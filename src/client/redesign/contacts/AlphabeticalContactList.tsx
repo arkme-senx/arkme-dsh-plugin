@@ -71,7 +71,7 @@ function rowContent(item: ArkmeDirectoryItem) {
     {item.kind === 'group'
       ? <span className="arkme-contact-directory-avatar" role="img" aria-label={`${item.displayName}的群聊头像`}>
           <ArkmeSourceAvatar
-            {...(avatarRef === undefined ? {} : { avatarRef })}
+            kind="group"
             {...(item.groupAvatar === undefined ? {} : { groupAvatar: item.groupAvatar })}
             size={38}
           />

@@ -20,7 +20,8 @@ import type {
   ArkmeSourceList,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
-import { ArkmeUserAvatar, loadArkmeImageDataUrl } from './ArkmeAvatar.js'
+import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
 
@@ -493,7 +494,7 @@ async function preloadCallSurfaceAvatars(refs: readonly (string | undefined)[]):
     if (normalized !== undefined) unique.add(normalized)
     if (unique.size >= CALL_SURFACE_AVATAR_PRELOAD_LIMIT) break
   }
-  await Promise.allSettled([...unique].map(ref => loadArkmeImageDataUrl(ref)))
+  await Promise.allSettled([...unique].map(async ref => await arkmeAvatarImages.load(ref)))
 }
 
 async function preloadHistoryAvatars(page: ArkmeCallHistoryPage): Promise<void> {
@@ -729,7 +730,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
     void callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile', {}, controller.signal)
       .then(async value => {
         const avatarRef = cleanAvatarRef(value.avatarRef)
-        if (avatarRef !== undefined) await loadArkmeImageDataUrl(avatarRef).catch(() => undefined)
+        if (avatarRef !== undefined) await arkmeAvatarImages.load(avatarRef).catch(() => undefined)
         if (!active || controller.signal.aborted) return
         setOfficialAuthorProfile({
           userId: value.userId,
@@ -758,7 +759,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
       void callArkme<ArkmeContactSearchResult>('contacts.search', { identifier: value }, controller.signal)
         .then(async result => {
           const avatarRef = cleanAvatarRef(result.avatarRef)
-          if (avatarRef !== undefined) await loadArkmeImageDataUrl(avatarRef).catch(() => undefined)
+          if (avatarRef !== undefined) await arkmeAvatarImages.load(avatarRef).catch(() => undefined)
           if (!active || controller.signal.aborted) return
           setContactSearchResult(result)
           setContactSearchState('ready')

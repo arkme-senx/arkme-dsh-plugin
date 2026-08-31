@@ -31,9 +31,9 @@ import type {
 } from '../types.js'
 import { callArkme } from './api.js'
 import { isArkmeRequestAbort, retryArkmeRead } from './read-retry.js'
-import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
 
 const colors = {
   panel: arkmeTheme.layer2,
@@ -282,16 +282,7 @@ export function ArkmeConversationHeaderIconButton(props: {
 }
 
 function Avatar({ imageRef, size = 32 }: { imageRef: string | undefined; size?: number }) {
-  const [src, setSrc] = useState('')
-  useEffect(() => {
-    let active = true
-    setSrc('')
-    if (imageRef === undefined) return () => { active = false }
-    void loadArkmeImageDataUrl(imageRef)
-      .then(value => { if (active) setSrc(value) })
-      .catch(() => undefined)
-    return () => { active = false }
-  }, [imageRef])
+  const src = useArkmeAvatarImage(imageRef) ?? ''
   return <span style={{ ...styles.avatar, width: size, height: size }}>
     {src === '' ? <ArkmeMark size={size} /> : <img src={src} alt="" draggable={false} style={styles.avatarImage} />}
   </span>

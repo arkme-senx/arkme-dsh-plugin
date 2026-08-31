@@ -1,5 +1,6 @@
 import { callArkme } from './api.js'
-import { clearArkmeAvatarCache } from './ArkmeAvatar.js'
+import { arkmeAvatarImages } from './avatar-image-runtime.js'
+import type { ArkmeAvatarImagePort } from './avatar-image-store.js'
 import { reconcileNavigationProviderInstance } from './navigation-cache.js'
 
 interface ArkmeProviderInstanceGuardOptions {
@@ -42,12 +43,20 @@ export function createArkmeProviderInstanceGuard(options: ArkmeProviderInstanceG
   }
 }
 
+export function revalidateArkmeProviderAvatarImages(
+  images: Pick<ArkmeAvatarImagePort, 'revalidateActive'>,
+): void {
+  void images.revalidateActive()
+}
+
 export const reconcileArkmeProviderInstance = createArkmeProviderInstanceGuard({
   loadInstance: async () => {
     const instance = await callArkme<{ instanceId: string }>('provider.instance')
     return instance.instanceId
   },
-  onInvalidate: clearArkmeAvatarCache,
+  onInvalidate: () => {
+    revalidateArkmeProviderAvatarImages(arkmeAvatarImages)
+  },
 })
 
 /** Drop stale Browser projections, preferring a fresh Host read with its current-instance snapshot as fallback. */

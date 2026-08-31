@@ -27,7 +27,7 @@ import type { ArkmeFileSendTask } from '../file-transfer-contract.js'
 import { bindSentFileTaskLocals, fileTaskConversationPreview, fileTaskTimelineItem, localFileBlock, useArkmeFileSendTasks } from './file-send-tasks.js'
 import { isArkmeRequestAbort, retryArkmeRead } from './read-retry.js'
 import { verifyPhoneCaptcha } from './geetest.js'
-import { ArkmeSourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { ArkmeDirectorySourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import {
   ARKME_CONVERSATION_HEADER_ACTIONS_STYLE,
   ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE,
@@ -3981,12 +3981,7 @@ export function ArkmeSurface({
       <section className="arkme-conversation-panel" ref={panelRef} style={styles.panel} role="region" aria-label={surfaceTitle}>
         {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header className="arkme-conversation-header" style={styles.header}>
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
-            <ArkmeSourceAvatar
-              size={34}
-              {...(source.avatarRef === undefined ? {} : { avatarRef: source.avatarRef })}
-              {...(source.avatarRefs === undefined ? {} : { avatarRefs: source.avatarRefs })}
-              {...(source.groupAvatar === undefined ? {} : { groupAvatar: source.groupAvatar })}
-            />
+            <ArkmeDirectorySourceAvatar source={source} size={34} />
           </span>}
           {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
             && auth?.userId !== undefined && <ArkmeTopicDirectoryPopover
@@ -4467,12 +4462,7 @@ export function ArkmeSurface({
                   key={target.sourceRef}
                   style={{ position: 'absolute', left: index * 15, top: 0 }}
                 >
-                  <ArkmeSourceAvatar
-                    size={30}
-                    {...(target.avatarRef === undefined ? {} : { avatarRef: target.avatarRef })}
-                    {...(target.avatarRefs === undefined ? {} : { avatarRefs: target.avatarRefs })}
-                    {...(target.groupAvatar === undefined ? {} : { groupAvatar: target.groupAvatar })}
-                  />
+                  <ArkmeDirectorySourceAvatar source={target} size={30} />
                 </span>)}
               </span>
               <span style={styles.forwardSuccessText}>{forwardSuccessFeedback.message}</span>
@@ -4709,12 +4699,7 @@ export function ArkmeSurface({
                             style={{ ...styles.forwardTargetCheck, ...(selected ? styles.forwardTargetCheckSelected : {}) }}
                             aria-hidden
                           >✓</span>
-                          <ArkmeSourceAvatar
-                            size={38}
-                            {...(target.avatarRef === undefined ? {} : { avatarRef: target.avatarRef })}
-                            {...(target.avatarRefs === undefined ? {} : { avatarRefs: target.avatarRefs })}
-                            {...(target.groupAvatar === undefined ? {} : { groupAvatar: target.groupAvatar })}
-                          />
+                          <ArkmeDirectorySourceAvatar source={target} size={38} />
                           <span style={styles.forwardTargetText}>
                             <span style={styles.forwardTargetName}>{target.displayName}</span>
                             <span style={styles.forwardTargetMeta}>{target.latestPreview?.trim() || arkmeForwardTargetMeta(target)}</span>
@@ -4728,12 +4713,10 @@ export function ArkmeSurface({
               <div style={styles.forwardTargetRecipients}>
                 <span>发送给：</span>
                 <span style={styles.forwardTargetAvatarStack}>
-                  {forwardSelectedTargets.slice(0, 6).map(target => <ArkmeSourceAvatar
+                  {forwardSelectedTargets.slice(0, 6).map(target => <ArkmeDirectorySourceAvatar
                     key={target.sourceRef}
+                    source={target}
                     size={26}
-                    {...(target.avatarRef === undefined ? {} : { avatarRef: target.avatarRef })}
-                    {...(target.avatarRefs === undefined ? {} : { avatarRefs: target.avatarRefs })}
-                    {...(target.groupAvatar === undefined ? {} : { groupAvatar: target.groupAvatar })}
                   />)}
                 </span>
               </div>

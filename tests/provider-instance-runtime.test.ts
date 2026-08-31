@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createArkmeProviderInstanceGuard, recoverArkmeProviderInstanceDirectory,
+  revalidateArkmeProviderAvatarImages,
 } from '../src/client/provider-instance-runtime.js'
 
 class MemoryStorage implements Storage {
@@ -14,6 +15,14 @@ class MemoryStorage implements Storage {
 }
 
 describe('Arkme Provider instance guard', () => {
+  it('softly revalidates mounted avatars without applying an account-scope reset', () => {
+    const revalidateActive = vi.fn(async () => undefined)
+
+    revalidateArkmeProviderAvatarImages({ revalidateActive })
+
+    expect(revalidateActive).toHaveBeenCalledOnce()
+  })
+
   it('coalesces concurrent checks and invalidates once for the same instance', async () => {
     const loadInstance = vi.fn(async () => 'instance-a')
     const onInvalidate = vi.fn()

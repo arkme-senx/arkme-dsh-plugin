@@ -114,7 +114,7 @@ export function ArkmeDSHBetaCommunityEntryContent({
     >
       {groupAvatar === undefined
         ? <ArkmeAvatarMosaic urls={avatarUrls} size={40} fallback={false} />
-        : <ArkmeSourceAvatar groupAvatar={groupAvatar} size={40} />}
+        : <ArkmeSourceAvatar kind="group" groupAvatar={groupAvatar} size={40} />}
       <span style={styles.content}>
         <span style={styles.title}>还没加入 DSH 内测群？</span>
         <span style={styles.subtitle}>和内测用户一起聊聊</span>
@@ -156,7 +156,7 @@ export function ArkmeDSHBetaCommunityJoinConfirmation({
       <div style={styles.sheetContent}>
         {groupAvatar === undefined
           ? <ArkmeAvatarMosaic urls={avatarUrls} size={86} fallback={false} />
-          : <ArkmeSourceAvatar groupAvatar={groupAvatar} size={86} />}
+          : <ArkmeSourceAvatar kind="group" groupAvatar={groupAvatar} size={86} />}
         <h2 id="arkme-community-join-title" style={styles.sheetTitle}>DSH 内测群</h2>
         <p style={styles.sheetSubtitle}>和内测用户一起聊聊</p>
         <button ref={confirmRef} type="button" style={styles.confirm} onClick={onConfirm}>

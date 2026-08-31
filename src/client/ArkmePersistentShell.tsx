@@ -20,7 +20,9 @@ import { callArkme } from './api.js'
 import { DeepSeekHarnessSurface } from './DeepSeekHarnessSurface.js'
 import { startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
+import { arkmePresentationMaintenance } from './presentation-maintenance-runtime.js'
 import { useArkmeRealtimeClientEvents } from './realtime-client-events.js'
 import { arkmeUi } from './ui-controller.js'
 import { ARKME_LOGIN_LOCALE_NAMESPACE } from './arkme-login-locales.js'
@@ -61,6 +63,15 @@ export function ArkmePersistentClientRuntime() {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const auth = authState.auth
+  const avatarScopeKey = auth?.status === 'authenticated'
+    ? `${auth.environment}:${String(auth.userId)}`
+    : undefined
+
+  useLayoutEffect(() => { arkmeAvatarImages.activateScope(avatarScopeKey) }, [avatarScopeKey])
+  useEffect(() => {
+    if (avatarScopeKey === undefined) return
+    return arkmePresentationMaintenance.start()
+  }, [avatarScopeKey])
 
   useArkmeRealtimeClientEvents(auth, ui.authRevision, true)
 

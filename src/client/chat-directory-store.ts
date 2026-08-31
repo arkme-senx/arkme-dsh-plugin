@@ -170,6 +170,83 @@ function sourceUpdate(update: ArkmeSourceItem | ArkmeChatDirectorySourceUpdate):
   return { source: update, ...(update.sourceKey === undefined ? {} : { sourceKey: update.sourceKey }) }
 }
 
+function directorySourceIdentity(source: ArkmeSourceItem): string {
+  return normalizedSourceKey(source.sourceKey) ?? source.sourceRef
+}
+
+type DirectorySourceScalarField = Exclude<keyof ArkmeSourceItem, 'avatarRefs' | 'groupAvatar'>
+
+const DIRECTORY_SOURCE_SCALAR_FIELDS: Record<DirectorySourceScalarField, true> = {
+  sourceRef: true,
+  sourceKey: true,
+  peerUserId: true,
+  parentSourceRef: true,
+  topicHierarchyKey: true,
+  parentTopicHierarchyKey: true,
+  hasPendingChildren: true,
+  siblingOrder: true,
+  kind: true,
+  displayName: true,
+  avatarRef: true,
+  latestPreview: true,
+  activeAtMillis: true,
+  unreadCount: true,
+  hasUnreadMention: true,
+  isMuted: true,
+  isPinned: true,
+  latestSequence: true,
+  recordCount: true,
+}
+
+function sameOrderedAvatarRefs(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
+  if (left === right) return true
+  return left !== undefined && right !== undefined
+    && left.length === right.length
+    && left.every((value, index) => value === right[index])
+}
+
+function sameGroupAvatarPresentation(
+  left: ArkmeSourceItem['groupAvatar'],
+  right: ArkmeSourceItem['groupAvatar'],
+): boolean {
+  if (left === right) return true
+  if (left === undefined || right === undefined) return false
+  // computedAtMillis is freshness provenance; the remaining structured fields define projection identity.
+  if (left.memberCount !== right.memberCount || left.strategy !== right.strategy
+    || left.slots.length !== right.slots.length) return false
+  return left.slots.every((slot, index) => {
+    const other = right.slots[index]
+    if (other === undefined || slot.avatarRef !== other.avatarRef || slot.fallback?.kind !== other.fallback?.kind) return false
+    if (slot.fallback?.kind !== 'phone_default' || other.fallback?.kind !== 'phone_default') return true
+    return slot.fallback.colorIndex === other.fallback.colorIndex && slot.fallback.label === other.fallback.label
+  })
+}
+
+function sameDirectorySourcePresentation(left: ArkmeSourceItem, right: ArkmeSourceItem): boolean {
+  for (const field of Object.keys(DIRECTORY_SOURCE_SCALAR_FIELDS) as DirectorySourceScalarField[]) {
+    if (left[field] !== right[field]) return false
+  }
+  return sameOrderedAvatarRefs(left.avatarRefs, right.avatarRefs)
+    && sameGroupAvatarPresentation(left.groupAvatar, right.groupAvatar)
+}
+
+function reconcileDirectorySources(
+  current: readonly ArkmeSourceItem[],
+  incoming: readonly ArkmeSourceItem[],
+): ArkmeSourceItem[] | readonly ArkmeSourceItem[] {
+  const currentByIdentity = new Map(current.map(source => [directorySourceIdentity(source), source]))
+  const reconciled = incoming.map(source => {
+    const previous = currentByIdentity.get(directorySourceIdentity(source))
+    return previous !== undefined
+      && sameDirectorySourcePresentation(previous, source)
+      ? previous
+      : source
+  })
+  return reconciled.length === current.length && reconciled.every((source, index) => source === current[index])
+    ? current
+    : reconciled
+}
+
 function mergeReadWatermark(
   target: Map<string, ArkmeChatReadWatermark>,
   key: string,
@@ -273,13 +350,21 @@ export class ArkmeChatDirectoryStore {
     if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady || this.snapshot.isRefreshing) this.commit([])
   }
 
-  async refreshRoot(options: { force?: boolean } = {}): Promise<ArkmeSourceItem[]> {
+  async refreshRoot(options: { force?: boolean; silent?: boolean } = {}): Promise<ArkmeSourceItem[]> {
     if (options.force !== true && this.refreshedAtMillis > 0
       && this.now() - this.refreshedAtMillis < this.maxAgeMs) {
       return [...this.snapshot.sources]
     }
-    if (this.refreshInFlight !== undefined) return await this.refreshInFlight
-    this.setRefreshing(true)
+    if (this.refreshInFlight !== undefined) {
+      if (options.silent === true) return await this.refreshInFlight
+      this.setRefreshing(true)
+      try {
+        return await this.refreshInFlight
+      } finally {
+        this.setRefreshing(false)
+      }
+    }
+    if (options.silent !== true) this.setRefreshing(true)
     const generation = this.generation
     const pending = (async () => {
       const loaded: ArkmeSourceItem[] = []
@@ -306,7 +391,7 @@ export class ArkmeChatDirectoryStore {
     } finally {
       if (this.refreshInFlight === pending) {
         this.refreshInFlight = undefined
-        this.setRefreshing(false)
+        if (options.silent !== true) this.setRefreshing(false)
       }
     }
   }
@@ -326,9 +411,11 @@ export class ArkmeChatDirectoryStore {
       this.combinedReadWatermarks(),
       { sourceKeysByRef: this.sourceKeysByRef },
     )
+    const reconciled = reconcileDirectorySources(this.snapshot.sources, merged)
+    const baselineChanged = !this.baselineReady
     this.pendingMutations = []
     this.baselineReady = true
-    this.commit(merged)
+    if (baselineChanged || reconciled !== this.snapshot.sources) this.commit([...reconciled])
   }
 
   private commit(sources: ArkmeSourceItem[]): void {

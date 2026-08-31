@@ -163,6 +163,161 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(store.getSnapshot()).toMatchObject({ baselineReady: true, isRefreshing: false, sources: page.items })
   })
 
+  it('keeps the directory snapshot stable when a silent refresh only advances avatar computation time', async () => {
+    const source = {
+      sourceRef: 'group-1', sourceKey: 'chat:group-1', kind: 'group_chat' as const, displayName: '项目群',
+      activeAtMillis: 10, unreadCount: 0,
+      groupAvatar: {
+        memberCount: 1, strategy: 'owner_recent_speakers_v1', computedAtMillis: 1,
+        slots: [{ avatarRef: 'avatar-a' }],
+      },
+    }
+    const store = new ArkmeChatDirectoryStore({
+      loadPage: async () => ({
+        directory: 'root', items: [{
+          ...source,
+          groupAvatar: { ...source.groupAvatar, computedAtMillis: 2 },
+        }], hasMore: false,
+      }),
+    })
+    store.publish([source])
+    const before = store.getSnapshot()
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    await store.refreshRoot({ force: true, silent: true })
+
+    expect(store.getSnapshot()).toBe(before)
+    expect(store.getSnapshot().sources[0]).toBe(source)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('publishes one silent-refresh revision and preserves unchanged row identities for real directory changes', async () => {
+    const unchanged = {
+      sourceRef: 'private-1', sourceKey: 'chat:private-1', kind: 'private_chat' as const, displayName: '联系人',
+      activeAtMillis: 20, unreadCount: 0, avatarRef: 'avatar-a',
+    }
+    const changed = {
+      sourceRef: 'group-1', sourceKey: 'chat:group-1', kind: 'group_chat' as const, displayName: '旧群名',
+      activeAtMillis: 10, unreadCount: 0,
+    }
+    const store = new ArkmeChatDirectoryStore({
+      loadPage: async () => ({
+        directory: 'root', items: [unchanged, { ...changed, displayName: '新群名' }], hasMore: false,
+      }),
+    })
+    store.publish([unchanged, changed])
+    const before = store.getSnapshot()
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    await store.refreshRoot({ force: true, silent: true })
+
+    const after = store.getSnapshot()
+    expect(after.revision).toBe(before.revision + 1)
+    expect(after.isRefreshing).toBe(false)
+    expect(after.sources[0]).toBe(before.sources[0])
+    expect(after.sources[1]).not.toBe(before.sources[1])
+    expect(after.sources[1]?.displayName).toBe('新群名')
+    expect(listener).toHaveBeenCalledOnce()
+  })
+
+  it('compares ordered avatarRefs and structured groupAvatar as separate projections', async () => {
+    const source = {
+      sourceRef: 'group-1', sourceKey: 'chat:group-1', kind: 'group_chat' as const, displayName: '项目群',
+      activeAtMillis: 10, unreadCount: 0, avatarRefs: ['legacy-a'],
+      groupAvatar: {
+        memberCount: 1, strategy: 'owner_recent_speakers_v1', computedAtMillis: 1,
+        slots: [{ avatarRef: 'avatar-a', fallback: { kind: 'default' as const } }],
+      },
+    }
+    let incoming = { ...source, avatarRefs: ['legacy-b'] }
+    const store = new ArkmeChatDirectoryStore({
+      loadPage: async () => ({ directory: 'root', items: [incoming], hasMore: false }),
+    })
+    store.publish([source])
+    const initialRevision = store.getSnapshot().revision
+
+    await store.refreshRoot({ force: true, silent: true })
+    expect(store.getSnapshot().revision).toBe(initialRevision + 1)
+    expect(store.getSnapshot().sources[0]?.avatarRefs).toEqual(['legacy-b'])
+
+    incoming = {
+      ...incoming,
+      groupAvatar: {
+        ...source.groupAvatar,
+        computedAtMillis: 2,
+        slots: [{ avatarRef: 'avatar-b', fallback: { kind: 'default' as const } }],
+      },
+    }
+    await store.refreshRoot({ force: true, silent: true })
+    expect(store.getSnapshot().revision).toBe(initialRevision + 2)
+    expect(store.getSnapshot().sources[0]?.groupAvatar?.slots[0]?.avatarRef).toBe('avatar-b')
+
+    incoming = {
+      ...incoming,
+      groupAvatar: {
+        ...incoming.groupAvatar,
+        computedAtMillis: 3,
+        slots: [{ avatarRef: 'avatar-b', fallback: { kind: 'phone_default' as const, colorIndex: 3, label: 'B' } }],
+      },
+    }
+    await store.refreshRoot({ force: true, silent: true })
+    expect(store.getSnapshot().revision).toBe(initialRevision + 3)
+    expect(store.getSnapshot().sources[0]?.groupAvatar?.slots[0]?.fallback).toEqual({
+      kind: 'phone_default', colorIndex: 3, label: 'B',
+    })
+  })
+
+  it('keeps the last good directory usable after a silent refresh failure and allows retry', async () => {
+    const source = {
+      sourceRef: 'source-1', kind: 'private_chat' as const, displayName: '联系人',
+      activeAtMillis: 1, unreadCount: 0,
+    }
+    const loadPage = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ directory: 'root', items: [{ ...source, displayName: '新联系人' }], hasMore: false })
+    const store = new ArkmeChatDirectoryStore({ loadPage })
+    store.publish([source])
+    const before = store.getSnapshot()
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    await expect(store.refreshRoot({ force: true, silent: true })).rejects.toThrow('offline')
+    expect(store.getSnapshot()).toBe(before)
+    expect(store.getSnapshot().isRefreshing).toBe(false)
+    expect(listener).not.toHaveBeenCalled()
+
+    await expect(store.refreshRoot({ force: true, silent: true })).resolves.toMatchObject([{ displayName: '新联系人' }])
+    expect(loadPage).toHaveBeenCalledTimes(2)
+    expect(store.getSnapshot().sources[0]?.displayName).toBe('新联系人')
+  })
+
+  it('shows user-requested refresh feedback when it joins a silent refresh already in flight', async () => {
+    const page = {
+      directory: 'root' as const,
+      items: [{
+        sourceRef: 'source-1', kind: 'private_chat' as const, displayName: '联系人',
+        activeAtMillis: 1, unreadCount: 0,
+      }],
+      hasMore: false,
+    }
+    let resolvePage!: (value: typeof page) => void
+    const store = new ArkmeChatDirectoryStore({
+      loadPage: async () => await new Promise<typeof page>(resolve => { resolvePage = resolve }),
+    })
+    store.publish(page.items)
+
+    const background = store.refreshRoot({ force: true, silent: true })
+    expect(store.getSnapshot().isRefreshing).toBe(false)
+    const userRefresh = store.refreshRoot({ force: true })
+    expect(store.getSnapshot().isRefreshing).toBe(true)
+
+    resolvePage(page)
+    await Promise.all([background, userRefresh])
+    expect(store.getSnapshot().isRefreshing).toBe(false)
+  })
+
   it('holds realtime mutations until the authoritative directory baseline is available', () => {
     const store = new ArkmeChatDirectoryStore()
     const listener = vi.fn()

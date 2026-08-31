@@ -17,7 +17,7 @@ import type {
   ArkmeUserProfileSnapshot,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
-import { ArkmeSourceAvatar } from './ArkmeAvatar.js'
+import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import {
   readArkoPendingTurn,
@@ -962,7 +962,7 @@ export function ArkmeArkoSurface() {
           </li> : <li style={{ ...styles.row, ...(item.role === 'user' ? styles.rowMe : styles.rowArko) }}>
             <div style={{ ...styles.line, ...(item.role === 'user' ? styles.lineMe : {}) }}>
               <span style={styles.avatar} aria-hidden>{item.role === 'user'
-                ? <ArkmeSourceAvatar
+                ? <ArkmeUserAvatar
                   {...(userProfile?.avatarRef === undefined ? {} : { avatarRef: userProfile.avatarRef })}
                   size={38}
                 />
