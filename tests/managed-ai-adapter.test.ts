@@ -427,6 +427,7 @@ describe('Arkme managed model adapter', () => {
               upload_uid: 'mai_upload_shared',
               asset_ref: 'mai_asset_shared',
               status: 'completed',
+              expires_at: Date.now() + 10 * 60_000,
               asset_expires_at: Date.now() + 60 * 60_000,
             },
           }), { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -527,6 +528,7 @@ describe('Arkme managed model adapter', () => {
               upload_uid: `mai_upload_${String(prepareCalls)}`,
               asset_ref: `mai_asset_${String(prepareCalls)}`,
               status: 'completed',
+              expires_at: Date.now() + 10 * 60_000,
               asset_expires_at: Date.now() + 60 * 60_000,
             },
           }), { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -612,6 +614,7 @@ describe('Arkme managed model adapter', () => {
               upload_uid: 'mai_upload_resumed',
               asset_ref: 'mai_asset_resumed',
               status: 'completed',
+              expires_at: Date.now() + 10 * 60_000,
               asset_expires_at: Date.now() + 60 * 60_000,
             },
           }), { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -641,6 +644,177 @@ describe('Arkme managed model adapter', () => {
     await expect(collect()).resolves.toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
     expect(attemptKeys).toHaveLength(2)
     expect(attemptKeys[1]).toBe(attemptKeys[0])
+  })
+
+  it('rotates an expired server generation and resumes within the same DSH request', async () => {
+    const data = Uint8Array.of(1, 2, 3)
+    const attachment = {
+      attachmentId: AttachmentId('expired-generation-image'),
+      mediaType: 'image/png' as const,
+      bytes: data.byteLength,
+      width: 16,
+      height: 16,
+      name: 'expired.png',
+    }
+    const capability: ManagedModelCapability = {
+      contractVersion: 'test-expired-generation-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'],
+        maximumImages: 1,
+        maximumBytesPerImage: data.byteLength,
+        countDimensionLimits: [],
+        evidence: {
+          providerReferenceUrl: 'https://example.test/provider-contract',
+          verifiedOn: '2026-08-31',
+          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
+          platformGuardrailFields: [],
+        },
+      },
+    }
+    const attemptKeys: string[] = []
+    let prepareCalls = 0
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      attachmentReader: { readImage: async () => ({ ref: attachment, data }) },
+      fetchImpl: async (input, init) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          const body = JSON.parse(String(init?.body)) as { idempotency_key: string }
+          attemptKeys.push(body.idempotency_key)
+          prepareCalls++
+          if (prepareCalls === 1) {
+            return new Response(JSON.stringify({
+              code: 1001,
+              message: '上传会话已过期',
+              data: { error_code: 'input_asset_upload_conflict' },
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+          }
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              upload_uid: 'mai_upload_rotated',
+              asset_ref: 'mai_asset_rotated',
+              status: 'completed',
+              expires_at: Date.now() + 10 * 60_000,
+              asset_expires_at: Date.now() + 60 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url.endsWith('/chat/completions')) {
+          return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          })
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+
+    const chunks: StreamChunk[] = []
+    for await (const chunk of transport.stream({
+      provider: ARKME_MANAGED_PROVIDER,
+      model: 'expired-generation-image',
+      messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+    }, capability)) chunks.push(chunk)
+
+    expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+    expect(attemptKeys).toHaveLength(2)
+    expect(attemptKeys[1]).not.toBe(attemptKeys[0])
+  })
+
+  it('uses the server upload expiry instead of a local session lifetime', async () => {
+    const data = Uint8Array.of(4, 5, 6)
+    const attachment = {
+      attachmentId: AttachmentId('server-expiry-image'),
+      mediaType: 'image/png' as const,
+      bytes: data.byteLength,
+      width: 16,
+      height: 16,
+      name: 'server-expiry.png',
+    }
+    const capability: ManagedModelCapability = {
+      contractVersion: 'test-server-expiry-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'],
+        maximumImages: 1,
+        maximumBytesPerImage: data.byteLength,
+        countDimensionLimits: [],
+        evidence: {
+          providerReferenceUrl: 'https://example.test/provider-contract',
+          verifiedOn: '2026-08-31',
+          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
+          platformGuardrailFields: [],
+        },
+      },
+    }
+    const attemptKeys: string[] = []
+    let prepareCalls = 0
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      attachmentReader: { readImage: async () => ({ ref: attachment, data }) },
+      fetchImpl: async (input, init) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          const body = JSON.parse(String(init?.body)) as { idempotency_key: string }
+          attemptKeys.push(body.idempotency_key)
+          prepareCalls++
+          if (prepareCalls === 1) {
+            return new Response(JSON.stringify({
+              code: 200,
+              data: {
+                upload_uid: 'mai_upload_short',
+                asset_ref: 'mai_asset_short',
+                status: 'prepared',
+                upload: { method: 'PUT', url: 'https://oss.test/short.png', headers: {} },
+                expires_at: Date.now() + 5,
+                asset_expires_at: Date.now() + 60 * 60_000,
+              },
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+          }
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              upload_uid: 'mai_upload_after_expiry',
+              asset_ref: 'mai_asset_after_expiry',
+              status: 'completed',
+              expires_at: Date.now() + 10 * 60_000,
+              asset_expires_at: Date.now() + 60 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url === 'https://oss.test/short.png') throw new TypeError('lost PUT response')
+        if (url.endsWith('/chat/completions')) {
+          return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          })
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const collect = async () => {
+      const chunks: StreamChunk[] = []
+      for await (const chunk of transport.stream({
+        provider: ARKME_MANAGED_PROVIDER,
+        model: 'server-expiry-image',
+        messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+      }, capability)) chunks.push(chunk)
+      return chunks
+    }
+
+    await expect(collect()).rejects.toMatchObject({ code: 'TRANSPORT' })
+    await new Promise(resolve => setTimeout(resolve, 15))
+    await expect(collect()).resolves.toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+    expect(attemptKeys).toHaveLength(2)
+    expect(attemptKeys[1]).not.toBe(attemptKeys[0])
   })
 
   it('uses a newly discovered Arkme model id on the managed chat route', async () => {

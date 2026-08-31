@@ -22,8 +22,12 @@ import type { AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 const STREAM_IDLE_TIMEOUT_MS = 300_000
 const MAX_SSE_EVENT_CHARS = 4 << 20
 const ASSET_EXPIRY_SAFETY_MS = 60_000
-const INPUT_ASSET_ATTEMPT_TTL_MS = 16 * 60_000
+// This only bounds local recovery memory when prepare may have committed but
+// its response was lost. Once prepare succeeds, the server-issued upload
+// expiry replaces it and is the sole session-lifetime authority.
+const INPUT_ASSET_ATTEMPT_RECOVERY_RETENTION_MS = 60 * 60_000
 const MAX_CACHED_INPUT_ASSETS = 4_096
+const MAX_RETAINED_INPUT_ASSET_ATTEMPTS = 4_096
 const MAX_CONCURRENT_INPUT_ASSET_UPLOADS = 4
 
 type DshToolCallId = Extract<StreamChunk, { type: 'tool-call-delta' }>['id']
@@ -99,10 +103,20 @@ interface ManagedEnvelope {
   data?: unknown
 }
 
+class ManagedAiApplicationError extends LlmError {
+  readonly applicationCode: string
+
+  constructor(message: string, code: 'INVALID_REQUEST' | 'SERVER', applicationCode: string) {
+    super(message, code)
+    this.applicationCode = applicationCode
+  }
+}
+
 interface PreparedUpload {
   uploadUid: string
   assetRef: string
   status: 'prepared' | 'completed'
+  uploadExpiresAt: number
   upload?: {
     method: 'PUT'
     url: string
@@ -838,28 +852,47 @@ export class ManagedAiTransport {
     if (retainedAttempt !== undefined && retainedAttempt.expiresAt <= now) {
       this.assetAttemptKeys.delete(attemptIdentity)
     }
-    const idempotencyKey = retainedAttempt !== undefined && retainedAttempt.expiresAt > now
+    let idempotencyKey = retainedAttempt !== undefined && retainedAttempt.expiresAt > now
       ? retainedAttempt.idempotencyKey
       : `dsh-${sha256.slice(0, 24)}-${randomUUID()}`
     if (retainedAttempt === undefined || retainedAttempt.expiresAt <= now) {
-      this.assetAttemptKeys.set(attemptIdentity, { idempotencyKey, expiresAt: now + INPUT_ASSET_ATTEMPT_TTL_MS })
+      this.rememberInputAssetAttempt(attemptIdentity, idempotencyKey, now + INPUT_ASSET_ATTEMPT_RECOVERY_RETENTION_MS)
     }
     let prepared: PreparedUpload
-    try {
-      prepared = await this.prepareUpload(model, contractVersion, stored, sha256, idempotencyKey, bearer, signal)
-    } catch (error) {
-      // A transport/server/malformed-response failure may have committed
-      // prepare before its response was lost, so retain the attempt key. Only
-      // an explicit application rejection proves this generation cannot resume.
-      if (error instanceof LlmError && error.code === 'INVALID_REQUEST') {
-        this.assetAttemptKeys.delete(attemptIdentity)
+    for (let prepareAttempt = 0; ; prepareAttempt++) {
+      try {
+        prepared = await this.prepareUpload(model, contractVersion, stored, sha256, idempotencyKey, bearer, signal)
+        break
+      } catch (error) {
+        // The server reports this code only when the retained idempotency
+        // generation is terminal (most commonly its 15-minute session expired).
+        // Rotate once inside the same DSH request so a recoverable upload does
+        // not surface as a user-visible model failure.
+        if (error instanceof ManagedAiApplicationError
+          && error.applicationCode === 'input_asset_upload_conflict'
+          && prepareAttempt === 0) {
+          idempotencyKey = `dsh-${sha256.slice(0, 24)}-${randomUUID()}`
+          this.rememberInputAssetAttempt(
+            attemptIdentity,
+            idempotencyKey,
+            Date.now() + INPUT_ASSET_ATTEMPT_RECOVERY_RETENTION_MS,
+          )
+          continue
+        }
+        // A transport/server/malformed-response failure may have committed
+        // prepare before its response was lost, so retain the attempt key. An
+        // explicit application rejection proves this generation cannot resume.
+        if (error instanceof ManagedAiApplicationError && error.code === 'INVALID_REQUEST') {
+          this.assetAttemptKeys.delete(attemptIdentity)
+        }
+        throw error
       }
-      throw error
     }
     if (prepared.status === 'completed') {
       this.assetAttemptKeys.delete(attemptIdentity)
       return { assetRef: prepared.assetRef, expiresAt: prepared.assetExpiresAt }
     }
+    this.rememberInputAssetAttempt(attemptIdentity, idempotencyKey, prepared.uploadExpiresAt)
     if (prepared.upload === undefined) throw new LlmError('Arkme AI 未返回上传参数', 'MALFORMED_RESPONSE')
     try {
       const response = await this.options.fetchImpl(prepared.upload.url, {
@@ -901,6 +934,20 @@ export class ManagedAiTransport {
     this.assetCache.set(key, asset)
   }
 
+  private rememberInputAssetAttempt(identity: string, idempotencyKey: string, expiresAt: number): void {
+    const now = Date.now()
+    for (const [candidateIdentity, attempt] of this.assetAttemptKeys) {
+      if (attempt.expiresAt <= now) this.assetAttemptKeys.delete(candidateIdentity)
+    }
+    this.assetAttemptKeys.delete(identity)
+    while (this.assetAttemptKeys.size >= MAX_RETAINED_INPUT_ASSET_ATTEMPTS) {
+      const oldest = this.assetAttemptKeys.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.assetAttemptKeys.delete(oldest)
+    }
+    this.assetAttemptKeys.set(identity, { idempotencyKey, expiresAt })
+  }
+
   private async prepareUpload(
     model: string,
     contractVersion: string,
@@ -933,6 +980,7 @@ export class ManagedAiTransport {
       uploadUid: requiredString(source, 'upload_uid'),
       assetRef: requiredString(source, 'asset_ref'),
       status,
+      uploadExpiresAt: requiredPositiveInteger(source, 'expires_at'),
       assetExpiresAt: requiredPositiveInteger(source, 'asset_expires_at'),
     }
     if (status === 'prepared') {
@@ -994,7 +1042,11 @@ export class ManagedAiTransport {
       const code = typeof details?.error_code === 'string' ? details.error_code : 'MANAGED_AI_FAILED'
       const invalid = code.startsWith('invalid_') || code.includes('expired') || code.includes('not_found')
         || code.includes('conflict') || code.includes('quota_exceeded')
-      throw new LlmError(envelope?.message ?? 'Arkme AI 资产请求失败', invalid ? 'INVALID_REQUEST' : 'SERVER')
+      throw new ManagedAiApplicationError(
+        envelope?.message ?? 'Arkme AI 资产请求失败',
+        invalid ? 'INVALID_REQUEST' : 'SERVER',
+        code,
+      )
     }
     return envelope.data
   }
