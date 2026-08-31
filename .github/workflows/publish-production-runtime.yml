@@ -1,19 +1,20 @@
-name: 发布 Arkme 插件后请求生产构建
-run-name: 请求 Arkme 生产构建 v${{ github.event.client_payload.version }}
+name: 构建并发布 Arkme 插件生产 Runtime
+run-name: 发布 Arkme 生产 Runtime v${{ github.event.client_payload.version }}
 
 on:
   repository_dispatch:
     types: [arkme-plugin-release-published]
 
 concurrency:
-  group: plugin-production-build-request-${{ github.event.client_payload.release_sha }}
+  group: plugin-production-runtime-publish
+  queue: max
   cancel-in-progress: false
 
 jobs:
-  request-backend-build:
-    name: 调用 Backend 请求 Arkme 生产构建
+  publish-runtime:
+    name: 构建并发布 Arkme 生产 Runtime
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 30
     environment: production
     permissions:
       contents: read
@@ -23,6 +24,10 @@ jobs:
           ref: master
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
       - name: 验证已发布版本与提交
         env:
           GH_TOKEN: ${{ github.token }}
@@ -45,6 +50,13 @@ jobs:
             exit 1
           fi
 
+          release_version=$(git show "${RELEASE_SHA}:package.json" | node -e \
+            "const fs = require('node:fs'); process.stdout.write(JSON.parse(fs.readFileSync(0, 'utf8')).version)")
+          if [ "$release_version" != "$VERSION" ]; then
+            echo '发布提交中的版本与事件不一致。' >&2
+            exit 1
+          fi
+
           tag="v${VERSION}"
           tag_sha=$(git rev-parse "${tag}^{commit}")
           if [ "$tag_sha" != "$RELEASE_SHA" ]; then
@@ -58,14 +70,37 @@ jobs:
             exit 1
           fi
 
-          package_name=$(node -p "require('./package.json').name")
+          package_name=$(git show "${RELEASE_SHA}:package.json" | node -e \
+            "const fs = require('node:fs'); process.stdout.write(JSON.parse(fs.readFileSync(0, 'utf8')).name)")
           registry_version=$(npm view "${package_name}@${VERSION}" version)
           if [ "$registry_version" != "$VERSION" ]; then
             echo 'npm Registry 尚未确认发布版本。' >&2
             exit 1
           fi
-      - name: 调用 Backend 请求 Arkme 生产构建
+      - name: 检出精确发布提交
         env:
+          RELEASE_SHA: ${{ github.event.client_payload.release_sha }}
+        run: git checkout --detach "$RELEASE_SHA"
+      - name: 安装依赖
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          zstd --version
+      - name: 测试、构建并打包 Runtime
+        run: |
+          pnpm test
+          pnpm run typecheck
+          pnpm run verify:call-assets
+          pnpm run build
+          pnpm run pack:runtime
+      - name: 准备发布说明
+        run: |
+          summary=$(node -e "const value = require('./package.json').arkme?.updateNotice?.summary; process.stdout.write(typeof value === 'string' && value.trim() ? value.trim().replace(/\\s+/g, ' ') : 'Arkme plugin production release')")
+          echo "ARKME_RELEASE_NOTES=$summary" >> "$GITHUB_ENV"
+      - name: 上传并激活生产 Runtime
+        env:
+          DEBUG: ""
           ARKME_BACKEND_BASE_URL: ${{ secrets.ARKME_BACKEND_BASE_URL }}
           ARKME_CI_TRIGGER_SECRET: ${{ secrets.ARKME_CI_TRIGGER_SECRET }}
-        run: bash .github/scripts/request-arkme-build.sh
+          ARKME_RELEASE_SOURCE_SHA: ${{ github.event.client_payload.release_sha }}
+        run: node scripts/publish-runtime-artifact.mjs

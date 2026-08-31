@@ -1,0 +1,91 @@
+name: 构建并发布 Arkme 插件测试 Runtime
+
+on:
+  push:
+    branches: [pre-release]
+
+concurrency:
+  group: plugin-pre-release-runtime-publish
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  build-runtime:
+    name: 构建 Arkme 测试 Runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: 安装依赖
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          zstd --version
+      - name: 验证稳定版本源码
+        run: |
+          pnpm test
+          pnpm run typecheck
+          pnpm run verify:call-assets
+      - name: 生成本次测试版本
+        id: release
+        run: node scripts/prepare-runtime-version.mjs --run-number "$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+      - name: 构建并打包 Runtime
+        run: |
+          pnpm run build
+          pnpm run pack:runtime
+      - name: 传递待发布制品
+        uses: actions/upload-artifact@v4
+        with:
+          name: arkme-pre-release-runtime
+          path: |
+            dist/runtime-artifacts/*.tar.zst
+            dist/runtime-artifacts/artifact-metadata.json
+            dist/runtime-artifacts/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-runtime:
+    name: 发布并激活 Arkme 测试 Runtime
+    needs: build-runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: pre-release
+    permissions:
+      contents: read
+    steps:
+      - name: 检出受保护的发布工具
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: 安装受信任的发布依赖
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: 下载待发布制品
+        uses: actions/download-artifact@v4
+        with:
+          name: arkme-pre-release-runtime
+          path: trusted-runtime-artifact
+      - name: 上传并激活测试 Runtime
+        env:
+          DEBUG: ""
+          ARKME_BACKEND_BASE_URL: ${{ secrets.ARKME_BACKEND_BASE_URL }}
+          ARKME_CI_TRIGGER_SECRET: ${{ secrets.ARKME_CI_TRIGGER_SECRET }}
+          ARKME_RELEASE_SOURCE_SHA: ${{ github.sha }}
+          ARKME_RELEASE_NOTES: Arkme plugin pre-release run ${{ github.run_number }}
+          ARKME_RUNTIME_ARTIFACT_DIR: trusted-runtime-artifact
+        run: node scripts/publish-runtime-artifact.mjs

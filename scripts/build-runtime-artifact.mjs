@@ -5,6 +5,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   rename,
@@ -117,12 +118,107 @@ async function sha256File(filePath) {
   return hash.digest('hex')
 }
 
+function writeTarString(header, offset, length, value) {
+  const encoded = Buffer.from(value)
+  if (encoded.length > length) throw new Error(`ustar field is too long: ${value}`)
+  encoded.copy(header, offset)
+}
+
+function writeTarOctal(header, offset, length, value) {
+  const encoded = value.toString(8).padStart(length - 1, '0')
+  if (encoded.length >= length) throw new Error(`ustar numeric field is too large: ${value}`)
+  writeTarString(header, offset, length, `${encoded}\0`)
+}
+
+function splitUstarPath(rawName) {
+  const directory = rawName.endsWith('/')
+  const name = directory ? rawName.slice(0, -1) : rawName
+  if (Buffer.byteLength(name) <= 100) return { name: directory ? `${name}/` : name, prefix: '' }
+  const segments = name.split('/')
+  for (let index = segments.length - 1; index > 0; index -= 1) {
+    const prefix = segments.slice(0, index).join('/')
+    const basename = segments.slice(index).join('/') + (directory ? '/' : '')
+    if (Buffer.byteLength(prefix) <= 155 && Buffer.byteLength(basename) <= 100) {
+      return { name: basename, prefix }
+    }
+  }
+  throw new Error(`runtime artifact path does not fit ustar: ${rawName}`)
+}
+
+function createTarHeader(entry) {
+  const header = Buffer.alloc(512)
+  const pathFields = splitUstarPath(entry.name)
+  writeTarString(header, 0, 100, pathFields.name)
+  writeTarOctal(header, 100, 8, entry.mode)
+  writeTarOctal(header, 108, 8, 0)
+  writeTarOctal(header, 116, 8, 0)
+  writeTarOctal(header, 124, 12, entry.directory ? 0 : entry.size)
+  writeTarOctal(header, 136, 12, 0)
+  header.fill(0x20, 148, 156)
+  header[156] = entry.directory ? 0x35 : 0x30
+  writeTarString(header, 257, 6, 'ustar\0')
+  writeTarString(header, 263, 2, '00')
+  writeTarString(header, 265, 32, 'root')
+  writeTarString(header, 297, 32, 'root')
+  writeTarString(header, 345, 155, pathFields.prefix)
+  const checksum = header.reduce((sum, byte) => sum + byte, 0).toString(8).padStart(6, '0')
+  writeTarString(header, 148, 8, `${checksum}\0 `)
+  return header
+}
+
+async function deterministicTarEntries(packageDirectory) {
+  const result = []
+  async function visit(directory, prefix = '') {
+    const names = (await readdir(directory)).sort()
+    for (const name of names) {
+      const relativePath = prefix === '' ? name : `${prefix}/${name}`
+      validateArchivePath(relativePath)
+      const absolutePath = join(directory, name)
+      const info = await lstat(absolutePath)
+      if (info.isSymbolicLink()) throw new Error(`runtime artifact must not contain a symbolic link: ${relativePath}`)
+      if (info.isDirectory()) {
+        result.push({ absolutePath, directory: true, mode: 0o755, name: `${relativePath}/`, size: 0 })
+        await visit(absolutePath, relativePath)
+      } else if (info.isFile()) {
+        result.push({
+          absolutePath,
+          directory: false,
+          mode: (info.mode & 0o111) === 0 ? 0o644 : 0o755,
+          name: relativePath,
+          size: info.size,
+        })
+      } else {
+        throw new Error(`runtime artifact entry must be a regular file or directory: ${relativePath}`)
+      }
+    }
+  }
+  await visit(packageDirectory)
+  return result
+}
+
+async function writeDeterministicTar(packageDirectory, outputPath) {
+  const output = await open(outputPath, 'w', 0o600)
+  try {
+    for (const entry of await deterministicTarEntries(packageDirectory)) {
+      await output.write(createTarHeader(entry))
+      if (!entry.directory) {
+        const data = await readFile(entry.absolutePath)
+        await output.write(data)
+        const padding = (512 - (data.length % 512)) % 512
+        if (padding > 0) await output.write(Buffer.alloc(padding))
+      }
+    }
+    await output.write(Buffer.alloc(1024))
+  } finally {
+    await output.close()
+  }
+}
+
 export async function createRuntimeArchive({ packageDirectory, outputDirectory }) {
   const canonicalPackageDirectory = resolve(packageDirectory)
   const canonicalOutputDirectory = resolve(outputDirectory)
   const manifest = validatePackageManifest(JSON.parse(await readFile(join(canonicalPackageDirectory, 'package.json'), 'utf8')))
   const inspection = await inspectPackageDirectory(canonicalPackageDirectory)
-  const topLevelEntries = (await readdir(canonicalPackageDirectory)).sort()
   await mkdir(canonicalOutputDirectory, { recursive: true })
   const temporaryDirectory = await mkdtemp(join(canonicalOutputDirectory, '.arkme-runtime-archive-'))
   const rawTarPath = join(temporaryDirectory, 'artifact.tar')
@@ -131,18 +227,7 @@ export async function createRuntimeArchive({ packageDirectory, outputDirectory }
   const artifactPath = join(canonicalOutputDirectory, artifactName)
 
   try {
-    await execFileAsync('tar', [
-      '--format=ustar',
-      '-cf', rawTarPath,
-      '-C', canonicalPackageDirectory,
-      ...topLevelEntries,
-    ], {
-      env: {
-        ...process.env,
-        COPYFILE_DISABLE: '1',
-        COPY_EXTENDED_ATTRIBUTES_DISABLE: '1',
-      },
-    })
+    await writeDeterministicTar(canonicalPackageDirectory, rawTarPath)
     const { stdout } = await execFileAsync('tar', ['-tf', rawTarPath], { encoding: 'utf8' })
     validateRuntimeArchiveEntries(stdout.trim().split('\n').filter(Boolean))
     await execFileAsync('zstd', ['-q', '-f', '-19', '--threads=0', rawTarPath, '-o', temporaryArtifactPath])
