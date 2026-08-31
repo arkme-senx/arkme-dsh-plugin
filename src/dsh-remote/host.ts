@@ -208,6 +208,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private historyReconcileTimer: ReturnType<typeof setTimeout> | undefined
   private historyReconcileFlight: Promise<void> | undefined
   private historyReconcileRequested = false
+  private readonly liveProjectionTails = new Map<string, Promise<void>>()
 
   constructor(private readonly options: ArkmeRemoteRealtimeHostOptions) {
     this.now = options.now ?? Date.now
@@ -235,6 +236,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (this.historyReconcileTimer !== undefined) clearTimeout(this.historyReconcileTimer)
     this.historyReconcileTimer = undefined
     this.historyReconcileRequested = false
+    this.liveProjectionTails.clear()
     await this.deactivateAccount()
     this.bump()
   }
@@ -414,6 +416,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (this.historyReconcileTimer !== undefined) clearTimeout(this.historyReconcileTimer)
     this.historyReconcileTimer = undefined
     this.historyReconcileRequested = false
+    this.liveProjectionTails.clear()
   }
 
   private startApiProxyEvents(): void {
@@ -441,13 +444,21 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (!this.started || runtime === undefined) return
     const issuedAt = this.now()
     if (event.kind === 'session-event') {
-      try {
-        await this.appendSessionHistory(runtime, event.sessionId, [event.entry])
-      } catch (error) {
-        this.scheduleHistoryReconcile()
-        throw error
-      }
-      this.scheduleHistoryReconcile()
+      const accountId = this.accountId
+      void this.appendSessionHistory(runtime, event.sessionId, [event.entry])
+        .then(() => {
+          if (event.entry.event.type === 'turn/end'
+            && accountId !== undefined
+            && this.historyOwnerMatches(accountId, runtime)) {
+            this.scheduleHistoryReconcile()
+          }
+        })
+        .catch(error => {
+          if (accountId === undefined || !this.historyOwnerMatches(accountId, runtime)) return
+          this.historySyncError = asDshRemoteError(error)
+          this.scheduleHistoryReconcile(HISTORY_RECONCILE_INTERVAL_MILLIS)
+          this.bump()
+        })
       // Backend durability is independent from Realtime presence. A disconnected
       // Host still persists the DSH event; only the live mobile projection waits.
       if (!this.connected || manager === undefined) return
@@ -456,18 +467,23 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         'dsh-remote-session-event-v1', runtime.runtimeRef, String(runtime.hostGeneration), event.sessionId,
         String(seq), event.entry.event.type,
       ].join('\n')).digest('base64url').slice(0, 40)}`
-      await manager.publishProjectionEvent({
-        protocol: DSH_REMOTE_PROTOCOL,
-        protocol_major: DSH_REMOTE_PROTOCOL_MAJOR,
-        kind: 'event',
-        request_ref: requestRef,
-        host_generation: runtime.hostGeneration,
-        issued_at: issuedAt,
-        operation: 'session.history',
-        body: { session_ref: event.sessionId, entries: [event.entry] },
-        session_seq: seq,
-        projection_as_of_seq: seq,
-      }, requestRef)
+      await this.enqueueLiveProjection(event.sessionId, async () => {
+        if (!this.started || !this.connected || this.channelManager !== manager
+          || this.runtime?.runtimeRef !== runtime.runtimeRef
+          || this.runtime.hostGeneration !== runtime.hostGeneration) return
+        await manager.publishProjectionEvent({
+          protocol: DSH_REMOTE_PROTOCOL,
+          protocol_major: DSH_REMOTE_PROTOCOL_MAJOR,
+          kind: 'event',
+          request_ref: requestRef,
+          host_generation: runtime.hostGeneration,
+          issued_at: issuedAt,
+          operation: 'session.history',
+          body: { session_ref: event.sessionId, entries: [event.entry] },
+          session_seq: seq,
+          projection_as_of_seq: seq,
+        }, requestRef)
+      })
       return
     }
     const baseline = event.kind === 'mux-baseline'
@@ -490,6 +506,22 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       },
       ...(baseline && event.lastSeq >= 0 ? { projection_as_of_seq: event.lastSeq } : {}),
     }, requestRef)
+  }
+
+  private async enqueueLiveProjection(
+    sessionRef: string,
+    action: () => Promise<void>,
+  ): Promise<void> {
+    const previous = this.liveProjectionTails.get(sessionRef) ?? Promise.resolve()
+    const queued = previous.catch(() => undefined).then(action)
+    this.liveProjectionTails.set(sessionRef, queued)
+    try {
+      await queued
+    } finally {
+      if (this.liveProjectionTails.get(sessionRef) === queued) {
+        this.liveProjectionTails.delete(sessionRef)
+      }
+    }
   }
 
   private async appendSessionHistory(

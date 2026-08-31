@@ -477,6 +477,39 @@ describe('Arkme remote Host account contract', () => {
     expect(publishProjectionEvent.mock.calls[2]![0]).not.toHaveProperty('body.pending_interactions')
   })
 
+  it('publishes ordered live events without waiting for Backend history latency', async () => {
+    const pendingAppends: Array<() => void> = []
+    const appendSessionEvents = vi.fn(async () => await new Promise<void>(resolve => {
+      pendingAppends.push(resolve)
+    }))
+    const publishedSeqs: number[] = []
+    const publishProjectionEvent = vi.fn(async (value: { session_seq?: number }) => {
+      publishedSeqs.push(value.session_seq ?? -1)
+    })
+    const host = inertHost(new DshApiProxyAdapter({}), {
+      controlPlane: { appendSessionEvents } as unknown as DshRemoteControlPlane,
+    })
+    Object.assign(host, {
+      started: true, connected: true, channelManager: { publishProjectionEvent }, accountId: '1',
+      runtime: {
+        runtimeRef: 'runtime-01', profileRef: 'web', accountId: '1', hostGeneration: 7,
+        capabilities: ['session.events'], updatedAtMillis: 1,
+      },
+    })
+    const project = (seq: number) => (host as unknown as {
+      publishProjectionEvent(value: DshRemoteApiProjectionEvent): Promise<void>
+    }).publishProjectionEvent({
+      kind: 'session-event', sessionId: 'session-01',
+      entry: { event: { type: 'assistant/chunk', seq, time: 1_400 + seq, data: {} } },
+    })
+
+    await Promise.all([project(8), project(9), project(10)])
+
+    expect(appendSessionEvents).toHaveBeenCalledTimes(3)
+    expect(publishedSeqs).toEqual([8, 9, 10])
+    for (const resolve of pendingAppends) resolve()
+  })
+
   it('syncs a newly-created session row before retrying its first Backend event append', async () => {
     const publishProjectionEvent = vi.fn(async () => undefined)
     const appendSessionEvents = vi.fn()
@@ -509,9 +542,11 @@ describe('Arkme remote Host account contract', () => {
       entry: { event: { type: 'assistant/message', seq: 0, time: 1_400, data: {} } },
     })
 
-    expect(syncProjectionSnapshot).toHaveBeenCalledOnce()
+    await vi.waitFor(() => {
+      expect(syncProjectionSnapshot).toHaveBeenCalledOnce()
+      expect(appendSessionEvents).toHaveBeenCalledTimes(2)
+    })
     expect(syncProjectionSnapshot).toHaveBeenCalledWith(true)
-    expect(appendSessionEvents).toHaveBeenCalledTimes(2)
     expect(publishProjectionEvent).toHaveBeenCalledOnce()
   })
 
