@@ -1,6 +1,7 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { Context } from '@deepseek-ai/cordis'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { createUserMessage, LlmRuntime } from '@deepseek-ai/dsh-llm'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
@@ -11,7 +12,16 @@ import {
   localizeManagedAiError,
   registerManagedAiProvider,
 } from '../src/managed-ai/adapter.js'
+import { ManagedAiTransport, type ManagedModelCapability } from '../src/managed-ai/transport.js'
 import { SecretValue } from '../src/secret-value.js'
+
+const TEXT_CAPABILITY = {
+  contract_version: 'text-chat-v1',
+  input_modalities: ['text'],
+  output_modalities: ['text'],
+  materialization_mode: 'none-v1',
+  usage_schema: 'cache-split-token-v1',
+}
 
 const MANAGED_CATALOG_ITEMS = [
   {
@@ -21,6 +31,7 @@ const MANAGED_CATALOG_ITEMS = [
     context_window_tokens: '1000000',
     default_max_output_tokens: '256000',
     maximum_max_output_tokens: '384000',
+    capability: TEXT_CAPABILITY,
   },
   {
     provider: 'arkme-managed',
@@ -29,6 +40,7 @@ const MANAGED_CATALOG_ITEMS = [
     context_window_tokens: '1000000',
     default_max_output_tokens: '65536',
     maximum_max_output_tokens: '131072',
+    capability: TEXT_CAPABILITY,
   },
   {
     provider: 'arkme-managed',
@@ -37,6 +49,7 @@ const MANAGED_CATALOG_ITEMS = [
     context_window_tokens: '1048576',
     default_max_output_tokens: '65536',
     maximum_max_output_tokens: '131072',
+    capability: TEXT_CAPABILITY,
   },
   {
     provider: 'arkme-managed',
@@ -45,6 +58,7 @@ const MANAGED_CATALOG_ITEMS = [
     context_window_tokens: '1000000',
     default_max_output_tokens: '131072',
     maximum_max_output_tokens: '393216',
+    capability: TEXT_CAPABILITY,
   },
 ]
 
@@ -128,6 +142,505 @@ describe('Arkme managed model adapter', () => {
         body: '{}',
       }),
     )
+  })
+
+  it('uploads a DSH image directly, completes an ambiguous existing object, and sends only image_asset', async () => {
+    const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+    const attachment = {
+      attachmentId: AttachmentId('sha256-managed-image'),
+      mediaType: 'image/png' as const,
+      bytes: imageBytes.byteLength,
+      width: 1,
+      height: 1,
+      name: 'screen.png',
+    }
+    const imageCapability = {
+      contract_version: 'deepseek-vision-exp-chat-v1',
+      input_modalities: ['text', 'image'],
+      output_modalities: ['text'],
+      image: {
+        allowed_media_types: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+        maximum_images: 600,
+        maximum_bytes_per_image: 64 * 1024 * 1024,
+        maximum_total_bytes: 200 * 1024 * 1024,
+        maximum_width: 8192,
+        maximum_height: 8192,
+        count_dimension_limits: [{ minimum_images: 15, maximum_width: 4096, maximum_height: 4096 }],
+        token_estimator: 'deepseek-upper-384-v1',
+        evidence: {
+          provider_reference_url: 'https://api-docs.deepseek.com/guides/vision/',
+          verified_on: '2026-08-31',
+          provider_documented_fields: [
+            'allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'maximum_total_bytes',
+            'maximum_width', 'maximum_height', 'count_dimension_limits', 'token_estimator',
+          ],
+        },
+      },
+      materialization_mode: 'deepseek-files-v1',
+      usage_schema: 'cache-split-token-v1',
+    }
+    const catalogItem = {
+      ...MANAGED_CATALOG_ITEMS[0],
+      public_model_code: 'deepseek-v4-flash-vision-exp',
+      display_name: 'DeepSeek V4 Flash Vision Exp',
+      capability: imageCapability,
+    }
+    const calls: Array<{ url: string; method: string; body: unknown }> = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      const method = init?.method ?? 'GET'
+      let body: unknown = init?.body
+      if (typeof body === 'string' && (init?.headers as Record<string, string> | undefined)?.['Content-Type'] === 'application/json') {
+        body = JSON.parse(body) as unknown
+      }
+      calls.push({ url, method, body })
+      if (url.endsWith('/models/query')) return managedCatalogResponse([catalogItem])
+      if (url.endsWith('/input-assets/uploads/prepare')) {
+        return new Response(JSON.stringify({
+          code: 200,
+          message: '请求成功',
+          data: {
+            upload_uid: 'mai_upload_123',
+            asset_ref: 'mai_asset_123',
+            status: 'prepared',
+            upload: {
+              method: 'PUT',
+              url: 'https://oss.test/managed/input.png?signature=secret',
+              headers: { 'Content-Type': 'image/png' },
+            },
+            expires_at: Date.now() + 10 * 60_000,
+            asset_expires_at: Date.now() + 7 * 24 * 60 * 60_000,
+          },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      // A lost successful PUT response is retried against forbid-overwrite OSS
+      // as 409; the adapter must validate it through complete, not abort it.
+      if (url.startsWith('https://oss.test/managed/input.png')) return new Response(null, { status: 409 })
+      if (url.endsWith('/input-assets/uploads/complete')) {
+        return new Response(JSON.stringify({
+          code: 200,
+          message: '请求成功',
+          data: {
+            asset_ref: 'mai_asset_123',
+            kind: 'image',
+            sha256: '0'.repeat(64),
+            media_type: 'image/png',
+            size_bytes: imageBytes.byteLength,
+            width: 1,
+            height: 1,
+            status: 'ready',
+            expires_at: Date.now() + 7 * 24 * 60 * 60_000,
+          },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (url.endsWith('/chat/completions')) {
+        return new Response([
+          'data: {"choices":[{"index":0,"delta":{"content":"看到了"},"finish_reason":null}]}',
+          '',
+          'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+          '',
+          'data: [DONE]',
+          '',
+          '',
+        ].join('\n'), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+      }
+      throw new Error(`unexpected request: ${method} ${url}`)
+    })
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: {
+        resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
+      },
+      attachmentReader: {
+        readImage: vi.fn(async () => ({ ref: attachment, data: imageBytes })),
+      },
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      fetchImpl,
+    })
+
+    await expect(adapter.resolveModel(
+      ARKME_MANAGED_PROVIDER,
+      'deepseek-v4-flash-vision-exp',
+    )).resolves.toMatchObject({ inputModalities: ['text', 'image'] })
+    const chunks: StreamChunk[] = []
+    for await (const chunk of adapter.stream({
+      provider: ARKME_MANAGED_PROVIDER,
+      model: 'deepseek-v4-flash-vision-exp',
+      messages: [createUserMessage({
+        content: [
+          { type: 'text', text: '这张图里有什么？' },
+          { type: 'image', attachment },
+        ],
+        source: { kind: 'user' },
+      })],
+    })) chunks.push(chunk)
+
+    expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: '看到了' })
+    const prepare = calls.find(call => call.url.endsWith('/input-assets/uploads/prepare'))
+    expect(prepare?.body).toMatchObject({
+      public_model_code: 'deepseek-v4-flash-vision-exp',
+      capability_contract_version: 'deepseek-vision-exp-chat-v1',
+      asset: {
+        kind: 'image',
+        media_type: 'image/png',
+        size_bytes: imageBytes.byteLength,
+        width: 1,
+        height: 1,
+      },
+    })
+    expect(prepare?.body).toMatchObject({ asset: { sha256: expect.stringMatching(/^[0-9a-f]{64}$/u) } })
+    const oss = calls.find(call => call.url.startsWith('https://oss.test/managed/input.png'))
+    expect(oss?.method).toBe('PUT')
+    expect(Buffer.from(oss?.body as Uint8Array)).toEqual(Buffer.from(imageBytes))
+    const chat = calls.find(call => call.url.endsWith('/chat/completions'))
+    expect(chat?.body).toMatchObject({
+      model: 'deepseek-v4-flash-vision-exp',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: '这张图里有什么？' },
+          { type: 'image_asset', asset_ref: 'mai_asset_123' },
+        ],
+      }],
+    })
+    expect(JSON.stringify(chat?.body)).not.toContain('signature=secret')
+    expect(JSON.stringify(chat?.body)).not.toContain('iVBOR')
+  })
+
+  it('enforces Qwen source geometry without treating provider max_pixels as a raw-image limit', async () => {
+    const capability = {
+      contract_version: 'bailian-qwen38-image-chat-v1',
+      input_modalities: ['text', 'image'],
+      output_modalities: ['text'],
+      image: {
+        allowed_media_types: ['image/jpeg', 'image/png'],
+        maximum_images: 2_048,
+        maximum_bytes_per_image: 20 * 1024 * 1024,
+        maximum_total_bytes: 1024 * 1024 * 1024,
+        minimum_width: 11,
+        minimum_height: 11,
+        maximum_aspect_ratio: 200,
+        provider_max_pixels: 2_621_440,
+        token_estimator: 'qwen-32px-default-v1',
+        evidence: {
+          provider_reference_url: 'https://help.aliyun.com/zh/model-studio/vision',
+          verified_on: '2026-08-31',
+          provider_documented_fields: [
+            'maximum_images', 'maximum_bytes_per_image', 'minimum_width', 'minimum_height',
+            'maximum_aspect_ratio', 'provider_max_pixels', 'token_estimator',
+          ],
+          platform_guardrail_fields: ['allowed_media_types', 'maximum_total_bytes'],
+        },
+      },
+      materialization_mode: 'oss-signed-url-v1',
+      usage_schema: 'cache-split-token-v1',
+    }
+    const reader = vi.fn()
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: { resolveManagedAccessCredential: async () => new SecretValue('arkme-access') },
+      attachmentReader: { readImage: reader },
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      fetchImpl: async input => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/models/query')) {
+          return managedCatalogResponse([{
+            ...MANAGED_CATALOG_ITEMS[1],
+            public_model_code: 'qwen3.8-max',
+            capability,
+          }])
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+    })
+    const attachment = {
+      attachmentId: AttachmentId('qwen-too-small'),
+      mediaType: 'image/png' as const,
+      bytes: 8,
+      width: 10,
+      height: 10,
+      name: 'small.png',
+    }
+    const stream = adapter.stream({
+      provider: ARKME_MANAGED_PROVIDER,
+      model: 'qwen3.8-max',
+      messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+    })
+    await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(reader).not.toHaveBeenCalled()
+  })
+
+  it('keeps a shared image upload alive when only one concurrent caller aborts', async () => {
+    const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+    const attachment = {
+      attachmentId: AttachmentId('shared-managed-image'),
+      mediaType: 'image/png' as const,
+      bytes: imageBytes.byteLength,
+      width: 16,
+      height: 16,
+      name: 'shared.png',
+    }
+    const capability: ManagedModelCapability = {
+      contractVersion: 'deepseek-vision-exp-chat-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'],
+        maximumImages: 1,
+        maximumBytesPerImage: 64 * 1024 * 1024,
+        maximumWidth: 8192,
+        maximumHeight: 8192,
+        countDimensionLimits: [],
+        evidence: {
+          providerReferenceUrl: 'https://api-docs.deepseek.com/guides/vision/',
+          verifiedOn: '2026-08-31',
+          providerDocumentedFields: [
+            'allowed_media_types', 'maximum_images', 'maximum_bytes_per_image',
+            'maximum_width', 'maximum_height', 'token_estimator',
+          ],
+          platformGuardrailFields: [],
+        },
+      },
+    }
+    let releaseRead!: () => void
+    let markReadStarted!: () => void
+    const readStarted = new Promise<void>(resolve => { markReadStarted = resolve })
+    const readGate = new Promise<void>(resolve => { releaseRead = resolve })
+    const readImage = vi.fn(async (_ref, signal?: AbortSignal) => {
+      markReadStarted()
+      await readGate
+      if (signal?.aborted === true) throw signal.reason
+      return { ref: attachment, data: imageBytes }
+    })
+    let prepareCalls = 0
+    let chatCalls = 0
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      attachmentReader: { readImage },
+      fetchImpl: async input => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          prepareCalls++
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              upload_uid: 'mai_upload_shared',
+              asset_ref: 'mai_asset_shared',
+              status: 'completed',
+              asset_expires_at: Date.now() + 60 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url.endsWith('/chat/completions')) {
+          chatCalls++
+          return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          })
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const collect = async (signal: AbortSignal) => {
+      const chunks: StreamChunk[] = []
+      for await (const chunk of transport.stream({
+        provider: ARKME_MANAGED_PROVIDER,
+        model: 'deepseek-v4-flash-vision-exp',
+        signal,
+        messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+      }, capability)) chunks.push(chunk)
+      return chunks
+    }
+    const firstController = new AbortController()
+    const secondController = new AbortController()
+    const first = collect(firstController.signal)
+    const second = collect(secondController.signal)
+    await readStarted
+    await new Promise(resolve => setTimeout(resolve, 10))
+    firstController.abort()
+    releaseRead()
+
+    await expect(first).rejects.toMatchObject({ code: 'ABORTED' })
+    await expect(second).resolves.toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+    expect(readImage).toHaveBeenCalledTimes(1)
+    expect(prepareCalls).toBe(1)
+    expect(chatCalls).toBe(1)
+  })
+
+  it('bounds direct-to-OSS preparation concurrency while preserving all image positions', async () => {
+    const attachments = Array.from({ length: 5 }, (_, index) => ({
+      attachmentId: AttachmentId(`bounded-managed-image-${String(index)}`),
+      mediaType: 'image/png' as const,
+      bytes: 1,
+      width: 16,
+      height: 16,
+      name: `bounded-${String(index)}.png`,
+    }))
+    const capability: ManagedModelCapability = {
+      contractVersion: 'test-bounded-image-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'],
+        maximumImages: attachments.length,
+        maximumBytesPerImage: 1,
+        countDimensionLimits: [],
+        evidence: {
+          providerReferenceUrl: 'https://example.test/provider-contract',
+          verifiedOn: '2026-08-31',
+          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
+          platformGuardrailFields: [],
+        },
+      },
+    }
+    let releaseReads!: () => void
+    const readGate = new Promise<void>(resolve => { releaseReads = resolve })
+    let markFourReads!: () => void
+    const fourReadsStarted = new Promise<void>(resolve => { markFourReads = resolve })
+    let activeReads = 0
+    let maximumActiveReads = 0
+    let startedReads = 0
+    const readImage = vi.fn(async (ref) => {
+      const index = attachments.findIndex(value => value.attachmentId === ref.attachmentId)
+      activeReads++
+      startedReads++
+      maximumActiveReads = Math.max(maximumActiveReads, activeReads)
+      if (startedReads === 4) markFourReads()
+      await readGate
+      activeReads--
+      return { ref: attachments[index]!, data: Uint8Array.of(index + 1) }
+    })
+    let prepareCalls = 0
+    let chatBody: Record<string, unknown> | undefined
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      attachmentReader: { readImage },
+      fetchImpl: async (input, init) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          prepareCalls++
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              upload_uid: `mai_upload_${String(prepareCalls)}`,
+              asset_ref: `mai_asset_${String(prepareCalls)}`,
+              status: 'completed',
+              asset_expires_at: Date.now() + 60 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url.endsWith('/chat/completions')) {
+          chatBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+          return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          })
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const completed = (async () => {
+      const chunks: StreamChunk[] = []
+      for await (const chunk of transport.stream({
+        provider: ARKME_MANAGED_PROVIDER,
+        model: 'bounded-images',
+        messages: [createUserMessage({
+          content: attachments.map(attachment => ({ type: 'image' as const, attachment })),
+          source: { kind: 'user' },
+        })],
+      }, capability)) chunks.push(chunk)
+      return chunks
+    })()
+
+    await fourReadsStarted
+    await Promise.resolve()
+    expect(startedReads).toBe(4)
+    releaseReads()
+    await expect(completed).resolves.toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+    expect(maximumActiveReads).toBe(4)
+    expect(readImage).toHaveBeenCalledTimes(5)
+    expect(prepareCalls).toBe(5)
+    expect(JSON.stringify(chatBody)).toContain('mai_asset_5')
+  })
+
+  it('reuses the upload generation after an ambiguous prepare transport failure', async () => {
+    const data = Uint8Array.of(1, 2, 3)
+    const attachment = {
+      attachmentId: AttachmentId('opaque-retry-image'),
+      mediaType: 'image/png' as const,
+      bytes: data.byteLength,
+      width: 16,
+      height: 16,
+      name: 'retry.png',
+    }
+    const capability: ManagedModelCapability = {
+      contractVersion: 'test-retry-image-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'],
+        maximumImages: 1,
+        maximumBytesPerImage: data.byteLength,
+        countDimensionLimits: [],
+        evidence: {
+          providerReferenceUrl: 'https://example.test/provider-contract',
+          verifiedOn: '2026-08-31',
+          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
+          platformGuardrailFields: [],
+        },
+      },
+    }
+    const attemptKeys: string[] = []
+    let prepareCalls = 0
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      attachmentReader: { readImage: async () => ({ ref: attachment, data }) },
+      fetchImpl: async (input, init) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          const body = JSON.parse(String(init?.body)) as { idempotency_key: string }
+          attemptKeys.push(body.idempotency_key)
+          prepareCalls++
+          if (prepareCalls === 1) throw new TypeError('connection reset after request write')
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              upload_uid: 'mai_upload_resumed',
+              asset_ref: 'mai_asset_resumed',
+              status: 'completed',
+              asset_expires_at: Date.now() + 60 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url.endsWith('/chat/completions')) {
+          return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          })
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const collect = async () => {
+      const chunks: StreamChunk[] = []
+      for await (const chunk of transport.stream({
+        provider: ARKME_MANAGED_PROVIDER,
+        model: 'retry-image',
+        messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+      }, capability)) chunks.push(chunk)
+      return chunks
+    }
+
+    await expect(collect()).rejects.toMatchObject({ code: 'TRANSPORT' })
+    await expect(collect()).resolves.toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+    expect(attemptKeys).toHaveLength(2)
+    expect(attemptKeys[1]).toBe(attemptKeys[0])
   })
 
   it('uses a newly discovered Arkme model id on the managed chat route', async () => {
@@ -236,6 +749,22 @@ describe('Arkme managed model adapter', () => {
     }
   })
 
+  it('fails closed when the first catalog snapshot is unavailable', async () => {
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: {
+        resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
+      },
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      fetchImpl: async () => { throw new Error('catalog unavailable') },
+    })
+
+    await expect(adapter.listModels(ARKME_MANAGED_PROVIDER)).rejects.toMatchObject({ code: 'TRANSPORT' })
+    await expect(adapter.resolveModel(ARKME_MANAGED_PROVIDER, ARKME_MANAGED_MODEL)).rejects.toMatchObject({
+      code: 'TRANSPORT',
+    })
+  })
+
   it('keeps the last-good catalog when a later refresh is malformed', async () => {
     let now = 10_000
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
@@ -263,7 +792,7 @@ describe('Arkme managed model adapter', () => {
     }
   })
 
-  it('removes the legacy fallback when the backend publishes an empty active catalog', async () => {
+  it('uses an empty active backend catalog as authoritative', async () => {
     const adapter = createManagedAiLlmAdapter({
       intelligentBaseUrl: 'https://intelligent.test',
       credentialOwner: {
@@ -287,6 +816,11 @@ describe('Arkme managed model adapter', () => {
         try {
           const body: Buffer[] = []
           for await (const chunk of req) body.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+          if (req.url === '/api/v1/managed-ai/models/query') {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ code: 200, message: '请求成功', data: { item_ls: MANAGED_CATALOG_ITEMS } }))
+            return
+          }
           request = {
             url: req.url ?? '',
             authorization: req.headers.authorization ?? '',
@@ -344,7 +878,7 @@ describe('Arkme managed model adapter', () => {
     })
 
     await received
-    expect(credentialReads).toBe(1)
+    expect(credentialReads).toBe(2)
     expect(request).toMatchObject({
       url: '/api/v1/managed-ai/chat/completions',
       authorization: 'Bearer arkme-access',

@@ -4,6 +4,7 @@ import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-llm'
 import Schema from '@deepseek-ai/schemastery'
 
@@ -400,10 +401,11 @@ export function apply(ctx: Context, config: Config): void {
     await service.accountScope.start()
     return () => undefined
   }, 'dsh-arkme: desktop account scope attestation')
-  ctx.inject(['llm'], modelCtx => {
+  ctx.inject(['llm', 'attachments'], modelCtx => {
     registerManagedAiProvider(modelCtx, {
       intelligentBaseUrl: config.intelligentBaseUrl,
       credentialOwner: service,
+      attachmentReader: modelCtx.attachments,
     })
   })
   registerDSHAgentInputRecordSync(ctx, service)
