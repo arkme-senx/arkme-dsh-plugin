@@ -52,6 +52,53 @@ function snapshotActionRef(input: Partial<Record<string, unknown>> = {}): string
 }
 
 describe('ChatService', () => {
+  it('propagates rich-send cancellation into human mention resolution', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/list'
+      ? { items: [{ user_id: 7, status: 1 }] }
+      : { record_uid: 'record-mention', rel_uid: 'relation-mention', seq: 9, audit_status: 1 })
+    const runtime = {
+      config: { richMediaSendEnabled: true, maxTextLength: 20_000 },
+      stateStore: { uniqueCode: vi.fn(async () => 'mention-signing-key') },
+      requireSession: vi.fn(async () => session),
+      authenticatedChatPost,
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({
+        version: 1, userId: 42, kind: 'group_chat', ownerRef: 'group-1', displayName: '群聊',
+      })),
+    }
+    const realtime = {
+      emitChatClientEvent: vi.fn(), nextChatClientRevision: vi.fn(() => 1),
+      scheduleChatSessionProjection: vi.fn(),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, realtime,
+    )
+    const payload = Buffer.from(JSON.stringify({
+      version: 1, viewerUserId: 42, chatSessionUid: 'group-1', targetUserId: 7,
+      displayNameSnapshot: '小林',
+    }), 'utf8').toString('base64url')
+    const mentionRef = `arkme-chat-human-mention-v1.${payload}.${createHmac('sha256', 'mention-signing-key')
+      .update(`arkme-chat-human-mention-v1.${payload}`).digest('base64url')}`
+    const signal = new AbortController().signal
+
+    await expect(chat.sendSourceRich('source-ref', {
+      textContent: '@小林 附件',
+      humanMentions: [{ mentionRef, startIndex: 0, length: 3 }],
+    }, { recordUid: 'record-mention', relationUid: 'relation-mention', signal }))
+      .resolves.toMatchObject({ itemUid: 'record-mention', sequence: 9 })
+
+    expect(authenticatedChatPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v1/chats/members/list',
+      { chat_session_uid: 'group-1', active_only: true },
+      session,
+      signal,
+    )
+  })
+
   it('passes browser capture metadata into send-to-self and default-category text writes', async () => {
     const runtime = {
       config: { maxTextLength: 20_000 },
@@ -64,9 +111,10 @@ describe('ChatService', () => {
     const record = {
       createTextForConversation: vi.fn(async (recordUid: string) => ({ recordUid, status: 1, localState: 'synced' })),
     }
+    const realtime = { invalidateRecordProjection: vi.fn(async () => undefined) }
     const chat = new ChatService(
       runtime as never, source as never, {} as never, {} as never, record as never,
-      {} as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, realtime as never,
     )
     const captureContext = {
       clientName: 'Google Chrome（DeepSeek Harness）', networkName: '网络已连接', electric: 100, charge: 1,
@@ -86,6 +134,7 @@ describe('ChatService', () => {
     expect(record.createTextForConversation).toHaveBeenNthCalledWith(
       2, 'record-default_category', '浏览器纯文字', { recordDurationMillis: 2_700, captureContext },
     )
+    expect(realtime.invalidateRecordProjection).toHaveBeenCalledTimes(2)
   })
 
   it('writes an explicitly captured location for every supported conversation source', async () => {
@@ -525,6 +574,50 @@ describe('ChatService', () => {
       .rejects.toMatchObject({ code: 'bot-chat-timeline-contract-invalid' })
   })
 
+  it('projects a realtime message action ref and resolves its related-note locator', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = {
+      requireSession: vi.fn(async () => session),
+      stateStore: { async uniqueCode() { return 'device-secret' } },
+      config: { maxTextLength: 20_000 },
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({
+        version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
+      })),
+    }
+    const profile = { sealProfileImageRef: vi.fn(async () => 'opaque-avatar') }
+    const media = {
+      recordContentPayload: vi.fn(() => ({})),
+      richContentBlocks: vi.fn(() => []),
+    }
+    const arko = { currentUserAgentSourceFallback: vi.fn(() => undefined) }
+    const aiPolish = { timelineAiPolish: vi.fn(() => undefined) }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, media as never, {} as never,
+      {} as never, arko as never, aiPolish as never, {} as never,
+    )
+    const items = await chat.chatTimelineItems({ items: [{
+      relation: {
+        record_uid: 'record-b', rel_uid: 'relation-b', sender_user_id: 13,
+        record_owner_user_id: 13, display_name_snapshot: 'B 用户', attach_at: 1_710_000_000_000, seq: 8,
+      },
+      record: { status: 1, payload: { title: '', text_content: '问题不大', template_kind: 1, display_kind: 0 } },
+    }] }, session, 'chat-1')
+
+    expect(items[0]?.messageActionRef).toMatch(/^arkme-message-action-v1\./u)
+    await expect(chat.relatedQuickNoteLocator('source-ref', items[0]?.messageActionRef ?? ''))
+      .resolves.toEqual({
+        viewerUserId: 42,
+        sourceRef: 'source-ref',
+        sourceOwnerRef: 'chat-1',
+        contextType: 'chat',
+        recordUid: 'record-b',
+        recordOwnerUserId: 13,
+        chatSessionUid: 'chat-1',
+      })
+  })
+
   it('resolves normal message copy links using the Flutter source anchor field names', async () => {
     const runtime = {
       requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
@@ -821,6 +914,7 @@ describe('ChatService', () => {
       nextChatClientRevision: vi.fn(() => 5),
       emitChatClientEvent: vi.fn(),
       scheduleChatSessionProjection: vi.fn(),
+      invalidateRecordProjection: vi.fn(async () => undefined),
     }
     const chat = new ChatService(
       runtime as never, source as never, profile as never, {} as never, record as never,
@@ -874,8 +968,7 @@ describe('ChatService', () => {
       },
     ])
     expect(JSON.stringify(worldPostBodies)).not.toContain('parent_extend_record_uid')
-    expect(source.invalidateSourceListCache).toHaveBeenCalledWith(42, 'send_to_self')
-    expect(realtime.emitChatClientEvent).toHaveBeenCalledWith({ type: 'projection-invalidated', revision: 5, projection: 'record' })
+    expect(realtime.invalidateRecordProjection).toHaveBeenCalledOnce()
   })
 
   it('moves and deletes favorite stickers while preserving only stable server fields', async () => {

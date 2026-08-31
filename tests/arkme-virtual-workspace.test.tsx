@@ -70,7 +70,13 @@ describe('Arkme conversation directory load state', () => {
     expect(workspaceSource).toContain("sourceAvatarWrap: { width: 38, height: 38")
     expect(workspaceSource.match(/<ArkmeMark size=\{38\} \/>/g)).toHaveLength(3)
     expect(workspaceSource).toContain('<ArkmeSendToSelfIcon size={38} />')
-    expect(workspaceSource).toMatch(/<ArkmeSourceAvatar\s+size=\{38\}/)
+    expect(workspaceSource).toContain('<ArkmeDirectorySourceAvatar source={source} size={38} />')
+  })
+
+  it('does not own account-scoped avatar or periodic presentation infrastructure', () => {
+    expect(workspaceSource).not.toContain('avatarCacheUserIdRef')
+    expect(workspaceSource).not.toContain('arkmeAvatarImages')
+    expect(workspaceSource).not.toContain('10 * 60 * 1000')
   })
 
   it('hides the contact-author guide when the ordinary directory already contains the author chat', () => {

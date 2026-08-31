@@ -9,7 +9,7 @@ import type {
 } from '../types.js'
 import type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 import { callArkme } from './api.js'
-import { ArkmeSourceAvatar, ArkmeUserAvatar, clearArkmeAvatarCache } from './ArkmeAvatar.js'
+import { ArkmeDirectorySourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
@@ -29,6 +29,7 @@ import {
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
+import { arkmePrependSourceByIdentity, arkmeSourceIdentityKey } from './source-identity.js'
 import {
   arkmeSelfDirectorySources, arkmeSendToSelfDirectoryPresentation, arkmeSourceTimeLabel, isArkmeSelfWorkspaceSource,
   sortArkmeSources, type ArkmeSourceSort,
@@ -851,7 +852,10 @@ export function ArkmeNavigation({
   wide = true, avatarOnly = false, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
   lockedDirectory = false, sendToSelfSource, directoryLead, onCreateTask, searchDshMessages, onOpenDshSession, renderSlot,
 }: ArkmeNavigationProps) {
-  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
+  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
+  const recordRevision = useSyncExternalStore(
+    arkmeUi.subscribe, arkmeUi.getRecordRevision, arkmeUi.getRecordRevision,
+  )
   const authState = useSyncExternalStore(
     arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot,
   )
@@ -866,7 +870,6 @@ export function ArkmeNavigation({
   const [initialCache] = useState(readLastNavigationCache)
   const cacheRef = useRef<ArkmeNavigationCache | undefined>(initialCache)
   const authenticatedUserIdRef = useRef<number | undefined>(initialCache?.userId)
-  const avatarCacheUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const directoryRequestAbortRef = useRef<AbortController>()
   const topicCreateRequestRef = useRef(false)
   const rootRowElementsRef = useRef(new Map<string, HTMLButtonElement>())
@@ -1037,19 +1040,15 @@ export function ArkmeNavigation({
   }, [])
 
   const reconcileAuth = useCallback((snapshot: ArkmeAuthSnapshot | undefined) => {
-      if (snapshot?.status !== 'authenticated' || snapshot.userId === undefined) {
-        if (avatarCacheUserIdRef.current !== undefined) clearArkmeAvatarCache()
-        avatarCacheUserIdRef.current = undefined
-        authenticatedUserIdRef.current = undefined
-        cacheRef.current = undefined
-        clearLastNavigationCache()
-        arkmeChatDirectory.activateAccount(undefined)
-        setDirectory('root'); setSources([])
-        return
-      }
-    arkmeChatDirectory.activateAccount(snapshot.userId)
-    if (avatarCacheUserIdRef.current !== snapshot.userId) clearArkmeAvatarCache()
-    avatarCacheUserIdRef.current = snapshot.userId
+    if (snapshot?.status !== 'authenticated' || snapshot.userId === undefined) {
+      authenticatedUserIdRef.current = undefined
+      cacheRef.current = undefined
+      clearLastNavigationCache()
+      arkmeChatDirectory.activateAccount(undefined)
+      setDirectory('root'); setSources([])
+      return
+    }
+    arkmeChatDirectory.activateAccount(`${snapshot.environment}:${String(snapshot.userId)}`)
     authenticatedUserIdRef.current = snapshot.userId
     const cached = readNavigationCache(snapshot.userId) ?? {
       version: 1, userId: snapshot.userId, directory: 'root', sources: {}, updatedAtMillis: 0,
@@ -1162,22 +1161,9 @@ export function ArkmeNavigation({
     return () => { directoryRequestAbortRef.current?.abort() }
   }, [authenticated, directory, loadDirectory])
   useEffect(() => {
-    if (!authenticated || directory !== 'send_to_self' || ui.recordRevision === 0) return
+    if (!authenticated || directory !== 'send_to_self' || recordRevision === 0) return
     void loadDirectory('send_to_self')
-  }, [authenticated, directory, loadDirectory, ui.recordRevision])
-  useEffect(() => {
-    if (!authenticated || directory !== 'root') return
-    let active = true
-    let timer: ReturnType<typeof setTimeout>
-    const schedule = (): void => {
-      timer = setTimeout(() => {
-        clearArkmeAvatarCache()
-        void loadDirectory('root').finally(() => { if (active) schedule() })
-      }, 10 * 60 * 1000 + Math.floor(Math.random() * 2 * 60 * 1000))
-    }
-    schedule()
-    return () => { active = false; clearTimeout(timer) }
-  }, [authenticated, directory, loadDirectory])
+  }, [authenticated, directory, loadDirectory, recordRevision])
   useEffect(() => {
     const userId = authenticated ? auth?.userId : undefined
     arkmeArkoProfileStore.activateUser(userId)
@@ -1217,7 +1203,7 @@ export function ArkmeNavigation({
     const source = notificationActivation.source
     if (!authenticated || source === undefined) return
     const shared = arkmeChatDirectory.getSnapshot().sources
-    const nextSources = [source, ...shared.filter(item => item.sourceRef !== source.sourceRef)]
+    const nextSources = arkmePrependSourceByIdentity(source, shared)
     arkmeChatDirectory.publish(nextSources)
     setDirectory('root')
     setSources(nextSources)
@@ -1456,7 +1442,7 @@ export function ArkmeNavigation({
     activateNativeEntry()
     const sharedSources = arkmeChatDirectory.getSnapshot().sources
     const currentSources = sharedSources.length > 0 ? sharedSources : sources
-    const nextSources = [source, ...currentSources.filter(item => item.sourceRef !== source.sourceRef)]
+    const nextSources = arkmePrependSourceByIdentity(source, currentSources)
     setSources(nextSources)
     arkmeChatDirectory.publish(nextSources)
     arkmeUi.selectSource(source)
@@ -1492,7 +1478,7 @@ export function ArkmeNavigation({
       const result = await callArkme<ArkmeOpenPrivateChatResult>('chat.official-author.private.open')
       const source = result.source
       activateNativeEntry()
-      const nextSources = [source, ...currentSources.filter(item => item.sourceRef !== source.sourceRef)]
+      const nextSources = arkmePrependSourceByIdentity(source, currentSources)
       setDirectory('root')
       setSources(nextSources)
       arkmeChatDirectory.publish(nextSources)
@@ -1510,7 +1496,7 @@ export function ArkmeNavigation({
     activateNativeEntry()
     const sharedSources = arkmeChatDirectory.getSnapshot().sources
     const currentSources = sharedSources.length > 0 ? sharedSources : sources
-    const optimistic = [source, ...currentSources.filter(item => item.sourceRef !== source.sourceRef)]
+    const optimistic = arkmePrependSourceByIdentity(source, currentSources)
     setDirectory('root')
     setSources(optimistic)
     arkmeChatDirectory.publish(optimistic)
@@ -1520,12 +1506,13 @@ export function ArkmeNavigation({
 
     const refreshed = await arkmeChatDirectory.refreshRoot({ force: true }).catch(() => undefined)
     if (refreshed === undefined) return
-    const reconciled = refreshed.some(item => item.sourceRef === source.sourceRef)
+    const sourceIdentity = arkmeSourceIdentityKey(source)
+    const reconciled = refreshed.some(item => arkmeSourceIdentityKey(item) === sourceIdentity)
       ? refreshed
       : optimistic
     setSources(reconciled)
     arkmeChatDirectory.publish(reconciled)
-    const selected = reconciled.find(item => item.sourceRef === source.sourceRef) ?? source
+    const selected = reconciled.find(item => arkmeSourceIdentityKey(item) === sourceIdentity) ?? source
     arkmeUi.selectSource(selected)
     persistCache({ directory: 'root', sources: { root: reconciled }, selectedSourceRef: selected.sourceRef })
   }
@@ -1756,12 +1743,7 @@ export function ArkmeNavigation({
           >
             <span style={{ ...styles.chatRowRemoveContent, ...(removeFeedbackVisible ? styles.chatRowRemoveContentHidden : {}) }}>
               <span style={styles.sourceAvatarWrap}>
-                <ArkmeSourceAvatar
-                  size={38}
-                  {...(source.avatarRef === undefined ? {} : { avatarRef: source.avatarRef })}
-                  {...(source.avatarRefs === undefined ? {} : { avatarRefs: source.avatarRefs })}
-                  {...(source.groupAvatar === undefined ? {} : { groupAvatar: source.groupAvatar })}
-                />
+                <ArkmeDirectorySourceAvatar source={source} size={38} />
                 {unreadPlacement === 'avatar' && <span style={styles.mentionUnread}>{unreadText}</span>}
               </span>
               <span style={styles.chatContent}>

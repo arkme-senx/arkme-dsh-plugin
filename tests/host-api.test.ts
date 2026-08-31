@@ -34,6 +34,9 @@ function fakeService() {
     arkoCancel: vi.fn(async () => ({ status: 'cancel_requested' })),
     interwovenMoments: vi.fn(async (sourceRef: string) => ({ sourceRef })),
     interwovenMomentDetail: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
+    relatedQuickNotesFromMessage: vi.fn(async (sourceRef: string, messageActionRef: string) => ({ sourceRef, messageActionRef })),
+    relatedQuickNotesFromMoment: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
+    relatedQuickNoteDetail: vi.fn(async (sourceRef: string, relatedRef: string) => ({ sourceRef, relatedRef })),
     listSourceMembers: vi.fn(async (sourceRef: string, options: unknown) => ({ sourceRef, options })),
     sourceMemberRecords: vi.fn(async (sourceRef: string, memberRef: string, mode: string, options: unknown) => ({ sourceRef, memberRef, mode, options })),
     messageReadReceiptSummaries: vi.fn(async (sourceRef: string, items: unknown, options: unknown) => ({ sourceRef, items, options })),
@@ -42,6 +45,7 @@ function fakeService() {
     openOfficialAuthorPrivateChat: vi.fn(async () => ({ source: { sourceRef: 'official-author-source' } })),
     openPrivateChatFromContact: vi.fn(async (contactRef: string) => ({ source: { sourceRef: `source:${contactRef}` } })),
     openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
+    reportMessage: vi.fn(async (messageRef: string, reportType: number, options: unknown) => ({ messageRef, reportType, options })),
     copySourceMessageLink: vi.fn(async (sourceRef: string, actionRefs: unknown, options: unknown) => ({ sourceRef, actionRefs, options })),
     resolveMessageCopyLink: vi.fn(async (sid: string, options: unknown) => ({ sid, options })),
     extendMessageCopyLink: vi.fn(async (sid: string, itemIndex: number, textContent: string, recordUid: string, options: unknown) => ({ sid, itemIndex, textContent, recordUid, options })),
@@ -489,26 +493,53 @@ describe('conversation member Host API dispatch', () => {
     const service = fakeService()
     await dispatchArkmeHostOperation(service as never, 'source.send-text', {
       sourceRef: 'source-ref', textContent: '@小林 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
-      humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3, userId: 999 }],
+      humanMentions: [{ mentionRef: 'mention-ref', startIndex: 0, length: 3, userId: 999 }],
     })
     expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@小林 请看', {
       recordUid: 'record-ref',
       relationUid: 'relation-ref',
-      humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3 }],
+      humanMentions: [{ mentionRef: 'mention-ref', startIndex: 0, length: 3 }],
     })
+  })
+
+  it('rejects member action refs in the mention-scoped send contract', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@小林 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3, userId: 999 }],
+    })).rejects.toMatchObject({ code: 'human-mention-invalid' })
+    expect(service.sendSourceText).not.toHaveBeenCalled()
+  })
+
+  it('rejects ambiguous human mention refs instead of choosing one implicitly', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@小林 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      humanMentions: [{ mentionRef: 'mention-ref', memberRef: 'member-ref', startIndex: 0, length: 3 }],
+    })).rejects.toMatchObject({ code: 'human-mention-invalid' })
+    expect(service.sendSourceText).not.toHaveBeenCalled()
   })
 
   it('keeps @所有人 human mention intent without requiring a member ref', async () => {
     const service = fakeService()
     await dispatchArkmeHostOperation(service as never, 'source.send-text', {
       sourceRef: 'source-ref', textContent: '@所有人 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
-      humanMentions: [{ all: true, memberRef: 'browser-owned', startIndex: 0, length: 4 }],
+      humanMentions: [{ all: true, startIndex: 0, length: 4 }],
     })
     expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@所有人 请看', {
       recordUid: 'record-ref',
       relationUid: 'relation-ref',
       humanMentions: [{ all: true, startIndex: 0, length: 4 }],
     })
+  })
+
+  it('rejects a member-scoped capability on an @所有人 range', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@所有人 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      humanMentions: [{ all: true, mentionRef: 'mention-ref', startIndex: 0, length: 4 }],
+    })).rejects.toMatchObject({ code: 'human-mention-invalid' })
+    expect(service.sendSourceText).not.toHaveBeenCalled()
   })
 
   it('keeps structured Bot mention ranges without exposing browser-owned fields', async () => {
@@ -570,6 +601,11 @@ describe('message action Host API dispatch', () => {
 
   it('forwards only opaque message action references and bounded send identifiers', async () => {
     const service = fakeService()
+    const requestUid = '019d8590-ebb4-7232-90f2-000000000001'
+    await dispatchArkmeHostOperation(service as never, 'source.message-report', {
+      messageRef: ' arkme-message-v1.payload.signature ', reportType: 4, reason: ' 补充说明 ', requestUid,
+      chatSessionUid: 'must-not-forward', relationUid: 'must-not-forward', reporterUserId: 999,
+    })
     await dispatchArkmeHostOperation(service as never, 'source.message-copy-link', {
       sourceRef: 'source-ref', actionRefs: ['action-1', '', 'action-2'], relationUid: 'must-not-forward',
     })
@@ -585,6 +621,9 @@ describe('message action Host API dispatch', () => {
       textContent: 'must-not-forward',
     })
 
+    expect(service.reportMessage).toHaveBeenCalledWith('arkme-message-v1.payload.signature', 4, {
+      reason: '补充说明', requestUid,
+    })
     expect(service.copySourceMessageLink).toHaveBeenCalledWith('source-ref', ['action-1', 'action-2'], expect.any(Object))
     expect(service.resolveMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', expect.any(Object))
     expect(service.extendMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', 1, ' 延展 ', 'record-1', expect.any(Object))
@@ -594,6 +633,83 @@ describe('message action Host API dispatch', () => {
       targetSourceRef: 'target-source-ref',
       commentText: ' 附言 ',
     })
+    await expect(dispatchArkmeHostOperation(service as never, 'source.message-report', {
+      messageRef: 'arkme-message-v1.payload.signature', reportType: 4, reason: '', requestUid,
+    })).rejects.toMatchObject({ code: 'message-report-invalid' })
+  })
+})
+
+describe('related quick note Host API dispatch', () => {
+  it('forwards only viewer-safe opaque references and the request signal', async () => {
+    const service = fakeService()
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'source.related-quick-notes.from-message', {
+      sourceRef: ' source-ref ', messageActionRef: ' action-ref ',
+      recordUid: 'must-not-forward', recordOwnerUserId: 999, chatSessionUid: 'must-not-forward',
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'source.related-quick-notes.from-moment', {
+      sourceRef: ' source-ref ', momentRef: ' moment-ref ', recordUid: 'must-not-forward',
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'source.related-quick-note.detail', {
+      sourceRef: ' source-ref ', relatedRef: ' related-ref ', ownerUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+
+    expect(service.relatedQuickNotesFromMessage).toHaveBeenCalledWith('source-ref', 'action-ref', signal)
+    expect(service.relatedQuickNotesFromMoment).toHaveBeenCalledWith('source-ref', 'moment-ref', signal)
+    expect(service.relatedQuickNoteDetail).toHaveBeenCalledWith('source-ref', 'related-ref', signal)
+  })
+
+  it('accepts a long opaque message action reference within the signed envelope limit', async () => {
+    const service = fakeService()
+    const messageActionRef = `arkme-message-action-v1.${'a'.repeat(5_000)}.signature`
+
+    await dispatchArkmeHostOperation(service as never, 'source.related-quick-notes.from-message', {
+      sourceRef: 'source-ref', messageActionRef,
+    })
+
+    expect(service.relatedQuickNotesFromMessage).toHaveBeenCalledWith(
+      'source-ref', messageActionRef, undefined,
+    )
+  })
+
+  it('accepts a maximum-configured CJK action envelope without widening unrelated Host API requests', async () => {
+    const service = fakeService()
+    const encoded = Buffer.from(JSON.stringify({ textContent: '快'.repeat(100_000) })).toString('base64url')
+    const messageActionRef = `arkme-message-action-v1.${encoded}.signature`
+    const server = createServer(createArkmeHostApi(service as never, {
+      expectedPort: 0,
+      allowNonLoopback: false,
+    }))
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('test server address missing')
+    try {
+      const response = await fetch(`http://127.0.0.1:${String(address.port)}/arkme-self/api`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'source.related-quick-notes.from-message',
+          params: { sourceRef: 'source-ref', messageActionRef },
+        }),
+      })
+
+      expect(response.status).toBe(200)
+      expect(service.relatedQuickNotesFromMessage).toHaveBeenCalledWith(
+        'source-ref', messageActionRef, expect.any(AbortSignal),
+      )
+
+      const unrelated = await fetch(`http://127.0.0.1:${String(address.port)}/arkme-self/api`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operation: 'billing.quota', params: { padding: 'a'.repeat(130 * 1024) } }),
+      })
+      expect(unrelated.status).toBe(413)
+      expect(service.billingQuota).not.toHaveBeenCalled()
+    } finally {
+      server.close()
+      await once(server, 'close')
+    }
   })
 })
 
@@ -808,6 +924,20 @@ describe('outgoing call Host API dispatch', () => {
     expect(service.sendSourceRich).toHaveBeenCalledWith('source-1', {
       title: '标题', textContent: '正文', displayKind: 1,
       assets: [{ fileAssetUid: 'asset-12345678', fileName: 'a.png', mimeType: 'image/png', size: 8, fileKind: 1 }],
+    }, { recordUid: 'record-1', relationUid: 'relation-1' })
+  })
+
+  it('keeps mention-scoped refs on rich sends without forwarding browser-owned identities', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.send-rich', {
+      sourceRef: 'source-1', textContent: '@小林 请看', displayKind: 0,
+      recordUid: 'record-1', relationUid: 'relation-1',
+      humanMentions: [{ mentionRef: 'mention-ref', userId: 999, startIndex: 0, length: 3 }],
+    })
+    expect(service.sendSourceRich).toHaveBeenCalledWith('source-1', {
+      title: '', textContent: '@小林 请看', displayKind: 0,
+      assets: [],
+      humanMentions: [{ mentionRef: 'mention-ref', startIndex: 0, length: 3 }],
     }, { recordUid: 'record-1', relationUid: 'relation-1' })
   })
 

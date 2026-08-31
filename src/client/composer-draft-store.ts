@@ -1,6 +1,7 @@
 import type { ArkmeSourceItem, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
+import { arkmeSourceIdentityKey } from './source-identity.js'
 
 export type ArkmeComposerAttachment = ({ asset: ArkmeUploadedAsset; localFile?: never } | { localFile: ArkmeLocalFile; asset?: never }) & { previewUrl?: string }
 
@@ -8,7 +9,7 @@ export function arkmeAttachmentId(item: ArkmeComposerAttachment): string { retur
 export function arkmeAttachmentMetadata(item: ArkmeComposerAttachment): ArkmeUploadedAsset | ArkmeLocalFile { return item.localFile ?? item.asset! }
 
 export interface ArkmeComposerMention {
-  memberRef?: string
+  mentionRef?: string
   botRef?: string
   all?: boolean
   displayName: string
@@ -189,10 +190,10 @@ function accountPrefix(userId: number): string {
 
 export function arkmeSourceComposerDraftKey(
   userId: number | undefined,
-  source: Pick<ArkmeSourceItem, 'kind' | 'sourceRef'> | undefined,
+  source: Pick<ArkmeSourceItem, 'kind' | 'sourceRef' | 'sourceKey' | 'topicHierarchyKey'> | undefined,
 ): string | undefined {
   if (!validUserId(userId) || source === undefined || source.sourceRef === '') return undefined
-  return `${accountPrefix(userId)}source:${encodeURIComponent(source.kind)}:${encodeURIComponent(source.sourceRef)}`
+  return `${accountPrefix(userId)}source:${encodeURIComponent(source.kind)}:${encodeURIComponent(arkmeSourceIdentityKey(source))}`
 }
 
 export function arkmeArkoComposerDraftKey(userId: number | undefined): string | undefined {
@@ -297,17 +298,17 @@ export class ArkmeComposerDraftStore {
 
   private insertMentionToken(
     key: string | undefined,
-    mention: Pick<ArkmeComposerMention, 'memberRef' | 'botRef' | 'all'>,
+    mention: Pick<ArkmeComposerMention, 'mentionRef' | 'botRef' | 'all'>,
     displayName: string,
     selectionStart: number,
     selectionEnd = selectionStart,
   ): number | undefined {
     const normalizedDisplayName = displayName.trim()
-    const normalizedMemberRef = mention.memberRef?.trim()
+    const normalizedMentionRef = mention.mentionRef?.trim()
     const normalizedBotRef = mention.botRef?.trim()
     if (key === undefined || normalizedDisplayName === '') return undefined
     if (mention.all !== true
-      && (normalizedMemberRef === undefined || normalizedMemberRef === '')
+      && (normalizedMentionRef === undefined || normalizedMentionRef === '')
       && (normalizedBotRef === undefined || normalizedBotRef === '')) return undefined
     const current = this.get(key)
     const start = Math.max(0, Math.min(current.text.length, Math.trunc(selectionStart)))
@@ -327,7 +328,7 @@ export class ArkmeComposerDraftStore {
     } else if (normalizedBotRef !== undefined && normalizedBotRef !== '') {
       mentions.push({ botRef: normalizedBotRef, displayName: normalizedDisplayName, startIndex: start, length: token.length })
     } else {
-      mentions.push({ memberRef: normalizedMemberRef!, displayName: normalizedDisplayName, startIndex: start, length: token.length })
+      mentions.push({ mentionRef: normalizedMentionRef!, displayName: normalizedDisplayName, startIndex: start, length: token.length })
     }
     mentions.sort((left, right) => left.startIndex - right.startIndex)
     const emojis = reconcileArkmeComposerEmojis(
@@ -343,12 +344,12 @@ export class ArkmeComposerDraftStore {
 
   insertMention(
     key: string | undefined,
-    memberRef: string,
+    mentionRef: string,
     displayName: string,
     selectionStart: number,
     selectionEnd = selectionStart,
   ): number | undefined {
-    return this.insertMentionToken(key, { memberRef }, displayName, selectionStart, selectionEnd)
+    return this.insertMentionToken(key, { mentionRef }, displayName, selectionStart, selectionEnd)
   }
 
   insertAllMention(

@@ -186,6 +186,7 @@ export class ChatRealtimeService {
       const session = await this.runtime.sessionStore.read()
       if (session === undefined) return
       this.source.invalidateSourceListCache(session.userId, 'send_to_self')
+      this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'calendar:')
       this.emitChatClientEvent({
         type: 'projection-invalidated',
         revision: this.nextChatClientRevision(),
@@ -450,6 +451,7 @@ export class ChatRealtimeService {
     }
     if (updates.length > 0) {
       this.source.invalidateSourceListCache(session.userId, 'root')
+      this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'calendar:')
       this.emitChatClientEvent({
         type: 'sessions-delta',
         revision: this.nextChatClientRevision(),

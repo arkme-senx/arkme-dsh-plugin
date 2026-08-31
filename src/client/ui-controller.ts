@@ -2,9 +2,10 @@ import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
 import type { ArkmeExtensionShareAction } from './extension-share-deeplink.js'
 
-function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | undefined): boolean {
+function sameSelectedSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | undefined): boolean {
   if (left === undefined || right === undefined) return left === right
-  return left.sourceRef === right.sourceRef && left.kind === right.kind && left.displayName === right.displayName
+  return left.sourceRef === right.sourceRef && left.sourceKey === right.sourceKey
+    && left.kind === right.kind && left.displayName === right.displayName
     && left.latestPreview === right.latestPreview && left.activeAtMillis === right.activeAtMillis
     && left.unreadCount === right.unreadCount && left.hasUnreadMention === right.hasUnreadMention
     && left.isMuted === right.isMuted && left.isPinned === right.isPinned
@@ -48,6 +49,13 @@ export interface ArkmeUiState {
   webLoginDialogOpen?: boolean
 }
 
+export type ArkmeUiViewState = Omit<ArkmeUiState, 'chatRevision' | 'recordRevision'>
+
+function viewStateOf(state: ArkmeUiState): ArkmeUiViewState {
+  const { chatRevision: _chatRevision, recordRevision: _recordRevision, ...view } = state
+  return view
+}
+
 export interface ArkmeExtensionAuthorFilter {
   ownerUserId: number
   ownerName: string
@@ -74,6 +82,7 @@ function sameWorldTarget(left: ArkmeWorldTarget | undefined, right: ArkmeWorldTa
 
 export class ArkmeUiController {
   private state: ArkmeUiState = { authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'login' }
+  private viewState: ArkmeUiViewState = viewStateOf(this.state)
   /** Runtime-only conversation memory. A fresh client always starts in Harness. */
   private lastConversationDestination: ArkmeConversationDestination | undefined
   private readonly listeners = new Set<() => void>()
@@ -81,6 +90,10 @@ export class ArkmeUiController {
   private conversationTargetRevision = 0
 
   readonly getSnapshot = (): ArkmeUiState => this.state
+  /** Navigation and presentation state, stable across projection-only invalidations. */
+  readonly getViewSnapshot = (): ArkmeUiViewState => this.viewState
+  readonly getChatRevision = (): number => this.state.chatRevision
+  readonly getRecordRevision = (): number => this.state.recordRevision
 
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
@@ -347,9 +360,7 @@ export class ArkmeUiController {
   }
 
   private publish(next: ArkmeUiState): void {
-    if (next.authRevision === this.state.authRevision
-      && next.chatRevision === this.state.chatRevision
-      && next.recordRevision === this.state.recordRevision
+    const sameView = next.authRevision === this.state.authRevision
       && next.mode === this.state.mode
       && next.productMode === this.state.productMode
       && next.calendarOpen === this.state.calendarOpen
@@ -365,9 +376,13 @@ export class ArkmeUiController {
       && next.extensionAuthorFilter?.ownerName === this.state.extensionAuthorFilter?.ownerName
       && next.webLoginDialogOpen === this.state.webLoginDialogOpen
       && sameWorldTarget(next.worldTarget, this.state.worldTarget)
-      && sameSource(next.selectedSource, this.state.selectedSource)
-      && sameBot(next.selectedBot, this.state.selectedBot)) return
+      && sameSelectedSource(next.selectedSource, this.state.selectedSource)
+      && sameBot(next.selectedBot, this.state.selectedBot)
+    if (sameView
+      && next.chatRevision === this.state.chatRevision
+      && next.recordRevision === this.state.recordRevision) return
     this.state = next
+    if (!sameView) this.viewState = viewStateOf(next)
     for (const listener of this.listeners) listener()
   }
 

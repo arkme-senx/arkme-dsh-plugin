@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeChatClientEvent } from '../types.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { arkmeCalendarInvalidations } from './calendar-invalidation-store.js'
 import {
   arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation,
 } from './chat-directory-store.js'
@@ -10,6 +11,7 @@ import { arkmeMessageReadReceipts } from './message-read-receipt-store.js'
 import {
   reconcileArkmeProviderInstance, recoverArkmeProviderInstanceDirectory,
 } from './provider-instance-runtime.js'
+import { arkmeChatSourceIdentityKey } from './source-identity.js'
 import { arkmeUi } from './ui-controller.js'
 
 export function arkmeSelectedBotAffectedByChatDelta(
@@ -19,6 +21,26 @@ export function arkmeSelectedBotAffectedByChatDelta(
   if (selectedBot?.conversationProjection !== 'chat' || selectedBot.chatSourceKey === undefined) return false
   return update.updates.some(item => item.source.kind === 'private_chat'
     && item.sourceKey === selectedBot.chatSourceKey)
+}
+
+export function arkmeChatDeltaSourceKeys(
+  update: Extract<ArkmeChatClientEvent, { type: 'sessions-delta' }>,
+): string[] {
+  return [...new Set(update.updates.map(item => arkmeChatSourceIdentityKey({
+    sourceRef: item.source.sourceRef,
+    ...(item.sourceKey ?? item.source.sourceKey) === undefined
+      ? {}
+      : { sourceKey: item.sourceKey ?? item.source.sourceKey },
+  })))]
+}
+
+export function arkmeChatDeltaCalendarDateStamps(
+  update: Extract<ArkmeChatClientEvent, { type: 'sessions-delta' }>,
+): number[] {
+  return [...new Set(update.updates.flatMap(item => [
+    item.source.activeAtMillis,
+    ...item.timelineItems.map(timelineItem => timelineItem.sendAtMillis),
+  ]).filter(value => Number.isFinite(value) && value > 0))]
 }
 
 export function useArkmeRealtimeClientEvents(
@@ -33,11 +55,16 @@ export function useArkmeRealtimeClientEvents(
   useEffect(() => {
     if (auth?.status !== 'authenticated' || auth.userId === undefined) {
       arkmeChatDirectory.activateAccount(undefined)
+      arkmeChatTimelineDelta.activateAccount(undefined)
+      arkmeInterwovenInvalidation.activateAccount(undefined)
       arkmeMessageReadReceipts.activateAccount(undefined)
       return
     }
     const authenticatedUserId = auth.userId
-    arkmeChatDirectory.activateAccount(authenticatedUserId)
+    const authenticatedAccountScope = `${auth.environment}:${String(authenticatedUserId)}`
+    arkmeChatDirectory.activateAccount(authenticatedAccountScope)
+    arkmeChatTimelineDelta.activateAccount(authenticatedAccountScope)
+    arkmeInterwovenInvalidation.activateAccount(authenticatedAccountScope)
     arkmeMessageReadReceipts.activateAccount(authenticatedUserId)
     let stopped = false
     let observedRevision: number | undefined
@@ -59,10 +86,14 @@ export function useArkmeRealtimeClientEvents(
           if (!changed || stopped) return
           try {
             await recoverArkmeProviderInstanceDirectory({
-              userId: authenticatedUserId,
-              activateAccount: userId => { arkmeChatDirectory.activateAccount(userId) },
+              accountScope: authenticatedAccountScope,
+              activateAccount: scope => { arkmeChatDirectory.activateAccount(scope) },
               refreshRoot: async force => { await refreshUnread(force) },
-              onRefreshed: () => { if (!stopped) arkmeUi.chatChanged() },
+              onRefreshed: () => {
+                if (stopped) return
+                arkmeCalendarInvalidations.publishAll()
+                arkmeUi.chatChanged()
+              },
             })
           } catch (error) {
             forgetNavigationProviderInstance()
@@ -83,7 +114,11 @@ export function useArkmeRealtimeClientEvents(
           reconcileReceipts()
           if (update.refresh === 'none') return
           void refreshUnread(update.refresh === 'force')
-            .then(() => { if (!stopped) arkmeUi.chatChanged() })
+            .then(() => {
+              if (stopped) return
+              arkmeCalendarInvalidations.publishAll()
+              arkmeUi.chatChanged()
+            })
             .catch(() => undefined)
           return
         }
@@ -103,6 +138,7 @@ export function useArkmeRealtimeClientEvents(
         if (update.type === 'projection-invalidated') {
           if (update.projection !== 'record') return
           arkmeInterwovenInvalidation.invalidate()
+          arkmeCalendarInvalidations.publishAll()
           arkmeUi.recordChanged()
           return
         }
@@ -117,10 +153,23 @@ export function useArkmeRealtimeClientEvents(
         })))
         const timelineUpdates = update.updates
           .filter(item => item.timelineItems.length > 0)
-          .map(item => ({ sourceRef: item.source.sourceRef, items: item.timelineItems }))
+          .map(item => {
+            const sourceKey = item.sourceKey ?? item.source.sourceKey
+            return {
+              source: {
+                sourceRef: item.source.sourceRef,
+                ...(sourceKey === undefined ? {} : { sourceKey }),
+                ...(item.source.latestSequence === undefined ? {} : { latestSequence: item.source.latestSequence }),
+              },
+              items: item.timelineItems,
+            }
+          })
         if (timelineUpdates.length > 0) arkmeChatTimelineDelta.publish(timelineUpdates)
+        for (const dateStamp of arkmeChatDeltaCalendarDateStamps(update)) {
+          arkmeCalendarInvalidations.publish({ dateStamp })
+        }
         if (arkmeSelectedBotAffectedByChatDelta(arkmeUi.getSnapshot().selectedBot, update)) arkmeUi.chatChanged()
-        arkmeInterwovenInvalidation.invalidate()
+        for (const sourceKey of arkmeChatDeltaSourceKeys(update)) arkmeInterwovenInvalidation.invalidate(sourceKey)
       } catch { /* Ignore malformed local frames; EventSource keeps the channel alive. */ }
     }
     const disconnectEvents = () => {
@@ -149,5 +198,5 @@ export function useArkmeRealtimeClientEvents(
       browserDocument?.removeEventListener('visibilitychange', handleVisibilityChange)
       browserWindow?.removeEventListener('focus', reconcileReceipts)
     }
-  }, [auth?.status, auth?.userId, authRevision, refreshDirectoryBaseline])
+  }, [auth?.environment, auth?.status, auth?.userId, authRevision, refreshDirectoryBaseline])
 }

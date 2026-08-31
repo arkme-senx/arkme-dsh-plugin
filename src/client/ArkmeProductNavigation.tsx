@@ -131,7 +131,7 @@ const styles: Record<string, CSSProperties> = {
 export function ArkmeProductNavigation({
   compact, hosted = false, taskExpanded = false, hidden = false, locked = false, currentSessionId,
 }: ArkmeProductNavigationProps) {
-  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
+  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const chatDirectory = useSyncExternalStore(
     arkmeChatDirectory.subscribe,

@@ -155,9 +155,11 @@ describe('ArkmeCalendarSurface layout', () => {
     expect(arkmeCalendarRecordIsDSHAgentInput(agentCreated)).toBe(false)
   })
 
-  it('refreshes open calendar data when the shared record projection changes', () => {
-    expect(surfaceSource).toContain('useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)')
-    expect(surfaceSource).toContain('}, [timezone, visibleMonth, ui.chatRevision, ui.recordRevision])')
-    expect(surfaceSource).toContain('}, [selectedDate, timezone, ui.chatRevision, ui.recordRevision])')
+  it('does not bind calendar requests to the global UI projection revisions', () => {
+    expect(surfaceSource).not.toContain('useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)')
+    expect(surfaceSource).not.toContain('ui.chatRevision')
+    expect(surfaceSource).not.toContain('ui.recordRevision')
+    expect(surfaceSource).toContain('arkmeCalendarInvalidations.subscribeMonth')
+    expect(surfaceSource).toContain('arkmeCalendarInvalidations.subscribeDate')
   })
 })

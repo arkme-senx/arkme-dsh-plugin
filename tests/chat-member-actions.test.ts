@@ -19,7 +19,7 @@ import {
 } from '../src/client/ArkmeSidebar.js'
 
 const member: ArkmeConversationMemberItem = {
-  memberRef: 'member-ref', displayName: '小林', role: 'member', status: 'active',
+  memberRef: 'member-ref', mentionRef: 'mention-ref', displayName: '小林', role: 'member', status: 'active',
   isSelf: false, isOwner: false, joinedAtMillis: 1, recordCount: 7, mentionCount: 2,
 }
 
@@ -79,6 +79,7 @@ describe('chat member action menu placement', () => {
     expect(candidates.map(candidate => candidate.displayName)).toEqual([
       '所有人', 'Bot 1', 'Bot 2', ...Array.from({ length: 12 }, (_, index) => `成员${index}`),
     ])
+    expect(candidates[0]).toEqual({ kind: 'all', displayName: '所有人' })
     expect(candidates[1]).toMatchObject({ kind: 'bot', avatarRef: 'arkme-bot-image-v1.avatar-1' })
   })
 

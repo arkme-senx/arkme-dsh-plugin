@@ -20,6 +20,14 @@ const defaultExpandedSections = (): ContactsTabExpandedSections => ({
   groups: false, bots: false, 'unmarked-speakers': false, teams: false, contacts: true,
 })
 
+function sameSelection(left: ArkmeDirectorySelection, right: ArkmeDirectorySelection): boolean {
+  return left.kind === right.kind
+    && (left.kind === 'none'
+      || (left.kind === 'contact' && right.kind === 'contact' && left.contactRef === right.contactRef)
+      || (left.kind === 'unmarked-speaker' && right.kind === 'unmarked-speaker'
+        && left.candidateRef === right.candidateRef))
+}
+
 export interface ContactsTabSnapshot {
   accountKey?: string
   generation: number
@@ -84,18 +92,21 @@ export class ContactsTabStore {
   select(selection: ArkmeDirectorySelection): void {
     if (this.snapshot.accountKey !== undefined) {
       this.abortPending()
+      if (sameSelection(this.snapshot.selection, selection)) return
       this.publish({ ...this.snapshot, generation: this.snapshot.generation + 1, selection })
     }
   }
   clear(): void {
     this.abortPending()
     const cached = this.directoryCache
-    if (cached !== undefined && cached.state.accountKey === this.snapshot.accountKey) {
+    if (cached !== undefined && cached.state.accountKey === this.snapshot.accountKey
+      && cached.state.selection.kind !== 'none') {
       this.directoryCache = {
         ...cached,
         state: { ...cached.state, selection: { kind: 'none' } },
       }
     }
+    if (this.snapshot.selection.kind === 'none') return
     this.publish({ ...this.snapshot, generation: this.snapshot.generation + 1, selection: { kind: 'none' } })
   }
   refresh(): void {

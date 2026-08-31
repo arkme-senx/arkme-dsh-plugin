@@ -1,3 +1,6 @@
 /.github/CODEOWNERS @SimonHe-1D3E
 /.github/workflows/ @SimonHe-1D3E
 /.github/scripts/ @SimonHe-1D3E
+/scripts/publish-runtime-artifact.mjs @SimonHe-1D3E
+/package.json @SimonHe-1D3E
+/pnpm-lock.yaml @SimonHe-1D3E

@@ -42,24 +42,83 @@ export function bindSentFileTaskLocals(item: ArkmeTimelineItem, tasks: readonly 
   })
   return changed ? { ...item, contentBlocks } : item
 }
-export function useArkmeFileSendTasks(sourceRef: string | undefined, userId: number | undefined) {
+
+const FILE_TASK_POLL_INTERVAL_MS = 750
+const FILE_TASK_INITIAL_RETRY_LIMIT = 3
+
+export function arkmeFileSendTasksNeedPolling(tasks: readonly ArkmeFileSendTask[]): boolean {
+  return tasks.some(task => task.state === 'queued' || task.state === 'uploading'
+    || task.state === 'sending')
+}
+
+export function arkmeFileSendTasksEqual(
+  left: readonly ArkmeFileSendTask[],
+  right: readonly ArkmeFileSendTask[],
+): boolean {
+  return left === right || JSON.stringify(left) === JSON.stringify(right)
+}
+
+export function useArkmeFileSendTasks(
+  sourceRef: string | undefined,
+  userId: number | undefined,
+  enabled = true,
+) {
   const [snapshot, setSnapshot] = useState<{ sourceRef: string; userId: number; tasks: ArkmeFileSendTask[] }>()
   const [revision, setRevision] = useState(0)
   useEffect(() => {
-    if (sourceRef === undefined || userId === undefined) return
+    if (!enabled || sourceRef === undefined || userId === undefined) return
     let active = true
     let timer: ReturnType<typeof setTimeout> | undefined
-    const controller = new AbortController()
+    let controller: AbortController | undefined
+    let pending = false
+    let failures = 0
+    let knownTasks = snapshot?.sourceRef === sourceRef && snapshot.userId === userId ? snapshot.tasks : []
+    const browserDocument = typeof document === 'undefined' ? undefined : document
+    const foreground = () => browserDocument?.visibilityState !== 'hidden'
+    const clearTimer = () => {
+      if (timer !== undefined) clearTimeout(timer)
+      timer = undefined
+    }
+    const schedule = (delay = FILE_TASK_POLL_INTERVAL_MS) => {
+      clearTimer()
+      if (!active || !foreground()) return
+      timer = setTimeout(() => { timer = undefined; void poll() }, delay)
+    }
     const poll = async () => {
+      if (!active || pending || !foreground()) return
+      pending = true
+      const request = new AbortController()
+      controller = request
       try {
-        const tasks = await callArkme<ArkmeFileSendTask[]>('files.send.tasks', { sourceRef }, controller.signal)
-        if (active) setSnapshot({ sourceRef, userId, tasks })
-      } catch { /* Keep last known task state on transient polling failure; never imply success. */ }
-      finally { if (active) timer = setTimeout(() => { void poll() }, 750) }
+        const tasks = await callArkme<ArkmeFileSendTask[]>('files.send.tasks', { sourceRef }, request.signal)
+        if (!active || request.signal.aborted) return
+        failures = 0
+        const changed = !arkmeFileSendTasksEqual(knownTasks, tasks)
+        knownTasks = tasks
+        if (changed) setSnapshot({ sourceRef, userId, tasks })
+      } catch {
+        if (!request.signal.aborted) failures += 1
+      } finally {
+        if (controller === request) controller = undefined
+        pending = false
+        if (!active) return
+        if (arkmeFileSendTasksNeedPolling(knownTasks)) schedule()
+        else if (failures > 0 && failures <= FILE_TASK_INITIAL_RETRY_LIMIT) schedule(FILE_TASK_POLL_INTERVAL_MS * failures)
+      }
+    }
+    const onVisibilityChange = () => {
+      if (foreground()) void poll()
+      else { clearTimer(); controller?.abort() }
     }
     void poll()
-    return () => { active = false; controller.abort(); if (timer !== undefined) clearTimeout(timer) }
-  }, [sourceRef, userId, revision])
+    browserDocument?.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      active = false
+      clearTimer()
+      controller?.abort()
+      browserDocument?.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [enabled, sourceRef, userId, revision])
   return {
     tasks: snapshot?.sourceRef === sourceRef && snapshot?.userId === userId ? snapshot?.tasks ?? [] : [],
     refresh: () => setRevision(value => value + 1),

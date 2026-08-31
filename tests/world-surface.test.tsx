@@ -29,6 +29,8 @@ import {
   worldExtensionShelfPreview,
   worldScopeScrollTransition,
   type ArkmeWorldViewState,
+  applyWorldAuthorLabels,
+  updateWorldViewItem,
 } from '../src/client/ArkmeWorldSurface.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import type { ArkmeWorldFeedItem, ArkmeWorldInteractionItem } from '../src/types.js'
@@ -120,6 +122,28 @@ function render(state: ArkmeWorldViewState, playableRefs: ReadonlySet<string> = 
 }
 
 describe('Arkme native World surface', () => {
+  it('preserves the view and untouched item references when patching one feed card', () => {
+    const untouched = { ...item, recordRef: 'world-untouched', headline: '未命中' }
+    const view = { status: 'success' as const, items: [item, untouched], hasMore: true, nextOffset: 40 }
+
+    const unchanged = updateWorldViewItem(view, 'missing', current => ({ ...current, extendCount: current.extendCount + 1 }))
+    expect(unchanged).toBe(view)
+
+    const updated = updateWorldViewItem(view, item.recordRef, current => ({ ...current, extendCount: current.extendCount + 1 }))
+    expect(updated).not.toBe(view)
+    expect(updated.items[0]).not.toBe(item)
+    expect(updated.items[1]).toBe(untouched)
+    expect(updated.nextOffset).toBe(40)
+  })
+
+  it('keeps a World view reference when author hydration has no matching change', () => {
+    const authored = { ...item, authorRef: 'author-1' }
+    const view = { status: 'success' as const, items: [authored], hasMore: false }
+    expect(applyWorldAuthorLabels(view, new Map([['missing', '其他作者']]))).toBe(view)
+    expect(applyWorldAuthorLabels(view, new Map([[authored.authorRef, authored.authorName]]))).toBe(view)
+    expect(applyWorldAuthorLabels(view, new Map([[authored.authorRef, '更新作者']]))).not.toBe(view)
+  })
+
   it('caps the World extension shelf preview at six items without mutating the catalog result', () => {
     const items = Array.from({ length: 9 }, (_, index) => ({ extension_id: `extension-${index}` })) as ArkmeExtensionCatalogItem[]
 
@@ -283,9 +307,13 @@ describe('Arkme native World surface', () => {
     expect(ownMarkup).not.toContain('aria-label="查看陈一涵的用户卡片"')
 
     const source = readFileSync(new URL('../src/client/ArkmeWorldSurface.tsx', import.meta.url), 'utf8')
-    expect(source).toContain("import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'")
+    expect(source).toContain("import { ArkmeMemberProfileCard, type ArkmeMemberProfileIdentity } from './ArkmeChatMemberActions.js'")
     expect(source).toContain("'chat.world.private.open'")
     expect(source).toContain('onSourceActivated?.(result.source)')
+    const projection = source.slice(source.indexOf('function worldAuthorCardMember'), source.indexOf('export function ArkmeWorldSurface'))
+    expect(projection).toContain('ArkmeMemberProfileIdentity')
+    expect(projection).not.toContain('memberRef:')
+    expect(projection).not.toContain("role: 'member'")
   })
 
   it('publishes a World-opened private chat to the shared directory before selecting it', () => {

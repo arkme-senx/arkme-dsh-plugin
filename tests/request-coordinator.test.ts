@@ -90,6 +90,82 @@ describe('ArkmeRequestCoordinator', () => {
     await expect(currentRequest).resolves.toBe('current')
   })
 
+  it('starts fresh keyed work after invalidation without cancelling or caching the detached result', async () => {
+    const coordinator = new ArkmeRequestCoordinator()
+    const oldResult = deferred<string>()
+    const currentResult = deferred<string>()
+    const signals: AbortSignal[] = []
+    const operation = vi.fn()
+      .mockImplementationOnce(async (signal: AbortSignal) => {
+        signals.push(signal)
+        return await oldResult.promise
+      })
+      .mockImplementationOnce(async (signal: AbortSignal) => {
+        signals.push(signal)
+        return await currentResult.promise
+      })
+    const request = {
+      scope: 'user:1', lane: 'interactive-read' as const, service: 'chat' as const,
+      key: 'calendar:month:2026-08', cacheMs: 30_000, operation,
+    }
+
+    const oldRequest = coordinator.run(request)
+    const oldJoiner = coordinator.run(request)
+    await vi.waitFor(() => { expect(operation).toHaveBeenCalledOnce() })
+
+    coordinator.invalidateKey('user:1', 'calendar:')
+    expect(signals[0]?.aborted).toBe(false)
+    const currentRequest = coordinator.run(request)
+    await vi.waitFor(() => { expect(operation).toHaveBeenCalledTimes(2) })
+
+    oldResult.resolve('detached')
+    await expect(Promise.all([oldRequest, oldJoiner])).resolves.toEqual(['detached', 'detached'])
+
+    const currentJoiner = coordinator.run(request)
+    expect(coordinator.snapshotStats()['interactive-read:chat']).toMatchObject({
+      started: 2,
+      joined: 2,
+      cacheHits: 0,
+    })
+
+    currentResult.resolve('current')
+    await expect(Promise.all([currentRequest, currentJoiner])).resolves.toEqual(['current', 'current'])
+    await expect(coordinator.run(request)).resolves.toBe('current')
+    expect(operation).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not restore a failure cooldown from invalidated keyed work', async () => {
+    const coordinator = new ArkmeRequestCoordinator({ random: () => 0.5 })
+    const oldResult = deferred<string>()
+    const currentResult = deferred<string>()
+    const operation = vi.fn()
+      .mockImplementationOnce(async () => await oldResult.promise)
+      .mockImplementationOnce(async () => await currentResult.promise)
+    const request = {
+      scope: 'user:1', lane: 'interactive-read' as const, service: 'chat' as const,
+      key: 'calendar:date:2026-08-31', failureCooldownMs: 30_000, operation,
+    }
+
+    const oldRequest = coordinator.run(request)
+    await vi.waitFor(() => { expect(operation).toHaveBeenCalledOnce() })
+    coordinator.invalidateKey('user:1', 'calendar:')
+    const currentRequest = coordinator.run(request)
+    await vi.waitFor(() => { expect(operation).toHaveBeenCalledTimes(2) })
+
+    oldResult.reject(new Error('detached failure'))
+    await expect(oldRequest).rejects.toThrow('detached failure')
+    const currentJoiner = coordinator.run(request)
+    expect(coordinator.snapshotStats()['interactive-read:chat']).toMatchObject({
+      started: 2,
+      joined: 1,
+      cooldownSkips: 0,
+    })
+
+    currentResult.resolve('current')
+    await expect(Promise.all([currentRequest, currentJoiner])).resolves.toEqual(['current', 'current'])
+    expect(operation).toHaveBeenCalledTimes(2)
+  })
+
   it('also fences unkeyed mutations when their account generation changes', async () => {
     const coordinator = new ArkmeRequestCoordinator()
     const result = deferred<string>()

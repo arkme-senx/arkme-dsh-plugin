@@ -9,7 +9,10 @@ const testState = vi.hoisted(() => ({ callArkme: vi.fn() }))
 const mountedRenderers = new Set<ReactTestRenderer>()
 vi.mock('../src/client/api.js', () => ({ callArkme: testState.callArkme }))
 vi.mock('../src/client/ArkmeSidebar.js', () => ({
-  ArkmeSurface: () => <div data-test-conversation-surface>original conversation surface</div>,
+  ArkmeSurface: ({ active }: { active?: boolean }) => <div
+    data-test-conversation-surface
+    data-test-conversation-active={active === false ? 'false' : 'true'}
+  >original conversation surface</div>,
 }))
 vi.mock('../src/client/ArkmeVirtualWorkspace.js', () => ({
   ArkmeNavigation: () => <nav aria-label="Arkme 会话列表" data-test-original-navigation>original navigation tree</nav>,
@@ -116,6 +119,8 @@ describe('production sibling Contacts tab', () => {
     expect(renderer.root.findAllByProps({ 'aria-label': '联系人目录' })).toHaveLength(0)
     expect(renderer.root.findByProps({ 'data-arkme-owned': 'persistent-sidebar' }).props['data-arkme-contacts-mobile-view']).toBeUndefined()
     expect(renderer.root.findByProps({ 'data-arkme-owned': 'persistent-workspace' }).props['data-arkme-contacts-mobile-view']).toBeUndefined()
+    const conversationSurface = renderer.root.findByProps({ 'data-test-conversation-surface': true })
+    expect(conversationSurface.props['data-test-conversation-active']).toBe('true')
 
     const contacts = button(renderer, '联系人')
     await act(async () => { contacts.props.onClick(); await Promise.resolve() })
@@ -124,6 +129,21 @@ describe('production sibling Contacts tab', () => {
     const brandImages = renderer.root.findByProps({ 'data-arkme-contacts-workspace': true }).findAllByProps({ alt: 'Arkme' })
     expect(brandImages).toHaveLength(2)
     expect(brandImages.map(image => image.props['data-arkme-theme-image'])).toEqual(['light', 'dark'])
+    const hiddenConversationSurface = renderer.root.findByProps({ 'data-test-conversation-surface': true })
+    const hiddenConversationLayer = renderer.root.findByProps({ 'data-arkme-owned': 'arkme-conversation-layer' })
+    expect(hiddenConversationSurface).toBe(conversationSurface)
+    expect(hiddenConversationSurface.props['data-test-conversation-active']).toBe('false')
+    expect(hiddenConversationLayer.props).toMatchObject({
+      'aria-hidden': true,
+      style: expect.objectContaining({ visibility: 'hidden', pointerEvents: 'none', zIndex: 0 }),
+    })
+    expect(renderer.root.findByProps({ 'data-arkme-contacts-workspace': true }).props.style)
+      .toEqual(expect.objectContaining({ position: 'absolute', inset: 0, zIndex: 2 }))
+
+    await act(async () => { button(renderer, '对话').props.onClick(); await Promise.resolve() })
+    expect(renderer.root.findByProps({ 'data-test-conversation-surface': true })).toBe(conversationSurface)
+    expect(conversationSurface.props['data-test-conversation-active']).toBe('true')
+    expect(renderer.root.findAllByProps({ 'data-arkme-contacts-workspace': true })).toHaveLength(0)
   })
 
   it('uses the AppFrame seats as a single narrow Contacts view and retains section folds across a conversations round trip', async () => {

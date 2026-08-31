@@ -38,6 +38,7 @@ describe('ChatRealtimeService', () => {
     })
     const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
     const invalidate = vi.spyOn(source, 'invalidateSourceListCache')
+    const invalidateKey = vi.spyOn(runtime, 'invalidateKey')
     vi.spyOn(service as unknown as { reconcileChatNotificationBaseline(generation: number): Promise<void> },
       'reconcileChatNotificationBaseline').mockResolvedValue()
     const events: unknown[] = []
@@ -50,6 +51,7 @@ describe('ChatRealtimeService', () => {
 
     await vi.waitFor(() => {
       expect(invalidate).toHaveBeenCalledWith(10001, 'send_to_self')
+      expect(invalidateKey).toHaveBeenCalledWith('user:10001', 'calendar:')
       expect(events).toContainEqual(expect.objectContaining({ type: 'projection-invalidated', projection: 'record' }))
     })
     service.dispose()

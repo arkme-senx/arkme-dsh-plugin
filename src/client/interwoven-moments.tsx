@@ -1,9 +1,18 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
 import { X } from '@phosphor-icons/react/dist/icons/X'
-import type { ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmeSourceItem, ArkmeTimelineItem } from '../types.js'
-import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
+import type { ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmeRelatedQuickNoteItem, ArkmeSourceItem, ArkmeTimelineItem } from '../types.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
+import {
+  ArkmeRelatedQuickNoteDetail,
+  ArkmeRelatedQuickNotesCard,
+  ArkmeRelatedQuickNotesList,
+  type ArkmeRelatedDrawerView,
+  type ArkmeRelatedQuickNoteDetailState,
+  type ArkmeRelatedQuickNotesLoadState,
+} from './ArkmeRelatedQuickNotes.js'
+import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
 
 /** Shared vertical anchor: detail begins below the conversation tab/header. */
 export const ARKME_CONVERSATION_HEADER_HEIGHT = 68
@@ -105,6 +114,10 @@ const styles: Record<string, CSSProperties> = {
   },
   asideTitleWrap: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, color: '#687081' },
   asideTitle: { margin: 0, color: '#17191c', fontSize: 14, lineHeight: '20px', fontWeight: 600 },
+  back: {
+    width: 30, height: 30, marginLeft: -7, display: 'grid', placeItems: 'center', padding: 0, border: 0,
+    borderRadius: 8, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #68707c)', cursor: 'pointer',
+  },
   close: {
     width: 32, height: 32, display: 'grid', placeItems: 'center', padding: 0, border: 0,
     borderRadius: 9, background: 'transparent', color: '#68707c', cursor: 'pointer',
@@ -138,16 +151,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 function OpaqueAvatar({ avatarRef, size = 18 }: { avatarRef?: string; size?: number }) {
-  const [src, setSrc] = useState('')
-  useEffect(() => {
-    let active = true
-    setSrc('')
-    if (avatarRef === undefined) return () => { active = false }
-    void loadArkmeImageDataUrl(avatarRef)
-      .then(value => { if (active) setSrc(value) })
-      .catch(() => undefined)
-    return () => { active = false }
-  }, [avatarRef])
+  const src = useArkmeAvatarImage(avatarRef) ?? ''
   return <span style={{ ...styles.avatar, width: size, height: size, minWidth: size }} aria-hidden>
     {src === '' ? <ArkmeMark size={size} /> : <img src={src} alt="" draggable={false} style={styles.avatarImage} />}
   </span>
@@ -193,25 +197,82 @@ export type ArkmeInterwovenDetailViewState =
 
 export function ArkmeInterwovenDetailAside({
   state,
+  relatedView = 'source-detail',
+  relatedState = { kind: 'idle' },
+  relatedDetailState = { kind: 'idle' },
   onClose,
   onRetry,
   onOpenGroup,
+  onOpenRelated,
+  onSelectRelated,
+  onBackRelated,
+  onRetryRelated,
+  onRetryRelatedDetail,
+  sourceRef,
+  shareWebsite,
 }: {
   state: ArkmeInterwovenDetailViewState
+  relatedView?: ArkmeRelatedDrawerView
+  relatedState?: ArkmeRelatedQuickNotesLoadState
+  relatedDetailState?: ArkmeRelatedQuickNoteDetailState
   onClose: () => void
   onRetry: () => void
   onOpenGroup?: () => void
+  onOpenRelated?: () => void
+  onSelectRelated?: (item: ArkmeRelatedQuickNoteItem) => void
+  onBackRelated?: () => void
+  onRetryRelated?: () => void
+  onRetryRelatedDetail?: (item: ArkmeRelatedQuickNoteItem) => void
+  sourceRef?: string
+  shareWebsite?: string
 }) {
+  const asideBodyRef = useRef<HTMLDivElement>(null)
+  const scrollTopByViewRef = useRef<Record<ArkmeRelatedDrawerView, number>>({
+    'source-detail': 0,
+    'related-list': 0,
+    'related-detail': 0,
+  })
+  const sourceDetailKey = state.kind === 'success' ? state.detail.momentId : ''
+  useEffect(() => {
+    scrollTopByViewRef.current = { 'source-detail': 0, 'related-list': 0, 'related-detail': 0 }
+    if (asideBodyRef.current !== null) asideBodyRef.current.scrollTop = 0
+  }, [sourceDetailKey])
+  useEffect(() => {
+    if (asideBodyRef.current !== null) asideBodyRef.current.scrollTop = scrollTopByViewRef.current[relatedView]
+  }, [relatedView, sourceDetailKey])
+  const rememberCurrentScroll = () => {
+    if (asideBodyRef.current !== null) scrollTopByViewRef.current[relatedView] = asideBodyRef.current.scrollTop
+  }
   const detailContent = state.kind === 'success'
     ? state.detail.textContent.trim() || (state.detail.degraded ? '' : state.detail.title.trim())
     : ''
+  const relatedTotal = relatedState.kind === 'success' ? relatedState.list.total : 0
+  const title = relatedView === 'related-list'
+    ? `${String(relatedTotal)} 条相关快记`
+    : relatedView === 'related-detail' ? '相关快记详情' : '快记详情'
   return <aside style={styles.aside} aria-label="快记详情" data-arkme-interwoven-detail>
     <header style={styles.asideHeader}>
-      <span style={styles.asideTitleWrap}><NotePencil size={17} aria-hidden /><h3 style={styles.asideTitle}>快记详情</h3></span>
+      <span style={styles.asideTitleWrap}>
+        {relatedView !== 'source-detail' && <button type="button" style={styles.back}
+          aria-label={relatedView === 'related-detail' ? '返回相关快记列表' : '返回快记详情'}
+          onClick={() => { rememberCurrentScroll(); onBackRelated?.() }}><ArrowLeft size={18} aria-hidden /></button>}
+        <NotePencil size={17} aria-hidden /><h3 style={styles.asideTitle}>{title}</h3>
+      </span>
       <button type="button" style={styles.close} aria-label="关闭快记详情" onClick={onClose}><X size={18} aria-hidden /></button>
     </header>
-    <div style={styles.asideBody} aria-live="polite">
-      {state.kind === 'loading' ? <div style={styles.state} role="status">正在加载快记详情…</div>
+    <div ref={asideBodyRef} style={styles.asideBody} aria-live="polite" data-arkme-interwoven-aside-body>
+      {relatedView === 'related-list'
+        ? <ArkmeRelatedQuickNotesList state={relatedState}
+          onSelect={item => {
+            rememberCurrentScroll()
+            onSelectRelated?.(item)
+          }} onRetry={onRetryRelated ?? (() => undefined)} />
+        : relatedView === 'related-detail'
+          ? <ArkmeRelatedQuickNoteDetail state={relatedDetailState}
+            onRetry={onRetryRelatedDetail ?? (() => undefined)}
+            {...(sourceRef === undefined ? {} : { sourceRef })}
+            {...(shareWebsite === undefined ? {} : { shareWebsite })} />
+          : state.kind === 'loading' ? <div style={styles.state} role="status">正在加载快记详情…</div>
         : state.kind === 'error' ? <div style={styles.state} role="alert">
           <div>{state.message}</div>
           <button type="button" style={styles.retry} onClick={onRetry}>重试</button>
@@ -247,6 +308,9 @@ export function ArkmeInterwovenDetailAside({
             <span style={styles.groupTagText}>{state.detail.groupName}</span>
             <span style={styles.groupTagChevron} aria-hidden>›</span>
           </button>
+          <ArkmeRelatedQuickNotesCard state={relatedState}
+            onOpen={() => { rememberCurrentScroll(); onOpenRelated?.() }}
+            onRetry={onRetryRelated ?? (() => undefined)} />
         </>}
     </div>
   </aside>

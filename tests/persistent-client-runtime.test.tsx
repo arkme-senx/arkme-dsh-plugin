@@ -6,6 +6,8 @@ vi.mock('../src/client/realtime-client-events.js', () => ({ useArkmeRealtimeClie
 
 import { ArkmePersistentClientRuntime } from '../src/client/ArkmePersistentShell.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { arkmeAvatarImages } from '../src/client/avatar-image-runtime.js'
+import { arkmePresentationMaintenance } from '../src/client/presentation-maintenance-runtime.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
 describe('Arkme persistent client runtime', () => {
@@ -20,6 +22,7 @@ describe('Arkme persistent client runtime', () => {
     await act(async () => { renderer?.unmount() })
     renderer = undefined
     arkmeUi.showConversations()
+    vi.restoreAllMocks()
   })
 
   it('recovers the normal Web workspace if shared authentication completes after the login dialog unmounts', async () => {
@@ -33,5 +36,29 @@ describe('Arkme persistent client runtime', () => {
 
     expect(arkmeUi.getSnapshot().mode).toBe('harness')
     expect(arkmeUi.getSnapshot().webLoginDialogOpen).toBeUndefined()
+  })
+
+  it('owns avatar account scope and maintenance independently from optional navigation surfaces', async () => {
+    const activateScope = vi.spyOn(arkmeAvatarImages, 'activateScope')
+    const stopMaintenance = vi.fn()
+    const startMaintenance = vi.spyOn(arkmePresentationMaintenance, 'start').mockReturnValue(stopMaintenance)
+    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 10002 })
+
+    await act(async () => { renderer = create(<ArkmePersistentClientRuntime />) })
+    expect(activateScope).toHaveBeenLastCalledWith('prod:10002')
+    expect(startMaintenance).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10002 })
+    })
+    expect(stopMaintenance).toHaveBeenCalledOnce()
+    expect(activateScope).toHaveBeenLastCalledWith('test:10002')
+    expect(startMaintenance).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' })
+    })
+    expect(stopMaintenance).toHaveBeenCalledTimes(2)
+    expect(activateScope).toHaveBeenLastCalledWith(undefined)
   })
 })

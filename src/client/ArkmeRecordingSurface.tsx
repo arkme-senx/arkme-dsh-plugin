@@ -278,7 +278,7 @@ function VersionPicker({ versions, selectedId, onChange }: {
 }
 
 export function ArkmeRecordingSurface() {
-  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
+  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const today = useMemo(() => startOfLocalDay(new Date()), [])
   const [selectedDate, setSelectedDate] = useState(today)
   const [visibleMonth, setVisibleMonth] = useState(monthStart(today))

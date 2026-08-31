@@ -31,6 +31,39 @@ describe('contacts tab store', () => {
     expect(store.getSnapshotForAccount('prod:1').expandedSections).toMatchObject({ groups: true, contacts: false })
   })
 
+  it('publishes changed cross-seat selections once and skips repeated clear or select snapshots', () => {
+    const store = new ContactsTabStore()
+    const abort = vi.fn()
+    const listener = vi.fn()
+    store.bindAborter(abort)
+    store.activateAccount('prod:1')
+    store.subscribe(listener)
+    const initial = store.getSnapshot()
+
+    store.clear()
+    expect(store.getSnapshot()).toBe(initial)
+    expect(listener).not.toHaveBeenCalled()
+
+    store.select({ kind: 'contact', contactRef: 'contact-1' })
+    const selected = store.getSnapshot()
+    expect(selected.selection).toEqual({ kind: 'contact', contactRef: 'contact-1' })
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    store.select({ kind: 'contact', contactRef: 'contact-1' })
+    expect(store.getSnapshot()).toBe(selected)
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    store.clear()
+    const cleared = store.getSnapshot()
+    expect(cleared.selection).toEqual({ kind: 'none' })
+    expect(listener).toHaveBeenCalledTimes(2)
+
+    store.clear()
+    expect(store.getSnapshot()).toBe(cleared)
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(abort).toHaveBeenCalledTimes(6)
+  })
+
   it('retains a fresh account-scoped directory across a Conversations round trip and expires it without exposing it to another account', () => {
     let now = 1_000
     const store = new ContactsTabStore({ now: () => now, directoryCacheMaxAgeMs: 30_000 })

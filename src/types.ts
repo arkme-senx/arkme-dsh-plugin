@@ -1049,6 +1049,8 @@ export interface ArkmeProviderCapabilities {
     sourceTextSend: true
     /** Recipient read/unread summaries and group member detail for current-user-sent messages. */
     messageReadReceipts?: true
+    /** Peer group-chat messages expose an account-bound report action. */
+    messageReport?: true
     richContentRead: boolean
     richContentSend: boolean
     fileUpload: boolean
@@ -1388,6 +1390,48 @@ export interface ArkmeTimelineItem {
   sharedRecording?: ArkmeSharedRecordingPreview
 }
 
+/** Browser-safe summary of one quick note related to the current message or moment. */
+export interface ArkmeRelatedQuickNoteItem {
+  /** Viewer- and source-bound opaque reference used to open the related note. */
+  relatedRef: string
+  senderName: string
+  /** Opaque Provider image reference for the related note author. */
+  senderAvatarRef?: string
+  sendAtMillis: number
+  title: string
+  textPreview: string
+  sourceLabel?: string
+}
+
+export interface ArkmeRelatedQuickNoteList {
+  items: ArkmeRelatedQuickNoteItem[]
+  total: number
+}
+
+/** Allowlisted presentation fields for one related note; routing identifiers stay host-side. */
+export interface ArkmeRelatedQuickNoteDetail {
+  relatedRef: string
+  senderName: string
+  /** Opaque Provider image reference for the related note author. */
+  avatarRef?: string
+  isMe: boolean
+  sendAtMillis: number
+  title: string
+  textContent: string
+  status: number
+  recordVersion?: number
+  aiPolish?: ArkmeTimelineAiPolish
+  templateKind?: number
+  displayKind?: number
+  version?: number
+  updateAtMillis?: number
+  recordDurationMillis?: number
+  editDurationMillis?: number
+  contentBlocks?: ArkmeContentBlock[]
+  mediaUnavailable?: boolean
+  forwardRecords?: ArkmeForwardRecordsPreview
+}
+
 /** Identity of one message returned by an Arkme private/group timeline. */
 export interface ArkmeMessageReadReceiptQueryItem {
   itemUid: string
@@ -1627,12 +1671,14 @@ export interface ArkmeRichSendInput {
   botMentions?: ArkmeBotMentionInput[]
 }
 
-export interface ArkmeHumanMentionInput {
-  memberRef?: string
-  all?: boolean
+interface ArkmeHumanMentionRange {
   startIndex: number
   length: number
 }
+
+export type ArkmeHumanMentionInput =
+  | (ArkmeHumanMentionRange & { mentionRef: string; memberRef?: never; all?: never })
+  | (ArkmeHumanMentionRange & { all: true; mentionRef?: never; memberRef?: never })
 
 export interface ArkmeBotMentionInput {
   botRef: string
@@ -1662,6 +1708,8 @@ export interface ArkmeLongArticleDraft {
   durationMillis: number
   updatedAtMillis: number
 }
+
+export type ArkmeMessageReportType = 1 | 2 | 3 | 4
 
 export interface ArkmeMessageReportResult {
   messageRef: string
@@ -1920,7 +1968,10 @@ export interface ArkmeGroupMemberList {
 }
 
 export interface ArkmeConversationMemberItem {
+  /** Stable account-and-session-scoped identity for member actions. */
   memberRef: string
+  /** Present only when this active non-self group member can be selected for a new human mention. */
+  mentionRef?: string
   displayName: string
   memberName?: string
   secondaryName?: string
@@ -2714,6 +2765,7 @@ export type ArkmePluginOperation =
   | 'source.mark-read'
   | 'source.read-receipts.summary-list'
   | 'source.read-receipts.detail'
+  | 'source.message-report'
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
@@ -2863,6 +2915,9 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'source.interwoven-moments'
   | 'source.interwoven-detail'
   | 'source.shared-recording-detail'
+  | 'source.related-quick-notes.from-message'
+  | 'source.related-quick-notes.from-moment'
+  | 'source.related-quick-note.detail'
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'
   | 'extensions.classification.items'

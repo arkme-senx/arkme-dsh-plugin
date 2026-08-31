@@ -872,6 +872,7 @@ describe('ArkmeService', () => {
         imageRead: true,
         recordCalendar: true,
         messageReadReceipts: true,
+        messageReport: true,
         outgoingCall: true,
         contactAdd: true,
         conversationQuickAdd: true,
@@ -2678,26 +2679,39 @@ describe('ArkmeService', () => {
   it('projects opaque member counts and sends a validated human mention without AI-polish rewriting', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
-    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const requests: Array<{ url: string; body: Record<string, unknown>; signal?: AbortSignal | null }> = []
+    let memberActive = true
+    let memberRequestFails = false
+    let includeSameNameMember = false
+    let rawMemberDisplayName = 'Tison@即我'
+    let rawMemberSnapshot = ''
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
-      requests.push({ url, body })
-      if (url.endsWith('/api/v1/chats/members/list')) return json({ code: 200, data: {
-        items: [{
-          user_id: 2001, role: 3, status: 1, join_at: 20,
-          display_name_snapshot: '1D3E', remark: '',
-          extra: {
-            record_count: 7, mention_count: 2, join_batch_at: 1_700_000_000_000,
-            inviter_user_id: 10001, inviter_display_name: '我', invitee_display_name: '小林',
-          },
-        }],
-      } })
+      requests.push({ url, body, signal: init?.signal })
+      if (url.endsWith('/api/v1/chats/members/list')) {
+        if (memberRequestFails) throw new TypeError('member directory unavailable')
+        return json({ code: 200, data: {
+          items: body.active_only === true && !memberActive ? [] : [{
+            user_id: 2001, role: 3, status: 1, join_at: 20,
+            display_name: rawMemberDisplayName,
+            display_name_snapshot: rawMemberSnapshot,
+            remark: '',
+            extra: {
+              record_count: 7, mention_count: 2, join_batch_at: 1_700_000_000_000,
+              inviter_user_id: 10001, inviter_display_name: '我', invitee_display_name: '小林',
+            },
+          }, ...(includeSameNameMember ? [{
+            user_id: 2002, role: 3, status: 1, join_at: 21,
+            display_name: 'Tison', display_name_snapshot: 'Tison', remark: '', extra: {},
+          }] : [])],
+        } })
+      }
       if (url.endsWith('/api/v1/chats/list')) return json({ code: 200, data: {
         items: [{
           session: { session_kind: 1 },
-          private_counterpart: { user_id: 2001, display_name_snapshot: '1D3E' },
-          private_supplement: { remark: '宏顺' },
+          private_counterpart: { user_id: 2001, display_name_snapshot: 'Tison' },
+          private_supplement: { remark: 'Tison' },
         }],
         has_more: false,
       } })
@@ -2723,9 +2737,16 @@ describe('ArkmeService', () => {
     const sourceRef = sourceRefFor('group_chat', 'group-mention', '协作群')
     const members = await service.listSourceMembers(sourceRef)
     expect(members.items[0]).toMatchObject({
-      displayName: '1D3E', memberName: '1D3E', secondaryName: '宏顺',
-      recordCount: 7, mentionCount: 2, memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+      displayName: 'Tison',
+      recordCount: 7, mentionCount: 2,
+      memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+      mentionRef: expect.stringMatching(/^arkme-chat-human-mention-v1\./),
     })
+    expect(members.items[0]!.mentionRef).not.toBe(members.items[0]!.memberRef)
+    const privateMembers = await service.listSourceMembers(
+      sourceRefFor('private_chat', 'private-mention', '小林'),
+    )
+    expect(privateMembers.items[0]).not.toHaveProperty('mentionRef')
     expect(members.joinEvents).toMatchObject([{
       eventId: expect.stringMatching(/^arkme-chat-join-v1\./),
       action: 'invite', occurredAtMillis: 1_700_000_000_000,
@@ -2735,28 +2756,38 @@ describe('ArkmeService', () => {
     expect(requests.find(request => request.url.endsWith('/api/v1/chats/members/list'))?.body)
       .toMatchObject({ active_only: false })
     const memberRef = members.items[0]!.memberRef
+    const mentionRef = members.items[0]!.mentionRef!
     await expect(service.sourceMemberRecords(sourceRef, `${memberRef}x`, 'owner'))
       .rejects.toMatchObject({ code: 'chat-member-ref-invalid' })
     await expect(service.sourceMemberRecords(sourceRefFor('group_chat', 'another-group', '另一个群'), memberRef, 'owner'))
       .rejects.toMatchObject({ code: 'chat-member-ref-invalid' })
+    await expect(service.sourceMemberRecords(sourceRef, mentionRef, 'owner'))
+      .rejects.toMatchObject({ code: 'chat-member-ref-invalid' })
+    const previouslyIssuedMemberPayload = Buffer.from(JSON.stringify({
+      version: 1, viewerUserId: 10001, chatSessionUid: 'group-mention', targetUserId: 2001,
+    }), 'utf8').toString('base64url')
+    const previouslyIssuedMemberRef = `arkme-chat-member-v1.${previouslyIssuedMemberPayload}.${createHmac('sha256', 'dsh-device-1')
+      .update(previouslyIssuedMemberPayload).digest('base64url')}`
+    await expect(service.sourceMemberRecords(sourceRef, previouslyIssuedMemberRef, 'owner', { limit: 10 }))
+      .resolves.toMatchObject({ member: { memberRef: previouslyIssuedMemberRef, displayName: 'Tison' } })
     await expect(service.sourceMemberRecords(sourceRef, memberRef, 'mentioned', { limit: 10 }))
       .resolves.toMatchObject({
-        member: { memberRef, displayName: '1D3E', secondaryName: '宏顺' },
+        member: { memberRef, displayName: 'Tison' },
         mode: 'mentioned',
         items: [{ itemUid: 'member-record-1', memberRef, textContent: '成员快记' }],
         hasMore: true,
         nextCursor: { beforeSequence: 8 },
       })
 
-    const result = await service.sendSourceText(sourceRef, '  @1D3E 请看  ', {
+    const result = await service.sendSourceText(sourceRef, '  @Tison 请看  ', {
       recordUid: 'record-human-mention', relationUid: 'relation-human-mention',
-      humanMentions: [{ memberRef, startIndex: 2, length: 5 }],
+      humanMentions: [{ mentionRef, startIndex: 2, length: 6 }],
     })
     expect(result).toMatchObject({ itemUid: 'record-human-mention', sequence: 18 })
     expect(requests.some(request => request.url.endsWith('/api/v1/chats/ai-polish/settings/query'))).toBe(false)
     expect(requests.at(-1)?.body).toMatchObject({
       chat_session_uid: 'group-mention',
-      text_content: '@1D3E 请看',
+      text_content: '@Tison 请看',
       content_payload: {
         payload_kind: 1,
         schema_version: 1,
@@ -2764,11 +2795,142 @@ describe('ArkmeService', () => {
         mention_metadata: {
           schema_version: 1,
           source_checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
-          human_mentions: [{ user_id: 2001, display_name_snapshot: '1D3E', start_index: 0, length: 5 }],
+          human_mentions: [{ user_id: 2001, display_name_snapshot: 'Tison', start_index: 0, length: 6 }],
         },
       },
     })
 
+    await expect(service.sendSourceText(sourceRef, '@Tison 请看', {
+      recordUid: 'record-v1-member-mention', relationUid: 'relation-v1-member-mention',
+      humanMentions: [{ memberRef, startIndex: 0, length: 6 } as never],
+    })).rejects.toMatchObject({ code: 'human-mention-invalid' })
+
+    requests.length = 0
+    await expect(service.sendSourceRich(sourceRef, {
+      textContent: '  @Tison 图片  ',
+      humanMentions: [{ mentionRef, startIndex: 2, length: 6 }],
+    }, {
+      recordUid: 'record-rich-human-mention', relationUid: 'relation-rich-human-mention',
+    })).resolves.toMatchObject({ itemUid: 'record-rich-human-mention', sequence: 18 })
+    expect(requests.at(-1)?.body).toMatchObject({
+      text_content: '@Tison 图片',
+      content_payload: {
+        mention_metadata: {
+          human_mentions: [{ user_id: 2001, display_name_snapshot: 'Tison', start_index: 0, length: 6 }],
+        },
+      },
+    })
+
+    await expect(service.sendSourceText(sourceRef, '😀 @Tison', {
+      recordUid: 'record-utf16-human-mention', relationUid: 'relation-utf16-human-mention',
+      humanMentions: [{ mentionRef, startIndex: 3, length: 6 }],
+    })).resolves.toMatchObject({ itemUid: 'record-utf16-human-mention', sequence: 18 })
+    expect(requests.at(-1)?.body).toMatchObject({
+      text_content: '😀 @Tison',
+      content_payload: {
+        mention_metadata: {
+          human_mentions: [{ user_id: 2001, display_name_snapshot: 'Tison', start_index: 3, length: 6 }],
+        },
+      },
+    })
+
+    includeSameNameMember = true
+    const sameNameMembers = await service.listSourceMembers(sourceRef)
+    const secondMentionRef = sameNameMembers.items.find(item => item.memberRef !== memberRef)?.mentionRef ?? ''
+    expect(secondMentionRef).toMatch(/^arkme-chat-human-mention-v1\./)
+    await expect(service.sendSourceText(sourceRef, '@Tison @Tison', {
+      recordUid: 'record-same-name-human-mentions', relationUid: 'relation-same-name-human-mentions',
+      humanMentions: [
+        { mentionRef, startIndex: 0, length: 6 },
+        { mentionRef: secondMentionRef, startIndex: 7, length: 6 },
+      ],
+    })).resolves.toMatchObject({ itemUid: 'record-same-name-human-mentions', sequence: 18 })
+    expect(requests.at(-1)?.body).toMatchObject({
+      content_payload: {
+        mention_metadata: {
+          human_mentions: [
+            { user_id: 2001, display_name_snapshot: 'Tison', start_index: 0, length: 6 },
+            { user_id: 2002, display_name_snapshot: 'Tison', start_index: 7, length: 6 },
+          ],
+        },
+      },
+    })
+    includeSameNameMember = false
+
+    await expect(service.sendSourceText(sourceRefFor('private_chat', 'private-mention', '小林'), '@Tison', {
+      recordUid: 'record-private-human-mention', relationUid: 'relation-private-human-mention',
+      humanMentions: [{ mentionRef, startIndex: 0, length: 6 }],
+    })).rejects.toMatchObject({ code: 'mention-group-required' })
+
+    const sendCountBeforeTamper = requests.filter(request => request.url.endsWith('/api/v1/chats/records/send')).length
+    await expect(service.sendSourceText(sourceRef, '@Tison 请看', {
+      recordUid: 'record-ambiguous-mention-ref', relationUid: 'relation-ambiguous-mention-ref',
+      humanMentions: [{ mentionRef, memberRef, startIndex: 0, length: 6 } as never],
+    })).rejects.toMatchObject({ code: 'human-mention-invalid' })
+    await expect(service.sendSourceText(sourceRef, '@Tison', {
+      recordUid: 'record-overlapping-human-mention', relationUid: 'relation-overlapping-human-mention',
+      humanMentions: [
+        { mentionRef, startIndex: 0, length: 6 },
+        { mentionRef, startIndex: 0, length: 6 },
+      ],
+    })).rejects.toMatchObject({ code: 'human-mention-overlap' })
+    await expect(service.sendSourceText(sourceRef, '@所有人', {
+      recordUid: 'record-too-many-human-mentions', relationUid: 'relation-too-many-human-mentions',
+      humanMentions: Array.from({ length: 51 }, () => ({ all: true as const, startIndex: 0, length: 4 })),
+    })).rejects.toMatchObject({ code: 'human-mention-invalid' })
+    await expect(service.sendSourceText(sourceRef, '@Lucis 请看', {
+      recordUid: 'record-tampered-mention', relationUid: 'relation-tampered-mention',
+      humanMentions: [{ mentionRef, startIndex: 0, length: 6 }],
+    })).rejects.toMatchObject({ code: 'human-mention-text-mismatch' })
+    await expect(service.sendSourceText(sourceRef, '@ Tison 请看', {
+      recordUid: 'record-spaced-mention', relationUid: 'relation-spaced-mention',
+      humanMentions: [{ mentionRef, startIndex: 0, length: 7 }],
+    })).rejects.toMatchObject({ code: 'human-mention-text-mismatch' })
+    expect(requests.filter(request => request.url.endsWith('/api/v1/chats/records/send')))
+      .toHaveLength(sendCountBeforeTamper)
+
+    await expect(service.sendSourceText(sourceRef, '@Tison 请看', {
+      recordUid: 'record-member-ref-as-mention', relationUid: 'relation-member-ref-as-mention',
+      humanMentions: [{ mentionRef: memberRef, startIndex: 0, length: 6 }],
+    })).rejects.toMatchObject({ code: 'chat-mention-ref-invalid' })
+    await expect(service.sendSourceText(sourceRef, '@Tison 请看', {
+      recordUid: 'record-tampered-mention-ref', relationUid: 'relation-tampered-mention-ref',
+      humanMentions: [{ mentionRef: `${mentionRef}x`, startIndex: 0, length: 6 }],
+    })).rejects.toMatchObject({ code: 'chat-mention-ref-invalid' })
+    await expect(service.sendSourceText(sourceRefFor('group_chat', 'another-group', '另一个群'), '@Tison 请看', {
+      recordUid: 'record-cross-group-mention-ref', relationUid: 'relation-cross-group-mention-ref',
+      humanMentions: [{ mentionRef, startIndex: 0, length: 6 }],
+    })).rejects.toMatchObject({ code: 'chat-mention-ref-invalid' })
+
+    rawMemberDisplayName = 'Lucis'
+    rawMemberSnapshot = 'Lucis'
+    await expect(service.sendSourceText(sourceRef, '@Lucis 请看', {
+      recordUid: 'record-current-name-substitution', relationUid: 'relation-current-name-substitution',
+      humanMentions: [{ mentionRef, startIndex: 0, length: 6 }],
+    })).rejects.toMatchObject({ code: 'human-mention-text-mismatch' })
+    await expect(service.sendSourceText(sourceRef, '@Tison 请看', {
+      recordUid: 'record-selected-name-snapshot', relationUid: 'relation-selected-name-snapshot',
+      humanMentions: [{ mentionRef, startIndex: 0, length: 6 }],
+    })).resolves.toMatchObject({ itemUid: 'record-selected-name-snapshot', sequence: 18 })
+
+    const selfMentionPayload = Buffer.from(JSON.stringify({
+      version: 1, viewerUserId: 10001, chatSessionUid: 'group-mention', targetUserId: 10001,
+      displayNameSnapshot: '我',
+    }), 'utf8').toString('base64url')
+    const selfMentionRef = `arkme-chat-human-mention-v1.${selfMentionPayload}.${createHmac('sha256', 'dsh-device-1')
+      .update(`arkme-chat-human-mention-v1.${selfMentionPayload}`).digest('base64url')}`
+    await expect(service.sendSourceText(sourceRef, '@我 请看', {
+      recordUid: 'record-self-human-mention', relationUid: 'relation-self-human-mention',
+      humanMentions: [{ mentionRef: selfMentionRef, startIndex: 0, length: 2 }],
+    })).rejects.toMatchObject({ code: 'human-mention-self-invalid' })
+
+    memberActive = false
+    await expect(service.sendSourceText(sourceRef, '@Tison 请看', {
+      recordUid: 'record-stale-mention', relationUid: 'relation-stale-mention',
+      humanMentions: [{ mentionRef, startIndex: 0, length: 6 }],
+    })).rejects.toMatchObject({ code: 'chat-member-ref-stale' })
+
+    memberRequestFails = true
     const allResult = await service.sendSourceText(sourceRef, '@所有人 请看', {
       recordUid: 'record-all-mention', relationUid: 'relation-all-mention',
       humanMentions: [{ all: true, startIndex: 0, length: 4 }],

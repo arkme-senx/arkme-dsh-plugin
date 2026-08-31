@@ -57,6 +57,30 @@ export function extensionTabLoadMode(loadedTabs: ReadonlySet<string>, target: st
   return loadedTabs.has(target) ? 'refresh' : 'initial'
 }
 
+export function sameExtensionInstallTaskSnapshot(
+  current: ArkmeExtensionInstallTaskSnapshot | undefined,
+  next: ArkmeExtensionInstallTaskSnapshot | undefined,
+): boolean {
+  if (current === next) return true
+  if (current === undefined || next === undefined) return false
+  return current.taskId === next.taskId
+    && current.extensionId === next.extensionId
+    && current.sessionId === next.sessionId
+    && current.done === next.done
+    && current.phase === next.phase
+    && current.version === next.version
+    && current.downloadedBytes === next.downloadedBytes
+    && current.totalBytes === next.totalBytes
+    && current.message === next.message
+    && current.result?.installed === next.result?.installed
+    && current.result?.active === next.result?.active
+    && current.result?.approvalRequired === next.result?.approvalRequired
+    && current.result?.restartRequired === next.result?.restartRequired
+    && current.error?.code === next.error?.code
+    && current.error?.message === next.error?.message
+    && current.error?.retryable === next.error?.retryable
+}
+
 const colors = {
   text: arkmeTheme.text,
   secondary: arkmeTheme.secondary,
@@ -1676,6 +1700,7 @@ export function ArkmeMarketplace({
   const [deleteConfirmExtensionId, setDeleteConfirmExtensionId] = useState<string>()
   const [loadedTabs, setLoadedTabs] = useState<ReadonlySet<Tab>>(new Set())
   const [error, setError] = useState('')
+  const [refreshError, setRefreshError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [category, setCategory] = useState<MarketplaceCategory>('all')
   const [classificationTree, setClassificationTree] = useState<ArkmeExtensionClassificationTree>({
@@ -1692,6 +1717,10 @@ export function ArkmeMarketplace({
   const [authorActionError, setAuthorActionError] = useState('')
   const requestSequence = useRef(0)
   const requestController = useRef<AbortController>()
+  const discoverCompanionControllers = useRef(new Set<AbortController>())
+  const discoverInstalledReady = useRef(false)
+  const discoverOwnedReady = useRef(false)
+  const discoverCompanionsPending = useRef(false)
   const loadMoreController = useRef<AbortController>()
   const loadMoreSequence = useRef(0)
   const loadingMoreDiscoverRef = useRef(false)
@@ -1755,6 +1784,56 @@ export function ArkmeMarketplace({
       try { window.sessionStorage.removeItem(PENDING_EXTENSION_RESTART_KEY) } catch { /* Best-effort UI marker cleanup. */ }
     }
   }
+
+  const ensureDiscoverCompanions = (): void => {
+    if ((discoverInstalledReady.current && discoverOwnedReady.current) || discoverCompanionsPending.current) return
+    discoverCompanionsPending.current = true
+    const controller = new AbortController()
+    discoverCompanionControllers.current.add(controller)
+    const reads: Promise<unknown>[] = []
+    if (!discoverInstalledReady.current) {
+      reads.push(callArkme<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, controller.signal)
+        .then(local => {
+          if (controller.signal.aborted) return
+          acceptInstalled(local)
+          discoverInstalledReady.current = true
+        }))
+    }
+    if (!discoverOwnedReady.current) {
+      reads.push(callArkme<ArkmeExtensionCatalogPage>('extensions.my-list', undefined, controller.signal)
+        .then(owned => {
+          if (controller.signal.aborted) return
+          setPublishedItems(owned.items)
+          setDiscoverOwnerWarning('')
+          discoverOwnedReady.current = true
+        }).catch(caught => {
+          if ((caught as Error).name !== 'AbortError' && !controller.signal.aborted) {
+            setDiscoverOwnerWarning('你的私有扩展暂未加载，请稍后刷新。')
+          }
+          throw caught
+        }))
+    }
+    void Promise.allSettled(reads).finally(() => {
+      discoverCompanionControllers.current.delete(controller)
+      discoverCompanionsPending.current = false
+    })
+  }
+
+  useEffect(() => () => {
+    for (const controller of discoverCompanionControllers.current) controller.abort()
+    discoverCompanionControllers.current.clear()
+  }, [])
+
+  useEffect(() => {
+    for (const controller of discoverCompanionControllers.current) controller.abort()
+    discoverCompanionControllers.current.clear()
+    discoverInstalledReady.current = false
+    discoverOwnedReady.current = false
+    discoverCompanionsPending.current = false
+    setInstalled([])
+    setPublishedItems([])
+    setLoadedTabs(new Set())
+  }, [currentUserId])
 
   const loadLifecycleCatalogItems = async (
     extensionIds: readonly string[],
@@ -1841,27 +1920,12 @@ export function ArkmeMarketplace({
     const controller = new AbortController()
     requestController.current = controller
     if (mode === 'initial') setLoadingTab(target)
-    setError(''); setInstallError('')
+    setError(''); setRefreshError(''); setInstallError('')
     if (!preserveDetail) { setDetail(undefined); setDetailRequestedExtensionId(undefined); setDetailError('') }
     setAuditResult(undefined); setAuditError('')
     try {
       if (target === 'discover') {
-        void callArkme<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, controller.signal)
-          .then(local => {
-            if (sequence === requestSequence.current) acceptInstalled(local)
-          })
-          .catch(() => undefined)
-        void callArkme<ArkmeExtensionCatalogPage>('extensions.my-list', undefined, controller.signal)
-          .then(owned => {
-            if (sequence !== requestSequence.current) return
-            setPublishedItems(owned.items)
-            setDiscoverOwnerWarning('')
-          })
-          .catch(caught => {
-            if ((caught as Error).name !== 'AbortError' && sequence === requestSequence.current) {
-              setDiscoverOwnerWarning('你的私有扩展暂未加载，请稍后刷新。')
-            }
-          })
+        ensureDiscoverCompanions()
         const page = await (category === 'all'
           ? callArkme<ArkmeExtensionCatalogPage>(
               'extensions.catalog.list',
@@ -1915,8 +1979,10 @@ export function ArkmeMarketplace({
       }
       if (sequence === requestSequence.current) setLoadedTabs(current => new Set(current).add(target))
     } catch (caught) {
-      if (mode === 'initial' && (caught as Error).name !== 'AbortError' && sequence === requestSequence.current) {
-        setError(caught instanceof Error ? caught.message : String(caught))
+      if ((caught as Error).name !== 'AbortError' && sequence === requestSequence.current) {
+        const message = caught instanceof Error ? caught.message : String(caught)
+        if (mode === 'initial') setError(message)
+        else setRefreshError(`刷新失败，仍显示上次结果：${message}`)
       }
     } finally {
       if (sequence === requestSequence.current) {
@@ -1982,13 +2048,15 @@ export function ArkmeMarketplace({
       preserveResolvedShareDetail.current = false
       return
     }
-    const timer = window.setTimeout(() => { void load('discover', 'initial') }, searchQuery.trim() === '' ? 0 : 250)
+    const timer = window.setTimeout(() => {
+      void load('discover', extensionTabLoadMode(loadedTabs, 'discover'))
+    }, searchQuery.trim() === '' ? 0 : 250)
     return () => {
       window.clearTimeout(timer)
       requestController.current?.abort()
       loadMoreController.current?.abort()
     }
-  }, [shareRef, searchQuery, sort, category, sortingEnabled, authorFilter?.ownerUserId])
+  }, [shareRef, searchQuery, sort, category, sortingEnabled, authorFilter?.ownerUserId, currentUserId])
 
   useEffect(() => {
     if (shareRef === undefined) return
@@ -2291,7 +2359,7 @@ export function ArkmeMarketplace({
           taskId: installTask.taskId,
           sessionId: installTask.sessionId,
         }, controller.signal)
-        setInstallTask(next)
+        setInstallTask(current => sameExtensionInstallTaskSnapshot(current, next) ? current : next)
         if (next.done) {
           const failureMessage = extensionInstallFailureMessage(next)
           if (failureMessage !== undefined) setInstallError(failureMessage)
@@ -2666,6 +2734,7 @@ export function ArkmeMarketplace({
       }}
     >
       {error !== '' && <div style={styles.error}>{error}</div>}
+      {refreshError !== '' && <div style={styles.error} role="alert">{refreshError}</div>}
       {installError !== '' && <div style={styles.error}>{installError}</div>}
       {installTask !== undefined && !installTask.done && <div style={styles.installStatus} role="status">
         {installTask.message}

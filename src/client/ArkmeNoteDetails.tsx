@@ -1,8 +1,19 @@
-import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react'
+import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X'
-import type { ArkmeForwardRecordPreviewItem, ArkmeTimelineItem } from '../types.js'
+import type { ArkmeForwardRecordPreviewItem, ArkmeRelatedQuickNoteDetail as ArkmeRelatedQuickNoteDetailDto, ArkmeRelatedQuickNoteItem, ArkmeRelatedQuickNoteList, ArkmeTimelineItem } from '../types.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
+import {
+  ArkmeRelatedQuickNoteDetail,
+  ArkmeRelatedQuickNotesCard,
+  ArkmeRelatedQuickNotesList,
+  relatedDrawerBackTarget,
+  type ArkmeRelatedDrawerView,
+  type ArkmeRelatedQuickNoteDetailState,
+  type ArkmeRelatedQuickNotesLoadState,
+} from './ArkmeRelatedQuickNotes.js'
+import { ArkmeClientError, callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ARKME_CONVERSATION_HEADER_HEIGHT } from './interwoven-moments.js'
 
@@ -17,6 +28,8 @@ const styles: Record<string, CSSProperties> = {
   subtitle: { marginTop: 8, color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '18px' },
   close: { width: 30, height: 30, marginTop: -3, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
     border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer' },
+  back: { width: 30, height: 30, marginTop: -3, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
+    border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain', padding: '24px 22px' },
   rows: { display: 'flex', flexDirection: 'column', gap: 23 },
   row: { display: 'flex', gap: 9, alignItems: 'flex-start' },
@@ -49,17 +62,19 @@ function offsetLabel(value: number): string {
 }
 
 /** Non-modal overlay: the conversation retains its width and scroll position. */
-function NoteDetailShell({ title, label, subtitle, footer, onClose, children }: {
+function NoteDetailShell({ title, label, subtitle, footer, onClose, onBack, backLabel, bodyRef, children }: {
   title: string; label: string; subtitle?: string; footer?: string; onClose: () => void; children: ReactNode
+  onBack?: () => void; backLabel?: string; bodyRef?: Ref<HTMLDivElement>
 }) {
   const closeRef = useRef<HTMLButtonElement>(null)
+  const backRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
   const titleId = useId()
   useEffect(() => {
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-    closeRef.current?.focus({ preventScroll: true })
+    ;(onBack === undefined ? closeRef.current : backRef.current)?.focus({ preventScroll: true })
     const onKey = (event: KeyboardEvent) => {
       // A portal preview owns Escape until it is closed; do not close both layers.
       if (event.key !== 'Escape' || event.defaultPrevented
@@ -78,18 +93,28 @@ function NoteDetailShell({ title, label, subtitle, footer, onClose, children }: 
   }, [])
   return <aside ref={panelRef} role="dialog" aria-label={label} aria-labelledby={titleId} style={styles.drawer} data-arkme-note-detail="true">
     <header style={styles.header}>
+      {onBack !== undefined && <button ref={backRef} type="button" style={styles.back}
+        aria-label={backLabel ?? '返回'} onClick={onBack}><ArrowLeft size={18} /></button>}
       <div style={styles.heading}><h3 id={titleId} style={styles.title}>{title}</h3>
         {subtitle && <div style={styles.subtitle}>{subtitle}</div>}
       </div>
       <button ref={closeRef} type="button" style={styles.close} aria-label="关闭详情" onClick={onClose}><X size={18} /></button>
     </header>
-    <div style={styles.body}>{children}</div>
+    <div ref={bodyRef} style={styles.body}>{children}</div>
     {footer && <footer style={styles.footer}>{footer}</footer>}
   </aside>
 }
 
 export function arkmeTimelineDetailSenderText(item: ArkmeTimelineItem): string {
   return item.agentSource === undefined ? item.senderName : `${item.senderName} · ${item.agentSource.label}`
+}
+
+function relatedQuickNoteErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim() !== '' ? error.message : fallback
+}
+
+function relatedQuickNoteReferenceExpired(error: unknown): boolean {
+  return error instanceof ArkmeClientError && error.body.code === 'related-quick-note-ref-expired'
 }
 
 export function ArkmeTimelineDetailDrawer({
@@ -103,10 +128,124 @@ export function ArkmeTimelineDetailDrawer({
   shareWebsite?: string
   onMessageCopyLinkOpen?: (sid: string) => void
 }) {
+  const [relatedView, setRelatedView] = useState<ArkmeRelatedDrawerView>('source-detail')
+  const [relatedState, setRelatedState] = useState<ArkmeRelatedQuickNotesLoadState>({ kind: 'idle' })
+  const [relatedDetailState, setRelatedDetailState] = useState<ArkmeRelatedQuickNoteDetailState>({ kind: 'idle' })
+  const listAbortRef = useRef<AbortController>()
+  const detailAbortRef = useRef<AbortController>()
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const scrollTopByViewRef = useRef<Record<ArkmeRelatedDrawerView, number>>({
+    'source-detail': 0,
+    'related-list': 0,
+    'related-detail': 0,
+  })
+  const messageActionRef = item.messageActionRef?.trim() ?? ''
+  const normalizedSourceRef = sourceRef?.trim() ?? ''
+  const loadRelated = useCallback(() => {
+    listAbortRef.current?.abort()
+    if (normalizedSourceRef === '' || messageActionRef === '') {
+      setRelatedState({ kind: 'idle' })
+      return
+    }
+    const controller = new AbortController()
+    listAbortRef.current = controller
+    setRelatedState({ kind: 'loading' })
+    void callArkme<ArkmeRelatedQuickNoteList>('source.related-quick-notes.from-message', {
+      sourceRef: normalizedSourceRef,
+      messageActionRef,
+    }, controller.signal).then(list => {
+      if (controller.signal.aborted || listAbortRef.current !== controller) return
+      setRelatedState(list.items.length === 0 ? { kind: 'empty' } : { kind: 'success', list })
+    }).catch(error => {
+      if (controller.signal.aborted || listAbortRef.current !== controller) return
+      setRelatedState({ kind: 'error', message: relatedQuickNoteErrorMessage(error, '相关快记加载失败') })
+    })
+  }, [messageActionRef, normalizedSourceRef])
+  const loadRelatedDetail = useCallback((relatedItem: ArkmeRelatedQuickNoteItem) => {
+    detailAbortRef.current?.abort()
+    if (normalizedSourceRef === '') return
+    const controller = new AbortController()
+    detailAbortRef.current = controller
+    setRelatedDetailState({ kind: 'loading' })
+    void callArkme<ArkmeRelatedQuickNoteDetailDto>('source.related-quick-note.detail', {
+      sourceRef: normalizedSourceRef,
+      relatedRef: relatedItem.relatedRef,
+    }, controller.signal).then(detail => {
+      if (controller.signal.aborted || detailAbortRef.current !== controller) return
+      setRelatedDetailState({ kind: 'success', item: relatedItem, detail })
+    }).catch(error => {
+      if (controller.signal.aborted || detailAbortRef.current !== controller) return
+      if (relatedQuickNoteReferenceExpired(error)) {
+        setRelatedDetailState({ kind: 'idle' })
+        setRelatedView('related-list')
+        loadRelated()
+        return
+      }
+      setRelatedDetailState({
+        kind: 'error', item: relatedItem,
+        message: relatedQuickNoteErrorMessage(error, '快记详情加载失败'),
+      })
+    })
+  }, [loadRelated, normalizedSourceRef])
+  useEffect(() => {
+    listAbortRef.current?.abort()
+    detailAbortRef.current?.abort()
+    setRelatedView('source-detail')
+    setRelatedState({ kind: 'idle' })
+    setRelatedDetailState({ kind: 'idle' })
+    scrollTopByViewRef.current = { 'source-detail': 0, 'related-list': 0, 'related-detail': 0 }
+    loadRelated()
+    return () => {
+      listAbortRef.current?.abort()
+      detailAbortRef.current?.abort()
+    }
+  }, [item.itemUid, loadRelated])
+  useEffect(() => {
+    if (bodyRef.current !== null) bodyRef.current.scrollTop = scrollTopByViewRef.current[relatedView]
+  }, [relatedView])
+  const navigateRelated = (nextView: ArkmeRelatedDrawerView) => {
+    if (bodyRef.current !== null) scrollTopByViewRef.current[relatedView] = bodyRef.current.scrollTop
+    setRelatedView(nextView)
+  }
+  const closeDrawer = () => {
+    listAbortRef.current?.abort()
+    detailAbortRef.current?.abort()
+    onClose()
+  }
+  const backRelated = () => {
+    if (relatedView === 'related-detail') detailAbortRef.current?.abort()
+    navigateRelated(relatedDrawerBackTarget(relatedView))
+  }
   const textContent = showOriginal && item.aiPolish?.originalText !== undefined ? item.aiPolish.originalText
     : item.aiPolish?.state === 'polished' && item.aiPolish.polishedText !== undefined ? item.aiPolish.polishedText : item.textContent
   const canToggle = item.aiPolish?.state === 'polished' && item.aiPolish.originalText !== undefined && item.aiPolish.polishedText !== undefined
-  return <NoteDetailShell title="快记详情" label="快记详情" onClose={onClose}>
+  if (relatedView === 'related-list') {
+    const total = relatedState.kind === 'success' ? relatedState.list.total : 0
+    return <NoteDetailShell key="related-list" title={`${String(total)} 条相关快记`} label="相关快记列表"
+      onClose={closeDrawer} onBack={backRelated} backLabel="返回快记详情" bodyRef={bodyRef}>
+      <div>
+        <ArkmeRelatedQuickNotesList state={relatedState}
+          onRetry={loadRelated}
+          onSelect={relatedItem => {
+            navigateRelated('related-detail')
+            loadRelatedDetail(relatedItem)
+          }} />
+      </div>
+    </NoteDetailShell>
+  }
+  if (relatedView === 'related-detail') {
+    return <NoteDetailShell key="related-detail" title="相关快记详情" label="相关快记详情"
+      onClose={closeDrawer} onBack={backRelated} backLabel="返回相关快记列表" bodyRef={bodyRef}>
+      <ArkmeRelatedQuickNoteDetail
+        state={relatedDetailState}
+        onRetry={loadRelatedDetail}
+        {...(normalizedSourceRef === '' ? {} : { sourceRef: normalizedSourceRef })}
+        {...(shareWebsite === undefined ? {} : { shareWebsite })}
+        {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
+      />
+    </NoteDetailShell>
+  }
+  return <NoteDetailShell key="source-detail" title="快记详情" label="快记详情" onClose={closeDrawer} bodyRef={bodyRef}>
     <div style={{ ...styles.row, alignItems: 'center', marginBottom: 20 }}>
       <ArkmeUserAvatar {...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef })} size={40} label="作者头像" />
       <div style={styles.content}><div style={styles.name}>{arkmeTimelineDetailSenderText(item)}</div>
@@ -123,6 +262,11 @@ export function ArkmeTimelineDetailDrawer({
         {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
       />
     </div>
+    <ArkmeRelatedQuickNotesCard
+      state={relatedState}
+      onOpen={() => { navigateRelated('related-list') }}
+      onRetry={loadRelated}
+    />
   </NoteDetailShell>
 }
 

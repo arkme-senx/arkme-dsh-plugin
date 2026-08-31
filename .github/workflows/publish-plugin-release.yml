@@ -253,8 +253,8 @@ jobs:
             gh release create "$tag" --target "$RELEASE_SHA" --title "$tag" --generate-notes
           fi
 
-  dispatch-backend-build:
-    name: 派发 Arkme 生产构建请求
+  dispatch-runtime-publish:
+    name: 派发 Arkme 生产 Runtime 发布
     needs: [prepare, publish]
     if: needs.publish.result == 'success'
     runs-on: ubuntu-latest
@@ -262,7 +262,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: 从默认分支派发生产构建请求
+      - name: 从默认分支派发生产 Runtime 发布
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

@@ -11,7 +11,7 @@ import {
   mergeArkmeTopicSourcePages, reconcileArkmeTopicSelection,
 } from '../src/client/ArkmeTopicDirectoryPopover.js'
 import {
-  arkmeAggregateSourceForUser, arkmeSourceComposerPlaceholder, arkmeSourceDestinationLabel,
+  arkmeAggregateSourceForUser, arkmeSourceDestinationLabel,
 } from '../src/client/ArkmeSidebar.js'
 import { arkmeConversationComposerLayout } from '../src/client/conversation-composer-presentation.js'
 import {
@@ -257,7 +257,7 @@ describe('topic create UI', () => {
     expect(filterArkmeTopicSources(sources, '  ').map(source => source.sourceRef)).toEqual(['root', 'child', 'other'])
   })
 
-  it('keeps send-to-self, default category, and topics as distinct destinations', () => {
+  it('keeps the personal destination labels independent from composer copy', () => {
     const aggregate: ArkmeSourceItem = {
       ...topicRow.source, sourceRef: 'aggregate', kind: 'send_to_self', displayName: '发给自己',
     }
@@ -266,13 +266,9 @@ describe('topic create UI', () => {
     }
 
     expect(arkmeSourceDestinationLabel(aggregate)).toBe('发给自己')
-    expect(arkmeSourceComposerPlaceholder(aggregate)).toBe('发送给自己…')
     expect(arkmeSourceDestinationLabel(defaultCategory)).toBe('默认分类')
-    expect(arkmeSourceComposerPlaceholder(defaultCategory)).toBe('发送到「默认分类」…')
     expect(arkmeSourceDestinationLabel(undefined)).toBe('发给自己')
-    expect(arkmeSourceComposerPlaceholder(undefined)).toBe('发送给自己…')
     expect(arkmeSourceDestinationLabel(topicRow.source)).toBe('工作')
-    expect(arkmeSourceComposerPlaceholder(topicRow.source)).toBe('发送到「工作」…')
   })
 
   it('records visited personal destinations without inferring directory parents', () => {

@@ -1,7 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ArkmeExtensionReviews,
+  applyCreatedExtensionReview,
   ArkmeExtensionInlineReviewComposer,
   ArkmeExtensionReviewComposerDialog,
   ArkmeExtensionReplyListDialog,
@@ -14,6 +16,20 @@ import {
   extensionReviewTree,
 } from '../../src/client/ArkmeExtensionReviews.js'
 import type { ArkmeExtensionReviewPage } from '../../src/extensions/types.js'
+
+const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
+
+vi.mock('../../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
+
+function content(value: unknown): string {
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  if (Array.isArray(value)) return value.map(content).join('')
+  if (value !== null && typeof value === 'object' && 'children' in value) return content((value as { children?: unknown }).children)
+  if (value !== null && typeof value === 'object' && 'props' in value) return content((value as { props?: { children?: unknown } }).props?.children)
+  return ''
+}
+
+beforeEach(() => { mocks.callArkme.mockReset() })
 
 const page: ArkmeExtensionReviewPage = {
   items: [
@@ -71,6 +87,91 @@ describe('extension reviews UI', () => {
     expect(html).not.toContain('<span>0</span>')
     expect(html).toContain('<svg aria-hidden="true" width="15" height="15"')
     expect(html).toContain('d="M9 8L4 12L9 16"')
+  })
+
+  it('patches a created review locally without discarding already loaded pagination', async () => {
+    const paged = { ...page, hasMore: true, nextOffset: 40 }
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'extensions.reviews.create') return {
+        review: {
+          reviewRef: 'review-new', authorName: '我', textContent: '分页仍然保留', rating: 4,
+          createdAtMillis: 1_780_000_002_000,
+        },
+        ratingSummary: { average: 4.5, count: 2, histogram: [0, 0, 0, 1, 1] },
+        idempotentReplay: false,
+      }
+      throw new Error(`unexpected operation: ${operation}`)
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeExtensionReviews extensionId="ext-1" initialPage={paged} />) })
+
+    act(() => { renderer.root.findByProps({ 'aria-label': '4 星' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ placeholder: '分享你的使用体验' }).props.onChange({ target: { value: '分页仍然保留' } }) })
+    await act(async () => {
+      renderer.root.findAllByType('button').find(button => content(button.props.children) === '发布')?.props.onClick()
+      await Promise.resolve()
+    })
+
+    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
+    expect(mocks.callArkme).toHaveBeenCalledWith('extensions.reviews.create', expect.objectContaining({
+      extensionId: 'ext-1', textContent: '分页仍然保留', rating: 4,
+    }))
+    expect(content(renderer.toJSON())).toContain('3 条评论')
+    expect(content(renderer.toJSON())).toContain('分页仍然保留')
+    expect(renderer.root.findAllByType('button').some(button => content(button.props.children) === '加载更多')).toBe(true)
+    act(() => { renderer.unmount() })
+  })
+
+  it('does not increase the top-level total for replies or idempotent replays', () => {
+    const replyResult = {
+      review: {
+        reviewRef: 'reply-new', parentReviewRef: page.items[0]!.reviewRef,
+        authorName: '我', textContent: '回复', rating: 0, createdAtMillis: 2,
+      },
+      ratingSummary: page.ratingSummary,
+      idempotentReplay: false,
+    }
+    expect(applyCreatedExtensionReview(page, replyResult).total).toBe(page.total)
+    expect(applyCreatedExtensionReview(page, {
+      ...replyResult,
+      review: { ...replyResult.review, reviewRef: 'review-replayed', parentReviewRef: undefined, rating: 5 },
+      idempotentReplay: true,
+    }).total).toBe(page.total)
+  })
+
+  it('merges a local create when the initial list response arrives later', async () => {
+    let resolveList!: (value: ArkmeExtensionReviewPage) => void
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'extensions.reviews.list') {
+        return await new Promise<ArkmeExtensionReviewPage>(resolve => { resolveList = resolve })
+      }
+      if (operation === 'extensions.reviews.create') return {
+        review: {
+          reviewRef: 'review-race', authorName: '我', textContent: '保留本地创建', rating: 5,
+          createdAtMillis: 1_780_000_003_000,
+        },
+        ratingSummary: { average: 5, count: 1, histogram: [0, 0, 0, 0, 1] },
+        idempotentReplay: false,
+      }
+      throw new Error(`unexpected operation: ${operation}`)
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeExtensionReviews extensionId="ext-race" />); await Promise.resolve() })
+    act(() => { renderer.root.findByProps({ 'aria-label': '5 星' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ placeholder: '分享你的使用体验' }).props.onChange({ target: { value: '保留本地创建' } }) })
+    await act(async () => {
+      renderer.root.findAllByType('button').find(button => content(button.props.children) === '发布')?.props.onClick()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      resolveList({ items: [], total: 0, limit: 20, offset: 0, hasMore: false, ratingSummary: page.ratingSummary })
+      await Promise.resolve()
+    })
+
+    expect(content(renderer.toJSON())).toContain('保留本地创建')
+    expect(content(renderer.toJSON())).toContain('1 条评论')
+    act(() => { renderer.unmount() })
   })
 
   it('hides the top-level comment entry for the extension owner while keeping replies', () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight'
@@ -10,7 +10,6 @@ import { SpinnerGap } from '@phosphor-icons/react/dist/icons/SpinnerGap'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeImagePayload,
-  ArkmeConversationMemberItem,
   ArkmeOpenPrivateChatResult,
   ArkmeUploadedAsset,
   ArkmeWorldPublishResult,
@@ -32,7 +31,7 @@ import { callArkme, ArkmeClientError } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
 import { ArkmeWorldEmptyNotice } from './ArkmeWorldEmptyNotice.js'
-import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'
+import { ArkmeMemberProfileCard, type ArkmeMemberProfileIdentity } from './ArkmeChatMemberActions.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeUi, type ArkmeWorldTarget } from './ui-controller.js'
@@ -67,6 +66,44 @@ export type ArkmeWorldViewState = {
   loadingMore?: boolean
   hasMore?: boolean
   nextOffset?: number
+}
+
+export function updateWorldViewItem(
+  view: ArkmeWorldViewState,
+  recordRef: string,
+  update: (item: ArkmeWorldFeedItem) => ArkmeWorldFeedItem,
+): ArkmeWorldViewState {
+  const index = view.items.findIndex(item => item.recordRef === recordRef)
+  if (index < 0) return view
+  const current = view.items[index]!
+  const next = update(current)
+  if (next === current) return view
+  const items = [...view.items]
+  items[index] = next
+  return { ...view, items }
+}
+
+export function applyWorldAuthorLabels(
+  view: ArkmeWorldViewState,
+  labelsByRef: ReadonlyMap<string, string>,
+): ArkmeWorldViewState {
+  let changed = false
+  const items = view.items.map(item => {
+    const authorName = item.authorRef === undefined ? undefined : labelsByRef.get(item.authorRef)
+    if (authorName === undefined || authorName === item.authorName) return item
+    changed = true
+    return { ...item, authorName }
+  })
+  return changed ? { ...view, items } : view
+}
+
+function appendWorldFeedItems(
+  current: readonly ArkmeWorldFeedItem[],
+  incoming: readonly ArkmeWorldFeedItem[],
+): ArkmeWorldFeedItem[] {
+  const byRef = new Map(current.map(item => [item.recordRef, item]))
+  for (const item of incoming) byRef.set(item.recordRef, item)
+  return [...byRef.values()]
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -1107,6 +1144,8 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
   </article>
 }
 
+const MemoizedWorldCard = memo(WorldCard)
+
 export function VoiceprintInviteDialog({ item, variantIndex, socialContext, sending, message, onClose, onConfirm }: {
   item: ArkmeWorldFeedItem
   variantIndex: number
@@ -1215,6 +1254,28 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
     : state.items.find(item => item.recordRef === interactionRecordRef)
   const scrollRootRef = useRef<HTMLDivElement | null>(null)
   const scrollPositionsRef = useRef<Record<WorldScope, number>>({ all: 0, mine: 0 })
+  const cardCallbacksRef = useRef({
+    onOpenInteractions,
+    onInteractionCreated,
+    onToggleVoiceprint,
+    onInviteVoiceprint,
+    onOpenAuthor,
+    onOpenExtension,
+  })
+  cardCallbacksRef.current = {
+    onOpenInteractions,
+    onInteractionCreated,
+    onToggleVoiceprint,
+    onInviteVoiceprint,
+    onOpenAuthor,
+    onOpenExtension,
+  }
+  const openCardInteractions = useCallback((item: ArkmeWorldFeedItem) => { cardCallbacksRef.current.onOpenInteractions(item) }, [])
+  const recordCardInteraction = useCallback((recordRef: string) => { cardCallbacksRef.current.onInteractionCreated?.(recordRef) }, [])
+  const toggleCardVoiceprint = useCallback((recordRef: string) => { cardCallbacksRef.current.onToggleVoiceprint(recordRef) }, [])
+  const inviteCardVoiceprint = useCallback((item: ArkmeWorldFeedItem) => { cardCallbacksRef.current.onInviteVoiceprint?.(item) }, [])
+  const openCardAuthor = useCallback((item: ArkmeWorldFeedItem) => { cardCallbacksRef.current.onOpenAuthor?.(item) }, [])
+  const openCardExtension = useCallback((extensionId: string) => { cardCallbacksRef.current.onOpenExtension(extensionId) }, [])
   const bindScrollRoot = useCallback((element: HTMLDivElement | null) => {
     scrollRootRef.current = element
     if (element !== null) element.scrollTop = scrollPositionsRef.current[scope]
@@ -1274,19 +1335,19 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
         </ArkmeWorldEmptyNotice>}
         {state.status === 'success' && <>
           {state.message !== undefined && <div role="status" style={{ ...styles.notice, ...styles.error, width: '100%', margin: 0 }}>{state.message}</div>}
-          {state.items.map(item => <WorldCard
+          {state.items.map(item => <MemoizedWorldCard
             key={item.recordRef}
             item={item}
             playable={voiceprintPlayableRefs.has(item.recordRef)}
             voiceprintActive={voiceprintRecordRef === item.recordRef}
             voiceprintLoading={voiceprintLoadingRecordRef === item.recordRef}
             interactionsOpen={interactionRecordRef === item.recordRef}
-            onOpenInteractions={onOpenInteractions}
-            onInteractionCreated={onInteractionCreated ?? (() => {})}
-            onToggleVoiceprint={onToggleVoiceprint}
-            onInviteVoiceprint={onInviteVoiceprint ?? (() => {})}
-            {...(onOpenAuthor === undefined ? {} : { onOpenAuthor })}
-            onOpenExtension={onOpenExtension}
+            onOpenInteractions={openCardInteractions}
+            onInteractionCreated={recordCardInteraction}
+            onToggleVoiceprint={toggleCardVoiceprint}
+            onInviteVoiceprint={inviteCardVoiceprint}
+            {...(onOpenAuthor === undefined ? {} : { onOpenAuthor: openCardAuthor })}
+            onOpenExtension={openCardExtension}
           />)}
           {state.hasMore && onLoadMore !== undefined && <WorldInfiniteScrollTrigger
             key={`${scope}:${String(state.nextOffset ?? 'more')}:${String(state.items.length)}`}
@@ -1575,13 +1636,11 @@ function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved
 const loadingState = (): ArkmeWorldViewState => ({ status: 'loading', items: [] })
 
 /** First-party World page owned by the same product surface as recordings. */
-function worldAuthorCardMember(item: ArkmeWorldFeedItem): ArkmeConversationMemberItem {
+function worldAuthorCardMember(item: ArkmeWorldFeedItem): ArkmeMemberProfileIdentity {
   return {
-    memberRef: item.authorRef ?? '', displayName: item.authorName,
+    displayName: item.authorName,
     ...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef }),
     ...(item.avatarFallback === undefined ? {} : { avatarFallback: item.avatarFallback }),
-    role: 'member', status: 'active', isSelf: false, isOwner: false,
-    joinedAtMillis: 0, recordCount: 0, mentionCount: 0,
   }
 }
 
@@ -1606,7 +1665,7 @@ export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSour
   const [voiceprintLoadingRecordRef, setVoiceprintLoadingRecordRef] = useState<string>()
   const [actionMessage, setActionMessage] = useState<string>()
   const [targetView, setTargetView] = useState<ArkmeWorldViewState>(() => loadingState())
-  const loadController = useRef<AbortController>()
+  const loadControllers = useRef<Partial<Record<WorldScope | 'target', AbortController>>>({})
   const audioRef = useRef<HTMLAudioElement>()
   const voiceprintControllerRef = useRef<AbortController>()
   const voiceprintAudioRefsRef = useRef(new Set<HTMLAudioElement>())
@@ -1617,14 +1676,12 @@ export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSour
   const applyViewerAuthorLabels = useCallback((labels: readonly ArkmeWorldAuthorLabel[]) => {
     const labelsByRef = new Map(labels.map(label => [label.authorRef, label.authorName]))
     if (labelsByRef.size === 0) return
-    const update = (view: ArkmeWorldViewState): ArkmeWorldViewState => ({
-      ...view,
-      items: view.items.map(item => {
-        const authorName = item.authorRef === undefined ? undefined : labelsByRef.get(item.authorRef)
-        return authorName === undefined || authorName === item.authorName ? item : { ...item, authorName }
-      }),
+    const update = (view: ArkmeWorldViewState): ArkmeWorldViewState => applyWorldAuthorLabels(view, labelsByRef)
+    setViews(current => {
+      const all = update(current.all)
+      const mine = update(current.mine)
+      return all === current.all && mine === current.mine ? current : { all, mine }
     })
-    setViews(current => ({ all: update(current.all), mine: update(current.mine) }))
     setTargetView(update)
     setAuthorCardItem(current => {
       if (current?.authorRef === undefined) return current
@@ -1665,9 +1722,9 @@ export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSour
   }
 
   const load = useCallback((target: WorldScope, offset = 0, preserveItems = false) => {
-    loadController.current?.abort()
+    loadControllers.current[target]?.abort()
     const controller = new AbortController()
-    loadController.current = controller
+    loadControllers.current[target] = controller
     setViews(current => ({
       ...current,
       [target]: offset === 0
@@ -1681,8 +1738,9 @@ export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSour
       if (controller.signal.aborted) return
       setLoaded(current => ({ ...current, [target]: true }))
       setViews(current => {
-        const items = offset === 0 ? page.items : [...current[target].items, ...page.items]
-        return { ...current, [target]: { status: items.length === 0 ? 'empty' : 'success', items, hasMore: page.hasMore, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) } }
+        const items = offset === 0 ? page.items : appendWorldFeedItems(current[target].items, page.items)
+        const hasMore = page.hasMore && page.nextOffset !== undefined && page.nextOffset > offset
+        return { ...current, [target]: { status: items.length === 0 ? 'empty' : 'success', items, hasMore, ...(hasMore ? { nextOffset: page.nextOffset } : {}) } }
       })
       hydrateViewerAuthorLabels(page.items, controller.signal)
     }).catch(error => {
@@ -1698,13 +1756,15 @@ export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSour
             : { status: 'error', items: [], message },
         }
       })
+    }).finally(() => {
+      if (loadControllers.current[target] === controller) delete loadControllers.current[target]
     })
   }, [hydrateViewerAuthorLabels])
 
   const loadUser = useCallback((profile: ArkmeWorldTarget, offset = 0, preserveItems = false) => {
-    loadController.current?.abort()
+    loadControllers.current.target?.abort()
     const controller = new AbortController()
-    loadController.current = controller
+    loadControllers.current.target = controller
     setTargetView(current => {
       const { message: _message, ...rest } = current
       return offset === 0
@@ -1717,10 +1777,13 @@ export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSour
       .then(page => {
         if (controller.signal.aborted) return
         setTargetView(current => {
-          const items = offset === 0 ? page.items : [...current.items, ...page.items]
-          return { status: items.length === 0 ? 'empty' : 'success', items, hasMore: page.hasMore, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) }
+          const items = offset === 0 ? page.items : appendWorldFeedItems(current.items, page.items)
+          const hasMore = page.hasMore && page.nextOffset !== undefined && page.nextOffset > offset
+          return { status: items.length === 0 ? 'empty' : 'success', items, hasMore, ...(hasMore ? { nextOffset: page.nextOffset } : {}) }
         })
         hydrateViewerAuthorLabels(page.items, controller.signal)
+      }).finally(() => {
+        if (loadControllers.current.target === controller) delete loadControllers.current.target
       })
       .catch(error => {
         if (controller.signal.aborted) return
@@ -1741,7 +1804,8 @@ export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSour
     loadUser(target)
   }, [loadUser, target?.userId])
   useEffect(() => () => {
-    loadController.current?.abort()
+    for (const controller of Object.values(loadControllers.current)) controller?.abort()
+    loadControllers.current = {}
     voiceprintTokenRef.current += 1
     inviteLoadTokenRef.current += 1
     voiceprintControllerRef.current?.abort()
@@ -1790,10 +1854,11 @@ export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSour
     setInteractionRecordRef(current => current === item.recordRef ? undefined : item.recordRef)
   }
   const recordInteractionCreated = (recordRef: string) => {
-    const update = (view: ArkmeWorldViewState): ArkmeWorldViewState => ({
-      ...view,
-      items: view.items.map(item => item.recordRef === recordRef ? { ...item, extendCount: item.extendCount + 1 } : item),
-    })
+    const update = (view: ArkmeWorldViewState): ArkmeWorldViewState => updateWorldViewItem(
+      view,
+      recordRef,
+      item => ({ ...item, extendCount: item.extendCount + 1 }),
+    )
     setViews(current => ({ all: update(current.all), mine: update(current.mine) }))
     setTargetView(update)
   }

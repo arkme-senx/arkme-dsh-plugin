@@ -251,6 +251,7 @@ export function ArkmeSearchSurface({
   const [resolvedAssetUids, setResolvedAssetUids] = useState<Set<string>>(() => new Set())
   const [preview, setPreview] = useState<Preview>()
   const [loading, setLoading] = useState(false)
+  const [searchLoading, setSearchLoading] = useState({ records: false, recordings: false, dsh: false })
   const [sourceLoading, setSourceLoading] = useState(false)
   const [recordError, setRecordError] = useState('')
   const [recordingError, setRecordingError] = useState('')
@@ -258,39 +259,61 @@ export function ArkmeSearchSurface({
   const requestId = useRef(0)
   const quickRef = useRef<QuickKey>()
   const searchAbort = useRef<AbortController>()
+  const sourceSearchAbort = useRef<AbortController>()
+  const sourceSearchRevision = useRef(0)
   const quickRequestAbort = useRef<AbortController>()
   const imageLoadMoreSentinel = useRef<HTMLDivElement>(null)
   const quickScroll = useRef<HTMLElement>(null)
   const imageLoadMoreInFlight = useRef(false)
 
   useEffect(() => { void callArkme<ArkmeSearchHistoryResult>('search.history', { limit: 10 }).then(value => setHistory(value.items.map(item => item.keyword))).catch(() => undefined) }, [])
-  const resetResults = useCallback(() => { searchAbort.current?.abort(); searchAbort.current = undefined; requestId.current += 1; setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setSourceLoading(false) }, [])
+  const resetResults = useCallback(() => { searchAbort.current?.abort(); searchAbort.current = undefined; sourceSearchAbort.current?.abort(); sourceSearchAbort.current = undefined; sourceSearchRevision.current += 1; requestId.current += 1; setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setSearchLoading({ records: false, recordings: false, dsh: false }); setSourceLoading(false) }, [])
 
   const runSearch = useCallback(async (raw: string) => {
     const keyword = raw.trim()
     if (keyword === '') { resetResults(); return }
     const id = ++requestId.current
     searchAbort.current?.abort()
+    sourceSearchAbort.current?.abort()
+    sourceSearchAbort.current = undefined
+    sourceSearchRevision.current += 1
     const controller = new AbortController()
     searchAbort.current = controller
-    setLoading(true); setRecordError(''); setRecordingError(''); setDshError('')
-    const [recordResult, recordingResult, dshResult] = await Promise.allSettled([
-      callArkme<ArkmeRecordSearchResult>('search.records', { query: keyword, limit: 50 }, controller.signal),
-      quickRef.current !== undefined ? Promise.resolve(undefined) : callArkme<ArkmeRecordingSearchResult>('search.recordings', { query: keyword, limit: 50 }, controller.signal),
-      quickRef.current !== undefined || searchDshMessages === undefined ? Promise.resolve(undefined) : searchDshMessages(keyword, controller.signal),
-    ])
-    if (id !== requestId.current || controller.signal.aborted) return
-    const nextRecords = recordResult.status === 'fulfilled' ? recordResult.value : undefined
-    setRecords(nextRecords)
-    setRecordings(recordingResult.status === 'fulfilled' ? recordingResult.value : undefined)
-    setRecordingError(recordingResult.status === 'rejected' ? errorMessage(recordingResult.reason) : '')
-    setRecordError(recordResult.status === 'rejected' ? errorMessage(recordResult.reason) : '')
-    setDshMessages(dshResult.status === 'fulfilled' ? dshResult.value : undefined)
-    setDshError(dshResult.status === 'rejected' ? errorMessage(dshResult.reason) : '')
-    const firstSource = nextRecords?.sourceAggregates[0]
-    setSelectedSourceUid(firstSource?.sourceUid ?? '')
-    setSourceRecords(firstSource === undefined ? [] : nextRecords?.items.filter(item => item.sourceUid === firstSource.sourceUid) ?? [])
-    setLoading(false)
+    const includeCompanionDomains = quickRef.current === undefined
+    const includeDsh = includeCompanionDomains && searchDshMessages !== undefined
+    const active = () => id === requestId.current && !controller.signal.aborted
+    const finish = (domain: 'records' | 'recordings' | 'dsh') => {
+      if (!active()) return
+      setSearchLoading(current => current[domain] ? { ...current, [domain]: false } : current)
+    }
+    setSearchLoading({ records: true, recordings: includeCompanionDomains, dsh: includeDsh })
+    setRecordError(''); setRecordingError(''); setDshError('')
+    const recordRequest = callArkme<ArkmeRecordSearchResult>(
+      'search.records', { query: keyword, limit: 50 }, controller.signal,
+    ).then(nextRecords => {
+      if (!active()) return
+      setRecords(nextRecords)
+      const firstSource = nextRecords.sourceAggregates[0]
+      setSelectedSourceUid(firstSource?.sourceUid ?? '')
+      setSourceRecords(firstSource === undefined ? [] : nextRecords.items.filter(item => item.sourceUid === firstSource.sourceUid))
+    }).catch(caught => {
+      if (active()) setRecordError(errorMessage(caught))
+    }).finally(() => { finish('records') })
+    const recordingRequest = includeCompanionDomains
+      ? callArkme<ArkmeRecordingSearchResult>(
+          'search.recordings', { query: keyword, limit: 50 }, controller.signal,
+        ).then(nextRecordings => { if (active()) setRecordings(nextRecordings) })
+          .catch(caught => { if (active()) setRecordingError(errorMessage(caught)) })
+          .finally(() => { finish('recordings') })
+      : Promise.resolve()
+    const dshRequest = includeDsh
+      ? Promise.resolve().then(async () => await searchDshMessages(keyword, controller.signal))
+          .then(nextDshMessages => { if (active()) setDshMessages(nextDshMessages) })
+          .catch(caught => { if (active()) setDshError(errorMessage(caught)) })
+          .finally(() => { finish('dsh') })
+      : Promise.resolve()
+    await Promise.allSettled([recordRequest, recordingRequest, dshRequest])
+    if (!active()) return
     if (searchAbort.current === controller) searchAbort.current = undefined
     void callArkme('search.history.create', { query: keyword }).catch(() => undefined)
     setHistory(current => [keyword, ...current.filter(value => value !== keyword)].slice(0, 10))
@@ -303,13 +326,21 @@ export function ArkmeSearchSurface({
     const cached = (records?.items ?? []).filter(item => item.sourceUid === sourceUid)
     setSourceRecords(cached)
     setSourceLoading(true)
+    sourceSearchAbort.current?.abort()
+    const controller = new AbortController()
+    sourceSearchAbort.current = controller
+    const revision = ++sourceSearchRevision.current
     try {
       const result = await callArkme<ArkmeRecordSearchResult>('search.records', {
         query: keyword, limit: 50, sourceUid, searchScope: sourceKind === 2 ? 'topic' : 'chat_session',
-      })
-      setSourceRecords(result.items)
-    } catch (caught) { setRecordError(errorMessage(caught)) }
-    finally { setSourceLoading(false) }
+      }, controller.signal)
+      if (!controller.signal.aborted && revision === sourceSearchRevision.current) setSourceRecords(result.items)
+    } catch (caught) {
+      if (!controller.signal.aborted && revision === sourceSearchRevision.current) setRecordError(errorMessage(caught))
+    } finally {
+      if (sourceSearchAbort.current === controller) sourceSearchAbort.current = undefined
+      if (revision === sourceSearchRevision.current) setSourceLoading(false)
+    }
   }, [query, records])
 
   useEffect(() => { if (quickRef.current === 'file') return; if (query.trim() === '') { resetResults(); return }; const timer = window.setTimeout(() => { void runSearch(query) }, 300); return () => window.clearTimeout(timer) }, [query, resetResults, runSearch])
@@ -322,7 +353,7 @@ export function ArkmeSearchSurface({
     const hasCachedPage = value === 'image' ? images !== undefined : value === 'ai_video' ? videos !== undefined : audioRecords !== undefined
     const id = ++requestId.current
     quickRef.current = value
-    setQuick(value); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError('')
+    setQuick(value); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setSearchLoading({ records: false, recordings: false, dsh: false })
     if (value === 'file' || hasCachedPage) { setLoading(false); return }
     const controller = new AbortController()
     quickRequestAbort.current = controller
@@ -374,8 +405,8 @@ export function ArkmeSearchSurface({
     return () => observer.disconnect()
   }, [imageCursor, imageHasMore, loadMoreImages, loading, query, quick, recordError, variant])
 
-  const leaveQuick = useCallback(() => { quickRequestAbort.current?.abort(); quickRequestAbort.current = undefined; searchAbort.current?.abort(); searchAbort.current = undefined; requestId.current += 1; quickRef.current = undefined; setQuick(undefined); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setAudioRecords(undefined); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setLoadingMore(false) }, [])
-  useEffect(() => () => { quickRequestAbort.current?.abort(); searchAbort.current?.abort() }, [])
+  const leaveQuick = useCallback(() => { quickRequestAbort.current?.abort(); quickRequestAbort.current = undefined; searchAbort.current?.abort(); searchAbort.current = undefined; sourceSearchAbort.current?.abort(); sourceSearchAbort.current = undefined; sourceSearchRevision.current += 1; requestId.current += 1; quickRef.current = undefined; setQuick(undefined); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setAudioRecords(undefined); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setSearchLoading({ records: false, recordings: false, dsh: false }); setLoadingMore(false) }, [])
+  useEffect(() => () => { quickRequestAbort.current?.abort(); searchAbort.current?.abort(); sourceSearchAbort.current?.abort() }, [])
   useEffect(() => {
     const videoAssets = (videos ?? []).flatMap(item => [item.coverAssetUid, item.videoAssetUid]).filter((value): value is string => value !== undefined)
     const audioAssets = (audioRecords ?? []).flatMap(item => item.voice === undefined || item.voice.mediaRef !== undefined ? [] : [item.voice.fileAssetUid])
@@ -439,15 +470,18 @@ export function ArkmeSearchSurface({
       >{label}{resultTab === key && <span style={styles.resultIndicator} />}</button>)}
     </nav>
     <div style={{ ...styles.resultFrame, ...(variant === 'dialog' ? { flex: 1 } : {}) }}>
-      {loading ? <Status loading /> : resultTab === 'records' ? <div style={{ height: '100%', overflowY: 'auto' }} aria-label="快记搜索结果">
+      {resultTab === 'records' ? <div style={{ height: '100%', overflowY: 'auto' }} aria-label="快记搜索结果">
+        {searchLoading.records && <div style={styles.status} role="status" aria-label="正在搜索快记">正在更新快记结果…</div>}
         <h3 style={styles.resultHeader}>{String(records?.itemCount ?? recordItems.length)}个关联快记</h3>
-        {recordError !== '' ? <div style={styles.error}>快记暂不可用：{recordError}</div>
-          : recordItems.length > 0 ? <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} />)}</div>
-            : <Status loading={false} empty />}
+        {recordError !== '' && <div style={styles.error}>快记暂不可用：{recordError}</div>}
+        {recordItems.length > 0 ? <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} />)}</div>
+          : !searchLoading.records && <Status loading={false} empty />}
       </div> : resultTab === 'topics' ? <div style={styles.sourceLayout} aria-label="主题搜索结果">
         <div style={styles.sourceList}>
+          {searchLoading.records && <div style={styles.status} role="status" aria-label="正在搜索主题">正在更新主题结果…</div>}
           <h3 style={styles.resultHeader}>{String(sourceItems.length)}个关联主题</h3>
-          {recordError !== '' ? <div style={styles.error}>主题暂不可用：{recordError}</div> : sourceItems.length === 0 ? <Status loading={false} empty /> : sourceItems.map(item => {
+          {recordError !== '' && <div style={styles.error}>主题暂不可用：{recordError}</div>}
+          {sourceItems.length === 0 ? !searchLoading.records && <Status loading={false} empty /> : sourceItems.map(item => {
             const active = selectedSourceUid === item.sourceUid
             return <button key={`${String(item.sourceKind)}:${item.sourceUid}`} type="button" style={{ ...styles.sourceRow, ...(active ? styles.sourceRowActive : {}) }} onClick={() => { void chooseSource(item.sourceUid, item.sourceKind) }}>
               {active && <span style={styles.sourceMarker} />}
@@ -464,15 +498,17 @@ export function ArkmeSearchSurface({
                 : <Status loading={false} empty />}
         </div>
       </div> : resultTab === 'recordings' ? <div style={{ height: '100%', overflowY: 'auto' }} aria-label="录音转写搜索结果">
+        {searchLoading.recordings && <div style={styles.status} role="status" aria-label="正在搜索录音·转写">正在更新录音·转写结果…</div>}
         <h3 style={styles.resultHeader}>{String(recordingItems.length)}个关联录音</h3>
-        {recordingError !== '' ? <div style={styles.error}>录音·转写暂不可用：{recordingError}</div>
-          : recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingRow key={`${item.sessionId}:${String(item.startAtMillis)}`} item={item} />)}</div>
-            : <Status loading={false} empty />}
+        {recordingError !== '' && <div style={styles.error}>录音·转写暂不可用：{recordingError}</div>}
+        {recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingRow key={`${item.sessionId}:${String(item.startAtMillis)}`} item={item} />)}</div>
+          : !searchLoading.recordings && <Status loading={false} empty />}
       </div> : <div style={{ height: '100%', overflowY: 'auto' }} aria-label="DSH 搜索结果">
+        {searchLoading.dsh && <div style={styles.status} role="status" aria-label="正在搜索 DSH">正在更新 DSH 结果…</div>}
         <h3 style={styles.resultHeader}>{String(dshItems.length)}个关联DSH任务</h3>
-        {dshError !== '' ? <div style={styles.error}>DSH 任务暂不可用：{dshError}</div>
-          : dshItems.length > 0 ? <div style={styles.list}>{dshItems.map(item => <DshMessageRow key={item.sessionId} item={item} onClick={() => onOpenDshSession?.(item.sessionId)} />)}</div>
-            : <Status loading={false} empty />}
+        {dshError !== '' && <div style={styles.error}>DSH 任务暂不可用：{dshError}</div>}
+        {dshItems.length > 0 ? <div style={styles.list}>{dshItems.map(item => <DshMessageRow key={item.sessionId} item={item} onClick={() => onOpenDshSession?.(item.sessionId)} />)}</div>
+          : !searchLoading.dsh && <Status loading={false} empty />}
       </div>}
     </div>
   </>
@@ -511,7 +547,7 @@ export function ArkmeSearchSurface({
           })}
         </div>
       </header>
-      <main key={quick} ref={quickScroll} aria-label="快速查找内容" tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{quick === 'file' ? <ArkmeFileQuickView query={query} onOpenRecord={openRecord} /> : hasQuery ? <>{loading ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} />)}</div>}</> : quickBody}</main>
+      <main key={quick} ref={quickScroll} aria-label="快速查找内容" tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{quick === 'file' ? <ArkmeFileQuickView query={query} onOpenRecord={openRecord} /> : hasQuery ? <>{searchLoading.records ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} />)}</div>}</> : quickBody}</main>
     </div>}
     {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}>{preview.subtitle}</span>}<button type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>关闭</button></div></div>}
   </div>

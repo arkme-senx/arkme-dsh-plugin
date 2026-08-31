@@ -2,6 +2,51 @@ import { describe, expect, it, vi } from 'vitest'
 import { ArkmeUiController } from '../src/client/ui-controller.js'
 
 describe('ArkmeUiController', () => {
+  it('keeps the view snapshot stable across projection-only invalidations', () => {
+    const controller = new ArkmeUiController()
+    const initial = controller.getViewSnapshot()
+
+    controller.chatChanged()
+    controller.recordChanged()
+
+    expect(controller.getViewSnapshot()).toBe(initial)
+    expect(controller.getChatRevision()).toBe(1)
+    expect(controller.getRecordRevision()).toBe(1)
+
+    controller.showWorld()
+    expect(controller.getViewSnapshot()).not.toBe(initial)
+    expect(controller.getViewSnapshot().mode).toBe('world')
+  })
+
+  it('publishes directory activity projection changes to the active conversation', () => {
+    const controller = new ArkmeUiController()
+    const listener = vi.fn()
+    controller.subscribe(listener)
+    const source = {
+      sourceRef: 'source-1', kind: 'group_chat' as const, displayName: '项目群',
+      latestPreview: '上一条', activeAtMillis: 1, unreadCount: 0, latestSequence: 8,
+    }
+    controller.selectSource(source)
+    listener.mockClear()
+
+    controller.selectSource({
+      ...source,
+      latestPreview: '刚发送的消息',
+      activeAtMillis: 2,
+      latestSequence: 9,
+    })
+
+    expect(listener).toHaveBeenCalledOnce()
+    expect(controller.getSnapshot().selectedSource).toMatchObject({
+      latestPreview: '刚发送的消息', activeAtMillis: 2, latestSequence: 9,
+    })
+
+    listener.mockClear()
+    controller.selectSource({ ...source, displayName: '已重命名的项目群' })
+    expect(listener).toHaveBeenCalledOnce()
+    expect(controller.getSnapshot().selectedSource?.displayName).toBe('已重命名的项目群')
+  })
+
   it('clears Contacts mode on every non-Contacts route and authenticated account reset', () => {
     const controller = new ArkmeUiController()
 

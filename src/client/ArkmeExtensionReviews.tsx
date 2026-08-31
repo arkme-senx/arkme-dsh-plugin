@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type {
   ArkmeExtensionRatingSummary,
@@ -115,6 +115,32 @@ export function extensionReviewTree(items: readonly ArkmeExtensionReviewItem[]):
     else parent.children.push(node)
   }
   return roots
+}
+
+export function applyCreatedExtensionReview(
+  current: ArkmeExtensionReviewPage | undefined,
+  result: ArkmeExtensionReviewCreateResult,
+): ArkmeExtensionReviewPage {
+  if (current === undefined) {
+    return {
+      items: [result.review], total: 1, limit: 20, offset: 0, hasMore: false,
+      ratingSummary: result.ratingSummary,
+    }
+  }
+  const existingIndex = current.items.findIndex(item => item.reviewRef === result.review.reviewRef)
+  const items = existingIndex >= 0
+    ? current.items.map((item, index) => index === existingIndex ? result.review : item)
+    : result.review.parentReviewRef === undefined
+      ? [result.review, ...current.items]
+      : [...current.items, result.review]
+  return {
+    ...current,
+    items,
+    total: current.total + (existingIndex < 0
+      && result.review.parentReviewRef === undefined
+      && result.idempotentReplay !== true ? 1 : 0),
+    ratingSummary: result.ratingSummary,
+  }
 }
 
 export function extensionReviewReplyCount(node: ArkmeExtensionReviewTreeNode): number {
@@ -447,32 +473,56 @@ export function ArkmeExtensionReviews({
   })
   const [replyComposer, setReplyComposer] = useState<ArkmeExtensionReviewComposerState>()
   const [submitting, setSubmitting] = useState(false)
+  const extensionRevisionRef = useRef(0)
+  const listControllerRef = useRef<AbortController>()
+  const locallyCreatedReviewsRef = useRef(new Map<string, ArkmeExtensionReviewCreateResult>())
   const tree = useMemo(() => extensionReviewTree(page?.items ?? []), [page?.items])
   const summary = page?.ratingSummary ?? initialRatingSummary
   const composerMode = extensionReviewComposerMode(canCreateTopLevelReview, replyComposer !== undefined)
 
   const load = async (offset = 0) => {
+    const revision = extensionRevisionRef.current
+    const controller = new AbortController()
+    listControllerRef.current?.abort()
+    listControllerRef.current = controller
     if (offset === 0) setLoading(true)
     else setLoadingMore(true)
     setError('')
     try {
-      const next = await callArkme<ArkmeExtensionReviewPage>('extensions.reviews.list', { extensionId, limit: 20, offset })
-      setPage(current => offset === 0 || current === undefined ? next : {
-        ...next,
-        items: [...current.items, ...next.items.filter(item => !current.items.some(existing => existing.reviewRef === item.reviewRef))],
+      const next = await callArkme<ArkmeExtensionReviewPage>(
+        'extensions.reviews.list', { extensionId, limit: 20, offset }, controller.signal,
+      )
+      if (controller.signal.aborted || revision !== extensionRevisionRef.current) return
+      const withLocalCreates = [...locallyCreatedReviewsRef.current.values()]
+        .reduce((current, result) => applyCreatedExtensionReview(current, result), next)
+      setPage(current => offset === 0 || current === undefined ? withLocalCreates : {
+        ...withLocalCreates,
+        items: [...current.items, ...withLocalCreates.items.filter(item => !current.items.some(existing => existing.reviewRef === item.reviewRef))],
       })
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      if (!controller.signal.aborted && revision === extensionRevisionRef.current) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
     } finally {
-      setLoading(false)
-      setLoadingMore(false)
+      if (listControllerRef.current === controller) listControllerRef.current = undefined
+      if (revision === extensionRevisionRef.current) {
+        setLoading(false)
+        setLoadingMore(false)
+      }
     }
   }
 
   useEffect(() => {
+    extensionRevisionRef.current += 1
+    listControllerRef.current?.abort()
+    listControllerRef.current = undefined
+    locallyCreatedReviewsRef.current.clear()
+    setPage(initialPage)
+    setLoading(initialPage === undefined)
     setTopLevelComposer({ textContent: '', rating: 0, clientMutationId: '', error: '' })
     setReplyComposer(undefined)
     if (initialPage === undefined) void load()
+    return () => { listControllerRef.current?.abort() }
   }, [extensionId])
   useEffect(() => {
     if (canCreateTopLevelReview) return
@@ -509,19 +559,23 @@ export function ArkmeExtensionReviews({
     if (kind === 'top-level') setTopLevelComposer(prepared)
     else setReplyComposer(prepared)
     setSubmitting(true)
+    const revision = extensionRevisionRef.current
     try {
-      await callArkme<ArkmeExtensionReviewCreateResult>('extensions.reviews.create', {
+      const result = await callArkme<ArkmeExtensionReviewCreateResult>('extensions.reviews.create', {
         ...extensionReviewCreateParams(extensionId, prepared),
       })
+      if (revision !== extensionRevisionRef.current) return
+      locallyCreatedReviewsRef.current.set(result.review.reviewRef, result)
+      setPage(currentPage => applyCreatedExtensionReview(currentPage, result))
       if (kind === 'top-level') setTopLevelComposer({ textContent: '', rating: 0, clientMutationId: '', error: '' })
       else setReplyComposer(undefined)
-      await load()
     } catch (caught) {
+      if (revision !== extensionRevisionRef.current) return
       const message = caught instanceof Error ? caught.message : String(caught)
       if (kind === 'top-level') setTopLevelComposer(value => ({ ...value, error: message }))
       else setReplyComposer(value => value === undefined ? value : { ...value, error: message })
     } finally {
-      setSubmitting(false)
+      if (revision === extensionRevisionRef.current) setSubmitting(false)
     }
   }
 
