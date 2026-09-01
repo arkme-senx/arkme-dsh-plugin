@@ -1355,15 +1355,11 @@ export class ChatService {
       throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
     }
     const rawMembers = await this.rawChatMembers(source.ownerRef, true, session, options.signal)
-    const rawMember = rawMembers.find(item => Math.trunc(numberValue(item.user_id)) === reference.targetUserId)
-    if (rawMember === undefined) {
+    const memberIsActive = rawMembers.some(item => Math.trunc(numberValue(item.user_id)) === reference.targetUserId)
+    if (!memberIsActive) {
       throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
     }
-    const displayName = stringValue(rawMember.remark).trim()
-      || stringValue(rawMember.display_name_snapshot).trim()
-      || '群成员'
     return await this.openPrivateChatFromUser(reference.targetUserId, {
-      displayName,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
   }
@@ -1380,7 +1376,8 @@ export class ChatService {
       throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
     }
     const profile = (await this.profile.publicProfileSummariesByUserIds([peerUserId], session, options.signal).catch(() => new Map())).get(peerUserId)
-    const displayName = options.displayName?.trim() || profile?.displayName || '群成员'
+    const persistedDisplayName = options.displayName?.trim() || profile?.displayName.trim() || ''
+    const displayName = persistedDisplayName || '群成员'
     const ownerSnapshot = (await this.runtime.stateStore.cachedProfile(session.userId).catch(() => undefined))?.profile?.displayName
       ?? ''
     const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
@@ -1388,10 +1385,10 @@ export class ChatService {
       {
         chat_session_uid: `chat_session_${randomUUID()}`,
         peer_user_id: peerUserId,
-        title: displayName,
+        ...(persistedDisplayName === '' ? {} : { title: persistedDisplayName }),
         create_at: Date.now(),
         owner_display_name_snapshot: ownerSnapshot,
-        peer_display_name_snapshot: displayName,
+        ...(persistedDisplayName === '' ? {} : { peer_display_name_snapshot: persistedDisplayName }),
         extra: { source: 'dsh_arkme_user_card', client: 'deepseek_harness' },
       },
       session,
