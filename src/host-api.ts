@@ -197,6 +197,12 @@ function directoryLimitParam(params: Record<string, unknown>, fallback = 30): nu
   return Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', fallback))))
 }
 
+function recordingSpeakerScopeParam(params: Record<string, unknown>): 'item' | 'speaker' {
+  const scope = stringParam(params, 'scope')
+  if (scope === 'item' || scope === 'speaker') return scope
+  throw new ArkmePluginError('recording-speaker-scope-invalid', '说话人修改范围无效', false, 400)
+}
+
 function unmarkedSpeakerMarkInputParam(params: Record<string, unknown>): {
   candidateRef: string
   candidateVersion: string
@@ -765,7 +771,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (request.operation === 'link.metadata' && origin === undefined) {
         throw new ArkmePluginError('origin-required', '网址名称解析必须从当前 DSH 页面发起', false, 403)
       }
-      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward']
+      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.speaker.assign-item']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -999,10 +1005,37 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'botRef').trim(), booleanParam(params, 'muted'), requestSignal === undefined ? {} : { signal: requestSignal },
     )
     case 'recordings.calendar': return await service.recordingCalendar(
-      numberParam(params, 'fromStamp', 0),
-      numberParam(params, 'toStamp', 0),
+      numberParam(params, 'fromStamp', Number.NaN),
+      numberParam(params, 'toStamp', Number.NaN),
+      requestSignal,
     )
-    case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
+    case 'recordings.day': return await service.recordingDay(
+      numberParam(params, 'dateStamp', Number.NaN),
+      requestSignal,
+    )
+    case 'recordings.import.preflight': return await service.recordingImportPreflight(
+      stringListParam(params, 'fileNames'), requestSignal,
+    )
+    case 'recordings.import.list': return await service.recordingImportList()
+    case 'recordings.import.status': return await service.recordingImportStatus(stringParam(params, 'importRef').trim())
+    case 'recordings.import.retry': return await service.retryRecordingImport(
+      stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)),
+    )
+    case 'recordings.import.cancel': return await service.cancelRecordingImport(
+      stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)),
+    )
+    case 'recordings.playback.open': return await service.recordingPlayback(
+      stringParam(params, 'itemRef').trim(), requestSignal,
+    )
+    case 'recordings.speaker.options': return await service.recordingSpeakerOptions(
+      stringParam(params, 'itemRef').trim(), requestSignal,
+    )
+    case 'recordings.speaker.assign-item': return await service.assignRecordingSpeaker({
+      itemRef: stringParam(params, 'itemRef').trim(),
+      ...(stringParam(params, 'speakerRef').trim() === '' ? {} : { speakerRef: stringParam(params, 'speakerRef').trim() }),
+      ...(stringParam(params, 'newSpeakerName').trim() === '' ? {} : { newSpeakerName: stringParam(params, 'newSpeakerName').trim() }),
+      scope: recordingSpeakerScopeParam(params),
+    }, requestSignal)
     case 'calendar.buckets': return await service.calendarBuckets({
       startDate: stringParam(params, 'startDate'),
       endDate: stringParam(params, 'endDate'),

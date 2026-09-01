@@ -483,6 +483,34 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('loads the desktop 1970-01 lower-bound calendar and day transcript', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const lowerBound = new Date(1970, 0, 1).getTime()
+    const bodies: Record<string, unknown>[] = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      bodies.push(body)
+      const url = String(input)
+      if (url.endsWith('/api/v1/audio/get-calender-summary')) {
+        return json({ code: 200, data: { duration_ls: [], un_click_session_ids_per_day: [] } })
+      }
+      if (url.endsWith('/api/v1/audio/one-day-trans')) {
+        return json({ code: 200, data: { session_ls: [], child_ls: [] } })
+      }
+      if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
+        return json({ code: 200, data: { spk_ls: [] } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.recordingCalendar(lowerBound, lowerBound + 24 * 60 * 60 * 1_000))
+      .resolves.toMatchObject({ fromStamp: lowerBound, days: [] })
+    await expect(service.recordingTranscript(lowerBound)).resolves.toMatchObject({ state: 'empty', items: [] })
+    expect(bodies).toContainEqual({ from_stamp: lowerBound, to_stamp: lowerBound + 24 * 60 * 60 * 1_000 })
+    expect(bodies).toContainEqual({ start_at: lowerBound, tz_offset: -new Date(lowerBound).getTimezoneOffset() * 60_000 })
+  })
+
   it('reads record calendar buckets and day records from the Record origin', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -662,7 +690,7 @@ describe('ArkmeService', () => {
           session_ls: [{ id: 'session-1', start_at: dayStamp + 1_000, duration: 6_000, belong_usr: 10001,
             spk_ls: [{ num: 1, spk_id: 'speaker-1' }] }],
           child_ls: [{ id: 'child-1', session_id: 'session-1', start_at: 500,
-            asr: [{ s: 100, e: 800, n: 1, t: '今天很顺利', effective_spk_id: 'speaker-1', b: 0 }] }],
+            asr: [{ s: 100, e: 800, n: 1, t: '今天很顺利', b: 0 }] }],
         } })
       }
       if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
@@ -766,15 +794,19 @@ describe('ArkmeService', () => {
         session_ls: [{ id: 'session-1', start_at: dayStamp, duration: 2_000,
           spk_ls: [{ num: 6, spk_id: 'speaker-6' }] }],
         child_ls: [{ id: 'child-1', session_id: 'session-1', start_at: 0,
-          asr: [{ s: 100, e: 900, n: 6, t: '继续讨论', effective_spk_id: 'speaker-6' }] }],
+          asr: [{ s: 100, e: 900, n: 6, t: '继续讨论' }] }],
       } })
     })
 
-    await expect(service.recordingTranscript(dayStamp)).resolves.toMatchObject({
+    const transcript = await service.recordingTranscript(dayStamp)
+    expect(transcript).toMatchObject({
       state: 'ready',
       identityCoverage: 'partial',
       items: [{ speakerLabel: '说话人 6', text: '继续讨论' }],
     })
+    expect(transcript.items[0]).not.toHaveProperty('speakerIdentity')
+    expect(transcript.items[0]).not.toHaveProperty('formalSpeakerId')
+    expect(transcript.items[0]).not.toHaveProperty('assignmentSpeakerNumber')
   })
 
   it('seals recording pagination cursors to the signed-in account and rejects tampering', async () => {
@@ -906,7 +938,10 @@ describe('ArkmeService', () => {
       jiwoScanLoginEnabled: false,
       callAssetBasePath: '/arkme-self/api/call',
       voiceprintEnrollmentPath: '/arkme-self/api/voiceprint/enroll',
+      recordingImportPath: '/arkme-self/api/recording/import',
+      mediaPath: '/arkme-self/api/media',
       shareWebsite: 'https://app.arkme.ai',
+      recordingWorkbenchEnabled: true,
     })
   })
 

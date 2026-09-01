@@ -30,7 +30,10 @@ export interface ArkmeClientConfig {
   jiwoScanLoginEnabled: boolean
   callAssetBasePath: string
   voiceprintEnrollmentPath: string
+  recordingImportPath: string
+  mediaPath: string
   shareWebsite: string
+  recordingWorkbenchEnabled: boolean
 }
 
 export type ArkmeBillingPaymentMethod = 'alipay_pc_web' | 'wechat_native'
@@ -2240,6 +2243,46 @@ export interface ArkmeRecordingTranscriptItem {
   text: string
 }
 
+/** Browser-safe day projection. Audio owner ids remain sealed in itemRef. */
+export interface ArkmeRecordingWorkbenchItem {
+  itemId: string
+  itemRef: string
+  startAtMillis: number
+  endAtMillis: number
+  speakerNumber: number
+  speakerKey: string
+  speakerColorIndex: number
+  speakerLabel: string
+  speakerAvatarRef?: string
+  sameSpeakerItemCount: number
+  isSelf: boolean
+  isBackground: boolean
+  text: string
+}
+
+export interface ArkmeRecordingPlayback {
+  playbackRef: string
+  mimeType: string
+  startOffsetMillis: number
+  endOffsetMillis: number
+}
+
+export interface ArkmeRecordingSpeakerOption {
+  speakerRef: string
+  label: string
+  avatarRef?: string
+  kind: 'arkme-user' | 'speaker'
+  currentAssignment: boolean
+  isCurrentUser: boolean
+  recommended: boolean
+}
+
+export interface ArkmeRecordingSpeakerMutationResult {
+  scope: 'item' | 'speaker'
+  affectedCount: number
+  day: ArkmeRecordingDay
+}
+
 export interface ArkmeRecordingTimelineEvent {
   eventId: string
   startAt: string
@@ -2276,15 +2319,16 @@ export interface ArkmeRecordingSection<T> {
   message: string
 }
 
-export interface ArkmeRecordingTranscriptSection extends ArkmeRecordingSection<ArkmeRecordingTranscriptItem> {
+export interface ArkmeRecordingTranscriptSection<T = ArkmeRecordingTranscriptItem> extends ArkmeRecordingSection<T> {
   identityCoverage?: 'complete' | 'partial'
   totalDurationMillis: number
+  processingCount: number
 }
 
 export interface ArkmeRecordingDay {
   dateStamp: number
   totalDurationMillis: number
-  transcript: ArkmeRecordingSection<ArkmeRecordingTranscriptItem>
+  transcript: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
   summary: ArkmeRecordingSection<ArkmeRecordingVersion>
   timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
 }
@@ -2976,6 +3020,14 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'dsh-beta-community.join'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'recordings.import.preflight'
+  | 'recordings.import.list'
+  | 'recordings.import.status'
+  | 'recordings.import.retry'
+  | 'recordings.import.cancel'
+  | 'recordings.playback.open'
+  | 'recordings.speaker.options'
+  | 'recordings.speaker.assign-item'
   | 'search.records'
   | 'search.scene'
   | 'search.recordings'

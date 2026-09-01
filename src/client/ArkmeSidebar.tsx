@@ -5372,7 +5372,7 @@ export function ArkmeSurface({
           onJiwoLogin={() => { void beginJiwo() }}
           onCancelBinding={() => { void cancelBinding() }}
         /></div> : ui.mode === 'calls' ? <ArkmeCallSurface />
-          : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
+          : ui.mode === 'recordings' ? <ArkmeRecordingSurface key={`recordings:${auth?.status ?? 'unknown'}:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`} />
           : ui.mode === 'world' ? <ArkmeWorldSurface
             {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}
             {...(currentSessionId === undefined ? {} : { currentSessionId })}

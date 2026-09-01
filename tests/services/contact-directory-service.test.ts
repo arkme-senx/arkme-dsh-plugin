@@ -272,6 +272,45 @@ describe('ContactDirectoryService', () => {
     )
   })
 
+  it('provides current-user and contact identities to the recording speaker candidate interface', async () => {
+    const { service, profile } = fixture({
+      contacts: {
+        items: [
+          { chat_session_uid: 'chat-self', user_id: 7, remark: '不应重复的自己', contact_state: 1 },
+          { chat_session_uid: 'chat-101', user_id: 101, remark: '老张', contact_state: 1 },
+          { chat_session_uid: 'chat-102', user_id: 102, remark: '', display_name: '快照名', contact_state: 1 },
+        ],
+        total: 3,
+        has_more: false,
+      },
+      profiles: new Map([
+        [7, { userId: 7, displayName: '当前用户', nickname: '我', avatarUrl: 'private-current-avatar' }],
+        [101, { userId: 101, displayName: '张三', nickname: '张三', avatarUrl: 'private-contact-avatar' }],
+        [102, { userId: 102, displayName: '', nickname: '', accountName: 'contact-102' }],
+      ]),
+    })
+    const controller = new AbortController()
+
+    await expect(service.listRecordingSpeakerUsers(session, controller.signal)).resolves.toEqual([
+      { userId: 7, label: '当前用户', avatarRef: 'avatar-ref-7' },
+      { userId: 101, label: '老张', avatarRef: 'avatar-ref-101' },
+      { userId: 102, label: 'contact-102' },
+    ])
+    expect(profile.publicProfileSummariesByUserIds).toHaveBeenCalledWith(
+      [7, 101, 102], session, controller.signal,
+    )
+    expect(profile.sealProfileImageRef).toHaveBeenCalledWith(7, 7)
+    expect(profile.sealProfileImageRef).toHaveBeenCalledWith(7, 101)
+  })
+
+  it('keeps the current account selectable when its public profile is temporarily unavailable', async () => {
+    const { service } = fixture()
+
+    await expect(service.listRecordingSpeakerUsers(session)).resolves.toEqual([
+      { userId: 7, label: '我' },
+    ])
+  })
+
   it('merges every base and direct-person page without duplicating contacts or admitting Bot identities', async () => {
     const profiles = new Map<number, Record<string, unknown>>([
       [101, { userId: 101, displayName: '张三', nickname: '张三', accountName: 'zhang-san' }],

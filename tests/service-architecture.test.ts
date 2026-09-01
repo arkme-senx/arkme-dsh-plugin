@@ -24,7 +24,10 @@ const expectedPublicMethods = [
   'listDirectory', 'directoryContactProfile', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
-  'sealRecordingCursor', 'openRecordingCursor', 'recordingDay', 'refreshProfile', 'arkoProfile',
+  'sealRecordingCursor', 'openRecordingCursor', 'recordingDay', 'recordingPlayback',
+  'recordingSpeakerOptions', 'assignRecordingSpeaker',
+  'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'retryRecordingImport',
+  'cancelRecordingImport', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
@@ -71,7 +74,7 @@ const expectedServiceFiles = [
   'service.ts', 'auth-service.ts', 'profile-service.ts', 'bot-service.ts', 'bot-conversation-service.ts', 'source-service.ts',
   'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
   'desktop-attention-bridge.ts',
-  'record-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'search-service.ts',
+  'record-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-import-gateway.ts', 'search-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
@@ -119,6 +122,34 @@ describe('Arkme service architecture', () => {
     for (const file of readdirSync(directory).filter(name => name.endsWith('-service.ts'))) {
       expect(readFileSync(join(directory, file), 'utf8')).not.toMatch(/from ['"]\.\.\/arkme-service/)
     }
+  })
+
+  it('keeps recording import business orchestration independent from filesystem and OSS layout details', () => {
+    const contract = readFileSync(join(root, 'src/recording-import-contract.ts'), 'utf8')
+    const refCodec = readFileSync(join(root, 'src/recording-import-ref.ts'), 'utf8')
+    const recordingService = readFileSync(join(root, 'src/services/recording-service.ts'), 'utf8')
+    const coordinator = readFileSync(join(root, 'src/recording-import-coordinator.ts'), 'utf8')
+
+    expect(contract).toContain('sourceHandle')
+    expect(contract).not.toContain('sourceRef')
+    expect(contract).not.toMatch(/from ['"]node:crypto/)
+    expect(contract).not.toContain('sealRecordingImportRef')
+    expect(contract).not.toContain('openRecordingImportRef')
+    expect(refCodec).toMatch(/from ['"]node:crypto/)
+    expect(refCodec).toContain('sealRecordingImportRef')
+    expect(refCodec).toContain('openRecordingImportRef')
+    expect(recordingService).not.toContain('AudioRecordingImportGateway')
+    expect(recordingService).not.toContain('probeRecordingImportFile')
+    expect(recordingService).not.toMatch(/from ['"]node:fs/)
+    expect(coordinator).not.toMatch(/from ['"]node:fs/)
+    expect(coordinator).not.toContain('pc_upload/')
+    expect(coordinator).not.toContain('arkme_')
+
+    const gateway = readFileSync(join(root, 'src/services/recording-import-gateway.ts'), 'utf8')
+    const source = readFileSync(join(root, 'src/recording-import-probe.ts'), 'utf8')
+    expect(gateway).toContain('pc_upload/')
+    expect(gateway).toContain('arkme_')
+    expect(source).toMatch(/from ['"]node:fs/)
   })
 
   it('keeps direct-conversation and group Bot projections behind separate mappers', () => {
@@ -244,5 +275,16 @@ describe('Arkme service architecture', () => {
     expect(client).not.toMatch(/Pull Request #|Change #/u)
     expect(service).not.toMatch(/Pull Request #|Change #/u)
     expect(host.match(/service\.resolveLinkMetadata\(/gu) ?? []).toHaveLength(2)
+  })
+
+  it('does not invent recording speaker mutation contracts that the Audio owner does not expose', () => {
+    const recordingService = readFileSync(join(root, 'src/services/recording-service.ts'), 'utf8')
+    const hostApi = readFileSync(join(root, 'src/host-api.ts'), 'utf8')
+    const clientApi = readFileSync(join(root, 'src/client/api.ts'), 'utf8')
+
+    expect(recordingService).not.toContain('/api/v1/audio/unassign-asr-item-spk')
+    expect(recordingService).not.toContain('/api/v1/audio/batch-unassign-session-num-spk')
+    expect(hostApi).not.toContain('recordings.speaker.unassign-item')
+    expect(clientApi).not.toContain('recordings.speaker.unassign-item')
   })
 })
