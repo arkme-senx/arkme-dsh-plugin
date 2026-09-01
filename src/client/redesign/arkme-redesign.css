@@ -341,6 +341,12 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
   background: #fff !important;
   box-shadow: 0 8px 30px rgba(28, 31, 39, .045) !important;
 }
+.arkme-redesign-route-chats .arkme-conversation-composer-inner[data-arkme-primary-composer="true"] {
+  box-shadow: none !important;
+}
+.arkme-redesign-route-chats .arkme-conversation-composer-inner[data-arkme-primary-composer="true"][data-arkme-composer-focused="true"] {
+  background: color-mix(in srgb, var(--dsw-alias-bg-base, #ffffff) 97%, #000000) !important;
+}
 .arkme-redesign-route-chats .arkme-conversation-composer textarea { min-height: 38px !important; padding: 0 !important; font-size: 14px !important; line-height: 22px !important; }
 .arkme-redesign-task-conversation { font-size: 15px; }
 .arkme-redesign-task-conversation [data-phase] {
@@ -354,19 +360,33 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
   margin-right: 32px !important;
 }
 .arkme-redesign-task-conversation textarea { font-size: 14px !important; }
-/* Keep one stable Arkme navigation column while only the right-hand conversation changes. */
+/* Keep both Arkme navigation columns visible at every viewport width. DSH may
+   report its sidebar as collapsed at 1024px; the plugin still owns a 72px rail
+   and at least a 64px avatar directory (plus the 4px divider budget). */
+[data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"][data-arkme-directory-visible="true"] [data-arkme-directory-mode="conversations"]) {
+  grid-template-columns: var(--arkme-persistent-sidebar-width, 356px) minmax(0, 1fr) 0 !important;
+}
+[data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-web-locked] [data-arkme-directory-mode="web-locked"]) {
+  grid-template-columns: var(--arkme-persistent-sidebar-width, 356px) minmax(0, 1fr) 0 !important;
+}
+[data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"][data-arkme-directory-visible="false"]) {
+  grid-template-columns: 72px minmax(0, 1fr) 0 !important;
+}
 @media (min-width: 1100px) {
-  [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="true"]) {
+  [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"] [data-arkme-directory-mode="contacts"]) {
     grid-template-columns: var(--arkme-persistent-sidebar-width, 356px) minmax(0, 1fr) 0 !important;
-  }
-  [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="false"]) {
-    grid-template-columns: 72px minmax(0, 1fr) 0 !important;
   }
   [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="true"]:not([data-arkme-web-locked])) {
     grid-template-columns: 0 minmax(0, 1fr) 0 !important;
   }
 }
 
+[data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"]:has(> [data-arkme-directory-mode="conversations"]) > [data-arkme-owned="product-navigation"] {
+  width: 72px !important;
+  min-width: 72px !important;
+  flex: 0 0 72px !important;
+}
+[data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 64px !important; }
 [data-arkme-avatar-only="true"] > :not([role="tree"]) { display: none !important; }
 [data-arkme-avatar-only="true"] [role="tree"] { padding: 8px 6px 18px !important; }
 [data-arkme-avatar-only="true"] [role="tree"] > button {
@@ -376,6 +396,21 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
   padding-right: 0 !important;
 }
 [data-arkme-avatar-only="true"] [role="tree"] > button > :not(:first-child) { display: none !important; }
+[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child:has(> span:nth-child(2)) {
+  width: auto !important;
+  min-width: 38px !important;
+  justify-content: center !important;
+  gap: 0 !important;
+}
+[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) { display: contents !important; }
+[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) > span:first-child { display: none !important; }
+[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) > span:last-child { display: contents !important; }
+[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) > span:last-child > :not([style*="min-width: 17px"]) { display: none !important; }
+[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) > span:last-child > [style*="min-width: 17px"] {
+  position: absolute !important;
+  top: 3px;
+  right: 3px;
+}
 
 .arkme-redesign-feature-page {
   width: 100%;
@@ -1484,6 +1519,12 @@ body[data-ds-dark-theme] .arkme-redesign-search-page .arkme-search-box {
   background: var(--dsw-specific-input-major) !important;
   color: var(--dsw-alias-label-primary) !important;
   box-shadow: var(--dsw-shadow-lv2) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-route-chats .arkme-conversation-composer-inner[data-arkme-primary-composer="true"] {
+  box-shadow: none !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-route-chats .arkme-conversation-composer-inner[data-arkme-primary-composer="true"][data-arkme-composer-focused="true"] {
+  background: color-mix(in srgb, var(--dsw-alias-bg-base, #ffffff) 97%, #000000) !important;
 }
 body[data-ds-dark-theme] .arkme-redesign-task-greeting img {
   filter: invert(1) hue-rotate(180deg);
