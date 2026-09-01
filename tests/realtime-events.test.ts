@@ -69,7 +69,7 @@ describe('Arkme local realtime events', () => {
       type: 'timeline-changed', revision: 5,
       sourceKey: 'arkme-chat-source-v1.browser-safe',
       timelineItemKey: 'arkme-chat-timeline-item-v1.browser-safe',
-      changeKind: 'deleted', throughSequence: 12,
+      changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 12,
     })
     expect(response.chunks.join('')).toContain('"type":"timeline-changed"')
     expect(response.chunks.join('')).toContain('arkme-chat-timeline-item-v1.browser-safe')

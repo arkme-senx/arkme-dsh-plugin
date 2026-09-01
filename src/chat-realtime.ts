@@ -54,6 +54,7 @@ export interface ArkmeChatTimelineChangedHint {
   actorUserId: number
   changeKind: 'deleted' | 'recovered' | 'reedited' | 'extended'
   changeVersion: number
+  relationTerminal: boolean
   eventAtMillis: number
 }
 
@@ -171,7 +172,7 @@ export function decodeArkmeChatReadCursorAdvancedDataLine(line: string): ArkmeCh
 
 const TIMELINE_CHANGED_ALLOWED_FIELDS = new Set([
   't', 'event_uid', 'chat_session_uid', 'rel_uid', 'latest_seq', 'actor_user_id',
-  'change_kind', 'change_version', 'event_at', 'source_client_id',
+  'change_kind', 'change_version', 'relation_terminal', 'event_at', 'source_client_id',
 ])
 
 /** Decode one metadata-only timeline invalidation. Record content remains owned by Chat reads. */
@@ -185,6 +186,9 @@ export function decodeArkmeChatTimelineChangedDataLine(line: string): ArkmeChatT
   const latestSequence = positiveInteger(source.latest_seq)
   const actorUserId = positiveInteger(source.actor_user_id)
   const changeVersion = positiveInteger(source.change_version)
+  const relationTerminal = source.relation_terminal === undefined ? false
+    : typeof source.relation_terminal === 'boolean' ? source.relation_terminal
+      : undefined
   const eventAtMillis = positiveInteger(source.event_at)
   const sourceClientId = source.source_client_id === undefined ? 0 : nonNegativeInteger(source.source_client_id)
   const changeKindValue = positiveInteger(source.change_kind)
@@ -195,10 +199,12 @@ export function decodeArkmeChatTimelineChangedDataLine(line: string): ArkmeChatT
           : undefined
   if (eventUid === undefined || chatSessionUid === undefined || relationUid === undefined
     || latestSequence === undefined || actorUserId === undefined || changeKind === undefined
-    || changeVersion === undefined || eventAtMillis === undefined || sourceClientId === undefined) return undefined
+    || changeVersion === undefined || relationTerminal === undefined
+    || eventAtMillis === undefined || sourceClientId === undefined) return undefined
+  if (relationTerminal && changeKind !== 'deleted') return undefined
   return {
     eventUid, chatSessionUid, relationUid, latestSequence, actorUserId,
-    changeKind, changeVersion, eventAtMillis,
+    changeKind, changeVersion, relationTerminal, eventAtMillis,
   }
 }
 

@@ -224,6 +224,8 @@ export class ChatRealtimeService {
         sourceKey,
         timelineItemKey,
         changeKind: hint.changeKind,
+        changeVersion: hint.changeVersion,
+        relationTerminal: hint.relationTerminal,
         throughSequence: hint.latestSequence,
       })
       this.scheduleChatSessionProjection(hint.chatSessionUid, hint.latestSequence)

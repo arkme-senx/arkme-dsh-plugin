@@ -2919,6 +2919,8 @@ export type ArkmeChatClientEvent = {
   sourceKey: string
   timelineItemKey: string
   changeKind: 'deleted' | 'recovered' | 'reedited' | 'extended'
+  changeVersion: number
+  relationTerminal: boolean
   throughSequence: number
 } | {
   type: 'attention-summary'

@@ -1178,9 +1178,12 @@ describe('ChatService', () => {
         record_owner_user_id: 13, display_name_snapshot: 'B 用户', attach_at: 1_710_000_000_000, seq: 8,
       },
       record: { status: 1, payload: { title: '', text_content: '问题不大', template_kind: 1, display_kind: 0 } },
-    }] }, session, 'chat-1')
+    }] }, session, 'chat-1', 'group_chat')
 
     expect(items[0]?.messageActionRef).toMatch(/^arkme-message-action-v1\./u)
+    expect(items[0]?.messageRef).toMatch(/^arkme-message-v1\./u)
+    expect(items[0]?.messageWithdrawalRef).toMatch(/^arkme-message-withdrawal-v1\./u)
+    expect(items[0]?.timelineItemKey).toBe('timeline-item-key')
     await expect(chat.relatedQuickNoteLocator('source-ref', items[0]?.messageActionRef ?? ''))
       .resolves.toEqual({
         viewerUserId: 42,

@@ -6929,6 +6929,8 @@ export function ArkmeSurface({
               sourceKey: conversationKey,
               timelineItemKey: result.timelineItemKey,
               changeKind: 'deleted',
+              changeVersion: result.withdrawnAtMillis,
+              relationTerminal: true,
               throughSequence: messageWithdrawalItem.sequence ?? source?.latestSequence ?? 0,
             })
             setMessageWithdrawalItem(undefined)

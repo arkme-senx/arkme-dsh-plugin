@@ -119,14 +119,14 @@ describe('ChatRealtimeService', () => {
       state: { revision: 2, connected: true, connectionGeneration: 1 },
       timelineChanged: {
         eventUid: 'timeline-event-1', chatSessionUid: 'raw-chat-session', relationUid: 'raw-relation',
-        latestSequence: 9, actorUserId: 10001, changeKind: 'deleted', changeVersion: 123456,
+        latestSequence: 9, actorUserId: 10001, changeKind: 'deleted', changeVersion: 123456, relationTerminal: true,
         eventAtMillis: 123457,
       },
     })
 
     await vi.waitFor(() => { expect(events).toHaveLength(1) })
     expect(events[0]).toMatchObject({
-      type: 'timeline-changed', changeKind: 'deleted', throughSequence: 9,
+      type: 'timeline-changed', changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 9,
       sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./),
       timelineItemKey: expect.stringMatching(/^arkme-chat-timeline-item-v1\./),
     })
@@ -163,7 +163,7 @@ describe('ChatRealtimeService', () => {
       state: { revision: 2, connected: true, connectionGeneration: 1 },
       timelineChanged: {
         eventUid: 'timeline-event-1', chatSessionUid: 'old-chat-session', relationUid: 'old-relation',
-        latestSequence: 9, actorUserId: 10001, changeKind: 'deleted', changeVersion: 123456,
+        latestSequence: 9, actorUserId: 10001, changeKind: 'deleted', changeVersion: 123456, relationTerminal: true,
         eventAtMillis: 123457,
       },
     })

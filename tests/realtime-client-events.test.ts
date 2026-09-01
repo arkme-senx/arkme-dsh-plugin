@@ -144,13 +144,13 @@ describe('realtime reconcile routing', () => {
       source.onmessage?.({ data: JSON.stringify({
         type: 'timeline-changed', revision: 1,
         sourceKey: 'opaque-source', timelineItemKey: 'opaque-item',
-        changeKind: 'deleted', throughSequence: 9,
+        changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 9,
       }) } as MessageEvent<string>)
     })
     expect(apply).toHaveBeenCalledWith({
       type: 'timeline-changed', revision: 1,
       sourceKey: 'opaque-source', timelineItemKey: 'opaque-item',
-      changeKind: 'deleted', throughSequence: 9,
+      changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 9,
     })
     await act(async () => { renderer.unmount() })
   })

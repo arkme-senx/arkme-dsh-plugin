@@ -47,6 +47,7 @@ const timelineChangedHint = {
   actor_user_id: 10001,
   change_kind: 1,
   change_version: 123450,
+  relation_terminal: true,
   event_at: 123458,
   source_client_id: 0,
 }
@@ -95,11 +96,18 @@ describe('Arkme Chat realtime', () => {
     expect(decodeArkmeChatTimelineChangedDataLine(`data: ${JSON.stringify(timelineChangedHint)}`)).toEqual({
       eventUid: 'timeline-event-1', chatSessionUid: 'chat-1', relationUid: 'relation-1',
       latestSequence: 9, actorUserId: 10001, changeKind: 'deleted',
-      changeVersion: 123450, eventAtMillis: 123458,
+      changeVersion: 123450, relationTerminal: true, eventAtMillis: 123458,
     })
     expect(decodeArkmeChatTimelineChangedDataLine(`data: ${JSON.stringify({
       ...timelineChangedHint, change_kind: 3,
-    })}`)).toMatchObject({ changeKind: 'reedited' })
+    })}`)).toBeUndefined()
+    expect(decodeArkmeChatTimelineChangedDataLine(`data: ${JSON.stringify({
+      ...timelineChangedHint, change_kind: 3, relation_terminal: false,
+    })}`)).toMatchObject({ changeKind: 'reedited', relationTerminal: false })
+
+    expect(decodeArkmeChatTimelineChangedDataLine(`data: ${JSON.stringify({
+      ...timelineChangedHint, relation_terminal: 'true',
+    })}`)).toBeUndefined()
     expect(decodeArkmeChatTimelineChangedDataLine(`data: ${JSON.stringify({
       ...timelineChangedHint, record_body: { text: 'must-not-cross' },
     })}`)).toBeUndefined()

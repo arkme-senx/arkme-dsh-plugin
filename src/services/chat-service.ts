@@ -4407,6 +4407,7 @@ export class ChatService {
             timelineItemKey: await this.source.chatTimelineItemKey(session.userId, chatSessionUid, relationUid),
           }),
           ...(sourceKind !== 'group_chat' || relationUid === '' || senderUserId === session.userId ? {} : {
+            messageRef: this.sealMessageRef(session.userId, chatSessionUid, relationUid, signingKey),
             messageWithdrawalRef: this.sealMessageWithdrawalRef(
               session.userId, chatSessionUid, relationUid, signingKey,
             ),

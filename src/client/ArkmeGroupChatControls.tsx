@@ -1416,13 +1416,16 @@ function GroupJoinRestrictionsPanel(props: {
               memberRef: item.memberRef,
               restricted: false,
             }, controller.signal).then(result => {
-              if (mountedRef.current && !result.restricted) {
+              if (mountedRef.current && mutationRef.current === controller && !result.restricted) {
                 setItems(current => current.filter(value => value.memberRef !== item.memberRef))
               }
             }).catch(caught => {
-              if (mountedRef.current && !controller.signal.aborted) setError(errorMessage(caught) || '解除限制失败，请稍后重试')
+              if (mountedRef.current && mutationRef.current === controller && !controller.signal.aborted) {
+                setError(errorMessage(caught) || '解除限制失败，请稍后重试')
+              }
             }).finally(() => {
-              if (mutationRef.current === controller) mutationRef.current = undefined
+              if (mutationRef.current !== controller) return
+              mutationRef.current = undefined
               busyMemberRefRef.current = ''
               if (mountedRef.current) setBusyMemberRef('')
             })
