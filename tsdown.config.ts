@@ -10,7 +10,36 @@ const CLIENT_EXTERNALS = [
   '@deepseek-ai/dsh-client-ui-slots',
 ]
 
+const PUBLIC_WORKBENCH_BUILD = process.env.ARKME_PUBLIC_BUILD === '1'
+
 export default defineConfig([
+  {
+    name: '@senguoyun/arkme-workbench',
+    entry: { index: 'src/workbench-extension-host.ts' },
+    outDir: 'packages/arkme-workbench/lib',
+    format: 'esm', platform: 'node', target: 'es2024', fixedExtension: false, dts: false, clean: false,
+  },
+  {
+    name: '@senguoyun/arkme-workbench/client',
+    entry: { client: 'src/workbench-extension-client.tsx' },
+    outDir: 'packages/arkme-workbench/lib',
+    format: 'cjs', platform: 'browser', target: 'es2022', fixedExtension: false, dts: false, clean: false,
+    minify: true, loader: { '.svg': 'base64', '.png': 'base64' }, sourcemap: false,
+    external: CLIENT_EXTERNALS,
+    noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
+    define: {
+      'process.env.NODE_ENV': JSON.stringify('production'),
+      // The marketplace package is built with ARKME_PUBLIC_BUILD=1 and starts
+      // empty. Local builds intentionally keep the owner's demo library.
+      '__ARKME_WORKBENCH_PUBLIC__': JSON.stringify(PUBLIC_WORKBENCH_BUILD),
+    },
+    outputOptions: {
+      entryFileNames: 'client.js',
+      banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/arkme-workbench", factory: (require) => {',
+      footer: 'return module.exports; } });',
+      intro: 'var module = { exports: {} }; var exports = module.exports;',
+    },
+  },
   {
     name: '@senguoyun/dsh-arkme',
     entry: {
@@ -39,12 +68,14 @@ export default defineConfig([
     fixedExtension: false,
     dts: false,
     clean: false,
+    minify: PUBLIC_WORKBENCH_BUILD,
     loader: { '.svg': 'base64', '.png': 'base64' },
-    sourcemap: true,
+    sourcemap: PUBLIC_WORKBENCH_BUILD ? false : true,
     external: CLIENT_EXTERNALS,
     noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
     define: {
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
+      '__ARKME_WORKBENCH_PUBLIC__': JSON.stringify(PUBLIC_WORKBENCH_BUILD),
     },
     outputOptions: {
       entryFileNames: 'client.js',

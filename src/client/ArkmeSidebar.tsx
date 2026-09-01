@@ -63,6 +63,11 @@ import {
 import { ArkmeAttachmentStrip, ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
+import {
+  ArkmeQQ2006BottomRow, ArkmeQQ2006InputActions, ArkmeQQ2006SmallToolbar, ArkmeQQ2006WindowChrome,
+  arkmeQQ2006ChatSkinStyle,
+} from './ArkmeQQ2006ChatChrome.js'
+import { arkmeQQ2006ChatAssets } from './qq2006-chat-assets.js'
 import type { ArkmeEmoji } from './arkme-emoji.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
@@ -1349,9 +1354,10 @@ function MessageAvatar(props: {
 }) {
   const member = props.member
   const avatar = <ArkmeUserAvatar {...(props.avatarRef === undefined ? {} : { avatarRef: props.avatarRef })} size={ARKME_MESSAGE_AVATAR_SIZE} label="消息头像" />
-  if (member === undefined) return <span data-arkme-message-avatar="true" style={styles.messageAvatar} aria-hidden>{avatar}</span>
+  if (member === undefined) return <span className="arkme-conversation-message-avatar" data-arkme-message-avatar="true" style={styles.messageAvatar} aria-hidden>{avatar}</span>
   return <button
     type="button"
+    className="arkme-conversation-message-avatar"
     data-arkme-message-avatar="true"
     style={{ ...styles.messageAvatar, padding: 0, border: 0, cursor: props.profileEnabled ? 'pointer' : 'default' }}
     aria-label={props.profileEnabled
@@ -1444,10 +1450,9 @@ export function ArkmeTimelineMessageHeader({
   profile?: ArkmeUserProfile
 }) {
   const senderName = arkmeTimelineSenderName(item, profile)
-  return <span style={styles.messageHeader}>
-    {item.isMe && <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>}
-    <span style={styles.sender}>{senderName}</span>
-    {!item.isMe && <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>}
+  return <span className="arkme-conversation-message-meta" data-self={item.isMe ? 'true' : 'false'} style={styles.messageHeader}>
+    <span className="arkme-conversation-message-sender" style={styles.sender}>{senderName}</span>
+    <span className="arkme-conversation-message-time" style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>
   </span>
 }
 
@@ -2004,6 +2009,7 @@ export function ArkmeSurface({
       browserDocument?.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [authenticatedAccountKey, authenticatedUserId, conversationKey, publishActiveTopicDissolve, topicDissolveVisible])
+  const qqAddMenuTriggerRef = useRef<HTMLButtonElement>(null)
   const [timelineView, setTimelineView] = useState<ArkmeTimelineViewState>({
     sourceKey: '', items: [], aiPolishNotices: [], aiPolishSettings: undefined, nextCursor: undefined, hasMore: false,
   })
@@ -2061,6 +2067,8 @@ export function ArkmeSurface({
   const notifiedFileTasks = useRef(new Set<string>())
   useEffect(() => { setDraftPreview(undefined) }, [authenticatedUserId])
   useEffect(() => () => { for (const controller of stageControllers.current) controller.abort() }, [authenticatedUserId])
+  const [qqChromeCollapsed, setQqChromeCollapsed] = useState(false)
+  const [qqFontSize, setQqFontSize] = useState<'s' | 'm' | 'l'>('m')
   const [busy, setBusy] = useState(false)
   const preparingFiles = composerDraftKey !== undefined && preparingKeys.has(composerDraftKey)
   // Transport is per message.  It must never lock the next draft while a previous
@@ -2260,7 +2268,8 @@ export function ArkmeSurface({
     if (!addMenuOpen || typeof document === 'undefined') return
     const closeFromOutside = (event: PointerEvent) => {
       const target = event.target instanceof Node ? event.target : null
-      if (arkmeShouldDismissAnchoredMenu(target, addMenuRef.current, addMenuTriggerRef.current)) setAddMenuOpen(false)
+      if (arkmeShouldDismissAnchoredMenu(target, addMenuRef.current, addMenuTriggerRef.current)
+        && arkmeShouldDismissAnchoredMenu(target, addMenuRef.current, qqAddMenuTriggerRef.current)) setAddMenuOpen(false)
     }
     const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') setAddMenuOpen(false)
@@ -3704,6 +3713,22 @@ export function ArkmeSurface({
       textareaRef.current?.setSelectionRange(caretIndex, caretIndex)
     })
   }, [busy, composerDraftKey, draft])
+  const insertPlainText = useCallback((text: string) => {
+    if (composerDraftKey === undefined || busy || text === '') return
+    const textarea = textareaRef.current
+    const start = textarea?.selectionStart ?? draft.length
+    const end = textarea?.selectionEnd ?? start
+    const next = `${draft.slice(0, start)}${text}${draft.slice(end)}`
+    arkmeComposerDraftStore.setText(composerDraftKey, next)
+    const caretIndex = start + text.length
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+      textareaRef.current?.setSelectionRange(caretIndex, caretIndex)
+    })
+  }, [busy, composerDraftKey, draft])
+  const cycleQqFontSize = useCallback(() => {
+    setQqFontSize(current => current === 's' ? 'm' : current === 'm' ? 'l' : 's')
+  }, [])
   const insertMemberMention = useCallback((member: ArkmeConversationMemberItem) => {
     const textarea = textareaRef.current
     const start = textarea?.selectionStart ?? draft.length
@@ -4498,6 +4523,13 @@ export function ArkmeSurface({
     body.scrollTo({ top: body.scrollHeight, behavior: 'smooth' })
     setNewMessageCount(0)
   }, [])
+  const loadOlderFromQqToolbar = useCallback(() => {
+    if (!authenticated || source === undefined || loadingOlder || !hasMore || nextCursor === undefined) return
+    setLoadingOlder(true)
+    void loadTimeline(nextCursor, true)
+      .catch(caught => { setError(errorMessage(caught)) })
+      .finally(() => { setLoadingOlder(false) })
+  }, [authenticated, hasMore, loadTimeline, loadingOlder, nextCursor, source])
   const detailGroupTarget = useMemo(
     () => detailState?.kind === 'success'
       ? resolveInterwovenGroupTarget(chatDirectory.sources, detailState.detail.groupName)
@@ -4541,7 +4573,9 @@ export function ArkmeSurface({
       className="arkme-conversation-surface"
       ref={surfaceRef}
       data-arkme-owned="product-surface"
+      data-qq-font={qqFontSize === 'm' ? undefined : qqFontSize}
       style={{
+        ...arkmeQQ2006ChatSkinStyle,
         ...styles.surface,
         ...(floating ? styles.floatingSurface : {}),
         ...(productChrome && compactNavigation ? styles.compactSurface : {}),
@@ -4567,8 +4601,16 @@ export function ArkmeSurface({
         />
       </aside>}
       <section className="arkme-conversation-panel" ref={panelRef} style={styles.panel} role="region" aria-label={surfaceTitle}>
-        {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header className="arkme-conversation-header" style={styles.header}>
-          {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
+        {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header
+          className="arkme-conversation-header"
+          data-arkme-qq-chat={authenticated && conversationBackdropVisible
+            && (source?.kind === 'private_chat' || source?.kind === 'group_chat') ? 'true' : undefined}
+          style={styles.header}
+        >
+          <div className="arkme-conversation-modern-header-content">
+          {authenticated && conversationBackdropVisible
+            && (source?.kind === 'private_chat' || source?.kind === 'group_chat')
+            && <span className="arkme-conversation-header-avatar" style={styles.headerAvatar}>
             <ArkmeDirectorySourceAvatar source={source} size={34} />
           </span>}
           {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
@@ -4647,6 +4689,11 @@ export function ArkmeSurface({
                   <h2 style={styles.title}>{surfaceTitle}</h2>
                   {source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon size={16} /></span>}
                 </span>
+                {authenticated && conversationBackdropVisible
+                  && (source?.kind === 'private_chat' || source?.kind === 'group_chat')
+                  && <span className="arkme-qq2006-presence">
+                    {source.kind === 'group_chat' ? 'Arkme 群聊' : 'Arkme 私聊'}
+                  </span>}
                 {authenticated && conversationBackdropVisible && source?.kind === 'group_chat'
                   && aiPolishSettings?.enabled === true
                   && <span style={styles.headerSubtitle}>AI润色已开启{aiPolishSettings.activeRuleName.trim() === '' ? '' : ` · ${aiPolishSettings.activeRuleName}`}</span>}
@@ -4728,6 +4775,23 @@ export function ArkmeSurface({
             </div>,
             conversationOverlayHost,
           )}
+          </div>
+          {authenticated && conversationBackdropVisible
+            && (source?.kind === 'private_chat' || source?.kind === 'group_chat')
+            && <ArkmeQQ2006WindowChrome
+              title={surfaceTitle}
+              avatar={<ArkmeDirectorySourceAvatar source={source} size={20} />}
+              group={source.kind === 'group_chat'}
+              collapsed={qqChromeCollapsed}
+              onOpenMenu={() => { setAddMenuOpen(value => !value) }}
+              onToggleCollapsed={() => { setQqChromeCollapsed(value => !value) }}
+              onFocusComposer={() => { textareaRef.current?.focus() }}
+              onSelectFiles={() => { fileInputRef.current?.click() }}
+              onLongArticle={() => { setLongArticleCreating(true) }}
+              {...(source.kind === 'group_chat' ? { onOpenMembers: () => { activateContextPanel('members') } } : {})}
+              onScrollLatest={scrollToLatest}
+              onInsertMusic={() => { insertPlainText('🎵') }}
+            />}
         </header>}
         {authView === 'login' ? <div style={styles.loginBody}><ArkmeLogin
           t={t}
@@ -4854,7 +4918,7 @@ export function ArkmeSurface({
                 const selectionAnchor = arkmeMessageSelectionAnchor(item)
                 return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
-                  <li data-arkme-conversation-row={row.id} data-arkme-message-item-uid={item.itemUid} style={{
+                  <li className="arkme-conversation-message-row" data-arkme-conversation-row={row.id} data-arkme-message-item-uid={item.itemUid} style={{
                     ...styles.row,
                     ...(activeSelectMode === undefined
                       ? isSharedRecordingCard
@@ -4881,7 +4945,7 @@ export function ArkmeSurface({
                       disabled={!canUseMessageAction}
                       onToggle={() => { toggleSelectedMessage(item) }}
                     />}
-                    <div style={{
+                    <div className="arkme-conversation-message-line" style={{
                       ...styles.messageLine,
                       ...(activeSelectMode !== undefined && selectionAnchor === 'avatar' ? styles.messageLineSelectAvatarMode : {}),
                       ...(item.isMe && !isSharedRecordingCard ? styles.messageLineMe : {}),
@@ -4896,7 +4960,7 @@ export function ArkmeSurface({
                         onOpen={openMemberProfile}
                         onContextMenu={openMemberMenu}
                       />}
-                      <div style={{
+                      <div className="arkme-conversation-message-body" style={{
                         ...styles.messageBody,
                         ...(item.isMe && !isSharedRecordingCard ? styles.messageBodyMe : {}),
                         ...(isForwardMessageCard ? styles.forwardMessageBody : {}),
@@ -5068,15 +5132,40 @@ export function ArkmeSurface({
               <div style={styles.menuDivider} />
               <button type="button" role="menuitem" style={styles.addMenuItem} onClick={() => { setLongArticleCreating(true); setAddMenuOpen(false) }}><span aria-hidden>✎</span>写长文</button>
             </div>}
-            <input ref={fileInputRef} type="file" multiple hidden onChange={event => { void selectFiles(event.currentTarget.files) }} />
-            {attachments.length > 0 && <ArkmeAttachmentStrip attachments={attachments} disabled={preparingFiles}
+            <input ref={fileInputRef} type="file" multiple hidden accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" onChange={event => { void selectFiles(event.currentTarget.files) }} />
+            <ArkmeQQ2006SmallToolbar
+              menuTriggerRef={qqAddMenuTriggerRef}
+              emojiTrigger={<ArkmeEmojiPicker
+                key={`qq-emoji-picker:${conversationOverlayKey}`}
+                disabled={preparingFiles}
+                scopeKey={composerDraftKey}
+                triggerIconUrl={arkmeQQ2006ChatAssets.smallFace}
+                {...(source?.kind === 'private_chat' || source?.kind === 'group_chat' ? { sourceRef: source.sourceRef } : {})}
+                getCaretGeometry={() => textareaRef.current?.getCaretGeometry()}
+                getEditorGeometry={() => textareaRef.current?.getEditorGeometry()}
+                onSelect={insertEmoji}
+                onUploadSticker={async file => {
+                  if (composerDraftKey === undefined) throw new Error('请先选择聊天')
+                  return await uploadFavoriteSticker(file)
+                }}
+                onStickerSent={async () => { await loadTimeline() }}
+                onError={message => { setError(message) }}
+              />}
+              onCycleFont={cycleQqFontSize}
+              onOpenMenu={() => { setAddMenuOpen(value => !value) }}
+              onSelectFiles={() => { fileInputRef.current?.click() }}
+              onLongArticle={() => { setLongArticleCreating(true) }}
+              onCelebrate={() => { insertPlainText('🎉') }}
+            />
+            <div className="arkme-conversation-input-card">
+            {attachments.length > 0 && <div className="arkme-conversation-attachments"><ArkmeAttachmentStrip attachments={attachments} disabled={preparingFiles}
               onMove={(from, to) => arkmeComposerDraftStore.moveAttachment(composerDraftKey, from, to)}
               onPreview={attachment => { if (attachment.localFile !== undefined) setDraftPreview(localFileBlock(attachment.localFile)) }}
               onRemove={attachment => {
                 arkmeComposerDraftStore.removeAttachment(composerDraftKey, arkmeAttachmentId(attachment))
                 if (attachment.localFile !== undefined) void callArkme('files.local.remove', { fileRef: attachment.localFile.fileRef }).catch(caught => setError(errorMessage(caught)))
               }}
-            />}
+            /></div>}
             {activeConversation && draftPreview !== undefined && typeof document !== 'undefined' && createPortal(<ArkmeMediaPreview selected={draftPreview} blocks={attachments.flatMap(attachment => attachment.localFile === undefined ? [] : [localFileBlock(attachment.localFile)])} onSelect={setDraftPreview} onClose={() => setDraftPreview(undefined)} openLocalFile={false} />, document.body)}
             {mentionTrigger !== undefined && <div style={styles.mentionSuggestions} role="listbox" aria-label="选择要 @ 的对象">
               {mentionCandidates.length === 0
@@ -5175,7 +5264,25 @@ export function ArkmeSurface({
                   if (canSend) void send()
                 }
               }} />
-            <div style={styles.tools}><div style={styles.toolGroup}><button ref={addMenuTriggerRef} type="button" style={styles.plus} aria-label="添加内容" aria-haspopup="menu" aria-expanded={addMenuOpen} disabled={preparingFiles} onClick={() => { setAddMenuOpen(value => !value) }}>{preparingFiles ? <ArkmeFilePreparingIndicator /> : '+'}</button><ArkmeEmojiPicker
+            <ArkmeQQ2006InputActions
+              group={source.kind === 'group_chat'}
+              canSend={canSend}
+              onSend={() => { void send() }}
+            />
+            </div>
+            <div className="arkme-conversation-tools" style={styles.tools}><div className="arkme-conversation-tool-group" style={styles.toolGroup}><button
+              ref={addMenuTriggerRef}
+              type="button"
+              className="arkme-conversation-tool arkme-conversation-add-tool"
+              style={styles.plus}
+              aria-label="添加内容"
+              aria-haspopup="menu"
+              aria-expanded={addMenuOpen}
+              disabled={preparingFiles}
+              title="添加内容"
+              onMouseDown={event => { event.preventDefault() }}
+              onClick={() => { setAddMenuOpen(value => !value) }}
+            >{preparingFiles ? <ArkmeFilePreparingIndicator /> : <><span className="arkme-conversation-toolbar-glyph" aria-hidden>＋</span><span className="arkme-conversation-toolbar-label">更多</span></>}</button><ArkmeEmojiPicker
               key={`emoji-picker:${conversationOverlayKey}`}
               disabled={preparingFiles}
               scopeKey={composerDraftKey}
@@ -5214,6 +5321,7 @@ export function ArkmeSurface({
               />
               <button
               type="button"
+              className="arkme-conversation-send"
               style={{ ...styles.send, opacity: canSend ? 1 : .4 }}
               disabled={!canSend}
               aria-label="发送消息"
@@ -5232,7 +5340,17 @@ export function ArkmeSurface({
                 <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />
               </svg>
               </button>
-            </div></div></div>
+            </div></div>
+            <ArkmeQQ2006BottomRow
+              {...(hasMore && !loadingOlder ? { onLoadOlder: loadOlderFromQqToolbar } : {})}
+              onLongArticle={() => { setLongArticleCreating(true) }}
+              onScrollLatest={scrollToLatest}
+              onOpenMenu={() => { setAddMenuOpen(value => !value) }}
+              onCelebrate={() => { insertPlainText('🎉') }}
+              onSelectFiles={() => { fileInputRef.current?.click() }}
+              onInsertMusic={() => { insertPlainText('🎵') }}
+            />
+            </div>
             <div style={styles.composerHint}>Enter发送 / Shift+Enter换行</div>
           </div></footer>}
         </>}

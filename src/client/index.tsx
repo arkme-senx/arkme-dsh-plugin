@@ -21,11 +21,13 @@ import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
 import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
 import { installArkmeAccountSettingsNavIcon } from './account-settings-nav-icon.js'
+import { installArkmeSkinMarketBridge } from './skin-market-bridge.js'
 import {
   ARKME_LOGIN_LOCALE_NAMESPACE, arkmeLoginEn, arkmeLoginZh,
 } from './arkme-login-locales.js'
 
 export const inject = ['slots', 'layout', 'locale', 'sessions']
+
 
 function ArkmeDshSettingsSection() {
   return <ArkmeSettingsSurface />
@@ -207,6 +209,11 @@ export function apply(ctx: ClientContext): void {
       disposeStyles()
     }
   }, 'dsh-arkme: install redesign visual system')
+
+  ctx.effect(
+    () => installArkmeSkinMarketBridge(),
+    'dsh-arkme: mirror active skin market theme',
+  )
 
   ctx.effect(
     () => installArkmeAccountSettingsNavIcon(),

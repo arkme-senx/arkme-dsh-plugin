@@ -359,8 +359,11 @@ describe('conversation send directory projection', () => {
       color: arkmeTheme.foreground,
     })
 
-    const toolbar = renderer!.root.findByProps({ role: 'toolbar' })
-    const exit = toolbar.findByProps({ 'aria-label': '退出多选' })
+    const toolbar = renderer!.root.findAllByProps({ role: 'toolbar' }).find(candidate => (
+      candidate.findAllByProps({ 'aria-label': '退出多选' }).length === 1
+    ))
+    expect(toolbar).toBeDefined()
+    const exit = toolbar!.findByProps({ 'aria-label': '退出多选' })
     const exitParts = exit.findAllByType('span')
     expect(exit.props.style).toMatchObject({ flexDirection: 'column', alignItems: 'center' })
     expect(exitParts[0]!.props.style.background).toBe(arkmeTheme.elevated)

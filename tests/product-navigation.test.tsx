@@ -67,6 +67,7 @@ describe('Arkme product navigation', () => {
     expect(markup.indexOf('data-arkme-owned="product-brand"')).toBeLessThan(markup.indexOf('>对话<'))
     expect(markup).toContain('background:#9eadff')
     expect(markup).toContain('aria-label="Arkme 功能导航"')
+    expect(markup).not.toContain('>工作台<')
     expect(markup).toContain('>对话<')
     expect(markup).toContain('>通话<')
     expect(markup).toContain('>录音<')
@@ -115,6 +116,7 @@ describe('Arkme product navigation', () => {
     expect(productNavigationSource).not.toContain("{ id: 'search', label: '搜索'")
     expect(productNavigationSource).not.toContain("else if (id === 'search')")
   })
+
 
   it('uses a horizontal layout contract for compact surfaces', () => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation compact currentSessionId={undefined} />)

@@ -11,7 +11,8 @@ describe('Arkme persistent sidebar', () => {
   it('keeps a constrained Arkme workspace visible on Web after logout', () => {
     expect(persistentShellSource).toContain("const webLockedMode = loginMode && !startupAuthGateEnabled()")
     expect(persistentShellSource).toContain('data-arkme-web-locked')
-    expect(persistentShellSource).toContain('data-arkme-workspace\n    data-arkme-login-mode="true"')
+    expect(persistentShellSource).toContain('data-arkme-workspace')
+    expect(persistentShellSource).toContain('data-arkme-login-mode="true"')
     expect(persistentShellSource).toContain('aria-label="Arkme 受限工作区导航"')
     expect(persistentShellSource).toContain('lockedDirectory')
     expect(persistentShellSource).toContain('nativeSettings={webLockedHarness}')

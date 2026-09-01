@@ -173,7 +173,7 @@ describe('Arkme persistent conversation frame', () => {
     expect(arkmeSourceShowsMessageAvatars(undefined)).toBe(false)
   })
 
-  it('puts time before nickname for own messages and keeps nickname before time for received messages', () => {
+  it('keeps the DSH sender-then-time order for both own and received messages', () => {
     const sendAtMillis = new Date(2026, 7, 21, 16, 38).getTime()
     const ownItem: ArkmeTimelineItem = {
       itemUid: 'record-1', senderName: 'Ye', isMe: true, sendAtMillis,
@@ -183,7 +183,7 @@ describe('Arkme persistent conversation frame', () => {
     const ownMarkup = renderToStaticMarkup(createElement(ArkmeTimelineMessageHeader, { item: ownItem }))
     const receivedMarkup = renderToStaticMarkup(createElement(ArkmeTimelineMessageHeader, { item: receivedItem }))
 
-    expect(ownMarkup.indexOf('16:38')).toBeLessThan(ownMarkup.indexOf('Ye'))
+    expect(ownMarkup.indexOf('Ye')).toBeLessThan(ownMarkup.indexOf('16:38'))
     expect(receivedMarkup.indexOf('小林')).toBeLessThan(receivedMarkup.indexOf('16:38'))
   })
 

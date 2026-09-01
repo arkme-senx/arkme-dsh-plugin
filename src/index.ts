@@ -52,6 +52,7 @@ import { ArkmeOwnedExtensionRefs } from './extensions/owned-refs.js'
 import { ArkmeOwnedExtensionStore } from './extensions/owned-store.js'
 import type { DynamicCordisRunnerLike } from './extensions/types.js'
 import { ArkmeStateStore } from './state-store.js'
+import { QQ2006HarnessRuntime } from './qq2006-harness-runtime.js'
 import { registerArkmeExtensionTools } from './tools/extensions/index.js'
 import { registerArkmeTools } from './tools/index.js'
 import type { ArkmeToolProfile } from './tools/index.js'
@@ -111,6 +112,10 @@ export interface Config {
   shareWebsite: string
   dshRemoteFeatureEnabled: boolean
   dshRemoteRealtimeBaseUrl: string
+  qq2006HarnessSourceRoot?: string
+  qq2006HarnessRuntimeHome?: string
+  qq2006HarnessNodeCommand?: string
+  qq2006HarnessPort?: number
 }
 
 export const ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS = '{"prod-ed25519-20260819-1":"m1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs="}'
@@ -159,6 +164,10 @@ export const Config: Schema<Config> = Schema.object({
   shareWebsite: Schema.string().default(ARKME_DEFAULT_SHARE_WEBSITE),
   dshRemoteFeatureEnabled: Schema.boolean().default(false),
   dshRemoteRealtimeBaseUrl: Schema.string().default(''),
+  qq2006HarnessSourceRoot: Schema.string().default(''),
+  qq2006HarnessRuntimeHome: Schema.string().default(''),
+  qq2006HarnessNodeCommand: Schema.string().default('node'),
+  qq2006HarnessPort: Schema.number().min(1).max(65535).default(3186),
 })
 
 export const name = 'dsh-arkme'
@@ -237,6 +246,13 @@ export function apply(ctx: Context, config: Config): void {
   const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
   const dshBinPath = process.argv[1] ?? ''
   const dshRuntimeVersion = readDshRuntimeVersion(dshBinPath)
+  const qq2006HarnessRuntime = new QQ2006HarnessRuntime({
+    sourceRoot: config.qq2006HarnessSourceRoot?.trim() ?? '',
+    runtimeHome: config.qq2006HarnessRuntimeHome?.trim() || join(dshHome, 'qq2006-runtime'),
+    dshHome,
+    nodeCommand: config.qq2006HarnessNodeCommand?.trim() || 'node',
+    port: config.qq2006HarnessPort ?? 3186,
+  }, ctx.logger)
   const appVersion = resolveArkmeAppVersion(config.appVersion)
   const stateDirectory = config.stateDirectory.trim() || join(dshHome, 'arkme-self', config.environment)
   const stateStore = new ArkmeStateStore(stateDirectory)
@@ -536,11 +552,34 @@ export function apply(ctx: Context, config: Config): void {
     ownedExtensionStore.close()
   }, 'dsh-arkme: local cache database')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
+  ctx.effect(() => {
+    qq2006HarnessRuntime.start()
+    return () => { qq2006HarnessRuntime.dispose() }
+  }, 'dsh-arkme: source-integrated QQ2006 Harness runtime')
   ctx.effect(() => updateManager.start(), 'dsh-arkme: plugin update notification runtime')
   ctx.effect(async () => {
     await extensionShareDiscovery.start()
     return async () => { await extensionShareDiscovery.dispose() }
   }, 'dsh-arkme: extension share discovery relay')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/qq2006-harness`,
+    handler: async (req, res) => {
+      const ready = await qq2006HarnessRuntime.ready()
+      const encoded = JSON.stringify({
+        enabled: qq2006HarnessRuntime.enabled,
+        ready,
+        url: ready ? qq2006HarnessRuntime.pageUrl : undefined,
+      })
+      res.writeHead(ready ? 200 : 503, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(encoded),
+        'Cache-Control': 'no-store',
+      })
+      if (req.method === 'HEAD') res.end()
+      else res.end(encoded)
+    },
+  }), 'dsh-arkme: source-integrated QQ2006 Harness discovery route')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: config.routePath,

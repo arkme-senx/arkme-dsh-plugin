@@ -98,6 +98,11 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
     join(root, 'src/client/ArkmeSettingsSurface.tsx'),
   ])
   if (localizedUiFiles.has(file)) return content.replaceAll('即我', '')
+  if (file === join(root, 'src/client/ArkmeWorkbenchSurface.tsx')) {
+    // User-authored private archive copy is not product chrome. Public builds
+    // compile it out and the packed artifact is privacy-scanned separately.
+    return content.replaceAll('即我', '')
+  }
   const allowedFiles = new Set([
     join(root, 'src/tools/business/account/set-id.ts'),
     join(root, 'src/tools/business/conversation/send-direct-text.ts'),

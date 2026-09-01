@@ -253,10 +253,11 @@ function EmojiGrid({ emojis, layout = 'compact', onSelect }: {
   </div>
 }
 
-export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeometry, getEditorGeometry, onBeforeToggle, onSelect, onUploadSticker, onStickerSent, onError }: {
+export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, triggerIconUrl, getCaretGeometry, getEditorGeometry, onBeforeToggle, onSelect, onUploadSticker, onStickerSent, onError }: {
   disabled: boolean
   scopeKey: string | undefined
   sourceRef?: string
+  triggerIconUrl?: string
   getCaretGeometry?: () => ArkmeComposerCaretGeometry | undefined
   getEditorGeometry?: () => ArkmeComposerCaretGeometry | undefined
   onBeforeToggle?: () => void
@@ -555,7 +556,9 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
       data-arkme-composer-tool="emoji"
       onMouseDown={event => { onBeforeToggle?.(); event.preventDefault() }}
       onClick={() => { setOpen(value => !value) }}
-    ><span style={styles.triggerIcon}><ArkmeComposerEmojiIcon /></span></ArkmeComposerToolButton>
+    ><span style={styles.triggerIcon}>{triggerIconUrl === undefined
+      ? <ArkmeComposerEmojiIcon />
+      : <img src={triggerIconUrl} alt="" draggable={false} width="16" height="16" />}</span><span className="arkme-conversation-toolbar-label">表情</span></ArkmeComposerToolButton>
     {open && (() => {
       const shell = <div
         style={{

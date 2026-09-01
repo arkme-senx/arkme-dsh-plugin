@@ -1,0 +1,4 @@
+- insert:
+    - id: arkme-workbench
+      name: '@senguoyun/arkme-workbench'
+      config: {}

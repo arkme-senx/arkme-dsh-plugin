@@ -339,7 +339,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       onTextChange(nextText)
     }
 
-    return <div style={{ ...styles.host, minHeight: style.minHeight, maxHeight: style.maxHeight }}>
+    return <div data-arkme-rich-composer-host="true" style={{ ...styles.host, minHeight: style.minHeight, maxHeight: style.maxHeight }}>
       {value === '' && !editorHasContent && <div aria-hidden style={{ ...style, ...styles.placeholder }}>{placeholder}</div>}
       <div
         ref={editorRef}

@@ -22,6 +22,7 @@ import { arkmeTheme } from './arkme-theme.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import { ArkmeQuickAddButton } from './ArkmeQuickAdd.js'
+import { arkmeQQ2006SidebarAssets } from './qq2006-sidebar-assets.js'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
   readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
@@ -116,6 +117,31 @@ const colors = {
   accent: '#9eadff',
   mention: '#20c66a',
 }
+
+type ArkmeQQDirectoryAction = 'focus' | 'new-task' | 'add-contact' | 'world' | 'market' | 'search'
+  | 'harness' | 'contacts' | 'calls' | 'recordings' | 'send-to-self' | 'calendar' | 'refresh'
+
+const ARKME_QQ_DIRECTORY_HEAD_TOOLS: readonly { key: string; label: string; asset: string; action: ArkmeQQDirectoryAction }[] = [
+  { key: 'focus', label: '定位消息输入框', asset: arkmeQQ2006SidebarAssets.headSms, action: 'focus' },
+  { key: 'new-task', label: '新建任务', asset: arkmeQQ2006SidebarAssets.headMail, action: 'new-task' },
+  { key: 'contact', label: '添加联系人', asset: arkmeQQ2006SidebarAssets.headSecurity, action: 'add-contact' },
+  { key: 'world', label: '打开世界', asset: arkmeQQ2006SidebarAssets.headHome, action: 'world' },
+  { key: 'market', label: '打开市集', asset: arkmeQQ2006SidebarAssets.headMusic, action: 'market' },
+  { key: 'search', label: '搜索对话或消息', asset: arkmeQQ2006SidebarAssets.headManager, action: 'search' },
+]
+
+const ARKME_QQ_DIRECTORY_BAR_TOOLS: readonly { key: string; label: string; asset: string; action: ArkmeQQDirectoryAction }[] = [
+  { key: 'harness', label: 'DeepSeek Harness', asset: arkmeQQ2006SidebarAssets.barSms, action: 'harness' },
+  { key: 'contacts', label: '联系人', asset: arkmeQQ2006SidebarAssets.barInvite, action: 'contacts' },
+  { key: 'new-task', label: '新建任务', asset: arkmeQQ2006SidebarAssets.barVideo, action: 'new-task' },
+  { key: 'calls', label: '通话', asset: arkmeQQ2006SidebarAssets.barVoice, action: 'calls' },
+  { key: 'recordings', label: '录音', asset: arkmeQQ2006SidebarAssets.barFile, action: 'recordings' },
+  { key: 'send-to-self', label: '发给自己', asset: arkmeQQ2006SidebarAssets.barShow3d, action: 'send-to-self' },
+  { key: 'calendar', label: '日历', asset: arkmeQQ2006SidebarAssets.barEnterprise, action: 'calendar' },
+  { key: 'world', label: '世界', asset: arkmeQQ2006SidebarAssets.barCustom, action: 'world' },
+  { key: 'market', label: '市集', asset: arkmeQQ2006SidebarAssets.barMail, action: 'market' },
+  { key: 'refresh', label: '刷新会话', asset: arkmeQQ2006SidebarAssets.barPark, action: 'refresh' },
+]
 
 const styles: Record<string, CSSProperties> = {
   shell: {
@@ -1315,6 +1341,26 @@ export function ArkmeNavigation({
     setSources(cacheRef.current?.sources[next] ?? [])
     persistCache({ directory: next })
   }
+  const runQQDirectoryAction = (action: ArkmeQQDirectoryAction) => {
+    if (action === 'focus') {
+      document.querySelector<HTMLTextAreaElement>('.arkme-conversation-textarea')?.focus()
+      return
+    }
+    if (action === 'new-task') { onCreateTask?.(); return }
+    if (action === 'add-contact') { showContactAdd(); return }
+    if (action === 'search') { setGlobalSearchOpen(true); return }
+    if (action === 'contacts') { activateNativeEntry(); arkmeUi.showContacts(); onActivateSurface?.(); return }
+    if (action === 'calls') { showCalls(); return }
+    if (action === 'recordings') { showRecordings(); return }
+    if (action === 'send-to-self') { changeDirectory('send_to_self'); return }
+    if (action === 'calendar') { showCalendar(); return }
+    if (action === 'world') { activateNativeEntry(); arkmeUi.showWorld(); onActivateSurface?.(); return }
+    if (action === 'market') { activateNativeEntry(); arkmeUi.showExtensions(); onActivateSurface?.(); return }
+    if (action === 'refresh') { void loadDirectory('root', undefined, true); return }
+    activateNativeEntry()
+    arkmeUi.showHarness()
+    onActivateSurface?.()
+  }
   const selectSource = (source: ArkmeSourceItem) => {
     activateNativeEntry()
     const optimisticRead = (source.kind === 'private_chat' || source.kind === 'group_chat')
@@ -1558,6 +1604,44 @@ export function ArkmeNavigation({
       }} />
       {onClose !== undefined && <button type="button" style={styles.headerButton} aria-label="关闭 Arkme" title="关闭 Arkme" onClick={onClose}>×</button>}
     </header>}
+    {directory === 'root' && embeddedProductShell && <div
+      className="arkme-qq2006-directory-chrome"
+      data-arkme-qq2006-directory-chrome="true"
+    >
+      <div className="arkme-qq2006-directory-identity">
+        <img className="arkme-qq2006-directory-avatar" src={arkmeQQ2006SidebarAssets.avatar} alt="" draggable={false} />
+        <span className="arkme-qq2006-directory-presence">
+          <strong>DeepSeek</strong>
+          <span><i aria-hidden />在线 · Arkme</span>
+        </span>
+        <span className="arkme-qq2006-directory-mini-tools">
+          {ARKME_QQ_DIRECTORY_HEAD_TOOLS.map(tool => <button
+            key={tool.key}
+            type="button"
+            aria-label={tool.label}
+            title={tool.label}
+            onClick={() => { runQQDirectoryAction(tool.action) }}
+            disabled={tool.action === 'new-task' && onCreateTask === undefined}
+          ><img src={tool.asset} alt="" draggable={false} /></button>)}
+        </span>
+      </div>
+      <div
+        className="arkme-qq2006-directory-tool-bar"
+        style={{
+          '--arkme-qq-directory-cell': `url("${arkmeQQ2006SidebarAssets.barCell}")`,
+          '--arkme-qq-directory-cell-hover': `url("${arkmeQQ2006SidebarAssets.barCellHover}")`,
+        } as CSSProperties}
+      >
+        {ARKME_QQ_DIRECTORY_BAR_TOOLS.map(tool => <button
+          key={tool.key}
+          type="button"
+          aria-label={tool.label}
+          title={tool.label}
+          onClick={() => { runQQDirectoryAction(tool.action) }}
+          disabled={tool.action === 'new-task' && onCreateTask === undefined}
+        ><img src={tool.asset} alt="" draggable={false} /></button>)}
+      </div>
+    </div>}
     {directory === 'root' && embeddedProductShell && <div style={styles.conversationToolbar}>
       <label style={{ ...styles.searchField, ...styles.embeddedSearchField }}>
         <MagnifyingGlass size={16} aria-hidden />
