@@ -177,9 +177,23 @@ describe('RecordingImportCoordinator', () => {
     owner.deleteSession = vi.fn(async () => { throw new Error('owner unavailable') })
     const coordinator = new RecordingImportCoordinator(store, owner, source(), async () => 42, () => 2_000)
 
-    await expect(coordinator.cancel(42, 'job-1', 3)).rejects.toThrow('owner unavailable')
+    await expect(coordinator.cancel(42, 'job-1', 4)).rejects.toThrow('owner unavailable')
     expect(store.value.phase).toBe('uploading')
     expect(store.value.sessionId).toBe('session-1')
+  })
+
+  it('rejects a stale cancel revision instead of cancelling a newer retry run', async () => {
+    const store = memoryStore(job({
+      phase: 'uploading', revision: 4, sessionId: 'session-1', childId: 'child-1',
+    }))
+    const owner = gateway()
+    const coordinator = new RecordingImportCoordinator(store, owner, source(), async () => 42, () => 2_000)
+
+    await expect(coordinator.cancel(42, 'job-1', 3)).rejects.toMatchObject({
+      code: 'recording-import-revision-conflict',
+    })
+    expect(owner.deleteSession).not.toHaveBeenCalled()
+    expect(store.value.phase).toBe('uploading')
   })
 
   it('asks the gateway to recover owner state before cancelling a prepared retry', async () => {

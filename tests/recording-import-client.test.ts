@@ -4,7 +4,11 @@ import {
   inspectArkmeRecordingSelection,
   validateArkmeRecordingSelection,
 } from '../src/client/recordings/recording-import-selection.js'
-import { recordingImportLocalInputValue } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
+import {
+  recordingImportEndTimeError,
+  recordingImportLocalInputValue,
+  recordingImportStartFromFileName,
+} from '../src/client/recordings/ArkmeRecordingImportDialog.js'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -12,6 +16,18 @@ describe('recording import client gateway', () => {
   it('preserves second precision for the imported recording start time', () => {
     expect(recordingImportLocalInputValue(new Date(2026, 7, 28, 9, 12, 34)))
       .toBe('2026-08-28T09:12:34')
+  })
+
+  it('uses the selected day as fallback, parses desktop filename timestamps and rejects future end times', () => {
+    const selectedDay = new Date(2026, 7, 28).getTime()
+    expect(recordingImportStartFromFileName('会议_20260828_091234.m4a', selectedDay))
+      .toBe(new Date(2026, 7, 28, 9, 12, 34).getTime())
+    expect(recordingImportStartFromFileName('普通会议.m4a', selectedDay))
+      .toBe(selectedDay)
+    expect(recordingImportStartFromFileName('会议_20261339_256199.m4a', selectedDay))
+      .toBe(selectedDay)
+    expect(recordingImportEndTimeError(2_000, 1_000, 2_999)).toBe('录音结束时间不能晚于当前时间')
+    expect(recordingImportEndTimeError(2_000, 1_000, 3_000)).toBe('')
   })
 
   it('rejects unsupported, empty, oversized and over-ten-hour selections before upload', async () => {
@@ -58,7 +74,7 @@ describe('recording import client gateway', () => {
     const file = new File(['abc'], '会议.m4a', { type: '' })
     const controller = new AbortController()
 
-    await expect(uploadArkmeRecording('/arkme-self/api/recording/import', file, 1_725_000_000_000, controller.signal))
+    await expect(uploadArkmeRecording('/arkme-self/api/recording/import', file, 1_725_000_000_000, 0, controller.signal))
       .resolves.toMatchObject({ importRef: 'opaque', phase: 'prepared' })
     expect(fetch).toHaveBeenCalledWith('/arkme-self/api/recording/import', expect.objectContaining({
       method: 'POST', body: file, credentials: 'same-origin', redirect: 'error',
@@ -67,6 +83,7 @@ describe('recording import client gateway', () => {
         'Content-Type': 'audio/mp4',
         'X-Arkme-File-Name': encodeURIComponent('会议.m4a'),
         'X-Arkme-Start-At': '1725000000000',
+        'X-Arkme-Belong-User': '0',
       }),
     }))
   })

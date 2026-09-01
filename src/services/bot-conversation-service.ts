@@ -10,6 +10,7 @@ import type {
   ArkmeBotSummary,
 } from '../types.js'
 import type { ArkmeBotRefPayload } from './bot-service.js'
+import { MessageActionService } from './message-action-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 type AvailableBotRef = ArkmeBotRefPayload & {
@@ -97,12 +98,18 @@ function subjectAttachments(value: unknown): ArkmeBotConversationMessage['attach
   })
 }
 
-function subjectMessage(value: unknown, fallbackContent = ''): ArkmeBotConversationMessage {
+function subjectMessage(
+  value: unknown,
+  fallbackContent = '',
+  messageIdIsRecordUid = false,
+): ArkmeBotConversationMessage {
   const raw = objectValue(value)
-  const recordUid = stringValue(raw.record_uid ?? raw.recordUid).trim()
+  const messageId = stringValue(raw.message_id ?? raw.messageId).trim()
+  const explicitRecordUid = stringValue(raw.record_uid ?? raw.recordUid).trim()
+  const recordUid = explicitRecordUid || (messageIdIsRecordUid ? messageId : '')
   const content = stringValue(raw.content)
   return {
-    messageId: stringValue(raw.message_id ?? raw.messageId).trim(),
+    messageId,
     ...(recordUid === '' ? {} : { recordUid }),
     role: stringValue(raw.role).trim().toLowerCase() === 'user' ? 'user' : 'assistant',
     content: content === '' ? fallbackContent : content,
@@ -135,7 +142,7 @@ function withLatestActivity(bot: ArkmeBotSummary, messages: readonly ArkmeBotCon
 }
 
 class SubjectBotConversationAdapter implements BotConversationOwnerAdapter {
-  constructor(private readonly runtime: ServiceRuntime) {}
+  constructor(private readonly runtime: ServiceRuntime, private readonly messageActions?: MessageActionService) {}
 
   async open(context: BotConversationContext, signal?: AbortSignal): Promise<ArkmeBotConversation> {
     return await this.read(context, signal)
@@ -184,14 +191,14 @@ class SubjectBotConversationAdapter implements BotConversationOwnerAdapter {
         409,
       )
     }
-    return {
-      userMessage: subjectMessage(data.user_message, content),
+    return await this.decorateResult(context, {
+      userMessage: subjectMessage(data.user_message, content, true),
       botMessages: dedupeMessages([
         ...listValue(data.bot_messages).map(message => subjectMessage(message)),
         ...(Object.keys(objectValue(data.bot_message)).length === 0 ? [] : [subjectMessage(data.bot_message)]),
       ]),
       status: stringValue(data.status).trim() || 'ok',
-    }
+    })
   }
 
   async notificationPreference(context: BotConversationContext, signal?: AbortSignal): Promise<ArkmeBotNotificationPreference> {
@@ -222,7 +229,39 @@ class SubjectBotConversationAdapter implements BotConversationOwnerAdapter {
     const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
       '/api/v1/bot/private-chat/open', { bot_id: context.reference.botId }, context.session, signal,
     )
-    return { messages: dedupeMessages(listValue(data.messages).map(message => subjectMessage(message))) }
+    // Subject private-chat history defines message_id as its canonical Record UID.
+    // Send-side Bot reply occurrence IDs do not share that contract and stay fail-closed.
+    const messages = dedupeMessages(listValue(data.messages).map(message => subjectMessage(message, '', true)))
+    return { messages: await Promise.all(messages.map(async message => await this.decorateMessage(context, message))) }
+  }
+
+  private async decorateResult(
+    context: BotConversationContext,
+    result: ArkmeBotConversationSendResult,
+  ): Promise<ArkmeBotConversationSendResult> {
+    return {
+      ...result,
+      userMessage: await this.decorateMessage(context, result.userMessage),
+      botMessages: await Promise.all(result.botMessages.map(async message => await this.decorateMessage(context, message))),
+    }
+  }
+
+  private async decorateMessage(
+    context: BotConversationContext,
+    message: ArkmeBotConversationMessage,
+  ): Promise<ArkmeBotConversationMessage> {
+    if (this.messageActions === undefined || !['sent', 'completed', 'success', 'ok'].includes(message.status.trim().toLowerCase())) return message
+    const target = this.subjectTarget(context)
+    const action = await this.messageActions.subjectBotMessage({
+      userId: context.session.userId,
+      subjectUid: target.subjectUid,
+      messageIdentity: message.messageId,
+      recordUid: message.recordUid ?? '',
+      role: message.role,
+      textContent: message.content,
+      createdAtMillis: message.createdAtMillis,
+    })
+    return action === undefined ? message : { ...message, ...action }
   }
 
   private subjectTarget(context: BotConversationContext): Extract<AvailableBotRef['target'], { kind: 'subject' }> {
@@ -293,8 +332,9 @@ export class BotConversationService {
     private readonly bot: BotConversationRegistryPort,
     chat: ChatBotConversationPort,
     private readonly invalidateRecordProjection: () => Promise<void>,
+    messageActions?: MessageActionService,
   ) {
-    this.subject = new SubjectBotConversationAdapter(runtime)
+    this.subject = new SubjectBotConversationAdapter(runtime, messageActions)
     this.chatAdapter = new ChatBotConversationAdapter(runtime, chat)
   }
 

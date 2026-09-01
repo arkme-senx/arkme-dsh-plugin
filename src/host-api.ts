@@ -31,7 +31,17 @@ import { arkmeRequiredLinkMetadataFallback } from './link-metadata.js'
 const MAX_STANDARD_REQUEST_BYTES = 128 * 1024
 const MAX_MESSAGE_ACTION_REF_CHARS = 1024 * 1024
 const MAX_MESSAGE_REPORT_REF_CHARS = 4_096
-const MAX_REQUEST_BYTES = MAX_MESSAGE_ACTION_REF_CHARS + (64 * 1024)
+const MAX_RELATED_QUICK_NOTE_REQUEST_BYTES = MAX_MESSAGE_ACTION_REF_CHARS + (64 * 1024)
+const MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES = 10 * 1024 * 1024
+const MAX_REQUEST_BYTES = MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
+
+function requestBytesLimit(operation: string): number {
+  if (operation === 'source.related-quick-notes.from-message') return MAX_RELATED_QUICK_NOTE_REQUEST_BYTES
+  if (operation === 'message-actions.copy-link' || operation === 'message-actions.forward') {
+    return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
+  }
+  return MAX_STANDARD_REQUEST_BYTES
+}
 
 function isLoopback(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
@@ -61,8 +71,7 @@ async function readRequest(req: IncomingMessage): Promise<ArkmePluginRequest> {
   if (typeof source.operation !== 'string') {
     throw new ArkmePluginError('operation-required', '缺少操作类型', false)
   }
-  if (bytes > MAX_STANDARD_REQUEST_BYTES
-    && source.operation !== 'source.related-quick-notes.from-message') {
+  if (bytes > requestBytesLimit(source.operation)) {
     throw new ArkmePluginError('request-too-large', '请求内容过大', false, 413)
   }
   return {
@@ -682,7 +691,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (request.operation === 'link.metadata' && origin === undefined) {
         throw new ArkmePluginError('origin-required', '网址名称解析必须从当前 DSH 页面发起', false, 403)
       }
-      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.speaker.assign-item']
+      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.speaker.assign-item', 'message-actions.copy-link', 'message-actions.forward']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -918,8 +927,12 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', 0),
       numberParam(params, 'toStamp', 0),
+      requestSignal,
     )
-    case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
+    case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0), requestSignal)
+    case 'recordings.import.preflight': return await service.recordingImportPreflight(
+      stringListParam(params, 'fileNames'), requestSignal,
+    )
     case 'recordings.import.list': return await service.recordingImportList()
     case 'recordings.import.status': return await service.recordingImportStatus(stringParam(params, 'importRef').trim())
     case 'recordings.import.retry': return await service.retryRecordingImport(
@@ -1264,6 +1277,11 @@ export async function dispatchArkmeHostOperation(
       messageActionRefsParam(params),
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
+    case 'message-actions.copy-link': return await service.copyMessageActionsLink(
+      stringParam(params, 'conversationRef').trim(),
+      messageActionRefsParam(params),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
     case 'source.message-copy-link.resolve': return await service.resolveMessageCopyLink(
       stringParam(params, 'sid'),
       requestSignal === undefined ? {} : { signal: requestSignal },
@@ -1302,6 +1320,19 @@ export async function dispatchArkmeHostOperation(
         ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(stringParam(params, 'commentText') === '' ? {} : { commentText: stringParam(params, 'commentText') }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      },
+    )
+    case 'message-actions.forward': return await service.forwardMessageActions(
+      stringParam(params, 'conversationRef').trim(),
+      messageActionRefsParam(params),
+      {
+        targetSourceRef: stringParam(params, 'targetSourceRef').trim(),
+        requestId: stringParam(params, 'requestId').trim(),
+        recordUid: stringParam(params, 'recordUid').trim(),
+        sendAtMillis: numberParam(params, 'sendAtMillis', 0),
+        ...(stringParam(params, 'commentRecordUid').trim() === '' ? {} : { commentRecordUid: stringParam(params, 'commentRecordUid').trim() }),
+        ...(stringParam(params, 'commentText').trim() === '' ? {} : { commentText: stringParam(params, 'commentText').trim() }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )

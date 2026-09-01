@@ -81,6 +81,15 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
   }
 }
 
+function cloneRecordingImportJob(job: RecordingImportJob): RecordingImportJob {
+  return {
+    ...job,
+    ...(job.uploadCheckpoint === undefined
+      ? {}
+      : { uploadCheckpoint: structuredClone(job.uploadCheckpoint) }),
+  }
+}
+
 function normalizedLongArticleDraft(value: unknown): ArkmeLongArticleDraft | undefined {
   if (value === null || typeof value !== 'object') return undefined
   const source = value as Record<string, unknown>
@@ -239,18 +248,18 @@ export class ArkmeStateStore {
 
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
     return await this.read(state => Object.values(state.recordingImportJobsByUser[String(userId)] ?? {})
-      .map(job => ({ ...job })))
+      .map(cloneRecordingImportJob))
   }
 
   async listAllRecordingImportJobs(): Promise<RecordingImportJob[]> {
     return await this.read(state => Object.values(state.recordingImportJobsByUser)
-      .flatMap(jobs => Object.values(jobs).map(job => ({ ...job }))))
+      .flatMap(jobs => Object.values(jobs).map(cloneRecordingImportJob)))
   }
 
   async getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined> {
     return await this.read(state => {
       const job = state.recordingImportJobsByUser[String(userId)]?.[jobId]
-      return job === undefined ? undefined : { ...job }
+      return job === undefined ? undefined : cloneRecordingImportJob(job)
     })
   }
 
@@ -258,7 +267,7 @@ export class ArkmeStateStore {
     if (job.userId !== userId) throw new Error('Recording import job account mismatch')
     await this.update(state => {
       const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
-      jobs[job.jobId] = { ...job }
+      jobs[job.jobId] = cloneRecordingImportJob(job)
       pruneRecordingImportTerminalJobs(jobs)
       state.recordingImportJobsByUser[String(userId)] = jobs
     })
@@ -266,16 +275,16 @@ export class ArkmeStateStore {
 
   async putRecordingImportJobIfAbsent(userId: number, job: RecordingImportJob): Promise<RecordingImportJob> {
     if (job.userId !== userId) throw new Error('Recording import job account mismatch')
-    let selected = job
+    let selected = cloneRecordingImportJob(job)
     await this.update(state => {
       const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
       const existing = Object.values(jobs).find(candidate => candidate.phase !== 'cancelled'
         && sameRecordingImportIdentity(candidate, job))
       if (existing !== undefined) {
-        selected = { ...existing }
+        selected = cloneRecordingImportJob(existing)
         return
       }
-      jobs[job.jobId] = { ...job }
+      jobs[job.jobId] = cloneRecordingImportJob(job)
       pruneRecordingImportTerminalJobs(jobs)
       state.recordingImportJobsByUser[String(userId)] = jobs
     })
@@ -293,7 +302,7 @@ export class ArkmeStateStore {
       const current = state.recordingImportJobsByUser[String(userId)]?.[job.jobId]
       if (current?.revision !== expectedRevision) return
       const jobs = state.recordingImportJobsByUser[String(userId)]!
-      jobs[job.jobId] = { ...job }
+      jobs[job.jobId] = cloneRecordingImportJob(job)
       pruneRecordingImportTerminalJobs(jobs)
       replaced = true
     })
@@ -343,9 +352,9 @@ export class ArkmeStateStore {
 
   private async update(mutator: (state: PersistedState) => void): Promise<void> {
     await this.serial(async () => {
-      const state = await this.load()
-      mutator(state)
-      await this.write(state)
+      const next = structuredClone(await this.load())
+      mutator(next)
+      await this.write(next)
     })
   }
 

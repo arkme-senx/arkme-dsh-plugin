@@ -75,6 +75,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
         orig_name: job.fileName,
         tz_offset: timezoneOffsetMillis,
         start_at: job.startAtMillis,
+        belong_usr: job.belongUserId,
       },
       session,
       signal,
@@ -220,7 +221,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
 
   private async requireJobSession(job: RecordingImportJob): Promise<ArkmeSessionCredentials> {
     const session = await this.runtime.requireSession()
-    if (session.userId !== job.userId || job.belongUserId !== job.userId) {
+    if (session.userId !== job.userId) {
       throw new ArkmePluginError('recording-import-account-mismatch', '登录账号已变化，已停止录音导入', true, 403)
     }
     return session

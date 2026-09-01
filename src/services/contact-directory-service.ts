@@ -84,6 +84,39 @@ export class ContactDirectoryService {
 
   dispose(): void { this.contactRefs.clear() }
 
+  async listRecordingSpeakerUsers(
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Array<{ userId: number; label: string; avatarRef?: string }>> {
+    const descriptors = await this.loadMergedContactDescriptors(session, signal === undefined ? {} : { signal })
+    const userIds = [session.userId, ...descriptors.map(descriptor => descriptor.targetUserId)]
+    const profiles = await this.profile.publicProfileSummariesByUserIds(userIds, session, signal)
+    const candidates: Array<{ userId: number; label: string; avatarRef?: string }> = []
+    const currentProfile = profiles.get(session.userId)
+    candidates.push({
+      userId: session.userId,
+      label: currentProfile?.displayName || currentProfile?.nickname || '我',
+      ...(currentProfile?.avatarUrl === undefined
+        ? {}
+        : { avatarRef: await this.profile.sealProfileImageRef(session.userId, session.userId) }),
+    })
+    for (const descriptor of descriptors) {
+      const identity = await this.contactIdentity(
+        descriptor.targetUserId,
+        descriptor.remark,
+        profiles.get(descriptor.targetUserId),
+        session,
+        descriptor.displayNameSnapshot,
+      )
+      candidates.push({
+        userId: descriptor.targetUserId,
+        label: identity.displayName,
+        ...(identity.avatarRef === undefined ? {} : { avatarRef: identity.avatarRef }),
+      })
+    }
+    return candidates
+  }
+
   async list(
     section: ArkmeDirectorySectionKind,
     options: { limit?: number; cursor?: string; countOnly?: boolean; refresh?: boolean; signal?: AbortSignal } = {},

@@ -28,7 +28,7 @@ const item = (itemRef: string, startAtMillis: number): ArkmeRecordingWorkbenchIt
   itemRef,
   speakerLabel: '说话人 1',
   speakerColorIndex: 1,
-  speakerIdentity: 'session:1',
+  speakerKey: 'session:1',
   sameSpeakerItemCount: 1,
   text: itemRef,
   startAtMillis,
@@ -94,6 +94,40 @@ describe('recording playback controller', () => {
     expect(playback.error).toBe('')
   })
 
+  it('releases the active item when the browser reports natural media completion', async () => {
+    await act(async () => { await playback.playItem(item('item-a', 100_000)); await tick() })
+    const audio = audios[0]!
+
+    await act(async () => { audio.emit('ended'); await tick() })
+
+    expect(audio.pause).toHaveBeenCalled()
+    expect(playback.activeItemRef).toBe('')
+    expect(playback.positionAtMillis).toBeUndefined()
+    expect(playback.isPlaying).toBe(false)
+    expect([...audio.listeners.values()].every(listeners => listeners.size === 0)).toBe(true)
+  })
+
+  it('aborts a superseded opaque playback request instead of leaving owner work running', async () => {
+    let firstSignal: AbortSignal | undefined
+    let resolveFirst!: (value: unknown) => void
+    mocks.callArkme.mockImplementationOnce(async (_operation, _params, signal?: AbortSignal) => {
+      firstSignal = signal
+      return await new Promise(resolve => { resolveFirst = resolve })
+    })
+
+    let firstRequest!: Promise<void>
+    await act(async () => { firstRequest = playback.playItem(item('item-a', 100_000)); await tick() })
+    await act(async () => { await playback.playItem(item('item-b', 200_000)); await tick() })
+
+    expect(firstSignal?.aborted).toBe(true)
+    await act(async () => {
+      resolveFirst({ playbackRef: 'opaque-stale', startOffsetMillis: 0, endOffsetMillis: 10_000 })
+      await firstRequest; await tick()
+    })
+    expect(audios).toHaveLength(1)
+    expect(playback.activeItemRef).toBe('item-b')
+  })
+
   it('stops the current Audio immediately while the next opaque playback ref is loading', async () => {
     await act(async () => { await playback.playItem(item('item-a', 100_000)); await tick() })
     const first = audios[0]!
@@ -120,5 +154,39 @@ describe('recording playback controller', () => {
     await act(async () => { renderer.unmount(); await tick() })
     expect(audio.pause).toHaveBeenCalled()
     expect([...audio.listeners.values()].every(listeners => listeners.size === 0)).toBe(true)
+  })
+
+  it('surfaces a resume failure and releases the unusable Audio instance', async () => {
+    await act(async () => { await playback.playItem(item('item-a', 100_000)); await tick() })
+    const audio = audios[0]!
+    await act(async () => { playback.pause(); await tick() })
+    audio.play.mockRejectedValueOnce(new Error('browser denied playback'))
+
+    await act(async () => { await playback.toggle(); await tick() })
+
+    expect(playback.error).toBe('browser denied playback')
+    expect(playback.activeItemRef).toBe('')
+    expect([...audio.listeners.values()].every(listeners => listeners.size === 0)).toBe(true)
+  })
+
+  it('starts from the item containing the selected time and continues with the next playable item', async () => {
+    const items = [item('item-a', 100_000), item('item-b', 120_000)]
+
+    await act(async () => { await playback.playAt(items, 103_000); await tick() })
+    expect(playback.activeItemRef).toBe('item-a')
+    expect(audios[0]?.currentTime).toBe(5)
+
+    await act(async () => { audios[0]!.currentTime = 12; audios[0]!.emit('timeupdate'); await tick() })
+    expect(mocks.callArkme).toHaveBeenCalledTimes(2)
+    expect(playback.activeItemRef).toBe('item-b')
+    expect(audios[1]?.currentTime).toBe(2)
+  })
+
+  it('does not start playback when the selected time has no containing item', async () => {
+    await act(async () => { await playback.playAt([item('item-a', 100_000)], 115_000); await tick() })
+
+    expect(mocks.callArkme).not.toHaveBeenCalled()
+    expect(playback.activeItemRef).toBe('')
+    expect(playback.positionAtMillis).toBe(115_000)
   })
 })

@@ -1,7 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
+import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
+import { MagnifyingGlassMinus } from '@phosphor-icons/react/dist/icons/MagnifyingGlassMinus'
+import { MagnifyingGlassPlus } from '@phosphor-icons/react/dist/icons/MagnifyingGlassPlus'
+import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
+import { Play } from '@phosphor-icons/react/dist/icons/Play'
 import type { ArkmeRecordingWorkbenchItem } from '../../types.js'
 import { arkmeTheme } from '../arkme-theme.js'
+import { ArkmeUserAvatar } from '../ArkmeAvatar.js'
 import { recordingSpeakerColor } from './recording-speaker-presentation.js'
+
+const desktop = {
+  base: arkmeTheme.base, surface: arkmeTheme.layer2, hover: arkmeTheme.hover, border: arkmeTheme.border,
+  text: arkmeTheme.text, secondary: arkmeTheme.secondary, tertiary: arkmeTheme.tertiary,
+  timelineBlue: arkmeTheme.info,
+}
 
 export const RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS = [
   86_400, 43_200, 21_600, 10_800, 7_200, 3_600, 1_800, 900,
@@ -10,6 +23,7 @@ export const RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS = [
 
 const DAY_MILLIS = 86_400_000
 const DEFAULT_RECORDING_ZOOM_INDEX = 6
+const WHEEL_ZOOM_THRESHOLD = 24
 
 function clampWindowStart(value: number, visibleMillis: number, dayStart: number, dayEnd: number): number {
   return Math.min(Math.max(dayStart, dayEnd - visibleMillis), Math.max(dayStart, value))
@@ -31,24 +45,13 @@ export function recordingSegmentLayout(start: number, end: number, windowStart: 
   const clippedEnd = Math.min(windowEnd, Math.max(clippedStart, end))
   return {
     leftPercent: (clippedStart - windowStart) / span * 100,
-    widthPercent: Math.max(.35, (clippedEnd - clippedStart) / span * 100),
+    widthPercent: (clippedEnd - clippedStart) / span * 100,
   }
 }
 
 export function recordingTimelineSeekMillis(ratio: number, windowStart: number, windowEnd: number): number {
   const bounded = Math.min(1, Math.max(0, ratio))
   return Math.round(windowStart + (windowEnd - windowStart) * bounded)
-}
-
-export function recordingTimelineItemAt(
-  items: readonly ArkmeRecordingWorkbenchItem[],
-  targetMillis: number,
-): ArkmeRecordingWorkbenchItem | undefined {
-  return items.find(item => item.startAtMillis <= targetMillis && targetMillis <= item.endAtMillis)
-    ?? items.reduce<ArkmeRecordingWorkbenchItem | undefined>((closest, item) => {
-      if (closest === undefined) return item
-      return Math.abs(item.startAtMillis - targetMillis) < Math.abs(closest.startAtMillis - targetMillis) ? item : closest
-    }, undefined)
 }
 
 export function recordingTimelineZoomStart(input: {
@@ -94,6 +97,18 @@ export function recordingTimelineFollowStart(
   return clampWindowStart(playheadMillis - visibleMillis / 2, visibleMillis, dayStart, dayEnd)
 }
 
+export function recordingTimelineWheelZoom(accumulatedDelta: number, delta: number, deltaMode = 0): {
+  accumulatedDelta: number
+  zoomStep: -1 | 0 | 1
+} {
+  const normalizedDelta = delta * (deltaMode === 1 ? 16 : deltaMode === 2 ? 120 : 1)
+  const nextDelta = accumulatedDelta !== 0 && Math.sign(accumulatedDelta) !== Math.sign(normalizedDelta)
+    ? normalizedDelta
+    : accumulatedDelta + normalizedDelta
+  if (Math.abs(nextDelta) < WHEEL_ZOOM_THRESHOLD) return { accumulatedDelta: nextDelta, zoomStep: 0 }
+  return { accumulatedDelta: 0, zoomStep: nextDelta > 0 ? -1 : 1 }
+}
+
 export function recordingTimelineInitialView(
   items: readonly Pick<ArkmeRecordingWorkbenchItem, 'startAtMillis'>[],
   dayStart: number,
@@ -116,8 +131,8 @@ export interface ArkmeVisibleTimelineItem {
   isMixedSpeakerAggregate: boolean
 }
 
-function recordingTimelineSpeakerIdentity(item: ArkmeRecordingWorkbenchItem): string {
-  return item.isBackground ? 'background' : `${item.speakerLabel}:${String(item.speakerColorIndex)}`
+export function recordingTimelineSpeakerIdentity(item: ArkmeRecordingWorkbenchItem): string {
+  return item.isBackground ? 'background' : item.speakerKey
 }
 
 export function recordingVisibleTimelineItems(
@@ -157,42 +172,99 @@ function durationLabel(seconds: number): string {
   return `${String(seconds)}秒`
 }
 
-function timeLabel(value: number): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  }).format(value)
+function timeLabel(value: number, showSeconds = true): string {
+  const date = new Date(value)
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  return showSeconds
+    ? `${hours}:${minutes}:${String(date.getSeconds()).padStart(2, '0')}`
+    : `${hours}:${minutes}`
+}
+
+const TIMELINE_TICK_STEPS_SECONDS = [
+  1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1_800,
+  3_600, 7_200, 10_800, 14_400, 21_600, 43_200, 86_400,
+] as const
+
+export function recordingTimelineTickTimes(windowStart: number, windowEnd: number): number[] {
+  const visibleSeconds = Math.max(1, (windowEnd - windowStart) / 1_000)
+  const targetStep = visibleSeconds / 6
+  const stepSeconds = TIMELINE_TICK_STEPS_SECONDS.reduce((closest, candidate) => (
+    Math.abs(candidate - targetStep) < Math.abs(closest - targetStep) ? candidate : closest
+  ))
+  const stepMillis = stepSeconds * 1_000
+  const firstTick = Math.ceil(windowStart / stepMillis) * stepMillis
+  const ticks: number[] = []
+  for (let value = firstTick; value < windowEnd; value += stepMillis) ticks.push(value)
+  return ticks
+}
+
+const SPEAKER_LEGEND_ITEM_WIDTH = 96
+const SPEAKER_LEGEND_HORIZONTAL_PADDING = 12
+const SPEAKER_LEGEND_TOGGLE_WIDTH = 16
+
+export function recordingTimelineVisibleSpeakerCount(containerWidth: number, totalSpeakers: number): number {
+  if (totalSpeakers <= 0) return 0
+  const availableWidth = Math.max(0, containerWidth - SPEAKER_LEGEND_HORIZONTAL_PADDING - SPEAKER_LEGEND_TOGGLE_WIDTH)
+  for (let candidate = totalSpeakers; candidate >= 1; candidate -= 1) {
+    const hiddenCount = totalSpeakers - candidate
+    const moreChipWidth = hiddenCount > 0 ? `+${String(hiddenCount)}`.length * 6 + 14 : 0
+    if (candidate * SPEAKER_LEGEND_ITEM_WIDTH + moreChipWidth <= availableWidth) return candidate
+  }
+  return 1
 }
 
 const styles: Record<string, CSSProperties> = {
-  shell: { display: 'grid', gridTemplateRows: '28px 10px 52px', gap: 7 },
-  toolbar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  controls: { display: 'flex', alignItems: 'center', gap: 4 },
-  legend: { position: 'relative', fontSize: 10, color: arkmeTheme.secondary },
-  legendSummary: { display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', listStyle: 'none' },
-  legendPanel: { position: 'absolute', zIndex: 8, top: 22, left: 0, minWidth: 180, padding: 8, display: 'grid', gap: 6, border: `1px solid ${arkmeTheme.border}`, borderRadius: 8, background: arkmeTheme.elevated, boxShadow: '0 8px 24px rgba(0,0,0,.12)' },
-  legendItem: { display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' },
-  legendDot: { width: 9, height: 9, flex: 'none', borderRadius: 3 },
-  button: { border: `1px solid ${arkmeTheme.border}`, borderRadius: 7, background: arkmeTheme.layer1, color: arkmeTheme.secondary, cursor: 'pointer', fontSize: 11, padding: '3px 8px' },
-  track: { position: 'relative', overflow: 'hidden', touchAction: 'none', userSelect: 'none', borderRadius: 9, background: arkmeTheme.layer2, cursor: 'grab' },
-  overview: { position: 'relative', overflow: 'hidden', height: 10, touchAction: 'none', borderRadius: 5, background: arkmeTheme.layer2, cursor: 'pointer' },
-  overviewSegment: { position: 'absolute', top: 2, height: 6, minWidth: 1, borderRadius: 2, opacity: .72 },
-  overviewWindow: { position: 'absolute', zIndex: 3, top: 0, bottom: 0, minWidth: 2, boxSizing: 'border-box', border: `1px solid ${arkmeTheme.primaryAction}`, borderRadius: 5, background: 'rgba(23,25,28,.08)', pointerEvents: 'none' },
-  canvas: { position: 'relative', width: '100%', height: 52 },
-  base: { position: 'absolute', left: 8, right: 8, top: 24, height: 2, background: arkmeTheme.border },
-  segment: { position: 'absolute', top: 13, height: 23, minWidth: 5, border: 0, borderRadius: 6, cursor: 'pointer', opacity: .92 },
-  playhead: { position: 'absolute', zIndex: 4, top: 5, bottom: 4, width: 2, transform: 'translateX(-1px)', background: arkmeTheme.primaryAction, pointerEvents: 'none' },
-  playheadDot: { position: 'absolute', top: -2, left: -3, width: 8, height: 8, borderRadius: '50%', background: arkmeTheme.primaryAction },
-  edgeTime: { position: 'absolute', bottom: 2, color: arkmeTheme.tertiary, fontSize: 8, fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
+  shell: { height: 146, display: 'grid', gridTemplateRows: '25px minmax(0,1fr) 28px', gap: 6, padding: 16, boxSizing: 'border-box', border: `1px solid ${desktop.border}`, borderRadius: 10, background: desktop.base },
+  overviewRow: { minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'start', gap: 16 },
+  overviewColumn: { minWidth: 0, height: 25, position: 'relative' },
+  overview: { position: 'relative', overflow: 'hidden', height: 10, marginTop: 4, touchAction: 'none', borderRadius: 10, background: desktop.surface, cursor: 'pointer' },
+  overviewSegment: { position: 'absolute', top: 2, height: 6, minWidth: 2, borderRadius: 3 },
+  overviewWindow: { position: 'absolute', zIndex: 3, top: -.5, bottom: -.5, minWidth: 2, boxSizing: 'border-box', border: `1px solid ${desktop.timelineBlue}`, borderRadius: 10, background: 'color-mix(in srgb, var(--dsw-alias-state-business-primary, #3964fe) 20%, transparent)', pointerEvents: 'none' },
+  overviewLabels: { position: 'absolute', top: 18, left: 0, right: 0, height: 11, color: desktop.tertiary, fontSize: 10, lineHeight: '11px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
+  overviewLabel: { position: 'absolute', transform: 'translateX(-50%)', whiteSpace: 'nowrap' },
+  zoomControls: { height: 20, display: 'flex', alignItems: 'center', gap: 10, color: desktop.text },
+  zoomButton: { width: 16, height: 16, padding: 0, display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' },
+  zoomHint: { marginLeft: -2, color: desktop.tertiary, fontSize: 10, lineHeight: '20px', whiteSpace: 'nowrap' },
+  followButton: { height: 20, padding: '0 6px', border: 0, borderRadius: 4, background: desktop.hover, color: desktop.secondary, cursor: 'pointer', fontSize: 10 },
+  track: { minWidth: 0, minHeight: 0, position: 'relative', paddingTop: 12, touchAction: 'none', userSelect: 'none' },
+  detailRail: { position: 'relative', overflow: 'hidden', height: 18, boxSizing: 'border-box', border: `1px solid ${desktop.border}`, borderRadius: 10, background: desktop.surface, cursor: 'grab' },
+  segment: { position: 'absolute', top: 1, bottom: 1, minWidth: 2, padding: 0, border: 0, borderRadius: 0, cursor: 'pointer', opacity: .96 },
+  tickLabels: { position: 'relative', height: 16, display: 'block', color: desktop.tertiary, fontSize: 10, lineHeight: '16px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
+  tickLabel: { position: 'absolute', transform: 'translateX(-50%)', whiteSpace: 'nowrap' },
+  playhead: { position: 'absolute', zIndex: 4, top: 0, bottom: 0, width: 2, transform: 'translateX(-1px)', background: desktop.timelineBlue, pointerEvents: 'none' },
+  playheadCap: { position: 'absolute', top: -1, left: -4, width: 10, height: 5, borderRadius: '0 0 10px 10px', background: desktop.timelineBlue },
+  playControl: { position: 'absolute', zIndex: 6, top: -20, width: 24, height: 20, transform: 'translateX(-50%)', padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 6, background: desktop.text, color: desktop.base, cursor: 'pointer' },
+  legend: { minWidth: 0, position: 'relative', margin: 0, color: desktop.secondary, fontSize: 12 },
+  legendSummary: { height: 28, boxSizing: 'border-box', padding: '4px 6px', display: 'flex', alignItems: 'center', cursor: 'pointer', listStyle: 'none', border: `1px solid ${desktop.border}`, borderRadius: 6, background: desktop.base },
+  legendItems: { minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', overflow: 'hidden' },
+  legendItem: { width: 96, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 4px', boxSizing: 'border-box', whiteSpace: 'nowrap' },
+  legendName: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: desktop.text, fontWeight: 500 },
+  legendDot: { width: 12, height: 12, flex: 'none', borderRadius: '50%' },
+  moreChip: { flex: 'none', marginRight: 2, padding: '0 6px', borderRadius: 10, background: desktop.hover, color: desktop.tertiary, fontSize: 11, lineHeight: '16px', fontWeight: 500 },
+  legendPanel: { position: 'absolute', zIndex: 12, top: 31, left: 0, right: 0, maxHeight: 260, padding: 8, display: 'grid', gap: 4, overflowY: 'auto', border: `1px solid ${desktop.border}`, borderRadius: 10, background: desktop.base, boxShadow: arkmeTheme.shadow },
+  legendPanelButton: { minWidth: 0, height: 30, display: 'flex', alignItems: 'center', gap: 8, padding: '0 8px', border: 0, borderRadius: 6, color: desktop.text, cursor: 'pointer', textAlign: 'left' },
+  emptyControl: { height: 28, display: 'flex', alignItems: 'center', color: desktop.secondary, fontSize: 12, fontWeight: 500, lineHeight: '16px', letterSpacing: '.24px' },
+  emptyIndicator: { width: 16, height: 16, flex: 'none', marginRight: 6, borderRadius: 4, background: desktop.hover },
+  importButton: { height: 20, marginLeft: 6, padding: 0, display: 'inline-flex', alignItems: 'center', gap: 2, border: 0, background: 'transparent', color: desktop.timelineBlue, cursor: 'pointer', font: 'inherit', fontSize: 12, fontWeight: 500, lineHeight: '16px', letterSpacing: '.24px' },
+  loadingControl: { width: 200, height: 16, alignSelf: 'center', borderRadius: 8, background: desktop.hover },
 }
 
-export function ArkmeRecordingTimeline({ items, dayStartMillis, playheadMillis, isPlaying, onActivate, onTogglePlayback }: {
+export function ArkmeRecordingTimeline({ items, dayStartMillis, playheadMillis, isPlaying, loading = false, emptyState, focusedSpeakerKey, onFocusedSpeakerChanged, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
   items: ArkmeRecordingWorkbenchItem[]
   dayStartMillis?: number
   playheadMillis?: number
   isPlaying: boolean
-  onActivate(item: ArkmeRecordingWorkbenchItem, seekAtMillis?: number): void
+  loading?: boolean
+  emptyState?: boolean
+  focusedSpeakerKey?: string
+  onFocusedSpeakerChanged?(key?: string): void
+  onImportAudio?(): void
+  onSelectAtMillis(value: number): void
   onTogglePlayback(): void
 }) {
+  const hasRecording = items.length > 0
+  const showEmptyState = !loading && (emptyState ?? !hasRecording)
   const derivedBounds = useMemo(() => recordingTimelineDayBounds(items), [items])
   const bounds = useMemo(() => ({
     start: dayStartMillis ?? derivedBounds.start,
@@ -205,6 +277,9 @@ export function ArkmeRecordingTimeline({ items, dayStartMillis, playheadMillis, 
   const [followPlayback, setFollowPlayback] = useState(true)
   const dragRef = useRef<{ x: number; start: number; moved: boolean }>()
   const overviewDragRef = useRef(false)
+  const wheelDeltaRef = useRef(0)
+  const legendRef = useRef<HTMLDetailsElement>(null)
+  const [legendWidth, setLegendWidth] = useState<number>()
   const firstItemStart = items[0]?.startAtMillis
 
   useEffect(() => {
@@ -228,17 +303,37 @@ export function ArkmeRecordingTimeline({ items, dayStartMillis, playheadMillis, 
     () => recordingVisibleTimelineItems(items, bounds.start, bounds.end),
     [bounds.end, bounds.start, items],
   )
-  const visibleSpeakers = useMemo(() => {
-    const speakers = new Map<string, { label: string; colorIndex: number; durationMillis: number }>()
+  const allDaySpeakers = useMemo(() => {
+    const speakers = new Map<string, { key: string; label: string; colorIndex: number; avatarRef?: string; durationMillis: number }>()
     for (const item of items) {
-      if (item.isBackground || item.endAtMillis < windowStart || item.startAtMillis > windowEnd) continue
-      const key = `${item.speakerLabel}:${String(item.speakerColorIndex)}`
-      const current = speakers.get(key) ?? { label: item.speakerLabel, colorIndex: item.speakerColorIndex, durationMillis: 0 }
-      current.durationMillis += Math.max(0, Math.min(windowEnd, item.endAtMillis) - Math.max(windowStart, item.startAtMillis))
+      if (item.isBackground) continue
+      const key = recordingTimelineSpeakerIdentity(item)
+      const current = speakers.get(key) ?? {
+        key,
+        label: item.speakerLabel,
+        colorIndex: item.speakerColorIndex,
+        ...(item.speakerAvatarRef === undefined ? {} : { avatarRef: item.speakerAvatarRef }),
+        durationMillis: 0,
+      }
+      current.durationMillis += Math.max(0, item.endAtMillis - item.startAtMillis)
       speakers.set(key, current)
     }
     return [...speakers.values()].sort((left, right) => right.durationMillis - left.durationMillis)
-  }, [items, windowEnd, windowStart])
+  }, [items])
+
+  useEffect(() => {
+    const element = legendRef.current
+    if (element === null) return
+    const updateWidth = () => {
+      const width = element.getBoundingClientRect().width
+      if (width > 0) setLegendWidth(width)
+    }
+    updateWidth()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(element)
+    return () => { observer.disconnect() }
+  }, [allDaySpeakers.length])
 
   const zoomTo = (targetIndex: number, anchorRatio = .5, anchorMillis?: number) => {
     const nextIndex = Math.min(RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS.length - 1, Math.max(0, targetIndex))
@@ -259,12 +354,11 @@ export function ArkmeRecordingTimeline({ items, dayStartMillis, playheadMillis, 
   const seekFromPointer = (clientX: number, element: HTMLDivElement) => {
     const rect = element.getBoundingClientRect()
     const seekAtMillis = recordingTimelineSeekMillis((clientX - rect.left) / Math.max(1, rect.width), windowStart, windowEnd)
-    const item = recordingTimelineItemAt(items, seekAtMillis)
-    if (item !== undefined) onActivate(item, seekAtMillis)
+    onSelectAtMillis(seekAtMillis)
   }
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return
+    if (!hasRecording || event.button !== 0) return
     event.currentTarget.setPointerCapture(event.pointerId)
     dragRef.current = { x: event.clientX, start: windowStart, moved: false }
   }
@@ -287,17 +381,26 @@ export function ArkmeRecordingTimeline({ items, dayStartMillis, playheadMillis, 
   }
 
   const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (!hasRecording) return
     event.preventDefault()
+    const wheel = recordingTimelineWheelZoom(wheelDeltaRef.current, event.deltaY, event.deltaMode)
+    wheelDeltaRef.current = wheel.accumulatedDelta
+    if (wheel.zoomStep === 0) return
     const rect = event.currentTarget.getBoundingClientRect()
     const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)))
     const anchorMillis = windowStart + visibleMillis * ratio
-    zoomTo(zoomIndex + (event.deltaY > 0 ? -1 : 1), ratio, anchorMillis)
+    zoomTo(zoomIndex + wheel.zoomStep, ratio, anchorMillis)
   }
 
   const playheadVisible = playheadMillis !== undefined && playheadMillis >= windowStart && playheadMillis <= windowEnd
   const playheadPercent = playheadVisible ? (playheadMillis - windowStart) / Math.max(1, windowEnd - windowStart) * 100 : 0
   const overviewWindowLeft = (windowStart - bounds.start) / DAY_MILLIS * 100
   const overviewWindowWidth = Math.min(100, visibleMillis / DAY_MILLIS * 100)
+  const detailTicks = recordingTimelineTickTimes(windowStart, windowEnd)
+  const showTickSeconds = visibleMillis <= 60_000
+  const visibleSpeakerCount = legendWidth === undefined
+    ? Math.min(allDaySpeakers.length, 6)
+    : recordingTimelineVisibleSpeakerCount(legendWidth, allDaySpeakers.length)
   const navigateOverview = (clientX: number, element: HTMLDivElement) => {
     const rect = element.getBoundingClientRect()
     const target = recordingTimelineSeekMillis((clientX - rect.left) / Math.max(1, rect.width), bounds.start, bounds.end)
@@ -306,94 +409,85 @@ export function ArkmeRecordingTimeline({ items, dayStartMillis, playheadMillis, 
   }
 
   return <div style={styles.shell} aria-label="真实录音时间轴">
-    <div style={styles.toolbar}>
-      <span style={styles.controls}>
-        <button type="button" style={styles.button} onClick={onTogglePlayback} aria-label={isPlaying ? '暂停录音' : '播放录音'}>{isPlaying ? '暂停' : '播放'}</button>
-        <span aria-live="polite" style={{ color: arkmeTheme.secondary, fontSize: 10 }}>{playheadMillis === undefined ? `${String(items.length)} 个转写片段` : timeLabel(playheadMillis)}</span>
-        {visibleSpeakers.length > 0 && <details style={styles.legend}>
-          <summary style={styles.legendSummary} aria-label="可视范围说话人">
-            {visibleSpeakers.slice(0, 3).map(speaker => <span key={`${speaker.label}:${String(speaker.colorIndex)}`} style={styles.legendItem}>
-              <span aria-hidden style={{ ...styles.legendDot, background: recordingSpeakerColor(speaker.colorIndex) }} />{speaker.label}
-            </span>)}
-            {visibleSpeakers.length > 3 && <span>+{visibleSpeakers.length - 3}</span>}
-          </summary>
-          <span style={styles.legendPanel}>
-            {visibleSpeakers.map(speaker => <span key={`${speaker.label}:${String(speaker.colorIndex)}`} style={styles.legendItem}>
-              <span aria-hidden style={{ ...styles.legendDot, background: recordingSpeakerColor(speaker.colorIndex) }} />
-              <span>{speaker.label}</span><small>{durationLabel(Math.max(1, Math.round(speaker.durationMillis / 1_000)))}</small>
-            </span>)}
-          </span>
-        </details>}
-      </span>
-      <span style={styles.controls}>
-        {!followPlayback && <button type="button" style={styles.button} onClick={() => { setFollowPlayback(true) }}>跟随播放</button>}
-        <button type="button" style={styles.button} disabled={zoomIndex === 0} onClick={() => { zoomTo(zoomIndex - 1) }}>缩小</button>
-        <span style={{ minWidth: 42, color: arkmeTheme.tertiary, fontSize: 9, textAlign: 'center' }}>{durationLabel(RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS[zoomIndex]!)}</span>
-        <button type="button" style={styles.button} disabled={zoomIndex === RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS.length - 1} onClick={() => { zoomTo(zoomIndex + 1) }}>放大</button>
+    <div style={styles.overviewRow} data-timeline-layer="overview">
+      <div style={styles.overviewColumn} aria-label="24 小时概览">
+        <div
+          style={{ ...styles.overview, ...(!hasRecording ? { cursor: 'default' } : {}) }}
+          role="scrollbar"
+          aria-label="24 小时缩略导航"
+          aria-valuemin={bounds.start}
+          aria-valuemax={bounds.end}
+          aria-valuenow={windowStart}
+          onPointerDown={event => {
+            if (!hasRecording || event.button !== 0) return
+            event.currentTarget.setPointerCapture(event.pointerId)
+            overviewDragRef.current = true
+            navigateOverview(event.clientX, event.currentTarget)
+          }}
+          onPointerMove={event => { if (overviewDragRef.current) navigateOverview(event.clientX, event.currentTarget) }}
+          onPointerUp={() => { overviewDragRef.current = false }}
+          onPointerCancel={() => { overviewDragRef.current = false }}
+        >
+          {overviewItems.map(item => {
+            const layout = recordingSegmentLayout(item.startAtMillis, item.endAtMillis, bounds.start, bounds.end)
+            return <span key={`overview:${item.item.itemId}:${String(item.startAtMillis)}`} aria-hidden style={{
+              ...styles.overviewSegment,
+              left: `${String(layout.leftPercent)}%`,
+              width: `${String(layout.widthPercent)}%`,
+              background: desktop.timelineBlue,
+            }} />
+          })}
+          <span aria-hidden style={{ ...styles.overviewWindow, left: `${String(overviewWindowLeft)}%`, width: `${String(overviewWindowWidth)}%` }} />
+        </div>
+        <span style={styles.overviewLabels} aria-hidden>
+          {['00:00', '06:00', '12:00', '18:00', '24:00'].map((label, index) => <span key={label} style={{
+            ...styles.overviewLabel,
+            left: `${String(index * 25)}%`,
+            ...(index === 0 ? { transform: 'none' } : index === 4 ? { transform: 'translateX(-100%)' } : {}),
+          }}>{label}</span>)}
+        </span>
+      </div>
+      <span style={styles.zoomControls}>
+        {!followPlayback && <button type="button" style={styles.followButton} onClick={() => { setFollowPlayback(true) }}>跟随播放</button>}
+        <button type="button" style={{ ...styles.zoomButton, ...(!hasRecording || zoomIndex === 0 ? { opacity: .3, cursor: 'default' } : {}) }} aria-label="缩小" title={hasRecording ? '缩小' : undefined} disabled={!hasRecording || zoomIndex === 0} onClick={() => { zoomTo(zoomIndex - 1) }}><MagnifyingGlassMinus size={16} aria-hidden /></button>
+        <button type="button" style={{ ...styles.zoomButton, ...(!hasRecording || zoomIndex === RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS.length - 1 ? { opacity: .3, cursor: 'default' } : {}) }} aria-label="放大" title={hasRecording ? '放大' : undefined} disabled={!hasRecording || zoomIndex === RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS.length - 1} onClick={() => { zoomTo(zoomIndex + 1) }}><MagnifyingGlassPlus size={16} aria-hidden /></button>
+        <span style={{ ...styles.zoomHint, ...(!hasRecording ? { opacity: .3 } : {}) }}>滚轮缩放</span>
       </span>
     </div>
-    <div
-      style={styles.overview}
-      role="scrollbar"
-      aria-label="24 小时缩略导航"
-      aria-valuemin={bounds.start}
-      aria-valuemax={bounds.end}
-      aria-valuenow={windowStart}
-      onPointerDown={event => {
-        if (event.button !== 0) return
-        event.currentTarget.setPointerCapture(event.pointerId)
-        overviewDragRef.current = true
-        navigateOverview(event.clientX, event.currentTarget)
-      }}
-      onPointerMove={event => { if (overviewDragRef.current) navigateOverview(event.clientX, event.currentTarget) }}
-      onPointerUp={() => { overviewDragRef.current = false }}
-      onPointerCancel={() => { overviewDragRef.current = false }}
-    >
-      {overviewItems.map(item => {
-        const layout = recordingSegmentLayout(item.startAtMillis, item.endAtMillis, bounds.start, bounds.end)
-        return <span key={`overview:${item.item.itemId}:${String(item.startAtMillis)}`} aria-hidden style={{
-          ...styles.overviewSegment,
-          left: `${String(layout.leftPercent)}%`,
-          width: `${String(layout.widthPercent)}%`,
-          background: item.isMixedSpeakerAggregate
-            ? arkmeTheme.secondary
-            : item.item.isBackground ? arkmeTheme.tertiary : recordingSpeakerColor(item.item.speakerColorIndex),
-        }} />
-      })}
-      <span aria-hidden style={{ ...styles.overviewWindow, left: `${String(overviewWindowLeft)}%`, width: `${String(overviewWindowWidth)}%` }} />
-    </div>
-    <div
-      style={styles.track}
-      tabIndex={0}
-      role="slider"
-      aria-label="当天录音时间轴，可拖拽平移，滚轮缩放"
-      aria-valuemin={bounds.start}
-      aria-valuemax={bounds.end}
-      aria-valuenow={playheadMillis ?? windowStart}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={() => { dragRef.current = undefined }}
-      onWheel={handleWheel}
-      onKeyDown={event => {
-        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-          event.preventDefault()
-          setFollowPlayback(false)
-          const direction = event.key === 'ArrowLeft' ? -1 : 1
-          setWindowStart(current => clampWindowStart(current + direction * visibleMillis * .1, visibleMillis, bounds.start, bounds.end))
-        } else if (event.key === '+' || event.key === '=') {
-          event.preventDefault(); zoomTo(zoomIndex + 1)
-        } else if (event.key === '-') {
-          event.preventDefault(); zoomTo(zoomIndex - 1)
-        } else if (event.key === ' ') {
-          event.preventDefault(); onTogglePlayback()
-        }
-      }}
-    >
-      <div style={styles.canvas}>
-        <span style={styles.base} />
-        <span style={{ ...styles.edgeTime, left: 4 }}>{timeLabel(windowStart)}</span>
-        <span style={{ ...styles.edgeTime, right: 4 }}>{timeLabel(windowEnd)}</span>
+
+    <div style={styles.track} data-timeline-layer="detail">
+      {playheadVisible && <button type="button" style={{ ...styles.playControl, left: `${String(playheadPercent)}%` }} onClick={onTogglePlayback} aria-label={isPlaying ? '暂停录音' : '播放录音'} title={`${timeLabel(playheadMillis)} · ${isPlaying ? '暂停' : '播放'}`}>{isPlaying ? <Pause size={11} weight="fill" aria-hidden /> : <Play size={11} weight="fill" aria-hidden />}</button>}
+      <div
+        style={{ ...styles.detailRail, ...(!hasRecording ? { cursor: 'default' } : {}) }}
+        tabIndex={hasRecording ? 0 : -1}
+        role="slider"
+        aria-disabled={!hasRecording}
+        aria-label="详细时间轴，可拖拽平移，滚轮缩放"
+        aria-valuemin={bounds.start}
+        aria-valuemax={bounds.end}
+        aria-valuenow={playheadMillis ?? windowStart}
+        aria-valuetext={durationLabel(RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS[zoomIndex]!)}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={() => { dragRef.current = undefined }}
+        onWheel={handleWheel}
+        onKeyDown={event => {
+          if (!hasRecording) return
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            event.preventDefault()
+            setFollowPlayback(false)
+            const direction = event.key === 'ArrowLeft' ? -1 : 1
+            setWindowStart(current => clampWindowStart(current + direction * visibleMillis * .1, visibleMillis, bounds.start, bounds.end))
+          } else if (event.key === '+' || event.key === '=') {
+            event.preventDefault(); zoomTo(zoomIndex + 1)
+          } else if (event.key === '-') {
+            event.preventDefault(); zoomTo(zoomIndex - 1)
+          } else if (event.key === ' ') {
+            event.preventDefault(); onTogglePlayback()
+          }
+        }}
+      >
         {visibleItems.map(item => {
           const layout = recordingSegmentLayout(item.startAtMillis, item.endAtMillis, windowStart, windowEnd)
           return <button
@@ -404,21 +498,55 @@ export function ArkmeRecordingTimeline({ items, dayStartMillis, playheadMillis, 
               left: `${String(layout.leftPercent)}%`,
               width: `${String(layout.widthPercent)}%`,
               background: item.isMixedSpeakerAggregate
-                ? arkmeTheme.secondary
-                : item.item.isBackground ? arkmeTheme.tertiary : recordingSpeakerColor(item.item.speakerColorIndex),
+                ? desktop.secondary
+                : item.item.isBackground ? desktop.tertiary : recordingSpeakerColor(item.item.speakerColorIndex),
             }}
             aria-label={item.isMixedSpeakerAggregate
-              ? `多个说话人，播放聚合的 ${String(item.aggregatedCount)} 个片段中的第一段`
-              : `${item.item.speakerLabel}，播放该片段${item.aggregatedCount > 1 ? `，聚合 ${String(item.aggregatedCount)} 个片段` : ''}`}
+              ? `多个说话人，选择聚合的 ${String(item.aggregatedCount)} 个片段中的第一段`
+              : `${item.item.speakerLabel}，选择该片段${item.aggregatedCount > 1 ? `，聚合 ${String(item.aggregatedCount)} 个片段` : ''}`}
             title={item.isMixedSpeakerAggregate
               ? `多个说话人 · 聚合 ${String(item.aggregatedCount)} 个片段`
               : `${item.item.speakerLabel} · ${item.item.text.slice(0, 80)}`}
             onPointerDown={event => { event.stopPropagation() }}
-            onClick={event => { event.stopPropagation(); onActivate(item.item) }}
+            onClick={event => { event.stopPropagation(); onSelectAtMillis(item.item.startAtMillis) }}
           />
         })}
-        {playheadVisible && <span style={{ ...styles.playhead, left: `${String(playheadPercent)}%` }} aria-hidden><span style={styles.playheadDot} /></span>}
+        {playheadVisible && <span style={{ ...styles.playhead, left: `${String(playheadPercent)}%` }} aria-hidden><span style={styles.playheadCap} /></span>}
       </div>
+      <span style={styles.tickLabels} data-timeline-ticks="detail" aria-hidden>
+        {detailTicks.map(tick => <span key={tick} style={{
+          ...styles.tickLabel,
+          left: `${String((tick - windowStart) / Math.max(1, windowEnd - windowStart) * 100)}%`,
+        }}>{timeLabel(tick, showTickSeconds)}</span>)}
+      </span>
     </div>
+
+    {loading ? <span style={styles.loadingControl} data-timeline-layer="loading" aria-label="正在读取录音" /> : showEmptyState ? <span style={styles.emptyControl} data-timeline-layer="empty">
+      <span style={styles.emptyIndicator} aria-hidden />
+      <span>无录音</span>
+      <button type="button" style={{ ...styles.importButton, ...(onImportAudio === undefined ? { cursor: 'default', opacity: .3 } : {}) }} disabled={onImportAudio === undefined} onClick={onImportAudio}>导入音频<CaretRight size={8} aria-hidden /></button>
+    </span> : allDaySpeakers.length > 0 ? <details ref={legendRef} style={styles.legend} data-timeline-layer="speakers">
+      <summary style={styles.legendSummary} aria-label="全天说话人图例">
+        <span style={styles.legendItems}>
+          {allDaySpeakers.slice(0, visibleSpeakerCount).map(speaker => <span key={speaker.key} style={styles.legendItem}>
+            {speaker.avatarRef === undefined
+              ? <span aria-hidden style={{ ...styles.legendDot, background: recordingSpeakerColor(speaker.colorIndex) }} />
+              : <ArkmeUserAvatar avatarRef={speaker.avatarRef} size={12} label={`${speaker.label}头像`} />}
+            <span style={{ ...styles.legendName, ...(speaker.avatarRef === undefined ? {} : { color: recordingSpeakerColor(speaker.colorIndex) }), ...(focusedSpeakerKey === speaker.key ? { fontWeight: 700 } : {}) }}>{speaker.label}</span>
+          </span>)}
+        </span>
+        {allDaySpeakers.length > visibleSpeakerCount && <span style={styles.moreChip}>+{allDaySpeakers.length - visibleSpeakerCount}</span>}
+        <CaretDown size={16} aria-hidden />
+      </summary>
+      <span style={styles.legendPanel}>
+        {allDaySpeakers.map(speaker => <button type="button" key={speaker.key} style={{ ...styles.legendPanelButton, background: focusedSpeakerKey === speaker.key ? desktop.hover : 'transparent' }} onClick={() => { onFocusedSpeakerChanged?.(focusedSpeakerKey === speaker.key ? undefined : speaker.key) }}>
+          {speaker.avatarRef === undefined
+            ? <span aria-hidden style={{ ...styles.legendDot, background: recordingSpeakerColor(speaker.colorIndex) }} />
+            : <ArkmeUserAvatar avatarRef={speaker.avatarRef} size={12} label={`${speaker.label}头像`} />}
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{speaker.label}</span>
+          <small style={{ color: desktop.tertiary }}>{durationLabel(Math.max(1, Math.round(speaker.durationMillis / 1_000)))}</small>
+        </button>)}
+      </span>
+    </details> : <span data-timeline-layer="speakers" aria-hidden />}
   </div>
 }

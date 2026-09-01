@@ -44,7 +44,7 @@ interface ArkmeRecordingImportAcceptor {
   recordingImportUserId(): Promise<number>
   acceptRecordingImport(
     sourceHandle: string,
-    metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number },
+    metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number },
     expectedUserId: number,
   ): Promise<PublicRecordingImportJob>
 }
@@ -99,6 +99,7 @@ export function createArkmeRecordingImportHandler(
       const fileSize = Number(headerText(req, 'content-length'))
       const mimeType = headerText(req, 'content-type').split(';')[0]?.trim().toLowerCase() ?? ''
       const startAtMillis = Number(headerText(req, 'x-arkme-start-at'))
+      const belongUserId = Number(headerText(req, 'x-arkme-belong-user'))
       let fileName = ''
       try { fileName = decodeURIComponent(headerText(req, 'x-arkme-file-name')).trim() } catch { fileName = '' }
       if (fileName === '' || fileName.length > 255) {
@@ -117,6 +118,9 @@ export function createArkmeRecordingImportHandler(
         throw new ArkmePluginError('recording-import-start-invalid', '录音开始时间无效', false)
       }
       const expectedUserId = await service.recordingImportUserId()
+      if (!Number.isSafeInteger(belongUserId) || (belongUserId !== 0 && belongUserId !== expectedUserId)) {
+        throw new ArkmePluginError('recording-import-owner-invalid', '录音数据归属无效', false)
+      }
 
       await mkdir(options.temporaryDirectory, { recursive: true, mode: 0o700 })
       temporaryPath = join(options.temporaryDirectory, `${randomUUID()}.upload`)
@@ -143,6 +147,7 @@ export function createArkmeRecordingImportHandler(
         fileSize: received,
         sha256: hash.digest('hex'),
         startAtMillis,
+        belongUserId,
       }, expectedUserId)
       accepted = true
       writeJson(res, 202, { ok: true, value })

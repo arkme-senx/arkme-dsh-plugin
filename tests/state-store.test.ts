@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -86,6 +86,33 @@ describe('ArkmeStateStore', () => {
     })
     await expect(reloaded.listRecordingImportJobs(10001)).resolves.toHaveLength(1)
     await expect(reloaded.listAllRecordingImportJobs()).resolves.toHaveLength(1)
+  })
+
+  it('does not let an OSS checkpoint consumer mutate persisted job state outside revision CAS', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-checkpoint-isolation-'))
+    const store = new ArkmeStateStore(root)
+    const job = recordingJob({ uploadCheckpoint: { uploadId: 'upload-1', doneParts: [1] } })
+    await store.putRecordingImportJob(10001, job)
+
+    ;(job.uploadCheckpoint!.doneParts as number[]).push(2)
+    const firstRead = await store.getRecordingImportJob(10001, 'job-1')
+    ;(firstRead!.uploadCheckpoint!.doneParts as number[]).push(3)
+
+    await expect(store.getRecordingImportJob(10001, 'job-1')).resolves.toMatchObject({
+      revision: 1,
+      uploadCheckpoint: { uploadId: 'upload-1', doneParts: [1] },
+    })
+  })
+
+  it('does not expose an unpersisted recording job when the atomic state write fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-write-failure-'))
+    const store = new ArkmeStateStore(root)
+    await store.uniqueCode()
+    await unlink(join(root, 'state.json'))
+    await mkdir(join(root, 'state.json'))
+
+    await expect(store.putRecordingImportJob(10001, recordingJob())).rejects.toThrow()
+    await expect(store.getRecordingImportJob(10001, 'job-1')).resolves.toBeUndefined()
   })
 
   it('atomically keeps one job for concurrent imports with the same content identity', async () => {

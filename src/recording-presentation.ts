@@ -6,12 +6,11 @@ import type {
 } from './types.js'
 
 export interface ArkmeRecordingPrivateTranscriptItem extends ArkmeRecordingTranscriptItem {
-  audioFileName: string
-  audioMimeType: string
+  childAsrItemStartAt: number
+  childAsrItemEndAt: number
   formalSpeakerId: string
   rawSpeakerNumber: number
   speakerIdentity: string
-  childStartMillis: number
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -64,10 +63,53 @@ function displayTimestamp(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+export interface ProjectRecordingTranscriptOptions {
+  dayStartMillis?: number
+  dayEndMillis?: number
+}
+
+interface RecordingSessionInterval {
+  startAtMillis: number
+  endAtMillis: number
+}
+
+function projectEffectiveSessionIntervals(
+  sessions: ReadonlyMap<string, Record<string, unknown>>,
+): ReadonlyMap<string, RecordingSessionInterval> {
+  const candidates = [...sessions.entries()].flatMap(([sessionId, session]) => {
+    const startAtMillis = displayTimestamp(session.start_at)
+    const endAtMillis = displayTimestamp(session.end_at)
+    if (startAtMillis <= 0 || endAtMillis <= startAtMillis) return []
+    return [{ sessionId, startAtMillis, endAtMillis, operatedAt: displayTimestamp(session.operate_at) }]
+  }).sort((left, right) => right.operatedAt - left.operatedAt || right.startAtMillis - left.startAtMillis)
+
+  const accepted: Array<{ sessionId: string; startAtMillis: number; endAtMillis: number }> = []
+  for (const candidate of candidates) {
+    let ranges = [{ startAtMillis: candidate.startAtMillis, endAtMillis: candidate.endAtMillis }]
+    for (const newer of accepted) {
+      ranges = ranges.flatMap(range => {
+        if (newer.endAtMillis <= range.startAtMillis || newer.startAtMillis >= range.endAtMillis) return [range]
+        const before = { startAtMillis: range.startAtMillis, endAtMillis: Math.min(range.endAtMillis, newer.startAtMillis) }
+        const after = { startAtMillis: Math.max(range.startAtMillis, newer.endAtMillis), endAtMillis: range.endAtMillis }
+        const usable = [before, after].filter(value => value.endAtMillis > value.startAtMillis)
+        if (usable.length < 2) return usable
+        const beforeDuration = before.endAtMillis - before.startAtMillis
+        const afterDuration = after.endAtMillis - after.startAtMillis
+        return [afterDuration > beforeDuration ? after : before]
+      })
+      if (ranges.length === 0) break
+    }
+    const range = ranges[0]
+    if (range !== undefined) accepted.push({ sessionId: candidate.sessionId, ...range })
+  }
+  return new Map(accepted.map(({ sessionId, ...interval }) => [sessionId, interval]))
+}
+
 export function projectRecordingTranscripts(
   response: unknown,
   speakerResponse: unknown,
   profilesByUserId: ReadonlyMap<number, { displayName: string; avatarRef?: string }> = new Map(),
+  options: ProjectRecordingTranscriptOptions = {},
 ): ArkmeRecordingPrivateTranscriptItem[] {
   const data = objectValue(response)
   const sessions = new Map<string, Record<string, unknown>>()
@@ -106,6 +148,7 @@ export function projectRecordingTranscripts(
       sessionSpeakerColorIndexes.set(`${id}:${rawNumber}`, colorIndex)
     }
   }
+  const effectiveSessionIntervals = projectEffectiveSessionIntervals(sessions)
 
   const speakers = new Map<string, Record<string, unknown>>()
   const speakerRows = Array.isArray(speakerResponse)
@@ -119,15 +162,14 @@ export function projectRecordingTranscripts(
     if (id !== '') speakers.set(id, speaker)
   }
 
-  const projected: Array<ArkmeRecordingPrivateTranscriptItem & { sourceIndex: number }> = []
+  const projected: Array<ArkmeRecordingPrivateTranscriptItem & { sourceIndex: number; uploadAtMillis: number }> = []
   let sourceIndex = 0
   for (const rawChild of listValue(data.child_ls ?? data.children)) {
     const child = objectValue(rawChild)
     const childId = stringValue(child.id ?? child.child_id).trim()
     const sessionId = stringValue(child.session_id).trim()
     const session = sessions.get(sessionId) ?? {}
-    const audioFileName = stringValue(child.file_name ?? child.audio_file_name ?? child.source_file_name).trim()
-    const audioMimeType = stringValue(child.mime_type ?? child.audio_mime_type).trim()
+    const uploadAtMillis = displayTimestamp(child.upload_at)
     const sessionSpeakers = listValue(session.spk_ls ?? session.speakers).map(objectValue)
     const childOffset = numberValue(child.start_at)
     const childStart = childOffset >= 100_000_000_000
@@ -172,20 +214,27 @@ export function projectRecordingTranscripts(
         || (speakerNumber >= 0 ? `说话人 ${speakerNumber}` : '未知说话人')
       const startOffset = numberValue(row.s ?? row.start_at)
       const endOffset = Math.max(startOffset, numberValue(row.e ?? row.end_at))
+      const rawStartAtMillis = childStart + startOffset
+      const rawEndAtMillis = childStart + endOffset
+      const effectiveSession = effectiveSessionIntervals.get(sessionId)
+      if (rawEndAtMillis <= rawStartAtMillis
+        || (effectiveSession !== undefined && (rawStartAtMillis < effectiveSession.startAtMillis
+          || rawEndAtMillis > effectiveSession.endAtMillis))
+        || (options.dayStartMillis !== undefined && rawStartAtMillis < options.dayStartMillis)
+        || (options.dayEndMillis !== undefined && rawEndAtMillis > options.dayEndMillis)) continue
       projected.push({
         itemId: `${childId || sessionId}:${index}`,
         sessionId,
         childId,
         asrItemIndex: index,
         transcriptSource: 'system',
-        audioFileName,
-        audioMimeType,
+        childAsrItemStartAt: startOffset,
+        childAsrItemEndAt: endOffset,
         formalSpeakerId,
         rawSpeakerNumber,
         speakerIdentity,
-        childStartMillis: childStart,
-        startAtMillis: childStart + startOffset,
-        endAtMillis: childStart + endOffset,
+        startAtMillis: rawStartAtMillis,
+        endAtMillis: rawEndAtMillis,
         speakerNumber,
         speakerColorIndex,
         speakerLabel,
@@ -194,17 +243,33 @@ export function projectRecordingTranscripts(
         isBackground,
         text,
         sourceIndex,
+        uploadAtMillis,
       })
       sourceIndex += 1
     }
   }
-  return projected
+  const withoutOverlappingSpeakerSegments: typeof projected = []
+  const activeIndexesBySpeaker = new Map<string, number[]>()
+  for (const item of projected.sort((left, right) => left.startAtMillis - right.startAtMillis
+    || right.uploadAtMillis - left.uploadAtMillis || left.sourceIndex - right.sourceIndex)) {
+    const activeIndexes = (activeIndexesBySpeaker.get(item.speakerIdentity) ?? [])
+      .filter(index => withoutOverlappingSpeakerSegments[index]!.endAtMillis > item.startAtMillis)
+    const overlapIndex = activeIndexes[0]
+    if (overlapIndex === undefined) {
+      activeIndexes.push(withoutOverlappingSpeakerSegments.length)
+      withoutOverlappingSpeakerSegments.push(item)
+    } else if (item.uploadAtMillis > withoutOverlappingSpeakerSegments[overlapIndex]!.uploadAtMillis) {
+      withoutOverlappingSpeakerSegments[overlapIndex] = item
+    }
+    activeIndexesBySpeaker.set(item.speakerIdentity, activeIndexes)
+  }
+  return withoutOverlappingSpeakerSegments
     .sort((left, right) => left.startAtMillis - right.startAtMillis
       || left.endAtMillis - right.endAtMillis
       || left.sessionId.localeCompare(right.sessionId)
       || left.childId.localeCompare(right.childId)
       || left.sourceIndex - right.sourceIndex)
-    .map(({ sourceIndex: _sourceIndex, ...item }) => item)
+    .map(({ sourceIndex: _sourceIndex, uploadAtMillis: _uploadAtMillis, ...item }) => item)
 }
 
 function normalizeStructuredTimeline(value: unknown): ArkmeRecordingTimelineEvent[] {

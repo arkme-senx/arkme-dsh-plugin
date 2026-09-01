@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RecordingImportSnapshot } from '../src/client/api.js'
-import { hasNewlyAcceptedRecordingImport } from '../src/client/recordings/ArkmeRecordingImportJobs.js'
+import { hasNewlyAcceptedRecordingImport } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
 
 function snapshot(importRef: string, phase: RecordingImportSnapshot['phase']): RecordingImportSnapshot {
   return {
@@ -11,12 +11,12 @@ function snapshot(importRef: string, phase: RecordingImportSnapshot['phase']): R
 }
 
 describe('recording import job projection refresh', () => {
-  it('refreshes only when a previously observed job becomes accepted', () => {
+  it('detects accepted jobs relative to an initialized prior snapshot', () => {
     expect(hasNewlyAcceptedRecordingImport(
       [snapshot('old', 'accepted'), snapshot('active', 'uploading')],
       [snapshot('old', 'accepted'), snapshot('active', 'accepted')],
     )).toBe(true)
-    expect(hasNewlyAcceptedRecordingImport([], [snapshot('old', 'accepted')])).toBe(false)
+    expect(hasNewlyAcceptedRecordingImport([], [snapshot('new', 'accepted')])).toBe(true)
     expect(hasNewlyAcceptedRecordingImport(
       [snapshot('old', 'accepted')], [snapshot('old', 'accepted')],
     )).toBe(false)

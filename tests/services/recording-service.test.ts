@@ -45,7 +45,7 @@ describe('RecordingService', () => {
 
     await expect(service.acceptRecordingImport(path, {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
-      sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
+      sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000, belongUserId: 42,
     }, 42)).rejects.toMatchObject({ code: 'recording-import-account-mismatch', retryable: true })
     await expect(store.listRecordingImportJobs(77)).resolves.toEqual([])
   })
@@ -90,7 +90,7 @@ describe('RecordingService', () => {
 
     const accepted = await service.acceptRecordingImport(path, {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
-      sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
+      sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000, belongUserId: 42,
     }, 42)
     expect(accepted).toMatchObject({ phase: 'prepared', fileName: 'voice.wav', durationMillis: 1_000 })
     expect(JSON.stringify(accepted)).not.toContain(path)
@@ -100,7 +100,7 @@ describe('RecordingService', () => {
     await writeFile(duplicatePath, bytes)
     await expect(service.acceptRecordingImport(duplicatePath, {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
-      sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
+      sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000, belongUserId: 42,
     }, 42)).resolves.toMatchObject({ importRef: accepted.importRef })
     await expect(access(duplicatePath)).rejects.toThrow()
 
@@ -112,6 +112,25 @@ describe('RecordingService', () => {
     const status = await service.recordingImportStatus(accepted.importRef)
     expect(status).not.toHaveProperty('sessionId')
     expect(status).not.toHaveProperty('childId')
+  })
+
+  it('rejects an import whose owner-verified duration would end in the future', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-future-end-'))
+    const path = join(root, 'voice.upload')
+    const bytes = oneSecondMonoWav()
+    await writeFile(path, bytes)
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies())
+
+    await expect(service.acceptRecordingImport(path, {
+      fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
+      sha256: 'f'.repeat(64), startAtMillis: Date.now(), belongUserId: 42,
+    }, 42)).rejects.toMatchObject({ code: 'recording-import-end-invalid', retryable: false })
+    await expect(store.listRecordingImportJobs(42)).resolves.toEqual([])
   })
 
   it('coalesces concurrent accepts before starting any duplicate Audio owner work', async () => {
@@ -137,7 +156,7 @@ describe('RecordingService', () => {
     )
     const metadata = {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
-      sha256: 'c'.repeat(64), startAtMillis: 1_725_000_000_000,
+      sha256: 'c'.repeat(64), startAtMillis: 1_725_000_000_000, belongUserId: 42,
     }
 
     const [first, second] = await Promise.all([
@@ -183,7 +202,7 @@ describe('RecordingService', () => {
     )
     const accepted = await service.acceptRecordingImport(path, {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
-      sha256: 'b'.repeat(64), startAtMillis: 1_725_000_000_000,
+      sha256: 'b'.repeat(64), startAtMillis: 1_725_000_000_000, belongUserId: 42,
     }, 42)
     await started
 
@@ -192,6 +211,84 @@ describe('RecordingService', () => {
     expect(gateway.deleteSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1' }))
     expect(gateway.finishChild).not.toHaveBeenCalled()
     await expect(access(path)).rejects.toThrow()
+  })
+
+  it('stops active import runners when the Provider is disposed without cancelling owner data', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-dispose-'))
+    const path = join(root, 'voice.upload')
+    const bytes = oneSecondMonoWav()
+    await writeFile(path, bytes)
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let activeSignal: AbortSignal | undefined
+    let uploadStarted!: () => void
+    const started = new Promise<void>(resolve => { uploadStarted = resolve })
+    const gateway = gatewayNoop()
+    gateway.upload = vi.fn(async (_job, _progress, signal) => {
+      activeSignal = signal
+      uploadStarted()
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => { reject(new Error('aborted')) }, { once: true })
+      })
+    })
+    gateway.deleteSession = vi.fn(async () => undefined)
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root)), dependencies(gateway),
+    )
+    await service.acceptRecordingImport(path, {
+      fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
+      sha256: '1'.repeat(64), startAtMillis: 1_725_000_000_000, belongUserId: 42,
+    }, 42)
+    await started
+
+    service.dispose()
+
+    expect(activeSignal?.aborted).toBe(true)
+    expect(gateway.deleteSession).not.toHaveBeenCalled()
+  })
+
+  it('lets only one of a stale cancel and a newer retry command advance the import', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-retry-cancel-race-'))
+    const path = join(root, 'retry.upload')
+    await writeFile(path, oneSecondMonoWav())
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const now = Date.now()
+    await store.putRecordingImportJob(42, {
+      jobId: 'retry-job', userId: 42, revision: 7, phase: 'failed', failedFromPhase: 'uploading',
+      fileName: 'retry.wav', mimeType: 'audio/wav', fileSize: 16_044, durationMillis: 1_000,
+      sha256: 'e'.repeat(64), startAtMillis: 1_725_000_000_000, belongUserId: 42,
+      sourceHandle: path, uploadedBytes: 8_000, sessionId: 'session-retry', childId: 'child-retry',
+      retryable: true, errorCode: 'owner-timeout', errorMessage: 'owner timeout',
+      createdAtMillis: now, updatedAtMillis: now,
+    })
+    let uploadStarted!: () => void
+    const started = new Promise<void>(resolve => { uploadStarted = resolve })
+    const gateway = gatewayNoop()
+    gateway.upload = vi.fn(async (_job, _progress, signal) => {
+      uploadStarted()
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => { reject(new Error('aborted')) }, { once: true })
+      })
+    })
+    gateway.deleteSession = vi.fn(async () => undefined)
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    const [failed] = await service.recordingImportList()
+
+    await expect(service.retryRecordingImport(failed!.importRef, 7)).resolves.toMatchObject({
+      phase: 'uploading', revision: 8,
+    })
+    await started
+    await expect(service.cancelRecordingImport(failed!.importRef, 7)).rejects.toMatchObject({
+      code: 'recording-import-revision-conflict',
+    })
+    expect(gateway.deleteSession).not.toHaveBeenCalled()
+    await expect(service.cancelRecordingImport(failed!.importRef, 8)).resolves.toMatchObject({ phase: 'cancelled' })
   })
 
   it('seals raw Audio selectors for playback and speaker mutations, then re-reads the owner day', async () => {
@@ -207,7 +304,7 @@ describe('RecordingService', () => {
       calls.push({ path: url.pathname, body })
       let data: Record<string, unknown> = {}
       if (url.pathname.endsWith('/one-day-trans')) data = {
-        session_ls: [{ id: 'session-secret', belong_usr: 42, start_at: 1_725_000_000_000, spk_ls: [{ num: 1, spk_id: 'speaker-secret' }] }],
+        session_ls: [{ id: 'session-secret', belong_usr: 42, start_at: new Date(2024, 7, 29).setHours(1, 0, 0, 0), spk_ls: [{ num: 1, spk_id: 'speaker-secret' }] }],
         child_ls: [{
           id: 'child-secret', session_id: 'session-secret', start_at: 0,
           file_name: 'device_0.m4a', mime_type: 'audio/mp4',
@@ -220,6 +317,7 @@ describe('RecordingService', () => {
       }
       if (url.pathname.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: 'speaker-secret', nick_name: '小林' }] }
       if (url.pathname.endsWith('/similar-session-speaker')) data = { speaker_id: 'speaker-secret' }
+      if (url.pathname.endsWith('/create-speaker')) data = { speaker_id: 'speaker-user' }
       if (url.pathname.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
       return new Response(JSON.stringify({ code: 200, data }), {
         status: 200, headers: { 'content-type': 'application/json' },
@@ -229,7 +327,12 @@ describe('RecordingService', () => {
     const gateway = gatewayNoop()
     const service = new RecordingService(
       new ServiceRuntime(config, sessions, new ArkmeStateStore(root), fetchImpl),
-      dependencies(gateway, { media }),
+      dependencies(gateway, {
+        media,
+        userCandidates: {
+          listRecordingSpeakerUsers: vi.fn(async () => [{ userId: 77, label: '小王' }]),
+        },
+      }),
     )
 
     const day = await service.recordingDay(new Date(2024, 7, 29).setHours(0, 0, 0, 0))
@@ -242,21 +345,49 @@ describe('RecordingService', () => {
     expect(item).not.toHaveProperty('sessionId')
     expect(item).not.toHaveProperty('childId')
     expect(JSON.stringify(day)).not.toContain('session-secret')
+    expect(item?.speakerKey).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(item?.speakerKey).not.toContain('speaker-secret')
     expect(item?.sameSpeakerItemCount).toBe(2)
 
     await expect(service.recordingPlayback(item!.itemRef)).resolves.toMatchObject({
-      playbackRef: 'playback-opaque', mimeType: 'audio/mp4', startOffsetMillis: 1_000, endOffsetMillis: 2_000,
+      playbackRef: 'playback-opaque', mimeType: 'audio/flac', startOffsetMillis: 0, endOffsetMillis: 1_000,
     })
+    expect(media.issueRecordingPlaybackMediaRef).toHaveBeenCalledWith({
+      viewerUserId: 42,
+      sessionId: 'session-secret',
+      childId: 'child-secret',
+      asrItemStartAt: 1_000,
+      asrItemEndAt: 2_000,
+      speakerNumber: 1,
+    }, undefined)
     const options = await service.recordingSpeakerOptions(item!.itemRef)
-    expect(options).toEqual([{
-      speakerRef: expect.stringMatching(/^arkme-recording-speaker-v1\./), label: '小林', recommended: true,
-    }])
+    expect(options).toEqual([
+      {
+        speakerRef: expect.stringMatching(/^arkme-recording-speaker-v1\./), label: '小林', kind: 'speaker',
+        currentAssignment: true, isCurrentUser: false, recommended: true,
+      },
+      {
+        speakerRef: expect.stringMatching(/^arkme-recording-speaker-v1\./), label: '小王', kind: 'arkme-user',
+        currentAssignment: false, isCurrentUser: false, recommended: false,
+      },
+    ])
     await expect(service.assignRecordingSpeaker({
       itemRef: item!.itemRef, speakerRef: options[0]!.speakerRef, scope: 'item',
     })).resolves.toMatchObject({ scope: 'item', affectedCount: 1, day: { dateStamp: expect.any(Number) } })
     expect(calls).toContainEqual({
       path: '/api/v1/audio/assign-asr-item-to-spk',
       body: { child_id: 'child-secret', spk_id: 'speaker-secret', item_index_ls: [0], transcript_source: 'system' },
+    })
+    await expect(service.assignRecordingSpeaker({
+      itemRef: item!.itemRef, speakerRef: options[1]!.speakerRef, scope: 'item',
+    })).resolves.toMatchObject({ scope: 'item', affectedCount: 1 })
+    expect(calls).toContainEqual({
+      path: '/api/v1/audio/create-speaker',
+      body: { nick_name: '小王', ref_usr_id: 77 },
+    })
+    expect(calls).toContainEqual({
+      path: '/api/v1/audio/assign-asr-item-to-spk',
+      body: { child_id: 'child-secret', spk_id: 'speaker-user', item_index_ls: [0], transcript_source: 'system' },
     })
     await expect(service.assignRecordingSpeaker({
       itemRef: item!.itemRef, speakerRef: options[0]!.speakerRef, scope: 'speaker',
@@ -280,8 +411,8 @@ describe('RecordingService', () => {
     })
     expect(calls.filter(call => call.path.endsWith('/batch-assign-session-num-to-spk'))).toHaveLength(1)
     expect(calls.filter(call => call.path.endsWith('/batch-change-flag-session-spk'))).toHaveLength(1)
-    expect(calls.filter(call => call.path.endsWith('/one-day-trans'))).toHaveLength(7)
-  })
+    expect(calls.filter(call => call.path.endsWith('/one-day-trans'))).toHaveLength(9)
+  }, 10_000)
 
   it('checks the owner snapshot before creating a new speaker', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-speaker-conflict-'))
@@ -299,7 +430,7 @@ describe('RecordingService', () => {
         transcriptReads += 1
         const speakerNumber = transcriptReads === 1 ? 1 : 2
         data = {
-          session_ls: [{ id: 'session-secret', belong_usr: 42, start_at: 1_725_000_000_000, spk_ls: [{ num: speakerNumber }] }],
+          session_ls: [{ id: 'session-secret', belong_usr: 42, start_at: new Date(2024, 7, 29).setHours(1, 0, 0, 0), spk_ls: [{ num: speakerNumber }] }],
           child_ls: [{
             id: 'child-secret', session_id: 'session-secret', start_at: 0,
             file_name: 'device_0.m4a', mime_type: 'audio/mp4',
@@ -325,6 +456,106 @@ describe('RecordingService', () => {
       scope: 'item',
     })).rejects.toMatchObject({ code: 'recording-speaker-conflict' })
     expect(calls.some(path => path.endsWith('/create-speaker'))).toBe(false)
+  })
+
+  it('reuses a newly created speaker when the following assignment is retried', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-speaker-retry-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let speakerCreated = false
+    let assignmentAttempts = 0
+    const calls: string[] = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      calls.push(path)
+      if (path.endsWith('/assign-asr-item-to-spk')) {
+        assignmentAttempts += 1
+        if (assignmentAttempts === 1) {
+          return new Response(JSON.stringify({ code: 500, message: 'temporary failure' }), {
+            status: 500, headers: { 'content-type': 'application/json' },
+          })
+        }
+      }
+      let data: Record<string, unknown> = {}
+      if (path.endsWith('/one-day-trans')) data = {
+        session_ls: [{ id: 'session-secret', belong_usr: 42, start_at: new Date(2024, 7, 29).setHours(1, 0, 0, 0), spk_ls: [{ num: 1 }] }],
+        child_ls: [{
+          id: 'child-secret', session_id: 'session-secret', start_at: 0,
+          file_name: 'device_0.m4a', mime_type: 'audio/mp4',
+          asr: [{ s: 1_000, e: 2_000, n: 1, t: '项目复盘' }],
+        }],
+      }
+      if (path.endsWith('/get-speaker-ls')) data = {
+        spk_ls: speakerCreated ? [{ speaker_id: 'speaker-recovered', nick_name: '新说话人' }] : [],
+      }
+      if (path.endsWith('/create-speaker')) {
+        speakerCreated = true
+        data = { speaker_id: 'speaker-recovered' }
+      }
+      if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root), fetchImpl),
+      dependencies(),
+    )
+    const day = await service.recordingDay(new Date(2024, 7, 29).setHours(0, 0, 0, 0))
+    const input = { itemRef: day.transcript.items[0]!.itemRef, newSpeakerName: '新说话人', scope: 'item' as const }
+
+    await expect(service.assignRecordingSpeaker(input)).rejects.toThrow()
+    await expect(service.assignRecordingSpeaker(input)).resolves.toMatchObject({ scope: 'item', affectedCount: 1 })
+
+    expect(calls.filter(path => path.endsWith('/create-speaker'))).toHaveLength(1)
+    expect(calls.filter(path => path.endsWith('/assign-asr-item-to-spk'))).toHaveLength(2)
+  })
+
+  it('rejects a speaker option sealed for a different Arkme account', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-speaker-account-'))
+    let userId = 42
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const calls: string[] = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push(path)
+      let data: Record<string, unknown> = {}
+      if (path.endsWith('/one-day-trans')) data = {
+        session_ls: [{ id: `session-${String(userId)}`, belong_usr: userId, start_at: Number(body.start_at) + 3_600_000, spk_ls: [{ num: 1, spk_id: `speaker-${String(userId)}` }] }],
+        child_ls: [{
+          id: `child-${String(userId)}`, session_id: `session-${String(userId)}`, start_at: 0,
+          file_name: 'device_0.m4a', mime_type: 'audio/mp4',
+          asr: [{ s: 1_000, e: 2_000, n: 1, t: '项目复盘', effective_spk_id: `speaker-${String(userId)}` }],
+        }],
+      }
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: `speaker-${String(userId)}`, nick_name: `用户${String(userId)}` }] }
+      if (path.endsWith('/similar-session-speaker')) data = {}
+      if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root), fetchImpl),
+      dependencies(),
+    )
+    const account42Day = await service.recordingDay(new Date(2024, 7, 29).setHours(0, 0, 0, 0))
+    const account42Option = (await service.recordingSpeakerOptions(account42Day.transcript.items[0]!.itemRef))[0]!
+    userId = 43
+    const account43Day = await service.recordingDay(new Date(2024, 7, 30).setHours(0, 0, 0, 0))
+
+    await expect(service.assignRecordingSpeaker({
+      itemRef: account43Day.transcript.items[0]!.itemRef,
+      speakerRef: account42Option.speakerRef,
+      scope: 'item',
+    })).rejects.toMatchObject({ code: 'recording-ref-account-mismatch' })
+    expect(calls.some(path => path.endsWith('/assign-asr-item-to-spk'))).toBe(false)
   })
 
   it('keeps the existing read-only recordings contract while the workbench kill switch blocks mutations and playback', async () => {

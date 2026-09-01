@@ -11,6 +11,8 @@ export interface RecordingImportSnapshot {
   fileSize: number
   durationMillis: number
   progress: number
+  createdAtMillis: number
+  updatedAtMillis: number
   errorMessage?: string
   retryable?: boolean
 }
@@ -25,6 +27,7 @@ export async function uploadArkmeRecording(
   importPath: string,
   file: File,
   startAtMillis: number,
+  belongUserId: number,
   signal?: AbortSignal,
 ): Promise<RecordingImportSnapshot> {
   const response = await fetch(importPath, {
@@ -33,6 +36,7 @@ export async function uploadArkmeRecording(
       'Content-Type': recordingImportMime(file),
       'X-Arkme-File-Name': encodeURIComponent(file.name),
       'X-Arkme-Start-At': String(startAtMillis),
+      'X-Arkme-Belong-User': String(belongUserId),
     },
     body: file,
     credentials: 'same-origin',
@@ -87,6 +91,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'recordings.calendar'
   | 'recordings.day'
   | 'recordings.import.list'
+  | 'recordings.import.preflight'
   | 'recordings.import.status'
   | 'recordings.import.retry'
   | 'recordings.import.cancel'
@@ -121,6 +126,8 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
   | 'source.forward-messages'
+  | 'message-actions.copy-link'
+  | 'message-actions.forward'
   | 'source.shared-recording-detail'
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'

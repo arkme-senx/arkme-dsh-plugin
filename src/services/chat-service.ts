@@ -60,6 +60,7 @@ import { ArkoService } from './arko-service.js'
 import { BotService } from './bot-service.js'
 import { GroupAiPolishService } from './group-ai-polish-service.js'
 import { MediaService, type ArkmeMediaDescriptor } from './media-service.js'
+import { MessageActionService } from './message-action-service.js'
 import { ProfileService } from './profile-service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
 import { arkmeRecordCaptureContextPayload, RecordService } from './record-service.js'
@@ -1000,6 +1001,7 @@ export class ChatService {
     private readonly aiPolish: GroupAiPolishService,
     private readonly realtime: ArkmeChatRealtimePort,
     private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
+    private readonly messageActions?: MessageActionService,
   ) {}
 
   async readDirectBotConversation(
@@ -1052,13 +1054,29 @@ export class ChatService {
       latestSequence = Math.max(latestSequence, sequence)
       if (numberValue(record.status) !== 1) continue
       const contentBlocks = this.media.richContentBlocks(item, session.userId)
+      const role = userActor ? 'user' as const : 'assistant' as const
+      const textContent = stringValue(payload.text_content)
+      const createdAtMillis = Math.max(0, Math.trunc(numberValue(relation.attach_at ?? payload.send_at)))
+      const action = await this.messageActions?.chatBotMessage({
+        userId: session.userId,
+        chatSessionUid: normalizedSessionUid,
+        relationUid,
+        recordUid,
+        messageIdentity: relationUid,
+        role,
+        textContent,
+        createdAtMillis,
+        sequence,
+        senderUserId,
+        senderName: userActor ? '我' : 'Bot',
+      })
       projected.push({
         messageId: relationUid,
         recordUid,
-        role: userActor ? 'user' : 'assistant',
-        content: stringValue(payload.text_content),
+        role,
+        content: textContent,
         status: 'sent',
-        createdAtMillis: Math.max(0, Math.trunc(numberValue(relation.attach_at ?? payload.send_at))),
+        createdAtMillis,
         attachments: contentBlocks.map(block => ({
           kind: block.kind,
           fileName: block.fileName,
@@ -1069,6 +1087,7 @@ export class ChatService {
           height: 0,
           sortOrder: block.sortOrder,
         })),
+        ...(action === undefined ? {} : action),
         sequence,
       })
     }

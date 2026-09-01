@@ -48,14 +48,15 @@ export interface RecordingImportSource {
 }
 
 export function sameRecordingImportIdentity(
-  left: Pick<RecordingImportJob, 'userId' | 'fileName' | 'fileSize' | 'sha256' | 'startAtMillis'>,
-  right: Pick<RecordingImportJob, 'userId' | 'fileName' | 'fileSize' | 'sha256' | 'startAtMillis'>,
+  left: Pick<RecordingImportJob, 'userId' | 'fileName' | 'fileSize' | 'sha256' | 'startAtMillis' | 'belongUserId'>,
+  right: Pick<RecordingImportJob, 'userId' | 'fileName' | 'fileSize' | 'sha256' | 'startAtMillis' | 'belongUserId'>,
 ): boolean {
   return left.userId === right.userId
     && left.fileName === right.fileName
     && left.fileSize === right.fileSize
     && left.sha256 === right.sha256
     && left.startAtMillis === right.startAtMillis
+    && left.belongUserId === right.belongUserId
 }
 
 export interface PublicRecordingImportJob {

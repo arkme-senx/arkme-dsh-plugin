@@ -32,9 +32,8 @@ describe('recording presentation', () => {
       {
         itemId: 'child-1:0', sessionId: 'session-1', childId: 'child-1',
         asrItemIndex: 0, transcriptSource: 'system',
-        audioFileName: '', audioMimeType: '', formalSpeakerId: 'speaker-me', rawSpeakerNumber: 1,
+        childAsrItemStartAt: 1_000, childAsrItemEndAt: 2_000, formalSpeakerId: 'speaker-me', rawSpeakerNumber: 1,
         speakerIdentity: 'speaker:speaker-me',
-        childStartMillis: 1_700_000_000_500,
         startAtMillis: 1_700_000_001_500, endAtMillis: 1_700_000_002_500,
         speakerNumber: 4, speakerColorIndex: 0, speakerLabel: '说话人 4',
         isSelf: true, isBackground: false, text: '我来同步',
@@ -42,9 +41,8 @@ describe('recording presentation', () => {
       {
         itemId: 'child-1:1', sessionId: 'session-1', childId: 'child-1',
         asrItemIndex: 1, transcriptSource: 'system',
-        audioFileName: '', audioMimeType: '', formalSpeakerId: '', rawSpeakerNumber: 2,
+        childAsrItemStartAt: 3_000, childAsrItemEndAt: 4_000, formalSpeakerId: '', rawSpeakerNumber: 2,
         speakerIdentity: 'inner:G',
-        childStartMillis: 1_700_000_000_500,
         startAtMillis: 1_700_000_003_500, endAtMillis: 1_700_000_004_500,
         speakerNumber: 5, speakerColorIndex: 1, speakerLabel: '说话人 5',
         isSelf: false, isBackground: true, text: '背景讨论',
@@ -52,9 +50,8 @@ describe('recording presentation', () => {
       {
         itemId: 'child-1:2', sessionId: 'session-1', childId: 'child-1',
         asrItemIndex: 2, transcriptSource: 'system',
-        audioFileName: '', audioMimeType: '', formalSpeakerId: '', rawSpeakerNumber: 3,
+        childAsrItemStartAt: 5_000, childAsrItemEndAt: 6_000, formalSpeakerId: '', rawSpeakerNumber: 3,
         speakerIdentity: 'inner:H',
-        childStartMillis: 1_700_000_000_500,
         startAtMillis: 1_700_000_005_500, endAtMillis: 1_700_000_006_500,
         speakerNumber: 3, speakerColorIndex: 2, speakerLabel: '说话人 3',
         isSelf: false, isBackground: false, text: '数字回退',
@@ -79,6 +76,60 @@ describe('recording presentation', () => {
     expect(items).toEqual([expect.objectContaining({
       speakerLabel: '英梦华', speakerAvatarRef: 'arkme-profile-image-v1.avatar', isSelf: false,
     })])
+  })
+
+  it('keeps only complete owner segments inside the selected local day', () => {
+    const dayStart = new Date(2026, 7, 20).getTime()
+    const items = projectRecordingTranscripts({
+      session_ls: [{
+        id: 'session-1', start_at: dayStart - 60_000, end_at: dayStart + 120_000,
+        operate_at: dayStart + 1_000, spk_ls: [{ num: 1 }],
+      }],
+      child_ls: [{
+        id: 'child-1', session_id: 'session-1', start_at: dayStart - 60_000,
+        asr: [
+          { s: 0, e: 30_000, n: 1, t: '前一天内容' },
+          { s: 50_000, e: 80_000, n: 1, t: '跨零点内容' },
+          { s: 90_000, e: 110_000, n: 1, t: '当天内容' },
+        ],
+      }],
+    }, [], new Map(), { dayStartMillis: dayStart, dayEndMillis: dayStart + 86_400_000 })
+
+    expect(items.map(value => [value.text, value.startAtMillis, value.endAtMillis])).toEqual([
+      ['当天内容', dayStart + 30_000, dayStart + 50_000],
+    ])
+  })
+
+  it('keeps the newer effective session when overlapping owner sessions describe the same speaker interval', () => {
+    const dayStart = new Date(2026, 7, 20).getTime()
+    const items = projectRecordingTranscripts({
+      session_ls: [
+        { id: 'old', start_at: dayStart, end_at: dayStart + 120_000, operate_at: 10, spk_ls: [{ num: 1, spk_id: 'speaker-a' }] },
+        { id: 'new', start_at: dayStart + 30_000, end_at: dayStart + 90_000, operate_at: 20, spk_ls: [{ num: 1, spk_id: 'speaker-a' }] },
+      ],
+      child_ls: [
+        { id: 'old-child', session_id: 'old', start_at: dayStart, asr: [{ s: 40_000, e: 50_000, n: 1, t: '旧内容' }] },
+        { id: 'new-child', session_id: 'new', start_at: dayStart + 30_000, asr: [{ s: 10_000, e: 20_000, n: 1, t: '新内容' }] },
+      ],
+    }, [], new Map(), { dayStartMillis: dayStart, dayEndMillis: dayStart + 86_400_000 })
+
+    expect(items.map(value => value.text)).toEqual(['新内容'])
+  })
+
+  it('keeps the newest uploaded segment when the same speaker interval overlaps', () => {
+    const dayStart = new Date(2026, 7, 20).getTime()
+    const items = projectRecordingTranscripts({
+      session_ls: [{
+        id: 'session-1', start_at: dayStart, end_at: dayStart + 120_000,
+        operate_at: 30, spk_ls: [{ num: 1, spk_id: 'speaker-a' }],
+      }],
+      child_ls: [
+        { id: 'old-child', session_id: 'session-1', start_at: 0, upload_at: 10, asr: [{ s: 40_000, e: 60_000, n: 1, t: '旧上传' }] },
+        { id: 'new-child', session_id: 'session-1', start_at: 0, upload_at: 20, asr: [{ s: 45_000, e: 55_000, n: 1, t: '新上传' }] },
+      ],
+    }, [], new Map(), { dayStartMillis: dayStart, dayEndMillis: dayStart + 86_400_000 })
+
+    expect(items.map(value => value.text)).toEqual(['新上传'])
   })
 
   it('parses structured and markdown timeline answers into the same display shape', () => {
