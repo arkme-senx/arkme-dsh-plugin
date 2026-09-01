@@ -51,6 +51,26 @@ describe('Arkme account session owner', () => {
     expect(store.write).toHaveBeenCalledWith(credentials(42))
   })
 
+  test('waits for Remote scope shutdown before mutating credentials', async () => {
+    const { bridge, owner, store } = fixture()
+    await owner.start()
+    const events: string[] = []
+    vi.mocked(bridge.prepare).mockImplementation(async () => {
+      events.push('prepare')
+      return { transitionRef: 'scope-transition-1' }
+    })
+    owner.attachScopeCloseBarrier(async () => { events.push('remote-stopped') })
+    vi.mocked(store.write).mockImplementation(async () => { events.push('write') })
+    vi.mocked(bridge.commit).mockImplementation(async () => {
+      events.push('commit')
+      return { status: 'ready' }
+    })
+
+    await owner.write(credentials(42))
+
+    expect(events).toEqual(['prepare', 'remote-stopped', 'write', 'commit'])
+  })
+
   test('does not change credentials when prepare fails', async () => {
     const current = credentials(42)
     const { bridge, owner, store } = fixture(current)
@@ -60,6 +80,19 @@ describe('Arkme account session owner', () => {
     await expect(owner.delete()).rejects.toThrow('bridge unavailable')
 
     expect(store.delete).not.toHaveBeenCalled()
+    expect(await owner.scopedSession()).toEqual(current)
+  })
+
+  test('aborts without credential changes when Remote shutdown fails', async () => {
+    const current = credentials(42)
+    const { bridge, owner, store } = fixture(current)
+    await owner.start()
+    owner.attachScopeCloseBarrier(async () => { throw new Error('remote stop failed') })
+
+    await expect(owner.delete()).rejects.toThrow('remote stop failed')
+
+    expect(store.delete).not.toHaveBeenCalled()
+    expect(bridge.abort).toHaveBeenCalledWith('scope-transition-1')
     expect(await owner.scopedSession()).toEqual(current)
   })
 

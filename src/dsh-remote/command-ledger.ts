@@ -50,7 +50,8 @@ function argumentsHash(operation: string, argumentsValue: Record<string, unknown
   return createHash('sha256').update(canonicalJson({ operation, arguments: argumentsValue })).digest('base64url')
 }
 
-function stableDshRpcId(input: Pick<DshRemoteLedgerIdentity, 'accountId' | 'runtimeRef' | 'requestRef'>): string {
+/** Cross-client identity: mobile writes it before send and DSH echoes it in canonical history. */
+export function dshRemoteCommandRpcId(input: Pick<DshRemoteLedgerIdentity, 'accountId' | 'runtimeRef' | 'requestRef'>): string {
   return `remote_${createHash('sha256')
     .update(`dsh-remote-rpc-v2\n${input.accountId}\n${input.runtimeRef}\n${input.requestRef}`)
     .digest('base64url').slice(0, 32)}`
@@ -125,7 +126,7 @@ export class DshRemoteCommandLedger {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.accountId, input.runtimeRef, input.requestRef, input.operation, hash,
-        stableDshRpcId(input), input.executeBeforeMillis, now,
+        dshRemoteCommandRpcId(input), input.executeBeforeMillis, now,
       )
       this.appendEvent(Number(result.lastInsertRowid), 'pending', { arguments: input.arguments }, now)
     })

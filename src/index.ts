@@ -508,11 +508,12 @@ export function apply(ctx: Context, config: Config): void {
       let lifecycleTail: Promise<void> = Promise.resolve()
       const reconcile = () => {
         lifecycleTail = lifecycleTail.then(
-          async () => { if (service.accountScope.ready()) await host.start(); else await host.stop() },
-          async () => { if (service.accountScope.ready()) await host.start(); else await host.stop() },
+          async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
+          async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
         )
       }
       const unsubscribe = service.accountScope.subscribe(reconcile)
+      service.accountScope.attachScopeCloseBarrier(async () => { await lifecycleTail })
       await lifecycleTail
       return async () => {
         unsubscribe()

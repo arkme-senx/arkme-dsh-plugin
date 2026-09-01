@@ -271,9 +271,18 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   }
 
   async stop(): Promise<void> {
+    await this.stopLifecycle(true)
+  }
+
+  async suspend(): Promise<void> {
+    await this.stopLifecycle(false)
+  }
+
+  private async stopLifecycle(flushPending: boolean): Promise<void> {
     if (!this.started) return
     this.stopApiProxyEvents()
-    await this.flushPendingSessionEventBatches()
+    if (flushPending) await this.flushPendingSessionEventBatches()
+    else this.clearPendingSessionEventBatches()
     this.started = false
     this.stopTransportDisconnect?.()
     this.stopTransportDisconnect = undefined

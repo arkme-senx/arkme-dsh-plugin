@@ -45,6 +45,7 @@ function inertHost(apiProxy: DshApiProxyAdapter, input: {
   controlPlane?: DshRemoteControlPlane
   ledger?: DshRemoteCommandLedger
   now?: () => number
+  realtime?: DshRemoteRealtimeTransport
   sessionOwnership?: DshRemoteSessionOwnership
 } = {}): ArkmeRemoteRealtimeHost {
   return new ArkmeRemoteRealtimeHost({
@@ -54,7 +55,7 @@ function inertHost(apiProxy: DshApiProxyAdapter, input: {
     runtimeStore: {} as DshRemoteRuntimeStore,
     sessionOwnership: input.sessionOwnership ?? new MemorySessionOwnership(),
     controlPlane: input.controlPlane ?? {} as DshRemoteControlPlane,
-    realtime: {} as DshRemoteRealtimeTransport,
+    realtime: input.realtime ?? {} as DshRemoteRealtimeTransport,
     apiProxy,
     ledgerForAccount: () => input.ledger ?? (() => { throw new Error('unused') })(),
     now: input.now ?? (() => 1_500),
@@ -651,6 +652,35 @@ describe('Arkme remote Host account contract', () => {
     for (const resolve of pendingAppends) resolve()
   })
 
+  it('keeps live batches independent across Sessions', async () => {
+    vi.useFakeTimers()
+    const appendSessionEvents = vi.fn(async () => await new Promise<void>(() => undefined))
+    const published = vi.fn(async () => undefined)
+    const host = inertHost(new DshApiProxyAdapter({}), {
+      controlPlane: { appendSessionEvents } as unknown as DshRemoteControlPlane,
+    })
+    Object.assign(host, {
+      started: true, connected: true, channelManager: { publishProjectionEvent: published }, accountId: '1',
+      runtime: {
+        runtimeRef: 'runtime-01', profileRef: 'web', accountId: '1', hostGeneration: 7,
+        capabilities: ['session.events'], updatedAtMillis: 1,
+      },
+    })
+    const project = (sessionId: string, seq: number) => (host as unknown as {
+      publishProjectionEvent(value: DshRemoteApiProjectionEvent): Promise<void>
+    }).publishProjectionEvent({
+      kind: 'session-event', sessionId,
+      entry: { event: { type: 'assistant/chunk', seq, time: 1_400 + seq, data: {} } },
+    })
+
+    await Promise.all([project('session-a', 8), project('session-b', 3)])
+    await vi.advanceTimersByTimeAsync(40)
+
+    expect(published).toHaveBeenCalledTimes(2)
+    expect(published.mock.calls.map(call => (call[0].body as { session_ref: string }).session_ref).sort())
+      .toEqual(['session-a', 'session-b'])
+  })
+
   it('flushes pending chunks with a semantic event and cancels the timer', async () => {
     vi.useFakeTimers()
     const appendSessionEvents = vi.fn(async () => ({}))
@@ -716,6 +746,35 @@ describe('Arkme remote Host account contract', () => {
     expect(published).toHaveBeenCalledOnce()
     await vi.advanceTimersByTimeAsync(40)
     expect(appendSessionEvents).toHaveBeenCalledOnce()
+  })
+
+  it('discards pending live chunks when an account transition suspends the Host', async () => {
+    vi.useFakeTimers()
+    const appendSessionEvents = vi.fn(async () => ({}))
+    const published = vi.fn(async () => undefined)
+    const host = inertHost(new DshApiProxyAdapter({}), {
+      controlPlane: { appendSessionEvents } as unknown as DshRemoteControlPlane,
+      realtime: { disconnect: async () => undefined } as unknown as DshRemoteRealtimeTransport,
+    })
+    Object.assign(host, {
+      started: true, connected: true, channelManager: { publishProjectionEvent: published, close: async () => undefined }, accountId: '1',
+      runtime: {
+        runtimeRef: 'runtime-01', profileRef: 'web', accountId: '1', hostGeneration: 7,
+        capabilities: ['session.events'], updatedAtMillis: 1,
+      },
+    })
+    await (host as unknown as {
+      publishProjectionEvent(value: DshRemoteApiProjectionEvent): Promise<void>
+    }).publishProjectionEvent({
+      kind: 'session-event', sessionId: 'session-01',
+      entry: { event: { type: 'assistant/chunk', seq: 8, time: 1_408, data: {} } },
+    })
+
+    await host.suspend()
+    await vi.advanceTimersByTimeAsync(40)
+
+    expect(appendSessionEvents).not.toHaveBeenCalled()
+    expect(published).not.toHaveBeenCalled()
   })
 
   it('flushes at the 50-event capacity and clears pending timers on lifecycle reset', async () => {

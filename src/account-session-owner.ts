@@ -23,6 +23,7 @@ export class ArkmeAccountSessionOwner {
   private mutationTail: Promise<void> = Promise.resolve()
   private readonly listeners = new Set<() => void>()
   private guestConversationProbe: () => Promise<boolean> = async () => true
+  private scopeCloseBarrier: () => Promise<void> = async () => undefined
 
   constructor(
     private readonly store: ArkmeSessionStore,
@@ -37,6 +38,10 @@ export class ArkmeAccountSessionOwner {
 
   attachGuestConversationProbe(probe: () => Promise<boolean>): void {
     this.guestConversationProbe = probe
+  }
+
+  attachScopeCloseBarrier(barrier: () => Promise<void>): void {
+    this.scopeCloseBarrier = barrier
   }
 
   async write(session: ArkmeSessionCredentials): Promise<void> {
@@ -113,7 +118,10 @@ export class ArkmeAccountSessionOwner {
     const previousIdentity = this.readyIdentity
     const prepared = await this.bridge.prepare(identity)
     this.setReady(undefined)
-    try { await mutate() }
+    try {
+      await this.scopeCloseBarrier()
+      await mutate()
+    }
     catch (error) {
       try { await this.bridge.abort(prepared.transitionRef) }
       finally { this.setReady(previousIdentity) }
