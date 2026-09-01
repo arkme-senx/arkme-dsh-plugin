@@ -487,6 +487,7 @@ describe('ArkmeService', () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const lowerBound = new Date(1970, 0, 1).getTime()
+    const timezoneOffset = -new Date(lowerBound).getTimezoneOffset() * 60_000
     const bodies: Record<string, unknown>[] = []
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
@@ -508,7 +509,10 @@ describe('ArkmeService', () => {
       .resolves.toMatchObject({ fromStamp: lowerBound, days: [] })
     await expect(service.recordingTranscript(lowerBound)).resolves.toMatchObject({ state: 'empty', items: [] })
     expect(bodies).toContainEqual({ from_stamp: lowerBound, to_stamp: lowerBound + 24 * 60 * 60 * 1_000 })
-    expect(bodies).toContainEqual({ start_at: lowerBound, tz_offset: -new Date(lowerBound).getTimezoneOffset() * 60_000 })
+    expect(bodies).toContainEqual({
+      start_at: lowerBound,
+      tz_offset: timezoneOffset === 0 ? 0 : timezoneOffset,
+    })
   })
 
   it('reads record calendar buckets and day records from the Record origin', async () => {
