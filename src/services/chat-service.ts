@@ -2775,7 +2775,9 @@ export class ChatService {
           source, input.textContent ?? '', textContent, input.humanMentions ?? [], input.botMentions ?? [], session,
           options.signal,
         )
-        contentPayload = { ...(mediaContentPayload ?? {}), ...mentionPayload }
+        contentPayload = mediaContentPayload === undefined
+          ? mentionPayload
+          : { ...mediaContentPayload, mention_metadata: mentionPayload.mention_metadata }
       }
       const commonBody = {
         record_uid: recordUid,
@@ -2789,13 +2791,16 @@ export class ChatService {
         send_at: Date.now(),
       }
       if (source.kind === 'send_to_self' || source.kind === 'default_category') {
-        const result = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/create', commonBody, session, options.signal)
+        const result = await this.runtime.authenticatedPost<Record<string, unknown>>(
+          '/api/v1/records/create', commonBody, session, options.signal, { trackWriteOutcome: true },
+        )
         await this.realtime.invalidateRecordProjection()
         return { sourceRef, itemUid: stringValue(result.record_uid).trim() || recordUid, status: numberValue(result.status), localState: 'synced' }
       }
       if (source.kind === 'topic') {
         const result = await this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/topics/records/create', { topic_uid: source.ownerRef, ...commonBody }, session, options.signal,
+          { trackWriteOutcome: true },
         )
         await this.realtime.invalidateRecordProjection()
         return { sourceRef, itemUid: stringValue(result.record_uid).trim() || recordUid, status: numberValue(result.status), localState: 'synced' }
@@ -2805,6 +2810,7 @@ export class ChatService {
         { chat_session_uid: source.ownerRef, rel_uid: relationUid, ...commonBody },
         session,
         options.signal,
+        { trackWriteOutcome: true },
       )
       const sequence = numberValue(result.seq)
       this.realtime.scheduleChatSessionProjection(source.ownerRef, sequence)

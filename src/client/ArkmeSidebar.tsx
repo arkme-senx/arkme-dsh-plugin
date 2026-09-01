@@ -4938,6 +4938,13 @@ export function ArkmeSurface({
                               {task.error ?? (task.state === 'sending' ? '正在发送…' : task.state === 'queued' ? '等待上传' : '正在上传')}
                               {task.state === 'failed' && <button type="button" onClick={event => { event.stopPropagation(); void callArkme('files.send.retry', { taskRef: task.taskRef }).then(fileTasks.refresh).catch(caught => setError(errorMessage(caught))) }}>重试</button>}
                               {task.state === 'uncertain' && <button type="button" onClick={event => { event.stopPropagation(); void callArkme<ArkmeFileSendTask>('files.send.reconcile', { taskRef: task.taskRef }).then(value => { fileTasks.refresh(); if (value.state === 'uncertain') setError('最近的会话记录还无法确认发送结果，请先核对原会话，不要重复发送') }).catch(caught => setError(errorMessage(caught))) }}>核对发送结果</button>}
+                              {(task.state === 'failed' || task.state === 'uncertain') && <>{' '}<button type="button" aria-label="清除发送记录" onClick={event => {
+                                event.stopPropagation()
+                                if (task.state === 'uncertain' && !window.confirm('发送结果仍未确认。清除记录不会撤回可能已发送的消息，是否继续？')) return
+                                void callArkme('files.send.discard', { taskRef: task.taskRef })
+                                  .then(fileTasks.refresh)
+                                  .catch(caught => setError(errorMessage(caught)))
+                              }}>清除</button></>}
                             </div>)}
                           </div>
                           return isSharedRecordingCard

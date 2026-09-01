@@ -8,7 +8,7 @@ import { GroupAiPolishService } from '../../src/services/group-ai-polish-service
 import { MediaService } from '../../src/services/media-service.js'
 import { ProfileService } from '../../src/services/profile-service.js'
 import { RecordService } from '../../src/services/record-service.js'
-import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
+import { ArkmePluginError, ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { SourceService } from '../../src/services/source-service.js'
 import { dispatchArkmeHostOperation } from '../../src/host-api.js'
 import { createArkmeSdk } from '../../src/sdk/index.js'
@@ -96,6 +96,42 @@ describe('ChatService', () => {
       { chat_session_uid: 'group-1', active_only: true },
       session,
       signal,
+    )
+  })
+
+  it('delegates rich write outcome tracking to the transport and leaves preflight failures unmarked', async () => {
+    const attemptedFailure = new ArkmePluginError('arkme-network-error', '发送结果未知', true, 502, {
+      writeOutcomeUnknown: true,
+    })
+    const knownFailure = new ArkmePluginError('arkme-code-1001', '载荷不合法', false, 502)
+    const runtime = {
+      config: { richMediaSendEnabled: true, maxTextLength: 20_000 },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn()
+        .mockRejectedValueOnce(attemptedFailure)
+        .mockRejectedValueOnce(knownFailure),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({
+      version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
+    })) }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await expect(chat.sendSourceRich('source-ref', { textContent: '发送图片' }, {
+      recordUid: 'record-1', relationUid: 'relation-1',
+    })).rejects.toMatchObject({ code: 'arkme-network-error', writeOutcomeUnknown: true })
+    await expect(chat.sendSourceRich('source-ref', { textContent: '发送图片' }, {
+      recordUid: 'record-2', relationUid: 'relation-2',
+    })).rejects.toHaveProperty('writeOutcomeUnknown', undefined)
+    await expect(chat.sendSourceRich('source-ref', {
+      textContent: '@成员', humanMentions: [{ mentionRef: 'mention-ref', startIndex: 0, length: 3 }],
+    })).rejects.toHaveProperty('writeOutcomeUnknown', undefined)
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledTimes(2)
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
+      '/api/v1/chats/records/send', expect.anything(), expect.anything(), undefined,
+      { trackWriteOutcome: true },
     )
   })
 

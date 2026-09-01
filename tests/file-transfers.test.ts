@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -12,7 +12,9 @@ async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'arkme files ')); directories.push(directory)
   let user = 42
   const upload = vi.fn<FileTransferPorts['upload']>(async (_path, metadata) => ({ ...metadata, fileAssetUid: `asset-${metadata.fileName}` }))
-  const send = vi.fn<FileTransferPorts['send']>(async input => ({ sourceRef: input.sourceRef, itemUid: input.recordUid, status: 1, localState: 'synced' }))
+  const send = vi.fn<FileTransferPorts['send']>(async input => ({ kind: 'owner_accepted', result: {
+    sourceRef: input.sourceRef, itemUid: input.recordUid, status: 1, localState: 'synced',
+  } }))
   const openPath = vi.fn<NonNullable<FileTransferPorts['openPath']>>(async () => {})
   const ports: FileTransferPorts = { currentUser: async () => user, upload, send, validateSource: async () => {},
     fetchMedia: async () => { throw new Error('unexpected download') }, openPath }
@@ -92,7 +94,7 @@ describe('account-bound file lifecycle', () => {
   })
   it('deduplicates repeated acceptance and restores uncertain submissions without resending', async () => {
     const f = await fixture(); const a = await f.stage('a.pdf')
-    f.send.mockRejectedValueOnce(new Error('ack lost'))
+    f.send.mockResolvedValueOnce({ kind: 'owner_outcome_unknown' })
     const request = input([a.fileRef])
     const task = await f.owner.enqueue(request); await f.owner.settled()
     expect((await f.owner.enqueue(request)).taskRef).toBe(task.taskRef)
@@ -101,13 +103,61 @@ describe('account-bound file lifecycle', () => {
     await expect(restored.retry(task.taskRef)).rejects.toMatchObject({ code: 'file-send-uncertain' })
     expect(f.send).toHaveBeenCalledTimes(1)
   })
+  it('keeps a preflight send failure recoverable instead of treating it as an unknown acknowledgement', async () => {
+    const f = await fixture(); const file = await f.stage('a.pdf')
+    f.send.mockResolvedValueOnce({ kind: 'owner_not_accepted', message: '成员校验暂时不可用' })
+
+    const task = await f.owner.enqueue(input([file.fileRef])); await f.owner.settled()
+
+    expect((await f.owner.tasks())[0]).toMatchObject({
+      taskRef: task.taskRef,
+      state: 'failed',
+      error: '成员校验暂时不可用',
+    })
+    await expect(f.owner.retry(task.taskRef)).resolves.toMatchObject({ state: 'queued' })
+    await f.owner.settled()
+    expect((await f.owner.tasks())[0]!.state).toBe('sent')
+    expect(f.send).toHaveBeenCalledTimes(2)
+  })
+  it('keeps an explicit owner rejection recoverable after entering the send phase', async () => {
+    const f = await fixture(); const file = await f.stage('a.pdf')
+    f.send.mockResolvedValueOnce({ kind: 'owner_not_accepted', message: '媒体载荷不合法' })
+
+    const task = await f.owner.enqueue(input([file.fileRef])); await f.owner.settled()
+
+    expect((await f.owner.tasks())[0]).toMatchObject({
+      taskRef: task.taskRef,
+      state: 'failed',
+      error: '媒体载荷不合法',
+    })
+    await expect(f.owner.retry(task.taskRef)).resolves.toMatchObject({ state: 'queued' })
+    await f.owner.settled()
+  })
+  it('prevents a blind retry only when the owner write result is genuinely unknown', async () => {
+    const f = await fixture(); const file = await f.stage('a.pdf')
+    f.send.mockResolvedValueOnce({ kind: 'owner_outcome_unknown' })
+
+    const task = await f.owner.enqueue(input([file.fileRef])); await f.owner.settled()
+
+    expect((await f.owner.tasks())[0]).toMatchObject({ taskRef: task.taskRef, state: 'uncertain' })
+    await expect(f.owner.retry(task.taskRef)).rejects.toMatchObject({ code: 'file-send-uncertain' })
+  })
+  it('fails closed when a send port violates the explicit owner-outcome contract', async () => {
+    const f = await fixture(); const file = await f.stage('a.pdf')
+    f.send.mockRejectedValueOnce(new Error('unexpected adapter failure'))
+
+    const task = await f.owner.enqueue(input([file.fileRef])); await f.owner.settled()
+
+    expect((await f.owner.tasks())[0]).toMatchObject({ taskRef: task.taskRef, state: 'uncertain' })
+    await expect(f.owner.retry(task.taskRef)).rejects.toMatchObject({ code: 'file-send-uncertain' })
+  })
   it('does not claim completion at the end of a PUT', () => {
     expect(arkmeVisibleUploadFraction({ phase: 'completing', sentBytes: 100, totalBytes: 100 })).toBe(.99)
     expect(arkmeVisibleUploadFraction({ phase: 'ready', sentBytes: 100, totalBytes: 100 })).toBe(1)
   })
   it('reconciles a lost acknowledgement without uploading or sending again', async () => {
     const f = await fixture(); const file = await f.stage('a.pdf')
-    f.send.mockRejectedValueOnce(new Error('ack lost'))
+    f.send.mockResolvedValueOnce({ kind: 'owner_outcome_unknown' })
     const task = await f.owner.enqueue(input([file.fileRef])); await f.owner.settled()
     f.ports.reconcile = vi.fn(async request => ({ sourceRef: request.sourceRef, itemUid: request.recordUid, status: 1, localState: 'synced' }))
     expect((await f.owner.reconcile(task.taskRef)).state).toBe('sent')
@@ -115,7 +165,7 @@ describe('account-bound file lifecycle', () => {
   })
   it('does not interpret absence from a recent page as a rejected send', async () => {
     const f = await fixture(); const file = await f.stage('a.pdf')
-    f.send.mockRejectedValueOnce(new Error('ack lost'))
+    f.send.mockResolvedValueOnce({ kind: 'owner_outcome_unknown' })
     const task = await f.owner.enqueue(input([file.fileRef])); await f.owner.settled()
     f.ports.reconcile = async () => undefined
     expect((await f.owner.reconcile(task.taskRef)).state).toBe('uncertain')
@@ -168,5 +218,16 @@ describe('account-bound file lifecycle', () => {
     await f.owner.discard(task.taskRef); await f.owner.remove(file.fileRef)
     expect(await f.owner.tasks()).toEqual([]); expect(await f.owner.files()).toEqual([])
     expect(f.send).toHaveBeenCalledTimes(1)
+  })
+  it('does not hide a terminal task in memory when its discard cannot be persisted', async () => {
+    const f = await fixture(); const file = await f.stage('a.pdf')
+    const task = await f.owner.enqueue(input([file.fileRef])); await f.owner.settled()
+    const statePath = join(f.directory, '42', 'state.json')
+    await rm(statePath)
+    await mkdir(statePath)
+
+    await expect(f.owner.discard(task.taskRef)).rejects.toBeDefined()
+
+    expect(await f.owner.tasks()).toContainEqual(expect.objectContaining({ taskRef: task.taskRef, state: 'sent' }))
   })
 })

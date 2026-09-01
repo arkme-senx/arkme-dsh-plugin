@@ -144,6 +144,15 @@ describe('Arkme service architecture', () => {
     expect(world).not.toMatch(/import \{[^}]*\bRecordService\b/)
   })
 
+  it('keeps transport outcome translation behind the file-send port adapter', () => {
+    const owner = readFileSync(join(root, 'src/file-transfer-owner.ts'), 'utf8')
+    const transfers = readFileSync(join(root, 'src/services/file-transfers.ts'), 'utf8')
+    const schedule = transfers.slice(transfers.indexOf('private schedule('), transfers.indexOf('async reception('))
+    expect(owner).toContain('writeOutcomeUnknown')
+    expect(transfers).not.toContain('writeOutcomeUnknown')
+    expect(schedule).not.toMatch(/task\.state\s*===\s*['"]sending['"]/u)
+  })
+
   it('keeps Voiceprint profile enrichment behind a narrow port', () => {
     const voiceprint = readFileSync(join(root, 'src/services/voiceprint-service.ts'), 'utf8')
     expect(voiceprint).toContain('export interface ArkmeVoiceprintProfileReader')

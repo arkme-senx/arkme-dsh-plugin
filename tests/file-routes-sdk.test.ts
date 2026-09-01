@@ -15,7 +15,9 @@ describe('file Host and external SDK transport contract', () => {
     let userId = 42
     const upload = vi.fn(async (_path, file) => ({ ...file, fileAssetUid: 'asset-12345678' }))
     const directUpload = vi.fn(async (_path, file) => ({ ...file, fileAssetUid: 'direct-asset' }))
-    const send = vi.fn(async input => ({ sourceRef: input.sourceRef, itemUid: input.recordUid, status: 1, localState: 'synced' as const }))
+    const send = vi.fn(async input => ({ kind: 'owner_accepted' as const, result: {
+      sourceRef: input.sourceRef, itemUid: input.recordUid, status: 1, localState: 'synced' as const,
+    } }))
     const openPath = vi.fn(async () => {})
     const owner = new FileTransfers(directory, { currentUser: async () => userId, validateSource: async () => {}, upload, send, fetchMedia: async () => { throw new Error('not expected') }, openPath }, 1000)
     const facade = {

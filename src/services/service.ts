@@ -1,4 +1,5 @@
 import {
+  ArkmeRequestQueueOverflowError,
   ArkmeRequestCoordinator,
   type ArkmeRequestLane,
   type ArkmeRequestService,
@@ -96,24 +97,45 @@ export interface ArkmeRemoteRequestOptions {
   cacheMs?: number
   failureCooldownMs?: number
   bypassCache?: boolean
+  /** Mark only transport outcomes where a mutation may have reached its owner without a usable acknowledgement. */
+  trackWriteOutcome?: boolean
 }
 
 export class ArkmePluginError extends Error {
   readonly upstreamStatus?: number
   readonly retryAfterMillis?: number
+  /** The owner mutation may have completed, but the caller did not receive a usable acknowledgement. */
+  readonly writeOutcomeUnknown?: true
 
   constructor(
     readonly code: string,
     message: string,
     readonly retryable: boolean,
     readonly httpStatus = 400,
-    options?: ErrorOptions & { upstreamStatus?: number; retryAfterMillis?: number },
+    options?: ErrorOptions & { upstreamStatus?: number; retryAfterMillis?: number; writeOutcomeUnknown?: boolean },
   ) {
     super(message, options)
     this.name = 'ArkmePluginError'
     if (options?.upstreamStatus !== undefined) this.upstreamStatus = options.upstreamStatus
     if (options?.retryAfterMillis !== undefined) this.retryAfterMillis = options.retryAfterMillis
+    if (options?.writeOutcomeUnknown === true) this.writeOutcomeUnknown = true
   }
+}
+
+function remoteWriteOutcomeUnknown(error: ArkmePluginError): boolean {
+  if (['arkme-network-error', 'arkme-timeout', 'arkme-response-invalid'].includes(error.code)) return true
+  return error.upstreamStatus === 408
+    || (error.upstreamStatus !== undefined && error.upstreamStatus >= 500)
+}
+
+function withUnknownWriteOutcome(error: ArkmePluginError): ArkmePluginError {
+  if (error.writeOutcomeUnknown === true) return error
+  return new ArkmePluginError(error.code, error.message, error.retryable, error.httpStatus, {
+    cause: error,
+    writeOutcomeUnknown: true,
+    ...(error.upstreamStatus === undefined ? {} : { upstreamStatus: error.upstreamStatus }),
+    ...(error.retryAfterMillis === undefined ? {} : { retryAfterMillis: error.retryAfterMillis }),
+  })
 }
 
 function retryAfterMillis(value: string | null): number | undefined {
@@ -315,7 +337,7 @@ export class ServiceRuntime {
     preserveHttpError = false,
     preserveForbiddenError = false,
   ): Promise<T> {
-    return await this.requestCoordinator.run({
+    return await this.requestCoordinator.run<T>({
       scope: options.scope ?? 'public',
       lane: options.lane ?? 'write',
       service: options.service ?? this.requestService(baseUrl),
@@ -327,10 +349,20 @@ export class ServiceRuntime {
       shouldCooldown: error => !(error instanceof ArkmePluginError)
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
       serviceCooldownMs: error => this.remoteServiceCooldownMs(error),
-      operation: async coordinatedSignal => await this.postDirect(
+      operation: async coordinatedSignal => await this.postDirect<T>(
         baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
         preserveHttpError, preserveForbiddenError,
       ),
+    }).catch((error): never => {
+      if (options.trackWriteOutcome === true && error instanceof ArkmeRequestQueueOverflowError) {
+        throw new ArkmePluginError('arkme-request-queue-full', '发送请求较多，请稍后重试', true, 503, { cause: error })
+      }
+      if (options.trackWriteOutcome === true && error instanceof Error && error.name === 'AbortError') {
+        throw new ArkmePluginError('arkme-request-aborted', '发送请求已取消', true, 409, { cause: error })
+      }
+      if (options.trackWriteOutcome === true && error instanceof ArkmePluginError
+        && remoteWriteOutcomeUnknown(error)) throw withUnknownWriteOutcome(error)
+      throw error
     })
   }
 

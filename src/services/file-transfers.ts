@@ -10,11 +10,15 @@ import { ARKME_TOOL_FILE_MAX_BYTES } from '../file-transfer-contract.js'
 type Metadata = Pick<ArkmeLocalFile, 'fileName' | 'mimeType' | 'size'>
 interface StoredFile extends ArkmeLocalFile { sha256: string; createdAtMillis: number; asset?: ArkmeUploadedAsset }
 interface FileState { version: 1; files: Record<string, StoredFile>; tasks: ArkmeFileSendTask[]; originals: Record<string, string> }
+export type FileTransferSendOutcome =
+  | { kind: 'owner_accepted'; result: ArkmeSourceSendResult }
+  | { kind: 'owner_not_accepted'; message: string }
+  | { kind: 'owner_outcome_unknown' }
 export interface FileTransferPorts {
   currentUser(): Promise<number>
   validateSource(sourceRef: string): Promise<void>
   upload(path: string, metadata: StoredFile, progress: (value: ArkmeFileProgress) => void, userId: number, signal: AbortSignal): Promise<ArkmeUploadedAsset>
-  send(input: ArkmeFileSendInput, assets: ArkmeUploadedAsset[], userId: number, signal: AbortSignal): Promise<ArkmeSourceSendResult>
+  send(input: ArkmeFileSendInput, assets: ArkmeUploadedAsset[], userId: number, signal: AbortSignal): Promise<FileTransferSendOutcome>
   fetchMedia(ref: string, signal: AbortSignal): Promise<{ response: Response; descriptor: Metadata }>
   openPath?(path: string, signal: AbortSignal): Promise<void>
   reconcile?(input: ArkmeFileSendInput, signal: AbortSignal): Promise<ArkmeSourceSendResult | undefined>
@@ -241,7 +245,10 @@ export class FileTransfers {
       if (!task) return
       if (['queued', 'uploading', 'sending'].includes(task.state)) throw fail('file-task-active', '任务仍在进行中，不能移除')
       // Removing a local task never deletes a remote record, or files still used by drafts.
-      state.tasks = state.tasks.filter(value => value !== task); await this.save(userId, state)
+      const previousTasks = state.tasks
+      state.tasks = state.tasks.filter(value => value !== task)
+      try { await this.save(userId, state) }
+      catch (error) { state.tasks = previousTasks; throw error }
     })
   }
   async reconcile(taskRef: string): Promise<ArkmeFileSendTask> {
@@ -312,6 +319,7 @@ export class FileTransfers {
   }
   private schedule(userId: number, state: FileState, task: ArkmeFileSendTask): void {
     const controller = new AbortController(); this.controllers.add(controller)
+    let ownerOutcome: FileTransferSendOutcome | undefined
     this.queue = this.queue.catch(() => {}).then(async () => {
       try {
         await this.assertUser(userId, controller.signal)
@@ -333,17 +341,36 @@ export class FileTransfers {
         }
         await this.assertUser(userId, controller.signal)
         task.state = 'sending'; await this.save(userId, state)
-        task.result = await this.ports.send(task, task.files.map(file => file.asset!), userId, controller.signal)
-        task.state = 'sent'; delete task.error
+        try {
+          ownerOutcome = await this.ports.send(task, task.files.map(file => file.asset!), userId, controller.signal)
+        } catch {
+          // A port contract violation must fail closed because the owner may have accepted the write.
+          ownerOutcome = { kind: 'owner_outcome_unknown' }
+        }
+        if (ownerOutcome.kind === 'owner_accepted') {
+          task.result = ownerOutcome.result; task.state = 'sent'; delete task.error
+        } else if (ownerOutcome.kind === 'owner_not_accepted') {
+          task.state = 'failed'; task.error = ownerOutcome.message
+        } else {
+          task.state = 'uncertain'; task.error = '发送结果待确认，请先核对会话，避免重复发送'
+        }
       } catch (error) {
-        const sending = task.state === 'sending'
-        task.state = sending ? 'uncertain' : 'failed'
-        task.error = sending ? '发送结果待确认，请先核对会话，避免重复发送' : error instanceof ArkmePluginError ? error.message : '文件传输中断，请重试'
+        task.state = 'failed'
+        task.error = error instanceof ArkmePluginError ? error.message : '文件传输中断，请重试'
       } finally {
         this.controllers.delete(controller)
         await this.save(userId, state)
       }
-    }).catch(() => { task.state = 'uncertain'; task.error = '本地发送状态保存失败，请先核对会话' })
+    }).catch(() => {
+      if (ownerOutcome?.kind === 'owner_accepted') {
+        task.state = 'sent'; delete task.error
+      } else if (ownerOutcome?.kind === 'owner_outcome_unknown') {
+        task.state = 'uncertain'; task.error = '发送结果待确认，请先核对会话，避免重复发送'
+      } else {
+        task.state = 'failed'
+        task.error ??= '本地发送状态保存失败，请重试'
+      }
+    })
   }
 
   async reception(mediaRef: string, start = false): Promise<ArkmeFileReception> {

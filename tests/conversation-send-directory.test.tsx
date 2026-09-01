@@ -73,6 +73,7 @@ describe('conversation send directory projection', () => {
       setTimeout: globalThis.setTimeout,
       clearTimeout: globalThis.clearTimeout,
       open: vi.fn(),
+      confirm: vi.fn(() => true),
     })
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
@@ -235,6 +236,94 @@ describe('conversation send directory projection', () => {
 
     expect(arkmeGroupMentionCandidates('', [], [member]).map(candidate => candidate.kind))
       .toEqual(['all'])
+  })
+
+  it('lets the user remove terminal local file tasks without hiding an unknown remote outcome', async () => {
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    const failedTask = {
+      taskRef: 'task-failed-file', sourceRef: target.sourceRef,
+      recordUid: 'record-failed-file', relationUid: 'relation-failed-file',
+      fileRefs: ['arkme-file-v1.00000000-0000-4000-8000-000000000001'],
+      content: { textContent: '@小林 请看' },
+      files: [{
+        fileRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000001',
+        fileName: '图片.png', mimeType: 'image/png', size: 3, fileKind: 1,
+        progress: { phase: 'ready', sentBytes: 3, totalBytes: 3 },
+      }],
+      state: 'failed', createdAtMillis: 48, error: '媒体载荷不合法',
+    }
+    let tasks = [failedTask]
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'files.send.tasks') return tasks
+      if (operation === 'files.send.discard') {
+        tasks = []
+        return undefined
+      }
+      return await baseCall(operation, params, signal)
+    })
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const remove = renderer!.root.findAllByType('button').find(button => button.children.includes('清除'))
+    expect(remove).toBeDefined()
+
+    await act(async () => {
+      remove!.props.onClick({ stopPropagation: vi.fn() })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mocks.callArkme).toHaveBeenCalledWith('files.send.discard', { taskRef: 'task-failed-file' })
+
+    await act(async () => {
+      renderer!.unmount()
+    })
+    renderer = undefined
+    tasks = [{
+      ...failedTask,
+      taskRef: 'task-uncertain-file',
+      recordUid: 'record-uncertain-file',
+      relationUid: 'relation-uncertain-file',
+      state: 'uncertain',
+      error: '发送结果待确认',
+    }]
+    const confirm = vi.mocked(window.confirm)
+    confirm.mockReset()
+    confirm.mockReturnValueOnce(false).mockReturnValueOnce(true)
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const uncertainRemove = renderer!.root.findAllByType('button').find(button => button.children.includes('清除'))
+    expect(uncertainRemove).toBeDefined()
+
+    await act(async () => {
+      uncertainRemove!.props.onClick({ stopPropagation: vi.fn() })
+      await Promise.resolve()
+    })
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(mocks.callArkme).not.toHaveBeenCalledWith('files.send.discard', { taskRef: 'task-uncertain-file' })
+
+    await act(async () => {
+      uncertainRemove!.props.onClick({ stopPropagation: vi.fn() })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(mocks.callArkme).toHaveBeenCalledWith('files.send.discard', { taskRef: 'task-uncertain-file' })
   })
 
   it('opens the report dialog from a peer group-message action menu', async () => {

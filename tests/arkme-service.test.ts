@@ -2808,13 +2808,19 @@ describe('ArkmeService', () => {
     requests.length = 0
     await expect(service.sendSourceRich(sourceRef, {
       textContent: '  @Tison 图片  ',
+      assets: [{
+        fileAssetUid: 'asset-mention-image', fileName: 'mention.png', mimeType: 'image/png', size: 3, fileKind: 1,
+      }],
       humanMentions: [{ mentionRef, startIndex: 2, length: 6 }],
     }, {
       recordUid: 'record-rich-human-mention', relationUid: 'relation-rich-human-mention',
     })).resolves.toMatchObject({ itemUid: 'record-rich-human-mention', sequence: 18 })
     expect(requests.at(-1)?.body).toMatchObject({
+      template_kind: 2,
       text_content: '@Tison 图片',
       content_payload: {
+        payload_kind: 2,
+        media_refs: [{ file_asset_uid: 'asset-mention-image', render_role: 1 }],
         mention_metadata: {
           human_mentions: [{ user_id: 2001, display_name_snapshot: 'Tison', start_index: 0, length: 6 }],
         },
@@ -2946,6 +2952,26 @@ describe('ArkmeService', () => {
         mention_metadata: {
           schema_version: 1,
           source_checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
+          human_mentions: [{ user_id: 0, display_name_snapshot: '所有人', start_index: 0, length: 4 }],
+        },
+      },
+    })
+
+    await expect(service.sendSourceRich(sourceRef, {
+      textContent: '@所有人 图片',
+      assets: [{
+        fileAssetUid: 'asset-all-mention-image', fileName: 'all.png', mimeType: 'image/png', size: 3, fileKind: 1,
+      }],
+      humanMentions: [{ all: true, startIndex: 0, length: 4 }],
+    }, {
+      recordUid: 'record-rich-all-mention', relationUid: 'relation-rich-all-mention',
+    })).resolves.toMatchObject({ itemUid: 'record-rich-all-mention', sequence: 18 })
+    expect(requests.at(-1)?.body).toMatchObject({
+      template_kind: 2,
+      content_payload: {
+        payload_kind: 2,
+        media_refs: [{ file_asset_uid: 'asset-all-mention-image', render_role: 1 }],
+        mention_metadata: {
           human_mentions: [{ user_id: 0, display_name_snapshot: '所有人', start_index: 0, length: 4 }],
         },
       },

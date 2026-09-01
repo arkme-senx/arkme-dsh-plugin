@@ -1,7 +1,8 @@
-import { FileTransfers } from './services/file-transfers.js'
+import { FileTransfers, type FileTransferSendOutcome } from './services/file-transfers.js'
 import type { ChatService } from './services/chat-service.js'
 import type { MediaService } from './services/media-service.js'
 import type { ServiceRuntime } from './services/service.js'
+import { ArkmePluginError } from './services/service.js'
 import type { SourceService } from './services/source-service.js'
 export type { ArkmeFileSendInput, ArkmeLocalFile } from './file-transfer-contract.js'
 export type { FileTransfers } from './services/file-transfers.js'
@@ -20,9 +21,18 @@ export function createArkmeFileTransfers(options: {
     currentUser: async () => (await options.runtime.requireSession()).userId,
     validateSource: async sourceRef => { await options.source.openSourceRef(sourceRef, (await options.runtime.requireSession()).userId) },
     upload: async (path, metadata, onProgress, expectedUserId, signal) => await options.media.uploadLocalFile(path, metadata, { onProgress, expectedUserId, signal }),
-    send: async (input, assets, expectedUserId, signal) => await options.chat.sendSourceRich(input.sourceRef, { ...input.content, assets }, {
-      recordUid: input.recordUid, relationUid: input.relationUid, expectedUserId, signal,
-    }),
+    send: async (input, assets, expectedUserId, signal): Promise<FileTransferSendOutcome> => {
+      try {
+        return { kind: 'owner_accepted', result: await options.chat.sendSourceRich(input.sourceRef, { ...input.content, assets }, {
+          recordUid: input.recordUid, relationUid: input.relationUid, expectedUserId, signal,
+        }) }
+      } catch (error) {
+        if (!(error instanceof ArkmePluginError)) return { kind: 'owner_outcome_unknown' }
+        return error.writeOutcomeUnknown === true
+          ? { kind: 'owner_outcome_unknown' }
+          : { kind: 'owner_not_accepted', message: error.message }
+      }
+    },
     fetchMedia: async (ref, signal) => await options.media.fetchMedia(ref, undefined, signal, true),
     ...(options.openPath === undefined ? {} : { openPath: options.openPath }),
     reconcile: async (input, signal) => {

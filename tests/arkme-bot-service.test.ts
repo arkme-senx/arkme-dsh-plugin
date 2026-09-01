@@ -1194,6 +1194,27 @@ describe('ArkmeService Bot owner adapter', () => {
         },
       },
     })
+
+    requests.length = 0
+    await expect(service.sendSourceRich(groupRef, {
+      textContent: '@总结 看图片',
+      assets: [{
+        fileAssetUid: 'asset-bot-mention-image', fileName: 'bot.png', mimeType: 'image/png', size: 3, fileKind: 1,
+      }],
+      botMentions: [{ botRef: bots.items[0]!.botRef, startIndex: 0, length: 3 }],
+    }, {
+      recordUid: 'record-rich-bot-mention', relationUid: 'relation-rich-bot-mention',
+    })).resolves.toMatchObject({ itemUid: 'record-rich-bot-mention', sequence: 13 })
+    expect(requests.at(-1)?.body).toMatchObject({
+      template_kind: 2,
+      content_payload: {
+        payload_kind: 2,
+        media_refs: [{ file_asset_uid: 'asset-bot-mention-image', render_role: 1 }],
+        mention_metadata: {
+          bot_mentions: [{ bot_uid: 'bot-summary', display_name_snapshot: '总结', start_index: 0, length: 3 }],
+        },
+      },
+    })
   })
 
   it('fails closed for duplicate or uninstalled Bot mentions before sending chat text', async () => {
