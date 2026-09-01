@@ -26,6 +26,8 @@ import type {
   ArkmeGroupMemberCandidateGroup,
   ArkmeGroupMemberCandidateList,
   ArkmeGroupInvitePreview,
+  ArkmeGroupJoinRestrictionMutationResult,
+  ArkmeGroupJoinRestrictionPage,
   ArkmeGroupNotificationResult,
   ArkmeGroupProjectionResult,
   ArkmeGroupSettingsSnapshot,
@@ -1112,6 +1114,8 @@ function GroupSettingsMenu(props: {
   aiPolishSettings?: ArkmeGroupAiPolishSnapshot | undefined
   onAiPolishSettingsChanged: (settings: ArkmeGroupAiPolishSnapshot) => void
   onAiPolishOpen: () => void
+  onRestrictionsOpen: () => void
+  onSettingsLoaded: (settings: Pick<ArkmeGroupSettingsSnapshot, 'selfRole' | 'selfStatus'>) => void
   onSourceProjectionUpdated: (source: ArkmeSourceItem) => void
   onMembershipChanged: (target: ArkmeGroupActionTarget) => void
   onMessageDndUpdated: (target: ArkmeGroupActionTarget, messageDnd: boolean) => void
@@ -1136,6 +1140,7 @@ function GroupSettingsMenu(props: {
         if (!active) return
         setSnapshot(value)
         setMessageDnd(value.messageDnd)
+        props.onSettingsLoaded(value)
       })
       .catch(caught => {
         if (active && !isArkmeRequestAbort(caught, controller.signal)) props.onError(errorMessage(caught))
@@ -1247,6 +1252,14 @@ function GroupSettingsMenu(props: {
           props.onClose()
         }}
       ><ClientIcon src={icons.rename} /><span>重命名</span></button>}
+      {effective.selfRole === 'owner' && effective.selfStatus === 'active' && <button
+        type="button"
+        role="menuitem"
+        style={{ ...styles.menuRow, marginTop: 6 }}
+        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
+        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+        onClick={props.onRestrictionsOpen}
+      ><span aria-hidden style={{ width: 20, textAlign: 'center' }}>⊘</span><span>禁止加入名单</span><span aria-hidden style={{ marginLeft: 'auto', color: colors.secondary }}>›</span></button>}
       <button
         type="button"
         role="menuitem"
@@ -1299,6 +1312,124 @@ function GroupSettingsMenu(props: {
       </button>
     </div>
   </div>
+}
+
+function GroupJoinRestrictionsPanel(props: {
+  source: ArkmeSourceItem
+  open: boolean
+  onClose: () => void
+}) {
+  const [items, setItems] = useState<ArkmeGroupJoinRestrictionPage['items']>([])
+  const [cursor, setCursor] = useState<string>()
+  const [loading, setLoading] = useState(false)
+  const [busyMemberRef, setBusyMemberRef] = useState('')
+  const [error, setError] = useState('')
+  const requestRef = useRef<AbortController>()
+  const mutationRef = useRef<AbortController>()
+  const busyMemberRefRef = useRef('')
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      requestRef.current?.abort()
+      mutationRef.current?.abort()
+    }
+  }, [])
+
+  const load = useCallback((nextCursor?: string) => {
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
+    setLoading(true)
+    setError('')
+    void callArkme<ArkmeGroupJoinRestrictionPage>('group.join-restrictions', {
+      sourceRef: props.source.sourceRef,
+      limit: 30,
+      ...(nextCursor === undefined ? {} : { cursor: nextCursor }),
+    }, controller.signal).then(page => {
+      if (requestRef.current !== controller) return
+      setItems(current => nextCursor === undefined
+        ? page.items
+        : [...current, ...page.items.filter(item => !current.some(existing => existing.memberRef === item.memberRef))])
+      setCursor(page.nextCursor)
+    }).catch(caught => {
+      if (!controller.signal.aborted) setError(errorMessage(caught) || '限制名单读取失败，请稍后重试')
+    }).finally(() => {
+      if (requestRef.current !== controller) return
+      requestRef.current = undefined
+      setLoading(false)
+    })
+  }, [props.source.sourceRef])
+
+  useEffect(() => {
+    if (!props.open) return
+    setItems([])
+    setCursor(undefined)
+    load()
+    return () => {
+      requestRef.current?.abort()
+      mutationRef.current?.abort()
+      busyMemberRefRef.current = ''
+    }
+  }, [load, props.open])
+
+  if (!props.open) return null
+  return <>
+    <div style={styles.drawerScrim} aria-hidden onPointerDown={event => { event.preventDefault(); props.onClose() }} />
+    <aside style={styles.drawer} aria-label="禁止加入名单">
+      <div style={styles.drawerHeader}>
+        <h3 style={{ ...styles.drawerTitle, fontSize: 16, fontWeight: 500 }}>禁止加入名单</h3>
+        <button type="button" aria-label="关闭禁止加入名单" style={styles.closeButton} onClick={props.onClose}><X size={18} /></button>
+      </div>
+      <p style={{ margin: 0, padding: '12px 18px', borderBottom: `1px solid ${colors.border}`, color: colors.secondary, fontSize: 12, lineHeight: '18px' }}>
+        名单中的用户无法通过邀请或添加再次加入此群。
+      </p>
+      <div style={styles.drawerBody}>
+        {loading && items.length === 0 ? <div style={styles.loading}>正在读取限制名单…</div> : null}
+        {!loading && error === '' && items.length === 0 ? <div style={styles.empty}>暂无被限制的用户</div> : null}
+        {items.map(item => <div key={item.memberRef} style={{ ...styles.memberRow, cursor: 'default' }}>
+          <Avatar imageRef={item.avatarRef} />
+          <span style={styles.memberMain}>
+            <span style={styles.memberName}>{item.displayName}</span>
+            <span style={{ color: colors.secondary, fontSize: 12 }}>已禁止再次加入</span>
+          </span>
+          <button type="button" disabled={busyMemberRef !== ''} style={{
+            height: 30, padding: '0 10px', border: `1px solid ${colors.border}`, borderRadius: 7,
+            background: colors.panel, color: colors.primary, opacity: busyMemberRef !== '' ? .5 : 1,
+          }} onClick={() => {
+            if (!window.confirm(`允许 ${item.displayName} 再次加入此群吗？`)) return
+            if (busyMemberRefRef.current !== '') return
+            const controller = new AbortController()
+            mutationRef.current = controller
+            busyMemberRefRef.current = item.memberRef
+            setBusyMemberRef(item.memberRef)
+            setError('')
+            void callArkme<ArkmeGroupJoinRestrictionMutationResult>('group.join-restriction.set', {
+              sourceRef: props.source.sourceRef,
+              memberRef: item.memberRef,
+              restricted: false,
+            }, controller.signal).then(result => {
+              if (mountedRef.current && !result.restricted) {
+                setItems(current => current.filter(value => value.memberRef !== item.memberRef))
+              }
+            }).catch(caught => {
+              if (mountedRef.current && !controller.signal.aborted) setError(errorMessage(caught) || '解除限制失败，请稍后重试')
+            }).finally(() => {
+              if (mutationRef.current === controller) mutationRef.current = undefined
+              busyMemberRefRef.current = ''
+              if (mountedRef.current) setBusyMemberRef('')
+            })
+          }}>{busyMemberRef === item.memberRef ? '处理中…' : '允许加入'}</button>
+        </div>)}
+        {error === '' ? null : <div role="alert" style={{ padding: 12, color: arkmeTheme.danger, fontSize: 12 }}>{error}</div>}
+        {cursor !== undefined ? <button type="button" disabled={loading} style={{ ...styles.closeButton, width: '100%', height: 36, color: colors.primary }} onClick={() => { load(cursor) }}>
+          {loading ? '加载中…' : '加载更多'}
+        </button> : null}
+      </div>
+    </aside>
+  </>
 }
 
 function RenameDialog(props: {
@@ -1377,6 +1508,7 @@ export function ArkmeGroupChatControls(props: {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsPosition, setSettingsPosition] = useState({ left: 12, top: 54 })
   const [aiPolishOpen, setAiPolishOpen] = useState(false)
+  const [restrictionsOpen, setRestrictionsOpen] = useState(false)
   const [renameSource, setRenameSource] = useState<ArkmeGroupActionTarget>()
   const [refreshToken, setRefreshToken] = useState(0)
   const [selfRole, setSelfRole] = useState<ArkmeGroupSettingsSnapshot['selfRole']>('unknown')
@@ -1387,6 +1519,11 @@ export function ArkmeGroupChatControls(props: {
     mountedRef.current = true
     return () => { mountedRef.current = false }
   }, [])
+  useEffect(() => {
+    setSelfRole('unknown')
+    setSelfStatus('unknown')
+    setRestrictionsOpen(false)
+  }, [props.source.sourceRef])
   const reportError = useCallback((message: string) => {
     if (mountedRef.current) props.onError(message)
   }, [props.onError])
@@ -1415,7 +1552,7 @@ export function ArkmeGroupChatControls(props: {
       const hostRect = host.getBoundingClientRect()
       const buttonRect = button.getBoundingClientRect()
       const menuWidth = GROUP_SETTINGS_MENU_WIDTH
-      const menuHeight = 120
+      const menuHeight = 280
       setSettingsPosition({
         left: Math.max(12, Math.min(hostRect.width - menuWidth - 12, buttonRect.right - hostRect.left - menuWidth)),
         top: Math.max(8, Math.min(hostRect.height - menuHeight - 12, buttonRect.bottom - hostRect.top + 8)),
@@ -1423,12 +1560,18 @@ export function ArkmeGroupChatControls(props: {
     }
     setMembersOpen(false)
     setAiPolishOpen(false)
+    setRestrictionsOpen(false)
     setSettingsOpen(true)
   }, [props.overlayHostRef, settingsOpen])
 
   const openAiPolish = useCallback(() => {
     setSettingsOpen(false)
     setAiPolishOpen(true)
+  }, [])
+
+  const openRestrictions = useCallback(() => {
+    setSettingsOpen(false)
+    setRestrictionsOpen(true)
   }, [])
 
   return <>
@@ -1448,6 +1591,8 @@ export function ArkmeGroupChatControls(props: {
         onClose={() => { setSettingsOpen(false) }}
         onRename={setRenameSource}
         onAiPolishOpen={openAiPolish}
+        onRestrictionsOpen={openRestrictions}
+        onSettingsLoaded={settingsLoaded}
         onSourceProjectionUpdated={props.onSourceProjectionUpdated}
         onMembershipChanged={props.onMembershipChanged}
         onMessageDndUpdated={props.onMessageDndUpdated}
@@ -1460,6 +1605,11 @@ export function ArkmeGroupChatControls(props: {
         onClose={() => { setAiPolishOpen(false) }}
         onSettingsChanged={settings => { props.onAiPolishSettingsChanged?.(settings) }}
         onError={reportError}
+      />
+      <GroupJoinRestrictionsPanel
+        source={props.source}
+        open={restrictionsOpen}
+        onClose={() => { setRestrictionsOpen(false) }}
       />
       <GroupMembersDrawer
         source={props.source}

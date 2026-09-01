@@ -21,6 +21,9 @@ import type {
   ArkmeForwardTranscriptSegment,
   ArkmeGroupAiPolishNotice,
   ArkmeGroupAiPolishSnapshot,
+  ArkmeGroupJoinRestrictionMutationResult,
+  ArkmeGroupJoinRestrictionPage,
+  ArkmeGroupMemberRemoveResult,
   ArkmeGroupMemberRole,
   ArkmeGroupMemberStatus,
   ArkmeHumanMentionInput,
@@ -40,6 +43,7 @@ import type {
   ArkmeMessageReadReceiptSummary,
   ArkmeMessageReadReceiptSummaryList,
   ArkmeMessageReportResult,
+  ArkmeMessageWithdrawalResult,
   ArkmeOfficialAuthorProfile,
   ArkmeOpenPrivateChatResult,
   ArkmeRichSendInput,
@@ -122,6 +126,21 @@ export function arkmeRichContentPayload(
   }
 }
 
+interface ArkmeMessageModerationRefPayload {
+  version: 1
+  userId: number
+  chatSessionUid: string
+  relationUid: string
+}
+
+interface ArkmeJoinRestrictionCursorPayload {
+  version: 1
+  userId: number
+  chatSessionUid: string
+  updatedAt: number
+  targetUserId: number
+}
+
 interface ArkmeMessageActionRefPayload {
   version: 1
   sourceKind: 'chat_relation' | 'record'
@@ -194,6 +213,8 @@ const OFFICIAL_AUTHOR_FALLBACK_DISPLAY_NAME = '即' + '我作者'
 const MAX_MESSAGE_COPY_LINK_ITEMS = 100
 const RECORD_UID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const CHAT_MEMBER_REF_PREFIX = 'arkme-chat-member-v1'
+const MESSAGE_MODERATION_REF_PREFIX = 'arkme-message-moderation-v1'
+const JOIN_RESTRICTION_CURSOR_PREFIX = 'arkme-join-restriction-cursor-v1'
 const CHAT_HUMAN_MENTION_REF_PREFIX = 'arkme-chat-human-mention-v1'
 
 export interface ArkmeChatRealtimePort {
@@ -2181,6 +2202,175 @@ export class ChatService {
       return { messageRef, reportUid, status: numberValue(report.status) }
     }
 
+  async withdrawGroupMessage(
+    messageModerationRef: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeMessageWithdrawalResult> {
+    const session = await this.runtime.requireSession()
+    const reference = await this.openMessageModerationRef(messageModerationRef, session.userId)
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/messages/withdraw',
+      { chat_session_uid: reference.chatSessionUid, rel_uid: reference.relationUid },
+      session,
+      options.signal,
+    )
+    const withdrawnAtMillis = Math.trunc(numberValue(data.withdrawn_at))
+    if (stringValue(data.chat_session_uid).trim() !== reference.chatSessionUid
+      || stringValue(data.rel_uid).trim() !== reference.relationUid
+      || withdrawnAtMillis <= 0) {
+      throw new ArkmePluginError('message-withdraw-invalid-response', '撤回服务返回无效', true, 502)
+    }
+    return {
+      messageModerationRef,
+      timelineItemKey: await this.source.chatTimelineItemKey(
+        session.userId, reference.chatSessionUid, reference.relationUid,
+      ),
+      withdrawnAtMillis,
+      alreadyWithdrawn: data.already_withdrawn === true,
+    }
+  }
+
+  async removeGroupMember(
+    sourceRef: string,
+    memberRef: string,
+    options: { preventRejoin?: boolean; signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupMemberRemoveResult> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') {
+      throw new ArkmePluginError('group-source-invalid', '仅支持移除群聊成员', false)
+    }
+    const member = await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/members/update',
+      {
+        chat_session_uid: source.ownerRef,
+        target_user_id: member.targetUserId,
+        action: 2,
+        prevent_rejoin: options.preventRejoin === true,
+      },
+      session,
+      options.signal,
+    )
+    const item = objectValue(data.item)
+    if (stringValue(data.chat_session_uid).trim() !== source.ownerRef
+      || Math.trunc(numberValue(item.user_id)) !== member.targetUserId
+      || Math.trunc(numberValue(item.status)) !== 3) {
+      throw new ArkmePluginError('group-member-remove-invalid-response', '移除成员服务返回无效', true, 502)
+    }
+    return {
+      sourceRef,
+      memberRef,
+      status: 'removed',
+      joinRestricted: item.join_restricted === true,
+    }
+  }
+
+  async listGroupJoinRestrictions(
+    sourceRef: string,
+    options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupJoinRestrictionPage> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') {
+      throw new ArkmePluginError('group-source-invalid', '仅支持查看群聊限制名单', false)
+    }
+    const cursor = options.cursor === undefined
+      ? undefined
+      : await this.openJoinRestrictionCursor(options.cursor, session.userId, source.ownerRef)
+    const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 30)))
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/governance/join-restriction/page',
+      {
+        chat_session_uid: source.ownerRef,
+        limit,
+        ...(cursor === undefined ? {} : {
+          cursor: { updated_at: cursor.updatedAt, user_id: cursor.targetUserId },
+        }),
+      },
+      session,
+      options.signal,
+    )
+    if (stringValue(data.chat_session_uid).trim() !== source.ownerRef) {
+      throw new ArkmePluginError('join-restrictions-invalid-response', '限制名单服务返回无效', true, 502)
+    }
+    const rawItems = listValue(data.items).map(objectValue)
+    const projected = await this.projectChatMembers(source.ownerRef, rawItems, session, {
+      includeViewerLabels: true,
+      includeHumanMentionRefs: false,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+    const projectedByRef = new Map(projected.map(item => [item.memberRef, item]))
+    const items = [] as ArkmeGroupJoinRestrictionPage['items']
+    for (const raw of rawItems) {
+      const userId = Math.trunc(numberValue(raw.user_id))
+      if (!Number.isSafeInteger(userId) || userId <= 0) continue
+      const memberRef = await this.sealChatMemberRef(session.userId, source.ownerRef, userId)
+      const member = projectedByRef.get(memberRef)
+      const restriction = objectValue(raw.restriction)
+      const restrictedAtMillis = Math.trunc(numberValue(restriction.updated_at))
+      if (member === undefined || restrictedAtMillis <= 0) {
+        throw new ArkmePluginError('join-restrictions-invalid-response', '限制名单服务返回无效', true, 502)
+      }
+      items.push({
+        memberRef,
+        displayName: member.displayName,
+        ...(member.memberName === undefined ? {} : { memberName: member.memberName }),
+        ...(member.secondaryName === undefined ? {} : { secondaryName: member.secondaryName }),
+        ...(member.avatarRef === undefined ? {} : { avatarRef: member.avatarRef }),
+        restrictedAtMillis,
+      })
+    }
+    const rawNextCursor = objectValue(data.next_cursor)
+    const nextUpdatedAt = Math.trunc(numberValue(rawNextCursor.updated_at))
+    const nextUserId = Math.trunc(numberValue(rawNextCursor.user_id))
+    return {
+      sourceRef,
+      items,
+      ...(nextUpdatedAt <= 0 || nextUserId <= 0 ? {} : {
+        nextCursor: await this.sealJoinRestrictionCursor({
+          version: 1,
+          userId: session.userId,
+          chatSessionUid: source.ownerRef,
+          updatedAt: nextUpdatedAt,
+          targetUserId: nextUserId,
+        }),
+      }),
+    }
+  }
+
+  async setGroupJoinRestriction(
+    sourceRef: string,
+    memberRef: string,
+    restricted: boolean,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupJoinRestrictionMutationResult> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') {
+      throw new ArkmePluginError('group-source-invalid', '仅支持设置群聊加入限制', false)
+    }
+    const member = await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/governance/join-restriction/set',
+      { chat_session_uid: source.ownerRef, target_user_id: member.targetUserId, restricted },
+      session,
+      options.signal,
+    )
+    const updatedAtMillis = Math.trunc(numberValue(data.updated_at))
+    if (stringValue(data.chat_session_uid).trim() !== source.ownerRef
+      || Math.trunc(numberValue(data.user_id)) !== member.targetUserId
+      || data.restricted !== restricted) {
+      throw new ArkmePluginError('join-restriction-invalid-response', '加入限制服务返回无效', true, 502)
+    }
+    return {
+      sourceRef,
+      memberRef,
+      restricted,
+      ...(updatedAtMillis <= 0 ? {} : { updatedAtMillis }),
+    }
+  }
+
   async messageReadReceiptSummaries(
     sourceRef: string,
     rawItems: readonly ArkmeMessageReadReceiptQueryItem[],
@@ -4148,9 +4338,11 @@ export class ChatService {
       data: Record<string, unknown>,
       session: ArkmeSessionCredentials,
       chatSessionUid: string,
+      projectedSourceKind?: 'private_chat' | 'group_chat',
     ): Promise<ArkmeTimelineItem[]> {
       const items: ArkmeTimelineItem[] = []
       const signingKey = await this.runtime.stateStore.uniqueCode()
+      const sourceKind = projectedSourceKind
       for (const raw of listValue(data.items)) {
         const item = objectValue(raw)
         const relation = objectValue(item.relation)
@@ -4185,6 +4377,14 @@ export class ChatService {
           && arkmeMentionMetadataMentionsViewer(record, payload, session.userId)
         items.push({
           itemUid: uid,
+          ...(relationUid === '' ? {} : {
+            timelineItemKey: await this.source.chatTimelineItemKey(session.userId, chatSessionUid, relationUid),
+          }),
+          ...(sourceKind !== 'group_chat' || relationUid === '' || senderUserId === session.userId ? {} : {
+            messageModerationRef: this.sealMessageModerationRef(
+              session.userId, chatSessionUid, relationUid, signingKey,
+            ),
+          }),
           ...(relationUid === '' ? {} : {
             messageActionRef: this.sealMessageActionRef(this.messageActionRefPayload({
               sourceKind: 'chat_relation',
@@ -5027,8 +5227,14 @@ export class ChatService {
       )
       const itemIndex = items.push({
         itemUid: uid,
+        ...(relationUid === '' ? {} : {
+          timelineItemKey: await this.source.chatTimelineItemKey(session.userId, source.ownerRef, relationUid),
+        }),
         ...(source.kind !== 'group_chat' || relationUid === '' || senderUserId === session.userId ? {} : {
           messageRef: this.sealMessageRef(session.userId, source.ownerRef, relationUid, signingKey),
+          messageModerationRef: this.sealMessageModerationRef(
+            session.userId, source.ownerRef, relationUid, signingKey,
+          ),
         }),
         ...(relationUid === '' ? {} : {
           messageActionRef: this.sealMessageActionRef(this.messageActionRefPayload({
@@ -5564,6 +5770,92 @@ export class ChatService {
       const signature = createHmac('sha256', signingKey).update(payload).digest('base64url')
       return `arkme-message-v1.${payload}.${signature}`
     }
+
+  private sealMessageModerationRef(
+    userId: number,
+    chatSessionUid: string,
+    relationUid: string,
+    signingKey: string,
+  ): string {
+    const payload = encodeOpaqueJson({
+      version: 1, userId, chatSessionUid, relationUid,
+    } satisfies ArkmeMessageModerationRefPayload)
+    const signature = createHmac('sha256', signingKey).update(payload).digest('base64url')
+    return `${MESSAGE_MODERATION_REF_PREFIX}.${payload}.${signature}`
+  }
+
+  private async openMessageModerationRef(
+    messageModerationRef: string,
+    expectedUserId: number,
+  ): Promise<ArkmeMessageModerationRefPayload> {
+    const parsed = await this.openSignedOpaquePayload(
+      messageModerationRef,
+      MESSAGE_MODERATION_REF_PREFIX,
+      'message-moderation-ref-invalid',
+      '消息治理引用无效，请刷新后重试',
+    )
+    const result: ArkmeMessageModerationRefPayload = {
+      version: 1,
+      userId: Math.trunc(numberValue(parsed.userId)),
+      chatSessionUid: stringValue(parsed.chatSessionUid).trim(),
+      relationUid: stringValue(parsed.relationUid).trim(),
+    }
+    if (parsed.version !== 1 || result.userId !== expectedUserId
+      || result.chatSessionUid === '' || result.relationUid === '') {
+      throw new ArkmePluginError('message-moderation-ref-invalid', '消息治理引用与当前账号不匹配', false, 403)
+    }
+    return result
+  }
+
+  private async sealJoinRestrictionCursor(payload: ArkmeJoinRestrictionCursorPayload): Promise<string> {
+    const encoded = encodeOpaqueJson(payload)
+    const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(encoded).digest('base64url')
+    return `${JOIN_RESTRICTION_CURSOR_PREFIX}.${encoded}.${signature}`
+  }
+
+  private async openJoinRestrictionCursor(
+    cursor: string,
+    expectedUserId: number,
+    expectedChatSessionUid: string,
+  ): Promise<ArkmeJoinRestrictionCursorPayload> {
+    const parsed = await this.openSignedOpaquePayload(
+      cursor,
+      JOIN_RESTRICTION_CURSOR_PREFIX,
+      'join-restriction-cursor-invalid',
+      '限制名单游标无效，请重新打开',
+    )
+    const result: ArkmeJoinRestrictionCursorPayload = {
+      version: 1,
+      userId: Math.trunc(numberValue(parsed.userId)),
+      chatSessionUid: stringValue(parsed.chatSessionUid).trim(),
+      updatedAt: Math.trunc(numberValue(parsed.updatedAt)),
+      targetUserId: Math.trunc(numberValue(parsed.targetUserId)),
+    }
+    if (parsed.version !== 1 || result.userId !== expectedUserId
+      || result.chatSessionUid !== expectedChatSessionUid
+      || result.updatedAt <= 0 || result.targetUserId <= 0) {
+      throw new ArkmePluginError('join-restriction-cursor-invalid', '限制名单游标与当前账号或群聊不匹配', false, 403)
+    }
+    return result
+  }
+
+  private async openSignedOpaquePayload(
+    reference: string,
+    prefix: string,
+    code: string,
+    message: string,
+  ): Promise<Record<string, unknown>> {
+    const parts = reference.trim().split('.')
+    if (parts.length !== 3 || parts[0] !== prefix) throw new ArkmePluginError(code, message, false)
+    const encoded = parts[1] ?? ''
+    const supplied = Buffer.from(parts[2] ?? '', 'base64url')
+    const expected = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(encoded).digest()
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new ArkmePluginError(code, message, false)
+    }
+    try { return objectValue(decodeOpaqueJson(encoded)) }
+    catch (error) { throw new ArkmePluginError(code, message, false, 400, { cause: error }) }
+  }
   
   async openMessageRef(messageRef: string, expectedUserId: number): Promise<ArkmeMessageRefPayload> {
       const parts = messageRef.trim().split('.')

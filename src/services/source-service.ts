@@ -1695,6 +1695,13 @@ export class SourceService {
     return `arkme-chat-source-v1.${digest}`
   }
 
+  async chatTimelineItemKey(userId: number, chatSessionUid: string, relationUid: string): Promise<string> {
+    const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
+      .update(`chat-timeline-item-key-v1:${String(userId)}:${chatSessionUid.trim()}:${relationUid.trim()}`)
+      .digest('base64url')
+    return `arkme-chat-timeline-item-v1.${digest}`
+  }
+
   async topicHierarchyKey(userId: number, topicUid: string): Promise<string> {
     const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`topic-hierarchy-key-v1:${String(userId)}:${topicUid.trim()}`)

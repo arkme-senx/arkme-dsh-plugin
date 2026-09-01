@@ -1,5 +1,7 @@
 import type {
-  ArkmeGroupMemberAddResult, ArkmeGroupMemberCandidateList, ArkmeGroupProjectionResult, ArkmeSourceItem,
+  ArkmeGroupJoinRestrictionMutationResult, ArkmeGroupJoinRestrictionPage,
+  ArkmeGroupMemberAddResult, ArkmeGroupMemberCandidateList, ArkmeGroupMemberRemoveResult,
+  ArkmeGroupProjectionResult, ArkmeSourceItem,
 } from '../../types.js'
 
 export interface ArkmeGroupToolPort {
@@ -22,4 +24,19 @@ export interface ArkmeGroupToolPort {
     candidateRefs: readonly string[],
     signal?: AbortSignal,
   ): Promise<ArkmeGroupMemberAddResult>
+  removeGroupMember(
+    sourceRef: string,
+    memberRef: string,
+    options?: { preventRejoin?: boolean; signal?: AbortSignal },
+  ): Promise<ArkmeGroupMemberRemoveResult>
+  listGroupJoinRestrictions(
+    sourceRef: string,
+    options?: { cursor?: string; limit?: number; signal?: AbortSignal },
+  ): Promise<ArkmeGroupJoinRestrictionPage>
+  setGroupJoinRestriction(
+    sourceRef: string,
+    memberRef: string,
+    restricted: boolean,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeGroupJoinRestrictionMutationResult>
 }

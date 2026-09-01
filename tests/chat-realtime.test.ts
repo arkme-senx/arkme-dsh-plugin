@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE, ARKME_CHAT_SSE_PATH,
+  ARKME_CHAT_TIMELINE_CHANGED_BIZ_TYPE,
   ARKME_PROJECTION_INVALIDATED_BIZ_TYPE, ARKME_RUNTIME_INSTANCE_ID_HEADER,
   ARKME_SSE_IDENTITY_VERSION, ARKME_SSE_IDENTITY_VERSION_HEADER, ArkmeChatRealtimeRuntime,
   decodeArkmeChatReadCursorAdvancedDataLine, decodeArkmeChatReceiveDataLine,
+  decodeArkmeChatTimelineChangedDataLine,
   decodeArkmeProjectionInvalidatedDataLine,
 } from '../src/chat-realtime.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from '../src/runtime-instance.js'
@@ -32,6 +34,19 @@ const readCursorHint = {
   reader_user_id: 20002,
   read_seq: 9,
   read_at: 123457,
+  event_at: 123458,
+  source_client_id: 0,
+}
+
+const timelineChangedHint = {
+  t: ARKME_CHAT_TIMELINE_CHANGED_BIZ_TYPE,
+  event_uid: 'timeline-event-1',
+  chat_session_uid: 'chat-1',
+  rel_uid: 'relation-1',
+  latest_seq: 9,
+  actor_user_id: 10001,
+  change_kind: 1,
+  change_version: 123450,
   event_at: 123458,
   source_client_id: 0,
 }
@@ -73,6 +88,29 @@ describe('Arkme Chat realtime', () => {
     })}`)).toBeUndefined()
     expect(decodeArkmeChatReadCursorAdvancedDataLine(`data: ${JSON.stringify({
       ...readCursorHint, source_client_id: -1,
+    })}`)).toBeUndefined()
+  })
+
+  it('decodes metadata-only timeline changes without leaking message content', () => {
+    expect(decodeArkmeChatTimelineChangedDataLine(`data: ${JSON.stringify(timelineChangedHint)}`)).toEqual({
+      eventUid: 'timeline-event-1', chatSessionUid: 'chat-1', relationUid: 'relation-1',
+      latestSequence: 9, actorUserId: 10001, changeKind: 'deleted',
+      changeVersion: 123450, eventAtMillis: 123458,
+    })
+    expect(decodeArkmeChatTimelineChangedDataLine(`data: ${JSON.stringify({
+      ...timelineChangedHint, change_kind: 3,
+    })}`)).toMatchObject({ changeKind: 'reedited' })
+    expect(decodeArkmeChatTimelineChangedDataLine(`data: ${JSON.stringify({
+      ...timelineChangedHint, record_body: { text: 'must-not-cross' },
+    })}`)).toBeUndefined()
+    expect(decodeArkmeChatTimelineChangedDataLine(`data: ${JSON.stringify({
+      ...timelineChangedHint, receiver_user_ids: [10001],
+    })}`)).toBeUndefined()
+    expect(decodeArkmeChatTimelineChangedDataLine(`data: ${JSON.stringify({
+      ...timelineChangedHint, message_preview: 'unknown content-like fields are also rejected',
+    })}`)).toBeUndefined()
+    expect(decodeArkmeChatTimelineChangedDataLine(`data: ${JSON.stringify({
+      ...timelineChangedHint, change_kind: 9,
     })}`)).toBeUndefined()
   })
 

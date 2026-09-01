@@ -687,14 +687,19 @@ export interface ArkmeChatTimelineDeltaSnapshot {
 export interface ArkmeChatTimelineSourceDeltaSnapshot {
   revision: number
   items: import('../types.js').ArkmeTimelineItem[]
+  removedItemKeys: string[]
+  invalidationRevision: number
   latestSequence?: number
 }
 
 const EMPTY_CHAT_TIMELINE_SOURCE_DELTA: ArkmeChatTimelineSourceDeltaSnapshot = {
   revision: 0,
   items: [],
+  removedItemKeys: [],
+  invalidationRevision: 0,
 }
 const MAX_SCOPED_REALTIME_SOURCES = 256
+const MAX_TIMELINE_REMOVED_ITEM_KEYS = 512
 
 function retainNewestMapEntries<Value>(map: Map<string, Value>): void {
   while (map.size > MAX_SCOPED_REALTIME_SOURCES) {
@@ -721,8 +726,9 @@ export class ArkmeChatTimelineDeltaStore {
     const normalized = clientAccountScopeKey(scope)
     if (normalized === this.accountScopeKey) return
     this.accountScopeKey = normalized
+    const hadScopedSnapshots = this.sourceSnapshots.size > 0
     this.sourceSnapshots.clear()
-    if (Object.keys(this.snapshot.itemsBySourceKey).length === 0) return
+    if (!hadScopedSnapshots && Object.keys(this.snapshot.itemsBySourceKey).length === 0) return
     this.snapshot = { revision: this.snapshot.revision + 1, itemsBySourceKey: {} }
     for (const listener of this.listeners) listener()
   }
@@ -734,20 +740,58 @@ export class ArkmeChatTimelineDeltaStore {
     for (const update of updates) {
       const sourceKey = arkmeChatSourceIdentityKey(update.source)
       const previous = this.sourceSnapshots.get(sourceKey)
+      const removedItemKeys = previous?.removedItemKeys ?? []
+      const removedItemKeySet = new Set(removedItemKeys)
+      const visibleItems = update.items.filter(item => !removedItemKeySet.has(item.timelineItemKey ?? ''))
       if (previous !== undefined && previous.latestSequence === update.source.latestSequence
-        && JSON.stringify(previous.items) === JSON.stringify(update.items)) continue
+        && JSON.stringify(previous.items) === JSON.stringify(visibleItems)
+        && JSON.stringify(previous.removedItemKeys) === JSON.stringify(removedItemKeys)) continue
       this.sourceSnapshots.delete(sourceKey)
       this.sourceSnapshots.set(sourceKey, {
         revision: (previous?.revision ?? 0) + 1,
-        items: [...update.items],
+        items: [...visibleItems],
+        removedItemKeys,
+        invalidationRevision: previous?.invalidationRevision ?? 0,
         ...(update.source.latestSequence === undefined ? {} : { latestSequence: update.source.latestSequence }),
       })
     }
     retainNewestMapEntries(this.sourceSnapshots)
     this.snapshot = {
       revision: this.snapshot.revision + 1,
-      itemsBySourceKey: Object.fromEntries(updates.map(update => [arkmeChatSourceIdentityKey(update.source), [...update.items]])),
+      itemsBySourceKey: Object.fromEntries(updates.map(update => {
+        const sourceKey = arkmeChatSourceIdentityKey(update.source)
+        return [sourceKey, [...(this.sourceSnapshots.get(sourceKey)?.items ?? [])]]
+      })),
     }
+    for (const listener of this.listeners) listener()
+  }
+
+  applyTimelineChange(change: {
+    sourceKey: string
+    timelineItemKey: string
+    changeKind: 'deleted' | 'recovered' | 'reedited' | 'extended'
+    throughSequence: number
+  }): void {
+    const sourceKey = change.sourceKey.trim()
+    const timelineItemKey = change.timelineItemKey.trim()
+    if (sourceKey === '' || timelineItemKey === '') return
+    const previous = this.sourceSnapshots.get(sourceKey) ?? EMPTY_CHAT_TIMELINE_SOURCE_DELTA
+    const removed = new Set(previous.removedItemKeys)
+    if (change.changeKind === 'deleted') removed.add(timelineItemKey)
+    else if (change.changeKind === 'recovered') removed.delete(timelineItemKey)
+    const boundedRemovedItemKeys = [...removed].slice(-MAX_TIMELINE_REMOVED_ITEM_KEYS)
+    const boundedRemovedItemKeySet = new Set(boundedRemovedItemKeys)
+    this.sourceSnapshots.delete(sourceKey)
+    this.sourceSnapshots.set(sourceKey, {
+      revision: previous.revision + 1,
+      items: previous.items.filter(item => !boundedRemovedItemKeySet.has(item.timelineItemKey ?? '')),
+      removedItemKeys: boundedRemovedItemKeys,
+      invalidationRevision: previous.invalidationRevision
+        + (change.changeKind === 'deleted' ? 0 : 1),
+      latestSequence: Math.max(previous.latestSequence ?? 0, change.throughSequence),
+    })
+    retainNewestMapEntries(this.sourceSnapshots)
+    this.snapshot = { revision: this.snapshot.revision + 1, itemsBySourceKey: {} }
     for (const listener of this.listeners) listener()
   }
 }

@@ -49,13 +49,16 @@ import {
   ArkmeGroupChatControls,
 } from './ArkmeGroupChatControls.js'
 import {
-  ArkmeMemberActionMenu, ArkmeMemberProfileCard, ArkmeMemberRecordsPanel,
+  ArkmeGroupMemberRemoveDialog, ArkmeMemberActionMenu, ArkmeMemberProfileCard, ArkmeMemberRecordsPanel,
   arkmeMemberActionMenuRowCount, arkmeMemberConversationAction, positionArkmeMemberMenu,
   type ArkmeMemberMenuPosition,
 } from './ArkmeChatMemberActions.js'
 import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeMessageReadReceiptLine } from './ArkmeMessageReadReceipt.js'
+import {
+  ArkmeMessageWithdrawalDialog, arkmeCanWithdrawTimelineMessage,
+} from './ArkmeMessageWithdrawalDialog.js'
 import { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { shouldShowUserBanAction } from './user-ban.js'
@@ -288,7 +291,9 @@ const EMPTY_CHAT_DIRECTORY_SNAPSHOT: ArkmeChatDirectorySnapshot = {
   baselineReady: false,
   isRefreshing: false,
 }
-const EMPTY_CHAT_DELTA_SNAPSHOT: ArkmeChatTimelineSourceDeltaSnapshot = { revision: 0, items: [] }
+const EMPTY_CHAT_DELTA_SNAPSHOT: ArkmeChatTimelineSourceDeltaSnapshot = {
+  revision: 0, items: [], removedItemKeys: [], invalidationRevision: 0,
+}
 const EMPTY_INTERWOVEN_INVALIDATION: ArkmeInterwovenInvalidationSnapshot = Object.freeze({ revision: 0 })
 const NOOP_SUBSCRIBE = (): (() => void) => () => undefined
 const INACTIVE_RECORD_INPUT_RECORDER: ArkmeBackgroundSoundRecorder = Object.freeze({
@@ -991,6 +996,11 @@ export function arkmeTimelineMessageActionRef(item: ArkmeTimelineItem): string {
   return item.messageActionRef?.trim() ?? ''
 }
 
+export function arkmeTimelineOccurrenceKey(item: ArkmeTimelineItem): string {
+  const opaqueKey = item.timelineItemKey?.trim() ?? ''
+  return opaqueKey === '' ? `item:${item.itemUid}` : opaqueKey
+}
+
 const ARKME_MESSAGE_ACTION_MENU_LABELS = ['复制', '复制链接', '延展', '多选', '转发'] as const
 const ARKME_MESSAGE_REPORT_ACTION_LABEL = '举报'
 const ARKME_MESSAGE_ACTION_DETAIL_LABEL = '详情'
@@ -1000,8 +1010,13 @@ export function arkmeMessageActionMenuLabels(): readonly string[] {
   return ARKME_MESSAGE_ACTION_MENU_LABELS
 }
 
-export function arkmeMessageActionMenuRowCount(item?: ArkmeTimelineItem, source?: ArkmeSourceItem): number {
+export function arkmeMessageActionMenuRowCount(
+  item?: ArkmeTimelineItem,
+  source?: ArkmeSourceItem,
+  selfRole: import('../types.js').ArkmeGroupMemberRole = 'unknown',
+): number {
   return ARKME_MESSAGE_ACTION_MENU_LABELS.length
+    + (item !== undefined && arkmeCanWithdrawTimelineMessage(source, item, selfRole) ? 1 : 0)
     + (item !== undefined && arkmeCanReportTimelineMessage(source, item) ? 1 : 0)
     + (item !== undefined && arkmeCanOpenMessageSnapshot(item) ? 1 : 0)
 }
@@ -1018,7 +1033,7 @@ export function arkmeSelectedTimelineItems(
   items: readonly ArkmeTimelineItem[],
   selectedIds: ReadonlySet<string>,
 ): ArkmeTimelineItem[] {
-  return items.filter(item => selectedIds.has(item.itemUid) && arkmeTimelineMessageActionRef(item) !== '')
+  return items.filter(item => selectedIds.has(arkmeTimelineOccurrenceKey(item)) && arkmeTimelineMessageActionRef(item) !== '')
 }
 
 export async function arkmeCopyTextToClipboard(value: string): Promise<void> {
@@ -1808,7 +1823,11 @@ function ArkmeSelectActionIcon({ kind, size = 22 }: { kind: 'copy' | 'link' | 's
   return <X size={size} weight="regular" aria-hidden />
 }
 
-function ArkmeMessageActionIcon({ kind }: { kind: 'copy' | 'link' | 'select' | 'forward' | 'report' }) {
+function ArkmeMessageActionIcon({ kind }: { kind: 'copy' | 'link' | 'select' | 'forward' | 'report' | 'withdraw' }) {
+  if (kind === 'withdraw') return <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden>
+    <path d="M4 7.5h8.25a4.25 4.25 0 0 1 0 8.5H9.5" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" />
+    <path d="m6.8 4.7-3 2.8 3 2.8" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
   if (kind === 'report') return <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden>
     <path d="M4.5 17.25V3.25M5 4H13.45C14.55 4 15.16 5.27 14.48 6.14L13.26 7.7C12.91 8.15 12.91 8.78 13.26 9.23L14.48 10.79C15.16 11.66 14.55 12.93 13.45 12.93H4.5" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
@@ -2562,6 +2581,7 @@ export function ArkmeSurface({
   const conversationMembers = conversationMemberSnapshot.sourceRef === source?.sourceRef
     ? conversationMemberSnapshot.items
     : EMPTY_CONVERSATION_MEMBERS
+  const groupSelfRole = conversationMembers.find(member => member.isSelf)?.role ?? 'unknown'
   const [conversationJoinEvents, setConversationJoinEvents] = useState<ArkmeConversationMemberJoinEvent[]>([])
   const [conversationMembersRefreshRevision, setConversationMembersRefreshRevision] = useState(0)
   const [groupMentionBots, setGroupMentionBots] = useState<ArkmeGroupBotCandidateList>()
@@ -2573,12 +2593,13 @@ export function ArkmeSurface({
     position: ArkmeMemberMenuPosition
   }>()
   const [messageMenu, setMessageMenu] = useState<{
-    itemUid: string
+    occurrenceKey: string
     left: number
     top: number
   }>()
   const [snapshot, setSnapshot] = useState<{ item: ArkmeTimelineItem; actionRef: string; detail?: ArkmeMessageSnapshotDetail; loading: boolean; loadError?: string }>()
   const [messageReportItem, setMessageReportItem] = useState<ArkmeTimelineItem>()
+  const [messageWithdrawalItem, setMessageWithdrawalItem] = useState<ArkmeTimelineItem>()
   const messageMenuRef = useRef<HTMLDivElement | null>(null)
   const [messageActionStatus, setMessageActionStatus] = useState('')
   const messageActionStatusTimerRef = useRef<number>()
@@ -2609,6 +2630,7 @@ export function ArkmeSurface({
     targets: ArkmeSourceItem[]
   }>()
   const [memberProfile, setMemberProfile] = useState<ArkmeConversationMemberItem>()
+  const [memberRemovalTarget, setMemberRemovalTarget] = useState<ArkmeConversationMemberItem>()
   const [memberRecords, setMemberRecords] = useState<{
     member: ArkmeConversationMemberItem
     mode: ArkmeConversationMemberRecordMode
@@ -2641,9 +2663,11 @@ export function ArkmeSurface({
     setConversationJoinEvents([])
     setMemberMenu(undefined)
     setMemberProfile(undefined)
+    setMemberRemovalTarget(undefined)
     setMemberRecords(undefined)
     setSnapshot(undefined)
     setMessageReportItem(undefined)
+    setMessageWithdrawalItem(undefined)
     if (authenticatedUserId === undefined || source === undefined || (source.kind !== 'group_chat' && source.kind !== 'private_chat')) return
     const controller = new AbortController()
     void callArkme<ArkmeConversationMemberList>('source.members', {
@@ -3892,20 +3916,27 @@ export function ArkmeSurface({
   useEffect(() => {
     if (!activeConversation || !authenticated || source === undefined) return
     const deltaItems = chatDelta.items
-    const existingIds = new Set(items.map(item => item.itemUid))
+    const removedItemKeys = new Set(chatDelta.removedItemKeys)
+    const retainedItems = removedItemKeys.size === 0
+      ? items
+      : items.filter(item => !removedItemKeys.has(item.timelineItemKey ?? ''))
     const applicableDeltaItems = arkmeConversationTimelineDeltaItems(
-      timelineMode, aroundSequenceRange, items, deltaItems,
+      timelineMode, aroundSequenceRange, retainedItems, deltaItems,
     )
-    if (applicableDeltaItems.length === 0) return
-    const nextItems = mergeItems(items, applicableDeltaItems)
+    if (applicableDeltaItems.length === 0 && retainedItems.length === items.length) return
+    const nextItems = mergeItems(retainedItems, applicableDeltaItems)
     if (JSON.stringify(nextItems) === JSON.stringify(items)) return
     const body = bodyRef.current
     const viewport = body === null ? undefined : arkmeConversationViewport(body)
     pendingViewportRestoreRef.current = { sourceKey: conversationKey, viewport }
+    const existingIds = new Set(retainedItems.map(item => item.itemUid))
     const incomingCount = applicableDeltaItems.filter(item => !existingIds.has(item.itemUid)).length
     setTimelineView(current => {
       if (current.sourceKey !== conversationKey) return current
-      const mergedItems = mergeItems(current.items, applicableDeltaItems)
+      const retained = removedItemKeys.size === 0
+        ? current.items
+        : current.items.filter(item => !removedItemKeys.has(item.timelineItemKey ?? ''))
+      const mergedItems = mergeItems(retained, applicableDeltaItems)
       return sameStateValue(current.items, mergedItems) ? current : { ...current, items: mergedItems }
     })
     if (viewport?.stickToBottom === false && incomingCount > 0) {
@@ -3915,6 +3946,15 @@ export function ArkmeSurface({
     }
     void acknowledgeRead(applicableDeltaItems)
   }, [acknowledgeRead, activeConversation, aroundSequenceRange, authenticated, chatDelta, conversationKey, items, source, timelineMode])
+
+  const appliedTimelineInvalidationsRef = useRef(new Map<string, number>())
+  useEffect(() => {
+    if (!activeConversation || !authenticated || source === undefined || chatDelta.invalidationRevision <= 0) return
+    const applied = appliedTimelineInvalidationsRef.current.get(conversationKey) ?? 0
+    if (chatDelta.invalidationRevision <= applied) return
+    appliedTimelineInvalidationsRef.current.set(conversationKey, chatDelta.invalidationRevision)
+    void loadTimeline(undefined, true).catch(caught => { setError(errorMessage(caught)) })
+  }, [activeConversation, authenticated, chatDelta.invalidationRevision, conversationKey, loadTimeline, source])
 
   useEffect(() => {
     if (!activeConversation || !authenticated || source?.kind !== 'group_chat') return
@@ -4798,10 +4838,14 @@ export function ArkmeSurface({
       position: positionArkmeMemberMenu(
         anchorRect,
         host.getBoundingClientRect(),
-        arkmeMemberActionMenuRowCount(member, source.kind),
+        arkmeMemberActionMenuRowCount(
+          member,
+          source.kind,
+          source.kind === 'group_chat' && groupSelfRole === 'owner' && !member.isSelf && !member.isOwner,
+        ),
       ),
     })
-  }, [source])
+  }, [groupSelfRole, source])
   const openMemberProfile = useCallback((member: ArkmeConversationMemberItem) => {
     if (source?.kind !== 'group_chat') return
     setMemberMenu(undefined)
@@ -5172,9 +5216,30 @@ export function ArkmeSurface({
   )
   const forwardPickerMessageItems = forwardTargetPicker?.items ?? []
   const messageMenuItem = useMemo(
-    () => messageMenu === undefined ? undefined : displayItems.find(item => item.itemUid === messageMenu.itemUid),
+    () => messageMenu === undefined
+      ? undefined
+      : displayItems.find(item => arkmeTimelineOccurrenceKey(item) === messageMenu.occurrenceKey),
     [displayItems, messageMenu],
   )
+  useEffect(() => {
+    const visibleOccurrenceKeys = new Set(displayItems.map(arkmeTimelineOccurrenceKey))
+    setMessageMenu(current => current === undefined || visibleOccurrenceKeys.has(current.occurrenceKey) ? current : undefined)
+    setSnapshot(current => current === undefined || visibleOccurrenceKeys.has(arkmeTimelineOccurrenceKey(current.item)) ? current : undefined)
+    setMessageReportItem(current => current === undefined || visibleOccurrenceKeys.has(arkmeTimelineOccurrenceKey(current)) ? current : undefined)
+    setMessageWithdrawalItem(current => current === undefined || visibleOccurrenceKeys.has(arkmeTimelineOccurrenceKey(current)) ? current : undefined)
+    setSelectMode(current => {
+      if (current === undefined || current.sourceKey !== conversationKey) return current
+      const selectedIds = new Set([...current.selectedIds].filter(key => visibleOccurrenceKeys.has(key)))
+      if (selectedIds.size === current.selectedIds.size) return current
+      return selectedIds.size === 0 ? undefined : { ...current, selectedIds }
+    })
+    setForwardTargetPicker(current => {
+      if (current === undefined || current.sourceKey !== conversationKey) return current
+      const items = current.items.filter(item => visibleOccurrenceKeys.has(arkmeTimelineOccurrenceKey(item)))
+      if (items.length === current.items.length) return current
+      return items.length === 0 ? undefined : { ...current, items, itemUids: items.map(item => item.itemUid) }
+    })
+  }, [conversationKey, displayItems])
   const showMessageActionStatus = useCallback((message: string, autoClear = true) => {
     if (messageActionStatusTimerRef.current !== undefined) {
       window.clearTimeout(messageActionStatusTimerRef.current)
@@ -5298,6 +5363,12 @@ export function ArkmeSurface({
     if (!arkmeCanReportTimelineMessage(source, item)) return
     setMessageReportItem(item)
   }, [closeMessageMenu, source])
+  const openMessageWithdrawal = useCallback((item: ArkmeTimelineItem) => {
+    if (!activeConversationRef.current) return
+    closeMessageMenu()
+    if (!arkmeCanWithdrawTimelineMessage(source, item, groupSelfRole)) return
+    setMessageWithdrawalItem(item)
+  }, [closeMessageMenu, groupSelfRole, source])
   const openMessageMenu = useCallback((item: ArkmeTimelineItem, event: Pick<MouseEvent, 'preventDefault' | 'stopPropagation' | 'clientX' | 'clientY'>) => {
     event.preventDefault()
     event.stopPropagation()
@@ -5305,14 +5376,14 @@ export function ArkmeSurface({
     if (host === null || source === undefined) return
     const hostRect = host.getBoundingClientRect()
     const menuWidth = 178
-    const menuHeight = 12 + arkmeMessageActionMenuRowCount(item, source) * 50
+    const menuHeight = 12 + arkmeMessageActionMenuRowCount(item, source, groupSelfRole) * 50
     setMemberMenu(undefined)
     setMessageMenu({
-      itemUid: item.itemUid,
+      occurrenceKey: arkmeTimelineOccurrenceKey(item),
       left: Math.min(Math.max(8, event.clientX - hostRect.left), Math.max(8, hostRect.width - menuWidth - 8)),
       top: Math.min(Math.max(8, event.clientY - hostRect.top), Math.max(8, hostRect.height - menuHeight - 8)),
     })
-  }, [source])
+  }, [groupSelfRole, source])
   const copyMessageText = useCallback(async (item: ArkmeTimelineItem) => {
     const text = arkmeMessageCopyText(item)
     closeMessageMenu()
@@ -5504,15 +5575,16 @@ export function ArkmeSurface({
       return
     }
     pendingSelectRevealItemUidRef.current = item.itemUid
-    setSelectMode({ sourceKey: conversationKey, selectedIds: new Set([item.itemUid]) })
+    setSelectMode({ sourceKey: conversationKey, selectedIds: new Set([arkmeTimelineOccurrenceKey(item)]) })
   }, [closeMessageMenu, conversationKey, showMessageActionStatus, source])
   const toggleSelectedMessage = useCallback((item: ArkmeTimelineItem) => {
     if (source === undefined || arkmeTimelineMessageActionRef(item) === '') return
     setSelectMode(current => {
-      if (current === undefined || current.sourceKey !== conversationKey) return { sourceKey: conversationKey, selectedIds: new Set([item.itemUid]) }
+      const occurrenceKey = arkmeTimelineOccurrenceKey(item)
+      if (current === undefined || current.sourceKey !== conversationKey) return { sourceKey: conversationKey, selectedIds: new Set([occurrenceKey]) }
       const selectedIds = new Set(current.selectedIds)
-      if (selectedIds.has(item.itemUid)) selectedIds.delete(item.itemUid)
-      else if (selectedIds.size < 100) selectedIds.add(item.itemUid)
+      if (selectedIds.has(occurrenceKey)) selectedIds.delete(occurrenceKey)
+      else if (selectedIds.size < 100) selectedIds.add(occurrenceKey)
       return { sourceKey: current.sourceKey, selectedIds }
     })
   }, [conversationKey, source])
@@ -6173,7 +6245,7 @@ export function ArkmeSurface({
                   ? (item.isMe ? selfConversationMember : undefined)
                   : conversationMemberByRef.get(item.memberRef)
                 const polishStatus = aiPolishStatus(item)
-                const selectedForAction = activeSelectMode?.selectedIds.has(item.itemUid) === true
+                const selectedForAction = activeSelectMode?.selectedIds.has(arkmeTimelineOccurrenceKey(item)) === true
                 const canUseMessageAction = arkmeTimelineMessageActionRef(item) !== ''
                 const isForwardMessageCard = item.forwardRecords !== undefined
                 const isSharedRecordingCard = item.sharedRecording !== undefined
@@ -6828,6 +6900,12 @@ export function ArkmeSurface({
             style={styles.messageActionMenuItem}
             onClick={() => { openMessageReport(messageMenuItem) }}
           ><span style={styles.messageActionMenuIcon} aria-hidden><ArkmeMessageActionIcon kind="report" /></span><span style={styles.messageActionMenuText}>{ARKME_MESSAGE_REPORT_ACTION_LABEL}</span></button>}
+          {arkmeCanWithdrawTimelineMessage(source, messageMenuItem, groupSelfRole) && <button
+            type="button"
+            role="menuitem"
+            style={{ ...styles.messageActionMenuItem, color: arkmeTheme.danger }}
+            onClick={() => { openMessageWithdrawal(messageMenuItem) }}
+          ><span style={styles.messageActionMenuIcon} aria-hidden><ArkmeMessageActionIcon kind="withdraw" /></span><span style={styles.messageActionMenuText}>撤回</span></button>}
           {arkmeCanOpenMessageSnapshot(messageMenuItem) && <button
             type="button"
             role="menuitem"
@@ -6841,6 +6919,20 @@ export function ArkmeSurface({
           onSubmitted={() => {
             setMessageReportItem(undefined)
             showMessageActionStatus('举报已提交')
+          }}
+        />}
+        {activeConversation && messageWithdrawalItem !== undefined && <ArkmeMessageWithdrawalDialog
+          item={messageWithdrawalItem}
+          onClose={() => { setMessageWithdrawalItem(undefined) }}
+          onWithdrawn={result => {
+            arkmeChatTimelineDelta.applyTimelineChange({
+              sourceKey: conversationKey,
+              timelineItemKey: result.timelineItemKey,
+              changeKind: 'deleted',
+              throughSequence: messageWithdrawalItem.sequence ?? source?.latestSequence ?? 0,
+            })
+            setMessageWithdrawalItem(undefined)
+            showMessageActionStatus(result.alreadyWithdrawn ? '消息已撤回' : '已撤回')
           }}
         />}
         {activeConversation && snapshot !== undefined && <ArkmeMessageSnapshotDialog
@@ -6864,7 +6956,20 @@ export function ArkmeSurface({
           position={memberMenu.position}
           onMention={() => { insertMemberMention(memberMenu.member) }}
           onRecords={mode => { openMemberRecords(memberMenu.member, mode) }}
+          canRemove={source.kind === 'group_chat' && groupSelfRole === 'owner' && !memberMenu.member.isSelf && !memberMenu.member.isOwner}
+          onRemove={() => { setMemberRemovalTarget(memberMenu.member); closeMemberMenu() }}
           onClose={closeMemberMenu}
+        />}
+        {activeConversation && source?.kind === 'group_chat' && memberRemovalTarget !== undefined && <ArkmeGroupMemberRemoveDialog
+          sourceRef={source.sourceRef}
+          member={memberRemovalTarget}
+          onClose={() => { setMemberRemovalTarget(undefined) }}
+          onRemoved={result => {
+            setMemberRemovalTarget(undefined)
+            setGroupMembersOpen(false)
+            setConversationMembersRefreshRevision(value => value + 1)
+            showMessageActionStatus(result.joinRestricted ? '已移出群聊，并禁止再次加入' : '已移出群聊')
+          }}
         />}
         {activeConversation && memberProfile !== undefined && <ArkmeMemberProfileCard
           member={memberProfile}

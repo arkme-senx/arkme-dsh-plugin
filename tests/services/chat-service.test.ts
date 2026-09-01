@@ -979,7 +979,10 @@ describe('ChatService', () => {
         send_time_stamp: 1_786_000_003_000, payload: { text_content: '实时消息' },
       } })),
     }
-    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
+    const source = {
+      openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })),
+      chatTimelineItemKey: vi.fn(async () => 'timeline-item-key'),
+    }
     const profile = { sealProfileImageRef: vi.fn(async () => 'avatar-ref') }
     const media = { richContentBlocks: vi.fn(() => []), recordContentPayload: vi.fn(() => ({})) }
     const chat = new ChatService(
@@ -1156,6 +1159,7 @@ describe('ChatService', () => {
       openSourceRef: vi.fn(async () => ({
         version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
       })),
+      chatTimelineItemKey: vi.fn(async () => 'timeline-item-key'),
     }
     const profile = { sealProfileImageRef: vi.fn(async () => 'opaque-avatar') }
     const media = {
@@ -2322,7 +2326,7 @@ describe('ChatService', () => {
     }
     const profile = { sealProfileImageRef: vi.fn(async () => 'avatar-ref') }
     const chat = new ChatService(
-      runtime as never, {} as SourceService, profile as never, media as never,
+      runtime as never, { chatTimelineItemKey: async () => 'timeline-item-key' } as SourceService, profile as never, media as never,
       {} as RecordService, {} as BotService, {} as ArkoService,
       { timelineAiPolish: vi.fn(() => undefined) } as never,
       { emitChatClientEvent() {}, nextChatClientRevision() { return 1 }, scheduleChatSessionProjection() {} },

@@ -35,6 +35,7 @@ import type { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
 const MAX_STANDARD_REQUEST_BYTES = 128 * 1024
 const MAX_MESSAGE_ACTION_REF_CHARS = 1024 * 1024
 const MAX_MESSAGE_REPORT_REF_CHARS = 4_096
+const MAX_MESSAGE_MODERATION_REF_CHARS = 4_096
 const MAX_RELATED_QUICK_NOTE_REQUEST_BYTES = MAX_MESSAGE_ACTION_REF_CHARS + (64 * 1024)
 const MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES = 10 * 1024 * 1024
 const MAX_REQUEST_BYTES = MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
@@ -1414,6 +1415,15 @@ export async function dispatchArkmeHostOperation(
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       })
     }
+    case 'source.message-withdraw': {
+      const messageModerationRef = stringParam(params, 'messageModerationRef').trim()
+      if (messageModerationRef === '' || messageModerationRef.length > MAX_MESSAGE_MODERATION_REF_CHARS) {
+        throw new ArkmePluginError('message-moderation-ref-invalid', '消息治理引用无效', false, 400)
+      }
+      return await service.withdrawGroupMessage(messageModerationRef, {
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
     case 'source.message-copy-link': return await service.copySourceMessageLink(
       stringParam(params, 'sourceRef'),
       messageActionRefsParam(params),
@@ -1579,6 +1589,45 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringListParam(params, 'candidateRefs'),
     )
+    case 'group.member-remove': {
+      if (params.preventRejoin !== undefined && typeof params.preventRejoin !== 'boolean') {
+        throw new ArkmePluginError('group-member-remove-invalid', '移除成员参数无效', false, 400)
+      }
+      return await service.removeGroupMember(
+        stringParam(params, 'sourceRef').trim(),
+        stringParam(params, 'memberRef').trim(),
+        {
+          preventRejoin: params.preventRejoin === true,
+          ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        },
+      )
+    }
+    case 'group.join-restrictions': {
+      if ((params.cursor !== undefined && typeof params.cursor !== 'string')
+        || (params.limit !== undefined && (typeof params.limit !== 'number' || !Number.isFinite(params.limit)))) {
+        throw new ArkmePluginError('join-restrictions-invalid', '限制名单分页参数无效', false, 400)
+      }
+      const cursor = stringParam(params, 'cursor').trim()
+      return await service.listGroupJoinRestrictions(
+        stringParam(params, 'sourceRef').trim(),
+        {
+          ...(cursor === '' ? {} : { cursor }),
+          limit: numberParam(params, 'limit', 30),
+          ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        },
+      )
+    }
+    case 'group.join-restriction.set': {
+      if (typeof params.restricted !== 'boolean') {
+        throw new ArkmePluginError('join-restriction-invalid', '加入限制参数无效', false, 400)
+      }
+      return await service.setGroupJoinRestriction(
+        stringParam(params, 'sourceRef').trim(),
+        stringParam(params, 'memberRef').trim(),
+        params.restricted,
+        { ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
+      )
+    }
     case 'group.bots': return await service.listGroupBots(
       stringParam(params, 'sourceRef'),
     )

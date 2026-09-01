@@ -1078,6 +1078,8 @@ export interface ArkmeProviderCapabilities {
     messageReport?: true
     /** Employee-only, source-bound private-chat user ban inspection and mutation are available. */
     userBanManagement?: true
+    /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
+    groupOwnerModeration?: true
     richContentRead: boolean
     richContentSend: boolean
     /** Explicit text background-sound descriptors are supported by direct and durable rich sends. */
@@ -1424,8 +1426,12 @@ export interface ArkmeMessageSnapshotDetail {
 
 export interface ArkmeTimelineItem {
   itemUid: string
+  /** Account- and conversation-bound stable key used only for realtime timeline invalidation. */
+  timelineItemKey?: string
   /** Account-bound opaque reference for reporting this concrete group-chat message. */
   messageRef?: string
+  /** Account-bound opaque reference for owner moderation of this concrete group-chat message. */
+  messageModerationRef?: string
   /** Account- and conversation-bound opaque reference for copy-link and forward actions. */
   messageActionRef?: string
   /** Account- and conversation-bound opaque reference for actions on the sender. */
@@ -1831,6 +1837,13 @@ export interface ArkmeMessageReportResult {
   status: number
 }
 
+export interface ArkmeMessageWithdrawalResult {
+  messageModerationRef: string
+  timelineItemKey: string
+  withdrawnAtMillis: number
+  alreadyWithdrawn: boolean
+}
+
 export interface ArkmeMessageCopyLinkResult {
   sid: string
   url: string
@@ -2139,6 +2152,35 @@ export interface ArkmeConversationMemberItem {
   joinedAtMillis: number
   recordCount: number
   mentionCount: number
+}
+
+export interface ArkmeGroupMemberRemoveResult {
+  sourceRef: string
+  memberRef: string
+  status: 'removed'
+  joinRestricted: boolean
+}
+
+export interface ArkmeGroupJoinRestrictionItem {
+  memberRef: string
+  displayName: string
+  memberName?: string
+  secondaryName?: string
+  avatarRef?: string
+  restrictedAtMillis: number
+}
+
+export interface ArkmeGroupJoinRestrictionPage {
+  sourceRef: string
+  items: ArkmeGroupJoinRestrictionItem[]
+  nextCursor?: string
+}
+
+export interface ArkmeGroupJoinRestrictionMutationResult {
+  sourceRef: string
+  memberRef: string
+  restricted: boolean
+  updatedAtMillis?: number
 }
 
 export type ArkmeConversationMemberJoinAction = 'invite' | 'direct_add'
@@ -2872,6 +2914,13 @@ export type ArkmeChatClientEvent = {
   revision: number
   updates: Array<{ sourceKey?: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }>
 } | {
+  type: 'timeline-changed'
+  revision: number
+  sourceKey: string
+  timelineItemKey: string
+  changeKind: 'deleted' | 'recovered' | 'reedited' | 'extended'
+  throughSequence: number
+} | {
   type: 'attention-summary'
   revision: number
   summary: ArkmeChatAttentionSummary
@@ -3005,6 +3054,7 @@ export type ArkmePluginOperation =
   | 'source.read-receipts.summary-list'
   | 'source.read-receipts.detail'
   | 'source.message-report'
+  | 'source.message-withdraw'
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
@@ -3029,6 +3079,9 @@ export type ArkmePluginOperation =
   | 'group.member-candidates'
   | 'group.invite-preview'
   | 'group.members.add'
+  | 'group.member-remove'
+  | 'group.join-restrictions'
+  | 'group.join-restriction.set'
   | 'group.bots'
   | 'group.bot.add'
   | 'group.settings'

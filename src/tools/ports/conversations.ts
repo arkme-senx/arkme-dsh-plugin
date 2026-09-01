@@ -3,6 +3,7 @@ import type {
   ArkmeDirectTextSendResult, ArkmeGroupAiPolishMutationResult, ArkmeGroupAiPolishRuleCandidate,
   ArkmeMessageCopyLinkExtendResult,
   ArkmeGroupAiPolishSnapshot, ArkmeMessageReportResult, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceReadResult, ArkmeSourceSendResult,
+  ArkmeMessageWithdrawalResult,
   ArkmeMessageReadReceiptDetail, ArkmeMessageReadReceiptQueryItem, ArkmeMessageReadReceiptSummaryList,
   ArkmeRelatedRecordingPage, ArkmeRelatedRecordingPageOptions, ArkmeTimelineCursor, ArkmeTimelinePage,
   ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerList,
@@ -99,6 +100,11 @@ export interface ArkmeConversationToolPort {
     reportType: 1 | 2 | 3 | 4,
     options?: { reason?: string; requestUid?: string; signal?: AbortSignal },
   ): Promise<ArkmeMessageReportResult>
+  /** Withdraw one other member's group message after an explicit owner request. */
+  withdrawGroupMessage(
+    messageModerationRef: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeMessageWithdrawalResult>
   inspectGroupAiPolishByName(
     groupName: string,
     options?: { signal?: AbortSignal },

@@ -49,6 +49,7 @@ function fakeService() {
     openPrivateChatFromContact: vi.fn(async (contactRef: string) => ({ source: { sourceRef: `source:${contactRef}` } })),
     openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
     reportMessage: vi.fn(async (messageRef: string, reportType: number, options: unknown) => ({ messageRef, reportType, options })),
+    withdrawGroupMessage: vi.fn(async (messageModerationRef: string, options: unknown) => ({ messageModerationRef, options })),
     copySourceMessageLink: vi.fn(async (sourceRef: string, actionRefs: unknown, options: unknown) => ({ sourceRef, actionRefs, options })),
     resolveMessageCopyLink: vi.fn(async (sid: string, options: unknown) => ({ sid, options })),
     extendMessageCopyLink: vi.fn(async (sid: string, itemIndex: number, textContent: string, recordUid: string, options: unknown) => ({ sid, itemIndex, textContent, recordUid, options })),
@@ -72,6 +73,9 @@ function fakeService() {
     removeLongArticleDraft: vi.fn(async () => undefined),
     listGroupMemberCandidates: vi.fn(async () => ({ items: [] })),
     addGroupMembers: vi.fn(async () => ({ items: [] })),
+    removeGroupMember: vi.fn(async (sourceRef: string, memberRef: string, options: unknown) => ({ sourceRef, memberRef, options })),
+    listGroupJoinRestrictions: vi.fn(async (sourceRef: string, options: unknown) => ({ sourceRef, options, items: [] })),
+    setGroupJoinRestriction: vi.fn(async (sourceRef: string, memberRef: string, restricted: boolean, options: unknown) => ({ sourceRef, memberRef, restricted, options })),
     groupInvitePreview: vi.fn(async () => ({ inviteLink: 'https://example.test/invite' })),
     listGroupBots: vi.fn(async () => ({ items: [] })),
     addGroupBot: vi.fn(async () => ({ installed: true })),
@@ -772,6 +776,38 @@ describe('message action Host API dispatch', () => {
     await expect(dispatchArkmeHostOperation(service as never, 'source.message-report', {
       messageRef: 'arkme-message-v1.payload.signature', reportType: 4, reason: '', requestUid,
     })).rejects.toMatchObject({ code: 'message-report-invalid' })
+  })
+
+  it('forwards only opaque group moderation references and explicit options', async () => {
+    const service = fakeService()
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'source.message-withdraw', {
+      messageModerationRef: ' arkme-message-moderation-v1.payload.signature ',
+      chatSessionUid: 'must-not-forward', relationUid: 'must-not-forward', actorUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'group.member-remove', {
+      sourceRef: ' group-ref ', memberRef: ' member-ref ', preventRejoin: true, targetUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'group.join-restrictions', {
+      sourceRef: ' group-ref ', cursor: ' cursor-ref ', limit: 25, targetUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'group.join-restriction.set', {
+      sourceRef: ' group-ref ', memberRef: ' member-ref ', restricted: false, targetUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+
+    expect(service.withdrawGroupMessage).toHaveBeenCalledWith('arkme-message-moderation-v1.payload.signature', { signal })
+    expect(service.removeGroupMember).toHaveBeenCalledWith('group-ref', 'member-ref', { preventRejoin: true, signal })
+    expect(service.listGroupJoinRestrictions).toHaveBeenCalledWith('group-ref', { cursor: 'cursor-ref', limit: 25, signal })
+    expect(service.setGroupJoinRestriction).toHaveBeenCalledWith('group-ref', 'member-ref', false, { signal })
+    await expect(dispatchArkmeHostOperation(service as never, 'group.join-restriction.set', {
+      sourceRef: 'group-ref', memberRef: 'member-ref',
+    })).rejects.toMatchObject({ code: 'join-restriction-invalid' })
+    await expect(dispatchArkmeHostOperation(service as never, 'group.member-remove', {
+      sourceRef: 'group-ref', memberRef: 'member-ref', preventRejoin: 'true',
+    })).rejects.toMatchObject({ code: 'group-member-remove-invalid' })
+    await expect(dispatchArkmeHostOperation(service as never, 'group.join-restrictions', {
+      sourceRef: 'group-ref', limit: '25',
+    })).rejects.toMatchObject({ code: 'join-restrictions-invalid' })
   })
 })
 

@@ -97,6 +97,45 @@ describe('ChatRealtimeService', () => {
     service.dispose()
   })
 
+  it('projects a timeline change to opaque source and item keys without content', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore)
+    const source = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
+    })
+    const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
+    const schedule = vi.spyOn(service, 'scheduleChatSessionProjection').mockImplementation(() => undefined)
+    vi.spyOn(service, 'refreshAttentionSummary').mockResolvedValue()
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+
+    service.handleChatRealtimeNotice({
+      cause: 'chat-hint',
+      state: { revision: 2, connected: true, connectionGeneration: 1 },
+      timelineChanged: {
+        eventUid: 'timeline-event-1', chatSessionUid: 'raw-chat-session', relationUid: 'raw-relation',
+        latestSequence: 9, actorUserId: 10001, changeKind: 'deleted', changeVersion: 123456,
+        eventAtMillis: 123457,
+      },
+    })
+
+    await vi.waitFor(() => { expect(events).toHaveLength(1) })
+    expect(events[0]).toMatchObject({
+      type: 'timeline-changed', changeKind: 'deleted', throughSequence: 9,
+      sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./),
+      timelineItemKey: expect.stringMatching(/^arkme-chat-timeline-item-v1\./),
+    })
+    expect(JSON.stringify(events[0])).not.toContain('raw-chat-session')
+    expect(JSON.stringify(events[0])).not.toContain('raw-relation')
+    expect(schedule).toHaveBeenCalledWith('raw-chat-session', 9)
+    service.dispose()
+  })
+
   it('refreshes the unread directory instead of emitting receipt data for the current user cursor', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },

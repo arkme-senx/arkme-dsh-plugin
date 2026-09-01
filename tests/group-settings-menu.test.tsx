@@ -304,6 +304,47 @@ describe('group settings menu', () => {
     expect(membershipButton?.props.disabled).toBe(true)
   })
 
+  it('lets only the owner inspect and lift future join restrictions', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'group.settings') return {
+        target: source, selfRole: 'owner', selfStatus: 'active', canRename: true,
+        canDissolve: true, canLeave: false, messageDnd: false,
+      }
+      if (operation === 'source.ai-polish.settings') return aiSettings
+      if (operation === 'group.join-restrictions') return {
+        sourceRef: source.sourceRef,
+        items: [{ memberRef: 'member-ref-1', displayName: '小林', restrictedAtMillis: 123 }],
+      }
+      if (operation === 'group.join-restriction.set') return {
+        sourceRef: source.sourceRef, memberRef: 'member-ref-1', restricted: false,
+      }
+      throw new Error(`unexpected ${operation}`)
+    })
+    await act(async () => { renderer = create(controls(source)) })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const entry = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
+      node.findAll(child => child.children.includes('禁止加入名单')).length > 0)!
+    await act(async () => {
+      entry.props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findByProps({ 'aria-label': '禁止加入名单' })).toBeDefined()
+    expect(JSON.stringify(renderer!.toJSON())).toContain('小林')
+    const allow = renderer!.root.findAllByType('button').find(node => node.children.includes('允许加入'))!
+    await act(async () => {
+      allow.props.onClick()
+      await Promise.resolve()
+    })
+    expect(mocks.callArkme).toHaveBeenCalledWith('group.join-restriction.set', {
+      sourceRef: source.sourceRef, memberRef: 'member-ref-1', restricted: false,
+    }, expect.any(AbortSignal))
+  })
+
   it('uses the current source mute projection while settings are still loading', async () => {
     const mutedSource: ArkmeSourceItem = { ...source, isMuted: true }
     mocks.callArkme.mockImplementation(async (operation: string) => {

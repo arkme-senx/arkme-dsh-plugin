@@ -8,6 +8,7 @@ export const ARKME_SSE_IDENTITY_VERSION_HEADER = 'X-Jotmo-SSE-Identity-Version'
 export const ARKME_SSE_IDENTITY_VERSION = '2'
 export const ARKME_CHAT_RECEIVE_BIZ_TYPE = 17
 export const ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE = 18
+export const ARKME_CHAT_TIMELINE_CHANGED_BIZ_TYPE = 20
 export const ARKME_PROJECTION_INVALIDATED_BIZ_TYPE = 25
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000
@@ -45,11 +46,23 @@ export interface ArkmeChatReadCursorAdvancedHint {
   eventAtMillis: number
 }
 
+export interface ArkmeChatTimelineChangedHint {
+  eventUid: string
+  chatSessionUid: string
+  relationUid: string
+  latestSequence: number
+  actorUserId: number
+  changeKind: 'deleted' | 'recovered' | 'reedited' | 'extended'
+  changeVersion: number
+  eventAtMillis: number
+}
+
 export interface ArkmeChatRealtimeNotice {
   state: ArkmeChatRealtimeState
   cause: 'reconcile' | 'chat-hint' | 'projection-invalidation' | 'local'
   hint?: ArkmeChatReceiveHint
   readCursorAdvanced?: ArkmeChatReadCursorAdvancedHint
+  timelineChanged?: ArkmeChatTimelineChangedHint
   projectionInvalidation?: ArkmeProjectionInvalidatedHint
 }
 
@@ -154,6 +167,39 @@ export function decodeArkmeChatReadCursorAdvancedDataLine(line: string): ArkmeCh
     || readSequence === undefined || readAtMillis === undefined || eventAtMillis === undefined
     || sourceClientId === undefined) return undefined
   return { eventUid, chatSessionUid, readerUserId, readSequence, readAtMillis, eventAtMillis }
+}
+
+const TIMELINE_CHANGED_ALLOWED_FIELDS = new Set([
+  't', 'event_uid', 'chat_session_uid', 'rel_uid', 'latest_seq', 'actor_user_id',
+  'change_kind', 'change_version', 'event_at', 'source_client_id',
+])
+
+/** Decode one metadata-only timeline invalidation. Record content remains owned by Chat reads. */
+export function decodeArkmeChatTimelineChangedDataLine(line: string): ArkmeChatTimelineChangedHint | undefined {
+  const source = decodeDataLine(line)
+  if (source === undefined || positiveInteger(source.t) !== ARKME_CHAT_TIMELINE_CHANGED_BIZ_TYPE) return undefined
+  if (Object.keys(source).some(field => !TIMELINE_CHANGED_ALLOWED_FIELDS.has(field))) return undefined
+  const eventUid = nonEmptyString(source.event_uid)
+  const chatSessionUid = nonEmptyString(source.chat_session_uid)
+  const relationUid = nonEmptyString(source.rel_uid)
+  const latestSequence = positiveInteger(source.latest_seq)
+  const actorUserId = positiveInteger(source.actor_user_id)
+  const changeVersion = positiveInteger(source.change_version)
+  const eventAtMillis = positiveInteger(source.event_at)
+  const sourceClientId = source.source_client_id === undefined ? 0 : nonNegativeInteger(source.source_client_id)
+  const changeKindValue = positiveInteger(source.change_kind)
+  const changeKind = changeKindValue === 1 ? 'deleted'
+    : changeKindValue === 2 ? 'recovered'
+      : changeKindValue === 3 ? 'reedited'
+        : changeKindValue === 4 ? 'extended'
+          : undefined
+  if (eventUid === undefined || chatSessionUid === undefined || relationUid === undefined
+    || latestSequence === undefined || actorUserId === undefined || changeKind === undefined
+    || changeVersion === undefined || eventAtMillis === undefined || sourceClientId === undefined) return undefined
+  return {
+    eventUid, chatSessionUid, relationUid, latestSequence, actorUserId,
+    changeKind, changeVersion, eventAtMillis,
+  }
 }
 
 const PROJECTION_NAME_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/
@@ -482,10 +528,14 @@ export class ArkmeChatRealtimeRuntime {
     const readCursorAdvanced = projectionInvalidation === undefined
       ? decodeArkmeChatReadCursorAdvancedDataLine(line)
       : undefined
-    const hint = projectionInvalidation === undefined && readCursorAdvanced === undefined
+    const timelineChanged = projectionInvalidation === undefined && readCursorAdvanced === undefined
+      ? decodeArkmeChatTimelineChangedDataLine(line)
+      : undefined
+    const hint = projectionInvalidation === undefined && readCursorAdvanced === undefined && timelineChanged === undefined
       ? decodeArkmeChatReceiveDataLine(line)
       : undefined
-    const eventUid = projectionInvalidation?.eventUid ?? readCursorAdvanced?.eventUid ?? hint?.eventUid
+    const eventUid = projectionInvalidation?.eventUid ?? readCursorAdvanced?.eventUid
+      ?? timelineChanged?.eventUid ?? hint?.eventUid
     if (eventUid === undefined || this.seenEventUids.has(eventUid)) return
     this.seenEventUids.add(eventUid)
     if (this.seenEventUids.size > MAX_SEEN_EVENTS) {
@@ -494,11 +544,12 @@ export class ArkmeChatRealtimeRuntime {
     }
     this.lastEventAtMillis = projectionInvalidation?.eventAtMillis
       ?? readCursorAdvanced?.eventAtMillis
+      ?? timelineChanged?.eventAtMillis
       ?? hint?.eventAtMillis
     if (projectionInvalidation !== undefined) {
       this.advanceRevision('projection-invalidation', undefined, undefined, projectionInvalidation)
     } else {
-      this.advanceRevision('chat-hint', hint, readCursorAdvanced)
+      this.advanceRevision('chat-hint', hint, readCursorAdvanced, undefined, timelineChanged)
     }
   }
 
@@ -507,12 +558,14 @@ export class ArkmeChatRealtimeRuntime {
     hint?: ArkmeChatReceiveHint,
     readCursorAdvanced?: ArkmeChatReadCursorAdvancedHint,
     projectionInvalidation?: ArkmeProjectionInvalidatedHint,
+    timelineChanged?: ArkmeChatTimelineChangedHint,
   ): void {
     this.revision += 1
     const state = this.state()
     const notice: ArkmeChatRealtimeNotice = {
       state,
       cause,
+      ...(timelineChanged === undefined ? {} : { timelineChanged }),
       ...(hint === undefined ? {} : { hint }),
       ...(readCursorAdvanced === undefined ? {} : { readCursorAdvanced }),
       ...(projectionInvalidation === undefined ? {} : { projectionInvalidation }),

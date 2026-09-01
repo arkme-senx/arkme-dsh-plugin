@@ -163,6 +163,9 @@ import type {
   ArkmeGroupAiPolishNotice,
   ArkmeGroupAiPolishRuleCandidate,
   ArkmeGroupAiPolishSnapshot,
+  ArkmeGroupJoinRestrictionMutationResult,
+  ArkmeGroupJoinRestrictionPage,
+  ArkmeGroupMemberRemoveResult,
   ArkmeGroupAiPolishThreadMessage,
   ArkmeGroupMemberList,
   ArkmeGroupMemberAddResult,
@@ -187,6 +190,7 @@ import type {
   ArkmeMessageReadReceiptQueryItem,
   ArkmeMessageReadReceiptSummaryList,
   ArkmeMessageReportResult,
+  ArkmeMessageWithdrawalResult,
   ArkmeOfficialAuthorProfile,
   ArkmeOpenPrivateChatResult,
   ArkmePendingWrite,
@@ -388,7 +392,7 @@ export class ArkmeService {
       sendChatSourceTextRaw: async (...args) => await this.chat.sendChatSourceTextRaw(...args),
     })
     this.realtime = new ChatRealtimeService(this.runtime, this.source, {
-      chatTimelineItems: async (data, session, chatSessionUid) => await this.chat.chatTimelineItems(data, session, chatSessionUid),
+      chatTimelineItems: async (data, session, chatSessionUid, sourceKind) => await this.chat.chatTimelineItems(data, session, chatSessionUid, sourceKind),
     })
     this.chat = new ChatService(
       this.runtime,
@@ -691,6 +695,7 @@ export class ArkmeService {
         messageReadReceipts: true,
         messageReport: true,
         userBanManagement: true,
+        groupOwnerModeration: true,
         richContentRead: this.config.richMediaRenderEnabled !== false,
         richContentSend: this.config.richMediaSendEnabled !== false,
         ...(this.config.richMediaSendEnabled === false ? {} : { backgroundSound: true as const }),
@@ -1293,6 +1298,10 @@ export class ArkmeService {
     this.relatedRecording.recordRelatedRecordingsToolEvent(event)
   }
   async reportMessage(messageRef: string, reportType: 1 | 2 | 3 | 4, options: { reason?: string; requestUid?: string; signal?: AbortSignal } = {}): Promise<ArkmeMessageReportResult> { return await this.chat.reportMessage(messageRef, reportType, options) }
+  async withdrawGroupMessage(messageModerationRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageWithdrawalResult> { return await this.chat.withdrawGroupMessage(messageModerationRef, options) }
+  async removeGroupMember(sourceRef: string, memberRef: string, options: { preventRejoin?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeGroupMemberRemoveResult> { return await this.chat.removeGroupMember(sourceRef, memberRef, options) }
+  async listGroupJoinRestrictions(sourceRef: string, options: { cursor?: string; limit?: number; signal?: AbortSignal } = {}): Promise<ArkmeGroupJoinRestrictionPage> { return await this.chat.listGroupJoinRestrictions(sourceRef, options) }
+  async setGroupJoinRestriction(sourceRef: string, memberRef: string, restricted: boolean, options: { signal?: AbortSignal } = {}): Promise<ArkmeGroupJoinRestrictionMutationResult> { return await this.chat.setGroupJoinRestriction(sourceRef, memberRef, restricted, options) }
   async copySourceMessageLink(sourceRef: string, actionRefs: readonly string[], options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkResult> { return await this.chat.copySourceMessageLink(sourceRef, actionRefs, options) }
   async copyMessageActionsLink(conversationRef: string, actionRefs: readonly string[], options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkResult> { return await this.messageActions.copyLink(conversationRef, actionRefs, options.signal) }
   async resolveMessageCopyLink(sid: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkResolveResult> { return await this.chat.resolveMessageCopyLink(sid, options) }

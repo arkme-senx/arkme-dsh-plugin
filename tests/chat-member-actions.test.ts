@@ -16,6 +16,7 @@ import {
   ArkmeMemberJoinNotice, arkmeConversationJoinEventsInLoadedWindow, arkmeMemberJoinDisplayName,
   arkmeMemberJoinTimeLabel, arkmeVisibleMemberJoinInvitees, arkmeComposerMentionTrigger,
   arkmeGroupMentionCandidates, arkmeMentionCandidateMatches, arkmeMentionCandidatePrimaryText,
+  arkmeSelectedTimelineItems, arkmeTimelineOccurrenceKey,
 } from '../src/client/ArkmeSidebar.js'
 
 const member: ArkmeConversationMemberItem = {
@@ -33,6 +34,18 @@ describe('chat member action menu placement', () => {
       host,
       3,
     )).toEqual({ left: 40, top: 112, placement: 'below' })
+  })
+
+  it('keeps message interaction selection bound to the exact relation occurrence', () => {
+    const base = {
+      itemUid: 'shared-record', senderName: '小林', isMe: false, sendAtMillis: 1,
+      title: '', textContent: '消息', status: 1, messageActionRef: 'action-ref',
+    }
+    const first = { ...base, timelineItemKey: 'timeline-key-1' }
+    const second = { ...base, timelineItemKey: 'timeline-key-2' }
+    expect(arkmeTimelineOccurrenceKey(first)).toBe('timeline-key-1')
+    expect(arkmeSelectedTimelineItems([first, second], new Set(['timeline-key-2'])))
+      .toEqual([second])
   })
 
   it('detects a composer @ trigger only at the active caret token', () => {
@@ -119,6 +132,19 @@ describe('chat member action menu placement', () => {
     expect(menu).toContain('>2<')
     expect(menu).toContain('>7<')
     expect(menu).toContain('background:var(--dsw-specific-menu')
+
+    const ownerMenu = renderToStaticMarkup(createElement(ArkmeMemberActionMenu, {
+      member,
+      sourceKind: 'group_chat',
+      position: { left: 10, top: 20, placement: 'below' },
+      onMention: () => undefined,
+      onRecords: () => undefined,
+      canRemove: true,
+      onRemove: () => undefined,
+      onClose: () => undefined,
+    }))
+    expect(ownerMenu).toContain('移出群聊')
+    expect(arkmeMemberActionMenuRowCount(member, 'group_chat', true)).toBe(4)
 
     const card = renderToStaticMarkup(createElement(ArkmeMemberProfileCard, {
       member,
