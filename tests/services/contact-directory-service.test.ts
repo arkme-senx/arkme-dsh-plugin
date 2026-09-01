@@ -494,7 +494,7 @@ describe('ContactDirectoryService', () => {
     await service.contactWorld(contactRef, { limit: 10, offset: 5 })
     expect(world.listUserWorldFeed).toHaveBeenCalledWith(88, { limit: 10, offset: 5 })
     await service.openContactChat(contactRef)
-    expect(chat.openPrivateChatFromUser).toHaveBeenCalledWith(88, { displayName: '同事' })
+    expect(chat.openPrivateChatFromUser).toHaveBeenCalledWith(88, { presentationDisplayName: '同事' })
     expect(profile.publicProfileSummariesByUserIds).toHaveBeenLastCalledWith([88], session, undefined)
   })
 

@@ -2719,7 +2719,7 @@ describe('ArkmeService', () => {
     let memberActive = true
     let memberRequestFails = false
     let includeSameNameMember = false
-    let rawMemberDisplayName = 'Tison@即我'
+    let rawMemberDisplayName = 'Tison'
     let rawMemberSnapshot = ''
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
@@ -2747,7 +2747,7 @@ describe('ArkmeService', () => {
         items: [{
           session: { session_kind: 1 },
           private_counterpart: { user_id: 2001, display_name_snapshot: 'Tison' },
-          private_supplement: { remark: 'Tison' },
+          private_supplement: { remark: '我的私有备注' },
         }],
         has_more: false,
       } })
@@ -2773,7 +2773,8 @@ describe('ArkmeService', () => {
     const sourceRef = sourceRefFor('group_chat', 'group-mention', '协作群')
     const members = await service.listSourceMembers(sourceRef)
     expect(members.items[0]).toMatchObject({
-      displayName: 'Tison',
+      displayName: '我的私有备注',
+      mentionDisplayName: 'Tison',
       recordCount: 7, mentionCount: 2,
       memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
       mentionRef: expect.stringMatching(/^arkme-chat-human-mention-v1\./),
@@ -2793,6 +2794,10 @@ describe('ArkmeService', () => {
       .toMatchObject({ active_only: false })
     const memberRef = members.items[0]!.memberRef
     const mentionRef = members.items[0]!.mentionRef!
+    expect(JSON.parse(Buffer.from(mentionRef.split('.')[1]!, 'base64url').toString('utf8'))).toMatchObject({
+      targetUserId: 2001,
+      displayNameSnapshot: 'Tison',
+    })
     await expect(service.sourceMemberRecords(sourceRef, `${memberRef}x`, 'owner'))
       .rejects.toMatchObject({ code: 'chat-member-ref-invalid' })
     await expect(service.sourceMemberRecords(sourceRefFor('group_chat', 'another-group', '另一个群'), memberRef, 'owner'))
@@ -2805,10 +2810,10 @@ describe('ArkmeService', () => {
     const previouslyIssuedMemberRef = `arkme-chat-member-v1.${previouslyIssuedMemberPayload}.${createHmac('sha256', 'dsh-device-1')
       .update(previouslyIssuedMemberPayload).digest('base64url')}`
     await expect(service.sourceMemberRecords(sourceRef, previouslyIssuedMemberRef, 'owner', { limit: 10 }))
-      .resolves.toMatchObject({ member: { memberRef: previouslyIssuedMemberRef, displayName: 'Tison' } })
+      .resolves.toMatchObject({ member: { memberRef: previouslyIssuedMemberRef, displayName: '我的私有备注' } })
     await expect(service.sourceMemberRecords(sourceRef, memberRef, 'mentioned', { limit: 10 }))
       .resolves.toMatchObject({
-        member: { memberRef, displayName: 'Tison' },
+        member: { memberRef, displayName: '我的私有备注' },
         mode: 'mentioned',
         items: [{ itemUid: 'member-record-1', memberRef, textContent: '成员快记' }],
         hasMore: true,
@@ -2835,6 +2840,7 @@ describe('ArkmeService', () => {
         },
       },
     })
+    expect(JSON.stringify(requests.at(-1)?.body)).not.toContain('我的私有备注')
 
     await expect(service.sendSourceText(sourceRef, '@Tison 请看', {
       recordUid: 'record-v1-member-mention', relationUid: 'relation-v1-member-mention',
@@ -4677,7 +4683,7 @@ describe('ArkmeService', () => {
       throw new Error(`unexpected URL ${url}`)
     })
 
-    const result = await service.openPrivateChatFromUser(2001, { displayName: 'Member' })
+    const result = await service.openPrivateChatFromUser(2001, { presentationDisplayName: 'Member' })
     expect(result.source).toMatchObject({
       kind: 'private_chat',
       displayName: 'Member',
@@ -4688,11 +4694,11 @@ describe('ArkmeService', () => {
     expect(result.source.sourceRef).toMatch(/^arkme-source-v1\./)
     expect(requests[1]?.body).toMatchObject({
       peer_user_id: 2001,
-      title: 'Member',
-      owner_display_name_snapshot: 'Owner',
-      peer_display_name_snapshot: 'Member',
-      extra: { source: 'dsh_arkme_user_card', client: 'deepseek_harness' },
     })
+    expect(requests[1]?.body).not.toHaveProperty('title')
+    expect(requests[1]?.body).not.toHaveProperty('owner_display_name_snapshot')
+    expect(requests[1]?.body).not.toHaveProperty('peer_display_name_snapshot')
+    expect(requests[1]?.body).not.toHaveProperty('extra')
   })
 
   it('opens a private chat from a searched registered contact without adding the contact', async () => {
@@ -4767,9 +4773,10 @@ describe('ArkmeService', () => {
     expect(requests.map(item => new URL(item.url).pathname)).not.toContain('/api/v1/chats/contacts/add-and-open-private')
     expect(requests[3]?.body).toMatchObject({
       peer_user_id: 2001,
-      title: '木白',
-      peer_display_name_snapshot: '木白',
     })
+    expect(requests[3]?.body).not.toHaveProperty('title')
+    expect(requests[3]?.body).not.toHaveProperty('owner_display_name_snapshot')
+    expect(requests[3]?.body).not.toHaveProperty('peer_display_name_snapshot')
   })
 
   it('opens the official author chat through the same Subject owner as the mobile contact-author entry', async () => {
@@ -4845,9 +4852,10 @@ describe('ArkmeService', () => {
     ])
     expect(requests[4]?.body).toMatchObject({
       peer_user_id: 11,
-      title: '即我作者真名',
-      peer_display_name_snapshot: '即我作者真名',
     })
+    expect(requests[4]?.body).not.toHaveProperty('title')
+    expect(requests[4]?.body).not.toHaveProperty('owner_display_name_snapshot')
+    expect(requests[4]?.body).not.toHaveProperty('peer_display_name_snapshot')
   })
 
   it('reuses an existing author private chat instead of creating a second one', async () => {

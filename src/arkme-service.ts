@@ -1208,7 +1208,7 @@ export class ArkmeService {
 
   async openPrivateChatFromUser(
     peerUserId: number,
-    options: { displayName?: string; signal?: AbortSignal } = {},
+    options: { presentationDisplayName?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeOpenPrivateChatResult> {
     return await this.chat.openPrivateChatFromUser(peerUserId, options)
   }
@@ -1233,7 +1233,7 @@ export class ArkmeService {
   async openPrivateChatFromWorldAuthor(recordRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
     const author = await this.world.worldAuthorFromRef(recordRef)
     return await this.chat.openPrivateChatFromUser(author.userId, {
-      displayName: author.displayName,
+      presentationDisplayName: author.displayName,
       ...(signal === undefined ? {} : { signal }),
     })
   }
@@ -1680,7 +1680,7 @@ export class ArkmeService {
       const variantIndex = this.worldVoiceprintInviteVariantIndex
       this.worldVoiceprintInviteVariantIndex = (variantIndex + 1) % WORLD_VOICEPRINT_INVITE_VARIANT_COUNT
       const privateChat = await this.chat.openPrivateChatFromUser(intent.peerUserId, {
-        displayName: intent.peerDisplayName,
+        presentationDisplayName: intent.peerDisplayName,
         ...(signal === undefined ? {} : { signal }),
       })
       const sent = await this.chat.sendSourceText(

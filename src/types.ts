@@ -2030,6 +2030,9 @@ export interface ArkmeConversationMemberItem {
   memberRef: string
   /** Present only when this active non-self group member can be selected for a new human mention. */
   mentionRef?: string
+  /** Public/group-safe name bound to mentionRef; never contains the viewer's private contact label. */
+  mentionDisplayName?: string
+  /** Viewer-facing label; it may be the current viewer's private contact remark. */
   displayName: string
   memberName?: string
   secondaryName?: string

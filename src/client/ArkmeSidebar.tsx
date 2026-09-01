@@ -1140,12 +1140,16 @@ export function arkmeComposerMentionTrigger(
 }
 
 export function arkmeMentionCandidateMatches(
-  member: Pick<ArkmeConversationMemberItem, 'displayName'> & { memberName?: string; secondaryName?: string },
+  member: Pick<ArkmeConversationMemberItem, 'displayName'> & {
+    mentionDisplayName?: string
+    memberName?: string
+    secondaryName?: string
+  },
   query: string,
 ): boolean {
   const normalizedQuery = query.trim().toLowerCase()
   if (normalizedQuery === '') return true
-  return [member.displayName, member.memberName, member.secondaryName]
+  return [member.displayName, member.mentionDisplayName, member.memberName, member.secondaryName]
     .some(value => (value ?? '').toLowerCase().includes(normalizedQuery))
 }
 
@@ -1191,8 +1195,11 @@ export function arkmeGroupMentionCandidates(
       ...(bot.avatarRef === undefined ? {} : { avatarRef: bot.avatarRef }),
     })))
   candidates.push(...members
-    .filter((member): member is ArkmeConversationMemberItem & { mentionRef: string } =>
-      !member.isSelf && member.mentionRef !== undefined && arkmeMentionCandidateMatches(member, query))
+    .filter((member): member is ArkmeConversationMemberItem & { mentionRef: string; mentionDisplayName: string } =>
+      !member.isSelf
+      && member.mentionRef !== undefined
+      && member.mentionDisplayName !== undefined
+      && arkmeMentionCandidateMatches(member, query))
     .map(member => ({ ...member, kind: 'member' as const })))
   return candidates
 }
@@ -2428,7 +2435,24 @@ export function ArkmeSurface({
     member: ArkmeConversationMemberItem
     mode: ArkmeConversationMemberRecordMode
   }>()
+  const privateChatAbortRef = useRef<AbortController>()
   const [privateChatBusy, setPrivateChatBusy] = useState(false)
+
+  useEffect(() => {
+    privateChatAbortRef.current?.abort()
+    privateChatAbortRef.current = undefined
+    setPrivateChatBusy(false)
+    return () => {
+      privateChatAbortRef.current?.abort()
+      privateChatAbortRef.current = undefined
+    }
+  }, [activeConversation, authenticatedUserId, conversationKey])
+  const closeMemberProfile = useCallback(() => {
+    privateChatAbortRef.current?.abort()
+    privateChatAbortRef.current = undefined
+    setPrivateChatBusy(false)
+    setMemberProfile(undefined)
+  }, [])
 
   useEffect(() => {
     if (!activeConversation) return
@@ -2440,7 +2464,6 @@ export function ArkmeSurface({
     setMemberMenu(undefined)
     setMemberProfile(undefined)
     setMemberRecords(undefined)
-    setPrivateChatBusy(false)
     setSnapshot(undefined)
     setMessageReportItem(undefined)
     if (authenticatedUserId === undefined || source === undefined || (source.kind !== 'group_chat' && source.kind !== 'private_chat')) return
@@ -4221,12 +4244,16 @@ export function ArkmeSurface({
     selectionStart: number,
     selectionEnd = selectionStart,
   ) => {
-    if (composerDraftKey === undefined || member.isSelf || member.mentionRef === undefined || !composerMentionsEnabled) return
+    if (composerDraftKey === undefined
+      || member.isSelf
+      || member.mentionRef === undefined
+      || member.mentionDisplayName === undefined
+      || !composerMentionsEnabled) return
     syncComposerUserInput(true)
     const cursor = arkmeComposerDraftStore.insertMention(
       composerDraftKey,
       member.mentionRef,
-      member.displayName,
+      member.mentionDisplayName,
       selectionStart,
       selectionEnd,
     )
@@ -4304,7 +4331,7 @@ export function ArkmeSurface({
     setMentionTrigger(arkmeComposerMentionTrigger(text, selectionStart, selectionEnd))
   }, [composerMentionsEnabled])
   const openPrivateChatForMember = useCallback((member: ArkmeConversationMemberItem) => {
-    if (source === undefined || privateChatBusy) return
+    if (source === undefined || privateChatBusy || privateChatAbortRef.current !== undefined) return
     setPrivateChatBusy(true)
     setError('')
     if (arkmeMemberConversationAction(member) === 'send_to_self') {
@@ -4319,17 +4346,24 @@ export function ArkmeSurface({
       setPrivateChatBusy(false)
       return
     }
+    const controller = new AbortController()
+    privateChatAbortRef.current = controller
     void callArkme<ArkmeOpenPrivateChatResult>('chat.member.private.open', {
       sourceRef: source.sourceRef,
       memberRef: member.memberRef,
-    })
+    }, controller.signal)
       .then(result => {
+        if (controller.signal.aborted) return
         setMemberProfile(undefined)
         setMemberRecords(undefined)
         activateSource(result.source)
       })
-      .catch(caught => { setError(errorMessage(caught)) })
-      .finally(() => { setPrivateChatBusy(false) })
+      .catch(caught => { if (!controller.signal.aborted) setError(errorMessage(caught)) })
+      .finally(() => {
+        if (privateChatAbortRef.current !== controller) return
+        privateChatAbortRef.current = undefined
+        setPrivateChatBusy(false)
+      })
   }, [activateSource, aggregateSource, privateChatBusy, source])
   useEffect(() => {
     if (memberMenu === undefined) return
@@ -6068,7 +6102,7 @@ export function ArkmeSurface({
           member={memberProfile}
           showTopicNickname={source?.kind === 'group_chat'}
           busy={privateChatBusy}
-          onClose={() => { if (!privateChatBusy) setMemberProfile(undefined) }}
+          onClose={closeMemberProfile}
           onSend={() => { openPrivateChatForMember(memberProfile) }}
         />}
         {activeConversation && source !== undefined && memberRecords !== undefined && <ArkmeMemberRecordsPanel

@@ -1534,7 +1534,10 @@ export async function dispatchArkmeHostOperation(
     case 'user.card': return await service.userCard(numberParam(params, 'userId', 0))
     case 'chat.private.open': return await service.openPrivateChatFromUser(
       numberParam(params, 'peerUserId', 0),
-      { displayName: stringParam(params, 'displayName') },
+      {
+        presentationDisplayName: stringParam(params, 'displayName'),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      },
     )
     case 'chat.private.open-from-contact': return await service.openPrivateChatFromContact(
       stringParam(params, 'contactRef'),
@@ -1544,6 +1547,7 @@ export async function dispatchArkmeHostOperation(
     case 'chat.member.private.open': return await service.openPrivateChatFromMember(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'memberRef'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
     )
     case 'files.capabilities': return service.fileCapabilities()
     case 'files.local.list': return await service.fileList()

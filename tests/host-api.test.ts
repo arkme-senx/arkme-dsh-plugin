@@ -44,6 +44,7 @@ function fakeService() {
     messageSnapshotDetail: vi.fn(async (sourceRef: string, actionRef: string, options: unknown) => ({ sourceRef, actionRef, options })),
     officialAuthorProfile: vi.fn(async () => ({ userId: 11, displayName: '阿森', avatarRef: 'author-avatar-ref' })),
     openOfficialAuthorPrivateChat: vi.fn(async () => ({ source: { sourceRef: 'official-author-source' } })),
+    openPrivateChatFromUser: vi.fn(async (peerUserId: number, options: unknown) => ({ peerUserId, options })),
     openPrivateChatFromContact: vi.fn(async (contactRef: string) => ({ source: { sourceRef: `source:${contactRef}` } })),
     openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
     reportMessage: vi.fn(async (messageRef: string, reportType: number, options: unknown) => ({ messageRef, reportType, options })),
@@ -448,6 +449,7 @@ describe('group AI polish Host API dispatch', () => {
 describe('conversation member Host API dispatch', () => {
   it('forwards only opaque member references and bounded paging fields', async () => {
     const service = fakeService()
+    const signal = new AbortController().signal
     await dispatchArkmeHostOperation(service as never, 'source.members', {
       sourceRef: 'source-ref', activeOnly: false, userId: 999,
     })
@@ -457,13 +459,28 @@ describe('conversation member Host API dispatch', () => {
     })
     await dispatchArkmeHostOperation(service as never, 'chat.member.private.open', {
       sourceRef: 'source-ref', memberRef: 'member-ref', peerUserId: 999,
-    })
+    }, undefined, undefined, undefined, undefined, signal)
     expect(service.listSourceMembers).toHaveBeenCalledWith('source-ref', { activeOnly: false })
     expect(service.sourceMemberRecords).toHaveBeenCalledWith('source-ref', 'member-ref', 'mentioned', {
       limit: 19,
       beforeSequence: 44,
     })
-    expect(service.openPrivateChatFromMember).toHaveBeenCalledWith('source-ref', 'member-ref')
+    expect(service.openPrivateChatFromMember).toHaveBeenCalledWith('source-ref', 'member-ref', { signal })
+  })
+
+  it('treats the browser-provided private-chat name as presentation-only input', async () => {
+    const service = fakeService()
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'chat.private.open', {
+      peerUserId: 7,
+      displayName: '我的备注',
+      title: '不得透传',
+      peerDisplayNameSnapshot: '不得透传',
+    }, undefined, undefined, undefined, undefined, signal)
+    expect(service.openPrivateChatFromUser).toHaveBeenCalledWith(7, {
+      presentationDisplayName: '我的备注',
+      signal,
+    })
   })
 
   it('opens the official author chat through its Host-owned route', async () => {

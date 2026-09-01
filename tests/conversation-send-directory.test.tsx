@@ -23,6 +23,7 @@ import {
 } from '../src/client/ArkmeSidebar.js'
 import { ArkmeClientError } from '../src/client/api.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
+import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta } from '../src/client/chat-directory-store.js'
 import { arkmeComposerDraftStore, arkmeSourceComposerDraftKey } from '../src/client/composer-draft-store.js'
@@ -1160,7 +1161,9 @@ describe('conversation send directory projection', () => {
         items: [{
           memberRef: 'arkme-chat-member-v1.stable.signature',
           mentionRef: 'arkme-chat-human-mention-v1.mention.signature',
-          displayName: 'Tison',
+          mentionDisplayName: 'Tison',
+          displayName: '我的私有备注',
+          secondaryName: 'Tison',
           role: 'member', status: 'active', isSelf: false, isOwner: false,
           joinedAtMillis: 1, recordCount: 0, mentionCount: 0,
         }],
@@ -1192,7 +1195,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     const tisonOption = renderer!.root.findAllByProps({ role: 'option' }).find(option =>
-      option.findAll(node => node.type === 'span' && node.children.join('') === 'Tison').length > 0)
+      option.findAll(node => node.type === 'span' && node.children.join('') === '我的私有备注（Tison）').length > 0)
     expect(tisonOption).toBeDefined()
     await act(async () => {
       tisonOption!.props.onMouseDown({ preventDefault: vi.fn() })
@@ -1237,7 +1240,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     const fileMentionOption = renderer!.root.findAllByProps({ role: 'option' }).find(option =>
-      option.findAll(node => node.type === 'span' && node.children.join('') === 'Tison').length > 0)
+      option.findAll(node => node.type === 'span' && node.children.join('') === '我的私有备注（Tison）').length > 0)
     expect(fileMentionOption).toBeDefined()
     await act(async () => {
       fileMentionOption!.props.onMouseDown({ preventDefault: vi.fn() })
@@ -1288,7 +1291,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     const retryOption = renderer!.root.findAllByProps({ role: 'option' }).find(option =>
-      option.findAll(node => node.type === 'span' && node.children.join('') === 'Tison').length > 0)
+      option.findAll(node => node.type === 'span' && node.children.join('') === '我的私有备注（Tison）').length > 0)
     expect(retryOption).toBeDefined()
     await act(async () => {
       retryOption!.props.onMouseDown({ preventDefault: vi.fn() })
@@ -1783,7 +1786,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'source.members' && params?.sourceRef === groupB.sourceRef) return {
         source: groupB,
         items: [{
-          memberRef: 'member-b', mentionRef: 'mention-b', displayName: 'B 成员',
+          memberRef: 'member-b', mentionRef: 'mention-b', mentionDisplayName: 'B 成员', displayName: 'B 成员',
           role: 'member', status: 'active', isSelf: false, isOwner: false,
           joinedAtMillis: 1, recordCount: 0, mentionCount: 0,
         }],
@@ -1811,7 +1814,7 @@ describe('conversation send directory projection', () => {
       resolveGroupA?.({
         source: groupA,
         items: [{
-          memberRef: 'member-a', mentionRef: 'mention-a', displayName: 'A 成员',
+          memberRef: 'member-a', mentionRef: 'mention-a', mentionDisplayName: 'A 成员', displayName: 'A 成员',
           role: 'member', status: 'active', isSelf: false, isOwner: false,
           joinedAtMillis: 1, recordCount: 0, mentionCount: 0,
         }],
@@ -1831,6 +1834,144 @@ describe('conversation send directory projection', () => {
     const rendered = JSON.stringify(renderer!.toJSON())
     expect(rendered).toContain('B 成员')
     expect(rendered).not.toContain('A 成员')
+  })
+
+  it('cancels a pending member private-chat open when the selected conversation changes or the card closes', async () => {
+    const groupA: ArkmeSourceItem = {
+      ...group, sourceRef: 'source-private-open-a', sourceKey: 'chat:private-open-a', displayName: 'A 群', latestSequence: 1,
+    }
+    const groupB: ArkmeSourceItem = {
+      ...group, sourceRef: 'source-private-open-b', sourceKey: 'chat:private-open-b', displayName: 'B 群', latestSequence: 1,
+    }
+    const groupARotatedRef: ArkmeSourceItem = { ...groupA, sourceRef: 'source-private-open-a-rotated' }
+    const member: ArkmeConversationMemberItem = {
+      memberRef: 'member-private-open-a', displayName: 'A 成员', role: 'member', status: 'active',
+      isSelf: false, isOwner: false, joinedAtMillis: 1, recordCount: 0, mentionCount: 0,
+    }
+    const message: ArkmeTimelineItem = {
+      itemUid: 'message-private-open-a', memberRef: member.memberRef, senderName: member.displayName,
+      isMe: false, sendAtMillis: 1, title: '', textContent: '你好', status: 1, sequence: 1,
+    }
+    let resolvePrivateOpen: ((value: unknown) => void) | undefined
+    let pendingPrivateOpen: Promise<unknown> = new Promise(resolve => { resolvePrivateOpen = resolve })
+    const privateOpenSignals: AbortSignal[] = []
+    arkmeChatDirectory.clear()
+    arkmeChatDirectory.activateAccount(42)
+    arkmeChatDirectory.publish([groupA, groupB])
+    arkmeUi.selectSource(groupA)
+    mocks.callArkme.mockImplementation(async (
+      operation: string,
+      params?: Record<string, unknown>,
+      signal?: AbortSignal,
+    ) => {
+      if (operation === 'user.profile') return {
+        profile: {
+          userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+        },
+        cachedAtMillis: 1,
+        revision: 1,
+      }
+      if (operation === 'source.members') return {
+        source: params?.sourceRef === groupB.sourceRef ? groupB : groupARotatedRef,
+        items: params?.sourceRef === groupB.sourceRef ? [] : [member],
+        total: params?.sourceRef === groupB.sourceRef ? 0 : 1,
+        activeCount: params?.sourceRef === groupB.sourceRef ? 0 : 1,
+      }
+      if (operation === 'source.timeline') return {
+        source: params?.sourceRef === groupB.sourceRef ? groupB : groupARotatedRef,
+        items: params?.sourceRef === groupB.sourceRef ? [] : [message],
+        hasMore: false,
+      }
+      if (operation === 'source.interwoven-moments') return { state: 'disabled', moments: [], preparedAtMillis: 48 }
+      if (operation === 'chat.member.private.open') {
+        if (signal !== undefined) privateOpenSignals.push(signal)
+        return await pendingPrivateOpen
+      }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '查看 A 成员' }).props.onClick({ stopPropagation: vi.fn() })
+      await Promise.resolve()
+    })
+    const idleButton = renderer!.root.findByProps({ 'data-arkme-profile-send-state': 'idle' })
+    await act(async () => {
+      idleButton.props.onClick()
+      idleButton.props.onClick()
+      await Promise.resolve()
+    })
+    const busyButton = renderer!.root.findByProps({ 'data-arkme-profile-send-state': 'loading' })
+    expect(busyButton.props.disabled).toBe(true)
+    await act(async () => {
+      busyButton.props.onClick()
+      await Promise.resolve()
+    })
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'chat.member.private.open')).toHaveLength(1)
+    expect(privateOpenSignals).toHaveLength(1)
+
+    await act(async () => {
+      arkmeUi.selectSource(groupARotatedRef)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(privateOpenSignals[0]?.aborted).toBe(false)
+
+    await act(async () => {
+      arkmeUi.selectSource(groupB)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(privateOpenSignals[0]?.aborted).toBe(true)
+
+    await act(async () => {
+      resolvePrivateOpen?.({
+        source: {
+          sourceRef: 'late-private-source', sourceKey: 'chat:late-private', kind: 'private_chat',
+          displayName: 'A 成员', activeAtMillis: 2, unreadCount: 0,
+        },
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(arkmeUi.getSnapshot().selectedSource?.sourceKey).toBe(groupB.sourceKey)
+
+    pendingPrivateOpen = new Promise(resolve => { resolvePrivateOpen = resolve })
+    await act(async () => {
+      arkmeUi.selectSource(groupA)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '查看 A 成员' }).props.onClick({ stopPropagation: vi.fn() })
+      await Promise.resolve()
+      renderer!.root.findByType(ArkmeMemberProfileCard).props.onSend()
+      await Promise.resolve()
+    })
+    expect(privateOpenSignals).toHaveLength(2)
+    await act(async () => {
+      renderer!.root.findByType(ArkmeMemberProfileCard).props.onClose()
+      await Promise.resolve()
+    })
+    expect(privateOpenSignals[1]?.aborted).toBe(true)
+    expect(renderer!.root.findAllByType(ArkmeMemberProfileCard)).toHaveLength(0)
+
+    await act(async () => {
+      resolvePrivateOpen?.({
+        source: {
+          sourceRef: 'closed-card-private-source', sourceKey: 'chat:closed-card-private', kind: 'private_chat',
+          displayName: 'A 成员', activeAtMillis: 3, unreadCount: 0,
+        },
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(arkmeUi.getSnapshot().selectedSource?.sourceKey).toBe(groupA.sourceKey)
   })
 
   it('does not expose Bot candidates returned by a previously selected group', async () => {
@@ -1936,7 +2077,8 @@ describe('conversation send directory projection', () => {
         return {
           source: accountGroup,
           items: [{
-            memberRef: 'member-account-b', mentionRef: 'mention-account-b', displayName: '账号 B 成员',
+            memberRef: 'member-account-b', mentionRef: 'mention-account-b',
+            mentionDisplayName: '账号 B 成员', displayName: '账号 B 成员',
             role: 'member', status: 'active', isSelf: false, isOwner: false,
             joinedAtMillis: 1, recordCount: 0, mentionCount: 0,
           }],
@@ -1963,7 +2105,8 @@ describe('conversation send directory projection', () => {
       resolveAccountA?.({
         source: accountGroup,
         items: [{
-          memberRef: 'member-account-a', mentionRef: 'mention-account-a', displayName: '账号 A 成员',
+          memberRef: 'member-account-a', mentionRef: 'mention-account-a',
+          mentionDisplayName: '账号 A 成员', displayName: '账号 A 成员',
           role: 'member', status: 'active', isSelf: false, isOwner: false,
           joinedAtMillis: 1, recordCount: 0, mentionCount: 0,
         }],

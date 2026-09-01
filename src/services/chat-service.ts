@@ -931,10 +931,21 @@ function projectChatMemberDisplayNames(
 ): ChatMemberDisplayNames {
   return resolveChatMemberDisplayNames({
     userId,
-    remarkCandidates: [],
+    remarkCandidates: [viewerLabel, item.remark],
     memberNameCandidates: [item.display_name_snapshot],
-    userNameCandidates: [viewerLabel, item.remark, publicDisplayName],
+    userNameCandidates: [item.display_name, publicDisplayName],
   })
+}
+
+function projectChatMemberMentionDisplayName(
+  item: Record<string, unknown>,
+  userId: number,
+  publicDisplayName?: string,
+): string {
+  return resolveChatMemberDisplayNames({
+    userId,
+    userNameCandidates: [item.display_name, publicDisplayName],
+  }).displayName
 }
 
 function normalizedJoinTimestamp(value: unknown): number {
@@ -1528,22 +1539,18 @@ export class ChatService {
       throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
     }
     const rawMembers = await this.rawChatMembers(source.ownerRef, true, session, options.signal)
-    const rawMember = rawMembers.find(item => Math.trunc(numberValue(item.user_id)) === reference.targetUserId)
-    if (rawMember === undefined) {
+    const memberIsActive = rawMembers.some(item => Math.trunc(numberValue(item.user_id)) === reference.targetUserId)
+    if (!memberIsActive) {
       throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
     }
-    const displayName = stringValue(rawMember.remark).trim()
-      || stringValue(rawMember.display_name_snapshot).trim()
-      || '群成员'
     return await this.openPrivateChatFromUser(reference.targetUserId, {
-      displayName,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
   }
 
   async openPrivateChatFromUser(
     peerUserId: number,
-    options: { displayName?: string; signal?: AbortSignal } = {},
+    options: { presentationDisplayName?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeOpenPrivateChatResult> {
     const session = await this.runtime.requireSession()
     if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
@@ -1553,19 +1560,13 @@ export class ChatService {
       throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
     }
     const profile = (await this.profile.publicProfileSummariesByUserIds([peerUserId], session, options.signal).catch(() => new Map())).get(peerUserId)
-    const displayName = options.displayName?.trim() || profile?.displayName || '群成员'
-    const ownerSnapshot = (await this.runtime.stateStore.cachedProfile(session.userId).catch(() => undefined))?.profile?.displayName
-      ?? ''
+    const displayName = options.presentationDisplayName?.trim() || profile?.displayName.trim() || '群成员'
     const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
       '/api/v1/chats/create-private',
       {
         chat_session_uid: `chat_session_${randomUUID()}`,
         peer_user_id: peerUserId,
-        title: displayName,
         create_at: Date.now(),
-        owner_display_name_snapshot: ownerSnapshot,
-        peer_display_name_snapshot: displayName,
-        extra: { source: 'dsh_arkme_user_card', client: 'deepseek_harness' },
       },
       session,
       options.signal,
@@ -1575,17 +1576,29 @@ export class ChatService {
     if (uid === '') {
       throw new ArkmePluginError('private-chat-contract-invalid', '私聊会话响应不完整', true, 502)
     }
+    const existingSource = this.source.cachedChatSource(session.userId, uid)
+    const existingPrivateSource = existingSource?.kind === 'private_chat' ? existingSource : undefined
     const unread = objectValue(data.unread_snapshot)
     const latestSequence = numberValue(unread.session_last_seq ?? chatSession.last_seq)
+      || existingPrivateSource?.latestSequence
+      || 0
     const source: ArkmeSourceItem = {
-      sourceRef: await this.source.sealSourceRef(session.userId, 'private_chat', uid, displayName),
-      sourceKey: await this.source.chatDirectorySourceKey(session.userId, uid),
+      sourceRef: existingPrivateSource?.sourceRef
+        ?? await this.source.sealSourceRef(session.userId, 'private_chat', uid, displayName),
+      sourceKey: existingPrivateSource?.sourceKey
+        ?? await this.source.chatDirectorySourceKey(session.userId, uid),
       peerUserId,
       kind: 'private_chat',
-      displayName,
-      ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, peerUserId) }),
-      activeAtMillis: numberValue(chatSession.last_active_at) || Date.now(),
-      unreadCount: numberValue(unread.unread_count),
+      displayName: existingPrivateSource?.displayName ?? displayName,
+      ...(existingPrivateSource?.avatarRef !== undefined
+        ? { avatarRef: existingPrivateSource.avatarRef }
+        : profile?.avatarUrl === undefined
+          ? {}
+          : { avatarRef: await this.profile.sealProfileImageRef(session.userId, peerUserId) }),
+      activeAtMillis: numberValue(chatSession.last_active_at) || existingPrivateSource?.activeAtMillis || Date.now(),
+      unreadCount: unread.unread_count === undefined
+        ? existingPrivateSource?.unreadCount ?? 0
+        : numberValue(unread.unread_count),
       ...(latestSequence > 0 ? { latestSequence } : {}),
     }
     this.source.setChatSourceByKey(`${String(session.userId)}:${uid}`, source)
@@ -1636,7 +1649,7 @@ export class ChatService {
       || stringValue(partner.nick_name).trim()
       || '作者'
     return await this.openPrivateChatFromUser(peerUserId, {
-      displayName,
+      presentationDisplayName: displayName,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
   }
@@ -4174,13 +4187,15 @@ export class ChatService {
       const { displayName, memberName, secondaryName } = projectChatMemberDisplayNames(
         item, userId, viewerLabels.get(userId), profile?.displayName,
       )
+      const mentionDisplayName = projectChatMemberMentionDisplayName(item, userId, profile?.displayName)
       const role = chatMemberRole(item.role)
       const status = chatMemberStatus(item.status)
       const extra = parsedObject(item.extra)
       members.push({
         memberRef: await this.sealChatMemberRef(session.userId, chatSessionUid, userId),
         ...(options.includeHumanMentionRefs && status === 'active' && userId !== session.userId ? {
-          mentionRef: await this.sealChatHumanMentionRef(session.userId, chatSessionUid, userId, displayName),
+          mentionRef: await this.sealChatHumanMentionRef(session.userId, chatSessionUid, userId, mentionDisplayName),
+          mentionDisplayName,
         } : {}),
         displayName,
         ...(memberName === '' ? {} : { memberName }),

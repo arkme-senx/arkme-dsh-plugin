@@ -191,7 +191,7 @@ export class ContactDirectoryService {
   async openContactChat(contactRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
     const { entry } = await this.resolveContactRef(contactRef)
     return await this.chat.openPrivateChatFromUser(entry.targetUserId, {
-      displayName: entry.displayName,
+      presentationDisplayName: entry.displayName,
       ...(signal === undefined ? {} : { signal }),
     })
   }

@@ -391,7 +391,10 @@ describe('world Provider projection', () => {
         return json({ code: 200, data: { items: [{ user_id: 20002, nick_name: '公开昵称A' }] } })
       }
       if (url === 'https://chat.test/api/v1/chats/create-private') {
-        expect(body).toMatchObject({ peer_user_id: 20002, title: '小王', peer_display_name_snapshot: '小王' })
+        expect(body).toMatchObject({ peer_user_id: 20002 })
+        expect(body).not.toHaveProperty('title')
+        expect(body).not.toHaveProperty('owner_display_name_snapshot')
+        expect(body).not.toHaveProperty('peer_display_name_snapshot')
         return json({ code: 200, data: {
           session: { chat_session_uid: 'private-20002', session_kind: 1, last_active_at: 1 },
           unread_snapshot: { unread_count: 0, session_last_seq: 0 },
@@ -791,7 +794,10 @@ describe('world Provider projection', () => {
         return json({ code: 200, data: { items: [{ user_id: 20002, nick_name: '小林' }] } })
       }
       if (url === 'https://chat.test/api/v1/chats/create-private') {
-        expect(body).toMatchObject({ peer_user_id: 20002, title: '小林' })
+        expect(body).toMatchObject({ peer_user_id: 20002 })
+        expect(body).not.toHaveProperty('title')
+        expect(body).not.toHaveProperty('owner_display_name_snapshot')
+        expect(body).not.toHaveProperty('peer_display_name_snapshot')
         return json({ code: 200, data: {
           session: { chat_session_uid: 'private-20002', session_kind: 1, last_active_at: 20 },
           unread_snapshot: { session_last_seq: 7, unread_count: 0 },
