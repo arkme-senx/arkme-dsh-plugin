@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { Context } from '@deepseek-ai/cordis'
-import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import { AttachmentError, AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { createUserMessage, LlmRuntime } from '@deepseek-ai/dsh-llm'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
@@ -410,6 +410,151 @@ describe('Arkme managed model adapter', () => {
     })
     expect(JSON.stringify(chat?.body)).not.toContain('signature=secret')
     expect(JSON.stringify(chat?.body)).not.toContain('iVBOR')
+  })
+
+  it.each([
+    ['INVALID_ATTACHMENT_REF', 'ATTACHMENT_UNAVAILABLE', '历史图片已不可用，请重新附加后继续'],
+    ['ATTACHMENT_NOT_FOUND', 'ATTACHMENT_UNAVAILABLE', '历史图片已不可用，请重新附加后继续'],
+    ['ATTACHMENT_CORRUPT', 'ATTACHMENT_UNAVAILABLE', '历史图片已不可用，请重新附加后继续'],
+    ['ATTACHMENT_READ_FAILED', 'ATTACHMENT_READ_FAILED', '无法读取历史图片，请检查本地附件存储后重试'],
+  ] as const)('preserves the DSH attachment failure boundary for %s', async (sourceCode, expectedCode, expectedMessage) => {
+    const data = Uint8Array.of(1, 2, 3)
+    const attachment = {
+      attachmentId: AttachmentId(`unavailable-${sourceCode.toLowerCase()}`),
+      mediaType: 'image/png' as const,
+      bytes: data.byteLength,
+      width: 16,
+      height: 16,
+    }
+    const capability: ManagedModelCapability = {
+      contractVersion: 'attachment-read-boundary-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'],
+        maximumImages: 1,
+        maximumBytesPerImage: data.byteLength,
+        countDimensionLimits: [],
+        evidence: {
+          providerReferenceUrl: 'https://example.test/provider-contract',
+          verifiedOn: '2026-09-01',
+          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image'],
+          platformGuardrailFields: [],
+        },
+      },
+    }
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('the attachment boundary must fail before network I/O')
+    })
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => ({
+        readImage: async () => {
+          throw new AttachmentError('DSH attachment read failed', sourceCode)
+        },
+      }),
+      fetchImpl,
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const stream = transport.stream({
+      provider: ARKME_MANAGED_PROVIDER,
+      model: 'attachment-read-boundary',
+      messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+    }, capability)
+
+    await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+      code: expectedCode,
+      message: expectedMessage,
+    })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('re-reads the durable DSH image only after the server asset safety window expires', async () => {
+    const data = Uint8Array.of(7, 8, 9)
+    const attachment = {
+      attachmentId: AttachmentId('durable-history-image'),
+      mediaType: 'image/png' as const,
+      bytes: data.byteLength,
+      width: 16,
+      height: 16,
+    }
+    const capability: ManagedModelCapability = {
+      contractVersion: 'durable-history-image-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'],
+        maximumImages: 1,
+        maximumBytesPerImage: data.byteLength,
+        countDimensionLimits: [],
+        evidence: {
+          providerReferenceUrl: 'https://example.test/provider-contract',
+          verifiedOn: '2026-09-01',
+          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image'],
+          platformGuardrailFields: [],
+        },
+      },
+    }
+    let clock = 1_788_192_000_000
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => clock)
+    let prepareCalls = 0
+    const chatAssets: string[] = []
+    const readImage = vi.fn(async () => ({ ref: attachment, data }))
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => ({ readImage }),
+      fetchImpl: async (input, init) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          prepareCalls++
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              upload_uid: `mai_upload_${String(prepareCalls)}`,
+              asset_ref: `mai_asset_${String(prepareCalls)}`,
+              status: 'completed',
+              expires_at: clock + 10 * 60_000,
+              asset_expires_at: clock + 2 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url.endsWith('/chat/completions')) {
+          const body = JSON.parse(String(init?.body)) as { messages: Array<{ content: Array<{ type: string, asset_ref?: string }> }> }
+          const asset = body.messages[0]?.content.find(block => block.type === 'image_asset')?.asset_ref
+          if (asset !== undefined) chatAssets.push(asset)
+          return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          })
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const collect = async () => {
+      const chunks: StreamChunk[] = []
+      for await (const chunk of transport.stream({
+        provider: ARKME_MANAGED_PROVIDER,
+        model: 'durable-history-image',
+        messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+      }, capability)) chunks.push(chunk)
+      return chunks
+    }
+
+    try {
+      await expect(collect()).resolves.toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+      await expect(collect()).resolves.toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+      clock += 60_001
+      await expect(collect()).resolves.toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+    } finally {
+      dateNow.mockRestore()
+    }
+
+    expect(readImage).toHaveBeenCalledTimes(2)
+    expect(prepareCalls).toBe(2)
+    expect(chatAssets).toEqual(['mai_asset_1', 'mai_asset_1', 'mai_asset_2'])
   })
 
   it.each([
