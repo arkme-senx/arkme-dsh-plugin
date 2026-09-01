@@ -293,6 +293,13 @@ describe('Arkme SDK', () => {
         name: '总结助手', provider: 'openclaw', avatar: 'file_asset://avatar-asset-1',
       } },
     ])
+    await sdk.createBot({
+      name: 'Agent Bot', provider: 'openclaw', directChatOwner: 'jotmo-chat',
+    })
+    expect(calls.at(-1)).toEqual({ operation: 'bots.create', params: {
+      name: 'Agent Bot', provider: 'openclaw', directChatOwner: 'jotmo-chat',
+      requestUid: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    } })
     await expect(sdk.createBot({
       name: '错误头像', provider: 'openclaw', avatar: 'https://untrusted.example/avatar.png',
     })).rejects.toThrow('file_asset reference')

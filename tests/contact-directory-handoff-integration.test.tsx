@@ -8,7 +8,7 @@ import type { ArkmeSourceItem } from '../src/types.js'
 
 const botSummary = {
   botRef: 'bot-1', name: '测试 Bot', provider: 'webhook', description: '', status: 'online',
-  directChatAvailable: true, privateChatOutboundEnabled: true, conversationProjection: 'chat',
+  directChatAvailable: true, privateChatOutboundEnabled: true, conversationProjection: 'chat', chatSourceKey: 'chat-key',
 } as const
 
 const testState = vi.hoisted(() => ({ callArkme: vi.fn() }))
@@ -19,6 +19,9 @@ vi.mock('../src/client/ArkmeSidebar.js', () => ({
 }))
 vi.mock('../src/client/ArkmeVirtualWorkspace.js', () => ({
   ArkmeNavigation: () => <nav aria-label="Arkme 会话列表">original navigation tree</nav>,
+}))
+vi.mock('../src/client/ArkmeBotSettingsPanel.js', () => ({
+  ArkmeBotSettingsPanel: ({ bot }: { bot: { name: string } }) => <aside role="dialog" aria-label="Bot 设置">管理{bot.name}</aside>,
 }))
 
 import { apply } from '../src/client/index.js'
@@ -38,8 +41,9 @@ function button(renderer: ReactTestRenderer, label: string): ReactTestInstance {
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>(fulfill => { resolve = fulfill })
-  return { promise, resolve }
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((fulfill, fail) => { resolve = fulfill; reject = fail })
+  return { promise, resolve, reject }
 }
 
 function productionSeats(): Map<string, ComponentType<Record<string, unknown>>> {
@@ -162,16 +166,21 @@ describe('production Contacts handoff isolation', () => {
     expect(arkmeContactsTab.getSnapshot().selection).toEqual({ kind: 'contact', contactRef: 'contact-1' })
   })
 
-  it('opens a Bot directly through the Bot surface and still aborts pending group work on an environment switch', async () => {
+  it('opens a Chat-owned Bot through its canonical Chat source and still aborts pending group work on an environment switch', async () => {
     const group = deferred<ArkmeSourceItem>()
     const bot = deferred<ArkmeSourceItem>()
     const signals = installDirectoryApi(group, bot)
     const renderer = await mountProductionContacts()
     await click(renderer, 'Bot')
     await click(renderer, '测试 Bot')
-    expect(arkmeUi.getSnapshot()).toMatchObject({ mode: 'bot', selectedBot: botSummary })
-    expect(arkmeUi.getSnapshot().selectedSource).toBeUndefined()
-    expect(testState.callArkme.mock.calls.some(([operation]) => operation === 'directory.bot.open-chat')).toBe(false)
+    expect(signals.bot?.aborted).toBe(false)
+    bot.resolve({ sourceRef: 'bot-source', kind: 'private_chat', displayName: '测试 Bot', activeAtMillis: 1, unreadCount: 0 })
+    await flush()
+    expect(arkmeUi.getSnapshot()).toMatchObject({
+      mode: 'source', selectedSource: { sourceRef: 'bot-source', kind: 'private_chat' },
+    })
+    expect(arkmeUi.getSnapshot().selectedBot).toBeUndefined()
+    expect(testState.callArkme.mock.calls.filter(([operation]) => operation === 'directory.bot.open-chat')).toHaveLength(1)
 
     await click(renderer, '联系人')
     await click(renderer, '群聊')
@@ -180,8 +189,24 @@ describe('production Contacts handoff isolation', () => {
     expect(signals.group?.aborted).toBe(true)
     group.resolve({ sourceRef: 'group-source', kind: 'group_chat', displayName: '测试群聊', activeAtMillis: 1, unreadCount: 0 })
     await flush()
-    expect(arkmeUi.getSnapshot().selectedSource).toBeUndefined()
+    expect(arkmeUi.getSnapshot().selectedSource).toMatchObject({ sourceRef: 'bot-source', kind: 'private_chat' })
     expect(arkmeContactsTab.getSnapshot().accountKey).toBe('prod:101')
+  })
+
+  it('opens Bot management from Contacts without opening a second conversation surface', async () => {
+    const group = deferred<ArkmeSourceItem>()
+    const bot = deferred<ArkmeSourceItem>()
+    installDirectoryApi(group, bot)
+    const renderer = await mountProductionContacts()
+    await click(renderer, 'Bot')
+
+    const manageButton = renderer.root.findByProps({ 'aria-label': '管理测试 Bot' })
+    await act(async () => { manageButton.props.onClick(); await Promise.resolve() })
+
+    expect(renderer.root.findByProps({ 'aria-label': 'Bot 设置' })).toBeDefined()
+    expect(testState.callArkme.mock.calls.filter(([operation]) => operation === 'directory.bot.open-chat')).toHaveLength(0)
+    expect(arkmeUi.getSnapshot()).toMatchObject({ mode: 'source', productMode: 'contacts' })
+    expect(arkmeUi.getSnapshot().selectedBot).toBeUndefined()
   })
 
   it('opens the current group request exactly once', async () => {
@@ -199,5 +224,21 @@ describe('production Contacts handoff isolation', () => {
     })
     expect(arkmeUi.getSnapshot().productMode).toBeUndefined()
     expect(testState.callArkme.mock.calls.filter(([operation]) => operation === 'directory.group.open-chat')).toHaveLength(1)
+  })
+
+  it('shows loading and an actionable error when a canonical Bot source cannot open', async () => {
+    const group = deferred<ArkmeSourceItem>()
+    const bot = deferred<ArkmeSourceItem>()
+    installDirectoryApi(group, bot)
+    const renderer = await mountProductionContacts()
+    await click(renderer, 'Bot')
+    await click(renderer, '测试 Bot')
+    expect(text(renderer.root.findByProps({ role: 'status' }))).toContain('正在打开 Bot 会话')
+
+    bot.reject(new Error('Bot 会话暂时不可用'))
+    await flush()
+
+    expect(text(renderer.root.findByProps({ role: 'alert' }))).toContain('Bot 会话暂时不可用')
+    expect(arkmeUi.getSnapshot()).toMatchObject({ mode: 'source', productMode: 'contacts' })
   })
 })

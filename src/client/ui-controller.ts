@@ -23,7 +23,8 @@ function sameBot(left: ArkmeBotSummary | undefined, right: ArkmeBotSummary | und
     && left.refreshOnRecordChanges === right.refreshOnRecordChanges
     && left.conversationProjection === right.conversationProjection
     && left.chatSourceKey === right.chatSourceKey
-    && left.createdAtMillis === right.createdAtMillis && left.latestMessageAtMillis === right.latestMessageAtMillis
+    && left.createdAtMillis === right.createdAtMillis && left.latestActivityAtMillis === right.latestActivityAtMillis
+    && left.latestMessageAtMillis === right.latestMessageAtMillis
     && left.latestMessagePreview === right.latestMessagePreview && left.unreadCount === right.unreadCount
     && left.isMuted === right.isMuted
 }

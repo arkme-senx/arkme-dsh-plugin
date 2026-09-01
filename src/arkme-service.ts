@@ -10,7 +10,6 @@ import type {
 } from './extensions/types.js'
 import type { ArkmeSessionStore } from './keychain-store.js'
 import { resolveManagedAccessCredential } from './managed-ai/credential.js'
-import type { createOpenClawProvisioner, OpenClawProvisionResult } from './openclaw/index.js'
 import { ArkmeOutgoingCallBroker } from './outgoing-call-broker.js'
 import {
   ArkmeBillingUnavailableError,
@@ -34,7 +33,7 @@ import { AiVideoService } from './services/ai-video-service.js'
 import { ArkoService } from './services/arko-service.js'
 import { ArrangementService } from './services/arrangement-service.js'
 import { AuthService, jiwoScanLoginAvailable } from './services/auth-service.js'
-import { BotService, type ArkmeBotManageUpdateInput, type ArkmeBotRefPayload } from './services/bot-service.js'
+import { BotService, type ArkmeBotManageUpdateInput, type ArkmeBotRefPayload, type OpenClawBotRuntimePort, type OpenClawProvisionResult } from './services/bot-service.js'
 import { BotConversationService } from './services/bot-conversation-service.js'
 import { CalendarService } from './services/calendar-service.js'
 import { CallHistoryService } from './services/call-history-service.js'
@@ -377,7 +376,6 @@ export class ArkmeService {
     this.botConversation = new BotConversationService(
       this.runtime,
       this.bot,
-      this.chat,
       async () => { await this.realtime.invalidateRecordProjection() },
     )
     this.relatedQuickNote = new RelatedQuickNoteService(this.runtime, this.record, this.media, this.profile, this.privacy)
@@ -479,7 +477,7 @@ export class ArkmeService {
     return failed.map(([uid, projection]) => [uid, projection.latestSequence])
   }
 
-  attachOpenClawProvisioner(provisioner: ReturnType<typeof createOpenClawProvisioner>): void {
+  attachOpenClawProvisioner(provisioner: OpenClawBotRuntimePort): void {
     this.bot.attachOpenClawProvisioner(provisioner)
   }
 

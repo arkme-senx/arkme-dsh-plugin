@@ -401,6 +401,8 @@ export interface ArkmeCreateFileAssetRecordResult {
 export type ArkmeBotProvider = 'openclaw' | 'webhook'
 export type ArkmeBotStatus = 'online' | 'offline' | 'unknown'
 export type ArkmeBotConversationProjection = 'record' | 'chat' | 'none'
+export const ARKME_CHAT_BOT_DIRECT_OWNER = 'jotmo-chat' as const
+export type ArkmeChatBotDirectOwner = typeof ARKME_CHAT_BOT_DIRECT_OWNER
 
 export interface ArkmeBotSummary {
   botRef: string
@@ -421,6 +423,8 @@ export interface ArkmeBotSummary {
   chatSourceKey?: string
   /** Creation time supplied by the Bot service, when available. */
   createdAtMillis?: number
+  /** Owner-projected conversation activity used only for directory ordering. */
+  latestActivityAtMillis?: number
   /** Latest private-chat message time, when the conversation directory has been hydrated. */
   latestMessageAtMillis?: number
   /** Safe preview of the latest private-chat message. */

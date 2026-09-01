@@ -5,6 +5,7 @@ import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-updat
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
   ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent, ArkmeBotProvider,
+  ArkmeChatBotDirectOwner,
   ArkmeBillingPaymentMethod, ArkmeBotMentionInput, ArkmeConversationMemberRecordMode,
   ArkmeDirectorySectionKind, ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerManageAction,
   ArkmeGroupAiPolishThreadMessage, ArkmeHumanMentionInput, ArkmeMessageReadReceiptQueryItem,
@@ -14,7 +15,7 @@ import type {
   ArkmeWorldPublishFileAsset,
 } from './types.js'
 import type { ArkmeCaptchaResult } from './types.js'
-import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from './types.js'
+import { ARKME_CHAT_BOT_DIRECT_OWNER, ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from './types.js'
 import type { ArkmeExtensionManager } from './extensions/manager.js'
 import type { ArkmeExtensionInstallTasks } from './extensions/install-tasks.js'
 import type { ArkmeOwnedExtensionInventory } from './extensions/owned-inventory.js'
@@ -232,6 +233,13 @@ function botProviderParam(params: Record<string, unknown>): ArkmeBotProvider {
     throw new ArkmePluginError('bot-provider-unsupported', 'Bot Provider 不受支持', false, 400)
   }
   return provider
+}
+
+function botDirectChatOwnerParam(params: Record<string, unknown>): ArkmeChatBotDirectOwner | undefined {
+  const owner = stringParam(params, 'directChatOwner').trim()
+  if (owner === '') return undefined
+  if (owner === ARKME_CHAT_BOT_DIRECT_OWNER) return owner
+  throw new ArkmePluginError('bot-direct-chat-owner-invalid', 'Bot 直连会话归属无效', false, 400)
 }
 
 function botAvatarParam(params: Record<string, unknown>): string {
@@ -881,9 +889,12 @@ export async function dispatchArkmeHostOperation(
     )
     case 'bots.create': {
       const avatar = botAvatarParam(params)
+      const directChatOwner = botDirectChatOwnerParam(params)
       return await service.createBotSummary({
         name: stringParam(params, 'name'),
         provider: botProviderParam(params),
+        ...(directChatOwner === undefined ? {} : { directChatOwner }),
+        ...(stringParam(params, 'requestUid').trim() === '' ? {} : { requestUid: stringParam(params, 'requestUid') }),
         ...(stringParam(params, 'description').trim() === ''
           ? {}
           : { description: stringParam(params, 'description') }),

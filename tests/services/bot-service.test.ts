@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
-import { BotService } from '../../src/services/bot-service.js'
+import { BotService, type OpenClawBotRuntimePort } from '../../src/services/bot-service.js'
 import { ProfileService } from '../../src/services/profile-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { SourceService } from '../../src/services/source-service.js'
@@ -12,6 +12,11 @@ const config: ArkmeServiceConfig = {
   relationBaseUrl: 'https://relation.test', intelligentBaseUrl: 'https://intelligent.test',
   routePath: '/arkme-self/api', audioBaseUrl: 'https://audio.test', requestTimeoutMs: 5_000,
   maxTextLength: 20_000, geetestCaptchaId: 'captcha-test-id-1234567890', interwovenMomentsEnabled: true,
+}
+
+const runtimePort: OpenClawBotRuntimePort = {
+  async chatOwnedCreatePreflight() { return { status: 'ready' } },
+  async reconcile() { return { status: 'connected_unverified', resource_ref: 'openclaw.bot.v1.test' } },
 }
 
 describe('BotService', () => {
@@ -122,11 +127,11 @@ describe('BotService', () => {
     })
     const service = new BotService(runtime, source)
     const botRef = (await service.listBots()).items[0]!.botRef
-    service.attachOpenClawProvisioner({} as never)
+    service.attachOpenClawProvisioner(runtimePort)
 
     service.clearAccountRefs()
 
     await expect(service.openBotRef(botRef, 42)).rejects.toMatchObject({ code: 'bot-ref-expired' })
-    expect(() => { service.attachOpenClawProvisioner({} as never) }).toThrow('already attached')
+    expect(() => { service.attachOpenClawProvisioner(runtimePort) }).toThrow('already attached')
   })
 })

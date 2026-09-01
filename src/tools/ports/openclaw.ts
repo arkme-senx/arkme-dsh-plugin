@@ -1,4 +1,4 @@
-import type { OpenClawProvisionResult } from '../../openclaw/index.js'
+import type { OpenClawProvisionResult } from '../../services/bot-service.js'
 
 export interface ArkmeOpenClawToolPort {
   connectOpenClawBot(botRef: string, options?: { signal?: AbortSignal }): Promise<OpenClawProvisionResult>

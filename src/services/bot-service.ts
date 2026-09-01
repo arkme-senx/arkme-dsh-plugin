@@ -1,8 +1,8 @@
 import { createHmac, randomUUID } from 'node:crypto'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
-import type { createOpenClawProvisioner, OpenClawProvisionResult } from '../openclaw/index.js'
 import { SecretValue } from '../secret-value.js'
+import { ARKME_CHAT_BOT_DIRECT_OWNER } from '../types.js'
 import type {
   ArkmeBotList,
   ArkmeBotManageProfile,
@@ -27,9 +27,35 @@ import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './se
 
 const BOT_CONVERSATION_OWNER = {
   subject: 'jotmo-subject',
-  chat: 'jotmo-chat',
+  chat: ARKME_CHAT_BOT_DIRECT_OWNER,
 } as const
 type BotConversationOwner = typeof BOT_CONVERSATION_OWNER[keyof typeof BOT_CONVERSATION_OWNER]
+type ArkmeBotCreatePreflight =
+  | { status: 'ready' }
+  | { status: 'blocked'; reason: 'openclaw_profile' | 'server_capability' }
+
+export type OpenClawBotRuntimeContract = 'subject_private_v1' | 'chat_direct_v1'
+export type OpenClawChatOwnedCreatePreflight =
+  | { status: 'ready' }
+  | { status: 'blocked'; reason: 'profile' }
+export interface OpenClawConnectionMetadata { gatewayUrl: string; tokenPreview: string }
+export type OpenClawProvisionResult =
+  | { status: 'profile_not_found' }
+  | { status: 'prerequisite_failed'; reason: 'binary' | 'version' | 'config' | 'model_auth' | 'gateway_service' | 'channel_contract' }
+  | { status: 'gateway_restart_confirmation_required'; resource_ref: string; impact: 'profile_all_agents' }
+  | { status: 'local_configured' | 'connected_unverified' | 'runtime_online'; resource_ref: string }
+
+export interface OpenClawBotRuntimePort {
+  chatOwnedCreatePreflight(input?: { signal?: AbortSignal }): Promise<OpenClawChatOwnedCreatePreflight>
+  reconcile(input: {
+    botRef: string
+    runtimeContract: OpenClawBotRuntimeContract
+    allowGatewayRestart?: boolean
+    resolveConnectionMetadata: () => Promise<OpenClawConnectionMetadata>
+    revealSecret: () => Promise<SecretValue>
+    signal?: AbortSignal
+  }): Promise<OpenClawProvisionResult>
+}
 
 export type BotConversationTarget =
   | { kind: 'subject'; subjectUid: string }
@@ -71,6 +97,7 @@ const BOT_REF_TTL_MILLIS = 30 * 60_000
 const BOT_REF_CAP = 2_000
 const BOT_REF_PATTERN = /^arkme-bot-v2\.[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const BOT_IMAGE_REF_PATTERN = /^arkme-bot-image-v1\.[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -117,9 +144,23 @@ function botProfileSource(data: Record<string, unknown>): Record<string, unknown
 function botConversationTarget(data: Record<string, unknown>): BotConversationTarget {
   const subjectUid = stringValue(data.subject_uid).trim()
   const chatSessionUid = stringValue(data.chat_session_uid).trim()
+  const declaredOwner = stringValue(data.direct_chat_owner).trim()
+  const provider = arkmeNormalizeBotProvider(data.provider)
+  if (declaredOwner !== '') {
+    const subjectMatches = declaredOwner === BOT_CONVERSATION_OWNER.subject
+      && subjectUid !== '' && chatSessionUid === ''
+    const chatMatches = declaredOwner === BOT_CONVERSATION_OWNER.chat
+      && chatSessionUid !== '' && subjectUid === ''
+    if (!subjectMatches && !chatMatches) return { kind: 'unavailable', reason: 'conflict' }
+  }
   if (subjectUid !== '' && chatSessionUid !== '') return { kind: 'unavailable', reason: 'conflict' }
   if (subjectUid !== '') return { kind: 'subject', subjectUid }
-  if (chatSessionUid !== '') return { kind: 'chat', chatSessionUid }
+  if (chatSessionUid !== '') {
+    if (provider === 'openclaw' && declaredOwner !== BOT_CONVERSATION_OWNER.chat) {
+      return { kind: 'unavailable', reason: 'conflict' }
+    }
+    return { kind: 'chat', chatSessionUid }
+  }
   return { kind: 'unavailable', reason: 'missing' }
 }
 
@@ -139,7 +180,7 @@ function botConversationCapabilities(target: BotConversationTarget, provider: 'o
 }
 
 export class BotService {
-  private openClawProvisioner: ReturnType<typeof createOpenClawProvisioner> | undefined
+  private openClawProvisioner: OpenClawBotRuntimePort | undefined
   private readonly botRefs = new Map<string, ArkmeBotRefEntry>()
   private readonly botRefByKey = new Map<string, string>()
   private readonly botImageRefs = new Map<string, ArkmeBotImageRefEntry>()
@@ -168,7 +209,7 @@ export class BotService {
     this.botImageRefByKey.clear()
   }
 
-  attachOpenClawProvisioner(provisioner: ReturnType<typeof createOpenClawProvisioner>): void {
+  attachOpenClawProvisioner(provisioner: OpenClawBotRuntimePort): void {
     if (this.openClawProvisioner !== undefined) throw new Error('OpenClaw provisioner is already attached')
     this.openClawProvisioner = provisioner
   }
@@ -182,8 +223,14 @@ export class BotService {
     if (this.openClawProvisioner === undefined) {
       throw new ArkmePluginError('openclaw-not-configured', '请先安装并配置本地 OpenClaw', false, 503)
     }
+    const session = await this.runtime.requireSession()
+    const reference = await this.openBotRef(botRef, session.userId)
+    if (reference.target.kind === 'unavailable') {
+      throw new ArkmePluginError('bot-conversation-owner-unavailable', '当前 Bot 会话归属信息不可用，请刷新后重试', false, 409)
+    }
     return await this.openClawProvisioner.reconcile({
       botRef,
+      runtimeContract: reference.target.kind === 'chat' ? 'chat_direct_v1' : 'subject_private_v1',
       allowGatewayRestart: true,
       resolveConnectionMetadata: async () => await this.resolveBotConnectionMetadata(botRef, options),
       revealSecret: async () => await this.revealBotSecret(botRef, options),
@@ -224,6 +271,23 @@ export class BotService {
     return { items }
   }
 
+  private async chatOwnedOpenClawCreatePreflight(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeBotCreatePreflight> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/list', {}, session, options.signal,
+    )
+    if (!booleanValue(objectValue(data.capabilities).chat_owned_openclaw_create)) {
+      return { status: 'blocked', reason: 'server_capability' }
+    }
+    if (this.openClawProvisioner === undefined) return { status: 'blocked', reason: 'openclaw_profile' }
+    const local = await this.openClawProvisioner.chatOwnedCreatePreflight(options)
+    return local.status === 'ready'
+      ? { status: 'ready' }
+      : { status: 'blocked', reason: 'openclaw_profile' }
+  }
+
   async countBots(options: { signal?: AbortSignal } = {}): Promise<number> {
     const session = await this.runtime.requireSession()
     const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
@@ -247,14 +311,49 @@ export class BotService {
     if (avatar !== '' && !isArkmeBotAvatarRef(avatar)) {
       throw new ArkmePluginError('bot-avatar-invalid', 'Bot 头像引用无效', false, 400)
     }
+    const directChatOwner = input.directChatOwner
+    if (directChatOwner !== undefined && (
+      directChatOwner !== BOT_CONVERSATION_OWNER.chat || provider !== 'openclaw'
+    )) {
+      throw new ArkmePluginError('bot-direct-chat-owner-invalid', 'Bot 直连会话归属无效', false, 400)
+    }
+    const createsChatOwnedOpenClaw = directChatOwner === BOT_CONVERSATION_OWNER.chat
+    const requestUid = input.requestUid?.trim() ?? ''
+    if (!createsChatOwnedOpenClaw && requestUid !== '') {
+      throw new ArkmePluginError('bot-create-request-invalid', 'Bot 创建请求标识与会话归属不匹配', false, 400)
+    }
+    if (createsChatOwnedOpenClaw) {
+      if (requestUid === '' || !UUID_PATTERN.test(requestUid)) {
+        throw new ArkmePluginError('bot-create-request-invalid', 'Bot 创建请求标识无效', false, 400)
+      }
+      const preflight = await this.chatOwnedOpenClawCreatePreflight(options)
+      if (preflight.status !== 'ready') {
+        throw new ArkmePluginError(
+          'chat-owned-openclaw-create-unavailable',
+          preflight.reason === 'server_capability'
+            ? 'Chat 原生 OpenClaw Bot 暂未开放'
+            : '请先安装并配置本地 OpenClaw',
+          false,
+          503,
+        )
+      }
+    }
     const session = await this.runtime.requireSession()
     let data: Record<string, unknown>
     try {
       data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
-        '/api/v1/bot/create', { name, provider, description, avatar }, session, options.signal,
+        '/api/v1/bot/create', {
+          name,
+          provider,
+          description,
+          avatar,
+          ...(createsChatOwnedOpenClaw
+            ? { direct_chat_owner: BOT_CONVERSATION_OWNER.chat, request_uid: requestUid }
+            : {}),
+        }, session, options.signal,
       )
     } catch (error) {
-      if (error instanceof ArkmePluginError && ['arkme-network-error', 'arkme-timeout'].includes(error.code)) {
+      if (error instanceof ArkmePluginError && error.retryable) {
         throw new ArkmePluginError(
           'bot-create-outcome-unknown',
           'Bot 创建结果未知，请刷新 Bot 列表确认；不会自动重试',
@@ -268,8 +367,16 @@ export class BotService {
     try {
       const token = stringValue(objectValue(data.token_info).token).trim()
       if (!token.startsWith('jbot_')) throw new Error('missing Bot token')
+      const rawBot = objectValue(data.bot)
+      const bot = await this.botSummaryFromData(rawBot, session.userId)
+      if (createsChatOwnedOpenClaw && (
+        stringValue(rawBot.direct_chat_owner).trim() !== BOT_CONVERSATION_OWNER.chat
+        || bot.conversationProjection !== 'chat'
+      )) {
+        throw new Error('missing Chat owner projection')
+      }
       return {
-        bot: await this.botSummaryFromData(objectValue(data.bot), session.userId),
+        bot,
         secret: new SecretValue(token),
       }
     } catch (error) {
@@ -380,26 +487,24 @@ export class BotService {
     const session = await this.runtime.requireSession()
     await this.openBotRef(botRef, session.userId)
     const bot = (await this.listBots(options)).items.find(item => item.botRef === botRef)
-    if (bot === undefined) throw new ArkmePluginError('bot-ref-not-owned', '当前账号不存在该 OpenClaw Bot', false, 404)
+    if (bot === undefined) throw new ArkmePluginError('bot-ref-not-owned', '当前账号不存在该 Bot', false, 404)
     const reference = await this.openBotRef(botRef, session.userId)
     if (reference.target.kind !== 'chat') {
       throw new ArkmePluginError('bot-chat-source-unavailable', '当前 Bot 不属于 Chat 私聊链路', false, 409)
     }
-    const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
-      '/api/v1/bot/private-chat/open', { bot_id: reference.botId }, session, options.signal,
-    )
-    const chatSessionUid = stringValue(data.chat_session_uid).trim()
-    if (chatSessionUid === '' || chatSessionUid !== reference.target.chatSessionUid) {
-      throw new ArkmePluginError('bot-chat-source-unavailable', '当前 Bot 私聊会话确认不一致', false, 409)
-    }
+    const chatSessionUid = reference.target.chatSessionUid
+    const cacheKey = `${String(session.userId)}:${chatSessionUid}`
+    const cached = this.source.cachedChatSourceByKey(cacheKey)
+    if (cached !== undefined) return cached
     const source: ArkmeSourceItem = {
       sourceRef: await this.source.sealSourceRef(session.userId, 'private_chat', chatSessionUid, bot.name),
+      sourceKey: await this.source.chatDirectorySourceKey(session.userId, chatSessionUid),
       kind: 'private_chat',
       displayName: bot.name,
       activeAtMillis: 0,
       unreadCount: 0,
     }
-    this.source.setChatSourceByKey(`${String(session.userId)}:${chatSessionUid}`, source)
+    this.source.setChatSourceByKey(cacheKey, source)
     return source
   }
 
@@ -567,6 +672,7 @@ export class BotService {
     const rawStatus = stringValue(raw.status).trim()
     const status: ArkmeBotStatus = rawStatus === 'online' || rawStatus === 'offline' ? rawStatus : 'unknown'
     const createdAtMillis = botPrivateChatTimestamp(raw.created_at ?? raw.createdAt)
+    const latestActivityAtMillis = botPrivateChatTimestamp(raw.latest_activity_at ?? raw.latestActivityAt)
     return {
       botRef: this.sealBotRef(userId, botId, provider, target),
       directoryKey: await this.botDirectoryKey(userId, botId),
@@ -575,6 +681,7 @@ export class BotService {
       description: stringValue(raw.description).trim(),
       status,
       ...(createdAtMillis === 0 ? {} : { createdAtMillis }),
+      ...(latestActivityAtMillis === 0 ? {} : { latestActivityAtMillis }),
       ...this.botAvatarProjection(raw, userId, botId),
     }
   }

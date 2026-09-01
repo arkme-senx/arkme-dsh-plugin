@@ -41,14 +41,14 @@ describe('ArkmeBotConversationSurface business gates', () => {
     expect(markup).toContain('placeholder="发消息给 OpenClaw"')
   })
 
-  it('preserves the master composer when an external summary has no new capability fields', () => {
+  it('fails closed when an external summary has no canonical projection evidence', () => {
     const markup = renderToStaticMarkup(<ArkmeBotConversationSurface bot={{
       botRef: 'external-summary', name: '外部摘要', provider: 'webhook', description: '', status: 'online',
       directChatAvailable: true,
     }} />)
 
-    expect(markup).toContain('<textarea')
-    expect(markup).not.toContain('Webhook Bot 仅接收外部系统推送')
+    expect(markup).not.toContain('<textarea')
+    expect(markup).toContain('当前 Bot 会话暂不可用')
   })
 
   it('uses an inbound-only notice instead of a composer for a Subject Webhook Bot', () => {
@@ -72,25 +72,28 @@ describe('ArkmeBotConversationSurface business gates', () => {
     expect(markup).not.toContain('Webhook Bot 仅接收外部系统推送')
   })
 
-  it('keeps the current Chat-owned Webhook surface out of the Subject-only UI gate', () => {
+  it('redirects Chat-owned summaries away from the private Subject surface', () => {
     const markup = renderToStaticMarkup(<ArkmeBotConversationSurface bot={{
       botRef: 'chat-webhook', name: 'Chat Webhook', provider: 'webhook', description: '', status: 'online',
-      directChatAvailable: true, privateChatOutboundEnabled: true, conversationProjection: 'chat',
+      directChatAvailable: true, privateChatOutboundEnabled: true, conversationProjection: 'chat', chatSourceKey: 'chat-key',
     }} />)
 
-    expect(markup).toContain('<textarea')
-    expect(markup).not.toContain('Webhook Bot 仅接收外部系统推送')
+    expect(markup).not.toContain('<textarea')
+    expect(markup).toContain('当前 Bot 会话暂不可用')
+    expect(markup).not.toContain('aria-label="Bot 设置"')
+    expect(surfaceSource).toContain('{privateSurfaceAvailable && settingsOpen && <ArkmeBotSettingsPanel')
   })
 
-  it('renders Subject-owned and Chat-owned Bots with the same existing DOM and styles', () => {
-    const subjectMarkup = renderToStaticMarkup(<ArkmeBotConversationSurface bot={subjectOpenClaw} />)
-    const chatMarkup = renderToStaticMarkup(<ArkmeBotConversationSurface bot={{
-      ...subjectOpenClaw,
-      conversationProjection: 'chat',
-      chatSourceKey: 'opaque-chat-source-key',
-    }} />)
+  it('never calls a private Bot operation for a Chat-owned summary', async () => {
+    await act(async () => {
+      renderer = create(<ArkmeBotConversationSurface bot={{
+        ...subjectOpenClaw,
+        botRef: 'chat-openclaw',
+        conversationProjection: 'chat', chatSourceKey: 'chat-key',
+      }} />)
+    })
 
-    expect(chatMarkup).toBe(subjectMarkup)
+    expect(mocks.callArkme).not.toHaveBeenCalled()
   })
 
   it('reloads the existing Bot surface when the shared Record projection changes', async () => {
@@ -107,96 +110,7 @@ describe('ArkmeBotConversationSurface business gates', () => {
     )
   })
 
-  it('does not apply Subject Record refreshes to a Chat-owned Bot surface', async () => {
-    const chatBot = { ...subjectOpenClaw, botRef: 'chat-bot', conversationProjection: 'chat' as const }
-    mocks.callArkme.mockResolvedValue({ bot: chatBot, messages: [] })
-    await act(async () => {
-      renderer = create(<ArkmeBotConversationSurface bot={chatBot} />)
-    })
-    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
-
-    await act(async () => { arkmeUi.recordChanged() })
-
-    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
-  })
-
-  it('acknowledges a Chat-owned Bot timeline sequence once without blocking the rendered conversation', async () => {
-    const chatBot = { ...subjectOpenClaw, botRef: 'chat-bot', conversationProjection: 'chat' as const }
-    mocks.callArkme
-      .mockResolvedValueOnce({ messages: [{
-        messageId: 'chat-record-1', recordUid: 'chat-record-1', role: 'assistant', content: 'Chat 回复',
-        status: 'sent', createdAtMillis: 1, attachments: [],
-      }], latestSequence: 9 })
-      .mockResolvedValueOnce({ effectiveReadSequence: 9, unreadCount: 0 })
-    await act(async () => {
-      renderer = create(<ArkmeBotConversationSurface bot={chatBot} />)
-    })
-
-    expect(JSON.stringify(renderer!.toJSON())).toContain('Chat 回复')
-    expect(mocks.callArkme).toHaveBeenCalledWith(
-      'bots.private-chat.mark-read', { botRef: 'chat-bot', sequence: 9 },
-    )
-
-    await act(async () => { arkmeUi.chatChanged() })
-    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'bots.private-chat.mark-read')).toHaveLength(1)
-  })
-
-  it('advances a newer Chat read sequence while an older acknowledgement is still in flight', async () => {
-    const chatBot = { ...subjectOpenClaw, botRef: 'chat-read-advance', conversationProjection: 'chat' as const }
-    let resolveSeven: ((value: unknown) => void) | undefined
-    let resolveNine: ((value: unknown) => void) | undefined
-    mocks.callArkme.mockImplementation((operation: string, params: { sequence?: number }) => {
-      if (operation === 'bots.private-chat.open') return Promise.resolve({ messages: [], latestSequence: 7 })
-      if (operation === 'bots.private-chat.refresh') return Promise.resolve({ messages: [], latestSequence: 9 })
-      if (operation === 'bots.private-chat.mark-read' && params.sequence === 7) {
-        return new Promise(resolve => { resolveSeven = resolve })
-      }
-      if (operation === 'bots.private-chat.mark-read' && params.sequence === 9) {
-        return new Promise(resolve => { resolveNine = resolve })
-      }
-      throw new Error(`unexpected operation ${operation}`)
-    })
-    await act(async () => {
-      renderer = create(<ArkmeBotConversationSurface bot={chatBot} />)
-    })
-
-    await act(async () => { arkmeUi.chatChanged() })
-
-    expect(mocks.callArkme.mock.calls
-      .filter(call => call[0] === 'bots.private-chat.mark-read')
-      .map(call => call[1].sequence)).toEqual([7, 9])
-
-    await act(async () => {
-      resolveNine?.({ effectiveReadSequence: 9, unreadCount: 0 })
-      await Promise.resolve()
-      resolveSeven?.({ effectiveReadSequence: 7, unreadCount: 0 })
-      await Promise.resolve()
-    })
-    await act(async () => { arkmeUi.chatChanged() })
-
-    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'bots.private-chat.mark-read')).toHaveLength(2)
-  })
-
-  it('retries a failed Chat read acknowledgement on the next owner refresh without surfacing a conversation error', async () => {
-    const chatBot = { ...subjectOpenClaw, botRef: 'chat-read-retry', conversationProjection: 'chat' as const }
-    mocks.callArkme
-      .mockResolvedValueOnce({ messages: [], latestSequence: 7 })
-      .mockRejectedValueOnce(new Error('read unavailable'))
-      .mockResolvedValueOnce({ messages: [], latestSequence: 7 })
-      .mockResolvedValueOnce({ effectiveReadSequence: 7, unreadCount: 0 })
-    await act(async () => {
-      renderer = create(<ArkmeBotConversationSurface bot={chatBot} />)
-    })
-    expect(renderer!.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
-
-    await act(async () => { arkmeUi.chatChanged() })
-
-    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'bots.private-chat.mark-read')).toHaveLength(2)
-    expect(renderer!.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
-  })
-
   it('keeps confirmed messages visible when an owner refresh fails', async () => {
-    const chatBot = { ...subjectOpenClaw, botRef: 'chat-refresh-failure', conversationProjection: 'chat' as const }
     mocks.callArkme
       .mockResolvedValueOnce({ messages: [{
         messageId: 'confirmed-message', role: 'assistant', content: '已经确认的消息', status: 'sent',
@@ -204,10 +118,10 @@ describe('ArkmeBotConversationSurface business gates', () => {
       }] })
       .mockRejectedValueOnce(new Error('刷新失败'))
     await act(async () => {
-      renderer = create(<ArkmeBotConversationSurface bot={chatBot} />)
+      renderer = create(<ArkmeBotConversationSurface bot={subjectOpenClaw} />)
     })
 
-    await act(async () => { arkmeUi.chatChanged() })
+    await act(async () => { arkmeUi.recordChanged() })
 
     expect(JSON.stringify(renderer!.toJSON())).toContain('已经确认的消息')
     expect(renderer!.root.findByProps({ role: 'alert' }).children).toContain('刷新失败')

@@ -93,7 +93,11 @@ describe('Arkme Bot tools', () => {
     ) as string
 
     expect(ports.createBot).toHaveBeenCalledWith(
-      { name: '八卦雷达', provider: 'openclaw', description: '高亮八卦', avatar: 'file_asset://avatar-asset-1' },
+      {
+        name: '八卦雷达', provider: 'openclaw', description: '高亮八卦', avatar: 'file_asset://avatar-asset-1',
+        directChatOwner: 'jotmo-chat',
+        requestUid: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
     expect(output).toContain('arkme-bot-v1.created')

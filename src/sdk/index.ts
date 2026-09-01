@@ -1,4 +1,4 @@
-import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
+import { ARKME_CHAT_BOT_DIRECT_OWNER, ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type {
   ArkmeArrangementDetail,
@@ -16,6 +16,7 @@ import type {
   ArkmeBotMentionInput,
   ArkmeBotProvider,
   ArkmeBotSummary,
+  ArkmeChatBotDirectOwner,
   ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
   ArkmeCalendarRecordCursor,
@@ -673,7 +674,14 @@ export class ArkmeSdk {
 
   /** Create a Bot without exposing the Host-owned one-time credential to the Consumer. */
   async createBot(
-    input: { name: string; provider: ArkmeBotProvider; description?: string; avatar?: string },
+    input: {
+      name: string
+      provider: ArkmeBotProvider
+      directChatOwner?: ArkmeChatBotDirectOwner
+      requestUid?: string
+      description?: string
+      avatar?: string
+    },
     signal?: AbortSignal,
   ): Promise<ArkmeBotSummary> {
     const name = input.name.trim()
@@ -686,9 +694,23 @@ export class ArkmeSdk {
     if (avatar !== '' && !isArkmeBotAvatarRef(avatar)) {
       throw new TypeError('Arkme Bot avatar must be a file_asset reference')
     }
+    if (input.directChatOwner !== undefined
+      && (input.directChatOwner !== ARKME_CHAT_BOT_DIRECT_OWNER || input.provider !== 'openclaw')) {
+      throw new TypeError('Arkme Bot direct Chat owner is invalid')
+    }
+    const createsChatOwnedOpenClaw = input.directChatOwner === ARKME_CHAT_BOT_DIRECT_OWNER
+    if (!createsChatOwnedOpenClaw && input.requestUid?.trim()) {
+      throw new TypeError('Arkme Bot creation request id requires an explicit direct Chat owner')
+    }
+    const requestUid = createsChatOwnedOpenClaw ? (input.requestUid?.trim() || crypto.randomUUID()) : ''
+    if (createsChatOwnedOpenClaw
+      && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestUid)) {
+      throw new TypeError('Arkme Bot creation request id must be a UUID')
+    }
     return await this.call<ArkmeBotSummary>('bots.create', {
       name,
       provider: input.provider,
+      ...(createsChatOwnedOpenClaw ? { directChatOwner: ARKME_CHAT_BOT_DIRECT_OWNER, requestUid } : {}),
       ...(description === '' ? {} : { description }),
       ...(avatar === '' ? {} : { avatar }),
     }, signal)

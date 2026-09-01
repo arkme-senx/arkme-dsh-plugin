@@ -9,9 +9,8 @@ import { ArkmeBotSettingsPanel } from '../src/client/ArkmeBotSettingsPanel.js'
 
 const source = readFileSync(new URL('../src/client/ArkmeBotSettingsPanel.tsx', import.meta.url), 'utf8')
 const bot = {
-  botRef: 'chat-bot', name: 'Chat Bot', provider: 'webhook', description: '', status: 'online',
-  directChatAvailable: true, privateChatOutboundEnabled: true, conversationProjection: 'chat',
-  chatSourceKey: 'opaque-source-key',
+  botRef: 'subject-bot', name: 'Subject Bot', provider: 'webhook', description: '', status: 'online',
+  directChatAvailable: true, privateChatOutboundEnabled: false, conversationProjection: 'record',
 } as const
 const profile = {
   ...bot,
@@ -22,7 +21,7 @@ const profile = {
   joinedGroups: [],
 }
 
-describe('ArkmeBotSettingsPanel owner-neutral notification operations', () => {
+describe('ArkmeBotSettingsPanel owner-specific notification operations', () => {
   let renderer: ReactTestRenderer | undefined
 
   beforeEach(() => {
@@ -47,7 +46,7 @@ describe('ArkmeBotSettingsPanel owner-neutral notification operations', () => {
     expect(source).not.toContain('/api/v1/')
   })
 
-  it('loads and updates mute state through the unified Bot conversation contract', async () => {
+  it('loads and updates mute state through the Subject private conversation contract', async () => {
     await act(async () => {
       renderer = create(<ArkmeBotSettingsPanel bot={bot} onClose={() => undefined} onUpdated={() => undefined} onDeleted={() => undefined} />)
       await Promise.resolve()
@@ -56,11 +55,27 @@ describe('ArkmeBotSettingsPanel owner-neutral notification operations', () => {
     await act(async () => { notificationSwitch.props.onClick(); await Promise.resolve() })
 
     expect(mocks.callArkme).toHaveBeenCalledWith(
-      'bots.private-chat.notification.status', { botRef: 'chat-bot' }, expect.any(AbortSignal),
+      'bots.private-chat.notification.status', { botRef: 'subject-bot' }, expect.any(AbortSignal),
     )
     expect(mocks.callArkme).toHaveBeenCalledWith(
-      'bots.private-chat.notification.update', { botRef: 'chat-bot', muted: true },
+      'bots.private-chat.notification.update', { botRef: 'subject-bot', muted: true },
     )
+  })
+
+  it('does not expose the Subject private notification contract for a Chat-owned Bot', async () => {
+    const chatBot = {
+      ...bot,
+      botRef: 'chat-bot',
+      conversationProjection: 'chat' as const,
+      chatSourceKey: 'opaque-source-key',
+    }
+    await act(async () => {
+      renderer = create(<ArkmeBotSettingsPanel bot={chatBot} onClose={() => undefined} onUpdated={() => undefined} onDeleted={() => undefined} />)
+      await Promise.resolve()
+    })
+
+    expect(mocks.callArkme.mock.calls.filter(call => String(call[0]).startsWith('bots.private-chat.notification.'))).toEqual([])
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('消息免打扰')
   })
 
   it('admits only one notification policy write while the owner acknowledgement is pending', async () => {

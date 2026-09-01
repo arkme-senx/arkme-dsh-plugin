@@ -8,6 +8,7 @@ type AdapterFactory = (options: {
   run: (args: readonly string[], options?: { stdin?: string }) => Promise<RunResult>
 }) => {
   preflight: () => Promise<{ status: string; version?: string; gateway?: string }>
+  ensureChannel: (input: { installed: boolean; targetVersion: '0.1.12' | '0.1.13' }) => Promise<{ changed: boolean; installedVersion?: string }>
 }
 
 function adapterFactory(): AdapterFactory {
@@ -15,6 +16,54 @@ function adapterFactory(): AdapterFactory {
 }
 
 describe('OpenClawCliAdapter', () => {
+  it('uses the official nested inspect version after installing the pinned Channel', async () => {
+    const createAdapter = adapterFactory()
+    const calls: string[] = []
+    const adapter = createAdapter({
+      profile: 'dev',
+      async run(args) {
+        const command = args.slice(2).join(' ')
+        calls.push(command)
+        if (command === 'plugins install @jotmo/openclaw-channel@0.1.13 --pin') {
+          return { exitCode: 0, stdout: '', stderr: '' }
+        }
+        if (command === 'plugins inspect jotmo-openclaw-channel --json') {
+          return { exitCode: 0, stdout: '{"plugin":{"version":"0.1.13"}}', stderr: '' }
+        }
+        return { exitCode: 2, stdout: '', stderr: `unexpected command: ${command}` }
+      },
+    })
+    await expect(adapter.ensureChannel({ installed: false, targetVersion: '0.1.13' })).resolves.toEqual({ changed: true, installedVersion: '0.1.13' })
+    expect(calls).toEqual([
+      'plugins install @jotmo/openclaw-channel@0.1.13 --pin',
+      'plugins inspect jotmo-openclaw-channel --json',
+    ])
+  })
+
+  it('updates an installed Channel and rejects non-official version shapes', async () => {
+    const createAdapter = adapterFactory()
+    const calls: string[] = []
+    const adapter = createAdapter({
+      profile: 'dev',
+      async run(args) {
+        const command = args.slice(2).join(' ')
+        calls.push(command)
+        if (command === 'plugins update @jotmo/openclaw-channel@0.1.13') {
+          return { exitCode: 0, stdout: '', stderr: '' }
+        }
+        if (command === 'plugins inspect jotmo-openclaw-channel --json') {
+          return { exitCode: 0, stdout: '{"version":"0.1.13"}', stderr: '' }
+        }
+        return { exitCode: 2, stdout: '', stderr: `unexpected command: ${command}` }
+      },
+    })
+    await expect(adapter.ensureChannel({ installed: true, targetVersion: '0.1.13' })).resolves.toEqual({ changed: true })
+    expect(calls).toEqual([
+      'plugins update @jotmo/openclaw-channel@0.1.13',
+      'plugins inspect jotmo-openclaw-channel --json',
+    ])
+  })
+
   it('reports a missing OpenClaw binary as an actionable prerequisite failure', async () => {
     const adapter = adapterFactory()({
       profile: 'dev',
@@ -38,7 +87,7 @@ describe('OpenClawCliAdapter', () => {
     }) as unknown as import('../src/openclaw/index.js').OpenClawCliPort
 
     await expect(adapter.inspect({ agentId: 'arkme-bot-abc', accountId: 'arkme-bot-abc', gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway' })).resolves.toEqual({ channel: false, agent: false, account: false, accountGateway: false, binding: false })
-    await adapter.ensureChannel()
+    await adapter.ensureChannel({ installed: false, targetVersion: '0.1.12' })
     await adapter.ensureAgent({ agentId: 'arkme-bot-abc', workspaceRef: '/owned/arkme-bot-abc' })
     await adapter.ensureAccountSecretRef({ accountId: 'arkme-bot-abc', secretRef: { provider: 'arkme-bot-abc', source: 'file', id: 'value', providerPath: '/owned/secrets/abc.secret' } })
     await adapter.ensureAccountGatewayUrl({ accountId: 'arkme-bot-abc', gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway' })
@@ -56,7 +105,7 @@ describe('OpenClawCliAdapter', () => {
       profile: 'dev',
       async run(args) {
         const command = args.slice(2).join(' ')
-        if (command === 'plugins inspect jotmo-openclaw-channel --json') return { exitCode: 0, stdout: '{}', stderr: '' }
+        if (command === 'plugins inspect jotmo-openclaw-channel --json') return { exitCode: 0, stdout: '{"plugin":{"version":"0.1.13"}}', stderr: '' }
         if (command === 'agents list --json') return { exitCode: 0, stdout: '[{"id":"arkme-bot-abc"}]', stderr: '' }
         if (command.startsWith('config get ')) return { exitCode: 0, stdout: '{"gatewayUrl":"wss://bot.test/ws/v1/bot/gateway"}', stderr: '' }
         if (command === 'agents bindings --json') return { exitCode: 0, stdout: '[{"agentId":"arkme-bot-abc","match":{"channel":"jotmo","accountId":"arkme-bot-abc"}}]', stderr: '' }
@@ -64,7 +113,7 @@ describe('OpenClawCliAdapter', () => {
       },
     }) as unknown as import('../src/openclaw/index.js').OpenClawCliPort
     await expect(adapter.inspect({ agentId: 'arkme-bot-abc', accountId: 'arkme-bot-abc', gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway' })).resolves.toEqual({
-      channel: true, agent: true, account: true, accountGateway: true, binding: true,
+      channel: true, channelVersion: '0.1.13', agent: true, account: true, accountGateway: true, binding: true,
     })
   })
   it('rejects an empty host-configured profile without invoking OpenClaw', async () => {

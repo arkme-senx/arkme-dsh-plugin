@@ -740,11 +740,15 @@ describe('outgoing call Host API dispatch', () => {
     })
     await dispatchArkmeHostOperation(service as never, 'bots.create', {
       name: '总结助手', provider: 'openclaw', description: '总结群聊',
-      avatar: 'file_asset://avatar-asset-1', token: 'must-not-forward',
+      directChatOwner: 'jotmo-chat',
+      avatar: 'file_asset://avatar-asset-1', requestUid: '11111111-1111-4111-8111-111111111111',
+      token: 'must-not-forward',
     })
     expect(service.createGroup).toHaveBeenCalledWith('项目群', 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b')
     expect(service.createBotSummary).toHaveBeenCalledWith({
       name: '总结助手', provider: 'openclaw', description: '总结群聊', avatar: 'file_asset://avatar-asset-1',
+      directChatOwner: 'jotmo-chat',
+      requestUid: '11111111-1111-4111-8111-111111111111',
     })
 
     await expect(dispatchArkmeHostOperation(service as never, 'bots.create', {
@@ -754,6 +758,10 @@ describe('outgoing call Host API dispatch', () => {
     await expect(dispatchArkmeHostOperation(service as never, 'bots.create', {
       name: '错误头像 Bot', provider: 'openclaw', avatar: 'https://untrusted.example/avatar.png',
     })).rejects.toMatchObject({ code: 'bot-avatar-invalid' })
+
+    await expect(dispatchArkmeHostOperation(service as never, 'bots.create', {
+      name: '错误 owner Bot', provider: 'openclaw', directChatOwner: 'jotmo-subject',
+    })).rejects.toMatchObject({ code: 'bot-direct-chat-owner-invalid' })
   })
 
   it('rejects an unknown outgoing media type before calling the service', async () => {

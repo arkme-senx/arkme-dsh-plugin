@@ -1,3 +1,5 @@
+import type { OpenClawChannelVersion } from './types.js'
+
 export interface OpenClawCommandResult {
   exitCode: number
   stdout: string
@@ -16,7 +18,7 @@ export type OpenClawPreflightResult =
 export interface OpenClawCliAdapter {
   preflight(options?: { signal?: AbortSignal }): Promise<OpenClawPreflightResult>
   inspect(input: { agentId: string; accountId: string; gatewayUrl: string }, options?: { signal?: AbortSignal }): Promise<import('./types.js').OpenClawLocalResources>
-  ensureChannel(options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
+  ensureChannel(input: { installed: boolean; targetVersion: OpenClawChannelVersion }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean; installedVersion?: string }>
   ensureAgent(input: { agentId: string; workspaceRef: string }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
   ensureAccountSecretRef(input: { accountId: string; secretRef: import('./types.js').OpenClawSecretRef }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
   ensureAccountGatewayUrl(input: { accountId: string; gatewayUrl: string }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
@@ -25,7 +27,9 @@ export interface OpenClawCliAdapter {
   restartGateway(options?: { signal?: AbortSignal }): Promise<'restarted' | 'service_not_installed'>
 }
 
-const JOTMO_CHANNEL_PACKAGE = '@jotmo/openclaw-channel@0.1.12'
+function jotmoChannelPackage(version: OpenClawChannelVersion): string {
+  return `@jotmo/openclaw-channel@${version}`
+}
 
 function assertSucceeded(result: OpenClawCommandResult, operation: string): void {
   if (result.exitCode !== 0) throw new Error(`OpenClaw ${operation} failed`)
@@ -64,6 +68,19 @@ function jsonHasGatewayUrl(stdout: string, expected: string): boolean {
       && (value as Record<string, unknown>).gatewayUrl === expected
   } catch {
     return false
+  }
+}
+
+function channelVersion(stdout: string): string | undefined {
+  try {
+    const value = JSON.parse(stdout) as unknown
+    if (value === null || typeof value !== 'object') return undefined
+    const plugin = (value as Record<string, unknown>).plugin
+    if (plugin === null || typeof plugin !== 'object') return undefined
+    const version = (plugin as Record<string, unknown>).version
+    return typeof version === 'string' && version.trim() !== '' ? version.trim() : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -129,18 +146,30 @@ export function createOpenClawCliAdapter(options: {
         options.run(profileArgs(profile, 'config', 'get', `channels.jotmo.accounts.${input.accountId}`), runOptions),
         options.run(profileArgs(profile, 'agents', 'bindings', '--json'), runOptions),
       ])
+      const installedChannelVersion = channel.exitCode === 0 ? channelVersion(channel.stdout) : undefined
       return {
         channel: channel.exitCode === 0,
+        ...(installedChannelVersion === undefined ? {} : { channelVersion: installedChannelVersion }),
         agent: agents.exitCode === 0 && jsonContainsExactString(agents.stdout, input.agentId),
         account: account.exitCode === 0,
         accountGateway: account.exitCode === 0 && jsonHasGatewayUrl(account.stdout, input.gatewayUrl),
         binding: bindings.exitCode === 0 && jsonHasBinding(bindings.stdout, input.agentId, input.accountId),
       }
     },
-    async ensureChannel(runOptions) {
-      const result = await options.run(profileArgs(profile, 'plugins', 'install', JOTMO_CHANNEL_PACKAGE, '--pin'), runOptions)
-      assertSucceeded(result, 'channel install')
-      return { changed: true }
+    async ensureChannel(input, runOptions) {
+      const channelPackage = jotmoChannelPackage(input.targetVersion)
+      const result = input.installed
+        ? await options.run(profileArgs(profile, 'plugins', 'update', channelPackage), runOptions)
+        : await options.run(profileArgs(profile, 'plugins', 'install', channelPackage, '--pin'), runOptions)
+      assertSucceeded(result, input.installed ? 'channel update' : 'channel install')
+      const inspection = await options.run(
+        profileArgs(profile, 'plugins', 'inspect', 'jotmo-openclaw-channel', '--json'), runOptions,
+      )
+      const installedVersion = inspection.exitCode === 0 ? channelVersion(inspection.stdout) : undefined
+      return {
+        changed: true,
+        ...(installedVersion === undefined ? {} : { installedVersion }),
+      }
     },
     async ensureAgent(input, runOptions) {
       const result = await options.run(profileArgs(profile, 'agents', 'add', input.agentId, '--non-interactive', '--workspace', input.workspaceRef, '--json'), runOptions)

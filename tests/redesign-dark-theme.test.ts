@@ -51,7 +51,7 @@ describe('Arkme redesign dark theme', () => {
         }
       }
     }
-    expect(contactsClasses.size).toBe(83)
+    expect(contactsClasses.size).toBe(85)
     for (const className of contactsClasses) {
       const rule = redesignCss.match(new RegExp(`\\.${className}(?:[\\s,:.#\\[>+~-][^{}]*)?\\{([^{}]+)\\}`))
       expect(rule, `${className} must have a CSS rule with declarations`).not.toBeNull()

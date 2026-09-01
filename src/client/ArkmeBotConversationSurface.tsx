@@ -14,6 +14,7 @@ import { ArkmeBotSettingsPanel } from './ArkmeBotSettingsPanel.js'
 import { arkmeUi } from './ui-controller.js'
 import { ArkmeLinkText } from './ArkmeLinkText.js'
 import { arkmeConversationComposerHeight, arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
+import { botUsesPrivateConversationSurface } from './bot-conversation-routing.js'
 
 const styles: Record<string, CSSProperties> = {
   shell: { width: '100%', height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: arkmeTheme.base },
@@ -111,9 +112,8 @@ export function ArkmeBotConversationSurface({
   const readInFlightRef = useRef<{ botRef: string; sequence: number }>()
   const confirmedReadRef = useRef<{ botRef: string; sequence: number }>()
   const activeRef = useRef(true)
-  const conversationRevision = bot.conversationProjection === 'record'
-    ? ui.recordRevision
-    : bot.conversationProjection === 'chat' ? ui.chatRevision : 0
+  const privateSurfaceAvailable = botUsesPrivateConversationSurface(bot)
+  const conversationRevision = ui.recordRevision
 
   useEffect(() => {
     activeRef.current = true
@@ -121,6 +121,14 @@ export function ArkmeBotConversationSurface({
   }, [])
 
   useEffect(() => {
+    if (!privateSurfaceAvailable) {
+      loadedBotRef.current = undefined
+      pendingConfirmedMessagesRef.current.clear()
+      setMessages([])
+      setError('')
+      setLoading(false)
+      return
+    }
     const controller = new AbortController()
     const initialLoad = loadedBotRef.current !== bot.botRef
     if (initialLoad) {
@@ -168,7 +176,7 @@ export function ArkmeBotConversationSurface({
       .catch(caught => { if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : String(caught)) })
       .finally(() => { if (!controller.signal.aborted && initialLoad) setLoading(false) })
     return () => { controller.abort() }
-  }, [bot.botRef, conversationRevision])
+  }, [bot.botRef, conversationRevision, privateSurfaceAvailable])
 
   useEffect(() => { bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight }) }, [messages.length])
   useEffect(() => {
@@ -180,7 +188,7 @@ export function ArkmeBotConversationSurface({
 
   const send = async () => {
     const content = draft.trim()
-    if (content === '' || sendInFlightRef.current) return
+    if (!privateSurfaceAvailable || content === '' || sendInFlightRef.current) return
     sendInFlightRef.current = true
     setSending(true)
     setError('')
@@ -203,14 +211,14 @@ export function ArkmeBotConversationSurface({
     }
   }
 
-  const privateChatUnavailable = !bot.directChatAvailable
-  const privateChatInboundOnly = bot.directChatAvailable && bot.privateChatOutboundEnabled === false
+  const privateChatUnavailable = !privateSurfaceAvailable
+  const privateChatInboundOnly = privateSurfaceAvailable && bot.privateChatOutboundEnabled === false
 
   return <section style={styles.shell} aria-label={`${bot.name} Bot 对话`}>
     <header style={styles.header}>
       <span style={styles.avatar} aria-hidden><RobotIcon size={20} weight="fill" /></span>
       <span style={styles.title}><span>{bot.name}</span><span style={styles.badge}>BOT</span></span>
-      <button type="button" aria-label="Bot 设置" title="Bot 设置" style={styles.settings} onClick={() => { setSettingsOpen(true) }}><GearSix size={20} /></button>
+      {privateSurfaceAvailable && <button type="button" aria-label="Bot 设置" title="Bot 设置" style={styles.settings} onClick={() => { setSettingsOpen(true) }}><GearSix size={20} /></button>}
     </header>
     <div ref={bodyRef} style={styles.body}>
       {error !== '' && <div role="alert" style={styles.error}>{error}</div>}
@@ -223,7 +231,9 @@ export function ArkmeBotConversationSurface({
           </div></div>)}</div>}
     </div>
     {privateChatUnavailable || privateChatInboundOnly ? <footer className="arkme-conversation-composer" style={styles.composer}><div className="arkme-conversation-composer-inner" style={styles.composerInner}>
-      <div role="note" style={styles.loading}>{privateChatUnavailable ? '当前 Bot 会话暂不可用' : 'Webhook Bot 仅接收外部系统推送'}</div>
+      <div role="note" style={styles.loading}>{privateChatUnavailable
+        ? '当前 Bot 会话暂不可用'
+        : 'Webhook Bot 仅接收外部系统推送'}</div>
     </div></footer> : <footer className="arkme-conversation-composer" style={styles.composer}><div className="arkme-conversation-composer-inner" style={styles.composerInner}>
       <textarea
         ref={inputRef} value={draft} disabled={sending} style={styles.input} rows={1} maxLength={20_000}
@@ -244,6 +254,6 @@ export function ArkmeBotConversationSurface({
         </button>
       </div>
     </div></footer>}
-    {settingsOpen && <ArkmeBotSettingsPanel bot={bot} onClose={() => { setSettingsOpen(false) }} onUpdated={updated => { onConversationActivity?.(updated); setSettingsOpen(false) }} onDeleted={() => { setSettingsOpen(false); onDeleted?.() }} />}
+    {privateSurfaceAvailable && settingsOpen && <ArkmeBotSettingsPanel bot={bot} onClose={() => { setSettingsOpen(false) }} onUpdated={updated => { onConversationActivity?.(updated); setSettingsOpen(false) }} onDeleted={() => { setSettingsOpen(false); onDeleted?.() }} />}
   </section>
 }

@@ -20,7 +20,11 @@ function fixture(overrides: Partial<OpenClawCliPort> = {}) {
   const cli: OpenClawCliPort = {
     async preflight() { return { status: 'ready', version: '2026.7.1-2', gateway: 'reachable' } },
     async inspect() { calls.push('inspect'); return resources },
-    async ensureChannel() { calls.push('channel'); resources = { ...resources, channel: true }; return { changed: true } },
+    async ensureChannel(input) {
+      calls.push(`channel:${input.installed ? 'update' : 'install'}:${input.targetVersion}`)
+      resources = { ...resources, channel: true, channelVersion: input.targetVersion }
+      return { changed: true, installedVersion: input.targetVersion }
+    },
     async ensureAgent(input) { calls.push(`agent:${input.agentId}:${input.workspaceRef}`); resources = { ...resources, agent: true }; return { changed: true } },
     async ensureAccountSecretRef(input) { calls.push(`account:${input.accountId}:${input.secretRef.provider}`); resources = { ...resources, account: true }; return { changed: true } },
     async ensureAccountGatewayUrl(input) { calls.push(`gateway-url:${input.accountId}:${input.gatewayUrl}`); resources = { ...resources, accountGateway: true }; return { changed: true } },
@@ -45,6 +49,67 @@ function secretStoreFixture(): OpenClawSecretStore {
 }
 
 describe('OpenClawProvisioner', () => {
+  it('checks only non-mutating local prerequisites before Chat-owned Bot creation', async () => {
+    const secretStore = secretStoreFixture()
+    const missing = fixture({ async preflight() { return { status: 'profile_not_found' } } })
+    const blocked = createOpenClawProvisioner({ cli: missing.cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
+    await expect(blocked.chatOwnedCreatePreflight()).resolves.toEqual({ status: 'blocked', reason: 'profile' })
+
+    const readyFixture = fixture()
+    const ready = createOpenClawProvisioner({ cli: readyFixture.cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
+    await expect(ready.chatOwnedCreatePreflight()).resolves.toEqual({ status: 'ready' })
+  })
+
+  it('upgrades an installed stale Channel before touching Bot secrets', async () => {
+    const { cli, calls, setResources } = fixture()
+    setResources({ channel: true, channelVersion: '0.1.12', agent: true, account: true, accountGateway: true, binding: true })
+    let reveals = 0
+    const provisioner = createOpenClawProvisioner({ cli, secretStore: secretStoreFixture(), workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
+
+    await expect(provisioner.reconcile({
+      botRef: 'opaque.bot.alpha', runtimeContract: 'chat_direct_v1',
+      resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'unused' }),
+      revealSecret: async () => { reveals += 1; return new SecretValue('unused') },
+    })).resolves.toMatchObject({ status: 'gateway_restart_confirmation_required' })
+    expect(calls).toEqual(['inspect', 'channel:update:0.1.13'])
+    expect(reveals).toBe(0)
+  })
+
+  it('fails closed when the pinned Channel still lacks the required Chat owner contract', async () => {
+    const { cli, calls } = fixture({
+      async ensureChannel(input) {
+        calls.push(`channel:${input.installed ? 'update' : 'install'}:${input.targetVersion}`)
+        return { changed: true, installedVersion: '0.1.12' }
+      },
+    })
+    let reveals = 0
+    const provisioner = createOpenClawProvisioner({ cli, secretStore: secretStoreFixture(), workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
+
+    await expect(provisioner.reconcile({
+      botRef: 'opaque.bot.alpha', runtimeContract: 'chat_direct_v1',
+      resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'unused' }),
+      revealSecret: async () => { reveals += 1; return new SecretValue('unused') },
+    })).resolves.toEqual({ status: 'prerequisite_failed', reason: 'channel_contract' })
+    expect(calls).toEqual(['inspect', 'channel:install:0.1.13'])
+    expect(reveals).toBe(0)
+  })
+
+  it('keeps a missing Subject-owner Channel on the existing stable version', async () => {
+    const { cli, calls } = fixture()
+    const provisioner = createOpenClawProvisioner({
+      cli, secretStore: secretStoreFixture(), workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false,
+    })
+
+    await expect(provisioner.reconcile({
+      botRef: 'opaque.subject.bot',
+      runtimeContract: 'subject_private_v1',
+      resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'unused' }),
+      revealSecret: async () => new SecretValue('unused'),
+    })).resolves.toMatchObject({ status: 'gateway_restart_confirmation_required' })
+    expect(calls[0]).toBe('inspect')
+    expect(calls[1]).toBe('channel:install:0.1.12')
+  })
+
   it('stops at preflight without reading or persisting a Bot secret', async () => {
     const writes: string[] = []
     const secretStore = secretStoreFixture()
@@ -52,7 +117,7 @@ describe('OpenClawProvisioner', () => {
     const { cli } = fixture({ async preflight() { return { status: 'profile_not_found' } } })
     const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
 
-    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'never' }), revealSecret: async () => new SecretValue('never') }))
+    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', runtimeContract: 'subject_private_v1', resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'never' }), revealSecret: async () => new SecretValue('never') }))
       .resolves.toEqual({ status: 'profile_not_found' })
     expect(writes).toEqual([])
   })
@@ -69,7 +134,7 @@ describe('OpenClawProvisioner', () => {
       },
     }
     const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
-    const result = await provisioner.reconcile({ botRef: 'opaque.bot.alpha', resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'top-secr...cret' }), revealSecret: async () => new SecretValue('top-secret') })
+    const result = await provisioner.reconcile({ botRef: 'opaque.bot.alpha', runtimeContract: 'subject_private_v1', resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'top-secr...cret' }), revealSecret: async () => new SecretValue('top-secret') })
 
     expect(result).toMatchObject({ status: 'gateway_restart_confirmation_required' })
     expect(JSON.stringify(result)).not.toContain('top-secret')
@@ -88,7 +153,7 @@ describe('OpenClawProvisioner', () => {
     secretStore.persist = async () => { throw new Error('must not persist') }
     const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => true })
 
-    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'unused' }), revealSecret: async () => { reveals++; return new SecretValue('unused') } }))
+    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', runtimeContract: 'subject_private_v1', resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'unused' }), revealSecret: async () => { reveals++; return new SecretValue('unused') } }))
       .resolves.toMatchObject({ status: 'runtime_online' })
     expect(reveals).toBe(0)
     expect(calls).toEqual(['inspect'])
@@ -100,7 +165,7 @@ describe('OpenClawProvisioner', () => {
     const secretStore = secretStoreFixture()
     const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
 
-    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'secret' }), revealSecret: async () => new SecretValue('secret') }))
+    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', runtimeContract: 'subject_private_v1', resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'secret' }), revealSecret: async () => new SecretValue('secret') }))
       .rejects.toThrow('bind failed')
     expect(calls).toEqual([
       'inspect',
@@ -117,7 +182,7 @@ describe('OpenClawProvisioner', () => {
       const { cli } = fixture({ async ensureAgent(input) { ids.push(input.agentId); return { changed: true } } })
       const secretStore = secretStoreFixture()
       return createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
-        .reconcile({ botRef, resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'secret' }), revealSecret: async () => new SecretValue('secret') })
+        .reconcile({ botRef, runtimeContract: 'subject_private_v1', resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'secret' }), revealSecret: async () => new SecretValue('secret') })
     }
     await run('opaque.bot.alpha')
     await run('opaque.bot.beta')
@@ -131,7 +196,7 @@ describe('OpenClawProvisioner', () => {
     secretStore.persist = async () => { throw new Error('must not persist') }
     const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
 
-    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'unused' }), revealSecret: async () => new SecretValue('unused') }))
+    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', runtimeContract: 'subject_private_v1', resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'unused' }), revealSecret: async () => new SecretValue('unused') }))
       .resolves.toMatchObject({ status: 'connected_unverified' })
   })
 
@@ -140,7 +205,7 @@ describe('OpenClawProvisioner', () => {
     const secretStore = secretStoreFixture()
     const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => true })
 
-    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', allowGatewayRestart: true, resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'secret' }), revealSecret: async () => new SecretValue('secret') }))
+    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', runtimeContract: 'subject_private_v1', allowGatewayRestart: true, resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'secret' }), revealSecret: async () => new SecretValue('secret') }))
       .resolves.toMatchObject({ status: 'runtime_online' })
     expect(calls).toContain('restart')
   })
@@ -154,7 +219,7 @@ describe('OpenClawProvisioner', () => {
     await secretStore.markRestartRequired('902c9cd4cd1d2046')
     const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
 
-    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', allowGatewayRestart: true, resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'unused' }), revealSecret: async () => new SecretValue('unused') }))
+    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', runtimeContract: 'subject_private_v1', allowGatewayRestart: true, resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'unused' }), revealSecret: async () => new SecretValue('unused') }))
       .resolves.toEqual({ status: 'prerequisite_failed', reason: 'gateway_service' })
     expect(await secretStore.isRestartRequired('902c9cd4cd1d2046')).toBe(true)
   })
@@ -168,6 +233,7 @@ describe('OpenClawProvisioner', () => {
 
     await expect(provisioner.reconcile({
       botRef: 'opaque.bot.alpha',
+      runtimeContract: 'subject_private_v1',
       resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'unused' }),
       revealSecret: async () => { reveals++; return new SecretValue('unused') },
     })).resolves.toMatchObject({ status: 'gateway_restart_confirmation_required' })
@@ -188,6 +254,7 @@ describe('OpenClawProvisioner', () => {
 
     await expect(provisioner.reconcile({
       botRef: 'opaque.bot.alpha',
+      runtimeContract: 'subject_private_v1',
       resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'new-toke...oken' }),
       revealSecret: async () => new SecretValue('new-token'),
     })).resolves.toMatchObject({ status: 'gateway_restart_confirmation_required' })

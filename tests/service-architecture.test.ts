@@ -88,9 +88,26 @@ function publicMethodNames(path: string): string[] {
     .sort()
 }
 
+function explicitStringUnionMembers(path: string, aliasName: string): string[] {
+  const source = readFileSync(path, 'utf8')
+  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const alias = file.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === aliasName)
+  if (alias === undefined || !ts.isTypeAliasDeclaration(alias)) throw new Error(`${aliasName} type alias not found`)
+  const members = ts.isUnionTypeNode(alias.type) ? alias.type.types : [alias.type]
+  return members.flatMap(member => ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal)
+    ? [member.literal.text]
+    : [])
+}
+
 describe('Arkme service architecture', () => {
   it('preserves the public facade method contract', () => {
     expect(publicMethodNames(join(root, 'src/arkme-service.ts'))).toEqual(expectedPublicMethods)
+  })
+
+  it('keeps the internal create preflight out of both browser operation contracts', () => {
+    const typesPath = join(root, 'src/types.ts')
+    expect(explicitStringUnionMembers(typesPath, 'ArkmePluginOperation')).not.toContain('bots.create.preflight')
+    expect(explicitStringUnionMembers(typesPath, 'ArkmeHostOperation')).not.toContain('bots.create.preflight')
   })
 
   it('has a services runtime root', () => {
@@ -124,14 +141,30 @@ describe('Arkme service architecture', () => {
     expect(arkmeService).not.toContain('BOT_CONVERSATION_OWNER')
   })
 
-  it('keeps owner-specific Bot conversation transport behind a narrow adapter interface', () => {
+  it('keeps Bot business dependent on a narrow OpenClaw runtime port instead of its factory', () => {
+    const botService = readFileSync(join(root, 'src/services/bot-service.ts'), 'utf8')
+    expect(botService).toContain('export interface OpenClawBotRuntimePort')
+    expect(botService).not.toContain('createOpenClawProvisioner')
+    expect(botService).not.toContain('ReturnType<')
+    expect(botService).not.toMatch(/from ['"]\.\.\/openclaw\//)
+  })
+
+  it('keeps Chat-owned Bots on the canonical Chat source and the private Bot surface Subject-only', () => {
     const conversation = readFileSync(join(root, 'src/services/bot-conversation-service.ts'), 'utf8')
     const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
-    expect(conversation).toContain('interface BotConversationOwnerAdapter')
+    const chat = readFileSync(join(root, 'src/services/chat-service.ts'), 'utf8')
     expect(conversation).toContain('interface BotConversationRegistryPort')
-    expect(conversation).toContain('interface ChatBotConversationPort')
-    expect(conversation).toContain('class SubjectBotConversationAdapter implements BotConversationOwnerAdapter')
-    expect(conversation).toContain('class ChatBotConversationAdapter implements BotConversationOwnerAdapter')
+    expect(conversation).toContain('class SubjectBotConversationAdapter')
+    expect(conversation).toContain('bot-conversation-standard-chat-required')
+    expect(conversation).not.toContain('interface BotConversationOwnerAdapter')
+    expect(conversation).not.toContain('interface ChatBotConversationPort')
+    expect(conversation).not.toContain('class ChatBotConversationAdapter')
+    expect(conversation).not.toContain('authenticatedChatPost')
+    expect(chat).not.toContain('readDirectBotConversation')
+    expect(chat).not.toContain('sendDirectBotText')
+    expect(chat).not.toContain('directBotNotificationPreference')
+    expect(chat).not.toContain('updateDirectBotNotificationPreference')
+    expect(chat).not.toContain('markDirectBotRead')
     expect(facade).not.toMatch(/\/api\/v1\/(bot\/private-chat|chat\/timeline)/)
   })
 

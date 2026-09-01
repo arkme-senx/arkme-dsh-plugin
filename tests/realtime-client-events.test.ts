@@ -3,26 +3,24 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
+import { arkmeCalendarInvalidations } from '../src/client/calendar-invalidation-store.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
 import {
   arkmeChatDeltaCalendarDateStamps,
   arkmeChatDeltaSourceKeys,
-  arkmeSelectedBotAffectedByChatDelta,
   useArkmeRealtimeClientEvents,
 } from '../src/client/realtime-client-events.js'
-import type { ArkmeBotSummary, ArkmeChatClientEvent } from '../src/types.js'
+import type { ArkmeChatClientEvent } from '../src/types.js'
 
-const selectedBot: ArkmeBotSummary = {
-  botRef: 'bot-ref', name: 'Chat Bot', provider: 'webhook', description: '', status: 'online',
-  directChatAvailable: true, privateChatOutboundEnabled: true, conversationProjection: 'chat',
-  chatSourceKey: 'selected-chat-key',
-}
 const delta: Extract<ArkmeChatClientEvent, { type: 'sessions-delta' }> = {
   type: 'sessions-delta', revision: 1,
   updates: [{
     sourceKey: 'selected-chat-key',
     source: { sourceRef: 'source-ref', sourceKey: 'selected-chat-key', kind: 'private_chat', displayName: 'Chat', activeAtMillis: 1, unreadCount: 1 },
-    timelineItems: [],
+    timelineItems: [{
+      itemUid: 'message-1', senderName: 'Bot', isMe: false, sendAtMillis: 1,
+      title: '', textContent: '新的标准时间线消息', status: 1,
+    }],
   }],
 }
 
@@ -31,29 +29,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('Chat-owned Bot realtime invalidation', () => {
-  it('matches only an exact opaque source key for the currently selected Chat Bot', () => {
-    expect(arkmeSelectedBotAffectedByChatDelta(selectedBot, delta)).toBe(true)
-    expect(arkmeSelectedBotAffectedByChatDelta(
-      { ...selectedBot, chatSourceKey: 'other-key' }, delta,
-    )).toBe(false)
-    expect(arkmeSelectedBotAffectedByChatDelta(
-      { ...selectedBot, conversationProjection: 'record', chatSourceKey: undefined }, delta,
-    )).toBe(false)
-    expect(arkmeSelectedBotAffectedByChatDelta(undefined, delta)).toBe(false)
-  })
-
-  it('does not infer identity from source refs or missing keys', () => {
-    expect(arkmeSelectedBotAffectedByChatDelta(selectedBot, {
-      ...delta,
-      updates: [{ ...delta.updates[0]!, sourceKey: undefined, source: { ...delta.updates[0]!.source, sourceRef: 'selected-chat-key', sourceKey: undefined } }],
-    })).toBe(false)
-    expect(arkmeSelectedBotAffectedByChatDelta(selectedBot, {
-      ...delta,
-      updates: [{ ...delta.updates[0]!, source: { ...delta.updates[0]!.source, kind: 'group_chat' } }],
-    })).toBe(false)
-  })
-
+describe('standard Chat realtime invalidation', () => {
   it('derives the exact scoped invalidation keys carried by a sessions delta', () => {
     expect(arkmeChatDeltaSourceKeys({
       ...delta,
@@ -116,6 +92,37 @@ describe('realtime reconcile routing', () => {
     expect(source.url).toBe('/arkme-self/api/events')
     expect(invalidate).toHaveBeenCalledOnce()
     expect(refreshRoot).not.toHaveBeenCalled()
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('routes a standard Chat Bot timeline delta into scoped Calendar invalidation', async () => {
+    let source!: FakeEventSource
+    class FakeEventSource {
+      onopen: (() => void) | null = null
+      onmessage: ((event: MessageEvent<string>) => void) | null = null
+      constructor(readonly url: string) { source = this }
+      close() {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+    vi.spyOn(arkmeMessageReadReceipts, 'reconcile').mockImplementation(() => undefined)
+    const publishCalendar = vi.spyOn(arkmeCalendarInvalidations, 'publish')
+
+    function Harness() {
+      useArkmeRealtimeClientEvents({
+        status: 'authenticated', revision: 1, userId: 10001, environment: 'prod',
+      }, 1, false)
+      return null
+    }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(createElement(Harness)) })
+
+    await act(async () => {
+      source.onmessage?.({ data: JSON.stringify(delta) } as MessageEvent<string>)
+      await Promise.resolve()
+    })
+
+    expect(publishCalendar).toHaveBeenCalledWith({ dateStamp: 1 })
     await act(async () => { renderer.unmount() })
   })
 })

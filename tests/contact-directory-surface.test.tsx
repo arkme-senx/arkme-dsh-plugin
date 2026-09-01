@@ -151,6 +151,29 @@ describe('ContactDirectorySurface content', () => {
     expect(botMarkup).not.toContain('<small>Bot</small>')
   })
 
+  it('keeps opening a Bot conversation and managing that Bot as separate actions', () => {
+    const onOpenBot = vi.fn()
+    const onManageBot = vi.fn()
+    const renderer = create(<DirectoryItemRow
+      item={items.bots[0]!}
+      selected={false}
+      onOpenGroup={() => undefined}
+      onOpenBot={onOpenBot}
+      onManageBot={onManageBot}
+      onSelect={() => undefined}
+    />)
+
+    const openButton = renderer.root.findByProps({ 'data-directory-row-kind': 'bot' })
+    const manageButton = renderer.root.findByProps({ 'aria-label': '管理旅行助手' })
+    openButton.props.onClick()
+    manageButton.props.onClick()
+
+    expect(onOpenBot).toHaveBeenCalledOnce()
+    expect(onOpenBot).toHaveBeenCalledWith(botSummary)
+    expect(onManageBot).toHaveBeenCalledOnce()
+    expect(onManageBot).toHaveBeenCalledWith(botSummary)
+  })
+
   it('renders contacts as one line with remark, nickname, then display name priority', () => {
     const renderContact = (item: Extract<ArkmeDirectoryItem, { kind: 'contact' }>) => renderToStaticMarkup(<DirectoryItemRow
       item={item}
@@ -392,6 +415,41 @@ describe('ContactDirectorySurface content', () => {
     ])
     expect(renderer.root.findByProps({ 'data-directory-section': 'unmarked-speakers' })
       .findByType('button').props['aria-expanded']).toBe(false)
+  })
+
+  it('refreshes only the Bot projection after a Bot management mutation', async () => {
+    const events = new EventTarget()
+    vi.stubGlobal('window', events)
+    const loadPage = vi.fn(async (section: ArkmeDirectorySectionKind): Promise<ArkmeDirectoryPage> => ({
+      section, items: section === 'bots' ? items.bots : [], total: section === 'bots' ? 1 : 0, hasMore: false,
+    }))
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => {
+        renderer = create(<ContactDirectorySurface
+          accountKey="account-a"
+          onSelectionChange={() => undefined}
+          onOpenGroup={() => undefined}
+          onOpenBot={() => undefined}
+          onManageBot={() => undefined}
+          loadPage={loadPage}
+        />)
+        await Promise.resolve()
+      })
+      loadPage.mockClear()
+
+      await act(async () => {
+        events.dispatchEvent(new Event('arkme-bot-updated'))
+        await Promise.resolve()
+      })
+
+      expect(loadPage.mock.calls.map(([section, options]) => [section, options])).toEqual([
+        ['bots', { limit: 50 }],
+      ])
+    } finally {
+      renderer?.unmount()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('keeps stale cached rows visible while replacing loaded sections in the background', async () => {
