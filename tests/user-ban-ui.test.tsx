@@ -26,7 +26,7 @@ describe('private-chat user-ban UI', () => {
     expect(related).toBeGreaterThan(-1)
     expect(ban).toBeGreaterThan(related)
     expect(source).not.toContain('用户管理')
-    expect(source).toContain('Backend、聊天和录音请求会立即受限，其他现有凭证最迟约 1 小时失效')
+    expect(source).toContain('其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效')
     expect(source).toContain("remark: ''")
     expect(source).not.toContain('remark: userBanSnapshot.record')
   })

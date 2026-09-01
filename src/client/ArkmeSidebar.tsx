@@ -5192,7 +5192,7 @@ export function ArkmeSurface({
     const nextBanned = !userBanSnapshot.banned
     const actionLabel = nextBanned ? '封禁' : '解封'
     const consequence = nextBanned
-      ? '封禁后该用户将无法重新登录；Backend、聊天和录音请求会立即受限，其他现有凭证最迟约 1 小时失效。'
+      ? '封禁后该用户将无法重新登录；Backend、聊天和录音请求会立即受限；其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效。'
       : '解封后该用户可以重新登录并恢复操作。'
     if (!window.confirm(`确认${actionLabel}“${userBanSnapshot.displayName}”吗？\n${consequence}`)) return
     const controller = new AbortController()

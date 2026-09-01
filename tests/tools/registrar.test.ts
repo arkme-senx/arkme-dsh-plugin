@@ -403,7 +403,7 @@ describe('registerArkmeTools', () => {
       callId: CallId('user-ban-prepare'), name: 'arkme_user_ban', arguments: args, agent, signal,
     })
     expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
-    expect(prepared.isError ? '' : prepared.value).toContain('最迟约 1 小时失效')
+    expect(prepared.isError ? '' : prepared.value).toContain('其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效')
     expect(banPrivateChatUser).not.toHaveBeenCalled()
 
     events.push({
