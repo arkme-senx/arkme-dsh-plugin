@@ -1,6 +1,13 @@
 import type { FetchLike } from './service.js'
 
-export type ArkmeDesktopBridgeAction = 'capabilities.get' | 'notification.show' | 'badge.applySnapshot'
+export type ArkmeDesktopBridgeAction =
+  | 'capabilities.get'
+  | 'notification.show'
+  | 'badge.applySnapshot'
+  | 'account.scope.attest'
+  | 'account.scope.prepare'
+  | 'account.scope.commit'
+  | 'account.scope.abort'
 export type ArkmeDesktopBridgeOutcome = 'accepted' | 'duplicate' | 'unsupported' | 'native-failed' | 'expired' | 'rate-limited'
 
 export interface ArkmeDesktopBridgeConfig {
@@ -82,6 +89,28 @@ function responseObject(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined
+}
+
+export async function requestArkmeDesktopBridge(
+  config: ArkmeDesktopBridgeConfig,
+  fetchImpl: FetchLike,
+  action: ArkmeDesktopBridgeAction,
+  payload: object,
+): Promise<Record<string, unknown>> {
+  const response = await fetchImpl(config.endpoint, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${config.token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ schemaVersion: 1, sessionId: config.sessionId, action, payload }),
+    signal: AbortSignal.timeout(DESKTOP_BRIDGE_TIMEOUT_MS),
+  })
+  if (!response.ok) throw new Error(`desktop bridge returned HTTP ${String(response.status)}`)
+  const body = responseObject(await response.json()) as ArkmeDesktopBridgeResponse | undefined
+  const value = responseObject(body?.value)
+  if (body?.ok !== true || value === undefined) throw new Error('desktop bridge returned an invalid response')
+  return value
 }
 
 function outcomeFromValue(value: Record<string, unknown>): ArkmeDesktopBridgeOutcome | undefined {
@@ -215,19 +244,6 @@ export class ArkmeDesktopAttentionBridge {
   private async request(action: ArkmeDesktopBridgeAction, payload: object): Promise<Record<string, unknown>> {
     const config = this.config
     if (config === undefined) throw new Error('desktop bridge unavailable')
-    const response = await this.fetchImpl(config.endpoint, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${config.token}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ schemaVersion: 1, sessionId: config.sessionId, action, payload }),
-      signal: AbortSignal.timeout(DESKTOP_BRIDGE_TIMEOUT_MS),
-    })
-    if (!response.ok) throw new Error(`desktop bridge returned HTTP ${String(response.status)}`)
-    const body = responseObject(await response.json()) as ArkmeDesktopBridgeResponse | undefined
-    const value = responseObject(body?.value)
-    if (body?.ok !== true || value === undefined) throw new Error('desktop bridge returned an invalid response')
-    return value
+    return await requestArkmeDesktopBridge(config, this.fetchImpl, action, payload)
   }
 }

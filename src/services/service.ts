@@ -6,6 +6,7 @@ import {
   type ArkmeRequestStats,
 } from '../request-coordinator.js'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from '../keychain-store.js'
+import { ArkmeAccountSessionOwner } from '../account-session-owner.js'
 import type {
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
@@ -185,6 +186,7 @@ export function joinUrl(baseUrl: string, path: string): string {
 export class ServiceRuntime {
   readonly requestCoordinator = new ArkmeRequestCoordinator()
   private readonly refreshInFlightByUserId = new Map<number, Promise<ArkmeSessionCredentials>>()
+  private readonly accountSessions: ArkmeAccountSessionOwner
   private pendingBindingSession: ArkmeSessionCredentials | undefined
 
   constructor(
@@ -193,7 +195,21 @@ export class ServiceRuntime {
     readonly stateStore: StateStore,
     readonly fetchImpl: FetchLike = fetch,
     readonly pendingSessionStore?: ArkmeSessionStore,
-  ) {}
+    accountSessions?: ArkmeAccountSessionOwner,
+  ) {
+    this.accountSessions = accountSessions ?? new ArkmeAccountSessionOwner(sessionStore)
+  }
+
+  async startAccountScope(): Promise<void> { await this.accountSessions.start() }
+  attachGuestConversationProbe(probe: () => Promise<boolean>): void { this.accountSessions.attachGuestConversationProbe(probe) }
+  accountScopeReady(): boolean { return this.accountSessions.ready() }
+  subscribeAccountScope(listener: () => void): () => void { return this.accountSessions.subscribe(listener) }
+  async accountScopedSession(): Promise<ArkmeSessionCredentials | undefined> {
+    await this.accountSessions.start()
+    return await this.accountSessions.scopedSession()
+  }
+  async writeSession(session: ArkmeSessionCredentials): Promise<void> { await this.accountSessions.write(session) }
+  async deleteSession(): Promise<void> { await this.accountSessions.delete() }
 
   requestStats(): Record<string, ArkmeRequestStats> {
     return this.requestCoordinator.snapshotStats()
@@ -217,7 +233,7 @@ export class ServiceRuntime {
   }
 
   async requireSession(): Promise<ArkmeSessionCredentials> {
-    const session = await this.sessionStore.read()
+    const session = await this.accountScopedSession()
     if (session === undefined) {
       throw new ArkmePluginError('login-required', '请先登录 Arkme', false, 401)
     }
@@ -285,12 +301,12 @@ export class ServiceRuntime {
         }
         const updated = { ...session, accessToken }
         if (this.isPendingBindingSession(session)) await this.writePendingBindingSession(updated)
-        else await this.sessionStore.write(updated)
+        else await this.writeSession(updated)
         return updated
       } catch (error) {
         if (error instanceof ArkmePluginError && ['auth-http-401', 'auth-http-403'].includes(error.code)) {
           if (this.isPendingBindingSession(session)) await this.clearPendingBindingSession()
-          else await this.sessionStore.delete()
+          else await this.deleteSession()
           throw new ArkmePluginError('login-expired', 'Arkme 登录已过期，请重新扫码', false, 401)
         }
         throw error

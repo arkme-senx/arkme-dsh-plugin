@@ -9,6 +9,7 @@ import type {
   ArkmeExtensionReviewPage,
 } from './extensions/types.js'
 import type { ArkmeSessionStore } from './keychain-store.js'
+import { createArkmeAccountSessionOwner } from './account-session-owner.js'
 import { resolveManagedAccessCredential } from './managed-ai/credential.js'
 import type { createOpenClawProvisioner, OpenClawProvisionResult } from './openclaw/index.js'
 import { ArkmeOutgoingCallBroker } from './outgoing-call-broker.js'
@@ -262,9 +263,9 @@ export {
   MAX_ARKME_RELATED_RECORDING_PAGE_SIZE,
 } from './services/related-recording-service.js'
 export { ArkmePluginError, type ArkmeServiceConfig }
-
 export class ArkmeService {
   private readonly runtime: ServiceRuntime
+  readonly accountScope: ReturnType<typeof createArkmeAccountSessionOwner>
   private readonly billingGateway: ArkmeBillingGateway
   private readonly aiVideo: AiVideoService
   private readonly arrangement: ArrangementService
@@ -303,7 +304,6 @@ export class ArkmeService {
   private readonly fileTransfers: FileTransfers | undefined
   private localFileOpener?: (path: string, signal: AbortSignal) => Promise<void>
   private worldVoiceprintInviteVariantIndex = 0
-
   constructor(
     private readonly config: ArkmeServiceConfig,
     private readonly sessionStore: ArkmeSessionStore,
@@ -314,7 +314,8 @@ export class ArkmeService {
     billingGateway?: ArkmeBillingGateway,
     linkDocumentReader?: ArkmeLinkDocumentReader,
   ) {
-    this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore)
+    this.accountScope = createArkmeAccountSessionOwner(sessionStore, fetchImpl)
+    this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore, this.accountScope)
     this.billingGateway = billingGateway ?? new HttpArkmeBillingGateway(this.runtime)
     this.privacy = new ArkmePrivacyVisibilityService(this.runtime)
     this.aiVideo = new AiVideoService(this.runtime)
@@ -441,7 +442,6 @@ export class ArkmeService {
       },
     })
   }
-
   private filesOwner(): FileTransfers {
     if (!this.fileTransfers) throw new ArkmePluginError('file-flow-unavailable', '当前宿主不支持本地文件流程，请升级插件', false, 501)
     return this.fileTransfers
