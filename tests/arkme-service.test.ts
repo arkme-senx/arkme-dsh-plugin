@@ -957,6 +957,7 @@ describe('ArkmeService', () => {
         recordCalendar: true,
         messageReadReceipts: true,
         messageReport: true,
+        userBanManagement: true,
         outgoingCall: true,
         contactAdd: true,
         conversationQuickAdd: true,

@@ -288,6 +288,12 @@ export class ServiceRuntime {
         else await this.sessionStore.write(updated)
         return updated
       } catch (error) {
+        if (error instanceof ArkmePluginError && error.code === 'arkme-code-1004') {
+          if (this.isPendingBindingSession(session)) await this.clearPendingBindingSession()
+          else await this.sessionStore.delete()
+          // 1004 是通用“账号不可用”，也覆盖注销等既有状态，不能在客户端臆断为封禁。
+          throw new ArkmePluginError('account-unavailable', '当前即我账号暂不可用', false, 403)
+        }
         if (error instanceof ArkmePluginError && ['auth-http-401', 'auth-http-403'].includes(error.code)) {
           if (this.isPendingBindingSession(session)) await this.clearPendingBindingSession()
           else await this.sessionStore.delete()

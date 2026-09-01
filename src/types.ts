@@ -1076,6 +1076,8 @@ export interface ArkmeProviderCapabilities {
     messageReadReceipts?: true
     /** Peer group-chat messages expose an account-bound report action. */
     messageReport?: true
+    /** Employee-only, source-bound private-chat user ban inspection and mutation are available. */
+    userBanManagement?: true
     richContentRead: boolean
     richContentSend: boolean
     /** Explicit text background-sound descriptors are supported by direct and durable rich sends. */
@@ -1185,6 +1187,39 @@ export interface ArkmeUserProfileSnapshot {
   profile: ArkmeUserProfile | null
   cachedAtMillis: number
   revision: number
+}
+
+export type ArkmeUserBanStatus = 'banned' | 'unbanned'
+
+/** Browser-safe current fact for the peer bound to one private-chat source. */
+export interface ArkmeUserBanRecord {
+  sourceRef: string
+  displayName: string
+  status: ArkmeUserBanStatus
+  remark: string
+  bannedAtMillis: number
+  unbannedAtMillis: number
+  updatedAtMillis: number
+}
+
+export interface ArkmeUserBanSnapshot {
+  sourceRef: string
+  displayName: string
+  exists: boolean
+  banned: boolean
+  record?: ArkmeUserBanRecord
+}
+
+/** Host-only owner fact used to bind confirmation to the same resolved peer. Never serialize directly. */
+export interface ArkmeUserBanOwnerRecord extends ArkmeUserBanRecord {
+  targetUserId: number
+  operatorUserId: number
+}
+
+/** Host-only lookup result. UI, Browser SDK and model output receive ArkmeUserBanSnapshot instead. */
+export interface ArkmeUserBanOwnerSnapshot extends Omit<ArkmeUserBanSnapshot, 'record'> {
+  targetUserId: number
+  record?: ArkmeUserBanOwnerRecord
 }
 
 export type ArkmeIdAvailabilityReason = '' | 'invalid' | 'taken' | 'modify_limited' | 'server_busy'
@@ -2882,6 +2917,9 @@ export type ArkmePluginOperation =
   | 'auth.phone.send'
   | 'auth.phone.verify'
   | 'auth.logout'
+  | 'user-ban.status'
+  | 'user-ban.ban'
+  | 'user-ban.unban'
   | 'remote.getStatus'
   | 'remote.renameDesktop'
   | 'billing.quota'

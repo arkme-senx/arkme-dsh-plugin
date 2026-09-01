@@ -31,6 +31,8 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_voiceprint_recognized_person_invite',
   'arkme_voiceprint_revoke',
   'arkme_voiceprint_restore_playback',
+  'arkme_user_ban',
+  'arkme_user_unban',
 ])
 
 function validateMaterializedTool(module: ArkmeToolModule, definition: ToolDefinition): ToolDefinition {
@@ -65,6 +67,8 @@ function cleanArgument(value: unknown, maxLength: number): string {
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
   if (name === 'arkme_background_sound_disable') return '是否确认关闭当前 Arkme 账号的文字背景音？这不会删除已经发送的背景音。'
+  if (name === 'arkme_user_ban') return '是否确认封禁这个私聊用户？确认后将无法重新登录；主要服务立即受限，其他现有凭证最迟约 1 小时失效。'
+  if (name === 'arkme_user_unban') return '是否确认解封这个私聊用户？确认后该用户可重新登录并恢复操作。'
   if (name === 'arkme_file_prepare') return `是否确认将“${cleanArgument(args.file_name, 100)}”暂存到本地？这一步不会上传或发送。`
   if (name === 'arkme_files_send') return `是否确认向刚才指定的 Arkme 会话发送这 ${Array.isArray(args.file_refs) ? args.file_refs.length : 0} 个文件及附带文字？确认后开始上传。`
   if (name === 'arkme_file_task') return cleanArgument(args.action, 30) === 'open-local'

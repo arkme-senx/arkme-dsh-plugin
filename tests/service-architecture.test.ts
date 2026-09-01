@@ -40,6 +40,7 @@ const expectedPublicMethods = [
   'confirmDisableGroupAiPolish', 'listGroupMembers', 'listGroupMemberCandidates', 'groupInvitePreview', 'addGroupMembers',
   'createGroup', 'groupSettings', 'setGroupMessageDnd',
   'renameGroup', 'leaveGroup', 'dissolveGroup', 'reportGroup', 'userCard',
+  'userBanStatus', 'banPrivateChatUser', 'unbanPrivateChatUser',
   'openPrivateChatFromUser', 'openPrivateChatFromContact', 'officialAuthorProfile', 'openOfficialAuthorPrivateChat', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'readSourceAround', 'messageReadReceiptSummaries', 'messageReadReceiptDetail', 'messageSnapshotDetail', 'saveMessageLocation', 'sharedRecordingDetail', 'relatedRecordingEligibility', 'relatedRecordings',
   'recordRelatedRecordingsToolEvent', 'reportMessage', 'copySourceMessageLink', 'copyMessageActionsLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'sourceMessageExtensionContext', 'extendSourceMessage', 'forwardSourceMessages', 'forwardMessageActions',
   'sendSourceText', 'retryGroupAiPolish',
@@ -79,7 +80,7 @@ const expectedServiceFiles = [
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'contact-service.ts', 'contact-directory-service.ts', 'unmarked-speaker-service.ts',
-  'voiceprint-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
+  'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
   'link-metadata-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts',
 ].sort()
 
@@ -111,7 +112,7 @@ describe('Arkme service architecture', () => {
 
   it('keeps the compatibility facade free of business transport and state owners', () => {
     const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
-    expect(facade.split('\n').length).toBeLessThan(1_825)
+    expect(facade.split('\n').length).toBeLessThan(1_850)
     expect(facade).not.toMatch(/\/api\//)
     expect(facade).not.toMatch(/private readonly \w+\s*=\s*new Map/)
   })

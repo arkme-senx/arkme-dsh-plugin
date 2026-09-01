@@ -11,6 +11,7 @@ import type {
   ArkmeMessageReportType,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRecordCaptureContext, ArkmeRecordLocationCapture, ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
+  ArkmeUserBanOwnerRecord, ArkmeUserBanOwnerSnapshot, ArkmeUserBanRecord, ArkmeUserBanSnapshot,
   ArkmeWorldPublishFileAsset,
 } from './types.js'
 import type { ArkmeCaptchaResult } from './types.js'
@@ -97,6 +98,28 @@ function writeJson(res: ServerResponse, status: number, body: ArkmePluginRespons
 
 function stringParam(params: Record<string, unknown>, key: string): string {
   return typeof params[key] === 'string' ? params[key] : ''
+}
+
+function browserUserBanRecord(record: ArkmeUserBanOwnerRecord): ArkmeUserBanRecord {
+  return {
+    sourceRef: record.sourceRef,
+    displayName: record.displayName,
+    status: record.status,
+    remark: record.remark,
+    bannedAtMillis: record.bannedAtMillis,
+    unbannedAtMillis: record.unbannedAtMillis,
+    updatedAtMillis: record.updatedAtMillis,
+  }
+}
+
+function browserUserBanSnapshot(snapshot: ArkmeUserBanOwnerSnapshot): ArkmeUserBanSnapshot {
+  return {
+    sourceRef: snapshot.sourceRef,
+    displayName: snapshot.displayName,
+    exists: snapshot.exists,
+    banned: snapshot.banned,
+    ...(snapshot.record === undefined ? {} : { record: browserUserBanRecord(snapshot.record) }),
+  }
 }
 
 function billingIdentifierParam(
@@ -773,6 +796,9 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (request.operation === 'link.metadata' && origin === undefined) {
         throw new ArkmePluginError('origin-required', '网址名称解析必须从当前 DSH 页面发起', false, 403)
       }
+      if (['user-ban.ban', 'user-ban.unban'].includes(request.operation) && origin === undefined) {
+        throw new ArkmePluginError('origin-required', '封禁操作必须从当前 DSH 页面发起', false, 403)
+      }
       if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.speaker.assign-item']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
@@ -868,6 +894,15 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'code'),
     )
     case 'auth.logout': return await service.logout()
+    case 'user-ban.status': return browserUserBanSnapshot(await service.userBanStatus(
+      stringParam(params, 'sourceRef'), requestSignal,
+    ))
+    case 'user-ban.ban': return browserUserBanRecord(await service.banPrivateChatUser(
+      stringParam(params, 'sourceRef'), stringParam(params, 'remark'), requestSignal,
+    ))
+    case 'user-ban.unban': return browserUserBanRecord(await service.unbanPrivateChatUser(
+      stringParam(params, 'sourceRef'), stringParam(params, 'remark'), requestSignal,
+    ))
     case 'remote.getStatus': return requireRemoteHost(remoteHost).getStatus()
     case 'remote.renameDesktop': return await requireRemoteHost(remoteHost).renameDesktop(stringParam(params, 'displayName'))
     case 'billing.quota': return await service.billingQuota()

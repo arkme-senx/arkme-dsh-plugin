@@ -298,6 +298,49 @@ describe('ChatService', () => {
       },
     })
   })
+
+  it('resolves exactly one active peer from an account-bound private-chat source', async () => {
+    const session = { userId: 7, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = {
+      requireSession: vi.fn(async () => session),
+      authenticatedChatPost: vi.fn(async () => ({ items: [{ user_id: 7 }, { user_id: 42 }] })),
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1', displayName: '何' })),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+    const signal = new AbortController().signal
+
+    await expect(chat.resolvePrivateChatPeer('source-ref', signal))
+      .resolves.toEqual({ userId: 42, displayName: '何' })
+    expect(source.openSourceRef).toHaveBeenCalledWith('source-ref', 7)
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
+      '/api/v1/chats/members/list', { chat_session_uid: 'chat-1', active_only: true }, session, signal,
+    )
+  })
+
+  it('rejects non-private or ambiguous sources before a user-ban target can be chosen', async () => {
+    const runtime = {
+      requireSession: vi.fn(async () => ({ userId: 7, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async () => ({ items: [{ user_id: 42 }, { user_id: 43 }] })),
+    }
+    const source = { openSourceRef: vi.fn() }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    source.openSourceRef.mockResolvedValueOnce({ kind: 'group_chat', ownerRef: 'group-1', displayName: '群聊' })
+    await expect(chat.resolvePrivateChatPeer('group-ref')).rejects.toMatchObject({ code: 'user-ban-private-chat-required' })
+    expect(runtime.authenticatedChatPost).not.toHaveBeenCalled()
+
+    source.openSourceRef.mockResolvedValueOnce({ kind: 'private_chat', ownerRef: 'chat-1', displayName: '异常私聊' })
+    await expect(chat.resolvePrivateChatPeer('ambiguous-ref')).rejects.toMatchObject({ code: 'user-ban-peer-invalid' })
+  })
+
   it('returns a source-bound signed action reference immediately for every text and rich send source', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const sourceKinds = ['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic'] as const
