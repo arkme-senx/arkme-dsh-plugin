@@ -88,6 +88,23 @@ describe('ArkmeStateStore', () => {
     await expect(reloaded.listAllRecordingImportJobs()).resolves.toHaveLength(1)
   })
 
+  it('does not share mutable upload checkpoints across the state-store boundary', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-checkpoint-copy-'))
+    const store = new ArkmeStateStore(root)
+    const checkpoint = { uploadId: 'upload-1', parts: [{ number: 1, etag: 'etag-1' }] }
+    await store.putRecordingImportJob(10001, recordingJob({ uploadCheckpoint: checkpoint }))
+
+    checkpoint.parts[0]!.etag = 'mutated-by-uploader'
+    const firstRead = await store.getRecordingImportJob(10001, 'job-1')
+    expect(firstRead?.uploadCheckpoint).toEqual({ uploadId: 'upload-1', parts: [{ number: 1, etag: 'etag-1' }] })
+
+    const exposed = firstRead?.uploadCheckpoint as typeof checkpoint
+    exposed.parts[0]!.etag = 'mutated-by-reader'
+    await expect(store.getRecordingImportJob(10001, 'job-1')).resolves.toMatchObject({
+      uploadCheckpoint: { uploadId: 'upload-1', parts: [{ number: 1, etag: 'etag-1' }] },
+    })
+  })
+
   it('atomically keeps one job for concurrent imports with the same content identity', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-dedupe-'))
     const store = new ArkmeStateStore(root)
@@ -95,15 +112,65 @@ describe('ArkmeStateStore', () => {
     const second = recordingJob({ jobId: 'job-second', sourceHandle: '/private/second.upload' })
 
     const [left, right] = await Promise.all([
-      store.putRecordingImportJobIfAbsent(10001, first),
-      store.putRecordingImportJobIfAbsent(10001, second),
+      store.admitRecordingImportJob(10001, first, 20),
+      store.admitRecordingImportJob(10001, second, 20),
     ])
 
-    expect(left.jobId).toBe('job-first')
-    expect(right.jobId).toBe('job-first')
+    expect(left).toEqual({ kind: 'inserted', job: expect.objectContaining({ jobId: 'job-first' }) })
+    expect(right).toEqual({ kind: 'existing', job: expect.objectContaining({ jobId: 'job-first' }) })
     await expect(store.listRecordingImportJobs(10001)).resolves.toEqual([
       expect.objectContaining({ jobId: 'job-first', sourceHandle: '/private/first.upload' }),
     ])
+  })
+
+  it('rejects a different unresolved file with the same Audio owner file-name identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-filename-dedupe-'))
+    const store = new ArkmeStateStore(root)
+    const first = recordingJob({ jobId: 'job-first', sourceHandle: '/private/first.upload' })
+    const second = recordingJob({
+      jobId: 'job-second', sourceHandle: '/private/second.upload', fileSize: first.fileSize + 1,
+      sha256: 'b'.repeat(64),
+    })
+
+    expect(await store.admitRecordingImportJob(10001, first, 20)).toMatchObject({ kind: 'inserted' })
+    await expect(store.admitRecordingImportJob(10001, second, 20)).resolves.toEqual({ kind: 'duplicate-file-name' })
+    await expect(store.listRecordingImportJobs(10001)).resolves.toHaveLength(1)
+  })
+
+  it('does not let terminal local history replace the Audio owner duplicate decision', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-terminal-owner-boundary-'))
+    const store = new ArkmeStateStore(root)
+    await store.putRecordingImportJob(10001, recordingJob({ phase: 'accepted' }))
+
+    await expect(store.admitRecordingImportJob(10001, recordingJob({ jobId: 'job-new' }), 20))
+      .resolves.toMatchObject({ kind: 'inserted', job: { jobId: 'job-new' } })
+  })
+
+  it('atomically enforces the unresolved recording import limit across distinct concurrent jobs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-admission-limit-'))
+    const store = new ArkmeStateStore(root)
+    for (let index = 0; index < 19; index += 1) {
+      await store.putRecordingImportJob(10001, recordingJob({
+        jobId: `pending-${String(index)}`,
+        sha256: String(index % 10).repeat(64),
+        startAtMillis: 1_725_000_000_000 + index,
+        sourceHandle: `/private/pending-${String(index)}.upload`,
+      }))
+    }
+    const first = recordingJob({
+      jobId: 'job-first', fileName: 'first.m4a', sha256: 'b'.repeat(64), sourceHandle: '/private/first.upload',
+    })
+    const second = recordingJob({
+      jobId: 'job-second', fileName: 'second.m4a', sha256: 'c'.repeat(64), sourceHandle: '/private/second.upload',
+    })
+
+    const results = await Promise.all([
+      store.admitRecordingImportJob(10001, first, 20),
+      store.admitRecordingImportJob(10001, second, 20),
+    ])
+
+    expect(results.map(result => result.kind).sort()).toEqual(['inserted', 'limit'])
+    await expect(store.listRecordingImportJobs(10001)).resolves.toHaveLength(20)
   })
 
   it('bounds terminal import history without pruning resumable jobs', async () => {

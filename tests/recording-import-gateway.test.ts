@@ -91,6 +91,94 @@ describe('AudioRecordingImportGateway', () => {
     expect(posts).toEqual(['/api/v1/audio/get-session-ls'])
   })
 
+  it('moves an imported recording to other ownership through the owner mutation contract', async () => {
+    const posts: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        posts.push({ path, body })
+        if (path.endsWith('get-session-ls')) return { session_ls: [] }
+        if (path.endsWith('check-exist-same-orig')) return { exist_names: [] }
+        if (path.endsWith('new-session')) return { session_id: 'session-other' }
+        if (path.endsWith('modify-session-belong-usr')) return {}
+        throw new Error(`unexpected owner request: ${path}`)
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.ensureSession(job({ belongUserId: 0 }))).resolves.toBe('session-other')
+    expect(posts).toEqual([
+      {
+        path: '/api/v1/audio/get-session-ls',
+        body: { to_stamp: 1_725_000_000_001, limit: 500, offset: 0, query_new: false },
+      },
+      { path: '/api/v1/audio/check-exist-same-orig', body: { orig_names: ['meeting.m4a'] } },
+      {
+        path: '/api/v1/audio/new-session',
+        body: expect.not.objectContaining({ belong_usr: expect.anything() }),
+      },
+      {
+        path: '/api/v1/audio/modify-session-belong-usr',
+        body: { session_id: 'session-other', belong_usr: 0 },
+      },
+    ])
+  })
+
+  it('recovers a response-lost other import before ownership mutation and does not create again', async () => {
+    const posts: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        posts.push({ path, body })
+        if (path.endsWith('get-session-ls')) return { session_ls: [{
+          id: 'recovered-other', source: 2, operate_at: 1_725_000_000_100,
+          start_at: 1_725_000_000_000, orig_name: 'meeting.m4a', belong_usr: 42,
+        }] }
+        if (path.endsWith('modify-session-belong-usr')) return {}
+        throw new Error('response-loss recovery must not create another session')
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.ensureSession(job({ belongUserId: 0 }))).resolves.toBe('recovered-other')
+    expect(posts).toEqual([
+      {
+        path: '/api/v1/audio/get-session-ls',
+        body: { to_stamp: 1_725_000_000_001, limit: 500, offset: 0, query_new: false },
+      },
+      {
+        path: '/api/v1/audio/modify-session-belong-usr',
+        body: { session_id: 'recovered-other', belong_usr: 0 },
+      },
+    ])
+  })
+
+  it('does not mutate ownership while compensating a response-lost cancelled import', async () => {
+    const posts: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        posts.push({ path, body })
+        if (path.endsWith('get-session-ls')) return { session_ls: [{
+          id: 'recovered-other', source: 2, operate_at: 1_725_000_000_100,
+          start_at: 1_725_000_000_000, orig_name: 'meeting.m4a', belong_usr: 42,
+        }] }
+        if (path.endsWith('del-session')) return {}
+        throw new Error(`unexpected owner request: ${path}`)
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await gateway.deleteSession(job({ belongUserId: 0, phase: 'failed', failedFromPhase: 'prepared' }))
+    expect(posts.map(item => item.path)).toEqual([
+      '/api/v1/audio/get-session-ls',
+      '/api/v1/audio/del-session',
+    ])
+  })
+
   it('rejects an account switch at the actual owner request boundary', async () => {
     const runtime = {
       config: { environment: 'test' },

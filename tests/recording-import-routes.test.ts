@@ -59,6 +59,7 @@ describe('recording import route', () => {
         origin: `http://127.0.0.1:${String(address.port)}`,
         'x-arkme-file-name': encodeURIComponent('会议.wav'),
         'x-arkme-start-at': '1725000000000',
+        'x-arkme-belong-user': '42',
       },
       body: Buffer.from('recording-bytes'),
     })
@@ -70,6 +71,38 @@ describe('recording import route', () => {
     }), 42)
     const temporaryPath = acceptRecordingImport.mock.calls[0]?.[0]
     expect((await stat(temporaryPath!)).mode & 0o777).toBe(0o600)
+  })
+
+  it('passes the desktop Unix epoch import lower bound through to the recording service', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-route-epoch-'))
+    const acceptRecordingImport = vi.fn(async () => ({
+      importRef: 'opaque', revision: 1, phase: 'prepared', progress: 0,
+    }))
+    const options: ArkmeRecordingImportRouteOptions = {
+      expectedPort: 0, allowNonLoopback: false, temporaryDirectory: root,
+    }
+    const handler = createArkmeRecordingImportHandler(routeService(acceptRecordingImport) as never, options)
+    const server = createServer((req, res) => { void handler(req, res) })
+    servers.push(server)
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('missing port')
+    options.expectedPort = address.port
+    const lowerBound = 0
+
+    const response = await fetch(`http://127.0.0.1:${String(address.port)}/recording/import`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'audio/wav', origin: `http://127.0.0.1:${String(address.port)}`,
+        'x-arkme-file-name': 'voice.wav', 'x-arkme-start-at': String(lowerBound), 'x-arkme-belong-user': '0',
+      },
+      body: Buffer.from('recording-bytes'),
+    })
+
+    expect(response.status).toBe(202)
+    expect(acceptRecordingImport).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      startAtMillis: lowerBound,
+    }), 42)
   })
 
   it('rejects unsupported metadata before writing an owner job', async () => {
@@ -90,7 +123,7 @@ describe('recording import route', () => {
       method: 'POST',
       headers: {
         'content-type': 'video/mp4', origin: `http://127.0.0.1:${String(address.port)}`,
-        'x-arkme-file-name': 'movie.mp4', 'x-arkme-start-at': '1725000000000',
+        'x-arkme-file-name': 'movie.mp4', 'x-arkme-start-at': '1725000000000', 'x-arkme-belong-user': '42',
       },
       body: Buffer.from('bad'),
     })
@@ -116,10 +149,17 @@ describe('recording import route', () => {
       'content-type': 'audio/wav',
       'x-arkme-file-name': 'voice.wav',
       'x-arkme-start-at': '1725000000000',
+      'x-arkme-belong-user': '42',
     }
 
     await expect(rawRequest(address.port, { method: 'GET' })).resolves.toMatchObject({ status: 405 })
     await expect(rawRequest(address.port, { headers: baseHeaders })).resolves.toMatchObject({ status: 400 })
+    await expect(rawRequest(address.port, {
+      headers: { ...baseHeaders, 'content-length': '5', 'x-arkme-start-at': '' }, body: 'voice',
+    })).resolves.toMatchObject({ status: 400 })
+    await expect(rawRequest(address.port, {
+      headers: { ...baseHeaders, 'content-length': '5', 'x-arkme-belong-user': '' }, body: 'voice',
+    })).resolves.toMatchObject({ status: 400 })
     await expect(rawRequest(address.port, {
       headers: { ...baseHeaders, 'content-length': String(1024 * 1024 * 1024 + 1) },
     })).resolves.toMatchObject({ status: 400 })
@@ -146,7 +186,7 @@ describe('recording import route', () => {
       method: 'POST',
       headers: {
         'content-type': 'audio/wav', origin: `http://127.0.0.1:${String(address.port)}`,
-        'x-arkme-file-name': 'voice.wav', 'x-arkme-start-at': '1725000000000',
+        'x-arkme-file-name': 'voice.wav', 'x-arkme-start-at': '1725000000000', 'x-arkme-belong-user': '42',
       },
       body: Buffer.from('recording-bytes'),
     })
@@ -177,7 +217,7 @@ describe('recording import route', () => {
         headers: {
           'content-type': 'audio/wav',
           ...(origin === undefined ? {} : { origin }),
-          'x-arkme-file-name': 'voice.wav', 'x-arkme-start-at': '1725000000000',
+          'x-arkme-file-name': 'voice.wav', 'x-arkme-start-at': '1725000000000', 'x-arkme-belong-user': '42',
         },
         body: Buffer.from('voice'),
       })
@@ -205,7 +245,7 @@ describe('recording import route', () => {
       method: 'POST',
       headers: {
         'content-type': 'audio/wav', origin: `http://127.0.0.1:${String(address.port)}`,
-        'x-arkme-file-name': 'voice.wav', 'x-arkme-start-at': '1725000000000',
+        'x-arkme-file-name': 'voice.wav', 'x-arkme-start-at': '1725000000000', 'x-arkme-belong-user': '42',
       },
       body: Buffer.from('recording-bytes'),
     })

@@ -25,7 +25,7 @@ const expectedPublicMethods = [
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
   'sealRecordingCursor', 'openRecordingCursor', 'recordingDay', 'recordingPlayback',
   'recordingSpeakerOptions', 'assignRecordingSpeaker',
-  'acceptRecordingImport', 'recordingImportUserId', 'recordingImportStatus', 'recordingImportList', 'retryRecordingImport',
+  'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'retryRecordingImport',
   'cancelRecordingImport', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
@@ -122,11 +122,18 @@ describe('Arkme service architecture', () => {
 
   it('keeps recording import business orchestration independent from filesystem and OSS layout details', () => {
     const contract = readFileSync(join(root, 'src/recording-import-contract.ts'), 'utf8')
+    const refCodec = readFileSync(join(root, 'src/recording-import-ref.ts'), 'utf8')
     const recordingService = readFileSync(join(root, 'src/services/recording-service.ts'), 'utf8')
     const coordinator = readFileSync(join(root, 'src/recording-import-coordinator.ts'), 'utf8')
 
     expect(contract).toContain('sourceHandle')
     expect(contract).not.toContain('sourceRef')
+    expect(contract).not.toMatch(/from ['"]node:crypto/)
+    expect(contract).not.toContain('sealRecordingImportRef')
+    expect(contract).not.toContain('openRecordingImportRef')
+    expect(refCodec).toMatch(/from ['"]node:crypto/)
+    expect(refCodec).toContain('sealRecordingImportRef')
+    expect(refCodec).toContain('openRecordingImportRef')
     expect(recordingService).not.toContain('AudioRecordingImportGateway')
     expect(recordingService).not.toContain('probeRecordingImportFile')
     expect(recordingService).not.toMatch(/from ['"]node:fs/)
@@ -236,5 +243,16 @@ describe('Arkme service architecture', () => {
     expect(client).not.toMatch(/Pull Request #|Change #/u)
     expect(service).not.toMatch(/Pull Request #|Change #/u)
     expect(host.match(/service\.resolveLinkMetadata\(/gu) ?? []).toHaveLength(2)
+  })
+
+  it('does not invent recording speaker mutation contracts that the Audio owner does not expose', () => {
+    const recordingService = readFileSync(join(root, 'src/services/recording-service.ts'), 'utf8')
+    const hostApi = readFileSync(join(root, 'src/host-api.ts'), 'utf8')
+    const clientApi = readFileSync(join(root, 'src/client/api.ts'), 'utf8')
+
+    expect(recordingService).not.toContain('/api/v1/audio/unassign-asr-item-spk')
+    expect(recordingService).not.toContain('/api/v1/audio/batch-unassign-session-num-spk')
+    expect(hostApi).not.toContain('recordings.speaker.unassign-item')
+    expect(clientApi).not.toContain('recordings.speaker.unassign-item')
   })
 })

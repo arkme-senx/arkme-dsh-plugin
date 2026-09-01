@@ -26,7 +26,7 @@
         relatedRecordingsEnabled: true
         geetestCaptchaId: ec81315ab8b0f18a7bfa13602d01e307
         interwovenMomentsEnabled: true
-        recordingWorkbenchV2Enabled: true
+        recordingWorkbenchEnabled: true
         chatMemberJoinEventsEnabled: true
         allowNonLoopback: false
         allowProduction: true

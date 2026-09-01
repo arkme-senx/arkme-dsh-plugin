@@ -332,11 +332,6 @@ export class ArkmeService {
       { openWorldImageRef: async (imageRef, viewerUserId) => await this.openWorldImageRef(imageRef, viewerUserId) },
       { recordUid: raw => this.recordUid(raw) }, { openBotImageRef: async (imageRef, viewerUserId) => await this.bot.openBotImageRef(imageRef, viewerUserId) },
     )
-    this.recording = new RecordingService(this.runtime, {
-      recordingImportGateway: new AudioRecordingImportGateway(this.runtime),
-      recordingImportSource: new LocalRecordingImportSource(),
-      profile: this.profile, media: this.media,
-    })
     this.source = new SourceService(this.runtime, this.profile, {
       summary: async () => await this.summary(),
       recordItem: raw => this.recordItem(raw),
@@ -394,6 +389,13 @@ export class ArkmeService {
     this.contactDirectory = new ContactDirectoryService(
       this.runtime, this.source, this.bot, this.profile, this.world, this.chat,
     )
+    this.recording = new RecordingService(this.runtime, {
+      recordingImportGateway: new AudioRecordingImportGateway(this.runtime),
+      recordingImportSource: new LocalRecordingImportSource(),
+      profile: this.profile,
+      media: this.media,
+      userCandidates: this.contactDirectory,
+    })
     this.unmarkedSpeaker = new UnmarkedSpeakerService(this.runtime, this.media)
     this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime)
     this.voiceprint = new VoiceprintService(this.runtime, this.profile, {
@@ -598,7 +600,7 @@ export class ArkmeService {
       recordingImportPath: `${this.config.routePath}/recording/import`,
       mediaPath: `${this.config.routePath}/media`,
       shareWebsite: this.config.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE,
-      recordingWorkbenchV2Enabled: this.config.recordingWorkbenchV2Enabled !== false,
+      recordingWorkbenchEnabled: this.config.recordingWorkbenchEnabled !== false,
     }
   }
 
@@ -762,6 +764,7 @@ export class ArkmeService {
     this.bot.dispose()
     this.extensionReview.dispose()
     this.media.dispose()
+    this.recording.dispose()
     this.source.dispose()
     this.aiPolish.dispose()
     this.arrangement.dispose()
@@ -805,39 +808,20 @@ export class ArkmeService {
   async recordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.recordingProjection(dateStamp, kind, signal) }
   async sealRecordingCursor(payload: ArkmeRecordingCursorPayload): Promise<string> { return await this.recording.sealRecordingCursor(payload) }
   async openRecordingCursor(cursor: string): Promise<ArkmeRecordingCursorPayload> { return await this.recording.openRecordingCursor(cursor) }
-  async recordingDay(dateStamp: number): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp) }
+  async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal) }
 
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async recordingSpeakerOptions(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerOption[]> { return await this.recording.recordingSpeakerOptions(itemRef, signal) }
 
-  async assignRecordingSpeaker(
-    input: { itemRef: string; speakerRef?: string; newSpeakerName?: string; scope: 'item' | 'speaker' },
-    signal?: AbortSignal,
-  ): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.assignRecordingSpeaker(input, signal) }
+  async assignRecordingSpeaker(input: { itemRef: string; speakerRef?: string; newSpeakerName?: string; scope: 'item' | 'speaker' }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.assignRecordingSpeaker(input, signal) }
 
-  /** @internal Built-in loopback UI only; raw files use the dedicated streaming route. */
-  async recordingImportUserId(): Promise<number> { return await this.recording.recordingImportUserId() }
-
-  /** @internal Built-in loopback UI only; raw files use the dedicated streaming route. */
-  async acceptRecordingImport(
-    sourceHandle: string,
-    metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number },
-    expectedUserId: number,
-  ): Promise<PublicRecordingImportJob> {
-    return await this.recording.acceptRecordingImport(sourceHandle, metadata, expectedUserId)
-  }
-
-  /** @internal Built-in loopback UI only. */
-  async recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob> { return await this.recording.recordingImportStatus(importRef) }
-
-  /** @internal Built-in loopback UI only. */
-  async recordingImportList(): Promise<PublicRecordingImportJob[]> { return await this.recording.recordingImportList() }
-
-  /** @internal Built-in loopback UI only. */
-  async retryRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> { return await this.recording.retryRecordingImport(importRef, expectedRevision) }
-
-  /** @internal Built-in loopback UI only. */
-  async cancelRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> { return await this.recording.cancelRecordingImport(importRef, expectedRevision) }
+  /** @internal Built-in loopback UI only. */ async recordingImportUserId(): Promise<number> { return await this.recording.recordingImportUserId() }
+  /** @internal Built-in loopback UI only. */ async recordingImportPreflight(fileNames: string[], signal?: AbortSignal): Promise<{ duplicateFileNames: string[] }> { return await this.recording.recordingImportPreflight(fileNames, signal) }
+  /** @internal Built-in loopback UI only. */ async acceptRecordingImport(sourceHandle: string, metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number }, expectedUserId: number): Promise<PublicRecordingImportJob> { return await this.recording.acceptRecordingImport(sourceHandle, metadata, expectedUserId) }
+  /** @internal Built-in loopback UI only. */ async recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob> { return await this.recording.recordingImportStatus(importRef) }
+  /** @internal Built-in loopback UI only. */ async recordingImportList(): Promise<PublicRecordingImportJob[]> { return await this.recording.recordingImportList() }
+  /** @internal Built-in loopback UI only. */ async retryRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> { return await this.recording.retryRecordingImport(importRef, expectedRevision) }
+  /** @internal Built-in loopback UI only. */ async cancelRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> { return await this.recording.cancelRecordingImport(importRef, expectedRevision) }
   async resumeRecordingImports(): Promise<void> { await this.recording.resumeRecordingImports() }
 
   async refreshProfile(): Promise<ArkmeUserProfileSnapshot> {

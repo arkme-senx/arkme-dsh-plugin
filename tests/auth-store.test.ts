@@ -16,7 +16,7 @@ const config: ArkmeClientConfig = {
   recordingImportPath: '/arkme-self/api/recording/import',
   mediaPath: '/arkme-self/api/media',
   shareWebsite: 'https://app.arkme.ai',
-  recordingWorkbenchV2Enabled: true,
+  recordingWorkbenchEnabled: true,
 }
 
 function deferred<T>(): {

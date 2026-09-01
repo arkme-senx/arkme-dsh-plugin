@@ -1,19 +1,10 @@
 import { callArkme as callProvider } from '../sdk/index.js'
+import type { PublicRecordingImportJob } from '../recording-import-shared.js'
 import type { ArkmePluginOperation } from '../types.js'
 
 export { ArkmeClientError } from '../sdk/index.js'
 
-export interface RecordingImportSnapshot {
-  importRef: string
-  revision: number
-  phase: 'prepared' | 'uploading' | 'finalizing' | 'accepted' | 'failed' | 'cancelled'
-  fileName: string
-  fileSize: number
-  durationMillis: number
-  progress: number
-  errorMessage?: string
-  retryable?: boolean
-}
+export type RecordingImportSnapshot = PublicRecordingImportJob
 
 function recordingImportMime(file: File): string {
   if (file.type !== '') return file.type
@@ -25,6 +16,7 @@ export async function uploadArkmeRecording(
   importPath: string,
   file: File,
   startAtMillis: number,
+  belongUserId: number,
   signal?: AbortSignal,
 ): Promise<RecordingImportSnapshot> {
   const response = await fetch(importPath, {
@@ -33,6 +25,7 @@ export async function uploadArkmeRecording(
       'Content-Type': recordingImportMime(file),
       'X-Arkme-File-Name': encodeURIComponent(file.name),
       'X-Arkme-Start-At': String(startAtMillis),
+      'X-Arkme-Belong-User': String(belongUserId),
     },
     body: file,
     credentials: 'same-origin',
@@ -87,6 +80,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'recordings.calendar'
   | 'recordings.day'
   | 'recordings.import.list'
+  | 'recordings.import.preflight'
   | 'recordings.import.status'
   | 'recordings.import.retry'
   | 'recordings.import.cancel'

@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { ArkmeLongArticleDraft, ArkmePendingWrite, ArkmeRecordCaptureContext } from './types.js'
-import { sameRecordingImportIdentity, type RecordingImportJob, type RecordingImportPhase } from './recording-import-contract.js'
+import {
+  sameRecordingImportIdentity,
+  type RecordingImportAdmission,
+  type RecordingImportJob,
+  type RecordingImportPhase,
+} from './recording-import-contract.js'
 import { securePrivateDirectory, securePrivateFile } from './private-filesystem.js'
 
 interface PersistedState {
@@ -27,6 +32,10 @@ const RECORDING_IMPORT_PHASES = new Set<RecordingImportPhase>([
   'prepared', 'uploading', 'finalizing', 'accepted', 'failed', 'cancelled',
 ])
 export const RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT = 100
+
+function cloneRecordingImportJob(job: RecordingImportJob): RecordingImportJob {
+  return structuredClone(job)
+}
 
 function pruneRecordingImportTerminalJobs(jobs: Record<string, RecordingImportJob>): void {
   const expiredTerminalJobs = Object.values(jobs)
@@ -239,18 +248,18 @@ export class ArkmeStateStore {
 
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
     return await this.read(state => Object.values(state.recordingImportJobsByUser[String(userId)] ?? {})
-      .map(job => ({ ...job })))
+      .map(cloneRecordingImportJob))
   }
 
   async listAllRecordingImportJobs(): Promise<RecordingImportJob[]> {
     return await this.read(state => Object.values(state.recordingImportJobsByUser)
-      .flatMap(jobs => Object.values(jobs).map(job => ({ ...job }))))
+      .flatMap(jobs => Object.values(jobs).map(cloneRecordingImportJob)))
   }
 
   async getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined> {
     return await this.read(state => {
       const job = state.recordingImportJobsByUser[String(userId)]?.[jobId]
-      return job === undefined ? undefined : { ...job }
+      return job === undefined ? undefined : cloneRecordingImportJob(job)
     })
   }
 
@@ -258,28 +267,46 @@ export class ArkmeStateStore {
     if (job.userId !== userId) throw new Error('Recording import job account mismatch')
     await this.update(state => {
       const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
-      jobs[job.jobId] = { ...job }
+      jobs[job.jobId] = cloneRecordingImportJob(job)
       pruneRecordingImportTerminalJobs(jobs)
       state.recordingImportJobsByUser[String(userId)] = jobs
     })
   }
 
-  async putRecordingImportJobIfAbsent(userId: number, job: RecordingImportJob): Promise<RecordingImportJob> {
+  async admitRecordingImportJob(
+    userId: number,
+    job: RecordingImportJob,
+    unresolvedLimit: number,
+  ): Promise<RecordingImportAdmission> {
     if (job.userId !== userId) throw new Error('Recording import job account mismatch')
-    let selected = job
+    if (!Number.isSafeInteger(unresolvedLimit) || unresolvedLimit < 1) {
+      throw new Error('Recording import unresolved limit must be a positive integer')
+    }
+    let admission: RecordingImportAdmission | undefined
     await this.update(state => {
       const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
-      const existing = Object.values(jobs).find(candidate => candidate.phase !== 'cancelled'
-        && sameRecordingImportIdentity(candidate, job))
+      const unresolved = Object.values(jobs)
+        .filter(candidate => !['accepted', 'cancelled'].includes(candidate.phase))
+      const existing = unresolved.find(candidate => sameRecordingImportIdentity(candidate, job))
       if (existing !== undefined) {
-        selected = { ...existing }
+        admission = { kind: 'existing', job: cloneRecordingImportJob(existing) }
         return
       }
-      jobs[job.jobId] = { ...job }
+      if (unresolved.some(candidate => candidate.fileName === job.fileName)) {
+        admission = { kind: 'duplicate-file-name' }
+        return
+      }
+      if (unresolved.length >= unresolvedLimit) {
+        admission = { kind: 'limit' }
+        return
+      }
+      jobs[job.jobId] = cloneRecordingImportJob(job)
       pruneRecordingImportTerminalJobs(jobs)
       state.recordingImportJobsByUser[String(userId)] = jobs
+      admission = { kind: 'inserted', job: cloneRecordingImportJob(job) }
     })
-    return selected
+    if (admission === undefined) throw new Error('Recording import admission was not decided')
+    return admission
   }
 
   async replaceRecordingImportJob(
@@ -293,7 +320,7 @@ export class ArkmeStateStore {
       const current = state.recordingImportJobsByUser[String(userId)]?.[job.jobId]
       if (current?.revision !== expectedRevision) return
       const jobs = state.recordingImportJobsByUser[String(userId)]!
-      jobs[job.jobId] = { ...job }
+      jobs[job.jobId] = cloneRecordingImportJob(job)
       pruneRecordingImportTerminalJobs(jobs)
       replaced = true
     })

@@ -88,18 +88,21 @@ describe('MediaService', () => {
     const service = new MediaService(runtime, new ProfileService(runtime), {} as never, { recordUid() { return '' } })
 
     const mediaRef = await service.issueRecordingPlaybackMediaRef({
-      viewerUserId: 42, sessionId: 'session-1', audioFileName: 'device_0.m4a', mimeType: 'audio/mp4',
+      viewerUserId: 42, sessionId: 'session-1', childId: 'child-1',
+      asrItemStartAt: 1_000, asrItemEndAt: 2_000, speakerNumber: 3,
     })
     expect(mediaRef).toMatch(/^arkme-media-v1\./)
     expect(mediaRef).not.toContain('secret')
     await expect(service.fetchMedia(mediaRef, 'bytes=100-199')).resolves.toMatchObject({
-      response: { status: 206 }, descriptor: { mimeType: 'audio/mp4', fileName: 'device_0.m4a' },
+      response: { status: 206 }, descriptor: { mimeType: 'audio/flac', fileName: '1000_2000_3.flac' },
     })
     const signedRequest = vi.mocked(fetchImpl).mock.calls.at(-1)?.[0]
     const signedUrl = new URL(typeof signedRequest === 'string' || signedRequest instanceof URL
       ? signedRequest : signedRequest!.url)
     expect(signedUrl.hostname).toBe('jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com')
-    expect(decodeURIComponent(signedUrl.pathname)).toBe('/pc_upload/42/session-1/device_0.m4a')
+    expect(decodeURIComponent(signedUrl.pathname)).toBe(
+      '/a1d0c6e83f027327d8461063f4ac58a6/42/audio_output/session-1/child-1/1000_2000_3.flac',
+    )
 
     const server = createServer(createArkmeMediaHandler({
       fetchMedia: async (ref: string, range?: string, signal?: AbortSignal) => await service.fetchMedia(ref, range, signal),
@@ -125,7 +128,8 @@ describe('MediaService', () => {
     userId = 99
     await expect(service.fetchMedia(mediaRef)).rejects.toMatchObject({ code: 'media-ref-invalid' })
     await expect(service.issueRecordingPlaybackMediaRef({
-      viewerUserId: 99, sessionId: '../other-user', audioFileName: 'voice.m4a', mimeType: 'audio/mp4',
+      viewerUserId: 99, sessionId: '../other-user', childId: 'child-1',
+      asrItemStartAt: 1_000, asrItemEndAt: 2_000, speakerNumber: 3,
     })).rejects.toMatchObject({ code: 'recording-playback-path-invalid' })
   })
 

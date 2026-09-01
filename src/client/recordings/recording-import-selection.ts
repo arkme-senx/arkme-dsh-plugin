@@ -1,7 +1,8 @@
 import { BlobSource, Input, MP3, MP4, WAVE } from 'mediabunny'
-
-const MAX_RECORDING_IMPORT_BYTES = 1024 ** 3
-const MAX_RECORDING_IMPORT_DURATION_MILLIS = 10 * 60 * 60 * 1_000
+import {
+  MAX_RECORDING_IMPORT_BYTES,
+  MAX_RECORDING_IMPORT_DURATION_MILLIS,
+} from '../../recording-import-shared.js'
 
 export type ArkmeRecordingSelectionFormat = 'WAV' | 'MP3' | 'M4A'
 

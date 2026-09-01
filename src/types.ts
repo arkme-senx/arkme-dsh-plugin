@@ -33,7 +33,7 @@ export interface ArkmeClientConfig {
   recordingImportPath: string
   mediaPath: string
   shareWebsite: string
-  recordingWorkbenchV2Enabled: boolean
+  recordingWorkbenchEnabled: boolean
 }
 
 export type ArkmeBillingPaymentMethod = 'alipay_pc_web' | 'wechat_native'
@@ -2190,6 +2190,7 @@ export interface ArkmeRecordingWorkbenchItem {
   startAtMillis: number
   endAtMillis: number
   speakerNumber: number
+  speakerKey: string
   speakerColorIndex: number
   speakerLabel: string
   speakerAvatarRef?: string
@@ -2210,6 +2211,9 @@ export interface ArkmeRecordingSpeakerOption {
   speakerRef: string
   label: string
   avatarRef?: string
+  kind: 'arkme-user' | 'speaker'
+  currentAssignment: boolean
+  isCurrentUser: boolean
   recommended: boolean
 }
 
@@ -2255,15 +2259,16 @@ export interface ArkmeRecordingSection<T> {
   message: string
 }
 
-export interface ArkmeRecordingTranscriptSection extends ArkmeRecordingSection<ArkmeRecordingTranscriptItem> {
+export interface ArkmeRecordingTranscriptSection<T = ArkmeRecordingTranscriptItem> extends ArkmeRecordingSection<T> {
   identityCoverage?: 'complete' | 'partial'
   totalDurationMillis: number
+  processingCount: number
 }
 
 export interface ArkmeRecordingDay {
   dateStamp: number
   totalDurationMillis: number
-  transcript: ArkmeRecordingSection<ArkmeRecordingWorkbenchItem>
+  transcript: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
   summary: ArkmeRecordingSection<ArkmeRecordingVersion>
   timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
 }
@@ -2930,6 +2935,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'dsh-beta-community.join'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'recordings.import.preflight'
   | 'recordings.import.list'
   | 'recordings.import.status'
   | 'recordings.import.retry'

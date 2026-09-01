@@ -7,6 +7,7 @@ import {
   recordingImportFileKind,
   type PublicRecordingImportJob,
 } from './recording-import-contract.js'
+import { isRecordingInstantOnOrAfterUnixEpoch } from './recording-time.js'
 import { ArkmePluginError } from './services/service.js'
 
 export interface ArkmeRecordingImportRouteOptions {
@@ -44,7 +45,7 @@ interface ArkmeRecordingImportAcceptor {
   recordingImportUserId(): Promise<number>
   acceptRecordingImport(
     sourceHandle: string,
-    metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number },
+    metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number },
     expectedUserId: number,
   ): Promise<PublicRecordingImportJob>
 }
@@ -75,6 +76,13 @@ function headerText(req: IncomingMessage, name: string): string {
   return Array.isArray(value) ? value[0] ?? '' : value ?? ''
 }
 
+function nonNegativeIntegerHeader(req: IncomingMessage, name: string): number {
+  const value = headerText(req, name).trim()
+  if (!/^(0|[1-9]\d*)$/.test(value)) return Number.NaN
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) ? parsed : Number.NaN
+}
+
 function writeJson(res: ServerResponse, status: number, body: unknown): void {
   const encoded = JSON.stringify(body)
   res.writeHead(status, {
@@ -96,9 +104,10 @@ export function createArkmeRecordingImportHandler(
     try {
       if (req.method !== 'POST') throw new ArkmePluginError('method-not-allowed', '只允许 POST 请求', false, 405)
       assertLocalRequest(req, options)
-      const fileSize = Number(headerText(req, 'content-length'))
+      const fileSize = nonNegativeIntegerHeader(req, 'content-length')
       const mimeType = headerText(req, 'content-type').split(';')[0]?.trim().toLowerCase() ?? ''
-      const startAtMillis = Number(headerText(req, 'x-arkme-start-at'))
+      const startAtMillis = nonNegativeIntegerHeader(req, 'x-arkme-start-at')
+      const belongUserId = nonNegativeIntegerHeader(req, 'x-arkme-belong-user')
       let fileName = ''
       try { fileName = decodeURIComponent(headerText(req, 'x-arkme-file-name')).trim() } catch { fileName = '' }
       if (fileName === '' || fileName.length > 255) {
@@ -113,10 +122,13 @@ export function createArkmeRecordingImportHandler(
         }
         throw error
       }
-      if (!Number.isSafeInteger(startAtMillis) || startAtMillis <= 0) {
+      if (!isRecordingInstantOnOrAfterUnixEpoch(startAtMillis)) {
         throw new ArkmePluginError('recording-import-start-invalid', '录音开始时间无效', false)
       }
       const expectedUserId = await service.recordingImportUserId()
+      if (!Number.isSafeInteger(belongUserId) || (belongUserId !== 0 && belongUserId !== expectedUserId)) {
+        throw new ArkmePluginError('recording-import-owner-invalid', '录音数据归属无效', false)
+      }
 
       await mkdir(options.temporaryDirectory, { recursive: true, mode: 0o700 })
       temporaryPath = join(options.temporaryDirectory, `${randomUUID()}.upload`)
@@ -131,7 +143,7 @@ export function createArkmeRecordingImportHandler(
             throw new ArkmePluginError('recording-import-size-mismatch', '录音文件大小与声明不一致', false)
           }
           hash.update(buffer)
-          await handle.write(buffer)
+          await handle.writeFile(buffer)
         }
       } finally {
         await handle.close()
@@ -143,6 +155,7 @@ export function createArkmeRecordingImportHandler(
         fileSize: received,
         sha256: hash.digest('hex'),
         startAtMillis,
+        belongUserId,
       }, expectedUserId)
       accepted = true
       writeJson(res, 202, { ok: true, value })

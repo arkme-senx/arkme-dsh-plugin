@@ -531,19 +531,25 @@ export class MediaService {
   async issueRecordingPlaybackMediaRef(input: {
     viewerUserId: number
     sessionId: string
-    audioFileName: string
-    mimeType: string
+    childId: string
+    asrItemStartAt: number
+    asrItemEndAt: number
+    speakerNumber: number
   }, signal?: AbortSignal): Promise<string> {
     const session = await this.runtime.requireSession()
     if (input.viewerUserId !== session.userId) {
       throw new ArkmePluginError('recording-playback-account-mismatch', '录音片段与当前账号不匹配', false, 403)
     }
     const sessionId = audioObjectPathPart(input.sessionId)
-    const audioFileName = audioObjectPathPart(input.audioFileName)
-    if (sessionId === undefined || audioFileName === undefined) {
+    const childId = audioObjectPathPart(input.childId)
+    if (sessionId === undefined || childId === undefined
+      || !Number.isSafeInteger(input.asrItemStartAt) || input.asrItemStartAt < 0
+      || !Number.isSafeInteger(input.asrItemEndAt) || input.asrItemEndAt < input.asrItemStartAt
+      || !Number.isSafeInteger(input.speakerNumber)) {
       throw new ArkmePluginError('recording-playback-path-invalid', '录音播放路径无效', false, 502)
     }
-    const objectPath = `pc_upload/${String(session.userId)}/${sessionId}/${audioFileName}`
+    const audioFileName = `${String(input.asrItemStartAt)}_${String(input.asrItemEndAt)}_${String(input.speakerNumber)}.flac`
+    const objectPath = `${md5Text(String(session.userId))}/${String(session.userId)}/audio_output/${sessionId}/${childId}/${audioFileName}`
     const credentials = await this.audioOssCredentials(session, signal)
     const bucket = this.runtime.config.environment === 'prod' ? 'jotmo-useraudio' : 'jotmo-useraudio-test'
     let signedUrl: URL
@@ -568,7 +574,7 @@ export class MediaService {
     const display = unmarkedSpeakerAudioType(audioFileName)
     return this.issueMediaRef(session.userId, {
       remoteUrl: signedUrl.toString(),
-      mimeType: input.mimeType.trim().startsWith('audio/') ? input.mimeType.trim() : display.mimeType,
+      mimeType: display.mimeType,
       fileName: audioFileName,
       size: 0,
     }, undefined, 110_000)

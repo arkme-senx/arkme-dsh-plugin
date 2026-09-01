@@ -29,6 +29,7 @@ interface AudioOssCredentials {
 interface RecoveredAudioSession {
   sessionId: string
   finished: boolean
+  belongUserId: number | undefined
 }
 
 const AUDIO_SESSION_RECOVERY_LIMIT = 500
@@ -37,6 +38,10 @@ type AudioOssClientFactory = (options: ConstructorParameters<typeof OSS>[0]) => 
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function optionalIntegerValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : undefined
 }
 
 function remoteFileName(job: RecordingImportJob): string {
@@ -79,7 +84,15 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
       session,
       signal,
     )
-    return stringValue(data.session_id).trim()
+    const sessionId = stringValue(data.session_id).trim()
+    if (sessionId !== '') {
+      await this.ensureSessionOwnership(job, {
+        sessionId,
+        finished: false,
+        belongUserId: job.userId,
+      }, session, signal)
+    }
+    return sessionId
   }
 
   async createChild(job: RecordingImportJob, signal?: AbortSignal): Promise<string> {
@@ -179,7 +192,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
   }
 
   async deleteSession(job: RecordingImportJob): Promise<void> {
-    const recovered = await this.recoverSession(job)
+    const recovered = await this.recoverSession(job, undefined, false)
     if (recovered?.finished === true) {
       throw new ArkmePluginError(
         'recording-import-already-accepted',
@@ -220,17 +233,20 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
 
   private async requireJobSession(job: RecordingImportJob): Promise<ArkmeSessionCredentials> {
     const session = await this.runtime.requireSession()
-    if (session.userId !== job.userId || job.belongUserId !== job.userId) {
+    if (session.userId !== job.userId) {
       throw new ArkmePluginError('recording-import-account-mismatch', '登录账号已变化，已停止录音导入', true, 403)
     }
     return session
   }
 
-  private async recoverSession(job: RecordingImportJob, signal?: AbortSignal): Promise<RecoveredAudioSession | undefined> {
+  private async recoverSession(
+    job: RecordingImportJob,
+    signal?: AbortSignal,
+    normalizeOwnership = true,
+  ): Promise<RecoveredAudioSession | undefined> {
     const session = await this.requireJobSession(job)
     const matchesIdentity = (item: Record<string, unknown>): boolean => numberValue(item.source) === 2
         && numberValue(item.start_at) === job.startAtMillis
-        && numberValue(item.belong_usr) === job.belongUserId
         && stringValue(item.orig_name) === job.fileName
 
     if (job.sessionId !== undefined) {
@@ -246,7 +262,13 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
           'Audio 会话检查点与当前任务不一致，已停止操作',
         )
       }
-      return { sessionId: job.sessionId, finished: recovered.has_finish_spk === true }
+      const result = {
+        sessionId: job.sessionId,
+        finished: recovered.has_finish_spk === true,
+        belongUserId: optionalIntegerValue(recovered.belong_usr),
+      }
+      if (normalizeOwnership) await this.ensureSessionOwnership(job, result, session, signal)
+      return result
     }
 
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
@@ -280,7 +302,34 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
     }
     const recovered = matches[0]
     if (recovered === undefined) return undefined
-    return { sessionId: stringValue(recovered.id).trim(), finished: recovered.has_finish_spk === true }
+    const result = {
+      sessionId: stringValue(recovered.id).trim(),
+      finished: recovered.has_finish_spk === true,
+      belongUserId: optionalIntegerValue(recovered.belong_usr),
+    }
+    if (normalizeOwnership) await this.ensureSessionOwnership(job, result, session, signal)
+    return result
+  }
+
+  private async ensureSessionOwnership(
+    job: RecordingImportJob,
+    recovered: RecoveredAudioSession,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (recovered.belongUserId === job.belongUserId) return
+    if (job.belongUserId !== 0 || recovered.belongUserId !== job.userId) {
+      throw new RecordingImportContractError(
+        'recording-import-session-ownership-conflict',
+        'Audio 会话归属与当前任务不一致，已停止操作',
+      )
+    }
+    await this.runtime.authenticatedAudioPost(
+      '/api/v1/audio/modify-session-belong-usr',
+      { session_id: recovered.sessionId, belong_usr: 0 },
+      session,
+      signal,
+    )
   }
 
   private assertOwnerAccepted(

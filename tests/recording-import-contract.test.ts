@@ -3,10 +3,8 @@ import {
   MAX_RECORDING_IMPORT_BYTES,
   MAX_RECORDING_IMPORT_DURATION_MILLIS,
   advanceRecordingImportJob,
-  openRecordingImportRef,
   recordingImportFileKind,
   recordingImportCanonicalMimeType,
-  sealRecordingImportRef,
   toPublicRecordingImportJob,
   type RecordingImportJob,
 } from '../src/recording-import-contract.js'
@@ -91,26 +89,25 @@ describe('recording import contract', () => {
     })).toThrowError(/不允许从 accepted/)
   })
 
-  it('seals the job identity to the current account', () => {
-    const ref = sealRecordingImportRef({ jobId: 'job-1', userId: 42 }, 'secret')
-    expect(ref.split('.')).toHaveLength(4)
-    for (const segment of ref.split('.').slice(1)) {
-      expect(() => JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'))).toThrow()
-    }
-    expect(openRecordingImportRef(ref, 42, 'secret')).toEqual({ jobId: 'job-1', userId: 42 })
-    expect(() => openRecordingImportRef(ref, 77, 'secret')).toThrowError(/不属于当前账号/)
-    expect(() => openRecordingImportRef(`${ref}x`, 42, 'secret')).toThrowError(/引用无效/)
-  })
-
   it('never exposes local paths or owner checkpoints to the browser snapshot', () => {
     const publicJob = toPublicRecordingImportJob(job({
       phase: 'uploading', uploadedBytes: 512, sessionId: 'session-secret', childId: 'child-secret', childFinished: true,
     }), 'opaque-ref')
-    expect(publicJob).toEqual(expect.objectContaining({ importRef: 'opaque-ref', phase: 'uploading', progress: 0.5 }))
+    expect(publicJob).toEqual(expect.objectContaining({
+      importRef: 'opaque-ref', phase: 'uploading', progress: 0.5, ownership: 'self',
+    }))
     expect(publicJob).not.toHaveProperty('sourceHandle')
     expect(publicJob).not.toHaveProperty('sessionId')
     expect(publicJob).not.toHaveProperty('childId')
     expect(publicJob).not.toHaveProperty('childFinished')
     expect(JSON.stringify(publicJob)).not.toContain('/private/')
+  })
+
+  it('projects ownership as a category without exposing the owner user id', () => {
+    const publicJob = toPublicRecordingImportJob(job({ belongUserId: 0 }), 'opaque-ref')
+
+    expect(publicJob.ownership).toBe('other')
+    expect(publicJob).not.toHaveProperty('belongUserId')
+    expect(JSON.stringify(publicJob)).not.toContain('42')
   })
 })

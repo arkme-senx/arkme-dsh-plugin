@@ -916,10 +916,17 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'botRef').trim(), booleanParam(params, 'muted'), requestSignal === undefined ? {} : { signal: requestSignal },
     )
     case 'recordings.calendar': return await service.recordingCalendar(
-      numberParam(params, 'fromStamp', 0),
-      numberParam(params, 'toStamp', 0),
+      numberParam(params, 'fromStamp', Number.NaN),
+      numberParam(params, 'toStamp', Number.NaN),
+      requestSignal,
     )
-    case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
+    case 'recordings.day': return await service.recordingDay(
+      numberParam(params, 'dateStamp', Number.NaN),
+      requestSignal,
+    )
+    case 'recordings.import.preflight': return await service.recordingImportPreflight(
+      stringListParam(params, 'fileNames'), requestSignal,
+    )
     case 'recordings.import.list': return await service.recordingImportList()
     case 'recordings.import.status': return await service.recordingImportStatus(stringParam(params, 'importRef').trim())
     case 'recordings.import.retry': return await service.retryRecordingImport(

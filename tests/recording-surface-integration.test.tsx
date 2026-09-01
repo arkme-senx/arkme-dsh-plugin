@@ -4,7 +4,7 @@ import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
 describe('recording surface integration', () => {
-  it('mounts the read-only recording page instead of the message composer', () => {
+  it('mounts the desktop-parity recording workbench instead of the message composer', () => {
     arkmeUi.showRecordings()
     const markup = renderToStaticMarkup(<ArkmeSurface initialAuth={{
       status: 'authenticated',
@@ -12,10 +12,10 @@ describe('recording surface integration', () => {
       userId: 10001,
     }} />)
 
-    expect(markup).toContain('>全天候录音<')
-    expect(markup).toContain('>查看每天的录音、转写、总结与时间轴。<')
-    expect(markup).toContain('>当天时间轴<')
-    expect(markup).toContain('aria-label="录音列表"')
+    expect(markup).toContain('aria-label="全天候录音"')
+    expect(markup).toContain('aria-label="录音日历"')
+    expect(markup).toContain('aria-label="真实录音时间轴"')
+    expect(markup).toContain('>导入历史音频<')
     expect(markup).not.toContain('data-arkme-owned="directory-pane"')
     expect(markup).not.toContain('aria-label="发送消息"')
   })

@@ -103,7 +103,7 @@ export class RecordingImportCoordinator {
 
   async cancel(userId: number, jobId: string, expectedRevision: number): Promise<RecordingImportJob> {
     const job = await this.requiredJob(userId, jobId)
-    if (expectedRevision > job.revision) {
+    if (expectedRevision !== job.revision) {
       throw new RecordingImportContractError('recording-import-revision-conflict', '任务状态已变化，请刷新后重试', true)
     }
     if (!['prepared', 'uploading', 'finalizing', 'failed'].includes(job.phase)) {
