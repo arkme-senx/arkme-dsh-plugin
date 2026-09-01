@@ -14,6 +14,20 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('MediaService', () => {
+  it('rejects a direct upload before remote prepare when its captured account changed', async () => {
+    const authenticatedPost = vi.fn()
+    const media = new MediaService({
+      config: { richMediaSendEnabled: true, maxUploadBytes: 1_000 },
+      requireSession: async () => ({ userId: 43, accessToken: 'access', refreshToken: 'refresh' }),
+      authenticatedPost,
+    } as never, {} as never, {} as never, {} as never)
+
+    await expect(media.uploadLocalFile('not-read-because-account-mismatch', {
+      size: 10, sha256: 'a'.repeat(64), mimeType: 'audio/mp4', fileName: 'background.m4a', fileKind: 2,
+    }, { expectedUserId: 42 })).rejects.toMatchObject({ code: 'file-account-changed' })
+    expect(authenticatedPost).not.toHaveBeenCalled()
+  })
+
   it('keeps previews separate from originals and classifies a stale file-marked MP3 as audio', async () => {
     const sessions: ArkmeSessionStore = { async read() { return { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' } }, async write() {}, async delete() {} }
     const fetchImpl = vi.fn(async () => new Response('original'))
@@ -124,6 +138,15 @@ describe('MediaService', () => {
         mime_type: 'audio/mp4',
         file_name: 'voice-1.m4a',
         size: 128,
+        duration_sec: 4.25,
+      }, {
+        // Browser-captured background sound is uploaded through the generic
+        // file owner rather than the dedicated legacy voice bucket.
+        file_asset_uid: 'background-1',
+        download_url: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/background-1.webm?x-oss-signature=test',
+        mime_type: 'audio/webm',
+        file_name: 'background-1.webm',
+        size: 256,
       }],
     }] } }), { status: 200 })) as typeof fetch
     const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
@@ -131,12 +154,22 @@ describe('MediaService', () => {
       async openWorldImageRef() { throw new Error('unexpected world image') },
     }, { recordUid() { return '' } })
 
-    const refs = await service.issueSearchAudioMediaRefs([
+    const requests = [
       { recordUid: 'record-1', fileAssetUid: 'voice-1' },
+      { recordUid: 'record-1', fileAssetUid: 'background-1' },
       { recordUid: 'record-1', fileAssetUid: 'missing' },
-    ])
+    ]
+    const media = await service.issueSearchAudioMedia(requests)
+    const refs = await service.issueSearchAudioMediaRefs(requests)
 
+    expect(media.get('record-1\0voice-1')).toMatchObject({
+      mediaRef: expect.stringMatching(/^arkme-media-v1\./),
+      durationSeconds: 4.25,
+    })
+    expect(media.has('record-1\0missing')).toBe(false)
+    expect(media.get('record-1\0background-1')?.mediaRef).toMatch(/^arkme-media-v1\./)
     expect(refs.get('record-1\0voice-1')).toMatch(/^arkme-media-v1\./)
+    expect(refs.get('record-1\0background-1')).toMatch(/^arkme-media-v1\./)
     expect(refs.has('record-1\0missing')).toBe(false)
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })

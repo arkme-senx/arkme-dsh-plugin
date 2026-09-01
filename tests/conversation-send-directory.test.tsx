@@ -18,7 +18,8 @@ vi.mock('react-dom', () => ({
 }))
 
 import {
-  ArkmeSurface, arkmeGroupMentionCandidates, arkmeRealtimeDeltaCoversTimelineGap,
+  ArkmeConfirmedSendRetentionOwner, ArkmeSurface, arkmeBackgroundSoundCaptureFailureFeedback,
+  arkmeGroupMentionCandidates, arkmeRealtimeDeltaCoversTimelineGap,
 } from '../src/client/ArkmeSidebar.js'
 import { ArkmeClientError } from '../src/client/api.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
@@ -26,6 +27,7 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta } from '../src/client/chat-directory-store.js'
 import { arkmeComposerDraftStore, arkmeSourceComposerDraftKey } from '../src/client/composer-draft-store.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
+import { setArkmeLocationCaptureEnabled } from '../src/client/record-capture-location.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
@@ -40,6 +42,10 @@ const other: ArkmeSourceItem = {
 const group: ArkmeSourceItem = {
   sourceRef: 'source-group', sourceKey: 'chat:group', kind: 'group_chat', displayName: '群聊',
   latestPreview: 'message-784', activeAtMillis: 48, unreadCount: 0, latestSequence: 784,
+}
+const sendToSelf: ArkmeSourceItem = {
+  sourceRef: 'source-self', sourceKey: 'record:self', kind: 'send_to_self', displayName: '发给自己',
+  latestPreview: '', activeAtMillis: 48, unreadCount: 0,
 }
 
 function activeMembers(count: number): ArkmeConversationMemberItem[] {
@@ -62,17 +68,58 @@ describe('conversation send directory projection', () => {
   let copiedQuickLinkExtensionText = ''
   let activeSource = target
 
+  it.each([
+    ['permission-denied', '未获得麦克风权限'],
+    ['start-failed', '录音启动失败'],
+    ['stop-failed', '录音结束失败'],
+    ['retention-evicted', '切换会话较多，较早草稿的背景音已释放'],
+    ['limit-reached', '录音达到上限且未生成可用片段'],
+  ] as const)('maps %s background capture failure to visible send feedback', (failure, feedback) => {
+    expect(arkmeBackgroundSoundCaptureFailureFeedback(failure)).toBe(feedback)
+  })
+
+  it('bounds confirmed-send retention and preserves its action ref through a sparse authoritative row', () => {
+    const owner = new ArkmeConfirmedSendRetentionOwner(2)
+    const retained = (itemUid: string): ArkmeTimelineItem => ({
+      itemUid, messageActionRef: `action-${itemUid}`, senderName: '我', isMe: true,
+      sendAtMillis: 1, title: '', textContent: itemUid, status: 1,
+    })
+    owner.retain('self', retained('one'), 0)
+    owner.retain('self', retained('two'), 0)
+    owner.retain('self', retained('three'), 0)
+    expect(owner.merge('self', [], 1).map(item => item.itemUid)).toEqual(['three', 'two'])
+
+    const { messageActionRef: _actionRef, ...sparseAuthoritative } = retained('three')
+    const merged = owner.merge('self', [sparseAuthoritative], 2)
+    expect(merged.find(item => item.itemUid === 'three')?.messageActionRef).toBe('action-three')
+    owner.merge('self', [retained('three')], 3)
+    expect(owner.merge('self', [], 4).map(item => item.itemUid)).toEqual(['two'])
+    expect(owner.merge('self', [], 60_001)).toEqual([])
+  })
+
   beforeEach(() => {
     timeline = []
     copiedQuickLinkExtensionText = ''
     activeSource = target
     vi.spyOn(Date, 'now').mockReturnValue(48)
+    const localStorage = new Map<string, string>()
+    const sessionStorage = new Map<string, string>()
     vi.stubGlobal('window', {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       setTimeout: globalThis.setTimeout,
       clearTimeout: globalThis.clearTimeout,
       open: vi.fn(),
+      localStorage: {
+        getItem: (key: string) => localStorage.get(key) ?? null,
+        setItem: (key: string, value: string) => { localStorage.set(key, value) },
+        removeItem: (key: string) => { localStorage.delete(key) },
+      },
+      sessionStorage: {
+        getItem: (key: string) => sessionStorage.get(key) ?? null,
+        setItem: (key: string, value: string) => { sessionStorage.set(key, value) },
+        removeItem: (key: string) => { sessionStorage.delete(key) },
+      },
     })
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
@@ -510,6 +557,63 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ role: 'status' })).toHaveLength(0)
   })
 
+  it('requests microphone permission from the first text input instead of focus or settings load', async () => {
+    const stopTrack = vi.fn()
+    const getUserMedia = vi.fn(async () => ({
+      getTracks: () => [{ stop: stopTrack }],
+    } as unknown as MediaStream))
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 Chrome/152 Safari/537.36',
+      mediaDevices: { getUserMedia },
+      permissions: { query: vi.fn(async () => ({ state: 'prompt' as PermissionState })) },
+    })
+    const fallback = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'provider.capabilities') return {
+        contractVersion: 1,
+        provider: '@senguoyun/dsh-arkme',
+        sdk: '@senguoyun/dsh-arkme/sdk',
+        environment: 'test',
+        features: { backgroundSound: true },
+        limits: {},
+      }
+      if (operation === 'settings.background-sound.get') return {
+        userId: 42,
+        found: true,
+        enabled: true,
+        eligible: true,
+        memberType: 2,
+        eligibilityReason: 'eligible',
+      }
+      return await fallback(operation, params, signal)
+    })
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onFocus()
+      await Promise.resolve()
+    })
+    expect(getUserMedia).not.toHaveBeenCalled()
+
+    await act(async () => {
+      composer.props.onTextChange('首')
+      await new Promise(resolve => { setTimeout(resolve, 5) })
+    })
+    expect(getUserMedia).toHaveBeenCalledOnce()
+    expect(stopTrack).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      composer.props.onTextChange('首次输入')
+      await Promise.resolve()
+    })
+    expect(getUserMedia).toHaveBeenCalledOnce()
+  })
+
   it('keeps the owner directory unchanged after send until the authoritative session projection arrives', async () => {
     await act(async () => {
       renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
@@ -534,6 +638,378 @@ describe('conversation send directory projection', () => {
     expect(sendCall?.[1]).not.toHaveProperty('humanMentions')
     expect(sendCall?.[1]).not.toHaveProperty('botMentions')
     expect(renderer!.root.findByProps({ 'data-arkme-read-receipt-indicator': 'unread' })).toBeDefined()
+  })
+
+  it.each([
+    ['私聊', target],
+    ['发给自己', sendToSelf],
+  ])('automatically records an already-authorized location after a %s send without prompting during input', async (_label, selectedSource) => {
+    const getCurrentPosition = vi.fn((success: PositionCallback) => { success({
+      coords: {
+        latitude: 30.52, longitude: 114.31, accuracy: 18, altitude: null,
+        altitudeAccuracy: null, heading: null, speed: null,
+      },
+      timestamp: 100,
+    } as GeolocationPosition) })
+    vi.stubGlobal('navigator', {
+      permissions: { query: vi.fn(async () => ({ state: 'granted' })) },
+      geolocation: { getCurrentPosition },
+    })
+    setArkmeLocationCaptureEnabled('test:42', true)
+    activeSource = selectedSource
+    arkmeUi.selectSource(selectedSource)
+    const baseImplementation = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'sources.list') return {
+        directory: params?.directory ?? 'root',
+        items: params?.directory === 'send_to_self' ? [sendToSelf] : [other, target],
+        hasMore: false,
+      }
+      if (operation === 'source.timeline') return { source: selectedSource, items: [], hasMore: false }
+      if (operation === 'source.send-text') return {
+        sourceRef: selectedSource.sourceRef,
+        itemUid: params?.recordUid ?? 'record-new',
+        status: 1,
+        sequence: selectedSource.kind === 'private_chat' ? 9 : undefined,
+        localState: 'synced',
+      }
+      if (operation === 'source.message-location.set') return {}
+      return await baseImplementation(operation, params, signal)
+    })
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('自动位置')
+      await Promise.resolve()
+    })
+    expect(getCurrentPosition).not.toHaveBeenCalled()
+
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(getCurrentPosition).toHaveBeenCalledOnce()
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-location.set', {
+      sourceRef: selectedSource.sourceRef,
+      itemUid: 'record-new',
+      location: { latitude: 30.52, longitude: 114.31, accuracyMeters: 18, capturedAtMillis: 100 },
+    })
+  })
+
+  it('drops a late explicit location result after switching composers and blocks send while it is pending', async () => {
+    let resolvePosition!: () => void
+    const getCurrentPosition = vi.fn((success: PositionCallback) => {
+      resolvePosition = () => { success({
+        coords: {
+          latitude: 30.52, longitude: 114.31, accuracy: 18, altitude: null,
+          altitudeAccuracy: null, heading: null, speed: null,
+        },
+        timestamp: 100,
+      } as GeolocationPosition) }
+    })
+    vi.stubGlobal('navigator', {
+      permissions: { query: vi.fn(async () => ({ state: 'granted' })) },
+      geolocation: { getCurrentPosition },
+    })
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    let composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('A 的消息')
+      await Promise.resolve()
+      renderer!.root.findByProps({ 'aria-label': '开启自动位置记录' }).props.onClick()
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.disabled).toBe(true)
+
+    activeSource = other
+    await act(async () => {
+      arkmeUi.selectSource(other)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('B 的消息')
+      resolvePosition()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(renderer!.root.findAllByProps({ 'aria-label': '已手动采集本条位置，点击移除' })).toHaveLength(0)
+    expect(renderer!.root.findByProps({ 'aria-label': '开启自动位置记录' })).toBeDefined()
+    expect(renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.disabled).toBe(false)
+  })
+
+  it('does not let an earlier send acknowledgement clear a newer composer location', async () => {
+    let positionIndex = 0
+    const positions = [
+      { latitude: 30.52, longitude: 114.31, capturedAtMillis: 100 },
+      { latitude: 31.23, longitude: 121.47, capturedAtMillis: 200 },
+    ]
+    const getCurrentPosition = vi.fn((success: PositionCallback) => {
+      const value = positions[positionIndex++]!
+      success({
+        coords: {
+          latitude: value.latitude, longitude: value.longitude, accuracy: 18, altitude: null,
+          altitudeAccuracy: null, heading: null, speed: null,
+        },
+        timestamp: value.capturedAtMillis,
+      } as GeolocationPosition)
+    })
+    vi.stubGlobal('navigator', {
+      permissions: { query: vi.fn(async () => ({ state: 'granted' })) },
+      geolocation: { getCurrentPosition },
+    })
+    const baseImplementation = mocks.callArkme.getMockImplementation()!
+    let resolveSend!: (value: unknown) => void
+    const pendingSend = new Promise(resolve => { resolveSend = resolve })
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'source.timeline') return { source: activeSource, items: [], hasMore: false }
+      if (operation === 'source.send-text' && params?.sourceRef === target.sourceRef) return await pendingSend
+      if (operation === 'source.message-location.set') return {}
+      return await baseImplementation(operation, params, signal)
+    })
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    let composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('A 的消息')
+      await Promise.resolve()
+      renderer!.root.findByProps({ 'aria-label': '开启自动位置记录' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findByProps({ 'aria-label': '已手动采集本条位置，点击移除' })).toBeDefined()
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    activeSource = other
+    await act(async () => {
+      arkmeUi.selectSource(other)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('B 的消息')
+      await Promise.resolve()
+      renderer!.root.findByProps({ 'aria-label': '已开启自动位置记录' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findByProps({ 'aria-label': '已手动采集本条位置，点击移除' })).toBeDefined()
+
+    await act(async () => {
+      resolveSend({ sourceRef: target.sourceRef, itemUid: 'record-new', status: 1, sequence: 9, localState: 'synced' })
+      await pendingSend
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(renderer!.root.findByProps({ 'aria-label': '已手动采集本条位置，点击移除' })).toBeDefined()
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-location.set', {
+      sourceRef: target.sourceRef,
+      itemUid: 'record-new',
+      location: { latitude: 30.52, longitude: 114.31, accuracyMeters: 18, capturedAtMillis: 100 },
+    })
+  })
+
+  it('does not restore a failed send location onto newer text in the same composer', async () => {
+    const getCurrentPosition = vi.fn((success: PositionCallback) => {
+      success({
+        coords: {
+          latitude: 30.52, longitude: 114.31, accuracy: 18, altitude: null,
+          altitudeAccuracy: null, heading: null, speed: null,
+        },
+        timestamp: 100,
+      } as GeolocationPosition)
+    })
+    vi.stubGlobal('navigator', {
+      permissions: { query: vi.fn(async () => ({ state: 'granted' })) },
+      geolocation: { getCurrentPosition },
+    })
+    const baseImplementation = mocks.callArkme.getMockImplementation()!
+    let rejectSend!: (error: Error) => void
+    const pendingSend = new Promise((_resolve, reject) => { rejectSend = reject })
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'source.send-text') return await pendingSend
+      return await baseImplementation(operation, params, signal)
+    })
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    let composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('待发送')
+      await Promise.resolve()
+      renderer!.root.findByProps({ 'aria-label': '开启自动位置记录' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('发送期间输入的新消息')
+      await Promise.resolve()
+      rejectSend(new Error('发送失败'))
+      await pendingSend.catch(() => undefined)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('发送期间输入的新消息')
+    expect(renderer!.root.findAllByProps({ 'aria-label': '已手动采集本条位置，点击移除' })).toHaveLength(0)
+  })
+
+  it('keeps the immediate snapshot action while the send-to-self owner projection converges', async () => {
+    activeSource = sendToSelf
+    arkmeUi.selectSource(sendToSelf)
+    vi.stubGlobal('HTMLElement', class { focus() {} })
+    vi.stubGlobal('document', {
+      activeElement: null,
+      body: {},
+      visibilityState: 'visible',
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })
+    const baseImplementation = mocks.callArkme.getMockImplementation()!
+    const openSettings = vi.spyOn(arkmeUi, 'openDshSettings')
+    let timelineCalls = 0
+    let resolveRefresh!: (value: unknown) => void
+    const pendingRefresh = new Promise(resolve => { resolveRefresh = resolve })
+    const authoritativeItem: ArkmeTimelineItem = {
+      itemUid: 'record-new', messageActionRef: 'opaque-send-to-self-message-action',
+      senderName: '狗才', isMe: true, sendAtMillis: 48, title: '', textContent: '立即查看快照', status: 1,
+    }
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'provider.capabilities') return {
+        contractVersion: 1, provider: '@senguoyun/dsh-arkme', sdk: '@senguoyun/dsh-arkme/sdk',
+        environment: 'test', features: { backgroundSound: true }, limits: {},
+      }
+      if (operation === 'settings.background-sound.get') return {
+        userId: 42, found: true, enabled: false, eligible: true, memberType: 2,
+        eligibilityReason: 'eligible',
+      }
+      if (operation === 'sources.list') return {
+        directory: params?.directory ?? 'root',
+        items: params?.directory === 'send_to_self' ? [sendToSelf] : [other, target],
+        hasMore: false,
+      }
+      if (operation === 'source.timeline') {
+        timelineCalls += 1
+        if (timelineCalls === 1) return { source: sendToSelf, items: [], hasMore: false }
+        if (timelineCalls === 2) return await pendingRefresh
+        return { source: sendToSelf, items: [authoritativeItem], hasMore: false }
+      }
+      if (operation === 'source.send-text') return {
+        sourceRef: sendToSelf.sourceRef,
+        itemUid: params?.recordUid ?? 'record-new',
+        status: 1,
+        localState: 'synced',
+        messageActionRef: 'opaque-send-to-self-message-action',
+      }
+      if (operation === 'source.message-snapshot.detail') return {
+        itemUid: 'record-new', textContent: '立即查看快照', recordDurationMillis: 1,
+        backgroundSound: 'not-recorded', syncState: 'synced',
+      }
+      return await baseImplementation(operation, params, signal)
+    })
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const revisionBeforeSend = arkmeUi.getSnapshot()
+    const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('立即查看快照')
+      await Promise.resolve()
+      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(arkmeUi.getSnapshot().recordRevision).toBe(revisionBeforeSend.recordRevision + 1)
+    expect(arkmeUi.getSnapshot().chatRevision).toBe(revisionBeforeSend.chatRevision)
+    const openMenu = async () => {
+      const line = renderer!.root.findByProps({ 'data-arkme-message-content-line': 'record-new' })
+      await act(async () => {
+        line.findByProps({ 'aria-label': '打开快记详情' }).props.onContextMenu({
+          preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180,
+        })
+        await Promise.resolve()
+      })
+      const menu = renderer!.root.findByProps({ 'aria-label': '消息操作' })
+      return menu.findAllByProps({ role: 'menuitem' }).find(button => button.findAllByType('span')
+        .some(span => span.children.includes('详情')))
+    }
+    const detailAction = await openMenu()
+    expect(detailAction).toBeDefined()
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.message-snapshot.detail')).toBe(false)
+    await act(async () => {
+      detailAction!.props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-snapshot.detail', {
+      sourceRef: sendToSelf.sourceRef,
+      actionRef: 'opaque-send-to-self-message-action',
+    }, expect.any(AbortSignal))
+    expect(renderer!.root.findByProps({ 'aria-label': '快记详情' })).toBeDefined()
+    const enableBackgroundSound = renderer!.root.findAll(node => node.type === 'button'
+      && node.children.includes('去开启›'))[0]
+    expect(enableBackgroundSound).toBeDefined()
+    await act(async () => { enableBackgroundSound!.props.onClick() })
+    expect(openSettings).toHaveBeenCalledOnce()
+    expect(renderer!.root.findAllByProps({ 'aria-label': '快记详情' })).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'settings.background-sound.update')).toBe(false)
+
+    await act(async () => {
+      resolveRefresh({ source: sendToSelf, items: [], hasMore: false })
+      await pendingRefresh
+      await Promise.resolve()
+    })
+    expect(await openMenu()).toBeDefined()
+    await act(async () => {
+      arkmeUi.recordChanged()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(timelineCalls).toBe(3)
+    expect(renderer!.root.findByProps({ 'data-arkme-message-content-line': 'record-new' })).toBeDefined()
   })
 
   it('replaces the native editor when the selected draft identity changes', async () => {

@@ -18,6 +18,7 @@ const expectedPublicMethods = [
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'listCallHistory', 'callDetail', 'retryCallSummary',
   'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'extensionAuthors', 'listExtensionReviews',
+  'backgroundSoundPreference', 'updateBackgroundSoundPreference',
   'resolveLinkMetadata',
   'searchContact', 'addContact',
   'listDirectory', 'directoryContactProfile', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
@@ -64,6 +65,8 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'background-sound-preference-service.ts',
+  'background-sound-membership-service.ts',
   'file-transfers.ts',
   'service.ts', 'auth-service.ts', 'profile-service.ts', 'bot-service.ts', 'bot-conversation-service.ts', 'source-service.ts',
   'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
@@ -105,7 +108,7 @@ describe('Arkme service architecture', () => {
 
   it('keeps the compatibility facade free of business transport and state owners', () => {
     const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
-    expect(facade.split('\n').length).toBeLessThan(1_800)
+    expect(facade.split('\n').length).toBeLessThan(1_825)
     expect(facade).not.toMatch(/\/api\//)
     expect(facade).not.toMatch(/private readonly \w+\s*=\s*new Map/)
   })

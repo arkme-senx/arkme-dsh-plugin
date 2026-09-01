@@ -6,6 +6,7 @@ import { arkmeNormalizedFileMimeType, arkmePickedFileKind, type ArkmeFileOpenRes
 import type { ArkmeUploadedAsset, ArkmeSourceSendResult } from '../types.js'
 import { ArkmePluginError } from './service.js'
 import { ARKME_TOOL_FILE_MAX_BYTES } from '../file-transfer-contract.js'
+import { arkmeFileBackgroundSound, assertArkmeBackgroundSoundLocalFiles } from '../record-background-sound.js'
 
 type Metadata = Pick<ArkmeLocalFile, 'fileName' | 'mimeType' | 'size'>
 interface StoredFile extends ArkmeLocalFile { sha256: string; createdAtMillis: number; asset?: ArkmeUploadedAsset }
@@ -14,7 +15,13 @@ export interface FileTransferPorts {
   currentUser(): Promise<number>
   validateSource(sourceRef: string): Promise<void>
   upload(path: string, metadata: StoredFile, progress: (value: ArkmeFileProgress) => void, userId: number, signal: AbortSignal): Promise<ArkmeUploadedAsset>
-  send(input: ArkmeFileSendInput, assets: ArkmeUploadedAsset[], userId: number, signal: AbortSignal): Promise<ArkmeSourceSendResult>
+  send(
+    input: ArkmeFileSendInput,
+    assets: ArkmeUploadedAsset[],
+    backgroundSound: import('../types.js').ArkmeRichBackgroundSoundInput | undefined,
+    userId: number,
+    signal: AbortSignal,
+  ): Promise<ArkmeSourceSendResult>
   fetchMedia(ref: string, signal: AbortSignal): Promise<{ response: Response; descriptor: Metadata }>
   openPath?(path: string, signal: AbortSignal): Promise<void>
   reconcile?(input: ArkmeFileSendInput, signal: AbortSignal): Promise<ArkmeSourceSendResult | undefined>
@@ -23,6 +30,11 @@ const REF = /^arkme-file-v1\.[0-9a-f-]{36}$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const fail = (code: string, message: string) => new ArkmePluginError(code, message, false, 400)
 const clone = <T>(value: T): T => structuredClone(value)
+const validLocation = (location: ArkmeFileSendInput['location']): boolean => location === undefined || (
+  Number.isFinite(location.latitude) && location.latitude >= -90 && location.latitude <= 90
+  && Number.isFinite(location.longitude) && location.longitude >= -180 && location.longitude <= 180
+  && Number.isSafeInteger(location.capturedAtMillis) && location.capturedAtMillis > 0
+)
 const publicFile = (file: ArkmeLocalFile): ArkmeLocalFile => ({ fileRef: file.fileRef, fileName: file.fileName, mimeType: file.mimeType, size: file.size, fileKind: file.fileKind })
 const nativeOpenFileName = (fileName: string): string => {
   const cleaned = fileName.replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '_').trim().replace(/^[. ]+|[. ]+$/g, '')
@@ -256,7 +268,13 @@ export class FileTransfers {
         await this.assertUser(userId, controller.signal)
         const result = await this.ports.reconcile?.(task, controller.signal)
         await this.assertUser(userId, controller.signal)
-        if (result) { task.result = result; task.state = 'sent'; delete task.error; await this.save(userId, state) }
+        if (result) {
+          task.result = result
+          task.state = 'sent'
+          delete task.location
+          delete task.error
+          await this.save(userId, state)
+        }
         // Absence from a recent page is not proof that the send was rejected.
         return clone(task)
       } finally { this.controllers.delete(controller) }
@@ -264,10 +282,32 @@ export class FileTransfers {
   }
   async enqueue(input: ArkmeFileSendInput): Promise<ArkmeFileSendTask> {
     const userId = await this.ports.currentUser()
+    if (input.expectedUserId !== undefined
+      && (!Number.isSafeInteger(input.expectedUserId) || input.expectedUserId <= 0)) {
+      throw fail('file-expected-user-invalid', '文件发送的预期账号无效')
+    }
+    if (input.expectedUserId !== undefined && input.expectedUserId !== userId) {
+      throw fail('file-account-changed', '账号已切换，本次文件发送已取消')
+    }
     if (!UUID.test(input.recordUid) || !UUID.test(input.relationUid) || !input.sourceRef.trim()
       || input.fileRefs.length < 1 || input.fileRefs.length > this.policy.maxAttachments
-      || new Set(input.fileRefs).size !== input.fileRefs.length || (input.content.textContent?.length ?? 0) > 20_000) {
+      || new Set(input.fileRefs).size !== input.fileRefs.length || (input.content.textContent?.length ?? 0) > 20_000
+      || !validLocation(input.location)) {
       throw fail('file-send-invalid', '发送标识、正文或附件数量无效')
+    }
+    const backgroundSound = arkmeFileBackgroundSound(input.backgroundSound, input.fileRefs)
+    if (backgroundSound !== undefined) {
+      const backgroundRefs = new Set(backgroundSound.fileRefs)
+      const hasOrdinaryFile = input.fileRefs.some(ref => !backgroundRefs.has(ref))
+      const hasText = (input.content.textContent?.trim() ?? '') !== '' || (input.content.title?.trim() ?? '') !== ''
+      if (!hasOrdinaryFile && !hasText) {
+        throw fail('file-send-background-only-invalid', '背景音不能作为唯一发送内容')
+      }
+    }
+    const { expectedUserId: _expectedUserId, ...persistedInput } = input
+    const normalizedInput: ArkmeFileSendInput = {
+      ...clone(persistedInput),
+      ...(backgroundSound === undefined ? {} : { backgroundSound }),
     }
     await this.ports.validateSource(input.sourceRef)
     return this.exclusive(async () => {
@@ -276,7 +316,9 @@ export class FileTransfers {
       const prior = state.tasks.find(task => task.recordUid === input.recordUid)
       if (prior) {
         if (prior.sourceRef !== input.sourceRef || prior.relationUid !== input.relationUid || JSON.stringify(prior.fileRefs) !== JSON.stringify(input.fileRefs)
-          || JSON.stringify(prior.content) !== JSON.stringify(input.content)) throw fail('file-send-conflict', '发送标识已用于另一份内容')
+          || JSON.stringify(prior.content) !== JSON.stringify(input.content)
+          || JSON.stringify(prior.backgroundSound) !== JSON.stringify(backgroundSound)
+          || (prior.state !== 'sent' && JSON.stringify(prior.location) !== JSON.stringify(input.location))) throw fail('file-send-conflict', '发送标识已用于另一份内容')
         return clone(prior)
       }
       if (state.tasks.filter(task => task.state !== 'sent').length >= 100) throw fail('file-queue-full', '待发送文件过多，请先处理失败任务')
@@ -285,8 +327,9 @@ export class FileTransfers {
         const { file } = await this.readLocal(ref)
         files.push({ ...file, progress: { phase: 'preparing', sentBytes: 0, totalBytes: file.size } })
       }
+      assertArkmeBackgroundSoundLocalFiles(backgroundSound, files)
       await this.assertUser(userId)
-      const task: ArkmeFileSendTask = { ...clone(input), taskRef: `arkme-send-v1.${randomUUID()}`, createdAtMillis: Date.now(), state: 'queued', files }
+      const task: ArkmeFileSendTask = { ...normalizedInput, taskRef: `arkme-send-v1.${randomUUID()}`, createdAtMillis: Date.now(), state: 'queued', files }
       state.tasks.push(task)
       try { await this.save(userId, state) } catch (error) { state.tasks = state.tasks.filter(value => value !== task); throw error }
       this.schedule(userId, state, task)
@@ -302,7 +345,7 @@ export class FileTransfers {
       await this.assertUser(userId)
       if (task.state === 'uncertain') throw fail('file-send-uncertain', '发送结果待确认，请先核对原会话，不能自动重复发送')
       if (task.state !== 'failed') return clone(task)
-      task.state = 'queued'; delete task.error
+      task.state = 'queued'; delete task.error; delete task.errorCode
       for (const file of task.files) {
         if (!file.asset) file.progress = { phase: 'preparing', sentBytes: 0, totalBytes: file.size }
       }
@@ -316,14 +359,27 @@ export class FileTransfers {
       try {
         await this.assertUser(userId, controller.signal)
         task.state = 'uploading'; await this.save(userId, state)
+        const backgroundRefs = new Set(task.backgroundSound?.fileRefs ?? [])
         for (const file of task.files) {
           await this.assertUser(userId, controller.signal)
           const stored = state.files[file.fileRef]
           if (!stored) throw fail('file-local-missing', '本地附件已不存在')
           if (!file.asset) {
-            const cached = stored.asset ?? Object.values(state.files).find(other => other.sha256 === stored.sha256 && other.fileKind === stored.fileKind && other.asset)?.asset
+            // Local audio remains a generic file. Only its explicit background role
+            // selects the provider audio kind, so ordinary audio is never recast implicitly.
+            const uploadFileKind = backgroundRefs.has(file.fileRef) ? 2 : stored.fileKind
+            const cached = stored.asset?.fileKind === uploadFileKind
+              ? stored.asset
+              : Object.values(state.files).find(other => other.sha256 === stored.sha256
+                && other.asset?.fileKind === uploadFileKind)?.asset
             if (cached) file.asset = cached
-            if (!file.asset) file.asset = await this.ports.upload(this.path(userId, file.fileRef), stored, progress => { file.progress = progress }, userId, controller.signal)
+            if (!file.asset) file.asset = await this.ports.upload(
+              this.path(userId, file.fileRef),
+              { ...stored, fileKind: uploadFileKind },
+              progress => { file.progress = progress },
+              userId,
+              controller.signal,
+            )
             // A reused blob retains this attachment's display name and original ordering.
             file.asset = { ...file.asset, fileName: file.fileName }
             stored.asset = file.asset
@@ -333,12 +389,27 @@ export class FileTransfers {
         }
         await this.assertUser(userId, controller.signal)
         task.state = 'sending'; await this.save(userId, state)
-        task.result = await this.ports.send(task, task.files.map(file => file.asset!), userId, controller.signal)
-        task.state = 'sent'; delete task.error
+        const assets = task.files.map(file => file.asset!)
+        const assetByRef = new Map(task.fileRefs.map((ref, index) => [ref, assets[index]!]))
+        const backgroundSound = task.backgroundSound === undefined ? undefined : {
+          assets: task.backgroundSound.fileRefs.map(ref => assetByRef.get(ref)!),
+          amplitudes: [...task.backgroundSound.amplitudes],
+        }
+        task.result = await this.ports.send(task, assets, backgroundSound, userId, controller.signal)
+        delete task.location
+        task.state = 'sent'; delete task.error; delete task.errorCode
       } catch (error) {
         const sending = task.state === 'sending'
-        task.state = sending ? 'uncertain' : 'failed'
-        task.error = sending ? '发送结果待确认，请先核对会话，避免重复发送' : error instanceof ArkmePluginError ? error.message : '文件传输中断，请重试'
+        const known = error instanceof ArkmePluginError
+        const outcomeUnknown = sending && (!known || error.retryable)
+        task.state = outcomeUnknown ? 'uncertain' : 'failed'
+        task.error = known
+          ? error.message
+          : outcomeUnknown
+            ? '发送结果待确认，请先核对会话，避免重复发送'
+            : '文件传输中断，请重试'
+        if (known) task.errorCode = error.code
+        else delete task.errorCode
       } finally {
         this.controllers.delete(controller)
         await this.save(userId, state)

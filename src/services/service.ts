@@ -653,6 +653,27 @@ export class ServiceRuntime {
     }
   }
 
+  /** Read a legacy private owner hosted by the main authenticated API. */
+  async authenticatedAuthReadPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'auth', 'interactive-read', options)
+    try {
+      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
   async authenticatedDshRemotePost<T>(
     path: string,
     body: Record<string, unknown>,

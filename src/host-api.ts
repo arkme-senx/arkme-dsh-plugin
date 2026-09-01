@@ -27,6 +27,8 @@ import { DshRemoteError } from './dsh-remote/errors.js'
 import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
 import { arkmeRequiredLinkMetadataFallback } from './link-metadata.js'
+import type { ArkmeFileBackgroundSoundInput } from './file-transfer-contract.js'
+import { arkmeFileBackgroundSound, arkmeRichBackgroundSound } from './record-background-sound.js'
 
 const MAX_STANDARD_REQUEST_BYTES = 128 * 1024
 const MAX_MESSAGE_ACTION_REF_CHARS = 1024 * 1024
@@ -277,6 +279,31 @@ function requiredBooleanParam(params: Record<string, unknown>, key: string): boo
   const value = params[key]
   if (typeof value !== 'boolean') {
     throw new ArkmePluginError('boolean-param-required', `${key}必须是布尔值`, false, 400)
+  }
+  return value
+}
+
+function backgroundSoundPreferenceEnabledParam(params: Record<string, unknown>): boolean {
+  if (typeof params.enabled !== 'boolean') {
+    throw new ArkmePluginError('background-sound-preference-invalid', '背景音开关必须是布尔值', false, 400)
+  }
+  return params.enabled
+}
+
+function backgroundSoundExpectedUserIdParam(params: Record<string, unknown>): number | undefined {
+  const value = params.expectedUserId
+  if (value === undefined) return undefined
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new ArkmePluginError('background-sound-expected-user-invalid', '背景音设置的预期账号无效', false, 400)
+  }
+  return value
+}
+
+function fileExpectedUserIdParam(params: Record<string, unknown>): number | undefined {
+  const value = params.expectedUserId
+  if (value === undefined) return undefined
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new ArkmePluginError('file-expected-user-invalid', '文件或发送操作的预期账号无效', false, 400)
   }
   return value
 }
@@ -549,6 +576,20 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   const captureContext = captureContextParam(params)
   const humanMentions = humanMentionsParam(params)
   const botMentions = botMentionsParam(params)
+  const assets = rawAssets.flatMap(raw => {
+    if (raw === null || typeof raw !== 'object') return []
+    const asset = raw as Record<string, unknown>
+    const fileKind = numberParam(asset, 'fileKind', 0)
+    if (![1, 2, 3, 4].includes(fileKind)) return []
+    return [{
+      fileAssetUid: stringParam(asset, 'fileAssetUid'),
+      fileName: stringParam(asset, 'fileName'),
+      mimeType: stringParam(asset, 'mimeType'),
+      size: numberParam(asset, 'size', 0),
+      fileKind: fileKind as 1 | 2 | 3 | 4,
+    }]
+  })
+  const backgroundSound = richBackgroundSoundParam(params)
   return {
     title: stringParam(params, 'title'),
     textContent: stringParam(params, 'textContent'),
@@ -558,20 +599,55 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
     ...(captureContext === undefined ? {} : { captureContext }),
     ...(humanMentions.length === 0 ? {} : { humanMentions }),
     ...(botMentions.length === 0 ? {} : { botMentions }),
-    assets: rawAssets.flatMap(raw => {
-      if (raw === null || typeof raw !== 'object') return []
-      const asset = raw as Record<string, unknown>
-      const fileKind = numberParam(asset, 'fileKind', 0)
-      if (![1, 2, 3, 4].includes(fileKind)) return []
-      return [{
-        fileAssetUid: stringParam(asset, 'fileAssetUid'),
-        fileName: stringParam(asset, 'fileName'),
-        mimeType: stringParam(asset, 'mimeType'),
-        size: numberParam(asset, 'size', 0),
-        fileKind: fileKind as 1 | 2 | 3 | 4,
-      }]
-    }),
+    assets,
+    ...(backgroundSound === undefined ? {} : { backgroundSound }),
   }
+}
+
+function richBackgroundSoundParam(params: Record<string, unknown>): ArkmeRichSendInput['backgroundSound'] {
+  const raw = params.backgroundSound
+  if (raw === undefined) return undefined
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ArkmePluginError('background-sound-invalid', '背景音参数无效', false, 400)
+  }
+  const value = raw as Record<string, unknown>
+  if (!Array.isArray(value.assets) || !Array.isArray(value.amplitudes)) {
+    throw new ArkmePluginError('background-sound-invalid', '背景音资产或振幅参数无效', false, 400)
+  }
+  const assets = value.assets.map(rawAsset => {
+    if (rawAsset === null || typeof rawAsset !== 'object' || Array.isArray(rawAsset)) {
+      throw new ArkmePluginError('background-sound-file-invalid', '背景音资产参数无效', false, 400)
+    }
+    const asset = rawAsset as Record<string, unknown>
+    return {
+      fileAssetUid: stringParam(asset, 'fileAssetUid'),
+      fileName: stringParam(asset, 'fileName'),
+      mimeType: stringParam(asset, 'mimeType'),
+      size: numberParam(asset, 'size', -1),
+      fileKind: numberParam(asset, 'fileKind', 0) as 1 | 2 | 3 | 4,
+    }
+  })
+  return arkmeRichBackgroundSound({ assets, amplitudes: value.amplitudes as number[] })
+}
+
+function fileBackgroundSoundParam(
+  params: Record<string, unknown>,
+  allFileRefs: readonly string[],
+): ArkmeFileBackgroundSoundInput | undefined {
+  const raw = params.backgroundSound
+  if (raw === undefined) return undefined
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ArkmePluginError('background-sound-invalid', '背景音参数无效', false, 400)
+  }
+  const value = raw as Record<string, unknown>
+  if (!Array.isArray(value.fileRefs) || !Array.isArray(value.amplitudes)
+    || value.fileRefs.some(ref => typeof ref !== 'string')) {
+    throw new ArkmePluginError('background-sound-invalid', '背景音文件引用或振幅参数无效', false, 400)
+  }
+  return arkmeFileBackgroundSound({
+    fileRefs: value.fileRefs as string[],
+    amplitudes: value.amplitudes as number[],
+  }, allFileRefs)
 }
 
 function favoriteStickerItemParam(params: Record<string, unknown>): ArkmeFavoriteStickerAddInput {
@@ -1016,6 +1092,12 @@ export async function dispatchArkmeHostOperation(
     case 'records.retry': return await service.retryPending(stringParam(params, 'recordUid'))
     case 'user.profile': return await service.cachedProfile()
     case 'user.profile.refresh': return await service.refreshProfile()
+    case 'settings.background-sound.get': return await service.backgroundSoundPreference(requestSignal)
+    case 'settings.background-sound.update': return await service.updateBackgroundSoundPreference(
+      backgroundSoundPreferenceEnabledParam(params),
+      requestSignal,
+      backgroundSoundExpectedUserIdParam(params),
+    )
     case 'user.arkme-id.check': return await service.checkArkmeIdAvailability(stringParam(params, 'arkmeId'))
     case 'user.arkme-id.set': return await service.setArkmeIdOnce(stringParam(params, 'arkmeId'))
     case 'image.read': {
@@ -1284,6 +1366,7 @@ export async function dispatchArkmeHostOperation(
       const humanMentions = humanMentionsParam(params)
       const botMentions = botMentionsParam(params)
       const captureContext = captureContextParam(params)
+      const expectedUserId = fileExpectedUserIdParam(params)
       return await service.sendSourceText(
         stringParam(params, 'sourceRef'),
         stringParam(params, 'textContent'),
@@ -1296,6 +1379,7 @@ export async function dispatchArkmeHostOperation(
           ...(botRefs.length === 0 ? {} : { botRefs }),
           ...(humanMentions.length === 0 ? {} : { humanMentions }),
           ...(botMentions.length === 0 ? {} : { botMentions }),
+          ...(expectedUserId === undefined ? {} : { expectedUserId }),
         },
       )
     }
@@ -1408,18 +1492,32 @@ export async function dispatchArkmeHostOperation(
     case 'files.send.reconcile': return await service.fileSendReconcile(stringParam(params, 'taskRef'))
     case 'files.stage-bytes': return await service.fileStageBytes(stringParam(params, 'contentBase64'), { fileName: stringParam(params, 'fileName'), mimeType: stringParam(params, 'mimeType') || 'application/octet-stream' })
     case 'files.receive': return await service.fileReceive(stringParam(params, 'mediaRef'), booleanParam(params, 'start'))
-    case 'files.send': return await service.fileSend({
-      sourceRef: stringParam(params, 'sourceRef'), recordUid: stringParam(params, 'recordUid'), relationUid: stringParam(params, 'relationUid'),
-      fileRefs: stringListParam(params, 'fileRefs'), content: richSendParam(params),
-    })
-    case 'source.send-rich': return await service.sendSourceRich(
-      stringParam(params, 'sourceRef'),
-      richSendParam(params),
-      {
-        ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
-        ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
-      },
-    )
+    case 'files.send': {
+      const fileRefs = stringListParam(params, 'fileRefs')
+      const backgroundSound = fileBackgroundSoundParam(params, fileRefs)
+      const location = params.location === undefined ? undefined : recordLocationCaptureParam(params)
+      const expectedUserId = fileExpectedUserIdParam(params)
+      return await service.fileSend({
+        sourceRef: stringParam(params, 'sourceRef'), recordUid: stringParam(params, 'recordUid'), relationUid: stringParam(params, 'relationUid'),
+        fileRefs,
+        ...(expectedUserId === undefined ? {} : { expectedUserId }),
+        ...(backgroundSound === undefined ? {} : { backgroundSound }),
+        ...(location === undefined ? {} : { location }),
+        content: richSendParam({ ...params, backgroundSound: undefined }),
+      })
+    }
+    case 'source.send-rich': {
+      const expectedUserId = fileExpectedUserIdParam(params)
+      return await service.sendSourceRich(
+        stringParam(params, 'sourceRef'),
+        richSendParam(params),
+        {
+          ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
+          ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
+          ...(expectedUserId === undefined ? {} : { expectedUserId }),
+        },
+      )
+    }
     case 'favorite-stickers.list': return await service.favoriteStickers()
     case 'favorite-stickers.add': return await service.addFavoriteSticker(favoriteStickerItemParam(params))
     case 'favorite-stickers.send': return await service.sendFavoriteSticker(

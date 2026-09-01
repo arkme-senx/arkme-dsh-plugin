@@ -22,13 +22,14 @@ import type {
   ArkmeTopicDissolveTask,
   ArkmeBotList, ArkmeGroupBotCandidate, ArkmeGroupBotCandidateList,
   ArkmeSharedRecordingPreview,
+  ArkmeBackgroundSoundPreference, ArkmeBackgroundSoundEligibilityReason, ArkmeProviderCapabilities,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import type { ArkmeContentBlock } from '../types.js'
 import type { ArkmeFileSendTask } from '../file-transfer-contract.js'
 import { projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
-import { bindSentFileTaskLocals, fileTaskTimelineItem, localFileBlock, useArkmeFileSendTasks } from './file-send-tasks.js'
+import { bindSentFileTaskLocals, fileTaskShowsInlineStatus, fileTaskTimelineItem, localFileBlock, useArkmeFileSendTasks } from './file-send-tasks.js'
 import { isArkmeRequestAbort, retryArkmeRead } from './read-retry.js'
 import { arkmeAwaitVisibleReadIntent } from './read-intent-visibility.js'
 import { verifyPhoneCaptcha } from './geetest.js'
@@ -91,6 +92,7 @@ import {
 } from './chat-directory-store.js'
 import {
   ArkmeConversationMemoryCache,
+  ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS,
   arkmeConversationRestoredScrollTop,
   arkmeConversationTimelineContentEqual,
   arkmeShouldRefreshChatTimeline,
@@ -146,10 +148,46 @@ import {
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDetails.js'
 import { ArkmeMessageSnapshotDialog, arkmeCanOpenMessageSnapshot } from './ArkmeMessageSnapshotDialog.js'
 import { ArkmeMessageReportDialog, arkmeCanReportTimelineMessage } from './ArkmeMessageReportDialog.js'
-import { arkmeLocationCaptureEnabled, arkmeSourceSupportsLocationCapture, requestArkmeRecordLocation, setArkmeLocationCaptureEnabled, subscribeArkmeLocationCapturePreference } from './record-capture-location.js'
+import {
+  arkmeLocationCaptureEnabled,
+  arkmeLocationErrorCanOpenSettings,
+  arkmeLocationSettingsAvailable,
+  arkmeOpenLocationSettings,
+  arkmeSourceSupportsLocationCapture,
+  captureArkmeRecordLocationForSend,
+  requestArkmeRecordLocation,
+  setArkmeLocationCaptureEnabled,
+  subscribeArkmeLocationCapturePreference,
+  type ArkmeRecordLocationForSendResult,
+} from './record-capture-location.js'
+import { ArkmeBackgroundSoundWaveform } from './ArkmeBackgroundSoundWaveform.js'
+import {
+  ArkmeRecordInputCaptureOwner,
+  applyArkmeBackgroundSoundOwnerSnapshot,
+  arkmeBackgroundSoundCaptureEnabled,
+  arkmeBackgroundSoundServerPreferenceRuntime,
+  arkmeMicrophoneCaptureReady,
+  arkmeSourceSupportsRecordInputCapture,
+  subscribeArkmeBackgroundSoundCapturePreference,
+  type ArkmeBackgroundSoundFailure,
+  type ArkmeBackgroundSoundRecorder,
+  type ArkmeRecordInputCaptureResult,
+} from './record-input-capture.js'
 export { ArkmeTimelineDetailDrawer, arkmeTimelineDetailSenderText } from './ArkmeNoteDetails.js'
 
 const ARKME_COMPOSER_SHOW_INPUT_TIME_STORAGE_KEY = 'arkme.composer.show-input-time'
+
+export function arkmeBackgroundSoundCaptureFailureFeedback(
+  failure: ArkmeBackgroundSoundFailure | undefined,
+): string {
+  if (failure === 'permission-denied') return '未获得麦克风权限'
+  if (failure === 'unavailable') return '当前设备无法录制'
+  if (failure === 'start-failed') return '录音启动失败'
+  if (failure === 'stop-failed') return '录音结束失败'
+  if (failure === 'retention-evicted') return '切换会话较多，较早草稿的背景音已释放'
+  if (failure === 'limit-reached') return '录音达到上限且未生成可用片段'
+  return ''
+}
 
 function arkmeComposerShowsInputTime(): boolean {
   try { return window.localStorage.getItem(ARKME_COMPOSER_SHOW_INPUT_TIME_STORAGE_KEY) !== 'hidden' } catch { return true }
@@ -157,51 +195,6 @@ function arkmeComposerShowsInputTime(): boolean {
 
 function setArkmeComposerShowsInputTime(value: boolean): void {
   try { window.localStorage.setItem(ARKME_COMPOSER_SHOW_INPUT_TIME_STORAGE_KEY, value ? 'shown' : 'hidden') } catch { /* storage is optional */ }
-}
-
-function arkmeBrowserName(): string {
-  const navigatorWithUaData = navigator as Navigator & { userAgentData?: { brands?: ReadonlyArray<{ brand?: unknown }> } }
-  const brands = navigatorWithUaData.userAgentData?.brands ?? []
-  const brandText = brands.map(item => typeof item.brand === 'string' ? item.brand : '').join(' ')
-  const userAgent = navigator.userAgent
-  if (/Microsoft Edge|Edg\//iu.test(`${brandText} ${userAgent}`)) return 'Microsoft Edge'
-  if (/Opera|OPR\//iu.test(`${brandText} ${userAgent}`)) return 'Opera'
-  if (/Firefox|FxiOS\//iu.test(`${brandText} ${userAgent}`)) return 'Firefox'
-  if (/Safari/iu.test(userAgent) && !/Chrome|Chromium|CriOS|Edg\//iu.test(userAgent)) return 'Safari'
-  if (/Google Chrome|Chrome|Chromium|CriOS/iu.test(`${brandText} ${userAgent}`)) return 'Google Chrome'
-  return '浏览器'
-}
-
-function arkmeNetworkName(): string {
-  const connection = (navigator as Navigator & { connection?: { type?: unknown } }).connection
-  const type = typeof connection?.type === 'string' ? connection.type.trim().toLowerCase() : ''
-  if (type === 'wifi') return 'Wi‑Fi'
-  if (type === 'ethernet') return '有线网络'
-  if (type === 'cellular') return '移动网络'
-  if (type === 'none') return '离线'
-  return navigator.onLine ? '网络已连接' : '离线'
-}
-
-async function arkmeComposerCaptureContext(): Promise<{ clientName: string; networkName?: string; electric?: number; charge?: number }> {
-  const networkName = arkmeNetworkName()
-  const base = {
-    clientName: `${arkmeBrowserName()}（DeepSeek Harness）`,
-    ...(networkName === '' ? {} : { networkName }),
-  }
-  const batteryApi = navigator as Navigator & { getBattery?: () => Promise<{ level?: number; charging?: boolean }> }
-  if (typeof batteryApi.getBattery !== 'function') return base
-  const battery = await Promise.race([
-    batteryApi.getBattery().catch(() => undefined),
-    new Promise<undefined>(resolve => { window.setTimeout(() => resolve(undefined), 900) }),
-  ])
-  const level = typeof battery?.level === 'number' && Number.isFinite(battery.level)
-    ? Math.round(Math.max(0, Math.min(1, battery.level)) * 100)
-    : undefined
-  return {
-    ...base,
-    ...(level === undefined ? {} : { electric: level }),
-    ...(level === undefined ? {} : { charge: battery?.charging === true ? 1 : 2 }),
-  }
 }
 
 function ArkmeComposerInputTimeIcon({ visible }: { visible: boolean }) {
@@ -298,6 +291,13 @@ const EMPTY_CHAT_DIRECTORY_SNAPSHOT: ArkmeChatDirectorySnapshot = {
 const EMPTY_CHAT_DELTA_SNAPSHOT: ArkmeChatTimelineSourceDeltaSnapshot = { revision: 0, items: [] }
 const EMPTY_INTERWOVEN_INVALIDATION: ArkmeInterwovenInvalidationSnapshot = Object.freeze({ revision: 0 })
 const NOOP_SUBSCRIBE = (): (() => void) => () => undefined
+const INACTIVE_RECORD_INPUT_RECORDER: ArkmeBackgroundSoundRecorder = Object.freeze({
+  async start() {},
+  async stop() { return undefined },
+  async cancel() {},
+  async dispose() {},
+  subscribeAmplitude() { return () => undefined },
+})
 export function arkmeShouldDismissAnchoredMenu(
   target: Node | null,
   menu: Pick<Node, 'contains'> | null,
@@ -802,6 +802,10 @@ export function arkmeAuthenticatedAccountChanged(
     && (previous?.status !== 'authenticated' || previous.userId !== next.userId || previous.environment !== next.environment)
 }
 
+function arkmeAuthenticatedAccountKey(auth: ArkmeAuthSnapshot | undefined): string | undefined {
+  return auth?.status === 'authenticated' ? `${auth.environment}:${String(auth.userId)}` : undefined
+}
+
 export function arkmeArkoSurfaceKey(auth: ArkmeAuthSnapshot | undefined): number | 'authenticated' | 'logged-out' {
   if (auth?.status !== 'authenticated') return 'logged-out'
   return auth.userId ?? 'authenticated'
@@ -877,6 +881,32 @@ export function arkmeShouldBeginWechat(
 function errorMessage(error: unknown): string {
   if (error instanceof ArkmeClientError) return error.body.message
   return error instanceof Error ? error.message : String(error)
+}
+
+function locationCaptureFeedback(result: ArkmeRecordLocationForSendResult): string | undefined {
+  if (result.state === 'permission-required') {
+    return result.permission === 'denied'
+      ? '消息已发送，但浏览器已拒绝位置权限；请在设置中重新允许后再试'
+      : result.permission === 'unavailable'
+        ? '消息已发送，但当前浏览器不支持位置采集'
+        : '消息已发送，但位置尚未授权；请点击输入框旁的位置按钮完成授权'
+  }
+  return result.state === 'failed' ? `消息已发送，但位置采集失败：${result.message}` : undefined
+}
+
+const ARKME_BACKGROUND_TRANSFER_TIMEOUT_MILLIS = 20_000
+
+async function boundedArkmeBackgroundTransfer<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMillis = ARKME_BACKGROUND_TRANSFER_TIMEOUT_MILLIS,
+): Promise<T> {
+  const controller = new AbortController()
+  const timer = globalThis.setTimeout(() => { controller.abort(new Error('背景音处理超时')) }, timeoutMillis)
+  try {
+    return await operation(controller.signal)
+  } finally {
+    globalThis.clearTimeout(timer)
+  }
 }
 
 function relatedQuickNoteReferenceExpired(error: unknown): boolean {
@@ -1200,9 +1230,56 @@ function mergeItems(current: ArkmeTimelineItem[], incoming: ArkmeTimelineItem[])
         ? { editDurationMillis: previous.editDurationMillis } : {}),
       ...(previous?.captureContext !== undefined && item.captureContext === undefined
         ? { captureContext: previous.captureContext } : {}),
+      ...(previous?.locationCapture !== undefined && item.locationCapture === undefined
+        ? { locationCapture: previous.locationCapture } : {}),
+      ...(previous?.messageActionRef !== undefined && item.messageActionRef === undefined
+        ? { messageActionRef: previous.messageActionRef } : {}),
     })
   }
   return [...map.values()].sort((a, b) => a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid))
+}
+
+const ARKME_CONFIRMED_SEND_RETENTION_MILLIS = ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS * 4
+
+/**
+ * Retains only bounded Host-confirmed sends while an eventually-consistent
+ * first page catches up. A signed authoritative row retires its local entry.
+ */
+export class ArkmeConfirmedSendRetentionOwner {
+  private readonly entries = new Map<string, { sourceKey: string; item: ArkmeTimelineItem; expiresAtMillis: number }>()
+
+  constructor(private readonly maxItems = 64) {}
+
+  retain(sourceKey: string, item: ArkmeTimelineItem, nowMillis = Date.now()): void {
+    if (sourceKey === '' || item.itemUid.trim() === '' || !item.isMe || item.status < 0) return
+    const key = `${sourceKey}\0${item.itemUid}`
+    this.entries.delete(key)
+    this.entries.set(key, {
+      sourceKey,
+      item: { ...item },
+      expiresAtMillis: nowMillis + ARKME_CONFIRMED_SEND_RETENTION_MILLIS,
+    })
+    while (this.entries.size > this.maxItems) {
+      const oldest = this.entries.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.entries.delete(oldest)
+    }
+  }
+
+  merge(sourceKey: string, authoritative: ArkmeTimelineItem[], nowMillis = Date.now()): ArkmeTimelineItem[] {
+    const retained: ArkmeTimelineItem[] = []
+    const authoritativeById = new Map(authoritative.map(item => [item.itemUid, item]))
+    for (const [key, entry] of this.entries) {
+      if (entry.expiresAtMillis <= nowMillis) {
+        this.entries.delete(key)
+        continue
+      }
+      if (entry.sourceKey !== sourceKey) continue
+      retained.push(entry.item)
+      if (authoritativeById.get(entry.item.itemUid)?.messageActionRef !== undefined) this.entries.delete(key)
+    }
+    return mergeItems(retained, authoritative)
+  }
 }
 
 function applySourceSendResult(
@@ -1228,6 +1305,7 @@ function applySourceSendResult(
     ...base,
     itemUid: result.itemUid,
     status: result.status,
+    ...(result.messageActionRef === undefined ? {} : { messageActionRef: result.messageActionRef }),
     ...(result.sequence === undefined ? {} : { sequence: result.sequence }),
     ...(result.aiPolish === undefined ? {} : {
       aiPolish: result.aiPolish,
@@ -1249,6 +1327,14 @@ interface ArkmeTimelineViewState {
   aiPolishSettings: ArkmeGroupAiPolishSnapshot | undefined
   nextCursor: ArkmeTimelineCursor | undefined
   hasMore: boolean
+}
+
+interface ArkmeComposerAsyncScope {
+  accountKey: string | undefined
+  sourceKey: string
+  draftKey: string | undefined
+  generation: number
+  locationRevision: number
 }
 
 function resolveStateAction<Value>(action: SetStateAction<Value>, current: Value): Value {
@@ -1930,9 +2016,7 @@ export function ArkmeSurface({
   )
   const auth = authStoreSnapshot.auth ?? initialAuth
   const authenticatedUserId = auth?.status === 'authenticated' ? auth.userId : undefined
-  const authenticatedAccountKey = auth?.status === 'authenticated'
-    ? `${auth.environment}:${String(auth.userId)}`
-    : undefined
+  const authenticatedAccountKey = arkmeAuthenticatedAccountKey(auth)
   const botConversationVisible = ui.mode === 'bot' && ui.selectedBot !== undefined
   const conversationBackdropVisible = ui.mode === 'source' || ui.mode === 'contact-add' || botConversationVisible
   const selectedSource = conversationBackdropVisible ? ui.selectedSource : undefined
@@ -1959,6 +2043,67 @@ export function ArkmeSurface({
   const activeConversation = active && ui.calendarOpen !== true && source !== undefined
   const activeConversationRef = useRef(activeConversation)
   activeConversationRef.current = activeConversation
+  const [backgroundSoundSupported, setBackgroundSoundSupported] = useState(false)
+  const [backgroundSoundCapabilityKnown, setBackgroundSoundCapabilityKnown] = useState(false)
+  const [backgroundSoundEligibilityReason, setBackgroundSoundEligibilityReason] = useState<ArkmeBackgroundSoundEligibilityReason>('membership-unavailable')
+  const backgroundSoundAccountGenerationRef = useRef(0)
+  useEffect(() => {
+    const generation = backgroundSoundAccountGenerationRef.current + 1
+    backgroundSoundAccountGenerationRef.current = generation
+    setBackgroundSoundSupported(false)
+    setBackgroundSoundCapabilityKnown(false)
+    setBackgroundSoundEligibilityReason('membership-unavailable')
+    if (!activeConversation || authenticatedUserId === undefined || authenticatedAccountKey === undefined) return
+    const targetUserId = authenticatedUserId
+    const targetAccountKey = authenticatedAccountKey
+    let alive = true
+    let controller: AbortController | undefined
+    const refresh = () => {
+      const readToken = arkmeBackgroundSoundServerPreferenceRuntime.beginRead(targetAccountKey)
+      if (!arkmeBackgroundSoundServerPreferenceRuntime.current(readToken)) return
+      controller?.abort()
+      const requestController = new AbortController()
+      controller = requestController
+      const sameAccount = () => {
+        const current = arkmeAuthStore.getSnapshot().auth
+        return alive
+          && !requestController.signal.aborted
+          && activeConversationRef.current
+          && backgroundSoundAccountGenerationRef.current === generation
+          && arkmeBackgroundSoundServerPreferenceRuntime.current(readToken)
+          && arkmeAuthenticatedAccountKey(current) === targetAccountKey
+      }
+      void Promise.all([
+        retryArkmeRead(
+          () => callArkme<ArkmeProviderCapabilities>('provider.capabilities', {}, requestController.signal),
+          { signal: requestController.signal, retryDelays: [250, 750] },
+        ).catch(() => undefined),
+        retryArkmeRead(
+          () => callArkme<ArkmeBackgroundSoundPreference>('settings.background-sound.get', undefined, requestController.signal),
+          { signal: requestController.signal, retryDelays: [250, 750] },
+        ).catch(() => undefined),
+      ]).then(([capabilities, preference]) => {
+        if (!sameAccount()) return
+        if (capabilities === undefined) return
+        setBackgroundSoundCapabilityKnown(true)
+        const supported = capabilities.features.backgroundSound === true
+        setBackgroundSoundSupported(supported)
+        if (!supported) return
+        if (preference === undefined) {
+          return
+        }
+        applyArkmeBackgroundSoundOwnerSnapshot(targetAccountKey, preference, undefined, targetUserId)
+        setBackgroundSoundEligibilityReason(preference.eligibilityReason)
+      })
+    }
+    const unsubscribeRuntime = arkmeBackgroundSoundServerPreferenceRuntime.subscribe(targetAccountKey, refresh)
+    refresh()
+    return () => {
+      alive = false
+      controller?.abort()
+      unsubscribeRuntime()
+    }
+  }, [activeConversation, authenticatedAccountKey, authenticatedUserId])
   const conversationOverlayKey = `${activeConversation ? 'active' : 'inactive'}:${conversationKey}:notification-${String(notificationActivationRevision)}`
   const conversationOverlayScopeRef = useRef({ key: conversationOverlayKey, generation: 0 })
   if (conversationOverlayScopeRef.current.key !== conversationOverlayKey) {
@@ -1988,6 +2133,39 @@ export function ArkmeSurface({
     () => 0,
   )
   const composerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
+  const composerAsyncScopeRef = useRef<ArkmeComposerAsyncScope>({
+    accountKey: undefined,
+    sourceKey: '',
+    draftKey: undefined,
+    generation: 0,
+    locationRevision: 0,
+  })
+  const composerAsyncScope = composerAsyncScopeRef.current
+  if (composerAsyncScope.accountKey !== authenticatedAccountKey
+    || composerAsyncScope.sourceKey !== conversationKey
+    || composerAsyncScope.draftKey !== composerDraftKey) {
+    composerAsyncScopeRef.current = {
+      accountKey: authenticatedAccountKey,
+      sourceKey: conversationKey,
+      draftKey: composerDraftKey,
+      generation: composerAsyncScope.generation + 1,
+      locationRevision: composerAsyncScope.locationRevision + 1,
+    }
+  }
+  const captureComposerAsyncScope = (): ArkmeComposerAsyncScope => ({ ...composerAsyncScopeRef.current })
+  const sameComposerAsyncScope = (expected: ArkmeComposerAsyncScope): boolean => {
+    const current = composerAsyncScopeRef.current
+    return activeConversationRef.current
+      && current.accountKey === expected.accountKey
+      && current.sourceKey === expected.sourceKey
+      && current.draftKey === expected.draftKey
+      && current.generation === expected.generation
+      && arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) === expected.accountKey
+  }
+  const advanceComposerLocationRevision = (): number => {
+    composerAsyncScopeRef.current.locationRevision += 1
+    return composerAsyncScopeRef.current.locationRevision
+  }
   const composerDraft = useSyncExternalStore(
     activeConversation ? arkmeComposerDraftStore.subscribe : NOOP_SUBSCRIBE,
     () => activeConversation ? arkmeComposerDraftStore.get(composerDraftKey) : arkmeComposerDraftStore.get(undefined),
@@ -1998,26 +2176,69 @@ export function ArkmeSurface({
   const [composerInputFocused, setComposerInputFocused] = useState(false)
   const [composerShowsInputTime, setComposerShowsInputTime] = useState(arkmeComposerShowsInputTime)
   const [composerLocation, setComposerLocation] = useState<ArkmeRecordLocationCapture>()
-  const locationCaptureEnabled = useSyncExternalStore(
-    subscribeArkmeLocationCapturePreference,
-    () => arkmeLocationCaptureEnabled(authenticatedUserId),
+  const [composerLocationRequesting, setComposerLocationRequesting] = useState(false)
+  const [composerLocationNeedsSettings, setComposerLocationNeedsSettings] = useState(false)
+  useEffect(() => {
+    setComposerLocation(undefined)
+    setComposerLocationRequesting(false)
+    setComposerLocationNeedsSettings(false)
+  }, [authenticatedAccountKey, composerDraftKey, conversationKey])
+  const backgroundSoundAvailabilityRef = useRef({
+    supported: backgroundSoundSupported,
+    eligibilityReason: backgroundSoundEligibilityReason,
+  })
+  backgroundSoundAvailabilityRef.current = {
+    supported: backgroundSoundSupported,
+    eligibilityReason: backgroundSoundEligibilityReason,
+  }
+  const recordInputCaptureOwner = useMemo(() => new ArkmeRecordInputCaptureOwner({
+    accountId: authenticatedAccountKey ?? 'logged-out',
+    ...(activeConversation ? {} : { recorder: INACTIVE_RECORD_INPUT_RECORDER }),
+    backgroundSoundEnabled: () => backgroundSoundAvailabilityRef.current.supported
+      && backgroundSoundAvailabilityRef.current.eligibilityReason === 'eligible'
+      && arkmeBackgroundSoundCaptureEnabled(authenticatedAccountKey),
+  }), [activeConversation, authenticatedAccountKey])
+  useEffect(() => {
+    recordInputCaptureOwner.activate()
+    return () => { recordInputCaptureOwner.deactivate() }
+  }, [recordInputCaptureOwner])
+  const backgroundSoundCaptureEnabled = useSyncExternalStore(
+    useCallback(
+      (listener: () => void) => subscribeArkmeBackgroundSoundCapturePreference(authenticatedAccountKey, listener),
+      [authenticatedAccountKey],
+    ),
+    useCallback(() => arkmeBackgroundSoundCaptureEnabled(authenticatedAccountKey), [authenticatedAccountKey]),
     () => false,
   )
-  // Keyboard handlers inside the contenteditable can fire before React has replaced
-  // their closures. Keep the start time in a ref as well, so an Enter-send always
-  // measures the draft that is currently on screen.
-  const composerInputStartedAtRef = useRef<{ draftKey: string; startedAt: number }>()
+  const locationCaptureEnabled = useSyncExternalStore(
+    useCallback(
+      (listener: () => void) => subscribeArkmeLocationCapturePreference(authenticatedAccountKey, listener),
+      [authenticatedAccountKey],
+    ),
+    () => arkmeLocationCaptureEnabled(authenticatedAccountKey),
+    () => false,
+  )
   const composerTextLength = Array.from(draft).length
-  const composerStatsVisible = composerInputFocused || composerTextLength > 0
-  if (composerDraftKey === undefined || composerTextLength === 0) composerInputStartedAtRef.current = undefined
-  else if (composerInputStartedAtRef.current?.draftKey !== composerDraftKey) {
-    composerInputStartedAtRef.current = { draftKey: composerDraftKey, startedAt: Date.now() }
-  }
-  const currentComposerInputStart = composerInputStartedAtRef.current
-  const composerInputStartedAtMillis = currentComposerInputStart !== undefined
-    && currentComposerInputStart.draftKey === composerDraftKey
-    ? currentComposerInputStart.startedAt
-    : undefined
+  const composerHasUserContent = composerTextLength > 0 || attachments.length > 0
+  const composerStatsVisible = composerInputFocused || composerHasUserContent
+  const composerInputStartedAtMillis = recordInputCaptureOwner.getStartedAtMillis(composerDraftKey)
+  useEffect(() => {
+    recordInputCaptureOwner.sync({
+      draftKey: composerDraftKey,
+      isActive: activeConversation && backgroundSoundSupported && backgroundSoundEligibilityReason === 'eligible'
+        && composerInputFocused && arkmeSourceSupportsRecordInputCapture(source?.kind),
+      hasUserContent: composerHasUserContent,
+    })
+  }, [activeConversation, backgroundSoundEligibilityReason, backgroundSoundSupported, composerDraftKey, composerHasUserContent, composerInputFocused, recordInputCaptureOwner, source?.kind])
+  const syncComposerUserInput = useCallback((hasUserContent: boolean) => {
+    recordInputCaptureOwner.sync({
+      draftKey: composerDraftKey,
+      isActive: activeConversation && backgroundSoundSupported && backgroundSoundEligibilityReason === 'eligible'
+        && composerInputFocused && arkmeSourceSupportsRecordInputCapture(source?.kind),
+      hasUserContent,
+    })
+    if (hasUserContent) recordInputCaptureOwner.beginUserInput(composerDraftKey)
+  }, [activeConversation, backgroundSoundEligibilityReason, backgroundSoundSupported, composerDraftKey, composerInputFocused, recordInputCaptureOwner, source?.kind])
   const surfaceRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -2147,6 +2368,11 @@ export function ArkmeSurface({
   const [addMenuOpen, setAddMenuOpen] = useState(false)
   const preparationJobs = useRef(new Map<string, Promise<boolean>>())
   const stageControllers = useRef(new Set<AbortController>())
+  const backgroundDirectUploadCacheRef = useRef(new Map<string, ArkmeUploadedAsset[]>())
+  useEffect(() => {
+    backgroundDirectUploadCacheRef.current.clear()
+    return () => { backgroundDirectUploadCacheRef.current.clear() }
+  }, [authenticatedAccountKey])
   const [preparingKeys, setPreparingKeys] = useState<Set<string>>(() => new Set())
   const [draftPreview, setDraftPreview] = useState<ArkmeContentBlock>()
   const fileTasks = useArkmeFileSendTasks(source?.sourceRef, authenticatedUserId, activeConversation)
@@ -2157,7 +2383,8 @@ export function ArkmeSurface({
   const preparingFiles = composerDraftKey !== undefined && preparingKeys.has(composerDraftKey)
   // Transport is per message.  It must never lock the next draft while a previous
   // message waits for the server, otherwise fast keyboard input is dropped.
-  const canSend = arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles)
+  const canSend = !composerLocationRequesting
+    && arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles)
   const pendingComposerFocusDraftKeyRef = useRef<string>()
   const [compactNavigation, setCompactNavigation] = useState(false)
   const [submitBusy, setSubmitBusy] = useState(false)
@@ -2397,6 +2624,10 @@ export function ArkmeSurface({
   const currentJiwoAttemptRef = useRef<string>()
   const pendingLoginModeSelectionRef = useRef<ArkmeLoginMode>()
   const conversationCacheRef = useRef(new ArkmeConversationMemoryCache())
+  const confirmedSendRetention = useMemo(
+    () => new ArkmeConfirmedSendRetentionOwner(),
+    [authenticatedAccountKey],
+  )
   const cacheAccountKeyRef = useRef<string>()
   const timelineGenerationRef = useRef(0)
   const timelineRequestAbortRef = useRef<AbortController>()
@@ -2914,8 +3145,11 @@ export function ArkmeSurface({
     if (generation !== timelineGenerationRef.current) return
     const cached = conversationCacheRef.current.getTimeline(sourceKey)
     const nextAiPolishSettings = cursor === undefined ? page.aiPolishSettings : cached?.aiPolishSettings
+    const authoritativeItems = mergeItems([], page.items)
     const snapshot: ArkmeConversationTimelineSnapshot = {
-      items: cursor === undefined ? mergeItems([], page.items) : mergeItems(cached?.items ?? [], page.items),
+      items: cursor === undefined
+        ? confirmedSendRetention.merge(sourceKey, authoritativeItems)
+        : mergeItems(cached?.items ?? [], page.items),
       aiPolishNotices: cursor === undefined ? page.aiPolishNotices ?? [] : cached?.aiPolishNotices ?? [],
       hasMore: page.hasMore,
       fetchedAtMillis: Date.now(),
@@ -2953,16 +3187,28 @@ export function ArkmeSurface({
       if (!hadCachedTimeline && snapshot.items.length > 0) setTimelineRevealKey(sourceKey)
       await acknowledgeRead(snapshot.items)
     }
-  }, [acknowledgeRead, interwovenMoments, source, sourceIsChat, sourceProjectionRevision])
+  }, [acknowledgeRead, confirmedSendRetention, interwovenMoments, source, sourceIsChat, sourceProjectionRevision])
 
   useEffect(() => {
     if (!activeConversation || source === undefined || authenticatedUserId === undefined) return
     let changed = false
+    let warningText = ''
     for (const task of fileTasks.tasks) {
       if (task.state !== 'sent' || notifiedFileTasks.current.has(task.taskRef)) continue
       notifiedFileTasks.current.add(task.taskRef); changed = true
+      confirmedSendRetention.retain(arkmeSourceIdentityKey(source), fileTaskTimelineItem(task))
+      if ((task.result?.warningText ?? '') !== '') warningText = task.result?.warningText ?? ''
+      if (notifiedFileTasks.current.size > 200) {
+        const oldest = notifiedFileTasks.current.values().next().value as string | undefined
+        if (oldest !== undefined) notifiedFileTasks.current.delete(oldest)
+      }
     }
-    if (changed) { arkmeUi.chatChanged(); void loadTimeline().catch(caught => setError(errorMessage(caught))) }
+    if (changed) {
+      if (isArkmeSelfWorkspaceSource(source)) arkmeUi.recordChanged()
+      else arkmeUi.chatChanged()
+      if (warningText !== '') setError(warningText)
+      void loadTimeline().catch(caught => setError(errorMessage(caught)))
+    }
     // Recover the acceptance boundary after a page refresh without producing a second send.
     const current = arkmeComposerDraftStore.get(composerDraftKey)
     const refs = current.attachments.map(arkmeAttachmentId)
@@ -2971,7 +3217,7 @@ export function ArkmeSurface({
       task.content.textContent === serializeArkmeComposerDraft(current).text.trim() && JSON.stringify(task.fileRefs) === JSON.stringify(refs))) {
       arkmeComposerDraftStore.clear(composerDraftKey)
     }
-  }, [activeConversation, fileTasks.tasks, source, authenticatedUserId, loadTimeline, composerDraftKey])
+  }, [activeConversation, confirmedSendRetention, fileTasks.tasks, source, authenticatedUserId, loadTimeline, composerDraftKey])
 
   useEffect(() => {
     const target = ui.conversationTarget
@@ -3479,6 +3725,7 @@ export function ArkmeSurface({
     const targetDraftKey = composerDraftKey
     const targetUserId = authenticatedUserId
     if (targetDraftKey === undefined || targetUserId === undefined) return
+    syncComposerUserInput(true)
     const picked = Array.from(files)
     const controller = new AbortController(); stageControllers.current.add(controller)
     setAddMenuOpen(false); setError(''); setPreparingKeys(current => new Set([...current, targetDraftKey]))
@@ -3516,35 +3763,75 @@ export function ArkmeSurface({
   }
 
   const send = async () => {
-    if (source === undefined || composerDraftKey === undefined) return
+    if (source === undefined || composerDraftKey === undefined || composerLocationRequesting) return
     const targetSource = source
     const targetDraftKey = composerDraftKey
     const targetUserId = authenticatedUserId
-    if (targetUserId === undefined) return
+    const targetAccountKey = authenticatedAccountKey
+    if (targetUserId === undefined || targetAccountKey === undefined) return
+    const targetComposerScope = captureComposerAsyncScope()
+    const submittedComposerLocation = composerLocation
+    let clearedComposerLocationRevision: number | undefined
+    const sameTargetAccount = () => {
+      const current = arkmeAuthStore.getSnapshot().auth
+      return arkmeAuthenticatedAccountKey(current) === targetAccountKey
+    }
+    const sameTargetComposer = () => sameTargetAccount() && sameComposerAsyncScope(targetComposerScope)
+    const targetDraftStillEmpty = () => {
+      const current = arkmeComposerDraftStore.get(targetDraftKey)
+      return current.text === '' && current.attachments.length === 0
+        && current.mentions.length === 0 && current.emojis.length === 0
+    }
+    const restoreSubmittedComposerLocation = (draftWasStillEmpty: boolean) => {
+      if (!draftWasStillEmpty || submittedComposerLocation === undefined || clearedComposerLocationRevision === undefined
+        || !sameTargetComposer()
+        || composerAsyncScopeRef.current.locationRevision !== clearedComposerLocationRevision) return
+      advanceComposerLocationRevision()
+      setComposerLocation(submittedComposerLocation)
+    }
     const preparation = preparationJobs.current.get(targetDraftKey)
     const preparationSucceeded = preparation === undefined ? true : await preparation
     if (preparationSucceeded === false) return
-    const currentAuth = arkmeAuthStore.getSnapshot().auth
-    if (currentAuth?.status !== 'authenticated' || currentAuth.userId !== targetUserId) return
+    if (!sameTargetAccount()) return
     const readyDraft = arkmeComposerDraftStore.get(targetDraftKey)
     const serializedDraft = serializeArkmeComposerDraft(readyDraft)
     const rawTextContent = serializedDraft.text
     const textContent = rawTextContent.trim()
     if (textContent === '' && readyDraft.attachments.length === 0) return
-    const composerStartedAt = composerInputStartedAtRef.current
-    const recordDurationMillis = composerStartedAt?.draftKey === targetDraftKey
-      ? Math.max(0, Date.now() - composerStartedAt.startedAt)
-      : 0
-    const captureContextPromise = arkmeComposerCaptureContext()
-    const selectedLocation = composerLocation
-    const { recordUid, relationUid } = readyDraft.attachments.some(item => item.localFile !== undefined)
-      ? arkmeComposerDraftStore.beginFileSend(targetDraftKey)
-      : { recordUid: crypto.randomUUID(), relationUid: crypto.randomUUID() }
+    const capturePromise = recordInputCaptureOwner.finishForSubmit(targetDraftKey)
+    const locationCaptureRequested = arkmeSourceSupportsLocationCapture(targetSource.kind)
+      && (locationCaptureEnabled || composerLocation !== undefined)
+    const locationCapturePromise: Promise<ArkmeRecordLocationForSendResult> = captureArkmeRecordLocationForSend(
+      arkmeSourceSupportsLocationCapture(targetSource.kind) && locationCaptureEnabled,
+      arkmeSourceSupportsLocationCapture(targetSource.kind) ? composerLocation : undefined,
+    ).catch(caught => ({ state: 'failed', message: errorMessage(caught) || '位置采集失败，请稍后重试' }))
+    const { recordUid, relationUid } = arkmeComposerDraftStore.beginFileSend(targetDraftKey)
     // Take the draft before any network await.  The next keystroke now belongs to a
     // fresh draft and can be sent independently instead of being swallowed by a busy lock.
     const pendingDraft = arkmeComposerDraftStore.take(targetDraftKey)
     pendingComposerFocusDraftKeyRef.current = targetDraftKey
-    const captureContext = await captureContextPromise
+    if (submittedComposerLocation !== undefined && sameTargetComposer()
+      && composerAsyncScopeRef.current.locationRevision === targetComposerScope.locationRevision) {
+      setComposerLocation(undefined)
+      setComposerLocationNeedsSettings(false)
+      clearedComposerLocationRevision = advanceComposerLocationRevision()
+    }
+    let inputCapture: ArkmeRecordInputCaptureResult
+    try {
+      inputCapture = await capturePromise
+    } catch (caught) {
+      const restoreLocation = targetDraftStillEmpty()
+      arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
+      restoreSubmittedComposerLocation(restoreLocation)
+      if (sameTargetComposer()) setError(errorMessage(caught) || '输入快照采集失败，请重试')
+      return
+    }
+    if (!sameTargetAccount()) {
+      releaseArkmeComposerDraft(pendingDraft)
+      return
+    }
+    const recordDurationMillis = inputCapture.recordDurationMillis
+    const captureContext = inputCapture.captureContext
     const now = Date.now()
     const optimisticSenderName = selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'
     const optimisticAvatarRef = selfProfile?.avatarRef.trim()
@@ -3562,7 +3849,9 @@ export function ArkmeSurface({
     const pendingAttachments = [...pendingDraft.attachments]
     const pendingAssets = pendingAttachments.flatMap(attachment => attachment.asset === undefined ? [] : [attachment.asset])
     const pendingFileRefs = pendingAttachments.flatMap(attachment => attachment.localFile === undefined ? [] : [attachment.localFile.fileRef])
-    pendingViewportRestoreRef.current = { sourceKey: arkmeSourceIdentityKey(targetSource), viewport: undefined }
+    if (sameTargetComposer()) {
+      pendingViewportRestoreRef.current = { sourceKey: arkmeSourceIdentityKey(targetSource), viewport: undefined }
+    }
     const pendingHumanMentions = serializedDraft.mentions.flatMap<ArkmeHumanMentionInput>(mention => {
       const base = { startIndex: mention.startIndex, length: mention.length }
       if (mention.all === true) return [{ ...base, all: true }]
@@ -3572,55 +3861,228 @@ export function ArkmeSurface({
       if (mention.botRef === undefined) return []
       return [{ botRef: mention.botRef, startIndex: mention.startIndex, length: mention.length }]
     })
-    if (pendingFileRefs.length === 0) setItems(current => mergeItems(current, [optimistic]))
-    setError('')
+    if (pendingFileRefs.length === 0 && sameTargetComposer()) setItems(current => mergeItems(current, [optimistic]))
+    if (sameTargetComposer()) setError('')
+    let durableFileSendUncertain = false
+    let stagedBackgroundFileRefs: string[] = []
     try {
-      if (pendingFileRefs.length > 0) {
-        if (pendingAssets.length > 0) throw new Error('旧版附件与本地附件不能混合发送，请重新添加旧版附件')
-        const acceptedTask = await callArkme<ArkmeFileSendTask>('files.send', {
-          sourceRef: targetSource.sourceRef, recordUid, relationUid, fileRefs: pendingFileRefs, title: '', textContent: rawTextContent, displayKind: 0,
+      if (pendingFileRefs.length > 0 && pendingAssets.length > 0) {
+        throw new Error('旧版附件与本地附件不能混合发送，请重新添加旧版附件')
+      }
+      const sdk = createArkmeSdk()
+      const allCapturedSegments = [...inputCapture.backgroundSound.segments]
+      const backgroundCaptureAvailable = backgroundSoundSupported && backgroundSoundEligibilityReason === 'eligible'
+      const capturedSegments = backgroundCaptureAvailable ? allCapturedSegments : []
+      let backgroundCaptureFeedback = allCapturedSegments.length > 0 && !backgroundCaptureAvailable
+        ? backgroundSoundEligibilityReason === 'membership-required'
+          ? '文字仍会发送，但免费版暂不支持背景音，本条录音未随消息发送'
+          : backgroundSoundEligibilityReason === 'membership-unavailable'
+            ? '文字仍会发送，但暂时无法确认会员权益，本条录音未随消息发送'
+            : '文字仍会发送，但当前运行环境不支持背景音，本条录音未随消息发送'
+        : ''
+      if (allCapturedSegments.length === 0 && inputCapture.backgroundSound.enabled) {
+        const failure = arkmeBackgroundSoundCaptureFailureFeedback(inputCapture.backgroundSound.failure)
+        if (failure !== '') backgroundCaptureFeedback = `文字仍会发送，但背景音未录入：${failure}`
+      }
+      const backgroundSoundFileRefs: string[] = []
+      const backgroundSoundAssets: ArkmeUploadedAsset[] = []
+      const backgroundSoundAmplitudes: number[] = []
+      const sendBackgroundDirectly = pendingAssets.length > 0
+        || (locationCaptureRequested && pendingFileRefs.length === 0)
+      if (capturedSegments.length > 0 && !sendBackgroundDirectly) {
+        const maxAttachments = await boundedArkmeBackgroundTransfer(
+          signal => sdk.fileCapabilities(signal).then(policy => policy.maxAttachments),
+        ).catch(() => 9)
+        const allowedSegments = capturedSegments.slice(0, Math.max(0, maxAttachments - pendingFileRefs.length))
+        if (allowedSegments.length < capturedSegments.length) {
+          backgroundCaptureFeedback = allowedSegments.length === 0
+            ? '消息已保留，但附件数量已满，本条背景音未随消息发送'
+            : `消息已保留；背景音片段较多，仅发送前 ${String(allowedSegments.length)} 段`
+        }
+        for (const segment of allowedSegments) {
+          try {
+            if (!sameTargetAccount()) throw new Error('账号已切换，本条背景音未暂存')
+            const localFile = await boundedArkmeBackgroundTransfer(signal => sdk.stageFile(segment.blob, {
+              fileName: segment.fileName,
+              signal,
+              expectedUserId: targetUserId,
+            }))
+            if (!sameTargetAccount()) throw new Error('账号已切换，本条背景音暂存结果已丢弃')
+            backgroundSoundFileRefs.push(localFile.fileRef)
+            stagedBackgroundFileRefs.push(localFile.fileRef)
+            backgroundSoundAmplitudes.push(...segment.amplitudes)
+          } catch (caught) {
+            backgroundCaptureFeedback = `文字仍会发送，但部分背景音暂存失败：${errorMessage(caught) || '请检查麦克风和本地空间'}`
+          }
+        }
+      } else if (capturedSegments.length > 0) {
+        const allowedSegments = capturedSegments.slice(0, Math.max(0, 20 - pendingAssets.length))
+        if (allowedSegments.length < capturedSegments.length) {
+          backgroundCaptureFeedback = allowedSegments.length === 0
+            ? '文字和已有附件仍会发送，但附件数量已满，本条背景音未随消息发送'
+            : `文字和已有附件仍会发送；背景音片段较多，仅发送前 ${String(allowedSegments.length)} 段`
+        }
+        const cachedAssets = backgroundDirectUploadCacheRef.current.get(recordUid) ?? []
+        for (const [index, segment] of allowedSegments.entries()) {
+          try {
+            const cached = cachedAssets[index]
+            if (cached !== undefined) {
+              backgroundSoundAssets.push(cached)
+              backgroundSoundAmplitudes.push(...segment.amplitudes)
+              continue
+            }
+            if (!sameTargetAccount()) throw new Error('账号已切换，本条背景音未上传')
+            const uploaded = await boundedArkmeBackgroundTransfer(signal => sdk.upload(segment.blob, {
+              fileName: segment.fileName,
+              signal,
+              expectedUserId: targetUserId,
+            }))
+            if (!sameTargetAccount()) throw new Error('账号已切换，本条背景音上传结果已丢弃')
+            backgroundSoundAssets.push(uploaded)
+            cachedAssets[index] = uploaded
+            backgroundDirectUploadCacheRef.current.set(recordUid, cachedAssets)
+            if (backgroundDirectUploadCacheRef.current.size > 8) {
+              const oldest = backgroundDirectUploadCacheRef.current.keys().next().value as string | undefined
+              if (oldest !== undefined && oldest !== recordUid) backgroundDirectUploadCacheRef.current.delete(oldest)
+            }
+            backgroundSoundAmplitudes.push(...segment.amplitudes)
+          } catch (caught) {
+            backgroundCaptureFeedback = `文字和已有附件仍会发送，但部分背景音上传失败：${errorMessage(caught) || '请检查网络'}`
+          }
+        }
+      }
+      const allFileRefs = [...pendingFileRefs, ...backgroundSoundFileRefs]
+      if (allFileRefs.length > 0) {
+        if (!sameTargetAccount()) throw new Error('账号已切换，本次发送已取消')
+        const locationCapture = await locationCapturePromise
+        if (!sameTargetAccount()) throw new Error('账号已切换，本次位置采集结果已丢弃')
+        const fileSendParams = {
+          sourceRef: targetSource.sourceRef, recordUid, relationUid, fileRefs: allFileRefs, title: '', textContent: rawTextContent, displayKind: 0,
+          expectedUserId: targetUserId,
           ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
           captureContext,
+          ...(backgroundSoundFileRefs.length === 0 ? {} : {
+            backgroundSound: { fileRefs: backgroundSoundFileRefs, amplitudes: backgroundSoundAmplitudes },
+          }),
+          ...(locationCapture.state === 'captured' ? { location: locationCapture.location } : {}),
           ...(pendingHumanMentions.length === 0 ? {} : { humanMentions: pendingHumanMentions }),
           ...(pendingBotMentions.length === 0 ? {} : { botMentions: pendingBotMentions }),
-        })
+        }
+        let acceptedTask: ArkmeFileSendTask | undefined
+        try {
+          acceptedTask = await callArkme<ArkmeFileSendTask>('files.send', fileSendParams)
+        } catch (caught) {
+          let taskLookupSucceeded = false
+          if (sameTargetAccount()) {
+            try {
+              const tasks = await callArkme<ArkmeFileSendTask[]>('files.send.tasks', { sourceRef: targetSource.sourceRef })
+              taskLookupSucceeded = true
+              acceptedTask = tasks.find(task => task.recordUid === recordUid && task.relationUid === relationUid)
+            } catch { /* an unreadable queue leaves acceptance uncertain */ }
+          }
+          if (acceptedTask === undefined) {
+            const nonRetryable = caught instanceof ArkmeClientError && !caught.body.retryable
+            durableFileSendUncertain = sameTargetAccount() && !taskLookupSucceeded && !nonRetryable
+            if (!durableFileSendUncertain && sameTargetAccount()) {
+              await Promise.all(stagedBackgroundFileRefs.map(async fileRef => {
+                await sdk.removeLocalFile(fileRef).catch(() => undefined)
+              }))
+              stagedBackgroundFileRefs = []
+            }
+            throw caught
+          }
+        }
+        if (!sameTargetAccount()) throw new Error('账号已切换，本次发送结果已丢弃')
+        backgroundDirectUploadCacheRef.current.delete(recordUid)
         releaseArkmeComposerDraft(pendingDraft)
-        setComposerLocation(undefined)
         fileTasks.accept(acceptedTask)
+        const locationFeedback = locationCaptureFeedback(locationCapture)
+        if (sameTargetComposer()) {
+          if (locationFeedback !== undefined) setError(locationFeedback)
+          else if (backgroundCaptureFeedback !== '') setError(backgroundCaptureFeedback)
+        }
         return
       }
-      const result = pendingAssets.length > 0
+      if (!sameTargetAccount()) throw new Error('账号已切换，本次发送已取消')
+      const result = pendingAssets.length > 0 || backgroundSoundAssets.length > 0
         ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
           sourceRef: targetSource.sourceRef, title: '', textContent: rawTextContent, displayKind: 0,
-          assets: pendingAssets, recordUid, relationUid,
+          assets: pendingAssets, recordUid, relationUid, expectedUserId: targetUserId,
           ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
           captureContext,
+          ...(backgroundSoundAssets.length === 0 ? {} : {
+            backgroundSound: { assets: backgroundSoundAssets, amplitudes: backgroundSoundAmplitudes },
+          }),
           ...(pendingHumanMentions.length === 0 ? {} : { humanMentions: pendingHumanMentions }),
           ...(pendingBotMentions.length === 0 ? {} : { botMentions: pendingBotMentions }),
         })
         : await callArkme<ArkmeSourceSendResult>('source.send-text', {
-          sourceRef: targetSource.sourceRef, textContent: rawTextContent, recordUid, relationUid,
+          sourceRef: targetSource.sourceRef, textContent: rawTextContent, recordUid, relationUid, expectedUserId: targetUserId,
           ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
           captureContext,
           ...(pendingHumanMentions.length === 0 ? {} : { humanMentions: pendingHumanMentions }),
           ...(pendingBotMentions.length === 0 ? {} : { botMentions: pendingBotMentions }),
         })
-      setItems(current => applySourceSendResult(current, recordUid, result))
-      if (result.localState !== 'failed' && selectedLocation !== undefined) {
-        setComposerLocation(undefined)
-        void callArkme('source.message-location.set', {
-          sourceRef: targetSource.sourceRef,
-          itemUid: result.itemUid,
-          location: selectedLocation,
-        }).then(() => {
-          setItems(current => current.map(item => item.itemUid === result.itemUid ? { ...item, locationCapture: selectedLocation } : item))
-        }).catch(caught => {
-          setError(`消息已发送，但位置快照未写入：${errorMessage(caught) || '请稍后重试'}`)
+      if (!sameTargetAccount()) throw new Error('账号已切换，本次发送结果已丢弃')
+      backgroundDirectUploadCacheRef.current.delete(recordUid)
+      const confirmedItem = applySourceSendResult([optimistic], recordUid, result)[0]
+      const targetSourceKey = arkmeSourceIdentityKey(targetSource)
+      if (result.localState === 'synced' && confirmedItem !== undefined) {
+        confirmedSendRetention.retain(targetSourceKey, confirmedItem)
+      }
+      if (sameTargetComposer()) setItems(current => applySourceSendResult(current, recordUid, result))
+      if (result.localState !== 'failed' && locationCaptureRequested) {
+        if (sameTargetAccount()) void locationCapturePromise.then(locationCapture => {
+          if (!sameTargetAccount()) return
+          const feedback = locationCaptureFeedback(locationCapture)
+          if (locationCapture.state !== 'captured') {
+            if (feedback !== undefined && sameTargetComposer()) setError(feedback)
+            return
+          }
+          const selectedLocation = locationCapture.location
+          return callArkme('source.message-location.set', {
+            sourceRef: targetSource.sourceRef,
+            itemUid: result.itemUid,
+            location: selectedLocation,
+          }).then(() => {
+            if (!sameTargetAccount()) return
+            if (sameTargetComposer()) {
+              setItems(current => current.map(item => item.itemUid === result.itemUid ? { ...item, locationCapture: selectedLocation } : item))
+            }
+            const cachedTimeline = conversationCacheRef.current.getTimeline(targetSourceKey)
+            if (cachedTimeline !== undefined) {
+              conversationCacheRef.current.storeTimeline(targetSourceKey, {
+                ...cachedTimeline,
+                items: cachedTimeline.items.map(item => item.itemUid === result.itemUid
+                  ? { ...item, locationCapture: selectedLocation }
+                  : item),
+              })
+            }
+            if (confirmedItem !== undefined) {
+              confirmedSendRetention.retain(targetSourceKey, { ...confirmedItem, locationCapture: selectedLocation })
+            }
+            if (sameTargetComposer()) {
+              setSnapshot(current => current?.item.itemUid === result.itemUid
+                ? {
+                    ...current,
+                    item: { ...current.item, locationCapture: selectedLocation },
+                    ...(current.detail === undefined ? {} : {
+                      detail: {
+                        ...current.detail,
+                        locationCapture: selectedLocation,
+                        ...(selectedLocation.altitudeMeters === undefined ? {} : { altitudeMeters: selectedLocation.altitudeMeters }),
+                      },
+                    }),
+                  }
+                : current)
+            }
+          }).catch(caught => {
+            if (sameTargetComposer()) setError(`消息已发送，但位置快照未写入：${errorMessage(caught) || '请稍后重试'}`)
+          })
         })
       }
       if (result.localState !== 'failed' && isArkmeChatDirectorySource(targetSource)
         && result.sequence !== undefined) {
-        const targetSourceKey = arkmeSourceIdentityKey(targetSource)
         const cachedTimeline = conversationCacheRef.current.getTimeline(targetSourceKey)
         if (cachedTimeline !== undefined) {
           conversationCacheRef.current.storeTimeline(targetSourceKey, {
@@ -3638,10 +4100,14 @@ export function ArkmeSurface({
         })
       }
       releaseArkmeComposerDraft(pendingDraft)
-      if (result.localState === 'failed') setError(result.error ?? '内容已保存在本地，远端同步失败')
-      if (result.localState !== 'failed' && isArkmeSelfWorkspaceSource(targetSource)) arkmeUi.chatChanged()
+      if (sameTargetComposer()) {
+        if (result.localState === 'failed') setError(result.error ?? '内容已保存在本地，远端同步失败')
+        else if (backgroundCaptureFeedback !== '') setError(backgroundCaptureFeedback)
+      }
+      if (result.localState !== 'failed' && isArkmeSelfWorkspaceSource(targetSource)) arkmeUi.recordChanged()
       if (result.aiPolish?.state === 'kept_original') {
         setTimeout(() => {
+          if (!sameTargetComposer()) return
           setItems(current => current.map(item => {
             if (item.itemUid !== result.itemUid || item.aiPolish?.state !== 'kept_original') return item
             const { aiPolish: _keptOriginal, ...plainItem } = item
@@ -3651,29 +4117,25 @@ export function ArkmeSurface({
       }
       if (pendingAssets.length > 0) await loadTimeline()
     } catch (caught) {
-      setItems(current => current.filter(item => item.itemUid !== recordUid))
-      const currentAuth = arkmeAuthStore.getSnapshot().auth
-      if (currentAuth?.status === 'authenticated' && currentAuth.userId === targetUserId) {
+      if (sameTargetComposer()) setItems(current => current.filter(item => item.itemUid !== recordUid))
+      if (sameTargetAccount()) {
         // restore() preserves any newer text entered after this send started.
-        if (pendingFileRefs.length === 0) arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
-        else releaseArkmeComposerDraft(pendingDraft)
+        if (!durableFileSendUncertain) {
+          const restoreLocation = targetDraftStillEmpty()
+          arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
+          recordInputCaptureOwner.restoreForRetry(targetDraftKey, inputCapture)
+          restoreSubmittedComposerLocation(restoreLocation)
+        } else releaseArkmeComposerDraft(pendingDraft)
       } else {
         releaseArkmeComposerDraft(pendingDraft)
       }
-      setError(errorMessage(caught))
+      if (sameTargetComposer()) setError(errorMessage(caught))
     }
   }
 
   const updateComposerText = (text: string) => {
-    if (composerDraftKey !== undefined && text.length > 0) {
-      const current = composerInputStartedAtRef.current
-      if (current?.draftKey !== composerDraftKey) {
-        const next = { draftKey: composerDraftKey, startedAt: Date.now() }
-        composerInputStartedAtRef.current = next
-      }
-    } else {
-      composerInputStartedAtRef.current = undefined
-    }
+    const hasUserContent = text.length > 0 || attachments.length > 0
+    syncComposerUserInput(hasUserContent)
     arkmeComposerDraftStore.setText(composerDraftKey, text)
   }
 
@@ -3816,6 +4278,7 @@ export function ArkmeSurface({
     selectionEnd = selectionStart,
   ) => {
     if (composerDraftKey === undefined || member.isSelf || member.mentionRef === undefined || !composerMentionsEnabled) return
+    syncComposerUserInput(true)
     const cursor = arkmeComposerDraftStore.insertMention(
       composerDraftKey,
       member.mentionRef,
@@ -3830,10 +4293,11 @@ export function ArkmeSurface({
       textareaRef.current?.focus()
       textareaRef.current?.setSelectionRange(cursor, cursor)
     })
-  }, [composerDraftKey, composerMentionsEnabled])
+  }, [composerDraftKey, composerMentionsEnabled, syncComposerUserInput])
 
   const insertEmoji = useCallback((emoji: ArkmeEmoji) => {
     if (composerDraftKey === undefined || busy) return
+    syncComposerUserInput(true)
     const textarea = textareaRef.current
     const start = textarea?.selectionStart ?? draft.length
     const end = textarea?.selectionEnd ?? start
@@ -3843,7 +4307,7 @@ export function ArkmeSurface({
       textareaRef.current?.focus()
       textareaRef.current?.setSelectionRange(caretIndex, caretIndex)
     })
-  }, [busy, composerDraftKey, draft])
+  }, [busy, composerDraftKey, draft, syncComposerUserInput])
   const insertMemberMention = useCallback((member: ArkmeConversationMemberItem) => {
     const textarea = textareaRef.current
     const start = textarea?.selectionStart ?? draft.length
@@ -3854,6 +4318,7 @@ export function ArkmeSurface({
     if (mentionTrigger === undefined) return
     if (member.kind === 'all') {
       if (composerDraftKey === undefined || !composerMentionsEnabled) return
+      syncComposerUserInput(true)
       const cursor = arkmeComposerDraftStore.insertAllMention(
         composerDraftKey,
         mentionTrigger.startIndex,
@@ -3869,6 +4334,7 @@ export function ArkmeSurface({
     }
     if (member.kind === 'bot') {
       if (composerDraftKey === undefined || !composerMentionsEnabled) return
+      syncComposerUserInput(true)
       const cursor = arkmeComposerDraftStore.insertBotMention(
         composerDraftKey,
         member.botRef,
@@ -3885,7 +4351,7 @@ export function ArkmeSurface({
       return
     }
     insertMemberMentionAt(member, mentionTrigger.startIndex, mentionTrigger.endIndex)
-  }, [composerDraftKey, composerMentionsEnabled, insertMemberMentionAt, mentionTrigger])
+  }, [composerDraftKey, composerMentionsEnabled, insertMemberMentionAt, mentionTrigger, syncComposerUserInput])
   const updateMentionTrigger = useCallback((text: string, selectionStart: number, selectionEnd: number) => {
     if (!composerMentionsEnabled) {
       setMentionTrigger(undefined)
@@ -5162,7 +5628,7 @@ export function ArkmeSurface({
                               }}
                             />
                             {!isSharedRecordingCard && <ArkmeTimelineAgentSourceBadge item={item} />}
-                            {fileTasks.tasks.filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid && task.state !== 'sent').map(task => <div key={task.taskRef} role="status" style={{ fontSize: 12, marginTop: 6 }}>
+                            {fileTasks.tasks.filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid && task.state !== 'sent' && fileTaskShowsInlineStatus(task)).map(task => <div key={task.taskRef} role="status" style={{ fontSize: 12, marginTop: 6 }}>
                               {task.error ?? (task.state === 'sending' ? '正在发送…' : task.state === 'queued' ? '等待上传' : '正在上传')}
                               {task.state === 'failed' && <button type="button" onClick={event => { event.stopPropagation(); void callArkme('files.send.retry', { taskRef: task.taskRef }).then(fileTasks.refresh).catch(caught => setError(errorMessage(caught))) }}>重试</button>}
                               {task.state === 'uncertain' && <button type="button" onClick={event => { event.stopPropagation(); void callArkme<ArkmeFileSendTask>('files.send.reconcile', { taskRef: task.taskRef }).then(value => { fileTasks.refresh(); if (value.state === 'uncertain') setError('最近的会话记录还无法确认发送结果，请先核对原会话，不要重复发送') }).catch(caught => setError(errorMessage(caught))) }}>核对发送结果</button>}
@@ -5396,15 +5862,40 @@ export function ArkmeSurface({
               onStickerSent={async () => { await loadTimeline() }}
               onError={message => { setError(message) }}
             /></div><div style={styles.composerSendArea}>
-              {arkmeSourceSupportsLocationCapture(source?.kind) && (composerInputFocused || composerTextLength > 0) && <button type="button" style={styles.composerTimeToggle} title={composerLocation === undefined ? '点击记录本条消息的位置' : '点击移除本条消息的位置'} aria-label={composerLocation === undefined ? '位置记录' : '已采集本条位置，点击移除'} onMouseDown={event => { event.preventDefault() }} onClick={() => {
-                if (composerLocation !== undefined) { setComposerLocation(undefined); textareaRef.current?.focus(); return }
+              {arkmeSourceSupportsLocationCapture(source?.kind) && (composerInputFocused || composerTextLength > 0) && <><button type="button" style={styles.composerTimeToggle} disabled={composerLocationRequesting} title={composerLocationRequesting ? '正在获取当前位置' : composerLocation !== undefined ? '点击移除本条手动位置' : locationCaptureEnabled ? '已开启自动位置记录；点击立即刷新本条位置' : '点击开启并授权自动位置记录'} aria-label={composerLocationRequesting ? '正在获取位置' : composerLocation !== undefined ? '已手动采集本条位置，点击移除' : locationCaptureEnabled ? '已开启自动位置记录' : '开启自动位置记录'} onMouseDown={event => { event.preventDefault() }} onClick={() => {
+                if (composerLocationRequesting) return
+                if (composerLocation !== undefined) {
+                  advanceComposerLocationRevision()
+                  setComposerLocation(undefined)
+                  setComposerLocationNeedsSettings(false)
+                  textareaRef.current?.focus()
+                  return
+                }
+                const requestScope = captureComposerAsyncScope()
+                setComposerLocationNeedsSettings(false)
+                setComposerLocationRequesting(true)
                 void requestArkmeRecordLocation().then(location => {
-                  setArkmeLocationCaptureEnabled(authenticatedUserId, true)
+                  if (!sameComposerAsyncScope(requestScope)) return
+                  advanceComposerLocationRevision()
+                  setArkmeLocationCaptureEnabled(requestScope.accountKey, true)
                   setComposerLocation(location)
                   setError('')
                   textareaRef.current?.focus()
-                }).catch(caught => { setError(errorMessage(caught)) })
-              }}>{composerLocation !== undefined ? '⌖ 已记录位置' : locationCaptureEnabled ? '⌖ 获取本条位置' : '⌖ 开启位置记录'}</button>}
+                }).catch(caught => {
+                  if (!sameComposerAsyncScope(requestScope)) return
+                  setComposerLocationNeedsSettings(arkmeLocationSettingsAvailable() && arkmeLocationErrorCanOpenSettings(caught))
+                  setError(errorMessage(caught))
+                }).finally(() => {
+                  if (sameComposerAsyncScope(requestScope)) setComposerLocationRequesting(false)
+                })
+              }}>{composerLocationRequesting ? '⌖ 正在获取位置…' : composerLocation !== undefined ? '⌖ 已选择本条位置' : locationCaptureEnabled ? '⌖ 自动记录位置' : '⌖ 开启位置记录'}</button>{composerLocationNeedsSettings ? <button type="button" style={styles.composerTimeToggle} aria-label="打开系统定位设置" onMouseDown={event => { event.preventDefault() }} onClick={() => {
+                const requestScope = captureComposerAsyncScope()
+                void arkmeOpenLocationSettings().then(opened => {
+                  if (sameComposerAsyncScope(requestScope)) {
+                    setError(opened ? '已打开系统定位设置；允许 Arkme 使用位置后请返回重试' : '无法打开系统定位设置，请稍后重试')
+                  }
+                })
+              }}>打开定位设置</button> : null}</>}
               <ArkmeComposerInputStats
                 active={activeConversation}
                 visible={composerStatsVisible}
@@ -5438,7 +5929,12 @@ export function ArkmeSurface({
                 <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />
               </svg>
               </button>
-            </div></div></div>
+            </div></div>
+            {arkmeSourceSupportsRecordInputCapture(source?.kind) && <ArkmeBackgroundSoundWaveform
+              owner={recordInputCaptureOwner}
+              draftKey={composerDraftKey}
+            />}
+          </div>
             <div style={styles.composerHint}>Enter发送 / Shift+Enter换行</div>
           </div></footer>}
         </>}
@@ -5628,7 +6124,21 @@ export function ArkmeSurface({
             showMessageActionStatus('举报已提交')
           }}
         />}
-        {activeConversation && snapshot !== undefined && <ArkmeMessageSnapshotDialog item={snapshot.item} {...(snapshot.detail === undefined ? {} : { detail: snapshot.detail })} loading={snapshot.loading} {...(snapshot.loadError === undefined ? {} : { loadError: snapshot.loadError })} onClose={closeMessageSnapshot} />}
+        {activeConversation && snapshot !== undefined && <ArkmeMessageSnapshotDialog
+          item={snapshot.item}
+          {...(snapshot.detail === undefined ? {} : { detail: snapshot.detail })}
+          loading={snapshot.loading}
+          {...(snapshot.loadError === undefined ? {} : { loadError: snapshot.loadError })}
+          backgroundSoundEnabled={backgroundSoundSupported && backgroundSoundEligibilityReason === 'eligible'
+            && backgroundSoundCaptureEnabled && arkmeMicrophoneCaptureReady()}
+          backgroundSoundSupported={backgroundSoundCapabilityKnown ? backgroundSoundSupported : true}
+          backgroundSoundEligibilityReason={backgroundSoundEligibilityReason}
+          onEnableBackgroundSound={() => {
+            closeMessageSnapshot()
+            arkmeUi.openDshSettings()
+          }}
+          onClose={closeMessageSnapshot}
+        />}
         {activeConversation && source !== undefined && memberMenu !== undefined && <ArkmeMemberActionMenu
           member={memberMenu.member}
           sourceKind={source.kind}
@@ -5778,7 +6288,9 @@ export function ArkmeSurface({
           onClose={() => { setLongArticleCreating(false) }}
           onCreated={item => {
             pendingViewportRestoreRef.current = { sourceKey: conversationKey, viewport: undefined }
+            confirmedSendRetention.retain(conversationKey, item)
             setItems(current => mergeItems(current, [item]))
+            if (isArkmeSelfWorkspaceSource(source)) arkmeUi.recordChanged()
           }}
         />,
         document.body,

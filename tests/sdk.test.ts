@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createArkmeSdk, ArkmeClientError } from '../src/sdk/index.js'
+import { createArkmeSdk, ArkmeClientError, type ArkmeFileSendInput } from '../src/sdk/index.js'
+import type { ArkmeRichSendInput } from '../src/types.js'
 import type {
   ArkmeOutgoingCallIntentClaim,
   ArkmeOutgoingCallPrepareResult,
@@ -18,6 +19,66 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('exposes typed background and location sends without owning snapshot display', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+      calls.push(request)
+      if (request.operation === 'files.send') return success({ ...request.params, taskRef: 'task-1', files: [], state: 'queued' })
+      return success({ sourceRef: 'source-1', itemUid: 'record-1', status: 1, localState: 'synced' })
+    } })
+    const asset = {
+      fileAssetUid: 'asset-background-audio', fileName: 'background.m4a',
+      mimeType: 'audio/mp4', size: 8, fileKind: 2 as const,
+    }
+    const richInput = {
+      textContent: '背景文字', backgroundSound: { assets: [asset], amplitudes: [0.1, 0.8] },
+    } satisfies ArkmeRichSendInput
+    const fileInput = {
+      sourceRef: 'source-1',
+      recordUid: '00000000-0000-4000-8000-000000000001',
+      relationUid: '00000000-0000-4000-8000-000000000002',
+      fileRefs: ['arkme-file-v1.00000000-0000-4000-8000-000000000003'],
+      content: { textContent: '背景文字' },
+      backgroundSound: {
+        fileRefs: ['arkme-file-v1.00000000-0000-4000-8000-000000000003'], amplitudes: [0.1, 0.8],
+      },
+      location: { latitude: 30.52, longitude: 114.31, capturedAtMillis: 100 },
+      expectedUserId: 42,
+    } satisfies ArkmeFileSendInput
+
+    await sdk.sendRich('source-1', richInput, {
+      recordUid: 'record-1', relationUid: 'relation-1', expectedUserId: 42,
+    })
+    await sdk.sendFiles(fileInput)
+
+    expect(calls).toEqual([
+      { operation: 'source.send-rich', params: {
+        sourceRef: 'source-1', ...richInput, recordUid: 'record-1', relationUid: 'relation-1', expectedUserId: 42,
+      } },
+      { operation: 'files.send', params: { textContent: '背景文字', ...fileInput } },
+    ])
+  })
+
+  it('reads and explicitly updates the account background-sound preference', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+      calls.push(request)
+      return success({
+        userId: 42, found: true, enabled: request.params?.enabled ?? false,
+        eligible: true, memberType: 1, eligibilityReason: 'eligible',
+      })
+    } })
+
+    await expect(sdk.backgroundSoundPreference()).resolves.toMatchObject({ enabled: false })
+    await expect(sdk.updateBackgroundSoundPreference(true, undefined, 42)).resolves.toMatchObject({ enabled: true })
+    expect(calls).toEqual([
+      { operation: 'settings.background-sound.get', params: {} },
+      { operation: 'settings.background-sound.update', params: { enabled: true, expectedUserId: 42 } },
+    ])
+  })
+
   it('manages account-scoped favorite stickers through the public typed SDK', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({

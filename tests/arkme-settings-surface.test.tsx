@@ -1,16 +1,127 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { create } from 'react-test-renderer'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ArkmeSettingsSurface,
+  BackgroundSoundSettingsRow,
   VersionSettingsRow,
   aboutArkmeVersion,
   aboutHarnessVersion,
+  describeArkmeBackgroundSoundSetting,
+  resolveArkmeBackgroundSoundEligibility,
   scrollArkmeSettingsSurface,
 } from '../src/client/ArkmeSettingsSurface.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import pluginManifest from '../package.json' with { type: 'json' }
 
 describe('ArkmeSettingsSurface', () => {
+  it('renders the text background-sound preference as an accessible real switch', () => {
+    const disabled = renderToStaticMarkup(<BackgroundSoundSettingsRow
+      checked={false}
+      busy={false}
+      description="未开启；开启后会在首次输入时请求麦克风权限"
+      onChange={() => {}}
+    />)
+    const enabled = renderToStaticMarkup(<BackgroundSoundSettingsRow
+      checked
+      busy
+      description="已开启，输入时自动记录环境背景音并随本条快记保存"
+      onChange={() => {}}
+    />)
+
+    expect(disabled).toContain('>文字背景音<')
+    expect(disabled).toContain('role="switch"')
+    expect(disabled).toContain('aria-label="文字背景音"')
+    expect(disabled).toContain('aria-checked="false"')
+    expect(disabled).toContain('首次输入时请求麦克风权限')
+    expect(enabled).toContain('aria-checked="true"')
+    expect(enabled).toContain('aria-busy="true"')
+    expect(enabled).toContain('disabled=""')
+    expect(enabled).toContain('自动记录环境背景音')
+
+    const onChange = vi.fn()
+    const renderer = create(<BackgroundSoundSettingsRow
+      checked={false}
+      busy={false}
+      description="未开启"
+      onChange={onChange}
+    />)
+    renderer.root.findByProps({ role: 'switch' }).props.onClick()
+    expect(onChange).toHaveBeenCalledWith(true)
+    renderer.unmount()
+  })
+
+  it('keeps the background-sound setting unavailable when the Host capability is absent', () => {
+    const markup = renderToStaticMarkup(<BackgroundSoundSettingsRow
+      checked={false}
+      busy={false}
+      disabled
+      description="当前 Arkme Host 不支持文字背景音"
+      onChange={() => { throw new Error('unsupported switch must not run') }}
+    />)
+
+    expect(markup).toContain('当前 Arkme Host 不支持文字背景音')
+    expect(markup).toContain('role="switch"')
+    expect(markup).toContain('aria-checked="false"')
+    expect(markup).toContain('disabled=""')
+  })
+
+  it('fail-closes free and unverifiable memberships with distinct settings guidance', () => {
+    expect(resolveArkmeBackgroundSoundEligibility({
+      eligible: true,
+      eligibilityReason: 'eligible',
+    })).toBe('eligible')
+    expect(resolveArkmeBackgroundSoundEligibility({
+      eligible: false,
+      eligibilityReason: 'membership-required',
+    })).toBe('membership-required')
+    expect(resolveArkmeBackgroundSoundEligibility({
+      eligible: false,
+      eligibilityReason: 'membership-unavailable',
+    })).toBe('membership-unavailable')
+    expect(resolveArkmeBackgroundSoundEligibility(undefined)).toBe('membership-unavailable')
+
+    const freeDescription = describeArkmeBackgroundSoundSetting({
+      capability: 'supported',
+      eligibility: 'membership-required',
+      enabled: true,
+      permission: 'granted',
+    })
+    const unknownDescription = describeArkmeBackgroundSoundSetting({
+      capability: 'supported',
+      eligibility: 'membership-unavailable',
+      enabled: true,
+      permission: 'granted',
+    })
+    expect(freeDescription).toBe('免费版暂不支持背景音')
+    expect(unknownDescription).toBe('暂时无法确认会员权益')
+    expect(describeArkmeBackgroundSoundSetting({
+      capability: 'supported',
+      eligibility: 'eligible',
+      enabled: true,
+      permission: 'prompt',
+    })).toBe('已开启，首次输入时会请求麦克风权限')
+    expect(describeArkmeBackgroundSoundSetting({
+      capability: 'supported',
+      eligibility: 'eligible',
+      enabled: true,
+      permission: 'denied',
+    })).toContain('输入时检测到麦克风权限已拒绝')
+
+    for (const description of [freeDescription, unknownDescription]) {
+      const markup = renderToStaticMarkup(<BackgroundSoundSettingsRow
+        checked={false}
+        busy={false}
+        disabled
+        description={description}
+        onChange={() => { throw new Error('ineligible switch must not run') }}
+      />)
+      expect(markup).toContain('aria-checked="false"')
+      expect(markup).toContain('disabled=""')
+      expect(markup).toContain(description)
+    }
+  })
+
   it('places update buttons before version values and reserves the shared trailing alignment column', () => {
     const appMarkup = renderToStaticMarkup(<VersionSettingsRow
       title="ArkME 客户端"
@@ -107,6 +218,9 @@ describe('ArkmeSettingsSurface', () => {
       const authenticated = renderToStaticMarkup(<ArkmeSettingsSurface />)
       expect(authenticated).toMatch(/AI 余额[\s\S]*正在加载余额…[\s\S]*充值/)
       expect(authenticated).toContain('>退出登录<')
+      expect(authenticated).toContain('>文字背景音<')
+      expect(authenticated).toContain('aria-label="文字背景音"')
+      expect(authenticated).toContain('aria-checked="false"')
       expect(authenticated).toContain('>账户操作<')
       expect(authenticated.indexOf('>隐私条款<')).toBeLessThan(authenticated.indexOf('>账户操作<'))
       expect(authenticated.indexOf('>账户操作<')).toBeLessThan(authenticated.indexOf('>退出登录<'))

@@ -122,6 +122,31 @@ describe('ServiceRuntime', () => {
     expect(authorizations).toEqual(['Bearer expired-access', 'Bearer new-access'])
   })
 
+  it('reads a legacy private owner from the authenticated API with interactive coordination', async () => {
+    const activeSession = { accessToken: 'auth-access', refreshToken: 'refresh-token', userId: 42 }
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      code: 200,
+      data: { member_type: 2 },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof fetch
+    const runtime = runtimeFixture(fetchImpl, {
+      async read() { return activeSession }, async write() {}, async delete() {},
+    })
+
+    await expect(runtime.authenticatedAuthReadPost<{ member_type: number }>(
+      '/api/v1/premium/get/member', {}, activeSession,
+    )).resolves.toEqual({ member_type: 2 })
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://auth.test/api/v1/premium/get/member',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer auth-access' }),
+      }),
+    )
+    expect(runtime.requestStats()).toMatchObject({
+      'interactive-read:auth': expect.objectContaining({ started: 1 }),
+    })
+  })
+
   it('preserves canonical DSH remote errors from HTTP 200 GET envelopes', async () => {
     const activeSession = { accessToken: 'remote-access', refreshToken: 'refresh-token', userId: 42 }
     const runtime = runtimeFixture(vi.fn(async () => new Response(JSON.stringify({

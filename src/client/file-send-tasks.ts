@@ -6,11 +6,26 @@ import { callArkme } from './api.js'
 export function localFileBlock(file: ArkmeLocalFile, sortOrder = 0): ArkmeContentBlock {
   return { kind: file.fileKind === 1 ? 'image' : file.fileKind === 3 ? 'video' : 'file', mediaRef: file.fileRef, localFileRef: file.fileRef, fileName: file.fileName, mimeType: file.mimeType, size: file.size, sortOrder }
 }
+function visibleTaskFiles(task: ArkmeFileSendTask) {
+  const backgroundRefs = new Set(task.backgroundSound?.fileRefs ?? [])
+  return task.files.filter(file => !backgroundRefs.has(file.fileRef))
+}
+export function fileTaskHasOnlyBackgroundFiles(task: ArkmeFileSendTask): boolean {
+  const backgroundRefs = new Set(task.backgroundSound?.fileRefs ?? [])
+  return task.fileRefs.length > 0 && backgroundRefs.size > 0
+    && task.fileRefs.every(fileRef => backgroundRefs.has(fileRef))
+}
+/** Active supplemental capture is intentionally invisible inside the message bubble. */
+export function fileTaskShowsInlineStatus(task: ArkmeFileSendTask): boolean {
+  return !fileTaskHasOnlyBackgroundFiles(task) || !['queued', 'uploading', 'sending'].includes(task.state)
+}
 export function fileTaskTimelineItem(task: ArkmeFileSendTask): ArkmeTimelineItem {
+  const visibleFiles = visibleTaskFiles(task)
   return {
     itemUid: task.result?.itemUid ?? task.recordUid, title: task.content.title ?? '', textContent: task.content.textContent ?? '',
     sendAtMillis: task.createdAtMillis, senderName: '我', isMe: true, status: task.result?.status ?? 0, displayKind: 0,
-    contentBlocks: task.files.map((file, index) => ({ ...localFileBlock(file, index),
+    ...(task.result?.messageActionRef === undefined ? {} : { messageActionRef: task.result.messageActionRef }),
+    contentBlocks: visibleFiles.map((file, index) => ({ ...localFileBlock(file, index),
       ...(['queued', 'uploading', 'sending'].includes(task.state) ? { uploadProgress: file.progress } : {}),
     })),
   }
@@ -18,7 +33,8 @@ export function fileTaskTimelineItem(task: ArkmeFileSendTask): ArkmeTimelineItem
 export function fileTaskConversationPreview(task: ArkmeFileSendTask): string {
   const text = task.content.textContent?.trim() ?? ''
   if (text !== '') return text
-  const fileKind = task.files[0]?.fileKind
+  const fileKind = visibleTaskFiles(task)[0]?.fileKind
+  if (fileKind === undefined && (task.backgroundSound?.fileRefs.length ?? 0) > 0) return '[文字背景音]'
   return fileKind === 1 ? '[图片]' : fileKind === 2 ? '[语音]' : fileKind === 3 ? '[视频]' : '[文件]'
 }
 export function bindSentFileTaskLocals(item: ArkmeTimelineItem, tasks: readonly ArkmeFileSendTask[]): ArkmeTimelineItem {

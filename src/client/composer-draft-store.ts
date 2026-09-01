@@ -470,7 +470,14 @@ export class ArkmeComposerDraftStore {
         releaseArkmeComposerAttachment(attachment)
       }
     }
-    this.storeOrDelete(key, { text, attachments: merged, mentions, emojis })
+    const restoreIdentity = current.text === '' && current.attachments.length === 0
+      && current.mentions.length === 0 && current.emojis.length === 0
+      ? snapshot.fileSendIdentity
+      : undefined
+    this.storeOrDelete(key, {
+      text, attachments: merged, mentions, emojis,
+      ...(restoreIdentity === undefined ? {} : { fileSendIdentity: restoreIdentity }),
+    })
   }
 
   clear(key: string | undefined): void {

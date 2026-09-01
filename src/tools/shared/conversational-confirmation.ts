@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 
 const DEFAULT_CONFIRMATION_TTL_MILLIS = 10 * 60_000
 const MAX_PENDING_CONFIRMATIONS = 1024
@@ -16,6 +17,38 @@ interface PendingConfirmation {
   preparedAfterSeq: number
   question: string
   expiresAtMillis: number
+  preparedContext: unknown
+  preparedContextFingerprint: string
+}
+
+type ToolArguments = Parameters<ToolDefinition['execute']>[0]
+type ToolExecution = Parameters<ToolDefinition['execute']>[1]
+type ToolExecutionResult = ReturnType<ToolDefinition['execute']>
+
+const ARKME_CONFIRMATION_CONTEXT_HOOKS = Symbol('arkme-confirmation-context-hooks')
+
+export interface ArkmeConfirmationContextHooks<PreparedContext = unknown> {
+  prepare(args: ToolArguments, exec: ToolExecution): PreparedContext | Promise<PreparedContext>
+  execute(args: ToolArguments, exec: ToolExecution, preparedContext: PreparedContext): ToolExecutionResult
+}
+
+type ArkmeConfirmationContextToolDefinition = ToolDefinition & {
+  [ARKME_CONFIRMATION_CONTEXT_HOOKS]?: ArkmeConfirmationContextHooks
+}
+
+/** Adds Host-only prepare/commit state without exposing it in model arguments or Tool schemas. */
+export function withArkmeConfirmationContext<PreparedContext>(
+  definition: ToolDefinition,
+  hooks: ArkmeConfirmationContextHooks<PreparedContext>,
+): ToolDefinition {
+  Object.defineProperty(definition, ARKME_CONFIRMATION_CONTEXT_HOOKS, { value: hooks })
+  return definition
+}
+
+export function arkmeConfirmationContextHooks(
+  definition: ToolDefinition,
+): ArkmeConfirmationContextHooks | undefined {
+  return (definition as ArkmeConfirmationContextToolDefinition)[ARKME_CONFIRMATION_CONTEXT_HOOKS]
 }
 
 export const ARKME_CONVERSATIONAL_CONFIRMATION_PROMPT =
@@ -36,12 +69,13 @@ export class ArkmeConversationalConfirmation {
     this.confirmationTtlMillis = options.confirmationTtlMillis ?? DEFAULT_CONFIRMATION_TTL_MILLIS
   }
 
-  async prepareOrExecute<Result>(input: {
+  async prepareOrExecute<Result, PreparedContext = undefined>(input: {
     agent: Agent
     operationKey: string
     arguments: unknown
     question: string
-    execute(): Promise<Result>
+    prepare?: () => PreparedContext | Promise<PreparedContext>
+    execute(preparedContext: PreparedContext | undefined): Promise<Result>
   }): Promise<ArkmeConversationalConfirmationRequired | Result> {
     const agentId = requiredAgentId(input.agent)
     const operationKey = input.operationKey.trim()
@@ -53,13 +87,15 @@ export class ArkmeConversationalConfirmation {
     const argumentsFingerprint = fingerprintArguments(operationKey, input.arguments)
     const existing = this.pending.get(agentId)
     if (existing === undefined) {
-      return this.prepare(agentId, input.agent, operationKey, argumentsFingerprint, question)
+      const preparedContext = input.prepare === undefined ? undefined : await input.prepare()
+      return this.prepare(agentId, input.agent, operationKey, argumentsFingerprint, question, preparedContext)
     }
 
     const hasLaterMessage = hasLaterDirectUserMessage(input.agent, existing.preparedAfterSeq)
     if (existing.operationKey !== operationKey || existing.argumentsFingerprint !== argumentsFingerprint) {
       if (!hasLaterMessage) throw new Error('当前已有等待用户确认的其他操作，请先在对话中处理该操作')
-      return this.prepare(agentId, input.agent, operationKey, argumentsFingerprint, question)
+      const preparedContext = input.prepare === undefined ? undefined : await input.prepare()
+      return this.prepare(agentId, input.agent, operationKey, argumentsFingerprint, question, preparedContext)
     }
     if (!hasLaterMessage) {
       return {
@@ -72,7 +108,10 @@ export class ArkmeConversationalConfirmation {
     this.pending.delete(agentId)
     this.running.add(agentId)
     try {
-      return await input.execute()
+      if (fingerprintPreparedContext(operationKey, existing.preparedContext) !== existing.preparedContextFingerprint) {
+        throw new Error('已确认操作的 Host 上下文已变化，请重新发起')
+      }
+      return await input.execute(existing.preparedContext as PreparedContext | undefined)
     } finally {
       this.running.delete(agentId)
     }
@@ -84,17 +123,21 @@ export class ArkmeConversationalConfirmation {
     operationKey: string,
     argumentsFingerprint: string,
     question: string,
+    preparedContext: unknown,
   ): ArkmeConversationalConfirmationRequired {
     if (!this.pending.has(agentId) && this.pending.size >= MAX_PENDING_CONFIRMATIONS) {
       throw new Error('等待确认的操作过多，请稍后重试')
     }
     const expiresAtMillis = this.now() + this.confirmationTtlMillis
+    const capturedContext = structuredClone(preparedContext)
     this.pending.set(agentId, {
       operationKey,
       argumentsFingerprint,
       preparedAfterSeq: lastSessionSeq(agent),
       question,
       expiresAtMillis,
+      preparedContext: capturedContext,
+      preparedContextFingerprint: fingerprintPreparedContext(operationKey, capturedContext),
     })
     return { status: 'confirmation_required', question, expiresAtMillis }
   }
@@ -126,6 +169,12 @@ function requiredAgentId(agent: Agent): string {
 function fingerprintArguments(operationKey: string, value: unknown): string {
   return createHash('sha256')
     .update(`arkme-conversational-confirmation-v1\0${operationKey}\0${canonicalJson(value)}`)
+    .digest('hex')
+}
+
+function fingerprintPreparedContext(operationKey: string, value: unknown): string {
+  return createHash('sha256')
+    .update(`arkme-conversational-confirmation-context-v1\0${operationKey}\0${value === undefined ? 'undefined' : canonicalJson(value)}`)
     .digest('hex')
 }
 

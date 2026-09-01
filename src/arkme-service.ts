@@ -34,6 +34,8 @@ import { AiVideoService } from './services/ai-video-service.js'
 import { ArkoService } from './services/arko-service.js'
 import { ArrangementService } from './services/arrangement-service.js'
 import { AuthService, jiwoScanLoginAvailable } from './services/auth-service.js'
+import { BackgroundSoundMembershipService } from './services/background-sound-membership-service.js'
+import { BackgroundSoundPreferenceService } from './services/background-sound-preference-service.js'
 import { BotService, type ArkmeBotManageUpdateInput, type ArkmeBotRefPayload } from './services/bot-service.js'
 import { BotConversationService } from './services/bot-conversation-service.js'
 import { CalendarService } from './services/calendar-service.js'
@@ -293,6 +295,7 @@ export class ArkmeService {
   private readonly contactDirectory: ContactDirectoryService
   private readonly unmarkedSpeaker: UnmarkedSpeakerService
   private readonly voiceprint: VoiceprintService
+  private readonly backgroundSoundPreferenceOwner: BackgroundSoundPreferenceService
   private readonly fileTransfers: FileTransfers | undefined
   private localFileOpener?: (path: string, signal: AbortSignal) => Promise<void>
   private worldVoiceprintInviteVariantIndex = 0
@@ -396,6 +399,10 @@ export class ArkmeService {
       reconnectChatRealtime: () => { this.realtime.reconnect() },
       clearAccountState: userIds => { this.clearAccountState(userIds) },
     })
+    this.backgroundSoundPreferenceOwner = new BackgroundSoundPreferenceService(
+      this.runtime,
+      new BackgroundSoundMembershipService(this.runtime),
+    )
     this.fileTransfers = createArkmeFileTransfers({
       directory: config.fileStateDirectory,
       maxUploadBytes: config.maxUploadBytes,
@@ -430,6 +437,11 @@ export class ArkmeService {
   async fileSendDiscard(taskRef: string) { return await this.filesOwner().discard(taskRef) }
   async fileSendReconcile(taskRef: string) { return await this.filesOwner().reconcile(taskRef) }
   async fileReceive(mediaRef: string, start = false) { return await this.filesOwner().reception(mediaRef, start) }
+  async backgroundSoundPreference(signal?: AbortSignal) { return await this.backgroundSoundPreferenceOwner.preference(signal) }
+  async updateBackgroundSoundPreference(enabled: boolean, signal?: AbortSignal, expectedUserId?: number) {
+    return await this.backgroundSoundPreferenceOwner.update(enabled, signal, expectedUserId)
+  }
+
   private clearAccountState(userIds: readonly number[]): void {
     this.realtime.resetAttentionSummary()
     for (const userId of userIds) this.privacy.clear(userId)
@@ -646,6 +658,7 @@ export class ArkmeService {
         messageReport: true,
         richContentRead: this.config.richMediaRenderEnabled !== false,
         richContentSend: this.config.richMediaSendEnabled !== false,
+        ...(this.config.richMediaSendEnabled === false ? {} : { backgroundSound: true as const }),
         fileUpload: this.config.richMediaSendEnabled !== false,
         outgoingCall: true,
         callHistory: true,
@@ -1275,6 +1288,7 @@ export class ArkmeService {
       botRefs?: readonly string[]
       humanMentions?: readonly ArkmeHumanMentionInput[]
       botMentions?: readonly ArkmeBotMentionInput[]
+      expectedUserId?: number
       signal?: AbortSignal
       agentAuthored?: boolean
     } = {},
@@ -1290,7 +1304,7 @@ export class ArkmeService {
   async sendSourceRich(
     sourceRef: string,
     input: ArkmeRichSendInput,
-    options: { recordUid?: string; relationUid?: string } = {},
+    options: { recordUid?: string; relationUid?: string; expectedUserId?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceSendResult> {
     return await this.chat.sendSourceRich(sourceRef, input, options)
   }
@@ -1324,8 +1338,9 @@ export class ArkmeService {
   async uploadLocalFile(
     filePath: string,
     metadata: { size: number; sha256: string; mimeType: string; fileName: string; fileKind: 1 | 2 | 3 | 4 },
+    options: { expectedUserId?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeUploadedAsset> {
-    return await this.chat.uploadLocalFile(filePath, metadata)
+    return await this.chat.uploadLocalFile(filePath, metadata, options)
   }
 
   async fetchMedia(

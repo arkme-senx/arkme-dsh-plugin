@@ -1063,6 +1063,8 @@ export interface ArkmeProviderCapabilities {
     messageReport?: true
     richContentRead: boolean
     richContentSend: boolean
+    /** Explicit text background-sound descriptors are supported by direct and durable rich sends. */
+    backgroundSound?: true
     fileUpload: boolean
     outgoingCall: true
     /** Browser-safe call-history list/detail and explicit summary retry are available. */
@@ -1340,6 +1342,13 @@ export interface ArkmeRecordLocationCapture {
   capturedAtMillis: number
 }
 
+/** Browser-safe playback projection for every segment of one background recording. */
+export interface ArkmeMessageSnapshotBackgroundSoundPlayback {
+  mediaRefs: string[]
+  amplitudes: number[]
+  durationSeconds?: number
+}
+
 export interface ArkmeMessageSnapshotDetail {
   itemUid: string
   textContent: string
@@ -1349,6 +1358,7 @@ export interface ArkmeMessageSnapshotDetail {
   shareTimes?: number
   captureContext?: ArkmeRecordCaptureContext
   backgroundSound: 'available' | 'not-recorded' | 'disabled' | 'unknown'
+  backgroundSoundPlayback?: ArkmeMessageSnapshotBackgroundSoundPlayback
   locationCapture?: ArkmeRecordLocationCapture
   locationLabel?: string
   weather?: string
@@ -1642,6 +1652,26 @@ export interface ArkmeUploadedAsset {
   fileKind: 1 | 2 | 3 | 4
 }
 
+/** Explicit background-audio role. Ordinary `audio/*` assets never acquire this role implicitly. */
+export interface ArkmeRichBackgroundSoundInput {
+  assets: ArkmeUploadedAsset[]
+  amplitudes: number[]
+}
+
+export type ArkmeBackgroundSoundEligibilityReason = 'eligible' | 'membership-required' | 'membership-unavailable'
+
+/** Current-account server projection for the text background-sound switch. */
+export interface ArkmeBackgroundSoundPreference {
+  userId: number
+  found: boolean
+  enabled: boolean
+  eligible: boolean
+  memberType?: number
+  eligibilityReason: ArkmeBackgroundSoundEligibilityReason
+  sourceVersion?: number
+  updatedAtMillis?: number
+}
+
 export interface ArkmeFavoriteSticker {
   fileAssetUid: string
   fileName: string
@@ -1681,6 +1711,7 @@ export interface ArkmeRichSendInput {
   /** Browser/device data captured at send time, when available. */
   captureContext?: ArkmeRecordCaptureContext
   assets?: ArkmeUploadedAsset[]
+  backgroundSound?: ArkmeRichBackgroundSoundInput
   humanMentions?: ArkmeHumanMentionInput[]
   botMentions?: ArkmeBotMentionInput[]
 }
@@ -1860,6 +1891,8 @@ export interface ArkmeInterwovenDetail {
 export interface ArkmeSourceSendResult {
   sourceRef: string
   itemUid: string
+  /** Host-signed reference for immediate actions before timeline convergence. */
+  messageActionRef?: string
   status: number
   sequence?: number
   localState: 'synced' | 'failed'
@@ -2766,6 +2799,8 @@ export type ArkmePluginOperation =
   | 'calendar.records'
   | 'user.profile'
   | 'user.profile.refresh'
+  | 'settings.background-sound.get'
+  | 'settings.background-sound.update'
   | 'user.arkme-id.check'
   | 'user.arkme-id.set'
   | 'image.read'
