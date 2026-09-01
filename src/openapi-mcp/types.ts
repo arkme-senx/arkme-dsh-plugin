@@ -17,7 +17,6 @@ export interface ManagedOpenApiCredential extends OpenApiMcpPrincipal {
   generation: number
   apiKey: string
   expiresAtMillis: number
-  mcpRevision: string
 }
 
 export type OpenApiMcpState =
@@ -41,7 +40,8 @@ export type ManagedOpenApiControlResult = {
   generation: number
   expiresAtMillis: number
   reconcileAfterSeconds: number
-  mcpRevision: string
+  mcpCatalogRevision: string
+  mcpRuntimeRevision: string
 } | {
   state: 'issued'
   keyId: string
@@ -49,11 +49,13 @@ export type ManagedOpenApiControlResult = {
   apiKey: string
   expiresAtMillis: number
   reconcileAfterSeconds: number
-  mcpRevision: string
+  mcpCatalogRevision: string
+  mcpRuntimeRevision: string
 } | {
   state: 'reauthorization_required'
   reconcileAfterSeconds: number
-  mcpRevision: string
+  mcpCatalogRevision: string
+  mcpRuntimeRevision: string
 }
 
 export interface ManagedOpenApiCredentialObservation {
@@ -64,7 +66,7 @@ export interface ManagedOpenApiCredentialObservation {
 export interface ManagedOpenApiControlPlane {
   ensure(accessToken: SecretValue, observed: ManagedOpenApiCredentialObservation | undefined, signal: AbortSignal): Promise<ManagedOpenApiControlResult>
   reauthorize(accessToken: SecretValue, signal: AbortSignal): Promise<Extract<ManagedOpenApiControlResult, { state: 'issued' }>>
-  disconnect(accessToken: SecretValue, observed: ManagedOpenApiCredentialObservation, signal: AbortSignal): Promise<void>
+  disconnect(apiKey: SecretValue, signal: AbortSignal): Promise<void>
 }
 
 export interface ManagedOpenApiCredentialStore {
@@ -74,11 +76,12 @@ export interface ManagedOpenApiCredentialStore {
 }
 
 export interface OpenApiMcpMount {
+  ready(): Promise<void>
   dispose(): Promise<void>
 }
 
 export interface OpenApiMcpRuntime {
-  mount(apiKey: SecretValue, signal: AbortSignal): Promise<OpenApiMcpMount>
+  mount(apiKey: SecretValue, signal: AbortSignal, onUnavailable: () => void): OpenApiMcpMount
 }
 
 export interface OpenApiMcpReconcileLock {

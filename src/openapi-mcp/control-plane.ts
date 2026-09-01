@@ -8,7 +8,8 @@ import type {
 const MAX_RESPONSE_BYTES = 64 * 1024
 const KEY_ID = /^[0-9a-f]{24}$/
 const API_KEY = /^arkme_([0-9a-f]{24})_[A-Za-z0-9_-]{43}$/
-const MCP_REVISION = /^sha256:[0-9a-f]{64}$/
+const MCP_CATALOG_REVISION = /^sha256:[0-9a-f]{64}$/
+const MCP_RUNTIME_REVISION = /^[a-z0-9][a-z0-9._-]{0,63}$/
 
 export type OpenApiControlPlaneFailureKind = 'unauthorized' | 'transient' | 'contract'
 
@@ -46,11 +47,8 @@ export class HttpManagedOpenApiControlPlane implements ManagedOpenApiControlPlan
     return result
   }
 
-  async disconnect(accessToken: SecretValue, observed: ManagedOpenApiCredentialObservation, signal: AbortSignal): Promise<void> {
-    const value = await this.post('/api/v1/platform/api-key/managed/disconnect', {
-      observed_key_id: observed.keyId,
-      observed_generation: observed.generation,
-    }, accessToken, signal)
+  async disconnect(apiKey: SecretValue, signal: AbortSignal): Promise<void> {
+    const value = await this.post('/api/v1/platform/api-key/managed/disconnect', {}, apiKey, signal)
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
       throw new OpenApiControlPlaneError('contract', 'OpenAPI MCP 断开响应无效')
     }
@@ -123,12 +121,14 @@ function parseControlResult(value: unknown): ManagedOpenApiControlResult {
   if (!Number.isSafeInteger(record.reconcile_after_seconds)
     || (record.reconcile_after_seconds as number) < 60
     || (record.reconcile_after_seconds as number) > 7 * 24 * 60 * 60
-    || typeof record.mcp_revision !== 'string' || !MCP_REVISION.test(record.mcp_revision)) {
+    || typeof record.mcp_catalog_revision !== 'string' || !MCP_CATALOG_REVISION.test(record.mcp_catalog_revision)
+    || typeof record.mcp_runtime_revision !== 'string' || !MCP_RUNTIME_REVISION.test(record.mcp_runtime_revision)) {
     throw new OpenApiControlPlaneError('contract', 'OpenAPI MCP 协调合同无效')
   }
   const common = {
     reconcileAfterSeconds: record.reconcile_after_seconds as number,
-    mcpRevision: record.mcp_revision,
+    mcpCatalogRevision: record.mcp_catalog_revision,
+    mcpRuntimeRevision: record.mcp_runtime_revision,
   }
   if (record.state === 'reauthorization_required') {
     if (record.key_id !== undefined || record.generation !== undefined

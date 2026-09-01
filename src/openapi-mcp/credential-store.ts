@@ -4,9 +4,8 @@ import type { ManagedOpenApiCredential, ManagedOpenApiCredentialStore } from './
 const ACCOUNT = 'managed-api-key'
 const KEY_ID = /^[0-9a-f]{24}$/
 const API_KEY = /^arkme_([0-9a-f]{24})_[A-Za-z0-9_-]{43}$/
-const MCP_REVISION = /^sha256:[0-9a-f]{64}$/
 const CREDENTIAL_FIELDS = new Set([
-  'schemaVersion', 'userId', 'loginDeviceId', 'keyId', 'generation', 'apiKey', 'expiresAtMillis', 'mcpRevision',
+  'schemaVersion', 'userId', 'loginDeviceId', 'keyId', 'generation', 'apiKey', 'expiresAtMillis',
 ])
 
 export class InvalidManagedOpenApiCredentialError extends Error {
@@ -27,8 +26,7 @@ export function parseManagedOpenApiCredential(value: unknown): ManagedOpenApiCre
     || !Number.isSafeInteger(record.generation) || (record.generation as number) <= 0
     || typeof record.apiKey !== 'string' || !API_KEY.test(record.apiKey)
     || API_KEY.exec(record.apiKey)?.[1] !== record.keyId
-    || !Number.isSafeInteger(record.expiresAtMillis) || (record.expiresAtMillis as number) <= 0
-    || typeof record.mcpRevision !== 'string' || !MCP_REVISION.test(record.mcpRevision)) return undefined
+    || !Number.isSafeInteger(record.expiresAtMillis) || (record.expiresAtMillis as number) <= 0) return undefined
   return {
     schemaVersion: 1,
     userId: record.userId as number,
@@ -37,7 +35,6 @@ export function parseManagedOpenApiCredential(value: unknown): ManagedOpenApiCre
     generation: record.generation as number,
     apiKey: record.apiKey,
     expiresAtMillis: record.expiresAtMillis as number,
-    mcpRevision: record.mcpRevision,
   }
 }
 

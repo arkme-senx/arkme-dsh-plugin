@@ -27,6 +27,7 @@ import { createArkmeSecureValueStore, createArkmeSessionStore } from './keychain
 import { HttpManagedOpenApiControlPlane } from './openapi-mcp/control-plane.js'
 import { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
 import { SecureManagedOpenApiCredentialStore } from './openapi-mcp/credential-store.js'
+import { registerManagedOpenApiMcpExecutionFence } from './openapi-mcp/execution-fence.js'
 import { CordisOpenApiMcpRuntime } from './openapi-mcp/mcp-runtime.js'
 import { FileOpenApiMcpReconcileLock } from './openapi-mcp/reconcile-lock.js'
 import { ObservedArkmeSessionStore } from './openapi-mcp/session-observer.js'
@@ -275,6 +276,10 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(
     () => ctx.tools.guard(execution => openApiMcpController.guardToolExecution(execution.name)),
     'dsh-arkme: managed OpenAPI MCP account guard',
+  )
+  ctx.effect(
+    () => registerManagedOpenApiMcpExecutionFence(ctx, openApiMcpController),
+    'dsh-arkme: managed OpenAPI MCP execution fence',
   )
   service.attachLocalFileOpener(async (path, signal) => {
     await openDshHostPath(ctx, path, signal)

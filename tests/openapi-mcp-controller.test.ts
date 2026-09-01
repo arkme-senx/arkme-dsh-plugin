@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from '../src/keychain-store.js'
-import { ManagedOpenApiMcpController } from '../src/openapi-mcp/controller.js'
+import {
+  ManagedOpenApiMcpController,
+  ManagedOpenApiMcpExecutionSupersededError,
+} from '../src/openapi-mcp/controller.js'
 import { InvalidManagedOpenApiCredentialError } from '../src/openapi-mcp/credential-store.js'
 import { ObservedArkmeSessionStore } from '../src/openapi-mcp/session-observer.js'
 import type {
@@ -14,6 +17,8 @@ const apiKey1 = `arkme_${keyId1}_${'A'.repeat(43)}`
 const apiKey2 = `arkme_${keyId1}_${'B'.repeat(43)}`
 const revision1 = `sha256:${'a'.repeat(64)}`
 const revision2 = `sha256:${'b'.repeat(64)}`
+const runtimeRevision1 = 'mcp-runtime-v1'
+const runtimeRevision2 = 'mcp-runtime-v2'
 const now = 1_700_000_000_000
 
 function jwt(userId: number, clientId: number): string {
@@ -51,13 +56,28 @@ class MemoryCredentialStore implements ManagedOpenApiCredentialStore {
 
 class FakeRuntime implements OpenApiMcpRuntime {
   mountedKeys: string[] = []
+  unavailable: Array<() => void> = []
   disposed = 0
+  failReady = false
+  failDispose = false
   constructor(private readonly order: string[]) {}
-  async mount(apiKey: SecretValue, _signal: AbortSignal): Promise<OpenApiMcpMount> {
+  mount(apiKey: SecretValue, _signal: AbortSignal, onUnavailable: () => void): OpenApiMcpMount {
     this.order.push('mount')
     this.mountedKeys.push(apiKey.reveal())
+    this.unavailable.push(onUnavailable)
     let active = true
-    return { dispose: async () => { if (active) { active = false; this.disposed++; this.order.push('dispose') } } }
+    return {
+      ready: async () => {
+        if (this.failReady) throw new Error('activation failed')
+      },
+      dispose: async () => {
+        if (!active) return
+        if (this.failDispose) throw new Error('dispose failed')
+        active = false
+        this.disposed++
+        this.order.push('dispose')
+      },
+    }
   }
 }
 
@@ -66,15 +86,21 @@ class ImmediateLock implements OpenApiMcpReconcileLock {
 }
 
 function issued(apiKey = apiKey1, revision = revision1, generation = 1): ManagedOpenApiControlResult {
-  return { state: 'issued', keyId: keyId1, generation, apiKey, expiresAtMillis: now + 30 * 24 * 60 * 60_000, reconcileAfterSeconds: 21_600, mcpRevision: revision }
+  return {
+    state: 'issued', keyId: keyId1, generation, apiKey, expiresAtMillis: now + 30 * 24 * 60 * 60_000,
+    reconcileAfterSeconds: 21_600, mcpCatalogRevision: revision, mcpRuntimeRevision: runtimeRevision1,
+  }
 }
 
-function ready(revision = revision1, generation = 1): ManagedOpenApiControlResult {
-  return { state: 'ready', keyId: keyId1, generation, expiresAtMillis: now + 30 * 24 * 60 * 60_000, reconcileAfterSeconds: 21_600, mcpRevision: revision }
+function ready(revision = revision1, generation = 1, runtimeRevision = runtimeRevision1): ManagedOpenApiControlResult {
+  return {
+    state: 'ready', keyId: keyId1, generation, expiresAtMillis: now + 30 * 24 * 60 * 60_000,
+    reconcileAfterSeconds: 21_600, mcpCatalogRevision: revision, mcpRuntimeRevision: runtimeRevision,
+  }
 }
 
-function stored(revision = revision1, generation = 1): ManagedOpenApiCredential {
-  return { schemaVersion: 1, userId: 42, loginDeviceId: 7, keyId: keyId1, generation, apiKey: apiKey1, expiresAtMillis: now + 24 * 60 * 60_000, mcpRevision: revision }
+function stored(generation = 1): ManagedOpenApiCredential {
+  return { schemaVersion: 1, userId: 42, loginDeviceId: 7, keyId: keyId1, generation, apiKey: apiKey1, expiresAtMillis: now + 24 * 60 * 60_000 }
 }
 
 function setup(input: { credential?: ManagedOpenApiCredential; ensure?: ManagedOpenApiControlResult } = {}) {
@@ -159,7 +185,7 @@ describe('managed OpenAPI MCP controller', () => {
   })
 
   it('remounts for a server catalog revision without recreating the API key', async () => {
-    const fixture = setup({ credential: stored(revision1), ensure: ready(revision1) })
+    const fixture = setup({ credential: stored(), ensure: ready(revision1) })
     await fixture.controller.retry()
     vi.mocked(fixture.control.ensure).mockResolvedValue(ready(revision2))
     await fixture.controller.retry()
@@ -170,13 +196,134 @@ describe('managed OpenAPI MCP controller', () => {
     expect(fixture.control.reauthorize).not.toHaveBeenCalled()
     expect(fixture.runtime.mountedKeys).toEqual([apiKey1, apiKey1])
     expect(fixture.runtime.disposed).toBe(1)
-    expect(fixture.credentials.value?.mcpRevision).toBe(revision2)
+    expect(fixture.credentials.value).not.toHaveProperty('mcpRevision')
+    await fixture.controller.dispose()
+  })
+
+  it('remounts for an MCP runtime contract revision without rotating or rewriting the API key', async () => {
+    const fixture = setup({ credential: stored(), ensure: ready(revision1) })
+    await fixture.controller.retry()
+    const writesBeforeUpdate = fixture.order.filter(value => value === 'write').length
+    vi.mocked(fixture.control.ensure).mockResolvedValue(ready(revision1, 1, runtimeRevision2))
+
+    await fixture.controller.retry()
+
+    expect(fixture.control.reauthorize).not.toHaveBeenCalled()
+    expect(fixture.runtime.mountedKeys).toEqual([apiKey1, apiKey1])
+    expect(fixture.runtime.disposed).toBe(1)
+    expect(fixture.order.filter(value => value === 'write')).toHaveLength(writesBeforeUpdate)
+    await fixture.controller.dispose()
+  })
+
+  it('persists a renewed expiry without remounting an unchanged MCP contract', async () => {
+    const fixture = setup({ credential: stored(), ensure: ready() })
+
+    await fixture.controller.retry()
+    await fixture.controller.retry()
+
+    expect(fixture.credentials.value?.expiresAtMillis).toBe(now + 30 * 24 * 60 * 60_000)
+    expect(fixture.runtime.mountedKeys).toEqual([apiKey1])
+    await fixture.controller.dispose()
+  })
+
+  it('retains and quarantines mount ownership when teardown fails, then retries cleanup before remounting', async () => {
+    const fixture = setup({ credential: stored(), ensure: ready(revision1) })
+    await fixture.controller.retry()
+    fixture.runtime.failDispose = true
+    vi.mocked(fixture.control.ensure).mockResolvedValue(ready(revision2))
+
+    await fixture.controller.retry()
+
+    expect(fixture.controller.status()).toMatchObject({ state: 'degraded', retryable: true })
+    expect(fixture.controller.guardToolExecution('mcp__arkme__profile_get')).toContain('not ready')
+    expect(fixture.runtime.mountedKeys).toEqual([apiKey1])
+
+    fixture.runtime.failDispose = false
+    await fixture.controller.retry()
+
+    expect(fixture.runtime.mountedKeys).toEqual([apiKey1, apiKey1])
+    expect(fixture.controller.status().state).toBe('ready')
+    expect(fixture.controller.guardToolExecution('mcp__arkme__profile_get')).toBeUndefined()
+    await fixture.controller.dispose()
+  })
+
+  it('retains a failed activating mount when its cleanup fails, then recovers without overlapping mounts', async () => {
+    const fixture = setup({ credential: stored(), ensure: ready() })
+    fixture.runtime.failReady = true
+    fixture.runtime.failDispose = true
+
+    await fixture.controller.retry()
+
+    expect(fixture.controller.status()).toMatchObject({ state: 'degraded', retryable: true })
+    expect(fixture.controller.guardToolExecution('mcp__arkme__profile_get')).toContain('not ready')
+    expect(fixture.runtime.mountedKeys).toEqual([apiKey1])
+
+    fixture.runtime.failReady = false
+    fixture.runtime.failDispose = false
+    await fixture.controller.retry()
+
+    expect(fixture.runtime.mountedKeys).toEqual([apiKey1, apiKey1])
+    expect(fixture.runtime.disposed).toBe(1)
+    expect(fixture.controller.status().state).toBe('ready')
+    await fixture.controller.dispose()
+  })
+
+  it('automatically rebuilds the same mount after the official MCP runtime loses all managed tools', async () => {
+    vi.useFakeTimers()
+    try {
+      const fixture = setup({ credential: stored(), ensure: ready() })
+      await fixture.controller.retry()
+
+      fixture.runtime.unavailable[0]?.()
+
+      expect(fixture.controller.status()).toMatchObject({ state: 'degraded', retryable: true })
+      expect(fixture.controller.guardToolExecution('mcp__arkme__profile_get')).toContain('not ready')
+      await vi.advanceTimersByTimeAsync(60_000)
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(fixture.runtime.mountedKeys).toEqual([apiKey1, apiKey1])
+      expect(fixture.controller.status().state).toBe('ready')
+      await fixture.controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('aborts an in-flight old-account call and discards its late result during a session switch', async () => {
+    const fixture = setup({ credential: stored(), ensure: ready() })
+    await fixture.controller.retry()
+    const late = Promise.withResolvers<string>()
+    let dispatchedSignal: AbortSignal | undefined
+    const running = fixture.controller.executeManagedTool(
+      'mcp__arkme__profile_get',
+      new AbortController().signal,
+      async signal => {
+        dispatchedSignal = signal
+        return await late.promise
+      },
+    )
+    await vi.waitFor(() => { expect(dispatchedSignal).toBeDefined() })
+
+    const ticket = await fixture.controller.prepare(
+      activeSession(),
+      { userId: 99, accessToken: jwt(99, 8), refreshToken: 'refresh-new' },
+    )
+    late.resolve('old-account-private-result')
+
+    const failure = await running.catch(error => error as unknown)
+    expect(failure).toBeInstanceOf(ManagedOpenApiMcpExecutionSupersededError)
+    expect(String(failure)).not.toContain('old-account-private-result')
+    expect(dispatchedSignal?.aborted).toBe(true)
+    fixture.controller.rolledBack(ticket)
+    await vi.waitFor(() => { expect(fixture.controller.status().state).toBe('ready') })
     await fixture.controller.dispose()
   })
 
   it('stops background recreation after revocation and only explicit reauthorization issues again', async () => {
     const fixture = setup({ credential: stored(), ensure: {
-      state: 'reauthorization_required', reconcileAfterSeconds: 21_600, mcpRevision: revision1,
+      state: 'reauthorization_required', reconcileAfterSeconds: 21_600,
+      mcpCatalogRevision: revision1, mcpRuntimeRevision: runtimeRevision1,
     } })
     await fixture.controller.retry()
     expect(fixture.controller.status()).toMatchObject({ state: 'reauthorization-required', userAction: 'reauthorize' })
@@ -208,9 +355,8 @@ describe('managed OpenAPI MCP controller', () => {
     fixture.credentials.failWrite = true
     await fixture.controller.retry()
 
-    expect(fixture.control.disconnect).toHaveBeenCalledWith(
-      expect.any(SecretValue), { keyId: keyId1, generation: 1 }, expect.any(AbortSignal),
-    )
+    expect(fixture.control.disconnect).toHaveBeenCalledWith(expect.any(SecretValue), expect.any(AbortSignal))
+    expect(vi.mocked(fixture.control.disconnect).mock.calls[0]?.[0].reveal()).toBe(apiKey1)
     expect(fixture.runtime.mountedKeys).toEqual([])
     expect(fixture.controller.status()).toMatchObject({ state: 'degraded', retryable: true })
     await fixture.controller.dispose()
@@ -243,9 +389,8 @@ describe('managed OpenAPI MCP controller', () => {
       controller.retry(),
       new Promise((_, reject) => setTimeout(() => { reject(new Error('lifecycle deadlocked')) }, 500)),
     ])).resolves.toMatchObject({ state: 'inactive' })
-    expect(control.disconnect).toHaveBeenCalledWith(
-      expect.any(SecretValue), { keyId: keyId1, generation: 1 }, expect.any(AbortSignal),
-    )
+    expect(control.disconnect).toHaveBeenCalledWith(expect.any(SecretValue), expect.any(AbortSignal))
+    expect(vi.mocked(control.disconnect).mock.calls[0]?.[0].reveal()).toBe(apiKey1)
     expect(credentials.value).toBeUndefined()
     expect(runtime.mountedKeys).toEqual([])
     await controller.dispose()
@@ -304,14 +449,47 @@ describe('managed OpenAPI MCP controller', () => {
 
     await observedSession.delete()
     await vi.waitFor(() => {
-      expect(control.disconnect).toHaveBeenCalledWith(
-        expect.any(SecretValue), { keyId: keyId1, generation: 1 }, expect.any(AbortSignal),
-      )
+      expect(control.disconnect).toHaveBeenCalledWith(expect.any(SecretValue), expect.any(AbortSignal))
     })
     const disconnectToken = vi.mocked(control.disconnect).mock.calls[0]?.[0]
-    expect(disconnectToken?.reveal()).toBe(activeSession().accessToken)
+    expect(disconnectToken?.reveal()).toBe(apiKey1)
     expect(credentials.value).toBeUndefined()
     await controller.dispose()
+  })
+
+  it('retries API-Key self-disconnect in memory with one bounded schedule', async () => {
+    vi.useFakeTimers()
+    try {
+      const innerSession = new MemorySessionStore(activeSession())
+      const observedSession = new ObservedArkmeSessionStore(innerSession)
+      const credentials = new MemoryCredentialStore(stored())
+      const disconnect = vi.fn()
+        .mockRejectedValueOnce(new Error('network unavailable'))
+        .mockRejectedValueOnce(new Error('network unavailable'))
+        .mockResolvedValueOnce(undefined)
+      const control: ManagedOpenApiControlPlane = {
+        ensure: vi.fn(async () => issued()),
+        reauthorize: vi.fn(async () => issued() as Extract<ManagedOpenApiControlResult, { state: 'issued' }>),
+        disconnect,
+      }
+      const controller = new ManagedOpenApiMcpController({
+        enabled: true, sessionStore: observedSession,
+        accessCredentialProvider: { resolveManagedAccessCredential: vi.fn(async () => new SecretValue('access-secret')) },
+        controlPlane: control, credentialStore: credentials, runtime: new FakeRuntime([]), reconcileLock: new ImmediateLock(),
+        logger: { warn: vi.fn() }, now: () => now, random: () => 0.5,
+      })
+      observedSession.attach(controller)
+
+      await observedSession.delete()
+      await vi.advanceTimersByTimeAsync(6_000)
+      await Promise.resolve()
+
+      expect(disconnect).toHaveBeenCalledTimes(3)
+      expect(disconnect.mock.calls.map(call => (call[0] as SecretValue).reveal())).toEqual([apiKey1, apiKey1, apiKey1])
+      await controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('remounts the original account after a failed session switch even when teardown is still pending', async () => {
@@ -322,10 +500,11 @@ describe('managed OpenAPI MCP controller', () => {
     const firstDisposeGate = new Promise<void>(resolve => { releaseFirstDispose = resolve })
     let mountCount = 0
     const runtime: OpenApiMcpRuntime = {
-      mount: vi.fn(async () => {
+      mount: vi.fn(() => {
         mountCount++
         const current = mountCount
         return {
+          ready: async () => undefined,
           dispose: async () => {
             if (current === 1) await firstDisposeGate
           },
@@ -368,15 +547,18 @@ describe('managed OpenAPI MCP controller', () => {
     const observedSession = new ObservedArkmeSessionStore(innerSession)
     const credentials = new MemoryCredentialStore(undefined)
     const runtime: OpenApiMcpRuntime = {
-      mount: vi.fn(async (_apiKey, signal) => await new Promise<OpenApiMcpMount>((_resolve, reject) => {
-        order.push('mount-start')
-        const aborted = () => {
-          setTimeout(() => {
-            order.push('mount-abort-cleanup')
-            reject(signal.reason)
-          }, 10)
-        }
-        signal.addEventListener('abort', aborted, { once: true })
+      mount: vi.fn((_apiKey, signal) => ({
+        ready: async () => await new Promise<void>((_resolve, reject) => {
+          order.push('mount-start')
+          const aborted = () => {
+            setTimeout(() => {
+              order.push('mount-abort-cleanup')
+              reject(signal.reason)
+            }, 10)
+          }
+          signal.addEventListener('abort', aborted, { once: true })
+        }),
+        dispose: async () => undefined,
       })),
     }
     const control: ManagedOpenApiControlPlane = {

@@ -11,7 +11,6 @@ const credential = {
   generation: 1,
   apiKey: `arkme_${keyId}_${'A'.repeat(43)}`,
   expiresAtMillis: 1_800_000_000_000,
-  mcpRevision: `sha256:${'a'.repeat(64)}`,
 }
 
 class MemorySecureStore implements ArkmeSecureValueStore {
@@ -33,11 +32,11 @@ describe('managed OpenAPI credential store', () => {
     expect(secure.operations.map(value => value.split(':')[0])).toEqual(['write', 'read', 'delete', 'read'])
   })
 
-  it('fails closed when identifiers, revision or plaintext do not agree', () => {
+  it('fails closed when identifiers or plaintext do not agree', () => {
     expect(parseManagedOpenApiCredential(credential)).toEqual(credential)
     expect(parseManagedOpenApiCredential({ ...credential, keyId: 'fedcba987654321001234567' })).toBeUndefined()
     expect(parseManagedOpenApiCredential({ ...credential, generation: 0 })).toBeUndefined()
-    expect(parseManagedOpenApiCredential({ ...credential, mcpRevision: 'latest' })).toBeUndefined()
+    expect(parseManagedOpenApiCredential({ ...credential, mcpRevision: `sha256:${'a'.repeat(64)}` })).toBeUndefined()
     expect(parseManagedOpenApiCredential({ ...credential, apiKey: 'arkme-secret' })).toBeUndefined()
     expect(parseManagedOpenApiCredential({ ...credential, refreshToken: 'must-not-exist' })).toBeUndefined()
   })

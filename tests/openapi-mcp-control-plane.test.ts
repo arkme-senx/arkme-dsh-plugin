@@ -5,6 +5,7 @@ import { SecretValue } from '../src/secret-value.js'
 const keyId = '0123456789abcdef01234567'
 const apiKey = `arkme_${keyId}_${'A'.repeat(43)}`
 const revision = `sha256:${'b'.repeat(64)}`
+const runtimeRevision = 'mcp-runtime-v1'
 
 function success(data: unknown): Response {
   return new Response(JSON.stringify({ code: 200, message: '请求成功', data }), { status: 200 })
@@ -20,13 +21,16 @@ describe('managed OpenAPI control plane', () => {
       })
       return success({
         state: 'issued', key_id: keyId, generation: 3, api_key: apiKey, expires_at: 1_800_000_000_000,
-        reconcile_after_seconds: 21_600, mcp_revision: revision,
+        reconcile_after_seconds: 21_600, mcp_catalog_revision: revision, mcp_runtime_revision: runtimeRevision,
       })
     }), 5_000)
 
     await expect(client.ensure(
       new SecretValue('access-secret'), { keyId, generation: 2 }, new AbortController().signal,
-    )).resolves.toMatchObject({ state: 'issued', keyId, generation: 3, apiKey, mcpRevision: revision })
+    )).resolves.toMatchObject({
+      state: 'issued', keyId, generation: 3, apiKey,
+      mcpCatalogRevision: revision, mcpRuntimeRevision: runtimeRevision,
+    })
     expect(requests).toEqual([{
       url: 'https://openapi.example.com/api/v1/platform/api-key/managed/ensure',
       authorization: 'Bearer access-secret', body: { observed_key_id: keyId, observed_generation: 2 },
@@ -36,7 +40,7 @@ describe('managed OpenAPI control plane', () => {
   it('rejects plaintext on ready and separates authorization failure', async () => {
     const invalid = new HttpManagedOpenApiControlPlane('https://openapi.example.com', vi.fn(async () => success({
       state: 'ready', key_id: keyId, generation: 1, api_key: apiKey, expires_at: 1_800_000_000_000,
-      reconcile_after_seconds: 21_600, mcp_revision: revision,
+      reconcile_after_seconds: 21_600, mcp_catalog_revision: revision, mcp_runtime_revision: runtimeRevision,
     })), 5_000)
     await expect(invalid.ensure(new SecretValue('access'), { keyId, generation: 1 }, new AbortController().signal))
       .rejects.toMatchObject({ kind: 'contract' })
@@ -50,23 +54,24 @@ describe('managed OpenAPI control plane', () => {
       .rejects.toMatchObject({ kind: 'unauthorized' })
   })
 
-  it('scopes delayed disconnect to the exact credential generation', async () => {
-    let body: unknown
+  it('uses the managed API Key itself to disconnect without identity fields', async () => {
+    let request: { authorization: string | null; body: unknown } | undefined
     const client = new HttpManagedOpenApiControlPlane('https://openapi.example.com', vi.fn(async (_input, init) => {
-      body = JSON.parse(String(init?.body))
+      request = {
+        authorization: new Headers(init?.headers).get('authorization'),
+        body: JSON.parse(String(init?.body)),
+      }
       return success({ state: 'disconnected' })
     }), 5_000)
 
-    await expect(client.disconnect(
-      new SecretValue('access'), { keyId, generation: 3 }, new AbortController().signal,
-    )).resolves.toBeUndefined()
-    expect(body).toEqual({ observed_key_id: keyId, observed_generation: 3 })
+    await expect(client.disconnect(new SecretValue(apiKey), new AbortController().signal)).resolves.toBeUndefined()
+    expect(request).toEqual({ authorization: `Bearer ${apiKey}`, body: {} })
   })
 
   it('rejects credential material outside an issued result', async () => {
     const client = new HttpManagedOpenApiControlPlane('https://openapi.example.com', vi.fn(async () => success({
       state: 'reauthorization_required', api_key: apiKey,
-      reconcile_after_seconds: 21_600, mcp_revision: revision,
+      reconcile_after_seconds: 21_600, mcp_catalog_revision: revision, mcp_runtime_revision: runtimeRevision,
     })), 5_000)
 
     await expect(client.ensure(new SecretValue('access'), undefined, new AbortController().signal))
