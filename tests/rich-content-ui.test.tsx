@@ -157,6 +157,13 @@ describe('Arkme rich content presentation', () => {
     expect(arkmeNextImagePreviewMode('width')).toBe('contained')
   })
 
+  it('uses the pasted-file blob when a draft image opens in the in-app preview', () => {
+    const image = { kind: 'image' as const, mediaRef: 'local-image-ref', localFileRef: 'local-image-ref', fileName: 'clipboard.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
+    const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={[image]} selected={image} previewUrl="blob:clipboard-preview" onSelect={() => undefined} onClose={() => undefined} openLocalFile={false} />)
+    expect(html).toContain('src="blob:clipboard-preview"')
+    expect(html).not.toContain('/arkme-self/api/files/local')
+  })
+
   it('moves only the vertical viewport opposite to pointer drag and anchors width zoom at the double-click point', () => {
     expect(arkmeImagePreviewDragTop({ clientY: 500, scrollTop: 120 }, 300)).toBe(320)
     expect(arkmeImagePreviewAnchoredTop(0.75, 2400, 300)).toBe(1500)

@@ -7,15 +7,24 @@ import type {
 } from '../types.js'
 
 export interface ArkmeConversationTimelineSnapshot {
+  mode?: 'latest' | 'around'
+  aroundSequenceRange?: ArkmeConversationTimelineSequenceRange
   items: ArkmeTimelineItem[]
   aiPolishNotices: ArkmeGroupAiPolishNotice[]
   aiPolishSettings?: ArkmeGroupAiPolishSnapshot
   nextCursor?: ArkmeTimelineCursor
   hasMore: boolean
+  newerCursor?: ArkmeTimelineCursor
+  newerHasMore?: boolean
   /** Client-only freshness metadata. It is never sent across the Host boundary. */
   fetchedAtMillis?: number
   refreshRevision?: number
   latestSequence?: number
+}
+
+export interface ArkmeConversationTimelineSequenceRange {
+  minimumSequence: number
+  maximumSequence: number
 }
 
 export interface ArkmeConversationViewportSnapshot {
@@ -43,11 +52,42 @@ export function arkmeConversationTimelineContentEqual(
 ): boolean {
   if (left === right) return true
   if (left === undefined || right === undefined) return false
-  return left.hasMore === right.hasMore
+  return (left.mode ?? 'latest') === (right.mode ?? 'latest')
+    && JSON.stringify(left.aroundSequenceRange) === JSON.stringify(right.aroundSequenceRange)
+    && left.hasMore === right.hasMore
+    && left.newerHasMore === right.newerHasMore
     && JSON.stringify(left.nextCursor) === JSON.stringify(right.nextCursor)
+    && JSON.stringify(left.newerCursor) === JSON.stringify(right.newerCursor)
     && JSON.stringify(left.items) === JSON.stringify(right.items)
     && JSON.stringify(left.aiPolishNotices) === JSON.stringify(right.aiPolishNotices)
     && JSON.stringify(left.aiPolishSettings) === JSON.stringify(right.aiPolishSettings)
+}
+
+export function arkmeConversationTimelineSequenceRange(
+  items: readonly ArkmeTimelineItem[],
+  previous?: ArkmeConversationTimelineSequenceRange,
+): ArkmeConversationTimelineSequenceRange | undefined {
+  const sequences = items.flatMap(item => item.sequence === undefined ? [] : [item.sequence])
+  if (sequences.length === 0) return previous
+  return {
+    minimumSequence: Math.min(previous?.minimumSequence ?? Number.POSITIVE_INFINITY, ...sequences),
+    maximumSequence: Math.max(previous?.maximumSequence ?? Number.NEGATIVE_INFINITY, ...sequences),
+  }
+}
+
+export function arkmeConversationTimelineDeltaItems(
+  mode: 'latest' | 'around',
+  aroundSequenceRange: ArkmeConversationTimelineSequenceRange | undefined,
+  currentItems: readonly ArkmeTimelineItem[],
+  deltaItems: readonly ArkmeTimelineItem[],
+): ArkmeTimelineItem[] {
+  if (mode === 'latest') return [...deltaItems]
+  const existingIds = new Set(currentItems.map(item => item.itemUid))
+  return deltaItems.filter(item => existingIds.has(item.itemUid)
+    || item.sequence !== undefined
+      && aroundSequenceRange !== undefined
+      && item.sequence >= aroundSequenceRange.minimumSequence
+      && item.sequence <= aroundSequenceRange.maximumSequence)
 }
 
 export function arkmeShouldRefreshConversationTimeline(
@@ -100,8 +140,15 @@ export class ArkmeConversationMemoryCache {
   ): ArkmeInterwovenMention[] | undefined {
     const previous = this.timelines.get(sourceRef)
     const computedLatestSequence = latestTimelineSequence(snapshot.items)
+    const mode = snapshot.mode ?? previous?.mode ?? 'latest'
+    const { aroundSequenceRange: snapshotAroundSequenceRange, ...snapshotWithoutAroundSequenceRange } = snapshot
+    const nextAroundSequenceRange = mode === 'around'
+      ? snapshotAroundSequenceRange ?? previous?.aroundSequenceRange
+      : undefined
     const next: ArkmeConversationTimelineSnapshot = {
-      ...snapshot,
+      ...snapshotWithoutAroundSequenceRange,
+      mode,
+      ...(nextAroundSequenceRange === undefined ? {} : { aroundSequenceRange: nextAroundSequenceRange }),
       ...(snapshot.fetchedAtMillis === undefined && previous?.fetchedAtMillis !== undefined
         ? { fetchedAtMillis: previous.fetchedAtMillis }
         : {}),

@@ -107,6 +107,13 @@ describe('Arkme SDK', () => {
           status: 1,
           localState: 'synced',
         })
+        if (request.operation === 'source.message-extension.context') return success({
+          parentRecordUid: 'parent-record-1', extensionCount: 0, extensions: [],
+        })
+        if (request.operation === 'source.message-extension.extend') return success({
+          recordUid: request.params?.recordUid, parentRecordUid: 'parent-record-1', status: 1, localState: 'synced',
+          extension: { recordUid: request.params?.recordUid },
+        })
         if (request.operation === 'source.link-metadata.resolve') return success({
           url: 'https://github.com/arkme-senx/arkme-dsh-plugin/pull/145',
           title: 'fix(ui): 补齐快记详情图片展示 by htao-123 · Pull Request #145 · arkme-senx/arkme-dsh-plugin',
@@ -125,6 +132,12 @@ describe('Arkme SDK', () => {
       itemIndex: 1,
       recordUid: 'record-extension-1',
     })).resolves.toMatchObject({ recordUid: 'record-extension-1', parentRecordUid: 'parent-record-1' })
+    await expect(sdk.sourceMessageExtensionContext('source-ref', 'opaque-action'))
+      .resolves.toMatchObject({ parentRecordUid: 'parent-record-1', extensionCount: 0 })
+    await expect(sdk.extendSourceMessage('source-ref', 'opaque-action', '', {
+      recordUid: 'record-extension-2', relationUid: 'relation-extension-2',
+      parentRecordUid: 'parent-extension-2', fileRefs: [' file-1 ', '', 'file-2'],
+    })).resolves.toMatchObject({ recordUid: 'record-extension-2', parentRecordUid: 'parent-record-1' })
     await expect(sdk.resolveLinkMetadata(' https://github.com/arkme-senx/arkme-dsh-plugin/pull/145 '))
       .resolves.toMatchObject({ title: 'fix(ui): 补齐快记详情图片展示 by htao-123 · Pull Request #145 · arkme-senx/arkme-dsh-plugin' })
     await expect(sdk.forwardMessages('source-ref', ['action-1'], {
@@ -138,6 +151,8 @@ describe('Arkme SDK', () => {
       { operation: 'source.message-copy-link', params: { sourceRef: 'source-ref', actionRefs: ['action-1', 'action-2'] } },
       { operation: 'source.message-copy-link.resolve', params: { sid: 'U2HQgn1RhPJZaFmx' } },
       { operation: 'source.message-copy-link.extend', params: { sid: 'U2HQgn1RhPJZaFmx', itemIndex: 1, textContent: '延展', recordUid: 'record-extension-1' } },
+      { operation: 'source.message-extension.context', params: { sourceRef: 'source-ref', messageActionRef: 'opaque-action' } },
+      { operation: 'source.message-extension.extend', params: { sourceRef: 'source-ref', messageActionRef: 'opaque-action', textContent: '', recordUid: 'record-extension-2', relationUid: 'relation-extension-2', parentRecordUid: 'parent-extension-2', fileRefs: ['file-1', 'file-2'] } },
       { operation: 'source.link-metadata.resolve', params: { url: 'https://github.com/arkme-senx/arkme-dsh-plugin/pull/145' } },
       { operation: 'source.forward-messages', params: { sourceRef: 'source-ref', targetSourceRef: 'target-source-ref', actionRefs: ['action-1'], recordUid: 'record-1', relationUid: 'rel-1', commentText: '附言' } },
     ])
@@ -705,6 +720,25 @@ describe('Arkme SDK', () => {
         },
       },
     ])
+  })
+
+  it('requests an exact chat timeline window around a record', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      calls.push(JSON.parse(String(init?.body)))
+      return success({
+        source: { sourceRef: 'source-1', kind: 'private_chat', displayName: '小林', activeAtMillis: 0, unreadCount: 0 },
+        items: [], anchorItemUid: 'record-1', anchorSequence: 11, anchorIndex: 0,
+        olderHasMore: false, newerHasMore: false,
+      })
+    } })
+
+    await expect(sdk.readSourceAround('source-1', 'record-1', 7, { beforeLimit: 20, afterLimit: 30 }))
+      .resolves.toMatchObject({ anchorItemUid: 'record-1' })
+    expect(calls).toEqual([{
+      operation: 'source.timeline-around',
+      params: { sourceRef: 'source-1', itemUid: 'record-1', recordOwnerUserId: 7, beforeLimit: 20, afterLimit: 30 },
+    }])
   })
 
   it('exposes group candidate discovery and member addition without raw user IDs', async () => {

@@ -204,6 +204,7 @@ import type {
   ArkmeSourceSendResult,
   ArkmeSharedRecordingPreview,
   ArkmeTimelineCursor,
+  ArkmeTimelineAroundPage,
   ArkmeTimelinePage,
   ArkmeTopicCreateResult,
   ArkmeTopicDissolveResult,
@@ -1226,12 +1227,8 @@ export class ArkmeService {
     return await this.chat.openPrivateChatFromMember(sourceRef, memberRef, options)
   }
 
-  async readSource(
-    sourceRef: string,
-    options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},
-  ): Promise<ArkmeTimelinePage> {
-    return await this.chat.readSource(sourceRef, options)
-  }
+  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {}): Promise<ArkmeTimelinePage> { return await this.chat.readSource(sourceRef, options) }
+  async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: number, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {}): Promise<ArkmeTimelineAroundPage> { return await this.chat.readSourceAround(sourceRef, itemUid, recordOwnerUserId, options) }
   async sharedRecordingDetail(detailRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeSharedRecordingPreview> {
     return await this.chat.sharedRecordingDetail(detailRef, options)
   }
@@ -1255,12 +1252,12 @@ export class ArkmeService {
   }): void {
     this.relatedRecording.recordRelatedRecordingsToolEvent(event)
   }
-  async reportMessage(messageRef: string, reportType: 1 | 2 | 3 | 4, options: { reason?: string; requestUid?: string; signal?: AbortSignal } = {}): Promise<ArkmeMessageReportResult> {
-    return await this.chat.reportMessage(messageRef, reportType, options)
-  }
+  async reportMessage(messageRef: string, reportType: 1 | 2 | 3 | 4, options: { reason?: string; requestUid?: string; signal?: AbortSignal } = {}): Promise<ArkmeMessageReportResult> { return await this.chat.reportMessage(messageRef, reportType, options) }
   async copySourceMessageLink(sourceRef: string, actionRefs: readonly string[], options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkResult> { return await this.chat.copySourceMessageLink(sourceRef, actionRefs, options) }
   async resolveMessageCopyLink(sid: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkResolveResult> { return await this.chat.resolveMessageCopyLink(sid, options) }
   async extendMessageCopyLink(sid: string, itemIndex: number, textContent: string, recordUid: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkExtendResult> { return await this.chat.extendMessageCopyLink(sid, itemIndex, textContent, recordUid, options) }
+  async sourceMessageExtensionContext(sourceRef: string, messageActionRef: string, options: { signal?: AbortSignal } = {}) { return await this.chat.sourceMessageExtensionContext(sourceRef, messageActionRef, options) }
+  async extendSourceMessage(sourceRef: string, messageActionRef: string, textContent: string, recordUid: string, fileRefs: readonly string[] = [], options: { relationUid?: string; parentRecordUid?: string; signal?: AbortSignal } = {}) { const context = await this.chat.sourceMessageExtensionContext(sourceRef, messageActionRef, options); const requestedParentRecordUid = options.parentRecordUid?.trim() ?? ''; if (requestedParentRecordUid !== '' && requestedParentRecordUid !== context.parentRecordUid && !context.extensions.some(extension => extension.recordUid === requestedParentRecordUid)) throw new ArkmePluginError('source-message-extension-target-invalid', '延展目标已变化，请刷新后重试', true, 409); const assets = fileRefs.length === 0 ? [] : await this.filesOwner().uploadRefs(fileRefs, options.signal); return await this.chat.extendSourceMessage(sourceRef, messageActionRef, textContent, recordUid, assets, options) }
   async forwardSourceMessages(sourceRef: string, actionRefs: readonly string[], options: { targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.forwardSourceMessages(sourceRef, actionRefs, options) }
 
   async sendSourceText(

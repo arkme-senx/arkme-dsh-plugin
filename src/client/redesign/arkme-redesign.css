@@ -1897,6 +1897,12 @@ body[data-ds-dark-theme] .arkme-conversation-surface {
   --arkme-chat-other-bubble: #282a31;
   --arkme-audio-control: #8995c5;
 }
+body[data-ds-dark-theme] .arkme-detail-extension-input-bar {
+  border-top-color: #363636 !important;
+}
+body[data-ds-dark-theme] .arkme-detail-extension-input-shell {
+  background: #2b2b2b !important;
+}
 [data-arkme-message-direction]:focus-visible,
 [data-arkme-note-detail] button:focus-visible {
   outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8);

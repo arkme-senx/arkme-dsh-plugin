@@ -304,6 +304,10 @@ export interface ArkmeSelfRecordItem {
   lastError?: string
   displayKind?: number
   contentBlocks?: ArkmeContentBlock[]
+  /** Durable extension edge restored from record/home/topic projections. */
+  extensionParentRecordUid?: string
+  /** Inline parent snapshot returned with a persisted record extension. */
+  extensionParent?: ArkmeTimelineExtensionParent
   /** Record owner reported media refs, but their delivery projection was temporarily unavailable. */
   mediaUnavailable?: boolean
 }
@@ -1294,6 +1298,7 @@ export interface ArkmeTimelineCursor {
   sendAtMillis?: number
   itemUid?: string
   beforeSequence?: number
+  afterSequence?: number
 }
 
 /** A browser-safe topic projection attached to an item in the aggregate self feed. */
@@ -1386,6 +1391,24 @@ export interface ArkmeTimelineItem {
   forwardRecords?: ArkmeForwardRecordsPreview
   /** Browser-safe shared recording snapshot. It is present only for explicit `render_kind=shared_recording_memory` payloads. */
   sharedRecording?: ArkmeSharedRecordingPreview
+  /** Record uid of the message this chat extension continues. */
+  extensionParentRecordUid?: string
+  /** Browser-safe desktop-style preview rendered above an extension child message. */
+  extensionParent?: ArkmeTimelineExtensionParent
+  /** Successful local send waiting for the authoritative chat timeline projection. */
+  awaitingTimelineProjection?: true
+}
+
+export interface ArkmeTimelineExtensionParent {
+  itemUid: string
+  senderName: string
+  title: string
+  textContent: string
+  /** Authoritative record owner required by Chat's exact around lookup. */
+  recordOwnerUserId?: number
+  sequence?: number
+  sendAtMillis?: number
+  contentBlocks?: ArkmeContentBlock[]
 }
 
 /** Browser-safe summary of one quick note related to the current message or moment. */
@@ -1725,6 +1748,21 @@ export interface ArkmeMessageCopyLinkExtendResult {
   extension?: ArkmeMessageCopyLinkExtensionItem
 }
 
+/** Extension state for a message authorized by its source-scoped action reference. */
+export interface ArkmeSourceMessageExtensionContext extends ArkmeMessageCopyLinkRecordContext {
+  parentRecordUid: string
+}
+
+export interface ArkmeSourceMessageExtendResult {
+  recordUid: string
+  parentRecordUid: string
+  relationUid?: string
+  sequence?: number
+  status: number
+  localState: 'synced'
+  extension: ArkmeMessageCopyLinkExtensionItem
+}
+
 export type ArkmeMessageCopyLinkAccessMode = 'normal' | 'link_read_only'
 
 export interface ArkmeMessageCopyLinkMediaItem {
@@ -1773,6 +1811,10 @@ export interface ArkmeMessageCopyLinkSourceAnchor {
 
 export interface ArkmeMessageCopyLinkExtensionItem extends ArkmeMessageCopyLinkSnapshotItem {
   recordUid: string
+  /** Record this extension directly continues; used to render the desktop two-level tree. */
+  parentRecordUid?: string
+  /** Owner required by the durable chat extension endpoint when this item becomes the next target. */
+  recordOwnerUserId?: number
   level: number
 }
 
@@ -1800,6 +1842,20 @@ export interface ArkmeTimelinePage {
   aiPolishSettings?: ArkmeGroupAiPolishSnapshot
   hasMore: boolean
   nextCursor?: ArkmeTimelineCursor
+}
+
+/** A continuous chat timeline window centered on an exact record. */
+export interface ArkmeTimelineAroundPage {
+  source: ArkmeSourceItem
+  items: ArkmeTimelineItem[]
+  anchorItemUid: string
+  anchorSequence: number
+  anchorIndex: number
+  olderHasMore: boolean
+  newerHasMore: boolean
+  olderCursor?: ArkmeTimelineCursor
+  newerCursor?: ArkmeTimelineCursor
+  latestKnownSequence?: number
 }
 
 /** Built-in UI projection of private-chat group mention moments. References stay opaque to the Browser. */
@@ -2751,6 +2807,7 @@ export type ArkmePluginOperation =
   | 'sources.list'
   | 'source.directory.policy.set'
   | 'source.timeline'
+  | 'source.timeline-around'
   | 'source.members'
   | 'source.member-records'
   | 'source.mark-read'
@@ -2759,6 +2816,8 @@ export type ArkmePluginOperation =
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
+  | 'source.message-extension.context'
+  | 'source.message-extension.extend'
   | 'source.message-snapshot.detail'
   | 'source.message-location.set'
   | 'source.link-metadata.resolve'

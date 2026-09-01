@@ -90,6 +90,24 @@ describe('account-bound file lifecycle', () => {
     expect(f.send.mock.calls[0]![0].recordUid).toBe(task.recordUid)
     expect((await f.owner.tasks())[0]!.state).toBe('sent')
   })
+  it('uploads staged extension attachments in order and reuses successful siblings after a retry', async () => {
+    const f = await fixture(); const a = await f.stage('a.pdf'); const b = await f.stage('b.pdf')
+    f.upload.mockImplementationOnce(async (_path, meta) => ({ ...meta, fileAssetUid: 'uploaded-a' }))
+      .mockImplementationOnce(async () => { throw new Error('offline') })
+
+    await expect((f.owner as unknown as {
+      uploadRefs(fileRefs: readonly string[]): Promise<Array<{ fileAssetUid: string }>>
+    }).uploadRefs([a.fileRef, b.fileRef])).rejects.toThrow('offline')
+
+    await expect((f.owner as unknown as {
+      uploadRefs(fileRefs: readonly string[]): Promise<Array<{ fileAssetUid: string; fileName: string }>>
+    }).uploadRefs([a.fileRef, b.fileRef])).resolves.toEqual([
+      expect.objectContaining({ fileAssetUid: 'uploaded-a', fileName: 'a.pdf' }),
+      expect.objectContaining({ fileAssetUid: 'asset-b.pdf', fileName: 'b.pdf' }),
+    ])
+    expect(f.upload).toHaveBeenCalledTimes(3)
+    expect(f.send).not.toHaveBeenCalled()
+  })
   it('deduplicates repeated acceptance and restores uncertain submissions without resending', async () => {
     const f = await fixture(); const a = await f.stage('a.pdf')
     f.send.mockRejectedValueOnce(new Error('ack lost'))

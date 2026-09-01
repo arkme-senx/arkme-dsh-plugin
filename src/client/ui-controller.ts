@@ -36,7 +36,7 @@ export interface ArkmeUiState {
   productMode?: 'conversations' | 'contacts'
   selectedSource?: ArkmeSourceItem
   selectedBot?: ArkmeBotSummary
-  conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number }
+  conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: number }
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   extensionShareRef?: string
   extensionShareAction?: ArkmeExtensionShareAction
@@ -322,7 +322,7 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'bot', selectedBot: bot })
   }
 
-  showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number): void {
+  showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number, recordOwnerUserId?: number): void {
     this.leaveContacts()
     const normalizedItemUid = itemUid.trim()
     if (normalizedItemUid === '') throw new TypeError('会话消息定位标识不能为空')
@@ -336,6 +336,9 @@ export class ArkmeUiController {
         revision: ++this.conversationTargetRevision,
         itemUid: normalizedItemUid,
         sendAtMillis: Number.isFinite(sendAtMillis) ? sendAtMillis : 0,
+        ...(recordOwnerUserId !== undefined && Number.isSafeInteger(recordOwnerUserId) && recordOwnerUserId > 0
+          ? { recordOwnerUserId }
+          : {}),
       },
     })
   }
@@ -356,6 +359,7 @@ export class ArkmeUiController {
       && next.conversationTarget?.revision === this.state.conversationTarget?.revision
       && next.conversationTarget?.itemUid === this.state.conversationTarget?.itemUid
       && next.conversationTarget?.sendAtMillis === this.state.conversationTarget?.sendAtMillis
+      && next.conversationTarget?.recordOwnerUserId === this.state.conversationTarget?.recordOwnerUserId
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
       && next.extensionShareRef === this.state.extensionShareRef
