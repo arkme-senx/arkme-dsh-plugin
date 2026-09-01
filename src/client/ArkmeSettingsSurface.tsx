@@ -22,6 +22,7 @@ import type {
 } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
+import { OpenApiMcpSettings } from './OpenApiMcpSettings.js'
 import { arkmeAppUpdateStore, type ArkmeAppUpdateSnapshot } from './app-update-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -953,6 +954,7 @@ export function ArkmeSettingsSurface() {
 
       {authenticated && <SettingsGroup title="账户">
         <ArkmeBillingSettings />
+        <OpenApiMcpSettings />
       </SettingsGroup>}
 
       {authenticated && <SettingsGroup title="账号信息">

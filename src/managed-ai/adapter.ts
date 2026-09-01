@@ -12,6 +12,7 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 import { DeepSeekAdapter, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import type { DeepSeekCatalogModel, DeepSeekConnectionOptions } from '@deepseek-ai/dsh-llm-deepseek'
+import type { ManagedAccessCredentialProvider } from '../managed-access-credential.js'
 import type { SecretValue } from '../secret-value.js'
 
 export const ARKME_MANAGED_PROVIDER = 'arkme-managed'
@@ -36,13 +37,9 @@ const ARKME_AUTH_FAILURE_CODES = new Set([
   'auth-http-403',
 ])
 
-export interface ManagedAccessCredentialOwner {
-  resolveManagedAccessCredential(): Promise<SecretValue>
-}
-
 export interface ManagedAiLlmAdapterOptions {
   intelligentBaseUrl: string
-  credentialOwner: ManagedAccessCredentialOwner
+  credentialOwner: ManagedAccessCredentialProvider
   resolveAnonymousUserId?: () => AnonymousUserId
   /** Test/runtime seam for the authenticated Arkme model-directory request. */
   fetchImpl?: typeof fetch
@@ -149,7 +146,7 @@ function assertManagedProvider(provider: string): void {
   }
 }
 
-async function resolveBearer(owner: ManagedAccessCredentialOwner): Promise<string> {
+async function resolveBearer(owner: ManagedAccessCredentialProvider): Promise<string> {
   try {
     const bearer = (await owner.resolveManagedAccessCredential()).reveal()
     if (bearer !== '') return bearer
@@ -323,7 +320,7 @@ class ManagedModelCatalog {
 
   constructor(
     intelligentBaseUrl: string,
-    private readonly credentialOwner: ManagedAccessCredentialOwner,
+    private readonly credentialOwner: ManagedAccessCredentialProvider,
     fetchImpl: typeof fetch,
   ) {
     this.baseUrl = managedAiBaseUrl(intelligentBaseUrl)

@@ -9,7 +9,7 @@ import type {
   ArkmeExtensionReviewPage,
 } from './extensions/types.js'
 import type { ArkmeSessionStore } from './keychain-store.js'
-import { resolveManagedAccessCredential } from './managed-ai/credential.js'
+import { resolveManagedAccessCredential } from './managed-access-credential.js'
 import type { createOpenClawProvisioner, OpenClawProvisionResult } from './openclaw/index.js'
 import { ArkmeOutgoingCallBroker } from './outgoing-call-broker.js'
 import {

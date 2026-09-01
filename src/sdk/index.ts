@@ -311,6 +311,8 @@ export type {
   DshRemoteStatus,
 } from '../dsh-remote/types.js'
 import type { DshRemoteStatus } from '../dsh-remote/types.js'
+export type { OpenApiMcpStatus } from '../openapi-mcp/types.js'
+import type { OpenApiMcpStatus } from '../openapi-mcp/types.js'
 export type {
   ArkmeOutgoingCallFailureCode,
   ArkmeOutgoingCallMediaType,
@@ -400,6 +402,21 @@ export class ArkmeSdk {
 
   async state(signal?: AbortSignal): Promise<ArkmeProviderState> {
     return await this.call<ArkmeProviderState>('provider.state', undefined, signal)
+  }
+
+  /** Read the credential-free managed OpenAPI MCP lifecycle projection. */
+  async openApiMcpStatus(signal?: AbortSignal): Promise<OpenApiMcpStatus> {
+    return await this.call<OpenApiMcpStatus>('openapi.mcp.status', undefined, signal)
+  }
+
+  /** Retry a degraded managed MCP connection without exposing or accepting credentials. */
+  async retryOpenApiMcp(signal?: AbortSignal): Promise<OpenApiMcpStatus> {
+    return await this.call<OpenApiMcpStatus>('openapi.mcp.retry', undefined, signal)
+  }
+
+  /** Explicit human action: replace a revoked managed credential and reconnect MCP tools. */
+  async reauthorizeOpenApiMcp(signal?: AbortSignal): Promise<OpenApiMcpStatus> {
+    return await this.call<OpenApiMcpStatus>('openapi.mcp.reauthorize', undefined, signal)
   }
 
   /** Read Browser-safe installed extension projections without Host filesystem paths or runtime IDs. */
