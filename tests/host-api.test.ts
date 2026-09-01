@@ -42,10 +42,13 @@ function fakeService() {
     sourceMemberRecords: vi.fn(async (sourceRef: string, memberRef: string, mode: string, options: unknown) => ({ sourceRef, memberRef, mode, options })),
     messageReadReceiptSummaries: vi.fn(async (sourceRef: string, items: unknown, options: unknown) => ({ sourceRef, items, options })),
     messageReadReceiptDetail: vi.fn(async (sourceRef: string, itemUid: string, sequence: number, options: unknown) => ({ sourceRef, itemUid, sequence, options })),
+    messageSnapshotDetail: vi.fn(async (sourceRef: string, actionRef: string, options: unknown) => ({ sourceRef, actionRef, options })),
     officialAuthorProfile: vi.fn(async () => ({ userId: 11, displayName: '阿森', avatarRef: 'author-avatar-ref' })),
     openOfficialAuthorPrivateChat: vi.fn(async () => ({ source: { sourceRef: 'official-author-source' } })),
+    openPrivateChatFromUser: vi.fn(async (peerUserId: number, options: unknown) => ({ peerUserId, options })),
     openPrivateChatFromContact: vi.fn(async (contactRef: string) => ({ source: { sourceRef: `source:${contactRef}` } })),
     openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
+    reportMessage: vi.fn(async (messageRef: string, reportType: number, options: unknown) => ({ messageRef, reportType, options })),
     copySourceMessageLink: vi.fn(async (sourceRef: string, actionRefs: unknown, options: unknown) => ({ sourceRef, actionRefs, options })),
     resolveMessageCopyLink: vi.fn(async (sid: string, options: unknown) => ({ sid, options })),
     extendMessageCopyLink: vi.fn(async (sid: string, itemIndex: number, textContent: string, recordUid: string, options: unknown) => ({ sid, itemIndex, textContent, recordUid, options })),
@@ -55,6 +58,9 @@ function fakeService() {
     forwardSourceMessages: vi.fn(async (sourceRef: string, actionRefs: unknown, options: unknown) => ({ sourceRef, actionRefs, options })),
     sendSourceText: vi.fn(async (_sourceRef: string, _text: string, options: unknown) => options),
     sendSourceRich: vi.fn(async () => undefined),
+    fileSend: vi.fn(async (input: unknown) => input),
+    backgroundSoundPreference: vi.fn(async () => ({ userId: 42, found: true, enabled: false })),
+    updateBackgroundSoundPreference: vi.fn(async (enabled: boolean) => ({ userId: 42, found: true, enabled })),
     favoriteStickers: vi.fn(async () => ({ items: [], itemCount: 0, updatedAtMillis: 0 })),
     addFavoriteSticker: vi.fn(async (item: unknown) => item),
     manageFavoriteSticker: vi.fn(async (fileAssetUid: string, action: string) => ({ fileAssetUid, action })),
@@ -457,6 +463,7 @@ describe('conversation member Host API dispatch', () => {
 
   it('forwards only opaque member references and bounded paging fields', async () => {
     const service = fakeService()
+    const signal = new AbortController().signal
     await dispatchArkmeHostOperation(service as never, 'source.members', {
       sourceRef: 'source-ref', activeOnly: false, userId: 999,
     })
@@ -466,13 +473,28 @@ describe('conversation member Host API dispatch', () => {
     })
     await dispatchArkmeHostOperation(service as never, 'chat.member.private.open', {
       sourceRef: 'source-ref', memberRef: 'member-ref', peerUserId: 999,
-    })
+    }, undefined, undefined, undefined, undefined, signal)
     expect(service.listSourceMembers).toHaveBeenCalledWith('source-ref', { activeOnly: false })
     expect(service.sourceMemberRecords).toHaveBeenCalledWith('source-ref', 'member-ref', 'mentioned', {
       limit: 19,
       beforeSequence: 44,
     })
-    expect(service.openPrivateChatFromMember).toHaveBeenCalledWith('source-ref', 'member-ref')
+    expect(service.openPrivateChatFromMember).toHaveBeenCalledWith('source-ref', 'member-ref', { signal })
+  })
+
+  it('treats the browser-provided private-chat name as presentation-only input', async () => {
+    const service = fakeService()
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'chat.private.open', {
+      peerUserId: 7,
+      displayName: '我的备注',
+      title: '不得透传',
+      peerDisplayNameSnapshot: '不得透传',
+    }, undefined, undefined, undefined, undefined, signal)
+    expect(service.openPrivateChatFromUser).toHaveBeenCalledWith(7, {
+      presentationDisplayName: '我的备注',
+      signal,
+    })
   })
 
   it('opens the official author chat through its Host-owned route', async () => {
@@ -506,26 +528,55 @@ describe('conversation member Host API dispatch', () => {
     const service = fakeService()
     await dispatchArkmeHostOperation(service as never, 'source.send-text', {
       sourceRef: 'source-ref', textContent: '@小林 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
-      humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3, userId: 999 }],
+      expectedUserId: 42,
+      humanMentions: [{ mentionRef: 'mention-ref', startIndex: 0, length: 3, userId: 999 }],
     })
     expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@小林 请看', {
       recordUid: 'record-ref',
       relationUid: 'relation-ref',
-      humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3 }],
+      expectedUserId: 42,
+      humanMentions: [{ mentionRef: 'mention-ref', startIndex: 0, length: 3 }],
     })
+  })
+
+  it('rejects member action refs in the mention-scoped send contract', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@小林 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3, userId: 999 }],
+    })).rejects.toMatchObject({ code: 'human-mention-invalid' })
+    expect(service.sendSourceText).not.toHaveBeenCalled()
+  })
+
+  it('rejects ambiguous human mention refs instead of choosing one implicitly', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@小林 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      humanMentions: [{ mentionRef: 'mention-ref', memberRef: 'member-ref', startIndex: 0, length: 3 }],
+    })).rejects.toMatchObject({ code: 'human-mention-invalid' })
+    expect(service.sendSourceText).not.toHaveBeenCalled()
   })
 
   it('keeps @所有人 human mention intent without requiring a member ref', async () => {
     const service = fakeService()
     await dispatchArkmeHostOperation(service as never, 'source.send-text', {
       sourceRef: 'source-ref', textContent: '@所有人 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
-      humanMentions: [{ all: true, memberRef: 'browser-owned', startIndex: 0, length: 4 }],
+      humanMentions: [{ all: true, startIndex: 0, length: 4 }],
     })
     expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@所有人 请看', {
       recordUid: 'record-ref',
       relationUid: 'relation-ref',
       humanMentions: [{ all: true, startIndex: 0, length: 4 }],
     })
+  })
+
+  it('rejects a member-scoped capability on an @所有人 range', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@所有人 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      humanMentions: [{ all: true, mentionRef: 'mention-ref', startIndex: 0, length: 4 }],
+    })).rejects.toMatchObject({ code: 'human-mention-invalid' })
+    expect(service.sendSourceText).not.toHaveBeenCalled()
   })
 
   it('keeps structured Bot mention ranges without exposing browser-owned fields', async () => {
@@ -539,6 +590,25 @@ describe('conversation member Host API dispatch', () => {
       relationUid: 'relation-ref',
       botMentions: [{ botRef: 'bot-ref', startIndex: 0, length: 5 }],
     })
+  })
+})
+
+describe('message snapshot Host API dispatch', () => {
+  it('forwards only the opaque source/action identity and request lifecycle signal', async () => {
+    const service = fakeService()
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'source.message-snapshot.detail', {
+      sourceRef: 'source-ref',
+      actionRef: 'arkme-message-action-v1.payload.signature',
+      recordUid: 'must-not-forward',
+      userId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+
+    expect(service.messageSnapshotDetail).toHaveBeenCalledWith(
+      'source-ref',
+      'arkme-message-action-v1.payload.signature',
+      { signal },
+    )
   })
 })
 
@@ -587,6 +657,11 @@ describe('message action Host API dispatch', () => {
 
   it('forwards only opaque message action references and bounded send identifiers', async () => {
     const service = fakeService()
+    const requestUid = '019d8590-ebb4-7232-90f2-000000000001'
+    await dispatchArkmeHostOperation(service as never, 'source.message-report', {
+      messageRef: ' arkme-message-v1.payload.signature ', reportType: 4, reason: ' 补充说明 ', requestUid,
+      chatSessionUid: 'must-not-forward', relationUid: 'must-not-forward', reporterUserId: 999,
+    })
     await dispatchArkmeHostOperation(service as never, 'source.message-copy-link', {
       sourceRef: 'source-ref', actionRefs: ['action-1', '', 'action-2'], relationUid: 'must-not-forward',
     })
@@ -610,6 +685,9 @@ describe('message action Host API dispatch', () => {
       textContent: 'must-not-forward',
     })
 
+    expect(service.reportMessage).toHaveBeenCalledWith('arkme-message-v1.payload.signature', 4, {
+      reason: '补充说明', requestUid,
+    })
     expect(service.copySourceMessageLink).toHaveBeenCalledWith('source-ref', ['action-1', 'action-2'], expect.any(Object))
     expect(service.resolveMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', expect.any(Object))
     expect(service.extendMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', 1, ' 延展 ', 'record-1', expect.any(Object))
@@ -625,6 +703,9 @@ describe('message action Host API dispatch', () => {
       targetSourceRef: 'target-source-ref',
       commentText: ' 附言 ',
     })
+    await expect(dispatchArkmeHostOperation(service as never, 'source.message-report', {
+      messageRef: 'arkme-message-v1.payload.signature', reportType: 4, reason: '', requestUid,
+    })).rejects.toMatchObject({ code: 'message-report-invalid' })
   })
 })
 
@@ -914,6 +995,87 @@ describe('outgoing call Host API dispatch', () => {
       title: '标题', textContent: '正文', displayKind: 1,
       assets: [{ fileAssetUid: 'asset-12345678', fileName: 'a.png', mimeType: 'image/png', size: 8, fileKind: 1 }],
     }, { recordUid: 'record-1', relationUid: 'relation-1' })
+  })
+
+  it('keeps mention-scoped refs on rich sends without forwarding browser-owned identities', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.send-rich', {
+      sourceRef: 'source-1', textContent: '@小林 请看', displayKind: 0,
+      recordUid: 'record-1', relationUid: 'relation-1',
+      humanMentions: [{ mentionRef: 'mention-ref', userId: 999, startIndex: 0, length: 3 }],
+    })
+    expect(service.sendSourceRich).toHaveBeenCalledWith('source-1', {
+      title: '', textContent: '@小林 请看', displayKind: 0,
+      assets: [],
+      humanMentions: [{ mentionRef: 'mention-ref', startIndex: 0, length: 3 }],
+    }, { recordUid: 'record-1', relationUid: 'relation-1' })
+  })
+
+  it('normalizes explicit direct and durable background-sound descriptors', async () => {
+    const service = fakeService()
+    const backgroundAsset = {
+      fileAssetUid: 'asset-background-audio', fileName: 'background.m4a',
+      mimeType: 'audio/mp4', size: 8, fileKind: 4,
+    }
+    await dispatchArkmeHostOperation(service as never, 'source.send-rich', {
+      sourceRef: 'source-1', textContent: '背景文字', recordUid: 'record-1', relationUid: 'relation-1',
+      expectedUserId: 42,
+      backgroundSound: { assets: [{ ...backgroundAsset, signedUrl: 'secret' }], amplitudes: [0, 0.5, 1] },
+    })
+    await dispatchArkmeHostOperation(service as never, 'files.send', {
+      sourceRef: 'source-1', textContent: '背景文字', recordUid: '00000000-0000-4000-8000-000000000001',
+      relationUid: '00000000-0000-4000-8000-000000000002',
+      expectedUserId: 42,
+      fileRefs: ['arkme-file-v1.00000000-0000-4000-8000-000000000003'],
+      backgroundSound: {
+        fileRefs: ['arkme-file-v1.00000000-0000-4000-8000-000000000003'], amplitudes: [0.2, 0.7],
+      },
+      location: { latitude: 30.52, longitude: 114.31, accuracyMeters: 18, capturedAtMillis: 100 },
+    })
+
+    expect(service.sendSourceRich).toHaveBeenCalledWith('source-1', {
+      title: '', textContent: '背景文字', displayKind: 0, assets: [],
+      backgroundSound: { assets: [backgroundAsset], amplitudes: [0, 0.5, 1] },
+    }, { recordUid: 'record-1', relationUid: 'relation-1', expectedUserId: 42 })
+    expect(service.fileSend).toHaveBeenCalledWith(expect.objectContaining({
+      expectedUserId: 42,
+      backgroundSound: {
+        fileRefs: ['arkme-file-v1.00000000-0000-4000-8000-000000000003'], amplitudes: [0.2, 0.7],
+      },
+      location: { latitude: 30.52, longitude: 114.31, accuracyMeters: 18, capturedAtMillis: 100 },
+    }))
+  })
+
+  it('rejects malformed background-sound Host parameters before calling service owners', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.send-rich', {
+      sourceRef: 'source-1', textContent: '背景文字',
+      backgroundSound: {
+        assets: [{ fileAssetUid: 'asset-background-audio', fileName: 'background.pdf', mimeType: 'application/pdf', size: 8, fileKind: 4 }],
+        amplitudes: [0.5],
+      },
+    })).rejects.toMatchObject({ code: 'background-sound-file-invalid' })
+    await expect(dispatchArkmeHostOperation(service as never, 'files.send', {
+      sourceRef: 'source-1', fileRefs: ['one'],
+      backgroundSound: { fileRefs: ['two'], amplitudes: [-0.1] },
+    })).rejects.toMatchObject({ code: 'background-sound-invalid' })
+    expect(service.sendSourceRich).not.toHaveBeenCalled()
+    expect(service.fileSend).not.toHaveBeenCalled()
+  })
+
+  it('dispatches background-sound preference reads and strictly typed writes', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'settings.background-sound.get', {}))
+      .resolves.toMatchObject({ enabled: false })
+    await expect(dispatchArkmeHostOperation(service as never, 'settings.background-sound.update', { enabled: true, expectedUserId: 42, userId: 99 }))
+      .resolves.toMatchObject({ enabled: true })
+    expect(service.backgroundSoundPreference).toHaveBeenCalledWith(undefined)
+    expect(service.updateBackgroundSoundPreference).toHaveBeenCalledWith(true, undefined, 42)
+    await expect(dispatchArkmeHostOperation(service as never, 'settings.background-sound.update', { enabled: 1 }))
+      .rejects.toMatchObject({ code: 'background-sound-preference-invalid' })
+    await expect(dispatchArkmeHostOperation(service as never, 'settings.background-sound.update', { enabled: false, expectedUserId: 0 }))
+      .rejects.toMatchObject({ code: 'background-sound-expected-user-invalid' })
+    expect(service.updateBackgroundSoundPreference).toHaveBeenCalledTimes(1)
   })
 
   it('normalizes long-article detail, update, and draft operations', async () => {

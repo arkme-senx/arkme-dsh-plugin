@@ -3,7 +3,23 @@
   "platform": "win32",
   "arch": "x64",
   "file": "arkme-credential-helper.exe",
-  "sha256": "8b598f3f4facb0c785c3fbc29ccddb75a08e90528ba02a55fc6c996442ec4a16",
+  "sha256": "fbfb99a440b2f1fcb83e49f29bb752ae214c4c2fe14890609835b53a8438db58",
   "sourceSha256": "7e2267aa232d4fbe785d2ab88bd707ab6edacd88bd454fda7f8017ddfc0335b6",
-  "goVersion": "go version go1.25.5 darwin/arm64"
+  "goVersion": "go version go1.25.5 darwin/arm64",
+  "helperVersion": "1.0.0.0",
+  "pe": {
+    "CompanyName": "Senqisi (Wuhan) Technology Co., Ltd.",
+    "ProductName": "Arkme Credential Helper",
+    "FileDescription": "Arkme Windows Credential Manager Helper",
+    "InternalName": "arkme-credential-helper",
+    "OriginalFilename": "arkme-credential-helper.exe",
+    "FileVersion": "1.0.0.0",
+    "ProductVersion": "1.0.0.0"
+  },
+  "authenticode": {
+    "digestAlgorithm": "sha256",
+    "signerSubject": "CN=\"Senqisi (Wuhan) Technology Co., Ltd.\", O=\"Senqisi (Wuhan) Technology Co., Ltd.\", L=Wuhan, S=Hubei, C=CN",
+    "signerSha1": "00ADCF59ACCC45F4643B4A682E32620C206CE66B",
+    "timestampRequired": true
+  }
 }

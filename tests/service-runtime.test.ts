@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../src/keychain-store.js'
+import { ArkmeRequestQueueOverflowError } from '../src/request-coordinator.js'
 import {
   ArkmePluginError,
   ServiceRuntime,
@@ -120,6 +121,104 @@ describe('ServiceRuntime', () => {
     await expect(runtime.authenticatedAuthPost<{ ok: boolean }>('/api/test', {}, stored))
       .resolves.toEqual({ ok: true })
     expect(authorizations).toEqual(['Bearer expired-access', 'Bearer new-access'])
+  })
+
+  it('reads a legacy private owner from the authenticated API with interactive coordination', async () => {
+    const activeSession = { accessToken: 'auth-access', refreshToken: 'refresh-token', userId: 42 }
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      code: 200,
+      data: { member_type: 2 },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof fetch
+    const runtime = runtimeFixture(fetchImpl, {
+      async read() { return activeSession }, async write() {}, async delete() {},
+    })
+
+    await expect(runtime.authenticatedAuthReadPost<{ member_type: number }>(
+      '/api/v1/premium/get/member', {}, activeSession,
+    )).resolves.toEqual({ member_type: 2 })
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://auth.test/api/v1/premium/get/member',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer auth-access' }),
+      }),
+    )
+    expect(runtime.requestStats()).toMatchObject({
+      'interactive-read:auth': expect.objectContaining({ started: 1 }),
+    })
+  })
+
+  it('marks only genuinely unknown remote write outcomes', async () => {
+    const activeSession = { accessToken: 'access', refreshToken: 'refresh-token', userId: 42 }
+    const sessionStore: ArkmeSessionStore = {
+      async read() { return activeSession }, async write() {}, async delete() {},
+    }
+    const knownRejection = runtimeFixture(vi.fn(async () => new Response(JSON.stringify({
+      code: 1001, message: '参数错误',
+    }), { status: 200 })), sessionStore)
+
+    await expect(knownRejection.authenticatedChatPost('/api/v1/chats/records/send', {}, activeSession, undefined, {
+      trackWriteOutcome: true,
+    })).rejects.toMatchObject({ code: 'arkme-code-1001', writeOutcomeUnknown: undefined })
+
+    const disconnected = runtimeFixture(vi.fn(async () => { throw new TypeError('offline') }), sessionStore)
+    await expect(disconnected.authenticatedChatPost('/api/v1/chats/records/send', {}, activeSession, undefined, {
+      trackWriteOutcome: true,
+    })).rejects.toMatchObject({ code: 'arkme-network-error', writeOutcomeUnknown: true })
+
+    for (const response of [
+      new Response('', { status: 408 }),
+      new Response('', { status: 500 }),
+      new Response('not-json', { status: 200 }),
+    ]) {
+      const unknown = runtimeFixture(vi.fn(async () => response), sessionStore)
+      await expect(unknown.authenticatedChatPost('/api/v1/chats/records/send', {}, activeSession, undefined, {
+        trackWriteOutcome: true,
+      })).rejects.toHaveProperty('writeOutcomeUnknown', true)
+    }
+
+    for (const status of [400, 429]) {
+      const knownHttpRejection = runtimeFixture(vi.fn(async () => new Response('', { status })), sessionStore)
+      await expect(knownHttpRejection.authenticatedChatPost('/api/v1/chats/records/send', {}, activeSession, undefined, {
+        trackWriteOutcome: true,
+      })).rejects.toHaveProperty('writeOutcomeUnknown', undefined)
+    }
+  })
+
+  it('does not confuse a failed auth refresh with an unknown business write result', async () => {
+    const activeSession = { accessToken: 'expired-access', refreshToken: 'refresh-token', userId: 42 }
+    const sessionStore: ArkmeSessionStore = {
+      async read() { return activeSession }, async write() {}, async delete() {},
+    }
+    const runtime = runtimeFixture(vi.fn(async input => {
+      if (String(input).endsWith('/api/public/v1/auth/new-short')) throw new TypeError('auth offline')
+      return new Response('', { status: 401 })
+    }), sessionStore)
+
+    await expect(runtime.authenticatedChatPost('/api/v1/chats/records/send', {}, activeSession, undefined, {
+      trackWriteOutcome: true,
+    })).rejects.toMatchObject({ code: 'arkme-network-error', writeOutcomeUnknown: undefined })
+  })
+
+  it('keeps coordinator failures before transport admission recoverable', async () => {
+    const activeSession = { accessToken: 'access', refreshToken: 'refresh-token', userId: 42 }
+    const runtime = runtimeFixture(vi.fn(), {
+      async read() { return activeSession }, async write() {}, async delete() {},
+    })
+    const untrackedOverflow = new ArkmeRequestQueueOverflowError('write', 'chat')
+    vi.spyOn(runtime.requestCoordinator, 'run')
+      .mockRejectedValueOnce(untrackedOverflow)
+      .mockRejectedValueOnce(new ArkmeRequestQueueOverflowError('write', 'chat'))
+      .mockRejectedValueOnce(Object.assign(new Error('cancelled before admission'), { name: 'AbortError' }))
+
+    await expect(runtime.authenticatedChatPost('/api/v1/chats/records/send', {}, activeSession))
+      .rejects.toBe(untrackedOverflow)
+    await expect(runtime.authenticatedChatPost('/api/v1/chats/records/send', {}, activeSession, undefined, {
+      trackWriteOutcome: true,
+    })).rejects.toMatchObject({ code: 'arkme-request-queue-full', writeOutcomeUnknown: undefined })
+    await expect(runtime.authenticatedChatPost('/api/v1/chats/records/send', {}, activeSession, undefined, {
+      trackWriteOutcome: true,
+    })).rejects.toMatchObject({ code: 'arkme-request-aborted', writeOutcomeUnknown: undefined })
   })
 
   it('preserves canonical DSH remote errors from HTTP 200 GET envelopes', async () => {

@@ -155,9 +155,10 @@ function ProviderOption({ provider, selected, disabled, onSelect }: {
   </button>
 }
 
-export function ArkmeBotCreateDialog({ onClose, onBotCreated }: {
+export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
   onClose(): void
   onBotCreated?(bot: ArkmeBotSummary): void | Promise<void>
+  onBusyChange?(busy: boolean): void
 }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -174,6 +175,7 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated }: {
   const canSubmit = !busy && !created && name.trim() !== ''
 
   useEffect(() => { nameInput.current?.focus() }, [])
+  useEffect(() => { onBusyChange?.(busy) }, [busy, onBusyChange])
   useEffect(() => () => { if (avatarPreview !== '') URL.revokeObjectURL(avatarPreview) }, [avatarPreview])
   useEffect(() => {
     if (typeof document === 'undefined') return
@@ -228,6 +230,7 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated }: {
   }
 
   return <div
+    data-arkme-notification-blocking-overlay="true"
     role="presentation" style={styles.overlay}
     onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose() }}
   >

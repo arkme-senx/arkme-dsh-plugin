@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -150,6 +150,33 @@ execFileSync('tar', ['-czf', join(destination, 'fixture.tgz'), '-C', process.env
         packageDirectory,
         outputDirectory: join(root, 'output'),
       })).rejects.toThrow('runtime artifact must not contain a symbolic link: lib/linked.js')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('produces identical bytes after source mtimes change', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-runtime-reproducible-'))
+    const packageDirectory = join(root, 'package')
+    try {
+      await mkdir(join(packageDirectory, 'lib'), { recursive: true })
+      await writeFile(join(packageDirectory, 'package.json'), JSON.stringify({
+        name: '@senguoyun/dsh-arkme',
+        version: '0.1.79',
+      }))
+      await writeFile(join(packageDirectory, 'cordis.patch.yml'), 'version: 1\n')
+      await writeFile(join(packageDirectory, 'lib/index.js'), 'export const host = true\n')
+      await writeFile(join(packageDirectory, 'lib/client.js'), 'export const client = true\n')
+
+      const first = await createRuntimeArchive({ packageDirectory, outputDirectory: join(root, 'first') })
+      const changed = new Date('2030-05-04T03:02:01Z')
+      for (const relative of ['package.json', 'cordis.patch.yml', 'lib', 'lib/index.js', 'lib/client.js']) {
+        await utimes(join(packageDirectory, relative), changed, changed)
+      }
+      const second = await createRuntimeArchive({ packageDirectory, outputDirectory: join(root, 'second') })
+
+      expect(await readFile(second.artifactPath)).toEqual(await readFile(first.artifactPath))
+      expect(second.metadata.sha256).toBe(first.metadata.sha256)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
@@ -13,9 +13,15 @@ describe('file Host and external SDK transport contract', () => {
   it('stages, reads ranges, queues sends, recovers tasks, and enforces account/origin boundaries', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'arkme sdk files '))
     let userId = 42
+    let sentLocation: unknown
     const upload = vi.fn(async (_path, file) => ({ ...file, fileAssetUid: 'asset-12345678' }))
     const directUpload = vi.fn(async (_path, file) => ({ ...file, fileAssetUid: 'direct-asset' }))
-    const send = vi.fn(async input => ({ sourceRef: input.sourceRef, itemUid: input.recordUid, status: 1, localState: 'synced' as const }))
+    const send = vi.fn(async input => {
+      sentLocation = structuredClone(input.location)
+      return { kind: 'owner_accepted' as const, result: {
+        sourceRef: input.sourceRef, itemUid: input.recordUid, status: 1, localState: 'synced' as const,
+      } }
+    })
     const openPath = vi.fn(async () => {})
     const owner = new FileTransfers(directory, { currentUser: async () => userId, validateSource: async () => {}, upload, send, fetchMedia: async () => { throw new Error('not expected') }, openPath }, 1000)
     const facade = {
@@ -33,7 +39,7 @@ describe('file Host and external SDK transport contract', () => {
     const api = createArkmeHostApi(facade as never, options)
     const server = createServer((request, response) => {
       if (request.url?.includes('/files/stage')) void stage(request, response)
-      else if (request.url?.includes('/media/upload')) void uploadDirectly(request, response)
+      else if (request.url?.endsWith('/upload') === true) void uploadDirectly(request, response)
       else if (request.url?.includes('/files/local')) void read(request, response)
       else void api(request, response)
     })
@@ -44,17 +50,21 @@ describe('file Host and external SDK transport contract', () => {
     const sdk = createArkmeSdk({ fetchImpl: (url, init) => fetch(new URL(String(url), base), init) })
     try {
       expect((await sdk.fileCapabilities()).version).toBe(1)
-      const file = await sdk.stageFile(new Blob(['abcdefghij'], { type: 'application/pdf' }), { fileName: 'a 中文.pdf' })
+      const file = await sdk.stageFile(new Blob(['abcdefghij'], { type: 'application/pdf' }), { fileName: 'a 中文.pdf', expectedUserId: 42 })
       expect(file).toMatchObject({ fileKind: 4, size: 10 }); expect(upload).not.toHaveBeenCalled()
       const image = await sdk.stageFile(new Blob(['abcdefghij']), { fileName: 'browser-photo.jpg' })
       expect(image).toMatchObject({ fileKind: 1, mimeType: 'image/jpeg', size: 10 })
       const directResponse = await fetch(`${base}/media/upload`, {
         method: 'POST',
-        headers: { 'content-type': 'audio/mpeg', 'content-length': '10', 'x-arkme-file-name': encodeURIComponent('picked.mp3') },
+        headers: { 'content-type': 'audio/mpeg', 'content-length': '10', 'x-arkme-file-name': encodeURIComponent('picked.mp3'), 'x-arkme-expected-user-id': '42' },
         body: 'abcdefghij',
       })
       expect(directResponse.status).toBe(200)
-      expect(directUpload).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ fileName: 'picked.mp3', mimeType: 'audio/mpeg', fileKind: 2 }))
+      expect(directUpload).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ fileName: 'picked.mp3', mimeType: 'audio/mpeg', fileKind: 2 }),
+        { expectedUserId: 42 },
+      )
       const range = await fetch(new URL(sdk.localFileUrl(file.fileRef), base), { headers: { Range: 'bytes=2-5' } })
       expect(range.status).toBe(206); expect(await range.text()).toBe('cdef')
       expect(range.headers.get('content-range')).toBe('bytes 2-5/10')
@@ -66,21 +76,71 @@ describe('file Host and external SDK transport contract', () => {
       expect(htmlResponse.headers.get('content-security-policy')).toContain('sandbox')
       await expect(sdk.openLocalFile(file.fileRef)).resolves.toMatchObject({ opened: true, file: { fileRef: file.fileRef } })
       expect(openPath).toHaveBeenCalledOnce()
-      const input = { sourceRef: 'source', recordUid: '00000000-0000-4000-8000-000000000001', relationUid: '00000000-0000-4000-8000-000000000002', fileRefs: [file.fileRef], content: { textContent: 'hello' } }
+      const input = {
+        sourceRef: 'source', recordUid: '00000000-0000-4000-8000-000000000001', relationUid: '00000000-0000-4000-8000-000000000002',
+        fileRefs: [file.fileRef], expectedUserId: 42, content: { textContent: 'hello' },
+        location: { latitude: 30.52, longitude: 114.31, capturedAtMillis: 100 },
+      }
       const task = await sdk.sendFiles(input); await owner.settled()
+      expect(task).not.toHaveProperty('expectedUserId')
       expect((await sdk.sendFiles(input)).taskRef).toBe(task.taskRef)
-      expect((await sdk.fileSendTasks())[0]!.state).toBe('sent')
+      const sentTask = (await sdk.fileSendTasks())[0]!
+      expect(sentTask.state).toBe('sent')
+      expect(sentTask).not.toHaveProperty('location')
+      expect(sentLocation).toEqual(input.location)
       expect(upload).toHaveBeenCalledOnce(); expect(send).toHaveBeenCalledOnce()
       const restored = new FileTransfers(directory, {} as never, 1000)
       expect(restored.capabilities().maxAttachments).toBe(9)
       userId = 43
       expect(await sdk.localFiles()).toEqual([])
+      await expect(sdk.stageFile(new Blob(['abcdefghij']), { fileName: 'wrong-account.pdf', expectedUserId: 42 }))
+        .rejects.toMatchObject({ body: { code: 'file-account-changed' } })
+      await expect(sdk.upload(new Blob(['abcdefghij'], { type: 'audio/mp4' }), { fileName: 'wrong-account.m4a', expectedUserId: 42 }))
+        .rejects.toMatchObject({ body: { code: 'file-account-changed' } })
+      await expect(sdk.sendFiles({
+        ...input,
+        recordUid: '00000000-0000-4000-8000-000000000009',
+      })).rejects.toMatchObject({ body: { code: 'file-account-changed' } })
+      expect(await readdir(options.temporaryDirectory)).toEqual([])
       expect((await fetch(new URL(sdk.localFileUrl(file.fileRef), base))).status).toBe(400)
       userId = 42
       await sdk.discardFileSend(task.taskRef); await sdk.removeLocalFile(file.fileRef)
       expect((await sdk.localFiles()).map(value => value.fileRef)).toEqual([image.fileRef, html.fileRef])
     } finally {
       owner.cancelActive(); await owner.settled()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+  it('drops a completed temporary body when the account changes before Host acceptance', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'arkme route account fence '))
+    const temporaryDirectory = join(directory, 'temporary')
+    const fileStage = vi.fn()
+    let sessionRead = 0
+    const service = {
+      fileSessionUser: async () => { sessionRead += 1; return sessionRead < 3 ? 42 : 43 },
+      fileStage,
+    }
+    const options = { expectedPort: 0, allowNonLoopback: false, maxUploadBytes: 1000, temporaryDirectory }
+    const handler = createArkmeUploadHandler(service as never, options, 'stage')
+    const server = createServer((request, response) => { void handler(request, response) })
+    server.listen(0, '127.0.0.1'); await once(server, 'listening')
+    const address = server.address(); if (typeof address !== 'object' || !address) throw new Error('missing address')
+    options.expectedPort = address.port
+    try {
+      const response = await fetch(`http://127.0.0.1:${String(address.port)}/files/stage`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/pdf', 'content-length': '10',
+          'x-arkme-file-name': 'account-a.pdf', 'x-arkme-expected-user-id': '42',
+        },
+        body: 'abcdefghij',
+      })
+      expect(response.status).toBe(409)
+      expect(await response.json()).toMatchObject({ ok: false, error: { code: 'file-account-changed' } })
+      expect(fileStage).not.toHaveBeenCalled()
+      expect(await readdir(temporaryDirectory)).toEqual([])
+    } finally {
       await new Promise<void>(resolve => server.close(() => resolve()))
       await rm(directory, { recursive: true, force: true })
     }

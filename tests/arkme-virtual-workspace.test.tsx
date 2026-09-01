@@ -42,7 +42,9 @@ describe('Arkme conversation directory load state', () => {
     expect(workspaceSource).toContain('const createdQuickAddBot = async (bot: ArkmeBotSummary): Promise<void> =>')
     expect(workspaceSource).toContain('setBots(current => sortArkmeBotsByCreatedAt([bot, ...current.filter(item => item.botRef !== bot.botRef)]))')
     expect(workspaceSource).toContain('arkmeUi.openBotConversation(bot)')
-    expect(workspaceSource).toContain('(bot.unreadCount ?? 0) > 0')
+    expect(workspaceSource).toContain('const badgeUnreadCount = arkmeBadgeUnreadCount(bot)')
+    expect(workspaceSource).toContain("unreadPlacement === 'avatar' && <span style={styles.mentionUnread}")
+    expect(workspaceSource).toContain("unreadPlacement === 'dot' && <span style={styles.mutedUnreadDot}")
     expect(workspaceSource).toContain('bot.isMuted === true')
     expect(workspaceSource).toContain("callArkme<{ items: ArkmeBotSummary[] }>('bots.private-chat.directory'")
   })
@@ -66,11 +68,43 @@ describe('Arkme conversation directory load state', () => {
     expect(workspaceSource).toContain("<span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{timeLabel(row.activeAtMillis)}</span>")
   })
 
+  it('announces unread counts on the row while keeping avatar badges decorative', () => {
+    expect(workspaceSource).toContain('`${bot.name}，${String(badgeUnreadCount)} 条未读`')
+    expect(workspaceSource).toContain('`${source.displayName}，${String(badgeUnreadCount)} 条未读`')
+    expect(workspaceSource).toContain('<span style={styles.sourceAvatarWrap} aria-hidden>')
+  })
+
   it('uses 38px avatars consistently in the conversation directory', () => {
     expect(workspaceSource).toContain("sourceAvatarWrap: { width: 38, height: 38")
     expect(workspaceSource.match(/<ArkmeMark size=\{38\} \/>/g)).toHaveLength(3)
     expect(workspaceSource).toContain('<ArkmeSendToSelfIcon size={38} />')
-    expect(workspaceSource).toMatch(/<ArkmeSourceAvatar\s+size=\{38\}/)
+    expect(workspaceSource).toContain('<ArkmeDirectorySourceAvatar source={source} size={38} />')
+  })
+
+  it('does not own account-scoped avatar or periodic presentation infrastructure', () => {
+    expect(workspaceSource).not.toContain('avatarCacheUserIdRef')
+    expect(workspaceSource).not.toContain('arkmeAvatarImages')
+    expect(workspaceSource).not.toContain('10 * 60 * 1000')
+  })
+
+  it('renders every eligible unread badge on the avatar and never beside the preview', () => {
+    expect(workspaceSource).toContain("if (arkmeBadgeUnreadCount(source) > 0) return 'avatar'")
+    expect(workspaceSource).toContain("? 'dot'")
+    expect(workspaceSource).not.toContain("unreadPlacement === 'inline'")
+  })
+
+  it('renders the muted unread dot in unread red instead of mention green', () => {
+    const mutedUnreadDotStyle = workspaceSource.slice(
+      workspaceSource.indexOf('mutedUnreadDot: {'),
+      workspaceSource.indexOf('avatar: {', workspaceSource.indexOf('mutedUnreadDot: {')),
+    )
+    expect(mutedUnreadDotStyle).toContain("background: '#ff5f57'")
+    expect(mutedUnreadDotStyle).not.toContain('background: colors.mention')
+  })
+
+  it('shows the shared notification permission recovery prompt above root conversations', () => {
+    expect(workspaceSource).toContain("import { ArkmeNotificationPermissionBanner }")
+    expect(workspaceSource).toContain('authenticated && <ArkmeNotificationPermissionBanner />')
   })
 
   it('hides the contact-author guide when the ordinary directory already contains the author chat', () => {

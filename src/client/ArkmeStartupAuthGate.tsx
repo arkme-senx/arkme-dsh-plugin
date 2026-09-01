@@ -185,6 +185,7 @@ export function ArkmeStartupAuthGate({ t }: ArkmeStartupAuthGateProps) {
   if (screen === 'authenticated') return null
   return <div
     ref={rootRef}
+    data-arkme-notification-blocking-overlay="true"
     style={styles.gate}
     role="dialog"
     aria-modal="true"

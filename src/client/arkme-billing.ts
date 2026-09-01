@@ -112,17 +112,30 @@ export function billingQrDataUrl(content: string | undefined): string {
 interface ArkmeBillingOrderPollerOptions {
   readStatus(orderId: string): Promise<ArkmeBillingOrderSnapshot>
   onUpdate(order: ArkmeBillingOrderSnapshot): void
-  onError(error: unknown): void
+  onError(error: unknown, retry: ArkmeBillingPollRetry): void
   onExpired?(): void
   intervalMillis?: number
   now?: () => number
 }
 
+export interface ArkmeBillingPollRetry {
+  willRetry: boolean
+  retryInMillis?: number
+}
+
 const TERMINAL_ORDER_STATUSES = new Set<ArkmeBillingOrderStatus>(['paid', 'expired', 'closed', 'failed'])
+const POLL_RETRY_BACKOFF_MILLIS = [1_000, 2_000, 4_000, 8_000, 10_000] as const
+
+function billingPollErrorRetryable(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('body' in error)) return true
+  const body = error.body
+  return !(typeof body === 'object' && body !== null && 'retryable' in body && body.retryable === false)
+}
 
 export class ArkmeBillingOrderPoller {
   private timer: ReturnType<typeof setTimeout> | undefined
   private generation = 0
+  private refresh: (() => void) | undefined
   private readonly intervalMillis: number
   private readonly now: () => number
 
@@ -145,7 +158,10 @@ export class ArkmeBillingOrderPoller {
       : this.intervalMillis
     let currentStatus = initialStatus
     if (TERMINAL_ORDER_STATUSES.has(currentStatus)) return
-    const schedule = () => {
+    let inFlight = false
+    let refreshQueued = false
+    let retryAttempt = 0
+    const schedule = (delayMillis = intervalMillis) => {
       if (generation !== this.generation) return
       if (currentStatus === 'pending') {
         const remaining = expiresAtMillis - this.now()
@@ -154,37 +170,73 @@ export class ArkmeBillingOrderPoller {
           this.stop()
           return
         }
-        this.timer = setTimeout(() => { void poll() }, Math.min(intervalMillis, remaining))
+        this.timer = setTimeout(() => { void poll() }, Math.min(delayMillis, remaining))
       } else {
-        this.timer = setTimeout(() => { void poll() }, intervalMillis)
+        this.timer = setTimeout(() => { void poll() }, delayMillis)
       }
     }
     const poll = async () => {
       if (generation !== this.generation) return
+      if (inFlight) {
+        refreshQueued = true
+        return
+      }
       if (currentStatus === 'pending' && this.now() >= expiresAtMillis) {
         this.options.onExpired?.()
         this.stop()
         return
       }
+      inFlight = true
+      let nextDelayMillis = intervalMillis
       try {
         const order = await this.options.readStatus(orderId)
         if (generation !== this.generation) return
+        retryAttempt = 0
         this.options.onUpdate(order)
         currentStatus = billingOrderScreen({ ...order, expiresAtMillis }, this.now())
         if (TERMINAL_ORDER_STATUSES.has(currentStatus)) this.stop()
-        else schedule()
       } catch (error) {
         if (generation !== this.generation) return
-        this.options.onError(error)
-        this.stop()
+        if (!billingPollErrorRetryable(error)) {
+          this.options.onError(error, { willRetry: false })
+          this.stop()
+          return
+        }
+        nextDelayMillis = POLL_RETRY_BACKOFF_MILLIS[Math.min(retryAttempt, POLL_RETRY_BACKOFF_MILLIS.length - 1)] ?? 10_000
+        retryAttempt += 1
+        this.options.onError(error, { willRetry: true, retryInMillis: nextDelayMillis })
+      } finally {
+        inFlight = false
       }
+      if (generation !== this.generation) return
+      if (refreshQueued) {
+        refreshQueued = false
+        void poll()
+        return
+      }
+      schedule(nextDelayMillis)
+    }
+    this.refresh = () => {
+      if (generation !== this.generation) return
+      if (this.timer !== undefined) clearTimeout(this.timer)
+      this.timer = undefined
+      if (inFlight) {
+        refreshQueued = true
+        return
+      }
+      void poll()
     }
     schedule()
+  }
+
+  refreshNow(): void {
+    this.refresh?.()
   }
 
   stop(): void {
     this.generation += 1
     if (this.timer !== undefined) clearTimeout(this.timer)
     this.timer = undefined
+    this.refresh = undefined
   }
 }

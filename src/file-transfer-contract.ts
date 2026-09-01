@@ -1,4 +1,4 @@
-import type { ArkmeRichSendInput, ArkmeSourceSendResult, ArkmeUploadedAsset } from './types.js'
+import type { ArkmeRecordLocationCapture, ArkmeRichSendInput, ArkmeSourceSendResult, ArkmeUploadedAsset } from './types.js'
 export const ARKME_TOOL_FILE_MAX_BYTES = 64 * 1024
 
 export interface ArkmeFilePolicy {
@@ -27,7 +27,18 @@ export interface ArkmeFileSendInput {
   recordUid: string
   relationUid: string
   fileRefs: string[]
-  content: Omit<ArkmeRichSendInput, 'assets'>
+  /** Captured current-account fence. It is validated before acceptance and is never persisted in a task. */
+  expectedUserId?: number
+  /** Every background ref is also present once in `fileRefs`; the role is never inferred from MIME. */
+  backgroundSound?: ArkmeFileBackgroundSoundInput
+  /** Send-scoped browser capture persisted until the owner confirms the record and applies its location post-effect. */
+  location?: ArkmeRecordLocationCapture
+  content: Omit<ArkmeRichSendInput, 'assets' | 'backgroundSound'>
+}
+
+export interface ArkmeFileBackgroundSoundInput {
+  fileRefs: string[]
+  amplitudes: number[]
 }
 
 export interface ArkmeFileSendTask extends ArkmeFileSendInput {
@@ -36,6 +47,8 @@ export interface ArkmeFileSendTask extends ArkmeFileSendInput {
   state: 'queued' | 'uploading' | 'sending' | 'sent' | 'failed' | 'uncertain'
   files: Array<ArkmeLocalFile & { progress: ArkmeFileProgress; asset?: ArkmeUploadedAsset }>
   result?: ArkmeSourceSendResult
+  /** Sanitized owner error code. Definite rejection and unknown outcome remain distinct via state. */
+  errorCode?: string
   error?: string
 }
 

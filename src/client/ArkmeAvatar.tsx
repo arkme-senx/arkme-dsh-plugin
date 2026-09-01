@@ -3,85 +3,11 @@ import type {
   ArkmeGroupAvatarFallback,
   ArkmeGroupAvatarPresentation,
   ArkmeGroupAvatarSlot,
-  ArkmeImagePayload,
+  ArkmeSourceItem,
 } from '../types.js'
-import { callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
-
-const AVATAR_CACHE_TTL_MS = 10 * 60 * 1000
-const AVATAR_CACHE_JITTER_MS = 2 * 60 * 1000
-const AVATAR_DOWNLOAD_CONCURRENCY = 6
-
-interface AvatarCacheEntry {
-  expiresAtMillis: number
-  pending: Promise<string>
-  value?: string
-}
-
-const avatarDataUrlCache = new Map<string, AvatarCacheEntry>()
-const avatarDownloadQueue: Array<() => void> = []
-let activeAvatarDownloads = 0
-
-function drainAvatarDownloadQueue(): void {
-  while (activeAvatarDownloads < AVATAR_DOWNLOAD_CONCURRENCY) {
-    const start = avatarDownloadQueue.shift()
-    if (start === undefined) return
-    activeAvatarDownloads += 1
-    start()
-  }
-}
-
-function scheduleAvatarDownload<T>(load: () => Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    avatarDownloadQueue.push(() => {
-      void load().then(resolve, reject).finally(() => {
-        activeAvatarDownloads -= 1
-        drainAvatarDownloadQueue()
-      })
-    })
-    drainAvatarDownloadQueue()
-  })
-}
-
-export function clearArkmeAvatarCache(): void {
-  avatarDataUrlCache.clear()
-}
-
-function getFreshAvatarCacheEntry(imageRef: string): AvatarCacheEntry | undefined {
-  const cached = avatarDataUrlCache.get(imageRef)
-  if (cached === undefined) return undefined
-  if (cached.expiresAtMillis > Date.now()) return cached
-  avatarDataUrlCache.delete(imageRef)
-  return undefined
-}
-
-export function getCachedArkmeImageDataUrl(imageRef: string): string | undefined {
-  return getFreshAvatarCacheEntry(imageRef)?.value
-}
-
-export function loadArkmeImageDataUrl(imageRef: string): Promise<string> {
-  const cached = getFreshAvatarCacheEntry(imageRef)
-  if (cached !== undefined) {
-    if (cached.value !== undefined) return Promise.resolve(cached.value)
-    return cached.pending
-  }
-  const entry: AvatarCacheEntry = {
-    expiresAtMillis: Date.now() + AVATAR_CACHE_TTL_MS + Math.floor(Math.random() * AVATAR_CACHE_JITTER_MS),
-    pending: Promise.resolve(''),
-  }
-  entry.pending = scheduleAvatarDownload(async () => await callArkme<ArkmeImagePayload>('image.read', { imageRef }))
-    .then(image => {
-      const value = `data:${image.mediaType};base64,${image.dataBase64}`
-      entry.value = value
-      return value
-    })
-    .catch(error => {
-      if (avatarDataUrlCache.get(imageRef) === entry) avatarDataUrlCache.delete(imageRef)
-      throw error
-    })
-  avatarDataUrlCache.set(imageRef, entry)
-  return entry.pending
-}
+import { arkmeAvatarImages } from './avatar-image-runtime.js'
+import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
 
 interface ResolvedGroupAvatarSlot extends ArkmeGroupAvatarSlot {
   imageUrl?: string
@@ -90,7 +16,21 @@ interface ResolvedGroupAvatarSlot extends ArkmeGroupAvatarSlot {
 function applyCachedAvatarSlots(sourceSlots: readonly ArkmeGroupAvatarSlot[]): ResolvedGroupAvatarSlot[] {
   return sourceSlots.map(slot => {
     if (slot.avatarRef === undefined) return slot
-    const imageUrl = getCachedArkmeImageDataUrl(slot.avatarRef)
+    const imageUrl = arkmeAvatarImages.current(slot.avatarRef)
+    return imageUrl === undefined ? slot : { ...slot, imageUrl }
+  })
+}
+
+function reconcileAvatarSlots(
+  current: readonly ResolvedGroupAvatarSlot[],
+  sourceSlots: readonly ArkmeGroupAvatarSlot[],
+): ResolvedGroupAvatarSlot[] {
+  return sourceSlots.map((slot, index) => {
+    if (slot.avatarRef === undefined) return slot
+    const currentSlot = current[index]
+    const imageUrl = currentSlot?.avatarRef === slot.avatarRef
+      ? currentSlot.imageUrl
+      : arkmeAvatarImages.current(slot.avatarRef)
     return imageUrl === undefined ? slot : { ...slot, imageUrl }
   })
 }
@@ -161,24 +101,7 @@ export function ArkmeUserAvatar({
   label?: string
 }) {
   const normalizedRef = avatarRef?.trim() ?? ''
-  const [imageUrl, setImageUrl] = useState<string | undefined>(() => normalizedRef === ''
-    ? undefined
-    : getCachedArkmeImageDataUrl(normalizedRef))
-
-  useEffect(() => {
-    let active = true
-    if (normalizedRef === '') {
-      setImageUrl(undefined)
-      return () => { active = false }
-    }
-    const cached = getCachedArkmeImageDataUrl(normalizedRef)
-    setImageUrl(cached)
-    if (cached !== undefined) return () => { active = false }
-    void loadArkmeImageDataUrl(normalizedRef)
-      .then(value => { if (active) setImageUrl(value) })
-      .catch(() => undefined)
-    return () => { active = false }
-  }, [normalizedRef])
+  const imageUrl = useArkmeAvatarImage(normalizedRef)
 
   const styles = avatarStyles(size)
   return <span style={styles.avatar} aria-label={label}>
@@ -253,7 +176,7 @@ export function ArkmeGroupAvatarVisual({
   </span>
 }
 
-/** Compatibility renderer for callers that already resolved legacy avatarRefs. */
+/** Renderer for callers that already own resolved group-member image URLs. */
 export function ArkmeAvatarMosaic({
   urls,
   size = 44,
@@ -267,24 +190,29 @@ export function ArkmeAvatarMosaic({
   return <ArkmeGroupAvatarVisual memberCount={slots.length} slots={slots} size={size} fallback={fallback} />
 }
 
-export function ArkmeSourceAvatar({
-  avatarRef,
-  avatarRefs,
-  groupAvatar,
-  size = 44,
-}: {
-  avatarRef?: string
-  avatarRefs?: readonly string[]
-  groupAvatar?: ArkmeGroupAvatarPresentation
-  size?: number
-}) {
+type ArkmeSourceAvatarProps =
+  | { kind: 'single'; avatarRef?: string | undefined; size?: number | undefined }
+  | {
+    kind: 'group'
+    avatarRefs?: readonly string[] | undefined
+    groupAvatar?: ArkmeGroupAvatarPresentation | undefined
+    size?: number | undefined
+  }
+
+export function ArkmeSourceAvatar(props: ArkmeSourceAvatarProps) {
+  const size = props.size ?? 44
+  const isGroup = props.kind === 'group'
+  const avatarRef = props.kind === 'single' ? props.avatarRef : undefined
+  const avatarRefs = props.kind === 'group' ? props.avatarRefs : undefined
+  const groupAvatar = props.kind === 'group' ? props.groupAvatar : undefined
   const container = useRef<HTMLSpanElement>(null)
-  const isGroup = groupAvatar !== undefined || avatarRefs !== undefined
   const sourceSlots = useMemo<ArkmeGroupAvatarSlot[]>(() => {
     if (groupAvatar !== undefined) return groupAvatar.slots.slice(0, 5)
-    return (avatarRefs ?? (avatarRef === undefined ? [] : [avatarRef])).slice(0, 5).map(ref => ({ avatarRef: ref }))
-  }, [avatarRef, avatarRefs, groupAvatar])
-  const slotsKey = JSON.stringify([sourceSlots, groupAvatar?.computedAtMillis ?? 0])
+    return (isGroup ? avatarRefs ?? [] : avatarRef === undefined ? [] : [avatarRef])
+      .slice(0, 5)
+      .map(ref => ({ avatarRef: ref }))
+  }, [avatarRef, avatarRefs, groupAvatar, isGroup])
+  const slotsKey = JSON.stringify(sourceSlots)
   const [visible, setVisible] = useState(() => typeof globalThis.IntersectionObserver !== 'function')
   const [slots, setSlots] = useState<ResolvedGroupAvatarSlot[]>(() => applyCachedAvatarSlots(sourceSlots))
 
@@ -314,21 +242,25 @@ export function ArkmeSourceAvatar({
 
   useEffect(() => {
     let active = true
-    setSlots(applyCachedAvatarSlots(sourceSlots))
+    setSlots(current => reconcileAvatarSlots(current, sourceSlots))
     if (!visible || sourceSlots.length === 0) return () => { active = false }
-    sourceSlots.forEach((slot, index) => {
-      if (slot.avatarRef === undefined) return
-      void loadArkmeImageDataUrl(slot.avatarRef).then(imageUrl => {
-        if (!active) return
-        setSlots(current => current.map((value, slotIndex) => slotIndex === index ? { ...slot, imageUrl } : value))
-      }).catch(() => {
-        if (!active) return
-        setSlots(current => current.map((value, slotIndex) => slotIndex === index
-          ? { fallback: slot.fallback ?? { kind: 'default' as const } }
-          : value))
-      })
+    const imageRefs = [...new Set(sourceSlots.flatMap(slot => slot.avatarRef === undefined ? [] : [slot.avatarRef]))]
+    const unsubscribes = imageRefs.map(imageRef => arkmeAvatarImages.subscribe(imageRef, imageUrl => {
+      if (!active) return
+      setSlots(current => current.map(slot => {
+        if (slot.avatarRef !== imageRef) return slot
+        if (imageUrl !== undefined) return { ...slot, imageUrl }
+        const { imageUrl: _discarded, ...unresolvedSlot } = slot
+        return unresolvedSlot
+      }))
+    }))
+    imageRefs.forEach(imageRef => {
+      void arkmeAvatarImages.load(imageRef).catch(() => undefined)
     })
-    return () => { active = false }
+    return () => {
+      active = false
+      unsubscribes.forEach(unsubscribe => { unsubscribe() })
+    }
   }, [slotsKey, visible])
 
   const styles = avatarStyles(size)
@@ -339,4 +271,16 @@ export function ArkmeSourceAvatar({
         ? <span style={styles.avatar}><img src={slots[0].imageUrl} alt="" draggable={false} style={styles.image} /></span>
         : <span style={styles.avatar}><DefaultUserAvatar size={size} /></span>}
   </span>
+}
+
+export function ArkmeDirectorySourceAvatar({
+  source,
+  size,
+}: {
+  source: Pick<ArkmeSourceItem, 'kind' | 'avatarRef' | 'avatarRefs' | 'groupAvatar'>
+  size?: number | undefined
+}) {
+  return source.kind === 'group_chat'
+    ? <ArkmeSourceAvatar kind="group" avatarRefs={source.avatarRefs} groupAvatar={source.groupAvatar} size={size} />
+    : <ArkmeSourceAvatar kind="single" avatarRef={source.avatarRef} size={size} />
 }

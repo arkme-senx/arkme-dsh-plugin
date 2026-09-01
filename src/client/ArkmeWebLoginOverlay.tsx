@@ -51,7 +51,7 @@ export type ArkmeWebLoginOverlayProps = PropsLocale<typeof ARKME_LOGIN_LOCALE_NA
 
 /** Web keeps Harness in place until this full-app login overlay is explicitly requested. */
 export function ArkmeWebLoginOverlay({ t }: ArkmeWebLoginOverlayProps) {
-  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
+  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const open = !startupAuthGateEnabled()
     && authState.auth?.status !== 'authenticated'

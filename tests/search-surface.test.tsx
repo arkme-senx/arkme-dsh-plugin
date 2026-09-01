@@ -485,6 +485,122 @@ describe('Arkme search surface', () => {
     act(() => { renderer.unmount() })
   })
 
+  it('keeps previous results visible and settles each search domain independently', async () => {
+    let resolveRecords!: (value: ReturnType<typeof arkmeResults>) => void
+    let resolveRecordings!: (value: { items: Array<{ sessionId: string; dateStamp: number; startAtMillis: number; snippet: string; score: number }>; hasMore: false; queryGuard: { state: 'ok' } }) => void
+    mocks.callArkme.mockImplementation(async (operation: string, params?: { query?: string }) => {
+      if (operation === 'search.history') return { items: [], hasMore: false }
+      if (operation === 'search.history.create') return { created: true }
+      if (operation === 'search.records' && params?.query === '第一条') return arkmeResults()
+      if (operation === 'search.recordings' && params?.query === '第一条') return {
+        items: [{ sessionId: 'old-recording', dateStamp: 1, startAtMillis: 2, snippet: '旧录音结果', score: 1 }],
+        hasMore: false, queryGuard: { state: 'ok' },
+      }
+      if (operation === 'search.records' && params?.query === '第二条') {
+        return await new Promise<ReturnType<typeof arkmeResults>>(resolve => { resolveRecords = resolve })
+      }
+      if (operation === 'search.recordings' && params?.query === '第二条') {
+        return await new Promise(resolve => { resolveRecordings = resolve })
+      }
+      throw new Error(`unexpected Arkme call: ${operation}`)
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeSearchSurface variant="dialog" onClose={vi.fn()} />); await Promise.resolve() })
+    const input = renderer.root.findByProps({ 'aria-label': '搜索' })
+
+    await act(async () => {
+      input.props.onChange({ target: { value: '第一条' } })
+      await vi.advanceTimersByTimeAsync(300)
+      await Promise.resolve()
+    })
+    expect(content(renderer.toJSON())).toContain('发布会快记')
+
+    await act(async () => {
+      input.props.onChange({ target: { value: '第二条' } })
+      await vi.advanceTimersByTimeAsync(300)
+    })
+    expect(content(renderer.toJSON())).toContain('发布会快记')
+    expect(renderer.root.findByProps({ 'aria-label': '正在搜索快记' })).toBeDefined()
+
+    await act(async () => {
+      const next = arkmeResults()
+      resolveRecords({
+        ...next,
+        items: [{ ...next.items[0]!, recordUid: 'record-2', title: '第二条快记', textContent: '新结果', snippet: '新结果' }],
+      })
+      await Promise.resolve()
+    })
+    expect(content(renderer.toJSON())).toContain('第二条快记')
+    expect(renderer.root.findAllByProps({ 'aria-label': '正在搜索快记' })).toHaveLength(0)
+
+    act(() => {
+      renderer.root.findAllByType('button').find(button => content(button.props.children) === '录音·转写')?.props.onClick()
+    })
+    expect(content(renderer.toJSON())).toContain('旧录音结果')
+    expect(renderer.root.findByProps({ 'aria-label': '正在搜索录音·转写' })).toBeDefined()
+
+    await act(async () => {
+      resolveRecordings({
+        items: [{ sessionId: 'new-recording', dateStamp: 1, startAtMillis: 3, snippet: '新录音结果', score: 1 }],
+        hasMore: false, queryGuard: { state: 'ok' },
+      })
+      await Promise.resolve()
+    })
+    expect(content(renderer.toJSON())).toContain('新录音结果')
+    act(() => { renderer.unmount() })
+  })
+
+  it('ignores a stale source-detail response after a newer source selection', async () => {
+    let resolveA!: (value: ReturnType<typeof arkmeResults>) => void
+    let resolveB!: (value: ReturnType<typeof arkmeResults>) => void
+    const base = arkmeResults()
+    mocks.callArkme.mockImplementation(async (operation: string, params?: { sourceUid?: string }) => {
+      if (operation === 'search.history') return { items: [], hasMore: false }
+      if (operation === 'search.history.create') return { created: true }
+      if (operation === 'search.recordings') return { items: [], hasMore: false, queryGuard: { state: 'ok' } }
+      if (operation === 'search.records' && params?.sourceUid === 'source-a') {
+        return await new Promise<ReturnType<typeof arkmeResults>>(resolve => { resolveA = resolve })
+      }
+      if (operation === 'search.records' && params?.sourceUid === 'source-b') {
+        return await new Promise<ReturnType<typeof arkmeResults>>(resolve => { resolveB = resolve })
+      }
+      if (operation === 'search.records') return {
+        ...base,
+        items: [
+          { ...base.items[0]!, recordUid: 'record-a', sourceUid: 'source-a', sourceTitle: '主题 A', title: 'A 缓存' },
+          { ...base.items[0]!, recordUid: 'record-b', sourceUid: 'source-b', sourceTitle: '主题 B', title: 'B 缓存' },
+        ],
+        sourceAggregates: [
+          { ...base.sourceAggregates[0]!, sourceUid: 'source-a', title: '主题 A' },
+          { ...base.sourceAggregates[0]!, sourceUid: 'source-b', title: '主题 B' },
+        ],
+        itemCount: 2,
+      }
+      throw new Error(`unexpected operation: ${operation}`)
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeSearchSurface variant="dialog" onClose={vi.fn()} />); await Promise.resolve() })
+    const input = renderer.root.findByProps({ 'aria-label': '搜索' })
+    await act(async () => { input.props.onChange({ target: { value: '主题' } }); await vi.advanceTimersByTimeAsync(300); await Promise.resolve() })
+    act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === '主题')?.props.onClick() })
+    const sourceButtons = () => renderer.root.findAllByType('button')
+    await act(async () => { sourceButtons().find(button => content(button.props.children).includes('主题 A'))?.props.onClick(); await Promise.resolve() })
+    await act(async () => { sourceButtons().find(button => content(button.props.children).includes('主题 B'))?.props.onClick(); await Promise.resolve() })
+
+    await act(async () => {
+      resolveB({ ...base, items: [{ ...base.items[0]!, recordUid: 'record-b-new', title: 'B 最新结果' }] })
+      await Promise.resolve()
+    })
+    await act(async () => {
+      resolveA({ ...base, items: [{ ...base.items[0]!, recordUid: 'record-a-late', title: 'A 迟到结果' }] })
+      await Promise.resolve()
+    })
+
+    expect(content(renderer.toJSON())).toContain('B 最新结果')
+    expect(content(renderer.toJSON())).not.toContain('A 迟到结果')
+    act(() => { renderer.unmount() })
+  })
+
   it('uses distinct topic and recording result layouts', async () => {
     let renderer!: ReactTestRenderer
     await act(async () => {

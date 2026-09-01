@@ -212,9 +212,13 @@ interface ArkmePaymentDialogProps {
   order: ArkmeBillingOrderSnapshot
   nowMillis: number
   statusError: string
+  statusRetryable: boolean
+  statusRetryInMillis?: number
+  quotaState: ArkmeQuotaViewState
   onClose(): void
   onRetryStatus(): void
   onRegenerate(): void
+  onRefreshQuota(): void
   onOpenPaymentUrl(url: string): void
 }
 
@@ -224,6 +228,19 @@ export function ArkmePaymentDialog(props: ArkmePaymentDialogProps) {
   const paymentAction = screen === 'pending' ? props.order.paymentAction : undefined
   const qrDataUrl = paymentAction?.type === 'display_qr' ? billingQrDataUrl(paymentAction.qrContent) : ''
   const openUrl = paymentAction?.type === 'open_url' ? paymentAction.url : ''
+  const paidAmount = formatArkmeBillingPrice(props.order.amountMinor, props.order.currency)
+  const statusProblem = props.statusError !== '' && (screen === 'pending' || screen === 'crediting')
+  const title = statusProblem
+    ? '正在确认支付'
+    : screen === 'crediting'
+    ? '支付已确认'
+    : screen === 'pending'
+      ? '完成支付'
+      : screen === 'paid'
+        ? '支付成功'
+        : screen === 'expired'
+          ? '支付未完成'
+          : '订单状态'
 
   useEffect(() => { dialogRef.current?.focus() }, [])
   const onKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
@@ -249,35 +266,58 @@ export function ArkmePaymentDialog(props: ArkmePaymentDialogProps) {
     >
       <header className="arkme-billing-dialog-header">
         <div>
-          <h2 id="arkme-payment-dialog-title">{screen === 'crediting' ? '支付已确认' : screen === 'pending' ? '完成支付' : '订单状态'}</h2>
+          <h2 id="arkme-payment-dialog-title">{title}</h2>
           <p>订单号：{props.order.orderId}</p>
         </div>
         <button type="button" aria-label="关闭支付弹窗" onClick={props.onClose}>×</button>
       </header>
-      <div className="arkme-billing-payment-content">
-        {screen === 'pending' && openUrl !== '' && <>
+      <div className={`arkme-billing-payment-content is-${screen}`}>
+        {statusProblem && <>
+          <strong>暂时无法查询订单状态</strong>
+          <p>{props.statusRetryable ? '系统会自动退避重试；请勿重复付款。' : '请勿重复付款；请点击立即重试。'}</p>
+          {props.statusRetryable && props.statusRetryInMillis !== undefined && <p>
+            下次重试约 {Math.max(1, Math.ceil(props.statusRetryInMillis / 1_000))} 秒后
+          </p>}
+        </>}
+        {!statusProblem && screen === 'pending' && openUrl !== '' && <>
           <AlipayIcon />
           <strong>支付宝收银台已在浏览器中打开</strong>
-          <p>请在浏览器中扫码或登录完成支付</p>
-          <button type="button" className="arkme-billing-primary-action" onClick={() => props.onOpenPaymentUrl(openUrl)}>重新打开支付页面</button>
+          <p>完成支付后返回 Arkme，页面会自动确认结果。</p>
         </>}
-        {screen === 'pending' && qrDataUrl !== '' && <>
+        {!statusProblem && screen === 'pending' && qrDataUrl !== '' && <>
           <img src={qrDataUrl} alt="微信支付二维码" />
           <strong>使用微信扫码支付</strong>
         </>}
-        {screen === 'pending' && qrDataUrl === '' && openUrl === '' && <p className="arkme-billing-error" role="alert">支付操作暂不可用</p>}
-        {screen === 'pending' && <p>支付金额 {formatArkmeBillingPrice(props.order.amountMinor, props.order.currency)} · 剩余 {countdownText(props.order.expiresAtMillis - props.nowMillis)}</p>}
-        {screen === 'crediting' && <><strong>支付已确认，余额到账中…</strong><p>到账后会自动刷新当前余额。</p></>}
-        {screen === 'paid' && <strong>支付成功，正在刷新余量…</strong>}
+        {!statusProblem && screen === 'pending' && qrDataUrl === '' && openUrl === '' && <p className="arkme-billing-error" role="alert">支付操作暂不可用</p>}
+        {!statusProblem && screen === 'pending' && <p>支付金额 {formatArkmeBillingPrice(props.order.amountMinor, props.order.currency)} · 剩余 {countdownText(props.order.expiresAtMillis - props.nowMillis)}</p>}
+        {!statusProblem && screen === 'crediting' && <><strong>支付已确认，无需重复支付</strong><p>余额到账中，到账后会自动刷新当前余额。</p></>}
+        {screen === 'paid' && <>
+          <strong>{paidAmount} 已到账</strong>
+          {props.quotaState.kind === 'loading' && <p>已到账，正在刷新当前余额</p>}
+          {props.quotaState.kind === 'ready' && <p>当前余额已刷新：{formatArkmeNanoCny(props.quotaState.quota.availableNanoCny)}</p>}
+          {props.quotaState.kind === 'error' && <p className="arkme-billing-error" role="alert">余额暂未刷新：{props.quotaState.message}</p>}
+        </>}
         {screen === 'expired' && <strong>支付凭据已过期，请重新生成。</strong>}
         {screen === 'closed' && <strong>订单已关闭。</strong>}
         {screen === 'failed' && <strong>订单支付失败。</strong>}
-        {props.statusError !== '' && <p className="arkme-billing-error" role="alert">{props.statusError}</p>}
+        {statusProblem && <p className="arkme-billing-error" role="alert">{props.statusError}</p>}
       </div>
       <footer className="arkme-billing-dialog-actions">
-        {props.statusError !== '' && (screen === 'pending' || screen === 'crediting') && <button type="button" onClick={props.onRetryStatus}>重新查询</button>}
         {screen === 'expired' && <button type="button" className="arkme-billing-primary-action" onClick={props.onRegenerate}>重新生成</button>}
-        <button type="button" onClick={props.onClose}>{screen === 'crediting' || screen === 'paid' ? '关闭' : '取消支付'}</button>
+        {screen === 'paid' && props.quotaState.kind === 'error' && <button type="button" onClick={props.onRefreshQuota}>刷新余额</button>}
+        <button type="button" onClick={props.onClose}>
+          {screen === 'paid' ? '完成' : screen === 'pending' || screen === 'crediting' ? '稍后查看' : '关闭'}
+        </button>
+        {!statusProblem && screen === 'pending' && openUrl !== '' && <button
+          type="button"
+          className="arkme-billing-primary-action"
+          onClick={() => props.onOpenPaymentUrl(openUrl)}
+        >重新打开支付页面</button>}
+        {props.statusError !== '' && (screen === 'pending' || screen === 'crediting') && <button
+          type="button"
+          className="arkme-billing-primary-action"
+          onClick={props.onRetryStatus}
+        >立即重试</button>}
       </footer>
     </section>
   </div>
@@ -292,16 +332,24 @@ export function ArkmeBillingSettings() {
   const [purchaseError, setPurchaseError] = useState('')
   const [order, setOrder] = useState<ArkmeBillingOrderSnapshot>()
   const [orderStatusError, setOrderStatusError] = useState('')
+  const [orderStatusRetryable, setOrderStatusRetryable] = useState(false)
+  const [orderStatusRetryInMillis, setOrderStatusRetryInMillis] = useState<number>()
   const [nowMillis, setNowMillis] = useState(Date.now())
   const pollerRef = useRef<ArkmeBillingOrderPoller>()
   const checkoutAttemptRef = useRef<ReturnType<typeof checkoutAttempt>>()
   const selectedProductIdRef = useRef<string>()
+  const quotaLoadGenerationRef = useRef(0)
 
   const openPaymentUrl = useCallback((url: string) => { window.open(url, '_blank', 'noopener,noreferrer') }, [])
   const loadQuota = useCallback(async () => {
+    const generation = ++quotaLoadGenerationRef.current
     setQuotaState({ kind: 'loading' })
-    try { setQuotaState({ kind: 'ready', quota: await callArkme<ArkmeQuotaSnapshot>('billing.quota') }) }
-    catch (error) { setQuotaState({ kind: 'error', message: errorMessage(error) }) }
+    try {
+      const quota = await callArkme<ArkmeQuotaSnapshot>('billing.quota')
+      if (generation === quotaLoadGenerationRef.current) setQuotaState({ kind: 'ready', quota })
+    } catch (error) {
+      if (generation === quotaLoadGenerationRef.current) setQuotaState({ kind: 'error', message: errorMessage(error) })
+    }
   }, [])
   const loadProducts = useCallback(async () => {
     setProductsState({ kind: 'loading' })
@@ -318,7 +366,10 @@ export function ArkmeBillingSettings() {
 
   useEffect(() => {
     void loadQuota()
-    return () => { pollerRef.current?.stop() }
+    return () => {
+      quotaLoadGenerationRef.current += 1
+      pollerRef.current?.stop()
+    }
   }, [loadQuota])
   useEffect(() => { if (open) void loadProducts() }, [loadProducts, open])
   useEffect(() => {
@@ -327,6 +378,19 @@ export function ArkmeBillingSettings() {
     const timer = setInterval(() => { setNowMillis(Date.now()) }, 1_000)
     return () => clearInterval(timer)
   }, [order?.orderId])
+  useEffect(() => {
+    if (order === undefined || ['paid', 'expired', 'closed', 'failed'].includes(order.status)) return
+    const refresh = () => { pollerRef.current?.refreshNow() }
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refresh()
+    }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
+  }, [order?.orderId, order?.status])
 
   const startPolling = useCallback((nextOrder: ArkmeBillingOrderSnapshot) => {
     pollerRef.current?.stop()
@@ -335,10 +399,16 @@ export function ArkmeBillingSettings() {
       onUpdate: latest => {
         setOrder(latest)
         setOrderStatusError('')
+        setOrderStatusRetryable(false)
+        setOrderStatusRetryInMillis(undefined)
         checkoutAttemptRef.current = checkoutAttemptAfterOrder(checkoutAttemptRef.current, latest.status)
-        if (latest.status === 'paid') { setOrder(undefined); void loadQuota() }
+        if (latest.status === 'paid') void loadQuota()
       },
-      onError: error => { setOrderStatusError(errorMessage(error)) },
+      onError: (error, retry) => {
+        setOrderStatusError(errorMessage(error))
+        setOrderStatusRetryable(retry.willRetry)
+        setOrderStatusRetryInMillis(retry.retryInMillis)
+      },
       onExpired: () => {
         checkoutAttemptRef.current = checkoutAttemptAfterOrder(checkoutAttemptRef.current, 'expired')
         setNowMillis(nextOrder.expiresAtMillis)
@@ -357,6 +427,8 @@ export function ArkmeBillingSettings() {
     setCreatingMethod(paymentMethod)
     setPurchaseError('')
     setOrderStatusError('')
+    setOrderStatusRetryable(false)
+    setOrderStatusRetryInMillis(undefined)
     try {
       const nextOrder = await createBillingOrderWithProcessingRetry(
         attempt,
@@ -365,8 +437,9 @@ export function ArkmeBillingSettings() {
       checkoutAttemptRef.current = checkoutAttemptAfterOrder(attempt, nextOrder.status)
       setNowMillis(Date.now())
       activateBillingPaymentAction(nextOrder.paymentAction, openPaymentUrl)
-      if (nextOrder.status === 'paid') { setOrder(undefined); void loadQuota() }
-      else { setOrder(nextOrder); startPolling(nextOrder) }
+      setOrder(nextOrder)
+      if (nextOrder.status === 'paid') void loadQuota()
+      else startPolling(nextOrder)
     } catch (error) { setPurchaseError(errorMessage(error)) }
     finally { setCreatingMethod(undefined) }
   }, [loadQuota, openPaymentUrl, productsState, startPolling])
@@ -379,8 +452,24 @@ export function ArkmeBillingSettings() {
     setPurchaseError('')
   }
   const closeRecharge = () => { if (order === undefined) setOpen(false) }
-  const closePayment = () => { pollerRef.current?.stop(); setOrder(undefined); setOrderStatusError(''); setOpen(false) }
-  const retryOrderStatus = () => { if (order !== undefined) { setOrderStatusError(''); startPolling(order) } }
+  const closePayment = () => {
+    pollerRef.current?.stop()
+    setOrder(undefined)
+    setOrderStatusError('')
+    setOrderStatusRetryable(false)
+    setOrderStatusRetryInMillis(undefined)
+    setOpen(false)
+  }
+  const retryOrderStatus = () => {
+    if (order === undefined) return
+    setOrderStatusError('')
+    setOrderStatusRetryInMillis(undefined)
+    if (orderStatusRetryable) pollerRef.current?.refreshNow()
+    else {
+      startPolling(order)
+      pollerRef.current?.refreshNow()
+    }
+  }
   const regenerateOrder = () => {
     if (order === undefined) return
     const paymentMethod = order.paymentMethod
@@ -390,7 +479,10 @@ export function ArkmeBillingSettings() {
   }
 
   return <>
-    <ArkmeBalanceSettingsRowView quotaState={quotaState} onOpen={() => setOpen(true)} />
+    <ArkmeBalanceSettingsRowView quotaState={quotaState} onOpen={() => {
+      setOpen(true)
+      void loadQuota()
+    }} />
     {open && order === undefined && <ArkmeRechargeDialogView
       quotaState={quotaState}
       productsState={productsState}
@@ -407,9 +499,13 @@ export function ArkmeBillingSettings() {
       order={order}
       nowMillis={nowMillis}
       statusError={orderStatusError}
+      statusRetryable={orderStatusRetryable}
+      {...(orderStatusRetryInMillis === undefined ? {} : { statusRetryInMillis: orderStatusRetryInMillis })}
+      quotaState={quotaState}
       onClose={closePayment}
       onRetryStatus={retryOrderStatus}
       onRegenerate={regenerateOrder}
+      onRefreshQuota={() => { void loadQuota() }}
       onOpenPaymentUrl={openPaymentUrl}
     />}
   </>

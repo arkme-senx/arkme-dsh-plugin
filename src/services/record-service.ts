@@ -309,9 +309,12 @@ export class RecordService {
   async createText(
     recordUid: string,
     textContent: string,
-    options: { recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
   ): Promise<ArkmeCreateTextResult> {
     const session = await this.runtime.requireSession()
+    if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) {
+      throw new ArkmePluginError('file-account-changed', '账号已切换，本次发送已取消', false, 409)
+    }
     const normalizedUid = recordUid.trim()
     const normalizedText = textContent.trim()
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedUid)) {
@@ -346,13 +349,14 @@ export class RecordService {
   async createTextForConversation(
     recordUid: string,
     textContent: string,
-    options: { recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
   ): Promise<ArkmeConversationWriteResult> {
     try {
       const result = await this.createText(recordUid, textContent, options)
       return { ...result, localState: 'synced' }
     } catch (error) {
       const session = await this.runtime.requireSession()
+      if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) throw error
       const pending = (await this.runtime.stateStore.listPending(session.userId))
         .find(item => item.recordUid === recordUid)
       if (pending === undefined) throw error

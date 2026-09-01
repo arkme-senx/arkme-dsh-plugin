@@ -19,7 +19,8 @@ import {
 } from '../src/client/ArkmeSidebar.js'
 
 const member: ArkmeConversationMemberItem = {
-  memberRef: 'member-ref', displayName: '小林', role: 'member', status: 'active',
+  memberRef: 'member-ref', mentionRef: 'mention-ref', mentionDisplayName: '小林', displayName: '小林',
+  role: 'member', status: 'active',
   isSelf: false, isOwner: false, joinedAtMillis: 1, recordCount: 7, mentionCount: 2,
 }
 
@@ -43,9 +44,13 @@ describe('chat member action menu placement', () => {
     expect(arkmeComposerMentionTrigger('@小林', 0, 2)).toBeUndefined()
   })
 
-  it('matches mention candidates by display, member, or secondary name', () => {
-    const candidate = { ...member, displayName: '小林', memberName: 'Lin', secondaryName: '设计师' }
+  it('matches mention candidates by viewer label, public mention, member, or secondary name', () => {
+    const candidate = {
+      ...member,
+      displayName: '我的私有备注', mentionDisplayName: 'Tison', memberName: 'Lin', secondaryName: '设计师',
+    }
     expect(arkmeMentionCandidateMatches(candidate, '')).toBe(true)
+    expect(arkmeMentionCandidateMatches(candidate, 'tison')).toBe(true)
     expect(arkmeMentionCandidateMatches(candidate, 'lin')).toBe(true)
     expect(arkmeMentionCandidateMatches(candidate, '设计')).toBe(true)
     expect(arkmeMentionCandidateMatches(candidate, '周')).toBe(false)
@@ -79,6 +84,7 @@ describe('chat member action menu placement', () => {
     expect(candidates.map(candidate => candidate.displayName)).toEqual([
       '所有人', 'Bot 1', 'Bot 2', ...Array.from({ length: 12 }, (_, index) => `成员${index}`),
     ])
+    expect(candidates[0]).toEqual({ kind: 'all', displayName: '所有人' })
     expect(candidates[1]).toMatchObject({ kind: 'bot', avatarRef: 'arkme-bot-image-v1.avatar-1' })
   })
 

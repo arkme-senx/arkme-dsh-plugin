@@ -4,6 +4,7 @@ import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { PencilSimpleIcon } from '@phosphor-icons/react/dist/csr/PencilSimple'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
 import type { ArkmeBotManageProfile, ArkmeBotNotificationPreference, ArkmeBotSummary } from '../types.js'
+import { projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { botAvatarMimeType, uploadBotAvatar } from './ArkmeBotCreateDialog.js'
@@ -153,6 +154,7 @@ export function ArkmeBotSettingsPanel({ bot, onClose, onUpdated, onDeleted }: {
     try {
       const value = await callArkme<ArkmeBotNotificationPreference>('bots.private-chat.notification.update', { botRef: bot.botRef, muted: nextMuted })
       setMuted(value.muted)
+      onUpdated({ ...bot, ...projectArkmeChatAttentionFromMuted(bot.unreadCount ?? 0, value.muted) })
     } catch (caught) { setError(errorMessage(caught)) } finally {
       notificationInFlightRef.current = false
       setNotificationLoading(false)

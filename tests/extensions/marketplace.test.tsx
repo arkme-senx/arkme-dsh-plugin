@@ -15,6 +15,7 @@ import {
   classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
   extensionEnabledLabel,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
+  sameExtensionInstallTaskSnapshot,
   extensionVersionLabel, installedExtensionCatalogItem, mergeInstalledExtensionCatalogItem,
   extensionNativeInstallWarning, filterMarketplaceMenuOptions, formatCompactCount, formatExtensionBytes, formatMarketplaceDate, marketplaceCategoryOptions, marketplaceListParams, MyExtensionCard, shouldLoadMoreDiscoverPage,
 } from '../../src/client/ArkmeMarketplace.js'
@@ -99,6 +100,16 @@ describe('Arkme marketplace UI', () => {
     expect(extensionTabLoadMode(new Set(['discover']), 'installed')).toBe('initial')
   })
 
+  it('keeps discover refinements scoped to the catalog and ignores timestamp-only install polling changes', () => {
+    const current = {
+      taskId: 'task-1', extensionId: 'ext-1', sessionId: 'session-1', done: false,
+      phase: 'downloading' as const, downloadedBytes: 25, totalBytes: 100,
+      message: '正在下载', updatedAtMillis: 100,
+    }
+    expect(sameExtensionInstallTaskSnapshot(current, { ...current, updatedAtMillis: 200 })).toBe(true)
+    expect(sameExtensionInstallTaskSnapshot(current, { ...current, downloadedBytes: 50, updatedAtMillis: 200 })).toBe(false)
+  })
+
   it('filters category menu options locally with trimmed case-insensitive text', () => {
     const options = [
       { value: 'all', label: '全部 · 307' },
@@ -145,6 +156,21 @@ describe('Arkme marketplace UI', () => {
     expect(html).toContain('data-marketplace-author-filter="true"')
     expect(html).toContain('泡泡 的全部插件')
     expect(html).toContain('aria-label="清除作者 泡泡 筛选"')
+  })
+
+  it('opens an initial extension detail modal before the marketplace list settles', () => {
+    const html = renderToStaticMarkup(<ArkmeMarketplace
+      displayMode="dialog"
+      initialExtensionId=" arkme-tic-tac-toe "
+      closeOnDetailClose
+      onClose={() => {}}
+    />)
+
+    expect(html).toContain('data-extension-detail-backdrop="true"')
+    expect(html).toContain('data-extension-detail-modal="true"')
+    expect(html).toContain('aria-label="正在加载扩展详情"')
+    expect(html).toContain('扩展详情')
+    expect(html).not.toContain('data-market-header-layer="primary"')
   })
 
   it('keeps only copy-link and close actions in the detail modal header', () => {
@@ -846,6 +872,16 @@ describe('Arkme marketplace UI', () => {
     expect(extensionAuthorLabel({ owner_user_id: 42, owner_name: '阿明', owner_arkme_id: 'aming' }))
       .toBe('阿明 · @aming')
     expect(extensionAuthorLabel({ owner_user_id: 42 })).toBe('Arkme 用户 42')
+    expect(extensionAuthorLabel({ source_author: { name: 'octocat' } }))
+      .toBe('octocat')
+    expect(extensionAuthorLabel({
+      source: {
+        type: 'github_repository',
+        url: 'https://github.com/octocat/weather',
+        label: 'GitHub',
+        verification: 'publisher_attested',
+      },
+    })).toBe('GitHub')
     expect(extensionAuthorLabel({})).toBe('作者信息暂不可用')
   })
 

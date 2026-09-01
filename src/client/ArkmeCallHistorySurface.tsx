@@ -4,9 +4,9 @@ import type { ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../types.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { callArkme } from './api.js'
 import { createDemoWavUrl } from './demo-audio.js'
-import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
+import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
 
 export type ArkmeCallMediaType = 'audio' | 'video'
 
@@ -104,14 +104,7 @@ function DemoPersonAvatar({ item, style }: { item: ArkmeCallHistoryItem; style: 
 }
 
 function RealContactAvatar({ contact }: { contact: ArkmeCallContact }) {
-  const [src, setSrc] = useState('')
-  useEffect(() => {
-    let active = true
-    setSrc('')
-    if (contact.avatarRef === undefined || contact.avatarRef === '') return () => { active = false }
-    void loadArkmeImageDataUrl(contact.avatarRef).then(value => { if (active) setSrc(value) }).catch(() => undefined)
-    return () => { active = false }
-  }, [contact.avatarRef])
+  const src = useArkmeAvatarImage(contact.avatarRef) ?? ''
   return <span style={styles.contactAvatar} aria-hidden>{src === ''
     ? <ArkmeMark size={30} />
     : <img src={src} alt="" draggable={false} style={{ width: '100%', height: '100%', borderRadius: 999, objectFit: 'cover' }} />}</span>

@@ -4,6 +4,7 @@ import {
   forgetNavigationProviderInstance, readNavigationCache, reconcileNavigationProviderInstance, reconcileSelectedSource,
   writeNavigationCache, type ArkmeNavigationCache,
 } from '../src/client/navigation-cache.js'
+import { arkmePrependSourceByIdentity } from '../src/client/source-identity.js'
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>()
@@ -16,10 +17,41 @@ class MemoryStorage implements Storage {
 }
 
 describe('Arkme navigation cache', () => {
+  it('replaces a rotated chat projection by stable identity when prepending it', () => {
+    const previous = {
+      sourceRef: 'source-before', sourceKey: 'chat:stable', kind: 'group_chat' as const,
+      displayName: '群聊', activeAtMillis: 1, unreadCount: 0,
+    }
+    const rotated = { ...previous, sourceRef: 'source-after', activeAtMillis: 2 }
+
+    expect(arkmePrependSourceByIdentity(rotated, [previous])).toEqual([rotated])
+  })
+
+  it('rebinds a renamed topic by topic identity without matching another same-name topic', () => {
+    const cached = {
+      sourceRef: 'topic-ref-before', topicHierarchyKey: 'topic:stable-1', kind: 'topic' as const,
+      displayName: '项目', activeAtMillis: 1, unreadCount: 0,
+    }
+    const renamed = {
+      ...cached,
+      sourceRef: 'topic-ref-after',
+      displayName: '新项目',
+    }
+    const sameNameDifferentTopic = {
+      ...renamed,
+      sourceRef: 'topic-ref-other',
+      topicHierarchyKey: 'topic:stable-2',
+    }
+
+    expect(reconcileSelectedSource(cached, [sameNameDifferentTopic, renamed])).toEqual(renamed)
+    expect(arkmePrependSourceByIdentity(renamed, [cached, sameNameDifferentTopic]))
+      .toEqual([renamed, sameNameDifferentTopic])
+  })
+
   it('persists account-scoped directories and the last selected source', () => {
     const storage = new MemoryStorage()
     const source = {
-      sourceRef: 'source-private', kind: 'private_chat' as const, displayName: '联系人',
+      sourceRef: 'source-private', sourceKey: 'chat:private-1', kind: 'private_chat' as const, displayName: '联系人',
       activeAtMillis: 1, unreadCount: 2, latestPreview: '你好', avatarRef: 'avatar-ref',
       hasUnreadMention: true, isMuted: true,
     }
@@ -112,6 +144,39 @@ describe('Arkme navigation cache', () => {
       { ...current, sourceRef: 'new-ref-1' },
       { ...current, sourceRef: 'new-ref-2' },
     ])).toBeUndefined()
+  })
+
+  it('rebinds a chat selection by its stable source key when activity rotates the capability ref', () => {
+    const cached = {
+      sourceRef: 'source-before-activity', sourceKey: 'chat:stable-1',
+      kind: 'group_chat' as const, displayName: '同名群聊', activeAtMillis: 1, unreadCount: 0,
+    }
+    const current = {
+      ...cached,
+      sourceRef: 'source-after-activity',
+      activeAtMillis: 2,
+      latestSequence: 9,
+    }
+    const sameNameDifferentChat = {
+      ...current,
+      sourceRef: 'source-other-chat',
+      sourceKey: 'chat:stable-2',
+    }
+
+    expect(reconcileSelectedSource(cached, [sameNameDifferentChat, current])).toEqual(current)
+  })
+
+  it('does not infer chat identity from a matching display name when the stable source key is absent', () => {
+    const previous = {
+      sourceRef: 'expired-chat-ref', kind: 'group_chat' as const, displayName: '项目群',
+      activeAtMillis: 1, unreadCount: 0,
+    }
+    const unrelated = {
+      ...previous,
+      sourceRef: 'different-chat-ref',
+    }
+
+    expect(reconcileSelectedSource(previous, [unrelated])).toBeUndefined()
   })
 
   it('invalidates legacy navigation caches when the Provider instance is first observed', () => {

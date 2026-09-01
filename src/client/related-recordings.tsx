@@ -256,10 +256,10 @@ export function mergeRelatedRecordingItems(
 export function isCurrentRelatedRecordingRequest(
   requestGeneration: number,
   activeGeneration: number,
-  requestSourceRef: string,
-  activeSourceRef: string,
+  requestSourceKey: string,
+  activeSourceKey: string,
 ): boolean {
-  return requestGeneration === activeGeneration && requestSourceRef === activeSourceRef
+  return requestGeneration === activeGeneration && requestSourceKey === activeSourceKey
 }
 
 export function shouldShowRelatedRecordingsEntry(

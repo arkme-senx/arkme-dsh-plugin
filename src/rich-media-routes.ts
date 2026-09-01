@@ -46,13 +46,34 @@ function headerText(req: IncomingMessage, name: string): string {
   return Array.isArray(value) ? value[0] ?? '' : value ?? ''
 }
 
+function clientExpectedUserId(req: IncomingMessage): number | undefined {
+  const raw = headerText(req, 'x-arkme-expected-user-id').trim()
+  if (raw === '') return undefined
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value <= 0 || String(value) !== raw) {
+    throw new ArkmePluginError('file-expected-user-invalid', '文件操作的预期账号无效', false, 400)
+  }
+  return value
+}
+
+async function assertRouteUser(service: ArkmeService, expectedUserId: number): Promise<void> {
+  if (await service.fileSessionUser() !== expectedUserId) {
+    throw new ArkmePluginError('file-account-changed', '账号已切换，本次文件操作已取消', false, 409)
+  }
+}
+
 export function createArkmeUploadHandler(service: ArkmeService, options: ArkmeRichMediaRouteOptions, mode: 'upload' | 'stage' = 'upload') {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     let temporaryPath = ''
     try {
       if (req.method !== 'POST') throw new ArkmePluginError('method-not-allowed', '只允许 POST 请求', false, 405)
       assertLocalRequest(req, options)
-      const expectedUserId = mode === 'stage' ? await service.fileSessionUser() : undefined
+      const requestedUserId = clientExpectedUserId(req)
+      const expectedUserId = await service.fileSessionUser()
+      if (requestedUserId !== undefined && requestedUserId !== expectedUserId) {
+        throw new ArkmePluginError('file-account-changed', '账号已切换，本次文件操作已取消', false, 409)
+      }
+      await assertRouteUser(service, expectedUserId)
       const plannedSize = Number(headerText(req, 'content-length'))
       const encodedName = headerText(req, 'x-arkme-file-name')
       const mimeType = headerText(req, 'content-type').split(';')[0]?.trim() || 'application/octet-stream'
@@ -77,10 +98,15 @@ export function createArkmeUploadHandler(service: ArkmeService, options: ArkmeRi
         }
       } finally { await handle.close() }
       if (received !== plannedSize) throw new ArkmePluginError('upload-size-mismatch', '上传文件不完整', false, 400)
+      await assertRouteUser(service, expectedUserId)
       const uploadedFileKind = normalizedMimeType.startsWith('audio/') ? 2 : arkmePickedFileKind(normalizedMimeType, fileName)
       const value = mode === 'stage'
         ? await service.fileStage(temporaryPath, { size: received, mimeType: normalizedMimeType, fileName }, expectedUserId)
-        : await service.uploadLocalFile(temporaryPath, { size: received, sha256: hash.digest('hex'), mimeType: normalizedMimeType, fileName, fileKind: uploadedFileKind })
+        : await service.uploadLocalFile(
+          temporaryPath,
+          { size: received, sha256: hash.digest('hex'), mimeType: normalizedMimeType, fileName, fileKind: uploadedFileKind },
+          { expectedUserId },
+        )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
       const known = error instanceof ArkmePluginError ? error : new ArkmePluginError('upload-internal-error', '文件上传失败', true, 500, { cause: error })

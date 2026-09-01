@@ -33,5 +33,8 @@ describe('Arkme directory slot contract', () => {
     expect(workspace).toContain('placeholder="搜索对话或消息"')
     expect(workspace).toContain('activateNativeEntry(); arkmeUi.showContactAdd()')
     expect(workspace).toContain('activateNativeEntry(); arkmeUi.showArko()')
+    expect(workspace).toMatch(
+      /const source = notificationActivation\.source[\s\S]*?activateNativeEntry\(\)[\s\S]*?arkmeUi\.selectSource\(source\)/,
+    )
   })
 })

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 const arkoSource = readFileSync(new URL('../src/client/ArkmeArkoSurface.tsx', import.meta.url), 'utf8')
 const sidebarSource = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
@@ -9,6 +9,7 @@ const toolButtonSource = readFileSync(new URL('../src/client/ArkmeComposerToolBu
 const toolIconSource = readFileSync(new URL('../src/client/ArkmeComposerToolIcon.tsx', import.meta.url), 'utf8')
 const presentationModuleUrl = new URL('../src/client/conversation-composer-presentation.ts', import.meta.url)
 const locationCaptureModuleUrl = new URL('../src/client/record-capture-location.ts', import.meta.url)
+const inputCaptureModuleUrl = new URL('../src/client/record-input-capture.ts', import.meta.url)
 
 describe('Arkme conversation composer presentation', () => {
   it('keeps file selection in the existing menu instead of exposing the internal cache', () => {
@@ -17,14 +18,14 @@ describe('Arkme conversation composer presentation', () => {
     expect(menu).toContain('添加照片和文件')
     expect(menu).toContain('写长文')
     expect(menu).not.toContain('采集本次位置')
-    expect(sidebarSource).toContain('开启位置记录')
+    expect(sidebarSource).not.toContain('开启位置记录')
     expect(menu).not.toContain('本地附件')
     expect(sidebarSource).not.toContain('files.local.list')
     expect(sidebarSource).not.toContain('添加到草稿')
     expect(sidebarSource).not.toContain('移除本地任务')
   })
 
-  it('offers the existing per-message location control for every record-producing conversation source', async () => {
+  it('supports default location capture without rendering a composer control', async () => {
     const locationCapture = await import(locationCaptureModuleUrl.href) as {
       arkmeSourceSupportsLocationCapture: (kind: string | undefined) => boolean
     }
@@ -32,10 +33,59 @@ describe('Arkme conversation composer presentation', () => {
       expect(locationCapture.arkmeSourceSupportsLocationCapture(kind)).toBe(true)
     }
     expect(locationCapture.arkmeSourceSupportsLocationCapture('bot')).toBe(false)
-    expect(sidebarSource).toContain('arkmeSourceSupportsLocationCapture(source?.kind)')
-    expect(sidebarSource).toContain('window.setTimeout(() => resolve(undefined), 900)')
-    expect(sidebarSource).toContain("charge: battery?.charging === true ? 1 : 2")
-    expect(sidebarSource).not.toContain('effectiveType')
+    expect(sidebarSource).toContain('const locationCaptureRequested = arkmeSourceSupportsLocationCapture(targetSource.kind)')
+    expect(sidebarSource).not.toContain('locationCaptureEnabled')
+    expect(sidebarSource).not.toContain('composerLocationRequesting')
+    expect(sidebarSource).not.toContain('⌖ 自动记录位置')
+  })
+
+  it('requests permission on the first supported send and captures later sends directly', async () => {
+    const locationCapture = await import(locationCaptureModuleUrl.href) as typeof import('../src/client/record-capture-location.js')
+    const selected = { latitude: 30.52, longitude: 114.31, capturedAtMillis: 100 }
+    const permissionState = vi.fn(async () => 'prompt' as const)
+    const requestPermissionAndLocation = vi.fn(async () => ({ ...selected, capturedAtMillis: 200 }))
+    const captureGrantedLocation = vi.fn(async () => ({ ...selected, capturedAtMillis: 300 }))
+
+    await expect(locationCapture.captureArkmeRecordLocationForSend({
+      permissionState,
+      requestPermissionAndLocation,
+      captureGrantedLocation,
+    })).resolves.toEqual({ state: 'captured', location: { ...selected, capturedAtMillis: 200 } })
+    expect(permissionState).toHaveBeenCalledOnce()
+    expect(requestPermissionAndLocation).toHaveBeenCalledOnce()
+    expect(captureGrantedLocation).not.toHaveBeenCalled()
+
+    permissionState.mockResolvedValueOnce('granted')
+    await expect(locationCapture.captureArkmeRecordLocationForSend({
+      permissionState,
+      requestPermissionAndLocation,
+      captureGrantedLocation,
+    })).resolves.toEqual({ state: 'captured', location: { ...selected, capturedAtMillis: 300 } })
+    expect(requestPermissionAndLocation).toHaveBeenCalledOnce()
+    expect(captureGrantedLocation).toHaveBeenCalledOnce()
+
+    permissionState.mockResolvedValueOnce('denied')
+    await expect(locationCapture.captureArkmeRecordLocationForSend({ permissionState })).resolves.toEqual({
+      state: 'permission-required', permission: 'denied',
+    })
+    expect(sidebarSource).toContain('captureArkmeRecordLocationForSend(')
+    expect(sidebarSource).not.toContain('⌖ 自动记录位置')
+  })
+
+  it('routes every quick-note source through the shared input capture owner', async () => {
+    const inputCapture = await import(inputCaptureModuleUrl.href) as {
+      arkmeSourceSupportsRecordInputCapture: (kind: string | undefined) => boolean
+    }
+    for (const kind of ['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic']) {
+      expect(inputCapture.arkmeSourceSupportsRecordInputCapture(kind)).toBe(true)
+    }
+    expect(inputCapture.arkmeSourceSupportsRecordInputCapture('bot')).toBe(false)
+    expect(sidebarSource).toContain('new ArkmeRecordInputCaptureOwner')
+    expect(sidebarSource).toContain('recordInputCaptureOwner.sync({')
+    expect(sidebarSource).toContain('recordInputCaptureOwner.finishForSubmit(targetDraftKey)')
+    expect(sidebarSource).toContain('<ArkmeBackgroundSoundWaveform')
+    expect(sidebarSource).toContain('backgroundSound: { fileRefs: backgroundSoundFileRefs, amplitudes: backgroundSoundAmplitudes }')
+    expect(sidebarSource).not.toContain('function arkmeComposerCaptureContext')
   })
 
   it('defines the private and group chat sizing contract once', async () => {
@@ -51,6 +101,7 @@ describe('Arkme conversation composer presentation', () => {
       padding: '0 24px 20px',
     })
     expect(arkmeConversationComposerLayout.composerInner).toMatchObject({
+      position: 'relative',
       width: '100%',
       gap: 8,
       padding: '12px 13px 9px',

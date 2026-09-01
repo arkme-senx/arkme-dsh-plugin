@@ -244,12 +244,15 @@ export class ArkmeRequestCoordinator {
           this.bump(request, 'staleDropped')
           throw new ArkmeStaleRequestError()
         }
+        if (this.inFlight.get(fullKey)?.promise !== promise) return value
         this.failures.delete(fullKey)
         if (cacheMs > 0) this.cache.set(fullKey, { value: clone(value), expiresAt: this.now() + cacheMs, epoch })
         return value
       })
       .catch(error => {
-        if (this.epoch(scope) === epoch && failureCooldownMs > 0
+        if (this.epoch(scope) === epoch
+          && this.inFlight.get(fullKey)?.promise === promise
+          && failureCooldownMs > 0
           && (request.shouldCooldown?.(error) ?? true)) {
           const jitter = 0.9 + this.random() * 0.2
           this.failures.set(fullKey, {
@@ -289,6 +292,8 @@ export class ArkmeRequestCoordinator {
     const prefix = `${scope}\u0000${keyPrefix}`
     for (const key of this.cache.keys()) if (key.startsWith(prefix)) this.cache.delete(key)
     for (const key of this.failures.keys()) if (key.startsWith(prefix)) this.failures.delete(key)
+    // Detach rather than abort: existing callers keep their result while future callers start fresh.
+    for (const key of this.inFlight.keys()) if (key.startsWith(prefix)) this.inFlight.delete(key)
   }
 
   snapshotStats(): Record<string, ArkmeRequestStats> {

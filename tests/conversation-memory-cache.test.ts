@@ -8,7 +8,8 @@ import {
   arkmeConversationTimelineDeltaItems,
   arkmeConversationTimelineSequenceRange,
   arkmeConversationTimelineContentEqual,
-  arkmeShouldRefreshConversationTimeline,
+  arkmeShouldRefreshChatTimeline,
+  arkmeShouldRefreshRecordTimeline,
   type ArkmeConversationTimelineSnapshot,
 } from '../src/client/conversation-memory-cache.js'
 
@@ -71,6 +72,17 @@ describe('ArkmeConversationMemoryCache', () => {
       .toEqual(['message-after-refresh'])
   })
 
+  it('does not manufacture chat sequence metadata for a record-owned timeline', () => {
+    const cache = new ArkmeConversationMemoryCache()
+    cache.storeTimeline('record-one', {
+      ...timeline('record-message'),
+      fetchedAtMillis: 100,
+      recordRevision: 3,
+    })
+
+    expect(cache.getTimeline('record-one')).not.toHaveProperty('latestSequence')
+  })
+
   it('keeps interwoven loading and failures out of the conversation markup', () => {
     const source = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
 
@@ -79,41 +91,42 @@ describe('ArkmeConversationMemoryCache', () => {
     expect(source).not.toContain('interwovenError')
   })
 
-  it('reuses a fresh authoritative timeline until its revision or latest sequence advances', () => {
+  it('refreshes chat timelines only from sequence advancement or cache expiry', () => {
     const nowMillis = 1_000_000
     const snapshot: ArkmeConversationTimelineSnapshot = {
       ...timeline('message-one'),
       fetchedAtMillis: nowMillis,
-      refreshRevision: 4,
       latestSequence: 8,
     }
 
-    expect(arkmeShouldRefreshConversationTimeline(snapshot, {
-      nowMillis: nowMillis + ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS - 1,
-      refreshRevision: 4,
-      latestSequence: 8,
-    })).toBe(false)
-    expect(arkmeShouldRefreshConversationTimeline(snapshot, {
-      nowMillis: nowMillis + 1,
-      refreshRevision: 5,
-      latestSequence: 8,
-    })).toBe(true)
-    expect(arkmeShouldRefreshConversationTimeline(snapshot, {
-      nowMillis: nowMillis + 1,
-      refreshRevision: 4,
-      latestSequence: 9,
-    })).toBe(true)
-    expect(arkmeShouldRefreshConversationTimeline(snapshot, {
-      nowMillis: nowMillis + ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS,
-      refreshRevision: 4,
-      latestSequence: 8,
-    })).toBe(true)
+    expect(arkmeShouldRefreshChatTimeline(
+      snapshot, nowMillis + ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS - 1, 8,
+    )).toBe(false)
+    expect(arkmeShouldRefreshChatTimeline(snapshot, nowMillis + 1, 9)).toBe(true)
+    expect(arkmeShouldRefreshChatTimeline(
+      snapshot, nowMillis + ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS, 8,
+    )).toBe(true)
+  })
+
+  it('refreshes record timelines only from their owner revision or cache expiry', () => {
+    const nowMillis = 1_000_000
+    const snapshot: ArkmeConversationTimelineSnapshot = {
+      ...timeline('message-one'),
+      fetchedAtMillis: nowMillis,
+      recordRevision: 4,
+    }
+
+    expect(arkmeShouldRefreshRecordTimeline(snapshot, nowMillis + 1, 4)).toBe(false)
+    expect(arkmeShouldRefreshRecordTimeline(snapshot, nowMillis + 1, 5)).toBe(true)
+    expect(arkmeShouldRefreshRecordTimeline(
+      snapshot, nowMillis + ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS, 4,
+    )).toBe(true)
   })
 
   it('detects semantic timeline changes without treating refreshed metadata as new content', () => {
-    const before = { ...timeline('message-one'), fetchedAtMillis: 100, refreshRevision: 1 }
-    const refreshed = { ...timeline('message-one'), fetchedAtMillis: 200, refreshRevision: 2 }
-    const changed = { ...timeline('message-two'), fetchedAtMillis: 200, refreshRevision: 2 }
+    const before = { ...timeline('message-one'), fetchedAtMillis: 100, recordRevision: 1 }
+    const refreshed = { ...timeline('message-one'), fetchedAtMillis: 200, recordRevision: 2 }
+    const changed = { ...timeline('message-two'), fetchedAtMillis: 200, recordRevision: 2 }
 
     expect(arkmeConversationTimelineContentEqual(before, refreshed)).toBe(true)
     expect(arkmeConversationTimelineContentEqual(before, changed)).toBe(false)
@@ -217,8 +230,9 @@ describe('ArkmeConversationMemoryCache', () => {
   it('keeps async refreshes behind freshness checks and centralizes viewport writes', () => {
     const source = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
 
-    expect(source).toContain('arkmeShouldRefreshConversationTimeline(cachedTimeline')
-    expect(source).toContain("setTimelineSkeletonSourceRef")
+    expect(source).toContain('arkmeShouldRefreshChatTimeline(cachedTimeline')
+    expect(source).toContain('arkmeShouldRefreshRecordTimeline(cachedTimeline')
+    expect(source).toContain('setTimelineSkeletonKey')
     expect(source).toContain('}, 120)')
     expect(source.match(/\.scrollTop\s*=/g)).toHaveLength(1)
     expect(source).toContain('arkmeConversationRestoredScrollTop')

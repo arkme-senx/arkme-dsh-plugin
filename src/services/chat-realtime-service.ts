@@ -6,18 +6,32 @@ import {
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeChatClientEvent,
+  ArkmeChatAttentionSummary,
   ArkmeChatRealtimeState,
   ArkmeSourceItem,
   ArkmeTimelineItem,
 } from '../types.js'
 import { SourceService } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import {
+  ArkmeDesktopAttentionBridge,
+  type ArkmeDesktopNotificationDispatchResult,
+  type ArkmeDesktopNotificationPayload,
+} from './desktop-attention-bridge.js'
 
 export interface ArkmeChatProjectionReader {
   chatTimelineItems(data: Record<string, unknown>, session: ArkmeSessionCredentials, chatSessionUid: string): Promise<ArkmeTimelineItem[]>
 }
 
+export interface ArkmeNativeAttentionDispatcher {
+  showNotification(payload: ArkmeDesktopNotificationPayload): Promise<ArkmeDesktopNotificationDispatchResult>
+  applyBadgeSummary(summary: { count: number; revision: number }): Promise<boolean>
+  resetBadgeCount?(): Promise<boolean>
+}
+
 const MAX_PROJECTION_RETRIES = 5
+const MAX_ATTENTION_SUMMARY_RETRIES = 5
+const MAX_NATIVE_NOTIFICATION_DELIVERY_CONCURRENCY = 3
 
 export interface PendingChatNotificationHint {
   hint: ArkmeChatReceiveHint
@@ -55,11 +69,22 @@ export class ChatRealtimeService {
   private notificationBaselineRetryTimer: ReturnType<typeof setTimeout> | undefined
   private notificationBaselineRetryCount = 0
   private chatClientRevision = 0
+  private attentionSummaryVersion = 0
+  private attentionSummaryFingerprint = ''
+  private latestAttentionSummary: ArkmeChatAttentionSummary | undefined
+  private attentionOwnerGeneration = 0
+  private attentionOwnerUserId: number | undefined
+  private attentionRefreshInFlight: Promise<void> | undefined
+  private attentionRefreshStarted = false
+  private attentionRefreshDirty = false
+  private attentionRetryTimer: ReturnType<typeof setTimeout> | undefined
+  private attentionRetryCount = 0
 
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly source: SourceService,
     private readonly projectionReader: ArkmeChatProjectionReader,
+    private readonly nativeAttention: ArkmeNativeAttentionDispatcher = new ArkmeDesktopAttentionBridge(),
   ) {
     this.chatRealtime = new ArkmeChatRealtimeRuntime({
       imBaseUrl: runtime.config.imBaseUrl,
@@ -67,6 +92,8 @@ export class ChatRealtimeService {
       refreshSession: async session => {
         try { return await runtime.refreshAccessToken(session) }
         catch (error) {
+          const activeSession = await runtime.sessionStore.read().catch(() => undefined)
+          if (activeSession === undefined || activeSession.userId !== session.userId) this.clearAttentionOwner()
           console.warn('dsh-arkme: Chat SSE credential refresh paused:', safeFailureMessage(error))
           return undefined
         }
@@ -77,14 +104,17 @@ export class ChatRealtimeService {
   }
 
   reconnect(): void {
+    void this.refreshAttentionSummary()
     this.chatRealtime.reconnect()
   }
 
   dispose(): void {
     if (this.projectionTimer !== undefined) clearTimeout(this.projectionTimer)
     if (this.notificationBaselineRetryTimer !== undefined) clearTimeout(this.notificationBaselineRetryTimer)
+    if (this.attentionRetryTimer !== undefined) clearTimeout(this.attentionRetryTimer)
     this.projectionTimer = undefined
     this.notificationBaselineRetryTimer = undefined
+    this.attentionRetryTimer = undefined
     this.pendingChatProjections.clear()
     this.projectionRetryCounts.clear()
     this.notificationBaselineSequences.clear()
@@ -93,6 +123,7 @@ export class ChatRealtimeService {
   }
 
   startChatRealtime(): () => void {
+    void this.refreshAttentionSummary()
     const unsubscribe = this.chatRealtime.subscribe(notice => { this.handleChatRealtimeNotice(notice) })
     const stop = this.chatRealtime.start()
     return () => {
@@ -100,8 +131,10 @@ export class ChatRealtimeService {
       stop()
       if (this.projectionTimer !== undefined) clearTimeout(this.projectionTimer)
       if (this.notificationBaselineRetryTimer !== undefined) clearTimeout(this.notificationBaselineRetryTimer)
+      if (this.attentionRetryTimer !== undefined) clearTimeout(this.attentionRetryTimer)
       this.projectionTimer = undefined
       this.notificationBaselineRetryTimer = undefined
+      this.attentionRetryTimer = undefined
       this.pendingChatProjections.clear()
       this.projectionRetryCounts.clear()
       this.notificationBaselineSequences.clear()
@@ -124,6 +157,7 @@ export class ChatRealtimeService {
       type: 'reconcile', revision: this.chatClientRevision, connected: state.connected,
       connectionGeneration: state.connectionGeneration,
       refresh: 'if-stale',
+      ...(this.latestAttentionSummary === undefined ? {} : { attentionSummary: { ...this.latestAttentionSummary } }),
     }
   }
 
@@ -141,6 +175,7 @@ export class ChatRealtimeService {
         refresh: 'none',
       })
       void this.reconcileChatNotificationBaseline(generation)
+      void this.refreshAttentionSummary()
       void this.invalidateRecordProjection()
       return
     }
@@ -186,6 +221,7 @@ export class ChatRealtimeService {
       const session = await this.runtime.sessionStore.read()
       if (session === undefined) return
       this.source.invalidateSourceListCache(session.userId, 'send_to_self')
+      this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'calendar:')
       this.emitChatClientEvent({
         type: 'projection-invalidated',
         revision: this.nextChatClientRevision(),
@@ -194,6 +230,155 @@ export class ChatRealtimeService {
     } catch (error) {
       console.warn('dsh-arkme: Record projection invalidation failed:', safeFailureMessage(error))
     }
+  }
+
+  async refreshAttentionSummary(): Promise<void> {
+    const session = await this.runtime.sessionStore.read()
+    if (session === undefined) {
+      this.clearAttentionOwner()
+      this.clearAttentionSummaryRetry()
+      return
+    }
+    this.activateAttentionOwner(session.userId)
+    const existing = this.attentionRefreshInFlight
+    if (existing !== undefined) {
+      if (this.attentionRefreshStarted) this.attentionRefreshDirty = true
+      await existing
+      return
+    }
+    // Defer the first read by one microtask so same-turn callers coalesce into
+    // one upstream request. Triggers arriving while any read is active mark a
+    // trailing refresh; looping until clean guarantees the last raced mutation
+    // is covered even when it arrives during a prior trailing read.
+    const pending = Promise.resolve().then(async () => {
+      do {
+        this.attentionRefreshDirty = false
+        this.attentionRefreshStarted = true
+        await this.refreshAttentionSummarySerial(this.attentionOwnerGeneration)
+        this.attentionRefreshStarted = false
+      } while (this.attentionRefreshDirty)
+    })
+    this.attentionRefreshInFlight = pending
+    try { await pending }
+    finally {
+      if (this.attentionRefreshInFlight === pending) {
+        this.attentionRefreshInFlight = undefined
+        this.attentionRefreshStarted = false
+        this.attentionRefreshDirty = false
+      }
+    }
+  }
+
+  private async refreshAttentionSummarySerial(ownerGeneration: number): Promise<void> {
+    try {
+      if (await this.runtime.sessionStore.read() === undefined) {
+        this.clearAttentionSummaryRetry()
+        return
+      }
+      const summary: ArkmeChatAttentionSummary = await this.source.chatUnreadBadgeSummary()
+      if (ownerGeneration !== this.attentionOwnerGeneration) return
+      const fingerprint = JSON.stringify(summary)
+      if (summary.summaryVersion < this.attentionSummaryVersion) {
+        const latest = this.latestAttentionSummary
+        if (latest !== undefined) {
+          const applied = await this.nativeAttention.applyBadgeSummary({
+            count: latest.badgeCount,
+            revision: latest.summaryVersion,
+          })
+          if (applied) this.clearAttentionSummaryRetry()
+          else this.scheduleAttentionSummaryRetry()
+        }
+        return
+      }
+      if (summary.summaryVersion === this.attentionSummaryVersion
+        && fingerprint === this.attentionSummaryFingerprint) {
+        // Browser already owns this snapshot, but native may have returned
+        // native-failed. Reusing the exact generation/revision/count is the
+        // idempotent retry contract for the client bridge.
+        const applied = await this.nativeAttention.applyBadgeSummary({ count: summary.badgeCount, revision: summary.summaryVersion })
+        if (applied) this.clearAttentionSummaryRetry()
+        else this.scheduleAttentionSummaryRetry()
+        return
+      }
+      this.attentionSummaryVersion = summary.summaryVersion
+      this.attentionSummaryFingerprint = fingerprint
+      this.latestAttentionSummary = { ...summary }
+      this.emitChatClientEvent({
+        type: 'attention-summary',
+        revision: this.nextChatClientRevision(),
+        summary,
+      })
+      const applied = await this.nativeAttention.applyBadgeSummary({ count: summary.badgeCount, revision: summary.summaryVersion })
+      if (applied) this.clearAttentionSummaryRetry()
+      else this.scheduleAttentionSummaryRetry()
+    } catch (error) {
+      if (await this.runtime.sessionStore.read().catch(() => undefined) === undefined) {
+        this.clearAttentionOwner()
+        this.clearAttentionSummaryRetry()
+        return
+      }
+      // Attention projection is best-effort and must never make Chat reads,
+      // writes, or SSE reconciliation fail.
+      console.warn('dsh-arkme: Chat attention summary refresh failed:', safeFailureMessage(error))
+      this.scheduleAttentionSummaryRetry()
+    }
+  }
+
+  private clearAttentionSummaryRetry(): void {
+    if (this.attentionRetryTimer !== undefined) clearTimeout(this.attentionRetryTimer)
+    this.attentionRetryTimer = undefined
+    this.attentionRetryCount = 0
+  }
+
+  private scheduleAttentionSummaryRetry(): void {
+    if (this.attentionRetryTimer !== undefined || this.attentionRetryCount >= MAX_ATTENTION_SUMMARY_RETRIES) return
+    this.attentionRetryCount += 1
+    const delay = Math.min(15_000, 1_000 * 2 ** (this.attentionRetryCount - 1))
+    this.attentionRetryTimer = setTimeout(() => {
+      this.attentionRetryTimer = undefined
+      void this.refreshAttentionSummary()
+    }, delay)
+  }
+
+  private activateAttentionOwner(userId: number): void {
+    if (this.attentionOwnerUserId === userId) return
+    if (this.attentionOwnerUserId !== undefined) this.resetAttentionSummary()
+    this.attentionOwnerUserId = userId
+  }
+
+  private clearAttentionOwner(): void {
+    if (this.attentionOwnerUserId === undefined) return
+    this.resetAttentionSummary()
+  }
+
+  resetAttentionSummary(): void {
+    this.clearAttentionSummaryRetry()
+    void this.nativeAttention.resetBadgeCount?.()
+    this.attentionOwnerGeneration += 1
+    this.attentionOwnerUserId = undefined
+    if (this.projectionTimer !== undefined) clearTimeout(this.projectionTimer)
+    this.projectionTimer = undefined
+    this.pendingChatProjections.clear()
+    this.projectionRetryCounts.clear()
+    this.projectionFailureCount = 0
+    this.notificationBaselineSequences.clear()
+    this.notificationBaselineGeneration = 0
+    const resetVersion = Math.max(Date.now(), this.attentionSummaryVersion + 1)
+    this.emitChatClientEvent({
+      type: 'attention-summary',
+      revision: this.nextChatClientRevision(),
+      summary: {
+        badgeCount: 0,
+        mutedUnreadCount: 0,
+        sessionCountWithUnread: 0,
+        hasAttention: false,
+        summaryVersion: resetVersion,
+        updatedAtMillis: resetVersion,
+      },
+    })
+    this.attentionSummaryVersion = 0
+    this.attentionSummaryFingerprint = ''
+    this.latestAttentionSummary = undefined
   }
 
   private async reconcileChatNotificationBaseline(connectionGeneration: number): Promise<void> {
@@ -340,6 +525,8 @@ export class ChatRealtimeService {
     pending: Array<[string, PendingChatProjection]>,
   ): Promise<Array<[string, PendingChatProjection]>> {
     const session = await this.runtime.requireSession()
+    this.activateAttentionOwner(session.userId)
+    const ownerGeneration = this.attentionOwnerGeneration
     const sessionUids = pending.map(([uid]) => uid).sort()
     const projectionBatchKey = sessionUids.join('|')
     const displayData = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
@@ -387,6 +574,7 @@ export class ChatRealtimeService {
         else failedUids.add(uid)
       })
     }
+    if (ownerGeneration !== this.attentionOwnerGeneration) return []
     const updates: Array<{ sourceKey: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }> = []
     const notifications: Array<Extract<ArkmeChatClientEvent, { type: 'message-notification' }>['notification']> = []
     for (const [uid, projection] of pending) {
@@ -399,6 +587,7 @@ export class ChatRealtimeService {
       const timelineItems = tailItemsByUid.get(uid) ?? []
       try {
         const source = await this.source.chatSourceFromBundle(bundle, session, this.source.cachedChatSourceByKey(cacheKey), timelineItems)
+        if (ownerGeneration !== this.attentionOwnerGeneration) return []
         this.source.setChatSourceByKey(cacheKey, source)
         const sourceKey = source.sourceKey ?? await this.source.chatDirectorySourceKey(session.userId, uid)
         updates.push({ sourceKey, source, timelineItems })
@@ -418,7 +607,7 @@ export class ChatRealtimeService {
             if (
               candidate.hint.latestSequence <= baselineSequence
               || candidate.hint.senderUserId === session.userId
-              || source.isMuted === true
+              || source.notificationAllowed !== true
             ) continue
             const message = timelineItems.find(item => item.sequence === candidate.hint.latestSequence && !item.isMe)
             if (message === undefined) {
@@ -448,15 +637,51 @@ export class ChatRealtimeService {
         failedUids.add(uid)
       }
     }
+    if (ownerGeneration !== this.attentionOwnerGeneration) return []
     if (updates.length > 0) {
       this.source.invalidateSourceListCache(session.userId, 'root')
+      this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'calendar:')
       this.emitChatClientEvent({
         type: 'sessions-delta',
         revision: this.nextChatClientRevision(),
         updates,
       })
+      void this.refreshAttentionSummary()
     }
-    for (const notification of notifications) {
+    const deliveries: Array<{
+      notification: (typeof notifications)[number]
+      fallbackToBrowser: boolean
+    }> = []
+    for (let offset = 0; offset < notifications.length; offset += MAX_NATIVE_NOTIFICATION_DELIVERY_CONCURRENCY) {
+      const chunk = notifications.slice(offset, offset + MAX_NATIVE_NOTIFICATION_DELIVERY_CONCURRENCY)
+      deliveries.push(...await Promise.all(chunk.map(async notification => {
+        if (ownerGeneration !== this.attentionOwnerGeneration) {
+          return { notification, fallbackToBrowser: false }
+        }
+        try {
+          const outcome = await this.nativeAttention.showNotification({
+            idempotencyKey: notification.eventUid,
+            kind: 'chat.message',
+            occurredAtMillis: notification.eventAtMillis,
+            expiresAtMillis: notification.eventAtMillis + 5 * 60_000,
+            presentation: { title: notification.title, body: notification.body },
+            activation: {
+              kind: 'chat-source',
+              sourceRef: notification.sourceRef,
+              sourceKey: notification.sourceKey,
+            },
+          })
+          return { notification, fallbackToBrowser: outcome.fallbackToBrowser }
+        } catch {
+          // An exception after native capability ownership is uncertain. Avoid a
+          // second Browser delivery; the concrete adapter reports safe fallback
+          // explicitly when no side-effecting request was attempted.
+          return { notification, fallbackToBrowser: false }
+        }
+      })))
+    }
+    for (const { notification, fallbackToBrowser } of deliveries) {
+      if (!fallbackToBrowser) continue
       this.emitChatClientEvent({
         type: 'message-notification',
         revision: this.nextChatClientRevision(),

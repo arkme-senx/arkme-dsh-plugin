@@ -126,6 +126,22 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).not.toContain('开始 Arkme 任务')
   })
 
+  it('keeps the Arkme conversation layer mounted and inaccessible below Contacts', () => {
+    arkmeUi.showContacts()
+    const markup = renderToStaticMarkup(<ArkmePersistentWorkspace {...({
+      sessionId: 'session-1',
+      useSessions: (selector: (state: { current?: string; ids: string[]; byId: Record<string, never> }) => unknown) => selector({ current: 'session-1', ids: [], byId: {} }),
+      closeDetails: vi.fn(),
+    } as never)} />)
+
+    expect(markup).toContain('data-arkme-contacts-workspace="true"')
+    expect(markup).toContain('data-arkme-owned="arkme-conversation-layer"')
+    expect(markup).toContain('visibility:hidden')
+    expect(markup).toContain('pointer-events:none')
+    expect(markup).toContain('aria-hidden="true"')
+    arkmeUi.showConversations()
+  })
+
   it('embeds the core-only native DSH client inside the current conversation region', () => {
     arkmeUi.showHarness()
     const markup = renderToStaticMarkup(<ArkmePersistentWorkspace {...({

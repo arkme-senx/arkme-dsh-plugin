@@ -30,7 +30,10 @@ export interface ArkmeClientConfig {
   jiwoScanLoginEnabled: boolean
   callAssetBasePath: string
   voiceprintEnrollmentPath: string
+  recordingImportPath: string
+  mediaPath: string
   shareWebsite: string
+  recordingWorkbenchEnabled: boolean
 }
 
 export type ArkmeBillingPaymentMethod = 'alipay_pc_web' | 'wechat_native'
@@ -431,6 +434,10 @@ export interface ArkmeBotSummary {
   latestMessagePreview?: string
   /** Unread count projected from the canonical Chat conversation, when Chat owns the Bot conversation. */
   unreadCount?: number
+  /** Attention count after applying the canonical Chat notification policy. */
+  badgeUnreadCount?: number
+  /** Whether new-message notifications are allowed by the canonical Chat policy. */
+  notificationAllowed?: boolean
   /** Notification mute projection from the canonical Chat conversation, when available. */
   isMuted?: boolean
   /** Account-bound opaque reference resolved through image.read. */
@@ -452,6 +459,14 @@ export interface ArkmeBotConversationMessage {
   status: string
   createdAtMillis: number
   attachments: ArkmeBotConversationAttachment[]
+  /** Account-, owner- and conversation-bound capability; absent for unstable or owner-incomplete messages. */
+  messageActionRef?: string
+  messageActionCapabilities?: ArkmeMessageActionCapabilities
+}
+
+export interface ArkmeMessageActionCapabilities {
+  copyLink: boolean
+  forward: boolean
 }
 
 /** Safe attachment metadata; source file identifiers and remote URLs remain Host-owned. */
@@ -552,12 +567,18 @@ export interface ArkmeWorldAvatarFallback {
   label: string
 }
 
+export interface ArkmeWorldExtensionShare {
+  ref: string
+  url: string
+}
+
 /** Immutable display snapshot emitted after one extension version becomes public. */
 export interface ArkmeWorldExtensionPublication {
   extensionId: string
   version: string
   name: string
   description: string
+  share?: ArkmeWorldExtensionShare
   iconRef?: string
   previewRefs: string[]
   visibility: 'public'
@@ -1053,8 +1074,12 @@ export interface ArkmeProviderCapabilities {
     sourceTextSend: true
     /** Recipient read/unread summaries and group member detail for current-user-sent messages. */
     messageReadReceipts?: true
+    /** Peer group-chat messages expose an account-bound report action. */
+    messageReport?: true
     richContentRead: boolean
     richContentSend: boolean
+    /** Explicit text background-sound descriptors are supported by direct and durable rich sends. */
+    backgroundSound?: true
     fileUpload: boolean
     outgoingCall: true
     /** Browser-safe call-history list/detail and explicit summary retry are available. */
@@ -1226,6 +1251,10 @@ export interface ArkmeSourceItem {
   latestPreview?: string
   activeAtMillis: number
   unreadCount: number
+  /** Attention count after applying mute/notification policy; raw unreadCount remains authoritative. */
+  badgeUnreadCount?: number
+  /** Whether new-message notifications are allowed for this conversation. */
+  notificationAllowed?: boolean
   hasUnreadMention?: boolean
   /** Effective chat notification state. True when mute is on or push notifications are disabled. */
   isMuted?: boolean
@@ -1329,6 +1358,13 @@ export interface ArkmeRecordLocationCapture {
   capturedAtMillis: number
 }
 
+/** Browser-safe playback projection for every segment of one background recording. */
+export interface ArkmeMessageSnapshotBackgroundSoundPlayback {
+  mediaRefs: string[]
+  amplitudes: number[]
+  durationSeconds?: number
+}
+
 export interface ArkmeMessageSnapshotDetail {
   itemUid: string
   textContent: string
@@ -1338,6 +1374,7 @@ export interface ArkmeMessageSnapshotDetail {
   shareTimes?: number
   captureContext?: ArkmeRecordCaptureContext
   backgroundSound: 'available' | 'not-recorded' | 'disabled' | 'unknown'
+  backgroundSoundPlayback?: ArkmeMessageSnapshotBackgroundSoundPlayback
   locationCapture?: ArkmeRecordLocationCapture
   locationLabel?: string
   weather?: string
@@ -1649,6 +1686,26 @@ export interface ArkmeUploadedAsset {
   fileKind: 1 | 2 | 3 | 4
 }
 
+/** Explicit background-audio role. Ordinary `audio/*` assets never acquire this role implicitly. */
+export interface ArkmeRichBackgroundSoundInput {
+  assets: ArkmeUploadedAsset[]
+  amplitudes: number[]
+}
+
+export type ArkmeBackgroundSoundEligibilityReason = 'eligible' | 'membership-required' | 'membership-unavailable'
+
+/** Current-account server projection for the text background-sound switch. */
+export interface ArkmeBackgroundSoundPreference {
+  userId: number
+  found: boolean
+  enabled: boolean
+  eligible: boolean
+  memberType?: number
+  eligibilityReason: ArkmeBackgroundSoundEligibilityReason
+  sourceVersion?: number
+  updatedAtMillis?: number
+}
+
 export interface ArkmeFavoriteSticker {
   fileAssetUid: string
   fileName: string
@@ -1688,16 +1745,19 @@ export interface ArkmeRichSendInput {
   /** Browser/device data captured at send time, when available. */
   captureContext?: ArkmeRecordCaptureContext
   assets?: ArkmeUploadedAsset[]
+  backgroundSound?: ArkmeRichBackgroundSoundInput
   humanMentions?: ArkmeHumanMentionInput[]
   botMentions?: ArkmeBotMentionInput[]
 }
 
-export interface ArkmeHumanMentionInput {
-  memberRef?: string
-  all?: boolean
+interface ArkmeHumanMentionRange {
   startIndex: number
   length: number
 }
+
+export type ArkmeHumanMentionInput =
+  | (ArkmeHumanMentionRange & { mentionRef: string; memberRef?: never; all?: never })
+  | (ArkmeHumanMentionRange & { all: true; mentionRef?: never; memberRef?: never })
 
 export interface ArkmeBotMentionInput {
   botRef: string
@@ -1727,6 +1787,8 @@ export interface ArkmeLongArticleDraft {
   durationMillis: number
   updatedAtMillis: number
 }
+
+export type ArkmeMessageReportType = 1 | 2 | 3 | 4
 
 export interface ArkmeMessageReportResult {
   messageRef: string
@@ -1896,6 +1958,8 @@ export interface ArkmeInterwovenDetail {
 export interface ArkmeSourceSendResult {
   sourceRef: string
   itemUid: string
+  /** Host-signed reference for immediate actions before timeline convergence. */
+  messageActionRef?: string
   status: number
   sequence?: number
   localState: 'synced' | 'failed'
@@ -2018,7 +2082,13 @@ export interface ArkmeGroupMemberList {
 }
 
 export interface ArkmeConversationMemberItem {
+  /** Stable account-and-session-scoped identity for member actions. */
   memberRef: string
+  /** Present only when this active non-self group member can be selected for a new human mention. */
+  mentionRef?: string
+  /** Public/group-safe name bound to mentionRef; never contains the viewer's private contact label. */
+  mentionDisplayName?: string
+  /** Viewer-facing label; it may be the current viewer's private contact remark. */
   displayName: string
   memberName?: string
   secondaryName?: string
@@ -2158,8 +2228,15 @@ export interface ArkmeOpenPrivateChatResult {
   source: ArkmeSourceItem
 }
 
+export interface ArkmeGroupActionTarget {
+  sourceRef: string
+  sourceKey?: string
+  kind: 'group_chat'
+  displayName: string
+}
+
 export interface ArkmeGroupSettingsSnapshot {
-  source: ArkmeSourceItem
+  target: ArkmeGroupActionTarget
   selfRole: ArkmeGroupMemberRole
   selfStatus: ArkmeGroupMemberStatus
   canRename: boolean
@@ -2172,8 +2249,12 @@ export interface ArkmeGroupNotificationResult {
   messageDnd: boolean
 }
 
-export interface ArkmeGroupActionResult {
+export interface ArkmeGroupProjectionResult {
   source: ArkmeSourceItem
+  status: 'ok'
+}
+
+export interface ArkmeGroupCommandResult {
   status: 'ok'
 }
 
@@ -2221,6 +2302,46 @@ export interface ArkmeRecordingTranscriptItem {
   text: string
 }
 
+/** Browser-safe day projection. Audio owner ids remain sealed in itemRef. */
+export interface ArkmeRecordingWorkbenchItem {
+  itemId: string
+  itemRef: string
+  startAtMillis: number
+  endAtMillis: number
+  speakerNumber: number
+  speakerKey: string
+  speakerColorIndex: number
+  speakerLabel: string
+  speakerAvatarRef?: string
+  sameSpeakerItemCount: number
+  isSelf: boolean
+  isBackground: boolean
+  text: string
+}
+
+export interface ArkmeRecordingPlayback {
+  playbackRef: string
+  mimeType: string
+  startOffsetMillis: number
+  endOffsetMillis: number
+}
+
+export interface ArkmeRecordingSpeakerOption {
+  speakerRef: string
+  label: string
+  avatarRef?: string
+  kind: 'arkme-user' | 'speaker'
+  currentAssignment: boolean
+  isCurrentUser: boolean
+  recommended: boolean
+}
+
+export interface ArkmeRecordingSpeakerMutationResult {
+  scope: 'item' | 'speaker'
+  affectedCount: number
+  day: ArkmeRecordingDay
+}
+
 export interface ArkmeRecordingTimelineEvent {
   eventId: string
   startAt: string
@@ -2257,15 +2378,16 @@ export interface ArkmeRecordingSection<T> {
   message: string
 }
 
-export interface ArkmeRecordingTranscriptSection extends ArkmeRecordingSection<ArkmeRecordingTranscriptItem> {
+export interface ArkmeRecordingTranscriptSection<T = ArkmeRecordingTranscriptItem> extends ArkmeRecordingSection<T> {
   identityCoverage?: 'complete' | 'partial'
   totalDurationMillis: number
+  processingCount: number
 }
 
 export interface ArkmeRecordingDay {
   dateStamp: number
   totalDurationMillis: number
-  transcript: ArkmeRecordingSection<ArkmeRecordingTranscriptItem>
+  transcript: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
   summary: ArkmeRecordingSection<ArkmeRecordingVersion>
   timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
 }
@@ -2554,6 +2676,13 @@ export interface ArkmeArkoHistoryItem {
   errorCode?: string
   retryOfRunUid?: string
   createdRecordUids: string[]
+  /** Original user input Record identity. This is distinct from Agent-created side effects. */
+  entryRecordUid?: string
+  /** Host-signed message action capability for one stable persisted message. */
+  messageActionRef?: string
+  /** Session-bound conversation capability paired with this historical Agent message. */
+  messageActionConversationRef?: string
+  messageActionCapabilities?: ArkmeMessageActionCapabilities
 }
 
 export interface ArkmeArkoHistoryPage {
@@ -2681,16 +2810,32 @@ export interface ArkmeChatRealtimeState {
   lastEventAtMillis?: number
 }
 
+/** Server-owned unread attention summary across every visible conversation. */
+export interface ArkmeChatAttentionSummary {
+  badgeCount: number
+  mutedUnreadCount: number
+  sessionCountWithUnread: number
+  hasAttention: boolean
+  summaryVersion: number
+  updatedAtMillis: number
+}
+
 export type ArkmeChatClientEvent = {
   type: 'reconcile'
   revision: number
   connected: boolean
   refresh?: 'none' | 'if-stale' | 'force'
   connectionGeneration: number
+  /** Latest server-owned full attention summary for Browser SSE reconnects. */
+  attentionSummary?: ArkmeChatAttentionSummary
 } | {
   type: 'sessions-delta'
   revision: number
   updates: Array<{ sourceKey?: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }>
+} | {
+  type: 'attention-summary'
+  revision: number
+  summary: ArkmeChatAttentionSummary
 } | {
   type: 'projection-invalidated'
   revision: number
@@ -2772,6 +2917,8 @@ export type ArkmePluginOperation =
   | 'calendar.records'
   | 'user.profile'
   | 'user.profile.refresh'
+  | 'settings.background-sound.get'
+  | 'settings.background-sound.update'
   | 'user.arkme-id.check'
   | 'user.arkme-id.set'
   | 'image.read'
@@ -2813,6 +2960,7 @@ export type ArkmePluginOperation =
   | 'source.mark-read'
   | 'source.read-receipts.summary-list'
   | 'source.read-receipts.detail'
+  | 'source.message-report'
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
@@ -2934,6 +3082,14 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'dsh-beta-community.join'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'recordings.import.preflight'
+  | 'recordings.import.list'
+  | 'recordings.import.status'
+  | 'recordings.import.retry'
+  | 'recordings.import.cancel'
+  | 'recordings.playback.open'
+  | 'recordings.speaker.options'
+  | 'recordings.speaker.assign-item'
   | 'search.records'
   | 'search.scene'
   | 'search.recordings'
@@ -2956,6 +3112,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'arko.ask'
   | 'arko.run.status'
   | 'arko.cancel'
+  | 'message-actions.copy-link'
+  | 'message-actions.forward'
   | 'plugin.update.status'
   | 'plugin.update.check'
   | 'plugin.update.acknowledge'

@@ -12,9 +12,10 @@ import type {
   ArkmeTimelineItem,
 } from '../types.js'
 import { callArkme } from './api.js'
-import { ArkmeUserAvatar, loadArkmeImageDataUrl } from './ArkmeAvatar.js'
+import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
 
 const MENU_WIDTH = 188
 const MENU_ROW_HEIGHT = 44
@@ -326,24 +327,20 @@ export function arkmeMemberProfileNames(
   }
 }
 
+export type ArkmeMemberProfileIdentity = Pick<
+  ArkmeConversationMemberItem,
+  'displayName' | 'memberName' | 'secondaryName' | 'avatarRef'
+> & { avatarFallback?: ArkmeGroupAvatarFallback }
+
 export function ArkmeMemberProfileCard(props: {
-  member: ArkmeConversationMemberItem & { avatarFallback?: ArkmeGroupAvatarFallback }
+  member: ArkmeMemberProfileIdentity
   showTopicNickname?: boolean
   busy: boolean
   onClose: () => void
   onSend: () => void
 }) {
-  const [backdrop, setBackdrop] = useState('')
+  const backdrop = useArkmeAvatarImage(props.member.avatarRef) ?? ''
   const [buttonState, setButtonState] = useState<'idle' | 'hover' | 'active'>('idle')
-  useEffect(() => {
-    let active = true
-    setBackdrop('')
-    if (props.member.avatarRef === undefined) return () => { active = false }
-    void loadArkmeImageDataUrl(props.member.avatarRef)
-      .then(value => { if (active) setBackdrop(value) })
-      .catch(() => undefined)
-    return () => { active = false }
-  }, [props.member.avatarRef])
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') props.onClose() }
     window.addEventListener('keydown', onKey)

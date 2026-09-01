@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createArkmeSdk, ArkmeClientError } from '../src/sdk/index.js'
+import { createArkmeSdk, ArkmeClientError, type ArkmeFileSendInput } from '../src/sdk/index.js'
+import type { ArkmeRichSendInput } from '../src/types.js'
 import type {
   ArkmeOutgoingCallIntentClaim,
   ArkmeOutgoingCallPrepareResult,
@@ -18,6 +19,66 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('exposes typed background and location sends without owning snapshot display', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+      calls.push(request)
+      if (request.operation === 'files.send') return success({ ...request.params, taskRef: 'task-1', files: [], state: 'queued' })
+      return success({ sourceRef: 'source-1', itemUid: 'record-1', status: 1, localState: 'synced' })
+    } })
+    const asset = {
+      fileAssetUid: 'asset-background-audio', fileName: 'background.m4a',
+      mimeType: 'audio/mp4', size: 8, fileKind: 2 as const,
+    }
+    const richInput = {
+      textContent: '背景文字', backgroundSound: { assets: [asset], amplitudes: [0.1, 0.8] },
+    } satisfies ArkmeRichSendInput
+    const fileInput = {
+      sourceRef: 'source-1',
+      recordUid: '00000000-0000-4000-8000-000000000001',
+      relationUid: '00000000-0000-4000-8000-000000000002',
+      fileRefs: ['arkme-file-v1.00000000-0000-4000-8000-000000000003'],
+      content: { textContent: '背景文字' },
+      backgroundSound: {
+        fileRefs: ['arkme-file-v1.00000000-0000-4000-8000-000000000003'], amplitudes: [0.1, 0.8],
+      },
+      location: { latitude: 30.52, longitude: 114.31, capturedAtMillis: 100 },
+      expectedUserId: 42,
+    } satisfies ArkmeFileSendInput
+
+    await sdk.sendRich('source-1', richInput, {
+      recordUid: 'record-1', relationUid: 'relation-1', expectedUserId: 42,
+    })
+    await sdk.sendFiles(fileInput)
+
+    expect(calls).toEqual([
+      { operation: 'source.send-rich', params: {
+        sourceRef: 'source-1', ...richInput, recordUid: 'record-1', relationUid: 'relation-1', expectedUserId: 42,
+      } },
+      { operation: 'files.send', params: { textContent: '背景文字', ...fileInput } },
+    ])
+  })
+
+  it('reads and explicitly updates the account background-sound preference', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+      calls.push(request)
+      return success({
+        userId: 42, found: true, enabled: request.params?.enabled ?? false,
+        eligible: true, memberType: 1, eligibilityReason: 'eligible',
+      })
+    } })
+
+    await expect(sdk.backgroundSoundPreference()).resolves.toMatchObject({ enabled: false })
+    await expect(sdk.updateBackgroundSoundPreference(true, undefined, 42)).resolves.toMatchObject({ enabled: true })
+    expect(calls).toEqual([
+      { operation: 'settings.background-sound.get', params: {} },
+      { operation: 'settings.background-sound.update', params: { enabled: true, expectedUserId: 42 } },
+    ])
+  })
+
   it('manages account-scoped favorite stickers through the public typed SDK', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({
@@ -92,6 +153,9 @@ describe('Arkme SDK', () => {
         const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
         calls.push(request)
         if (request.operation === 'source.message-copy-link') return success({ sid: 'sid-1', url: 'https://app.arkme.ai/share/sid-1' })
+        if (request.operation === 'source.message-report') return success({
+          messageRef: request.params?.messageRef, reportUid: 'report-1', status: 1,
+        })
         if (request.operation === 'source.message-copy-link.resolve') return success({
           sid: 'U2HQgn1RhPJZaFmx',
           displayTitle: '实习性的快记',
@@ -126,6 +190,11 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.copyMessageLink('source-ref', [' action-1 ', '', 'action-2']))
       .resolves.toEqual({ sid: 'sid-1', url: 'https://app.arkme.ai/share/sid-1' })
+    await expect(sdk.reportMessage(' arkme-message-v1.payload.signature ', 4, {
+      reason: ' 补充说明 ', requestUid: '019d8590-ebb4-7232-90f2-000000000001',
+    })).resolves.toEqual({
+      messageRef: 'arkme-message-v1.payload.signature', reportUid: 'report-1', status: 1,
+    })
     await expect(sdk.resolveMessageCopyLink(' U2HQgn1RhPJZaFmx '))
       .resolves.toMatchObject({ sid: 'U2HQgn1RhPJZaFmx', displayTitle: '实习性的快记' })
     await expect(sdk.extendMessageCopyLink(' U2HQgn1RhPJZaFmx ', ' 延展 ', {
@@ -149,6 +218,10 @@ describe('Arkme SDK', () => {
 
     expect(calls).toEqual([
       { operation: 'source.message-copy-link', params: { sourceRef: 'source-ref', actionRefs: ['action-1', 'action-2'] } },
+      { operation: 'source.message-report', params: {
+        messageRef: 'arkme-message-v1.payload.signature', reportType: 4, reason: '补充说明',
+        requestUid: '019d8590-ebb4-7232-90f2-000000000001',
+      } },
       { operation: 'source.message-copy-link.resolve', params: { sid: 'U2HQgn1RhPJZaFmx' } },
       { operation: 'source.message-copy-link.extend', params: { sid: 'U2HQgn1RhPJZaFmx', itemIndex: 1, textContent: '延展', recordUid: 'record-extension-1' } },
       { operation: 'source.message-extension.context', params: { sourceRef: 'source-ref', messageActionRef: 'opaque-action' } },
@@ -157,6 +230,14 @@ describe('Arkme SDK', () => {
       { operation: 'source.forward-messages', params: { sourceRef: 'source-ref', targetSourceRef: 'target-source-ref', actionRefs: ['action-1'], recordUid: 'record-1', relationUid: 'rel-1', commentText: '附言' } },
     ])
     await expect(sdk.copyMessageLink('source-ref', ['action-1', 'action-1'])).rejects.toThrow('unique')
+    const randomUuid = vi.spyOn(globalThis.crypto, 'randomUUID')
+    await expect(sdk.reportMessage('', 1)).rejects.toThrow('message reference')
+    expect(randomUuid).not.toHaveBeenCalled()
+    randomUuid.mockRestore()
+    await expect(sdk.reportMessage('arkme-message-v1.payload.signature', 4)).rejects.toThrow('reason')
+    await expect(sdk.reportMessage('arkme-message-v1.payload.signature', 1, {
+      requestUid: 'not-a-uuid',
+    })).rejects.toThrow('request UID')
     await expect(sdk.resolveMessageCopyLink('bad')).rejects.toThrow('16 alphanumeric')
     await expect(sdk.extendMessageCopyLink('bad', '延展')).rejects.toThrow('16 alphanumeric')
     await expect(sdk.resolveLinkMetadata('')).rejects.toThrow('must not be empty')
@@ -488,6 +569,7 @@ describe('Arkme SDK', () => {
               recordCalendar: true,
               sourceDirectory: true, sourceTimeline: true, sourceTextSend: true, outgoingCall: true,
               messageReadReceipts: true,
+              messageReport: true,
               extensionManagement: true,
               extensionIcons: true,
             },
@@ -534,7 +616,7 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.capabilities()).resolves.toMatchObject({
       contractVersion: 1,
-      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true, messageReadReceipts: true, accountSettings: true },
+      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true, messageReadReceipts: true, messageReport: true, accountSettings: true },
       limits: { maxMessageReadReceiptItems: 50 },
     })
     await expect(sdk.search('复盘', { limit: 5, syncAll: true })).resolves.toMatchObject({ revision: 4 })
@@ -652,7 +734,7 @@ describe('Arkme SDK', () => {
     })).resolves.toMatchObject({ itemUid: 'record-agent-1' })
     await expect(sdk.sendText('source-1', '@小林 请看', {
       recordUid: 'record-mention-1', relationUid: 'rel-mention-1',
-      humanMentions: [{ memberRef: 'member-1', startIndex: 0, length: 3 }],
+      humanMentions: [{ mentionRef: 'mention-1', startIndex: 0, length: 3 }],
     })).resolves.toMatchObject({ itemUid: 'record-mention-1' })
     await expect(sdk.sendText('source-1', '@所有人 请看', {
       recordUid: 'record-all-mention-1', relationUid: 'rel-all-mention-1',
@@ -696,7 +778,7 @@ describe('Arkme SDK', () => {
           textContent: '@小林 请看',
           recordUid: 'record-mention-1',
           relationUid: 'rel-mention-1',
-          humanMentions: [{ memberRef: 'member-1', startIndex: 0, length: 3 }],
+          humanMentions: [{ mentionRef: 'mention-1', startIndex: 0, length: 3 }],
         },
       },
       {

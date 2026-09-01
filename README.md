@@ -57,7 +57,7 @@ SHA256SUMS
 pnpm pack:runtime -- --output-dir /path/to/output
 ```
 
-脚本会运行插件现有构建流程，并校验包名、版本、Release Set 必需入口、归档路径和文件类型；校验失败时不会留下不完整制品。
+脚本会运行插件现有构建流程，并校验包名、版本、Release Set 必需入口、归档路径和文件类型；tar 条目顺序、mtime、owner/group 与权限均固定，在同一 Node.js/zstd 构建工具链下，同一源码重复构建会生成相同摘要。校验失败时不会留下不完整制品。
 
 ## 架构
 

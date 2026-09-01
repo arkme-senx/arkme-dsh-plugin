@@ -8,7 +8,7 @@ import { GroupAiPolishService } from '../../src/services/group-ai-polish-service
 import { MediaService } from '../../src/services/media-service.js'
 import { ProfileService } from '../../src/services/profile-service.js'
 import { RecordService } from '../../src/services/record-service.js'
-import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
+import { ArkmePluginError, ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { SourceService } from '../../src/services/source-service.js'
 import { dispatchArkmeHostOperation } from '../../src/host-api.js'
 import { createArkmeSdk } from '../../src/sdk/index.js'
@@ -49,6 +49,27 @@ function snapshotActionRef(input: Partial<Record<string, unknown>> = {}): string
   })).toString('base64url')
   const signature = createHmac('sha256', 'snapshot-test-signing-key').update(payload).digest('base64url')
   return `arkme-message-action-v1.${payload}.${signature}`
+}
+
+function messageActionPayload(actionRef: string): Record<string, unknown> {
+  const [, payload = ''] = actionRef.split('.')
+  return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>
+}
+
+function chatMemberRef(
+  viewerUserId: number,
+  chatSessionUid: string,
+  targetUserId: number,
+  signingKey = 'member-signing-key',
+): string {
+  const payload = Buffer.from(JSON.stringify({
+    version: 1,
+    viewerUserId,
+    chatSessionUid,
+    targetUserId,
+  }), 'utf8').toString('base64url')
+  const signature = createHmac('sha256', signingKey).update(payload).digest('base64url')
+  return `arkme-chat-member-v1.${payload}.${signature}`
 }
 
 describe('ChatService', () => {
@@ -277,6 +298,249 @@ describe('ChatService', () => {
       },
     })
   })
+  it('returns a source-bound signed action reference immediately for every text and rich send source', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const sourceKinds = ['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic'] as const
+    const sourcePayloads = new Map<string, { version: 1; userId: number; kind: typeof sourceKinds[number]; ownerRef: string; displayName: string }>()
+    for (const kind of sourceKinds) {
+      sourcePayloads.set(`source-${kind}`, { version: 1, userId: 42, kind, ownerRef: `owner-${kind}`, displayName: kind })
+      sourcePayloads.set(`wrong-${kind}`, { version: 1, userId: 42, kind, ownerRef: `wrong-owner-${kind}`, displayName: kind })
+    }
+    const source = {
+      openSourceRef: vi.fn(async (sourceRef: string) => sourcePayloads.get(sourceRef)),
+      invalidateSourceListCache: vi.fn(),
+    }
+    const runtime = {
+      config: { richMediaSendEnabled: true, maxTextLength: 20_000 },
+      stateStore: { uniqueCode: vi.fn(async () => 'send-action-signing-key') },
+      requireSession: vi.fn(async () => session),
+      authenticatedPost: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        if (path === '/api/v1/records/detail') {
+          return { record_core: { record_uid: body.record_uid, text_content: '权威快记详情', status: 1 } }
+        }
+        if (path === '/api/v1/records/location/context/get') return { record_uid: body.record_uid }
+        return { record_uid: body.record_uid, status: 1 }
+      }),
+      authenticatedChatPost: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        if (path === '/api/v1/chats/records/detail') {
+          return { item: {
+            relation: {
+              record_uid: body.record_uid,
+              rel_uid: body.rel_uid,
+              record_owner_user_id: 42,
+              sender_user_id: 42,
+              seq: body.seq ?? 17,
+            },
+            record: { status: 1, payload: { record_uid: body.record_uid, text_content: '权威聊天详情' } },
+          } }
+        }
+        return { record_uid: body.record_uid, rel_uid: body.rel_uid, audit_status: 1, seq: 17 }
+      }),
+    }
+    const record = {
+      createTextForConversation: vi.fn(async (recordUid: string) => ({ recordUid, status: 1, localState: 'synced' })),
+    }
+    const realtime = {
+      emitChatClientEvent: vi.fn(), nextChatClientRevision: vi.fn(() => 1),
+      scheduleChatSessionProjection: vi.fn(),
+      invalidateRecordProjection: vi.fn(async () => {}),
+    }
+    let chat!: ChatService
+    const aiPolish = {
+      sendGroupSourceTextWithAiPolish: vi.fn(async (
+        ...args: Parameters<GroupAiPolishService['sendGroupSourceTextWithAiPolish']>
+      ) => {
+        const [sourceRef, chatSessionUid, text, recordUid, relationUid, currentSession, options = {}] = args
+        return await chat.sendChatSourceTextRaw(
+          sourceRef, chatSessionUid, text, recordUid, relationUid, currentSession,
+          undefined, undefined, options.signal, options,
+        )
+      }),
+    }
+    chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, record as never,
+      {} as never, {} as never, aiPolish as never, realtime,
+    )
+
+    for (const mode of ['text', 'rich'] as const) {
+      for (const kind of sourceKinds) {
+        const sourceRef = `source-${kind}`
+        const recordUid = `record-${mode}-${kind}`
+        const relationUid = `relation-${mode}-${kind}`
+        const result = mode === 'text'
+          ? await chat.sendSourceText(sourceRef, `正文-${kind}`, { recordUid, relationUid })
+          : await chat.sendSourceRich(sourceRef, {
+              title: `标题-${kind}`,
+              textContent: `正文-${kind}`,
+              assets: [
+                { fileAssetUid: 'asset-file-12345', fileName: 'report.pdf', mimeType: 'application/pdf', size: 12, fileKind: 4 },
+                { fileAssetUid: 'asset-image-1234', fileName: 'photo.png', mimeType: 'image/png', size: 34, fileKind: 1 },
+              ],
+            }, { recordUid, relationUid })
+        expect(result).toMatchObject({ itemUid: recordUid, localState: 'synced' })
+        expect(result.messageActionRef).toMatch(/^arkme-message-action-v1\./u)
+
+        const payload = messageActionPayload(result.messageActionRef ?? '')
+        expect(payload).toMatchObject({
+          userId: 42,
+          sourceOwnerRef: `owner-${kind}`,
+          recordOwnerUserId: 42,
+          recordUid,
+          senderUserId: 42,
+          sourceKind: kind === 'private_chat' || kind === 'group_chat' ? 'chat_relation' : 'record',
+          relationUid: kind === 'private_chat' || kind === 'group_chat' ? relationUid : '',
+          chatSessionUid: kind === 'private_chat' || kind === 'group_chat' ? `owner-${kind}` : '',
+          textContent: `正文-${kind}`,
+          templateKind: mode === 'rich' ? 2 : 1,
+          imageCount: mode === 'rich' ? 1 : 0,
+          fileCount: mode === 'rich' ? 1 : 0,
+          fileNames: mode === 'rich' ? ['report.pdf'] : [],
+        })
+        await expect(chat.relatedQuickNoteLocator(sourceRef, result.messageActionRef ?? ''))
+          .resolves.toMatchObject({ recordUid, recordOwnerUserId: 42 })
+        await expect(chat.messageSnapshotDetail(sourceRef, result.messageActionRef ?? ''))
+          .resolves.toMatchObject({ itemUid: recordUid, syncState: 'synced' })
+        await expect(chat.relatedQuickNoteLocator(`wrong-${kind}`, result.messageActionRef ?? ''))
+          .rejects.toMatchObject({ code: 'message-action-ref-invalid' })
+      }
+    }
+  })
+
+  it('never turns a confirmed send into a failed promise when action-ref signing fails', async () => {
+    const uniqueCode = vi.fn(async () => { throw new Error('local key store unavailable') })
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      stateStore: { uniqueCode },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self-owner' })),
+      invalidateSourceListCache: vi.fn(),
+    }
+    const record = {
+      createTextForConversation: vi.fn(async () => ({ recordUid: 'record-confirmed', status: 1, localState: 'synced' })),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, record as never,
+      {} as never, {} as never, {} as never,
+      { invalidateRecordProjection: vi.fn(async () => {}) } as never,
+    )
+
+    await expect(chat.sendSourceText('source-self', '已经写入', { recordUid: 'record-confirmed' }))
+      .resolves.toEqual({ sourceRef: 'source-self', itemUid: 'record-confirmed', status: 1, localState: 'synced' })
+    expect(record.createTextForConversation).toHaveBeenCalledOnce()
+    expect(uniqueCode).toHaveBeenCalledOnce()
+  })
+
+  it('does not sign or expose message actions for a failed local record send', async () => {
+    const uniqueCode = vi.fn(async () => 'unused-key')
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      stateStore: { uniqueCode },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self-owner' })),
+      invalidateSourceListCache: vi.fn(),
+    }
+    const record = {
+      createTextForConversation: vi.fn(async () => ({
+        recordUid: 'record-failed', status: 0, localState: 'failed', error: '未写入',
+      })),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, record as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await expect(chat.sendSourceText('source-self', '未写入', { recordUid: 'record-failed' })).resolves.toEqual({
+      sourceRef: 'source-self', itemUid: 'record-failed', status: 0, localState: 'failed', error: '未写入',
+    })
+    expect(uniqueCode).not.toHaveBeenCalled()
+  })
+
+  it('propagates rich-send cancellation into human mention resolution', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/list'
+      ? { items: [{ user_id: 7, status: 1 }] }
+      : { record_uid: 'record-mention', rel_uid: 'relation-mention', seq: 9, audit_status: 1 })
+    const runtime = {
+      config: { richMediaSendEnabled: true, maxTextLength: 20_000 },
+      stateStore: { uniqueCode: vi.fn(async () => 'mention-signing-key') },
+      requireSession: vi.fn(async () => session),
+      authenticatedChatPost,
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({
+        version: 1, userId: 42, kind: 'group_chat', ownerRef: 'group-1', displayName: '群聊',
+      })),
+    }
+    const realtime = {
+      emitChatClientEvent: vi.fn(), nextChatClientRevision: vi.fn(() => 1),
+      scheduleChatSessionProjection: vi.fn(),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, realtime,
+    )
+    const payload = Buffer.from(JSON.stringify({
+      version: 1, viewerUserId: 42, chatSessionUid: 'group-1', targetUserId: 7,
+      displayNameSnapshot: '小林',
+    }), 'utf8').toString('base64url')
+    const mentionRef = `arkme-chat-human-mention-v1.${payload}.${createHmac('sha256', 'mention-signing-key')
+      .update(`arkme-chat-human-mention-v1.${payload}`).digest('base64url')}`
+    const signal = new AbortController().signal
+
+    await expect(chat.sendSourceRich('source-ref', {
+      textContent: '@小林 附件',
+      humanMentions: [{ mentionRef, startIndex: 0, length: 3 }],
+    }, { recordUid: 'record-mention', relationUid: 'relation-mention', signal }))
+      .resolves.toMatchObject({ itemUid: 'record-mention', sequence: 9 })
+
+    expect(authenticatedChatPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v1/chats/members/list',
+      { chat_session_uid: 'group-1', active_only: true },
+      session,
+      signal,
+    )
+  })
+
+  it('delegates rich write outcome tracking to the transport and leaves preflight failures unmarked', async () => {
+    const attemptedFailure = new ArkmePluginError('arkme-network-error', '发送结果未知', true, 502, {
+      writeOutcomeUnknown: true,
+    })
+    const knownFailure = new ArkmePluginError('arkme-code-1001', '载荷不合法', false, 502)
+    const runtime = {
+      config: { richMediaSendEnabled: true, maxTextLength: 20_000 },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn()
+        .mockRejectedValueOnce(attemptedFailure)
+        .mockRejectedValueOnce(knownFailure),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({
+      version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
+    })) }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await expect(chat.sendSourceRich('source-ref', { textContent: '发送图片' }, {
+      recordUid: 'record-1', relationUid: 'relation-1',
+    })).rejects.toMatchObject({ code: 'arkme-network-error', writeOutcomeUnknown: true })
+    await expect(chat.sendSourceRich('source-ref', { textContent: '发送图片' }, {
+      recordUid: 'record-2', relationUid: 'relation-2',
+    })).rejects.toHaveProperty('writeOutcomeUnknown', undefined)
+    await expect(chat.sendSourceRich('source-ref', {
+      textContent: '@成员', humanMentions: [{ mentionRef: 'mention-ref', startIndex: 0, length: 3 }],
+    })).rejects.toHaveProperty('writeOutcomeUnknown', undefined)
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledTimes(2)
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
+      '/api/v1/chats/records/send', expect.anything(), expect.anything(), undefined,
+      { trackWriteOutcome: true },
+    )
+  })
 
   it('passes browser capture metadata into send-to-self and default-category text writes', async () => {
     const runtime = {
@@ -290,9 +554,10 @@ describe('ChatService', () => {
     const record = {
       createTextForConversation: vi.fn(async (recordUid: string) => ({ recordUid, status: 1, localState: 'synced' })),
     }
+    const realtime = { invalidateRecordProjection: vi.fn(async () => undefined) }
     const chat = new ChatService(
       runtime as never, source as never, {} as never, {} as never, record as never,
-      {} as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, realtime as never,
     )
     const captureContext = {
       clientName: 'Google Chrome（DeepSeek Harness）', networkName: '网络已连接', electric: 100, charge: 1,
@@ -307,11 +572,30 @@ describe('ChatService', () => {
       })).resolves.toMatchObject({ localState: 'synced' })
     }
     expect(record.createTextForConversation).toHaveBeenNthCalledWith(
-      1, 'record-send_to_self', '浏览器纯文字', { recordDurationMillis: 2_700, captureContext },
+      1, 'record-send_to_self', '浏览器纯文字', { expectedUserId: 42, recordDurationMillis: 2_700, captureContext },
     )
     expect(record.createTextForConversation).toHaveBeenNthCalledWith(
-      2, 'record-default_category', '浏览器纯文字', { recordDurationMillis: 2_700, captureContext },
+      2, 'record-default_category', '浏览器纯文字', { expectedUserId: 42, recordDurationMillis: 2_700, captureContext },
     )
+    expect(realtime.invalidateRecordProjection).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects a composer send after its captured account has changed', async () => {
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      requireSession: vi.fn(async () => ({ userId: 43, accessToken: 'access', refreshToken: 'refresh' })),
+    }
+    const source = { openSourceRef: vi.fn() }
+    const record = { createTextForConversation: vi.fn() }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, record as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await expect(chat.sendSourceText('source-a', '发送内容', { expectedUserId: 42 }))
+      .rejects.toMatchObject({ code: 'file-account-changed' })
+    expect(source.openSourceRef).not.toHaveBeenCalled()
+    expect(record.createTextForConversation).not.toHaveBeenCalled()
   })
 
   it('writes an explicitly captured location for every supported conversation source', async () => {
@@ -340,7 +624,9 @@ describe('ChatService', () => {
       {
         record_uid: 'record-topic',
         location: {
-          source_kind: 1, lat: 30.52, lon: 114.31, accuracy: 18, alt: 42, speed: 0,
+          // Accuracy remains browser/UI metadata. The strict record owner does
+          // not accept an `accuracy` field on its location fact write.
+          source_kind: 1, lat: 30.52, lon: 114.31, alt: 42, speed: 0,
           captured_at: 1_786_000_000_000,
         },
       },
@@ -363,8 +649,17 @@ describe('ChatService', () => {
       authenticatedPost: vi.fn(async () => ({
         record_core: {
           record_uid: 'record-snapshot-1', text_content: '完整快记文本', record_duration_millis: 2_400,
+          // The user's day boundary can assign an after-midnight record to the previous day.
+          belong_date: '2026-08-30',
           create_at: 1_786_000_000_000, send_at: 1_786_000_003_000, upload_at: 1_786_000_004_000, status: 1,
-          content_payload: JSON.stringify({ network: 'WiFi（senguoyun_5G）' }),
+          content_payload: JSON.stringify({
+            network: 'WiFi（senguoyun_5G）',
+            media_refs: [
+              { file_asset_uid: 'asset-background-b', content_file_role: 4, sort_order: 2 },
+              { file_asset_uid: 'asset-ordinary-voice', content_file_role: 1, sort_order: 0 },
+              { file_asset_uid: 'asset-background-a', binding_type: 4, sort_order: 1 },
+            ],
+          }),
         },
         // The real detail contract keeps these outside record_core. They must
         // survive the hydration merge just as they do in the Flutter parser.
@@ -374,14 +669,27 @@ describe('ChatService', () => {
       })),
     }
     const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
-    const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+    const media = { issueSearchAudioMedia: vi.fn(async () => new Map([
+      ['record-snapshot-1\0asset-background-a', { mediaRef: 'arkme-media-v1.background-a', durationSeconds: 1.25 }],
+      ['record-snapshot-1\0asset-background-b', { mediaRef: 'arkme-media-v1.background-b' }],
+    ])) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
 
     await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef())).resolves.toMatchObject({
       itemUid: 'record-snapshot-1', textContent: '完整快记文本', recordDurationMillis: 2_400,
       weather: '30° Windy', altitudeMeters: 12, movement: '静止', locationLabel: '武汉市洪山区高新大道',
       captureContext: { clientName: 'ts\'s MacBook Pro', networkName: 'WiFi（senguoyun_5G）', electric: 81, charge: 1 },
       backgroundSound: 'available', syncState: 'synced',
+      backgroundSoundPlayback: {
+        mediaRefs: ['arkme-media-v1.background-a', 'arkme-media-v1.background-b'],
+        amplitudes: [1, 1, 1],
+        durationSeconds: 2.4,
+      },
     })
+    expect(media.issueSearchAudioMedia).toHaveBeenCalledWith([
+      { recordUid: 'record-snapshot-1', fileAssetUid: 'asset-background-a' },
+      { recordUid: 'record-snapshot-1', fileAssetUid: 'asset-background-b' },
+    ], undefined)
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith('/api/v1/chats/records/detail', {
       chat_session_uid: 'chat-1', record_uid: 'record-snapshot-1', record_owner_user_id: 42, rel_uid: 'rel-snapshot-1', seq: 9,
     }, expect.anything(), undefined, expect.anything())
@@ -390,7 +698,48 @@ describe('ChatService', () => {
     }, expect.anything(), undefined, expect.anything())
   })
 
+  it('does not expose a truncated background player when any recorded segment is unavailable', async () => {
+    const runtime = {
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async () => ({ item: {
+        relation: { rel_uid: 'rel-snapshot-1', record_uid: 'record-snapshot-1', record_owner_user_id: 42, seq: 9 },
+        record: { record_uid: 'record-snapshot-1', payload: { text_content: '消息' } },
+      } })),
+      authenticatedPost: vi.fn(async (path: string) => path === '/api/v1/records/detail'
+        ? { record_core: {
+            record_uid: 'record-snapshot-1', text_content: '消息', status: 1,
+            content_payload: JSON.stringify({ media_refs: [
+              { file_asset_uid: 'background-a', content_file_role: 4, sort_order: 1 },
+              { file_asset_uid: 'background-b', content_file_role: 4, sort_order: 2 },
+            ] }),
+          } }
+        : { record_uid: 'record-snapshot-1' }),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
+    const media = { issueSearchAudioMedia: vi.fn(async () => new Map([
+      ['record-snapshot-1\0background-a', { mediaRef: 'arkme-media-v1.background-a' }],
+    ])) }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, media as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    const detail = await chat.messageSnapshotDetail('opaque-source', snapshotActionRef())
+
+    expect(detail.backgroundSound).toBe('available')
+    expect(detail.backgroundSoundPlayback).toBeUndefined()
+    expect(media.issueSearchAudioMedia).toHaveBeenCalledWith([
+      { recordUid: 'record-snapshot-1', fileAssetUid: 'background-a' },
+      { recordUid: 'record-snapshot-1', fileAssetUid: 'background-b' },
+    ], undefined)
+  })
+
   it('uses Flutter record timestamps and location context when the detail core has no weather', async () => {
+    const legacyBelongDateMillis = Date.UTC(2026, 7, 29, 12)
+    const sendBelongDateLabel = new Intl.DateTimeFormat('zh-CN', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(1_786_000_000_000))
     const runtime = {
       stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
       requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
@@ -403,6 +752,7 @@ describe('ChatService', () => {
             record_uid: 'record-snapshot-flutter', text_content: 'Flutter 发送的快记', status: 1,
             // Older records can expose only send_at. Flutter uses it as the
             // creation-time fallback, so the plugin must do the same.
+            belong_date: legacyBelongDateMillis,
             send_at: 1_786_000_000_000,
             update_time_stamp: 1_786_000_004_000,
             // A stale payload timestamp must never hide the record-core one.
@@ -425,6 +775,7 @@ describe('ChatService', () => {
       syncState: 'synced',
       weather: '30° Windy',
       altitudeMeters: 0,
+      belongDate: sendBelongDateLabel,
       locationCapture: { latitude: 30.1, longitude: 120.2, altitudeMeters: 0 },
     })
     expect(runtime.authenticatedPost).toHaveBeenCalledWith('/api/v1/records/location/context/get', {
@@ -1542,6 +1893,7 @@ describe('ChatService', () => {
       nextChatClientRevision: vi.fn(() => 5),
       emitChatClientEvent: vi.fn(),
       scheduleChatSessionProjection: vi.fn(),
+      invalidateRecordProjection: vi.fn(async () => undefined),
     }
     const chat = new ChatService(
       runtime as never, source as never, profile as never, {} as never, record as never,
@@ -1595,8 +1947,7 @@ describe('ChatService', () => {
       },
     ])
     expect(JSON.stringify(worldPostBodies)).not.toContain('parent_extend_record_uid')
-    expect(source.invalidateSourceListCache).toHaveBeenCalledWith(42, 'send_to_self')
-    expect(realtime.emitChatClientEvent).toHaveBeenCalledWith({ type: 'projection-invalidated', revision: 5, projection: 'record' })
+    expect(realtime.invalidateRecordProjection).toHaveBeenCalledOnce()
   })
 
   it('moves and deletes favorite stickers while preserving only stable server fields', async () => {
@@ -2033,6 +2384,201 @@ describe('ChatService', () => {
     })
 
     await expect(chat.openPrivateChatFromUser(42)).rejects.toMatchObject({ code: 'private-chat-self-invalid' })
+  })
+
+  it.each(['', '群成员', '群内昵称'])(
+    'uses the public profile identity instead of the group member name %j when opening a private chat',
+    async groupMemberName => {
+      const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+      const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/list'
+        ? { items: [{ user_id: 7, status: 1, remark: '', display_name_snapshot: groupMemberName }] }
+        : {
+            session: { chat_session_uid: 'private-1', last_active_at: 1_700_000_000_000, last_seq: 0 },
+            unread_snapshot: { unread_count: 0, session_last_seq: 0 },
+          })
+      const runtime = {
+        stateStore: {
+          uniqueCode: vi.fn(async () => 'member-signing-key'),
+        },
+        requireSession: vi.fn(async () => session),
+        authenticatedChatPost,
+      }
+      const source = {
+        openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })),
+        cachedChatSource: vi.fn(() => undefined),
+        sealSourceRef: vi.fn(async () => 'private-source-ref'),
+        chatDirectorySourceKey: vi.fn(async () => 'chat:private-1'),
+        setChatSourceByKey: vi.fn(),
+      }
+      const profile = {
+        publicProfileSummariesByUserIds: vi.fn(async () => new Map([[7, { displayName: '公开昵称' }]])),
+      }
+      const chat = new ChatService(
+        runtime as never, source as never, profile as never, {} as never, {} as never,
+        {} as never, {} as never, {} as never, {} as never,
+      )
+
+      await expect(chat.openPrivateChatFromMember(
+        'group-source-ref', chatMemberRef(42, 'group-1', 7),
+      )).resolves.toMatchObject({ source: { displayName: '公开昵称', peerUserId: 7 } })
+      expect(authenticatedChatPost).toHaveBeenLastCalledWith(
+        '/api/v1/chats/create-private',
+        expect.objectContaining({
+          peer_user_id: 7,
+        }),
+        session,
+        undefined,
+      )
+      const createBody = authenticatedChatPost.mock.calls[1]?.[1] as Record<string, unknown>
+      expect(createBody).not.toHaveProperty('title')
+      expect(createBody).not.toHaveProperty('owner_display_name_snapshot')
+      expect(createBody).not.toHaveProperty('peer_display_name_snapshot')
+      expect(createBody).not.toHaveProperty('extra')
+    },
+  )
+
+  it('keeps private-chat creation usable without persisting a placeholder identity', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const authenticatedChatPost = vi.fn(async () => ({
+      session: { chat_session_uid: 'private-2', last_active_at: 1_700_000_000_000, last_seq: 0 },
+      unread_snapshot: { unread_count: 0, session_last_seq: 0 },
+    }))
+    const runtime = {
+      stateStore: {},
+      requireSession: vi.fn(async () => session),
+      authenticatedChatPost,
+    }
+    const source = {
+      cachedChatSource: vi.fn(() => undefined),
+      sealSourceRef: vi.fn(async () => 'private-source-ref'),
+      chatDirectorySourceKey: vi.fn(async () => 'chat:private-2'),
+      setChatSourceByKey: vi.fn(),
+    }
+    const profile = {
+      publicProfileSummariesByUserIds: vi.fn(async () => { throw new Error('profile unavailable') }),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await expect(chat.openPrivateChatFromUser(7)).resolves.toMatchObject({
+      source: { displayName: '群成员', peerUserId: 7 },
+    })
+    const createBody = authenticatedChatPost.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(createBody).not.toHaveProperty('title')
+    expect(createBody).not.toHaveProperty('owner_display_name_snapshot')
+    expect(createBody).not.toHaveProperty('peer_display_name_snapshot')
+    expect(createBody).not.toHaveProperty('extra')
+  })
+
+  it('keeps the existing viewer-bound private-chat projection when create-private reuses a session', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const existingSource = {
+      sourceRef: 'existing-private-source-ref',
+      sourceKey: 'chat:private-existing',
+      peerUserId: 7,
+      kind: 'private_chat',
+      displayName: '我的备注',
+      activeAtMillis: 1_700_000_000_000,
+      unreadCount: 3,
+      latestSequence: 9,
+    }
+    const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/list'
+      ? { items: [{ user_id: 7, status: 1, remark: '我的备注', display_name_snapshot: '群内昵称' }] }
+      : {
+          session: { chat_session_uid: 'private-existing', last_active_at: 1_700_000_000_500, last_seq: 9 },
+          unread_snapshot: { unread_count: 3, session_last_seq: 9 },
+        })
+    const runtime = {
+      stateStore: {
+        uniqueCode: vi.fn(async () => 'member-signing-key'),
+      },
+      requireSession: vi.fn(async () => session),
+      authenticatedChatPost,
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })),
+      cachedChatSource: vi.fn(() => existingSource),
+      sealSourceRef: vi.fn(async () => 'new-private-source-ref'),
+      chatDirectorySourceKey: vi.fn(async () => 'chat:private-existing'),
+      setChatSourceByKey: vi.fn(),
+    }
+    const profile = {
+      publicProfileSummariesByUserIds: vi.fn(async () => new Map([[7, { displayName: '公开昵称' }]])),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    const opened = await chat.openPrivateChatFromMember(
+      'group-source-ref', chatMemberRef(42, 'group-1', 7),
+    )
+    expect(opened.source).toMatchObject({
+      sourceRef: existingSource.sourceRef,
+      sourceKey: existingSource.sourceKey,
+      displayName: '我的备注',
+      activeAtMillis: 1_700_000_000_500,
+      unreadCount: 3,
+      latestSequence: 9,
+    })
+    expect(source.setChatSourceByKey).toHaveBeenCalledWith('42:private-existing', opened.source)
+    const createBody = authenticatedChatPost.mock.calls[1]?.[1] as Record<string, unknown>
+    expect(createBody).not.toHaveProperty('title')
+    expect(createBody).not.toHaveProperty('owner_display_name_snapshot')
+    expect(createBody).not.toHaveProperty('peer_display_name_snapshot')
+  })
+
+  it.each([
+    { name: 'self member', targetUserId: 42, memberChatSessionUid: 'group-1', members: [{ user_id: 42 }], code: 'private-chat-self-invalid' },
+    { name: 'stale member', targetUserId: 7, memberChatSessionUid: 'group-1', members: [], code: 'chat-member-ref-stale' },
+    { name: 'member from another chat', targetUserId: 7, memberChatSessionUid: 'group-2', members: [{ user_id: 7 }], code: 'chat-member-ref-invalid' },
+  ])('rejects $name before creating a private chat', async ({ targetUserId, memberChatSessionUid, members, code }) => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const authenticatedChatPost = vi.fn(async () => ({ items: members }))
+    const runtime = {
+      stateStore: { uniqueCode: vi.fn(async () => 'member-signing-key') },
+      requireSession: vi.fn(async () => session),
+      authenticatedChatPost,
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })) }
+    const profile = { publicProfileSummariesByUserIds: vi.fn() }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await expect(chat.openPrivateChatFromMember(
+      'group-source-ref', chatMemberRef(42, memberChatSessionUid, targetUserId),
+    )).rejects.toMatchObject({ code })
+    expect(authenticatedChatPost.mock.calls.some(call => call[0] === '/api/v1/chats/create-private')).toBe(false)
+    expect(profile.publicProfileSummariesByUserIds).not.toHaveBeenCalled()
+  })
+
+  it('does not cache or activate an incomplete create-private response', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = {
+      stateStore: {},
+      requireSession: vi.fn(async () => session),
+      authenticatedChatPost: vi.fn(async () => ({ session: {}, unread_snapshot: {} })),
+    }
+    const source = {
+      cachedChatSource: vi.fn(),
+      sealSourceRef: vi.fn(),
+      chatDirectorySourceKey: vi.fn(),
+      setChatSourceByKey: vi.fn(),
+    }
+    const profile = { publicProfileSummariesByUserIds: vi.fn(async () => new Map()) }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await expect(chat.openPrivateChatFromUser(7)).rejects.toMatchObject({ code: 'private-chat-contract-invalid' })
+    expect(source.cachedChatSource).not.toHaveBeenCalled()
+    expect(source.sealSourceRef).not.toHaveBeenCalled()
+    expect(source.setChatSourceByKey).not.toHaveBeenCalled()
   })
 
   it('schedules the authoritative chat projection after sending text', async () => {

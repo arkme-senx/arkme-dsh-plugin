@@ -10,9 +10,13 @@ const config: ArkmeClientConfig = {
   captchaId: 'captcha-id',
   environment: 'prod',
   testLoginEnabled: false,
+  jiwoScanLoginEnabled: false,
   callAssetBasePath: '/arkme-self/api/call',
   voiceprintEnrollmentPath: '/voiceprint',
+  recordingImportPath: '/arkme-self/api/recording/import',
+  mediaPath: '/arkme-self/api/media',
   shareWebsite: 'https://app.arkme.ai',
+  recordingWorkbenchEnabled: true,
 }
 
 function deferred<T>(): {

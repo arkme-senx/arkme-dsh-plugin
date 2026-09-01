@@ -84,6 +84,39 @@ export class ContactDirectoryService {
 
   dispose(): void { this.contactRefs.clear() }
 
+  async listRecordingSpeakerUsers(
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Array<{ userId: number; label: string; avatarRef?: string }>> {
+    const descriptors = await this.loadMergedContactDescriptors(session, signal === undefined ? {} : { signal })
+    const userIds = [session.userId, ...descriptors.map(descriptor => descriptor.targetUserId)]
+    const profiles = await this.profile.publicProfileSummariesByUserIds(userIds, session, signal)
+    const candidates: Array<{ userId: number; label: string; avatarRef?: string }> = []
+    const currentProfile = profiles.get(session.userId)
+    candidates.push({
+      userId: session.userId,
+      label: currentProfile?.displayName || currentProfile?.nickname || '我',
+      ...(currentProfile?.avatarUrl === undefined
+        ? {}
+        : { avatarRef: await this.profile.sealProfileImageRef(session.userId, session.userId) }),
+    })
+    for (const descriptor of descriptors) {
+      const identity = await this.contactIdentity(
+        descriptor.targetUserId,
+        descriptor.remark,
+        profiles.get(descriptor.targetUserId),
+        session,
+        descriptor.displayNameSnapshot,
+      )
+      candidates.push({
+        userId: descriptor.targetUserId,
+        label: identity.displayName,
+        ...(identity.avatarRef === undefined ? {} : { avatarRef: identity.avatarRef }),
+      })
+    }
+    return candidates
+  }
+
   async list(
     section: ArkmeDirectorySectionKind,
     options: { limit?: number; cursor?: string; countOnly?: boolean; refresh?: boolean; signal?: AbortSignal } = {},
@@ -158,7 +191,7 @@ export class ContactDirectoryService {
   async openContactChat(contactRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
     const { entry } = await this.resolveContactRef(contactRef)
     return await this.chat.openPrivateChatFromUser(entry.targetUserId, {
-      displayName: entry.displayName,
+      presentationDisplayName: entry.displayName,
       ...(signal === undefined ? {} : { signal }),
     })
   }
@@ -304,7 +337,8 @@ export class ContactDirectoryService {
       for (const value of rawItems) {
         const raw = objectValue(value)
         const targetUserId = numberValue(raw.user_id)
-        if (targetUserId <= 0 || !Number.isSafeInteger(targetUserId) || descriptorsByUserId.has(targetUserId)) continue
+        if (targetUserId <= 0 || !Number.isSafeInteger(targetUserId)
+          || targetUserId === session.userId || descriptorsByUserId.has(targetUserId)) continue
         const chatSessionUid = stringValue(raw.chat_session_uid).trim()
         descriptorsByUserId.set(targetUserId, {
           targetUserId,
@@ -353,7 +387,7 @@ export class ContactDirectoryService {
         if (numberValue(chatSession.session_kind) !== 1 || listValue(bundle.bot_participants).length > 0) continue
         const counterpart = objectValue(bundle.private_counterpart)
         const targetUserId = numberValue(counterpart.user_id)
-        if (targetUserId <= 0 || !Number.isSafeInteger(targetUserId)) continue
+        if (targetUserId <= 0 || !Number.isSafeInteger(targetUserId) || targetUserId === session.userId) continue
         const chatSessionUid = stringValue(chatSession.chat_session_uid).trim()
         const existing = descriptorsByUserId.get(targetUserId)
         if (existing !== undefined) {

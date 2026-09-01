@@ -17,7 +17,7 @@ import type {
   ArkmeUserProfileSnapshot,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
-import { ArkmeSourceAvatar } from './ArkmeAvatar.js'
+import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import {
   readArkoPendingTurn,
@@ -34,6 +34,11 @@ import {
   arkmeConversationComposerHeight, arkmeConversationComposerLayout,
 } from './conversation-composer-presentation.js'
 import { restoreArkmeComposerFocus } from './composer-focus.js'
+import {
+  ArkmeMessageActionSelectCheck,
+  useArkmeMessageActions,
+  type ArkmeMessageActionViewItem,
+} from './ArkmeMessageActions.js'
 
 type ArkoMessageRole = 'user' | 'assistant' | 'divider'
 type ArkoMessageStatus = 'sending' | 'done' | 'error'
@@ -51,6 +56,10 @@ interface ArkoMessage {
   assistantMsgId?: number
   runUid?: string
   runStatus?: string
+  messageActionRef?: string
+  messageActionConversationRef?: string
+  copyLinkAvailable?: boolean
+  forwardAvailable?: boolean
 }
 
 interface ArkoContinuationTarget {
@@ -323,6 +332,12 @@ function historyMessage(item: ArkmeArkoHistoryItem): ArkoMessage {
     ...(item.runUid === undefined ? {} : { runUid: item.runUid }),
     ...(item.runStatus === undefined ? {} : { runStatus: item.runStatus }),
     ...(activity === undefined ? {} : { meta: activity }),
+    ...(item.messageActionRef === undefined ? {} : {
+      messageActionRef: item.messageActionRef,
+      ...(item.messageActionConversationRef === undefined ? {} : { messageActionConversationRef: item.messageActionConversationRef }),
+      copyLinkAvailable: item.messageActionCapabilities?.copyLink === true,
+      forwardAvailable: item.messageActionCapabilities?.forward === true,
+    }),
   }
 }
 
@@ -433,6 +448,24 @@ export function ArkmeArkoSurface() {
   const [notice, setNotice] = useState('')
   const [activeRun, setActiveRun] = useState<ActiveArkoRun>()
   const [pendingTurn, setPendingTurn] = useState<ArkmeArkoPendingTurn>()
+  const messageActionItems = useMemo<ArkmeMessageActionViewItem[]>(() => messages.flatMap(message => (
+    message.role === 'divider' || message.messageActionRef === undefined || message.messageActionConversationRef === undefined
+      ? []
+      : [{
+        id: message.id,
+        actionRef: message.messageActionRef,
+        conversationRef: message.messageActionConversationRef,
+        copyText: message.text,
+        copyLinkAvailable: message.copyLinkAvailable === true,
+        forwardAvailable: message.forwardAvailable === true,
+      }]
+  )), [messages])
+  const messageActions = useArkmeMessageActions({
+    scopeKey: profileUserId === undefined
+      ? 'anonymous'
+      : `user:${String(profileUserId)}:session:${String(session?.sessionId ?? 0)}`,
+    items: messageActionItems,
+  })
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -956,13 +989,26 @@ export function ArkmeArkoSurface() {
           const activity = arkoRunActivityLabel(item.runStatus)
           const showThinking = item.role === 'assistant'
             && shouldShowArkoThinking(item.status, item.reasoning)
+          const actionItem = messageActionItems.find(candidate => candidate.id === item.id)
+          const selectedForAction = messageActions.selectedIds.has(item.id)
           return <Fragment key={item.id}>
           {item.role === 'divider' ? <li style={{ ...styles.row, justifyContent: 'center' }}>
             <span style={styles.divider}>{item.text}</span>
-          </li> : <li style={{ ...styles.row, ...(item.role === 'user' ? styles.rowMe : styles.rowArko) }}>
+          </li> : <li
+            style={{ ...styles.row, ...(item.role === 'user' ? styles.rowMe : styles.rowArko) }}
+            onClick={event => {
+              if (!messageActions.selecting || actionItem === undefined) return
+              if (event.target instanceof Element && event.target.closest('button,a,input,textarea,[role=link]')) return
+              messageActions.toggle(actionItem)
+            }}
+          >
             <div style={{ ...styles.line, ...(item.role === 'user' ? styles.lineMe : {}) }}>
+              {messageActions.selecting && actionItem !== undefined && <ArkmeMessageActionSelectCheck
+                selected={selectedForAction}
+                onClick={event => { event.stopPropagation(); messageActions.toggle(actionItem) }}
+              />}
               <span style={styles.avatar} aria-hidden>{item.role === 'user'
-                ? <ArkmeSourceAvatar
+                ? <ArkmeUserAvatar
                   {...(userProfile?.avatarRef === undefined ? {} : { avatarRef: userProfile.avatarRef })}
                   size={38}
                 />
@@ -973,7 +1019,9 @@ export function ArkmeArkoSurface() {
                   {...(item.reasoning === undefined ? {} : { reasoning: item.reasoning })}
                   {...(activity === undefined ? {} : { activity })}
                 />}
-                {(item.text.trim() !== '' || item.status === 'error') && <div style={{
+                {(item.text.trim() !== '' || item.status === 'error') && <div
+                  onContextMenu={event => { if (actionItem !== undefined) messageActions.openMenu(actionItem, event) }}
+                  style={{
                   ...styles.bubble,
                   ...(item.role === 'user' ? styles.bubbleMe : styles.bubbleArko),
                   ...(item.status === 'error' ? styles.bubbleError : {}),
@@ -1029,7 +1077,7 @@ export function ArkmeArkoSurface() {
       </section>
     </div>}
 
-    <footer style={styles.composer}><div ref={composerRef} style={styles.composerInner}>
+    {messageActions.selecting ? messageActions.selectionBar : <footer style={styles.composer}><div ref={composerRef} style={styles.composerInner}>
       <textarea
         ref={textareaRef}
         rows={1}
@@ -1067,6 +1115,7 @@ export function ArkmeArkoSurface() {
           onClick={() => { void cancelActiveRun() }}
         ><span aria-hidden>■</span></button>}
       </div>
-    </div></footer>
+    </div></footer>}
+    {messageActions.overlay}
   </div>
 }

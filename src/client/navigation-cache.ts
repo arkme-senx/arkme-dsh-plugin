@@ -5,6 +5,7 @@ import type {
   ArkmeSourceItem,
   ArkmeSourceKind,
 } from '../types.js'
+import { arkmeSourceIdentityKey } from './source-identity.js'
 
 const POINTER_KEY = 'dsh-arkme:navigation:v1:last-user'
 const CACHE_KEY_PREFIX = 'dsh-arkme:navigation:v1:user:'
@@ -80,6 +81,9 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
   const groupAvatar = groupAvatarPresentation(item.groupAvatar)
   return {
     sourceRef: item.sourceRef,
+    ...(typeof item.sourceKey === 'string' && item.sourceKey.trim() !== ''
+      ? { sourceKey: item.sourceKey.trim() }
+      : {}),
     ...(typeof item.parentSourceRef === 'string' && item.parentSourceRef !== ''
       ? { parentSourceRef: item.parentSourceRef }
       : {}),
@@ -99,6 +103,10 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     ...(typeof item.latestPreview === 'string' ? { latestPreview: item.latestPreview } : {}),
     activeAtMillis: item.activeAtMillis,
     unreadCount: Math.max(0, Math.trunc(item.unreadCount)),
+    ...(typeof item.badgeUnreadCount === 'number' && Number.isFinite(item.badgeUnreadCount)
+      ? { badgeUnreadCount: Math.max(0, Math.trunc(item.badgeUnreadCount)) }
+      : {}),
+    ...(typeof item.notificationAllowed === 'boolean' ? { notificationAllowed: item.notificationAllowed } : {}),
     ...(typeof item.hasUnreadMention === 'boolean' ? { hasUnreadMention: item.hasUnreadMention } : {}),
     ...(typeof item.isMuted === 'boolean' ? { isMuted: item.isMuted } : {}),
     ...(typeof item.latestSequence === 'number' && Number.isSafeInteger(item.latestSequence) && item.latestSequence > 0
@@ -218,8 +226,10 @@ export function reconcileSelectedSource(
   loaded: ArkmeSourceItem[],
 ): ArkmeSourceItem | undefined {
   if (selected === undefined) return undefined
-  const exact = loaded.find(item => item.sourceRef === selected.sourceRef)
+  const selectedIdentity = arkmeSourceIdentityKey(selected)
+  const exact = loaded.find(item => arkmeSourceIdentityKey(item) === selectedIdentity)
   if (exact !== undefined) return exact
+  if (selected.kind !== 'send_to_self' && selected.kind !== 'default_category') return undefined
   const equivalent = loaded.filter(item => item.kind === selected.kind && item.displayName === selected.displayName)
   return equivalent.length === 1 ? equivalent[0] : undefined
 }

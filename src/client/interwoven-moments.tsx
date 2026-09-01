@@ -3,7 +3,6 @@ import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmeRelatedQuickNoteItem, ArkmeSourceItem, ArkmeTimelineItem } from '../types.js'
-import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import {
   ArkmeRelatedQuickNoteDetail,
@@ -13,6 +12,7 @@ import {
   type ArkmeRelatedQuickNoteDetailState,
   type ArkmeRelatedQuickNotesLoadState,
 } from './ArkmeRelatedQuickNotes.js'
+import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
 
 /** Shared vertical anchor: detail begins below the conversation tab/header. */
 export const ARKME_CONVERSATION_HEADER_HEIGHT = 68
@@ -151,16 +151,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 function OpaqueAvatar({ avatarRef, size = 18 }: { avatarRef?: string; size?: number }) {
-  const [src, setSrc] = useState('')
-  useEffect(() => {
-    let active = true
-    setSrc('')
-    if (avatarRef === undefined) return () => { active = false }
-    void loadArkmeImageDataUrl(avatarRef)
-      .then(value => { if (active) setSrc(value) })
-      .catch(() => undefined)
-    return () => { active = false }
-  }, [avatarRef])
+  const src = useArkmeAvatarImage(avatarRef) ?? ''
   return <span style={{ ...styles.avatar, width: size, height: size, minWidth: size }} aria-hidden>
     {src === '' ? <ArkmeMark size={size} /> : <img src={src} alt="" draggable={false} style={styles.avatarImage} />}
   </span>

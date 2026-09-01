@@ -11,9 +11,12 @@ import qrcode from 'qrcode-generator'
 import pluginManifest from '../../package.json' with { type: 'json' }
 import type {
   ArkmeAuthSnapshot,
+  ArkmeBackgroundSoundEligibilityReason,
+  ArkmeBackgroundSoundPreference,
   ArkmeClientConfig,
   ArkmeIdAvailabilitySnapshot,
   ArkmeIdMutationResult,
+  ArkmeProviderCapabilities,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
 } from '../types.js'
@@ -22,12 +25,58 @@ import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
 import { arkmeAppUpdateStore, type ArkmeAppUpdateSnapshot } from './app-update-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
+import {
+  arkmeDesktopNotifications,
+  type ArkmeDesktopNotificationPermission,
+} from './desktop-notification-runtime.js'
 import { clearLastNavigationCache } from './navigation-cache.js'
-import { arkmeLocationCaptureEnabled, arkmeLocationPermissionState, requestArkmeRecordLocation, setArkmeLocationCaptureEnabled, subscribeArkmeLocationCapturePreference } from './record-capture-location.js'
+import { retryArkmeRead } from './read-retry.js'
+import {
+  applyArkmeBackgroundSoundOwnerSnapshot,
+  arkmeBackgroundSoundCaptureEnabled,
+  arkmeBackgroundSoundServerPreferenceRuntime,
+  arkmeMicrophonePermissionState,
+  setArkmeBackgroundSoundFromSettings,
+  subscribeArkmeBackgroundSoundCapturePreference,
+  type ArkmeMicrophonePermissionState,
+} from './record-input-capture.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeUpdateUi } from './update-ui-controller.js'
 import { verifyPhoneCaptcha } from './geetest.js'
+
+export type ArkmeBackgroundSoundEligibilityStatus = 'loading' | ArkmeBackgroundSoundEligibilityReason
+export type ArkmeBackgroundSoundCapabilityStatus = 'loading' | 'supported' | 'unsupported'
+
+export function resolveArkmeBackgroundSoundEligibility(
+  preference: Pick<ArkmeBackgroundSoundPreference, 'eligible' | 'eligibilityReason'> | undefined,
+): ArkmeBackgroundSoundEligibilityReason {
+  if (preference?.eligible === true && preference.eligibilityReason === 'eligible') return 'eligible'
+  return preference?.eligibilityReason === 'membership-required'
+    ? 'membership-required'
+    : 'membership-unavailable'
+}
+
+export function describeArkmeBackgroundSoundSetting(input: {
+  capability: ArkmeBackgroundSoundCapabilityStatus
+  eligibility: ArkmeBackgroundSoundEligibilityStatus
+  enabled: boolean
+  permission: ArkmeMicrophonePermissionState
+}): string {
+  if (input.capability === 'loading') return '正在确认当前 Arkme Host 是否支持文字背景音…'
+  if (input.capability === 'unsupported') return '当前 Arkme Host 不支持文字背景音，请升级后重试'
+  if (input.eligibility === 'loading') return '正在确认当前账号的背景音会员权益…'
+  if (input.eligibility === 'membership-required') return '免费版暂不支持背景音'
+  if (input.eligibility === 'membership-unavailable') return '暂时无法确认会员权益'
+  if (input.enabled && input.permission === 'granted') return '已开启，输入时自动记录环境背景音并随本条快记保存'
+  if (input.enabled) {
+    if (input.permission === 'denied') return '已开启；输入时检测到麦克风权限已拒绝，请在浏览器站点设置中允许'
+    if (input.permission === 'unavailable') return '账号开关已开启，但当前浏览器不支持麦克风录音'
+    return '已开启，首次输入时会请求麦克风权限'
+  }
+  if (input.permission === 'denied') return '未开启，麦克风权限已拒绝'
+  if (input.permission === 'unavailable') return '当前浏览器不支持麦克风录音'
+  return '未开启；开启后会在首次输入时请求麦克风权限'
+}
 
 interface SettingsRowProps {
   title: string
@@ -53,6 +102,64 @@ function SettingsRow({ title, description, href, onClick, danger = false, disabl
     return <button type="button" className="arkme-redesign-setting-row" disabled={disabled} onClick={onClick}>{body}</button>
   }
   return <div className="arkme-redesign-setting-row">{body}</div>
+}
+
+export function BackgroundSoundSettingsRow({
+  checked,
+  busy,
+  disabled = false,
+  description,
+  onChange,
+}: {
+  checked: boolean
+  busy: boolean
+  disabled?: boolean
+  description: string
+  onChange: (checked: boolean) => void
+}) {
+  const switchDisabled = busy || disabled
+  return <div className="arkme-redesign-setting-row">
+    <strong>文字背景音</strong>
+    <span style={{ minWidth: 0, maxWidth: 430, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 }}>
+      <span className="arkme-redesign-setting-summary" style={{ minWidth: 0 }}>{description}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-label="文字背景音"
+        aria-checked={checked}
+        aria-busy={busy}
+        disabled={switchDisabled}
+        onClick={() => { onChange(!checked) }}
+        style={{
+          position: 'relative',
+          width: 40,
+          height: 23,
+          flex: '0 0 40px',
+          padding: 0,
+          border: 0,
+          borderRadius: 999,
+          background: checked ? '#00b96b' : '#d7d9dd',
+          cursor: switchDisabled ? 'default' : 'pointer',
+          opacity: switchDisabled ? .55 : 1,
+          transition: 'background .16s ease',
+        }}
+      >
+        <span aria-hidden style={{
+          position: 'absolute',
+          top: 3,
+          left: 3,
+          width: 17,
+          height: 17,
+          borderRadius: '50%',
+          background: '#fff',
+          boxShadow: '0 1px 3px rgba(20, 24, 32, .22)',
+          transform: checked ? 'translateX(17px)' : 'translateX(0)',
+          transition: 'transform .16s ease',
+        }} />
+      </button>
+    </span>
+    <span className="arkme-redesign-trailing-slot" aria-hidden />
+  </div>
 }
 
 interface VersionSettingsRowProps {
@@ -210,42 +317,6 @@ function SettingsDialog({
       {children}
     </section>
   </div>
-}
-
-function LocationPermissionDialog({ userId, enabled, onClose }: { userId: number; enabled: boolean; onClose: () => void }) {
-  const [permission, setPermission] = useState<'granted' | 'denied' | 'prompt' | 'unavailable'>('prompt')
-  const [locationBusy, setLocationBusy] = useState(false)
-  const [status, setStatus] = useState('')
-  const refreshPermission = useCallback(() => { void arkmeLocationPermissionState().then(setPermission) }, [])
-  useEffect(() => { refreshPermission() }, [refreshPermission])
-  const request = async () => {
-    setLocationBusy(true)
-    setStatus('')
-    try {
-      // This is an explicit settings action. It is the only place besides the
-      // composer reminder that is allowed to trigger a browser permission UI.
-      await requestArkmeRecordLocation()
-      setArkmeLocationCaptureEnabled(userId, true)
-      setStatus('位置记录已开启')
-    } catch (caught) {
-      setStatus(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      await arkmeLocationPermissionState().then(setPermission)
-      setLocationBusy(false)
-    }
-  }
-  const browserPermission = permission === 'granted' ? '已允许' : permission === 'denied' ? '已拒绝' : permission === 'unavailable' ? '浏览器不支持' : '尚未授权'
-  return <SettingsDialog title="位置权限" onClose={onClose}>
-    <div className="arkme-account-form">
-      <p className="arkme-account-rule">开启后，私聊、群聊、发给自己和主题输入时会显示位置提示；只有你点击提示后，才会记录该条消息的位置。</p>
-      <p className="arkme-account-rule">插件记录：{enabled ? '已开启' : '未开启'} · 浏览器权限：{browserPermission}</p>
-      {status !== '' ? <p className={`arkme-account-dialog-status${status === '位置记录已开启' ? '' : ' is-error'}`} role="status">{status}</p> : null}
-      <div className="arkme-account-dialog-actions">
-        {enabled ? <button type="button" disabled={locationBusy} onClick={() => { setArkmeLocationCaptureEnabled(userId, false); setStatus('位置记录已关闭') }}>关闭位置记录</button> : <button type="button" disabled={locationBusy || permission === 'unavailable'} onClick={() => { void request() }}>{locationBusy ? '正在请求…' : '开启位置记录'}</button>}
-        <button type="button" onClick={onClose}>完成</button>
-      </div>
-    </div>
-  </SettingsDialog>
 }
 
 function ProfileQrDialog({
@@ -541,6 +612,16 @@ export function buildArkmeAppUpdateRow(input: {
   }
 }
 
+export function arkmeNotificationPermissionLabel(permission: ArkmeDesktopNotificationPermission): string {
+  return permission === 'granted'
+    ? '已开启'
+    : permission === 'denied'
+      ? '系统通知未开启，点击前往设置'
+      : permission === 'default'
+        ? '尚未授权，点击开启'
+        : permission === 'system-managed' ? '由系统管理' : '不可用'
+}
+
 export function ArkmeSettingsSurface() {
   const surfaceRef = useRef<HTMLDivElement>(null)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
@@ -552,8 +633,24 @@ export function ArkmeSettingsSurface() {
   const [error, setError] = useState('')
   const [accountFeedback, setAccountFeedback] = useState('')
   const [activeAccountDialog, setActiveAccountDialog] = useState<'qr' | 'arkme-id' | 'phone' | null>(null)
-  const [locationDialogOpen, setLocationDialogOpen] = useState(false)
-  const [notificationPermission, setNotificationPermission] = useState(() => arkmeDesktopNotifications.permission())
+  const notificationPermission = useSyncExternalStore(
+    arkmeDesktopNotifications.subscribePermission,
+    arkmeDesktopNotifications.getPermissionSnapshot,
+    arkmeDesktopNotifications.getPermissionSnapshot,
+  ).permission
+  const [backgroundSoundBusy, setBackgroundSoundBusy] = useState(false)
+  const backgroundSoundBusyRef = useRef(false)
+  const backgroundSoundAccountGenerationRef = useRef(0)
+  const [backgroundSoundCapabilityState, setBackgroundSoundCapabilityState] = useState<{
+    accountId?: string
+    status: ArkmeBackgroundSoundCapabilityStatus
+  }>({ status: 'loading' })
+  const [backgroundSoundEligibilityState, setBackgroundSoundEligibilityState] = useState<{
+    accountId?: string
+    status: ArkmeBackgroundSoundEligibilityStatus
+  }>({ status: 'loading' })
+  const [backgroundSoundPermission, setBackgroundSoundPermission] = useState<ArkmeMicrophonePermissionState>('prompt')
+  const [backgroundSoundFeedback, setBackgroundSoundFeedback] = useState('')
 
   const applyProfileSnapshot = useCallback((snapshot: ArkmeUserProfileSnapshot) => {
     if (snapshot.profile !== null) setProfile(snapshot.profile)
@@ -591,6 +688,14 @@ export function ArkmeSettingsSurface() {
     return () => { controller.abort() }
   }, [loadProfile])
 
+  useEffect(() => {
+    const refresh = () => { void arkmeDesktopNotifications.refreshPermission() }
+    refresh()
+    if (typeof window === 'undefined') return
+    window.addEventListener('focus', refresh)
+    return () => { window.removeEventListener('focus', refresh) }
+  }, [])
+
   useLayoutEffect(() => {
     scrollArkmeSettingsSurface(surfaceRef.current)
   }, [])
@@ -613,7 +718,17 @@ export function ArkmeSettingsSurface() {
   const enableNotifications = async () => {
     setNotificationBusy(true)
     try {
-      setNotificationPermission(await arkmeDesktopNotifications.requestPermission())
+      await arkmeDesktopNotifications.requestPermission()
+    } finally {
+      setNotificationBusy(false)
+    }
+  }
+
+  const openNotificationSettings = async () => {
+    setNotificationBusy(true)
+    setError('')
+    try {
+      if (!await arkmeDesktopNotifications.openPermissionSettings()) setError('无法打开系统通知设置')
     } finally {
       setNotificationBusy(false)
     }
@@ -621,11 +736,95 @@ export function ArkmeSettingsSurface() {
 
   const authenticated = authState.auth?.status === 'authenticated'
   const authenticatedUserId = authenticated ? authState.auth?.userId : undefined
-  const locationCaptureEnabled = useSyncExternalStore(
-    subscribeArkmeLocationCapturePreference,
-    () => arkmeLocationCaptureEnabled(authenticatedUserId),
+  const authenticatedAccountKey = authState.auth?.status === 'authenticated'
+    ? `${authState.auth.environment}:${String(authState.auth.userId)}`
+    : undefined
+  const subscribeBackgroundSound = useCallback(
+    (listener: () => void) => subscribeArkmeBackgroundSoundCapturePreference(authenticatedAccountKey, listener),
+    [authenticatedAccountKey],
+  )
+  const backgroundSoundEnabled = useSyncExternalStore(
+    subscribeBackgroundSound,
+    () => arkmeBackgroundSoundCaptureEnabled(authenticatedAccountKey),
     () => false,
   )
+  const backgroundSoundCapability = backgroundSoundCapabilityState.accountId === authenticatedAccountKey
+    ? backgroundSoundCapabilityState.status
+    : 'loading'
+  const backgroundSoundEligibility = backgroundSoundEligibilityState.accountId === authenticatedAccountKey
+    ? backgroundSoundEligibilityState.status
+    : 'loading'
+  useEffect(() => {
+    const generation = backgroundSoundAccountGenerationRef.current + 1
+    backgroundSoundAccountGenerationRef.current = generation
+    backgroundSoundBusyRef.current = false
+    setBackgroundSoundBusy(false)
+    setBackgroundSoundFeedback('')
+    if (authenticatedUserId === undefined || authenticatedAccountKey === undefined) {
+      setBackgroundSoundCapabilityState({ status: 'loading' })
+      setBackgroundSoundEligibilityState({ status: 'loading' })
+      setBackgroundSoundPermission('prompt')
+      setBackgroundSoundFeedback('')
+      return
+    }
+    const targetUserId = authenticatedUserId
+    const targetAccountKey = authenticatedAccountKey
+    let active = true
+    let controller: AbortController | undefined
+    const refresh = () => {
+      const readToken = arkmeBackgroundSoundServerPreferenceRuntime.beginRead(targetAccountKey)
+      if (!arkmeBackgroundSoundServerPreferenceRuntime.current(readToken)) return
+      if (backgroundSoundBusyRef.current) {
+        backgroundSoundBusyRef.current = false
+        setBackgroundSoundBusy(false)
+        setBackgroundSoundFeedback('')
+      }
+      controller?.abort()
+      const requestController = new AbortController()
+      controller = requestController
+      const sameAccount = () => {
+        const current = arkmeAuthStore.getSnapshot().auth
+        return active
+          && !requestController.signal.aborted
+          && backgroundSoundAccountGenerationRef.current === generation
+          && arkmeBackgroundSoundServerPreferenceRuntime.current(readToken)
+          && current?.status === 'authenticated'
+          && `${current.environment}:${String(current.userId)}` === targetAccountKey
+      }
+      void Promise.all([
+        retryArkmeRead(
+          () => callArkme<ArkmeProviderCapabilities>('provider.capabilities', {}, requestController.signal),
+          { signal: requestController.signal, retryDelays: [250, 750] },
+        ).catch(() => undefined),
+        retryArkmeRead(
+          () => callArkme<ArkmeBackgroundSoundPreference>('settings.background-sound.get', undefined, requestController.signal),
+          { signal: requestController.signal, retryDelays: [250, 750] },
+        ).catch(() => undefined),
+        arkmeMicrophonePermissionState(),
+      ]).then(([capabilities, preference, permission]) => {
+        if (!sameAccount()) return
+        setBackgroundSoundPermission(permission)
+        if (capabilities === undefined) {
+          setBackgroundSoundCapabilityState({ accountId: targetAccountKey, status: 'loading' })
+          setBackgroundSoundEligibilityState({ accountId: targetAccountKey, status: 'loading' })
+          return
+        }
+        const supported = capabilities.features.backgroundSound === true
+        setBackgroundSoundCapabilityState({ accountId: targetAccountKey, status: supported ? 'supported' : 'unsupported' })
+        if (!supported) return
+        if (preference === undefined) {
+          setBackgroundSoundEligibilityState({ accountId: targetAccountKey, status: 'loading' })
+          return
+        }
+        const eligibility = resolveArkmeBackgroundSoundEligibility(preference)
+        setBackgroundSoundEligibilityState({ accountId: targetAccountKey, status: eligibility })
+        applyArkmeBackgroundSoundOwnerSnapshot(targetAccountKey, preference, undefined, targetUserId)
+      })
+    }
+    const unsubscribeRuntime = arkmeBackgroundSoundServerPreferenceRuntime.subscribe(targetAccountKey, refresh)
+    refresh()
+    return () => { active = false; controller?.abort(); unsubscribeRuntime() }
+  }, [authenticatedAccountKey, authenticatedUserId])
   const bindingRequired = authState.auth?.status === 'binding-required'
   const displayName = authenticated
     ? profile?.displayName.trim() || profile?.nickname.trim() || '我的账户'
@@ -633,9 +832,16 @@ export function ArkmeSettingsSurface() {
   const accountDescription = authenticated
     ? profile?.arkmeId ? `即我号 ${profile.arkmeId}` : '即我号读取中…'
     : bindingRequired ? '请完成手机号绑定' : authState.checked ? '登录后显示账户信息' : '正在读取账户状态…'
-  const notificationLabel = notificationPermission === 'granted'
-    ? '已开启'
-    : notificationPermission === 'denied' ? '已阻止' : notificationPermission === 'default' ? '未开启' : '不可用'
+  const notificationLabel = arkmeNotificationPermissionLabel(notificationPermission)
+  const backgroundSoundBaseDescription = describeArkmeBackgroundSoundSetting({
+    capability: backgroundSoundCapability,
+    eligibility: backgroundSoundEligibility,
+    enabled: backgroundSoundEnabled,
+    permission: backgroundSoundPermission,
+  })
+  const backgroundSoundDescription = backgroundSoundFeedback === ''
+    ? backgroundSoundBaseDescription
+    : `${backgroundSoundFeedback} · ${backgroundSoundBaseDescription}`
   const appUpdateRow = buildArkmeAppUpdateRow({
     ...(appUpdateState.status === undefined ? {} : { app: appUpdateState.status }),
     ...(appUpdateState.error === '' ? {} : { appError: appUpdateState.error }),
@@ -662,6 +868,59 @@ export function ArkmeSettingsSurface() {
     window.setTimeout(() => {
       setAccountFeedback(current => current === message ? '' : current)
     }, 3600)
+  }
+  const changeBackgroundSound = async (enabled: boolean) => {
+    if (authenticatedUserId === undefined || authenticatedAccountKey === undefined || backgroundSoundCapability !== 'supported'
+      || backgroundSoundEligibility !== 'eligible' || backgroundSoundBusyRef.current) return
+    const targetUserId = authenticatedUserId
+    const targetAccountKey = authenticatedAccountKey
+    const generation = backgroundSoundAccountGenerationRef.current
+    const mutationToken = arkmeBackgroundSoundServerPreferenceRuntime.beginMutation(targetAccountKey)
+    const sameAccount = () => {
+      const current = arkmeAuthStore.getSnapshot().auth
+      return backgroundSoundAccountGenerationRef.current === generation
+        && arkmeBackgroundSoundServerPreferenceRuntime.current(mutationToken)
+        && current?.status === 'authenticated'
+        && `${current.environment}:${String(current.userId)}` === targetAccountKey
+    }
+    backgroundSoundBusyRef.current = true
+    setBackgroundSoundBusy(true)
+    setBackgroundSoundFeedback(enabled ? '正在开启文字背景音…' : '')
+    try {
+      let persistedEnabled = enabled
+      await setArkmeBackgroundSoundFromSettings(
+        targetAccountKey,
+        enabled,
+        async next => {
+          if (!sameAccount()) throw new Error('账号已切换，本次背景音设置未保存')
+          const preference = await callArkme<ArkmeBackgroundSoundPreference>('settings.background-sound.update', {
+            enabled: next,
+            expectedUserId: targetUserId,
+          })
+          if (!sameAccount()) throw new Error('账号已切换，本次背景音设置结果已丢弃')
+          const eligibility = resolveArkmeBackgroundSoundEligibility(preference)
+          setBackgroundSoundEligibilityState({ accountId: targetAccountKey, status: eligibility })
+          persistedEnabled = preference.eligible ? preference.enabled : false
+          applyArkmeBackgroundSoundOwnerSnapshot(targetAccountKey, preference, undefined, targetUserId)
+        },
+        undefined,
+        sameAccount,
+      )
+      if (!sameAccount()) return
+      setBackgroundSoundFeedback(persistedEnabled === enabled
+        ? enabled ? '文字背景音已开启' : '文字背景音已关闭'
+        : '当前账号暂不支持开启文字背景音')
+    } catch (caught) {
+      if (sameAccount()) setBackgroundSoundFeedback(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      const permission = await arkmeMicrophonePermissionState()
+      if (sameAccount()) {
+        setBackgroundSoundPermission(permission)
+        backgroundSoundBusyRef.current = false
+        setBackgroundSoundBusy(false)
+      }
+      arkmeBackgroundSoundServerPreferenceRuntime.finish(mutationToken)
+    }
   }
 
   return <div ref={surfaceRef} className="arkme-redesign-settings-surface" data-arkme-settings-surface aria-label="Arkme 设置">
@@ -731,15 +990,22 @@ export function ArkmeSettingsSurface() {
           title="通知"
           description={notificationLabel}
           disabled={notificationBusy}
-          {...(notificationPermission === 'default' ? { onClick: () => { void enableNotifications() } } : {})}
+          {...(notificationPermission === 'default'
+            ? { onClick: () => { void enableNotifications() } }
+            : notificationPermission === 'denied'
+              ? { onClick: () => { void openNotificationSettings() } }
+              : {})}
         />
       </SettingsGroup>
 
       {authenticated && authenticatedUserId !== undefined ? <SettingsGroup title="隐私与权限">
-        <SettingsRow
-          title="位置记录"
-          description={locationCaptureEnabled ? '已开启，输入时可记录本条消息的位置' : '未开启，不会采集位置'}
-          onClick={() => { setLocationDialogOpen(true) }}
+        <BackgroundSoundSettingsRow
+          checked={backgroundSoundCapability === 'supported' && backgroundSoundEligibility === 'eligible' && backgroundSoundEnabled}
+          busy={backgroundSoundBusy || backgroundSoundCapability === 'loading' || backgroundSoundEligibility === 'loading'}
+          disabled={backgroundSoundCapability !== 'supported' || backgroundSoundEligibility !== 'eligible'
+            || !backgroundSoundEnabled && backgroundSoundPermission === 'unavailable'}
+          description={backgroundSoundDescription}
+          onChange={enabled => { void changeBackgroundSound(enabled) }}
         />
       </SettingsGroup> : null}
 
@@ -779,9 +1045,6 @@ export function ArkmeSettingsSurface() {
           onClose={() => { setActiveAccountDialog(null) }}
           onUpdated={(snapshot) => { applyProfileSnapshot(snapshot); arkmeUi.authChanged(true) }}
         />
-      : null}
-    {locationDialogOpen && authenticatedUserId !== undefined
-      ? <LocationPermissionDialog userId={authenticatedUserId} enabled={locationCaptureEnabled} onClose={() => { setLocationDialogOpen(false) }} />
       : null}
   </div>
 }

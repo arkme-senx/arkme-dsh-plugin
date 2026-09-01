@@ -305,21 +305,30 @@ describe('ArkmeLinkMetadataService', () => {
   })
 
   it('does not start queued network work after that request deadline has elapsed', async () => {
-    const reader: ArkmeLinkDocumentReader = {
-      read: vi.fn(async (_url, options) => {
-        await new Promise<void>((_resolve, reject) => {
-          options?.signal?.addEventListener('abort', () => { reject(options.signal?.reason) }, { once: true })
-        })
-        return { status: 200, body: '' }
-      }),
-    }
-    const service = new ArkmeLinkMetadataService(reader, { maxConcurrent: 1, maxQueue: 1, timeoutMs: 30 })
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const reader: ArkmeLinkDocumentReader = {
+        read: vi.fn(async (_url, options) => {
+          await new Promise<void>((_resolve, reject) => {
+            options?.signal?.addEventListener('abort', () => { reject(options.signal?.reason) }, { once: true })
+          })
+          return { status: 200, body: '' }
+        }),
+      }
+      const service = new ArkmeLinkMetadataService(reader, { maxConcurrent: 1, maxQueue: 1, timeoutMs: 30 })
+      const pending = Promise.all([
+        service.resolve('https://example.com/active-timeout'),
+        service.resolve('https://example.com/queued-timeout'),
+      ])
 
-    await expect(Promise.all([
-      service.resolve('https://example.com/active-timeout'),
-      service.resolve('https://example.com/queued-timeout'),
-    ])).resolves.toEqual([null, null])
-    expect(reader.read).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(30)
+
+      await expect(pending).resolves.toEqual([null, null])
+      expect(reader.read).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('skips an expired queued request and starts the next request while a slot is available', async () => {

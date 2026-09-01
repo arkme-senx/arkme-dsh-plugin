@@ -1,5 +1,7 @@
 import { callArkme } from './api.js'
-import { clearArkmeAvatarCache } from './ArkmeAvatar.js'
+import { arkmeAvatarImages } from './avatar-image-runtime.js'
+import type { ArkmeAvatarImagePort } from './avatar-image-store.js'
+import type { ArkmeClientAccountScope } from './chat-directory-store.js'
 import { reconcileNavigationProviderInstance } from './navigation-cache.js'
 
 interface ArkmeProviderInstanceGuardOptions {
@@ -9,8 +11,8 @@ interface ArkmeProviderInstanceGuardOptions {
 }
 
 interface ArkmeProviderInstanceDirectoryRecoveryOptions {
-  userId: number
-  activateAccount(userId: number | undefined): void
+  accountScope: Exclude<ArkmeClientAccountScope, undefined>
+  activateAccount(scope: ArkmeClientAccountScope): void
   refreshRoot(force: boolean): Promise<void>
   onRefreshed(): void
   retryDelaysMillis?: readonly number[]
@@ -42,12 +44,20 @@ export function createArkmeProviderInstanceGuard(options: ArkmeProviderInstanceG
   }
 }
 
+export function revalidateArkmeProviderAvatarImages(
+  images: Pick<ArkmeAvatarImagePort, 'revalidateActive'>,
+): void {
+  void images.revalidateActive()
+}
+
 export const reconcileArkmeProviderInstance = createArkmeProviderInstanceGuard({
   loadInstance: async () => {
     const instance = await callArkme<{ instanceId: string }>('provider.instance')
     return instance.instanceId
   },
-  onInvalidate: clearArkmeAvatarCache,
+  onInvalidate: () => {
+    revalidateArkmeProviderAvatarImages(arkmeAvatarImages)
+  },
 })
 
 /** Drop stale Browser projections, preferring a fresh Host read with its current-instance snapshot as fallback. */
@@ -55,7 +65,7 @@ export async function recoverArkmeProviderInstanceDirectory(
   options: ArkmeProviderInstanceDirectoryRecoveryOptions,
 ): Promise<void> {
   options.activateAccount(undefined)
-  options.activateAccount(options.userId)
+  options.activateAccount(options.accountScope)
   const wait = options.wait ?? (async (delayMillis: number) => {
     await new Promise<void>(resolve => { window.setTimeout(resolve, delayMillis) })
   })

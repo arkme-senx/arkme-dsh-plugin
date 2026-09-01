@@ -11,6 +11,7 @@ import type {
   ArkmeArrangementReminderToggleResult,
   ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
+  ArkmeBackgroundSoundPreference,
   ArkmeCaptchaResult,
   ArkmeBotList,
   ArkmeBotMentionInput,
@@ -52,6 +53,8 @@ import type {
   ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeMessageReportResult,
+  ArkmeMessageReportType,
   ArkmeMessageCopyLinkExtendResult,
   ArkmeMessageCopyLinkResult,
   ArkmeMessageCopyLinkResolveResult,
@@ -72,6 +75,7 @@ import type {
   ArkmeProviderCapabilities,
   ArkmeProviderState,
   ArkmeRichSendInput,
+  ArkmeRichBackgroundSoundInput,
   ArkmeSourceDirectory,
   ArkmeSourceItem,
   ArkmeSourceList,
@@ -115,7 +119,7 @@ import type {
 import type { ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput } from '../extensions/owned-types.js'
 import { normalizeGitHubRepositoryURL } from '../extensions/source.js'
 import type { ArkmeFilePolicy, ArkmeLocalFile, ArkmeFileSendInput, ArkmeFileSendTask, ArkmeFileReception } from '../file-transfer-contract.js'
-export type { ArkmeFileOpenResult, ArkmeFilePolicy, ArkmeLocalFile, ArkmeFileProgress, ArkmeFileSendInput, ArkmeFileSendTask, ArkmeFileReception } from '../file-transfer-contract.js'
+export type { ArkmeFileBackgroundSoundInput, ArkmeFileOpenResult, ArkmeFilePolicy, ArkmeLocalFile, ArkmeFileProgress, ArkmeFileSendInput, ArkmeFileSendTask, ArkmeFileReception } from '../file-transfer-contract.js'
 import type { ArkmeLinkMetadata } from '../link-metadata.js'
 
 export type { ArkmeLinkMetadata } from '../link-metadata.js'
@@ -135,6 +139,7 @@ export type {
   ArkmeArrangementReminderWriteResult,
   ArkmeArrangementStatus,
   ArkmeAuthSnapshot,
+  ArkmeBackgroundSoundPreference,
   ArkmeBotProvider,
   ArkmeBotStatus,
   ArkmeBotSummary,
@@ -197,6 +202,8 @@ export type {
   ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeMessageReportResult,
+  ArkmeMessageReportType,
   ArkmeMessageCopyLinkExtendResult,
   ArkmeMessageCopyLinkResult,
   ArkmeMessageCopyLinkAccessMode,
@@ -227,6 +234,7 @@ export type {
   ArkmeProviderCapabilities,
   ArkmeProviderState,
   ArkmeRichSendInput,
+  ArkmeRichBackgroundSoundInput,
   ArkmeSourceDirectory,
   ArkmeSourceItem,
   ArkmeSourceKind,
@@ -306,6 +314,20 @@ export type {
 } from '../outgoing-call-contract.js'
 
 const DEFAULT_ROUTE = '/arkme-self/api'
+
+function expectedUserIdHeaders(expectedUserId: number | undefined): Record<string, string> {
+  if (expectedUserId === undefined) return {}
+  if (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0) {
+    throw new TypeError('Arkme expected user ID must be a positive safe integer')
+  }
+  return { 'X-Arkme-Expected-User-Id': String(expectedUserId) }
+}
+
+function expectedUserIdParam(expectedUserId: number | undefined): { expectedUserId: number } | Record<string, never> {
+  if (expectedUserId === undefined) return {}
+  expectedUserIdHeaders(expectedUserId)
+  return { expectedUserId }
+}
 
 export class ArkmeClientError extends Error {
   constructor(readonly body: ArkmePluginErrorBody) {
@@ -583,6 +605,23 @@ export class ArkmeSdk {
       options.refresh === true ? 'user.profile.refresh' : 'user.profile',
       undefined,
       options.signal,
+    )
+  }
+
+  async backgroundSoundPreference(signal?: AbortSignal): Promise<ArkmeBackgroundSoundPreference> {
+    return await this.call<ArkmeBackgroundSoundPreference>('settings.background-sound.get', {}, signal)
+  }
+
+  async updateBackgroundSoundPreference(
+    enabled: boolean,
+    signal?: AbortSignal,
+    expectedUserId?: number,
+  ): Promise<ArkmeBackgroundSoundPreference> {
+    if (typeof enabled !== 'boolean') throw new TypeError('Arkme background-sound preference must be boolean')
+    return await this.call<ArkmeBackgroundSoundPreference>(
+      'settings.background-sound.update',
+      { enabled, ...expectedUserIdParam(expectedUserId) },
+      signal,
     )
   }
 
@@ -1345,6 +1384,7 @@ export class ArkmeSdk {
       humanMentions?: readonly ArkmeHumanMentionInput[]
       botMentions?: readonly ArkmeBotMentionInput[]
       botRefs?: readonly string[]
+      expectedUserId?: number
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeSourceSendResult> {
@@ -1360,6 +1400,7 @@ export class ArkmeSdk {
       ...(options.humanMentions === undefined ? {} : { humanMentions: options.humanMentions }),
       ...(options.botMentions === undefined ? {} : { botMentions: options.botMentions }),
       ...(options.botRefs === undefined ? {} : { botRefs: options.botRefs }),
+      ...expectedUserIdParam(options.expectedUserId),
     }, options.signal)
   }
 
@@ -1373,6 +1414,31 @@ export class ArkmeSdk {
       throw new TypeError('Arkme message link action references must be 1-100 unique values')
     }
     return await this.call<ArkmeMessageCopyLinkResult>('source.message-copy-link', { sourceRef, actionRefs: refs }, signal)
+  }
+
+  async reportMessage(
+    messageRef: string,
+    reportType: ArkmeMessageReportType,
+    options: { reason?: string; requestUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeMessageReportResult> {
+    const normalizedMessageRef = messageRef.trim()
+    const reason = options.reason?.trim() ?? ''
+    if (normalizedMessageRef === '' || normalizedMessageRef.length > 4_096) {
+      throw new TypeError('Arkme message reference must not be empty or exceed 4096 characters')
+    }
+    if (![1, 2, 3, 4].includes(reportType) || (reportType === 4 && reason === '') || [...reason].length > 500) {
+      throw new TypeError('Arkme message report type or reason is invalid')
+    }
+    const requestUid = (options.requestUid ?? crypto.randomUUID()).trim().toLowerCase()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(requestUid)) {
+      throw new TypeError('Arkme message report request UID is invalid')
+    }
+    return await this.call<ArkmeMessageReportResult>('source.message-report', {
+      messageRef: normalizedMessageRef,
+      reportType,
+      ...(reason === '' ? {} : { reason }),
+      requestUid,
+    }, options.signal)
   }
 
   async resolveMessageCopyLink(
@@ -1498,7 +1564,7 @@ export class ArkmeSdk {
   async sendRich(
     sourceRef: string,
     input: ArkmeRichSendInput,
-    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
+    options: { recordUid?: string; relationUid?: string; expectedUserId?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceSendResult> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme source reference must not be empty')
     return await this.call<ArkmeSourceSendResult>('source.send-rich', {
@@ -1506,6 +1572,7 @@ export class ArkmeSdk {
       ...input,
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
+      ...expectedUserIdParam(options.expectedUserId),
     }, options.signal)
   }
 
@@ -1618,9 +1685,9 @@ export class ArkmeSdk {
   }
 
   /** Stage locally only. Cloud upload starts when sendFiles accepts a task. */
-  async stageFile(file: Blob & { name?: string }, options: { fileName?: string; signal?: AbortSignal } = {}): Promise<ArkmeLocalFile> {
+  async stageFile(file: Blob & { name?: string }, options: { fileName?: string; expectedUserId?: number; signal?: AbortSignal } = {}): Promise<ArkmeLocalFile> {
     const response = await this.fetchImpl(`${this.route}/files/stage`, {
-      method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Arkme-File-Name': encodeURIComponent(options.fileName ?? file.name ?? 'attachment') },
+      method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Arkme-File-Name': encodeURIComponent(options.fileName ?? file.name ?? 'attachment'), ...expectedUserIdHeaders(options.expectedUserId) },
       body: file, ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
     const payload = await response.json() as ArkmePluginResponse<ArkmeLocalFile>
@@ -1630,7 +1697,7 @@ export class ArkmeSdk {
 
   async upload(
     file: Blob & { name?: string },
-    options: { fileName?: string; signal?: AbortSignal } = {},
+    options: { fileName?: string; expectedUserId?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeUploadedAsset> {
     const fileName = (options.fileName ?? file.name ?? 'attachment').trim()
     const response = await this.fetchImpl(`${this.route}/upload`, {
@@ -1638,6 +1705,7 @@ export class ArkmeSdk {
       headers: {
         'Content-Type': file.type || 'application/octet-stream',
         'X-Arkme-File-Name': encodeURIComponent(fileName),
+        ...expectedUserIdHeaders(options.expectedUserId),
       },
       body: file,
       ...(options.signal === undefined ? {} : { signal: options.signal }),

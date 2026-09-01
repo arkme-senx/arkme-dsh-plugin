@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import type { ArkmeClientConfig, ArkmeImagePayload } from '../types.js'
+import type { ArkmeClientConfig } from '../types.js'
 import { callArkme } from './api.js'
+import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { OutgoingCallRuntime } from './outgoing-call-runtime.js'
 
 export function outgoingCallModalLayout(compact: boolean, fullscreen: boolean): CSSProperties {
@@ -29,14 +30,11 @@ const retainedOverlayStyle: CSSProperties = {
 
 const frameStyle: CSSProperties = { width: '100%', height: '100%', display: 'block', border: 0, background: 'transparent' }
 
-async function loadCallAvatar(imageRef: string): Promise<string> {
-  const image = await callArkme<ArkmeImagePayload>('image.read', { imageRef })
-  return `data:${image.mediaType};base64,${image.dataBase64}`
-}
-
 export function ArkmeOutgoingCallHost() {
   const runtimeRef = useRef<OutgoingCallRuntime>()
-  if (runtimeRef.current === undefined) runtimeRef.current = new OutgoingCallRuntime({ loadAvatar: loadCallAvatar })
+  if (runtimeRef.current === undefined) {
+    runtimeRef.current = new OutgoingCallRuntime({ loadAvatar: imageRef => arkmeAvatarImages.load(imageRef) })
+  }
   const runtime = runtimeRef.current
   const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot)
   const attachCallFrame = useCallback((node: HTMLIFrameElement | null) => { runtime.attachFrame(node) }, [runtime])

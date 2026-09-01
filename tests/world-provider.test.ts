@@ -34,6 +34,8 @@ const config: ArkmeServiceConfig = {
   geetestCaptchaId: 'captcha-test-id-1234567890',
   interwovenMomentsEnabled: true,
 }
+const extensionShareRef = 'extshare_0123456789abcdef0123456789abcdef'
+const extensionShareUrl = `https://jiwo.cc/app/share/extension/${extensionShareRef}`
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -313,6 +315,54 @@ describe('world Provider projection', () => {
     expect(JSON.stringify(page)).not.toContain('public-record-1')
   })
 
+  it('projects public extension publication share links into World feed items', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, stateStore as never, async (input, init) => {
+      expect(String(input)).toBe('https://world.test/api/public/v1/public-record/world-list')
+      expect(JSON.parse(String(init?.body))).toEqual({ limit: 20, offset: 0 })
+      return json({ code: 200, data: { list: [{
+        record_uid: 'extension-record-1',
+        user_id: 20002,
+        nick_name: '发布者',
+        text_content: '发布了一个新的插件',
+        record_type: 'extension_publication',
+        images: [],
+        videos: [],
+        voices: [],
+        extend_count: 0,
+        extension_publication: {
+          extension_id: 'arkme-tic-tac-toe',
+          version: '1.0.4',
+          name: '井字棋（联机版）',
+          description: '通过 Arkme 私聊进行公平、轻松的井字棋联机对战。',
+          visibility: 'public',
+          desktop_required: true,
+          published_at: 1_700_000_100_000,
+          share: { ref: extensionShareRef, url: extensionShareUrl },
+        },
+      }], total: 1 } })
+    })
+
+    const page = await service.listWorldFeed({ limit: 20, offset: 0 })
+
+    expect(page.items).toMatchObject([{
+      recordRef: expect.stringMatching(/^arkme-world-record-v1\./),
+      authorName: '发布者',
+      textContent: '发布了一个新的插件',
+      recordType: 'extension_publication',
+      extensionPublication: {
+        extensionId: 'arkme-tic-tac-toe',
+        version: '1.0.4',
+        name: '井字棋（联机版）',
+        visibility: 'public',
+        desktopRequired: true,
+        share: { ref: extensionShareRef, url: extensionShareUrl },
+      },
+    }])
+    expect(JSON.stringify(page)).not.toContain('extension-record-1')
+  })
+
   it('uses the current viewer\'s private remark in World and in the chat opened from that World author', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -341,7 +391,10 @@ describe('world Provider projection', () => {
         return json({ code: 200, data: { items: [{ user_id: 20002, nick_name: '公开昵称A' }] } })
       }
       if (url === 'https://chat.test/api/v1/chats/create-private') {
-        expect(body).toMatchObject({ peer_user_id: 20002, title: '小王', peer_display_name_snapshot: '小王' })
+        expect(body).toMatchObject({ peer_user_id: 20002 })
+        expect(body).not.toHaveProperty('title')
+        expect(body).not.toHaveProperty('owner_display_name_snapshot')
+        expect(body).not.toHaveProperty('peer_display_name_snapshot')
         return json({ code: 200, data: {
           session: { chat_session_uid: 'private-20002', session_kind: 1, last_active_at: 1 },
           unread_snapshot: { unread_count: 0, session_last_seq: 0 },
@@ -741,7 +794,10 @@ describe('world Provider projection', () => {
         return json({ code: 200, data: { items: [{ user_id: 20002, nick_name: '小林' }] } })
       }
       if (url === 'https://chat.test/api/v1/chats/create-private') {
-        expect(body).toMatchObject({ peer_user_id: 20002, title: '小林' })
+        expect(body).toMatchObject({ peer_user_id: 20002 })
+        expect(body).not.toHaveProperty('title')
+        expect(body).not.toHaveProperty('owner_display_name_snapshot')
+        expect(body).not.toHaveProperty('peer_display_name_snapshot')
         return json({ code: 200, data: {
           session: { chat_session_uid: 'private-20002', session_kind: 1, last_active_at: 20 },
           unread_snapshot: { session_last_seq: 7, unread_count: 0 },

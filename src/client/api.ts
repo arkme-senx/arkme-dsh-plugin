@@ -1,7 +1,49 @@
 import { callArkme as callProvider } from '../sdk/index.js'
+import type { PublicRecordingImportJob } from '../recording-import-shared.js'
 import type { ArkmePluginOperation } from '../types.js'
 
 export { ArkmeClientError } from '../sdk/index.js'
+
+export type RecordingImportSnapshot = PublicRecordingImportJob
+
+function recordingImportMime(file: File): string {
+  if (file.type !== '') return file.type
+  const extension = file.name.toLowerCase().split('.').at(-1)
+  return extension === 'wav' ? 'audio/wav' : extension === 'mp3' ? 'audio/mpeg' : extension === 'm4a' ? 'audio/mp4' : ''
+}
+
+export async function uploadArkmeRecording(
+  importPath: string,
+  file: File,
+  startAtMillis: number,
+  belongUserId: number,
+  signal?: AbortSignal,
+): Promise<RecordingImportSnapshot> {
+  const response = await fetch(importPath, {
+    method: 'POST',
+    headers: {
+      'Content-Type': recordingImportMime(file),
+      'X-Arkme-File-Name': encodeURIComponent(file.name),
+      'X-Arkme-Start-At': String(startAtMillis),
+      'X-Arkme-Belong-User': String(belongUserId),
+    },
+    body: file,
+    credentials: 'same-origin',
+    redirect: 'error',
+    ...(signal === undefined ? {} : { signal }),
+  })
+  let payload: { ok: boolean; value?: RecordingImportSnapshot; error?: { message?: string } }
+  try {
+    payload = await response.json() as typeof payload
+  } catch (reason) {
+    if (reason instanceof Error && reason.name === 'AbortError') throw reason
+    throw new Error('录音导入失败')
+  }
+  if (!response.ok || !payload.ok || payload.value === undefined) {
+    throw new Error(payload.error?.message || '录音导入失败')
+  }
+  return payload.value
+}
 
 type ArkmeUiOperation = ArkmePluginOperation
   | 'provider.instance'
@@ -37,6 +79,14 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'calendar.records'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'recordings.import.list'
+  | 'recordings.import.preflight'
+  | 'recordings.import.status'
+  | 'recordings.import.retry'
+  | 'recordings.import.cancel'
+  | 'recordings.playback.open'
+  | 'recordings.speaker.options'
+  | 'recordings.speaker.assign-item'
   | 'topic.create'
   | 'topic.rename'
   | 'topic.dissolve'
@@ -67,6 +117,8 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'source.message-extension.context'
   | 'source.message-extension.extend'
   | 'source.forward-messages'
+  | 'message-actions.copy-link'
+  | 'message-actions.forward'
   | 'source.shared-recording-detail'
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'

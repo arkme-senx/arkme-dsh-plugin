@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
+  ArkmeChatAttentionSummary,
   ArkmeGroupAvatarPresentation,
   ArkmeSelfRecordItem,
   ArkmeSelfSummary,
@@ -22,6 +23,7 @@ import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLo
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { arkmeMentionMetadataMentionsViewer } from '../mention-metadata.js'
 import { arkmeMediaKind } from '../file-transfer-contract.js'
+import { projectArkmeChatAttention, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 
 export interface ArkmeSourceRefPayload {
   version: 1
@@ -186,12 +188,6 @@ function isSourceKind(value: unknown): value is ArkmeSourceKind {
     || value === 'private_chat' || value === 'group_chat'
 }
 
-function chatMessageDnd(value: unknown): boolean | undefined {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
-  const policy = value as Record<string, unknown>
-  return numberValue(policy.mute_state) === 2 || numberValue(policy.notify_state) === 2
-}
-
 function attachmentPreviewKind(item: Record<string, unknown>): 'image' | 'video' | 'audio' | 'file' {
   const fileName = stringValue(item.file_name ?? item.fileName).trim()
   const mimeType = stringValue(item.mime_type ?? item.mimeType).trim()
@@ -254,14 +250,24 @@ function safeFailureMessage(error: unknown): string {
   return '未知错误'
 }
 
-function cloneSourceList(value: ArkmeSourceList): ArkmeSourceList {
+function cloneSourceItem(value: ArkmeSourceItem): ArkmeSourceItem {
   return {
     ...value,
-    items: value.items.map(item => ({
-      ...item,
-      ...(item.avatarRefs === undefined ? {} : { avatarRefs: [...item.avatarRefs] }),
-    })),
+    ...(value.avatarRefs === undefined ? {} : { avatarRefs: [...value.avatarRefs] }),
+    ...(value.groupAvatar === undefined ? {} : {
+      groupAvatar: {
+        ...value.groupAvatar,
+        slots: value.groupAvatar.slots.map(slot => ({
+          ...slot,
+          ...(slot.fallback === undefined ? {} : { fallback: { ...slot.fallback } }),
+        })),
+      },
+    }),
   }
+}
+
+function cloneSourceList(value: ArkmeSourceList): ArkmeSourceList {
+  return { ...value, items: value.items.map(cloneSourceItem) }
 }
 
 export class SourceService {
@@ -322,6 +328,52 @@ export class SourceService {
     return this.chatSourceCache.get(cacheKey)
   }
 
+  private projectChatSourceAttention(source: ArkmeSourceItem): ArkmeSourceItem {
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') return source
+    const attention = projectArkmeChatAttentionFromMuted(source.unreadCount, source.isMuted === true)
+    return { ...source, ...attention }
+  }
+
+  private storeChatSourceByKey(cacheKey: string, source: ArkmeSourceItem): void {
+    this.chatSourceCache.set(cacheKey, cloneSourceItem(this.projectChatSourceAttention(source)))
+  }
+
+  /**
+   * Server-owned tray summary. `summary` covers every visible conversation;
+   * paginated `items` from this endpoint must never be summed as the Dock total.
+   */
+  async chatUnreadBadgeSummary(signal?: AbortSignal): Promise<ArkmeChatAttentionSummary> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/unread-snapshot',
+      { limit: 1 },
+      session,
+      signal,
+      { lane: 'background-read', key: 'chat:unread-badge-summary', bypassCache: true },
+    )
+    const summary = objectValue(data.summary)
+    const badgeCount = integerLikeValue(summary.badge_count)
+    const mutedUnreadCount = integerLikeValue(summary.muted_unread_count)
+    const sessionCountWithUnread = integerLikeValue(summary.session_count_with_unread)
+    const summaryVersion = integerLikeValue(summary.summary_version)
+    const updatedAtMillis = integerLikeValue(summary.updated_at)
+    const hasAttention = summary.has_attention
+    if (![badgeCount, mutedUnreadCount, sessionCountWithUnread, summaryVersion, updatedAtMillis]
+      .every(Number.isSafeInteger)
+      || badgeCount < 0 || mutedUnreadCount < 0 || sessionCountWithUnread < 0
+      || summaryVersion <= 0 || updatedAtMillis <= 0 || typeof hasAttention !== 'boolean') {
+      throw new ArkmePluginError('chat-unread-summary-invalid', '聊天未读角标摘要响应不完整', true, 502)
+    }
+    return {
+      badgeCount,
+      mutedUnreadCount,
+      sessionCountWithUnread,
+      hasAttention,
+      summaryVersion,
+      updatedAtMillis,
+    }
+  }
+
   /** Resolve a remote-search owner into the same viewer-bound source used by the conversation UI. */
   async searchTargetSource(
     sourceKind: number,
@@ -372,11 +424,11 @@ export class SourceService {
   }
 
   setChatSource(userId: number, chatSessionUid: string, source: ArkmeSourceItem): void {
-    this.chatSourceCache.set(`${String(userId)}:${chatSessionUid}`, source)
+    this.storeChatSourceByKey(`${String(userId)}:${chatSessionUid}`, source)
   }
 
   setChatSourceByKey(cacheKey: string, source: ArkmeSourceItem): void {
-    this.chatSourceCache.set(cacheKey, source)
+    this.storeChatSourceByKey(cacheKey, source)
   }
 
   /**
@@ -1048,7 +1100,7 @@ export class SourceService {
     await Promise.all(writes)
     const cacheKey = `${String(session.userId)}:${source.ownerRef}`
     const cached = this.chatSourceCache.get(cacheKey)
-    if (cached !== undefined) this.chatSourceCache.set(cacheKey, { ...cached, isPinned: pinned })
+    if (cached !== undefined) this.storeChatSourceByKey(cacheKey, { ...cached, isPinned: pinned })
     this.sourceListCache.clear()
     return { sourceRef, pinned, hidden }
   }
@@ -1340,6 +1392,7 @@ export class SourceService {
       },
     )
     const items: ArkmeSourceItem[] = []
+    const chatSessionUidByIndex = new Map<number, string>()
     const privateUserIdByIndex = new Map<number, number>()
     const groupSessionUidByIndex = new Map<number, string>()
     for (const raw of listValue(data.items)) {
@@ -1352,7 +1405,7 @@ export class SourceService {
       const latestPayload = objectValue(latestRecord.payload)
       const unread = objectValue(bundle.unread_snapshot)
       const currentPolicy = objectValue(bundle.current_policy)
-      const isMuted = chatMessageDnd(currentPolicy) ?? false
+      const attention = projectArkmeChatAttention(unread.unread_count, currentPolicy)
       const isPinned = numberValue(currentPolicy.pin_state) === 2
       const uid = stringValue(chatSession.chat_session_uid).trim()
       const sessionKind = numberValue(chatSession.session_kind)
@@ -1367,7 +1420,7 @@ export class SourceService {
         )
         : stringValue(chatSession.title)).trim() || '未命名会话'
       const preview = arkmeChatConversationPreview(latestPayload)
-      const unreadCount = Math.max(0, Math.trunc(numberValue(unread.unread_count)))
+      const unreadCount = attention.unreadCount
       const latestRelation = objectValue(latestPreview.relation)
       const latestSenderUserId = integerLikeValue(latestRelation.sender_user_id ?? latestRelation.senderUserId)
       const latestPreviewMentionsViewer = latestSenderUserId !== session.userId
@@ -1382,6 +1435,7 @@ export class SourceService {
             : backendMentionState === true || latestPreviewMentionsViewer
       const botGroupTarget = kind === 'group_chat' ? arkmeGroupBotBindingTargetFromBundle(bundle) : undefined
       const sidebarTarget = arkmeChatSidebarTargetFromBundle(bundle, kind === 'group_chat' ? uid : '')
+      const cached = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
       const item: ArkmeSourceItem = {
         sourceRef: await this.sealSourceRef(
           session.userId,
@@ -1396,18 +1450,26 @@ export class SourceService {
         sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
         kind,
         displayName,
+        ...(kind === 'private_chat' && cached?.avatarRef !== undefined
+          ? { avatarRef: cached.avatarRef }
+          : {}),
+        ...(kind === 'group_chat' && cached?.avatarRefs !== undefined
+          ? { avatarRefs: [...cached.avatarRefs] }
+          : {}),
+        ...(kind === 'group_chat' && cached?.groupAvatar !== undefined
+          ? { groupAvatar: cloneSourceItem(cached).groupAvatar }
+          : {}),
         ...(preview === '' ? {} : { latestPreview: preview }),
         activeAtMillis: numberValue(bundle.sort_active_at ?? chatSession.last_active_at),
-        unreadCount,
+        ...attention,
         ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
-        isMuted,
         isPinned,
         ...((numberValue(unread.session_last_seq ?? chatSession.last_seq)) > 0
           ? { latestSequence: numberValue(unread.session_last_seq ?? chatSession.last_seq) }
           : {}),
       }
       const itemIndex = items.push(item) - 1
-      this.chatSourceCache.set(`${String(session.userId)}:${uid}`, item)
+      chatSessionUidByIndex.set(itemIndex, uid)
       if (kind === 'private_chat') {
         const counterpartUserId = numberValue(counterpart.user_id)
         if (Number.isSafeInteger(counterpartUserId) && counterpartUserId > 0) {
@@ -1425,6 +1487,12 @@ export class SourceService {
     } catch (error) {
       // Avatar decoration is best-effort; chat source identity and navigation remain usable.
       console.warn('dsh-arkme: Chat avatar hydration failed:', safeFailureMessage(error))
+    }
+    // Cache the final hydrated projection as an owned snapshot. Realtime updates
+    // must not depend on later mutation of the directory row object.
+    for (const [index, uid] of chatSessionUidByIndex) {
+      const item = items[index]
+      if (item !== undefined) this.storeChatSourceByKey(`${String(session.userId)}:${uid}`, item)
     }
     const hasMore = data.has_more === true
     const totalValue = data.total ?? data.total_count
@@ -1475,6 +1543,7 @@ export class SourceService {
     signal?: AbortSignal,
   ): Promise<void> {
     const groupSnapshotsByIndex = new Map<number, ArkmeGroupAvatarSnapshotProjection>()
+    const authoritativeGroupIndices = new Set<number>()
     const indexByGroupUid = new Map([...groupSessionUidByIndex].map(([index, uid]) => [uid, index]))
     const missingGroupUids: string[] = []
     const now = Date.now()
@@ -1486,6 +1555,7 @@ export class SourceService {
         missingGroupUids.push(uid)
         continue
       }
+      authoritativeGroupIndices.add(index)
       if (cached.value !== null && cached.value.memberIds.length > 0) {
         groupSnapshotsByIndex.set(index, {
           ...cached.value,
@@ -1513,6 +1583,10 @@ export class SourceService {
           safeFailureMessage(error),
         )
         continue
+      }
+      for (const uid of groupUids) {
+        const index = indexByGroupUid.get(uid)
+        if (index !== undefined) authoritativeGroupIndices.add(index)
       }
       const snapshotsByUid = new Map<string, ArkmeGroupAvatarSnapshotProjection>()
       for (const raw of listValue(data.items)) {
@@ -1544,20 +1618,54 @@ export class SourceService {
       }
     }
 
+    for (const index of authoritativeGroupIndices) {
+      if (groupSnapshotsByIndex.has(index) || items[index] === undefined) continue
+      // A successful snapshot read with no usable members is the complete
+      // baseline and is therefore allowed to remove a previous presentation.
+      delete items[index].groupAvatar
+      delete items[index].avatarRefs
+    }
     const targetUserIds = new Set<number>(privateUserIdByIndex.values())
     for (const snapshot of groupSnapshotsByIndex.values()) {
       for (const userId of snapshot.memberIds) targetUserIds.add(userId)
     }
-    const profiles = await this.profile.publicProfileSummariesByUserIds([...targetUserIds], session, signal).catch(() => new Map())
+    let profiles: ReadonlyMap<number, ArkmePublicProfile>
+    try {
+      profiles = await this.profile.publicProfileSummariesByUserIds([...targetUserIds], session, signal)
+    } catch (error) {
+      // A failed profile read is not an authoritative avatar deletion. Callers
+      // may have seeded the rows with their last successful presentation.
+      console.warn('dsh-arkme: Public profile avatar hydration failed:', safeFailureMessage(error))
+      return
+    }
     for (const [index, targetUserId] of privateUserIdByIndex) {
-      if (profiles.get(targetUserId)?.avatarUrl === undefined || items[index] === undefined) continue
-      items[index].avatarRef = await this.profile.sealProfileImageRef(session.userId, targetUserId)
+      const item = items[index]
+      if (item === undefined) continue
+      if (profiles.get(targetUserId)?.avatarUrl === undefined) {
+        // The profile request completed and explicitly produced no usable
+        // avatar, so the full directory baseline owns removal.
+        delete item.avatarRef
+        continue
+      }
+      try {
+        item.avatarRef = await this.profile.sealProfileImageRef(session.userId, targetUserId)
+      } catch (error) {
+        // Keep a seeded last-known-good avatar when sealing is temporarily
+        // unavailable; this is not a server-owned deletion either.
+        console.warn('dsh-arkme: Private avatar sealing failed:', safeFailureMessage(error))
+      }
     }
     for (const [index, snapshot] of groupSnapshotsByIndex) {
       if (items[index] === undefined) continue
-      const presentation = await this.groupAvatarPresentation(snapshot, profiles, session.userId)
-      items[index].groupAvatar = presentation
-      items[index].avatarRefs = presentation.slots.flatMap(slot => slot.avatarRef === undefined ? [] : [slot.avatarRef])
+      try {
+        const presentation = await this.groupAvatarPresentation(snapshot, profiles, session.userId)
+        items[index].groupAvatar = presentation
+        items[index].avatarRefs = presentation.slots.flatMap(slot => slot.avatarRef === undefined ? [] : [slot.avatarRef])
+      } catch (error) {
+        // Preserve a seeded last-known-good group presentation when the
+        // complete replacement could not be materialized.
+        console.warn('dsh-arkme: Group avatar presentation failed:', safeFailureMessage(error))
+      }
     }
   }
 
@@ -1704,7 +1812,7 @@ export class SourceService {
     const supplement = objectValue(bundle.private_supplement)
     const unread = objectValue(bundle.unread_snapshot)
     const currentPolicy = objectValue(bundle.current_policy)
-    const isMuted = chatMessageDnd(currentPolicy) ?? cached?.isMuted ?? false
+    const attention = projectArkmeChatAttention(unread.unread_count, currentPolicy, cached?.isMuted ?? false)
     const isPinned = numberValue(currentPolicy.pin_state) === 2
     const uid = stringValue(chatSession.chat_session_uid).trim()
     const sessionKind = numberValue(chatSession.session_kind)
@@ -1729,7 +1837,7 @@ export class SourceService {
       latestItem?.sequence ?? 0,
       cached?.latestSequence ?? 0,
     )
-    const unreadCount = Math.max(0, Math.trunc(numberValue(unread.unread_count)))
+    const unreadCount = attention.unreadCount
     const latestMentionsViewer = latestItem?.isMe === false && latestItem.mentionsViewer === true
     const backendMentionState = chatUnreadMentionState(unread)
     const hasUnreadMention = kind !== 'group_chat'
@@ -1763,9 +1871,8 @@ export class SourceService {
         numberValue(bundle.sort_active_at ?? chatSession.last_active_at),
         latestItem?.sendAtMillis ?? 0,
       ),
-      unreadCount,
+      ...attention,
       ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
-      isMuted,
       isPinned,
       ...(latestSequence > 0 ? { latestSequence } : {}),
     }

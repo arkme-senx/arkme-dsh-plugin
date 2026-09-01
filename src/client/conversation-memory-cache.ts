@@ -18,7 +18,8 @@ export interface ArkmeConversationTimelineSnapshot {
   newerHasMore?: boolean
   /** Client-only freshness metadata. It is never sent across the Host boundary. */
   fetchedAtMillis?: number
-  refreshRevision?: number
+  /** Record-owner projection revision. Chat timelines must use latestSequence instead. */
+  recordRevision?: number
   latestSequence?: number
 }
 
@@ -32,12 +33,6 @@ export interface ArkmeConversationViewportSnapshot {
   stickToBottom: boolean
   anchorId?: string
   anchorOffset?: number
-}
-
-export interface ArkmeConversationTimelineRefreshContext {
-  nowMillis: number
-  refreshRevision: number
-  latestSequence?: number
 }
 
 export const ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS = 15_000
@@ -90,15 +85,31 @@ export function arkmeConversationTimelineDeltaItems(
       && item.sequence <= aroundSequenceRange.maximumSequence)
 }
 
-export function arkmeShouldRefreshConversationTimeline(
+function arkmeConversationTimelineExpired(
   snapshot: ArkmeConversationTimelineSnapshot | undefined,
-  context: ArkmeConversationTimelineRefreshContext,
+  nowMillis: number,
 ): boolean {
   if (snapshot?.fetchedAtMillis === undefined) return true
-  if (snapshot.refreshRevision !== context.refreshRevision) return true
-  const cachedLatestSequence = Math.max(snapshot.latestSequence ?? 0, latestTimelineSequence(snapshot.items))
-  if (context.latestSequence !== undefined && context.latestSequence > cachedLatestSequence) return true
-  return context.nowMillis - snapshot.fetchedAtMillis >= ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS
+  return nowMillis - snapshot.fetchedAtMillis >= ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS
+}
+
+export function arkmeShouldRefreshChatTimeline(
+  snapshot: ArkmeConversationTimelineSnapshot | undefined,
+  nowMillis: number,
+  latestSequence?: number,
+): boolean {
+  if (arkmeConversationTimelineExpired(snapshot, nowMillis)) return true
+  const cachedLatestSequence = Math.max(snapshot?.latestSequence ?? 0, latestTimelineSequence(snapshot?.items ?? []))
+  return latestSequence !== undefined && latestSequence > cachedLatestSequence
+}
+
+export function arkmeShouldRefreshRecordTimeline(
+  snapshot: ArkmeConversationTimelineSnapshot | undefined,
+  nowMillis: number,
+  recordRevision: number,
+): boolean {
+  if (arkmeConversationTimelineExpired(snapshot, nowMillis)) return true
+  return snapshot?.recordRevision !== recordRevision
 }
 
 export function arkmeConversationRestoredScrollTop(
@@ -128,23 +139,28 @@ export class ArkmeConversationMemoryCache {
 
   constructor(private readonly maxSources = 20) {}
 
-  getTimeline(sourceRef: string): ArkmeConversationTimelineSnapshot | undefined {
-    const snapshot = this.timelines.get(sourceRef)
-    if (snapshot !== undefined) this.touch(sourceRef)
+  getTimeline(conversationKey: string): ArkmeConversationTimelineSnapshot | undefined {
+    const snapshot = this.timelines.get(conversationKey)
+    if (snapshot !== undefined) this.touch(conversationKey)
     return snapshot
   }
 
   storeTimeline(
-    sourceRef: string,
+    conversationKey: string,
     snapshot: ArkmeConversationTimelineSnapshot,
   ): ArkmeInterwovenMention[] | undefined {
-    const previous = this.timelines.get(sourceRef)
+    const previous = this.timelines.get(conversationKey)
     const computedLatestSequence = latestTimelineSequence(snapshot.items)
     const mode = snapshot.mode ?? previous?.mode ?? 'latest'
     const { aroundSequenceRange: snapshotAroundSequenceRange, ...snapshotWithoutAroundSequenceRange } = snapshot
     const nextAroundSequenceRange = mode === 'around'
       ? snapshotAroundSequenceRange ?? previous?.aroundSequenceRange
       : undefined
+    const latestSequence = snapshot.latestSequence === undefined
+        && previous?.latestSequence === undefined
+        && computedLatestSequence === 0
+      ? undefined
+      : Math.max(snapshot.latestSequence ?? 0, previous?.latestSequence ?? 0, computedLatestSequence)
     const next: ArkmeConversationTimelineSnapshot = {
       ...snapshotWithoutAroundSequenceRange,
       mode,
@@ -152,58 +168,58 @@ export class ArkmeConversationMemoryCache {
       ...(snapshot.fetchedAtMillis === undefined && previous?.fetchedAtMillis !== undefined
         ? { fetchedAtMillis: previous.fetchedAtMillis }
         : {}),
-      ...(snapshot.refreshRevision === undefined && previous?.refreshRevision !== undefined
-        ? { refreshRevision: previous.refreshRevision }
+      ...(snapshot.recordRevision === undefined && previous?.recordRevision !== undefined
+        ? { recordRevision: previous.recordRevision }
         : {}),
-      latestSequence: Math.max(snapshot.latestSequence ?? 0, previous?.latestSequence ?? 0, computedLatestSequence),
+      ...(latestSequence === undefined ? {} : { latestSequence }),
     }
-    this.timelines.set(sourceRef, next)
-    this.touch(sourceRef)
-    const pending = this.pendingInterwovenMoments.get(sourceRef)
+    this.timelines.set(conversationKey, next)
+    this.touch(conversationKey)
+    const pending = this.pendingInterwovenMoments.get(conversationKey)
     if (pending === undefined) return undefined
-    const pendingRevision = this.pendingInterwovenRefreshRevisions.get(sourceRef) ?? 0
-    this.pendingInterwovenMoments.delete(sourceRef)
-    this.pendingInterwovenRefreshRevisions.delete(sourceRef)
-    this.interwovenMoments.set(sourceRef, pending)
-    this.interwovenRefreshRevisions.set(sourceRef, pendingRevision)
+    const pendingRevision = this.pendingInterwovenRefreshRevisions.get(conversationKey) ?? 0
+    this.pendingInterwovenMoments.delete(conversationKey)
+    this.pendingInterwovenRefreshRevisions.delete(conversationKey)
+    this.interwovenMoments.set(conversationKey, pending)
+    this.interwovenRefreshRevisions.set(conversationKey, pendingRevision)
     return pending
   }
 
-  getInterwovenMoments(sourceRef: string): ArkmeInterwovenMention[] | undefined {
-    const moments = this.interwovenMoments.get(sourceRef)
-    if (moments !== undefined) this.touch(sourceRef)
+  getInterwovenMoments(conversationKey: string): ArkmeInterwovenMention[] | undefined {
+    const moments = this.interwovenMoments.get(conversationKey)
+    if (moments !== undefined) this.touch(conversationKey)
     return moments
   }
 
   /** Returns true only when the ordinary timeline is ready and the result may be revealed. */
-  storeInterwovenMoments(sourceRef: string, moments: ArkmeInterwovenMention[], refreshRevision = 0): boolean {
-    this.touch(sourceRef)
-    if (!this.timelines.has(sourceRef)) {
-      this.pendingInterwovenMoments.set(sourceRef, moments)
-      this.pendingInterwovenRefreshRevisions.set(sourceRef, refreshRevision)
+  storeInterwovenMoments(conversationKey: string, moments: ArkmeInterwovenMention[], refreshRevision = 0): boolean {
+    this.touch(conversationKey)
+    if (!this.timelines.has(conversationKey)) {
+      this.pendingInterwovenMoments.set(conversationKey, moments)
+      this.pendingInterwovenRefreshRevisions.set(conversationKey, refreshRevision)
       return false
     }
-    this.pendingInterwovenMoments.delete(sourceRef)
-    this.pendingInterwovenRefreshRevisions.delete(sourceRef)
-    this.interwovenMoments.set(sourceRef, moments)
-    this.interwovenRefreshRevisions.set(sourceRef, refreshRevision)
+    this.pendingInterwovenMoments.delete(conversationKey)
+    this.pendingInterwovenRefreshRevisions.delete(conversationKey)
+    this.interwovenMoments.set(conversationKey, moments)
+    this.interwovenRefreshRevisions.set(conversationKey, refreshRevision)
     return true
   }
 
-  isInterwovenFresh(sourceRef: string, refreshRevision: number): boolean {
-    return this.interwovenMoments.has(sourceRef)
-      && this.interwovenRefreshRevisions.get(sourceRef) === refreshRevision
+  isInterwovenFresh(conversationKey: string, refreshRevision: number): boolean {
+    return this.interwovenMoments.has(conversationKey)
+      && this.interwovenRefreshRevisions.get(conversationKey) === refreshRevision
   }
 
-  getViewport(sourceRef: string): ArkmeConversationViewportSnapshot | undefined {
-    const viewport = this.viewports.get(sourceRef)
-    if (viewport !== undefined) this.touch(sourceRef)
+  getViewport(conversationKey: string): ArkmeConversationViewportSnapshot | undefined {
+    const viewport = this.viewports.get(conversationKey)
+    if (viewport !== undefined) this.touch(conversationKey)
     return viewport
   }
 
-  storeViewport(sourceRef: string, viewport: ArkmeConversationViewportSnapshot): void {
-    this.viewports.set(sourceRef, viewport)
-    this.touch(sourceRef)
+  storeViewport(conversationKey: string, viewport: ArkmeConversationViewportSnapshot): void {
+    this.viewports.set(conversationKey, viewport)
+    this.touch(conversationKey)
   }
 
   clear(): void {
@@ -216,9 +232,9 @@ export class ArkmeConversationMemoryCache {
     this.recency.clear()
   }
 
-  private touch(sourceRef: string): void {
-    this.recency.delete(sourceRef)
-    this.recency.set(sourceRef, true)
+  private touch(conversationKey: string): void {
+    this.recency.delete(conversationKey)
+    this.recency.set(conversationKey, true)
     while (this.recency.size > Math.max(1, this.maxSources)) {
       const oldest = this.recency.keys().next().value as string | undefined
       if (oldest === undefined) return
