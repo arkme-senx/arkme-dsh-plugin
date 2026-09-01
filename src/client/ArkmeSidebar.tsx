@@ -10,7 +10,7 @@ import qrcode from 'qrcode-generator'
 import type {
   ArkmeAuthSnapshot, ArkmeGroupAiPolishNotice, ArkmeGroupAiPolishSnapshot, ArkmeSourceReadResult,
   ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPage,
-  ArkmeRelatedRecordingPageState, ArkmeSourceItem, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage, ArkmeMessageSnapshotDetail, ArkmeRecordLocationCapture,
+  ArkmeRelatedRecordingPageState, ArkmeSourceItem, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage, ArkmeMessageSnapshotDetail,
   ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmePluginResponse,
   ArkmeRelatedQuickNoteDetail, ArkmeRelatedQuickNoteItem, ArkmeRelatedQuickNoteList,
   ArkmeMessageCopyLinkExtendResult, ArkmeMessageCopyLinkExtensionItem, ArkmeMessageCopyLinkResolveResult, ArkmeMessageCopyLinkResult, ArkmeMessageCopyLinkSnapshotItem,
@@ -149,15 +149,8 @@ import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDeta
 import { ArkmeMessageSnapshotDialog, arkmeCanOpenMessageSnapshot } from './ArkmeMessageSnapshotDialog.js'
 import { ArkmeMessageReportDialog, arkmeCanReportTimelineMessage } from './ArkmeMessageReportDialog.js'
 import {
-  arkmeLocationCaptureEnabled,
-  arkmeLocationErrorCanOpenSettings,
-  arkmeLocationSettingsAvailable,
-  arkmeOpenLocationSettings,
   arkmeSourceSupportsLocationCapture,
   captureArkmeRecordLocationForSend,
-  requestArkmeRecordLocation,
-  setArkmeLocationCaptureEnabled,
-  subscribeArkmeLocationCapturePreference,
   type ArkmeRecordLocationForSendResult,
 } from './record-capture-location.js'
 import { ArkmeBackgroundSoundWaveform } from './ArkmeBackgroundSoundWaveform.js'
@@ -886,10 +879,10 @@ function errorMessage(error: unknown): string {
 function locationCaptureFeedback(result: ArkmeRecordLocationForSendResult): string | undefined {
   if (result.state === 'permission-required') {
     return result.permission === 'denied'
-      ? '消息已发送，但浏览器已拒绝位置权限；请在设置中重新允许后再试'
+      ? '消息已发送，但系统已拒绝位置权限；请在系统定位设置中允许后再试'
       : result.permission === 'unavailable'
         ? '消息已发送，但当前浏览器不支持位置采集'
-        : '消息已发送，但位置尚未授权；请点击输入框旁的位置按钮完成授权'
+        : '消息已发送，但位置尚未授权；请在系统定位设置中允许位置访问'
   }
   return result.state === 'failed' ? `消息已发送，但位置采集失败：${result.message}` : undefined
 }
@@ -1334,7 +1327,6 @@ interface ArkmeComposerAsyncScope {
   sourceKey: string
   draftKey: string | undefined
   generation: number
-  locationRevision: number
 }
 
 function resolveStateAction<Value>(action: SetStateAction<Value>, current: Value): Value {
@@ -2138,7 +2130,6 @@ export function ArkmeSurface({
     sourceKey: '',
     draftKey: undefined,
     generation: 0,
-    locationRevision: 0,
   })
   const composerAsyncScope = composerAsyncScopeRef.current
   if (composerAsyncScope.accountKey !== authenticatedAccountKey
@@ -2149,7 +2140,6 @@ export function ArkmeSurface({
       sourceKey: conversationKey,
       draftKey: composerDraftKey,
       generation: composerAsyncScope.generation + 1,
-      locationRevision: composerAsyncScope.locationRevision + 1,
     }
   }
   const captureComposerAsyncScope = (): ArkmeComposerAsyncScope => ({ ...composerAsyncScopeRef.current })
@@ -2162,10 +2152,6 @@ export function ArkmeSurface({
       && current.generation === expected.generation
       && arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) === expected.accountKey
   }
-  const advanceComposerLocationRevision = (): number => {
-    composerAsyncScopeRef.current.locationRevision += 1
-    return composerAsyncScopeRef.current.locationRevision
-  }
   const composerDraft = useSyncExternalStore(
     activeConversation ? arkmeComposerDraftStore.subscribe : NOOP_SUBSCRIBE,
     () => activeConversation ? arkmeComposerDraftStore.get(composerDraftKey) : arkmeComposerDraftStore.get(undefined),
@@ -2175,14 +2161,6 @@ export function ArkmeSurface({
   const attachments = composerDraft.attachments
   const [composerInputFocused, setComposerInputFocused] = useState(false)
   const [composerShowsInputTime, setComposerShowsInputTime] = useState(arkmeComposerShowsInputTime)
-  const [composerLocation, setComposerLocation] = useState<ArkmeRecordLocationCapture>()
-  const [composerLocationRequesting, setComposerLocationRequesting] = useState(false)
-  const [composerLocationNeedsSettings, setComposerLocationNeedsSettings] = useState(false)
-  useEffect(() => {
-    setComposerLocation(undefined)
-    setComposerLocationRequesting(false)
-    setComposerLocationNeedsSettings(false)
-  }, [authenticatedAccountKey, composerDraftKey, conversationKey])
   const backgroundSoundAvailabilityRef = useRef({
     supported: backgroundSoundSupported,
     eligibilityReason: backgroundSoundEligibilityReason,
@@ -2208,14 +2186,6 @@ export function ArkmeSurface({
       [authenticatedAccountKey],
     ),
     useCallback(() => arkmeBackgroundSoundCaptureEnabled(authenticatedAccountKey), [authenticatedAccountKey]),
-    () => false,
-  )
-  const locationCaptureEnabled = useSyncExternalStore(
-    useCallback(
-      (listener: () => void) => subscribeArkmeLocationCapturePreference(authenticatedAccountKey, listener),
-      [authenticatedAccountKey],
-    ),
-    () => arkmeLocationCaptureEnabled(authenticatedAccountKey),
     () => false,
   )
   const composerTextLength = Array.from(draft).length
@@ -2383,8 +2353,7 @@ export function ArkmeSurface({
   const preparingFiles = composerDraftKey !== undefined && preparingKeys.has(composerDraftKey)
   // Transport is per message.  It must never lock the next draft while a previous
   // message waits for the server, otherwise fast keyboard input is dropped.
-  const canSend = !composerLocationRequesting
-    && arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles)
+  const canSend = arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles)
   const pendingComposerFocusDraftKeyRef = useRef<string>()
   const [compactNavigation, setCompactNavigation] = useState(false)
   const [submitBusy, setSubmitBusy] = useState(false)
@@ -3763,32 +3732,18 @@ export function ArkmeSurface({
   }
 
   const send = async () => {
-    if (source === undefined || composerDraftKey === undefined || composerLocationRequesting) return
+    if (source === undefined || composerDraftKey === undefined) return
     const targetSource = source
     const targetDraftKey = composerDraftKey
     const targetUserId = authenticatedUserId
     const targetAccountKey = authenticatedAccountKey
     if (targetUserId === undefined || targetAccountKey === undefined) return
     const targetComposerScope = captureComposerAsyncScope()
-    const submittedComposerLocation = composerLocation
-    let clearedComposerLocationRevision: number | undefined
     const sameTargetAccount = () => {
       const current = arkmeAuthStore.getSnapshot().auth
       return arkmeAuthenticatedAccountKey(current) === targetAccountKey
     }
     const sameTargetComposer = () => sameTargetAccount() && sameComposerAsyncScope(targetComposerScope)
-    const targetDraftStillEmpty = () => {
-      const current = arkmeComposerDraftStore.get(targetDraftKey)
-      return current.text === '' && current.attachments.length === 0
-        && current.mentions.length === 0 && current.emojis.length === 0
-    }
-    const restoreSubmittedComposerLocation = (draftWasStillEmpty: boolean) => {
-      if (!draftWasStillEmpty || submittedComposerLocation === undefined || clearedComposerLocationRevision === undefined
-        || !sameTargetComposer()
-        || composerAsyncScopeRef.current.locationRevision !== clearedComposerLocationRevision) return
-      advanceComposerLocationRevision()
-      setComposerLocation(submittedComposerLocation)
-    }
     const preparation = preparationJobs.current.get(targetDraftKey)
     const preparationSucceeded = preparation === undefined ? true : await preparation
     if (preparationSucceeded === false) return
@@ -3800,29 +3755,20 @@ export function ArkmeSurface({
     if (textContent === '' && readyDraft.attachments.length === 0) return
     const capturePromise = recordInputCaptureOwner.finishForSubmit(targetDraftKey)
     const locationCaptureRequested = arkmeSourceSupportsLocationCapture(targetSource.kind)
-      && (locationCaptureEnabled || composerLocation !== undefined)
-    const locationCapturePromise: Promise<ArkmeRecordLocationForSendResult> = captureArkmeRecordLocationForSend(
-      arkmeSourceSupportsLocationCapture(targetSource.kind) && locationCaptureEnabled,
-      arkmeSourceSupportsLocationCapture(targetSource.kind) ? composerLocation : undefined,
-    ).catch(caught => ({ state: 'failed', message: errorMessage(caught) || '位置采集失败，请稍后重试' }))
+    const locationCapturePromise: Promise<ArkmeRecordLocationForSendResult> = locationCaptureRequested
+      ? captureArkmeRecordLocationForSend()
+        .catch(caught => ({ state: 'failed', message: errorMessage(caught) || '位置采集失败，请稍后重试' }))
+      : Promise.resolve({ state: 'disabled' })
     const { recordUid, relationUid } = arkmeComposerDraftStore.beginFileSend(targetDraftKey)
     // Take the draft before any network await.  The next keystroke now belongs to a
     // fresh draft and can be sent independently instead of being swallowed by a busy lock.
     const pendingDraft = arkmeComposerDraftStore.take(targetDraftKey)
     pendingComposerFocusDraftKeyRef.current = targetDraftKey
-    if (submittedComposerLocation !== undefined && sameTargetComposer()
-      && composerAsyncScopeRef.current.locationRevision === targetComposerScope.locationRevision) {
-      setComposerLocation(undefined)
-      setComposerLocationNeedsSettings(false)
-      clearedComposerLocationRevision = advanceComposerLocationRevision()
-    }
     let inputCapture: ArkmeRecordInputCaptureResult
     try {
       inputCapture = await capturePromise
     } catch (caught) {
-      const restoreLocation = targetDraftStillEmpty()
       arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
-      restoreSubmittedComposerLocation(restoreLocation)
       if (sameTargetComposer()) setError(errorMessage(caught) || '输入快照采集失败，请重试')
       return
     }
@@ -4121,10 +4067,8 @@ export function ArkmeSurface({
       if (sameTargetAccount()) {
         // restore() preserves any newer text entered after this send started.
         if (!durableFileSendUncertain) {
-          const restoreLocation = targetDraftStillEmpty()
           arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
           recordInputCaptureOwner.restoreForRetry(targetDraftKey, inputCapture)
-          restoreSubmittedComposerLocation(restoreLocation)
         } else releaseArkmeComposerDraft(pendingDraft)
       } else {
         releaseArkmeComposerDraft(pendingDraft)
@@ -5869,40 +5813,6 @@ export function ArkmeSurface({
               onStickerSent={async () => { await loadTimeline() }}
               onError={message => { setError(message) }}
             /></div><div style={styles.composerSendArea}>
-              {arkmeSourceSupportsLocationCapture(source?.kind) && (composerInputFocused || composerTextLength > 0) && <><button type="button" style={styles.composerTimeToggle} disabled={composerLocationRequesting} title={composerLocationRequesting ? '正在获取当前位置' : composerLocation !== undefined ? '点击移除本条手动位置' : locationCaptureEnabled ? '已开启自动位置记录；点击立即刷新本条位置' : '点击开启并授权自动位置记录'} aria-label={composerLocationRequesting ? '正在获取位置' : composerLocation !== undefined ? '已手动采集本条位置，点击移除' : locationCaptureEnabled ? '已开启自动位置记录' : '开启自动位置记录'} onMouseDown={event => { event.preventDefault() }} onClick={() => {
-                if (composerLocationRequesting) return
-                if (composerLocation !== undefined) {
-                  advanceComposerLocationRevision()
-                  setComposerLocation(undefined)
-                  setComposerLocationNeedsSettings(false)
-                  textareaRef.current?.focus()
-                  return
-                }
-                const requestScope = captureComposerAsyncScope()
-                setComposerLocationNeedsSettings(false)
-                setComposerLocationRequesting(true)
-                void requestArkmeRecordLocation().then(location => {
-                  if (!sameComposerAsyncScope(requestScope)) return
-                  advanceComposerLocationRevision()
-                  setArkmeLocationCaptureEnabled(requestScope.accountKey, true)
-                  setComposerLocation(location)
-                  setError('')
-                  textareaRef.current?.focus()
-                }).catch(caught => {
-                  if (!sameComposerAsyncScope(requestScope)) return
-                  setComposerLocationNeedsSettings(arkmeLocationSettingsAvailable() && arkmeLocationErrorCanOpenSettings(caught))
-                  setError(errorMessage(caught))
-                }).finally(() => {
-                  if (sameComposerAsyncScope(requestScope)) setComposerLocationRequesting(false)
-                })
-              }}>{composerLocationRequesting ? '⌖ 正在获取位置…' : composerLocation !== undefined ? '⌖ 已选择本条位置' : locationCaptureEnabled ? '⌖ 自动记录位置' : '⌖ 开启位置记录'}</button>{composerLocationNeedsSettings ? <button type="button" style={styles.composerTimeToggle} aria-label="打开系统定位设置" onMouseDown={event => { event.preventDefault() }} onClick={() => {
-                const requestScope = captureComposerAsyncScope()
-                void arkmeOpenLocationSettings().then(opened => {
-                  if (sameComposerAsyncScope(requestScope)) {
-                    setError(opened ? '已打开系统定位设置；允许 Arkme 使用位置后请返回重试' : '无法打开系统定位设置，请稍后重试')
-                  }
-                })
-              }}>打开定位设置</button> : null}</>}
               <ArkmeComposerInputStats
                 active={activeConversation}
                 visible={composerStatsVisible}

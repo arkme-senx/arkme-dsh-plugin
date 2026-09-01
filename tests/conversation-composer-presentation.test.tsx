@@ -18,14 +18,14 @@ describe('Arkme conversation composer presentation', () => {
     expect(menu).toContain('添加照片和文件')
     expect(menu).toContain('写长文')
     expect(menu).not.toContain('采集本次位置')
-    expect(sidebarSource).toContain('开启位置记录')
+    expect(sidebarSource).not.toContain('开启位置记录')
     expect(menu).not.toContain('本地附件')
     expect(sidebarSource).not.toContain('files.local.list')
     expect(sidebarSource).not.toContain('添加到草稿')
     expect(sidebarSource).not.toContain('移除本地任务')
   })
 
-  it('offers the location status/control for every record-producing conversation source', async () => {
+  it('supports default location capture without rendering a composer control', async () => {
     const locationCapture = await import(locationCaptureModuleUrl.href) as {
       arkmeSourceSupportsLocationCapture: (kind: string | undefined) => boolean
     }
@@ -33,42 +33,43 @@ describe('Arkme conversation composer presentation', () => {
       expect(locationCapture.arkmeSourceSupportsLocationCapture(kind)).toBe(true)
     }
     expect(locationCapture.arkmeSourceSupportsLocationCapture('bot')).toBe(false)
-    expect(sidebarSource).toContain('arkmeSourceSupportsLocationCapture(source?.kind)')
-    expect(sidebarSource).toContain('disabled={composerLocationRequesting}')
-    expect(sidebarSource).toContain("composerLocationRequesting ? '⌖ 正在获取位置…'")
-    expect(sidebarSource).toContain('if (sameComposerAsyncScope(requestScope)) setComposerLocationRequesting(false)')
-    expect(sidebarSource).toContain('arkmeLocationErrorCanOpenSettings(caught)')
-    expect(sidebarSource).toContain('aria-label="打开系统定位设置"')
+    expect(sidebarSource).toContain('const locationCaptureRequested = arkmeSourceSupportsLocationCapture(targetSource.kind)')
+    expect(sidebarSource).not.toContain('locationCaptureEnabled')
+    expect(sidebarSource).not.toContain('composerLocationRequesting')
+    expect(sidebarSource).not.toContain('⌖ 自动记录位置')
   })
 
-  it('automatically captures every enabled send only after permission was already granted', async () => {
+  it('requests permission on the first supported send and captures later sends directly', async () => {
     const locationCapture = await import(locationCaptureModuleUrl.href) as typeof import('../src/client/record-capture-location.js')
     const selected = { latitude: 30.52, longitude: 114.31, capturedAtMillis: 100 }
-    const permissionState = vi.fn(async () => 'granted' as const)
-    const requestLocation = vi.fn(async () => ({ ...selected, capturedAtMillis: 200 }))
+    const permissionState = vi.fn(async () => 'prompt' as const)
+    const requestPermissionAndLocation = vi.fn(async () => ({ ...selected, capturedAtMillis: 200 }))
+    const captureGrantedLocation = vi.fn(async () => ({ ...selected, capturedAtMillis: 300 }))
 
-    await expect(locationCapture.captureArkmeRecordLocationForSend(true, selected, {
+    await expect(locationCapture.captureArkmeRecordLocationForSend({
       permissionState,
-      requestLocation,
-    })).resolves.toEqual({ state: 'captured', location: selected, source: 'selected' })
-    expect(permissionState).not.toHaveBeenCalled()
-    expect(requestLocation).not.toHaveBeenCalled()
+      requestPermissionAndLocation,
+      captureGrantedLocation,
+    })).resolves.toEqual({ state: 'captured', location: { ...selected, capturedAtMillis: 200 } })
+    expect(permissionState).toHaveBeenCalledOnce()
+    expect(requestPermissionAndLocation).toHaveBeenCalledOnce()
+    expect(captureGrantedLocation).not.toHaveBeenCalled()
 
-    await expect(locationCapture.captureArkmeRecordLocationForSend(true, undefined, {
+    permissionState.mockResolvedValueOnce('granted')
+    await expect(locationCapture.captureArkmeRecordLocationForSend({
       permissionState,
-      requestLocation,
-    })).resolves.toMatchObject({ state: 'captured', source: 'granted-preference' })
-    expect(requestLocation).toHaveBeenCalledOnce()
+      requestPermissionAndLocation,
+      captureGrantedLocation,
+    })).resolves.toEqual({ state: 'captured', location: { ...selected, capturedAtMillis: 300 } })
+    expect(requestPermissionAndLocation).toHaveBeenCalledOnce()
+    expect(captureGrantedLocation).toHaveBeenCalledOnce()
 
-    permissionState.mockResolvedValueOnce('prompt')
-    requestLocation.mockClear()
-    await expect(locationCapture.captureArkmeRecordLocationForSend(true, undefined, {
-      permissionState,
-      requestLocation,
-    })).resolves.toEqual({ state: 'permission-required', permission: 'prompt' })
-    expect(requestLocation).not.toHaveBeenCalled()
+    permissionState.mockResolvedValueOnce('denied')
+    await expect(locationCapture.captureArkmeRecordLocationForSend({ permissionState })).resolves.toEqual({
+      state: 'permission-required', permission: 'denied',
+    })
     expect(sidebarSource).toContain('captureArkmeRecordLocationForSend(')
-    expect(sidebarSource).toContain('⌖ 自动记录位置')
+    expect(sidebarSource).not.toContain('⌖ 自动记录位置')
   })
 
   it('routes every quick-note source through the shared input capture owner', async () => {

@@ -48,9 +48,8 @@ describe('ArkmeSettingsSurface', () => {
     expect(source).toContain('暂时无法确认会员权益')
     expect(source).not.toContain("actionLabel: '授权本机'")
     expect(source).not.toContain('requestArkmeBackgroundSoundPermission')
-    expect(source).toContain('每条消息发送成功后自动记录当前位置；输入时不会重复申请权限')
-    expect(source).toContain('打开系统定位设置')
-    expect(source).toContain('系统权限：{permissionLabel}')
+    expect(source).not.toContain('title="位置记录"')
+    expect(source).not.toContain('LocationPermissionDialog')
     expect(source).not.toContain('只有你点击提示后，才会记录该条消息的位置')
     const backgroundSoundOwner = source.slice(
       source.indexOf('const backgroundSoundEnabled'),

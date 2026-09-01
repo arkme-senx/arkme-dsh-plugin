@@ -1,9 +1,7 @@
 import type { ArkmeRecordLocationCapture, ArkmeSourceItem } from '../types.js'
 
-const LOCATION_ENABLED_PREFIX = 'arkme.record-capture.location.enabled.'
 export const ARKME_DESKTOP_LOCATION_BRIDGE_TIMEOUT_MILLIS = 5_000
 export const ARKME_DESKTOP_LOCATION_PERMISSION_REQUEST_TIMEOUT_MILLIS = 65_000
-const listeners = new Map<string, Set<() => void>>()
 
 export type ArkmeLocationPermissionState =
   | 'granted'
@@ -69,6 +67,7 @@ const LOCATION_PERMISSION_STATES = new Set<ArkmeLocationPermissionState>([
   'services-disabled',
   'unavailable',
 ])
+let locationPermissionRequestInFlight: Promise<ArkmeRecordLocationCapture> | undefined
 
 function browserLocationRuntimeScope(): ArkmeLocationRuntimeScope {
   return {
@@ -109,7 +108,7 @@ function permissionError(
   return new ArkmeLocationCaptureError(
     input.explicit
       ? '尚未完成位置授权，请在系统授权弹窗中选择“允许”'
-      : '位置权限尚未授权；请先在输入框中点击“开启位置记录”',
+      : '位置权限尚未授权；请在设置中允许位置访问',
     state,
   )
 }
@@ -127,45 +126,9 @@ function geolocationError(error: GeolocationPositionError): ArkmeLocationCapture
   return new ArkmeLocationCaptureError('位置采集失败，请稍后重试', 'capture-failed')
 }
 
-function storageKey(accountId: number | string | undefined): string | undefined {
-  if (accountId === undefined || String(accountId).trim() === '') return undefined
-  return `${LOCATION_ENABLED_PREFIX}${String(accountId)}`
-}
-
 export function arkmeSourceSupportsLocationCapture(kind: ArkmeSourceItem['kind'] | undefined): boolean {
   return kind === 'private_chat' || kind === 'group_chat' || kind === 'send_to_self'
     || kind === 'default_category' || kind === 'topic'
-}
-
-export function arkmeLocationCaptureEnabled(accountId: number | string | undefined): boolean {
-  const key = storageKey(accountId)
-  if (key === undefined) return false
-  try { return window.localStorage.getItem(key) === 'enabled' } catch { return false }
-}
-
-export function setArkmeLocationCaptureEnabled(accountId: number | string | undefined, enabled: boolean): void {
-  const key = storageKey(accountId)
-  if (key === undefined) return
-  try { window.localStorage.setItem(key, enabled ? 'enabled' : 'disabled') } catch { /* local preference is optional */ }
-  for (const listener of listeners.get(key) ?? []) listener()
-}
-
-export function subscribeArkmeLocationCapturePreference(
-  accountId: number | string | undefined,
-  listener: () => void,
-): () => void {
-  const key = storageKey(accountId)
-  if (key === undefined) return () => undefined
-  const accountListeners = listeners.get(key) ?? new Set<() => void>()
-  accountListeners.add(listener)
-  listeners.set(key, accountListeners)
-  const onStorage = (event: StorageEvent) => { if (event.key === key) listener() }
-  if (typeof window !== 'undefined') window.addEventListener('storage', onStorage)
-  return () => {
-    if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage)
-    accountListeners.delete(listener)
-    if (accountListeners.size === 0) listeners.delete(key)
-  }
 }
 
 async function withDesktopBridgeDeadline<T>(
@@ -305,36 +268,45 @@ export function arkmeLocationErrorCanOpenSettings(error: unknown): boolean {
 }
 
 export type ArkmeRecordLocationForSendResult =
-  | { state: 'captured'; location: ArkmeRecordLocationCapture; source: 'selected' | 'granted-preference' }
+  | { state: 'captured'; location: ArkmeRecordLocationCapture }
   | { state: 'disabled' }
   | { state: 'permission-required'; permission: Exclude<ArkmeLocationPermissionState, 'granted'> }
   | { state: 'failed'; message: string }
 
+async function requestInitialLocation(
+  operation: () => Promise<ArkmeRecordLocationCapture>,
+): Promise<ArkmeRecordLocationCapture> {
+  if (locationPermissionRequestInFlight !== undefined) return await locationPermissionRequestInFlight
+  const pending = operation().finally(() => {
+    if (locationPermissionRequestInFlight === pending) locationPermissionRequestInFlight = undefined
+  })
+  locationPermissionRequestInFlight = pending
+  return await pending
+}
+
 /**
- * Resolve one send-scoped location without ever opening a permission prompt.
- * The explicit composer button remains the only permission-request owner;
- * once granted, the enabled preference records each later message automatically.
+ * The first supported send owns the system permission request. Once granted,
+ * later sends capture directly without another request flow.
  */
 export async function captureArkmeRecordLocationForSend(
-  enabled: boolean,
-  selectedLocation?: ArkmeRecordLocationCapture,
   dependencies: {
     permissionState?: typeof arkmeLocationPermissionState
-    requestLocation?: typeof requestArkmeRecordLocation
+    captureGrantedLocation?: () => Promise<ArkmeRecordLocationCapture>
+    requestPermissionAndLocation?: () => Promise<ArkmeRecordLocationCapture>
   } = {},
 ): Promise<ArkmeRecordLocationForSendResult> {
-  if (selectedLocation !== undefined) {
-    return { state: 'captured', location: selectedLocation, source: 'selected' }
-  }
-  if (!enabled) return { state: 'disabled' }
   const permission = await (dependencies.permissionState ?? arkmeLocationPermissionState)()
-  if (permission !== 'granted') return { state: 'permission-required', permission }
+  if (permission !== 'granted' && permission !== 'prompt') return { state: 'permission-required', permission }
   try {
-    const location = dependencies.requestLocation === undefined
-      ? await captureArkmeRecordLocation('automatic-send')
-      : await dependencies.requestLocation()
-    return { state: 'captured', location, source: 'granted-preference' }
+    const location = permission === 'prompt'
+      ? await requestInitialLocation(dependencies.requestPermissionAndLocation ?? requestArkmeRecordLocation)
+      : await (dependencies.captureGrantedLocation ?? (() => captureArkmeRecordLocation('automatic-send')))()
+    return { state: 'captured', location }
   } catch (error) {
+    if (error instanceof ArkmeLocationCaptureError
+      && LOCATION_PERMISSION_STATES.has(error.failure as ArkmeLocationPermissionState)) {
+      return { state: 'permission-required', permission: error.failure as Exclude<ArkmeLocationPermissionState, 'granted'> }
+    }
     return { state: 'failed', message: error instanceof Error ? error.message : '位置采集失败，请稍后重试' }
   }
 }

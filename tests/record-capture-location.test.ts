@@ -1,14 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ArkmeLocationCaptureError,
-  arkmeLocationCaptureEnabled,
   arkmeLocationErrorCanOpenSettings,
   arkmeLocationPermissionState,
   arkmeLocationSettingsAvailable,
   arkmeOpenLocationSettings,
   captureArkmeRecordLocation,
-  setArkmeLocationCaptureEnabled,
-  subscribeArkmeLocationCapturePreference,
+  captureArkmeRecordLocationForSend,
   type ArkmeDesktopLocationBridge,
   type ArkmeLocationPermissionState,
   type ArkmeLocationRuntimeScope,
@@ -72,37 +70,6 @@ function locationScope(input: {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('Arkme record location capture', () => {
-  it('isolates environment-scoped preferences and observes matching cross-window storage changes', () => {
-    const values = new Map<string, string>()
-    let storageListener: ((event: StorageEvent) => void) | undefined
-    vi.stubGlobal('window', {
-      localStorage: {
-        getItem: (key: string) => values.get(key) ?? null,
-        setItem: (key: string, value: string) => { values.set(key, value) },
-      },
-      addEventListener: (type: string, listener: (event: StorageEvent) => void) => {
-        if (type === 'storage') storageListener = listener
-      },
-      removeEventListener: vi.fn(),
-    })
-    const testChanged = vi.fn()
-    const prodChanged = vi.fn()
-    const unsubscribeTest = subscribeArkmeLocationCapturePreference('test:42', testChanged)
-    const unsubscribeProd = subscribeArkmeLocationCapturePreference('prod:42', prodChanged)
-
-    setArkmeLocationCaptureEnabled('test:42', true)
-    expect(arkmeLocationCaptureEnabled('test:42')).toBe(true)
-    expect(arkmeLocationCaptureEnabled('prod:42')).toBe(false)
-    expect(testChanged).toHaveBeenCalledOnce()
-    expect(prodChanged).not.toHaveBeenCalled()
-
-    values.set('arkme.record-capture.location.enabled.prod:42', 'disabled')
-    storageListener?.({ key: 'arkme.record-capture.location.enabled.prod:42' } as StorageEvent)
-    expect(prodChanged).toHaveBeenCalledOnce()
-    unsubscribeTest()
-    unsubscribeProd()
-  })
-
   it('uses the desktop permission owner before browser permission state', async () => {
     const runtime = locationScope({ state: 'granted' })
 
@@ -158,7 +125,7 @@ describe('Arkme record location capture', () => {
 
     await expect(captureArkmeRecordLocation('automatic-send', runtime.scope)).rejects.toMatchObject({
       failure: 'prompt',
-      message: '位置权限尚未授权；请先在输入框中点击“开启位置记录”',
+      message: '位置权限尚未授权；请在设置中允许位置访问',
     })
     expect(runtime.requestPermission).not.toHaveBeenCalled()
     expect(runtime.getCurrentPosition).not.toHaveBeenCalled()
@@ -173,6 +140,64 @@ describe('Arkme record location capture', () => {
     })
     expect(runtime.requestPermission).not.toHaveBeenCalled()
     expect(runtime.getCurrentPosition).toHaveBeenCalledOnce()
+  })
+
+  it('requests permission on the first send and captures directly after it is granted', async () => {
+    const permissionState = vi.fn()
+      .mockResolvedValueOnce('prompt')
+      .mockResolvedValueOnce('granted')
+    const requestPermissionAndLocation = vi.fn(async () => ({ latitude: 30.52, longitude: 114.31, capturedAtMillis: 100 }))
+    const captureGrantedLocation = vi.fn(async () => ({ latitude: 31.23, longitude: 121.47, capturedAtMillis: 200 }))
+
+    await expect(captureArkmeRecordLocationForSend({
+      permissionState,
+      requestPermissionAndLocation,
+      captureGrantedLocation,
+    })).resolves.toMatchObject({ state: 'captured', location: { capturedAtMillis: 100 } })
+    expect(requestPermissionAndLocation).toHaveBeenCalledOnce()
+    expect(captureGrantedLocation).not.toHaveBeenCalled()
+
+    await expect(captureArkmeRecordLocationForSend({
+      permissionState,
+      requestPermissionAndLocation,
+      captureGrantedLocation,
+    })).resolves.toMatchObject({ state: 'captured', location: { capturedAtMillis: 200 } })
+    expect(requestPermissionAndLocation).toHaveBeenCalledOnce()
+    expect(captureGrantedLocation).toHaveBeenCalledOnce()
+  })
+
+  it('does not reopen the permission flow after the system denies it', async () => {
+    const requestPermissionAndLocation = vi.fn()
+    const captureGrantedLocation = vi.fn()
+
+    await expect(captureArkmeRecordLocationForSend({
+      permissionState: async () => 'denied',
+      requestPermissionAndLocation,
+      captureGrantedLocation,
+    })).resolves.toEqual({ state: 'permission-required', permission: 'denied' })
+    expect(requestPermissionAndLocation).not.toHaveBeenCalled()
+    expect(captureGrantedLocation).not.toHaveBeenCalled()
+  })
+
+  it('shares one in-flight permission request across simultaneous first sends', async () => {
+    let resolveLocation!: (value: { latitude: number; longitude: number; capturedAtMillis: number }) => void
+    const requestPermissionAndLocation = vi.fn(async () => await new Promise<{
+      latitude: number; longitude: number; capturedAtMillis: number
+    }>(resolve => { resolveLocation = resolve }))
+    const dependencies = {
+      permissionState: async () => 'prompt' as const,
+      requestPermissionAndLocation,
+    }
+
+    const first = captureArkmeRecordLocationForSend(dependencies)
+    const second = captureArkmeRecordLocationForSend(dependencies)
+    await vi.waitFor(() => { expect(requestPermissionAndLocation).toHaveBeenCalledOnce() })
+    resolveLocation({ latitude: 30.52, longitude: 114.31, capturedAtMillis: 100 })
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { state: 'captured', location: { latitude: 30.52, longitude: 114.31, capturedAtMillis: 100 } },
+      { state: 'captured', location: { latitude: 30.52, longitude: 114.31, capturedAtMillis: 100 } },
+    ])
   })
 
   it('keeps the browser permission prompt fallback when the desktop bridge is absent', async () => {

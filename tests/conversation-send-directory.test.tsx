@@ -27,7 +27,6 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta } from '../src/client/chat-directory-store.js'
 import { arkmeComposerDraftStore, arkmeSourceComposerDraftKey } from '../src/client/composer-draft-store.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
-import { setArkmeLocationCaptureEnabled } from '../src/client/record-capture-location.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
@@ -729,6 +728,56 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findByProps({ 'data-arkme-read-receipt-indicator': 'unread' })).toBeDefined()
   })
 
+  it('requests location permission on the first supported send and records that message', async () => {
+    const permissionQuery = vi.fn(async () => ({ state: 'prompt' as PermissionState }))
+    const getCurrentPosition = vi.fn((success: PositionCallback) => { success({
+      coords: {
+        latitude: 30.52, longitude: 114.31, accuracy: 18, altitude: null,
+        altitudeAccuracy: null, heading: null, speed: null,
+      },
+      timestamp: 100,
+    } as GeolocationPosition) })
+    vi.stubGlobal('navigator', {
+      permissions: { query: permissionQuery },
+      geolocation: { getCurrentPosition },
+    })
+    const baseImplementation = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'source.send-text') return {
+        sourceRef: target.sourceRef,
+        itemUid: params?.recordUid ?? 'record-new',
+        status: 1,
+        sequence: 9,
+        localState: 'synced',
+      }
+      if (operation === 'source.message-location.set') return {}
+      return await baseImplementation(operation, params, signal)
+    })
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('首条消息')
+      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(permissionQuery).toHaveBeenCalledTimes(2)
+    expect(getCurrentPosition).toHaveBeenCalledOnce()
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-location.set', {
+      sourceRef: target.sourceRef,
+      itemUid: 'record-new',
+      location: { latitude: 30.52, longitude: 114.31, accuracyMeters: 18, capturedAtMillis: 100 },
+    })
+  })
+
   it.each([
     ['私聊', target],
     ['发给自己', sendToSelf],
@@ -744,7 +793,6 @@ describe('conversation send directory projection', () => {
       permissions: { query: vi.fn(async () => ({ state: 'granted' })) },
       geolocation: { getCurrentPosition },
     })
-    setArkmeLocationCaptureEnabled('test:42', true)
     activeSource = selectedSource
     arkmeUi.selectSource(selectedSource)
     const baseImplementation = mocks.callArkme.getMockImplementation()!
@@ -792,190 +840,6 @@ describe('conversation send directory projection', () => {
       itemUid: 'record-new',
       location: { latitude: 30.52, longitude: 114.31, accuracyMeters: 18, capturedAtMillis: 100 },
     })
-  })
-
-  it('drops a late explicit location result after switching composers and blocks send while it is pending', async () => {
-    let resolvePosition!: () => void
-    const getCurrentPosition = vi.fn((success: PositionCallback) => {
-      resolvePosition = () => { success({
-        coords: {
-          latitude: 30.52, longitude: 114.31, accuracy: 18, altitude: null,
-          altitudeAccuracy: null, heading: null, speed: null,
-        },
-        timestamp: 100,
-      } as GeolocationPosition) }
-    })
-    vi.stubGlobal('navigator', {
-      permissions: { query: vi.fn(async () => ({ state: 'granted' })) },
-      geolocation: { getCurrentPosition },
-    })
-
-    await act(async () => {
-      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    let composer = renderer!.root.findByType(ArkmeRichComposerInput)
-    await act(async () => {
-      composer.props.onTextChange('A 的消息')
-      await Promise.resolve()
-      renderer!.root.findByProps({ 'aria-label': '开启自动位置记录' }).props.onClick()
-      await Promise.resolve()
-    })
-    expect(renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.disabled).toBe(true)
-
-    activeSource = other
-    await act(async () => {
-      arkmeUi.selectSource(other)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    composer = renderer!.root.findByType(ArkmeRichComposerInput)
-    await act(async () => {
-      composer.props.onTextChange('B 的消息')
-      resolvePosition()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(renderer!.root.findAllByProps({ 'aria-label': '已手动采集本条位置，点击移除' })).toHaveLength(0)
-    expect(renderer!.root.findByProps({ 'aria-label': '开启自动位置记录' })).toBeDefined()
-    expect(renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.disabled).toBe(false)
-  })
-
-  it('does not let an earlier send acknowledgement clear a newer composer location', async () => {
-    let positionIndex = 0
-    const positions = [
-      { latitude: 30.52, longitude: 114.31, capturedAtMillis: 100 },
-      { latitude: 31.23, longitude: 121.47, capturedAtMillis: 200 },
-    ]
-    const getCurrentPosition = vi.fn((success: PositionCallback) => {
-      const value = positions[positionIndex++]!
-      success({
-        coords: {
-          latitude: value.latitude, longitude: value.longitude, accuracy: 18, altitude: null,
-          altitudeAccuracy: null, heading: null, speed: null,
-        },
-        timestamp: value.capturedAtMillis,
-      } as GeolocationPosition)
-    })
-    vi.stubGlobal('navigator', {
-      permissions: { query: vi.fn(async () => ({ state: 'granted' })) },
-      geolocation: { getCurrentPosition },
-    })
-    const baseImplementation = mocks.callArkme.getMockImplementation()!
-    let resolveSend!: (value: unknown) => void
-    const pendingSend = new Promise(resolve => { resolveSend = resolve })
-    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
-      if (operation === 'source.timeline') return { source: activeSource, items: [], hasMore: false }
-      if (operation === 'source.send-text' && params?.sourceRef === target.sourceRef) return await pendingSend
-      if (operation === 'source.message-location.set') return {}
-      return await baseImplementation(operation, params, signal)
-    })
-
-    await act(async () => {
-      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    let composer = renderer!.root.findByType(ArkmeRichComposerInput)
-    await act(async () => {
-      composer.props.onTextChange('A 的消息')
-      await Promise.resolve()
-      renderer!.root.findByProps({ 'aria-label': '开启自动位置记录' }).props.onClick()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(renderer!.root.findByProps({ 'aria-label': '已手动采集本条位置，点击移除' })).toBeDefined()
-    await act(async () => {
-      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    activeSource = other
-    await act(async () => {
-      arkmeUi.selectSource(other)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    composer = renderer!.root.findByType(ArkmeRichComposerInput)
-    await act(async () => {
-      composer.props.onTextChange('B 的消息')
-      await Promise.resolve()
-      renderer!.root.findByProps({ 'aria-label': '已开启自动位置记录' }).props.onClick()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(renderer!.root.findByProps({ 'aria-label': '已手动采集本条位置，点击移除' })).toBeDefined()
-
-    await act(async () => {
-      resolveSend({ sourceRef: target.sourceRef, itemUid: 'record-new', status: 1, sequence: 9, localState: 'synced' })
-      await pendingSend
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(renderer!.root.findByProps({ 'aria-label': '已手动采集本条位置，点击移除' })).toBeDefined()
-    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-location.set', {
-      sourceRef: target.sourceRef,
-      itemUid: 'record-new',
-      location: { latitude: 30.52, longitude: 114.31, accuracyMeters: 18, capturedAtMillis: 100 },
-    })
-  })
-
-  it('does not restore a failed send location onto newer text in the same composer', async () => {
-    const getCurrentPosition = vi.fn((success: PositionCallback) => {
-      success({
-        coords: {
-          latitude: 30.52, longitude: 114.31, accuracy: 18, altitude: null,
-          altitudeAccuracy: null, heading: null, speed: null,
-        },
-        timestamp: 100,
-      } as GeolocationPosition)
-    })
-    vi.stubGlobal('navigator', {
-      permissions: { query: vi.fn(async () => ({ state: 'granted' })) },
-      geolocation: { getCurrentPosition },
-    })
-    const baseImplementation = mocks.callArkme.getMockImplementation()!
-    let rejectSend!: (error: Error) => void
-    const pendingSend = new Promise((_resolve, reject) => { rejectSend = reject })
-    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
-      if (operation === 'source.send-text') return await pendingSend
-      return await baseImplementation(operation, params, signal)
-    })
-
-    await act(async () => {
-      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    let composer = renderer!.root.findByType(ArkmeRichComposerInput)
-    await act(async () => {
-      composer.props.onTextChange('待发送')
-      await Promise.resolve()
-      renderer!.root.findByProps({ 'aria-label': '开启自动位置记录' }).props.onClick()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    await act(async () => {
-      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    composer = renderer!.root.findByType(ArkmeRichComposerInput)
-    await act(async () => {
-      composer.props.onTextChange('发送期间输入的新消息')
-      await Promise.resolve()
-      rejectSend(new Error('发送失败'))
-      await pendingSend.catch(() => undefined)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('发送期间输入的新消息')
-    expect(renderer!.root.findAllByProps({ 'aria-label': '已手动采集本条位置，点击移除' })).toHaveLength(0)
   })
 
   it('keeps the immediate snapshot action while the send-to-self owner projection converges', async () => {
