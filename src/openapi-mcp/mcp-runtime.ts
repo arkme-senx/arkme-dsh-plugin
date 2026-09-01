@@ -14,6 +14,7 @@ export class CordisOpenApiMcpRuntime implements OpenApiMcpRuntime {
 
   mount(apiKey: SecretValue, signal: AbortSignal, onUnavailable: () => void): OpenApiMcpMount {
     if (signal.aborted) throw signal.reason
+    const existingManagedTools = this.managedToolNames()
     const fiber = this.ctx.plugin(McpClient, {
       transport: 'streamable-http',
       serverName: 'arkme',
@@ -26,9 +27,9 @@ export class CordisOpenApiMcpRuntime implements OpenApiMcpRuntime {
     let disposed = false
     let observing = false
     let off: (() => boolean) | undefined
-    const ready = this.activate(fiber, signal, () => {
+    const ready = this.activate(fiber, signal, existingManagedTools, () => {
       observing = true
-      off = this.observeAvailability(onUnavailable, () => disposed)
+      off = this.observeAvailability(existingManagedTools, onUnavailable, () => disposed)
     })
     return {
       ready: async () => { await ready },
@@ -48,6 +49,7 @@ export class CordisOpenApiMcpRuntime implements OpenApiMcpRuntime {
   private async activate(
     fiber: ReturnType<Context['plugin']>,
     signal: AbortSignal,
+    existingManagedTools: ReadonlySet<string>,
     observe: () => void,
   ): Promise<void> {
     let rejectAbort: ((reason?: unknown) => void) | undefined
@@ -61,7 +63,7 @@ export class CordisOpenApiMcpRuntime implements OpenApiMcpRuntime {
     try {
       await Promise.race([fiber.await(), aborted])
       if (signal.aborted) throw signal.reason
-      if (!this.hasManagedTools()) {
+      if (!this.hasMountedManagedTools(existingManagedTools)) {
         throw new Error('OpenAPI MCP client mounted without any Arkme tools')
       }
       observe()
@@ -70,7 +72,11 @@ export class CordisOpenApiMcpRuntime implements OpenApiMcpRuntime {
     }
   }
 
-  private observeAvailability(onUnavailable: () => void, disposed: () => boolean): () => boolean {
+  private observeAvailability(
+    existingManagedTools: ReadonlySet<string>,
+    onUnavailable: () => void,
+    disposed: () => boolean,
+  ): () => boolean {
     let checkScheduled = false
     let unavailableReported = false
     return this.ctx.on('tools/change', () => {
@@ -78,14 +84,20 @@ export class CordisOpenApiMcpRuntime implements OpenApiMcpRuntime {
       checkScheduled = true
       queueMicrotask(() => {
         checkScheduled = false
-        if (disposed() || unavailableReported || this.hasManagedTools()) return
+        if (disposed() || unavailableReported || this.hasMountedManagedTools(existingManagedTools)) return
         unavailableReported = true
         onUnavailable()
       })
     })
   }
 
-  private hasManagedTools(): boolean {
-    return this.ctx.tools.schemas().some(tool => tool.name.startsWith(MANAGED_TOOL_PREFIX))
+  private managedToolNames(): Set<string> {
+    return new Set(this.ctx.tools.schemas()
+      .map(tool => tool.name)
+      .filter(name => name.startsWith(MANAGED_TOOL_PREFIX)))
+  }
+
+  private hasMountedManagedTools(existingManagedTools: ReadonlySet<string>): boolean {
+    return [...this.managedToolNames()].some(name => !existingManagedTools.has(name))
   }
 }

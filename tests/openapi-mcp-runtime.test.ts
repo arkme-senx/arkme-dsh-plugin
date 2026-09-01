@@ -4,7 +4,7 @@ import { CordisOpenApiMcpRuntime } from '../src/openapi-mcp/mcp-runtime.js'
 import { SecretValue } from '../src/secret-value.js'
 
 function runtimeContext(plugin: ReturnType<typeof vi.fn>) {
-  let names = ['mcp__arkme__profile_get']
+  let names: string[] = []
   let listener: (() => void) | undefined
   return {
     ctx: {
@@ -23,8 +23,12 @@ function runtimeContext(plugin: ReturnType<typeof vi.fn>) {
 describe('official OpenAPI MCP runtime adapter', () => {
   it('mounts the official client under the stable Arkme namespace and disposes its fiber', async () => {
     const dispose = vi.fn(async () => undefined)
-    const plugin = vi.fn(() => ({ await: async () => undefined, dispose }))
+    const plugin = vi.fn()
     const context = runtimeContext(plugin)
+    plugin.mockImplementation(() => ({
+      await: async () => { context.setNames(['mcp__arkme__profile_get']) },
+      dispose,
+    }))
     const runtime = new CordisOpenApiMcpRuntime(
       context.ctx as never, 'https://openapi.example.com/mcp', 30_000,
     )
@@ -78,8 +82,13 @@ describe('official OpenAPI MCP runtime adapter', () => {
 
   it('reports terminal MCP tool loss once and stops observing after disposal', async () => {
     const dispose = vi.fn(async () => undefined)
-    const plugin = vi.fn(() => ({ await: async () => undefined, dispose }))
+    const plugin = vi.fn()
     const context = runtimeContext(plugin)
+    context.setNames(['mcp__arkme__foreign_tool'])
+    plugin.mockImplementation(() => ({
+      await: async () => { context.setNames(['mcp__arkme__foreign_tool', 'mcp__arkme__profile_get']) },
+      dispose,
+    }))
     const unavailable = vi.fn()
     const runtime = new CordisOpenApiMcpRuntime(
       context.ctx as never, 'https://openapi.example.com/mcp', 30_000,
@@ -89,7 +98,7 @@ describe('official OpenAPI MCP runtime adapter', () => {
     )
     await mount.ready()
 
-    context.setNames([])
+    context.setNames(['mcp__arkme__foreign_tool'])
     context.emitChange()
     context.emitChange()
     await vi.waitFor(() => { expect(unavailable).toHaveBeenCalledOnce() })
@@ -103,8 +112,12 @@ describe('official OpenAPI MCP runtime adapter', () => {
     const dispose = vi.fn()
       .mockRejectedValueOnce(new Error('fiber disposal failed'))
       .mockResolvedValueOnce(undefined)
-    const plugin = vi.fn(() => ({ await: async () => undefined, dispose }))
+    const plugin = vi.fn()
     const context = runtimeContext(plugin)
+    plugin.mockImplementation(() => ({
+      await: async () => { context.setNames(['mcp__arkme__profile_get']) },
+      dispose,
+    }))
     const runtime = new CordisOpenApiMcpRuntime(
       context.ctx as never, 'https://openapi.example.com/mcp', 30_000,
     )
@@ -124,6 +137,23 @@ describe('official OpenAPI MCP runtime adapter', () => {
     const plugin = vi.fn(() => ({ await: async () => undefined, dispose }))
     const context = runtimeContext(plugin)
     context.setNames([])
+    const runtime = new CordisOpenApiMcpRuntime(
+      context.ctx as never, 'https://openapi.example.com/mcp', 30_000,
+    )
+
+    const mount = runtime.mount(
+      new SecretValue('managed-api-secret'), new AbortController().signal, vi.fn(),
+    )
+    await expect(mount.ready()).rejects.toThrow('without any Arkme tools')
+    await mount.dispose()
+    expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('does not mistake a pre-existing foreign Arkme namespace for tools owned by this mount', async () => {
+    const dispose = vi.fn(async () => undefined)
+    const plugin = vi.fn(() => ({ await: async () => undefined, dispose }))
+    const context = runtimeContext(plugin)
+    context.setNames(['mcp__arkme__foreign_tool'])
     const runtime = new CordisOpenApiMcpRuntime(
       context.ctx as never, 'https://openapi.example.com/mcp', 30_000,
     )

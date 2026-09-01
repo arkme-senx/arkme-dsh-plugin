@@ -38,7 +38,7 @@ interface MountedCredential {
 
 export interface OpenApiMcpSessionTransition {
   changed: boolean
-  previousPrincipal?: OpenApiMcpPrincipal
+  nextPrincipal?: OpenApiMcpPrincipal
   previousCredential?: ManagedOpenApiCredential
 }
 
@@ -163,11 +163,12 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
 
   async prepare(
     previous: ArkmeSessionCredentials | undefined,
-    _next: ArkmeSessionCredentials | undefined,
+    next: ArkmeSessionCredentials | undefined,
   ): Promise<OpenApiMcpSessionTransition> {
     this.cancelCurrent(true)
     this.setStatus({ state: 'inactive', retryable: false, userAction: 'none' })
     const previousPrincipal = openApiMcpPrincipal(previous)
+    const nextPrincipal = openApiMcpPrincipal(next)
     const previousCredential = previousPrincipal !== undefined && this.activeCredential !== undefined
       && credentialBelongsTo(this.activeCredential, previousPrincipal)
       ? this.activeCredential
@@ -177,7 +178,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     this.beginMountCleanup()
     return {
       changed: true,
-      ...(previousPrincipal === undefined ? {} : { previousPrincipal }),
+      ...(nextPrincipal === undefined ? {} : { nextPrincipal }),
       ...(previousCredential === undefined ? {} : { previousCredential }),
     }
   }
@@ -187,15 +188,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     if (ticket.previousCredential !== undefined) this.disconnectCredential(ticket.previousCredential.apiKey)
     const operationEpoch = this.epoch
     void this.enqueue(async () => {
-      if (ticket.previousCredential === undefined && ticket.previousPrincipal !== undefined) {
-        try {
-          const candidate = await this.readLocalCredential()
-          if (candidate !== undefined && credentialBelongsTo(candidate, ticket.previousPrincipal)) {
-            this.disconnectCredential(candidate.apiKey)
-          }
-        } catch { this.warn('credential-read') }
-      }
-      try { await this.options.credentialStore.delete() } catch { this.warn('credential-delete') }
+      await this.cleanupTransitionCredential(ticket.nextPrincipal)
       await this.reconcile(false, operationEpoch)
     })
   }
@@ -230,7 +223,9 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
         const principal = openApiMcpPrincipal(session)
         if (session === undefined) {
           this.activePrincipal = undefined
-          await this.removeLocalCredential()
+          const credential = await this.readLocalCredential()
+          if (credential !== undefined) await this.discardLocalCredential(credential)
+          else this.activeCredential = undefined
           await this.disposeMount()
           this.setStatus({ state: 'inactive', retryable: false, userAction: 'login' })
           return
@@ -247,7 +242,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
 
         let credential = await this.readLocalCredential()
         if (credential !== undefined && !credentialBelongsTo(credential, principal)) {
-          await this.options.credentialStore.delete()
+          await this.discardLocalCredential(credential)
           credential = undefined
         }
         this.activeCredential = credential
@@ -449,6 +444,21 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   private async removeLocalCredential(): Promise<void> {
     this.activeCredential = undefined
     try { await this.options.credentialStore.delete() } catch { this.warn('credential-delete') }
+  }
+
+  private async discardLocalCredential(credential: ManagedOpenApiCredential): Promise<void> {
+    this.disconnectCredential(credential.apiKey)
+    await this.removeLocalCredential()
+  }
+
+  private async cleanupTransitionCredential(nextPrincipal: OpenApiMcpPrincipal | undefined): Promise<void> {
+    try {
+      await this.options.reconcileLock.run(new AbortController().signal, async () => {
+        const candidate = await this.readLocalCredential()
+        if (candidate === undefined || nextPrincipal !== undefined && credentialBelongsTo(candidate, nextPrincipal)) return
+        await this.discardLocalCredential(candidate)
+      })
+    } catch { this.warn('credential-cleanup') }
   }
 
   private beginMountCleanup(): void {

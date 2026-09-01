@@ -58,14 +58,14 @@ export class HttpManagedOpenApiControlPlane implements ManagedOpenApiControlPlan
     }
   }
 
-  private async post(path: string, body: Record<string, unknown>, accessToken: SecretValue, signal: AbortSignal): Promise<unknown> {
+  private async post(path: string, body: Record<string, unknown>, bearerCredential: SecretValue, signal: AbortSignal): Promise<unknown> {
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs)
     const combinedSignal = AbortSignal.any([signal, timeoutSignal])
     let response: Response
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken.reveal()}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearerCredential.reveal()}` },
         body: JSON.stringify(body),
         signal: combinedSignal,
       })

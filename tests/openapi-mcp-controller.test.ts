@@ -103,6 +103,10 @@ function stored(generation = 1): ManagedOpenApiCredential {
   return { schemaVersion: 1, userId: 42, loginDeviceId: 7, keyId: keyId1, generation, apiKey: apiKey1, expiresAtMillis: now + 24 * 60 * 60_000 }
 }
 
+function storedFor(userId: number, loginDeviceId: number): ManagedOpenApiCredential {
+  return { ...stored(), userId, loginDeviceId }
+}
+
 function setup(input: { credential?: ManagedOpenApiCredential; ensure?: ManagedOpenApiControlResult } = {}) {
   const order: string[] = []
   const session = new MemorySessionStore(activeSession())
@@ -170,6 +174,35 @@ describe('managed OpenAPI MCP controller', () => {
     expect(fixture.credentials.value?.keyId).toBe(keyId1)
     expect(fixture.runtime.mountedKeys).toEqual([apiKey1])
     expect(fixture.logger.warn).toHaveBeenCalledWith(expect.stringContaining('(%s)'), 'credential-invalid')
+    await fixture.controller.dispose()
+  })
+
+  it('self-disconnects a valid cached credential when startup finds no active session', async () => {
+    const fixture = setup({ credential: stored(), ensure: ready() })
+    fixture.session.value = undefined
+
+    await fixture.controller.retry()
+
+    expect(fixture.control.ensure).not.toHaveBeenCalled()
+    expect(fixture.control.disconnect).toHaveBeenCalledWith(expect.any(SecretValue), expect.any(AbortSignal))
+    expect(vi.mocked(fixture.control.disconnect).mock.calls[0]?.[0].reveal()).toBe(apiKey1)
+    expect(fixture.credentials.value).toBeUndefined()
+    expect(fixture.runtime.mountedKeys).toEqual([])
+    expect(fixture.controller.status()).toMatchObject({ state: 'inactive', userAction: 'login' })
+    await fixture.controller.dispose()
+  })
+
+  it('self-disconnects a cached credential owned by another principal before issuing for the current session', async () => {
+    const fixture = setup({ credential: stored(), ensure: issued(apiKey2, revision1, 2) })
+    fixture.session.value = { userId: 99, accessToken: jwt(99, 8), refreshToken: 'refresh-new' }
+
+    await fixture.controller.retry()
+
+    expect(fixture.control.disconnect).toHaveBeenCalledWith(expect.any(SecretValue), expect.any(AbortSignal))
+    expect(vi.mocked(fixture.control.disconnect).mock.calls[0]?.[0].reveal()).toBe(apiKey1)
+    expect(fixture.control.ensure).toHaveBeenCalledWith(expect.any(SecretValue), undefined, expect.any(AbortSignal))
+    expect(fixture.credentials.value).toMatchObject({ userId: 99, loginDeviceId: 8, apiKey: apiKey2 })
+    expect(fixture.runtime.mountedKeys).toEqual([apiKey2])
     await fixture.controller.dispose()
   })
 
@@ -454,6 +487,34 @@ describe('managed OpenAPI MCP controller', () => {
     const disconnectToken = vi.mocked(control.disconnect).mock.calls[0]?.[0]
     expect(disconnectToken?.reveal()).toBe(apiKey1)
     expect(credentials.value).toBeUndefined()
+    await controller.dispose()
+  })
+
+  it('preserves a credential already owned by the committed next principal during delayed cleanup', async () => {
+    const innerSession = new MemorySessionStore(activeSession())
+    const credentials = new MemoryCredentialStore(storedFor(99, 8))
+    const runtime = new FakeRuntime([])
+    const control: ManagedOpenApiControlPlane = {
+      ensure: vi.fn(async () => ready()),
+      reauthorize: vi.fn(async () => issued() as Extract<ManagedOpenApiControlResult, { state: 'issued' }>),
+      disconnect: vi.fn(async () => undefined),
+    }
+    const controller = new ManagedOpenApiMcpController({
+      enabled: true, sessionStore: innerSession,
+      accessCredentialProvider: { resolveManagedAccessCredential: vi.fn(async () => new SecretValue('access-secret')) },
+      controlPlane: control, credentialStore: credentials, runtime, reconcileLock: new ImmediateLock(),
+      logger: { warn: vi.fn() }, now: () => now, random: () => 0.5,
+    })
+    const next = { userId: 99, accessToken: jwt(99, 8), refreshToken: 'refresh-new' }
+
+    const ticket = await controller.prepare(activeSession(), next)
+    innerSession.value = next
+    controller.committed(ticket)
+    await vi.waitFor(() => { expect(controller.status().state).toBe('ready') })
+
+    expect(control.disconnect).not.toHaveBeenCalled()
+    expect(credentials.value).toMatchObject({ userId: 99, loginDeviceId: 8, apiKey: apiKey1 })
+    expect(runtime.mountedKeys).toEqual([apiKey1])
     await controller.dispose()
   })
 
