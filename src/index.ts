@@ -64,6 +64,7 @@ import { ArkmeRemoteRealtimeHost } from './dsh-remote/host.js'
 import { ArkmeRemoteRealtimeTransport, type DshRemoteSocketLike } from './dsh-remote/realtime-transport.js'
 import { DshRemoteRuntimeStore } from './dsh-remote/runtime-store.js'
 import { DshRemoteRuntimeSecretBroker } from './dsh-remote/runtime-secret-broker.js'
+import { DshRemoteSessionOwnershipStore } from './dsh-remote/session-ownership-store.js'
 import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 
 export interface Config {
@@ -442,7 +443,17 @@ export function apply(ctx: Context, config: Config): void {
       if (session === undefined) throw new Error('Arkme session is unavailable')
       return await authenticatedSocketFactory({ ...input, accessToken: session.accessToken })
     })
-    const apiProxy = new DshApiProxyAdapter(apiCtx.apiProxy as unknown as DshPublicApiProxyLike)
+    const agentDefaultModel = apiCtx.get('agentDefaultModel') as {
+      currentSelection?: () => unknown
+    } | undefined
+    const apiProxy = new DshApiProxyAdapter(
+      apiCtx.apiProxy as unknown as DshPublicApiProxyLike,
+      {
+        ...(typeof agentDefaultModel?.currentSelection !== 'function'
+          ? {}
+          : { defaultModelSelection: () => agentDefaultModel.currentSelection!() }),
+      },
+    )
     const secretBroker = new DshRemoteRuntimeSecretBroker(createArkmeSecureValueStore(
       `${config.keychainServicePrefix}.${config.environment}.dsh-remote-desktop`,
     ))
@@ -451,6 +462,7 @@ export function apply(ctx: Context, config: Config): void {
       transportAvailable: true,
       profileRef, hostClientRef, secretBroker,
       runtimeStore: new DshRemoteRuntimeStore(stateDirectory),
+      sessionOwnership: new DshRemoteSessionOwnershipStore(stateDirectory, profileRef),
       controlPlane: new DshRemoteHttpControlPlane({
         post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal),
       }),

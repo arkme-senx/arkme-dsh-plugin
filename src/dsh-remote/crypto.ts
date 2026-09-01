@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, getCiphers, randomBytes } from 'node:crypto'
 import { DshRemoteError } from './errors.js'
 
 export function encodeBase64Url(value: Uint8Array | string): string {
@@ -76,6 +76,8 @@ export interface XChaChaCiphertext {
   ciphertext: string
 }
 
+const AES_256_GCM_PREFIX = 'aes256gcm.'
+
 export function encryptXChaCha20Poly1305(
   key: Uint8Array,
   plaintext: Uint8Array | string,
@@ -106,6 +108,59 @@ export function decryptXChaCha20Poly1305(
     const subkey = hChaCha20(key, nonce.subarray(0, 16))
     const chachaNonce = Buffer.concat([Buffer.alloc(4), nonce.subarray(16)])
     const decipher = createDecipheriv('chacha20-poly1305', subkey, chachaNonce, { authTagLength: 16 })
+    decipher.setAAD(Buffer.from(aad), { plaintextLength: encoded.length - 16 })
+    decipher.setAuthTag(encoded.subarray(encoded.length - 16))
+    return Buffer.concat([decipher.update(encoded.subarray(0, encoded.length - 16)), decipher.final()])
+  } catch (error) {
+    throw new DshRemoteError('REMOTE_STORAGE_FAILED', '命令账本密文认证失败', false, {}, { cause: error })
+  }
+}
+
+export function encryptLedgerPayload(
+  key: Uint8Array,
+  plaintext: Uint8Array | string,
+  aad: Uint8Array | string,
+  nonce: Uint8Array = randomBytes(24),
+  availableCiphers: readonly string[] = getCiphers(),
+): XChaChaCiphertext {
+  if (availableCiphers.includes('chacha20-poly1305')) {
+    return encryptXChaCha20Poly1305(key, plaintext, aad, nonce)
+  }
+  if (key.length !== 32 || nonce.length !== 24) {
+    throw new TypeError('Ledger AES-256-GCM requires a 32-byte key and 24-byte nonce source')
+  }
+  const encodedPlaintext = Buffer.from(plaintext)
+  const cipher = createCipheriv('aes-256-gcm', Buffer.from(key), Buffer.from(nonce.subarray(0, 12)), {
+    authTagLength: 16,
+  })
+  cipher.setAAD(Buffer.from(aad), { plaintextLength: encodedPlaintext.length })
+  const encrypted = Buffer.concat([cipher.update(encodedPlaintext), cipher.final(), cipher.getAuthTag()])
+  return {
+    nonce: encodeBase64Url(nonce),
+    ciphertext: `${AES_256_GCM_PREFIX}${encodeBase64Url(encrypted)}`,
+  }
+}
+
+export function decryptLedgerPayload(
+  key: Uint8Array,
+  input: XChaChaCiphertext,
+  aad: Uint8Array | string,
+): Buffer {
+  if (!input.ciphertext.startsWith(AES_256_GCM_PREFIX)) {
+    return decryptXChaCha20Poly1305(key, input, aad)
+  }
+  const nonce = decodeBase64Url(input.nonce)
+  const encoded = decodeBase64Url(input.ciphertext.slice(AES_256_GCM_PREFIX.length))
+  if (key.length !== 32 || nonce.length !== 24 || encoded.length < 16) {
+    throw new DshRemoteError('REMOTE_REQUEST_INVALID', '远控密文格式无效')
+  }
+  try {
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      Buffer.from(key),
+      nonce.subarray(0, 12),
+      { authTagLength: 16 },
+    )
     decipher.setAAD(Buffer.from(aad), { plaintextLength: encoded.length - 16 })
     decipher.setAuthTag(encoded.subarray(encoded.length - 16))
     return Buffer.concat([decipher.update(encoded.subarray(0, encoded.length - 16)), decipher.final()])

@@ -97,7 +97,7 @@ describe('account-scoped Runtime channel manager', () => {
     expect(dispatch).toHaveBeenCalledOnce()
   })
 
-  it('ignores Host echoes but treats a stale controller generation as fatal', async () => {
+  it('ignores Host echoes and delegates stale controller leases without restarting the Host', async () => {
     const { manager, realtime, dispatch, fatals } = managerFixture()
     await manager.prepare()
     await manager.activate(9)
@@ -105,8 +105,13 @@ describe('account-scoped Runtime channel manager', () => {
     await Promise.resolve()
     expect(dispatch).not.toHaveBeenCalled()
     realtime.event({ kind: 'request' }, controllerMetadata(8))
-    await vi.waitFor(() => { expect(fatals).toHaveLength(1) })
-    expect(fatals[0]).toMatchObject({ code: 'HOST_GENERATION_STALE', retryable: true })
+    await vi.waitFor(() => { expect(dispatch).toHaveBeenCalledOnce() })
+    await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(1) })
+    expect(dispatch.mock.calls[0]![1]).toMatchObject({
+      serviceLeaseGeneration: 9,
+      metadata: { targetHostLeaseGeneration: 8 },
+    })
+    expect(fatals).toEqual([])
   })
 
   it('recovers a replay gap by subscribing at the live head', async () => {

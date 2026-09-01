@@ -16,6 +16,12 @@ const REQUEST_KEYS = new Set([
   'protocol', 'protocol_major', 'kind', 'request_ref', 'host_generation', 'issued_at', 'execute_before', 'operation', 'body',
 ])
 
+export interface DshRemoteRequestIdentity {
+  requestRef: string
+  hostGeneration: number
+  operation: DshRemoteOperation
+}
+
 function object(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new DshRemoteError('REMOTE_REQUEST_INVALID', '远控请求必须为对象')
@@ -72,15 +78,29 @@ function validateOperationBody(operation: DshRemoteOperation, source: Record<str
     case 'session.model.get':
       assertOnly(source, ['session_ref']); bodyRef(source, 'session_ref'); return
     case 'session.model.select':
-      assertOnly(source, ['session_ref', 'model_provider', 'model_id'])
-      bodyRef(source, 'session_ref'); bodyRef(source, 'model_provider'); bodyRef(source, 'model_id'); return
+      assertOnly(source, ['session_ref', 'model_provider', 'model_id', 'reasoning_effort'])
+      bodyRef(source, 'session_ref')
+      bodyRef(source, 'model_provider', false)
+      bodyRef(source, 'model_id', false)
+      bodyRef(source, 'reasoning_effort', false)
+      if ((source.model_provider === undefined) !== (source.model_id === undefined)) {
+        throw new DshRemoteError('REMOTE_REQUEST_INVALID', '模型 Provider 和模型 ID 必须同时提供')
+      }
+      if (source.model_provider === undefined) {
+        throw new DshRemoteError('REMOTE_REQUEST_INVALID', '必须提供模型 Provider 和模型 ID')
+      }
+      return
     case 'session.create': {
-      assertOnly(source, ['workspace_ref', 'model_provider', 'model_id'])
+      assertOnly(source, ['workspace_ref', 'model_provider', 'model_id', 'reasoning_effort'])
       bodyRef(source, 'workspace_ref')
       bodyRef(source, 'model_provider', false)
       bodyRef(source, 'model_id', false)
+      bodyRef(source, 'reasoning_effort', false)
       if ((source.model_provider === undefined) !== (source.model_id === undefined)) {
         throw new DshRemoteError('REMOTE_REQUEST_INVALID', '模型 Provider 和模型 ID 必须同时提供')
+      }
+      if (source.reasoning_effort !== undefined && source.model_provider === undefined) {
+        throw new DshRemoteError('REMOTE_REQUEST_INVALID', '推理等级必须与模型选择同时提供')
       }
       return
     }
@@ -113,6 +133,23 @@ function validateOperationBody(operation: DshRemoteOperation, source: Record<str
       if (source.outcome !== 'allowed-once' && source.outcome !== 'rejected') {
         throw new DshRemoteError('REMOTE_REQUEST_INVALID', 'outcome 无效')
       }
+  }
+}
+
+/** Correlation-only parse used to return a typed rejection for a valid envelope identity. */
+export function dshRemoteRequestIdentity(value: unknown): DshRemoteRequestIdentity | undefined {
+  try {
+    const source = object(value)
+    if (source.protocol !== DSH_REMOTE_PROTOCOL || source.protocol_major !== DSH_REMOTE_PROTOCOL_MAJOR
+      || source.kind !== 'request' || typeof source.operation !== 'string'
+      || !OPERATIONS.has(source.operation as DshRemoteOperation)) return undefined
+    return {
+      requestRef: ref(source.request_ref, 'request_ref'),
+      hostGeneration: positiveInteger(source.host_generation, 'host_generation'),
+      operation: source.operation as DshRemoteOperation,
+    }
+  } catch {
+    return undefined
   }
 }
 

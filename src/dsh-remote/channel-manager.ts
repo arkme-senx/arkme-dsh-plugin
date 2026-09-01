@@ -119,14 +119,18 @@ export class DshRemoteHostChannelManager {
       this.pendingEvents.push({ payload, metadata })
       return
     }
-    if (metadata.senderRole !== 'controller' || metadata.runtimeRef !== this.options.runtimeRef
-      || metadata.targetHostLeaseGeneration !== this.target.hostLeaseGeneration) {
-      throw new DshRemoteError('HOST_GENERATION_STALE', '远控请求不属于当前 Runtime Host lease', true)
+    let result: DshRemoteResponse
+    try {
+      // The Host owns correlated request and lease rejections. A stale
+      // Controller must not restart the shared Host connection.
+      result = await this.options.dispatch(payload, {
+        serviceLeaseGeneration: this.target.hostLeaseGeneration,
+        metadata,
+      })
+    } catch (error) {
+      if (error instanceof DshRemoteError) return
+      throw error
     }
-    const result = await this.options.dispatch(payload, {
-      serviceLeaseGeneration: this.target.hostLeaseGeneration,
-      metadata,
-    })
     const responseCommandId = `response_${createHash('sha256').update(result.request_ref).digest('base64url')}`
     await this.publishPayload(result, responseCommandId, 'response')
   }

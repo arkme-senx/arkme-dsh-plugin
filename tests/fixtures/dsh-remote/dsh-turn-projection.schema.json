@@ -9,6 +9,7 @@
     "start_seq",
     "end_seq",
     "status",
+    "presentation_version",
     "nodes"
   ],
   "properties": {
@@ -18,6 +19,7 @@
     "status": {
       "enum": ["completed", "interrupted", "error", "max_tokens"]
     },
+    "presentation_version": {"type": "integer", "minimum": 1},
     "nodes": {
       "type": "array",
       "minItems": 0,
@@ -37,7 +39,8 @@
         "time",
         "source_seq_start",
         "source_seq_end",
-        "data"
+        "data",
+        "presentation"
       ],
       "properties": {
         "node_ref": {"type": "string", "minLength": 1, "maxLength": 256},
@@ -61,7 +64,23 @@
         "time": {"type": "number"},
         "source_seq_start": {"type": "integer", "minimum": 0},
         "source_seq_end": {"type": "integer", "minimum": 0},
-        "data": {"type": "object"}
+        "data": {"type": "object"},
+        "presentation": {"$ref": "#/$defs/presentation"}
+      }
+    },
+    "presentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "format", "tone"],
+      "properties": {
+        "version": {"type": "integer", "minimum": 1},
+        "format": {"enum": ["message", "content", "summary"]},
+        "icon": {"type": "string", "maxLength": 64},
+        "title": {"type": "string", "maxLength": 65536},
+        "summary": {"type": "string", "maxLength": 65536},
+        "details": {"type": "string", "maxLength": 65536},
+        "tone": {"enum": ["neutral", "muted", "error"]},
+        "monospace": {"type": "boolean"}
       }
     }
   }

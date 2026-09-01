@@ -126,6 +126,7 @@ export interface DshRemoteControlPlane {
   registerRuntime(desktopRef: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
   syncWorkspaces(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
   syncSessions(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  completeProjectionSnapshot(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
   appendSessionEvents(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
   sessionEventSyncStatuses(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
   completeSessionEventHistory(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
@@ -148,6 +149,22 @@ export type DshRemoteTimelineNodeKind =
   | 'max_tokens'
   | 'unknown'
 
+export type DshRemotePresentationFormat = 'message' | 'content' | 'summary'
+
+export type DshRemotePresentationTone = 'neutral' | 'muted' | 'error'
+
+/** Host-owned render intent; consumers map layout without interpreting raw events. */
+export interface DshRemoteNodePresentation {
+  version: 1
+  format: DshRemotePresentationFormat
+  icon?: 'context' | 'think' | 'tool' | 'search' | 'fetch' | 'terminal' | 'read' | 'edit' | 'code' | 'retry' | 'error' | 'info' | 'command' | 'compact'
+  title?: string
+  summary?: string
+  details?: string
+  tone: DshRemotePresentationTone
+  monospace?: boolean
+}
+
 export interface DshRemoteTimelineNode {
   node_ref: string
   kind: DshRemoteTimelineNodeKind
@@ -157,6 +174,7 @@ export interface DshRemoteTimelineNode {
   source_seq_start: number
   source_seq_end: number
   data: Record<string, unknown>
+  presentation: DshRemoteNodePresentation
 }
 
 export interface DshRemoteTurnProjection {
@@ -164,6 +182,7 @@ export interface DshRemoteTurnProjection {
   start_seq: number
   end_seq: number
   status: 'completed' | 'interrupted' | 'error' | 'max_tokens'
+  presentation_version: 1
   nodes: DshRemoteTimelineNode[]
 }
 
@@ -207,7 +226,12 @@ export interface DshRemoteSessionSummary {
   updatedAt: number
   running: boolean
   blank: boolean
+  archived?: boolean
+  origin?: 'subagent'
+  parentSessionId?: string
   projectionAsOfSeq?: number
+  /** Public DSH `goal` projection; absent only when the runtime omits it. */
+  goal?: unknown
 }
 
 export interface DshRemoteModelOption {
@@ -216,17 +240,27 @@ export interface DshRemoteModelOption {
   model: string
   displayName: string
   description?: string
+  reasoningEfforts?: DshRemoteReasoningEffortOption[]
+  defaultReasoningEffort?: string
+}
+
+export interface DshRemoteReasoningEffortOption {
+  id: string
+  displayName: string
+  description?: string
 }
 
 export interface DshRemoteModelCatalog {
   items: DshRemoteModelOption[]
   failedProviders: Array<{ provider: string; providerName: string }>
   truncated: boolean
+  defaultSelection?: DshRemoteModelSelection
 }
 
 export interface DshRemoteModelSelection {
   provider: string
   model: string
+  reasoningEffort?: string
 }
 
 export interface DshRemoteSnapshot {

@@ -45,6 +45,7 @@ describe('DSH completed Turn projector', () => {
     expect(result.turns).toHaveLength(1)
     expect(result.turns[0]).toMatchObject({
       turn_ref: 'turn:0:6', start_seq: 0, end_seq: 6, status: 'completed',
+      presentation_version: 1,
     })
     expect(result.turns[0]!.nodes.map(node => [node.node_ref, node.kind, node.ordinal]))
       .toEqual([
@@ -55,12 +56,64 @@ describe('DSH completed Turn projector', () => {
     expect(result.turns[0]!.nodes[1]).toMatchObject({
       source_seq_start: 3, source_seq_end: 4,
       data: { status: 'completed', resultView: { summary: '完成命令' } },
+      presentation: {
+        version: 1, format: 'summary', title: 'Bash',
+        summary: '完成命令', tone: 'neutral',
+      },
     })
     expect(result.turns[0]!.nodes[2]).toMatchObject({
       anchor_seq: 5, source_seq_start: 2, source_seq_end: 5,
       data: { status: 'settled', blocks: [{ type: 'text', text: '状态正常' }] },
     })
     expect(JSON.stringify(result)).not.toContain('human-2')
+  })
+
+  it('owns failed tool and injected context presentation semantics', () => {
+    const result = projectCompletedTurns([
+      entry('turn/start', 20, { turn: 4 }),
+      entry('user/message', 21, {
+        id: 'goal-round', source: { kind: 'goal', goalId: 'goal-1', revision: 1, round: 2 },
+        content: [{ type: 'text', text: '<goal_round>hidden model context</goal_round>' }],
+      }, 'append'),
+      entry('tool/call', 22, {
+        turn: 4, step: 1, callId: 'call-send', name: 'arkme_text_send',
+        arguments: JSON.stringify({ source_ref: 'opaque-ref', text: 'hello' }),
+      }),
+      entry('tool/result', 23, {
+        error: { code: 'invalid-argument', message: '参数错误' },
+        message: { source: { callId: 'call-send' }, content: [{ type: 'text', text: 'Error: 参数错误' }] },
+      }, 'append'),
+      entry('turn/end', 24, { turn: 4, reason: { kind: 'completed' } }),
+    ])
+
+    expect(result.turns[0]!.nodes[0]!.presentation).toEqual({
+      version: 1, format: 'summary', icon: 'context',
+      title: '上下文注入', summary: 'goal', tone: 'muted',
+    })
+    expect(result.turns[0]!.nodes[1]!.presentation).toMatchObject({
+      version: 1, format: 'summary', icon: 'tool', title: 'Tool call',
+      summary: 'Error: 参数错误', tone: 'error',
+    })
+    expect(JSON.stringify(result.turns[0]!.nodes[1]!.presentation)).not.toContain('opaque-ref')
+  })
+
+  it('projects the DSH question tool as one answered question row', () => {
+    const result = projectCompletedTurns([
+      entry('turn/start', 30, { turn: 5 }),
+      entry('tool/call', 31, {
+        turn: 5, step: 1, callId: 'call-question', name: 'ask_user_question',
+        arguments: JSON.stringify({ questions: [{ id: 'recipient', question: '发给谁？' }] }),
+      }),
+      entry('tool/result', 32, {
+        error: null,
+        message: { source: { callId: 'call-question' }, content: [] },
+      }, 'append'),
+      entry('turn/end', 33, { turn: 5, reason: { kind: 'completed' } }),
+    ])
+
+    expect(result.turns[0]!.nodes[0]!.presentation).toMatchObject({
+      title: '提问', summary: '1/1 已回答', tone: 'neutral',
+    })
   })
 
   it('keeps replacement compaction and terminal error semantics without duplicating replacement messages', () => {

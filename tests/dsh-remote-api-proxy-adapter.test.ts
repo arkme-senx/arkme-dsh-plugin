@@ -13,7 +13,7 @@ import {
 
 function ok<T>(value: T, rpcId = 'rpc') { return { rpcId, result: { ok: true as const, value } } }
 
-function expectFitsFrames(operation: 'session.list' | 'session.history' | 'snapshot.get', result: unknown): void {
+function expectFitsFrames(operation: 'model.list' | 'session.list' | 'session.history' | 'snapshot.get', result: unknown): void {
   const response = {
     protocol: 'dsh.remote', protocol_major: 1, kind: 'response', request_ref: 'r'.repeat(128),
     status: 'completed', host_generation: Number.MAX_SAFE_INTEGER, issued_at: Number.MAX_SAFE_INTEGER,
@@ -71,7 +71,7 @@ async function fakeApi(): Promise<{ api: DshPublicApiProxyLike; prompt: ReturnTy
       sessions: {
         list: async request => ok({ items: [{
           sessionId: 'session-1', updatedAt: 100, running: true, blank: false,
-          projections: { asOfSeq: 8, values: { title: 'Remote Session' } },
+          projections: { asOfSeq: 8, values: { title: 'Remote Session', goal: null } },
         }] }, request.rpcId),
         create: async request => ok({ sessionId: request.payload.sessionId }, request.rpcId),
         history: async request => ok({
@@ -93,7 +93,7 @@ describe('public DSH ApiProxy remote adapter', () => {
     expect(adapter.capabilities()).not.toContain('interaction.approval.respond')
     await expect(adapter.snapshot()).resolves.toMatchObject({
       workspaces: [{ workspaceId: 'workspace-1', available: true }],
-      sessions: [{ sessionId: 'session-1', workspaceId: 'workspace-1', title: 'Remote Session' }],
+      sessions: [{ sessionId: 'session-1', workspaceId: 'workspace-1', title: 'Remote Session', goal: null }],
     })
   })
 
@@ -108,14 +108,32 @@ describe('public DSH ApiProxy remote adapter', () => {
       .resolves.not.toEqual(first)
   })
 
+  it('projects DSH archive and subagent lineage for sidebar parity', async () => {
+    const { api } = await fakeApi()
+    api.workspace!.list = async request => ok({
+      items: [{ workspaceId: 'workspace-1', path: process.cwd(), title: 'Project', sessionIds: ['root', 'child'] }],
+      archivedSessionIds: ['root'],
+    }, request.rpcId)
+    api.sessions!.list = async request => ok({ items: [
+      { sessionId: 'root', updatedAt: 2, running: false, blank: false },
+      { sessionId: 'child', updatedAt: 1, running: false, blank: false, parentSessionId: 'root', origin: 'subagent' },
+    ] }, request.rpcId)
+    const page = await new DshApiProxyAdapter(api).sessions({ limit: 50 })
+    expect(page.items).toEqual([
+      expect.objectContaining({ sessionId: 'root', archived: true }),
+      expect.objectContaining({ sessionId: 'child', archived: false, parentSessionId: 'root', origin: 'subagent' }),
+    ])
+  })
+
   it('projects the live DSH model catalog including the Arkme managed provider and applies an exact model', async () => {
     const { api } = await fakeApi()
     const selectModel = vi.fn(async (request: {
       rpcId: string
-      payload: { sessionId: string; provider: string; model: string }
+      payload: { sessionId: string; provider: string; model: string; reasoningEffort?: string }
     }) => ok({ selected: {
       provider: request.payload.provider,
       model: request.payload.model,
+      reasoningEffort: request.payload.reasoningEffort ?? 'high',
     } }, request.rpcId))
     api.llm = { models: async request => ok({
       groups: [
@@ -123,13 +141,23 @@ describe('public DSH ApiProxy remote adapter', () => {
           { id: 'deepseek-chat', name: 'DeepSeek Chat' },
         ] },
         { id: 'arkme-managed', name: 'Arkme · 余额计费', models: [
-          { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', description: 'Arkme 托管模型' },
+          { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', description: 'Arkme 托管模型', reasoning: {
+            efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'High' }], defaultEffort: 'high',
+          } },
         ] },
       ],
       failures: [{ id: 'broken-provider', name: '失败 Provider', message: 'https://secret.example failed' }],
     }, request.rpcId) }
+    api.sessions!.models = async request => ok({
+      current: { provider: 'arkme-managed', model: 'deepseek-v4-flash', reasoningEffort: 'off' },
+      routable: true, groups: [], failures: [],
+    }, request.rpcId)
     api.sessions!.selectModel = selectModel
-    const adapter = new DshApiProxyAdapter(api)
+    const adapter = new DshApiProxyAdapter(api, {
+      defaultModelSelection: () => ({
+        provider: 'arkme-managed', model: 'deepseek-v4-flash', reasoningEffort: 'off',
+      }),
+    })
 
     expect(adapter.capabilities()).toEqual(expect.arrayContaining([
       'model.list', 'session.create.model',
@@ -143,25 +171,122 @@ describe('public DSH ApiProxy remote adapter', () => {
         {
           provider: 'arkme-managed', providerName: 'Arkme · 余额计费',
           model: 'deepseek-v4-flash', displayName: 'DeepSeek-V4-Flash', description: 'Arkme 托管模型',
+          reasoningEfforts: [
+            { id: 'off', displayName: 'Off' },
+            { id: 'high', displayName: 'High' },
+          ],
+          defaultReasoningEffort: 'high',
         },
       ],
       failedProviders: [{ provider: 'broken-provider', providerName: '失败 Provider' }],
       truncated: false,
+      defaultSelection: {
+        provider: 'arkme-managed', model: 'deepseek-v4-flash', reasoningEffort: 'off',
+      },
     })
     const created = await adapter.createSession({
       workspaceId: 'workspace-1',
       dshRpcId: 'rpc-model-create',
-      modelSelection: { provider: 'arkme-managed', model: 'deepseek-v4-flash' },
+      modelSelection: { provider: 'arkme-managed', model: 'deepseek-v4-flash', reasoningEffort: 'off' },
     })
     expect(created).toMatchObject({
-      modelSelection: { provider: 'arkme-managed', model: 'deepseek-v4-flash' },
+      modelSelection: { provider: 'arkme-managed', model: 'deepseek-v4-flash', reasoningEffort: 'off' },
     })
     expect(selectModel).toHaveBeenCalledWith(expect.objectContaining({
       payload: expect.objectContaining({
-        provider: 'arkme-managed', model: 'deepseek-v4-flash',
+        provider: 'arkme-managed', model: 'deepseek-v4-flash', reasoningEffort: 'off',
       }),
     }))
     expect(JSON.stringify(await adapter.models())).not.toContain('secret.example')
+    await expect(adapter.sessionModel({ sessionId: 'session-1' })).resolves.toEqual({
+      current: { provider: 'arkme-managed', model: 'deepseek-v4-flash', reasoningEffort: 'off' },
+    })
+  })
+
+  it('uses the official Session model catalog and durable projection for get/select', async () => {
+    const { api } = await fakeApi()
+    let next: { provider: string; model: string; reasoningEffort?: string } | null = null
+    api.sessions!.modelCatalog = async request => ok({
+      default: { provider: 'deepseek-official', model: 'deepseek-chat' },
+      routableProviders: ['deepseek-official', 'arkme-managed'],
+      groups: [
+        { id: 'deepseek-official', name: 'DeepSeek', models: [
+          { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+        ] },
+        { id: 'arkme-managed', name: 'Arkme · 余额计费', models: [
+          { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', description: 'Arkme 托管模型' },
+        ] },
+      ],
+      failures: [],
+    }, request.rpcId)
+    api.sessions!.list = async request => ok({ items: [{
+      sessionId: 'session-1', updatedAt: 100, running: false, blank: false,
+      projections: {
+        asOfSeq: 9,
+        values: { modelSelection: { lastUsed: null, next } },
+      },
+    }] }, request.rpcId)
+    const selectModel = vi.fn(async (request: {
+      rpcId: string
+      payload: { sessionId: string; provider: string; model: string; reasoningEffort?: string }
+    }) => {
+      next = {
+        provider: request.payload.provider,
+        model: request.payload.model,
+        reasoningEffort: request.payload.reasoningEffort ?? 'high',
+      }
+      return ok({ selected: next }, request.rpcId)
+    })
+    api.sessions!.selectModel = selectModel
+    const adapter = new DshApiProxyAdapter(api)
+
+    expect(adapter.capabilities()).toEqual(expect.arrayContaining([
+      'model.list', 'session.create.model', 'session.model.get', 'session.model.select',
+    ]))
+    await expect(adapter.models()).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({ provider: 'arkme-managed', model: 'deepseek-v4-flash' }),
+      ]),
+    })
+    await expect(adapter.sessionModel({ sessionId: 'session-1' })).resolves.toEqual({
+      current: { provider: 'deepseek-official', model: 'deepseek-chat' },
+    })
+    await expect(adapter.selectSessionModel({
+      sessionId: 'session-1', provider: 'arkme-managed', model: 'deepseek-v4-flash', reasoningEffort: 'max',
+      dshRpcId: 'rpc-select-model',
+    })).resolves.toEqual({
+      selected: { provider: 'arkme-managed', model: 'deepseek-v4-flash', reasoningEffort: 'max' },
+    })
+    await expect(adapter.sessionModel({ sessionId: 'session-1' })).resolves.toEqual({
+      current: { provider: 'arkme-managed', model: 'deepseek-v4-flash', reasoningEffort: 'max' },
+    })
+    await expect(adapter.sessionModelMatches({
+      sessionId: 'session-1', provider: 'arkme-managed', model: 'deepseek-v4-flash', reasoningEffort: 'max',
+    })).resolves.toBe(true)
+    expect(selectModel).toHaveBeenCalledTimes(1)
+  })
+
+  it('bounds the remote model catalog by item count and serialized result bytes', async () => {
+    const { api } = await fakeApi()
+    api.sessions!.modelCatalog = async request => ok({
+      default: { provider: 'provider-0', model: 'model-0' },
+      routableProviders: ['provider-0'],
+      groups: [{
+        id: 'provider-0',
+        name: 'Provider',
+        models: Array.from({ length: 150 }, (_, index) => ({
+          id: `model-${index}`,
+          name: `Model ${index}`,
+          description: 'bounded description '.repeat(16),
+        })),
+      }],
+      failures: [],
+    }, request.rpcId)
+    const catalog = await new DshApiProxyAdapter(api).models()
+
+    expect(catalog.truncated).toBe(true)
+    expect(catalog.items.length).toBeLessThanOrEqual(100)
+    expectFitsFrames('model.list', catalog)
   })
 
   it('reconciles a created Session by its deterministic request identity', async () => {
@@ -428,6 +553,59 @@ describe('public DSH ApiProxy remote adapter', () => {
       kind: 'interactions', pendingInteractions: [{
         kind: 'question', interactionRpcRef: 'question-live-01', sessionId: 'session-1',
       }],
+    })
+    stop()
+  })
+
+  it('projects one canonical live presentation and the public goal projection', async () => {
+    const { api } = await fakeApi()
+    async function* mux() {
+      yield { rpcId: 'call', payload: {
+        type: 'session/event', sessionId: 'session-1',
+        event: { type: 'tool/call', seq: 10, time: 100, data: {
+          callId: 'call-send', name: 'arkme_text_send',
+          arguments: JSON.stringify({ source_ref: 'opaque-ref', text: 'hello' }),
+        } },
+      } }
+      yield { rpcId: 'result', payload: {
+        type: 'session/event', sessionId: 'session-1',
+        event: { type: 'tool/result', seq: 11, time: 101, surfaceOp: 'append', data: {
+          error: { code: 'invalid-argument', message: '参数错误' },
+          message: {
+            source: { callId: 'call-send' },
+            content: [{ type: 'text', text: 'Error: 参数错误' }],
+          },
+        } },
+      } }
+      yield { rpcId: 'goal', payload: {
+        type: 'session/projection', sessionId: 'session-1', key: 'goal', seq: 12,
+        value: {
+          goal: { id: 'goal-1', revision: 2, objective: '完成任务', phase: 'blocked', maxGoalRounds: 10,
+            blockedReason: { code: 'tool-failed', message: '参数错误' } },
+          roundsStarted: 3, createdAt: 1, updatedAt: 2,
+        },
+      } }
+      await new Promise(() => undefined)
+    }
+    api.events = { mux: () => mux() }
+    const adapter = new DshApiProxyAdapter(api)
+    const projected: unknown[] = []
+    adapter.subscribeProjectionEvents(event => { projected.push(event) })
+    const stop = adapter.startEvents()
+    await vi.waitFor(() => { expect(projected).toHaveLength(3) })
+
+    expect(projected[1]).toMatchObject({
+      kind: 'session-event',
+      entry: { presentation: {
+        version: 1, format: 'summary', title: 'Tool call',
+        summary: 'Error: 参数错误', tone: 'error',
+      } },
+    })
+    expect(JSON.stringify((projected[1] as { entry: { presentation: unknown } }).entry.presentation))
+      .not.toContain('opaque-ref')
+    expect(projected[2]).toMatchObject({
+      kind: 'session-projection', sessionId: 'session-1', key: 'goal', seq: 12,
+      value: { goal: { phase: 'blocked', objective: '完成任务' }, roundsStarted: 3 },
     })
     stop()
   })

@@ -6,6 +6,10 @@ import type {
   DshRemoteTimelineNodeKind,
   DshRemoteTurnProjection,
 } from './types.js'
+import {
+  DSH_REMOTE_PRESENTATION_VERSION,
+  presentationForTimelineNode,
+} from './presentation.js'
 
 const MAX_TURN_PROJECTION_BYTES = 4 * 1024 * 1024
 
@@ -337,6 +341,7 @@ function projectNodes(entries: DshRemoteHistoryEntry[]): DshRemoteTimelineNode[]
       source_seq_start: Math.min(...node.sourceSeqs),
       source_seq_end: Math.max(...node.sourceSeqs),
       data: node.data,
+      presentation: presentationForTimelineNode(node.kind, node.data),
     }))
 }
 
@@ -368,6 +373,7 @@ export function projectCompletedTurns(source: Iterable<DshRemoteHistoryEntry>): 
       start_seq: startSeq,
       end_seq: endSeq,
       status: turnStatus(entry),
+      presentation_version: DSH_REMOTE_PRESENTATION_VERSION,
       nodes: projectNodes(active),
     }
     if (Buffer.byteLength(JSON.stringify(projection)) > MAX_TURN_PROJECTION_BYTES) {

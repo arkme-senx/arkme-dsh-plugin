@@ -47,7 +47,7 @@
     },
     {
       "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.create"}}, "required": ["kind", "operation"]},
-      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["workspace_ref"], "dependentRequired": {"model_provider": ["model_id"], "model_id": ["model_provider"]}, "properties": {"workspace_ref": {"$ref": "#/$defs/ref"}, "model_provider": {"$ref": "#/$defs/ref"}, "model_id": {"$ref": "#/$defs/ref"}}}}}
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["workspace_ref"], "dependentRequired": {"model_provider": ["model_id"], "model_id": ["model_provider"], "reasoning_effort": ["model_provider", "model_id"]}, "properties": {"workspace_ref": {"$ref": "#/$defs/ref"}, "model_provider": {"$ref": "#/$defs/ref"}, "model_id": {"$ref": "#/$defs/ref"}, "reasoning_effort": {"$ref": "#/$defs/ref"}}}}}
     },
     {
       "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.model.get"}}, "required": ["kind", "operation"]},
@@ -55,7 +55,7 @@
     },
     {
       "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.model.select"}}, "required": ["kind", "operation"]},
-      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref", "model_provider", "model_id"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}, "model_provider": {"$ref": "#/$defs/ref"}, "model_id": {"$ref": "#/$defs/ref"}}}}}
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref", "model_provider", "model_id"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}, "model_provider": {"$ref": "#/$defs/ref"}, "model_id": {"$ref": "#/$defs/ref"}, "reasoning_effort": {"$ref": "#/$defs/ref"}}}}}
     },
     {
       "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.history"}}, "required": ["kind", "operation"]},

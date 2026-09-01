@@ -37,6 +37,10 @@ export class DshRemoteHttpControlPlane implements DshRemoteControlPlane {
     return await this.post(`${BASE}/sessions/sync`, input, signal)
   }
 
+  async completeProjectionSnapshot(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.post(`${BASE}/projections/complete`, input, signal)
+  }
+
   async appendSessionEvents(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
     return await this.post(`${BASE}/session-events/append`, input, signal)
   }

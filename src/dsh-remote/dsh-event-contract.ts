@@ -1,4 +1,5 @@
 import { DshRemoteError } from './errors.js'
+import type { DshRemoteNodePresentation } from './types.js'
 
 export type DshRemoteJsonValue =
   | null
@@ -27,6 +28,8 @@ export interface DshRemoteToolEventView {
 export interface DshRemoteHistoryEntry {
   event: DshRemoteSessionEvent
   view?: DshRemoteToolEventView
+  /** Realtime/read projection only. Backend canonical event storage strips it. */
+  presentation?: DshRemoteNodePresentation
 }
 
 function record(value: unknown): Record<string, unknown> {

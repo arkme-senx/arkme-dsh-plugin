@@ -9,6 +9,7 @@ describe('Backend login-only DSH remote control plane', () => {
     await plane.registerRuntime('desktop-01', { profile_ref: 'web' })
     await plane.syncWorkspaces({ runtime_ref: 'runtime-01', items: [] })
     await plane.syncSessions({ runtime_ref: 'runtime-01', items: [] })
+    await plane.completeProjectionSnapshot({ runtime_ref: 'runtime-01', snapshot_ref: 'snapshot-1' })
     await plane.appendSessionEvents({ runtime_ref: 'runtime-01', entries: [] })
     await plane.sessionEventSyncStatuses({ runtime_ref: 'runtime-01', session_refs: ['session-01'] })
     await plane.completeSessionEventHistory({
@@ -23,6 +24,7 @@ describe('Backend login-only DSH remote control plane', () => {
       '/api/v1/dsh-remote/desktops/desktop-01/runtimes/register',
       '/api/v1/dsh-remote/workspaces/sync',
       '/api/v1/dsh-remote/sessions/sync',
+      '/api/v1/dsh-remote/projections/complete',
       '/api/v1/dsh-remote/session-events/append',
       '/api/v1/dsh-remote/session-events/status',
       '/api/v1/dsh-remote/session-events/complete',

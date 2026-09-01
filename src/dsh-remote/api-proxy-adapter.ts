@@ -8,6 +8,7 @@ import {
   DSH_REMOTE_MAX_TEXT_CODE_POINTS,
   type DshRemoteCapability,
   type DshRemoteModelCatalog,
+  type DshRemoteModelOption,
   type DshRemoteModelSelection,
   type DshRemotePendingInteraction,
   type DshRemoteSessionSummary,
@@ -20,12 +21,32 @@ import {
   snapshotDshHistoryEntry,
   type DshRemoteHistoryEntry,
 } from './dsh-event-contract.js'
+import { DshRemoteEventPresenter } from './presentation.js'
 
 export type { DshRemoteHistoryEntry } from './dsh-event-contract.js'
 
 interface RpcSuccess<T> { rpcId: string; result: { ok: true; value: T } }
 interface RpcFailure { rpcId: string; result: { ok: false; error: { code: string; message: string; details?: unknown } } }
 type RpcResponse<T> = RpcSuccess<T> | RpcFailure
+
+interface ModelCatalogApiValue {
+  default?: { provider: string; model: string; reasoningEffort?: string }
+  routableProviders?: string[]
+  groups: Array<{
+    id: string
+    name: string
+    models: Array<{
+      id: string
+      name: string
+      description?: string
+      reasoning?: {
+        efforts: Array<{ id: string; name: string; description?: string }>
+        defaultEffort?: string
+      }
+    }>
+  }>
+  failures: Array<{ id: string; name: string; message: string }>
+}
 
 interface WorkspaceApiLike {
   list?(request: { rpcId: string; payload: Record<string, never> }): Promise<RpcResponse<{
@@ -34,16 +55,24 @@ interface WorkspaceApiLike {
   }>>
 }
 
+interface DshRemoteWorkspaceInventory {
+  items: DshRemoteWorkspaceView[]
+  archivedSessionIds: string[]
+}
+
 interface SessionsApiLike {
   list?(request: { rpcId: string; payload: { cursor?: string } }): Promise<RpcResponse<{ items: Array<{
     sessionId: string
     updatedAt: number
     running: boolean
     blank: boolean
+    parentSessionId?: string
+    origin?: 'subagent'
     cwd?: string
     projections?: { asOfSeq: number; values: Record<string, unknown> }
   }> }>>
   create?(request: { rpcId: string; payload: { workspaceId: string; sessionId: string } }): Promise<RpcResponse<{ sessionId: string }>>
+  modelCatalog?(request: { rpcId: string; payload: Record<string, never> }): Promise<RpcResponse<ModelCatalogApiValue>>
   models?(request: { rpcId: string; payload: { sessionId: string } }): Promise<RpcResponse<{
     current: { provider: string; model: string; reasoningEffort?: string }
     routable: boolean
@@ -54,6 +83,7 @@ interface SessionsApiLike {
     sessionId: string
     provider: string
     model: string
+    reasoningEffort?: string
   } }): Promise<RpcResponse<{ selected: { provider: string; model: string; reasoningEffort?: string } }>>
   history?(request: { rpcId: string; payload: { sessionId: string; beforeSeq?: number; maxMessages: number } }): Promise<RpcResponse<{
     events: Array<{ event: {
@@ -77,14 +107,7 @@ interface SessionsApiLike {
 }
 
 interface LlmApiLike {
-  models?(request: { rpcId: string; payload: Record<string, never> }): Promise<RpcResponse<{
-    groups: Array<{
-      id: string
-      name: string
-      models: Array<{ id: string; name: string; description?: string }>
-    }>
-    failures: Array<{ id: string; name: string; message: string }>
-  }>>
+  models?(request: { rpcId: string; payload: Record<string, never> }): Promise<RpcResponse<ModelCatalogApiValue>>
 }
 
 interface EventsApiLike {
@@ -99,6 +122,13 @@ export type DshRemoteApiProjectionEvent =
       kind: 'session-event'
       sessionId: string
       entry: DshRemoteHistoryEntry
+    }
+  | {
+      kind: 'session-projection'
+      sessionId: string
+      key: 'goal'
+      value: unknown
+      seq: number
     }
   | {
       kind: 'interactions'
@@ -154,7 +184,7 @@ function readOffset(cursor?: string): number {
   throw new DshRemoteError('REMOTE_REQUEST_INVALID', '分页游标无效')
 }
 
-function stableSessionId(requestRef: string): string {
+export function stableDshRemoteSessionId(requestRef: string): string {
   const bytes = createHash('sha256').update(`dsh-remote-session-v1\n${requestRef}`).digest().subarray(0, 16)
   bytes[6] = (bytes[6]! & 0x0f) | 0x40
   bytes[8] = (bytes[8]! & 0x3f) | 0x80
@@ -165,6 +195,68 @@ function stableSessionId(requestRef: string): string {
 function codePointLength(value: string): number { return [...value].length }
 
 function jsonBytes(value: unknown): number { return Buffer.byteLength(JSON.stringify(value)) }
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function modelSelection(value: unknown, field: string): DshRemoteModelSelection | undefined {
+  if (value === undefined || value === null) return undefined
+  const source = objectValue(value)
+  if (source === undefined
+    || typeof source.provider !== 'string' || source.provider.trim() === '' || source.provider.length > 256
+    || typeof source.model !== 'string' || source.model.trim() === '' || source.model.length > 256
+    || (source.reasoningEffort !== undefined
+      && (typeof source.reasoningEffort !== 'string'
+        || source.reasoningEffort.trim() === '' || source.reasoningEffort.length > 128))) {
+    throw new DshRemoteError('REMOTE_INVALID_RESPONSE', `DSH ${field} 模型选择无效`)
+  }
+  return {
+    provider: source.provider.trim(),
+    model: source.model.trim(),
+    ...(typeof source.reasoningEffort === 'string'
+      ? { reasoningEffort: source.reasoningEffort.trim() }
+      : {}),
+  }
+}
+
+function modelReasoning(value: unknown): Pick<DshRemoteModelOption, 'reasoningEfforts' | 'defaultReasoningEffort'> {
+  if (value === undefined || value === null) return {}
+  const source = objectValue(value)
+  if (source === undefined || !Array.isArray(source.efforts) || source.efforts.length === 0
+    || source.efforts.length > 16) {
+    throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 模型推理等级无效')
+  }
+  const reasoningEfforts = source.efforts.map((raw) => {
+    const effort = objectValue(raw)
+    if (effort === undefined || typeof effort.id !== 'string' || effort.id.trim() === ''
+      || typeof effort.name !== 'string' || effort.name.trim() === '') {
+      throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 模型推理等级条目无效')
+    }
+    return {
+      id: boundedUtf8(effort.id.trim(), 128),
+      displayName: boundedUtf8(effort.name.trim(), 256),
+      ...(typeof effort.description === 'string' && effort.description.trim() !== ''
+        ? { description: boundedUtf8(effort.description.trim(), 512) }
+        : {}),
+    }
+  })
+  const ids = new Set(reasoningEfforts.map(effort => effort.id))
+  if (ids.size !== reasoningEfforts.length) {
+    throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 模型推理等级包含重复 ID')
+  }
+  const defaultReasoningEffort = typeof source.defaultEffort === 'string'
+    ? boundedUtf8(source.defaultEffort.trim(), 128) : undefined
+  if (defaultReasoningEffort !== undefined && !ids.has(defaultReasoningEffort)) {
+    throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 默认推理等级不在可选列表中')
+  }
+  return {
+    reasoningEfforts,
+    ...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
+  }
+}
 
 // A live session event or one pending interaction is not itself pageable. Keep
 // each atomic projection well below the 40 KiB page-result budget so the
@@ -250,10 +342,14 @@ export class DshApiProxyAdapter {
   private readonly projectionListeners = new Set<(event: DshRemoteApiProjectionEvent) => void>()
   private eventController: AbortController | undefined
   private eventLoop: Promise<void> | undefined
+  private readonly eventPresenter = new DshRemoteEventPresenter()
 
   constructor(
     private readonly api: DshPublicApiProxyLike,
-    private readonly options: { eventRetryBaseMillis?: number } = {},
+    private readonly options: {
+      eventRetryBaseMillis?: number
+      defaultModelSelection?: () => unknown
+    } = {},
   ) {}
 
   capabilities(): DshRemoteCapability[] {
@@ -263,9 +359,11 @@ export class DshApiProxyAdapter {
     if (typeof this.api.sessions?.create === 'function') result.push('session.create')
     if (typeof this.api.sessions?.create === 'function'
       && typeof this.api.sessions?.selectModel === 'function') result.push('session.create.model')
-    if (typeof this.api.sessions?.models === 'function') result.push('session.model.get')
+    if (this.hasModelCatalog()) result.push('model.list')
+    if (typeof this.api.sessions?.models === 'function'
+      || (typeof this.api.sessions?.list === 'function'
+        && typeof this.api.sessions?.modelCatalog === 'function')) result.push('session.model.get')
     if (typeof this.api.sessions?.selectModel === 'function') result.push('session.model.select')
-    if (typeof this.api.llm?.models === 'function') result.push('model.list')
     if (typeof this.api.sessions?.history === 'function') result.push('session.history')
     if (typeof this.api.sessions?.prompt === 'function') {
       result.push('session.prompt', 'session.prompt.queue', 'session.prompt.steer')
@@ -279,10 +377,14 @@ export class DshApiProxyAdapter {
   }
 
   async workspaces(): Promise<DshRemoteWorkspaceView[]> {
+    return (await this.workspaceInventory()).items
+  }
+
+  async workspaceInventory(): Promise<DshRemoteWorkspaceInventory> {
     const list = this.api.workspace?.list
     if (typeof list !== 'function') this.unsupported('workspace.list')
     const value = unwrap(await list.call(this.api.workspace, { rpcId: rpcId('remote-workspaces'), payload: {} }))
-    return await Promise.all(value.items.map(async item => {
+    const items = await Promise.all(value.items.map(async item => {
       let available = false
       let path = item.path
       try {
@@ -297,6 +399,10 @@ export class DshApiProxyAdapter {
         sessionIds: [...item.sessionIds],
       }
     }))
+    return {
+      items,
+      archivedSessionIds: [...new Set(value.archivedSessionIds ?? [])],
+    }
   }
 
   async workspacePage(input: { limit?: number; cursor?: string } = {}): Promise<{
@@ -318,13 +424,20 @@ export class DshApiProxyAdapter {
     })
   }
 
-  async sessions(input: { workspaceId?: string; limit?: number; cursor?: string } = {}): Promise<{
+  async sessions(input: {
+    workspaceId?: string
+    limit?: number
+    cursor?: string
+    workspaceInventory?: DshRemoteWorkspaceInventory
+  } = {}): Promise<{
     items: DshRemoteSessionSummary[]
     nextCursor?: string
   }> {
     const list = this.api.sessions?.list
     if (typeof list !== 'function') this.unsupported('session.list')
-    const workspaces = await this.workspaces()
+    const workspaceInventory = input.workspaceInventory ?? await this.workspaceInventory()
+    const workspaces = workspaceInventory.items
+    const archived = new Set(workspaceInventory.archivedSessionIds)
     const workspaceBySession = new Map<string, string>()
     for (const workspace of workspaces) {
       for (const sessionId of workspace.sessionIds) workspaceBySession.set(sessionId, workspace.workspaceId)
@@ -341,7 +454,13 @@ export class DshApiProxyAdapter {
         updatedAt: item.updatedAt,
         running: item.running,
         blank: item.blank,
+        archived: archived.has(item.sessionId),
+        ...(item.origin === undefined ? {} : { origin: item.origin }),
+        ...(item.parentSessionId === undefined ? {} : { parentSessionId: item.parentSessionId }),
         ...(item.projections === undefined ? {} : { projectionAsOfSeq: item.projections.asOfSeq }),
+        ...(item.projections !== undefined && Object.hasOwn(item.projections.values, 'goal')
+          ? { goal: item.projections.values.goal }
+          : {}),
       }]
     }).sort((left, right) => right.updatedAt - left.updatedAt)
     const offset = readOffset(input.cursor)
@@ -370,7 +489,10 @@ export class DshApiProxyAdapter {
         ...(input.beforeSeq === undefined ? {} : { beforeSeq: input.beforeSeq }),
       },
     }))
-    const entries = value.events.map(snapshotDshHistoryEntry)
+    const presenter = new DshRemoteEventPresenter()
+    const entries = value.events
+      .map(snapshotDshHistoryEntry)
+      .map(entry => presenter.present(input.sessionId, entry))
     let truncatedByBudget = false
     while (entries.length > 0) {
       const firstSeq = value.events[0]?.event.seq
@@ -395,12 +517,13 @@ export class DshApiProxyAdapter {
   }
 
   async models(): Promise<DshRemoteModelCatalog> {
-    const models = this.api.llm?.models
-    if (typeof models !== 'function') this.unsupported('model.list')
-    const value = unwrap(await models.call(this.api.llm, {
-      rpcId: rpcId('remote-models'),
-      payload: {},
-    }))
+    const value = await this.modelCatalog()
+    const defaultSelection = this.options.defaultModelSelection === undefined
+      ? undefined
+      : modelSelection(
+          this.options.defaultModelSelection(),
+          'agentDefaultModel.currentSelection',
+        )
     const result: DshRemoteModelCatalog = {
       items: [],
       failedProviders: value.failures.map(failure => ({
@@ -408,6 +531,7 @@ export class DshApiProxyAdapter {
         providerName: boundedUtf8(failure.name, 256),
       })),
       truncated: false,
+      ...(defaultSelection === undefined ? {} : { defaultSelection }),
     }
     outer: for (const group of value.groups) {
       const provider = boundedUtf8(group.id, 128)
@@ -421,6 +545,7 @@ export class DshApiProxyAdapter {
           ...(model.description === undefined
             ? {}
             : { description: boundedUtf8(model.description, 512) }),
+          ...modelReasoning(model.reasoning),
         }
         if (result.items.length >= DSH_REMOTE_MAX_MODEL_OPTIONS
           || jsonBytes({ ...result, items: [...result.items, item] }) > DSH_REMOTE_MAX_PAGE_RESULT_BYTES) {
@@ -433,37 +558,72 @@ export class DshApiProxyAdapter {
     return result
   }
 
-  async sessionModel(sessionId: string): Promise<{
-    current: DshRemoteModelSelection
-    routable: boolean
-  }> {
-    const models = this.api.sessions?.models
-    if (typeof models !== 'function') this.unsupported('session.model.get')
-    const value = unwrap(await models.call(this.api.sessions, {
-      rpcId: rpcId('remote-session-model'),
-      payload: { sessionId },
-    }))
-    return {
-      current: {
-        provider: boundedUtf8(value.current.provider, 128),
-        model: boundedUtf8(value.current.model, 128),
-      },
-      routable: value.routable,
+  async sessionModel(input: { sessionId: string }): Promise<{ current: DshRemoteModelSelection }> {
+    await this.requireSession(input.sessionId, false)
+    const legacyModels = this.api.sessions?.models
+    if (typeof legacyModels === 'function') {
+      const value = unwrap(await legacyModels.call(this.api.sessions, {
+        rpcId: rpcId('remote-session-model'),
+        payload: { sessionId: input.sessionId },
+      }))
+      const current = modelSelection(value.current, 'session.models.current')
+      if (current === undefined) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 未返回当前模型')
+      return { current }
     }
+
+    const list = this.api.sessions?.list
+    if (typeof list !== 'function' || typeof this.api.sessions?.modelCatalog !== 'function') {
+      this.unsupported('session.model.get')
+    }
+    const listed = unwrap(await list.call(this.api.sessions, {
+      rpcId: rpcId('remote-session-model-projection'),
+      payload: {},
+    })).items.find(item => item.sessionId === input.sessionId)
+    if (listed === undefined) throw new DshRemoteError('SESSION_NOT_FOUND', 'DSH 会话不存在')
+    const projection = objectValue(listed.projections?.values.modelSelection)
+    const current = modelSelection(projection?.next, 'modelSelection.next')
+      ?? modelSelection(projection?.lastUsed, 'modelSelection.lastUsed')
+      ?? modelSelection((await this.modelCatalog()).default, 'modelCatalog.default')
+    if (current === undefined) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 未返回当前或默认模型')
+    return { current }
   }
 
   async selectSessionModel(input: {
     sessionId: string
-    selection: DshRemoteModelSelection
+    provider: string
+    model: string
+    reasoningEffort?: string
     dshRpcId: string
   }): Promise<{ selected: DshRemoteModelSelection }> {
+    await this.requireSession(input.sessionId, false)
     const selectModel = this.api.sessions?.selectModel
     if (typeof selectModel !== 'function') this.unsupported('session.model.select')
-    const selected = unwrap(await selectModel.call(this.api.sessions, {
+    const selected = modelSelection(unwrap(await selectModel.call(this.api.sessions, {
       rpcId: input.dshRpcId,
-      payload: { sessionId: input.sessionId, ...input.selection },
-    })).selected
-    return { selected: { provider: selected.provider, model: selected.model } }
+      payload: {
+        sessionId: input.sessionId,
+        provider: input.provider,
+        model: input.model,
+        ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
+      },
+    })).selected, 'session.selectModel.selected')
+    if (selected === undefined
+      || selected.provider !== input.provider || selected.model !== input.model
+      || (input.reasoningEffort !== undefined && selected.reasoningEffort !== input.reasoningEffort)) {
+      throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 返回了与请求不一致的模型')
+    }
+    return { selected }
+  }
+
+  async sessionModelMatches(input: {
+    sessionId: string
+    provider: string
+    model: string
+    reasoningEffort?: string
+  }): Promise<boolean> {
+    const current = (await this.sessionModel({ sessionId: input.sessionId })).current
+    return current.provider === input.provider && current.model === input.model
+      && (input.reasoningEffort === undefined || current.reasoningEffort === input.reasoningEffort)
   }
 
   historyContainsRpcId(entries: readonly DshRemoteHistoryEntry[], rpcIdValue: string): boolean {
@@ -474,14 +634,16 @@ export class DshApiProxyAdapter {
     workspaceId: string
     dshRpcId: string
     modelSelection?: DshRemoteModelSelection
+    beforeCreate?: (sessionId: string) => Promise<void>
   }): Promise<{ sessionId: string; modelSelection?: DshRemoteModelSelection }> {
     const workspace = (await this.workspaces()).find(item => item.workspaceId === input.workspaceId)
     if (workspace === undefined || !workspace.available) throw new DshRemoteError('WORKSPACE_UNAVAILABLE', '工作目录已经删除或不可访问')
     const create = this.api.sessions?.create
     if (typeof create !== 'function') this.unsupported('session.create')
     // request_ref is only controller-scoped. The Host ledger's rpc id also
-    // binds Binding+Runtime, so two trusted phones cannot collide on a Session.
-    const sessionId = stableSessionId(input.dshRpcId)
+    // binds account+Runtime, so two trusted phones cannot collide on a Session.
+    const sessionId = stableDshRemoteSessionId(input.dshRpcId)
+    await input.beforeCreate?.(sessionId)
     const created = unwrap(await create.call(this.api.sessions, {
       rpcId: input.dshRpcId,
       payload: { workspaceId: input.workspaceId, sessionId },
@@ -492,15 +654,17 @@ export class DshApiProxyAdapter {
     if (input.modelSelection === undefined) return created
     const selectModel = this.api.sessions?.selectModel
     if (typeof selectModel !== 'function') this.unsupported('session.create.model')
-    const selected = unwrap(await selectModel.call(this.api.sessions, {
+    const selected = modelSelection(unwrap(await selectModel.call(this.api.sessions, {
       rpcId: `${input.dshRpcId}-model`,
       payload: { sessionId, ...input.modelSelection },
-    })).selected
-    if (selected.provider !== input.modelSelection.provider
-      || selected.model !== input.modelSelection.model) {
+    })).selected, 'session.selectModel.selected')
+    if (selected === undefined || selected.provider !== input.modelSelection.provider
+      || selected.model !== input.modelSelection.model
+      || (input.modelSelection.reasoningEffort !== undefined
+        && selected.reasoningEffort !== input.modelSelection.reasoningEffort)) {
       throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 返回了与请求不一致的模型')
     }
-    return { sessionId, modelSelection: { provider: selected.provider, model: selected.model } }
+    return { sessionId, modelSelection: selected }
   }
 
   async reconcileCreatedSession(input: {
@@ -508,7 +672,7 @@ export class DshApiProxyAdapter {
     dshRpcId: string
     modelSelection?: DshRemoteModelSelection
   }): Promise<{ sessionId: string; modelSelection?: DshRemoteModelSelection } | undefined> {
-    const expected = stableSessionId(input.dshRpcId)
+    const expected = stableDshRemoteSessionId(input.dshRpcId)
     let cursor: string | undefined
     do {
       const page = await this.sessions({
@@ -518,14 +682,7 @@ export class DshApiProxyAdapter {
       })
       if (page.items.some(item => item.sessionId === expected)) {
         if (input.modelSelection === undefined) return { sessionId: expected }
-        const models = this.api.sessions?.models
-        if (typeof models !== 'function') return undefined
-        const current = unwrap(await models.call(this.api.sessions, {
-          rpcId: rpcId('remote-session-model'),
-          payload: { sessionId: expected },
-        })).current
-        return current.provider === input.modelSelection.provider
-          && current.model === input.modelSelection.model
+        return await this.sessionModelMatches({ sessionId: expected, ...input.modelSelection })
           ? { sessionId: expected, modelSelection: input.modelSelection }
           : undefined
       }
@@ -641,11 +798,16 @@ export class DshApiProxyAdapter {
   }
 
   async snapshot(input: { limit?: number; cursor?: string } = {}): Promise<DshRemoteSnapshot> {
-    const workspaces = await this.workspaces()
+    const workspaceInventory = await this.workspaceInventory()
+    const workspaces = workspaceInventory.items
     const sessions: DshRemoteSessionSummary[] = []
     let cursor: string | undefined
     do {
-      const page = await this.sessions({ limit: DSH_REMOTE_MAX_PAGE_ITEMS, ...(cursor === undefined ? {} : { cursor }) })
+      const page = await this.sessions({
+        limit: DSH_REMOTE_MAX_PAGE_ITEMS,
+        workspaceInventory,
+        ...(cursor === undefined ? {} : { cursor }),
+      })
       sessions.push(...page.items)
       cursor = page.nextCursor
     } while (cursor !== undefined)
@@ -677,6 +839,7 @@ export class DshApiProxyAdapter {
     mux: (request: { rpcId: string; payload: {} }, signal: AbortSignal) => AsyncIterable<{ rpcId: string; payload: Record<string, unknown> }>,
     signal: AbortSignal,
   ): Promise<void> {
+    this.eventPresenter.reset()
     for await (const frame of mux({ rpcId: rpcId('remote-mux'), payload: {} }, signal)) {
       if (signal.aborted) return
       const payload = frame.payload
@@ -687,9 +850,19 @@ export class DshApiProxyAdapter {
         const event = payload.event as Record<string, unknown>
         if (typeof event.type === 'string' && typeof event.seq === 'number' && Number.isSafeInteger(event.seq) && event.seq >= 0
           && typeof event.time === 'number' && Number.isSafeInteger(event.time) && event.time >= 0) {
-          const entry = snapshotDshHistoryEntry({ event, view: payload.view })
+          const entry = this.eventPresenter.present(
+            payload.sessionId,
+            snapshotDshHistoryEntry({ event, view: payload.view }),
+          )
           this.emitProjection({ kind: 'session-event', sessionId: payload.sessionId, entry })
         }
+      } else if (type === 'session/projection' && typeof payload.sessionId === 'string'
+        && payload.key === 'goal' && typeof payload.seq === 'number'
+        && Number.isSafeInteger(payload.seq) && payload.seq >= 0) {
+        this.emitProjection({
+          kind: 'session-projection', sessionId: payload.sessionId,
+          key: 'goal', value: payload.value, seq: payload.seq,
+        })
       } else if (type === 'session/subscribed' && typeof payload.sessionId === 'string'
         && typeof payload.lastSeq === 'number' && Number.isSafeInteger(payload.lastSeq) && payload.lastSeq >= -1) {
         this.emitProjection({
@@ -789,4 +962,27 @@ export class DshApiProxyAdapter {
   }
 
   private resolved(): never { throw new DshRemoteError('INTERACTION_RESOLVED', '问题或审批已在其他端处理') }
+
+  private hasModelCatalog(): boolean {
+    return typeof this.api.sessions?.modelCatalog === 'function'
+      || typeof this.api.llm?.models === 'function'
+  }
+
+  private async modelCatalog(): Promise<ModelCatalogApiValue> {
+    const official = this.api.sessions?.modelCatalog
+    if (typeof official === 'function') {
+      return unwrap(await official.call(this.api.sessions, {
+        rpcId: rpcId('remote-model-catalog'),
+        payload: {},
+      }))
+    }
+    const legacy = this.api.llm?.models
+    if (typeof legacy === 'function') {
+      return unwrap(await legacy.call(this.api.llm, {
+        rpcId: rpcId('remote-models'),
+        payload: {},
+      }))
+    }
+    return this.unsupported('model.list')
+  }
 }
