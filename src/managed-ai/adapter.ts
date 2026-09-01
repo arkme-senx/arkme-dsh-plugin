@@ -41,8 +41,8 @@ const ARKME_AUTH_FAILURE_CODES = new Set([
 export interface ManagedAiLlmAdapterOptions {
   intelligentBaseUrl: string
   credentialOwner: ManagedAccessCredentialProvider
-  /** DSH's durable attachment owner. Required only when a selected model consumes images. */
-  attachmentReader?: ManagedImageAttachmentReader
+  /** Resolves DSH's current durable attachment owner only when an image request needs it. */
+  resolveAttachmentReader?: () => ManagedImageAttachmentReader | undefined
   resolveAnonymousUserId?: () => AnonymousUserId
   /** Test/runtime seam shared by catalog, direct OSS upload, and managed model transport. */
   fetchImpl?: typeof fetch
@@ -806,7 +806,7 @@ export function createManagedAiLlmAdapter(options: ManagedAiLlmAdapterOptions): 
   })
   const transport = new ManagedAiTransport({
     baseUrl: managedAiBaseUrl(options.intelligentBaseUrl),
-    ...(options.attachmentReader === undefined ? {} : { attachmentReader: options.attachmentReader }),
+    resolveAttachmentReader: options.resolveAttachmentReader ?? (() => undefined),
     fetchImpl,
     resolveBearer: async () => await resolveBearer(options.credentialOwner),
     resolveAnonymousUserId,

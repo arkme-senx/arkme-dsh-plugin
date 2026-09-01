@@ -74,7 +74,7 @@ export interface ManagedImageAttachmentReader {
 
 export interface ManagedAiTransportOptions {
   baseUrl: string
-  attachmentReader?: ManagedImageAttachmentReader
+  resolveAttachmentReader: () => ManagedImageAttachmentReader | undefined
   fetchImpl: typeof fetch
   resolveBearer: () => Promise<string>
   resolveAnonymousUserId: () => AnonymousUserId
@@ -118,9 +118,10 @@ interface PreparedUpload {
   status: 'prepared' | 'completed'
   uploadExpiresAt: number
   upload?: {
-    method: 'PUT'
+    method: 'POST'
     url: string
-    headers: Record<string, string>
+    fields: Record<string, string>
+    fileField: 'file'
   }
   assetExpiresAt: number
 }
@@ -223,17 +224,22 @@ function requiredHTTPSURL(source: Record<string, unknown>, key: string): string 
   return value
 }
 
-function optionalHeaders(value: unknown): Record<string, string> {
+function requiredUploadFields(value: unknown, fileField: string): Record<string, string> {
   const source = asRecord(value)
   if (source === undefined) throw new LlmError('Arkme AI 返回了无效的上传参数', 'MALFORMED_RESPONSE')
-  const headers: Record<string, string> = {}
-  for (const [key, item] of Object.entries(source)) {
-    if (key.trim() === '' || typeof item !== 'string' || /[\r\n]/u.test(key) || /[\r\n]/u.test(item)) {
+  const entries = Object.entries(source)
+  if (entries.length === 0 || entries.length > 16) {
+    throw new LlmError('Arkme AI 返回了无效的上传参数', 'MALFORMED_RESPONSE')
+  }
+  const fields: Record<string, string> = Object.create(null) as Record<string, string>
+  for (const [key, item] of entries) {
+    if (key.trim() === '' || key.length > 128 || key.toLowerCase() === fileField.toLowerCase() ||
+      typeof item !== 'string' || item.length > 64 * 1024 || /[\u0000-\u001f\u007f]/u.test(key) || /[\u0000-\u001f\u007f]/u.test(item)) {
       throw new LlmError('Arkme AI 返回了无效的上传参数', 'MALFORMED_RESPONSE')
     }
-    headers[key] = item
+    fields[key] = item
   }
-  return headers
+  return fields
 }
 
 async function waitForPromiseWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -680,19 +686,22 @@ async function* parseSse(
   let text = ''
   let firstLine = true
   let dataLines: string[] = []
+  let dataChars = 0
   let done = false
   try {
     while (true) {
       const result = await readWithIdleTimeout(reader, controller)
       if (result.done) break
       text += decoder.decode(result.value, { stream: true })
-      if (text.length > MAX_SSE_EVENT_CHARS) throw new LlmError('Arkme AI SSE event is too large', 'MALFORMED_RESPONSE')
       while (true) {
         const newline = text.indexOf('\n')
         if (newline < 0) break
         let line = text.slice(0, newline)
         text = text.slice(newline + 1)
         if (line.endsWith('\r')) line = line.slice(0, -1)
+        if (line.length > MAX_SSE_EVENT_CHARS) {
+          throw new LlmError('Arkme AI SSE event is too large', 'MALFORMED_RESPONSE')
+        }
         if (firstLine) {
           firstLine = false
           if (line.startsWith('\uFEFF')) line = line.slice(1)
@@ -701,6 +710,7 @@ async function* parseSse(
           if (dataLines.length === 0) continue
           const payload = dataLines.join('\n')
           dataLines = []
+          dataChars = 0
           yield payload
           if (payload === '[DONE]') {
             done = true
@@ -713,7 +723,17 @@ async function* parseSse(
         const field = colon < 0 ? line : line.slice(0, colon)
         let value = colon < 0 ? '' : line.slice(colon + 1)
         if (value.startsWith(' ')) value = value.slice(1)
-        if (field === 'data') dataLines.push(value)
+        if (field === 'data') {
+          const separatorChars = dataLines.length === 0 ? 0 : 1
+          if (value.length > MAX_SSE_EVENT_CHARS - dataChars - separatorChars) {
+            throw new LlmError('Arkme AI SSE event is too large', 'MALFORMED_RESPONSE')
+          }
+          dataLines.push(value)
+          dataChars += separatorChars + value.length
+        }
+      }
+      if (text.length > MAX_SSE_EVENT_CHARS - dataChars) {
+        throw new LlmError('Arkme AI SSE event is too large', 'MALFORMED_RESPONSE')
       }
     }
     text += decoder.decode()
@@ -839,7 +859,7 @@ export class ManagedAiTransport {
     bearer: string,
     signal: AbortSignal,
   ): Promise<CachedInputAsset> {
-    const reader = this.options.attachmentReader
+    const reader = this.options.resolveAttachmentReader()
     if (reader === undefined) throw new LlmError('DSH 图片附件服务不可用', 'UNSUPPORTED_CONTENT')
     const stored = await reader.readImage(attachment, signal)
     assertStoredAttachment(attachment, stored)
@@ -895,23 +915,26 @@ export class ManagedAiTransport {
     this.rememberInputAssetAttempt(attemptIdentity, idempotencyKey, prepared.uploadExpiresAt)
     if (prepared.upload === undefined) throw new LlmError('Arkme AI 未返回上传参数', 'MALFORMED_RESPONSE')
     try {
+      const uploadBody = new FormData()
+      for (const [name, value] of Object.entries(prepared.upload.fields)) uploadBody.append(name, value)
+      const fileBytes = new Uint8Array(stored.data.byteLength)
+      fileBytes.set(stored.data)
+      uploadBody.append(prepared.upload.fileField, new Blob([fileBytes], { type: stored.ref.mediaType }), 'asset')
       const response = await this.options.fetchImpl(prepared.upload.url, {
         method: prepared.upload.method,
-        headers: prepared.upload.headers,
-        body: stored.data.buffer instanceof ArrayBuffer
-          ? stored.data.buffer.slice(stored.data.byteOffset, stored.data.byteOffset + stored.data.byteLength)
-          : Uint8Array.from(stored.data).buffer,
+        body: uploadBody,
         signal,
       })
-      if (!response.ok && response.status !== 409 && response.status !== 412) {
+      if (response.body !== null) await response.body.cancel()
+      if (!response.ok && response.status !== 409) {
         throw new LlmError(`图片上传失败 (HTTP ${response.status})`, 'TRANSPORT')
       }
       const completed = await this.completeUpload(prepared.uploadUid, bearer, signal)
       this.assetAttemptKeys.delete(attemptIdentity)
       return completed
     } catch (error) {
-      // PUT and complete are both ambiguous across cancellation or transport
-      // loss. Keep the generation so the next prepare can re-sign the PUT or
+      // POST and complete are both ambiguous across cancellation or transport
+      // loss. Keep the generation so the next prepare can issue a fresh grant or
       // return its already-completed asset. A server INVALID_REQUEST is the
       // only proof that this upload generation is terminal.
       if (error instanceof LlmError && error.code === 'INVALID_REQUEST') {
@@ -985,13 +1008,14 @@ export class ManagedAiTransport {
     }
     if (status === 'prepared') {
       const upload = asRecord(source.upload)
-      if (upload === undefined || requiredString(upload, 'method') !== 'PUT') {
+      if (upload === undefined || requiredString(upload, 'method') !== 'POST' || requiredString(upload, 'file_field') !== 'file') {
         throw new LlmError('Arkme AI 返回了无效的上传参数', 'MALFORMED_RESPONSE')
       }
       result.upload = {
-        method: 'PUT',
+        method: 'POST',
         url: requiredHTTPSURL(upload, 'url'),
-        headers: optionalHeaders(upload.headers),
+        fields: requiredUploadFields(upload.fields, 'file'),
+        fileField: 'file',
       }
     }
     return result
