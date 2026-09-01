@@ -386,6 +386,17 @@ function assertStoredAttachment(expected: ImageAttachmentRef, stored: StoredImag
   }
 }
 
+function attachmentReadError(error: unknown, signal: AbortSignal): LlmError {
+  if (signal.aborted) {
+    return new LlmError('Arkme AI request aborted by caller', 'ABORTED', { cause: error })
+  }
+  const code = asRecord(error)?.code
+  if (code === 'INVALID_ATTACHMENT_REF' || code === 'ATTACHMENT_NOT_FOUND' || code === 'ATTACHMENT_CORRUPT') {
+    return new LlmError('历史图片已不可用，请重新附加后继续', 'ATTACHMENT_UNAVAILABLE', { cause: error })
+  }
+  return new LlmError('无法读取历史图片，请检查本地附件存储后重试', 'ATTACHMENT_READ_FAILED', { cause: error })
+}
+
 function flattenText(blocks: readonly ContentBlock[]): string {
   return blocks.filter(block => block.type === 'text').map(block => block.text).join('')
 }
@@ -861,7 +872,12 @@ export class ManagedAiTransport {
   ): Promise<CachedInputAsset> {
     const reader = this.options.resolveAttachmentReader()
     if (reader === undefined) throw new LlmError('DSH 图片附件服务不可用', 'UNSUPPORTED_CONTENT')
-    const stored = await reader.readImage(attachment, signal)
+    let stored: StoredImageAttachment
+    try {
+      stored = await reader.readImage(attachment, signal)
+    } catch (error) {
+      throw attachmentReadError(error, signal)
+    }
     assertStoredAttachment(attachment, stored)
     assertAttachmentWithinCapability(stored.ref, capability)
     const sha256 = createHash('sha256').update(stored.data).digest('hex')
@@ -917,9 +933,11 @@ export class ManagedAiTransport {
     try {
       const uploadBody = new FormData()
       for (const [name, value] of Object.entries(prepared.upload.fields)) uploadBody.append(name, value)
-      const fileBytes = new Uint8Array(stored.data.byteLength)
-      fileBytes.set(stored.data)
-      uploadBody.append(prepared.upload.fileField, new Blob([fileBytes], { type: stored.ref.mediaType }), 'asset')
+      uploadBody.append(
+        prepared.upload.fileField,
+        new Blob([stored.data as BlobPart], { type: stored.ref.mediaType }),
+        'asset',
+      )
       const response = await this.options.fetchImpl(prepared.upload.url, {
         method: prepared.upload.method,
         body: uploadBody,

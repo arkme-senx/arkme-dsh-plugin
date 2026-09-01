@@ -110,6 +110,12 @@ function managedAiLocalizedFailure(facts: ManagedAiFailureFacts): { code: string
   if (facts.code === 'TRANSPORT') {
     return { code: 'TRANSPORT', message: '无法连接 Arkme AI 服务，请检查网络后重试' }
   }
+  if (facts.code === 'ATTACHMENT_UNAVAILABLE') {
+    return { code: facts.code, message: '历史图片已不可用，请重新附加后继续' }
+  }
+  if (facts.code === 'ATTACHMENT_READ_FAILED') {
+    return { code: facts.code, message: '无法读取历史图片，请检查本地附件存储后重试' }
+  }
   if (facts.code === 'CONTEXT_WINDOW_EXCEEDED') {
     return { code: facts.code, message: '对话内容过长，请新建对话或减少上下文后重试' }
   }
