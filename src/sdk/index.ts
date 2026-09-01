@@ -1533,15 +1533,15 @@ export class ArkmeSdk {
   }
 
   async withdrawGroupMessage(
-    messageModerationRef: string,
+    messageWithdrawalRef: string,
     signal?: AbortSignal,
   ): Promise<ArkmeMessageWithdrawalResult> {
-    const normalized = messageModerationRef.trim()
+    const normalized = messageWithdrawalRef.trim()
     if (normalized === '' || normalized.length > 4_096) {
-      throw new TypeError('Arkme message moderation reference must not be empty or exceed 4096 characters')
+      throw new TypeError('Arkme message withdrawal reference must not be empty or exceed 4096 characters')
     }
     return await this.call<ArkmeMessageWithdrawalResult>('source.message-withdraw', {
-      messageModerationRef: normalized,
+      messageWithdrawalRef: normalized,
     }, signal)
   }
 

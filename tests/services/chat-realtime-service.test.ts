@@ -136,6 +136,44 @@ describe('ChatRealtimeService', () => {
     service.dispose()
   })
 
+  it('drops a timeline invalidation when the authenticated account changes during key projection', async () => {
+    let readCount = 0
+    const sessions: ArkmeSessionStore = {
+      async read() {
+        readCount += 1
+        return readCount === 1
+          ? { userId: 10001, accessToken: 'old-access', refreshToken: 'old-refresh' }
+          : { userId: 10002, accessToken: 'new-access', refreshToken: 'new-refresh' }
+      },
+      async write() {}, async delete() {},
+    }
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore)
+    const source = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
+    })
+    const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
+    const schedule = vi.spyOn(service, 'scheduleChatSessionProjection').mockImplementation(() => undefined)
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+
+    service.handleChatRealtimeNotice({
+      cause: 'chat-hint',
+      state: { revision: 2, connected: true, connectionGeneration: 1 },
+      timelineChanged: {
+        eventUid: 'timeline-event-1', chatSessionUid: 'old-chat-session', relationUid: 'old-relation',
+        latestSequence: 9, actorUserId: 10001, changeKind: 'deleted', changeVersion: 123456,
+        eventAtMillis: 123457,
+      },
+    })
+
+    await vi.waitFor(() => { expect(readCount).toBeGreaterThanOrEqual(2) })
+    expect(events).toEqual([])
+    expect(schedule).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
   it('refreshes the unread directory instead of emitting receipt data for the current user cursor', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },

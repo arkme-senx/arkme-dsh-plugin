@@ -266,8 +266,8 @@ function fakeService(): ArkmeCoreToolPorts & {
     reportMessage: vi.fn(async (messageRef: string, _reportType: 1 | 2 | 3 | 4) => ({
       messageRef, reportUid: 'report-1', status: 1,
     })),
-    withdrawGroupMessage: vi.fn(async (messageModerationRef: string) => ({
-      messageModerationRef, timelineItemKey: 'timeline-item-1', withdrawnAtMillis: 123, alreadyWithdrawn: false,
+    withdrawGroupMessage: vi.fn(async (messageWithdrawalRef: string) => ({
+      messageWithdrawalRef, timelineItemKey: 'timeline-item-1', withdrawnAtMillis: 123, alreadyWithdrawn: false,
     })),
     sendSourceText: vi.fn(async (sourceRef: string, _text: string, options?: { recordUid?: string }) => ({
       sourceRef, itemUid: options?.recordUid ?? 'record-1', status: 1, localState: 'synced' as const,
@@ -959,7 +959,7 @@ describe('Arkme conversation tools', () => {
     const remove = tools.find(definition => definition.name === 'arkme_group_member_remove')!
     const setRestriction = tools.find(definition => definition.name === 'arkme_group_join_restriction_set')!
 
-    await withdraw.execute({ message_moderation_ref: 'moderation-ref-1' }, { signal } as never)
+    await withdraw.execute({ message_withdrawal_ref: 'withdrawal-ref-1' }, { signal } as never)
     await remove.execute({
       group_source_ref: 'group-ref-1', member_ref: 'member-ref-1', prevent_rejoin: false,
     }, { signal } as never)
@@ -967,7 +967,7 @@ describe('Arkme conversation tools', () => {
       group_source_ref: 'group-ref-1', member_ref: 'member-ref-1', restricted: true,
     }, { signal } as never)
 
-    expect(service.withdrawGroupMessage).toHaveBeenCalledWith('moderation-ref-1', { signal })
+    expect(service.withdrawGroupMessage).toHaveBeenCalledWith('withdrawal-ref-1', { signal })
     expect(service.removeGroupMember).toHaveBeenCalledWith('group-ref-1', 'member-ref-1', {
       preventRejoin: false, signal,
     })

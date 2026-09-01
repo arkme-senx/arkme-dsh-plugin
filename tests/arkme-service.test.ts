@@ -958,7 +958,7 @@ describe('ArkmeService', () => {
         messageReadReceipts: true,
         messageReport: true,
         userBanManagement: true,
-        groupOwnerModeration: true,
+        groupOwnerGovernance: true,
         outgoingCall: true,
         contactAdd: true,
         conversationQuickAdd: true,
@@ -2233,6 +2233,12 @@ describe('ArkmeService', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
     const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    let joinRestrictionPageUserId = 20002
+    let joinRestrictionNextCursor: unknown = { updated_at: 1_700_000_000_456, user_id: 20002 }
+    let joinRestrictionItemsPresent = true
+    let joinRestrictionSetUpdatedAt = 0
+    let withdrawalAlreadyWithdrawn: unknown = false
+    let removedMemberJoinRestricted: unknown = true
     const service = new ArkmeService(config, sessions, state, async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
@@ -2319,7 +2325,7 @@ describe('ArkmeService', () => {
       } })
       if (url.endsWith('/api/v1/chats/messages/withdraw')) return json({ code: 200, data: {
         chat_session_uid: body.chat_session_uid, rel_uid: body.rel_uid,
-        withdrawn_at: 1_700_000_000_123, already_withdrawn: false,
+        withdrawn_at: 1_700_000_000_123, already_withdrawn: withdrawalAlreadyWithdrawn,
       } })
       if (url.endsWith('/api/v1/chats/members/list')) return json({ code: 200, data: {
         items: [
@@ -2329,19 +2335,19 @@ describe('ArkmeService', () => {
       } })
       if (url.endsWith('/api/v1/chats/members/update')) return json({ code: 200, data: {
         chat_session_uid: body.chat_session_uid,
-        item: { user_id: body.target_user_id, status: 3, join_restricted: body.prevent_rejoin === true },
+        item: { user_id: body.target_user_id, status: 3, join_restricted: removedMemberJoinRestricted },
       } })
       if (url.endsWith('/api/v1/chats/governance/join-restriction/page')) return json({ code: 200, data: {
         chat_session_uid: body.chat_session_uid,
-        items: [{
-          user_id: 20002, role: 3, status: 3, display_name_snapshot: '群昵称小林',
+        ...(joinRestrictionItemsPresent ? { items: [{
+          user_id: joinRestrictionPageUserId, role: 3, status: 3, display_name_snapshot: '群昵称小林',
           restriction: { updated_by_user_id: 10001, updated_at: 1_700_000_000_456 },
-        }],
-        next_cursor: { updated_at: 1_700_000_000_456, user_id: 20002 },
+        }] } : {}),
+        next_cursor: joinRestrictionNextCursor,
       } })
       if (url.endsWith('/api/v1/chats/governance/join-restriction/set')) return json({ code: 200, data: {
         chat_session_uid: body.chat_session_uid, user_id: body.target_user_id,
-        restricted: body.restricted, updated_at: 1_700_000_000_789,
+        restricted: body.restricted, updated_at: joinRestrictionSetUpdatedAt,
       } })
       if (url.endsWith('/api/v1/chats/read-receipts/summary-list')) return json({ code: 200, data: {
         chat_session_uid: body.chat_session_uid,
@@ -2485,10 +2491,10 @@ describe('ArkmeService', () => {
     expect(groupTimeline.items).toHaveLength(2)
     expect(groupTimeline.items.find(item => item.itemUid === 'chat-record-unavailable')).toBeUndefined()
     expect(groupTimeline.items[0]?.messageRef).toMatch(/^arkme-message-v1\./)
-    expect(groupTimeline.items[0]?.messageModerationRef).toMatch(/^arkme-message-moderation-v1\./)
+    expect(groupTimeline.items[0]?.messageWithdrawalRef).toMatch(/^arkme-message-withdrawal-v1\./)
     expect(groupTimeline.items[0]?.timelineItemKey).toMatch(/^arkme-chat-timeline-item-v1\./)
     expect(groupTimeline.items[1]?.messageRef).toBeUndefined()
-    expect(groupTimeline.items[1]?.messageModerationRef).toBeUndefined()
+    expect(groupTimeline.items[1]?.messageWithdrawalRef).toBeUndefined()
     await expect(service.messageReadReceiptSummaries(groupRef, [
       { itemUid: 'chat-record-2', sequence: 8 },
     ])).resolves.toMatchObject({
@@ -2542,13 +2548,18 @@ describe('ArkmeService', () => {
       reason: '明确举报', request_uid: '019d8590-ebb4-7232-90f2-000000000001',
     })
     expect(lastCall('/api/v1/chats/report')?.body).not.toHaveProperty('created_at')
-    await expect(service.withdrawGroupMessage(groupTimeline.items[0]!.messageModerationRef!)).resolves.toMatchObject({
-      messageModerationRef: groupTimeline.items[0]!.messageModerationRef,
+    await expect(service.withdrawGroupMessage(groupTimeline.items[0]!.messageWithdrawalRef!)).resolves.toMatchObject({
+      messageWithdrawalRef: groupTimeline.items[0]!.messageWithdrawalRef,
       timelineItemKey: groupTimeline.items[0]!.timelineItemKey,
       withdrawnAtMillis: 1_700_000_000_123,
       alreadyWithdrawn: false,
     })
     expect(lastCall('/api/v1/chats/messages/withdraw')?.body).toEqual({ chat_session_uid: 'chat-group', rel_uid: 'chat-relation-1' })
+    withdrawalAlreadyWithdrawn = undefined
+    await expect(service.withdrawGroupMessage(groupTimeline.items[0]!.messageWithdrawalRef!)).rejects.toMatchObject({
+      code: 'message-withdraw-invalid-response',
+    })
+    withdrawalAlreadyWithdrawn = false
     const members = await service.listSourceMembers(groupRef)
     const peerMemberRef = members.items.find(member => !member.isSelf)!.memberRef
     await expect(service.removeGroupMember(groupRef, peerMemberRef, { preventRejoin: true })).resolves.toMatchObject({
@@ -2557,19 +2568,54 @@ describe('ArkmeService', () => {
     expect(lastCall('/api/v1/chats/members/update')?.body).toEqual({
       chat_session_uid: 'chat-group', target_user_id: 20002, action: 2, prevent_rejoin: true,
     })
+    removedMemberJoinRestricted = undefined
+    await expect(service.removeGroupMember(groupRef, peerMemberRef)).rejects.toMatchObject({
+      code: 'group-member-remove-invalid-response',
+    })
+    removedMemberJoinRestricted = false
+    await expect(service.removeGroupMember(groupRef, peerMemberRef, { preventRejoin: true })).rejects.toMatchObject({
+      code: 'group-member-remove-invalid-response',
+    })
+    removedMemberJoinRestricted = true
+    await expect(service.removeGroupMember(groupRef, peerMemberRef)).resolves.toMatchObject({
+      joinRestricted: true,
+    })
     const restrictions = await service.listGroupJoinRestrictions(groupRef, { limit: 20 })
     expect(restrictions).toMatchObject({
       sourceRef: groupRef,
-      items: [{ memberRef: peerMemberRef, displayName: '群昵称小林', restrictedAtMillis: 1_700_000_000_456 }],
+      items: [{
+        memberRef: peerMemberRef,
+        displayName: '小林',
+        memberName: '群昵称小林',
+        restrictedAtMillis: 1_700_000_000_456,
+      }],
       nextCursor: expect.stringMatching(/^arkme-join-restriction-cursor-v1\./),
     })
     expect(calls.find(call => call.url.endsWith('/api/v1/chats/governance/join-restriction/page'))?.body)
       .toEqual({ chat_session_uid: 'chat-group', limit: 20 })
-    await expect(service.setGroupJoinRestriction(groupRef, peerMemberRef, false)).resolves.toMatchObject({
-      memberRef: peerMemberRef, restricted: false, updatedAtMillis: 1_700_000_000_789,
+    joinRestrictionNextCursor = { updated_at: 1_700_000_000_456 }
+    await expect(service.listGroupJoinRestrictions(groupRef)).rejects.toMatchObject({
+      code: 'join-restrictions-invalid-response',
+    })
+    joinRestrictionNextCursor = { updated_at: 1_700_000_000_456, user_id: 20002 }
+    joinRestrictionItemsPresent = false
+    await expect(service.listGroupJoinRestrictions(groupRef)).rejects.toMatchObject({
+      code: 'join-restrictions-invalid-response',
+    })
+    joinRestrictionItemsPresent = true
+    joinRestrictionPageUserId = 0
+    await expect(service.listGroupJoinRestrictions(groupRef)).rejects.toMatchObject({
+      code: 'join-restrictions-invalid-response',
+    })
+    joinRestrictionPageUserId = 20002
+    await expect(service.setGroupJoinRestriction(groupRef, peerMemberRef, false)).resolves.toEqual({
+      sourceRef: groupRef, memberRef: peerMemberRef, restricted: false,
     })
     expect(lastCall('/api/v1/chats/governance/join-restriction/set')?.body)
       .toEqual({ chat_session_uid: 'chat-group', target_user_id: 20002, restricted: false })
+    await expect(service.setGroupJoinRestriction(groupRef, peerMemberRef, true)).rejects.toMatchObject({
+      code: 'join-restriction-invalid-response',
+    })
     const messageRef = groupTimeline.items[0]!.messageRef!
     const [messagePrefix, encodedMessage, messageSignature] = messageRef.split('.') as [string, string, string]
     const crossSessionPayload = {

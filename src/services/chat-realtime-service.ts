@@ -212,13 +212,17 @@ export class ChatRealtimeService {
     try {
       const session = await this.runtime.sessionStore.read()
       if (session === undefined) return
+      const [sourceKey, timelineItemKey] = await Promise.all([
+        this.source.chatDirectorySourceKey(session.userId, hint.chatSessionUid),
+        this.source.chatTimelineItemKey(session.userId, hint.chatSessionUid, hint.relationUid),
+      ])
+      const activeSession = await this.runtime.sessionStore.read()
+      if (activeSession?.userId !== session.userId) return
       this.emitChatClientEvent({
         type: 'timeline-changed',
         revision: this.nextChatClientRevision(),
-        sourceKey: await this.source.chatDirectorySourceKey(session.userId, hint.chatSessionUid),
-        timelineItemKey: await this.source.chatTimelineItemKey(
-          session.userId, hint.chatSessionUid, hint.relationUid,
-        ),
+        sourceKey,
+        timelineItemKey,
         changeKind: hint.changeKind,
         throughSequence: hint.latestSequence,
       })

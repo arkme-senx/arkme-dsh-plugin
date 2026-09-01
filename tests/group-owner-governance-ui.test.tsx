@@ -17,7 +17,7 @@ const group: ArkmeSourceItem = {
 }
 const message: ArkmeTimelineItem = {
   itemUid: 'record-1', timelineItemKey: 'timeline-key-1',
-  messageModerationRef: 'arkme-message-moderation-v1.payload.signature',
+  messageWithdrawalRef: 'arkme-message-withdrawal-v1.payload.signature',
   senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '需要撤回的消息', status: 1,
 }
 const member: ArkmeConversationMemberItem = {
@@ -25,7 +25,7 @@ const member: ArkmeConversationMemberItem = {
   isSelf: false, isOwner: false, joinedAtMillis: 1, recordCount: 0, mentionCount: 0,
 }
 
-describe('message withdrawal UI', () => {
+describe('group owner governance UI', () => {
   let renderer: ReactTestRenderer | undefined
   beforeEach(() => { mocks.callArkme.mockReset() })
   afterEach(async () => { await act(async () => { renderer?.unmount() }); renderer = undefined })
@@ -35,12 +35,12 @@ describe('message withdrawal UI', () => {
     expect(arkmeCanWithdrawTimelineMessage(group, message, 'member')).toBe(false)
     expect(arkmeCanWithdrawTimelineMessage({ ...group, kind: 'private_chat' }, message, 'owner')).toBe(false)
     expect(arkmeCanWithdrawTimelineMessage(group, { ...message, isMe: true }, 'owner')).toBe(false)
-    expect(arkmeCanWithdrawTimelineMessage(group, { ...message, messageModerationRef: undefined }, 'owner')).toBe(false)
+    expect(arkmeCanWithdrawTimelineMessage(group, { ...message, messageWithdrawalRef: undefined }, 'owner')).toBe(false)
   })
 
-  it('explains the exact scope and submits only the opaque moderation reference', async () => {
+  it('explains the exact scope and submits only the opaque withdrawal reference', async () => {
     const result = {
-      messageModerationRef: message.messageModerationRef!, timelineItemKey: 'timeline-key-1',
+      messageWithdrawalRef: message.messageWithdrawalRef!, timelineItemKey: 'timeline-key-1',
       withdrawnAtMillis: 123, alreadyWithdrawn: false,
     }
     mocks.callArkme.mockResolvedValue(result)
@@ -51,12 +51,13 @@ describe('message withdrawal UI', () => {
     const text = JSON.stringify(renderer!.toJSON())
     expect(text).toContain('所有群成员都无法再查看')
     expect(text).toContain('不会移除或限制发送者')
+    expect(renderer!.root.findByProps({ role: 'dialog' }).props['aria-busy']).toBeUndefined()
     await act(async () => {
       renderer!.root.findAllByType('button').filter(node => node.children.includes('确认撤回'))[0]!.props.onClick()
       await Promise.resolve()
     })
     expect(mocks.callArkme).toHaveBeenCalledWith('source.message-withdraw', {
-      messageModerationRef: message.messageModerationRef,
+      messageWithdrawalRef: message.messageWithdrawalRef,
     }, expect.any(AbortSignal))
     expect(onWithdrawn).toHaveBeenCalledWith(result)
   })
@@ -74,6 +75,7 @@ describe('message withdrawal UI', () => {
     const text = JSON.stringify(renderer!.toJSON())
     expect(text).toContain('禁止再次加入此群')
     expect(text).toContain('可在群聊设置中解除')
+    expect(renderer!.root.findByProps({ role: 'dialog' }).props['aria-modal']).toBe('true')
     const checkbox = renderer!.root.findByType('input')
     await act(async () => { checkbox.props.onChange({ currentTarget: { checked: true } }) })
     const confirm = renderer!.root.findAllByType('button').find(node => node.children.includes('确认移除'))!

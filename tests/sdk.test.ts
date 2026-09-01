@@ -598,7 +598,7 @@ describe('Arkme SDK', () => {
               messageReadReceipts: true,
               messageReport: true,
               userBanManagement: true,
-              groupOwnerModeration: true,
+              groupOwnerGovernance: true,
               extensionManagement: true,
               extensionIcons: true,
             },
@@ -652,7 +652,7 @@ describe('Arkme SDK', () => {
         messageReadReceipts: true,
         messageReport: true,
         userBanManagement: true,
-        groupOwnerModeration: true,
+        groupOwnerGovernance: true,
         accountSettings: true,
       },
       limits: { maxMessageReadReceiptItems: 50 },
@@ -896,7 +896,7 @@ describe('Arkme SDK', () => {
         const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
         calls.push(request)
         if (request.operation === 'source.message-withdraw') return success({
-          messageModerationRef: request.params?.messageModerationRef,
+          messageWithdrawalRef: request.params?.messageWithdrawalRef,
           timelineItemKey: 'timeline-item-key', withdrawnAtMillis: 123, alreadyWithdrawn: false,
         })
         if (request.operation === 'group.member-remove') return success({
@@ -914,12 +914,12 @@ describe('Arkme SDK', () => {
       },
     })
 
-    await expect(sdk.withdrawGroupMessage(' moderation-ref ')).resolves.toMatchObject({ timelineItemKey: 'timeline-item-key' })
+    await expect(sdk.withdrawGroupMessage(' withdrawal-ref ')).resolves.toMatchObject({ timelineItemKey: 'timeline-item-key' })
     await expect(sdk.removeGroupMember(' group-ref ', ' member-ref ', { preventRejoin: true })).resolves.toMatchObject({ joinRestricted: true })
     await expect(sdk.listGroupJoinRestrictions(' group-ref ', { limit: 20 })).resolves.toMatchObject({ nextCursor: 'next-cursor' })
     await expect(sdk.setGroupJoinRestriction(' group-ref ', ' member-ref ', false)).resolves.toMatchObject({ restricted: false })
     expect(calls).toEqual([
-      { operation: 'source.message-withdraw', params: { messageModerationRef: 'moderation-ref' } },
+      { operation: 'source.message-withdraw', params: { messageWithdrawalRef: 'withdrawal-ref' } },
       { operation: 'group.member-remove', params: { sourceRef: 'group-ref', memberRef: 'member-ref', preventRejoin: true } },
       { operation: 'group.join-restrictions', params: { sourceRef: 'group-ref', limit: 20 } },
       { operation: 'group.join-restriction.set', params: { sourceRef: 'group-ref', memberRef: 'member-ref', restricted: false } },

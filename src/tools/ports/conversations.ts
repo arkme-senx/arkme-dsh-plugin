@@ -102,7 +102,7 @@ export interface ArkmeConversationToolPort {
   ): Promise<ArkmeMessageReportResult>
   /** Withdraw one other member's group message after an explicit owner request. */
   withdrawGroupMessage(
-    messageModerationRef: string,
+    messageWithdrawalRef: string,
     options?: { signal?: AbortSignal },
   ): Promise<ArkmeMessageWithdrawalResult>
   inspectGroupAiPolishByName(

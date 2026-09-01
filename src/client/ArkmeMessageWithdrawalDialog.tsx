@@ -38,7 +38,7 @@ export function arkmeCanWithdrawTimelineMessage(
   selfRole: ArkmeGroupMemberRole,
 ): boolean {
   return source?.kind === 'group_chat' && selfRole === 'owner' && !item.isMe
-    && (item.messageModerationRef?.trim() ?? '') !== '' && (item.timelineItemKey?.trim() ?? '') !== ''
+    && (item.messageWithdrawalRef?.trim() ?? '') !== '' && (item.timelineItemKey?.trim() ?? '') !== ''
 }
 
 export function ArkmeMessageWithdrawalDialog(props: {
@@ -74,8 +74,8 @@ export function ArkmeMessageWithdrawalDialog(props: {
   }, [])
 
   const submit = useCallback(async () => {
-    const messageModerationRef = props.item.messageModerationRef?.trim() ?? ''
-    if (messageModerationRef === '' || submittingRef.current) return
+    const messageWithdrawalRef = props.item.messageWithdrawalRef?.trim() ?? ''
+    if (messageWithdrawalRef === '' || submittingRef.current) return
     const controller = new AbortController()
     requestRef.current = controller
     submittingRef.current = true
@@ -83,7 +83,7 @@ export function ArkmeMessageWithdrawalDialog(props: {
     setError('')
     try {
       const result = await callArkme<ArkmeMessageWithdrawalResult>('source.message-withdraw', {
-        messageModerationRef,
+        messageWithdrawalRef,
       }, controller.signal)
       if (mountedRef.current) props.onWithdrawn(result)
     } catch (caught) {
@@ -93,11 +93,11 @@ export function ArkmeMessageWithdrawalDialog(props: {
       submittingRef.current = false
       if (mountedRef.current) setSubmitting(false)
     }
-  }, [props.item.messageModerationRef, props.onWithdrawn])
+  }, [props.item.messageWithdrawalRef, props.onWithdrawn])
 
   const preview = props.item.textContent.trim() || props.item.title.trim() || '非文本消息'
   const dialog = <div style={styles.backdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close() }}>
-    <section role="dialog" aria-modal="true" aria-labelledby="arkme-message-withdraw-title" style={styles.dialog}>
+    <section role="dialog" aria-modal="true" aria-labelledby="arkme-message-withdraw-title" aria-busy={submitting || undefined} style={styles.dialog}>
       <h2 id="arkme-message-withdraw-title" style={styles.title}>撤回这条消息？</h2>
       <p style={styles.description}>撤回后，所有群成员都无法再查看这条消息。此操作不会移除或限制发送者。</p>
       <p style={styles.preview} title={preview}>{preview}</p>

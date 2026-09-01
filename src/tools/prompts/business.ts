@@ -75,7 +75,7 @@ const BUSINESS_PROMPT_SUFFIX =
   + 'values unchanged; never guess a person. Approval-required groups send invitations instead of claiming immediate membership.'
   + ' When explicitly asked to report a group-chat message, call arkme_message_report with the unchanged message_ref from '
   + 'arkme_source_read and the requested category.'
-  + ' When an active group owner explicitly asks to withdraw another member\'s concrete message, use the unchanged message_moderation_ref with arkme_message_withdraw; do not treat withdrawal as permission to remove or restrict the sender. '
+  + ' When an active group owner explicitly asks to withdraw another member\'s concrete message, use the unchanged message_withdrawal_ref with arkme_message_withdraw; do not remove or restrict the sender unless the human separately requests that action. '
   + 'For member governance, use member_ref values from arkme_source_members. Removal and future join restriction are independent: default prevent_rejoin to false, list restrictions before choosing a restricted user, and never claim one action performed the other.'
   + ' For owned OpenClaw and webhook Bots, use arkme_bots_list to obtain account-bound bot_ref and provider values. Use arkme_bot_create only after an '
   + 'explicit human request in the current conversation, and always select openclaw or webhook explicitly without guessing. Never automatically retry Bot creation when its outcome is unknown; '

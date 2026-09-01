@@ -1079,7 +1079,7 @@ export interface ArkmeProviderCapabilities {
     /** Employee-only, source-bound private-chat user ban inspection and mutation are available. */
     userBanManagement?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
-    groupOwnerModeration?: true
+    groupOwnerGovernance?: true
     richContentRead: boolean
     richContentSend: boolean
     /** Explicit text background-sound descriptors are supported by direct and durable rich sends. */
@@ -1430,8 +1430,8 @@ export interface ArkmeTimelineItem {
   timelineItemKey?: string
   /** Account-bound opaque reference for reporting this concrete group-chat message. */
   messageRef?: string
-  /** Account-bound opaque reference for owner moderation of this concrete group-chat message. */
-  messageModerationRef?: string
+  /** Account-bound opaque reference for owner withdrawal of this concrete group-chat message. */
+  messageWithdrawalRef?: string
   /** Account- and conversation-bound opaque reference for copy-link and forward actions. */
   messageActionRef?: string
   /** Account- and conversation-bound opaque reference for actions on the sender. */
@@ -1838,7 +1838,7 @@ export interface ArkmeMessageReportResult {
 }
 
 export interface ArkmeMessageWithdrawalResult {
-  messageModerationRef: string
+  messageWithdrawalRef: string
   timelineItemKey: string
   withdrawnAtMillis: number
   alreadyWithdrawn: boolean

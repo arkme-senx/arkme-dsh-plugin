@@ -331,6 +331,7 @@ export function ArkmeGroupMemberRemoveDialog(props: {
   const requestRef = useRef<AbortController>()
   const busyRef = useRef(false)
   const mountedRef = useRef(true)
+  const cancelRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     mountedRef.current = true
     return () => {
@@ -338,10 +339,21 @@ export function ArkmeGroupMemberRemoveDialog(props: {
       requestRef.current?.abort()
     }
   }, [])
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    cancelRef.current?.focus({ preventScroll: true })
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || busyRef.current) return
+      event.preventDefault()
+      props.onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('keydown', onKeyDown) }
+  }, [props.onClose])
   return <div style={{ ...styles.cardScrim, zIndex: 48 }} role="presentation" onMouseDown={event => {
     if (event.target === event.currentTarget && !busy) props.onClose()
   }}>
-    <section role="dialog" aria-modal="true" aria-labelledby="arkme-member-remove-title" style={{
+    <section role="dialog" aria-modal="true" aria-labelledby="arkme-member-remove-title" aria-busy={busy || undefined} style={{
       width: 'min(420px, 100%)', padding: 22, boxSizing: 'border-box', borderRadius: 14,
       border: `1px solid ${arkmeTheme.border}`, background: arkmeTheme.base, boxShadow: arkmeTheme.shadow,
     }}>
@@ -355,7 +367,7 @@ export function ArkmeGroupMemberRemoveDialog(props: {
       </label>
       {error === '' ? null : <div role="alert" style={{ marginTop: 12, padding: '9px 11px', borderRadius: 8, background: arkmeTheme.dangerSoft, color: arkmeTheme.danger, fontSize: 12 }}>{error}</div>}
       <footer style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
-        <button type="button" disabled={busy} style={{ height: 36, minWidth: 82, border: `1px solid ${arkmeTheme.border}`, borderRadius: 9, background: arkmeTheme.base, color: arkmeTheme.text }} onClick={props.onClose}>取消</button>
+        <button ref={cancelRef} type="button" disabled={busy} style={{ height: 36, minWidth: 82, border: `1px solid ${arkmeTheme.border}`, borderRadius: 9, background: arkmeTheme.base, color: arkmeTheme.text }} onClick={props.onClose}>取消</button>
         <button type="button" disabled={busy} style={{ height: 36, minWidth: 96, border: 0, borderRadius: 9, background: arkmeTheme.danger, color: arkmeTheme.onPrimaryAction, opacity: busy ? .5 : 1 }} onClick={() => {
           if (busyRef.current) return
           const controller = new AbortController()

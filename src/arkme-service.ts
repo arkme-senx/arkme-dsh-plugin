@@ -695,7 +695,7 @@ export class ArkmeService {
         messageReadReceipts: true,
         messageReport: true,
         userBanManagement: true,
-        groupOwnerModeration: true,
+        groupOwnerGovernance: true,
         richContentRead: this.config.richMediaRenderEnabled !== false,
         richContentSend: this.config.richMediaSendEnabled !== false,
         ...(this.config.richMediaSendEnabled === false ? {} : { backgroundSound: true as const }),
@@ -1298,7 +1298,7 @@ export class ArkmeService {
     this.relatedRecording.recordRelatedRecordingsToolEvent(event)
   }
   async reportMessage(messageRef: string, reportType: 1 | 2 | 3 | 4, options: { reason?: string; requestUid?: string; signal?: AbortSignal } = {}): Promise<ArkmeMessageReportResult> { return await this.chat.reportMessage(messageRef, reportType, options) }
-  async withdrawGroupMessage(messageModerationRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageWithdrawalResult> { return await this.chat.withdrawGroupMessage(messageModerationRef, options) }
+  async withdrawGroupMessage(messageWithdrawalRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageWithdrawalResult> { return await this.chat.withdrawGroupMessage(messageWithdrawalRef, options) }
   async removeGroupMember(sourceRef: string, memberRef: string, options: { preventRejoin?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeGroupMemberRemoveResult> { return await this.chat.removeGroupMember(sourceRef, memberRef, options) }
   async listGroupJoinRestrictions(sourceRef: string, options: { cursor?: string; limit?: number; signal?: AbortSignal } = {}): Promise<ArkmeGroupJoinRestrictionPage> { return await this.chat.listGroupJoinRestrictions(sourceRef, options) }
   async setGroupJoinRestriction(sourceRef: string, memberRef: string, restricted: boolean, options: { signal?: AbortSignal } = {}): Promise<ArkmeGroupJoinRestrictionMutationResult> { return await this.chat.setGroupJoinRestriction(sourceRef, memberRef, restricted, options) }

@@ -1364,9 +1364,14 @@ function GroupJoinRestrictionsPanel(props: {
   }, [props.source.sourceRef])
 
   useEffect(() => {
-    if (!props.open) return
+    if (!props.open) {
+      setLoading(false)
+      setBusyMemberRef('')
+      return
+    }
     setItems([])
     setCursor(undefined)
+    setBusyMemberRef('')
     load()
     return () => {
       requestRef.current?.abort()
