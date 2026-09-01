@@ -2347,6 +2347,56 @@ describe('conversation send directory projection', () => {
     })
   })
 
+  it('restores the desktop composer focus fill and centered paper-plane action', async () => {
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+
+    const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    let composerShell = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
+    let sendButton = renderer!.root.findByProps({ 'aria-label': '发送消息' })
+
+    expect(composerShell.props.style).toMatchObject({
+      background: arkmeTheme.input,
+      boxShadow: 'none',
+    })
+    expect(composerShell.props).toMatchObject({
+      'data-arkme-primary-composer': 'true',
+      'data-arkme-composer-focused': 'false',
+    })
+    expect(sendButton.props.disabled).toBe(true)
+    expect(sendButton.props.style).toMatchObject({
+      width: 36,
+      height: 28,
+      borderRadius: 14,
+      background: '#DCE1E9',
+      color: '#fff',
+    })
+
+    act(() => { composer.props.onFocus() })
+    composerShell = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
+    expect(composerShell.props.style).toMatchObject({
+      background: 'color-mix(in srgb, var(--dsw-alias-bg-base, #ffffff) 97%, #000000)',
+      boxShadow: 'none',
+    })
+    expect(composerShell.props['data-arkme-composer-focused']).toBe('true')
+
+    await act(async () => {
+      composer.props.onTextChange('继续输入')
+      await Promise.resolve()
+    })
+    sendButton = renderer!.root.findByProps({ 'aria-label': '发送消息' })
+    expect(sendButton.props.disabled).toBe(false)
+    expect(sendButton.props.style).toMatchObject({ background: '#09B83E', cursor: 'pointer' })
+    expect(sendButton.findByType('svg').props).toMatchObject({
+      viewBox: '9.7 6.1 16 16',
+      width: '16',
+      height: '16',
+    })
+    expect(sendButton.findByType('path').props.d).toContain('M23.5521 7.04659')
+  })
+
   it('extends the copied quick-link detail record from the footer input', async () => {
     timeline = [{
       itemUid: 'copy-link-message', senderName: '1D3E', isMe: false, sendAtMillis: 1, status: 1,

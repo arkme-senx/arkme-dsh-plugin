@@ -1,11 +1,16 @@
+import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  ArkmePersistentDetails, ArkmePersistentSidebar, ArkmePersistentWorkspace, shouldRestoreWebAuthenticatedWorkspace,
+  ArkmePersistentDetails, ArkmePersistentSidebar, ArkmePersistentWorkspace, clampPersistentSidebarWidth,
+  readPersistentSidebarWidth, resolvePersistentSidebarWidth, shouldRestoreWebAuthenticatedWorkspace,
+  writePersistentSidebarWidth,
 } from '../src/client/ArkmePersistentShell.js'
 import { ArkmeWebLoginOverlay } from '../src/client/ArkmeWebLoginOverlay.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
+
+const redesignCss = readFileSync(new URL('../src/client/redesign/arkme-redesign.css', import.meta.url), 'utf8')
 
 describe('Arkme persistent DSH shell', () => {
   beforeEach(() => {
@@ -17,6 +22,40 @@ describe('Arkme persistent DSH shell', () => {
     expect(shouldRestoreWebAuthenticatedWorkspace(authenticated, 'login', false)).toBe(true)
     expect(shouldRestoreWebAuthenticatedWorkspace(authenticated, 'harness', false)).toBe(false)
     expect(shouldRestoreWebAuthenticatedWorkspace(authenticated, 'login', true)).toBe(false)
+  })
+
+  it('keeps a durable full-width preference while compact layouts use an independently expandable width', () => {
+    expect(clampPersistentSidebarWidth(0)).toBe(140)
+    expect(clampPersistentSidebarWidth(900)).toBe(480)
+    for (const viewportWidth of [1023, 1024]) {
+      expect(resolvePersistentSidebarWidth(true, viewportWidth, 380)).toBe(140)
+      expect(resolvePersistentSidebarWidth(true, viewportWidth, 380, 220)).toBe(220)
+    }
+    expect(resolvePersistentSidebarWidth(false, 1099, 380, 220)).toBe(380)
+
+    const values = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) },
+    }
+    expect(readPersistentSidebarWidth(storage)).toBeUndefined()
+    writePersistentSidebarWidth(382, storage)
+    expect(readPersistentSidebarWidth(storage)).toBe(382)
+    writePersistentSidebarWidth(1, storage)
+    expect(readPersistentSidebarWidth(storage)).toBe(140)
+    values.set('dsh-arkme:persistent-sidebar-width:v1', 'not-a-number')
+    expect(readPersistentSidebarWidth(storage)).toBeUndefined()
+  })
+
+  it('applies the conversation and Web-locked grid contract below the desktop breakpoint without changing Contacts', () => {
+    const desktopOnlyMedia = redesignCss.indexOf('@media (min-width: 1100px)')
+    const conversationRule = redesignCss.indexOf('[data-arkme-directory-mode="conversations"]')
+    const webLockedRule = redesignCss.indexOf('[data-arkme-directory-mode="web-locked"]')
+    expect(conversationRule).toBeGreaterThanOrEqual(0)
+    expect(webLockedRule).toBeGreaterThanOrEqual(0)
+    expect(conversationRule).toBeLessThan(desktopOnlyMedia)
+    expect(webLockedRule).toBeLessThan(desktopOnlyMedia)
+    expect(redesignCss.slice(desktopOnlyMedia)).toContain('[data-arkme-directory-mode="contacts"]')
   })
 
   it('renders an Arkme-owned sidebar rail for the lifetime of the plugin', () => {
@@ -35,7 +74,14 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('data-arkme-sidebar-collapsed="true"')
     expect(markup).toContain('data-arkme-owned="product-navigation"')
     expect(markup).toContain('data-arkme-directory-visible="true"')
-    expect(markup).not.toContain('persistent-sidebar-resize-handle-style')
+    expect(markup).toContain('persistent-sidebar-resize-handle-style')
+    expect(markup).toContain('--arkme-persistent-sidebar-width: 140px')
+    expect(markup).toContain('left: 140px !important')
+    expect(markup).toContain('data-arkme-directory-width="64"')
+    expect(markup).toContain('data-arkme-avatar-only="true"')
+    expect(markup).toContain('data-arkme-owned="persistent-sidebar-resize-handle"')
+    expect(markup).toContain('aria-valuemin="64"')
+    expect(markup).toContain('aria-valuenow="64"')
     expect(markup).toContain('DeepSeek Harness')
     expect(markup).not.toContain('与 Arkme 沟通任务')
     expect(markup).not.toContain('aria-label="新任务"')
@@ -60,7 +106,8 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('--arkme-persistent-sidebar-width: 148px')
     expect(markup).toContain('left: 148px !important')
     expect(markup).toContain('data-arkme-owned="persistent-sidebar-resize-handle"')
-    expect(markup).toContain('aria-valuemin="72"')
+    expect(markup).toContain('aria-valuemin="64"')
+    expect(markup).toContain('aria-valuenow="72"')
     expect(markup).toContain('data-arkme-sidebar-resizing="false"')
     expect(markup).toContain('transition: none !important')
   })
@@ -84,8 +131,8 @@ describe('Arkme persistent DSH shell', () => {
   it('keeps a constrained Arkme workspace on the Web login screen', () => {
     arkmeUi.showLogin()
     const markup = renderToStaticMarkup(<ArkmePersistentSidebar {...({
-      collapsed: false,
-      width: 72,
+      collapsed: true,
+      width: 56,
       useSessions: (selector: (state: { current?: string; ids: string[]; byId: Record<string, never> }) => unknown) => selector({ current: undefined, ids: [], byId: {} }),
       renderSlot: () => null,
       collapseSidebar: vi.fn(),
@@ -106,6 +153,11 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('data-arkme-owned="product-navigation"')
     expect(markup).toContain('data-arkme-plugin-version=')
     expect(markup).toContain('对话')
+    expect(markup).toContain('data-arkme-directory-width="64"')
+    expect(markup).toContain('--arkme-persistent-sidebar-width: 140px')
+    expect(markup).toContain('data-arkme-avatar-only="true"')
+    expect(markup).toContain('data-arkme-owned="persistent-sidebar-resize-handle"')
+    expect(markup).toContain('aria-valuemin="64"')
   })
 
   it('renders Arkme as the permanent conversation owner without its old floating card', () => {

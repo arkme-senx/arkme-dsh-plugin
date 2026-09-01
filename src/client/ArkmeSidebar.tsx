@@ -728,7 +728,12 @@ const styles: Record<string, CSSProperties> = {
   composerInner: {
     ...arkmeConversationComposerLayout.composerInner,
     border: `1px solid ${colors.border}`,
-    background: arkmeTheme.input, boxShadow: arkmeTheme.shadow,
+    background: arkmeTheme.input, boxShadow: 'none',
+    transition: 'background-color 140ms ease',
+  },
+  composerInnerFocused: {
+    background: 'color-mix(in srgb, var(--dsw-alias-bg-base, #ffffff) 97%, #000000)',
+    boxShadow: 'none',
   },
   composerStack: { width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column' },
   composerHint: { alignSelf: 'flex-end', margin: '4px 4px 0 0', color: arkmeTheme.tertiary, fontSize: 10, lineHeight: '14px' },
@@ -771,10 +776,11 @@ const styles: Record<string, CSSProperties> = {
   mentionSuggestionSecondary: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: colors.secondary, fontSize: 11, lineHeight: '15px' },
   mentionSuggestionsEmpty: { padding: '8px 10px', color: colors.secondary, fontSize: 12, lineHeight: '18px' },
   send: {
-    width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center',
-    border: 0, borderRadius: 9, background: '#171923',
-    color: arkmeTheme.foreground, cursor: 'pointer', transform: 'translateY(-2px)', transition: 'background-color 100ms ease',
+    width: 36, height: 28, flex: 'none', display: 'grid', placeItems: 'center',
+    border: 0, borderRadius: 14, background: '#09B83E',
+    color: '#fff', cursor: 'pointer', transform: 'translateY(-2px)', transition: 'background-color 100ms ease',
   },
+  sendDisabled: { background: '#DCE1E9', color: '#fff', cursor: 'default' },
   forwardDrawerDismiss: { position: 'absolute', top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, left: 0, zIndex: 9, background: 'transparent' },
   loginBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
 }
@@ -5719,7 +5725,13 @@ export function ArkmeSurface({
           {activeSelectMode === undefined && <footer className="arkme-conversation-composer" style={styles.composer}
             onDragOver={event => { if (!preparingFiles && Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
             onDrop={event => { if (!preparingFiles && event.dataTransfer.files.length > 0) { event.preventDefault(); void selectFiles(event.dataTransfer.files) } }}
-          ><div style={styles.composerStack}><div ref={composerRef} className="arkme-conversation-composer-inner" style={styles.composerInner}>
+          ><div style={styles.composerStack}><div
+            ref={composerRef}
+            className="arkme-conversation-composer-inner"
+            data-arkme-primary-composer="true"
+            data-arkme-composer-focused={composerInputFocused ? 'true' : 'false'}
+            style={{ ...styles.composerInner, ...(composerInputFocused ? styles.composerInnerFocused : {}) }}
+          >
             {addMenuOpen && <div ref={addMenuRef} style={styles.addMenu} role="menu">
               <button type="button" role="menuitem" style={styles.addMenuItem} onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click() }}><span aria-hidden>📎</span>添加照片和文件</button>
               <div style={styles.menuDivider} />
@@ -5862,22 +5874,22 @@ export function ArkmeSurface({
               />
               <button
               type="button"
-              style={{ ...styles.send, opacity: canSend ? 1 : .4 }}
+              style={{ ...styles.send, ...(canSend ? {} : styles.sendDisabled) }}
               disabled={!canSend}
               aria-label="发送消息"
               onMouseDown={event => { event.preventDefault() }}
               onMouseEnter={event => {
                 if (!event.currentTarget.disabled) {
-                  event.currentTarget.style.background = '#262936'
+                  event.currentTarget.style.background = '#08A437'
                 }
               }}
               onMouseLeave={event => {
-                event.currentTarget.style.background = '#171923'
+                if (!event.currentTarget.disabled) event.currentTarget.style.background = '#09B83E'
               }}
               onClick={() => { void send() }}
             >
-              <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
-                <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />
+              <svg viewBox="9.7 6.1 16 16" width="16" height="16" aria-hidden>
+                <path d="M23.5521 7.04659L11.5965 10.7238C10.7646 10.9798 10.6133 12.092 11.3467 12.5609L14.879 14.8189C15.0627 14.9363 15.2792 14.9919 15.4967 14.9775C15.7142 14.9631 15.9214 14.8794 16.088 14.7388L20.4967 11.0186C20.7357 10.8169 21.0582 11.1392 20.8566 11.3784L17.1366 15.7879C16.996 15.9545 16.9124 16.1617 16.8981 16.3792C16.8837 16.5966 16.9393 16.813 17.0568 16.9966L19.3143 20.5285C19.783 21.2617 20.8954 21.1104 21.1513 20.2787L24.8286 8.32335C25.0696 7.53956 24.3356 6.80563 23.5521 7.04659Z" fill="currentColor" />
               </svg>
               </button>
             </div></div>
