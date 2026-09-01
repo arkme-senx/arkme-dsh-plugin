@@ -409,11 +409,11 @@ export function apply(ctx: Context, config: Config): void {
     await service.accountScope.start()
     return () => undefined
   }, 'dsh-arkme: desktop account scope attestation')
-  ctx.inject(['llm', 'attachments'], modelCtx => {
+  ctx.inject(['llm'], modelCtx => {
     registerManagedAiProvider(modelCtx, {
       intelligentBaseUrl: config.intelligentBaseUrl,
       credentialOwner: service,
-      attachmentReader: modelCtx.attachments,
+      resolveAttachmentReader: () => modelCtx.get('attachments'),
     })
   })
   registerDSHAgentInputRecordSync(ctx, service)

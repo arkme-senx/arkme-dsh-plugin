@@ -12,7 +12,11 @@ import {
   localizeManagedAiError,
   registerManagedAiProvider,
 } from '../src/managed-ai/adapter.js'
-import { ManagedAiTransport, type ManagedModelCapability } from '../src/managed-ai/transport.js'
+import {
+  ManagedAiTransport,
+  type ManagedImageAttachmentReader,
+  type ManagedModelCapability,
+} from '../src/managed-ai/transport.js'
 import { SecretValue } from '../src/secret-value.js'
 
 const TEXT_CAPABILITY = {
@@ -284,18 +288,23 @@ describe('Arkme managed model adapter', () => {
             asset_ref: 'mai_asset_123',
             status: 'prepared',
             upload: {
-              method: 'PUT',
-              url: 'https://oss.test/managed/input.png?signature=secret',
-              headers: { 'Content-Type': 'image/png' },
+              method: 'POST',
+              url: 'https://managed-ai.oss.test/',
+              fields: {
+                key: 'managed/input.png',
+                policy: 'signed-policy',
+                'x-oss-signature': 'secret',
+              },
+              file_field: 'file',
             },
             expires_at: Date.now() + 10 * 60_000,
             asset_expires_at: Date.now() + 7 * 24 * 60 * 60_000,
           },
         }), { status: 200, headers: { 'Content-Type': 'application/json' } })
       }
-      // A lost successful PUT response is retried against forbid-overwrite OSS
+      // A lost successful POST response is retried against forbid-overwrite OSS
       // as 409; the adapter must validate it through complete, not abort it.
-      if (url.startsWith('https://oss.test/managed/input.png')) return new Response(null, { status: 409 })
+      if (url === 'https://managed-ai.oss.test/') return new Response(null, { status: 409 })
       if (url.endsWith('/input-assets/uploads/complete')) {
         return new Response(JSON.stringify({
           code: 200,
@@ -326,14 +335,14 @@ describe('Arkme managed model adapter', () => {
       }
       throw new Error(`unexpected request: ${method} ${url}`)
     })
+    const readImage = vi.fn(async () => ({ ref: attachment, data: imageBytes }))
+    let attachmentReader: ManagedImageAttachmentReader | undefined
     const adapter = createManagedAiLlmAdapter({
       intelligentBaseUrl: 'https://intelligent.test',
       credentialOwner: {
         resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
       },
-      attachmentReader: {
-        readImage: vi.fn(async () => ({ ref: attachment, data: imageBytes })),
-      },
+      resolveAttachmentReader: () => attachmentReader,
       resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
       fetchImpl,
     })
@@ -342,6 +351,16 @@ describe('Arkme managed model adapter', () => {
       ARKME_MANAGED_PROVIDER,
       'deepseek-v4-flash-vision-exp',
     )).resolves.toMatchObject({ inputModalities: ['text', 'image'] })
+    const unavailable = adapter.stream({
+      provider: ARKME_MANAGED_PROVIDER,
+      model: 'deepseek-v4-flash-vision-exp',
+      messages: [createUserMessage({
+        content: [{ type: 'image', attachment }],
+        source: { kind: 'user' },
+      })],
+    })
+    await expect(unavailable[Symbol.asyncIterator]().next()).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTENT' })
+    attachmentReader = { readImage }
     const chunks: StreamChunk[] = []
     for await (const chunk of adapter.stream({
       provider: ARKME_MANAGED_PROVIDER,
@@ -356,6 +375,7 @@ describe('Arkme managed model adapter', () => {
     })) chunks.push(chunk)
 
     expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: '看到了' })
+    expect(readImage).toHaveBeenCalledTimes(1)
     const prepare = calls.find(call => call.url.endsWith('/input-assets/uploads/prepare'))
     expect(prepare?.body).toMatchObject({
       public_model_code: 'deepseek-v4-flash-vision-exp',
@@ -369,9 +389,14 @@ describe('Arkme managed model adapter', () => {
       },
     })
     expect(prepare?.body).toMatchObject({ asset: { sha256: expect.stringMatching(/^[0-9a-f]{64}$/u) } })
-    const oss = calls.find(call => call.url.startsWith('https://oss.test/managed/input.png'))
-    expect(oss?.method).toBe('PUT')
-    expect(Buffer.from(oss?.body as Uint8Array)).toEqual(Buffer.from(imageBytes))
+    const oss = calls.find(call => call.url === 'https://managed-ai.oss.test/')
+    expect(oss?.method).toBe('POST')
+    const form = oss?.body as FormData
+    expect(form.get('key')).toBe('managed/input.png')
+    expect(form.get('policy')).toBe('signed-policy')
+    const formEntries = [...form.entries()]
+    expect(formEntries.at(-1)?.[0]).toBe('file')
+    expect(Buffer.from(await (form.get('file') as Blob).arrayBuffer())).toEqual(Buffer.from(imageBytes))
     const chat = calls.find(call => call.url.endsWith('/chat/completions'))
     expect(chat?.body).toMatchObject({
       model: 'deepseek-v4-flash-vision-exp',
@@ -385,6 +410,62 @@ describe('Arkme managed model adapter', () => {
     })
     expect(JSON.stringify(chat?.body)).not.toContain('signature=secret')
     expect(JSON.stringify(chat?.body)).not.toContain('iVBOR')
+  })
+
+  it.each([
+    ['legacy PUT method', { method: 'PUT', url: 'https://oss.test/', fields: { key: 'asset.png' }, file_field: 'file' }],
+    ['duplicate file field', { method: 'POST', url: 'https://oss.test/', fields: { key: 'asset.png', file: 'shadow' }, file_field: 'file' }],
+    ['unexpected file field name', { method: 'POST', url: 'https://oss.test/', fields: { key: 'asset.png' }, file_field: 'payload' }],
+  ])('rejects malformed PostObject grant: %s', async (_name, upload) => {
+    const data = new Uint8Array([137, 80, 78, 71])
+    const attachment = {
+      attachmentId: AttachmentId('malformed-upload-grant'),
+      mediaType: 'image/png' as const,
+      bytes: data.byteLength,
+      width: 1,
+      height: 1,
+    }
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => ({ readImage: async () => ({ ref: attachment, data }) }),
+      fetchImpl: async (input) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (!url.endsWith('/input-assets/uploads/prepare')) throw new Error(`unexpected request: ${url}`)
+        return new Response(JSON.stringify({
+          code: 200,
+          data: {
+            upload_uid: 'mai_upload_malformed',
+            asset_ref: 'mai_asset_malformed',
+            status: 'prepared',
+            upload,
+            expires_at: Date.now() + 10 * 60_000,
+            asset_expires_at: Date.now() + 60 * 60_000,
+          },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const stream = transport.stream({
+      provider: ARKME_MANAGED_PROVIDER,
+      model: 'post-object-contract',
+      messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+    }, {
+      contractVersion: 'post-object-contract-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'], maximumImages: 1, maximumBytesPerImage: data.byteLength,
+        maximumPixels: 40_000_000, countDimensionLimits: [],
+        evidence: {
+          providerReferenceUrl: 'https://example.test/provider-contract', verifiedOn: '2026-09-01',
+          providerDocumentedFields: ['allowed_media_types', 'maximum_bytes_per_image'],
+          platformGuardrailFields: ['maximum_images', 'maximum_pixels', 'token_estimator'],
+        },
+      },
+    })
+
+    await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
   })
 
   it('enforces Qwen source geometry without treating provider max_pixels as a raw-image limit', async () => {
@@ -420,7 +501,7 @@ describe('Arkme managed model adapter', () => {
     const adapter = createManagedAiLlmAdapter({
       intelligentBaseUrl: 'https://intelligent.test',
       credentialOwner: { resolveManagedAccessCredential: async () => new SecretValue('arkme-access') },
-      attachmentReader: { readImage: reader },
+      resolveAttachmentReader: () => ({ readImage: reader }),
       resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
       fetchImpl: async input => {
         const url = typeof input === 'string' ? input : input.toString()
@@ -497,7 +578,7 @@ describe('Arkme managed model adapter', () => {
     let chatCalls = 0
     const transport = new ManagedAiTransport({
       baseUrl: 'https://intelligent.test/api/v1/managed-ai',
-      attachmentReader: { readImage },
+      resolveAttachmentReader: () => ({ readImage }),
       fetchImpl: async input => {
         const url = typeof input === 'string' ? input : input.toString()
         if (url.endsWith('/input-assets/uploads/prepare')) {
@@ -598,7 +679,7 @@ describe('Arkme managed model adapter', () => {
     let chatBody: Record<string, unknown> | undefined
     const transport = new ManagedAiTransport({
       baseUrl: 'https://intelligent.test/api/v1/managed-ai',
-      attachmentReader: { readImage },
+      resolveAttachmentReader: () => ({ readImage }),
       fetchImpl: async (input, init) => {
         const url = typeof input === 'string' ? input : input.toString()
         if (url.endsWith('/input-assets/uploads/prepare')) {
@@ -681,7 +762,7 @@ describe('Arkme managed model adapter', () => {
     let prepareCalls = 0
     const transport = new ManagedAiTransport({
       baseUrl: 'https://intelligent.test/api/v1/managed-ai',
-      attachmentReader: { readImage: async () => ({ ref: attachment, data }) },
+      resolveAttachmentReader: () => ({ readImage: async () => ({ ref: attachment, data }) }),
       fetchImpl: async (input, init) => {
         const url = typeof input === 'string' ? input : input.toString()
         if (url.endsWith('/input-assets/uploads/prepare')) {
@@ -758,7 +839,7 @@ describe('Arkme managed model adapter', () => {
     let prepareCalls = 0
     const transport = new ManagedAiTransport({
       baseUrl: 'https://intelligent.test/api/v1/managed-ai',
-      attachmentReader: { readImage: async () => ({ ref: attachment, data }) },
+      resolveAttachmentReader: () => ({ readImage: async () => ({ ref: attachment, data }) }),
       fetchImpl: async (input, init) => {
         const url = typeof input === 'string' ? input : input.toString()
         if (url.endsWith('/input-assets/uploads/prepare')) {
@@ -838,7 +919,7 @@ describe('Arkme managed model adapter', () => {
     let prepareCalls = 0
     const transport = new ManagedAiTransport({
       baseUrl: 'https://intelligent.test/api/v1/managed-ai',
-      attachmentReader: { readImage: async () => ({ ref: attachment, data }) },
+      resolveAttachmentReader: () => ({ readImage: async () => ({ ref: attachment, data }) }),
       fetchImpl: async (input, init) => {
         const url = typeof input === 'string' ? input : input.toString()
         if (url.endsWith('/input-assets/uploads/prepare')) {
@@ -852,7 +933,9 @@ describe('Arkme managed model adapter', () => {
                 upload_uid: 'mai_upload_short',
                 asset_ref: 'mai_asset_short',
                 status: 'prepared',
-                upload: { method: 'PUT', url: 'https://oss.test/short.png', headers: {} },
+                upload: {
+                  method: 'POST', url: 'https://oss.test/', fields: { key: 'short.png' }, file_field: 'file',
+                },
                 expires_at: Date.now() + 5,
                 asset_expires_at: Date.now() + 60 * 60_000,
               },
@@ -869,7 +952,7 @@ describe('Arkme managed model adapter', () => {
             },
           }), { status: 200, headers: { 'Content-Type': 'application/json' } })
         }
-        if (url === 'https://oss.test/short.png') throw new TypeError('lost PUT response')
+        if (url === 'https://oss.test/') throw new TypeError('lost POST response')
         if (url.endsWith('/chat/completions')) {
           return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
             status: 200,
@@ -1145,6 +1228,77 @@ describe('Arkme managed model adapter', () => {
     })
     expect(request?.body).not.toHaveProperty('user')
     expect(request?.body).not.toHaveProperty('user_id')
+  })
+
+  it('rejects an oversized multiline SSE event across decoded chunks', async () => {
+    const encoder = new TextEncoder()
+    const line = `data: ${'a'.repeat((4 << 20) / 2)}\n`
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => undefined,
+      fetchImpl: async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(line))
+          controller.enqueue(encoder.encode(line))
+          controller.enqueue(encoder.encode('\n'))
+          controller.close()
+        },
+      }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const stream = transport.stream({
+      provider: ARKME_MANAGED_PROVIDER,
+      model: ARKME_MANAGED_MODEL,
+      messages: [createUserMessage({
+        content: [{ type: 'text', text: '你好' }],
+        source: { kind: 'user' },
+      })],
+    }, {
+      contractVersion: 'text-chat-v1',
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+    })
+
+    await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+      code: 'MALFORMED_RESPONSE',
+    })
+  })
+
+  it('accepts multiple bounded SSE events coalesced into one large transport chunk', async () => {
+    const encoder = new TextEncoder()
+    const keepalive = `:${'k'.repeat((4 << 20) / 2)}\n\n`
+    const payload = keepalive + keepalive
+      + 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n'
+      + 'data: [DONE]\n\n'
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => undefined,
+      fetchImpl: async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(payload))
+          controller.close()
+        },
+      }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const chunks: StreamChunk[] = []
+    for await (const chunk of transport.stream({
+      provider: ARKME_MANAGED_PROVIDER,
+      model: ARKME_MANAGED_MODEL,
+      messages: [createUserMessage({
+        content: [{ type: 'text', text: '你好' }],
+        source: { kind: 'user' },
+      })],
+    }, {
+      contractVersion: 'text-chat-v1',
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+    })) chunks.push(chunk)
+
+    expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+    expect(chunks).toContainEqual({ type: 'finish', reason: { kind: 'stop' } })
   })
 
   it('turns an explicit HTTP 402 into a stable Arkme recharge prompt', async () => {
