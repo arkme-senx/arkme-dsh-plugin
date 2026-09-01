@@ -27,11 +27,23 @@ import { DshRemoteError } from './dsh-remote/errors.js'
 import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
 import { arkmeRequiredLinkMetadataFallback } from './link-metadata.js'
+import type { ArkmeFileBackgroundSoundInput } from './file-transfer-contract.js'
+import { arkmeFileBackgroundSound, arkmeRichBackgroundSound } from './record-background-sound.js'
 
 const MAX_STANDARD_REQUEST_BYTES = 128 * 1024
 const MAX_MESSAGE_ACTION_REF_CHARS = 1024 * 1024
 const MAX_MESSAGE_REPORT_REF_CHARS = 4_096
-const MAX_REQUEST_BYTES = MAX_MESSAGE_ACTION_REF_CHARS + (64 * 1024)
+const MAX_RELATED_QUICK_NOTE_REQUEST_BYTES = MAX_MESSAGE_ACTION_REF_CHARS + (64 * 1024)
+const MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES = 10 * 1024 * 1024
+const MAX_REQUEST_BYTES = MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
+
+function requestBytesLimit(operation: string): number {
+  if (operation === 'source.related-quick-notes.from-message') return MAX_RELATED_QUICK_NOTE_REQUEST_BYTES
+  if (operation === 'message-actions.copy-link' || operation === 'message-actions.forward') {
+    return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
+  }
+  return MAX_STANDARD_REQUEST_BYTES
+}
 
 function isLoopback(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
@@ -61,8 +73,7 @@ async function readRequest(req: IncomingMessage): Promise<ArkmePluginRequest> {
   if (typeof source.operation !== 'string') {
     throw new ArkmePluginError('operation-required', '缺少操作类型', false)
   }
-  if (bytes > MAX_STANDARD_REQUEST_BYTES
-    && source.operation !== 'source.related-quick-notes.from-message') {
+  if (bytes > requestBytesLimit(source.operation)) {
     throw new ArkmePluginError('request-too-large', '请求内容过大', false, 413)
   }
   return {
@@ -186,6 +197,12 @@ function directoryLimitParam(params: Record<string, unknown>, fallback = 30): nu
   return Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', fallback))))
 }
 
+function recordingSpeakerScopeParam(params: Record<string, unknown>): 'item' | 'speaker' {
+  const scope = stringParam(params, 'scope')
+  if (scope === 'item' || scope === 'speaker') return scope
+  throw new ArkmePluginError('recording-speaker-scope-invalid', '说话人修改范围无效', false, 400)
+}
+
 function unmarkedSpeakerMarkInputParam(params: Record<string, unknown>): {
   candidateRef: string
   candidateVersion: string
@@ -281,6 +298,31 @@ function requiredBooleanParam(params: Record<string, unknown>, key: string): boo
   return value
 }
 
+function backgroundSoundPreferenceEnabledParam(params: Record<string, unknown>): boolean {
+  if (typeof params.enabled !== 'boolean') {
+    throw new ArkmePluginError('background-sound-preference-invalid', '背景音开关必须是布尔值', false, 400)
+  }
+  return params.enabled
+}
+
+function backgroundSoundExpectedUserIdParam(params: Record<string, unknown>): number | undefined {
+  const value = params.expectedUserId
+  if (value === undefined) return undefined
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new ArkmePluginError('background-sound-expected-user-invalid', '背景音设置的预期账号无效', false, 400)
+  }
+  return value
+}
+
+function fileExpectedUserIdParam(params: Record<string, unknown>): number | undefined {
+  const value = params.expectedUserId
+  if (value === undefined) return undefined
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new ArkmePluginError('file-expected-user-invalid', '文件或发送操作的预期账号无效', false, 400)
+  }
+  return value
+}
+
 function requiredArrangementReminderEnabledParam(params: Record<string, unknown>): boolean {
   const value = params.enabled
   if (typeof value !== 'boolean') {
@@ -307,7 +349,11 @@ function stringListParam(params: Record<string, unknown>, key: string): string[]
 }
 
 function messageActionRefsParam(params: Record<string, unknown>): string[] {
-  return stringListParam(params, 'actionRefs').map(value => value.trim()).filter(value => value !== '')
+  const values = stringListParam(params, 'actionRefs')
+  if (values.some(value => value.length > MAX_MESSAGE_ACTION_REF_CHARS)) {
+    throw new ArkmePluginError('message-action-ref-invalid', '消息操作引用无效', false, 400)
+  }
+  return values.map(value => value.trim()).filter(value => value !== '')
 }
 
 function messageReportParam(params: Record<string, unknown>): {
@@ -549,6 +595,20 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   const captureContext = captureContextParam(params)
   const humanMentions = humanMentionsParam(params)
   const botMentions = botMentionsParam(params)
+  const assets = rawAssets.flatMap(raw => {
+    if (raw === null || typeof raw !== 'object') return []
+    const asset = raw as Record<string, unknown>
+    const fileKind = numberParam(asset, 'fileKind', 0)
+    if (![1, 2, 3, 4].includes(fileKind)) return []
+    return [{
+      fileAssetUid: stringParam(asset, 'fileAssetUid'),
+      fileName: stringParam(asset, 'fileName'),
+      mimeType: stringParam(asset, 'mimeType'),
+      size: numberParam(asset, 'size', 0),
+      fileKind: fileKind as 1 | 2 | 3 | 4,
+    }]
+  })
+  const backgroundSound = richBackgroundSoundParam(params)
   return {
     title: stringParam(params, 'title'),
     textContent: stringParam(params, 'textContent'),
@@ -558,20 +618,55 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
     ...(captureContext === undefined ? {} : { captureContext }),
     ...(humanMentions.length === 0 ? {} : { humanMentions }),
     ...(botMentions.length === 0 ? {} : { botMentions }),
-    assets: rawAssets.flatMap(raw => {
-      if (raw === null || typeof raw !== 'object') return []
-      const asset = raw as Record<string, unknown>
-      const fileKind = numberParam(asset, 'fileKind', 0)
-      if (![1, 2, 3, 4].includes(fileKind)) return []
-      return [{
-        fileAssetUid: stringParam(asset, 'fileAssetUid'),
-        fileName: stringParam(asset, 'fileName'),
-        mimeType: stringParam(asset, 'mimeType'),
-        size: numberParam(asset, 'size', 0),
-        fileKind: fileKind as 1 | 2 | 3 | 4,
-      }]
-    }),
+    assets,
+    ...(backgroundSound === undefined ? {} : { backgroundSound }),
   }
+}
+
+function richBackgroundSoundParam(params: Record<string, unknown>): ArkmeRichSendInput['backgroundSound'] {
+  const raw = params.backgroundSound
+  if (raw === undefined) return undefined
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ArkmePluginError('background-sound-invalid', '背景音参数无效', false, 400)
+  }
+  const value = raw as Record<string, unknown>
+  if (!Array.isArray(value.assets) || !Array.isArray(value.amplitudes)) {
+    throw new ArkmePluginError('background-sound-invalid', '背景音资产或振幅参数无效', false, 400)
+  }
+  const assets = value.assets.map(rawAsset => {
+    if (rawAsset === null || typeof rawAsset !== 'object' || Array.isArray(rawAsset)) {
+      throw new ArkmePluginError('background-sound-file-invalid', '背景音资产参数无效', false, 400)
+    }
+    const asset = rawAsset as Record<string, unknown>
+    return {
+      fileAssetUid: stringParam(asset, 'fileAssetUid'),
+      fileName: stringParam(asset, 'fileName'),
+      mimeType: stringParam(asset, 'mimeType'),
+      size: numberParam(asset, 'size', -1),
+      fileKind: numberParam(asset, 'fileKind', 0) as 1 | 2 | 3 | 4,
+    }
+  })
+  return arkmeRichBackgroundSound({ assets, amplitudes: value.amplitudes as number[] })
+}
+
+function fileBackgroundSoundParam(
+  params: Record<string, unknown>,
+  allFileRefs: readonly string[],
+): ArkmeFileBackgroundSoundInput | undefined {
+  const raw = params.backgroundSound
+  if (raw === undefined) return undefined
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ArkmePluginError('background-sound-invalid', '背景音参数无效', false, 400)
+  }
+  const value = raw as Record<string, unknown>
+  if (!Array.isArray(value.fileRefs) || !Array.isArray(value.amplitudes)
+    || value.fileRefs.some(ref => typeof ref !== 'string')) {
+    throw new ArkmePluginError('background-sound-invalid', '背景音文件引用或振幅参数无效', false, 400)
+  }
+  return arkmeFileBackgroundSound({
+    fileRefs: value.fileRefs as string[],
+    amplitudes: value.amplitudes as number[],
+  }, allFileRefs)
 }
 
 function favoriteStickerItemParam(params: Record<string, unknown>): ArkmeFavoriteStickerAddInput {
@@ -676,7 +771,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (request.operation === 'link.metadata' && origin === undefined) {
         throw new ArkmePluginError('origin-required', '网址名称解析必须从当前 DSH 页面发起', false, 403)
       }
-      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop']
+      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.speaker.assign-item']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -910,10 +1005,37 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'botRef').trim(), booleanParam(params, 'muted'), requestSignal === undefined ? {} : { signal: requestSignal },
     )
     case 'recordings.calendar': return await service.recordingCalendar(
-      numberParam(params, 'fromStamp', 0),
-      numberParam(params, 'toStamp', 0),
+      numberParam(params, 'fromStamp', Number.NaN),
+      numberParam(params, 'toStamp', Number.NaN),
+      requestSignal,
     )
-    case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
+    case 'recordings.day': return await service.recordingDay(
+      numberParam(params, 'dateStamp', Number.NaN),
+      requestSignal,
+    )
+    case 'recordings.import.preflight': return await service.recordingImportPreflight(
+      stringListParam(params, 'fileNames'), requestSignal,
+    )
+    case 'recordings.import.list': return await service.recordingImportList()
+    case 'recordings.import.status': return await service.recordingImportStatus(stringParam(params, 'importRef').trim())
+    case 'recordings.import.retry': return await service.retryRecordingImport(
+      stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)),
+    )
+    case 'recordings.import.cancel': return await service.cancelRecordingImport(
+      stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)),
+    )
+    case 'recordings.playback.open': return await service.recordingPlayback(
+      stringParam(params, 'itemRef').trim(), requestSignal,
+    )
+    case 'recordings.speaker.options': return await service.recordingSpeakerOptions(
+      stringParam(params, 'itemRef').trim(), requestSignal,
+    )
+    case 'recordings.speaker.assign-item': return await service.assignRecordingSpeaker({
+      itemRef: stringParam(params, 'itemRef').trim(),
+      ...(stringParam(params, 'speakerRef').trim() === '' ? {} : { speakerRef: stringParam(params, 'speakerRef').trim() }),
+      ...(stringParam(params, 'newSpeakerName').trim() === '' ? {} : { newSpeakerName: stringParam(params, 'newSpeakerName').trim() }),
+      scope: recordingSpeakerScopeParam(params),
+    }, requestSignal)
     case 'calendar.buckets': return await service.calendarBuckets({
       startDate: stringParam(params, 'startDate'),
       endDate: stringParam(params, 'endDate'),
@@ -1016,6 +1138,12 @@ export async function dispatchArkmeHostOperation(
     case 'records.retry': return await service.retryPending(stringParam(params, 'recordUid'))
     case 'user.profile': return await service.cachedProfile()
     case 'user.profile.refresh': return await service.refreshProfile()
+    case 'settings.background-sound.get': return await service.backgroundSoundPreference(requestSignal)
+    case 'settings.background-sound.update': return await service.updateBackgroundSoundPreference(
+      backgroundSoundPreferenceEnabledParam(params),
+      requestSignal,
+      backgroundSoundExpectedUserIdParam(params),
+    )
     case 'user.arkme-id.check': return await service.checkArkmeIdAvailability(stringParam(params, 'arkmeId'))
     case 'user.arkme-id.set': return await service.setArkmeIdOnce(stringParam(params, 'arkmeId'))
     case 'image.read': {
@@ -1238,6 +1366,11 @@ export async function dispatchArkmeHostOperation(
       messageActionRefsParam(params),
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
+    case 'message-actions.copy-link': return await service.copyMessageActionsLink(
+      stringParam(params, 'conversationRef').trim(),
+      messageActionRefsParam(params),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
     case 'source.message-copy-link.resolve': return await service.resolveMessageCopyLink(
       stringParam(params, 'sid'),
       requestSignal === undefined ? {} : { signal: requestSignal },
@@ -1279,11 +1412,25 @@ export async function dispatchArkmeHostOperation(
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
+    case 'message-actions.forward': return await service.forwardMessageActions(
+      stringParam(params, 'conversationRef').trim(),
+      messageActionRefsParam(params),
+      {
+        targetSourceRef: stringParam(params, 'targetSourceRef').trim(),
+        requestId: stringParam(params, 'requestId').trim(),
+        recordUid: stringParam(params, 'recordUid').trim(),
+        sendAtMillis: numberParam(params, 'sendAtMillis', 0),
+        ...(stringParam(params, 'commentRecordUid').trim() === '' ? {} : { commentRecordUid: stringParam(params, 'commentRecordUid').trim() }),
+        ...(stringParam(params, 'commentText').trim() === '' ? {} : { commentText: stringParam(params, 'commentText').trim() }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      },
+    )
     case 'source.send-text': {
       const botRefs = botRefsParam(params)
       const humanMentions = humanMentionsParam(params)
       const botMentions = botMentionsParam(params)
       const captureContext = captureContextParam(params)
+      const expectedUserId = fileExpectedUserIdParam(params)
       return await service.sendSourceText(
         stringParam(params, 'sourceRef'),
         stringParam(params, 'textContent'),
@@ -1296,6 +1443,7 @@ export async function dispatchArkmeHostOperation(
           ...(botRefs.length === 0 ? {} : { botRefs }),
           ...(humanMentions.length === 0 ? {} : { humanMentions }),
           ...(botMentions.length === 0 ? {} : { botMentions }),
+          ...(expectedUserId === undefined ? {} : { expectedUserId }),
         },
       )
     }
@@ -1408,18 +1556,32 @@ export async function dispatchArkmeHostOperation(
     case 'files.send.reconcile': return await service.fileSendReconcile(stringParam(params, 'taskRef'))
     case 'files.stage-bytes': return await service.fileStageBytes(stringParam(params, 'contentBase64'), { fileName: stringParam(params, 'fileName'), mimeType: stringParam(params, 'mimeType') || 'application/octet-stream' })
     case 'files.receive': return await service.fileReceive(stringParam(params, 'mediaRef'), booleanParam(params, 'start'))
-    case 'files.send': return await service.fileSend({
-      sourceRef: stringParam(params, 'sourceRef'), recordUid: stringParam(params, 'recordUid'), relationUid: stringParam(params, 'relationUid'),
-      fileRefs: stringListParam(params, 'fileRefs'), content: richSendParam(params),
-    })
-    case 'source.send-rich': return await service.sendSourceRich(
-      stringParam(params, 'sourceRef'),
-      richSendParam(params),
-      {
-        ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
-        ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
-      },
-    )
+    case 'files.send': {
+      const fileRefs = stringListParam(params, 'fileRefs')
+      const backgroundSound = fileBackgroundSoundParam(params, fileRefs)
+      const location = params.location === undefined ? undefined : recordLocationCaptureParam(params)
+      const expectedUserId = fileExpectedUserIdParam(params)
+      return await service.fileSend({
+        sourceRef: stringParam(params, 'sourceRef'), recordUid: stringParam(params, 'recordUid'), relationUid: stringParam(params, 'relationUid'),
+        fileRefs,
+        ...(expectedUserId === undefined ? {} : { expectedUserId }),
+        ...(backgroundSound === undefined ? {} : { backgroundSound }),
+        ...(location === undefined ? {} : { location }),
+        content: richSendParam({ ...params, backgroundSound: undefined }),
+      })
+    }
+    case 'source.send-rich': {
+      const expectedUserId = fileExpectedUserIdParam(params)
+      return await service.sendSourceRich(
+        stringParam(params, 'sourceRef'),
+        richSendParam(params),
+        {
+          ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
+          ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
+          ...(expectedUserId === undefined ? {} : { expectedUserId }),
+        },
+      )
+    }
     case 'favorite-stickers.list': return await service.favoriteStickers()
     case 'favorite-stickers.add': return await service.addFavoriteSticker(favoriteStickerItemParam(params))
     case 'favorite-stickers.send': return await service.sendFavoriteSticker(

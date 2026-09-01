@@ -8,7 +8,7 @@ import { ContactDirectoryService } from '../src/services/contact-directory-servi
 import { MediaService } from '../src/services/media-service.js'
 import { UnmarkedSpeakerService } from '../src/services/unmarked-speaker-service.js'
 import type {
-  ArkmeRecordCursor, ArkmeSelfRecordItem, ArkmeSelfRecordList, ArkmeSelfSummary,
+  ArkmeRecordCursor, ArkmeSelfRecordItem, ArkmeSelfRecordList, ArkmeSelfSummary, ArkmeSourceItem,
   ArkmeUserProfile, ArkmeUserProfileSnapshot,
 } from '../src/types.js'
 
@@ -483,6 +483,34 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('loads the desktop 1970-01 lower-bound calendar and day transcript', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const lowerBound = new Date(1970, 0, 1).getTime()
+    const bodies: Record<string, unknown>[] = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      bodies.push(body)
+      const url = String(input)
+      if (url.endsWith('/api/v1/audio/get-calender-summary')) {
+        return json({ code: 200, data: { duration_ls: [], un_click_session_ids_per_day: [] } })
+      }
+      if (url.endsWith('/api/v1/audio/one-day-trans')) {
+        return json({ code: 200, data: { session_ls: [], child_ls: [] } })
+      }
+      if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
+        return json({ code: 200, data: { spk_ls: [] } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.recordingCalendar(lowerBound, lowerBound + 24 * 60 * 60 * 1_000))
+      .resolves.toMatchObject({ fromStamp: lowerBound, days: [] })
+    await expect(service.recordingTranscript(lowerBound)).resolves.toMatchObject({ state: 'empty', items: [] })
+    expect(bodies).toContainEqual({ from_stamp: lowerBound, to_stamp: lowerBound + 24 * 60 * 60 * 1_000 })
+    expect(bodies).toContainEqual({ start_at: lowerBound, tz_offset: -new Date(lowerBound).getTimezoneOffset() * 60_000 })
+  })
+
   it('reads record calendar buckets and day records from the Record origin', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -662,7 +690,7 @@ describe('ArkmeService', () => {
           session_ls: [{ id: 'session-1', start_at: dayStamp + 1_000, duration: 6_000, belong_usr: 10001,
             spk_ls: [{ num: 1, spk_id: 'speaker-1' }] }],
           child_ls: [{ id: 'child-1', session_id: 'session-1', start_at: 500,
-            asr: [{ s: 100, e: 800, n: 1, t: '今天很顺利', effective_spk_id: 'speaker-1', b: 0 }] }],
+            asr: [{ s: 100, e: 800, n: 1, t: '今天很顺利', b: 0 }] }],
         } })
       }
       if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
@@ -766,15 +794,19 @@ describe('ArkmeService', () => {
         session_ls: [{ id: 'session-1', start_at: dayStamp, duration: 2_000,
           spk_ls: [{ num: 6, spk_id: 'speaker-6' }] }],
         child_ls: [{ id: 'child-1', session_id: 'session-1', start_at: 0,
-          asr: [{ s: 100, e: 900, n: 6, t: '继续讨论', effective_spk_id: 'speaker-6' }] }],
+          asr: [{ s: 100, e: 900, n: 6, t: '继续讨论' }] }],
       } })
     })
 
-    await expect(service.recordingTranscript(dayStamp)).resolves.toMatchObject({
+    const transcript = await service.recordingTranscript(dayStamp)
+    expect(transcript).toMatchObject({
       state: 'ready',
       identityCoverage: 'partial',
       items: [{ speakerLabel: '说话人 6', text: '继续讨论' }],
     })
+    expect(transcript.items[0]).not.toHaveProperty('speakerIdentity')
+    expect(transcript.items[0]).not.toHaveProperty('formalSpeakerId')
+    expect(transcript.items[0]).not.toHaveProperty('assignmentSpeakerNumber')
   })
 
   it('seals recording pagination cursors to the signed-in account and rejects tampering', async () => {
@@ -906,7 +938,10 @@ describe('ArkmeService', () => {
       jiwoScanLoginEnabled: false,
       callAssetBasePath: '/arkme-self/api/call',
       voiceprintEnrollmentPath: '/arkme-self/api/voiceprint/enroll',
+      recordingImportPath: '/arkme-self/api/recording/import',
+      mediaPath: '/arkme-self/api/media',
       shareWebsite: 'https://app.arkme.ai',
+      recordingWorkbenchEnabled: true,
     })
   })
 
@@ -2335,7 +2370,8 @@ describe('ArkmeService', () => {
     await expect(service.markSourceRead(privateRef, 8)).resolves.toMatchObject({
       effectiveReadSequence: 8, unreadCount: 0,
     })
-    expect(calls.at(-1)?.body).toMatchObject({ chat_session_uid: 'chat-private', read_seq: 8 })
+    expect(calls.find(call => call.url.endsWith('/api/v1/chats/cursor/update'))?.body)
+      .toMatchObject({ chat_session_uid: 'chat-private', read_seq: 8 })
     expect(clientEvents[0]).toMatchObject({
       type: 'read-ack',
       sourceRef: privateRef,
@@ -2808,13 +2844,19 @@ describe('ArkmeService', () => {
     requests.length = 0
     await expect(service.sendSourceRich(sourceRef, {
       textContent: '  @Tison 图片  ',
+      assets: [{
+        fileAssetUid: 'asset-mention-image', fileName: 'mention.png', mimeType: 'image/png', size: 3, fileKind: 1,
+      }],
       humanMentions: [{ mentionRef, startIndex: 2, length: 6 }],
     }, {
       recordUid: 'record-rich-human-mention', relationUid: 'relation-rich-human-mention',
     })).resolves.toMatchObject({ itemUid: 'record-rich-human-mention', sequence: 18 })
     expect(requests.at(-1)?.body).toMatchObject({
+      template_kind: 2,
       text_content: '@Tison 图片',
       content_payload: {
+        payload_kind: 2,
+        media_refs: [{ file_asset_uid: 'asset-mention-image', render_role: 1 }],
         mention_metadata: {
           human_mentions: [{ user_id: 2001, display_name_snapshot: 'Tison', start_index: 0, length: 6 }],
         },
@@ -2946,6 +2988,26 @@ describe('ArkmeService', () => {
         mention_metadata: {
           schema_version: 1,
           source_checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
+          human_mentions: [{ user_id: 0, display_name_snapshot: '所有人', start_index: 0, length: 4 }],
+        },
+      },
+    })
+
+    await expect(service.sendSourceRich(sourceRef, {
+      textContent: '@所有人 图片',
+      assets: [{
+        fileAssetUid: 'asset-all-mention-image', fileName: 'all.png', mimeType: 'image/png', size: 3, fileKind: 1,
+      }],
+      humanMentions: [{ all: true, startIndex: 0, length: 4 }],
+    }, {
+      recordUid: 'record-rich-all-mention', relationUid: 'relation-rich-all-mention',
+    })).resolves.toMatchObject({ itemUid: 'record-rich-all-mention', sequence: 18 })
+    expect(requests.at(-1)?.body).toMatchObject({
+      template_kind: 2,
+      content_payload: {
+        payload_kind: 2,
+        media_refs: [{ file_asset_uid: 'asset-all-mention-image', render_role: 1 }],
+        mention_metadata: {
           human_mentions: [{ user_id: 0, display_name_snapshot: '所有人', start_index: 0, length: 4 }],
         },
       },
@@ -3379,16 +3441,60 @@ describe('ArkmeService', () => {
     expect(JSON.stringify(sources)).not.toContain('x-oss-signature')
     expect(profileReads).toBe(1)
 
-    await expect(service.readImage(sources.items[0]!.avatarRef!)).resolves.toMatchObject({
+    const sourceCache = (service as unknown as { source: {
+      cachedChatSource(userId: number, chatSessionUid: string): ArkmeSourceItem | undefined
+      chatSourceFromBundle(
+        bundle: Record<string, unknown>,
+        session: ArkmeSessionCredentials,
+        cached: ArkmeSourceItem | undefined,
+        timelineItems: [],
+      ): Promise<ArkmeSourceItem>
+    } }).source
+    const cachedPrivate = sourceCache.cachedChatSource(10001, 'private-1')
+    const cachedGroup = sourceCache.cachedChatSource(10001, 'group-1')
+    expect(cachedPrivate).toMatchObject({
+      peerUserId: 20002,
+      avatarRef: sources.items[0]?.avatarRef,
+    })
+    expect(cachedGroup).toMatchObject({
+      avatarRefs: sources.items[1]?.avatarRefs,
+      groupAvatar: sources.items[1]?.groupAvatar,
+    })
+
+    sources.items[0]!.avatarRef = 'mutated-private-avatar'
+    sources.items[1]!.avatarRefs![0] = 'mutated-group-avatar'
+    sources.items[1]!.groupAvatar!.slots[0]!.avatarRef = 'mutated-group-presentation'
+    expect(sourceCache.cachedChatSource(10001, 'private-1')?.avatarRef).not.toBe('mutated-private-avatar')
+    expect(sourceCache.cachedChatSource(10001, 'group-1')?.avatarRefs?.[0]).not.toBe('mutated-group-avatar')
+    expect(sourceCache.cachedChatSource(10001, 'group-1')?.groupAvatar?.slots[0]?.avatarRef)
+      .not.toBe('mutated-group-presentation')
+
+    const session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    await expect(sourceCache.chatSourceFromBundle({
+      session: { chat_session_uid: 'private-1', session_kind: 1, last_active_at: 3, last_seq: 1 },
+      private_counterpart: { user_id: 20002, display_name_snapshot: '联系人' },
+      unread_snapshot: { unread_count: 1, session_last_seq: 1 },
+    }, session, sourceCache.cachedChatSource(10001, 'private-1'), [])).resolves.toMatchObject({
+      avatarRef: cachedPrivate?.avatarRef,
+    })
+    await expect(sourceCache.chatSourceFromBundle({
+      session: { chat_session_uid: 'group-1', session_kind: 2, title: '群聊', last_active_at: 3, last_seq: 1 },
+      unread_snapshot: { unread_count: 1, session_last_seq: 1 },
+    }, session, sourceCache.cachedChatSource(10001, 'group-1'), [])).resolves.toMatchObject({
+      avatarRefs: cachedGroup?.avatarRefs,
+      groupAvatar: cachedGroup?.groupAvatar,
+    })
+
+    await expect(service.readImage(cachedPrivate!.avatarRef!)).resolves.toMatchObject({
       mediaType: 'image/png', bytes: png.byteLength,
     })
-    await expect(service.readImage(sources.items[0]!.avatarRef!)).resolves.toMatchObject({
+    await expect(service.readImage(cachedPrivate!.avatarRef!)).resolves.toMatchObject({
       mediaType: 'image/png', bytes: png.byteLength,
     })
     expect(profileReads).toBe(1)
     expect(imageDownloads).toBe(1)
     sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
-    await expect(service.readImage(sources.items[0]!.avatarRef!)).rejects.toMatchObject({ code: 'image-ref-invalid' })
+    await expect(service.readImage(cachedPrivate!.avatarRef!)).rejects.toMatchObject({ code: 'image-ref-invalid' })
   })
 
   it('bounds concurrent image downloads at the Host cache boundary', async () => {
@@ -5330,10 +5436,11 @@ describe('ArkmeService', () => {
     expect(sentBodies[0]).toMatchObject({
       chat_session_uid: 'chat-media', record_uid: 'record-rich', rel_uid: 'relation-rich', template_kind: 2,
       content_payload: { media_refs: [{
-        file_asset_uid: 'asset-12345678', render_role: 1, file_name: '示例.png', file_kind: 1,
-        mime_type: 'image/png', size: 3,
+        file_asset_uid: 'asset-12345678', content_file_role: 1, render_role: 1,
+        sort_order: 0, file_name: '示例.png',
       }] },
     })
+    expect(JSON.stringify(sentBodies[0]?.content_payload)).not.toMatch(/file_type|file_kind|mime_type|"size"/u)
     await expect(service.sendSourceRich(sourceRef, {
       title: '长文标题', textContent: '长文正文', displayKind: 1, thinkingDurationMillis: 4200,
     }, { recordUid: 'record-long-article', relationUid: 'relation-long-article' }))

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { act, create } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
 import {
   appendWorldPublishFiles,
@@ -27,6 +28,7 @@ import {
   worldInteractionCountLabel,
   worldInteractionThreads,
   worldExtensionShelfPreview,
+  worldExtensionPublicationTextContent,
   worldScopeScrollTransition,
   type ArkmeWorldViewState,
   applyWorldAuthorLabels,
@@ -44,6 +46,8 @@ const actions = {
   onOpenInteractions: noop,
   onToggleVoiceprint: noop,
 }
+const extensionShareRef = 'extshare_0123456789abcdef0123456789abcdef'
+const extensionShareUrl = `https://jiwo.cc/app/share/extension/${extensionShareRef}`
 
 function styleForDataAttribute(markup: string, attribute: string, value: string): string {
   const tag = markup.match(/<[^>]+>/g)?.find(candidate => candidate.includes(`${attribute}="${value}"`))
@@ -80,6 +84,7 @@ const extensionPublicationItem: ArkmeWorldFeedItem = {
     version: '1.0.4',
     name: '井字棋（联机版）',
     description: '通过 Arkme 私聊进行公平、轻松的井字棋联机对战。',
+    share: { ref: extensionShareRef, url: extensionShareUrl },
     previewRefs: [],
     visibility: 'public',
     desktopRequired: true,
@@ -194,19 +199,74 @@ describe('Arkme native World surface', () => {
   it('renders extension publications as compact feed-native attachments', () => {
     const markup = render({ status: 'success', items: [extensionPublicationItem] }, new Set())
     const activityStyle = styleForDataAttribute(markup, 'data-world-extension-activity', 'compact')
+    const playableMarkup = render({ status: 'success', items: [extensionPublicationItem] }, new Set(['world_extension_1']))
 
-    expect(activityStyle).toContain('grid-template-columns:48px minmax(0,1fr) auto')
+    expect(activityStyle).toContain('grid-template-columns:48px minmax(0,1fr)')
     expect(activityStyle).toContain('border:0')
     expect(activityStyle).toContain('background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))')
+    expect(activityStyle).toContain('cursor:pointer')
+    expect(markup).toContain('aria-label="邀请陈一涵开启声纹"')
+    expect(markup).toContain('data-world-voiceprint-invite-icon="microphone"')
+    expect(playableMarkup).toContain('aria-label="播放陈一涵的声纹"')
     expect(markup).toContain('>井字棋（联机版）<')
     expect(markup).toContain('>v1.0.4<')
     expect(markup).toContain('>已上架<')
     expect(markup).toContain('>桌面端<')
-    expect(markup).toContain('>查看详情<')
-    expect(markup).toContain('aria-label="在市集中查看井字棋（联机版）"')
+    expect(markup.indexOf('通过 Arkme 私聊进行公平、轻松的井字棋联机对战。')).toBeLessThan(markup.indexOf(extensionShareUrl))
+    expect(markup).toContain('data-world-extension-share-link="true"')
+    expect(markup).toContain(`href="${extensionShareUrl}"`)
+    expect(markup).toContain(`>${extensionShareUrl}</a>`)
+    expect(markup).toContain('rel="noopener noreferrer"')
+    expect(markup).not.toContain('>查看详情<')
+    expect(markup).not.toContain('arkme-world-extension-open')
+    expect(markup).toContain('role="button"')
+    expect(markup).toContain('tabindex="0"')
+    expect(markup).toContain('aria-label="井字棋（联机版）插件发布动态，点击在市集中查看"')
     expect(markup).not.toContain('在市集中查看</button>')
     expect(styleForDataAttribute(markup, 'data-world-extension-open', 'detail'))
-      .toContain('background:transparent')
+      .toContain('cursor:pointer')
+  })
+
+  it('opens extension details from the whole publication card', () => {
+    const opened: string[] = []
+    const renderer = create(<ArkmeWorldContent
+      state={{ status: 'success', items: [extensionPublicationItem] }}
+      scope="all"
+      voiceprintPlayableRefs={new Set()}
+      voiceprintRecordRef={undefined}
+      {...actions}
+      onOpenExtension={extensionId => { opened.push(extensionId) }}
+    />)
+    const activity = renderer.root.findByProps({ 'data-world-extension-open': 'detail' })
+    expect(activity.type).toBe('section')
+
+    act(() => { activity.props.onClick() })
+    const keyboardTarget = {}
+    const preventDefault = vi.fn()
+    act(() => {
+      activity.props.onKeyDown({
+        currentTarget: keyboardTarget,
+        target: keyboardTarget,
+        key: 'Enter',
+        preventDefault,
+      })
+    })
+
+    expect(opened).toEqual(['arkme-tic-tac-toe', 'arkme-tic-tac-toe'])
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    renderer.unmount()
+  })
+
+  it('appends extension share links after publication text when the feed carries copy', () => {
+    const feedCopy = '发布了一个新的联机小游戏'
+    const itemWithCopy = { ...extensionPublicationItem, textContent: feedCopy }
+    const markup = render({ status: 'success', items: [itemWithCopy] }, new Set())
+
+    expect(worldExtensionPublicationTextContent(itemWithCopy)).toBe(`${feedCopy}\n${extensionShareUrl}`)
+    expect(markup.indexOf(feedCopy)).toBeLessThan(markup.indexOf(extensionShareUrl))
+    expect(markup).toContain('data-arkme-text-link="true"')
+    expect(markup).toContain(`href="${extensionShareUrl}"`)
+    expect(markup).not.toContain('data-world-extension-share-link="true"')
   })
 
   it('keeps the expanded comment panel and composer on one semantic surface', () => {

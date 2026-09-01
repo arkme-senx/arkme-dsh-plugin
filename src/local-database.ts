@@ -16,6 +16,7 @@ import type {
   ArkmeUserProfileSnapshot,
 } from './types.js'
 import type { ArkmeExtensionReviewOperation } from './extensions/types.js'
+import type { RecordingImportJob } from './recording-import-contract.js'
 import { securePrivateDirectorySync, securePrivateFileSync } from './private-filesystem.js'
 
 type CacheState = 'synced' | 'pending' | 'failed'
@@ -72,7 +73,7 @@ export class ArkmeLocalDatabase {
   private readonly migrations = new Map<number, Promise<void>>()
   private readonly securedWindowsFiles = new Set<string>()
 
-  constructor(directory: string, private readonly legacy: ArkmeStateStore) {
+  constructor(directory: string, private readonly operationalState: ArkmeStateStore) {
     mkdirSync(directory, { recursive: true, mode: 0o700 })
     securePrivateDirectorySync(directory)
     this.path = join(directory, 'records.sqlite3')
@@ -170,7 +171,7 @@ export class ArkmeLocalDatabase {
   }
 
   async uniqueCode(): Promise<string> {
-    return await this.legacy.uniqueCode()
+    return await this.operationalState.uniqueCode()
   }
 
   async cachedSnapshot(userId: number): Promise<ArkmeCachedSnapshot> {
@@ -468,15 +469,47 @@ export class ArkmeLocalDatabase {
   }
 
   async getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined> {
-    return await this.legacy.getLongArticleDraft(userId, sourceRef, itemUid)
+    return await this.operationalState.getLongArticleDraft(userId, sourceRef, itemUid)
   }
 
   async putLongArticleDraft(userId: number, draft: ArkmeLongArticleDraft): Promise<void> {
-    await this.legacy.putLongArticleDraft(userId, draft)
+    await this.operationalState.putLongArticleDraft(userId, draft)
   }
 
   async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void> {
-    await this.legacy.removeLongArticleDraft(userId, sourceRef, itemUid)
+    await this.operationalState.removeLongArticleDraft(userId, sourceRef, itemUid)
+  }
+
+  async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
+    return await this.operationalState.listRecordingImportJobs(userId)
+  }
+
+  async listAllRecordingImportJobs(): Promise<RecordingImportJob[]> {
+    return await this.operationalState.listAllRecordingImportJobs()
+  }
+
+  async getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined> {
+    return await this.operationalState.getRecordingImportJob(userId, jobId)
+  }
+
+  async putRecordingImportJob(userId: number, job: RecordingImportJob): Promise<void> {
+    await this.operationalState.putRecordingImportJob(userId, job)
+  }
+
+  async admitRecordingImportJob(
+    userId: number,
+    job: RecordingImportJob,
+    unresolvedLimit: number,
+  ): ReturnType<ArkmeStateStore['admitRecordingImportJob']> {
+    return await this.operationalState.admitRecordingImportJob(userId, job, unresolvedLimit)
+  }
+
+  async replaceRecordingImportJob(
+    userId: number,
+    job: RecordingImportJob,
+    expectedRevision: number,
+  ): Promise<boolean> {
+    return await this.operationalState.replaceRecordingImportJob(userId, job, expectedRevision)
   }
 
   async markAttempt(userId: number, recordUid: string, error: string): Promise<void> {
@@ -614,9 +647,9 @@ export class ArkmeLocalDatabase {
     const existing = this.migrations.get(userId)
     if (existing !== undefined) return await existing
     const migration = (async () => {
-      const pending = await this.legacy.listPending(userId)
+      const pending = await this.operationalState.listPending(userId)
       for (const item of pending) this.insertPending(userId, item)
-      for (const item of pending) await this.legacy.removePending(userId, item.recordUid)
+      for (const item of pending) await this.operationalState.removePending(userId, item.recordUid)
       if (pending.length > 0) this.bumpRevision(userId)
       this.secureDatabaseFiles()
     })()

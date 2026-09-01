@@ -35,7 +35,7 @@ describe('group AI polish settings popover', () => {
     currentSettings = structuredClone(settings)
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
       if (operation === 'group.settings') return {
-        source, selfRole: 'member', selfStatus: 'active', canRename: false,
+        target: source, selfRole: 'member', selfStatus: 'active', canRename: false,
         canDissolve: false, canLeave: true, messageDnd: false,
       }
       if (operation === 'source.ai-polish.settings') return currentSettings
@@ -71,7 +71,9 @@ describe('group AI polish settings popover', () => {
         overlayHostRef={{ current: {} as HTMLElement }}
         aiPolishSettings={settings}
         onAiPolishSettingsChanged={() => {}}
-        onSourceActivated={() => {}}
+        onSourceProjectionUpdated={() => {}}
+        onMembershipChanged={() => {}}
+        onMessageDndUpdated={() => {}}
         onMemberOpen={() => {}}
         onMemberContextMenu={() => {}}
         onError={() => {}}
@@ -106,7 +108,9 @@ describe('group AI polish settings popover', () => {
         overlayHostRef={{ current: {} as HTMLElement }}
         aiPolishSettings={currentSettings}
         onAiPolishSettingsChanged={() => {}}
-        onSourceActivated={() => {}}
+        onSourceProjectionUpdated={() => {}}
+        onMembershipChanged={() => {}}
+        onMessageDndUpdated={() => {}}
         onMemberOpen={() => {}}
         onMemberContextMenu={() => {}}
         onError={() => {}}
@@ -130,6 +134,7 @@ describe('group AI polish settings popover', () => {
 
   it('does not report the expected group-settings cancellation when opening AI polish', async () => {
     const onError = vi.fn()
+    const onSourceProjectionUpdated = vi.fn()
     mocks.callArkme.mockImplementation(async (operation: string, _params?: Record<string, unknown>, signal?: AbortSignal) => {
       if (operation === 'group.settings') return await new Promise((_resolve, reject) => {
         signal?.addEventListener('abort', () => {
@@ -145,7 +150,9 @@ describe('group AI polish settings popover', () => {
         overlayHostRef={{ current: {} as HTMLElement }}
         aiPolishSettings={settings}
         onAiPolishSettingsChanged={() => {}}
-        onSourceActivated={() => {}}
+        onSourceProjectionUpdated={onSourceProjectionUpdated}
+        onMembershipChanged={() => {}}
+        onMessageDndUpdated={() => {}}
         onMemberOpen={() => {}}
         onMemberContextMenu={() => {}}
         onError={onError}
@@ -164,6 +171,7 @@ describe('group AI polish settings popover', () => {
 
     expect(renderer!.root.findByProps({ 'aria-label': 'AI 表达润色' })).toBeDefined()
     expect(onError).not.toHaveBeenCalled()
+    expect(onSourceProjectionUpdated).not.toHaveBeenCalled()
   })
 
   it('loads AI polish settings as soon as the menu opens instead of waiting for the timeline', async () => {
@@ -173,7 +181,9 @@ describe('group AI polish settings popover', () => {
         source={source}
         overlayHostRef={{ current: {} as HTMLElement }}
         onAiPolishSettingsChanged={changed}
-        onSourceActivated={() => {}}
+        onSourceProjectionUpdated={() => {}}
+        onMembershipChanged={() => {}}
+        onMessageDndUpdated={() => {}}
         onMemberOpen={() => {}}
         onMemberContextMenu={() => {}}
         onError={() => {}}
@@ -198,7 +208,7 @@ describe('group AI polish settings popover', () => {
   it('ends the menu loading state when the settings request fails', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'group.settings') return {
-        source, selfRole: 'member', selfStatus: 'active', canRename: false,
+        target: source, selfRole: 'member', selfStatus: 'active', canRename: false,
         canDissolve: false, canLeave: true, messageDnd: false,
       }
       if (operation === 'source.ai-polish.settings') throw new Error('request failed')
@@ -208,7 +218,9 @@ describe('group AI polish settings popover', () => {
       renderer = create(<ArkmeGroupChatControls
         source={source}
         overlayHostRef={{ current: {} as HTMLElement }}
-        onSourceActivated={() => {}}
+        onSourceProjectionUpdated={() => {}}
+        onMembershipChanged={() => {}}
+        onMessageDndUpdated={() => {}}
         onMemberOpen={() => {}}
         onMemberContextMenu={() => {}}
         onError={() => {}}
@@ -234,7 +246,9 @@ describe('group AI polish settings popover', () => {
         overlayHostRef={{ current: {} as HTMLElement }}
         aiPolishSettings={currentSettings}
         onAiPolishSettingsChanged={changed}
-        onSourceActivated={() => {}}
+        onSourceProjectionUpdated={() => {}}
+        onMembershipChanged={() => {}}
+        onMessageDndUpdated={() => {}}
         onMemberOpen={() => {}}
         onMemberContextMenu={() => {}}
         onError={() => {}}

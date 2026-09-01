@@ -1,11 +1,19 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  arkmeNotificationPermissionLabel,
   buildArkmeAppUpdateRow,
   updateVersionText,
 } from '../src/client/ArkmeSettingsSurface.js'
 
 describe('Arkme settings policy', () => {
+  it('does not report an Electron bridge without permission introspection as granted', () => {
+    expect(arkmeNotificationPermissionLabel('system-managed')).toBe('由系统管理')
+    expect(arkmeNotificationPermissionLabel('granted')).toBe('已开启')
+    expect(arkmeNotificationPermissionLabel('denied')).toBe('系统通知未开启，点击前往设置')
+    expect(arkmeNotificationPermissionLabel('default')).toBe('尚未授权，点击开启')
+  })
+
   it('hides the latest version label when current and latest versions match', () => {
     expect(updateVersionText('v0.1.10', 'v0.1.10')).toBe('当前 v0.1.10 · 已是最新版本')
     expect(updateVersionText('v0.1.10', 'v0.1.11')).toBe('当前 v0.1.10 → 最新 v0.1.11')

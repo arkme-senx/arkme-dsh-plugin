@@ -13,7 +13,9 @@ describe('group chat header dark-mode contract', () => {
         activeAtMillis: 1, unreadCount: 0,
       }}
       overlayHostRef={createRef<HTMLElement>()}
-      onSourceActivated={() => {}}
+      onSourceProjectionUpdated={() => {}}
+      onMembershipChanged={() => {}}
+      onMessageDndUpdated={() => {}}
       onError={() => {}}
     />)
 

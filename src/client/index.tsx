@@ -14,8 +14,14 @@ import {
 } from './ArkmePersistentShell.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeAppUpdateStore } from './app-update-store.js'
-import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
-import { arkmeNotificationActivation } from './notification-activation-store.js'
+import {
+  arkmeDesktopNotifications,
+  type ArkmeDesktopNotificationActivation,
+  type ArkmeDesktopNotificationActivationOutcome,
+} from './desktop-notification-runtime.js'
+import {
+  arkmeNotificationActivation, type ArkmeNotificationActivationSnapshot,
+} from './notification-activation-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
 import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested } from './DeepSeekHarnessSurface.js'
@@ -32,13 +38,13 @@ function ArkmeDshSettingsSection() {
 }
 
 async function resolveNotificationSource(
-  activation: { sourceRef: string; sourceKey?: string },
+  activation: ArkmeDesktopNotificationActivation,
   signal: AbortSignal,
-): Promise<ArkmeSourceItem | undefined> {
+): Promise<{ source?: ArkmeSourceItem; lookup: 'cache' | 'page' | 'miss' }> {
   const matches = (source: ArkmeSourceItem) => source.sourceRef === activation.sourceRef
     || (activation.sourceKey !== undefined && source.sourceKey === activation.sourceKey)
   const cached = arkmeChatDirectory.getSnapshot().sources.find(matches)
-  if (cached !== undefined) return cached
+  if (cached !== undefined) return { source: cached, lookup: 'cache' }
   let cursor: string | undefined
   for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
     const page = await callArkme<ArkmeSourceList>('sources.list', {
@@ -48,11 +54,25 @@ async function resolveNotificationSource(
       ...(cursor === undefined ? {} : { cursor }),
     }, signal)
     const source = page.items.find(matches)
-    if (source !== undefined) return source
-    if (!page.hasMore || page.nextCursor === undefined) return undefined
+    if (source !== undefined) return { source, lookup: 'page' }
+    if (!page.hasMore || page.nextCursor === undefined) return { lookup: 'miss' }
     cursor = page.nextCursor
   }
-  return undefined
+  return { lookup: 'miss' }
+}
+
+function logNotificationActivation(
+  stage: string,
+  activation: Pick<ArkmeDesktopNotificationActivation, 'activationId' | 'sourceKey'>,
+  details: { lookup?: 'cache' | 'page' | 'miss'; outcome?: ArkmeDesktopNotificationActivationOutcome } = {},
+): void {
+  console.info('dsh-arkme: notification_activation', JSON.stringify({
+    stage,
+    ...(activation.activationId === undefined ? {} : { activationId: activation.activationId }),
+    hasSourceKey: activation.sourceKey !== undefined,
+    ...(details.lookup === undefined ? {} : { lookup: details.lookup }),
+    ...(details.outcome === undefined ? {} : { outcome: details.outcome }),
+  }))
 }
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
@@ -84,26 +104,83 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update status')
   ctx.effect(() => {
     let disposed = false
-    let activationGeneration = 0
-    let controller: AbortController | undefined
+    let resolving: {
+      activation: ArkmeDesktopNotificationActivation
+      controller: AbortController
+    } | undefined
+    const complete = (
+      activation: ArkmeDesktopNotificationActivation,
+      outcome: ArkmeDesktopNotificationActivationOutcome,
+      lookup?: 'cache' | 'page' | 'miss',
+    ): void => {
+      logNotificationActivation('complete', activation, { outcome, ...(lookup === undefined ? {} : { lookup }) })
+      if (activation.activationId !== undefined) {
+        void arkmeDesktopNotifications.completeActivationV2(activation.activationId, outcome)
+      }
+    }
+    const completeDisplaced = (snapshot: ArkmeNotificationActivationSnapshot | undefined): void => {
+      if (snapshot?.source === undefined) return
+      complete({
+        ...(snapshot.activationId === undefined ? {} : { activationId: snapshot.activationId }),
+        sourceRef: snapshot.source.sourceRef,
+        ...(snapshot.source.sourceKey === undefined ? {} : { sourceKey: snapshot.source.sourceKey }),
+      }, 'superseded')
+    }
+    const supersedePendingCommit = (): void => {
+      const pending = arkmeNotificationActivation.getSnapshot()
+      if (pending.source === undefined || !arkmeNotificationActivation.consume(pending.revision)) return
+      completeDisplaced(pending)
+    }
     const stop = arkmeDesktopNotifications.onActivated(activation => {
-      const generation = ++activationGeneration
-      controller?.abort()
+      if (activation.activationId !== undefined) {
+        if (resolving?.activation.activationId === activation.activationId) {
+          logNotificationActivation('duplicate-resolving', activation)
+          return
+        }
+        const pending = arkmeNotificationActivation.getSnapshot()
+        if (pending.source !== undefined && pending.activationId === activation.activationId) {
+          logNotificationActivation('duplicate-pending', activation)
+          return
+        }
+      }
+      const previous = resolving
+      resolving = undefined
+      if (previous !== undefined) {
+        previous.controller.abort()
+        complete(previous.activation, 'superseded')
+      }
+      supersedePendingCommit()
       const request = new AbortController()
-      controller = request
-      void resolveNotificationSource(activation, request.signal).then(source => {
-        if (disposed || generation !== activationGeneration || source === undefined) return
+      resolving = { activation, controller: request }
+      logNotificationActivation('resolve-start', activation)
+      void resolveNotificationSource(activation, request.signal).then(result => {
+        if (disposed || resolving?.controller !== request) return
+        if (result.source === undefined) {
+          resolving = undefined
+          complete(activation, 'not-found', result.lookup)
+          return
+        }
+        const source = result.source
+        logNotificationActivation('resolve-hit', activation, { lookup: result.lookup })
         arkmeChatDirectory.upsert(source)
-        arkmeUi.selectSource(source)
-        arkmeNotificationActivation.publish(source)
-      }).catch(error => {
-        if (!request.signal.aborted) console.warn('dsh-arkme: notification_source_resolve_failed', error)
+        arkmeUi.activateNotificationSource(source)
+        completeDisplaced(arkmeNotificationActivation.publish(activation.activationId, source))
+        resolving = undefined
+      }).catch(() => {
+        if (disposed || resolving?.controller !== request) return
+        resolving = undefined
+        complete(activation, request.signal.aborted ? 'superseded' : 'failed')
       })
     })
     return () => {
       disposed = true
-      activationGeneration += 1
-      controller?.abort()
+      const active = resolving
+      resolving = undefined
+      if (active !== undefined) {
+        active.controller.abort()
+        complete(active.activation, 'superseded')
+      }
+      supersedePendingCommit()
       stop()
     }
   }, 'dsh-arkme: activate message notification sources')

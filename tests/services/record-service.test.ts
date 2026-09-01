@@ -76,6 +76,22 @@ describe('RecordService', () => {
     expect(pending).toEqual([])
   })
 
+  it('does not create a pending record under a different current account', async () => {
+    const putPending = vi.fn()
+    const service = new RecordService({
+      config: { maxTextLength: 20_000 },
+      requireSession: async () => ({ userId: 43, accessToken: 'access', refreshToken: 'refresh' }),
+      stateStore: { putPending },
+    } as never, {} as never, {} as never)
+
+    await expect(service.createTextForConversation(
+      'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
+      '账号 A 的输入',
+      { expectedUserId: 42 },
+    )).rejects.toMatchObject({ code: 'file-account-changed' })
+    expect(putPending).not.toHaveBeenCalled()
+  })
+
   it('reads and caches the self-record summary', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

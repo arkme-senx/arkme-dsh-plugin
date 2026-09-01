@@ -70,7 +70,12 @@ describe('Arkme send-to-self source list', () => {
     expect(arkmeRootChatPreviewParts(groupChat)).toEqual({ mentionPrefix: '[有人@我] ', preview: '@所有人 开会' })
     expect(arkmeRootChatUnreadPlacement(groupChat)).toBe('avatar')
     expect(arkmeRootChatPreview(privateChat)).toBe('私聊消息')
-    expect(arkmeRootChatUnreadPlacement(privateChat)).toBe('inline')
+    expect(arkmeRootChatPreview({ ...privateChat, latestPreview: '[jm_emoji:silent_face]' })).toBe('😶')
+    expect(arkmeRootChatUnreadPlacement(privateChat)).toBe('avatar')
+    expect(arkmeRootChatUnreadPlacement({ ...groupChat, isMuted: true, badgeUnreadCount: 0 })).toBe('dot')
+    expect(arkmeRootChatUnreadPlacement({
+      ...groupChat, isMuted: true, notificationAllowed: false, unreadCount: 0, badgeUnreadCount: 0,
+    })).toBe('none')
   })
 
   it('globally sorts parents and children for card modes without mutating its input', () => {

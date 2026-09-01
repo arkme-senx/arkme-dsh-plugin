@@ -15,6 +15,179 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('uses the server-owned full unread summary instead of summing the current page', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async (_input, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual({ limit: 1 })
+      return new Response(JSON.stringify({ code: 200, data: {
+        // The first page is intentionally incomplete; summary covers later pages too.
+        items: [{ unread_snapshot: { unread_count: 1 } }],
+        has_more: true,
+        next_page_cursor: { sort_active_at: 1, chat_session_uid: 'page-2' },
+        summary: {
+          badge_count: 61,
+          muted_unread_count: 120,
+          session_count_with_unread: 55,
+          // Ordinary unread without a human mention is valid.
+          has_attention: false,
+          summary_version: 1000,
+          updated_at: 1000,
+        },
+      } }), { status: 200 })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+
+    await expect(service.chatUnreadBadgeSummary()).resolves.toEqual({
+      badgeCount: 61,
+      mutedUnreadCount: 120,
+      sessionCountWithUnread: 55,
+      hasAttention: false,
+      summaryVersion: 1000,
+      updatedAtMillis: 1000,
+    })
+  })
+
+  it('retains the last successful chat avatars when profile and group hydration temporarily fail', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const privateAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/private.png?x-oss-signature=private'
+    const groupAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/group.png?x-oss-signature=group'
+    let hydrationUnavailable = false
+    const fetchImpl = vi.fn(async (input) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/v1/chats/list') return new Response(JSON.stringify({ code: 200, data: {
+        items: [{
+          session: { chat_session_uid: 'private-1', session_kind: 1, last_active_at: 2 },
+          private_counterpart: { user_id: 7, display_name_snapshot: '联系人' },
+          unread_snapshot: { unread_count: 1 },
+        }, {
+          session: { chat_session_uid: 'group-1', session_kind: 2, title: '项目群', last_active_at: 1 },
+          unread_snapshot: { unread_count: 1 },
+        }],
+        has_more: false,
+      } }), { status: 200 })
+      if (path === '/api/v1/chats/group-avatar-snapshots') {
+        if (hydrationUnavailable) throw new Error('group avatars unavailable')
+        return new Response(JSON.stringify({ code: 200, data: { items: [{
+          chat_session_uid: 'group-1', member_count: 1, strategy: 'owner_recent_speakers',
+          computed_at: 1, members: [{ user_id: 8 }],
+        }] } }), { status: 200 })
+      }
+      if (path === '/api/v1/auth/get-public-users-by-ids') {
+        if (hydrationUnavailable) throw new Error('profiles unavailable')
+        return new Response(JSON.stringify({ code: 200, data: { items: [
+          { user_id: 7, nick_name: '联系人', head_img: privateAvatar },
+          { user_id: 8, nick_name: '群成员', head_img: groupAvatar },
+        ] } }), { status: 200 })
+      }
+      throw new Error(`unexpected path: ${path}`)
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, fetchImpl)
+    const profile = new ProfileService(runtime)
+    const service = new SourceService(runtime, profile, {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+    const hydrated = await service.listSources('root', { refresh: true })
+    const privateAvatarRef = hydrated.items[0]?.avatarRef
+    const groupAvatarRefs = hydrated.items[1]?.avatarRefs
+    const groupPresentation = hydrated.items[1]?.groupAvatar
+    expect(privateAvatarRef).toMatch(/^arkme-profile-image-v1\./)
+    expect(groupAvatarRefs).toHaveLength(1)
+    expect(groupPresentation?.slots).toHaveLength(1)
+
+    hydrationUnavailable = true
+    profile.invalidate()
+    service.invalidateGroupAvatar(42, 'group-1')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const result = await service.listSources('root', { refresh: true })
+      expect(result.items[0]).toMatchObject({ avatarRef: privateAvatarRef })
+      expect(result.items[1]).toMatchObject({
+        avatarRefs: groupAvatarRefs,
+        groupAvatar: groupPresentation,
+      })
+      expect(service.cachedChatSource(42, 'private-1')).toMatchObject({ avatarRef: privateAvatarRef })
+      expect(service.cachedChatSource(42, 'group-1')).toMatchObject({
+        avatarRefs: groupAvatarRefs,
+        groupAvatar: groupPresentation,
+      })
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('lets a successful complete avatar baseline remove previous chat avatars', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async (input) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/v1/chats/list') return new Response(JSON.stringify({ code: 200, data: {
+        items: [{
+          session: { chat_session_uid: 'private-1', session_kind: 1, last_active_at: 2 },
+          private_counterpart: { user_id: 7, display_name_snapshot: '联系人' },
+          unread_snapshot: { unread_count: 1 },
+        }, {
+          session: { chat_session_uid: 'group-1', session_kind: 2, title: '项目群', last_active_at: 1 },
+          unread_snapshot: { unread_count: 1 },
+        }],
+        has_more: false,
+      } }), { status: 200 })
+      if (path === '/api/v1/chats/group-avatar-snapshots') {
+        return new Response(JSON.stringify({ code: 200, data: { items: [] } }), { status: 200 })
+      }
+      if (path === '/api/v1/auth/get-public-users-by-ids') {
+        return new Response(JSON.stringify({ code: 200, data: {
+          items: [{ user_id: 7, nick_name: '联系人', head_img: '' }],
+        } }), { status: 200 })
+      }
+      throw new Error(`unexpected path: ${path}`)
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+    service.setChatSource(42, 'private-1', {
+      sourceRef: 'private-source', kind: 'private_chat', displayName: '联系人', activeAtMillis: 1,
+      unreadCount: 0, avatarRef: 'last-private-avatar',
+    })
+    service.setChatSource(42, 'group-1', {
+      sourceRef: 'group-source', kind: 'group_chat', displayName: '项目群', activeAtMillis: 1,
+      unreadCount: 0, avatarRefs: ['last-group-avatar'],
+      groupAvatar: {
+        memberCount: 1, strategy: 'owner_recent_speakers', computedAtMillis: 1,
+        slots: [{ avatarRef: 'last-group-avatar' }],
+      },
+    })
+
+    const result = await service.listSources('root', { refresh: true })
+
+    expect(result.items[0]).not.toHaveProperty('avatarRef')
+    expect(result.items[1]).not.toHaveProperty('avatarRefs')
+    expect(result.items[1]).not.toHaveProperty('groupAvatar')
+    expect(service.cachedChatSource(42, 'private-1')).not.toHaveProperty('avatarRef')
+    expect(service.cachedChatSource(42, 'group-1')).not.toHaveProperty('avatarRefs')
+    expect(service.cachedChatSource(42, 'group-1')).not.toHaveProperty('groupAvatar')
+  })
+
   it('keeps chat directory attachment previews aligned with the real media kind', () => {
     expect(arkmeChatConversationPreview({
       content_payload: { media_refs: [{ file_asset_uid: 'pdf-asset', file_name: '方案.pdf', file_kind: 4, mime_type: 'application/pdf' }] },

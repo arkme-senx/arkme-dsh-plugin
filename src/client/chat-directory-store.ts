@@ -1,4 +1,5 @@
 import type { ArkmeSourceItem, ArkmeSourceList } from '../types.js'
+import { arkmeBadgeUnreadCount, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { callArkme } from './api.js'
 import { arkmeChatSourceIdentityKey, arkmeSourceIdentityKey } from './source-identity.js'
 
@@ -57,6 +58,11 @@ function normalizedCount(value: number): number {
 
 function normalizedSequence(value: number | undefined): number {
   return Number.isSafeInteger(value) && (value ?? 0) > 0 ? value ?? 0 : 0
+}
+
+function projectSourceAttention(source: ArkmeSourceItem, unreadCount = source.unreadCount): ArkmeSourceItem {
+  if (source.kind !== 'private_chat' && source.kind !== 'group_chat') return source
+  return { ...source, ...projectArkmeChatAttentionFromMuted(unreadCount, source.isMuted === true) }
 }
 
 function normalizedSourceKey(value: string | undefined): string | undefined {
@@ -122,7 +128,7 @@ function applyReadWatermark(
   const hasUnreadMention = unreadCount <= 0 && source.hasUnreadMention !== undefined ? false : source.hasUnreadMention
   return unreadCount === source.unreadCount && hasUnreadMention === source.hasUnreadMention
     ? source
-    : { ...source, unreadCount, ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }) }
+    : projectSourceAttention({ ...source, unreadCount, ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }) })
 }
 
 function mergeUnreadMention(existing: ArkmeSourceItem | undefined, source: ArkmeSourceItem): boolean | undefined {
@@ -134,6 +140,27 @@ function mergeUnreadMention(existing: ArkmeSourceItem | undefined, source: Arkme
   return source.hasUnreadMention
 }
 
+function retainRealtimeAvatarPresentation(
+  existing: ArkmeSourceItem | undefined,
+  source: ArkmeSourceItem,
+): ArkmeSourceItem {
+  if (existing === undefined) return source
+  const avatarRef = source.avatarRef?.trim()
+  return {
+    ...source,
+    ...(avatarRef === undefined || avatarRef === ''
+      ? existing.avatarRef === undefined ? {} : { avatarRef: existing.avatarRef }
+      : { avatarRef }),
+    ...(source.avatarRefs === undefined || source.avatarRefs.length === 0
+      ? existing.avatarRefs === undefined ? {} : { avatarRefs: existing.avatarRefs }
+      : {}),
+    ...((source.groupAvatar === undefined || source.groupAvatar.slots.length === 0)
+      && existing.groupAvatar !== undefined
+      ? { groupAvatar: existing.groupAvatar }
+      : {}),
+  }
+}
+
 function mergeSourceProjection(
   existing: ArkmeSourceItem | undefined,
   source: ArkmeSourceItem,
@@ -143,11 +170,14 @@ function mergeSourceProjection(
 ): ArkmeSourceItem {
   const existingSequence = normalizedSequence(existing?.latestSequence)
   const sourceSequence = normalizedSequence(source.latestSequence)
+  // sessions-delta is an additive projection. Avatar removal is authoritative
+  // only in a complete directory baseline, which bypasses this merge path.
+  const sourceWithAvatarPresentation = retainRealtimeAvatarPresentation(existing, source)
   const merged = existing !== undefined && sourceSequence < existingSequence
     ? (() => {
-        const latestPreview = existing.latestPreview ?? source.latestPreview
+        const latestPreview = existing.latestPreview ?? sourceWithAvatarPresentation.latestPreview
         return {
-          ...source,
+          ...sourceWithAvatarPresentation,
           ...(latestPreview === undefined ? {} : { latestPreview }),
           activeAtMillis: existing.activeAtMillis,
           unreadCount: existing.unreadCount,
@@ -159,13 +189,13 @@ function mergeSourceProjection(
         ...(() => {
           const hasUnreadMention = mergeUnreadMention(existing, source)
           return {
-            ...source,
+            ...sourceWithAvatarPresentation,
             activeAtMillis: Math.max(existing?.activeAtMillis ?? 0, source.activeAtMillis),
             ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
           }
         })(),
       }
-  return applyReadWatermark(merged, watermarks, indexes, sourceKey)
+  return applyReadWatermark(projectSourceAttention(merged), watermarks, indexes, sourceKey)
 }
 
 function sourceUpdate(update: ArkmeSourceItem | ArkmeChatDirectorySourceUpdate): ArkmeChatDirectorySourceUpdate {
@@ -194,6 +224,8 @@ const DIRECTORY_SOURCE_SCALAR_FIELDS: Record<DirectorySourceScalarField, true> =
   latestPreview: true,
   activeAtMillis: true,
   unreadCount: true,
+  badgeUnreadCount: true,
+  notificationAllowed: true,
   hasUnreadMention: true,
   isMuted: true,
   isPinned: true,
@@ -466,6 +498,16 @@ export class ArkmeChatDirectoryStore {
       : sum + normalizedCount(source.unreadCount), 0)
   }
 
+  totalBadgeUnreadCount(): number {
+    const sources = applyDirectoryMutations(
+      this.snapshot.sources,
+      this.pendingMutations,
+      this.combinedReadWatermarks(),
+      { sourceKeysByRef: new Map(this.sourceKeysByRef) },
+    )
+    return sources.reduce((sum, source) => sum + arkmeBadgeUnreadCount(source), 0)
+  }
+
   markReadOptimistic(
     source: ArkmeSourceItem,
     sourceKey: string | undefined,
@@ -521,7 +563,7 @@ export class ArkmeChatDirectoryStore {
       if (backupUnreadCount === undefined) return source
       if (identityForSource(indexes, source.sourceRef, source.sourceKey) !== identity) return source
       if (normalizedSequence(source.latestSequence) > target.effectiveReadSequence) return source
-      return { ...source, unreadCount: backupUnreadCount }
+      return projectSourceAttention(source, backupUnreadCount)
     })
     this.commit(applyDirectoryMutations(
       sources,
@@ -630,7 +672,7 @@ export class ArkmeChatDirectoryStore {
       const hasUnreadMention = unreadCount <= 0 && source.hasUnreadMention !== undefined ? false : source.hasUnreadMention
       return source.unreadCount === unreadCount && source.hasUnreadMention === hasUnreadMention
         ? source
-        : { ...source, unreadCount, ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }) }
+        : projectSourceAttention({ ...source, unreadCount, ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }) })
     })
   }
 }

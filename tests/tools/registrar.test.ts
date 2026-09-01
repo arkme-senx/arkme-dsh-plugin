@@ -14,6 +14,7 @@ import type { ArkmeToolProfile } from '../../src/tools/index.js'
 import { promptForArkmeToolProfile, registerArkmeTools } from '../../src/tools/index.js'
 
 const ports = {
+  backgroundSoundPreference: async () => ({ userId: 42, found: true, enabled: true }),
   providerCapabilities: () => ({
     contractVersion: 1,
     provider: '@senguoyun/dsh-arkme',
@@ -85,6 +86,8 @@ describe('registerArkmeTools', () => {
       'arkme_plugin_contract',
       'arkme_records_recent',
       'arkme_user_profile',
+      'arkme_background_sound_status',
+      'arkme_background_sound_disable',
       'arkme_id_set',
       'arkme_contact_search',
       'arkme_contact_add',
@@ -311,6 +314,9 @@ describe('registerArkmeTools', () => {
 
   it.each([
     {
+      name: 'arkme_background_sound_disable', args: {}, prompt: '关闭当前 Arkme 账号的文字背景音', port: 'updateBackgroundSoundPreference',
+    },
+    {
       name: 'arkme_voiceprint_invite', args: {}, prompt: '24 小时有效', port: 'createVoiceprintInvitation',
     },
     {
@@ -341,6 +347,47 @@ describe('registerArkmeTools', () => {
     expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
     expect(prepared.isError ? '' : prepared.value).toContain(prompt)
     expect(write).not.toHaveBeenCalled()
+  })
+
+  it('binds background-sound confirmation to the account verified during prepare', async () => {
+    const ctx = await setup()
+    let userId = 42
+    const writes: number[] = []
+    const backgroundSoundPreference = vi.fn(async () => ({ userId, found: true, enabled: true }))
+    const updateBackgroundSoundPreference = vi.fn(async (enabled: boolean, _signal?: AbortSignal, expectedUserId?: number) => {
+      if (expectedUserId !== userId) throw new Error('账号已切换，本次背景音设置未保存')
+      writes.push(userId)
+      return { userId, found: true, enabled }
+    })
+    await mountArkmeTools(ctx, 'business', {
+      ...ports, backgroundSoundPreference, updateBackgroundSoundPreference,
+    } as unknown as ArkmeToolPorts)
+    const events: Array<Record<string, unknown>> = [
+      { seq: 0, type: 'turn/start', data: { turn: 1 } },
+      { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '关闭背景音' }], source: { kind: 'user' } } },
+    ]
+    const agent = {
+      id: SessionId('session-background-sound-account-fence'), session: { get events() { return events } },
+    } as unknown as Agent
+    const signal = new AbortController().signal
+
+    const prepared = await ctx.tools.execute({
+      callId: CallId('prepare'), name: 'arkme_background_sound_disable', arguments: {}, agent, signal,
+    })
+    expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
+    expect(backgroundSoundPreference).toHaveBeenCalledOnce()
+    expect(updateBackgroundSoundPreference).not.toHaveBeenCalled()
+
+    userId = 43
+    events.push({
+      seq: 2, type: 'user/message', data: { content: [{ type: 'text', text: '确认关闭' }], source: { kind: 'user' } },
+    })
+    const confirmed = await ctx.tools.execute({
+      callId: CallId('confirm'), name: 'arkme_background_sound_disable', arguments: {}, agent, signal,
+    })
+    expect(confirmed.isError).toBe(true)
+    expect(updateBackgroundSoundPreference).toHaveBeenCalledWith(false, signal, 42)
+    expect(writes).toEqual([])
   })
 
   it('reads World voiceprint social context without entering the write confirmation flow', async () => {

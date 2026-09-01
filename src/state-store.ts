@@ -2,6 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { ArkmeLongArticleDraft, ArkmePendingWrite, ArkmeRecordCaptureContext } from './types.js'
+import {
+  sameRecordingImportIdentity,
+  type RecordingImportAdmission,
+  type RecordingImportJob,
+  type RecordingImportPhase,
+} from './recording-import-contract.js'
 import { securePrivateDirectory, securePrivateFile } from './private-filesystem.js'
 
 interface PersistedState {
@@ -9,6 +15,7 @@ interface PersistedState {
   uniqueCode: string
   pendingByUser: Record<string, ArkmePendingWrite[]>
   longArticleDraftsByUser: Record<string, Record<string, ArkmeLongArticleDraft>>
+  recordingImportJobsByUser: Record<string, Record<string, RecordingImportJob>>
 }
 
 function emptyState(): PersistedState {
@@ -17,6 +24,69 @@ function emptyState(): PersistedState {
     uniqueCode: randomUUID(),
     pendingByUser: {},
     longArticleDraftsByUser: {},
+    recordingImportJobsByUser: {},
+  }
+}
+
+const RECORDING_IMPORT_PHASES = new Set<RecordingImportPhase>([
+  'prepared', 'uploading', 'finalizing', 'accepted', 'failed', 'cancelled',
+])
+export const RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT = 100
+
+function cloneRecordingImportJob(job: RecordingImportJob): RecordingImportJob {
+  return structuredClone(job)
+}
+
+function pruneRecordingImportTerminalJobs(jobs: Record<string, RecordingImportJob>): void {
+  const expiredTerminalJobs = Object.values(jobs)
+    .filter(candidate => ['accepted', 'cancelled'].includes(candidate.phase))
+    .sort((left, right) => right.createdAtMillis - left.createdAtMillis)
+    .slice(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT)
+  for (const expired of expiredTerminalJobs) delete jobs[expired.jobId]
+}
+
+function normalizedRecordingImportJob(value: unknown): RecordingImportJob | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const source = value as Record<string, unknown>
+  const requiredStrings = ['jobId', 'fileName', 'mimeType', 'sha256', 'sourceHandle'] as const
+  const requiredNumbers = [
+    'userId', 'revision', 'fileSize', 'durationMillis', 'startAtMillis', 'belongUserId',
+    'uploadedBytes', 'createdAtMillis', 'updatedAtMillis',
+  ] as const
+  if (requiredStrings.some(key => typeof source[key] !== 'string')) return undefined
+  if (requiredNumbers.some(key => typeof source[key] !== 'number' || !Number.isFinite(source[key]))) return undefined
+  if (typeof source.phase !== 'string' || !RECORDING_IMPORT_PHASES.has(source.phase as RecordingImportPhase)) return undefined
+  return {
+    jobId: source.jobId as string,
+    userId: source.userId as number,
+    revision: source.revision as number,
+    phase: source.phase as RecordingImportPhase,
+    fileName: source.fileName as string,
+    mimeType: source.mimeType as string,
+    fileSize: source.fileSize as number,
+    durationMillis: source.durationMillis as number,
+    sha256: source.sha256 as string,
+    startAtMillis: source.startAtMillis as number,
+    belongUserId: source.belongUserId as number,
+    sourceHandle: source.sourceHandle as string,
+    uploadedBytes: source.uploadedBytes as number,
+    createdAtMillis: source.createdAtMillis as number,
+    updatedAtMillis: source.updatedAtMillis as number,
+    ...(typeof source.sessionId === 'string' ? { sessionId: source.sessionId } : {}),
+    ...(typeof source.childId === 'string' ? { childId: source.childId } : {}),
+    ...(typeof source.childFinished === 'boolean' ? { childFinished: source.childFinished } : {}),
+    ...(typeof source.errorCode === 'string' ? { errorCode: source.errorCode } : {}),
+    ...(typeof source.errorMessage === 'string' ? { errorMessage: source.errorMessage } : {}),
+    ...(typeof source.retryable === 'boolean' ? { retryable: source.retryable } : {}),
+    ...(typeof source.failedFromPhase === 'string'
+      && RECORDING_IMPORT_PHASES.has(source.failedFromPhase as RecordingImportPhase)
+      && !['failed', 'cancelled', 'accepted'].includes(source.failedFromPhase)
+      ? { failedFromPhase: source.failedFromPhase as Exclude<RecordingImportJob['failedFromPhase'], undefined> }
+      : {}),
+    ...(source.uploadCheckpoint !== null && typeof source.uploadCheckpoint === 'object'
+      && !Array.isArray(source.uploadCheckpoint)
+      ? { uploadCheckpoint: source.uploadCheckpoint as Record<string, unknown> }
+      : {}),
   }
 }
 
@@ -110,6 +180,18 @@ function parseState(raw: string): PersistedState {
       if (Object.keys(drafts).length > 0) longArticleDraftsByUser[userId] = drafts
     }
   }
+  const recordingImportJobsByUser: Record<string, Record<string, RecordingImportJob>> = {}
+  if (source.recordingImportJobsByUser !== null && typeof source.recordingImportJobsByUser === 'object') {
+    for (const [userId, rawJobs] of Object.entries(source.recordingImportJobsByUser as Record<string, unknown>)) {
+      if (rawJobs === null || typeof rawJobs !== 'object' || Array.isArray(rawJobs)) continue
+      const jobs: Record<string, RecordingImportJob> = {}
+      for (const [jobId, rawJob] of Object.entries(rawJobs as Record<string, unknown>)) {
+        const job = normalizedRecordingImportJob(rawJob)
+        if (job !== undefined && job.jobId === jobId && String(job.userId) === userId) jobs[jobId] = job
+      }
+      if (Object.keys(jobs).length > 0) recordingImportJobsByUser[userId] = jobs
+    }
+  }
   return {
     version: 1,
     uniqueCode: typeof source.uniqueCode === 'string' && source.uniqueCode.trim() !== ''
@@ -117,6 +199,7 @@ function parseState(raw: string): PersistedState {
       : randomUUID(),
     pendingByUser,
     longArticleDraftsByUser,
+    recordingImportJobsByUser,
   }
 }
 
@@ -161,6 +244,87 @@ export class ArkmeStateStore {
       drafts[longArticleDraftKey(draft.sourceRef, draft.itemUid)] = { ...draft }
       state.longArticleDraftsByUser[userKey] = drafts
     })
+  }
+
+  async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
+    return await this.read(state => Object.values(state.recordingImportJobsByUser[String(userId)] ?? {})
+      .map(cloneRecordingImportJob))
+  }
+
+  async listAllRecordingImportJobs(): Promise<RecordingImportJob[]> {
+    return await this.read(state => Object.values(state.recordingImportJobsByUser)
+      .flatMap(jobs => Object.values(jobs).map(cloneRecordingImportJob)))
+  }
+
+  async getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined> {
+    return await this.read(state => {
+      const job = state.recordingImportJobsByUser[String(userId)]?.[jobId]
+      return job === undefined ? undefined : cloneRecordingImportJob(job)
+    })
+  }
+
+  async putRecordingImportJob(userId: number, job: RecordingImportJob): Promise<void> {
+    if (job.userId !== userId) throw new Error('Recording import job account mismatch')
+    await this.update(state => {
+      const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
+      jobs[job.jobId] = cloneRecordingImportJob(job)
+      pruneRecordingImportTerminalJobs(jobs)
+      state.recordingImportJobsByUser[String(userId)] = jobs
+    })
+  }
+
+  async admitRecordingImportJob(
+    userId: number,
+    job: RecordingImportJob,
+    unresolvedLimit: number,
+  ): Promise<RecordingImportAdmission> {
+    if (job.userId !== userId) throw new Error('Recording import job account mismatch')
+    if (!Number.isSafeInteger(unresolvedLimit) || unresolvedLimit < 1) {
+      throw new Error('Recording import unresolved limit must be a positive integer')
+    }
+    let admission: RecordingImportAdmission | undefined
+    await this.update(state => {
+      const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
+      const unresolved = Object.values(jobs)
+        .filter(candidate => !['accepted', 'cancelled'].includes(candidate.phase))
+      const existing = unresolved.find(candidate => sameRecordingImportIdentity(candidate, job))
+      if (existing !== undefined) {
+        admission = { kind: 'existing', job: cloneRecordingImportJob(existing) }
+        return
+      }
+      if (unresolved.some(candidate => candidate.fileName === job.fileName)) {
+        admission = { kind: 'duplicate-file-name' }
+        return
+      }
+      if (unresolved.length >= unresolvedLimit) {
+        admission = { kind: 'limit' }
+        return
+      }
+      jobs[job.jobId] = cloneRecordingImportJob(job)
+      pruneRecordingImportTerminalJobs(jobs)
+      state.recordingImportJobsByUser[String(userId)] = jobs
+      admission = { kind: 'inserted', job: cloneRecordingImportJob(job) }
+    })
+    if (admission === undefined) throw new Error('Recording import admission was not decided')
+    return admission
+  }
+
+  async replaceRecordingImportJob(
+    userId: number,
+    job: RecordingImportJob,
+    expectedRevision: number,
+  ): Promise<boolean> {
+    if (job.userId !== userId) throw new Error('Recording import job account mismatch')
+    let replaced = false
+    await this.update(state => {
+      const current = state.recordingImportJobsByUser[String(userId)]?.[job.jobId]
+      if (current?.revision !== expectedRevision) return
+      const jobs = state.recordingImportJobsByUser[String(userId)]!
+      jobs[job.jobId] = cloneRecordingImportJob(job)
+      pruneRecordingImportTerminalJobs(jobs)
+      replaced = true
+    })
+    return replaced
   }
 
   async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void> {

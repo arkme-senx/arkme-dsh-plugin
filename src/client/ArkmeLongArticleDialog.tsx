@@ -243,6 +243,7 @@ export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, on
           version: 1,
           recordDurationMillis: editingDurationMillis,
           editDurationMillis: 0,
+          ...(result.messageActionRef === undefined ? {} : { messageActionRef: result.messageActionRef }),
           ...(result.sequence === undefined ? {} : { sequence: result.sequence }),
         })
         onClose()

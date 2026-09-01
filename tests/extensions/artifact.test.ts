@@ -293,6 +293,10 @@ describe('extension signature and runtime bridge', () => {
       return {
         publish_session_id: 'pub-existing', extension_id: 'ext-existing', version: '1.0.0',
         status: 'published', idempotent_replay: true,
+        share: {
+          ref: 'extshare_0123456789abcdef0123456789abcdef',
+          url: 'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef',
+        },
       } as T
     }, fetchImpl)
     const directory = temporaryDirectory()
@@ -307,7 +311,12 @@ describe('extension signature and runtime bridge', () => {
     await expect(manager.publish({
       agent: {}, pluginId: 'plug-1', packageId: 'pkg-1', name: '插件', description: '用途',
       version: '1.0.0', visibility: 'private', idempotencyKey: 'bundle-existing-publish',
-    })).resolves.toMatchObject({ extension_id: 'ext-existing', version: '1.0.0', status: 'published' })
+    })).resolves.toMatchObject({
+      extension_id: 'ext-existing',
+      version: '1.0.0',
+      status: 'published',
+      share: { ref: 'extshare_0123456789abcdef0123456789abcdef' },
+    })
     expect(requests).toEqual(['/api/v1/extensions/publish-session/create'])
     expect(fetchImpl).not.toHaveBeenCalled()
     store.close()

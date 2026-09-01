@@ -344,8 +344,14 @@ export function ArkmePersistentWorkspace({
   useLayoutEffect(() => {
     arkmeContactsTab.activateAccount(contactsAccountKey)
   }, [contactsAccountKey])
-
-  return <main data-arkme-owned="persistent-workspace" data-arkme-workspace {...(contactsMode ? { 'data-arkme-contacts-mobile-view': scopedContacts.selection.kind !== 'none' ? 'content' : 'directory' } : {})} style={styles.workspace} aria-label="Arkme 主界面">
+  return <main
+    data-arkme-owned="persistent-workspace"
+    data-arkme-workspace
+    data-arkme-notification-activation-revision={ui.notificationActivationRevision ?? 0}
+    {...(contactsMode ? { 'data-arkme-contacts-mobile-view': scopedContacts.selection.kind !== 'none' ? 'content' : 'directory' } : {})}
+    style={styles.workspace}
+    aria-label="Arkme 主界面"
+  >
     <ArkmePersistentClientRuntime />
     <ArkmeExtensionRecoveryNotice />
     <DeepSeekHarnessSurface

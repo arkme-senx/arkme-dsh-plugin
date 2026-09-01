@@ -65,8 +65,7 @@ jobs:
       - name: 检出受保护的发布工具
         uses: actions/checkout@v4
         with:
-          # Bootstrap only: restore `master` after this publisher lands there.
-          ref: d286f78a0058944e775f8835f4629eea401fe144
+          ref: master
           fetch-depth: 1
           persist-credentials: false
       - uses: actions/setup-node@v4

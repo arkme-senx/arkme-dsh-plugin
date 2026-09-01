@@ -313,6 +313,7 @@ export interface ArkmeBundlePublishSession {
   version?: string
   status?: string
   idempotent_replay?: boolean
+  share?: ArkmeExtensionShare
   bundle_upload?: ArkmeExtensionUploadSlot
   source_upload?: ArkmeExtensionUploadSlot
 }

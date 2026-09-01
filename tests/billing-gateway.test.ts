@@ -86,6 +86,26 @@ describe('Arkme billing gateway', () => {
     await expect(requests[0]?.json()).resolves.toEqual({})
   })
 
+  it('does not coalesce balance reads that may straddle a completed payment', async () => {
+    const releases: Array<(response: Response) => void> = []
+    const service = createService(undefined, async () => await new Promise<Response>(resolve => { releases.push(resolve) }))
+    const first = service.billingQuota()
+    await Promise.resolve()
+    await Promise.resolve()
+    const second = service.billingQuota()
+    for (let attempt = 0; attempt < 20 && releases.length < 2; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+    const requestCount = releases.length
+    const response = () => new Response(JSON.stringify({
+      code: 200,
+      data: { currency: 'CNY', total_nano_cny: '10', available_nano_cny: '10', reserved_nano_cny: '0' },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    for (const release of releases) release(response())
+    await Promise.all([first, second])
+    expect(requestCount).toBe(2)
+  })
+
   it('maps the backend product catalog without inventing packages or payment channels', async () => {
     const requests: Request[] = []
     const service = createService(undefined, async (input, init) => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { GroupService } from '../../src/services/group-service.js'
 import { ProfileService } from '../../src/services/profile-service.js'
@@ -44,9 +44,88 @@ describe('GroupService', () => {
     })
     const sourceRef = await source.sealSourceRef(42, 'group_chat', 'group-1', '研发群')
     const service = new GroupService(runtime, source, profile)
-    await expect(service.groupSettings(sourceRef)).resolves.toMatchObject({
-      source: { displayName: '研发群' }, messageDnd: true,
+    await expect(service.groupSettings(sourceRef)).resolves.toEqual({
+      target: {
+        sourceRef: expect.any(String), sourceKey: expect.any(String), kind: 'group_chat', displayName: '研发群',
+      },
+      selfRole: 'unknown', selfStatus: 'unknown', canRename: false, canDissolve: false, canLeave: false,
+      messageDnd: true,
     })
+  })
+
+  it('does not replace the directory projection when group settings are read', async () => {
+    const paths: string[] = []
+    const { source, service } = fixture(async input => {
+      const path = new URL(String(input)).pathname
+      paths.push(path)
+      if (path.endsWith('/chats/detail')) return new Response(JSON.stringify({
+        code: 200,
+        data: {
+          session: { chat_session_uid: 'group-1', title: '研发群', last_active_at: 100, last_seq: 12 },
+          current_policy: { mute_state: 2 },
+          unread_snapshot: { unread_count: 0 },
+        },
+      }), { status: 200 })
+      return new Response(JSON.stringify({ code: 200, data: { items: [] } }), { status: 200 })
+    })
+    const cachedSource = {
+      sourceRef: await source.sealSourceRef(42, 'group_chat', 'group-1', '研发群'),
+      sourceKey: await source.chatDirectorySourceKey(42, 'group-1'),
+      kind: 'group_chat' as const,
+      displayName: '研发群',
+      latestPreview: '不能被设置详情覆盖的最新消息',
+      latestSequence: 12,
+      activeAtMillis: 100,
+      unreadCount: 0,
+      avatarRef: 'group-avatar-ref',
+    }
+    source.setChatSource(42, 'group-1', cachedSource)
+    const normalizedCachedSource = source.cachedChatSource(42, 'group-1')
+
+    await service.groupSettings(cachedSource.sourceRef)
+
+    expect(source.cachedChatSource(42, 'group-1')).toEqual(normalizedCachedSource)
+    expect(paths).toEqual(['/api/v1/chats/detail'])
+  })
+
+  it('invalidates a cached root page after enabling do-not-disturb', async () => {
+    let muted = false
+    let listReads = 0
+    const { source, service } = fixture(async (input) => {
+      const path = new URL(String(input)).pathname
+      if (path.endsWith('/chats/list')) {
+        listReads += 1
+        return new Response(JSON.stringify({ code: 200, data: {
+          items: [{
+            session: { chat_session_uid: 'group-dnd', session_kind: 2, title: '免打扰测试群', last_seq: 9 },
+            current_policy: { mute_state: muted ? 2 : 1, notify_state: muted ? 2 : 1 },
+            unread_snapshot: { unread_count: 3, session_last_seq: 9 },
+          }],
+          has_more: false,
+        } }), { status: 200 })
+      }
+      if (path.endsWith('/chats/group-avatar-snapshots')) {
+        return new Response(JSON.stringify({ code: 200, data: { items: [] } }), { status: 200 })
+      }
+      if (path.endsWith('/chats/policy/get')) {
+        return new Response(JSON.stringify({ code: 200, data: {
+          show_in_home_state: 1, privacy_state: 1, mute_state: muted ? 2 : 1,
+          pin_state: 1, notify_state: muted ? 2 : 1, status: 1,
+        } }), { status: 200 })
+      }
+      if (path.endsWith('/chats/policy/update')) {
+        muted = true
+        return new Response(JSON.stringify({ code: 200, data: {} }), { status: 200 })
+      }
+      throw new Error(`unexpected ${path}`)
+    })
+
+    const before = await source.listSources('root')
+    expect(before.items[0]).toMatchObject({ unreadCount: 3, badgeUnreadCount: 3, isMuted: false })
+    await service.setGroupMessageDnd(before.items[0]!.sourceRef, true)
+    const after = await source.listSources('root')
+    expect(after.items[0]).toMatchObject({ unreadCount: 3, badgeUnreadCount: 0, isMuted: true })
+    expect(listReads).toBe(2)
   })
 
   it('invalidates the root directory cache after a group rename', async () => {
@@ -86,6 +165,38 @@ describe('GroupService', () => {
 
     expect(after.items[0]?.displayName).toBe('Harness3')
     expect(directoryReads).toBe(2)
+  })
+
+  it.each([
+    ['leave', '/api/v1/chats/members/update'],
+    ['dissolve', '/api/v1/chats/dissolve'],
+  ] as const)('treats group %s as a command and never replaces the cached projection', async (command, expectedPath) => {
+    const paths: string[] = []
+    const { source, service } = fixture(async input => {
+      paths.push(new URL(String(input)).pathname)
+      return new Response(JSON.stringify({ code: 200, data: {} }), { status: 200 })
+    })
+    const cachedSource = {
+      sourceRef: await source.sealSourceRef(42, 'group_chat', 'group-1', '研发群'),
+      sourceKey: await source.chatDirectorySourceKey(42, 'group-1'),
+      kind: 'group_chat' as const,
+      displayName: '研发群',
+      latestPreview: '退出前最后一条消息',
+      activeAtMillis: 100,
+      unreadCount: 0,
+    }
+    source.setChatSource(42, 'group-1', cachedSource)
+    const normalizedCachedSource = source.cachedChatSource(42, 'group-1')
+    const invalidate = vi.spyOn(source, 'invalidateSourceListCache')
+
+    const result = command === 'leave'
+      ? await service.leaveGroup(cachedSource.sourceRef)
+      : await service.dissolveGroup(cachedSource.sourceRef)
+
+    expect(result).toEqual({ status: 'ok' })
+    expect(paths).toEqual([expectedPath])
+    expect(source.cachedChatSource(42, 'group-1')).toEqual(normalizedCachedSource)
+    expect(invalidate).toHaveBeenCalledWith(42, 'root')
   })
 
   it('lists account-bound private-chat candidates and adds one idempotently', async () => {

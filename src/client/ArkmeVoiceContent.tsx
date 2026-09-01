@@ -29,8 +29,14 @@ export interface ArkmeVoiceContentProps {
   /** Account/source-scoped identity; changing it releases previous playback. */
   sourceKey: string
   src?: string | undefined
+  /** Ordered media segments. They are loaded and played one at a time. */
+  playlist?: readonly string[] | undefined
   durationSeconds?: number | undefined
   resolveSrc?: ((signal: AbortSignal) => Promise<string>) | undefined
+  /** Optional presentation placed between the play control and duration. */
+  visualization?: ReactNode
+  /** Accessible content name used by play/loading/error copy. */
+  contentLabel?: string | undefined
   children?: ReactNode
   collapsible?: boolean | undefined
   maxLines?: number | undefined
@@ -42,29 +48,37 @@ interface VoiceLease { cancel(): void }
 let activeVoice: VoiceLease | undefined
 
 export function ArkmeVoiceContent(props: ArkmeVoiceContentProps) {
-  return <VoiceContent key={JSON.stringify([props.sourceKey, props.src ?? ''])} {...props} />
+  return <VoiceContent key={JSON.stringify([props.sourceKey, props.src ?? '', props.playlist ?? []])} {...props} />
 }
 
-function VoiceContent({ src = '', durationSeconds, resolveSrc, children, collapsible = false, maxLines = 5, downloadName }: ArkmeVoiceContentProps) {
+function VoiceContent({ src = '', playlist, durationSeconds, resolveSrc, visualization, contentLabel = '语音', children, collapsible = false, maxLines = 5, downloadName }: ArkmeVoiceContentProps) {
+  const playlistSources = playlist?.filter(value => value.trim() !== '') ?? []
+  const sources = playlistSources.length > 0 ? playlistSources : src === '' ? [] : [src]
+  const initialSrc = sources[0] ?? ''
   const audioRef = useRef<HTMLAudioElement>(null)
   const requestRef = useRef<AbortController>()
   const leaseRef = useRef<VoiceLease>()
   const compatibleSrc = useRef<string>()
-  const playbackSrc = useRef(src)
+  const compatibleOriginalSrc = useRef<string>()
+  const playbackSrc = useRef(initialSrc)
+  const sourceIndex = useRef(0)
+  const completedSeconds = useRef(0)
   const pendingPlay = useRef(false)
   const recoveryTimeout = useRef<ReturnType<typeof setTimeout>>()
   const handleMediaError = useRef<(() => void)>()
   const mounted = useRef(true)
-  const [resolvedSrc, setResolvedSrc] = useState(src)
+  const [resolvedSrc, setResolvedSrc] = useState(initialSrc)
   const [status, setStatus] = useState<'idle' | 'loading' | 'playing' | 'paused' | 'error'>('idle')
   const [showLoadingIcon, setShowLoadingIcon] = useState(false)
   const [metadataDuration, setMetadataDuration] = useState<number>()
   const [position, setPosition] = useState(0)
   const [expanded, setExpanded] = useState(false)
-  const duration = metadataDuration !== undefined && Number.isFinite(metadataDuration) && metadataDuration > 0
+  // Per-segment metadata must never masquerade as a playlist total.
+  const duration = sources.length > 1 ? durationSeconds : metadataDuration !== undefined && Number.isFinite(metadataDuration) && metadataDuration > 0
     ? metadataDuration : durationSeconds
   const totalLabel = arkmeVoiceDuration(duration)
-  const unavailable = resolvedSrc === '' && resolveSrc === undefined
+  const unavailable = sources.length === 0 && resolvedSrc === '' && resolveSrc === undefined
+  const normalizedContentLabel = contentLabel.trim() || '语音'
 
   useEffect(() => {
     // Fast/cached playback should not flash a spinner. A slower load replaces
@@ -87,6 +101,7 @@ function VoiceContent({ src = '', durationSeconds, resolveSrc, children, collaps
   const clearCompatible = () => {
     if (compatibleSrc.current !== undefined) URL.revokeObjectURL(compatibleSrc.current)
     compatibleSrc.current = undefined
+    compatibleOriginalSrc.current = undefined
   }
   useEffect(() => {
     mounted.current = true
@@ -105,33 +120,18 @@ function VoiceContent({ src = '', durationSeconds, resolveSrc, children, collaps
     clearCompatible()
     if (mounted.current) setStatus('error')
   }
-  const toggle = async () => {
-    if (unavailable) return
-    if (leaseRef.current !== undefined) {
-      leaseRef.current.cancel()
-      return
-    }
-    activeVoice?.cancel()
-    const controller = new AbortController()
-    requestRef.current = controller
-    const lease: VoiceLease = { cancel: () => {
-      release()
-      audioRef.current?.pause()
-      if (mounted.current) setStatus('paused')
-    } }
-    leaseRef.current = lease
-    activeVoice = lease
+  const playSource = async (url: string, index: number, lease: VoiceLease, controller: AbortController) => {
     const isCurrent = () => mounted.current && !controller.signal.aborted && leaseRef.current === lease
+    if (!isCurrent()) return
+    if (sourceIndex.current !== index || compatibleOriginalSrc.current !== url) clearCompatible()
+    sourceIndex.current = index
+    setResolvedSrc(url)
     pendingPlay.current = true
     setStatus('loading')
     try {
-      const url = resolvedSrc || await resolveSrc?.(controller.signal) || ''
-      if (!isCurrent()) return
-      if (url === '') { fail(); return }
-      setResolvedSrc(url)
       const audio = audioRef.current
       if (audio === null) { release(); setStatus('idle'); return }
-      const mediaUrl = compatibleSrc.current ?? url
+      const mediaUrl = compatibleOriginalSrc.current === url ? compatibleSrc.current ?? url : url
       if (playbackSrc.current !== mediaUrl) { audio.src = mediaUrl; playbackSrc.current = mediaUrl }
       let recovering = false
       let attempted = false
@@ -149,6 +149,7 @@ function VoiceContent({ src = '', durationSeconds, resolveSrc, children, collaps
           if (!isCurrent()) return
           const objectUrl = URL.createObjectURL(blob)
           compatibleSrc.current = objectUrl
+          compatibleOriginalSrc.current = url
           playbackSrc.current = objectUrl
           audio.src = objectUrl
           await audio.play()
@@ -182,7 +183,37 @@ function VoiceContent({ src = '', durationSeconds, resolveSrc, children, collaps
     }
   }
 
-  const label = status === 'loading' ? '正在加载语音' : unavailable ? '语音暂不可播放' : status === 'error' ? '重试播放语音' : status === 'playing' ? '暂停语音' : '播放语音'
+  const toggle = async () => {
+    if (unavailable) return
+    if (leaseRef.current !== undefined) {
+      leaseRef.current.cancel()
+      return
+    }
+    activeVoice?.cancel()
+    const controller = new AbortController()
+    requestRef.current = controller
+    const lease: VoiceLease = { cancel: () => {
+      release()
+      audioRef.current?.pause()
+      if (mounted.current) setStatus('paused')
+    } }
+    leaseRef.current = lease
+    activeVoice = lease
+    let url = sources[sourceIndex.current] ?? resolvedSrc
+    if (url === '') {
+      pendingPlay.current = true
+      setStatus('loading')
+      try { url = await resolveSrc?.(controller.signal) ?? '' } catch {
+        if (leaseRef.current === lease && !controller.signal.aborted) fail()
+        return
+      }
+    }
+    if (leaseRef.current !== lease || controller.signal.aborted) return
+    if (url === '') { fail(); return }
+    await playSource(url, sourceIndex.current, lease, controller)
+  }
+
+  const label = status === 'loading' ? `正在加载${normalizedContentLabel}` : unavailable ? `${normalizedContentLabel}暂不可播放` : status === 'error' ? `重试播放${normalizedContentLabel}` : status === 'playing' ? `暂停${normalizedContentLabel}` : `播放${normalizedContentLabel}`
   return <div style={styles.root} data-arkme-voice="inline" data-arkme-voice-state={status}>
     <div style={{ ...styles.content, ...(!expanded && collapsible ? { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: maxLines, overflow: 'hidden' } as CSSProperties : {}) }}>
       <button
@@ -200,6 +231,7 @@ function VoiceContent({ src = '', durationSeconds, resolveSrc, children, collaps
         {status === 'loading' && showLoadingIcon
           ? <SpinnerGap size={16} weight="bold" aria-hidden className="arkme-icon-spin" data-arkme-voice-loading="true" />
           : status === 'playing' ? <Pause size={16} weight="fill" aria-hidden /> : <Play size={16} weight="fill" aria-hidden />}
+        {visualization !== undefined && visualization !== null && <span data-arkme-voice-visualization="true">{visualization}</span>}
         <span style={styles.duration}>{status === 'playing' ? arkmeVoiceDuration(position, true) : totalLabel}</span>
       </button>
       {children !== undefined && children !== null && children !== '' && <span style={styles.transcript} data-arkme-voice-transcript="true">{children}</span>}
@@ -208,16 +240,16 @@ function VoiceContent({ src = '', durationSeconds, resolveSrc, children, collaps
       onClick={event => { event.stopPropagation(); setExpanded(value => !value) }}
       onKeyDown={event => { event.stopPropagation() }} onKeyUp={event => { event.stopPropagation() }}
     >{expanded ? '收起' : '展开'}</button>}
-    {status === 'error' && <div style={styles.error} role="status">语音加载或播放失败，请点击播放重试。
-      {resolvedSrc !== '' && downloadName !== undefined && <>{' '}<a href={resolvedSrc} download={downloadName} style={styles.action} onClick={event => { event.stopPropagation() }}>下载语音</a></>}
+    {status === 'error' && <div style={styles.error} role="status">{normalizedContentLabel}加载或播放失败，请点击播放重试。
+      {resolvedSrc !== '' && downloadName !== undefined && <>{' '}<a href={resolvedSrc} download={downloadName} style={styles.action} onClick={event => { event.stopPropagation() }}>下载{normalizedContentLabel}</a></>}
     </div>}
     {/* The keyed instance owns its initial src. Lazy resolution sets audio.src
         once in toggle; mirroring it here reloads media and aborts the first play. */}
     <audio
-      ref={audioRef} src={src || undefined} preload="metadata" style={{ display: 'none' }}
+      ref={audioRef} src={initialSrc || undefined} preload="metadata" style={{ display: 'none' }}
       onLoadedMetadata={event => { setMetadataDuration(event.currentTarget.duration) }}
       onDurationChange={event => { setMetadataDuration(event.currentTarget.duration) }}
-      onTimeUpdate={event => { setPosition(event.currentTarget.currentTime) }}
+      onTimeUpdate={event => { setPosition(completedSeconds.current + event.currentTarget.currentTime) }}
       onPlay={() => {
         if (leaseRef.current === undefined || activeVoice !== leaseRef.current) { audioRef.current?.pause(); return }
         setStatus('playing')
@@ -230,7 +262,25 @@ function VoiceContent({ src = '', durationSeconds, resolveSrc, children, collaps
         if (pendingPlay.current || (leaseRef.current !== undefined && event.currentTarget.error !== null && event.currentTarget.error !== undefined)) return
         release(); if (mounted.current) setStatus(value => value === 'error' ? value : 'paused')
       }}
-      onEnded={() => { release(); setStatus('idle'); setPosition(0) }}
+      onEnded={event => {
+        const lease = leaseRef.current
+        const controller = requestRef.current
+        const nextIndex = sourceIndex.current + 1
+        const nextSource = sources[nextIndex]
+        if (lease !== undefined && controller !== undefined && nextSource !== undefined) {
+          const completed = Number.isFinite(event.currentTarget.duration) && event.currentTarget.duration > 0
+            ? event.currentTarget.duration : event.currentTarget.currentTime
+          completedSeconds.current += Math.max(0, completed)
+          pendingPlay.current = true
+          void playSource(nextSource, nextIndex, lease, controller)
+          return
+        }
+        release()
+        sourceIndex.current = 0
+        completedSeconds.current = 0
+        setStatus('idle')
+        setPosition(0)
+      }}
       onError={() => {
         if (handleMediaError.current !== undefined) handleMediaError.current()
         // A recoverable preload decode error is not a failed user play. Wait

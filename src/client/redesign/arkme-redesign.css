@@ -924,6 +924,9 @@ button.arkme-redesign-update-button:disabled { opacity: .55; cursor: default; }
 .arkme-billing-payment-content > img { width: 210px; height: 210px; border-radius: 10px; }
 .arkme-billing-payment-content > strong { font-size: 14px; line-height: 21px; font-weight: 600; }
 .arkme-billing-payment-content > p { margin: 0; color: #858992; font-size: 12px; line-height: 18px; }
+.arkme-billing-payment-content.is-paid > strong { color: #16794f; font-size: 18px; line-height: 25px; }
+.arkme-billing-payment-content.is-paid > .arkme-billing-error { justify-content: center; }
+.arkme-billing-payment-content.is-crediting > strong { color: #335f9e; }
 .arkme-billing-dialog-actions { padding: 0 22px 20px; display: flex; justify-content: center; flex-wrap: wrap; gap: 9px; }
 .arkme-billing-dialog-actions > button,
 .arkme-billing-primary-action {
@@ -1903,13 +1906,13 @@ body[data-ds-dark-theme] .arkme-conversation-surface {
   outline-offset: 2px;
 }
 
-.arkme-world-extension-open:hover {
+.arkme-world-extension-activity:hover {
   background: var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, 0.06)) !important;
 }
-.arkme-world-extension-open:active {
+.arkme-world-extension-activity:active {
   background: var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, 0.10)) !important;
 }
-.arkme-world-extension-open:focus-visible {
+.arkme-world-extension-activity:focus-visible {
   outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8);
   outline-offset: 2px;
 }
@@ -1918,10 +1921,5 @@ body[data-ds-dark-theme] .arkme-conversation-surface {
     grid-template-columns: 48px minmax(0, 1fr) !important;
     gap: 11px !important;
     padding: 13px !important;
-  }
-  .arkme-world-extension-open {
-    grid-column: 2;
-    justify-self: start;
-    margin: 0 0 0 -8px !important;
   }
 }

@@ -107,6 +107,7 @@ describe('Arkme desktop Bot create dialog', () => {
     expect(markup).toContain('height:auto')
     expect(markup).toContain('data-arkme-bot-provider="openclaw"')
     expect(markup).toContain('data-arkme-bot-provider="webhook"')
+    expect(markup).toContain('data-arkme-notification-blocking-overlay="true"')
     expect(markup).not.toMatch(/green|#07c160|#16a34a/i)
   })
 

@@ -561,7 +561,12 @@ export function ArkmeGlobalSearchDialog({
     document.addEventListener('keydown', closeOnEscape)
     return () => document.removeEventListener('keydown', closeOnEscape)
   }, [onClose])
-  return <div style={styles.dialogOverlay} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+  return <div
+    data-arkme-notification-blocking-overlay="true"
+    style={styles.dialogOverlay}
+    role="presentation"
+    onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}
+  >
     <section style={styles.dialogPanel} role="dialog" aria-modal="true" aria-label="全局搜索">
       <ArkmeSearchSurface
         variant="dialog"

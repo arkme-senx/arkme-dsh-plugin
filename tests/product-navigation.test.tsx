@@ -6,6 +6,7 @@ import { ArkmeCallSurface } from '../src/client/ArkmeCallSurface.js'
 import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { arkmeAttentionSummary } from '../src/client/attention-summary-store.js'
 import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
@@ -21,12 +22,23 @@ const realtimeClientEventsSource = readFileSync(
   new URL('../src/client/realtime-client-events.ts', import.meta.url),
   'utf8',
 )
+const footerDropdownSource = readFileSync(
+  new URL('../src/client/ArkmeFooterDropdown.tsx', import.meta.url),
+  'utf8',
+)
 const redesignCss = readFileSync(
   new URL('../src/client/redesign/arkme-redesign.css', import.meta.url),
   'utf8',
 )
 
 describe('Arkme product navigation', () => {
+  it('uses the same server-owned attention summary for product navigation and the legacy footer seat', () => {
+    expect(productNavigationSource).toContain('arkmeAttentionSummary.subscribe')
+    expect(footerDropdownSource).toContain('arkmeAttentionSummary.subscribe')
+    expect(productNavigationSource).not.toContain('totalUnreadCount')
+    expect(footerDropdownSource).not.toContain('totalUnreadCount')
+  })
+
   it('opens voiceprint management while the account entry lives in DSH settings', () => {
     expect(productNavigationSource).toContain('arkmeUi.showVoiceprint()')
     expect(productNavigationSource).toContain('<strong>声纹管理</strong>')
@@ -123,9 +135,10 @@ describe('Arkme product navigation', () => {
     expect(markup).not.toContain('data-arkme-owned="product-brand"')
   })
 
-  it('shows the conversation unread indicator from the existing account-scoped directory state', () => {
+  it('shows the conversation unread indicator from the server-owned account summary', () => {
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 901 })
     arkmeChatDirectory.activateAccount(901)
+    arkmeAttentionSummary.activateAccount(901)
     arkmeChatDirectory.publish([{
       sourceRef: 'private-chat-1', kind: 'private_chat', displayName: '小林',
       activeAtMillis: 1, unreadCount: 60,
@@ -136,6 +149,10 @@ describe('Arkme product navigation', () => {
       sourceRef: 'muted-group-chat-1', kind: 'group_chat', displayName: '免打扰群',
       activeAtMillis: 3, unreadCount: 80, isMuted: true,
     }])
+    arkmeAttentionSummary.apply({
+      badgeCount: 110, mutedUnreadCount: 80, sessionCountWithUnread: 3,
+      hasAttention: false, summaryVersion: 1, updatedAtMillis: 1,
+    })
 
     const unreadMarkup = renderToStaticMarkup(<ArkmeProductNavigation compact={false} />)
     expect(unreadMarkup).toContain('aria-label="对话，110 条未读"')
@@ -146,6 +163,10 @@ describe('Arkme product navigation', () => {
     expect(unreadMarkup).toContain('background:#ff5a52')
 
     arkmeChatDirectory.publish([])
+    arkmeAttentionSummary.apply({
+      badgeCount: 0, mutedUnreadCount: 0, sessionCountWithUnread: 0,
+      hasAttention: false, summaryVersion: 2, updatedAtMillis: 2,
+    })
     const readMarkup = renderToStaticMarkup(<ArkmeProductNavigation compact={false} />)
     expect(readMarkup).not.toContain('data-arkme-unread-indicator')
 

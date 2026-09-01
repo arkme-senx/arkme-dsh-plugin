@@ -1,5 +1,5 @@
 import type {
-  ArkmeGroupActionResult, ArkmeGroupMemberAddResult, ArkmeGroupMemberCandidateList, ArkmeSourceItem,
+  ArkmeGroupMemberAddResult, ArkmeGroupMemberCandidateList, ArkmeGroupProjectionResult, ArkmeSourceItem,
 } from '../../types.js'
 
 export interface ArkmeGroupToolPort {
@@ -12,7 +12,7 @@ export interface ArkmeGroupToolPort {
     sourceRef: string,
     title: string,
     signal?: AbortSignal,
-  ): Promise<ArkmeGroupActionResult>
+  ): Promise<ArkmeGroupProjectionResult>
   listGroupMemberCandidates(
     sourceRef: string,
     options?: { query?: string; limit?: number; groupSourceRefs?: readonly string[]; signal?: AbortSignal },

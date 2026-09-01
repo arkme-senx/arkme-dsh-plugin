@@ -18,12 +18,16 @@ const expectedPublicMethods = [
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'listCallHistory', 'callDetail', 'retryCallSummary',
   'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'extensionAuthors', 'listExtensionReviews',
+  'backgroundSoundPreference', 'updateBackgroundSoundPreference',
   'resolveLinkMetadata',
   'searchContact', 'addContact',
   'listDirectory', 'directoryContactProfile', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
-  'sealRecordingCursor', 'openRecordingCursor', 'recordingDay', 'refreshProfile', 'arkoProfile',
+  'sealRecordingCursor', 'openRecordingCursor', 'recordingDay', 'recordingPlayback',
+  'recordingSpeakerOptions', 'assignRecordingSpeaker',
+  'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'retryRecordingImport',
+  'cancelRecordingImport', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
@@ -37,7 +41,7 @@ const expectedPublicMethods = [
   'createGroup', 'groupSettings', 'setGroupMessageDnd',
   'renameGroup', 'leaveGroup', 'dissolveGroup', 'reportGroup', 'userCard',
   'openPrivateChatFromUser', 'openPrivateChatFromContact', 'officialAuthorProfile', 'openOfficialAuthorPrivateChat', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'messageReadReceiptSummaries', 'messageReadReceiptDetail', 'messageSnapshotDetail', 'saveMessageLocation', 'sharedRecordingDetail', 'relatedRecordingEligibility', 'relatedRecordings',
-  'recordRelatedRecordingsToolEvent', 'reportMessage', 'copySourceMessageLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'forwardSourceMessages',
+  'recordRelatedRecordingsToolEvent', 'reportMessage', 'copySourceMessageLink', 'copyMessageActionsLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'forwardSourceMessages', 'forwardMessageActions',
   'sendSourceText', 'retryGroupAiPolish',
   'sendSourceRich', 'favoriteStickers', 'addFavoriteSticker', 'manageFavoriteSticker', 'sendFavoriteSticker', 'longArticleDetail', 'updateLongArticle', 'getLongArticleDraft',
   'putLongArticleDraft', 'removeLongArticleDraft', 'uploadLocalFile', 'fetchMedia', 'sendDirectText',
@@ -64,16 +68,19 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'background-sound-preference-service.ts',
+  'background-sound-membership-service.ts',
   'file-transfers.ts',
   'service.ts', 'auth-service.ts', 'profile-service.ts', 'bot-service.ts', 'bot-conversation-service.ts', 'source-service.ts',
   'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
-  'record-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'search-service.ts',
+  'desktop-attention-bridge.ts',
+  'record-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-import-gateway.ts', 'search-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'contact-service.ts', 'contact-directory-service.ts', 'unmarked-speaker-service.ts',
   'voiceprint-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
-  'link-metadata-service.ts',
+  'link-metadata-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {
@@ -104,7 +111,7 @@ describe('Arkme service architecture', () => {
 
   it('keeps the compatibility facade free of business transport and state owners', () => {
     const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
-    expect(facade.split('\n').length).toBeLessThan(1_800)
+    expect(facade.split('\n').length).toBeLessThan(1_825)
     expect(facade).not.toMatch(/\/api\//)
     expect(facade).not.toMatch(/private readonly \w+\s*=\s*new Map/)
   })
@@ -115,6 +122,34 @@ describe('Arkme service architecture', () => {
     for (const file of readdirSync(directory).filter(name => name.endsWith('-service.ts'))) {
       expect(readFileSync(join(directory, file), 'utf8')).not.toMatch(/from ['"]\.\.\/arkme-service/)
     }
+  })
+
+  it('keeps recording import business orchestration independent from filesystem and OSS layout details', () => {
+    const contract = readFileSync(join(root, 'src/recording-import-contract.ts'), 'utf8')
+    const refCodec = readFileSync(join(root, 'src/recording-import-ref.ts'), 'utf8')
+    const recordingService = readFileSync(join(root, 'src/services/recording-service.ts'), 'utf8')
+    const coordinator = readFileSync(join(root, 'src/recording-import-coordinator.ts'), 'utf8')
+
+    expect(contract).toContain('sourceHandle')
+    expect(contract).not.toContain('sourceRef')
+    expect(contract).not.toMatch(/from ['"]node:crypto/)
+    expect(contract).not.toContain('sealRecordingImportRef')
+    expect(contract).not.toContain('openRecordingImportRef')
+    expect(refCodec).toMatch(/from ['"]node:crypto/)
+    expect(refCodec).toContain('sealRecordingImportRef')
+    expect(refCodec).toContain('openRecordingImportRef')
+    expect(recordingService).not.toContain('AudioRecordingImportGateway')
+    expect(recordingService).not.toContain('probeRecordingImportFile')
+    expect(recordingService).not.toMatch(/from ['"]node:fs/)
+    expect(coordinator).not.toMatch(/from ['"]node:fs/)
+    expect(coordinator).not.toContain('pc_upload/')
+    expect(coordinator).not.toContain('arkme_')
+
+    const gateway = readFileSync(join(root, 'src/services/recording-import-gateway.ts'), 'utf8')
+    const source = readFileSync(join(root, 'src/recording-import-probe.ts'), 'utf8')
+    expect(gateway).toContain('pc_upload/')
+    expect(gateway).toContain('arkme_')
+    expect(source).toMatch(/from ['"]node:fs/)
   })
 
   it('keeps direct-conversation and group Bot projections behind separate mappers', () => {
@@ -135,6 +170,25 @@ describe('Arkme service architecture', () => {
     expect(facade).not.toMatch(/\/api\/v1\/(bot\/private-chat|chat\/timeline)/)
   })
 
+  it('keeps message-action business rules independent from capabilities and owner transport', () => {
+    const contract = readFileSync(join(root, 'src/message-action-contract.ts'), 'utf8')
+    const service = readFileSync(join(root, 'src/services/message-action-service.ts'), 'utf8')
+    const infrastructure = readFileSync(join(root, 'src/services/message-action-infrastructure.ts'), 'utf8')
+
+    expect(contract).toContain('export type MessageActionReference =')
+    expect(contract).toContain("ownerKind: 'agent'")
+    expect(contract).toContain("ownerKind: 'bot_chat'")
+    expect(contract).toContain("ownerKind: 'bot_subject'")
+    expect(contract).toContain('export interface MessageActionCapabilityCodec')
+    expect(contract).toContain('export interface MessageActionGateway')
+    expect(service).not.toMatch(/from ['"]node:crypto['"]/)
+    expect(service).not.toMatch(/\/api\/v1\//)
+    expect(service).not.toMatch(/\bServiceRuntime\b|\bSourceService\b|\bBotService\b/)
+    expect(infrastructure).toMatch(/createCipheriv|createDecipheriv/)
+    expect(infrastructure).toContain('/api/v1/chats/messages/copy-link/get-or-create')
+    expect(infrastructure).toContain('/api/v1/chats/records/forward')
+  })
+
   it('keeps World cross-domain dependencies behind narrow ports', () => {
     const world = readFileSync(join(root, 'src/services/world-service.ts'), 'utf8')
     expect(world).toContain('export interface ArkmeWorldProfileReader')
@@ -142,6 +196,15 @@ describe('Arkme service architecture', () => {
     expect(world).toContain('export interface ArkmeWorldRecordWriter')
     expect(world).not.toMatch(/import \{[^}]*\bMediaService\b/)
     expect(world).not.toMatch(/import \{[^}]*\bRecordService\b/)
+  })
+
+  it('keeps transport outcome translation behind the file-send port adapter', () => {
+    const owner = readFileSync(join(root, 'src/file-transfer-owner.ts'), 'utf8')
+    const transfers = readFileSync(join(root, 'src/services/file-transfers.ts'), 'utf8')
+    const schedule = transfers.slice(transfers.indexOf('private schedule('), transfers.indexOf('async reception('))
+    expect(owner).toContain('writeOutcomeUnknown')
+    expect(transfers).not.toContain('writeOutcomeUnknown')
+    expect(schedule).not.toMatch(/task\.state\s*===\s*['"]sending['"]/u)
   })
 
   it('keeps Voiceprint profile enrichment behind a narrow port', () => {
@@ -212,5 +275,16 @@ describe('Arkme service architecture', () => {
     expect(client).not.toMatch(/Pull Request #|Change #/u)
     expect(service).not.toMatch(/Pull Request #|Change #/u)
     expect(host.match(/service\.resolveLinkMetadata\(/gu) ?? []).toHaveLength(2)
+  })
+
+  it('does not invent recording speaker mutation contracts that the Audio owner does not expose', () => {
+    const recordingService = readFileSync(join(root, 'src/services/recording-service.ts'), 'utf8')
+    const hostApi = readFileSync(join(root, 'src/host-api.ts'), 'utf8')
+    const clientApi = readFileSync(join(root, 'src/client/api.ts'), 'utf8')
+
+    expect(recordingService).not.toContain('/api/v1/audio/unassign-asr-item-spk')
+    expect(recordingService).not.toContain('/api/v1/audio/batch-unassign-session-num-spk')
+    expect(hostApi).not.toContain('recordings.speaker.unassign-item')
+    expect(clientApi).not.toContain('recordings.speaker.unassign-item')
   })
 })

@@ -1,4 +1,5 @@
 import {
+  ArkmeRequestQueueOverflowError,
   ArkmeRequestCoordinator,
   type ArkmeRequestLane,
   type ArkmeRequestService,
@@ -18,6 +19,7 @@ import type {
   ArkmeUserProfileSnapshot,
 } from '../types.js'
 import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
+import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore {
   uniqueCode(): Promise<string>
@@ -47,6 +49,16 @@ export interface StateStore {
   getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined>
   putLongArticleDraft(userId: number, draft: ArkmeLongArticleDraft): Promise<void>
   removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void>
+  listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]>
+  listAllRecordingImportJobs(): Promise<RecordingImportJob[]>
+  getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined>
+  putRecordingImportJob(userId: number, job: RecordingImportJob): Promise<void>
+  admitRecordingImportJob(
+    userId: number,
+    job: RecordingImportJob,
+    unresolvedLimit: number,
+  ): Promise<RecordingImportAdmission>
+  replaceRecordingImportJob(userId: number, job: RecordingImportJob, expectedRevision: number): Promise<boolean>
 }
 
 export interface ArkmeServiceConfig {
@@ -70,6 +82,7 @@ export interface ArkmeServiceConfig {
   geetestCaptchaId: string
   relatedRecordingsEnabled?: boolean
   interwovenMomentsEnabled: boolean
+  recordingWorkbenchEnabled?: boolean
   chatMemberJoinEventsEnabled?: boolean
   shareWebsite?: string
   richMediaRenderEnabled?: boolean
@@ -96,24 +109,45 @@ export interface ArkmeRemoteRequestOptions {
   cacheMs?: number
   failureCooldownMs?: number
   bypassCache?: boolean
+  /** Mark only transport outcomes where a mutation may have reached its owner without a usable acknowledgement. */
+  trackWriteOutcome?: boolean
 }
 
 export class ArkmePluginError extends Error {
   readonly upstreamStatus?: number
   readonly retryAfterMillis?: number
+  /** The owner mutation may have completed, but the caller did not receive a usable acknowledgement. */
+  readonly writeOutcomeUnknown?: true
 
   constructor(
     readonly code: string,
     message: string,
     readonly retryable: boolean,
     readonly httpStatus = 400,
-    options?: ErrorOptions & { upstreamStatus?: number; retryAfterMillis?: number },
+    options?: ErrorOptions & { upstreamStatus?: number; retryAfterMillis?: number; writeOutcomeUnknown?: boolean },
   ) {
     super(message, options)
     this.name = 'ArkmePluginError'
     if (options?.upstreamStatus !== undefined) this.upstreamStatus = options.upstreamStatus
     if (options?.retryAfterMillis !== undefined) this.retryAfterMillis = options.retryAfterMillis
+    if (options?.writeOutcomeUnknown === true) this.writeOutcomeUnknown = true
   }
+}
+
+function remoteWriteOutcomeUnknown(error: ArkmePluginError): boolean {
+  if (['arkme-network-error', 'arkme-timeout', 'arkme-response-invalid'].includes(error.code)) return true
+  return error.upstreamStatus === 408
+    || (error.upstreamStatus !== undefined && error.upstreamStatus >= 500)
+}
+
+function withUnknownWriteOutcome(error: ArkmePluginError): ArkmePluginError {
+  if (error.writeOutcomeUnknown === true) return error
+  return new ArkmePluginError(error.code, error.message, error.retryable, error.httpStatus, {
+    cause: error,
+    writeOutcomeUnknown: true,
+    ...(error.upstreamStatus === undefined ? {} : { upstreamStatus: error.upstreamStatus }),
+    ...(error.retryAfterMillis === undefined ? {} : { retryAfterMillis: error.retryAfterMillis }),
+  })
 }
 
 function retryAfterMillis(value: string | null): number | undefined {
@@ -315,7 +349,7 @@ export class ServiceRuntime {
     preserveHttpError = false,
     preserveForbiddenError = false,
   ): Promise<T> {
-    return await this.requestCoordinator.run({
+    return await this.requestCoordinator.run<T>({
       scope: options.scope ?? 'public',
       lane: options.lane ?? 'write',
       service: options.service ?? this.requestService(baseUrl),
@@ -327,10 +361,20 @@ export class ServiceRuntime {
       shouldCooldown: error => !(error instanceof ArkmePluginError)
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
       serviceCooldownMs: error => this.remoteServiceCooldownMs(error),
-      operation: async coordinatedSignal => await this.postDirect(
+      operation: async coordinatedSignal => await this.postDirect<T>(
         baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
         preserveHttpError, preserveForbiddenError,
       ),
+    }).catch((error): never => {
+      if (options.trackWriteOutcome === true && error instanceof ArkmeRequestQueueOverflowError) {
+        throw new ArkmePluginError('arkme-request-queue-full', '发送请求较多，请稍后重试', true, 503, { cause: error })
+      }
+      if (options.trackWriteOutcome === true && error instanceof Error && error.name === 'AbortError') {
+        throw new ArkmePluginError('arkme-request-aborted', '发送请求已取消', true, 409, { cause: error })
+      }
+      if (options.trackWriteOutcome === true && error instanceof ArkmePluginError
+        && remoteWriteOutcomeUnknown(error)) throw withUnknownWriteOutcome(error)
+      throw error
     })
   }
 
@@ -642,6 +686,27 @@ export class ServiceRuntime {
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
     const requestOptions = () => this.authenticatedRequestOptions(session, 'auth', 'write', options)
+    try {
+      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
+  /** Read a legacy private owner hosted by the main authenticated API. */
+  async authenticatedAuthReadPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'auth', 'interactive-read', options)
     try {
       return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     } catch (error) {

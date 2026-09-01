@@ -1,5 +1,7 @@
 import type { ArkmeSourceItem } from '../types.js'
 
+export type ArkmeSourceIdentityFacts = Pick<ArkmeSourceItem, 'kind' | 'sourceRef' | 'sourceKey' | 'topicHierarchyKey'>
+
 export function arkmeChatSourceIdentityKey(
   source: Pick<ArkmeSourceItem, 'sourceRef' | 'sourceKey'>,
 ): string {
@@ -8,7 +10,7 @@ export function arkmeChatSourceIdentityKey(
 }
 
 export function arkmeSourceIdentityKey(
-  source: Pick<ArkmeSourceItem, 'kind' | 'sourceRef' | 'sourceKey' | 'topicHierarchyKey'>,
+  source: ArkmeSourceIdentityFacts,
 ): string {
   if (source.kind === 'private_chat' || source.kind === 'group_chat') {
     return arkmeChatSourceIdentityKey(source)
