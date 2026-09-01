@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.38",
+  "version": "0.1.39",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -65,10 +65,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.38 更新",
-      "summary": "fix: 恢复输入视觉并保留窄屏会话栏",
-      "publishedAt": "2026-09-01T12:14:41.929Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.38"
+      "title": "Arkme 插件 0.1.39 更新",
+      "summary": "Dev to master",
+      "publishedAt": "2026-09-01T12:48:29.808Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.39"
     }
   },
   "scripts": {
