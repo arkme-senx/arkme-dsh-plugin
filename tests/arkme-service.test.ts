@@ -8,7 +8,7 @@ import { ContactDirectoryService } from '../src/services/contact-directory-servi
 import { MediaService } from '../src/services/media-service.js'
 import { UnmarkedSpeakerService } from '../src/services/unmarked-speaker-service.js'
 import type {
-  ArkmeRecordCursor, ArkmeSelfRecordItem, ArkmeSelfRecordList, ArkmeSelfSummary,
+  ArkmeRecordCursor, ArkmeSelfRecordItem, ArkmeSelfRecordList, ArkmeSelfSummary, ArkmeSourceItem,
   ArkmeUserProfile, ArkmeUserProfileSnapshot,
 } from '../src/types.js'
 
@@ -2335,7 +2335,8 @@ describe('ArkmeService', () => {
     await expect(service.markSourceRead(privateRef, 8)).resolves.toMatchObject({
       effectiveReadSequence: 8, unreadCount: 0,
     })
-    expect(calls.at(-1)?.body).toMatchObject({ chat_session_uid: 'chat-private', read_seq: 8 })
+    expect(calls.find(call => call.url.endsWith('/api/v1/chats/cursor/update'))?.body)
+      .toMatchObject({ chat_session_uid: 'chat-private', read_seq: 8 })
     expect(clientEvents[0]).toMatchObject({
       type: 'read-ack',
       sourceRef: privateRef,
@@ -3379,16 +3380,60 @@ describe('ArkmeService', () => {
     expect(JSON.stringify(sources)).not.toContain('x-oss-signature')
     expect(profileReads).toBe(1)
 
-    await expect(service.readImage(sources.items[0]!.avatarRef!)).resolves.toMatchObject({
+    const sourceCache = (service as unknown as { source: {
+      cachedChatSource(userId: number, chatSessionUid: string): ArkmeSourceItem | undefined
+      chatSourceFromBundle(
+        bundle: Record<string, unknown>,
+        session: ArkmeSessionCredentials,
+        cached: ArkmeSourceItem | undefined,
+        timelineItems: [],
+      ): Promise<ArkmeSourceItem>
+    } }).source
+    const cachedPrivate = sourceCache.cachedChatSource(10001, 'private-1')
+    const cachedGroup = sourceCache.cachedChatSource(10001, 'group-1')
+    expect(cachedPrivate).toMatchObject({
+      peerUserId: 20002,
+      avatarRef: sources.items[0]?.avatarRef,
+    })
+    expect(cachedGroup).toMatchObject({
+      avatarRefs: sources.items[1]?.avatarRefs,
+      groupAvatar: sources.items[1]?.groupAvatar,
+    })
+
+    sources.items[0]!.avatarRef = 'mutated-private-avatar'
+    sources.items[1]!.avatarRefs![0] = 'mutated-group-avatar'
+    sources.items[1]!.groupAvatar!.slots[0]!.avatarRef = 'mutated-group-presentation'
+    expect(sourceCache.cachedChatSource(10001, 'private-1')?.avatarRef).not.toBe('mutated-private-avatar')
+    expect(sourceCache.cachedChatSource(10001, 'group-1')?.avatarRefs?.[0]).not.toBe('mutated-group-avatar')
+    expect(sourceCache.cachedChatSource(10001, 'group-1')?.groupAvatar?.slots[0]?.avatarRef)
+      .not.toBe('mutated-group-presentation')
+
+    const session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    await expect(sourceCache.chatSourceFromBundle({
+      session: { chat_session_uid: 'private-1', session_kind: 1, last_active_at: 3, last_seq: 1 },
+      private_counterpart: { user_id: 20002, display_name_snapshot: '联系人' },
+      unread_snapshot: { unread_count: 1, session_last_seq: 1 },
+    }, session, sourceCache.cachedChatSource(10001, 'private-1'), [])).resolves.toMatchObject({
+      avatarRef: cachedPrivate?.avatarRef,
+    })
+    await expect(sourceCache.chatSourceFromBundle({
+      session: { chat_session_uid: 'group-1', session_kind: 2, title: '群聊', last_active_at: 3, last_seq: 1 },
+      unread_snapshot: { unread_count: 1, session_last_seq: 1 },
+    }, session, sourceCache.cachedChatSource(10001, 'group-1'), [])).resolves.toMatchObject({
+      avatarRefs: cachedGroup?.avatarRefs,
+      groupAvatar: cachedGroup?.groupAvatar,
+    })
+
+    await expect(service.readImage(cachedPrivate!.avatarRef!)).resolves.toMatchObject({
       mediaType: 'image/png', bytes: png.byteLength,
     })
-    await expect(service.readImage(sources.items[0]!.avatarRef!)).resolves.toMatchObject({
+    await expect(service.readImage(cachedPrivate!.avatarRef!)).resolves.toMatchObject({
       mediaType: 'image/png', bytes: png.byteLength,
     })
     expect(profileReads).toBe(1)
     expect(imageDownloads).toBe(1)
     sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
-    await expect(service.readImage(sources.items[0]!.avatarRef!)).rejects.toMatchObject({ code: 'image-ref-invalid' })
+    await expect(service.readImage(cachedPrivate!.avatarRef!)).rejects.toMatchObject({ code: 'image-ref-invalid' })
   })
 
   it('bounds concurrent image downloads at the Host cache boundary', async () => {

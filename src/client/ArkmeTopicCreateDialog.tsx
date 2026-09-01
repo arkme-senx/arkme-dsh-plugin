@@ -84,7 +84,12 @@ export function ArkmeTopicCreateDialog({
     if (event.key === 'Escape' && !submitting) onCancel()
   }
 
-  return <div style={styles.backdrop} onMouseDown={cancelFromBackdrop} onKeyDown={cancelFromKeyboard}>
+  return <div
+    data-arkme-notification-blocking-overlay="true"
+    style={styles.backdrop}
+    onMouseDown={cancelFromBackdrop}
+    onKeyDown={cancelFromKeyboard}
+  >
     <form
       role="dialog" aria-modal="true" aria-labelledby="arkme-topic-create-title"
       style={styles.dialog} onSubmit={submit}

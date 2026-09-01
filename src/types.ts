@@ -427,6 +427,10 @@ export interface ArkmeBotSummary {
   latestMessagePreview?: string
   /** Unread count projected from the canonical Chat conversation, when Chat owns the Bot conversation. */
   unreadCount?: number
+  /** Attention count after applying the canonical Chat notification policy. */
+  badgeUnreadCount?: number
+  /** Whether new-message notifications are allowed by the canonical Chat policy. */
+  notificationAllowed?: boolean
   /** Notification mute projection from the canonical Chat conversation, when available. */
   isMuted?: boolean
   /** Account-bound opaque reference resolved through image.read. */
@@ -1230,6 +1234,10 @@ export interface ArkmeSourceItem {
   latestPreview?: string
   activeAtMillis: number
   unreadCount: number
+  /** Attention count after applying mute/notification policy; raw unreadCount remains authoritative. */
+  badgeUnreadCount?: number
+  /** Whether new-message notifications are allowed for this conversation. */
+  notificationAllowed?: boolean
   hasUnreadMention?: boolean
   /** Effective chat notification state. True when mute is on or push notifications are disabled. */
   isMuted?: boolean
@@ -2651,16 +2659,32 @@ export interface ArkmeChatRealtimeState {
   lastEventAtMillis?: number
 }
 
+/** Server-owned unread attention summary across every visible conversation. */
+export interface ArkmeChatAttentionSummary {
+  badgeCount: number
+  mutedUnreadCount: number
+  sessionCountWithUnread: number
+  hasAttention: boolean
+  summaryVersion: number
+  updatedAtMillis: number
+}
+
 export type ArkmeChatClientEvent = {
   type: 'reconcile'
   revision: number
   connected: boolean
   refresh?: 'none' | 'if-stale' | 'force'
   connectionGeneration: number
+  /** Latest server-owned full attention summary for Browser SSE reconnects. */
+  attentionSummary?: ArkmeChatAttentionSummary
 } | {
   type: 'sessions-delta'
   revision: number
   updates: Array<{ sourceKey?: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }>
+} | {
+  type: 'attention-summary'
+  revision: number
+  summary: ArkmeChatAttentionSummary
 } | {
   type: 'projection-invalidated'
   revision: number

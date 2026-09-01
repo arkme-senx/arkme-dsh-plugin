@@ -20,6 +20,7 @@ import type {
 import { ProfileService } from './profile-service.js'
 import { SourceService, type ArkmeSourceRefPayload } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import { projectArkmeChatAttention } from '../chat-attention.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -61,12 +62,6 @@ interface RawMemberCandidate {
   origin: 'private_chat' | 'group_chat'
 }
 
-function chatMessageDnd(value: unknown): boolean | undefined {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
-  const policy = value as Record<string, unknown>
-  return numberValue(policy.mute_state) === 2 || numberValue(policy.notify_state) === 2
-}
-
 function chatMemberRole(value: unknown): ArkmeGroupMemberRole {
   if (value === 'owner' || value === 1) return 'owner'
   if (value === 'admin' || value === 2) return 'admin'
@@ -87,6 +82,7 @@ export class GroupService {
     private readonly source: SourceService,
     private readonly profile: ProfileService,
     private readonly inviteSender?: GroupInviteTextSender,
+    private readonly attentionInvalidated?: () => void,
   ) {}
 
   async groupInvitePreview(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupInvitePreview> {
@@ -519,7 +515,11 @@ export class GroupService {
     const chatSession = objectValue(data.session)
     const currentMember = objectValue(data.current_member)
     const title = stringValue(chatSession.title).trim() || source.displayName
-    const messageDnd = chatMessageDnd(data.current_policy) ?? false
+    const attention = projectArkmeChatAttention(
+      objectValue(data.unread_snapshot).unread_count,
+      data.current_policy,
+    )
+    const messageDnd = attention.isMuted
     const target: ArkmeGroupSettingsSnapshot['target'] = {
       sourceRef: await this.source.sealSourceRef(session.userId, 'group_chat', source.ownerRef, title),
       sourceKey: await this.source.chatDirectorySourceKey(session.userId, source.ownerRef),
@@ -574,6 +574,8 @@ export class GroupService {
     const cacheKey = `${String(session.userId)}:${source.ownerRef}`
     const cached = this.source.cachedChatSourceByKey(cacheKey)
     if (cached !== undefined) this.source.setChatSourceByKey(cacheKey, { ...cached, isMuted: enabled })
+    this.source.invalidateSourceListCache(session.userId, 'root')
+    this.attentionInvalidated?.()
     return {
       messageDnd: enabled,
     }

@@ -22,7 +22,10 @@ import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
 import { arkmeAppUpdateStore, type ArkmeAppUpdateSnapshot } from './app-update-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
+import {
+  arkmeDesktopNotifications,
+  type ArkmeDesktopNotificationPermission,
+} from './desktop-notification-runtime.js'
 import { clearLastNavigationCache } from './navigation-cache.js'
 import { arkmeLocationCaptureEnabled, arkmeLocationPermissionState, requestArkmeRecordLocation, setArkmeLocationCaptureEnabled, subscribeArkmeLocationCapturePreference } from './record-capture-location.js'
 import { arkmeUi } from './ui-controller.js'
@@ -541,6 +544,16 @@ export function buildArkmeAppUpdateRow(input: {
   }
 }
 
+export function arkmeNotificationPermissionLabel(permission: ArkmeDesktopNotificationPermission): string {
+  return permission === 'granted'
+    ? '已开启'
+    : permission === 'denied'
+      ? '系统通知未开启，点击前往设置'
+      : permission === 'default'
+        ? '尚未授权，点击开启'
+        : permission === 'system-managed' ? '由系统管理' : '不可用'
+}
+
 export function ArkmeSettingsSurface() {
   const surfaceRef = useRef<HTMLDivElement>(null)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
@@ -553,7 +566,11 @@ export function ArkmeSettingsSurface() {
   const [accountFeedback, setAccountFeedback] = useState('')
   const [activeAccountDialog, setActiveAccountDialog] = useState<'qr' | 'arkme-id' | 'phone' | null>(null)
   const [locationDialogOpen, setLocationDialogOpen] = useState(false)
-  const [notificationPermission, setNotificationPermission] = useState(() => arkmeDesktopNotifications.permission())
+  const notificationPermission = useSyncExternalStore(
+    arkmeDesktopNotifications.subscribePermission,
+    arkmeDesktopNotifications.getPermissionSnapshot,
+    arkmeDesktopNotifications.getPermissionSnapshot,
+  ).permission
 
   const applyProfileSnapshot = useCallback((snapshot: ArkmeUserProfileSnapshot) => {
     if (snapshot.profile !== null) setProfile(snapshot.profile)
@@ -591,6 +608,14 @@ export function ArkmeSettingsSurface() {
     return () => { controller.abort() }
   }, [loadProfile])
 
+  useEffect(() => {
+    const refresh = () => { void arkmeDesktopNotifications.refreshPermission() }
+    refresh()
+    if (typeof window === 'undefined') return
+    window.addEventListener('focus', refresh)
+    return () => { window.removeEventListener('focus', refresh) }
+  }, [])
+
   useLayoutEffect(() => {
     scrollArkmeSettingsSurface(surfaceRef.current)
   }, [])
@@ -613,7 +638,17 @@ export function ArkmeSettingsSurface() {
   const enableNotifications = async () => {
     setNotificationBusy(true)
     try {
-      setNotificationPermission(await arkmeDesktopNotifications.requestPermission())
+      await arkmeDesktopNotifications.requestPermission()
+    } finally {
+      setNotificationBusy(false)
+    }
+  }
+
+  const openNotificationSettings = async () => {
+    setNotificationBusy(true)
+    setError('')
+    try {
+      if (!await arkmeDesktopNotifications.openPermissionSettings()) setError('无法打开系统通知设置')
     } finally {
       setNotificationBusy(false)
     }
@@ -633,9 +668,7 @@ export function ArkmeSettingsSurface() {
   const accountDescription = authenticated
     ? profile?.arkmeId ? `即我号 ${profile.arkmeId}` : '即我号读取中…'
     : bindingRequired ? '请完成手机号绑定' : authState.checked ? '登录后显示账户信息' : '正在读取账户状态…'
-  const notificationLabel = notificationPermission === 'granted'
-    ? '已开启'
-    : notificationPermission === 'denied' ? '已阻止' : notificationPermission === 'default' ? '未开启' : '不可用'
+  const notificationLabel = arkmeNotificationPermissionLabel(notificationPermission)
   const appUpdateRow = buildArkmeAppUpdateRow({
     ...(appUpdateState.status === undefined ? {} : { app: appUpdateState.status }),
     ...(appUpdateState.error === '' ? {} : { appError: appUpdateState.error }),
@@ -731,7 +764,11 @@ export function ArkmeSettingsSurface() {
           title="通知"
           description={notificationLabel}
           disabled={notificationBusy}
-          {...(notificationPermission === 'default' ? { onClick: () => { void enableNotifications() } } : {})}
+          {...(notificationPermission === 'default'
+            ? { onClick: () => { void enableNotifications() } }
+            : notificationPermission === 'denied'
+              ? { onClick: () => { void openNotificationSettings() } }
+              : {})}
         />
       </SettingsGroup>
 

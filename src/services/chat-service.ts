@@ -144,6 +144,7 @@ export interface ArkmeChatRealtimePort {
   nextChatClientRevision(): number
   scheduleChatSessionProjection(chatSessionUid: string, latestSequence: number): void
   invalidateRecordProjection(): Promise<void>
+  refreshAttentionSummary(): Promise<void>
 }
 
 function numberValue(value: unknown): number {
@@ -1193,6 +1194,8 @@ export class ChatService {
     const cacheKey = `${String(session.userId)}:${sessionUid}`
     const cached = this.source.cachedChatSourceByKey(cacheKey)
     if (cached !== undefined) this.source.setChatSourceByKey(cacheKey, { ...cached, isMuted: muted })
+    this.source.invalidateSourceListCache(session.userId, 'root')
+    void this.realtime.refreshAttentionSummary()
     return { muted }
   }
 
@@ -3132,6 +3135,7 @@ export class ChatService {
         unreadCount,
       })
       this.realtime.scheduleChatSessionProjection(chatSessionUid, sessionLastSequence)
+      void this.realtime.refreshAttentionSummary()
       return { sourceRef, effectiveReadSequence, unreadCount }
     }
   

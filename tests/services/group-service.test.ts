@@ -80,11 +80,52 @@ describe('GroupService', () => {
       avatarRef: 'group-avatar-ref',
     }
     source.setChatSource(42, 'group-1', cachedSource)
+    const normalizedCachedSource = source.cachedChatSource(42, 'group-1')
 
     await service.groupSettings(cachedSource.sourceRef)
 
-    expect(source.cachedChatSource(42, 'group-1')).toEqual(cachedSource)
+    expect(source.cachedChatSource(42, 'group-1')).toEqual(normalizedCachedSource)
     expect(paths).toEqual(['/api/v1/chats/detail'])
+  })
+
+  it('invalidates a cached root page after enabling do-not-disturb', async () => {
+    let muted = false
+    let listReads = 0
+    const { source, service } = fixture(async (input) => {
+      const path = new URL(String(input)).pathname
+      if (path.endsWith('/chats/list')) {
+        listReads += 1
+        return new Response(JSON.stringify({ code: 200, data: {
+          items: [{
+            session: { chat_session_uid: 'group-dnd', session_kind: 2, title: '免打扰测试群', last_seq: 9 },
+            current_policy: { mute_state: muted ? 2 : 1, notify_state: muted ? 2 : 1 },
+            unread_snapshot: { unread_count: 3, session_last_seq: 9 },
+          }],
+          has_more: false,
+        } }), { status: 200 })
+      }
+      if (path.endsWith('/chats/group-avatar-snapshots')) {
+        return new Response(JSON.stringify({ code: 200, data: { items: [] } }), { status: 200 })
+      }
+      if (path.endsWith('/chats/policy/get')) {
+        return new Response(JSON.stringify({ code: 200, data: {
+          show_in_home_state: 1, privacy_state: 1, mute_state: muted ? 2 : 1,
+          pin_state: 1, notify_state: muted ? 2 : 1, status: 1,
+        } }), { status: 200 })
+      }
+      if (path.endsWith('/chats/policy/update')) {
+        muted = true
+        return new Response(JSON.stringify({ code: 200, data: {} }), { status: 200 })
+      }
+      throw new Error(`unexpected ${path}`)
+    })
+
+    const before = await source.listSources('root')
+    expect(before.items[0]).toMatchObject({ unreadCount: 3, badgeUnreadCount: 3, isMuted: false })
+    await service.setGroupMessageDnd(before.items[0]!.sourceRef, true)
+    const after = await source.listSources('root')
+    expect(after.items[0]).toMatchObject({ unreadCount: 3, badgeUnreadCount: 0, isMuted: true })
+    expect(listReads).toBe(2)
   })
 
   it('invalidates the root directory cache after a group rename', async () => {
@@ -145,6 +186,7 @@ describe('GroupService', () => {
       unreadCount: 0,
     }
     source.setChatSource(42, 'group-1', cachedSource)
+    const normalizedCachedSource = source.cachedChatSource(42, 'group-1')
     const invalidate = vi.spyOn(source, 'invalidateSourceListCache')
 
     const result = command === 'leave'
@@ -153,7 +195,7 @@ describe('GroupService', () => {
 
     expect(result).toEqual({ status: 'ok' })
     expect(paths).toEqual([expectedPath])
-    expect(source.cachedChatSource(42, 'group-1')).toEqual(cachedSource)
+    expect(source.cachedChatSource(42, 'group-1')).toEqual(normalizedCachedSource)
     expect(invalidate).toHaveBeenCalledWith(42, 'root')
   })
 

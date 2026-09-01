@@ -425,4 +425,43 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot().selectedSource?.isMuted).toBe(true)
     expect(listener).toHaveBeenCalledTimes(2)
   })
+
+  it('commits every notification activation even when the target source is already selected', () => {
+    const controller = new ArkmeUiController()
+    const listener = vi.fn()
+    const source = {
+      sourceRef: 'source-notification', sourceKey: 'source-key-notification',
+      kind: 'private_chat' as const, displayName: '林溪', activeAtMillis: 1, unreadCount: 1,
+    }
+    controller.selectSource(source)
+    controller.subscribe(listener)
+
+    controller.activateNotificationSource(source)
+    const firstRevision = controller.getSnapshot().notificationActivationRevision
+    controller.activateNotificationSource(source)
+
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
+    expect(firstRevision).toBe(1)
+    expect(controller.getSnapshot().notificationActivationRevision).toBe(2)
+    expect(listener).toHaveBeenCalledTimes(2)
+  })
+
+  it('atomically clears competing overlays when a notification activates a source', () => {
+    const controller = new ArkmeUiController()
+    const source = {
+      sourceRef: 'source-notification', kind: 'group_chat' as const,
+      displayName: '项目群', activeAtMillis: 1, unreadCount: 1,
+    }
+    controller.openExtensionShare('share-ref', 'author-chat')
+    controller.openWebLoginDialog()
+
+    controller.activateNotificationSource(source)
+
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
+    expect(controller.getSnapshot()).not.toHaveProperty('extensionShareRef')
+    expect(controller.getSnapshot()).not.toHaveProperty('extensionShareAction')
+    expect(controller.getSnapshot()).not.toHaveProperty('webLoginDialogOpen')
+    expect(controller.getSnapshot()).not.toHaveProperty('calendarOpen')
+    expect(controller.getSnapshot()).not.toHaveProperty('productMode')
+  })
 })

@@ -27,8 +27,10 @@ import { callArkme, ArkmeClientError } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import type { ArkmeContentBlock } from '../types.js'
 import type { ArkmeFileSendTask } from '../file-transfer-contract.js'
+import { projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { bindSentFileTaskLocals, fileTaskTimelineItem, localFileBlock, useArkmeFileSendTasks } from './file-send-tasks.js'
 import { isArkmeRequestAbort, retryArkmeRead } from './read-retry.js'
+import { arkmeAwaitVisibleReadIntent } from './read-intent-visibility.js'
 import { verifyPhoneCaptcha } from './geetest.js'
 import { ArkmeDirectorySourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import {
@@ -107,6 +109,12 @@ import {
 } from './composer-draft-store.js'
 import { arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
 import { restoreArkmeComposerFocus } from './composer-focus.js'
+import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
+import {
+  arkmeNotificationActivation,
+  type ArkmeNotificationActivationSnapshot,
+  type ArkmeNotificationActivationStore,
+} from './notification-activation-store.js'
 import { arkmeSourceIdentityKey, type ArkmeSourceIdentityFacts } from './source-identity.js'
 import {
   arkmeComposerGroupMemberCount, arkmeComposerPlaceholderText,
@@ -1817,6 +1825,84 @@ function CopyLinkDetailDrawer({
   </aside>
 }
 
+export const ARKME_NOTIFICATION_BLOCKING_OVERLAY_SELECTOR = [
+  '[data-arkme-notification-blocking-overlay="true"]',
+  '[data-arkme-web-login-dialog="true"]',
+].join(', ')
+export const ARKME_NOTIFICATION_OVERLAY_OBSERVER_TIMEOUT_MILLIS = 30_000
+
+interface ArkmeNotificationOverlayObserver {
+  observe(target: Node, options: MutationObserverInit): void
+  disconnect(): void
+}
+
+export function observeArkmeNotificationBlockingOverlayChanges(
+  target: Node,
+  onChange: () => void,
+  options: {
+    createObserver?(callback: () => void): ArkmeNotificationOverlayObserver
+    setTimer?(callback: () => void, delay: number): ReturnType<typeof setTimeout>
+    clearTimer?(timer: ReturnType<typeof setTimeout>): void
+  } = {},
+): () => void {
+  const observer = (options.createObserver ?? (callback => new MutationObserver(callback)))(onChange)
+  const schedule = options.setTimer ?? ((callback, delay) => setTimeout(callback, delay))
+  const cancel = options.clearTimer ?? (timer => { clearTimeout(timer) })
+  let stopped = false
+  const stop = () => {
+    if (stopped) return
+    stopped = true
+    observer.disconnect()
+    cancel(timeout)
+  }
+  observer.observe(target, { childList: true, subtree: true })
+  const timeout = schedule(stop, ARKME_NOTIFICATION_OVERLAY_OBSERVER_TIMEOUT_MILLIS)
+  return stop
+}
+
+export function arkmeNotificationBlockingOverlayPresent(
+  scope: Pick<Document, 'querySelector'>,
+): boolean {
+  return scope.querySelector(ARKME_NOTIFICATION_BLOCKING_OVERLAY_SELECTOR) !== null
+}
+
+export function arkmeNotificationConversationPanelMatches(
+  panel: Pick<HTMLElement, 'getAttribute'> | null,
+  activeConversation: boolean,
+  sourceIdentity: string,
+  targetIdentity: string,
+): boolean {
+  return activeConversation
+    && sourceIdentity === targetIdentity
+    && panel?.getAttribute('data-arkme-active-conversation-identity') === targetIdentity
+}
+
+export function takeArkmeNotificationSurfaceCommit({
+  store,
+  revision,
+  targetIdentity,
+  activeConversation,
+  sourceIdentity,
+  panel,
+  documentScope,
+}: {
+  store: ArkmeNotificationActivationStore
+  revision: number
+  targetIdentity: string
+  activeConversation: boolean
+  sourceIdentity: string
+  panel: Pick<HTMLElement, 'getAttribute'> | null
+  documentScope: Pick<Document, 'querySelector'>
+}): ArkmeNotificationActivationSnapshot | undefined {
+  const current = store.getSnapshot()
+  if (current.revision !== revision || current.source === undefined
+    || arkmeSourceIdentityKey(current.source) !== targetIdentity
+    || !arkmeNotificationConversationPanelMatches(panel, activeConversation, sourceIdentity, targetIdentity)
+    || arkmeNotificationBlockingOverlayPresent(documentScope)) return undefined
+  if (!current.surfaceCommitted && !store.markSurfaceCommitted(revision)) return undefined
+  return store.takeReady(revision)
+}
+
 export function ArkmeSurface({
   t = defaultArkmeLoginTranslate,
   floating = false,
@@ -1832,6 +1918,11 @@ export function ArkmeSurface({
   active = true,
 }: ArkmeSurfaceProps = {}) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
+  const notificationActivation = useSyncExternalStore(
+    arkmeNotificationActivation.subscribe,
+    arkmeNotificationActivation.getSnapshot,
+    arkmeNotificationActivation.getSnapshot,
+  )
   const authStoreSnapshot = useSyncExternalStore(
     arkmeAuthStore.subscribe,
     arkmeAuthStore.getSnapshot,
@@ -1864,10 +1955,11 @@ export function ArkmeSurface({
       : undefined
   const source = ui.mode === 'source' || ui.mode === 'contact-add' ? selectedSource ?? aggregateSource : undefined
   const conversationKey = source === undefined ? '' : arkmeSourceIdentityKey(source)
+  const notificationActivationRevision = ui.notificationActivationRevision ?? 0
   const activeConversation = active && ui.calendarOpen !== true && source !== undefined
   const activeConversationRef = useRef(activeConversation)
   activeConversationRef.current = activeConversation
-  const conversationOverlayKey = `${activeConversation ? 'active' : 'inactive'}:${conversationKey}`
+  const conversationOverlayKey = `${activeConversation ? 'active' : 'inactive'}:${conversationKey}:notification-${String(notificationActivationRevision)}`
   const conversationOverlayScopeRef = useRef({ key: conversationOverlayKey, generation: 0 })
   if (conversationOverlayScopeRef.current.key !== conversationOverlayKey) {
     conversationOverlayScopeRef.current = {
@@ -2775,8 +2867,9 @@ export function ArkmeSurface({
     const hasReadIntent = source.unreadCount > 0
       || arkmeChatDirectory.hasOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? readSequence)
     if (!hasReadIntent) return
+    if (!await arkmeAwaitVisibleReadIntent()) return
+    if (lastReadAckRef.current === readAckKey) return
     lastReadAckRef.current = readAckKey
-    await new Promise<void>(resolve => { requestAnimationFrame(() => { resolve() }) })
     try {
       const result = await callArkme<ArkmeSourceReadResult>('source.mark-read', {
         sourceRef: source.sourceRef,
@@ -2952,8 +3045,13 @@ export function ArkmeSurface({
     setTimelineRevealKey('')
     setNewMessageCount(0)
     setDrawer(undefined); setGroupMembersOpen(false); setDetailItemUid(''); setShowOriginal(false)
+    setDraftPreview(undefined)
     if (authenticated) setError('')
     setLongArticleCreating(false); setAddMenuOpen(false)
+    setMentionTrigger(undefined)
+    setRelatedMenuOpen(false)
+    setRelatedPanelOpen(false)
+    setRelatedDetail(undefined)
     interwovenRequestRef.current?.abort()
     interwovenGenerationRef.current += 1
     detailRequestRef.current?.abort()
@@ -2963,6 +3061,29 @@ export function ArkmeSurface({
     momentRelatedRequestRef.current = undefined
     momentRelatedDetailRequestRef.current?.abort()
     momentRelatedDetailRequestRef.current = undefined
+    relatedGenerationRef.current += 1
+    relatedEligibilityAbortRef.current?.abort()
+    relatedEligibilityAbortRef.current = undefined
+    relatedPageAbortRef.current?.abort()
+    relatedPageAbortRef.current = undefined
+    snapshotRequestRef.current?.abort()
+    snapshotRequestRef.current = undefined
+    copyLinkDetailRequestRef.current?.abort()
+    copyLinkDetailRequestRef.current = undefined
+    forwardTargetRequestRef.current?.abort()
+    forwardTargetRequestRef.current = undefined
+    if (copyLinkRefreshTimerRef.current !== undefined) {
+      window.clearTimeout(copyLinkRefreshTimerRef.current)
+      copyLinkRefreshTimerRef.current = undefined
+    }
+    if (messageActionStatusTimerRef.current !== undefined) {
+      window.clearTimeout(messageActionStatusTimerRef.current)
+      messageActionStatusTimerRef.current = undefined
+    }
+    if (forwardSuccessTimerRef.current !== undefined) {
+      window.clearTimeout(forwardSuccessTimerRef.current)
+      forwardSuccessTimerRef.current = undefined
+    }
     setInterwovenMoments(sourceKey === undefined
       ? []
       : conversationCacheRef.current.getInterwovenMoments(sourceKey) ?? [])
@@ -2971,7 +3092,23 @@ export function ArkmeSurface({
     setMomentRelatedView('source-detail')
     setMomentRelatedState({ kind: 'idle' })
     setMomentRelatedDetailState({ kind: 'idle' })
-  }, [authenticated, authenticatedAccountKey, conversationKey])
+    setCopyLinkDetail(undefined)
+    setCopyLinkDetailDraft('')
+    setCopyLinkDetailSending(false)
+    setCopyLinkDetailSendError('')
+    setMemberMenu(undefined)
+    setMessageMenu(undefined)
+    setSnapshot(undefined)
+    setMessageReportItem(undefined)
+    setMemberProfile(undefined)
+    setMemberRecords(undefined)
+    setPrivateChatBusy(false)
+    setSelectMode(undefined)
+    setForwardTargetPicker(undefined)
+    setForwardSuccessFeedback(undefined)
+    setMessageActionStatus('')
+    setMessageActionBusy(undefined)
+  }, [authenticated, authenticatedAccountKey, conversationKey, notificationActivationRevision])
   useEffect(() => {
     if (!activeConversation || !authenticated || source === undefined) return
     const generation = timelineGenerationRef.current
@@ -3000,7 +3137,7 @@ export function ArkmeSurface({
         if (!hasCachedTimeline) setError(errorMessage(caught))
       }
     })
-  }, [acknowledgeRead, activeConversation, authenticated, chatDelta.items, conversationKey, loadTimeline, source, sourceIsChat, sourceProjectionRevision])
+  }, [acknowledgeRead, activeConversation, authenticated, chatDelta.items, conversationKey, loadTimeline, notificationActivationRevision, source, sourceIsChat, sourceProjectionRevision])
   useEffect(() => {
     if (!authenticated || source === undefined || timelineStateKey !== conversationKey) return
     if (conversationCacheRef.current.getTimeline(conversationKey) === undefined) return
@@ -3598,7 +3735,10 @@ export function ArkmeSurface({
     const currentSource = selectedSource !== undefined && arkmeSourceIdentityKey(selectedSource) === sourceIdentity
       ? selectedSource
       : arkmeChatDirectory.getSnapshot().sources.find(item => arkmeSourceIdentityKey(item) === sourceIdentity)
-    if (currentSource !== undefined) updateSourceProjection({ ...currentSource, isMuted: messageDnd })
+    if (currentSource !== undefined) updateSourceProjection({
+      ...currentSource,
+      ...projectArkmeChatAttentionFromMuted(currentSource.unreadCount, messageDnd),
+    })
   }, [updateSourceProjection])
   const conversationMemberByRef = useMemo(
     () => new Map(conversationMembers.map(member => [member.memberRef, member])),
@@ -4522,6 +4662,65 @@ export function ArkmeSurface({
   const composerPlaceholder = arkmeComposerPlaceholderText(
     arkmeComposerPlaceholderTargetForSource(selectedSource, conversationMembers.length),
   )
+  const localNotificationBlockingOverlayOpen = addMenuOpen
+    || longArticleCreating
+    || groupMembersOpen
+    || drawer !== undefined
+    || selectedMoment !== undefined
+    || relatedMenuOpen
+    || relatedPanelOpen
+    || relatedDetail !== undefined
+    || memberMenu !== undefined
+    || messageMenu !== undefined
+    || snapshot !== undefined
+    || messageReportItem !== undefined
+    || memberProfile !== undefined
+    || memberRecords !== undefined
+    || forwardTargetPicker !== undefined
+
+  useLayoutEffect(() => {
+    const target = notificationActivation.source
+    if (target === undefined || typeof document === 'undefined') return
+    const revision = notificationActivation.revision
+    const targetIdentity = arkmeSourceIdentityKey(target)
+    let resolved = false
+    let stopWatching: () => void = () => undefined
+    const tryCommit = () => {
+      const current = arkmeNotificationActivation.getSnapshot()
+      if (resolved || current.revision !== revision || current.source === undefined
+        || arkmeSourceIdentityKey(current.source) !== targetIdentity) {
+        stopWatching()
+        return
+      }
+      if (localNotificationBlockingOverlayOpen) return
+      const ready = takeArkmeNotificationSurfaceCommit({
+        store: arkmeNotificationActivation,
+        revision,
+        targetIdentity,
+        activeConversation,
+        sourceIdentity: conversationKey,
+        panel: panelRef.current,
+        documentScope: document,
+      })
+      if (ready === undefined) return
+      resolved = true
+      stopWatching()
+      if (ready.activationId !== undefined) {
+        void arkmeDesktopNotifications.completeActivationV2(ready.activationId, 'resolved')
+      }
+    }
+    tryCommit()
+    if (!resolved && typeof MutationObserver !== 'undefined' && document.body !== null) {
+      stopWatching = observeArkmeNotificationBlockingOverlayChanges(document.body, tryCommit)
+      // Close the race where a portal was removed between the first query and observer registration.
+      tryCommit()
+    }
+    return stopWatching
+  }, [
+    activeConversation, conversationKey, localNotificationBlockingOverlayOpen,
+    notificationActivation.navigationApplied, notificationActivation.revision,
+    notificationActivation.source, notificationActivation.surfaceCommitted,
+  ])
 
   if (!active) return <div
     className="arkme-conversation-surface"
@@ -4566,7 +4765,14 @@ export function ArkmeSurface({
           {...(renderSlot === undefined ? {} : { renderSlot })}
         />
       </aside>}
-      <section className="arkme-conversation-panel" ref={panelRef} style={styles.panel} role="region" aria-label={surfaceTitle}>
+      <section
+        className="arkme-conversation-panel"
+        ref={panelRef}
+        data-arkme-active-conversation-identity={activeConversation ? conversationKey : undefined}
+        style={styles.panel}
+        role="region"
+        aria-label={surfaceTitle}
+      >
         {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header className="arkme-conversation-header" style={styles.header}>
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
             <ArkmeDirectorySourceAvatar source={source} size={34} />
@@ -5237,6 +5443,7 @@ export function ArkmeSurface({
           </div></footer>}
         </>}
         {activeConversation && forwardTargetPicker !== undefined && <div
+          data-arkme-notification-blocking-overlay="true"
           style={styles.forwardTargetBackdrop}
           role="presentation"
           onMouseDown={event => { if (event.target === event.currentTarget && messageActionBusy !== 'forward') setForwardTargetPicker(undefined) }}

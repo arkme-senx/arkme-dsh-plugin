@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import type { ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeChatClientEvent } from '../types.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeCalendarInvalidations } from './calendar-invalidation-store.js'
+import { arkmeAttentionSummary } from './attention-summary-store.js'
 import {
   arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation,
 } from './chat-directory-store.js'
@@ -43,6 +44,13 @@ export function arkmeChatDeltaCalendarDateStamps(
   ]).filter(value => Number.isFinite(value) && value > 0))]
 }
 
+export function arkmeRealtimeTimelineDeliveryAllowed(
+  visibilityState: DocumentVisibilityState | undefined,
+  hasFocus = true,
+): boolean {
+  return visibilityState !== 'hidden' && hasFocus
+}
+
 export function useArkmeRealtimeClientEvents(
   auth: ArkmeAuthSnapshot | undefined,
   authRevision: number,
@@ -57,6 +65,7 @@ export function useArkmeRealtimeClientEvents(
       arkmeChatDirectory.activateAccount(undefined)
       arkmeChatTimelineDelta.activateAccount(undefined)
       arkmeInterwovenInvalidation.activateAccount(undefined)
+      arkmeAttentionSummary.activateAccount(undefined)
       arkmeMessageReadReceipts.activateAccount(undefined)
       return
     }
@@ -65,6 +74,7 @@ export function useArkmeRealtimeClientEvents(
     arkmeChatDirectory.activateAccount(authenticatedAccountScope)
     arkmeChatTimelineDelta.activateAccount(authenticatedAccountScope)
     arkmeInterwovenInvalidation.activateAccount(authenticatedAccountScope)
+    arkmeAttentionSummary.activateAccount(authenticatedUserId, authenticatedAccountScope)
     arkmeMessageReadReceipts.activateAccount(authenticatedUserId)
     let stopped = false
     let observedRevision: number | undefined
@@ -110,6 +120,7 @@ export function useArkmeRealtimeClientEvents(
           || (observedRevision !== undefined && update.revision <= observedRevision)) return
         observedRevision = update.revision
         if (update.type === 'reconcile') {
+          if (update.attentionSummary !== undefined) arkmeAttentionSummary.apply(update.attentionSummary)
           arkmeInterwovenInvalidation.invalidate()
           reconcileReceipts()
           if (update.refresh === 'none') return
@@ -129,6 +140,10 @@ export function useArkmeRealtimeClientEvents(
             update.effectiveReadSequence,
             update.unreadCount,
           )
+          return
+        }
+        if (update.type === 'attention-summary') {
+          arkmeAttentionSummary.apply(update.summary)
           return
         }
         if (update.type === 'message-notification') {
@@ -164,11 +179,15 @@ export function useArkmeRealtimeClientEvents(
               items: item.timelineItems,
             }
           })
-        if (timelineUpdates.length > 0) arkmeChatTimelineDelta.publish(timelineUpdates)
+        const foreground = arkmeRealtimeTimelineDeliveryAllowed(
+          browserDocument?.visibilityState,
+          browserDocument?.hasFocus?.() ?? true,
+        )
+        if (foreground && timelineUpdates.length > 0) arkmeChatTimelineDelta.publish(timelineUpdates)
         for (const dateStamp of arkmeChatDeltaCalendarDateStamps(update)) {
           arkmeCalendarInvalidations.publish({ dateStamp })
         }
-        if (arkmeSelectedBotAffectedByChatDelta(arkmeUi.getSnapshot().selectedBot, update)) arkmeUi.chatChanged()
+        if (foreground && arkmeSelectedBotAffectedByChatDelta(arkmeUi.getSnapshot().selectedBot, update)) arkmeUi.chatChanged()
         for (const sourceKey of arkmeChatDeltaSourceKeys(update)) arkmeInterwovenInvalidation.invalidate(sourceKey)
       } catch { /* Ignore malformed local frames; EventSource keeps the channel alive. */ }
     }
@@ -177,7 +196,7 @@ export function useArkmeRealtimeClientEvents(
       events = undefined
     }
     const connectEvents = () => {
-      if (stopped || events !== undefined || browserDocument?.visibilityState === 'hidden') return
+      if (stopped || events !== undefined) return
       const next = new EventSource('/arkme-self/api/events')
       next.onopen = handleOpen
       next.onmessage = handleMessage
@@ -185,18 +204,27 @@ export function useArkmeRealtimeClientEvents(
     }
     const handleVisibilityChange = () => {
       updateForeground()
-      if (browserDocument?.visibilityState === 'hidden') disconnectEvents()
-      else connectEvents()
+      connectEvents()
+      if (browserDocument?.visibilityState !== 'hidden') {
+        reconcileReceipts()
+        void refreshUnread(true)
+          .then(() => { if (!stopped) arkmeUi.chatChanged() })
+          .catch(() => undefined)
+      }
     }
     updateForeground()
     connectEvents()
     browserDocument?.addEventListener('visibilitychange', handleVisibilityChange)
-    browserWindow?.addEventListener('focus', reconcileReceipts)
+    const handleWindowFocus = () => {
+      reconcileReceipts()
+      arkmeUi.chatChanged()
+    }
+    browserWindow?.addEventListener('focus', handleWindowFocus)
     return () => {
       stopped = true
       disconnectEvents()
       browserDocument?.removeEventListener('visibilitychange', handleVisibilityChange)
-      browserWindow?.removeEventListener('focus', reconcileReceipts)
+      browserWindow?.removeEventListener('focus', handleWindowFocus)
     }
   }, [auth?.environment, auth?.status, auth?.userId, authRevision, refreshDirectoryBaseline])
 }

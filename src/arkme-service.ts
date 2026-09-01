@@ -352,7 +352,7 @@ export class ArkmeService {
           sourceRef, chatSessionUid, text, recordUid, relationUid, session, undefined, undefined, signal,
         )
       },
-    })
+    }, () => { void this.realtime.refreshAttentionSummary() })
     this.relatedRecording = new RelatedRecordingService(this.runtime, this.source)
     this.community = new CommunityService(this.runtime, this.source, this.profile)
     this.interwoven = new InterwovenService(this.runtime, this.source, this.profile)
@@ -430,8 +430,8 @@ export class ArkmeService {
   async fileSendDiscard(taskRef: string) { return await this.filesOwner().discard(taskRef) }
   async fileSendReconcile(taskRef: string) { return await this.filesOwner().reconcile(taskRef) }
   async fileReceive(mediaRef: string, start = false) { return await this.filesOwner().reception(mediaRef, start) }
-
   private clearAccountState(userIds: readonly number[]): void {
+    this.realtime.resetAttentionSummary()
     for (const userId of userIds) this.privacy.clear(userId)
     this.fileTransfers?.cancelActive()
     for (const userId of userIds) this.outgoingCall.clearUser(userId, '账号已退出，呼叫已取消')
@@ -738,8 +738,8 @@ export class ArkmeService {
   async listCallHistory(options: ArkmeCallHistoryOptions = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> { return await this.callHistory.listCallHistory(options, signal) }
   async callDetail(callRef: string, signal?: AbortSignal): Promise<ArkmeCallDetail> { return await this.callHistory.callDetail(callRef, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
-
   dispose(): void {
+    this.realtime.resetAttentionSummary()
     this.fileTransfers?.cancelActive()
     this.contact.dispose()
     this.contactDirectory.dispose()

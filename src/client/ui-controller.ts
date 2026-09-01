@@ -9,6 +9,8 @@ function sameSelectedSource(left: ArkmeSourceItem | undefined, right: ArkmeSourc
     && left.kind === right.kind && left.displayName === right.displayName
     && left.latestPreview === right.latestPreview && left.activeAtMillis === right.activeAtMillis
     && left.unreadCount === right.unreadCount && left.hasUnreadMention === right.hasUnreadMention
+    && left.badgeUnreadCount === right.badgeUnreadCount
+    && left.notificationAllowed === right.notificationAllowed
     && left.isMuted === right.isMuted && left.isPinned === right.isPinned
     && left.latestSequence === right.latestSequence
     && left.avatarRef === right.avatarRef && (left.avatarRefs ?? []).join('|') === (right.avatarRefs ?? []).join('|')
@@ -38,6 +40,8 @@ export interface ArkmeUiState {
   productMode?: 'conversations' | 'contacts'
   selectedSource?: ArkmeSourceItem
   selectedBot?: ArkmeBotSummary
+  /** Forces a real conversation-surface commit for every native notification click, including the current source. */
+  notificationActivationRevision?: number
   conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number }
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   extensionShareRef?: string
@@ -89,6 +93,7 @@ export class ArkmeUiController {
   private readonly listeners = new Set<() => void>()
   private settingsOpener: (() => void) | undefined
   private conversationTargetRevision = 0
+  private notificationActivationRevision = 0
 
   readonly getSnapshot = (): ArkmeUiState => this.state
   /** Navigation and presentation state, stable across projection-only invalidations. */
@@ -338,6 +343,31 @@ export class ArkmeUiController {
     return true
   }
 
+  activateNotificationSource(source: ArkmeSourceItem): void {
+    this.leaveContacts()
+    this.lastConversationDestination = { kind: 'source', source }
+    const {
+      selectedBot: _selectedBot,
+      calendarOpen: _calendarOpen,
+      productMode: _productMode,
+      conversationTarget: _conversationTarget,
+      recordingTarget: _recordingTarget,
+      worldTarget: _worldTarget,
+      extensionShareRef: _extensionShareRef,
+      extensionShareAction: _extensionShareAction,
+      extensionDetailId: _extensionDetailId,
+      extensionAuthorFilter: _extensionAuthorFilter,
+      webLoginDialogOpen: _webLoginDialogOpen,
+      ...rest
+    } = this.state
+    this.publish({
+      ...rest,
+      mode: 'source',
+      selectedSource: source,
+      notificationActivationRevision: ++this.notificationActivationRevision,
+    })
+  }
+
   openBotConversation(bot: ArkmeBotSummary): void {
     this.leaveContacts()
     this.lastConversationDestination = { kind: 'bot', bot }
@@ -374,6 +404,7 @@ export class ArkmeUiController {
       && next.mode === this.state.mode
       && next.productMode === this.state.productMode
       && next.calendarOpen === this.state.calendarOpen
+      && next.notificationActivationRevision === this.state.notificationActivationRevision
       && next.conversationTarget?.revision === this.state.conversationTarget?.revision
       && next.conversationTarget?.itemUid === this.state.conversationTarget?.itemUid
       && next.conversationTarget?.sendAtMillis === this.state.conversationTarget?.sendAtMillis
