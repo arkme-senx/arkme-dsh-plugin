@@ -82,6 +82,12 @@ describe('Arkme send-to-self source list', () => {
     expect(emojiPreview).toContain('data:image/svg+xml;base64,')
     expect(emojiPreview).not.toContain('😶')
     expect(emojiPreview).not.toContain('[jm_emoji:silent_face]')
+    const linkPreview = renderToStaticMarkup(createElement(ArkmeRootChatPreview, {
+      source: { ...privateChat, latestPreview: 'https://example.com [jm_emoji:silent_face]' },
+    }))
+    expect(linkPreview).toContain('https://example.com')
+    expect(linkPreview).not.toContain('<a')
+    expect(linkPreview).toContain('data-arkme-rich-emoji="silent_face"')
     expect(arkmeRootChatUnreadPlacement(privateChat)).toBe('avatar')
     expect(arkmeRootChatUnreadPlacement({ ...groupChat, isMuted: true, badgeUnreadCount: 0 })).toBe('dot')
     expect(arkmeRootChatUnreadPlacement({

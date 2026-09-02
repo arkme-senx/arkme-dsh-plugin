@@ -626,7 +626,7 @@ export function ArkmeRootChatPreview({ source }: { source: ArkmeSourceItem }) {
   const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
   return <span style={styles.preview}>
     {mentionPrefix !== '' && <span style={styles.mentionPreviewPrefix}>{mentionPrefix}</span>}
-    <ArkmeRichText text={preview} emojiSize={20} />
+    <ArkmeRichText text={preview} emojiSize={20} renderLink={link => link.text} />
   </span>
 }
 
