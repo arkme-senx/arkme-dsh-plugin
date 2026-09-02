@@ -876,6 +876,81 @@ describe('Arkme managed model adapter', () => {
     expect(JSON.stringify(chatBody)).toContain('mai_asset_5')
   })
 
+  it('drops queued image work immediately when the caller cancels', async () => {
+    const attachments = Array.from({ length: 8 }, (_, index) => ({
+      attachmentId: AttachmentId(`cancelled-managed-image-${String(index)}`),
+      mediaType: 'image/png' as const,
+      bytes: 1,
+      width: 16,
+      height: 16,
+      name: `cancelled-${String(index)}.png`,
+    }))
+    const capability: ManagedModelCapability = {
+      contractVersion: 'test-cancelled-image-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'],
+        maximumImages: attachments.length,
+        maximumBytesPerImage: 1,
+        countDimensionLimits: [],
+        evidence: {
+          providerReferenceUrl: 'https://example.test/provider-contract',
+          verifiedOn: '2026-08-31',
+          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
+          platformGuardrailFields: [],
+        },
+      },
+    }
+    let markFourReads!: () => void
+    const fourReadsStarted = new Promise<void>(resolve => { markFourReads = resolve })
+    let startedReads = 0
+    const readImage = vi.fn(async (ref, signal?: AbortSignal) => {
+      startedReads++
+      if (startedReads === 4) markFourReads()
+      await new Promise<never>((_resolve, reject) => {
+        if (signal?.aborted === true) {
+          reject(signal.reason)
+          return
+        }
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+      throw new Error(`unreachable attachment read: ${String(ref.attachmentId)}`)
+    })
+    let remoteCalls = 0
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => ({ readImage }),
+      fetchImpl: async () => {
+        remoteCalls++
+        throw new Error('cancelled image request must not reach the network')
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const controller = new AbortController()
+    const completed = (async () => {
+      for await (const _chunk of transport.stream({
+        provider: ARKME_MANAGED_PROVIDER,
+        model: 'cancelled-images',
+        signal: controller.signal,
+        messages: [createUserMessage({
+          content: attachments.map(attachment => ({ type: 'image' as const, attachment })),
+          source: { kind: 'user' },
+        })],
+      }, capability)) {
+        // A cancelled request must not yield model output.
+      }
+    })()
+
+    await fourReadsStarted
+    controller.abort()
+
+    await expect(completed).rejects.toMatchObject({ code: 'ABORTED' })
+    expect(readImage).toHaveBeenCalledTimes(4)
+    expect(remoteCalls).toBe(0)
+  })
+
   it('reuses the upload generation after an ambiguous prepare transport failure', async () => {
     const data = Uint8Array.of(1, 2, 3)
     const attachment = {
