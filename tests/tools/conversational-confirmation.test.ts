@@ -125,4 +125,29 @@ describe('Arkme conversational confirmation', () => {
       execute,
     })).resolves.toBe('done')
   })
+
+  it('commits with the Host context captured once during preparation', async () => {
+    const events: Array<Record<string, unknown>> = [
+      { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [] } },
+    ]
+    const current = agent(events)
+    let liveUserId = 42
+    const prepare = vi.fn(async () => ({ expectedUserId: liveUserId }))
+    const execute = vi.fn(async (context: { expectedUserId: number } | undefined) => context)
+    const conversation = new ArkmeConversationalConfirmation()
+    const input = {
+      agent: current, operationKey: 'account-write', arguments: {}, question: '确认写入？', prepare, execute,
+    }
+
+    await expect(conversation.prepareOrExecute(input)).resolves.toMatchObject({ status: 'confirmation_required' })
+    await expect(conversation.prepareOrExecute(input)).resolves.toMatchObject({ status: 'confirmation_required' })
+    expect(prepare).toHaveBeenCalledTimes(1)
+    liveUserId = 43
+    events.push({
+      seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认' }] },
+    })
+
+    await expect(conversation.prepareOrExecute(input)).resolves.toEqual({ expectedUserId: 42 })
+    expect(execute).toHaveBeenCalledWith({ expectedUserId: 42 })
+  })
 })

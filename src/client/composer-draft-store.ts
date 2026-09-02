@@ -215,9 +215,9 @@ export class ArkmeComposerDraftStore {
   private revision = 0
   private readonly restoredKeys = new Set<string>()
   isRestored(key: string | undefined): boolean { return key !== undefined && this.restoredKeys.has(key) }
-  beginFileSend(key: string): { recordUid: string; relationUid: string } {
+  beginFileSend(key: string, submissionScope = 'file-send'): { recordUid: string; relationUid: string } {
     const draft = this.get(key)
-    const fingerprint = JSON.stringify([serializeArkmeComposerDraft(draft), draft.attachments.map(arkmeAttachmentId)])
+    const fingerprint = JSON.stringify([submissionScope, serializeArkmeComposerDraft(draft), draft.attachments.map(arkmeAttachmentId)])
     const current = draft.fileSendIdentity
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     if (current?.fingerprint === fingerprint && uuid.test(current.recordUid) && uuid.test(current.relationUid)) return current
@@ -470,7 +470,14 @@ export class ArkmeComposerDraftStore {
         releaseArkmeComposerAttachment(attachment)
       }
     }
-    this.storeOrDelete(key, { text, attachments: merged, mentions, emojis })
+    const restoreIdentity = current.text === '' && current.attachments.length === 0
+      && current.mentions.length === 0 && current.emojis.length === 0
+      ? snapshot.fileSendIdentity
+      : undefined
+    this.storeOrDelete(key, {
+      text, attachments: merged, mentions, emojis,
+      ...(restoreIdentity === undefined ? {} : { fileSendIdentity: restoreIdentity }),
+    })
   }
 
   clear(key: string | undefined): void {

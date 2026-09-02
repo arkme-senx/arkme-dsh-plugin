@@ -151,24 +151,85 @@ describe('Arkme billing client state', () => {
     expect(reads).toBe(2)
   })
 
-  it('preserves the order for manual retry after a status query failure', async () => {
-    vi.useFakeTimers()
-    const billing = await import('../src/client/arkme-billing.js')
-    let reads = 0
-    const errors: string[] = []
-    const poller = new billing.ArkmeBillingOrderPoller({
-      readStatus: async () => { reads += 1; throw new Error('查询失败') },
-      onUpdate: () => { throw new Error('unexpected update') },
-      onError: error => { errors.push(error instanceof Error ? error.message : String(error)) },
-    })
+  it('backs off retryable status failures and resumes the server polling interval after recovery', async () => {
+	vi.useFakeTimers()
+	const billing = await import('../src/client/arkme-billing.js')
+	let reads = 0
+	const retries: Array<{ message: string; willRetry: boolean; retryInMillis?: number }> = []
+	const poller = new billing.ArkmeBillingOrderPoller({
+	  readStatus: async () => {
+		reads += 1
+		if (reads <= 2) throw new Error(`查询失败-${reads}`)
+		return { status: reads === 3 ? 'pending' : 'paid' } as never
+	  },
+	  onUpdate: () => undefined,
+	  onError: (error, retry) => { retries.push({ message: error instanceof Error ? error.message : String(error), ...retry }) },
+	})
 
-    poller.start('order-1', Date.now() + 20_000)
-    await vi.advanceTimersByTimeAsync(2_000)
-    await vi.advanceTimersByTimeAsync(10_000)
+	poller.start('order-1', Date.now() + 20_000)
+	await vi.advanceTimersByTimeAsync(2_000)
+	await vi.advanceTimersByTimeAsync(999)
+	expect(reads).toBe(1)
+	await vi.advanceTimersByTimeAsync(1)
+	await vi.advanceTimersByTimeAsync(2_000)
+	await vi.advanceTimersByTimeAsync(2_000)
 
-    expect(errors).toEqual(['查询失败'])
-    expect(reads).toBe(1)
-  })
+	expect(retries).toEqual([
+	  { message: '查询失败-1', willRetry: true, retryInMillis: 1_000 },
+	  { message: '查询失败-2', willRetry: true, retryInMillis: 2_000 },
+	])
+	expect(reads).toBe(4)
+	})
+
+  it('stops automatic polling on an explicitly non-retryable client error', async () => {
+	vi.useFakeTimers()
+	const billing = await import('../src/client/arkme-billing.js')
+	let reads = 0
+	const retries: Array<{ willRetry: boolean; retryInMillis?: number }> = []
+	const poller = new billing.ArkmeBillingOrderPoller({
+	  readStatus: async () => {
+		reads += 1
+		throw { body: { code: 'invalid-order', message: '订单无效', retryable: false } }
+	  },
+	  onUpdate: () => undefined,
+	  onError: (_error, retry) => { retries.push(retry) },
+	})
+
+	poller.start('order-1', Date.now() + 20_000)
+	await vi.advanceTimersByTimeAsync(20_000)
+
+	expect(reads).toBe(1)
+	expect(retries).toEqual([{ willRetry: false }])
+	})
+
+	it('refreshes immediately without allowing concurrent status requests', async () => {
+	vi.useFakeTimers()
+	const billing = await import('../src/client/arkme-billing.js')
+	let reads = 0
+	const resolvers: Array<(value: unknown) => void> = []
+	const poller = new billing.ArkmeBillingOrderPoller({
+	  readStatus: async () => {
+		reads += 1
+		return await new Promise(resolve => { resolvers.push(resolve) }) as never
+	  },
+	  onUpdate: () => undefined,
+	  onError: error => { throw error },
+	})
+
+	poller.start('order-1', Date.now() + 20_000)
+	poller.refreshNow()
+	poller.refreshNow()
+	poller.refreshNow()
+	await Promise.resolve()
+	expect(reads).toBe(1)
+	resolvers.shift()?.({ status: 'pending' })
+	await vi.advanceTimersByTimeAsync(0)
+	expect(reads).toBe(2)
+	resolvers.shift()?.({ status: 'paid' })
+	await vi.advanceTimersByTimeAsync(0)
+	await vi.advanceTimersByTimeAsync(10_000)
+	expect(reads).toBe(2)
+	})
 
   it('cancels scheduled polling when the payment dialog closes', async () => {
     vi.useFakeTimers()
@@ -185,5 +246,21 @@ describe('Arkme billing client state', () => {
     await vi.advanceTimersByTimeAsync(10_000)
 
     expect(reads).toBe(0)
+  })
+
+  it('caps repeated retry backoff at ten seconds', async () => {
+    vi.useFakeTimers()
+    const billing = await import('../src/client/arkme-billing.js')
+    const retryDelays: Array<number | undefined> = []
+    const poller = new billing.ArkmeBillingOrderPoller({
+      readStatus: async () => { throw new Error('temporary network error') },
+      onUpdate: () => undefined,
+      onError: (_error, retry) => { retryDelays.push(retry.retryInMillis) },
+    })
+
+    poller.start('order-1', Date.now() + 120_000, 500)
+    await vi.advanceTimersByTimeAsync(500 + 1_000 + 2_000 + 4_000 + 8_000 + 10_000 + 10_000)
+
+    expect(retryDelays.slice(0, 7)).toEqual([1_000, 2_000, 4_000, 8_000, 10_000, 10_000, 10_000])
   })
 })

@@ -103,6 +103,10 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     ...(typeof item.latestPreview === 'string' ? { latestPreview: item.latestPreview } : {}),
     activeAtMillis: item.activeAtMillis,
     unreadCount: Math.max(0, Math.trunc(item.unreadCount)),
+    ...(typeof item.badgeUnreadCount === 'number' && Number.isFinite(item.badgeUnreadCount)
+      ? { badgeUnreadCount: Math.max(0, Math.trunc(item.badgeUnreadCount)) }
+      : {}),
+    ...(typeof item.notificationAllowed === 'boolean' ? { notificationAllowed: item.notificationAllowed } : {}),
     ...(typeof item.hasUnreadMention === 'boolean' ? { hasUnreadMention: item.hasUnreadMention } : {}),
     ...(typeof item.isMuted === 'boolean' ? { isMuted: item.isMuted } : {}),
     ...(typeof item.latestSequence === 'number' && Number.isSafeInteger(item.latestSequence) && item.latestSequence > 0

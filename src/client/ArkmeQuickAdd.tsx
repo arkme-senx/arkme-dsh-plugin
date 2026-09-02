@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import arkmeBotIconBase64 from '../../assets/icons/cpu-linear.svg'
 import arkmeGroupIconBase64 from '../../assets/icons/profile-2user-linear.svg'
@@ -96,7 +96,7 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onAddBot }: {
   onCreateGroup(): void
   onAddBot(): void
 }) {
-  return <div role="menu" aria-label="添加" style={style.menu}>
+  return <div data-arkme-notification-blocking-overlay="true" role="menu" aria-label="添加" style={style.menu}>
     <ArkmeQuickAddMenuItem icon={arkmeUserAddIconBase64} label="添加联系人" onClick={onContactAdd} />
     <div aria-hidden style={style.divider} />
     <ArkmeQuickAddMenuItem icon={arkmeGroupIconBase64} label="创建群聊" onClick={onCreateGroup} />
@@ -105,15 +105,47 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onAddBot }: {
   </div>
 }
 
-export function ArkmeQuickAddButton({ onContactAdd, onSourceCreated, onBotCreated }: {
+export function ArkmeQuickAddButton({
+  onContactAdd,
+  onSourceCreated,
+  onBotCreated,
+  notificationActivationRevision = 0,
+  onBlockingOverlayChange,
+}: {
   onContactAdd(): void
   onSourceCreated(source: ArkmeSourceItem): void | Promise<void>
   onBotCreated?(bot: ArkmeBotSummary): void | Promise<void>
+  notificationActivationRevision?: number
+  onBlockingOverlayChange?(open: boolean): void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [dialogKind, setDialogKind] = useState<QuickAddDialogKind>()
+  const [dialogBusy, setDialogBusy] = useState(false)
   const anchorRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const notificationRevisionRef = useRef(notificationActivationRevision)
+  const pendingNotificationDismissRef = useRef(false)
+  const blockingOverlayOpen = menuOpen || dialogKind !== undefined
+
+  useLayoutEffect(() => {
+    onBlockingOverlayChange?.(blockingOverlayOpen)
+  }, [blockingOverlayOpen, onBlockingOverlayChange])
+
+  useEffect(() => {
+    if (notificationRevisionRef.current === notificationActivationRevision) return
+    notificationRevisionRef.current = notificationActivationRevision
+    pendingNotificationDismissRef.current = true
+    setMenuOpen(false)
+    if (!dialogBusy) {
+      pendingNotificationDismissRef.current = false
+      setDialogKind(undefined)
+    }
+  }, [notificationActivationRevision])
+  useEffect(() => {
+    if (dialogBusy || !pendingNotificationDismissRef.current) return
+    pendingNotificationDismissRef.current = false
+    setDialogKind(undefined)
+  }, [dialogBusy])
 
   useEffect(() => {
     if (!menuOpen || typeof document === 'undefined') return
@@ -138,6 +170,7 @@ export function ArkmeQuickAddButton({ onContactAdd, onSourceCreated, onBotCreate
 
   const chooseDialog = (kind: QuickAddDialogKind) => {
     setMenuOpen(false)
+    setDialogBusy(false)
     setDialogKind(kind)
   }
 
@@ -158,24 +191,31 @@ export function ArkmeQuickAddButton({ onContactAdd, onSourceCreated, onBotCreate
     />}
     {dialogKind === 'group' && <ArkmeGroupCreateDialog
       onClose={() => {
+        pendingNotificationDismissRef.current = false
+        setDialogBusy(false)
         setDialogKind(undefined)
         triggerRef.current?.focus()
       }}
+      onBusyChange={setDialogBusy}
       onSourceCreated={onSourceCreated}
     />}
     {dialogKind === 'bot' && <ArkmeBotCreateDialog
       onClose={() => {
+        pendingNotificationDismissRef.current = false
+        setDialogBusy(false)
         setDialogKind(undefined)
         triggerRef.current?.focus()
       }}
+      onBusyChange={setDialogBusy}
       {...(onBotCreated === undefined ? {} : { onBotCreated })}
     />}
   </div>
 }
 
-function ArkmeGroupCreateDialog({ onClose, onSourceCreated }: {
+function ArkmeGroupCreateDialog({ onClose, onSourceCreated, onBusyChange }: {
   onClose(): void
   onSourceCreated(source: ArkmeSourceItem): void | Promise<void>
+  onBusyChange?(busy: boolean): void
 }) {
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
@@ -183,6 +223,7 @@ function ArkmeGroupCreateDialog({ onClose, onSourceCreated }: {
   const firstInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => { firstInput.current?.focus() }, [])
+  useEffect(() => { onBusyChange?.(busy) }, [busy, onBusyChange])
   useEffect(() => {
     if (typeof document === 'undefined') return
     const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
@@ -212,6 +253,7 @@ function ArkmeGroupCreateDialog({ onClose, onSourceCreated }: {
   }
 
   return <div
+    data-arkme-notification-blocking-overlay="true"
     role="presentation" style={style.overlay}
     onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose() }}
   >

@@ -404,11 +404,12 @@ export function arkmeContainedImageRect(viewportWidth: number, viewportHeight: n
   }
 }
 
-export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, openLocalFile = true, forceDownload = false }: {
+export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, previewUrl, openLocalFile = true, forceDownload = false }: {
   blocks: ArkmeContentBlock[]
   selected: ArkmeContentBlock
   onSelect: (block: ArkmeContentBlock) => void
   onClose: () => void
+  previewUrl?: string
   openLocalFile?: boolean
   forceDownload?: boolean
 }) {
@@ -419,7 +420,7 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, openLoc
   const [imageMode, setImageMode] = useState<ImagePreviewMode>('contained')
   const [imageDragging, setImageDragging] = useState(false)
   const original = useArkmeOriginal(selected, selected.kind === 'image')
-  const originalUrl = original.localRef === undefined ? mediaUrl(selected) : arkmeLocalFileUrl(original.localRef)
+  const originalUrl = previewUrl ?? (original.localRef === undefined ? mediaUrl(selected) : arkmeLocalFileUrl(original.localRef))
 
   useEffect(() => {
     setImageMode('contained')
@@ -842,18 +843,22 @@ export function ArkmeAttachmentDraftTile({ asset, previewUrl, onRemove, onOpen, 
   onOpen?: () => void
   disabled?: boolean
 }) {
-  const visualPreview = previewUrl !== undefined && (asset.fileKind === 1 || asset.fileKind === 3)
+  const [failedPreviewUrl, setFailedPreviewUrl] = useState<string>()
+  const visualPreview = previewUrl !== undefined && failedPreviewUrl !== previewUrl && (asset.fileKind === 1 || asset.fileKind === 3)
+  const imagePreviewFailed = asset.fileKind === 1 && previewUrl !== undefined && failedPreviewUrl === previewUrl
   return <span
-    data-arkme-attachment-tile={visualPreview ? asset.fileKind === 1 ? 'image-preview' : 'video-preview' : 'file-icon'}
+    data-arkme-attachment-tile={visualPreview ? asset.fileKind === 1 ? 'image-preview' : 'video-preview' : imagePreviewFailed ? 'image-error' : 'file-icon'}
     title={asset.fileName}
     aria-label={`附件 ${asset.fileName}`}
     style={{ position: 'relative', width: 48, height: 48, flex: 'none', display: 'inline-grid', placeItems: 'center', overflow: 'hidden', borderRadius: 8, background: 'var(--dsw-alias-bg-subtle, #f0f2f5)' }}
   >
-    <button type="button" aria-label={`预览 ${asset.fileName}`} onClick={onOpen} disabled={onOpen === undefined} style={{ border: 0, padding: 0, width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: 'transparent', cursor: 'pointer' }}>{visualPreview && asset.fileKind === 1
-      ? <img src={previewUrl} alt={asset.fileName} style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }} />
+    <button type="button" aria-label={`预览 ${asset.fileName}`} onClick={onOpen} disabled={onOpen === undefined || imagePreviewFailed} style={{ border: 0, padding: 0, width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: 'transparent', cursor: imagePreviewFailed ? 'default' : 'pointer' }}>{visualPreview && asset.fileKind === 1
+      ? <img src={previewUrl} alt={asset.fileName} onError={() => { setFailedPreviewUrl(previewUrl) }} style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }} />
       : visualPreview && asset.fileKind === 3
-        ? <><video src={previewUrl} muted playsInline preload="metadata" aria-label={asset.fileName} style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover', background: '#111' }} /><span aria-hidden style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#fff', fontSize: 16, textShadow: '0 1px 4px rgba(0,0,0,.55)' }}>▶</span></>
-      : <ArkmeFileIcon fileName={asset.fileName} {...(asset.mimeType === undefined ? {} : { mimeType: asset.mimeType })} size={32} />}</button>
+        ? <><video src={previewUrl} muted playsInline preload="metadata" aria-label={asset.fileName} onError={() => { setFailedPreviewUrl(previewUrl) }} style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover', background: '#111' }} /><span aria-hidden style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#fff', fontSize: 16, textShadow: '0 1px 4px rgba(0,0,0,.55)' }}>▶</span></>
+      : imagePreviewFailed
+        ? <span role="status" aria-label={`${asset.fileName} 图片预览失败`} style={{ maxWidth: 42, color: 'var(--dsw-alias-label-tertiary, #7f8792)', fontSize: 9, lineHeight: '12px', textAlign: 'center' }}>图片预览失败</span>
+        : <ArkmeFileIcon fileName={asset.fileName} {...(asset.mimeType === undefined ? {} : { mimeType: asset.mimeType })} size={32} />}</button>
     <button
       type="button"
       aria-label={`移除${asset.fileName}`}

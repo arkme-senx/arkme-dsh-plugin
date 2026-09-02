@@ -20,7 +20,7 @@ import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 import { ArkmeUpdateRailSlot } from './ArkmeUpdateSurfaces.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { arkmeChatDirectory } from './chat-directory-store.js'
+import { arkmeAttentionSummary } from './attention-summary-store.js'
 import { arkmeUi } from './ui-controller.js'
 
 export interface ArkmeProductNavigationProps {
@@ -133,10 +133,10 @@ export function ArkmeProductNavigation({
 }: ArkmeProductNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
-  const chatDirectory = useSyncExternalStore(
-    arkmeChatDirectory.subscribe,
-    arkmeChatDirectory.getSnapshot,
-    arkmeChatDirectory.getSnapshot,
+  const attention = useSyncExternalStore(
+    arkmeAttentionSummary.subscribe,
+    arkmeAttentionSummary.getSnapshot,
+    arkmeAttentionSummary.getSnapshot,
   )
   const [profileOpen, setProfileOpen] = useState(false)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
@@ -171,6 +171,9 @@ export function ArkmeProductNavigation({
       document.removeEventListener('keydown', dismissOnEscape)
     }
   }, [profileOpen])
+  useEffect(() => {
+    if ((ui.notificationActivationRevision ?? 0) > 0) setProfileOpen(false)
+  }, [ui.notificationActivationRevision])
   const activeId = locked ? 'conversations'
     : ui.mode === 'login' ? undefined
     : ui.calendarOpen === true ? 'calendar'
@@ -179,8 +182,9 @@ export function ArkmeProductNavigation({
     : ui.mode === 'calls' ? 'calls'
     : ui.mode === 'recordings' ? 'recordings'
       : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
-  const conversationUnreadCount = authState.auth?.status === 'authenticated' && chatDirectory.baselineReady
-    ? arkmeChatDirectory.totalUnreadCount({ excludeMuted: true })
+  const conversationUnreadCount = authState.auth?.status === 'authenticated' && attention.ready
+    && attention.accountUserId === authState.auth.userId
+    ? attention.summary?.badgeCount ?? 0
     : 0
   const conversationUnreadLabel = conversationUnreadCount > 99 ? '99+' : String(conversationUnreadCount)
   const navigationItems = items
@@ -278,7 +282,13 @@ export function ArkmeProductNavigation({
       {!compact && !locked && <div className="arkme-redesign-rail-footer">
         <ArkmeUpdateRailSlot />
         {authState.auth?.status === 'authenticated' && <>
-        {profileOpen && typeof document !== 'undefined' && createPortal(<div ref={profilePopoverRef} className="arkme-redesign-profile-popover" role="menu" aria-label="个人菜单">
+        {profileOpen && typeof document !== 'undefined' && createPortal(<div
+          ref={profilePopoverRef}
+          className="arkme-redesign-profile-popover"
+          data-arkme-notification-blocking-overlay="true"
+          role="menu"
+          aria-label="个人菜单"
+        >
           <div className="arkme-redesign-profile-head">
             <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={40} label="当前用户头像" />
             <span><strong>{profile?.displayName || profile?.nickname || 'Arkme 用户'}</strong><small>{profile?.arkmeId ? `@${profile.arkmeId}` : 'Arkme 账号'}</small></span>

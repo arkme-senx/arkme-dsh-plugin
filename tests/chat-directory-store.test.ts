@@ -41,6 +41,7 @@ describe('ArkmeChatDirectoryStore', () => {
 
     expect(store.totalUnreadCount()).toBe(124)
     expect(store.totalUnreadCount({ excludeMuted: true })).toBe(4)
+    expect(store.totalBadgeUnreadCount()).toBe(4)
   })
 
   it('keeps stable server order for unread-only updates and equal activity times', () => {
@@ -261,6 +262,90 @@ describe('ArkmeChatDirectoryStore', () => {
     })
   })
 
+  it('retains private and group avatars for newer or equal sessions-delta updates until a full baseline removes them', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const privateSource = {
+      sourceRef: 'private-ref-1', sourceKey: 'chat:private-1', kind: 'private_chat' as const,
+      displayName: '联系人', avatarRef: 'private-avatar', activeAtMillis: 10,
+      unreadCount: 2, badgeUnreadCount: 0, notificationAllowed: false, isMuted: true,
+      latestSequence: 10,
+    }
+    const groupSource = {
+      sourceRef: 'group-ref-1', sourceKey: 'chat:group-1', kind: 'group_chat' as const,
+      displayName: '项目群', avatarRefs: ['group-avatar-a', 'group-avatar-b'], activeAtMillis: 9,
+      unreadCount: 1, badgeUnreadCount: 1, notificationAllowed: true, isMuted: false,
+      latestSequence: 10,
+      groupAvatar: {
+        memberCount: 2, strategy: 'owner_recent_speakers_v1', computedAtMillis: 1,
+        slots: [{ avatarRef: 'group-avatar-a' }, { avatarRef: 'group-avatar-b' }],
+      },
+    }
+    store.publish([privateSource, groupSource])
+
+    store.upsert({
+      sourceRef: 'private-ref-2', sourceKey: 'chat:private-1', kind: 'private_chat',
+      displayName: '联系人', latestPreview: '较新的私聊消息', activeAtMillis: 12,
+      avatarRef: '   ',
+      unreadCount: 3, badgeUnreadCount: 0, notificationAllowed: false, isMuted: true,
+      latestSequence: 11,
+    })
+    store.upsert({
+      sourceRef: 'group-ref-2', sourceKey: 'chat:group-1', kind: 'group_chat',
+      displayName: '项目群', latestPreview: '相等序列的群消息', activeAtMillis: 11,
+      avatarRefs: [],
+      unreadCount: 2, badgeUnreadCount: 2, notificationAllowed: true, isMuted: false,
+      latestSequence: 10,
+      groupAvatar: {
+        memberCount: 2, strategy: 'owner_recent_speakers_v1', computedAtMillis: 2, slots: [],
+      },
+    })
+
+    const privateDelta = store.getSnapshot().sources.find(source => source.sourceKey === 'chat:private-1')
+    const groupDelta = store.getSnapshot().sources.find(source => source.sourceKey === 'chat:group-1')
+    expect(privateDelta).toMatchObject({
+      sourceRef: 'private-ref-2', avatarRef: 'private-avatar', unreadCount: 3,
+      badgeUnreadCount: 0, notificationAllowed: false, isMuted: true, latestSequence: 11,
+    })
+    expect(groupDelta).toMatchObject({
+      sourceRef: 'group-ref-2', avatarRefs: ['group-avatar-a', 'group-avatar-b'],
+      groupAvatar: groupSource.groupAvatar, unreadCount: 2, badgeUnreadCount: 2,
+      notificationAllowed: true, isMuted: false, latestSequence: 10,
+    })
+
+    store.upsert({
+      sourceRef: 'group-ref-3', sourceKey: 'chat:group-1', kind: 'group_chat',
+      displayName: '项目群', latestPreview: '较新的群消息', activeAtMillis: 13,
+      avatarRefs: [],
+      unreadCount: 3, badgeUnreadCount: 3, notificationAllowed: true, isMuted: false,
+      latestSequence: 11,
+      groupAvatar: {
+        memberCount: 2, strategy: 'owner_recent_speakers_v1', computedAtMillis: 3, slots: [],
+      },
+    })
+
+    expect(store.getSnapshot().sources.find(source => source.sourceKey === 'chat:group-1')).toMatchObject({
+      sourceRef: 'group-ref-3', avatarRefs: ['group-avatar-a', 'group-avatar-b'],
+      groupAvatar: groupSource.groupAvatar, unreadCount: 3, badgeUnreadCount: 3,
+      latestSequence: 11,
+    })
+
+    store.publish([{
+      sourceRef: 'private-baseline-3', sourceKey: 'chat:private-1', kind: 'private_chat',
+      displayName: '联系人', activeAtMillis: 12, unreadCount: 3,
+      badgeUnreadCount: 0, notificationAllowed: false, isMuted: true, latestSequence: 11,
+    }, {
+      sourceRef: 'group-baseline-3', sourceKey: 'chat:group-1', kind: 'group_chat',
+      displayName: '项目群', activeAtMillis: 11, unreadCount: 2,
+      badgeUnreadCount: 2, notificationAllowed: true, isMuted: false, latestSequence: 10,
+    }])
+
+    const privateBaseline = store.getSnapshot().sources.find(source => source.sourceKey === 'chat:private-1')
+    const groupBaseline = store.getSnapshot().sources.find(source => source.sourceKey === 'chat:group-1')
+    expect(privateBaseline).not.toHaveProperty('avatarRef')
+    expect(groupBaseline).not.toHaveProperty('avatarRefs')
+    expect(groupBaseline).not.toHaveProperty('groupAvatar')
+  })
+
   it('keeps the last good directory usable after a silent refresh failure and allows retry', async () => {
     const source = {
       sourceRef: 'source-1', kind: 'private_chat' as const, displayName: '联系人',
@@ -335,7 +420,18 @@ describe('ArkmeChatDirectoryStore', () => {
     store.publish([baseline])
     expect(store.getSnapshot()).toEqual({
       revision: 1,
-      sources: [latestRealtime, { ...baseline, unreadCount: 0 }],
+      sources: [{
+        ...latestRealtime,
+        badgeUnreadCount: 2,
+        notificationAllowed: true,
+        isMuted: false,
+      }, {
+        ...baseline,
+        unreadCount: 0,
+        badgeUnreadCount: 0,
+        notificationAllowed: true,
+        isMuted: false,
+      }],
       baselineReady: true,
       isRefreshing: false,
     })
@@ -599,11 +695,17 @@ describe('ArkmeChatDirectoryStore', () => {
     store.updateReadAck('source-1', 'chat:private-1', 8, 0)
     store.upsert({ ...source, latestPreview: '新消息', activeAtMillis: 12, unreadCount: 1, latestSequence: 9 }, 'chat:private-1')
 
-    store.upsert({ ...source, latestPreview: '旧消息', activeAtMillis: 13, unreadCount: 0, latestSequence: 8 }, 'chat:private-1')
+    store.upsert({
+      ...source,
+      latestPreview: '旧消息', activeAtMillis: 13, unreadCount: 0,
+      badgeUnreadCount: 0, notificationAllowed: true, latestSequence: 8,
+    }, 'chat:private-1')
     expect(store.getSnapshot().sources[0]).toMatchObject({
       activeAtMillis: 12,
       latestPreview: '新消息',
       unreadCount: 1,
+      badgeUnreadCount: 1,
+      notificationAllowed: true,
       latestSequence: 9,
     })
     expect(store.totalUnreadCount()).toBe(1)

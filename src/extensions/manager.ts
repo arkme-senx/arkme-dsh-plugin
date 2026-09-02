@@ -168,7 +168,12 @@ function completedPublishSession(
   fallbackVersion: string,
 ): ArkmeExtensionPublishResult | undefined {
   return session.status === 'published'
-    ? { extension_id: session.extension_id, version: session.version ?? fallbackVersion, status: 'published' }
+    ? {
+        extension_id: session.extension_id,
+        version: session.version ?? fallbackVersion,
+        status: 'published',
+        ...(session.share === undefined ? {} : { share: session.share }),
+      }
     : undefined
 }
 

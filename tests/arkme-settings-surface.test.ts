@@ -39,6 +39,23 @@ describe('ArkmeSettingsSurface', () => {
     expect(source).toContain("callArkme<ArkmeAuthSnapshot>('auth.phone.verify'")
     expect(navigationSource).not.toContain('<strong>我的账户</strong>')
     expect(navigationSource).toContain('arkmeUi.openDshSettings()')
+    expect(source).toContain("callArkme<ArkmeProviderCapabilities>('provider.capabilities'")
+    expect(source).toContain('arkmeBackgroundSoundServerPreferenceRuntime.beginRead')
+    expect(source).toContain('arkmeBackgroundSoundServerPreferenceRuntime.beginMutation')
+    expect(source).toContain('backgroundSoundCapability === \'supported\'')
+    expect(source).toContain("backgroundSoundEligibility !== 'eligible'")
+    expect(source).toContain('免费版暂不支持背景音')
+    expect(source).toContain('暂时无法确认会员权益')
+    expect(source).not.toContain("actionLabel: '授权本机'")
+    expect(source).not.toContain('requestArkmeBackgroundSoundPermission')
+    expect(source).not.toContain('title="位置记录"')
+    expect(source).not.toContain('LocationPermissionDialog')
+    expect(source).not.toContain('只有你点击提示后，才会记录该条消息的位置')
+    const backgroundSoundOwner = source.slice(
+      source.indexOf('const backgroundSoundEnabled'),
+      source.indexOf('const appUpdateRow'),
+    )
+    expect(backgroundSoundOwner).not.toContain('accountType')
   })
 
   it('clears the previous account projection before loading another authenticated user', () => {

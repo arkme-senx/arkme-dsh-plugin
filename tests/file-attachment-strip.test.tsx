@@ -37,6 +37,24 @@ describe('client-aligned attachment strip', () => {
     expect(event.preventDefault).toHaveBeenCalledOnce(); expect(onMove).not.toHaveBeenCalled()
     await act(async () => view.unmount())
   })
+  it('prefers pasted-file bytes for image previews and shows an explicit image error when decoding fails', async () => {
+    const image: ArkmeComposerAttachment = {
+      localFile: {
+        fileRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000003',
+        fileName: 'clipboard.png', fileKind: 1, mimeType: 'image/png', size: 10,
+      },
+      previewUrl: 'blob:clipboard-preview',
+    }
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeAttachmentStrip attachments={[image]} disabled={false} onMove={() => {}} onRemove={() => {}} onPreview={() => {}} />) })
+    const preview = view.root.findByType('img')
+    expect(preview.props.src).toBe('blob:clipboard-preview')
+    await act(async () => { preview.props.onError() })
+    expect(view.root.findAllByType('img').filter(image => image.props.src === 'blob:clipboard-preview')).toHaveLength(0)
+    expect(view.root.findByProps({ 'aria-label': '附件 clipboard.png' }).props['data-arkme-attachment-tile']).toBe('image-error')
+    expect(view.root.findByProps({ role: 'status', 'aria-label': 'clipboard.png 图片预览失败' })).toBeTruthy()
+    await act(async () => view.unmount())
+  })
   it('shows a local preparation spinner, with no cloud-upload text', async () => {
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeFilePreparingIndicator />) })

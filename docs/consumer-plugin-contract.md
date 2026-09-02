@@ -141,6 +141,45 @@ Chat items returned by `readSource()` may include an opaque sender `avatarRef`. 
 
 Timeline items may include `contentBlocks` for image, video, audio, and file content. Long articles use the owner contract's `templateKind: 8`; `displayKind: 1` remains accepted only as a compatibility signal for previously sent plugin records. Each block's `mediaRef` is account-bound and short-lived. Render it with `sdk.mediaUrl(mediaRef)`; never decode or persist it. `upload()` sends a browser file only to the same-origin plugin route and returns an Arkme asset descriptor for `sendRich()`.
 
+### Text background sound and location capture
+
+Background sound is an explicit role, never an audio-MIME heuristic. An ordinary `audio/*` asset passed in `sendRich().assets` remains an ordinary attachment. A direct rich send passes background assets separately:
+
+```ts
+const background = await arkme.upload(backgroundBlob, { fileName: 'background.m4a' })
+await arkme.sendRich(sourceRef, {
+  textContent: '这是一条带背景音的文字快记',
+  backgroundSound: { assets: [background], amplitudes: [0.1, 0.6, 0.3] },
+})
+```
+
+The direct `upload()` route reports audio as service `fileKind: 2`, while a locally staged generic file currently reports `fileKind: 4`; both are accepted as background audio only when they appear in the separate `backgroundSound` descriptor. Putting either asset in ordinary `assets` keeps `content_file_role=1`.
+
+For durable sends, stage every file first and pass every background ref in both `fileRefs` and `backgroundSound.fileRefs`. `sendFiles()` persists that descriptor with the task, uploads each local file at most once, and reuses the same uploaded asset and descriptor after a retry. A descriptor is rejected when refs are duplicated or not a subset, samples are non-finite or outside `0..1`, or a selected file is not an ordinary `audio/*` file (`fileKind: 4`).
+
+The Browser UI may also persist a send-scoped `location` on a durable task after the user has explicitly enabled location recording. The task owner applies it only after the final record UID is confirmed, including reconciliation. External SDK consumers must obtain the same explicit user authorization before supplying precise coordinates. Model-facing file Tools neither accept nor return this field.
+
+Gate background-sound sends on `capabilities().features.backgroundSound` so the same Consumer degrades cleanly on older Providers. The built-in message-detail owner remains authoritative for snapshot retrieval and display; this contract only extends that existing detail with optional background playback and the already-authorized location facts.
+
+Successful `sendText()`, `sendRich()` and durable `sendFiles()` confirmations may return the same Host-signed `messageActionRef` immediately, before an authoritative timeline refresh. Consumers may use it to enable message actions without waiting for projection convergence, but must treat omission as a compatibility/degraded state and wait for `readSource()`; they must never synthesize or weaken validation of the reference.
+
+The switch itself is an account-scoped server owner, not a browser-local preference. `backgroundSoundPreference()` reads `/api/v1/settings/background-voice/query` and the independent record-service membership owner; `updateBackgroundSoundPreference(enabled, signal?, expectedUserId?)` writes only `{ enabled }` to `/api/v1/settings/background-voice/update`. The built-in Host UI, SDK Consumer and confirmed Tool pass the `userId` captured from that verified read as `expectedUserId`; the owner rejects an account switch before the remote write. The Host verifies the returned `user_id` against the active session and returns `{ userId, found, enabled, eligible, memberType?, eligibilityReason, sourceVersion?, updatedAtMillis? }`. Free membership forces `enabled=false`; unknown membership also fails closed but remains distinguishable as `eligibilityReason=membership-unavailable`. Enabling is rejected before the settings write unless the membership owner confirms eligibility; disabling always remains available. A UI may update its local projection optimistically, but it must restore the previous value when the owner write fails. `found=false` means use the local default (`false`) without manufacturing a server fact.
+
+Calling `updateBackgroundSoundPreference(true)` is allowed only from a current explicit human UI/SDK action and still does not grant microphone permission; the interactive composer owns that separate browser permission request. Model Tools can read the preference or, after explicit write confirmation, disable it. They intentionally have no enable parameter, because a model must not turn on a recording-affecting preference or trigger a microphone flow.
+
+Do not derive subscription eligibility from `profile().accountType`; that field is an account classification, not the Flutter membership owner. `BackgroundSoundMembershipService` reads the authoritative `/api/v1/premium/get/member` `member_type` fact: `0` is free and ineligible, while positive member types are eligible. A failed or malformed membership read is `membership-unavailable`, not proof that the account is free.
+
+Capability matrix:
+
+| Surface | Entry | Contract and safety boundary |
+| --- | --- | --- |
+| Built-in UI | Settings switch, composer capture and message snapshot dialog | The switch is a reversible local projection of the account owner. One input-capture owner submits the explicit background descriptor; the snapshot dialog reads the same Host detail owner. |
+| Browser SDK | `backgroundSoundPreference()`, `updateBackgroundSoundPreference()`, `sendRich()`, `sendFiles()` | Typed same-origin calls; no credentials, storage paths, implicit microphone grant, raw record id, or inferred background role. Enabling requires a current explicit human action. |
+| DSH Tool | `arkme_background_sound_status`, `arkme_background_sound_disable`, `arkme_files_send` | Disable/file send remain `explicit-user-write`; no Tool can enable or open the microphone. File send reuses only staged opaque refs and never exposes precise location. |
+| Host owner | `BackgroundSoundMembershipService`, `BackgroundSoundPreferenceService`, `ChatService.sendSourceRich()` and the existing snapshot detail owner | The settings owner validates current-account identity. One payload builder merges ordinary assets, mentions and background items. Background refs use `file_type=5`, `content_file_role=4`, `binding_type=4`, `render_role=1`; only-background text keeps the plain-text template. Existing account, source, permission and idempotency checks remain authoritative. |
+
+Snapshot `backgroundSound=available` requires an identified media row (`file_asset_uid`, `uid`, `media_id`, or compatible file ID) carrying role `content_file_role=4`, `binding_type=4`, or legacy `file_type/type=5`. Waveform amplitudes without such a file remain `not-recorded`; an ordinary audio MIME never supplies the role.
+
 `capabilities().features.forwardContent === true` advertises expanded `readSource()` forward snapshots. `forwardRecords.items` may contain `sourceType`, `segments` (speaker, full text, relative start/end milliseconds), `contentBlocks` and `mediaUnavailable`. Segment audio also uses `contentBlocks`, never raw URLs. The same snapshot is returned to the built-in UI and `arkme_source_read`. Missing optional fields on older Providers mean text-only rendering, not an error. Unknown source types remain `unknown`; filenames must not determine recording type. No original chat name or source access is implied. A transcript with no attachment is not playable. `truncated` marks bounded output (100 flattened records, nesting depth four; up to 500 segments per record / 2000 total; 32 attachments per record). Display it as partial, never silently claim a complete archive.
 
 Consumers retain no additional resources for a one-shot `readSource()`. If they call `subscribe()`, invoke its returned unsubscribe function on disposal. Refresh the received timeline when a media reference expires; do not query the private original recording or cache/decode its reference. Unsupported `contractVersion` is rejected by `capabilities()`; an absent optional `forwardContent` feature falls back to the existing text snapshot.

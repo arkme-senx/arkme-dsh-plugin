@@ -45,6 +45,74 @@ describe('shared inline voice presentation and playback', () => {
     expect(html.indexOf('0:02</span>')).toBeLessThan(html.indexOf('123456。'))
   })
 
+  it('places an optional visualization between the icon and duration and uses the supplied content label', () => {
+    const html = renderToStaticMarkup(<ArkmeVoiceContent
+      sourceKey="background"
+      playlist={['/background-1.m4a', '/background-2.m4a']}
+      durationSeconds={4}
+      contentLabel="背景音"
+      visualization={<span data-waveform="true">声浪</span>}
+    />)
+
+    expect(html).toContain('aria-label="播放背景音，时长 0:04"')
+    expect(html).toContain('data-arkme-voice-visualization="true"')
+    expect(html.indexOf('data-waveform="true"')).toBeLessThan(html.indexOf('0:04</span>'))
+    expect(html.match(/<audio/g)).toHaveLength(1)
+  })
+
+  it('plays an ordered playlist through one audio element without preloading later segments', async () => {
+    const audio = new FakeAudio()
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeVoiceContent
+      sourceKey="background"
+      playlist={['/segment-a.m4a', '/segment-b.m4a']}
+      durationSeconds={4}
+      contentLabel="背景音"
+    />, { createNodeMock: node => node.type === 'audio' ? audio : null }) })
+
+    expect(renderer.root.findAllByType('audio')).toHaveLength(1)
+    expect(renderer.root.findByType('audio').props.src).toBe('/segment-a.m4a')
+    await act(async () => { playButton(renderer).props.onClick(); await tick() })
+    expect(audio.play).toHaveBeenCalledOnce()
+    expect(audio.src).not.toBe('/segment-b.m4a')
+
+    await act(async () => { renderer.root.findByType('audio').props.onEnded({ currentTarget: audio }); await tick() })
+    expect(audio.src).toBe('/segment-b.m4a')
+    expect(audio.play).toHaveBeenCalledTimes(2)
+    expect(state(renderer)).toBe('playing')
+
+    act(() => { renderer.root.findByType('audio').props.onEnded({ currentTarget: audio }) })
+    expect(state(renderer)).toBe('idle')
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('releases a failed later playlist segment and retries that segment without restarting the first', async () => {
+    const audio = new FakeAudio()
+    audio.play
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('second segment failed'))
+      .mockResolvedValueOnce(undefined)
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeVoiceContent
+      sourceKey="background"
+      playlist={['/segment-a.m4a', '/segment-b.m4a']}
+      contentLabel="背景音"
+    />, { createNodeMock: node => node.type === 'audio' ? audio : null }) })
+
+    await act(async () => { playButton(renderer).props.onClick(); await tick() })
+    await act(async () => { renderer.root.findByType('audio').props.onEnded({ currentTarget: audio }); await tick() })
+    expect(state(renderer)).toBe('error')
+    expect(renderer.root.findByProps({ role: 'status' }).children.join('')).toContain('背景音加载或播放失败')
+    expect(audio.pause).toHaveBeenCalled()
+
+    await act(async () => { playButton(renderer).props.onClick(); await tick() })
+    expect(audio.play).toHaveBeenCalledTimes(3)
+    expect(audio.src).toBe('/segment-b.m4a')
+    expect(state(renderer)).toBe('playing')
+    await act(async () => { renderer.unmount() })
+    expect(audio.pause).toHaveBeenCalled()
+  })
+
   it('fills missing duration from metadata and updates elapsed time, pause, resume and end', async () => {
     const audio = new FakeAudio()
     let renderer!: ReactTestRenderer

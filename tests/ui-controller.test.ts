@@ -47,6 +47,32 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot().selectedSource?.displayName).toBe('已重命名的项目群')
   })
 
+  it('updates only the matching selected source projection without navigating back', () => {
+    const controller = new ArkmeUiController()
+    const first = {
+      sourceRef: 'group-ref-1', sourceKey: 'chat:group-1', kind: 'group_chat' as const,
+      displayName: '项目一群', activeAtMillis: 1, unreadCount: 0,
+    }
+    const second = {
+      sourceRef: 'group-ref-2', sourceKey: 'chat:group-2', kind: 'group_chat' as const,
+      displayName: '项目二群', activeAtMillis: 2, unreadCount: 0,
+    }
+    controller.selectSource(first)
+
+    expect(controller.updateSelectedSourceProjection({ ...first, sourceRef: 'group-ref-1-next', isMuted: true })).toBe(true)
+    expect(controller.getSnapshot().selectedSource).toMatchObject({
+      sourceKey: first.sourceKey,
+      sourceRef: 'group-ref-1-next',
+      isMuted: true,
+    })
+    expect(controller.getChatRevision()).toBe(0)
+
+    controller.selectSource(second)
+    expect(controller.updateSelectedSourceProjection({ ...first, displayName: '旧请求完成后的群名' })).toBe(false)
+    expect(controller.getSnapshot().selectedSource).toEqual(second)
+    expect(controller.getChatRevision()).toBe(0)
+  })
+
   it('clears Contacts mode on every non-Contacts route and authenticated account reset', () => {
     const controller = new ArkmeUiController()
 
@@ -398,5 +424,44 @@ describe('ArkmeUiController', () => {
 
     expect(controller.getSnapshot().selectedSource?.isMuted).toBe(true)
     expect(listener).toHaveBeenCalledTimes(2)
+  })
+
+  it('commits every notification activation even when the target source is already selected', () => {
+    const controller = new ArkmeUiController()
+    const listener = vi.fn()
+    const source = {
+      sourceRef: 'source-notification', sourceKey: 'source-key-notification',
+      kind: 'private_chat' as const, displayName: '林溪', activeAtMillis: 1, unreadCount: 1,
+    }
+    controller.selectSource(source)
+    controller.subscribe(listener)
+
+    controller.activateNotificationSource(source)
+    const firstRevision = controller.getSnapshot().notificationActivationRevision
+    controller.activateNotificationSource(source)
+
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
+    expect(firstRevision).toBe(1)
+    expect(controller.getSnapshot().notificationActivationRevision).toBe(2)
+    expect(listener).toHaveBeenCalledTimes(2)
+  })
+
+  it('atomically clears competing overlays when a notification activates a source', () => {
+    const controller = new ArkmeUiController()
+    const source = {
+      sourceRef: 'source-notification', kind: 'group_chat' as const,
+      displayName: '项目群', activeAtMillis: 1, unreadCount: 1,
+    }
+    controller.openExtensionShare('share-ref', 'author-chat')
+    controller.openWebLoginDialog()
+
+    controller.activateNotificationSource(source)
+
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
+    expect(controller.getSnapshot()).not.toHaveProperty('extensionShareRef')
+    expect(controller.getSnapshot()).not.toHaveProperty('extensionShareAction')
+    expect(controller.getSnapshot()).not.toHaveProperty('webLoginDialogOpen')
+    expect(controller.getSnapshot()).not.toHaveProperty('calendarOpen')
+    expect(controller.getSnapshot()).not.toHaveProperty('productMode')
   })
 })

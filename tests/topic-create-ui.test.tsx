@@ -122,6 +122,7 @@ describe('topic create UI', () => {
     const root = renderDialog('topic')
 
     expect(child).toContain('role="dialog"')
+    expect(child).toContain('data-arkme-notification-blocking-overlay="true"')
     expect(child).toContain('aria-modal="true"')
     expect(child).toContain('创建子主题')
     expect(child).toContain('将在「想写/可写的文章 / AI-coding 团队变革文章」下创建')

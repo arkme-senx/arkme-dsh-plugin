@@ -1,6 +1,6 @@
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
-  type CSSProperties, type PointerEvent as ReactPointerEvent,
+  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent,
 } from 'react'
 import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionSearchResultItem } from '@deepseek-ai/dsh-client-runtime/client'
@@ -53,12 +53,54 @@ const styles: Record<string, CSSProperties> = {
 
 // The DSH layout width covers the legacy sidebar seat; Arkme adds its 72px navigation rail plus its divider budget.
 const ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH = 76
-const ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH = 72
+const ARKME_PERSISTENT_NAVIGATION_WIDTH = 72
+const ARKME_PERSISTENT_DIVIDER_BUDGET = ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH - ARKME_PERSISTENT_NAVIGATION_WIDTH
+const ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH = 64
+const ARKME_PERSISTENT_DIRECTORY_AVATAR_ONLY_WIDTH = 200
+const ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH = ARKME_PERSISTENT_NAVIGATION_WIDTH
+  + ARKME_PERSISTENT_DIVIDER_BUDGET
+  + ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH
 const ARKME_PERSISTENT_SIDEBAR_MAX_WIDTH = 480
-const ARKME_PERSISTENT_SIDEBAR_AVATAR_ONLY_WIDTH = 120
+const ARKME_PERSISTENT_DIRECTORY_MAX_WIDTH = ARKME_PERSISTENT_SIDEBAR_MAX_WIDTH - ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
+const ARKME_PERSISTENT_SIDEBAR_WIDTH_STORAGE_KEY = 'dsh-arkme:persistent-sidebar-width:v1'
 
-function clampPersistentSidebarWidth(width: number): number {
+type PersistentSidebarStorage = Pick<Storage, 'getItem' | 'setItem'>
+
+export function clampPersistentSidebarWidth(width: number): number {
   return Math.min(ARKME_PERSISTENT_SIDEBAR_MAX_WIDTH, Math.max(ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH, Math.round(width)))
+}
+
+function browserPersistentSidebarStorage(): PersistentSidebarStorage | undefined {
+  try { return typeof window === 'undefined' ? undefined : window.localStorage }
+  catch { return undefined }
+}
+
+export function readPersistentSidebarWidth(storage: PersistentSidebarStorage | undefined = browserPersistentSidebarStorage()): number | undefined {
+  if (storage === undefined) return undefined
+  try {
+    const raw = storage.getItem(ARKME_PERSISTENT_SIDEBAR_WIDTH_STORAGE_KEY)
+    if (raw === null || raw.trim() === '') return undefined
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) ? clampPersistentSidebarWidth(parsed) : undefined
+  } catch { return undefined }
+}
+
+export function writePersistentSidebarWidth(width: number, storage: PersistentSidebarStorage | undefined = browserPersistentSidebarStorage()): void {
+  if (storage === undefined) return
+  try { storage.setItem(ARKME_PERSISTENT_SIDEBAR_WIDTH_STORAGE_KEY, String(clampPersistentSidebarWidth(width))) }
+  catch { /* Browser privacy settings may make localStorage unavailable. */ }
+}
+
+export function resolvePersistentSidebarWidth(
+  collapsed: boolean,
+  hostWidth: number,
+  preferredWidth?: number,
+  compactWidthOverride?: number,
+): number {
+  if (collapsed) return compactWidthOverride === undefined
+    ? ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH
+    : clampPersistentSidebarWidth(compactWidthOverride)
+  return preferredWidth === undefined ? clampPersistentSidebarWidth(hostWidth) : clampPersistentSidebarWidth(preferredWidth)
 }
 
 /** Permanent browser-side lifecycles that used to be owned by the optional DSH footer entry. */
@@ -106,7 +148,7 @@ export type ArkmePersistentSidebarProps = PropsRuntime<'sidebar'>
 
 /** Arkme permanently owns the DSH sidebar seat so navigation stays stable across Arkme and Harness conversations. */
 export function ArkmePersistentSidebar({
-  collapsed, width, useSessions, renderSlot, collapseSidebar, closeDetails,
+  collapsed, width, useSessions, renderSlot, closeDetails,
   searchDshMessages = async () => ({ items: [], hasMore: false }), openDshSession = () => undefined,
 }: ArkmePersistentSidebarProps) {
   const sessionState = useSessions(state => state)
@@ -134,11 +176,22 @@ export function ArkmePersistentSidebar({
   }>()
   const directoryVisible = !loginMode && ui.calendarOpen !== true
     && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || harnessMode)
-  const [sidebarWidthOverride, setSidebarWidthOverride] = useState<number>()
-  const sidebarResizeRef = useRef<{ pointerId: number; startX: number; startWidth: number }>()
+  const [preferredSidebarWidth, setPreferredSidebarWidth] = useState<number | undefined>(() => readPersistentSidebarWidth())
+  const [compactSidebarWidthOverride, setCompactSidebarWidthOverride] = useState<number>()
+  const sidebarResizeRef = useRef<{
+    pointerId: number
+    startX: number
+    startWidth: number
+    compact: boolean
+    lastWidth: number
+  }>()
   const [sidebarResizing, setSidebarResizing] = useState(false)
-  const renderedSidebarWidth = sidebarWidthOverride ?? width + ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
-  const avatarOnly = !contactsMode && renderedSidebarWidth <= ARKME_PERSISTENT_SIDEBAR_AVATAR_ONLY_WIDTH
+  const hostSidebarWidth = clampPersistentSidebarWidth(width + ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH)
+  const renderedSidebarWidth = resolvePersistentSidebarWidth(
+    collapsed, hostSidebarWidth, preferredSidebarWidth, compactSidebarWidthOverride,
+  )
+  const renderedDirectoryWidth = renderedSidebarWidth - ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
+  const avatarOnly = !contactsMode && renderedDirectoryWidth <= ARKME_PERSISTENT_DIRECTORY_AVATAR_ONLY_WIDTH
   useEffect(() => {
     if (authenticatedUserId === undefined) {
       setSendToSelfState(undefined)
@@ -175,8 +228,10 @@ export function ArkmePersistentSidebar({
   }, [searchDshMessages, sessionState.byId])
   useLayoutEffect(() => {
     closeDetails()
-    if (collapsed) collapseSidebar()
-  }, [closeDetails, collapseSidebar, collapsed])
+  }, [closeDetails])
+  useEffect(() => {
+    if (!collapsed) setCompactSidebarWidthOverride(undefined)
+  }, [collapsed])
   useLayoutEffect(() => { arkmeContactsTab.activateAccount(contactsAccountKey) }, [contactsAccountKey])
   useEffect(() => arkmeContactsTab.bindAborter(() => { handoffControllerRef.current?.abort() }), [])
   useEffect(() => {
@@ -188,19 +243,73 @@ export function ArkmePersistentSidebar({
     if (event.button !== 0) return
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
-    sidebarResizeRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: renderedSidebarWidth }
+    sidebarResizeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: renderedSidebarWidth,
+      compact: collapsed,
+      lastWidth: renderedSidebarWidth,
+    }
     setSidebarResizing(true)
-  }, [renderedSidebarWidth])
+  }, [collapsed, renderedSidebarWidth])
   const continueSidebarResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const resize = sidebarResizeRef.current
     if (resize === undefined || resize.pointerId !== event.pointerId) return
-    setSidebarWidthOverride(clampPersistentSidebarWidth(resize.startWidth + event.clientX - resize.startX))
+    const nextWidth = clampPersistentSidebarWidth(resize.startWidth + event.clientX - resize.startX)
+    resize.lastWidth = nextWidth
+    if (resize.compact) setCompactSidebarWidthOverride(nextWidth)
+    else setPreferredSidebarWidth(nextWidth)
   }, [])
   const stopSidebarResize = useCallback((element?: HTMLDivElement, pointerId?: number) => {
+    const resize = sidebarResizeRef.current
     if (pointerId !== undefined && element?.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId)
+    if (resize !== undefined && !resize.compact) writePersistentSidebarWidth(resize.lastWidth)
     sidebarResizeRef.current = undefined
     setSidebarResizing(false)
   }, [])
+  const resizeSidebarFromKeyboard = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    let nextWidth: number | undefined
+    if (event.key === 'Home') nextWidth = ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH
+    else if (event.key === 'End') nextWidth = ARKME_PERSISTENT_SIDEBAR_MAX_WIDTH
+    else if (event.key === 'ArrowLeft') nextWidth = renderedSidebarWidth - 16
+    else if (event.key === 'ArrowRight') nextWidth = renderedSidebarWidth + 16
+    if (nextWidth === undefined) return
+    event.preventDefault()
+    const clamped = clampPersistentSidebarWidth(nextWidth)
+    if (collapsed) setCompactSidebarWidthOverride(clamped)
+    else {
+      setPreferredSidebarWidth(clamped)
+      writePersistentSidebarWidth(clamped)
+    }
+  }, [collapsed, renderedSidebarWidth])
+  const sidebarSizingStyle = <style data-arkme-owned="persistent-sidebar-resize-handle-style">{`
+    :root { --arkme-persistent-sidebar-width: ${String(renderedSidebarWidth)}px; }
+    :root:has([data-arkme-owned="persistent-sidebar"]) [data-side="sidebar"] {
+      left: ${String(renderedSidebarWidth)}px !important;
+      pointer-events: none;
+    }
+    :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-slot="root"] > div,
+    :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-side="sidebar"] {
+      transition: none !important;
+    }
+  `}</style>
+  const sidebarResizeHandle = <div
+    data-arkme-owned="persistent-sidebar-resize-handle"
+    role="separator"
+    aria-label="调整对话列表宽度"
+    aria-orientation="vertical"
+    aria-valuemin={ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH}
+    aria-valuemax={ARKME_PERSISTENT_DIRECTORY_MAX_WIDTH}
+    aria-valuenow={renderedDirectoryWidth}
+    tabIndex={0}
+    style={styles.sidebarResizeHandle}
+    onPointerDown={beginSidebarResize}
+    onPointerMove={continueSidebarResize}
+    onPointerUp={event => { stopSidebarResize(event.currentTarget, event.pointerId) }}
+    onPointerCancel={event => { stopSidebarResize(event.currentTarget, event.pointerId) }}
+    onLostPointerCapture={() => { stopSidebarResize() }}
+    onKeyDown={resizeSidebarFromKeyboard}
+  />
 
   if (loginMode) return webLockedMode ? <aside
     data-arkme-owned="persistent-sidebar"
@@ -208,13 +317,19 @@ export function ArkmePersistentSidebar({
     data-arkme-login-mode="true"
     data-arkme-web-locked
     data-arkme-directory-visible="true"
+    data-arkme-sidebar-collapsed={collapsed ? 'true' : 'false'}
+    data-arkme-sidebar-resizing={sidebarResizing ? 'true' : 'false'}
+    data-arkme-sidebar-width={renderedSidebarWidth}
+    data-arkme-directory-width={renderedDirectoryWidth}
     style={styles.sidebar}
     aria-label="Arkme 受限工作区导航"
   >
+    {sidebarSizingStyle}
     <ArkmeProductNavigation compact={false} hosted taskExpanded locked />
     <div style={styles.taskDirectory} data-arkme-directory-mode="web-locked">
-      <ArkmeNavigation wide embeddedProductShell showHarnessEntry lockedDirectory />
+      <ArkmeNavigation wide avatarOnly={avatarOnly} embeddedProductShell showHarnessEntry lockedDirectory />
     </div>
+    {sidebarResizeHandle}
   </aside> : <aside
     data-arkme-owned="persistent-sidebar"
     data-arkme-login-mode="true"
@@ -230,27 +345,18 @@ export function ArkmePersistentSidebar({
     data-arkme-harness-mode={harnessMode ? 'true' : 'false'}
     data-arkme-directory-visible={directoryVisible ? 'true' : 'false'}
     data-arkme-sidebar-resizing={sidebarResizing ? 'true' : 'false'}
+    data-arkme-sidebar-width={renderedSidebarWidth}
+    data-arkme-directory-width={renderedDirectoryWidth}
     data-arkme-login-mode="false"
     {...(contactsMode ? { 'data-arkme-contacts-mobile-view': scopedContacts.selection.kind !== 'none' ? 'content' : 'directory' } : {})}
     style={styles.sidebar}
     aria-label="Arkme 功能导航栏"
   >
-    {!collapsed && directoryVisible && <style data-arkme-owned="persistent-sidebar-resize-handle-style">{`
-      :root { --arkme-persistent-sidebar-width: ${String(renderedSidebarWidth)}px; }
-      :root:has([data-arkme-owned="persistent-sidebar"]) [data-side="sidebar"] {
-        left: ${String(renderedSidebarWidth)}px !important;
-        pointer-events: none;
-      }
-      :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-slot="root"] > div,
-      :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-side="sidebar"] {
-        transition: none !important;
-      }
-    `}</style>}
+    {directoryVisible && (!contactsMode || !collapsed) && sidebarSizingStyle}
     <ArkmeProductNavigation
       compact={false}
       hosted
       taskExpanded
-      hidden={avatarOnly}
       currentSessionId={sessionState.current}
     />
     {directoryVisible && <div style={styles.taskDirectory} data-arkme-directory-mode={contactsMode ? 'contacts' : 'conversations'}>
@@ -301,21 +407,7 @@ export function ArkmePersistentSidebar({
         {...(sendToSelfSource === undefined ? {} : { sendToSelfSource })}
       />}
     </div>}
-    {!collapsed && directoryVisible && !contactsMode && <div
-      data-arkme-owned="persistent-sidebar-resize-handle"
-      role="separator"
-      aria-label="调整对话列表宽度"
-      aria-orientation="vertical"
-      aria-valuemin={ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH}
-      aria-valuemax={ARKME_PERSISTENT_SIDEBAR_MAX_WIDTH}
-      aria-valuenow={renderedSidebarWidth}
-      style={styles.sidebarResizeHandle}
-      onPointerDown={beginSidebarResize}
-      onPointerMove={continueSidebarResize}
-      onPointerUp={event => { stopSidebarResize(event.currentTarget, event.pointerId) }}
-      onPointerCancel={event => { stopSidebarResize(event.currentTarget, event.pointerId) }}
-      onLostPointerCapture={() => { stopSidebarResize() }}
-    />}
+    {directoryVisible && !contactsMode && sidebarResizeHandle}
   </aside>
 }
 
@@ -344,8 +436,14 @@ export function ArkmePersistentWorkspace({
   useLayoutEffect(() => {
     arkmeContactsTab.activateAccount(contactsAccountKey)
   }, [contactsAccountKey])
-
-  return <main data-arkme-owned="persistent-workspace" data-arkme-workspace {...(contactsMode ? { 'data-arkme-contacts-mobile-view': scopedContacts.selection.kind !== 'none' ? 'content' : 'directory' } : {})} style={styles.workspace} aria-label="Arkme 主界面">
+  return <main
+    data-arkme-owned="persistent-workspace"
+    data-arkme-workspace
+    data-arkme-notification-activation-revision={ui.notificationActivationRevision ?? 0}
+    {...(contactsMode ? { 'data-arkme-contacts-mobile-view': scopedContacts.selection.kind !== 'none' ? 'content' : 'directory' } : {})}
+    style={styles.workspace}
+    aria-label="Arkme 主界面"
+  >
     <ArkmePersistentClientRuntime />
     <ArkmeExtensionRecoveryNotice />
     <DeepSeekHarnessSurface

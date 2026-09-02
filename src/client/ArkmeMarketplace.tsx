@@ -1033,6 +1033,8 @@ export function extensionCommunityAuthor(item: ArkmeExtensionCatalogItem): { nam
   }
   const ownerName = item.owner_name?.trim() ?? ''
   if (ownerName !== '') return { name: ownerName, github: false }
+  const sourceAuthorName = item.source_author?.name?.trim() ?? ''
+  if (sourceAuthorName !== '') return { name: sourceAuthorName, github: false }
   return { name: extensionAuthorLabel(item), github: false }
 }
 
@@ -1586,7 +1588,9 @@ export function extensionNativeInstallWarning(
 }
 
 export function extensionAuthorLabel(
-  item: Pick<ArkmeExtensionCatalogItem, 'owner_user_id' | 'owner_name' | 'owner_arkme_id'>,
+  item: Pick<ArkmeExtensionCatalogItem,
+    'owner_user_id' | 'owner_name' | 'owner_arkme_id' | 'source_author' | 'publisher_role' | 'source'
+  >,
 ): string {
   const displayName = item.owner_name?.trim() ?? ''
   const arkmeId = item.owner_arkme_id?.trim().replace(/^@+/, '') ?? ''
@@ -1594,6 +1598,9 @@ export function extensionAuthorLabel(
   if (displayName !== '') return displayName
   if (arkmeId !== '') return `@${arkmeId}`
   if (item.owner_user_id !== undefined) return `Arkme 用户 ${String(item.owner_user_id)}`
+  const sourceAuthorName = item.source_author?.name?.trim() ?? ''
+  if (sourceAuthorName !== '') return sourceAuthorName
+  if (effectiveExtensionPublisherRole(item) === 'importer' && item.source?.type === 'github_repository') return 'GitHub'
   return '作者信息暂不可用'
 }
 
@@ -1640,10 +1647,15 @@ export function extensionEnableUnavailable(
   return enabled && item?.unavailable !== undefined
 }
 
+function normalizedInitialMarketplaceExtensionId(extensionId: string | undefined): string | undefined {
+  const normalized = extensionId?.trim()
+  return normalized === undefined || normalized === '' ? undefined : normalized
+}
+
 export function ArkmeMarketplace({
   currentSessionId, currentUserId, currentUserAvatarRef, shareRef, shareAction, initialExtensionId, initialAuthorFilter,
   onShareResolved, onShareExit, onClose,
-  displayMode = 'dialog', onPrivateChatOpened, sortingEnabled = true,
+  displayMode = 'dialog', onPrivateChatOpened, sortingEnabled = true, closeOnDetailClose = false,
 }: {
   currentSessionId?: string | undefined
   currentUserId?: number | undefined
@@ -1658,7 +1670,9 @@ export function ArkmeMarketplace({
   displayMode?: 'dialog' | 'page'
   onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined
   sortingEnabled?: boolean
+  closeOnDetailClose?: boolean
 }) {
+  const initialDetailId = normalizedInitialMarketplaceExtensionId(initialExtensionId)
   const [tab, setTab] = useState<Tab>('discover')
   const [discoverItems, setDiscoverItems] = useState<ArkmeExtensionCatalogItem[]>([])
   const [publishedItems, setPublishedItems] = useState<ArkmeExtensionCatalogItem[]>([])
@@ -1670,9 +1684,9 @@ export function ArkmeMarketplace({
   const [updates, setUpdates] = useState<ArkmeExtensionUpdateResolution[]>([])
   const [lifecycleCatalogItems, setLifecycleCatalogItems] = useState<Record<string, ArkmeExtensionCatalogItem>>({})
   const [detail, setDetail] = useState<ArkmeExtensionCatalogItem>()
-  const [detailRequestedExtensionId, setDetailRequestedExtensionId] = useState<string>()
+  const [detailRequestedExtensionId, setDetailRequestedExtensionId] = useState<string | undefined>(() => initialDetailId)
   const [loadingTab, setLoadingTab] = useState<Tab | undefined>(shareRef === undefined ? 'discover' : undefined)
-  const [detailBusy, setDetailBusy] = useState(false)
+  const [detailBusy, setDetailBusy] = useState(initialDetailId !== undefined)
   const [detailError, setDetailError] = useState('')
   const [installTask, setInstallTask] = useState<ArkmeExtensionInstallTaskSnapshot>()
   const [actionBusyExtensionId, setActionBusyExtensionId] = useState<string>()
@@ -1752,6 +1766,7 @@ export function ArkmeMarketplace({
     detailReturnFocus.current = undefined
     if (restoreFocus && target !== undefined && typeof window !== 'undefined') window.setTimeout(() => { target.focus() }, 0)
     if (dismissPendingShare) onShareExit?.()
+    if (restoreFocus && closeOnDetailClose) onClose?.()
   }
 
   const hostInstance = async (): Promise<string | undefined> => {
@@ -2049,14 +2064,14 @@ export function ArkmeMarketplace({
       return
     }
     const timer = window.setTimeout(() => {
-      void load('discover', extensionTabLoadMode(loadedTabs, 'discover'))
+      void load('discover', extensionTabLoadMode(loadedTabs, 'discover'), normalizedInitialMarketplaceExtensionId(initialExtensionId) !== undefined)
     }, searchQuery.trim() === '' ? 0 : 250)
     return () => {
       window.clearTimeout(timer)
       requestController.current?.abort()
       loadMoreController.current?.abort()
     }
-  }, [shareRef, searchQuery, sort, category, sortingEnabled, authorFilter?.ownerUserId, currentUserId])
+  }, [shareRef, searchQuery, sort, category, sortingEnabled, authorFilter?.ownerUserId, currentUserId, initialExtensionId])
 
   useEffect(() => {
     if (shareRef === undefined) return
@@ -2181,8 +2196,8 @@ export function ArkmeMarketplace({
   }
 
   useEffect(() => {
-    const extensionId = initialExtensionId?.trim()
-    if (extensionId === undefined || extensionId === '' || openedInitialExtensionIdRef.current === extensionId) return
+    const extensionId = normalizedInitialMarketplaceExtensionId(initialExtensionId)
+    if (extensionId === undefined || openedInitialExtensionIdRef.current === extensionId) return
     openedInitialExtensionIdRef.current = extensionId
     void inspect(extensionId)
   }, [initialExtensionId])
@@ -2598,7 +2613,7 @@ export function ArkmeMarketplace({
     }
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [authorCardOpen, detailModalOpen, displayMode, editBusy, editItem, onClose, publishBusy, publishItem, restartPrompt, restarting])
+  }, [authorCardOpen, closeOnDetailClose, detailModalOpen, displayMode, editBusy, editItem, onClose, publishBusy, publishItem, restartPrompt, restarting])
 
   useEffect(() => {
     if (!detailModalOpen || typeof document === 'undefined') return

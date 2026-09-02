@@ -270,7 +270,6 @@ export class HttpArkmeBillingGateway implements ArkmeBillingGateway {
       {},
       'interactive-read',
       signal,
-      'managed-ai-balance',
     ))
     const currency = stringValue(data.currency).trim()
     if (currency !== 'CNY') {

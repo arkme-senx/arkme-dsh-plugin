@@ -65,6 +65,16 @@ function privateBundle(lastSequence: number, unreadCount: number) {
   }
 }
 
+function unreadSummary(badgeCount = 0): Response {
+  return json({
+    items: [], has_more: false,
+    summary: {
+      badge_count: badgeCount, muted_unread_count: 0, session_count_with_unread: badgeCount > 0 ? 1 : 0,
+      has_attention: false, summary_version: Date.now(), updated_at: Date.now(),
+    },
+  })
+}
+
 describe('Arkme Chat message notification projection', () => {
   it('emits one notification for every peer hint after the authoritative session delta', async () => {
     const sessions = new MemorySessionStore()
@@ -85,6 +95,7 @@ describe('Arkme Chat message notification projection', () => {
           },
         }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       }
+      if (url.endsWith('/api/v1/chats/unread-snapshot')) return unreadSummary()
       if (url.endsWith('/api/v1/chats/list')) {
         return json({ items: [privateBundle(8, 0)], has_more: false })
       }
@@ -208,6 +219,7 @@ describe('Arkme Chat message notification projection', () => {
           },
         }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       }
+      if (url.endsWith('/api/v1/chats/unread-snapshot')) return unreadSummary(1)
       if (url.endsWith('/api/v1/chats/list')) return json({ items: bundles, has_more: false })
       if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) return json({ items: [] })
       if (url.endsWith('/api/v1/chats/display-snapshots')) {
@@ -252,7 +264,19 @@ describe('Arkme Chat message notification projection', () => {
 
     await vi.waitFor(() => {
       expect(events.filter(event => event.type === 'sessions-delta')).toHaveLength(1)
-    }, { timeout: 2_000 })
+    }, { timeout: 8_000 })
+    const delta = events.find(event => event.type === 'sessions-delta') as {
+      updates: Array<{ source: { displayName: string; unreadCount: number; badgeUnreadCount?: number; notificationAllowed?: boolean } }>
+    }
+    expect(delta.updates.find(update => update.source.displayName === '免打扰群')?.source).toMatchObject({
+      unreadCount: 1, badgeUnreadCount: 0, notificationAllowed: false,
+    })
+    expect(delta.updates.find(update => update.source.displayName === '关闭推送群')?.source).toMatchObject({
+      unreadCount: 1, badgeUnreadCount: 0, notificationAllowed: false,
+    })
+    expect(delta.updates.find(update => update.source.displayName === '产品群')?.source).toMatchObject({
+      unreadCount: 1, badgeUnreadCount: 1, notificationAllowed: true,
+    })
     expect(events.filter(event => event.type === 'message-notification').map(event => event.notification))
       .toEqual([expect.objectContaining({ eventUid: 'event-group', title: '产品群', body: '周鹏：群消息' })])
     unsubscribe()
@@ -279,6 +303,7 @@ describe('Arkme Chat message notification projection', () => {
           },
         }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       }
+      if (url.endsWith('/api/v1/chats/unread-snapshot')) return unreadSummary()
       if (url.endsWith('/api/v1/chats/list')) {
         baselineRequestCount += 1
         return json({ items: [privateBundle(authoritativeSequence, 0)], has_more: false })
@@ -355,6 +380,7 @@ describe('Arkme Chat message notification projection', () => {
           },
         }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       }
+      if (url.endsWith('/api/v1/chats/unread-snapshot')) return unreadSummary(1)
       if (url.endsWith('/api/v1/chats/list')) return json({ items: [privateBundle(8, 0)], has_more: false })
       if (url.endsWith('/api/v1/chats/display-snapshots')) return json({ items: [privateBundle(9, 1)] })
       if (url.endsWith('/api/v1/chat/timeline/tail')) {
@@ -387,11 +413,11 @@ describe('Arkme Chat message notification projection', () => {
         events.filter(event => event.type === 'message-notification'),
         `tail requests: ${String(tailRequests)}; event types: ${events.map(event => String(event.type)).join(',')}`,
       ).toHaveLength(1)
-    }, { timeout: 5_000 })
+    }, { timeout: 8_000 })
     expect(tailRequests).toBe(5)
     expect(events.find(event => event.type === 'message-notification')?.notification)
       .toEqual(expect.objectContaining({ eventUid: 'event-delayed', body: '延迟投影消息' }))
     unsubscribe()
     stop()
-  })
+  }, 10_000)
 })

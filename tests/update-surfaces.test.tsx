@@ -69,6 +69,33 @@ describe('Arkme Demo-aligned update surfaces', () => {
     expect(appUpdateProgress(25, undefined)).toBeUndefined()
   })
 
+  it('uses the progress layout for a downloading APP update', () => {
+    const item = deriveArkmeUpdatePresentation({
+      app: {
+        checked: true,
+        busy: true,
+        error: '',
+        status: {
+          status: 'downloading',
+          currentVersion: '0.1.18',
+          latestVersion: '0.1.19',
+          downloadedBytes: 49,
+          totalBytes: 100,
+        },
+      },
+    }).primary
+    expect(item).toBeDefined()
+
+    const markup = renderToStaticMarkup(<ArkmeUpdateTopCapsule
+      item={item!}
+      onClose={() => undefined}
+      onRetry={() => undefined}
+      onOpenDownloaded={() => undefined}
+    />)
+
+    expect(markup).toContain('data-layout="progress"')
+  })
+
   it('renders the downloaded APP state without any plugin restart action', () => {
     const item = deriveArkmeUpdatePresentation({
       app: {
@@ -90,6 +117,7 @@ describe('Arkme Demo-aligned update surfaces', () => {
     expect(markup).toContain('更新包已就绪')
     expect(markup).toContain('已下载 0.1.19')
     expect(markup).toContain('打开文件夹')
+    expect(markup).toContain('data-layout="action"')
     expect(markup).not.toContain('立即重启')
     expect(markup).not.toContain('稍后重启')
   })

@@ -27,7 +27,7 @@ export default defineConfig([
     fixedExtension: false,
     dts: false,
     clean: false,
-    deps: { alwaysBundle: ['pinyin-pro'] },
+    deps: { alwaysBundle: ['mediabunny', 'pinyin-pro'] },
   },
   {
     name: '@senguoyun/dsh-arkme/client',

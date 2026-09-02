@@ -8,6 +8,7 @@ import type {
   ArkmeUserProfile,
   ArkmeWorldAvatarFallback,
   ArkmeWorldAuthorLabel,
+  ArkmeWorldExtensionShare,
   ArkmeWorldFeedItem,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
@@ -152,6 +153,36 @@ function integerValue(value: unknown): number {
 
 function booleanValue(value: unknown): boolean { return value === true }
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
+
+function extensionShareRefFromUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl)
+    return url.pathname.split('/').at(-1) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function worldExtensionPublicationShare(
+  rawPublication: Record<string, unknown>,
+  rawItem: Record<string, unknown>,
+): ArkmeWorldExtensionShare | undefined {
+  const share = objectValue(rawPublication.share ?? rawItem.share)
+  const url = stringValue(share.url ?? rawPublication.share_url ?? rawItem.share_url).trim()
+  if (url === '' || url.length > 4096) return undefined
+  const ref = stringValue(share.ref ?? rawPublication.share_ref ?? rawItem.share_ref).trim() || extensionShareRefFromUrl(url)
+  if (!/^extshare_[0-9a-f]{32}$/.test(ref)) return undefined
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return undefined
+  }
+  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '' || !parsed.pathname.endsWith(`/${ref}`)) {
+    return undefined
+  }
+  return { ref, url: parsed.href }
+}
 
 function isTopLevelWorldRecord(raw: unknown): boolean {
   return stringValue(objectValue(raw).parent_record_uid).trim() === ''
@@ -1165,6 +1196,10 @@ export class WorldService {
           version: stringValue(rawExtensionPublication.version).trim(),
           name: stringValue(rawExtensionPublication.name).trim() || '未命名插件',
           description: stringValue(rawExtensionPublication.description).trim(),
+          ...(() => {
+            const share = worldExtensionPublicationShare(rawExtensionPublication, item)
+            return share === undefined ? {} : { share }
+          })(),
           ...(() => {
             const iconRef = stringValue(rawExtensionPublication.icon_ref).trim()
             return iconRef === '' ? {} : { iconRef }

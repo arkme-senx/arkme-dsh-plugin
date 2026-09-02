@@ -23,6 +23,8 @@ export function projectBotChatDirectory(
     const projectedBot: ArkmeBotSummary = {
       ...bot,
       unreadCount: source.unreadCount,
+      ...(source.badgeUnreadCount === undefined ? {} : { badgeUnreadCount: source.badgeUnreadCount }),
+      ...(source.notificationAllowed === undefined ? {} : { notificationAllowed: source.notificationAllowed }),
       ...(source.isMuted === undefined ? {} : { isMuted: source.isMuted }),
     }
     const botActivityAtMillis = bot.latestMessageAtMillis ?? bot.createdAtMillis ?? 0

@@ -1,40 +1,228 @@
 import type { ArkmeRecordLocationCapture, ArkmeSourceItem } from '../types.js'
 
-const LOCATION_ENABLED_PREFIX = 'arkme.record-capture.location.enabled.'
-const listeners = new Set<() => void>()
+export const ARKME_DESKTOP_LOCATION_BRIDGE_TIMEOUT_MILLIS = 5_000
+export const ARKME_DESKTOP_LOCATION_PERMISSION_REQUEST_TIMEOUT_MILLIS = 65_000
 
-function storageKey(userId: number | undefined): string { return `${LOCATION_ENABLED_PREFIX}${String(userId ?? 0)}` }
+export type ArkmeLocationPermissionState =
+  | 'granted'
+  | 'prompt'
+  | 'denied'
+  | 'restricted'
+  | 'services-disabled'
+  | 'unavailable'
+
+export interface ArkmeDesktopLocationPermissionSnapshot {
+  readonly schemaVersion: 1
+  readonly state: ArkmeLocationPermissionState
+}
+
+export interface ArkmeDesktopLocationBridge {
+  permissionState(): Promise<ArkmeDesktopLocationPermissionSnapshot>
+  requestPermission(): Promise<ArkmeDesktopLocationPermissionSnapshot>
+  openSettings(): Promise<boolean>
+}
+
+export interface ArkmeLocationNavigator {
+  readonly geolocation?: Pick<Geolocation, 'getCurrentPosition'>
+  readonly permissions?: {
+    query(descriptor: PermissionDescriptor): Promise<{ readonly state: PermissionState }>
+  }
+}
+
+export interface ArkmeLocationRuntimeScope {
+  readonly navigator?: ArkmeLocationNavigator
+  readonly arkmeDesktopLocation?: ArkmeDesktopLocationBridge
+  readonly desktopBridgeTimeoutMillis?: number
+}
+
+export type ArkmeLocationCaptureIntent = 'explicit-user-action' | 'automatic-send'
+
+export type ArkmeLocationCaptureFailure =
+  | Exclude<ArkmeLocationPermissionState, 'granted'>
+  | 'position-unavailable'
+  | 'timeout'
+  | 'capture-failed'
+
+declare global {
+  interface Window {
+    readonly arkmeDesktopLocation?: ArkmeDesktopLocationBridge
+  }
+}
+
+export class ArkmeLocationCaptureError extends Error {
+  constructor(
+    message: string,
+    readonly failure: ArkmeLocationCaptureFailure,
+  ) {
+    super(message)
+    this.name = 'ArkmeLocationCaptureError'
+  }
+}
+
+const LOCATION_PERMISSION_STATES = new Set<ArkmeLocationPermissionState>([
+  'granted',
+  'prompt',
+  'denied',
+  'restricted',
+  'services-disabled',
+  'unavailable',
+])
+let locationPermissionRequestInFlight: Promise<ArkmeRecordLocationCapture> | undefined
+
+function browserLocationRuntimeScope(): ArkmeLocationRuntimeScope {
+  return {
+    ...(typeof navigator === 'undefined' ? {} : { navigator }),
+    ...(typeof window === 'undefined' || window.arkmeDesktopLocation === undefined
+      ? {}
+      : { arkmeDesktopLocation: window.arkmeDesktopLocation }),
+  }
+}
+
+function desktopPermissionState(value: unknown): ArkmeLocationPermissionState {
+  if (typeof value !== 'object' || value === null) return 'unavailable'
+  const snapshot = value as Partial<ArkmeDesktopLocationPermissionSnapshot>
+  return snapshot.schemaVersion === 1 && LOCATION_PERMISSION_STATES.has(snapshot.state as ArkmeLocationPermissionState)
+    ? snapshot.state as ArkmeLocationPermissionState
+    : 'unavailable'
+}
+
+function permissionError(
+  state: Exclude<ArkmeLocationPermissionState, 'granted'>,
+  input: { desktop: boolean; explicit: boolean },
+): ArkmeLocationCaptureError {
+  if (state === 'denied') {
+    return new ArkmeLocationCaptureError('Arkme 的位置权限已被拒绝，请打开系统定位设置后允许访问位置', state)
+  }
+  if (state === 'restricted') {
+    return new ArkmeLocationCaptureError('此设备限制了 Arkme 使用位置，无法记录当前位置', state)
+  }
+  if (state === 'services-disabled') {
+    return new ArkmeLocationCaptureError('系统定位服务未开启，请先打开系统定位设置', state)
+  }
+  if (state === 'unavailable') {
+    return new ArkmeLocationCaptureError(
+      input.desktop ? 'Arkme 客户端当前无法使用系统定位服务' : '当前浏览器不支持位置采集',
+      state,
+    )
+  }
+  return new ArkmeLocationCaptureError(
+    input.explicit
+      ? '尚未完成位置授权，请在系统授权弹窗中选择“允许”'
+      : '位置权限尚未授权；请在设置中允许位置访问',
+    state,
+  )
+}
+
+function geolocationError(error: GeolocationPositionError): ArkmeLocationCaptureError {
+  if (error.code === 1) {
+    return new ArkmeLocationCaptureError('系统未允许 Arkme 读取位置，请打开系统定位设置后允许访问位置', 'denied')
+  }
+  if (error.code === 2) {
+    return new ArkmeLocationCaptureError('暂时无法获取当前位置，请检查系统定位服务后重试', 'position-unavailable')
+  }
+  if (error.code === 3) {
+    return new ArkmeLocationCaptureError('获取当前位置超时，请移动到定位信号较好的位置后重试', 'timeout')
+  }
+  return new ArkmeLocationCaptureError('位置采集失败，请稍后重试', 'capture-failed')
+}
 
 export function arkmeSourceSupportsLocationCapture(kind: ArkmeSourceItem['kind'] | undefined): boolean {
   return kind === 'private_chat' || kind === 'group_chat' || kind === 'send_to_self'
     || kind === 'default_category' || kind === 'topic'
 }
 
-export function arkmeLocationCaptureEnabled(userId: number | undefined): boolean {
-  try { return window.localStorage.getItem(storageKey(userId)) === 'enabled' } catch { return false }
+async function withDesktopBridgeDeadline<T>(
+  operation: () => Promise<T>,
+  timeoutMillis: number,
+): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    let settled = false
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      globalThis.clearTimeout(timer)
+      callback()
+    }
+    const timer = globalThis.setTimeout(() => {
+      finish(() => { reject(new Error('Arkme 桌面位置桥响应超时')) })
+    }, Math.max(1, Math.trunc(timeoutMillis)))
+    void Promise.resolve().then(operation).then(
+      value => { finish(() => { resolve(value) }) },
+      error => { finish(() => { reject(error) }) },
+    )
+  })
 }
 
-export function setArkmeLocationCaptureEnabled(userId: number | undefined, enabled: boolean): void {
-  try { window.localStorage.setItem(storageKey(userId), enabled ? 'enabled' : 'disabled') } catch { /* local preference is optional */ }
-  for (const listener of listeners) listener()
+function desktopBridgeTimeoutMillis(scope: ArkmeLocationRuntimeScope, fallback: number): number {
+  return scope.desktopBridgeTimeoutMillis ?? fallback
 }
 
-export function subscribeArkmeLocationCapturePreference(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => { listeners.delete(listener) }
+export async function arkmeLocationPermissionState(
+  scope: ArkmeLocationRuntimeScope = browserLocationRuntimeScope(),
+): Promise<ArkmeLocationPermissionState> {
+  const desktop = scope.arkmeDesktopLocation
+  if (typeof desktop?.permissionState === 'function') {
+    try {
+      return desktopPermissionState(await withDesktopBridgeDeadline(
+        () => desktop.permissionState(),
+        desktopBridgeTimeoutMillis(scope, ARKME_DESKTOP_LOCATION_BRIDGE_TIMEOUT_MILLIS),
+      ))
+    }
+    catch { return 'unavailable' }
+  }
+  const locationNavigator = scope.navigator
+  if (typeof locationNavigator?.geolocation?.getCurrentPosition !== 'function') return 'unavailable'
+  if (typeof locationNavigator.permissions?.query !== 'function') return 'prompt'
+  try {
+    const state = (await locationNavigator.permissions.query({ name: 'geolocation' as PermissionName })).state
+    return state === 'granted' || state === 'denied' ? state : 'prompt'
+  } catch {
+    return 'prompt'
+  }
 }
 
-export async function arkmeLocationPermissionState(): Promise<'granted' | 'denied' | 'prompt' | 'unavailable'> {
-  if (!('geolocation' in navigator)) return 'unavailable'
-  const permissions = navigator as Navigator & { permissions?: { query?: (descriptor: PermissionDescriptor) => Promise<{ state: PermissionState }> } }
-  if (typeof permissions.permissions?.query !== 'function') return 'prompt'
-  try { return (await permissions.permissions.query({ name: 'geolocation' as PermissionName })).state } catch { return 'prompt' }
-}
+/**
+ * One location owner for every input surface.
+ *
+ * Explicit user actions may ask the desktop owner (or the browser fallback)
+ * for permission. Automatic sends are strictly granted-only and can therefore
+ * never create an unsolicited permission prompt.
+ */
+export async function captureArkmeRecordLocation(
+  intent: ArkmeLocationCaptureIntent,
+  scope: ArkmeLocationRuntimeScope = browserLocationRuntimeScope(),
+): Promise<ArkmeRecordLocationCapture> {
+  const desktop = scope.arkmeDesktopLocation
+  const locationNavigator = scope.navigator
+  const explicit = intent === 'explicit-user-action'
+  let permission = await arkmeLocationPermissionState(scope)
 
-export function requestArkmeRecordLocation(): Promise<ArkmeRecordLocationCapture> {
-  if (!('geolocation' in navigator)) return Promise.reject(new Error('当前浏览器不支持位置采集'))
-  return new Promise((resolve, reject) => {
-    navigator.geolocation.getCurrentPosition(position => {
+  if (permission === 'prompt' && explicit && desktop !== undefined) {
+    if (typeof desktop.requestPermission !== 'function') permission = 'unavailable'
+    else {
+      try {
+        permission = desktopPermissionState(await withDesktopBridgeDeadline(
+          () => desktop.requestPermission(),
+          desktopBridgeTimeoutMillis(scope, ARKME_DESKTOP_LOCATION_PERMISSION_REQUEST_TIMEOUT_MILLIS),
+        ))
+      }
+      catch { permission = 'unavailable' }
+    }
+  }
+
+  // In a normal browser, getCurrentPosition is the permission request owner.
+  // The desktop bridge is authoritative whenever it exists, so a desktop
+  // prompt must be resolved by requestPermission before Web geolocation runs.
+  const browserMayPrompt = explicit && desktop === undefined && permission === 'prompt'
+  if (permission !== 'granted' && !browserMayPrompt) {
+    throw permissionError(permission, { desktop: desktop !== undefined, explicit })
+  }
+  if (typeof locationNavigator?.geolocation?.getCurrentPosition !== 'function') {
+    throw permissionError('unavailable', { desktop: desktop !== undefined, explicit })
+  }
+
+  return await new Promise((resolve, reject) => {
+    locationNavigator.geolocation!.getCurrentPosition(position => {
       const { latitude, longitude, accuracy, altitude, speed } = position.coords
       resolve({
         latitude, longitude,
@@ -43,7 +231,82 @@ export function requestArkmeRecordLocation(): Promise<ArkmeRecordLocationCapture
         ...(altitude === null ? {} : { altitudeMeters: altitude }),
         ...(speed === null || speed < 0 ? {} : { speedMetersPerSecond: speed }),
       })
-    }, error => reject(new Error(error.code === error.PERMISSION_DENIED ? '你未允许浏览器记录位置' : '位置采集失败，请稍后重试')),
+    }, error => { reject(geolocationError(error)) },
     { enableHighAccuracy: false, timeout: 10_000, maximumAge: 30_000 })
   })
+}
+
+export async function requestArkmeRecordLocation(
+  scope: ArkmeLocationRuntimeScope = browserLocationRuntimeScope(),
+): Promise<ArkmeRecordLocationCapture> {
+  return await captureArkmeRecordLocation('explicit-user-action', scope)
+}
+
+export function arkmeLocationSettingsAvailable(
+  scope: ArkmeLocationRuntimeScope = browserLocationRuntimeScope(),
+): boolean {
+  return typeof scope.arkmeDesktopLocation?.openSettings === 'function'
+}
+
+export async function arkmeOpenLocationSettings(
+  scope: ArkmeLocationRuntimeScope = browserLocationRuntimeScope(),
+): Promise<boolean> {
+  const openSettings = scope.arkmeDesktopLocation?.openSettings
+  if (typeof openSettings !== 'function') return false
+  try {
+    return await withDesktopBridgeDeadline(
+      async () => await openSettings.call(scope.arkmeDesktopLocation),
+      desktopBridgeTimeoutMillis(scope, ARKME_DESKTOP_LOCATION_BRIDGE_TIMEOUT_MILLIS),
+    )
+  }
+  catch { return false }
+}
+
+export function arkmeLocationErrorCanOpenSettings(error: unknown): boolean {
+  return error instanceof ArkmeLocationCaptureError
+    && ['prompt', 'denied', 'restricted', 'services-disabled', 'unavailable', 'position-unavailable'].includes(error.failure)
+}
+
+export type ArkmeRecordLocationForSendResult =
+  | { state: 'captured'; location: ArkmeRecordLocationCapture }
+  | { state: 'disabled' }
+  | { state: 'permission-required'; permission: Exclude<ArkmeLocationPermissionState, 'granted'> }
+  | { state: 'failed'; message: string }
+
+async function requestInitialLocation(
+  operation: () => Promise<ArkmeRecordLocationCapture>,
+): Promise<ArkmeRecordLocationCapture> {
+  if (locationPermissionRequestInFlight !== undefined) return await locationPermissionRequestInFlight
+  const pending = operation().finally(() => {
+    if (locationPermissionRequestInFlight === pending) locationPermissionRequestInFlight = undefined
+  })
+  locationPermissionRequestInFlight = pending
+  return await pending
+}
+
+/**
+ * The first supported send owns the system permission request. Once granted,
+ * later sends capture directly without another request flow.
+ */
+export async function captureArkmeRecordLocationForSend(
+  dependencies: {
+    permissionState?: typeof arkmeLocationPermissionState
+    captureGrantedLocation?: () => Promise<ArkmeRecordLocationCapture>
+    requestPermissionAndLocation?: () => Promise<ArkmeRecordLocationCapture>
+  } = {},
+): Promise<ArkmeRecordLocationForSendResult> {
+  const permission = await (dependencies.permissionState ?? arkmeLocationPermissionState)()
+  if (permission !== 'granted' && permission !== 'prompt') return { state: 'permission-required', permission }
+  try {
+    const location = permission === 'prompt'
+      ? await requestInitialLocation(dependencies.requestPermissionAndLocation ?? requestArkmeRecordLocation)
+      : await (dependencies.captureGrantedLocation ?? (() => captureArkmeRecordLocation('automatic-send')))()
+    return { state: 'captured', location }
+  } catch (error) {
+    if (error instanceof ArkmeLocationCaptureError
+      && LOCATION_PERMISSION_STATES.has(error.failure as ArkmeLocationPermissionState)) {
+      return { state: 'permission-required', permission: error.failure as Exclude<ArkmeLocationPermissionState, 'granted'> }
+    }
+    return { state: 'failed', message: error instanceof Error ? error.message : '位置采集失败，请稍后重试' }
+  }
 }

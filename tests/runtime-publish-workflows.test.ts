@@ -78,7 +78,7 @@ describe('Arkme runtime publish workflow boundaries', () => {
     expect(buildJob).toContain('uses: actions/upload-artifact@v4')
     expect(publishJob).toContain('needs: build-runtime')
     expect(publishJob).toContain('environment: pre-release')
-    expect(publishJob).toContain('ref: d286f78a0058944e775f8835f4629eea401fe144')
+    expect(publishJob).toContain('ref: master')
     expect(publishJob).toContain('uses: actions/download-artifact@v4')
     expect(publishJob).toContain('ARKME_RUNTIME_ARTIFACT_DIR: trusted-runtime-artifact')
     expect(preRelease).toContain('contents: read')

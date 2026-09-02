@@ -1,7 +1,6 @@
-import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
-import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight'
 import { ChatCircleDots } from '@phosphor-icons/react/dist/icons/ChatCircleDots'
 import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
@@ -30,6 +29,8 @@ import { createArkmeSdk } from '../sdk/index.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
+import { ArkmeMarketplace } from './ArkmeMarketplace.js'
+import { ArkmeLinkText } from './ArkmeLinkText.js'
 import { ArkmeWorldEmptyNotice } from './ArkmeWorldEmptyNotice.js'
 import { ArkmeMemberProfileCard, type ArkmeMemberProfileIdentity } from './ArkmeChatMemberActions.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
@@ -153,14 +154,14 @@ const styles: Record<string, CSSProperties> = {
   imageButton: { position: 'relative', minWidth: 0, padding: 0, border: 0, borderRadius: 11, overflow: 'hidden', background: arkmeTheme.subtle, cursor: 'pointer' },
   imageOverflow: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(20,22,28,.52)', color: arkmeTheme.foreground, fontSize: 22, lineHeight: 1, fontWeight: 650, letterSpacing: '.01em', pointerEvents: 'none' },
   cardFooter: { minHeight: 24, marginTop: 9, paddingTop: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 },
-  extensionActivity: { marginTop: 13, padding: '15px 16px', display: 'grid', gridTemplateColumns: '48px minmax(0,1fr) auto', alignItems: 'start', gap: 14, border: 0, borderRadius: 12, background: arkmeTheme.subtle },
+  extensionActivity: { marginTop: 13, padding: '15px 16px', display: 'grid', gridTemplateColumns: '48px minmax(0,1fr)', alignItems: 'start', gap: 14, border: 0, borderRadius: 12, background: arkmeTheme.subtle, cursor: 'pointer', outline: 0 },
   extensionActivityIcon: { width: 48, height: 48, display: 'grid', placeItems: 'center', boxSizing: 'border-box', border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 10, background: arkmeTheme.elevated },
   extensionActivityCopy: { minWidth: 0, display: 'grid', gap: 4 },
   extensionActivityTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.text, fontSize: 15, lineHeight: '21px', fontWeight: 650, letterSpacing: '-.01em' },
   extensionActivityMeta: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 5, color: arkmeTheme.tertiary, fontSize: 10, lineHeight: '16px' },
   extensionActivityMetaSeparator: { color: arkmeTheme.caption },
   extensionActivityDescription: { maxWidth: '62ch', margin: '1px 0 0', overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, color: arkmeTheme.secondary, fontSize: 12, lineHeight: '19px' },
-  extensionOpenButton: { minHeight: 32, marginTop: -1, padding: '0 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 650, whiteSpace: 'nowrap' },
+  extensionActivityShare: { minWidth: 0, maxWidth: '62ch', marginTop: 1, overflowWrap: 'anywhere', color: arkmeTheme.accent, fontSize: 12, lineHeight: '18px', textDecoration: 'underline', textUnderlineOffset: 2 },
   extensionShelf: { padding: '14px 15px', display: 'grid', gap: 11, border: `1px dashed ${arkmeTheme.border}`, borderRadius: 14, background: arkmeTheme.layer1 },
   extensionShelfHeader: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 },
   extensionShelfTitle: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 650 },
@@ -812,7 +813,7 @@ export function WorldCollapsibleText({ recordRef, authorName, textContent, hasMe
       id={textId}
       style={{ ...styles.text, ...(!expanded ? styles.textCollapsed : {}), ...(!expanded ? { WebkitLineClamp: maxLines } : {}) }}
       data-world-text-expanded={expanded ? 'true' : 'false'}
-    >{content}</p>
+    ><ArkmeLinkText text={content} /></p>
     {collapsible && <button
       type="button"
       style={styles.textToggle}
@@ -986,10 +987,39 @@ function WorldInteractionPreview({ item, onOpen, onCountResolved }: { item: Arkm
   return <WorldInteractionPreviewContent item={item} items={items} onOpen={onOpen} />
 }
 
-function WorldExtensionActivity({ item, onOpen }: { item: ArkmeWorldFeedItem; onOpen(extensionId: string): void }) {
+export function worldExtensionPublicationTextContent(item: ArkmeWorldFeedItem): string {
+  const content = item.textContent.trim()
+  const share = item.extensionPublication?.share
+  if (share === undefined || content === '') return content
+  if (content.includes(share.url) || content.includes(share.ref)) return content
+  return `${content}\n${share.url}`
+}
+
+function WorldExtensionActivity({ item, onOpen, showShareLink = true }: {
+  item: ArkmeWorldFeedItem
+  onOpen(extensionId: string): void
+  showShareLink?: boolean
+}) {
   const publication = item.extensionPublication
   if (publication === undefined) return null
-  return <section className="arkme-world-extension-activity" style={styles.extensionActivity} aria-label={`${publication.name}插件发布动态`} data-world-extension-activity="compact">
+  const openPublication = () => { onOpen(publication.extensionId) }
+  const openPublicationFromKeyboard = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.currentTarget !== event.target) return
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    openPublication()
+  }
+  return <section
+    className="arkme-world-extension-activity"
+    style={styles.extensionActivity}
+    role="button"
+    tabIndex={0}
+    aria-label={`${publication.name}插件发布动态，点击在市集中查看`}
+    data-world-extension-activity="compact"
+    data-world-extension-open="detail"
+    onClick={openPublication}
+    onKeyDown={openPublicationFromKeyboard}
+  >
     <span style={styles.extensionActivityIcon} aria-hidden>
       <ArkmeExtensionAvatar extensionId={publication.extensionId} {...(publication.iconRef === undefined ? {} : { iconRef: publication.iconRef })} size={40} />
     </span>
@@ -1002,10 +1032,15 @@ function WorldExtensionActivity({ item, onOpen }: { item: ArkmeWorldFeedItem; on
         {publication.desktopRequired && <><span style={styles.extensionActivityMetaSeparator} aria-hidden>·</span><span>桌面端</span></>}
       </div>
       {publication.description !== '' && <p style={styles.extensionActivityDescription}>{publication.description}</p>}
+      {showShareLink && publication.share !== undefined && <a
+        href={publication.share.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={styles.extensionActivityShare}
+        data-world-extension-share-link="true"
+        onClick={event => { event.stopPropagation() }}
+      >{publication.share.url}</a>}
     </div>
-    <button type="button" className="arkme-world-extension-open" style={styles.extensionOpenButton} aria-label={`在市集中查看${publication.name}`} data-world-extension-open="detail" onClick={() => { onOpen(publication.extensionId) }}>
-      查看详情<ArrowRight size={13} weight="bold" aria-hidden />
-    </button>
   </section>
 }
 
@@ -1078,6 +1113,7 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
     : `${String(interactionCount.count)}${interactionCount.hasMore ? '+' : ''} 条评论`
   const visibleImageRefs = item.imageRefs.slice(0, WORLD_FEED_IMAGE_LIMIT)
   const hiddenImageCount = Math.max(0, item.imageRefs.length - visibleImageRefs.length)
+  const extensionTextContent = item.extensionPublication === undefined ? '' : worldExtensionPublicationTextContent(item)
   useEffect(() => {
     if (previewIndex === undefined) return
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setPreviewIndex(undefined) }
@@ -1098,7 +1134,7 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
           {item.authorRef === undefined
             ? <strong style={styles.author}>{item.authorName}</strong>
             : <button type="button" style={styles.authorButton} aria-label={`查看${item.authorName}的用户卡片`} onClick={() => { onOpenAuthor?.(item) }}><strong style={styles.author}>{item.authorName}</strong></button>}
-          {item.extensionPublication === undefined && (playable
+          {playable
             ? <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintLoading ? '正在生成声纹，点击停止' : voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintLoading ? `正在生成${item.authorName}的声纹，点击停止` : voiceprintActive ? `停止播放${item.authorName}的声纹` : `播放${item.authorName}的声纹`} aria-busy={voiceprintLoading || undefined} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
               {voiceprintLoading
                 ? <SpinnerGap className="arkme-icon-spin" size={15} weight="bold" />
@@ -1106,13 +1142,21 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
             </button>
             : <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title="邀请开启声纹" aria-label={`邀请${item.authorName}开启声纹`} data-world-voiceprint-invite-icon="microphone" onClick={() => { onInviteVoiceprint(item) }}>
               <Microphone size={17} weight="light" />
-            </button>)}
+            </button>}
         </span>
       </span>
       <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
     </header>
     {item.extensionPublication !== undefined
-      ? <WorldExtensionActivity item={item} onOpen={onOpenExtension} />
+      ? <>
+        {extensionTextContent !== '' && <WorldCollapsibleText
+          recordRef={item.recordRef}
+          authorName={item.authorName}
+          textContent={extensionTextContent}
+          hasMedia={false}
+        />}
+        <WorldExtensionActivity item={item} onOpen={onOpenExtension} showShareLink={extensionTextContent === ''} />
+      </>
       : <>{item.headline !== '' && <h2 style={styles.headline}>{arkmeEmojiPlainText(item.headline)}</h2>}
     {item.textContent.trim() !== '' && <WorldCollapsibleText
       recordRef={item.recordRef}
@@ -1644,12 +1688,20 @@ function worldAuthorCardMember(item: ArkmeWorldFeedItem): ArkmeMemberProfileIden
   }
 }
 
-export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSourceActivated }: { target?: ArkmeWorldTarget; currentUserId?: number; onBackToWorld?(): void; onSourceActivated?(source: ArkmeOpenPrivateChatResult['source']): void } = {}) {
+export function ArkmeWorldSurface({ target, currentSessionId, currentUserId, currentUserAvatarRef, onBackToWorld, onSourceActivated }: {
+  target?: ArkmeWorldTarget
+  currentSessionId?: string
+  currentUserId?: number
+  currentUserAvatarRef?: string
+  onBackToWorld?(): void
+  onSourceActivated?(source: ArkmeOpenPrivateChatResult['source']): void
+} = {}) {
   const [scope, setScope] = useState<WorldScope>('all')
   const [views, setViews] = useState<Record<WorldScope, ArkmeWorldViewState>>({ all: loadingState(), mine: loadingState() })
   const [loaded, setLoaded] = useState<Record<WorldScope, boolean>>({ all: false, mine: false })
   const [composerOpen, setComposerOpen] = useState(false)
   const [interactionRecordRef, setInteractionRecordRef] = useState<string>()
+  const [extensionDetailId, setExtensionDetailId] = useState<string>()
   const [authorCardItem, setAuthorCardItem] = useState<ArkmeWorldFeedItem>()
   const [authorCardBusy, setAuthorCardBusy] = useState(false)
   const [inviteItem, setInviteItem] = useState<ArkmeWorldFeedItem>()
@@ -2006,8 +2058,19 @@ export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSour
         if (target === undefined) load(scope, state.nextOffset)
         else loadUser(target, state.nextOffset)
       }} onOpenAuthor={item => { if (item.authorRef !== undefined) setAuthorCardItem(item) }}
-      onOpenExtension={extensionId => { arkmeUi.showExtensionDetail(extensionId) }}
+      onOpenExtension={extensionId => { setExtensionDetailId(extensionId) }}
       onOpenAllExtensions={(ownerUserId, ownerName) => { arkmeUi.showAuthorExtensions(ownerUserId, ownerName) }} />
+    {extensionDetailId !== undefined && <ArkmeMarketplace
+      key={extensionDetailId}
+      displayMode="dialog"
+      initialExtensionId={extensionDetailId}
+      closeOnDetailClose
+      {...(currentSessionId === undefined ? {} : { currentSessionId })}
+      {...(currentUserId === undefined ? {} : { currentUserId })}
+      {...(currentUserAvatarRef === undefined ? {} : { currentUserAvatarRef })}
+      onClose={() => { setExtensionDetailId(undefined) }}
+      onPrivateChatOpened={onSourceActivated}
+    />}
     {composerOpen && <PublishDialog onClose={() => { setComposerOpen(false) }} onPublished={result => {
       setLoaded(current => ({ ...current, all: false, mine: false }))
       setActionMessage(result.visibility === 'pending_review' ? '已提交审核，可稍后在“我的世界”查看' : '已发布到世界')

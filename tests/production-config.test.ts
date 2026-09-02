@@ -33,6 +33,7 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('relatedRecordingsEnabled: true')
     expect(patch).not.toContain('relatedRecordingSharingEnabled:')
     expect(patch).toContain('interwovenMomentsEnabled: true')
+    expect(patch).toContain('recordingWorkbenchEnabled: true')
     expect(patch).toContain('chatMemberJoinEventsEnabled: true')
     expect(patch).toContain('richMediaRenderEnabled: true')
     expect(patch).toContain('richMediaSendEnabled: true')

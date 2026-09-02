@@ -309,9 +309,12 @@ export class RecordService {
   async createText(
     recordUid: string,
     textContent: string,
-    options: { recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
   ): Promise<ArkmeCreateTextResult> {
     const session = await this.runtime.requireSession()
+    if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) {
+      throw new ArkmePluginError('file-account-changed', '账号已切换，本次发送已取消', false, 409)
+    }
     const normalizedUid = recordUid.trim()
     const normalizedText = textContent.trim()
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedUid)) {
@@ -346,13 +349,14 @@ export class RecordService {
   async createTextForConversation(
     recordUid: string,
     textContent: string,
-    options: { recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
   ): Promise<ArkmeConversationWriteResult> {
     try {
       const result = await this.createText(recordUid, textContent, options)
       return { ...result, localState: 'synced' }
     } catch (error) {
       const session = await this.runtime.requireSession()
+      if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) throw error
       const pending = (await this.runtime.stateStore.listPending(session.userId))
         .find(item => item.recordUid === recordUid)
       if (pending === undefined) throw error
@@ -461,6 +465,73 @@ export class RecordService {
     }
   }
 
+  async createExtensionForConversation(
+    parentRecordUid: string,
+    recordUid: string,
+    textContent: string,
+    assets: readonly ArkmeUploadedAsset[] = [],
+  ): Promise<ArkmeConversationWriteResult & { localState: 'synced' }> {
+    const session = await this.runtime.requireSession()
+    const normalizedParentUid = parentRecordUid.trim()
+    const normalizedUid = recordUid.trim()
+    const normalizedText = textContent.trim()
+    if (normalizedParentUid === '' || normalizedParentUid === normalizedUid
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedUid)) {
+      throw new ArkmePluginError('record-extension-identity-invalid', '延展记录标识无效，请重试', false)
+    }
+    if ((normalizedText === '' && assets.length === 0)
+      || normalizedText.length > this.runtime.config.maxTextLength || assets.length > 20) {
+      throw new ArkmePluginError('record-file-assets-invalid', '延展内容为空、过长或附件数量超限', false)
+    }
+    for (const asset of assets) {
+      if (!/^[A-Za-z0-9._:-]{8,256}$/.test(asset.fileAssetUid) || asset.fileName.trim() === ''
+        || asset.fileName.length > 255 || !Number.isSafeInteger(asset.size) || asset.size <= 0
+        || ![1, 2, 3, 4].includes(asset.fileKind)) {
+        throw new ArkmePluginError('record-file-asset-invalid', '附件资产参数无效', false)
+      }
+    }
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/records/extensions/create',
+      {
+        parent_record_uid: normalizedParentUid,
+        record_uid: normalizedUid,
+        template_kind: assets.length === 0 ? 1 : 2,
+        title: '',
+        text_content: normalizedText,
+        content_payload: {
+          payload_kind: assets.length === 0 ? 1 : 2,
+          schema_version: 1,
+          text_state: normalizedText === '' ? 3 : 1,
+          ...(assets.length === 0 ? {} : {
+            media_refs: assets.map((asset, index) => ({
+              file_asset_uid: asset.fileAssetUid,
+              content_file_role: 1,
+              render_role: 1,
+              sort_order: index,
+              file_name: asset.fileName,
+              file_kind: asset.fileKind,
+              mime_type: asset.mimeType,
+              size: asset.size,
+            })),
+          }),
+        },
+        send_at: Date.now(),
+      },
+      session,
+    )
+    const createdRecordUid = stringValue(data.record_uid).trim() || normalizedUid
+    const createdParentUid = stringValue(data.parent_record_uid).trim()
+    const edgeUid = stringValue(data.edge_uid).trim()
+    if (createdRecordUid !== normalizedUid || createdParentUid !== normalizedParentUid || edgeUid === '') {
+      throw new ArkmePluginError('record-extension-response-invalid', '延展写入结果无效，请刷新后重试', true, 502)
+    }
+    return {
+      recordUid: createdRecordUid,
+      status: numberValue(data.record_status ?? data.status),
+      localState: 'synced',
+    }
+  }
+
   async pendingWrites(): Promise<ArkmePendingWrite[]> {
     const session = await this.runtime.requireSession()
     return await this.runtime.stateStore.listPending(session.userId)
@@ -531,7 +602,54 @@ export class RecordService {
       version: item.version,
       ...(item.displayKind === undefined ? {} : { displayKind: item.displayKind }),
       ...(item.contentBlocks === undefined ? {} : { contentBlocks: item.contentBlocks }),
+      ...(item.extensionParentRecordUid === undefined ? {} : { extensionParentRecordUid: item.extensionParentRecordUid }),
+      ...(item.extensionParent === undefined ? {} : { extensionParent: item.extensionParent }),
       ...(item.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
+    }
+  }
+
+  private recordExtensionProjection(
+    raw: unknown,
+    viewerUserId: number,
+  ): Pick<ArkmeTimelineItem, 'extensionParentRecordUid' | 'extensionParent'> | undefined {
+    const item = objectValue(raw)
+    const core = objectValue(item.record_core)
+    const edge = objectValue(item.extension_edge ?? core.extension_edge)
+    const preview = objectValue(
+      item.extension_parent_preview ?? item.extensionParentPreview
+        ?? core.extension_parent_preview ?? core.extensionParentPreview,
+    )
+    const previewRecord = objectValue(preview.record ?? preview.record_core ?? preview.recordCore)
+    const previewPayload = objectValue(previewRecord.payload)
+    const parentRecordUid = stringValue(
+      item.parent_record_uid ?? item.parentRecordUid
+        ?? item.parent_extend_record_uid ?? item.parentExtendRecordUid
+        ?? core.parent_record_uid ?? core.parentRecordUid
+        ?? core.parent_extend_record_uid ?? core.parentExtendRecordUid
+        ?? edge.parent_record_uid ?? edge.parentRecordUid,
+    ).trim()
+    if (parentRecordUid === '') return undefined
+    const previewRecordUid = stringValue(
+      previewRecord.record_uid ?? previewRecord.recordUid ?? previewPayload.record_uid ?? previewPayload.recordUid,
+    ).trim()
+    if (previewRecordUid === '' || previewRecordUid !== parentRecordUid) {
+      return { extensionParentRecordUid: parentRecordUid }
+    }
+    return {
+      extensionParentRecordUid: parentRecordUid,
+      extensionParent: {
+        itemUid: parentRecordUid,
+        senderName: stringValue(
+          previewRecord.nickname ?? previewRecord.nick_name
+            ?? preview.nickname ?? preview.nick_name,
+        ).trim() || '我',
+        title: stringValue(previewRecord.title ?? previewPayload.title),
+        textContent: stringValue(
+          previewRecord.text_content ?? previewRecord.textContent
+            ?? previewPayload.text_content ?? previewPayload.textContent,
+        ),
+        contentBlocks: this.media.richContentBlocks({ ...preview, record_core: previewRecord }, viewerUserId),
+      },
     }
   }
 
@@ -542,6 +660,7 @@ export class RecordService {
   ): ArkmeTimelineItem {
     const item = objectValue(raw)
     const core = objectValue(item.record_core)
+    const extensionProjection = this.recordExtensionProjection(raw, userId)
     return {
       itemUid: stringValue(item.record_uid ?? core.record_uid).trim(),
       senderName: stringValue(item.nickname).trim() || '我',
@@ -557,6 +676,7 @@ export class RecordService {
       recordDurationMillis: numberValue(item.record_duration_millis ?? core.record_duration_millis),
       editDurationMillis: numberValue(item.edit_duration_millis ?? core.edit_duration_millis),
       contentBlocks: this.media.richContentBlocks(raw, userId, options.displayItems),
+      ...(extensionProjection === undefined ? {} : extensionProjection),
       ...(options.selfTopic === undefined ? {} : { selfTopic: options.selfTopic }),
       ...(options.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
     }
@@ -571,6 +691,7 @@ export class RecordService {
     const core = objectValue(item.record_core)
     const recordUid = stringValue(item.record_uid ?? core.record_uid).trim()
     if (recordUid === '') return undefined
+    const extensionProjection = userId === undefined ? undefined : this.recordExtensionProjection(raw, userId)
     return {
       recordUid,
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
@@ -582,6 +703,7 @@ export class RecordService {
       creationSource: recordCreationSource(raw),
       displayKind: numberValue(item.display_kind ?? core.display_kind),
       ...(userId === undefined ? {} : { contentBlocks: this.media.richContentBlocks(raw, userId, options.displayItems) }),
+      ...(extensionProjection === undefined ? {} : extensionProjection),
       ...(options.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
     }
   }

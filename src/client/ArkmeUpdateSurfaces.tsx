@@ -165,6 +165,7 @@ export function ArkmeUpdateTopCapsule({ item, onClose, onRetry, onOpenDownloaded
       : item.phaseMessage ?? '可继续使用'
   return <section
     className={`arkme-update-capsule${item.ready ? ' is-ready' : ''}${item.restarting ? ' is-restarting' : ''}${item.failed ? ' is-error' : ''}`}
+    data-layout={active ? 'progress' : item.ready || item.failed ? 'action' : undefined}
     role={item.failed ? 'alert' : 'status'}
     aria-live={item.failed ? 'assertive' : 'polite'}
     aria-label={item.restarting ? '正在自动重启客户端' : item.ready ? '更新包已就绪' : item.failed ? '更新未完成' : `正在更新，${item.progress ?? 0}%`}

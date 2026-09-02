@@ -12,8 +12,9 @@ import { MapPinIcon as MapPin } from '@phosphor-icons/react/dist/csr/MapPin'
 import { MountainsIcon as Mountains } from '@phosphor-icons/react/dist/csr/Mountains'
 import { PersonSimpleWalkIcon as PersonSimpleWalk } from '@phosphor-icons/react/dist/csr/PersonSimpleWalk'
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X'
-import type { ArkmeMessageSnapshotDetail, ArkmeTimelineItem } from '../types.js'
+import type { ArkmeBackgroundSoundEligibilityReason, ArkmeMessageSnapshotDetail, ArkmeTimelineItem } from '../types.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ArkmeVoiceContent, arkmeVoiceMediaUrl } from './ArkmeVoiceContent.js'
 
 const styles = {
   backdrop: { position: 'fixed', inset: 0, zIndex: 10_200, display: 'grid', placeItems: 'center', padding: 24, boxSizing: 'border-box', background: 'rgba(18, 20, 24, .36)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' },
@@ -35,6 +36,10 @@ const styles = {
   enabled: { color: '#09b94f' },
   loading: { margin: '9px 0 -3px 30px', color: '#a4a6a9', fontSize: 12, lineHeight: '18px' },
   error: { marginTop: 18, padding: '12px 14px', borderRadius: 12, background: '#fff3f2', color: '#b6423b', fontSize: 14, lineHeight: '21px' },
+  backgroundAction: { marginLeft: 8, padding: 0, border: 0, background: 'transparent', color: '#09b94f', cursor: 'pointer', font: 'inherit', fontSize: 14, lineHeight: '20px' },
+  backgroundPlayer: { minWidth: 0, display: 'flex', justifyContent: 'flex-end', color: '#292a2d' },
+  backgroundWaveform: { height: 20, display: 'inline-flex', alignItems: 'center', gap: 3, color: '#8f949c', verticalAlign: 'middle' },
+  backgroundWaveformBar: { width: 2, minWidth: 2, borderRadius: 2, background: 'currentColor' },
 } as const
 
 function epochMillis(value: number): number { return Number.isFinite(value) && value > 0 ? value < 100_000_000_000 ? value * 1000 : value : 0 }
@@ -63,7 +68,26 @@ function locationDetailLabel(location: ArkmeTimelineItem['locationCapture']): st
 }
 function SnapshotGlyph({ children }: { children: ReactNode }) { return <span aria-hidden style={styles.icon}>{children}</span> }
 
-export function ArkmeMessageSnapshotDialogContent({ item, detail, loading = false, loadError }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; loading?: boolean; loadError?: string }) {
+/** Equally samples the full recording and maps it onto the desktop 1–20px waveform. */
+export function arkmeMessageSnapshotWaveformHeights(amplitudes: readonly number[]): number[] {
+  if (amplitudes.length === 0) return []
+  const count = Math.min(30, amplitudes.length)
+  const samples = Array.from({ length: count }, (_, index) => {
+    const sourceIndex = count === 1 ? 0 : Math.round(index * (amplitudes.length - 1) / (count - 1))
+    const value = amplitudes[sourceIndex] ?? 0
+    return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0
+  })
+  const peak = Math.max(...samples)
+  return samples.map(value => peak === 0 ? 1 : Math.max(1, Math.min(20, Math.round(value / peak * 20))))
+}
+
+function SnapshotBackgroundWaveform({ amplitudes }: { amplitudes: readonly number[] }) {
+  return <span style={styles.backgroundWaveform} aria-hidden data-arkme-snapshot-waveform="true">
+    {arkmeMessageSnapshotWaveformHeights(amplitudes).map((height, index) => <i key={index} style={{ ...styles.backgroundWaveformBar, height }} data-arkme-snapshot-waveform-bar="true" />)}
+  </span>
+}
+
+export function ArkmeMessageSnapshotDialogContent({ item, detail, loading = false, loadError, backgroundSoundEnabled = false, backgroundSoundSupported = true, backgroundSoundEligibilityReason = 'eligible', onEnableBackgroundSound }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; loading?: boolean; loadError?: string; backgroundSoundEnabled?: boolean; backgroundSoundSupported?: boolean; backgroundSoundEligibilityReason?: ArkmeBackgroundSoundEligibilityReason; onEnableBackgroundSound?: () => void }) {
   const text = detail?.textContent.trim() || item.textContent.trim() || item.title.trim() || '暂无内容'
   const error = loadError?.trim()
   if (error !== undefined && error !== '') return <>
@@ -74,8 +98,27 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, loading = fals
   const context = detail?.captureContext ?? item.captureContext
   const locationCapture = detail?.locationCapture ?? item.locationCapture
   const locationText = detail?.locationLabel ?? locationDetailLabel(locationCapture) ?? '暂无详细位置信息'
-  const rows: Array<{ icon: ReactNode; label: string; value: string; enabled?: boolean }> = [
-    { icon: <Ear size={19} weight="light" />, label: '背景音', value: detail?.backgroundSound === 'available' ? '已记录背景音' : '未开启背景音', enabled: detail?.backgroundSound !== 'available' },
+  const backgroundSoundAvailable = detail?.backgroundSound === 'available'
+  const backgroundSoundPlayback = detail?.backgroundSoundPlayback
+  const backgroundSoundPlaylist = backgroundSoundPlayback?.mediaRefs
+    .filter(value => value.trim() !== '')
+    .map(arkmeVoiceMediaUrl) ?? []
+  const backgroundSoundCanEnable = backgroundSoundSupported && backgroundSoundEligibilityReason === 'eligible'
+  const backgroundSoundValue = backgroundSoundPlaylist.length > 0 && backgroundSoundPlayback !== undefined
+    ? <div style={styles.backgroundPlayer}><ArkmeVoiceContent
+      sourceKey={`snapshot-background:${item.itemUid}`}
+      playlist={backgroundSoundPlaylist}
+      durationSeconds={backgroundSoundPlayback.durationSeconds}
+      contentLabel="背景音"
+      visualization={<SnapshotBackgroundWaveform amplitudes={backgroundSoundPlayback.amplitudes} />}
+    /></div>
+    : backgroundSoundAvailable ? '背景音暂不可播放'
+      : !backgroundSoundSupported ? '当前运行环境不支持背景音'
+        : backgroundSoundEligibilityReason === 'membership-required' ? '免费版暂不支持背景音'
+          : backgroundSoundEligibilityReason === 'membership-unavailable' ? '暂时无法确认会员权益'
+            : backgroundSoundEnabled ? '未录制背景音' : '未开启背景音'
+  const rows: Array<{ icon: ReactNode; label: string; value: ReactNode; action?: boolean }> = [
+    { icon: <Ear size={19} weight="light" />, label: '背景音', value: backgroundSoundValue, action: backgroundSoundCanEnable && !backgroundSoundAvailable && !backgroundSoundEnabled },
     { icon: <Cloud size={19} weight="light" />, label: '天气', value: detail?.weather ?? '未记录' },
     { icon: <Mountains size={19} weight="light" />, label: '海拔', value: numberLabel(detail?.altitudeMeters, 'm') },
     { icon: <PersonSimpleWalk size={19} weight="light" />, label: '移动状态', value: detail?.movement ?? '未记录' },
@@ -98,12 +141,12 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, loading = fals
     <div style={styles.location} title={locationText}><SnapshotGlyph><MapPin size={19} weight="fill" /></SnapshotGlyph><span style={styles.locationText}>{locationText}</span></div>
     {loading ? <p style={styles.loading}>正在补全记忆快照…</p> : null}
     <div style={styles.rows} aria-label="记忆快照">
-      {rows.map(row => <div key={row.label} style={styles.row}><SnapshotGlyph>{row.icon}</SnapshotGlyph><span style={styles.rowLabel}>{row.label}</span><span title={row.value} style={{ ...styles.rowValue, ...(row.enabled ? styles.enabled : {}) }}>{row.value}{row.enabled ? '  去开启›' : ''}</span></div>)}
+      {rows.map(row => <div key={row.label} style={styles.row}><SnapshotGlyph>{row.icon}</SnapshotGlyph><span style={styles.rowLabel}>{row.label}</span><div title={typeof row.value === 'string' ? row.value : undefined} style={styles.rowValue}>{row.value}{row.action ? <button type="button" style={styles.backgroundAction} onClick={onEnableBackgroundSound} disabled={onEnableBackgroundSound === undefined}>去开启›</button> : null}</div></div>)}
     </div>
   </>
 }
 
-export function ArkmeMessageSnapshotDialog({ item, detail, loading = false, loadError, onClose }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; loading?: boolean; loadError?: string; onClose: () => void }) {
+export function ArkmeMessageSnapshotDialog({ item, detail, loading = false, loadError, backgroundSoundEnabled = false, backgroundSoundSupported = true, backgroundSoundEligibilityReason = 'eligible', onEnableBackgroundSound, onClose }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; loading?: boolean; loadError?: string; backgroundSoundEnabled?: boolean; backgroundSoundSupported?: boolean; backgroundSoundEligibilityReason?: ArkmeBackgroundSoundEligibilityReason; onEnableBackgroundSound?: () => void; onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement>(null)
   const triggerRef = useRef<HTMLElement>()
   useEffect(() => {
@@ -117,7 +160,7 @@ export function ArkmeMessageSnapshotDialog({ item, detail, loading = false, load
     <div style={styles.backdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
       <section role="dialog" aria-modal="true" aria-label="快记详情" style={styles.dialog}>
         <button ref={closeRef} type="button" aria-label="关闭快记详情" style={styles.close} onClick={onClose}><X size={22} weight="bold" /></button>
-        <div style={styles.body}><ArkmeMessageSnapshotDialogContent item={item} {...(detail === undefined ? {} : { detail })} loading={loading} {...(loadError === undefined ? {} : { loadError })} /></div>
+        <div style={styles.body}><ArkmeMessageSnapshotDialogContent item={item} {...(detail === undefined ? {} : { detail })} loading={loading} {...(loadError === undefined ? {} : { loadError })} backgroundSoundEnabled={backgroundSoundEnabled} backgroundSoundSupported={backgroundSoundSupported} backgroundSoundEligibilityReason={backgroundSoundEligibilityReason} {...(onEnableBackgroundSound === undefined ? {} : { onEnableBackgroundSound })} /></div>
       </section>
     </div>,
     document.body,

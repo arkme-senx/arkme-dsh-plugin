@@ -57,6 +57,12 @@ export interface ArkmeMediaDescriptor {
   stableKey?: string
 }
 
+/** Safe browser playback data issued from one verified record audio asset. */
+export interface ArkmeIssuedAudioMedia {
+  mediaRef: string
+  durationSeconds?: number
+}
+
 interface ArkmePreparedUpload {
   upload_session_uid?: unknown
   upload_url?: unknown
@@ -124,6 +130,11 @@ function allowedSignedAudioHost(environment: 'test' | 'prod', hostname: string):
     ? ['jotmo-useraudio.oss-cn-hangzhou.aliyuncs.com']
     : ['jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com']
   return allowed.includes(hostname.toLowerCase())
+}
+
+/** Record audio can originate from the dedicated audio or generic file bucket. */
+function allowedSignedRecordAudioHost(environment: 'test' | 'prod', hostname: string): boolean {
+  return allowedSignedAudioHost(environment, hostname) || allowedSignedImageHost(environment, hostname)
 }
 
 function trustedWorldVoiceprintAudioUrl(environment: 'test' | 'prod', raw: string): URL {
@@ -388,6 +399,10 @@ export class MediaService {
           }
         } finally { await handle.close() }
       }
+      if (options.expectedUserId !== undefined
+        && (await this.runtime.requireSession()).userId !== options.expectedUserId) {
+        throw new ArkmePluginError('file-account-changed', '账号已切换，本次上传已取消', false, 409)
+      }
       progress('completing', metadata.size)
       const completed = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/files/complete-upload', {
         upload_session_uid: uploadSessionUid,
@@ -397,6 +412,10 @@ export class MediaService {
       }, session, options.signal)
       const fileAssetUid = stringValue(completed.file_asset_uid).trim()
       if (fileAssetUid === '') throw new ArkmePluginError('upload-complete-invalid', '上传完成响应无效', true, 502)
+      if (options.expectedUserId !== undefined
+        && (await this.runtime.requireSession()).userId !== options.expectedUserId) {
+        throw new ArkmePluginError('file-account-changed', '账号已切换，本次上传结果已丢弃', false, 409)
+      }
       progress('ready', metadata.size)
       return {
         fileAssetUid,
@@ -524,6 +543,58 @@ export class MediaService {
       remoteUrl: signedUrl.toString(),
       mimeType: display.mimeType,
       fileName: display.fileName,
+      size: 0,
+    }, undefined, 110_000)
+  }
+
+  async issueRecordingPlaybackMediaRef(input: {
+    viewerUserId: number
+    sessionId: string
+    childId: string
+    asrItemStartAt: number
+    asrItemEndAt: number
+    speakerNumber: number
+  }, signal?: AbortSignal): Promise<string> {
+    const session = await this.runtime.requireSession()
+    if (input.viewerUserId !== session.userId) {
+      throw new ArkmePluginError('recording-playback-account-mismatch', '录音片段与当前账号不匹配', false, 403)
+    }
+    const sessionId = audioObjectPathPart(input.sessionId)
+    const childId = audioObjectPathPart(input.childId)
+    if (sessionId === undefined || childId === undefined
+      || !Number.isSafeInteger(input.asrItemStartAt) || input.asrItemStartAt < 0
+      || !Number.isSafeInteger(input.asrItemEndAt) || input.asrItemEndAt < input.asrItemStartAt
+      || !Number.isSafeInteger(input.speakerNumber)) {
+      throw new ArkmePluginError('recording-playback-path-invalid', '录音播放路径无效', false, 502)
+    }
+    const audioFileName = `${String(input.asrItemStartAt)}_${String(input.asrItemEndAt)}_${String(input.speakerNumber)}.flac`
+    const objectPath = `${md5Text(String(session.userId))}/${String(session.userId)}/audio_output/${sessionId}/${childId}/${audioFileName}`
+    const credentials = await this.audioOssCredentials(session, signal)
+    const bucket = this.runtime.config.environment === 'prod' ? 'jotmo-useraudio' : 'jotmo-useraudio-test'
+    let signedUrl: URL
+    try {
+      const client = new OSS({
+        region: 'oss-cn-hangzhou', bucket, secure: true,
+        accessKeyId: credentials.accessKeyId,
+        accessKeySecret: credentials.accessKeySecret,
+        stsToken: credentials.stsToken,
+      })
+      signedUrl = new URL(client.signatureUrl(objectPath, { method: 'GET', expires: 120 }))
+    } catch (error) {
+      throw new ArkmePluginError('recording-playback-sign-failed', '录音播放授权失败', true, 502, { cause: error })
+    }
+    const signedPath = decodeURIComponent(signedUrl.pathname).replace(/^\/+/, '')
+    const hasSignature = (signedUrl.searchParams.get('Signature') ?? signedUrl.searchParams.get('x-oss-signature') ?? '').trim() !== ''
+    if (signedUrl.protocol !== 'https:' || signedUrl.username !== '' || signedUrl.password !== ''
+      || signedUrl.port !== '' || signedUrl.hash !== '' || !hasSignature
+      || !allowedSignedAudioHost(this.runtime.config.environment, signedUrl.hostname) || signedPath !== objectPath) {
+      throw new ArkmePluginError('recording-playback-target-rejected', '录音播放授权目标不受信任', false, 502)
+    }
+    const display = unmarkedSpeakerAudioType(audioFileName)
+    return this.issueMediaRef(session.userId, {
+      remoteUrl: signedUrl.toString(),
+      mimeType: display.mimeType,
+      fileName: audioFileName,
       size: 0,
     }, undefined, 110_000)
   }
@@ -837,17 +908,17 @@ export class MediaService {
     return displayItemsByRecordUid
   }
 
-  async issueSearchAudioMediaRefs(
+  async issueSearchAudioMedia(
     requests: Array<{ recordUid: string; fileAssetUid: string }>,
     signal?: AbortSignal,
-  ): Promise<Map<string, string>> {
+  ): Promise<Map<string, ArkmeIssuedAudioMedia>> {
     const normalized = [...new Map(requests.map(request => {
       const recordUid = request.recordUid.trim()
       const fileAssetUid = request.fileAssetUid.trim()
       return [`${recordUid}\0${fileAssetUid}`, { recordUid, fileAssetUid }] as const
     }).filter(([, request]) => request.recordUid !== '' && request.fileAssetUid !== '')).values()].slice(0, 50)
-    const mediaRefs = new Map<string, string>()
-    if (normalized.length === 0 || this.runtime.config.richMediaRenderEnabled === false) return mediaRefs
+    const media = new Map<string, ArkmeIssuedAudioMedia>()
+    if (normalized.length === 0 || this.runtime.config.richMediaRenderEnabled === false) return media
     const session = await this.runtime.requireSession()
     const displayItemsByRecordUid = await this.queryRecordMediaDisplayItems(
       normalized.map(request => request.recordUid),
@@ -863,16 +934,29 @@ export class MediaService {
       if (remoteUrl === undefined) continue
       const parsedUrl = new URL(remoteUrl)
       const mimeType = stringValue(item.mime_type).trim() || 'audio/mpeg'
-      if (!allowedSignedAudioHost(this.runtime.config.environment, parsedUrl.hostname) || !mimeType.startsWith('audio/')) continue
+      if (!allowedSignedRecordAudioHost(this.runtime.config.environment, parsedUrl.hostname) || !mimeType.startsWith('audio/')) continue
       const key = `${request.recordUid}\0${request.fileAssetUid}`
-      mediaRefs.set(key, this.issueMediaRef(session.userId, {
-        remoteUrl,
-        mimeType,
-        fileName: stringValue(item.file_name).trim() || '语音',
-        size: Math.max(0, numberValue(item.size)),
-      }, `search-audio\0${key}`))
+      const durationSeconds = numberValue(item.duration_sec ?? item.durationSec ?? item.duration)
+        || numberValue(item.duration_millis ?? item.durationMillis ?? item.duration_ms) / 1_000
+      media.set(key, {
+        mediaRef: this.issueMediaRef(session.userId, {
+          remoteUrl,
+          mimeType,
+          fileName: stringValue(item.file_name).trim() || '语音',
+          size: Math.max(0, numberValue(item.size)),
+        }, `search-audio\0${key}`),
+        ...(durationSeconds > 0 && Number.isFinite(durationSeconds) ? { durationSeconds } : {}),
+      })
     }
-    return mediaRefs
+    return media
+  }
+
+  async issueSearchAudioMediaRefs(
+    requests: Array<{ recordUid: string; fileAssetUid: string }>,
+    signal?: AbortSignal,
+  ): Promise<Map<string, string>> {
+    const media = await this.issueSearchAudioMedia(requests, signal)
+    return new Map([...media].map(([key, value]) => [key, value.mediaRef]))
   }
 
   async issueSearchFileMediaRefs(requests: Array<{ recordUid: string; fileAssetUid: string }>, signal?: AbortSignal): Promise<Map<string, string>> {

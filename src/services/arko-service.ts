@@ -14,6 +14,7 @@ import type {
 } from '../types.js'
 import { ProfileService } from './profile-service.js'
 import { ArkmePluginError, ServiceRuntime, clippedText, joinUrl, objectValue, stringValue } from './service.js'
+import { MessageActionService } from './message-action-service.js'
 
 interface CacheEntry<T> { value: T; expiresAtMillis: number }
 
@@ -151,6 +152,7 @@ function arkoHistoryItemFromData(value: unknown): ArkmeArkoHistoryItem | undefin
   const retryable = optionalBooleanValue(extra.agent_run_retryable)
   const errorCode = optionalString(extra.agent_run_error_code)
   const retryOfRunUid = optionalString(extra.retry_of_run_uid)
+  const entryRecordUid = optionalString(extra.entry_record_uid ?? extraData.entry_record_uid)
   return {
     messageId,
     sessionId,
@@ -164,6 +166,7 @@ function arkoHistoryItemFromData(value: unknown): ArkmeArkoHistoryItem | undefin
     ...(retryable === undefined ? {} : { retryable }),
     ...(errorCode === undefined ? {} : { errorCode }),
     ...(retryOfRunUid === undefined ? {} : { retryOfRunUid }),
+    ...(entryRecordUid === undefined ? {} : { entryRecordUid }),
     createdRecordUids: arkoCreatedRecordUids(data.created_record_uids ?? data.createdRecordUids),
   }
 }
@@ -210,6 +213,7 @@ export class ArkoService {
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly profile: ProfileService,
+    private readonly messageActions?: MessageActionService,
   ) {}
 
   dispose(): void {
@@ -304,9 +308,22 @@ export class ArkoService {
       signal,
     )
     const rawItems = listValue(data.message_ls)
-    const items = rawItems
+    const projectedItems = rawItems
       .map(arkoHistoryItemFromData)
       .filter((item): item is ArkmeArkoHistoryItem => item !== undefined)
+    const conversationRefs = new Map<number, Promise<string>>()
+    const items = this.messageActions === undefined
+      ? projectedItems
+      : await Promise.all(projectedItems.map(async item => {
+          const action = await this.messageActions?.agentHistoryItem(item, session.userId)
+          if (action?.messageActionRef === undefined) return item
+          let itemConversationRef = conversationRefs.get(item.sessionId)
+          if (itemConversationRef === undefined) {
+            itemConversationRef = this.messageActions!.agentConversationRef(session.userId, item.sessionId)
+            conversationRefs.set(item.sessionId, itemConversationRef)
+          }
+          return { ...item, ...action, messageActionConversationRef: await itemConversationRef }
+        }))
     const hasMore = rawItems.length === normalizedLimit
     return {
       items,

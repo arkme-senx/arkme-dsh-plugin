@@ -8,10 +8,12 @@ import { promptForArkmeToolProfile } from '../prompts/index.js'
 import {
   ARKME_CONVERSATIONAL_CONFIRMATION_PROMPT,
   ArkmeConversationalConfirmation,
+  arkmeConfirmationContextHooks,
 } from '../shared/conversational-confirmation.js'
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_background_sound_disable',
   'arkme_file_prepare',
   'arkme_files_send',
   'arkme_file_task',
@@ -62,6 +64,7 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_background_sound_disable') return '是否确认关闭当前 Arkme 账号的文字背景音？这不会删除已经发送的背景音。'
   if (name === 'arkme_file_prepare') return `是否确认将“${cleanArgument(args.file_name, 100)}”暂存到本地？这一步不会上传或发送。`
   if (name === 'arkme_files_send') return `是否确认向刚才指定的 Arkme 会话发送这 ${Array.isArray(args.file_refs) ? args.file_refs.length : 0} 个文件及附带文字？确认后开始上传。`
   if (name === 'arkme_file_task') return cleanArgument(args.action, 30) === 'open-local'
@@ -140,12 +143,16 @@ function withCoreConversationalConfirmation(
         definition.name,
         typeof args === 'object' && args !== null ? args as Record<string, unknown> : {},
       )
+      const hooks = arkmeConfirmationContextHooks(definition)
       const result = await conversation.prepareOrExecute({
         agent: exec.agent as Agent,
         operationKey: definition.name,
         arguments: args,
         question,
-        execute: async () => await definition.execute(args, exec),
+        ...(hooks === undefined ? {} : { prepare: async () => await hooks.prepare(args, exec) }),
+        execute: async preparedContext => hooks === undefined
+          ? await definition.execute(args, exec)
+          : await hooks.execute(args, exec, preparedContext),
       })
       return typeof result === 'string' ? result : JSON.stringify(result, undefined, 2)
     },

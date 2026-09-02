@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { GearSix } from '@phosphor-icons/react/dist/icons/GearSix'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
 import type {
@@ -14,6 +14,11 @@ import { ArkmeBotSettingsPanel } from './ArkmeBotSettingsPanel.js'
 import { arkmeUi } from './ui-controller.js'
 import { ArkmeLinkText } from './ArkmeLinkText.js'
 import { arkmeConversationComposerHeight, arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
+import {
+  ArkmeMessageActionSelectCheck,
+  useArkmeMessageActions,
+  type ArkmeMessageActionViewItem,
+} from './ArkmeMessageActions.js'
 
 const styles: Record<string, CSSProperties> = {
   shell: { width: '100%', height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: arkmeTheme.base },
@@ -114,6 +119,19 @@ export function ArkmeBotConversationSurface({
   const conversationRevision = bot.conversationProjection === 'record'
     ? ui.recordRevision
     : bot.conversationProjection === 'chat' ? ui.chatRevision : 0
+  const messageActionItems = useMemo<ArkmeMessageActionViewItem[]>(() => messages.flatMap(message => (
+    message.messageActionRef === undefined
+      ? []
+      : [{
+        id: message.messageId,
+        actionRef: message.messageActionRef,
+        conversationRef: bot.botRef,
+        copyText: message.content,
+        copyLinkAvailable: message.messageActionCapabilities?.copyLink === true,
+        forwardAvailable: message.messageActionCapabilities?.forward === true,
+      }]
+  )), [messages])
+  const messageActions = useArkmeMessageActions({ scopeKey: bot.botRef, items: messageActionItems })
 
   useEffect(() => {
     activeRef.current = true
@@ -216,13 +234,28 @@ export function ArkmeBotConversationSurface({
       {error !== '' && <div role="alert" style={styles.error}>{error}</div>}
       {loading ? <div role="status" style={styles.loading}>正在加载 Bot 对话…</div>
         : messages.length === 0 ? <div style={styles.empty}>和 {bot.name} 打个招呼吧</div>
-          : <div style={styles.messages}>{messages.map((message, index) => <div
-            key={message.messageId || `${message.role}:${message.createdAtMillis}:${index}`} style={{ ...styles.row, ...(message.role === 'user' ? styles.rowUser : {}) }}
-          ><div style={{ ...styles.bubble, ...(message.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant) }}>
+          : <div style={styles.messages}>{messages.map((message, index) => {
+            const actionItem = messageActionItems.find(candidate => candidate.id === message.messageId)
+            const selectedForAction = messageActions.selectedIds.has(message.messageId)
+            return <div
+            key={message.messageId || `${message.role}:${message.createdAtMillis}:${index}`}
+            style={{ ...styles.row, ...(message.role === 'user' ? styles.rowUser : {}), gap: messageActions.selecting ? 10 : 0 }}
+            onClick={event => {
+              if (!messageActions.selecting || actionItem === undefined) return
+              if (event.target instanceof Element && event.target.closest('button,a,input,textarea,[role=link]')) return
+              messageActions.toggle(actionItem)
+            }}
+          >{messageActions.selecting && actionItem !== undefined && <ArkmeMessageActionSelectCheck
+            selected={selectedForAction}
+            onClick={event => { event.stopPropagation(); messageActions.toggle(actionItem) }}
+          />}<div
+            onContextMenu={event => { if (actionItem !== undefined) messageActions.openMenu(actionItem, event) }}
+            style={{ ...styles.bubble, ...(message.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant) }}
+          >
             <ArkmeLinkText text={message.content} />
-          </div></div>)}</div>}
+          </div></div>})}</div>}
     </div>
-    {privateChatUnavailable || privateChatInboundOnly ? <footer className="arkme-conversation-composer" style={styles.composer}><div className="arkme-conversation-composer-inner" style={styles.composerInner}>
+    {messageActions.selecting ? messageActions.selectionBar : privateChatUnavailable || privateChatInboundOnly ? <footer className="arkme-conversation-composer" style={styles.composer}><div className="arkme-conversation-composer-inner" style={styles.composerInner}>
       <div role="note" style={styles.loading}>{privateChatUnavailable ? '当前 Bot 会话暂不可用' : 'Webhook Bot 仅接收外部系统推送'}</div>
     </div></footer> : <footer className="arkme-conversation-composer" style={styles.composer}><div className="arkme-conversation-composer-inner" style={styles.composerInner}>
       <textarea
@@ -244,6 +277,7 @@ export function ArkmeBotConversationSurface({
         </button>
       </div>
     </div></footer>}
+    {messageActions.overlay}
     {settingsOpen && <ArkmeBotSettingsPanel bot={bot} onClose={() => { setSettingsOpen(false) }} onUpdated={updated => { onConversationActivity?.(updated); setSettingsOpen(false) }} onDeleted={() => { setSettingsOpen(false); onDeleted?.() }} />}
   </section>
 }
