@@ -13,6 +13,7 @@ import { messageReadReceiptToolModules } from './conversation/read-receipts.js'
 import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
 import { reportMessageToolModule } from './conversation/report-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
+import { userBanToolModules } from './conversation/user-ban.js'
 import { sendDirectTextToolModule } from './conversation/send-direct-text.js'
 import { sendTextToolModule } from './conversation/send-text.js'
 import { startCallToolModule } from './conversation/start-call.js'
@@ -76,6 +77,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   conversationMarkReadToolModule,
   reportMessageToolModule,
   relatedRecordingsToolModule,
+  ...userBanToolModules,
   groupAiPolishToolModule,
   listFavoriteStickersToolModule,
   addFavoriteStickerToolModule,

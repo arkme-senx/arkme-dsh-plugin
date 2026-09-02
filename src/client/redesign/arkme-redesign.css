@@ -88,6 +88,11 @@
 }
 .arkme-redesign-rail-footer > button:hover, .arkme-redesign-rail-footer > button.is-active { background: #f1f2f5; }
 .arkme-redesign-rail-footer:empty { display: none; }
+.arkme-conversation-input-card { display: contents; }
+body:is([data-ds-skin='qq2006'], [data-arkme-skin='qq2006']) [data-arkme-owned='product-surface']
+  .arkme-conversation-input-card.arkme-conversation-input-card.arkme-conversation-tools {
+  display: flex !important;
+}
 .arkme-update-rail-slot { position: relative; width: 52px; height: 30px; }
 button.arkme-update-rail {
   width: 52px;

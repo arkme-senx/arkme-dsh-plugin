@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { DshRemoteCommandLedger } from '../src/dsh-remote/command-ledger.js'
+import { DshRemoteCommandLedger, dshRemoteCommandRpcId } from '../src/dsh-remote/command-ledger.js'
 
 const identity = {
   accountId: 'account-1', runtimeRef: 'runtime-1', requestRef: 'request-1',
@@ -12,6 +12,12 @@ const identity = {
 }
 
 describe('encrypted append-only remote command ledger', () => {
+  it('shares the deterministic command identity with mobile', () => {
+    expect(dshRemoteCommandRpcId({
+      accountId: 'account_a', runtimeRef: 'runtime_ref', requestRef: 'request_ref',
+    })).toBe('remote_KkImu8EdZcAnoNep7W_uWUB7rhLP3kiu')
+  })
+
   it('persists pending before execution and returns the original completed result for duplicates', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'arkme-remote-ledger-'))
     const key = Buffer.alloc(32, 9)

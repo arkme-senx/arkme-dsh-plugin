@@ -8,12 +8,19 @@ import {
 } from './types.js'
 
 const OPERATIONS = new Set<DshRemoteOperation>([
-  'workspace.list', 'session.create', 'session.list', 'session.history', 'session.prompt', 'session.cancel',
+  'workspace.list', 'model.list', 'session.model.get', 'session.model.select',
+  'session.create', 'session.list', 'session.history', 'session.prompt', 'session.cancel',
   'interaction.question.respond', 'interaction.approval.respond', 'snapshot.get', 'capabilities.get',
 ])
 const REQUEST_KEYS = new Set([
   'protocol', 'protocol_major', 'kind', 'request_ref', 'host_generation', 'issued_at', 'execute_before', 'operation', 'body',
 ])
+
+export interface DshRemoteRequestIdentity {
+  requestRef: string
+  hostGeneration: number
+  operation: DshRemoteOperation
+}
 
 function object(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -67,7 +74,36 @@ function validateOperationBody(operation: DshRemoteOperation, source: Record<str
     case 'workspace.list': assertOnly(source, ['cursor', 'limit']); pageFields(source); return
     case 'session.list':
       assertOnly(source, ['workspace_ref', 'cursor', 'limit']); bodyRef(source, 'workspace_ref', false); pageFields(source); return
-    case 'session.create': assertOnly(source, ['workspace_ref']); bodyRef(source, 'workspace_ref'); return
+    case 'model.list': assertOnly(source, []); return
+    case 'session.model.get':
+      assertOnly(source, ['session_ref']); bodyRef(source, 'session_ref'); return
+    case 'session.model.select':
+      assertOnly(source, ['session_ref', 'model_provider', 'model_id', 'reasoning_effort'])
+      bodyRef(source, 'session_ref')
+      bodyRef(source, 'model_provider', false)
+      bodyRef(source, 'model_id', false)
+      bodyRef(source, 'reasoning_effort', false)
+      if ((source.model_provider === undefined) !== (source.model_id === undefined)) {
+        throw new DshRemoteError('REMOTE_REQUEST_INVALID', '模型 Provider 和模型 ID 必须同时提供')
+      }
+      if (source.model_provider === undefined) {
+        throw new DshRemoteError('REMOTE_REQUEST_INVALID', '必须提供模型 Provider 和模型 ID')
+      }
+      return
+    case 'session.create': {
+      assertOnly(source, ['workspace_ref', 'model_provider', 'model_id', 'reasoning_effort'])
+      bodyRef(source, 'workspace_ref')
+      bodyRef(source, 'model_provider', false)
+      bodyRef(source, 'model_id', false)
+      bodyRef(source, 'reasoning_effort', false)
+      if ((source.model_provider === undefined) !== (source.model_id === undefined)) {
+        throw new DshRemoteError('REMOTE_REQUEST_INVALID', '模型 Provider 和模型 ID 必须同时提供')
+      }
+      if (source.reasoning_effort !== undefined && source.model_provider === undefined) {
+        throw new DshRemoteError('REMOTE_REQUEST_INVALID', '推理等级必须与模型选择同时提供')
+      }
+      return
+    }
     case 'session.history':
       assertOnly(source, ['session_ref', 'before_seq', 'limit']); bodyRef(source, 'session_ref');
       if (source.before_seq !== undefined && (!Number.isSafeInteger(source.before_seq) || Number(source.before_seq) < 1)) {
@@ -97,6 +133,23 @@ function validateOperationBody(operation: DshRemoteOperation, source: Record<str
       if (source.outcome !== 'allowed-once' && source.outcome !== 'rejected') {
         throw new DshRemoteError('REMOTE_REQUEST_INVALID', 'outcome 无效')
       }
+  }
+}
+
+/** Correlation-only parse used to return a typed rejection for a valid envelope identity. */
+export function dshRemoteRequestIdentity(value: unknown): DshRemoteRequestIdentity | undefined {
+  try {
+    const source = object(value)
+    if (source.protocol !== DSH_REMOTE_PROTOCOL || source.protocol_major !== DSH_REMOTE_PROTOCOL_MAJOR
+      || source.kind !== 'request' || typeof source.operation !== 'string'
+      || !OPERATIONS.has(source.operation as DshRemoteOperation)) return undefined
+    return {
+      requestRef: ref(source.request_ref, 'request_ref'),
+      hostGeneration: positiveInteger(source.host_generation, 'host_generation'),
+      operation: source.operation as DshRemoteOperation,
+    }
+  } catch {
+    return undefined
   }
 }
 

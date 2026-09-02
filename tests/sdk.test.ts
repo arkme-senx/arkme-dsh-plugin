@@ -19,6 +19,33 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('exposes employee user-ban operations through the same source-bound Host contract', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+      calls.push(request)
+      if (request.operation === 'user-ban.status') {
+        return success({ sourceRef: 'source-ref', displayName: '何', exists: false, banned: false })
+      }
+      return success({
+        sourceRef: 'source-ref', displayName: '何',
+        status: request.operation === 'user-ban.ban' ? 'banned' : 'unbanned',
+        remark: request.params?.remark, bannedAtMillis: 1, unbannedAtMillis: 0, updatedAtMillis: 1,
+      })
+    } })
+
+    await expect(sdk.userBanStatus('source-ref')).resolves.toMatchObject({ banned: false })
+    await expect(sdk.banPrivateChatUser('source-ref', ' 私聊复核 ')).resolves.toMatchObject({ status: 'banned' })
+    await expect(sdk.unbanPrivateChatUser('source-ref', ' 复核通过 ')).resolves.toMatchObject({ status: 'unbanned' })
+
+    expect(calls).toEqual([
+      { operation: 'user-ban.status', params: { sourceRef: 'source-ref' } },
+      { operation: 'user-ban.ban', params: { sourceRef: 'source-ref', remark: '私聊复核' } },
+      { operation: 'user-ban.unban', params: { sourceRef: 'source-ref', remark: '复核通过' } },
+    ])
+    await expect(sdk.banPrivateChatUser('source-ref', '字'.repeat(256))).rejects.toThrow(/255/)
+  })
+
   it('exposes typed background and location sends without owning snapshot display', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
@@ -570,6 +597,7 @@ describe('Arkme SDK', () => {
               sourceDirectory: true, sourceTimeline: true, sourceTextSend: true, outgoingCall: true,
               messageReadReceipts: true,
               messageReport: true,
+              userBanManagement: true,
               extensionManagement: true,
               extensionIcons: true,
             },
@@ -616,7 +644,7 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.capabilities()).resolves.toMatchObject({
       contractVersion: 1,
-      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true, messageReadReceipts: true, messageReport: true, accountSettings: true },
+      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true, messageReadReceipts: true, messageReport: true, userBanManagement: true, accountSettings: true },
       limits: { maxMessageReadReceiptItems: 50 },
     })
     await expect(sdk.search('复盘', { limit: 5, syncAll: true })).resolves.toMatchObject({ revision: 4 })

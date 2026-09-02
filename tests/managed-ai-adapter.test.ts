@@ -108,6 +108,10 @@ describe('Arkme managed model adapter', () => {
       context: { contextWindow: 1_000_000 },
       defaultMaxTokens: 65_536,
     })
+    const prepared = await (adapter as unknown as {
+      prepareCall(provider: string, model: string): Promise<{ model: { id: string } }>
+    }).prepareCall('arkme-managed', 'qwen3.8-max')
+    expect(prepared.model.id).toBe('qwen3.8-max')
     await expect(adapter.resolveModel('arkme-managed', 'deepseek-v4-pro')).rejects.toMatchObject({
       code: 'UNKNOWN_MODEL',
     })
@@ -174,6 +178,59 @@ describe('Arkme managed model adapter', () => {
 
       expect(requestedModel).toBe('qwen3.8-max')
       expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: '完成' })
+    } finally {
+      await new Promise<void>(resolve => { server.close(() => { resolve() }) })
+    }
+  })
+
+  it('keeps the first non-empty tool identity when later SSE deltas contain empty fields', async () => {
+    const server = createServer(async (req, res) => {
+      for await (const _chunk of req) { /* Drain the request before responding. */ }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      res.end([
+        'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_weather","type":"function","function":{"name":"web_search","arguments":""}}]},"finish_reason":null}]}',
+        '',
+        'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"{\\"queries\\":[]}"}}]},"finish_reason":"tool_calls"}]}',
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n') + '\n')
+    })
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolve)
+    })
+    try {
+      const address = server.address() as AddressInfo
+      const adapter = createManagedAiLlmAdapter({
+        intelligentBaseUrl: `http://127.0.0.1:${String(address.port)}`,
+        credentialOwner: {
+          resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
+        },
+        resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      })
+      const chunks: StreamChunk[] = []
+      for await (const chunk of adapter.stream({
+        provider: ARKME_MANAGED_PROVIDER,
+        model: ARKME_MANAGED_MODEL,
+        messages: [createUserMessage({
+          content: [{ type: 'text', text: '查天气' }],
+          source: { kind: 'user' },
+        })],
+      })) chunks.push(chunk)
+
+      expect(chunks.filter(chunk => chunk.type === 'tool-call-delta')).toEqual([
+        {
+          type: 'tool-call-delta', index: 0, id: 'call_weather', name: 'web_search', argumentsDelta: '',
+        },
+        {
+          type: 'tool-call-delta', index: 0, id: 'call_weather', name: 'web_search', argumentsDelta: '{"queries":[]}',
+        },
+      ])
+      expect(chunks).toContainEqual({
+        type: 'block-end', index: 0,
+        block: { type: 'tool-call', id: 'call_weather', name: 'web_search', arguments: '{"queries":[]}' },
+      })
     } finally {
       await new Promise<void>(resolve => { server.close(() => { resolve() }) })
     }

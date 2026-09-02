@@ -89,7 +89,7 @@ export class AuthService {
       this.runtime.invalidateScope(this.runtime.requestScope(userId))
       this.runtime.clearRefreshForUser(userId)
     }
-    await this.runtime.sessionStore.delete()
+    await this.runtime.deleteSession()
     await this.runtime.clearPendingBindingSession()
     this.profile.invalidate()
     this.jiwoAttemptGeneration += 1
@@ -113,7 +113,7 @@ export class AuthService {
           } satisfies ArkmeAuthSnapshot
       if (snapshot.status === 'binding-required') {
         await this.runtime.writePendingBindingSession(activeSession)
-        await this.runtime.sessionStore.delete()
+        await this.runtime.deleteSession()
         this.lifecycle.reconnectChatRealtime()
       }
       return snapshot
@@ -516,12 +516,12 @@ export class AuthService {
     const snapshot = await this.authSnapshotForSession(session, { forceProfile: true })
     if (snapshot.status === 'authenticated') {
       await this.runtime.clearPendingBindingSession()
-      await this.runtime.sessionStore.write(session)
+      await this.runtime.writeSession(session)
       this.lifecycle.reconnectChatRealtime()
       return snapshot
     }
     await this.runtime.writePendingBindingSession(session)
-    await this.runtime.sessionStore.delete()
+    await this.runtime.deleteSession()
     this.lifecycle.reconnectChatRealtime()
     return snapshot
   }

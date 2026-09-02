@@ -23,6 +23,8 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('relationBaseUrl: https://relation.jotmo.cc')
     expect(patch).toContain('intelligentBaseUrl: https://intelligent.jotmo.cc')
     expect(patch).toContain('audioBaseUrl: https://audio.jotmo.cc')
+    expect(patch).toContain('dshRemoteFeatureEnabled: true')
+    expect(patch).toContain('dshRemoteRealtimeBaseUrl: https://realtime.jotmo.cc')
     expect(patch).toContain('extensionPublishBaseUrl: https://extension-publish.jotmo.cc')
     expect(patch).toContain('shareWebsite: https://jiwo.cc')
     expect(patch).toContain('prod-ed25519-20260819-1')

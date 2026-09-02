@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { securePrivateDirectorySync, securePrivateFileSync } from '../private-filesystem.js'
-import { canonicalJson, decryptXChaCha20Poly1305, encryptXChaCha20Poly1305 } from './crypto.js'
+import { canonicalJson, decryptLedgerPayload, encryptLedgerPayload } from './crypto.js'
 import { DshRemoteError } from './errors.js'
 import type { DshRemoteOperation } from './types.js'
 
@@ -50,7 +50,8 @@ function argumentsHash(operation: string, argumentsValue: Record<string, unknown
   return createHash('sha256').update(canonicalJson({ operation, arguments: argumentsValue })).digest('base64url')
 }
 
-function stableDshRpcId(input: Pick<DshRemoteLedgerIdentity, 'accountId' | 'runtimeRef' | 'requestRef'>): string {
+/** Cross-client identity: mobile writes it before send and DSH echoes it in canonical history. */
+export function dshRemoteCommandRpcId(input: Pick<DshRemoteLedgerIdentity, 'accountId' | 'runtimeRef' | 'requestRef'>): string {
   return `remote_${createHash('sha256')
     .update(`dsh-remote-rpc-v2\n${input.accountId}\n${input.runtimeRef}\n${input.requestRef}`)
     .digest('base64url').slice(0, 32)}`
@@ -125,7 +126,7 @@ export class DshRemoteCommandLedger {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.accountId, input.runtimeRef, input.requestRef, input.operation, hash,
-        stableDshRpcId(input), input.executeBeforeMillis, now,
+        dshRemoteCommandRpcId(input), input.executeBeforeMillis, now,
       )
       this.appendEvent(Number(result.lastInsertRowid), 'pending', { arguments: input.arguments }, now)
     })
@@ -273,7 +274,7 @@ export class DshRemoteCommandLedger {
     const aad = this.eventAad(row, event.state, event.created_at_millis)
     let payload: Record<string, unknown>
     try {
-      payload = JSON.parse(decryptXChaCha20Poly1305(this.key, event, aad).toString('utf8')) as Record<string, unknown>
+      payload = JSON.parse(decryptLedgerPayload(this.key, event, aad).toString('utf8')) as Record<string, unknown>
     } catch (error) {
       if (error instanceof DshRemoteError) throw new DshRemoteError('REMOTE_STORAGE_FAILED', '命令账本认证失败', false, {}, { cause: error })
       throw error
@@ -300,7 +301,7 @@ export class DshRemoteCommandLedger {
       FROM remote_command_identity_v2 WHERE identity_id = ?
     `).get(identityId) as unknown as IdentityRow | undefined
     if (row === undefined) throw new DshRemoteError('REMOTE_STORAGE_FAILED', '命令账本 identity 缺失')
-    const encrypted = encryptXChaCha20Poly1305(this.key, canonicalJson(payload), this.eventAad(row, state, now), randomBytes(24))
+    const encrypted = encryptLedgerPayload(this.key, canonicalJson(payload), this.eventAad(row, state, now), randomBytes(24))
     this.database.prepare(`
       INSERT INTO remote_command_event_v2 (identity_id, state, nonce, ciphertext, created_at_millis)
       VALUES (?, ?, ?, ?, ?)

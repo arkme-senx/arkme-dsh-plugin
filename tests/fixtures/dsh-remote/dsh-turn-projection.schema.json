@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jotmo.dev/contracts/dsh-remote/v1/dsh-turn-projection.schema.json",
+  "title": "Completed DSH turn presentation projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "turn_ref",
+    "start_seq",
+    "end_seq",
+    "status",
+    "presentation_version",
+    "nodes"
+  ],
+  "properties": {
+    "turn_ref": {"type": "string", "minLength": 1, "maxLength": 128},
+    "start_seq": {"type": "integer", "minimum": 0},
+    "end_seq": {"type": "integer", "minimum": 0},
+    "status": {
+      "enum": ["completed", "interrupted", "error", "max_tokens"]
+    },
+    "presentation_version": {"type": "integer", "minimum": 1},
+    "nodes": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 10000,
+      "items": {"$ref": "#/$defs/timelineNode"}
+    }
+  },
+  "$defs": {
+    "timelineNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_ref",
+        "kind",
+        "ordinal",
+        "anchor_seq",
+        "time",
+        "source_seq_start",
+        "source_seq_end",
+        "data",
+        "presentation"
+      ],
+      "properties": {
+        "node_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {
+          "enum": [
+            "user",
+            "steering",
+            "context",
+            "assistant",
+            "tool",
+            "command",
+            "compaction",
+            "retry",
+            "turn_error",
+            "max_tokens",
+            "unknown"
+          ]
+        },
+        "ordinal": {"type": "integer", "minimum": 0},
+        "anchor_seq": {"type": "number", "minimum": 0},
+        "time": {"type": "number"},
+        "source_seq_start": {"type": "integer", "minimum": 0},
+        "source_seq_end": {"type": "integer", "minimum": 0},
+        "data": {"type": "object"},
+        "presentation": {"$ref": "#/$defs/presentation"}
+      }
+    },
+    "presentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "format", "tone"],
+      "properties": {
+        "version": {"type": "integer", "minimum": 1},
+        "format": {"enum": ["message", "content", "summary"]},
+        "icon": {"type": "string", "maxLength": 64},
+        "title": {"type": "string", "maxLength": 65536},
+        "summary": {"type": "string", "maxLength": 65536},
+        "details": {"type": "string", "maxLength": 65536},
+        "tone": {"enum": ["neutral", "muted", "error"]},
+        "monospace": {"type": "boolean"}
+      }
+    }
+  }
+}

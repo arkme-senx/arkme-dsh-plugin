@@ -75,6 +75,7 @@ export const arkmeLoginZh = {
   'error.phone.code': '手机号或验证码错误',
   'error.captcha.required': '请先完成安全验证',
   'error.login.required': '登录已失效，请重新登录',
+  'error.account.unavailable': '当前即我账号暂不可用，如有疑问请联系工作人员',
 } as const
 
 export type ArkmeLoginLocaleKey = keyof typeof arkmeLoginZh
@@ -152,6 +153,7 @@ export const arkmeLoginEn: Record<ArkmeLoginLocaleKey, string> = {
   'error.phone.code': 'The phone number or verification code is incorrect.',
   'error.captcha.required': 'Complete the security verification first.',
   'error.login.required': 'Your sign-in has expired. Sign in again.',
+  'error.account.unavailable': 'This Arkme account is currently unavailable. Contact support if you need help.',
 }
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {

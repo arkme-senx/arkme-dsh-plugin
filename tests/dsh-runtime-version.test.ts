@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { mkdtempSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { readDshRuntimeVersion } from '../src/index.js'
+import { readDshRuntimeVersion, resolveDshRemoteProfileRef } from '../src/index.js'
 
 describe('readDshRuntimeVersion', () => {
   it('reads the version from the DSH installation that owns the active bin', () => {
@@ -40,5 +40,15 @@ describe('readDshRuntimeVersion', () => {
   it('does not invent a version when the installation metadata is unavailable or invalid', () => {
     expect(readDshRuntimeVersion('')).toBeUndefined()
     expect(readDshRuntimeVersion(join(tmpdir(), 'missing-dsh', 'lib', 'bin.js'))).toBeUndefined()
+  })
+})
+
+describe('resolveDshRemoteProfileRef', () => {
+  it('uses the client-provided container identity instead of collapsing every Home into web', () => {
+    expect(resolveDshRemoteProfileRef({
+      ARKME_DSH_RUNTIME_SCOPE_REF: 'web:scope_account_01',
+      DSH_PROFILE: 'web',
+    })).toBe('web:scope_account_01')
+    expect(resolveDshRemoteProfileRef({ ARKME_DSH_RUNTIME_SCOPE_REF: '../other' })).toBe('web')
   })
 })

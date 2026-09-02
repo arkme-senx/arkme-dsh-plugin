@@ -32,10 +32,11 @@ function HighlightedText({ text }: { text: string }) {
   >{run.text}</span>)}</>
 }
 
-export function ArkmeRichText({ text, highlightMentions = false, renderLink }: {
+export function ArkmeRichText({ text, highlightMentions = false, renderLink, emojiSize }: {
   text: string
   highlightMentions?: boolean
   renderLink?: ArkmeLinkRenderer
+  emojiSize?: number
 }) {
   const renderText = highlightMentions ? (value: string) => <HighlightedText text={value} /> : undefined
   return <>{arkmeEmojiTextRuns(text).map((run, index) => run.kind === 'emoji' && run.emoji !== undefined
@@ -44,7 +45,7 @@ export function ArkmeRichText({ text, highlightMentions = false, renderLink }: {
       src={run.emoji.assetUrl}
       alt={run.emoji.label}
       title={run.emoji.label}
-      style={emojiInlineStyle}
+      style={emojiSize === undefined ? emojiInlineStyle : { ...emojiInlineStyle, width: emojiSize, height: emojiSize, verticalAlign: `${Math.round(-emojiSize * 0.27)}px` }}
       draggable={false}
       data-arkme-rich-emoji={run.emoji.id}
     />

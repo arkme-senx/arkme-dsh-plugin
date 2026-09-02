@@ -12,6 +12,7 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 import { DeepSeekAdapter, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import type { DeepSeekCatalogModel, DeepSeekConnectionOptions } from '@deepseek-ai/dsh-llm-deepseek'
+import type { ManagedAccessCredentialProvider } from '../managed-access-credential.js'
 import type { SecretValue } from '../secret-value.js'
 
 export const ARKME_MANAGED_PROVIDER = 'arkme-managed'
@@ -36,13 +37,9 @@ const ARKME_AUTH_FAILURE_CODES = new Set([
   'auth-http-403',
 ])
 
-export interface ManagedAccessCredentialOwner {
-  resolveManagedAccessCredential(): Promise<SecretValue>
-}
-
 export interface ManagedAiLlmAdapterOptions {
   intelligentBaseUrl: string
-  credentialOwner: ManagedAccessCredentialOwner
+  credentialOwner: ManagedAccessCredentialProvider
   resolveAnonymousUserId?: () => AnonymousUserId
   /** Test/runtime seam for the authenticated Arkme model-directory request. */
   fetchImpl?: typeof fetch
@@ -149,7 +146,95 @@ function assertManagedProvider(provider: string): void {
   }
 }
 
-async function resolveBearer(owner: ManagedAccessCredentialOwner): Promise<string> {
+type ToolCallDeltaChunk = Extract<StreamChunk, { type: 'tool-call-delta' }>
+
+async function* keepToolCallIdentity(
+  chunks: AsyncIterable<StreamChunk>,
+): AsyncIterable<StreamChunk> {
+  const calls = new Map<number, {
+    id?: ToolCallDeltaChunk['id']
+    name?: string
+    pendingArguments: string
+    started: boolean
+  }>()
+  const ids = new Set<string>()
+
+  for await (const chunk of chunks) {
+    if (chunk.type === 'block-start' && chunk.blockType === 'tool-call') {
+      if (calls.has(chunk.index)) {
+        throw new LlmError('Arkme AI 返回了重复的工具调用起始帧', 'MALFORMED_RESPONSE')
+      }
+      calls.set(chunk.index, { pendingArguments: '', started: false })
+      continue
+    }
+
+    if (chunk.type === 'tool-call-delta') {
+      const call = calls.get(chunk.index)
+      if (call === undefined) {
+        throw new LlmError('Arkme AI 返回了缺少起始帧的工具调用', 'MALFORMED_RESPONSE')
+      }
+      if (String(chunk.id).trim() !== '') {
+        if (call.id !== undefined && call.id !== chunk.id) {
+          throw new LlmError('Arkme AI 在同一工具调用中更改了调用 ID', 'MALFORMED_RESPONSE')
+        }
+        call.id = chunk.id
+      }
+      if (chunk.name !== undefined && chunk.name.trim() !== '') {
+        if (call.name !== undefined && call.name !== chunk.name) {
+          throw new LlmError('Arkme AI 在同一工具调用中更改了工具名', 'MALFORMED_RESPONSE')
+        }
+        call.name = chunk.name
+      }
+      call.pendingArguments += chunk.argumentsDelta
+      if (!call.started && call.id !== undefined && call.name !== undefined) {
+        if (ids.has(call.id)) {
+          throw new LlmError('Arkme AI 返回了重复的工具调用 ID', 'MALFORMED_RESPONSE')
+        }
+        ids.add(call.id)
+        call.started = true
+        yield { type: 'block-start', index: chunk.index, blockType: 'tool-call' }
+        yield {
+          type: 'tool-call-delta',
+          index: chunk.index,
+          id: call.id,
+          name: call.name,
+          argumentsDelta: call.pendingArguments,
+        }
+        call.pendingArguments = ''
+      } else if (call.started) {
+        yield {
+          type: 'tool-call-delta',
+          index: chunk.index,
+          id: call.id!,
+          name: call.name!,
+          argumentsDelta: call.pendingArguments,
+        }
+        call.pendingArguments = ''
+      }
+      continue
+    }
+
+    if (chunk.type === 'block-end' && chunk.block.type === 'tool-call') {
+      const call = calls.get(chunk.index)
+      if (call?.started !== true || call.id === undefined || call.name === undefined) {
+        throw new LlmError('Arkme AI 返回了缺少调用 ID 或工具名的工具调用', 'MALFORMED_RESPONSE')
+      }
+      calls.delete(chunk.index)
+      yield {
+        ...chunk,
+        block: { ...chunk.block, id: call.id, name: call.name },
+      }
+      continue
+    }
+
+    if (chunk.type === 'finish' && calls.size > 0) {
+      throw new LlmError('Arkme AI 返回了未结束的工具调用', 'MALFORMED_RESPONSE')
+    }
+    yield chunk
+  }
+}
+
+async function resolveBearer(owner: ManagedAccessCredentialProvider): Promise<string> {
   try {
     const bearer = (await owner.resolveManagedAccessCredential()).reveal()
     if (bearer !== '') return bearer
@@ -323,7 +408,7 @@ class ManagedModelCatalog {
 
   constructor(
     intelligentBaseUrl: string,
-    private readonly credentialOwner: ManagedAccessCredentialOwner,
+    private readonly credentialOwner: ManagedAccessCredentialProvider,
     fetchImpl: typeof fetch,
   ) {
     this.baseUrl = managedAiBaseUrl(intelligentBaseUrl)
@@ -469,12 +554,26 @@ class ManagedAiLlmAdapter extends LlmAdapter {
     return await this.delegate.resolveModel(provider, model, signal)
   }
 
+  async prepareCall(
+    provider: string,
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<{
+      model: LlmResolvedModelInfo
+      stream: (options: GenerateOptions) => AsyncIterable<StreamChunk>
+    }> {
+    return {
+      model: await this.resolveModel(provider, model, signal),
+      stream: options => this.stream(options),
+    }
+  }
+
   override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     try {
       assertManagedProvider(options.provider)
       await this.catalog.ensureModel(options.model, options.signal)
       this.catalog.assertModel(options.model)
-      yield* this.delegate.stream(options)
+      yield* keepToolCallIdentity(this.delegate.stream(options))
     } catch (error) {
       throw localizeManagedAiError(error)
     }

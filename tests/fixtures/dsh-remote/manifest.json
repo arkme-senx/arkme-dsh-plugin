@@ -1,13 +1,15 @@
 {
   "contract": "dsh.remote/v1",
-  "schema_version": 2,
+  "schema_version": 5,
   "authority": "authenticated-account",
   "files": {
     "dsh-history-entry.schema.json": "f327364f10e8742172ec2588c7da78ed36a4e354851c2ed40ac6fe9a09748855",
+    "dsh-turn-projection.schema.json": "432f0961fb2bed5e0d9d0e56d1cdd56e0319eae8c22b54eb083ab38ed2ebbc94",
+    "dsh-turn-projection.json": "bed0c79c4f968399e3e987845ba47fb4295c89abccd24d4570eb246dfb8aa86a",
     "errors.json": "31d373e27168035a35a439a55f749c47b773fed116b63406b2c5b7ceb94b52d2",
-    "protocol-v1.json": "21eaff5aac47362e66e6b1cf48668926ff6ad0ddb3d4395a0607783a8971de4f",
+    "protocol-v1.json": "85711539203c78023d54d40af70f94f7a2ef89aa623431d51d962d3b11c85c68",
     "remote-channel.schema.json": "6b6f78e5a74819d01f058ac3dcc1f5ed5d4c5fdfac0801f3a2adccf7a80344fc",
-    "remote-envelope.schema.json": "a3e884c1e6bac278d82fe202851df53ce9e2d957ec88850154c5a3153f4a3c7f",
+    "remote-envelope.schema.json": "e56cd8e46b7725b5feab4aef98059a6e235b4415d6a281239f9f276c0843685e",
     "transport-fragment.schema.json": "85adfece7c890ff0ad676d9b0092d7914144ee7fb3019d330e09649e08365d31"
   }
 }

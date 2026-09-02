@@ -9,7 +9,8 @@ import type {
   ArkmeExtensionReviewPage,
 } from './extensions/types.js'
 import type { ArkmeSessionStore } from './keychain-store.js'
-import { resolveManagedAccessCredential } from './managed-ai/credential.js'
+import { createArkmeAccountSessionOwner } from './account-session-owner.js'
+import { resolveManagedAccessCredential } from './managed-access-credential.js'
 import type { createOpenClawProvisioner, OpenClawProvisionResult } from './openclaw/index.js'
 import { ArkmeOutgoingCallBroker } from './outgoing-call-broker.js'
 import {
@@ -93,6 +94,7 @@ import { SourceService } from './services/source-service.js'
 import { UnmarkedSpeakerService } from './services/unmarked-speaker-service.js'
 import { WechatService } from './services/wechat-service.js'
 import { VoiceprintService } from './services/voiceprint-service.js'
+import { UserBanService } from './services/user-ban-service.js'
 import { WorldService } from './services/world-service.js'
 import type {
   ArkmeBotCreateInput,
@@ -224,6 +226,8 @@ import type {
   ArkmeUnmarkedSpeakerOptions,
   ArkmeUnmarkedSpeakerSegmentPage,
   ArkmeUserCardSnapshot,
+  ArkmeUserBanOwnerRecord,
+  ArkmeUserBanOwnerSnapshot,
   ArkmeUserProfileSnapshot,
   ArkmeWechatCallFilter,
   ArkmeWechatCommonGroupPage,
@@ -263,9 +267,9 @@ export {
   MAX_ARKME_RELATED_RECORDING_PAGE_SIZE,
 } from './services/related-recording-service.js'
 export { ArkmePluginError, type ArkmeServiceConfig }
-
 export class ArkmeService {
   private readonly runtime: ServiceRuntime
+  readonly accountScope: ReturnType<typeof createArkmeAccountSessionOwner>
   private readonly billingGateway: ArkmeBillingGateway
   private readonly aiVideo: AiVideoService
   private readonly arrangement: ArrangementService
@@ -300,11 +304,11 @@ export class ArkmeService {
   private readonly contactDirectory: ContactDirectoryService
   private readonly unmarkedSpeaker: UnmarkedSpeakerService
   private readonly voiceprint: VoiceprintService
+  private readonly userBan: UserBanService
   private readonly backgroundSoundPreferenceOwner: BackgroundSoundPreferenceService
   private readonly fileTransfers: FileTransfers | undefined
   private localFileOpener?: (path: string, signal: AbortSignal) => Promise<void>
   private worldVoiceprintInviteVariantIndex = 0
-
   constructor(
     private readonly config: ArkmeServiceConfig,
     private readonly sessionStore: ArkmeSessionStore,
@@ -315,7 +319,8 @@ export class ArkmeService {
     billingGateway?: ArkmeBillingGateway,
     linkDocumentReader?: ArkmeLinkDocumentReader,
   ) {
-    this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore)
+    this.accountScope = createArkmeAccountSessionOwner(sessionStore, fetchImpl)
+    this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore, this.accountScope)
     this.billingGateway = billingGateway ?? new HttpArkmeBillingGateway(this.runtime)
     this.privacy = new ArkmePrivacyVisibilityService(this.runtime)
     this.aiVideo = new AiVideoService(this.runtime)
@@ -398,6 +403,7 @@ export class ArkmeService {
       this.privacy,
       this.messageActions,
     )
+    this.userBan = new UserBanService(this.runtime, this.chat)
     this.botConversation = new BotConversationService(
       this.runtime,
       this.bot,
@@ -442,7 +448,6 @@ export class ArkmeService {
       },
     })
   }
-
   private filesOwner(): FileTransfers {
     if (!this.fileTransfers) throw new ArkmePluginError('file-flow-unavailable', '当前宿主不支持本地文件流程，请升级插件', false, 501)
     return this.fileTransfers
@@ -685,6 +690,7 @@ export class ArkmeService {
         sourceTextSend: true,
         messageReadReceipts: true,
         messageReport: true,
+        userBanManagement: true,
         richContentRead: this.config.richMediaRenderEnabled !== false,
         richContentSend: this.config.richMediaSendEnabled !== false,
         ...(this.config.richMediaSendEnabled === false ? {} : { backgroundSound: true as const }),
@@ -1205,6 +1211,18 @@ export class ArkmeService {
 
   async userCard(userId: number, signal?: AbortSignal): Promise<ArkmeUserCardSnapshot> {
     return await this.profile.userCard(userId, signal)
+  }
+
+  async userBanStatus(sourceRef: string, signal?: AbortSignal): Promise<ArkmeUserBanOwnerSnapshot> {
+    return await this.userBan.status(sourceRef, signal)
+  }
+
+  async banPrivateChatUser(sourceRef: string, remark = '', signal?: AbortSignal): Promise<ArkmeUserBanOwnerRecord> {
+    return await this.userBan.ban(sourceRef, remark, signal)
+  }
+
+  async unbanPrivateChatUser(sourceRef: string, remark = '', signal?: AbortSignal): Promise<ArkmeUserBanOwnerRecord> {
+    return await this.userBan.unban(sourceRef, remark, signal)
   }
 
   async openPrivateChatFromUser(
