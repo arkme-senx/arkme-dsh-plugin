@@ -72,6 +72,14 @@ function chatMemberRef(
   return `arkme-chat-member-v1.${payload}.${signature}`
 }
 
+async function chatTimelineItemKeyForTest(
+  userId: number,
+  chatSessionUid: string,
+  relationUid: string,
+): Promise<string> {
+  return `timeline:${String(userId)}:${chatSessionUid}:${relationUid}`
+}
+
 describe('ChatService', () => {
   it('projects a private-chat extension child with the desktop parent preview contract', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
@@ -116,6 +124,7 @@ describe('ChatService', () => {
         version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事',
       })),
       sourceItem: vi.fn(async () => sourceItem),
+      chatTimelineItemKey: chatTimelineItemKeyForTest,
     }
     const media = {
       recordContentPayload: vi.fn(() => ({})),
@@ -177,6 +186,7 @@ describe('ChatService', () => {
     const source = {
       openSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
       sourceItem: vi.fn(async () => sourceItem),
+      chatTimelineItemKey: chatTimelineItemKeyForTest,
     }
     const chat = new ChatService(
       runtime as never, source as never,
@@ -218,6 +228,7 @@ describe('ChatService', () => {
     const source = {
       openSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
       sourceItem: vi.fn(async () => ({ sourceRef: 'source-private', kind: 'private_chat', displayName: '同事', activeAtMillis: 0, unreadCount: 0 })),
+      chatTimelineItemKey: chatTimelineItemKeyForTest,
     }
     const chat = new ChatService(
       runtime as never, source as never,
