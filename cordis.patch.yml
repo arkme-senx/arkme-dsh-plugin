@@ -15,6 +15,8 @@
         relationBaseUrl: https://relation.jotmo.cc
         intelligentBaseUrl: https://intelligent.jotmo.cc
         audioBaseUrl: https://audio.jotmo.cc
+        dshRemoteFeatureEnabled: true
+        dshRemoteRealtimeBaseUrl: https://realtime.jotmo.cc
         extensionPublishBaseUrl: https://extension-publish.jotmo.cc
         shareWebsite: https://jiwo.cc
         extensionArtifactDirectory: ''
