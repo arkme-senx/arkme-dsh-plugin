@@ -429,15 +429,42 @@ function assertUserBlocks(blocks: readonly ContentBlock[]): void {
 function limitConcurrency<Argument, Result>(
   maximum: number,
   operation: (argument: Argument) => Promise<Result>,
+  signal: AbortSignal,
 ): (argument: Argument) => Promise<Result> {
   let active = 0
-  const pending: Array<() => void> = []
+  const pending: Array<{
+    resolve: () => void
+    reject: (reason: unknown) => void
+  }> = []
+  let listeningForAbort = false
+  const stopListeningForAbort = () => {
+    if (!listeningForAbort || signal.aborted || pending.length > 0) return
+    signal.removeEventListener('abort', abortPending)
+    listeningForAbort = false
+  }
+  const abortPending = () => {
+    listeningForAbort = false
+    const reason = signal.reason ?? new DOMException('Aborted', 'AbortError')
+    for (const waiter of pending.splice(0)) waiter.reject(reason)
+  }
+  const waitForSlot = async () => {
+    if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+    await new Promise<void>((resolve, reject) => {
+      pending.push({ resolve, reject })
+      if (!listeningForAbort) {
+        listeningForAbort = true
+        signal.addEventListener('abort', abortPending, { once: true })
+      }
+    })
+  }
   const release = () => {
     active--
-    pending.shift()?.()
+    pending.shift()?.resolve()
+    stopListeningForAbort()
   }
   return async (argument) => {
-    if (active >= maximum) await new Promise<void>(resolve => pending.push(resolve))
+    if (active >= maximum) await waitForSlot()
+    if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
     active++
     try {
       return await operation(argument)
@@ -472,6 +499,7 @@ function serializeAssistant(message: Message): WireMessage {
 async function serializeMessages(
   messages: readonly Message[],
   resolveImage: (attachment: ImageAttachmentRef) => Promise<string>,
+  signal: AbortSignal,
 ): Promise<WireMessage[]> {
   // Validate the entire request before beginning any direct-to-OSS work.
   for (const message of messages) {
@@ -479,7 +507,7 @@ async function serializeMessages(
     else if (message.role === 'assistant') assertAssistantBlocks(message.content)
     else assertUserBlocks(message.content)
   }
-  const resolveImageLimited = limitConcurrency(MAX_CONCURRENT_INPUT_ASSET_UPLOADS, resolveImage)
+  const resolveImageLimited = limitConcurrency(MAX_CONCURRENT_INPUT_ASSET_UPLOADS, resolveImage, signal)
   const groups = await Promise.all(messages.map(async (message): Promise<WireMessage[]> => {
     if (message.role === 'system') {
       return [{ role: 'system', content: flattenText(message.content) }]
@@ -521,10 +549,11 @@ async function serializeMessages(
 async function serializeRequest(
   options: GenerateOptions,
   resolveImage: (attachment: ImageAttachmentRef) => Promise<string>,
+  signal: AbortSignal,
 ): Promise<WireRequest> {
   const messages: WireMessage[] = []
   if (options.system !== undefined) messages.push({ role: 'system', content: options.system })
-  messages.push(...await serializeMessages(options.messages, resolveImage))
+  messages.push(...await serializeMessages(options.messages, resolveImage, signal))
   const effort = options.reasoningEffort === undefined ? 'high' : String(options.reasoningEffort)
   if (!['off', 'high', 'max'].includes(effort)) {
     throw new LlmError(`Arkme AI 不支持推理强度“${effort}”`, 'UNSUPPORTED_REASONING_EFFORT')
@@ -787,7 +816,7 @@ export class ManagedAiTransport {
           signal,
         )
         return uploaded.assetRef
-      })
+      }, signal)
       if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
       const response = await this.options.fetchImpl(`${this.options.baseUrl}/chat/completions`, {
         method: 'POST',
