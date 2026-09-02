@@ -414,11 +414,6 @@ export class ArkmeSdk {
     return await this.call<OpenApiMcpStatus>('openapi.mcp.retry', undefined, signal)
   }
 
-  /** Explicit human action: replace a revoked managed credential and reconnect MCP tools. */
-  async reauthorizeOpenApiMcp(signal?: AbortSignal): Promise<OpenApiMcpStatus> {
-    return await this.call<OpenApiMcpStatus>('openapi.mcp.reauthorize', undefined, signal)
-  }
-
   /** Read Browser-safe installed extension projections without Host filesystem paths or runtime IDs. */
   async installedExtensions(signal?: AbortSignal): Promise<ArkmeInstalledExtensionView[]> {
     return await this.call<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, signal)

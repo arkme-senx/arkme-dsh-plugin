@@ -75,4 +75,32 @@ describe('active session observation', () => {
     await expect(store.write(session(100, 9, 'failed'))).rejects.toThrow('write failed')
     expect(order).toEqual(['prepare-dispose-old-tools', 'inner-write', 'rolled-back'])
   })
+
+  it('fences MCP without blocking the authoritative session mutation when the prior read fails', async () => {
+    const order: string[] = []
+    const inner: ArkmeSessionStore = {
+      read: vi.fn(async () => { throw new Error('secure read unavailable') }),
+      write: vi.fn(async () => { order.push('inner-write') }),
+      delete: vi.fn(async () => { order.push('inner-delete') }),
+    }
+    const store = new ObservedArkmeSessionStore(inner)
+    const observer: SessionTransitionObserver<string> = {
+      prepare: vi.fn(async (previous, next) => {
+        order.push(`prepare:${previous === undefined ? 'unknown' : 'known'}:${next === undefined ? 'delete' : 'write'}`)
+        return 'ticket'
+      }),
+      committed: vi.fn(() => { order.push('committed') }),
+      rolledBack: vi.fn(),
+    }
+    store.attach(observer)
+
+    await store.write(session(42, 7, 'next'))
+    await store.delete()
+
+    expect(order).toEqual([
+      'prepare:unknown:write', 'inner-write', 'committed',
+      'prepare:unknown:delete', 'inner-delete', 'committed',
+    ])
+    expect(observer.rolledBack).not.toHaveBeenCalled()
+  })
 })

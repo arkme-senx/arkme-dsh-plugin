@@ -7,7 +7,7 @@ import { callArkme } from './api.js'
 export interface OpenApiMcpPresentation {
   title: string
   description: string
-  action?: 'retry' | 'reauthorize'
+  action?: 'retry'
 }
 
 export function openApiMcpPresentation(status: OpenApiMcpStatus | undefined): OpenApiMcpPresentation {
@@ -16,9 +16,6 @@ export function openApiMcpPresentation(status: OpenApiMcpStatus | undefined): Op
   }
   if (status.state === 'ready') {
     return { title: '开放平台 MCP', description: '已连接，Agent 可使用开放平台工具' }
-  }
-  if (status.state === 'reauthorization-required') {
-    return { title: '开放平台 MCP', description: '授权已撤销，需要重新授权', action: 'reauthorize' }
   }
   if (status.state === 'degraded') {
     return { title: '开放平台 MCP', description: '连接暂时不可用，可安全重试', action: 'retry' }
@@ -58,14 +55,10 @@ export function OpenApiMcpSettings(): JSX.Element {
   const presentation = openApiMcpPresentation(status)
   const runAction = async (): Promise<void> => {
     if (presentation.action === undefined || busy) return
-    if (presentation.action === 'reauthorize'
-      && !window.confirm('重新授权会替换当前 DSH 托管凭据，并恢复开放平台 MCP 工具。是否继续？')) return
     setBusy(true)
     setFeedback('')
     try {
-      const next = await callArkme<OpenApiMcpStatus>(
-        presentation.action === 'reauthorize' ? 'openapi.mcp.reauthorize' : 'openapi.mcp.retry',
-      )
+      const next = await callArkme<OpenApiMcpStatus>('openapi.mcp.retry')
       setStatus(next)
     } catch {
       setFeedback('操作未完成，请稍后重试')
@@ -91,7 +84,7 @@ export function OpenApiMcpSettings(): JSX.Element {
           type="button"
           className="arkme-redesign-setting-row"
           disabled={busy}
-          aria-label={presentation.action === 'reauthorize' ? '重新授权开放平台 MCP' : '重试开放平台 MCP 连接'}
+          aria-label="重试开放平台 MCP 连接"
           onClick={() => { void runAction() }}
         >{body}</button>}
     {feedback === '' ? null : <p className="arkme-account-feedback" role="alert">{feedback}</p>}

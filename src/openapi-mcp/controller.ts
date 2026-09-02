@@ -1,7 +1,10 @@
+import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
+import { createHash } from 'node:crypto'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from '../keychain-store.js'
 import { SecretValue } from '../secret-value.js'
 import { OpenApiControlPlaneError } from './control-plane.js'
 import { InvalidManagedOpenApiCredentialError } from './credential-store.js'
+import { OpenApiMcpManifestError } from './manifest-source.js'
 import type { SessionTransitionObserver } from './session-observer.js'
 import {
   credentialBelongsTo,
@@ -10,6 +13,8 @@ import {
   type ManagedOpenApiControlPlane,
   type ManagedOpenApiCredential,
   type ManagedOpenApiCredentialStore,
+  type OpenApiMcpManifest,
+  type OpenApiMcpManifestSource,
   type OpenApiMcpMount,
   type OpenApiMcpPrincipal,
   type OpenApiMcpReconcileLock,
@@ -18,8 +23,10 @@ import {
 } from './types.js'
 
 const MANAGED_TOOL_PREFIX = 'mcp__arkme__'
-const RETRY_DELAYS_MILLIS = [60_000, 5 * 60_000, 30 * 60_000] as const
-const FALLBACK_RECONCILE_MILLIS = 6 * 60 * 60_000
+const CREDENTIAL_RETRY_DELAYS_MILLIS = [60_000, 5 * 60_000, 30 * 60_000] as const
+const CREDENTIAL_FALLBACK_RECONCILE_MILLIS = 6 * 60 * 60_000
+const MANIFEST_RETRY_DELAYS_MILLIS = [60_000, 5 * 60_000] as const
+const MANIFEST_FALLBACK_RECONCILE_MILLIS = 5 * 60_000
 const DISCONNECT_RETRY_DELAYS_MILLIS = [0, 1_000, 5_000] as const
 const DISCONNECT_TIMEOUT_MILLIS = 10_000
 
@@ -31,8 +38,7 @@ interface MountedCredential {
   principal: OpenApiMcpPrincipal
   keyId: string
   generation: number
-  catalogRevision: string
-  runtimeRevision: string
+  manifest: OpenApiMcpManifest
   mount: OpenApiMcpMount
 }
 
@@ -47,6 +53,7 @@ export interface ManagedOpenApiMcpControllerOptions {
   sessionStore: ArkmeSessionStore
   accessCredentialProvider: ManagedAccessCredentialProvider
   controlPlane: ManagedOpenApiControlPlane
+  manifestSource: OpenApiMcpManifestSource
   credentialStore: ManagedOpenApiCredentialStore
   runtime: OpenApiMcpRuntime
   reconcileLock: OpenApiMcpReconcileLock
@@ -72,14 +79,19 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   private activeCredential: ManagedOpenApiCredential | undefined
   private mounted: MountedCredential | undefined
   private operationQueue: Promise<void> = Promise.resolve()
-  private timer: ReturnType<typeof setTimeout> | undefined
+  private credentialTimer: ReturnType<typeof setTimeout> | undefined
+  private manifestTimer: ReturnType<typeof setTimeout> | undefined
+  private credentialNextAtMillis: number | undefined
+  private manifestNextAtMillis: number | undefined
   private activeAbort: AbortController | undefined
   private mountTransition: Promise<void> | undefined
   private mountCleanup: Promise<void> = Promise.resolve()
   private readonly toolExecutionAborts = new Set<AbortController>()
   private toolExecutionEnabled = false
+  private credentialFailures = 0
+  private manifestFailures = 0
+  private diagnosticPending = false
   private epoch = 0
-  private failures = 0
   private disposed = false
 
   constructor(private readonly options: ManagedOpenApiMcpControllerOptions) {
@@ -93,7 +105,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   start(): void {
     if (!this.options.enabled || this.disposed) return
     const operationEpoch = this.epoch
-    void this.enqueue(async () => { await this.reconcile(false, operationEpoch) })
+    void this.enqueue(async () => { await this.reconcileCredential(operationEpoch) })
   }
 
   status(): OpenApiMcpStatus {
@@ -106,15 +118,12 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     return 'Arkme OpenAPI MCP tools are not ready for the current account'
   }
 
-  /**
-   * Fences both sides of an official MCP dispatch. A session or mount change
-   * aborts the transport and replaces any late result with a fixed safe error.
-   */
-  async executeManagedTool<T>(
+  /** Fences both sides of an official MCP dispatch and diagnoses managed failures in the background. */
+  async executeManagedTool(
     toolName: string,
     callerSignal: AbortSignal,
-    execute: (signal: AbortSignal) => Promise<T>,
-  ): Promise<T> {
+    execute: (signal: AbortSignal) => Promise<ToolExecutionResult>,
+  ): Promise<ToolExecutionResult> {
     if (!toolName.startsWith(MANAGED_TOOL_PREFIX)) return await execute(callerSignal)
     const mounted = this.mounted
     if (mounted === undefined) return await execute(callerSignal)
@@ -128,6 +137,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
       if (lifecycleAbort.signal.aborted || !this.executionMatches(mounted)) {
         throw new ManagedOpenApiMcpExecutionSupersededError()
       }
+      if (result.isError) this.scheduleDiagnosticReconcile(mounted)
       return result
     } catch (error) {
       if (lifecycleAbort.signal.aborted || !this.executionMatches(mounted)) {
@@ -142,22 +152,10 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   async retry(): Promise<OpenApiMcpStatus> {
     if (!this.options.enabled || this.disposed) return this.status()
     this.cancelCurrent(false)
+    this.credentialFailures = 0
+    this.manifestFailures = 0
     const operationEpoch = this.epoch
-    await this.enqueue(async () => {
-      this.failures = 0
-      await this.reconcile(false, operationEpoch)
-    })
-    return this.status()
-  }
-
-  async reauthorize(): Promise<OpenApiMcpStatus> {
-    if (!this.options.enabled || this.disposed) return this.status()
-    this.cancelCurrent(true)
-    const operationEpoch = this.epoch
-    await this.enqueue(async () => {
-      this.failures = 0
-      await this.reconcile(true, operationEpoch)
-    })
+    await this.enqueue(async () => { await this.reconcileCredential(operationEpoch) })
     return this.status()
   }
 
@@ -166,6 +164,8 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     next: ArkmeSessionCredentials | undefined,
   ): Promise<OpenApiMcpSessionTransition> {
     this.cancelCurrent(true)
+    this.credentialFailures = 0
+    this.manifestFailures = 0
     this.setStatus({ state: 'inactive', retryable: false, userAction: 'none' })
     const previousPrincipal = openApiMcpPrincipal(previous)
     const nextPrincipal = openApiMcpPrincipal(next)
@@ -185,18 +185,20 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
 
   committed(ticket: OpenApiMcpSessionTransition): void {
     if (!ticket.changed || this.disposed) return
+    this.cancelCurrent(true)
     if (ticket.previousCredential !== undefined) this.disconnectCredential(ticket.previousCredential.apiKey)
     const operationEpoch = this.epoch
     void this.enqueue(async () => {
       await this.cleanupTransitionCredential(ticket.nextPrincipal)
-      await this.reconcile(false, operationEpoch)
+      await this.reconcileCredential(operationEpoch)
     })
   }
 
   rolledBack(ticket: OpenApiMcpSessionTransition): void {
     if (!ticket.changed || this.disposed) return
+    this.cancelCurrent(true)
     const operationEpoch = this.epoch
-    void this.enqueue(async () => { await this.reconcile(false, operationEpoch) })
+    void this.enqueue(async () => { await this.reconcileCredential(operationEpoch) })
   }
 
   async dispose(): Promise<void> {
@@ -212,34 +214,42 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     }
   }
 
-  private async reconcile(explicitReauthorization: boolean, operationEpoch: number): Promise<void> {
+  private async reconcileCredential(operationEpoch: number, background = false): Promise<void> {
     if (this.disposed || !this.options.enabled || operationEpoch !== this.epoch) return
     const abort = new AbortController()
     this.activeAbort = abort
-    this.setStatus({ state: 'reconciling', retryable: false, userAction: 'none' })
+    const progress: { phase: 'credential' | 'manifest' } = { phase: 'credential' }
+    if (!background && !this.toolExecutionEnabled) {
+      this.setStatus({ state: 'reconciling', retryable: false, userAction: 'none' })
+    }
     try {
-      await this.options.reconcileLock.run(abort.signal, async () => {
-        const session = await this.options.sessionStore.read()
-        const principal = openApiMcpPrincipal(session)
-        if (session === undefined) {
-          this.activePrincipal = undefined
+      const session = await this.options.sessionStore.read()
+      const principal = openApiMcpPrincipal(session)
+      if (session === undefined) {
+        this.activePrincipal = undefined
+        this.activeCredential = undefined
+        await this.disposeMount()
+        await this.options.reconcileLock.run(abort.signal, async () => {
           const credential = await this.readLocalCredential()
           if (credential !== undefined) await this.discardLocalCredential(credential)
-          else this.activeCredential = undefined
-          await this.disposeMount()
-          this.setStatus({ state: 'inactive', retryable: false, userAction: 'login' })
-          return
-        }
-        if (principal === undefined) {
-          this.activePrincipal = undefined
-          this.activeCredential = undefined
-          await this.disposeMount()
-          throw new Error('managed principal unavailable')
-        }
-        this.assertCurrent(operationEpoch, abort.signal)
-        await this.adoptPrincipal(principal)
-        this.assertCurrent(operationEpoch, abort.signal)
+        })
+        this.setStatus({ state: 'inactive', retryable: false, userAction: 'login' })
+        return
+      }
+      if (principal === undefined) {
+        this.activePrincipal = undefined
+        this.activeCredential = undefined
+        await this.disposeMount()
+        throw new Error('managed principal unavailable')
+      }
+      this.assertCurrent(operationEpoch, abort.signal)
+      await this.adoptPrincipal(principal)
+      this.assertCurrent(operationEpoch, abort.signal)
 
+      const outcome = await this.options.reconcileLock.run(abort.signal, async (): Promise<{
+        credential: ManagedOpenApiCredential
+        reconcileAfterMillis: number
+      }> => {
         let credential = await this.readLocalCredential()
         if (credential !== undefined && !credentialBelongsTo(credential, principal)) {
           await this.discardLocalCredential(credential)
@@ -247,31 +257,21 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
         }
         this.activeCredential = credential
         const accessToken = await this.resolveAccessCredential(principal, operationEpoch, abort.signal)
-        const result = explicitReauthorization
-          ? await this.options.controlPlane.reauthorize(accessToken, abort.signal)
-          : await this.options.controlPlane.ensure(accessToken, credential === undefined ? undefined : {
-            keyId: credential.keyId,
-            generation: credential.generation,
-          }, abort.signal)
+        const result = await this.options.controlPlane.ensure(accessToken, credential === undefined ? undefined : {
+          keyId: credential.keyId,
+          generation: credential.generation,
+          keyDigest: managedCredentialDigest(credential),
+        }, abort.signal)
         if (this.disposed || abort.signal.aborted || operationEpoch !== this.epoch) {
           if (result.state === 'issued') this.disconnectCredential(result.apiKey)
           throw abort.signal.reason ?? new Error('OpenAPI MCP lifecycle superseded')
         }
 
-        if (result.state === 'reauthorization_required') {
-          await this.removeLocalCredential()
-          await this.disposeMount()
-          this.failures = 0
-          const next = this.schedule(result.reconcileAfterSeconds * 1000, operationEpoch)
-          this.setStatus({ state: 'reauthorization-required', retryable: false, userAction: 'reauthorize', nextReconcileAtMillis: next })
-          return
-        }
-
         let desired: ManagedOpenApiCredential
         if (result.state === 'issued') {
           desired = {
-            schemaVersion: 1, ...principal, keyId: result.keyId, generation: result.generation, apiKey: result.apiKey,
-            expiresAtMillis: result.expiresAtMillis,
+            schemaVersion: 1, ...principal, keyId: result.keyId, generation: result.generation,
+            apiKey: result.apiKey, expiresAtMillis: result.expiresAtMillis,
           }
           try {
             await this.options.credentialStore.write(desired)
@@ -296,38 +296,112 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
           }
         }
         this.assertCurrent(operationEpoch, abort.signal)
-        this.activeCredential = desired
-        await this.replaceMount(
-          desired,
-          principal,
-          result.mcpCatalogRevision,
-          result.mcpRuntimeRevision,
-          operationEpoch,
-          abort.signal,
-        )
-        this.failures = 0
-        const next = this.schedule(result.reconcileAfterSeconds * 1000, operationEpoch)
-        this.setStatus({ state: 'ready', retryable: false, userAction: 'none', nextReconcileAtMillis: next })
+        return { credential: desired, reconcileAfterMillis: result.reconcileAfterSeconds * 1000 }
       })
+      this.assertCurrent(operationEpoch, abort.signal)
+      if (!this.mountMatchesCredential(outcome.credential, principal)) {
+        this.disableToolExecution()
+        this.beginMountCleanup()
+      }
+      this.activeCredential = outcome.credential
+      this.credentialFailures = 0
+      this.scheduleCredential(outcome.reconcileAfterMillis, operationEpoch)
+
+      progress.phase = 'manifest'
+      await this.refreshManifestFor(outcome.credential, principal, operationEpoch, abort.signal)
     } catch (error) {
       if (!abort.signal.aborted && !this.disposed && operationEpoch === this.epoch) {
-        this.failures++
-        this.warn(failureCategory(error))
-        if (this.activeCredential !== undefined && this.activeCredential.expiresAtMillis <= this.now()) {
-          this.disableToolExecution()
-          this.beginMountCleanup()
-        }
-        const session = await this.options.sessionStore.read().catch(() => undefined)
-        if (session === undefined) {
-          this.setStatus({ state: 'inactive', retryable: false, userAction: 'login' })
-        } else {
-          const next = this.schedule(retryDelay(this.failures), operationEpoch)
-          this.setStatus({ state: 'degraded', retryable: true, userAction: 'none', nextReconcileAtMillis: next })
-        }
+        if (progress.phase === 'manifest') await this.handleManifestFailure(error, operationEpoch)
+        else await this.handleCredentialFailure(error, operationEpoch)
       }
     } finally {
       if (this.activeAbort === abort) this.activeAbort = undefined
     }
+  }
+
+  private async refreshManifest(operationEpoch: number): Promise<void> {
+    if (this.disposed || !this.options.enabled || operationEpoch !== this.epoch) return
+    const abort = new AbortController()
+    this.activeAbort = abort
+    try {
+      const session = await this.options.sessionStore.read()
+      const principal = openApiMcpPrincipal(session)
+      const credential = this.activeCredential
+      if (principal === undefined || credential === undefined || !credentialBelongsTo(credential, principal)
+        || !samePrincipal(this.activePrincipal, principal)) {
+        this.scheduleCredential(60_000, operationEpoch)
+        return
+      }
+      await this.refreshManifestFor(credential, principal, operationEpoch, abort.signal)
+    } catch (error) {
+      if (!abort.signal.aborted && !this.disposed && operationEpoch === this.epoch) {
+        await this.handleManifestFailure(error, operationEpoch)
+      }
+    } finally {
+      if (this.activeAbort === abort) this.activeAbort = undefined
+    }
+  }
+
+  private async refreshManifestFor(
+    credential: ManagedOpenApiCredential,
+    principal: OpenApiMcpPrincipal,
+    operationEpoch: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const manifest = await this.options.manifestSource.read(signal)
+    this.assertCurrent(operationEpoch, signal)
+    await this.replaceMount(credential, principal, manifest, operationEpoch, signal)
+    this.manifestFailures = 0
+    this.scheduleManifest(manifest.pollAfterSeconds * 1000, operationEpoch)
+    this.setReadyStatus()
+  }
+
+  private async handleCredentialFailure(error: unknown, operationEpoch: number): Promise<void> {
+    this.credentialFailures++
+    this.warn(failureCategory(error))
+    if (this.activeCredential !== undefined && this.activeCredential.expiresAtMillis <= this.now()) {
+      this.disableToolExecution()
+      this.beginMountCleanup()
+    }
+    let session: ArkmeSessionCredentials | undefined
+    try {
+      session = await this.options.sessionStore.read()
+    } catch {
+      this.scheduleCredential(credentialRetryDelay(this.credentialFailures), operationEpoch)
+      this.setDegradedStatus()
+      return
+    }
+    if (session === undefined) {
+      this.setStatus({ state: 'inactive', retryable: false, userAction: 'login' })
+      return
+    }
+    this.scheduleCredential(credentialRetryDelay(this.credentialFailures), operationEpoch)
+    this.setDegradedStatus()
+  }
+
+  private async handleManifestFailure(error: unknown, operationEpoch: number): Promise<void> {
+    this.manifestFailures++
+    this.warn(failureCategory(error))
+    this.scheduleManifest(manifestRetryDelay(this.manifestFailures), operationEpoch)
+    if (this.toolExecutionEnabled && this.mounted !== undefined) this.setReadyStatus()
+    else this.setDegradedStatus()
+  }
+
+  private scheduleDiagnosticReconcile(mounted: MountedCredential): void {
+    if (this.disposed || this.diagnosticPending || !this.executionMatches(mounted)) return
+    this.diagnosticPending = true
+    const operationEpoch = this.epoch
+    queueMicrotask(() => {
+      void this.enqueue(async () => {
+        try {
+          if (!this.disposed && operationEpoch === this.epoch && this.executionMatches(mounted)) {
+            await this.reconcileCredential(operationEpoch, true)
+          }
+        } finally {
+          this.diagnosticPending = false
+        }
+      })
+    })
   }
 
   private async adoptPrincipal(principal: OpenApiMcpPrincipal): Promise<void> {
@@ -354,22 +428,18 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   private async replaceMount(
     credential: ManagedOpenApiCredential,
     principal: OpenApiMcpPrincipal,
-    catalogRevision: string,
-    runtimeRevision: string,
+    manifest: OpenApiMcpManifest,
     operationEpoch: number,
     signal: AbortSignal,
   ): Promise<void> {
     await this.mountCleanup
     this.assertCurrent(operationEpoch, signal)
     if (this.mounted !== undefined && this.toolExecutionEnabled
-      && this.mounted.keyId === credential.keyId && this.mounted.generation === credential.generation
-      && this.mounted.catalogRevision === catalogRevision && this.mounted.runtimeRevision === runtimeRevision
-      && samePrincipal(this.mounted.principal, principal)) return
+      && this.mountMatchesCredential(credential, principal)
+      && sameManifest(this.mounted.manifest, manifest)) return
     await this.disposeMount()
     this.assertCurrent(operationEpoch, signal)
-    const transition = this.mountFresh(
-      credential, principal, catalogRevision, runtimeRevision, operationEpoch, signal,
-    )
+    const transition = this.mountFresh(credential, principal, manifest, operationEpoch, signal)
     this.mountTransition = transition
     try {
       await transition
@@ -381,18 +451,17 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   private async mountFresh(
     credential: ManagedOpenApiCredential,
     principal: OpenApiMcpPrincipal,
-    catalogRevision: string,
-    runtimeRevision: string,
+    manifest: OpenApiMcpManifest,
     operationEpoch: number,
     signal: AbortSignal,
   ): Promise<void> {
     let candidate: MountedCredential | undefined
-    const mount = this.options.runtime.mount(new SecretValue(credential.apiKey), signal, () => {
+    const mount = this.options.runtime.mount(new SecretValue(credential.apiKey), manifest, signal, () => {
       if (candidate !== undefined) this.mountUnavailable(candidate)
     })
     candidate = {
       principal: { ...principal }, keyId: credential.keyId, generation: credential.generation,
-      catalogRevision, runtimeRevision, mount,
+      manifest: { ...manifest }, mount,
     }
     this.mounted = candidate
     try {
@@ -413,11 +482,11 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     if (this.disposed || this.mounted !== mounted) return
     this.cancelCurrent(true)
     this.beginMountCleanup()
-    this.failures++
+    this.manifestFailures++
     this.warn('mcp-unavailable')
     const operationEpoch = this.epoch
-    const next = this.schedule(retryDelay(this.failures), operationEpoch)
-    this.setStatus({ state: 'degraded', retryable: true, userAction: 'none', nextReconcileAtMillis: next })
+    this.scheduleCredential(manifestRetryDelay(this.manifestFailures), operationEpoch)
+    this.setDegradedStatus()
   }
 
   private async disposeMount(): Promise<void> {
@@ -439,6 +508,13 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   private executionMatches(mounted: MountedCredential): boolean {
     return !this.disposed && this.toolExecutionEnabled && this.mounted === mounted
       && samePrincipal(this.activePrincipal, mounted.principal)
+  }
+
+  private mountMatchesCredential(credential: ManagedOpenApiCredential, principal: OpenApiMcpPrincipal): boolean {
+    return this.mounted !== undefined
+      && this.mounted.keyId === credential.keyId
+      && this.mounted.generation === credential.generation
+      && samePrincipal(this.mounted.principal, principal)
   }
 
   private async removeLocalCredential(): Promise<void> {
@@ -496,27 +572,75 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     })()
   }
 
-  private schedule(delayMillis: number, operationEpoch: number): number {
-    if (this.timer !== undefined) clearTimeout(this.timer)
-    const bounded = Math.max(60_000, Math.min(7 * 24 * 60 * 60_000, delayMillis))
-    const jittered = Math.round(bounded * (0.9 + this.random() * 0.2))
+  private scheduleCredential(delayMillis: number, operationEpoch: number): number {
+    if (this.credentialTimer !== undefined) clearTimeout(this.credentialTimer)
+    const jittered = this.jitter(delayMillis, 7 * 24 * 60 * 60_000)
     const next = this.now() + jittered
-    this.timer = setTimeout(() => {
-      this.timer = undefined
+    this.credentialNextAtMillis = next
+    this.credentialTimer = setTimeout(() => {
+      this.credentialTimer = undefined
+      this.credentialNextAtMillis = undefined
       if (!this.disposed && operationEpoch === this.epoch) {
-        void this.enqueue(async () => { await this.reconcile(false, operationEpoch) })
+        void this.enqueue(async () => { await this.reconcileCredential(operationEpoch) })
       }
     }, jittered)
-    this.timer.unref()
+    this.credentialTimer.unref()
     return next
+  }
+
+  private scheduleManifest(delayMillis: number, operationEpoch: number): number {
+    if (this.manifestTimer !== undefined) clearTimeout(this.manifestTimer)
+    const jittered = this.jitter(delayMillis, 60 * 60_000)
+    const next = this.now() + jittered
+    this.manifestNextAtMillis = next
+    this.manifestTimer = setTimeout(() => {
+      this.manifestTimer = undefined
+      this.manifestNextAtMillis = undefined
+      if (!this.disposed && operationEpoch === this.epoch) {
+        void this.enqueue(async () => { await this.refreshManifest(operationEpoch) })
+      }
+    }, jittered)
+    this.manifestTimer.unref()
+    return next
+  }
+
+  private jitter(delayMillis: number, maximumMillis: number): number {
+    const bounded = Math.max(60_000, Math.min(maximumMillis, delayMillis))
+    return Math.round(bounded * (0.9 + this.random() * 0.2))
+  }
+
+  private nextReconcileAtMillis(): number | undefined {
+    const candidates = [this.credentialNextAtMillis, this.manifestNextAtMillis]
+      .filter((value): value is number => value !== undefined)
+    return candidates.length === 0 ? undefined : Math.min(...candidates)
+  }
+
+  private setReadyStatus(): void {
+    const next = this.nextReconcileAtMillis()
+    this.setStatus({
+      state: 'ready', retryable: false, userAction: 'none',
+      ...(next === undefined ? {} : { nextReconcileAtMillis: next }),
+    })
+  }
+
+  private setDegradedStatus(): void {
+    const next = this.nextReconcileAtMillis()
+    this.setStatus({
+      state: 'degraded', retryable: true, userAction: 'none',
+      ...(next === undefined ? {} : { nextReconcileAtMillis: next }),
+    })
   }
 
   private cancelCurrent(quarantineTools: boolean): void {
     this.epoch++
     this.activeAbort?.abort(new Error('OpenAPI MCP lifecycle superseded'))
     this.activeAbort = undefined
-    if (this.timer !== undefined) clearTimeout(this.timer)
-    this.timer = undefined
+    if (this.credentialTimer !== undefined) clearTimeout(this.credentialTimer)
+    if (this.manifestTimer !== undefined) clearTimeout(this.manifestTimer)
+    this.credentialTimer = undefined
+    this.manifestTimer = undefined
+    this.credentialNextAtMillis = undefined
+    this.manifestNextAtMillis = undefined
     if (quarantineTools) this.disableToolExecution()
   }
 
@@ -545,13 +669,29 @@ function samePrincipal(left: OpenApiMcpPrincipal | undefined, right: OpenApiMcpP
   return left?.userId === right.userId && left.loginDeviceId === right.loginDeviceId
 }
 
-function retryDelay(failures: number): number {
-  if (failures > RETRY_DELAYS_MILLIS.length) return FALLBACK_RECONCILE_MILLIS
-  return RETRY_DELAYS_MILLIS[Math.max(0, failures - 1)] ?? FALLBACK_RECONCILE_MILLIS
+function managedCredentialDigest(credential: ManagedOpenApiCredential): string {
+  return createHash('sha256').update(credential.apiKey, 'utf8').digest('hex')
+}
+
+function sameManifest(left: OpenApiMcpManifest, right: OpenApiMcpManifest): boolean {
+  return left.catalogRevision === right.catalogRevision
+    && left.runtimeRevision === right.runtimeRevision
+    && left.endpointPath === right.endpointPath
+}
+
+function credentialRetryDelay(failures: number): number {
+  if (failures > CREDENTIAL_RETRY_DELAYS_MILLIS.length) return CREDENTIAL_FALLBACK_RECONCILE_MILLIS
+  return CREDENTIAL_RETRY_DELAYS_MILLIS[Math.max(0, failures - 1)] ?? CREDENTIAL_FALLBACK_RECONCILE_MILLIS
+}
+
+function manifestRetryDelay(failures: number): number {
+  if (failures > MANIFEST_RETRY_DELAYS_MILLIS.length) return MANIFEST_FALLBACK_RECONCILE_MILLIS
+  return MANIFEST_RETRY_DELAYS_MILLIS[Math.max(0, failures - 1)] ?? MANIFEST_FALLBACK_RECONCILE_MILLIS
 }
 
 function failureCategory(error: unknown): string {
   if (error instanceof OpenApiControlPlaneError) return `control-${error.kind}`
+  if (error instanceof OpenApiMcpManifestError) return `manifest-${error.kind}`
   return 'runtime'
 }
 

@@ -1,11 +1,24 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, stat, unlink } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import type { OpenApiMcpReconcileLock } from './types.js'
 
 const STALE_AFTER_MILLIS = 2 * 60_000
 const ACQUIRE_TIMEOUT_MILLIS = 5_000
 const HEARTBEAT_MILLIS = 30_000
+
+export function managedOpenApiMcpReconcileLockPath(
+  credentialNamespace: string,
+  coordinationRoot = join(homedir(), '.arkme', 'coordination'),
+): string {
+  const normalized = credentialNamespace.trim()
+  if (normalized === '') throw new Error('OpenAPI MCP credential namespace is required')
+  const namespaceDigest = createHash('sha256')
+    .update(`arkme-openapi-mcp-lock-v1\0${normalized}`)
+    .digest('hex')
+  return join(coordinationRoot, 'openapi-mcp', namespaceDigest, 'reconcile.lock')
+}
 
 function errorCode(error: unknown): string | undefined {
   return typeof error === 'object' && error !== null && 'code' in error

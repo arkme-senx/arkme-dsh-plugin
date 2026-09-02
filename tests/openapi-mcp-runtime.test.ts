@@ -3,6 +3,13 @@ import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 import { CordisOpenApiMcpRuntime } from '../src/openapi-mcp/mcp-runtime.js'
 import { SecretValue } from '../src/secret-value.js'
 
+const manifest = {
+  catalogRevision: `sha256:${'a'.repeat(64)}`,
+  runtimeRevision: 'mcp-runtime-v1',
+  endpointPath: '/mcp/managed',
+  pollAfterSeconds: 300,
+}
+
 function runtimeContext(plugin: ReturnType<typeof vi.fn>) {
   let names: string[] = []
   let listener: (() => void) | undefined
@@ -30,17 +37,22 @@ describe('official OpenAPI MCP runtime adapter', () => {
       dispose,
     }))
     const runtime = new CordisOpenApiMcpRuntime(
-      context.ctx as never, 'https://openapi.example.com/mcp', 30_000,
+      context.ctx as never, 'https://openapi.example.com', 30_000,
     )
 
     const mount = runtime.mount(
-      new SecretValue('managed-api-secret'), new AbortController().signal, vi.fn(),
+      new SecretValue('managed-api-secret'), manifest, new AbortController().signal, vi.fn(),
     )
     await mount.ready()
 
     expect(plugin).toHaveBeenCalledWith(McpClient, {
-      transport: 'streamable-http', serverName: 'arkme', url: 'https://openapi.example.com/mcp',
-      headers: { Authorization: 'Bearer managed-api-secret' }, toolCallTimeoutMs: 30_000,
+      transport: 'streamable-http', serverName: 'arkme', url: 'https://openapi.example.com/mcp/managed',
+      headers: {
+        Authorization: 'Bearer managed-api-secret',
+        'X-Arkme-MCP-Catalog-Revision': manifest.catalogRevision,
+        'X-Arkme-MCP-Runtime-Revision': manifest.runtimeRevision,
+      },
+      toolCallTimeoutMs: 30_000,
       failOnStartupError: true,
       reconnect: { enabled: true, initialDelayMs: 500, maxDelayMs: 30_000, maxAttempts: 10 },
     })
@@ -54,10 +66,10 @@ describe('official OpenAPI MCP runtime adapter', () => {
     const controller = new AbortController()
     controller.abort(new Error('superseded'))
     const runtime = new CordisOpenApiMcpRuntime(
-      context.ctx as never, 'https://openapi.example.com/mcp', 30_000,
+      context.ctx as never, 'https://openapi.example.com', 30_000,
     )
 
-    expect(() => runtime.mount(new SecretValue('managed-api-secret'), controller.signal, vi.fn())).toThrow('superseded')
+    expect(() => runtime.mount(new SecretValue('managed-api-secret'), manifest, controller.signal, vi.fn())).toThrow('superseded')
     expect(plugin).not.toHaveBeenCalled()
   })
 
@@ -69,10 +81,10 @@ describe('official OpenAPI MCP runtime adapter', () => {
     const context = runtimeContext(plugin)
     const controller = new AbortController()
     const runtime = new CordisOpenApiMcpRuntime(
-      context.ctx as never, 'https://openapi.example.com/mcp', 30_000,
+      context.ctx as never, 'https://openapi.example.com', 30_000,
     )
 
-    const mount = runtime.mount(new SecretValue('managed-api-secret'), controller.signal, vi.fn())
+    const mount = runtime.mount(new SecretValue('managed-api-secret'), manifest, controller.signal, vi.fn())
     const mounting = mount.ready()
     controller.abort(new Error('superseded'))
 
@@ -91,10 +103,10 @@ describe('official OpenAPI MCP runtime adapter', () => {
     }))
     const unavailable = vi.fn()
     const runtime = new CordisOpenApiMcpRuntime(
-      context.ctx as never, 'https://openapi.example.com/mcp', 30_000,
+      context.ctx as never, 'https://openapi.example.com', 30_000,
     )
     const mount = runtime.mount(
-      new SecretValue('managed-api-secret'), new AbortController().signal, unavailable,
+      new SecretValue('managed-api-secret'), manifest, new AbortController().signal, unavailable,
     )
     await mount.ready()
 
@@ -119,10 +131,10 @@ describe('official OpenAPI MCP runtime adapter', () => {
       dispose,
     }))
     const runtime = new CordisOpenApiMcpRuntime(
-      context.ctx as never, 'https://openapi.example.com/mcp', 30_000,
+      context.ctx as never, 'https://openapi.example.com', 30_000,
     )
     const mount = runtime.mount(
-      new SecretValue('managed-api-secret'), new AbortController().signal, vi.fn(),
+      new SecretValue('managed-api-secret'), manifest, new AbortController().signal, vi.fn(),
     )
     await mount.ready()
 
@@ -138,11 +150,11 @@ describe('official OpenAPI MCP runtime adapter', () => {
     const context = runtimeContext(plugin)
     context.setNames([])
     const runtime = new CordisOpenApiMcpRuntime(
-      context.ctx as never, 'https://openapi.example.com/mcp', 30_000,
+      context.ctx as never, 'https://openapi.example.com', 30_000,
     )
 
     const mount = runtime.mount(
-      new SecretValue('managed-api-secret'), new AbortController().signal, vi.fn(),
+      new SecretValue('managed-api-secret'), manifest, new AbortController().signal, vi.fn(),
     )
     await expect(mount.ready()).rejects.toThrow('without any Arkme tools')
     await mount.dispose()
@@ -155,11 +167,11 @@ describe('official OpenAPI MCP runtime adapter', () => {
     const context = runtimeContext(plugin)
     context.setNames(['mcp__arkme__foreign_tool'])
     const runtime = new CordisOpenApiMcpRuntime(
-      context.ctx as never, 'https://openapi.example.com/mcp', 30_000,
+      context.ctx as never, 'https://openapi.example.com', 30_000,
     )
 
     const mount = runtime.mount(
-      new SecretValue('managed-api-secret'), new AbortController().signal, vi.fn(),
+      new SecretValue('managed-api-secret'), manifest, new AbortController().signal, vi.fn(),
     )
     await expect(mount.ready()).rejects.toThrow('without any Arkme tools')
     await mount.dispose()

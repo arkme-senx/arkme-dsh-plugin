@@ -24,13 +24,12 @@ export type OpenApiMcpState =
   | 'reconciling'
   | 'ready'
   | 'degraded'
-  | 'reauthorization-required'
 
 /** Browser/model-safe lifecycle projection. It intentionally contains no principal or credential identifier. */
 export interface OpenApiMcpStatus {
   state: OpenApiMcpState
   retryable: boolean
-  userAction: 'none' | 'login' | 'reauthorize'
+  userAction: 'none' | 'login'
   nextReconcileAtMillis?: number
 }
 
@@ -40,8 +39,6 @@ export type ManagedOpenApiControlResult = {
   generation: number
   expiresAtMillis: number
   reconcileAfterSeconds: number
-  mcpCatalogRevision: string
-  mcpRuntimeRevision: string
 } | {
   state: 'issued'
   keyId: string
@@ -49,24 +46,28 @@ export type ManagedOpenApiControlResult = {
   apiKey: string
   expiresAtMillis: number
   reconcileAfterSeconds: number
-  mcpCatalogRevision: string
-  mcpRuntimeRevision: string
-} | {
-  state: 'reauthorization_required'
-  reconcileAfterSeconds: number
-  mcpCatalogRevision: string
-  mcpRuntimeRevision: string
+}
+
+export interface OpenApiMcpManifest {
+  catalogRevision: string
+  runtimeRevision: string
+  endpointPath: string
+  pollAfterSeconds: number
 }
 
 export interface ManagedOpenApiCredentialObservation {
   keyId: string
   generation: number
+  keyDigest: string
 }
 
 export interface ManagedOpenApiControlPlane {
   ensure(accessToken: SecretValue, observed: ManagedOpenApiCredentialObservation | undefined, signal: AbortSignal): Promise<ManagedOpenApiControlResult>
-  reauthorize(accessToken: SecretValue, signal: AbortSignal): Promise<Extract<ManagedOpenApiControlResult, { state: 'issued' }>>
   disconnect(apiKey: SecretValue, signal: AbortSignal): Promise<void>
+}
+
+export interface OpenApiMcpManifestSource {
+  read(signal: AbortSignal): Promise<OpenApiMcpManifest>
 }
 
 export interface ManagedOpenApiCredentialStore {
@@ -81,7 +82,7 @@ export interface OpenApiMcpMount {
 }
 
 export interface OpenApiMcpRuntime {
-  mount(apiKey: SecretValue, signal: AbortSignal, onUnavailable: () => void): OpenApiMcpMount
+  mount(apiKey: SecretValue, manifest: OpenApiMcpManifest, signal: AbortSignal, onUnavailable: () => void): OpenApiMcpMount
 }
 
 export interface OpenApiMcpReconcileLock {

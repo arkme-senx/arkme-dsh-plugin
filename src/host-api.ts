@@ -763,7 +763,7 @@ export interface ArkmeHostApiOptions {
   ownedExtensionInventory?: () => ArkmeOwnedExtensionInventory | undefined
   remoteHost?: () => DshRemoteHostFacade | undefined
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>
-  openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry' | 'reauthorize'>
+  openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
@@ -854,7 +854,7 @@ export async function dispatchArkmeHostOperation(
   requestSignal?: AbortSignal,
   remoteHost?: DshRemoteHostFacade,
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>,
-  openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry' | 'reauthorize'>,
+  openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': return service.providerCapabilities()
@@ -909,7 +909,6 @@ export async function dispatchArkmeHostOperation(
     ))
     case 'openapi.mcp.status': return requireOpenApiMcpController(openApiMcpController).status()
     case 'openapi.mcp.retry': return await requireOpenApiMcpController(openApiMcpController).retry()
-    case 'openapi.mcp.reauthorize': return await requireOpenApiMcpController(openApiMcpController).reauthorize()
     case 'remote.getStatus': return requireRemoteHost(remoteHost).getStatus()
     case 'remote.renameDesktop': return await requireRemoteHost(remoteHost).renameDesktop(stringParam(params, 'displayName'))
     case 'billing.quota': return await service.billingQuota()
@@ -1940,8 +1939,8 @@ export async function dispatchArkmeHostOperation(
 }
 
 function requireOpenApiMcpController(
-  controller: Pick<ManagedOpenApiMcpController, 'status' | 'retry' | 'reauthorize'> | undefined,
-): Pick<ManagedOpenApiMcpController, 'status' | 'retry' | 'reauthorize'> {
+  controller: Pick<ManagedOpenApiMcpController, 'status' | 'retry'> | undefined,
+): Pick<ManagedOpenApiMcpController, 'status' | 'retry'> {
   if (controller === undefined) {
     throw new ArkmePluginError('openapi-mcp-unavailable', 'OpenAPI MCP 托管能力当前不可用', true, 503)
   }

@@ -28,10 +28,11 @@ import { HttpManagedOpenApiControlPlane } from './openapi-mcp/control-plane.js'
 import { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
 import { SecureManagedOpenApiCredentialStore } from './openapi-mcp/credential-store.js'
 import { registerManagedOpenApiMcpExecutionFence } from './openapi-mcp/execution-fence.js'
+import { HttpOpenApiMcpManifestSource } from './openapi-mcp/manifest-source.js'
 import { CordisOpenApiMcpRuntime } from './openapi-mcp/mcp-runtime.js'
-import { FileOpenApiMcpReconcileLock } from './openapi-mcp/reconcile-lock.js'
+import { FileOpenApiMcpReconcileLock, managedOpenApiMcpReconcileLockPath } from './openapi-mcp/reconcile-lock.js'
 import { ObservedArkmeSessionStore } from './openapi-mcp/session-observer.js'
-import { registerOpenApiMcpStatusTool } from './openapi-mcp/status-tool.js'
+import { registerOpenApiMcpLifecycleTools } from './openapi-mcp/status-tool.js'
 import { ArkmeLocalDatabase } from './local-database.js'
 import { registerManagedAiProvider } from './managed-ai/adapter.js'
 import {
@@ -260,16 +261,16 @@ export function apply(ctx: Context, config: Config): void {
   const sessionStore = new ObservedArkmeSessionStore(rawSessionStore)
   const pendingSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}.pending-binding`)
   const service = new ArkmeService({ ...config, fileStateDirectory: join(stateDirectory, 'files') }, sessionStore, localDatabase, fetch, pendingSessionStore)
+  const openApiMcpCredentialNamespace = `${config.keychainServicePrefix}.${config.environment}.openapi-mcp`
   const openApiMcpController = new ManagedOpenApiMcpController({
     enabled: config.openApiMcpEnabled,
     sessionStore,
     accessCredentialProvider: service,
     controlPlane: new HttpManagedOpenApiControlPlane(config.openApiBaseUrl, fetch, config.requestTimeoutMs),
-    credentialStore: new SecureManagedOpenApiCredentialStore(createArkmeSecureValueStore(
-      `${config.keychainServicePrefix}.${config.environment}.openapi-mcp`,
-    )),
-    runtime: new CordisOpenApiMcpRuntime(ctx, `${config.openApiBaseUrl}/mcp`, config.requestTimeoutMs),
-    reconcileLock: new FileOpenApiMcpReconcileLock(join(stateDirectory, 'openapi-mcp', 'reconcile.lock')),
+    manifestSource: new HttpOpenApiMcpManifestSource(config.openApiBaseUrl, fetch, config.requestTimeoutMs),
+    credentialStore: new SecureManagedOpenApiCredentialStore(createArkmeSecureValueStore(openApiMcpCredentialNamespace)),
+    runtime: new CordisOpenApiMcpRuntime(ctx, config.openApiBaseUrl, config.requestTimeoutMs),
+    reconcileLock: new FileOpenApiMcpReconcileLock(managedOpenApiMcpReconcileLockPath(openApiMcpCredentialNamespace)),
     logger: ctx.logger,
   })
   sessionStore.attach(openApiMcpController)
@@ -394,7 +395,7 @@ export function apply(ctx: Context, config: Config): void {
   })
   registerDSHAgentInputRecordSync(ctx, service)
   registerArkmeTools(ctx, service, config.toolProfile)
-  if (config.openApiMcpEnabled) registerOpenApiMcpStatusTool(ctx, openApiMcpController)
+  if (config.openApiMcpEnabled) registerOpenApiMcpLifecycleTools(ctx, openApiMcpController)
   ctx.inject(['dynamicCordisRunner', 'agents'], dynamicCtx => {
     const runner = (dynamicCtx as Context & { dynamicCordisRunner: DynamicCordisRunnerLike }).dynamicCordisRunner
     const agents = (dynamicCtx as Context & { agents: ArkmeAgentRegistryLike }).agents

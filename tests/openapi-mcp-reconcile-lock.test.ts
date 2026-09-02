@@ -2,7 +2,10 @@ import { mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { FileOpenApiMcpReconcileLock } from '../src/openapi-mcp/reconcile-lock.js'
+import {
+  FileOpenApiMcpReconcileLock,
+  managedOpenApiMcpReconcileLockPath,
+} from '../src/openapi-mcp/reconcile-lock.js'
 
 const temporaryDirectories: string[] = []
 
@@ -18,6 +21,20 @@ async function lockFixture(): Promise<{ directory: string; path: string; lock: F
 }
 
 describe('OpenAPI MCP cross-process reconcile lock', () => {
+  it('derives one global lock from the secure credential namespace instead of DSH_HOME', async () => {
+    const coordinationRoot = await mkdtemp(join(tmpdir(), 'arkme-openapi-mcp-coordination-'))
+    temporaryDirectories.push(coordinationRoot)
+    const namespace = 'com.senqisi.dsh-arkme.prod.openapi-mcp'
+
+    const first = managedOpenApiMcpReconcileLockPath(namespace, coordinationRoot)
+    const second = managedOpenApiMcpReconcileLockPath(namespace, coordinationRoot)
+    const otherAccountStore = managedOpenApiMcpReconcileLockPath(`${namespace}.other`, coordinationRoot)
+
+    expect(first).toBe(second)
+    expect(first).not.toBe(otherAccountStore)
+    expect(first).not.toContain(namespace)
+  })
+
   it('serializes concurrent owners and removes the lock after completion', async () => {
     const fixture = await lockFixture()
     const order: string[] = []

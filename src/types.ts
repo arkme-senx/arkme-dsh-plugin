@@ -2922,7 +2922,6 @@ export type ArkmePluginOperation =
   | 'user-ban.unban'
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
-  | 'openapi.mcp.reauthorize'
   | 'remote.getStatus'
   | 'remote.renameDesktop'
   | 'billing.quota'

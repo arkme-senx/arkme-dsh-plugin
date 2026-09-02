@@ -33,8 +33,10 @@ export class ObservedArkmeSessionStore<Ticket = unknown> implements ArkmeSession
 
   private async mutate(next: ArkmeSessionCredentials | undefined, commit: () => Promise<void>): Promise<void> {
     const operation = async (): Promise<void> => {
-      const previous = await this.inner.read()
-      if (sameOpenApiMcpPrincipal(previous, next)) {
+      let previous: ArkmeSessionCredentials | undefined
+      let previousKnown = true
+      try { previous = await this.inner.read() } catch { previousKnown = false }
+      if (previousKnown && sameOpenApiMcpPrincipal(previous, next)) {
         await commit()
         return
       }
