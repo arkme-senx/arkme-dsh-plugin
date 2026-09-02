@@ -15,6 +15,7 @@ export const arkmeTheme = {
   messageOther: 'var(--arkme-chat-other-bubble, var(--dsw-specific-bubble, var(--dsw-alias-bg-layer-2, #f3f4f6)))',
   memberRecordOther: 'var(--arkme-member-record-other-bubble, var(--dsw-specific-bubble-highlight, var(--dsw-alias-bg-layer-3, #e1e5ee)))',
   subtle: 'var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))',
+  extensionSource: 'var(--dsw-alias-fill-secondary, var(--dsw-alias-bg-module-platform, #f2f2f2))',
   elevated: 'var(--dsw-alias-button-elevated-fill, var(--dsw-alias-bg-layer-2, #ffffff))',
   primaryAction: 'var(--dsw-alias-button-primary-fill, #17191c)',
   onPrimaryAction: 'var(--dsw-alias-label-primary-inverted, #ffffff)',

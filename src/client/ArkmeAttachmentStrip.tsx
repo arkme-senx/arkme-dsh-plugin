@@ -25,6 +25,8 @@ export function ArkmeAttachmentStrip({ attachments, disabled, onMove, onRemove, 
       const id = arkmeAttachmentId(attachment)
       const metadata = arkmeAttachmentMetadata(attachment)
       const canMove = !disabled && attachments.length > 1
+      const previewUrl = attachment.previewUrl ?? (attachment.localFile === undefined
+        ? undefined : arkmeLocalFileUrl(attachment.localFile.fileRef))
       return <span key={id} role="listitem" tabIndex={canMove ? 0 : -1}
         aria-label={`${metadata.fileName}，第 ${index + 1} 个附件`}
         aria-keyshortcuts={canMove ? 'Alt+ArrowLeft Alt+ArrowRight' : undefined}
@@ -52,9 +54,8 @@ export function ArkmeAttachmentStrip({ attachments, disabled, onMove, onRemove, 
           if (to >= 0 && to < attachments.length) onMove(index, to)
         }}>
         <ArkmeAttachmentDraftTile asset={metadata} disabled={disabled}
-          {...(attachment.localFile === undefined
-            ? attachment.previewUrl === undefined ? {} : { previewUrl: attachment.previewUrl }
-            : { previewUrl: arkmeLocalFileUrl(attachment.localFile.fileRef), onOpen: () => onPreview(attachment) })}
+          {...(previewUrl === undefined ? {} : { previewUrl })}
+          {...(attachment.localFile === undefined ? {} : { onOpen: () => onPreview(attachment) })}
           onRemove={() => { if (!disabled) onRemove(attachment) }} />
       </span>
     })}

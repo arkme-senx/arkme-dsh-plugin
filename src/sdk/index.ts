@@ -58,6 +58,8 @@ import type {
   ArkmeMessageCopyLinkExtendResult,
   ArkmeMessageCopyLinkResult,
   ArkmeMessageCopyLinkResolveResult,
+  ArkmeSourceMessageExtendResult,
+  ArkmeSourceMessageExtensionContext,
   ArkmeMessageReadReceiptDetail,
   ArkmeMessageReadReceiptQueryItem,
   ArkmeMessageReadReceiptSummaryList,
@@ -80,6 +82,7 @@ import type {
   ArkmeSourceReadResult,
   ArkmeSourceSendResult,
   ArkmeTimelineCursor,
+  ArkmeTimelineAroundPage,
   ArkmeTimelinePage,
   ArkmeUserProfileSnapshot,
   ArkmeUploadedAsset,
@@ -210,6 +213,8 @@ export type {
   ArkmeMessageCopyLinkSnapshotItem,
   ArkmeMessageCopyLinkSourceAnchor,
   ArkmeMessageCopyLinkStructuredContent,
+  ArkmeSourceMessageExtendResult,
+  ArkmeSourceMessageExtensionContext,
   ArkmeMessageReadReceiptDetail,
   ArkmeMessageReadReceiptMember,
   ArkmeMessageReadReceiptQueryItem,
@@ -237,6 +242,7 @@ export type {
   ArkmeSourceReadResult,
   ArkmeSourceSendResult,
   ArkmeTimelineCursor,
+  ArkmeTimelineAroundPage,
   ArkmeTimelineItem,
   ArkmeForwardRecordsPreview,
   ArkmeForwardRecordPreviewItem,
@@ -1305,6 +1311,24 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  async readSourceAround(
+    sourceRef: string,
+    itemUid: string,
+    recordOwnerUserId: number,
+    options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeTimelineAroundPage> {
+    if (sourceRef.trim() === '' || itemUid.trim() === '' || !Number.isSafeInteger(recordOwnerUserId) || recordOwnerUserId <= 0) {
+      throw new TypeError('Arkme timeline around requires a source, record uid, and record owner')
+    }
+    return await this.call<ArkmeTimelineAroundPage>('source.timeline-around', {
+      sourceRef,
+      itemUid,
+      recordOwnerUserId,
+      ...(options.beforeLimit === undefined ? {} : { beforeLimit: options.beforeLimit }),
+      ...(options.afterLimit === undefined ? {} : { afterLimit: options.afterLimit }),
+    }, options.signal)
+  }
+
   async messageReadReceiptSummaries(
     sourceRef: string,
     items: readonly ArkmeMessageReadReceiptQueryItem[],
@@ -1446,6 +1470,39 @@ export class ArkmeSdk {
       itemIndex,
       textContent: text,
       recordUid: options.recordUid ?? crypto.randomUUID(),
+    }, options.signal)
+  }
+
+  async sourceMessageExtensionContext(
+    sourceRef: string,
+    messageActionRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeSourceMessageExtensionContext> {
+    if (sourceRef.trim() === '' || messageActionRef.trim() === '') {
+      throw new TypeError('Arkme source message extension requires a source and action reference')
+    }
+    return await this.call<ArkmeSourceMessageExtensionContext>('source.message-extension.context', {
+      sourceRef, messageActionRef,
+    }, signal)
+  }
+
+  async extendSourceMessage(
+    sourceRef: string,
+    messageActionRef: string,
+    textContent: string,
+    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceMessageExtendResult> {
+    const fileRefs = [...new Set((options.fileRefs ?? []).map(value => value.trim()).filter(value => value !== ''))]
+    if (sourceRef.trim() === '' || messageActionRef.trim() === '' || (textContent.trim() === '' && fileRefs.length === 0)) {
+      throw new TypeError('Arkme source message extension requires a target and text or attachments')
+    }
+    if (fileRefs.length > 9) throw new TypeError('Arkme source message extension accepts at most 9 attachments')
+    return await this.call<ArkmeSourceMessageExtendResult>('source.message-extension.extend', {
+      sourceRef, messageActionRef, textContent,
+      recordUid: options.recordUid ?? crypto.randomUUID(),
+      relationUid: options.relationUid ?? crypto.randomUUID(),
+      ...(options.parentRecordUid?.trim() ? { parentRecordUid: options.parentRecordUid.trim() } : {}),
+      fileRefs,
     }, options.signal)
   }
 

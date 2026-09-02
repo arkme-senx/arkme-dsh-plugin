@@ -114,6 +114,8 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
+  | 'source.message-extension.context'
+  | 'source.message-extension.extend'
   | 'source.forward-messages'
   | 'message-actions.copy-link'
   | 'message-actions.forward'

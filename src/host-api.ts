@@ -523,7 +523,9 @@ function timelineCursorParam(params: Record<string, unknown>): ArkmeTimelineCurs
   const sendAtMillis = numberParam(cursor, 'sendAtMillis', 0)
   const itemUid = stringParam(cursor, 'itemUid')
   const beforeSequence = numberParam(cursor, 'beforeSequence', 0)
+  const afterSequence = numberParam(cursor, 'afterSequence', 0)
   if (beforeSequence > 0) return { beforeSequence }
+  if (afterSequence > 0) return { afterSequence }
   return sendAtMillis > 0 && itemUid !== '' ? { sendAtMillis, itemUid } : undefined
 }
 
@@ -1303,6 +1305,16 @@ export async function dispatchArkmeHostOperation(
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }) },
       )
     }
+    case 'source.timeline-around': return await service.readSourceAround(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'itemUid'),
+      numberParam(params, 'recordOwnerUserId', 0),
+      {
+        beforeLimit: numberParam(params, 'beforeLimit', 20),
+        afterLimit: numberParam(params, 'afterLimit', 20),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      },
+    )
     case 'source.members': return await service.listSourceMembers(
       stringParam(params, 'sourceRef'),
       { activeOnly: params.activeOnly !== false },
@@ -1381,6 +1393,23 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'textContent'),
       stringParam(params, 'recordUid'),
       requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.message-extension.context': return await service.sourceMessageExtensionContext(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'messageActionRef'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.message-extension.extend': return await service.extendSourceMessage(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'messageActionRef'),
+      stringParam(params, 'textContent'),
+      stringParam(params, 'recordUid'),
+      [...new Set(stringListParam(params, 'fileRefs').map(value => value.trim()).filter(value => value !== ''))],
+      {
+        ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
+        ...(stringParam(params, 'parentRecordUid') === '' ? {} : { parentRecordUid: stringParam(params, 'parentRecordUid') }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      },
     )
     case 'source.shared-recording-detail': return await service.sharedRecordingDetail(
       stringParam(params, 'detailRef'),

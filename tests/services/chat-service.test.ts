@@ -73,6 +73,231 @@ function chatMemberRef(
 }
 
 describe('ChatService', () => {
+  it('projects a private-chat extension child with the desktop parent preview contract', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const sourceItem = {
+      sourceRef: 'source-private', sourceKey: 'chat:private', kind: 'private_chat' as const,
+      displayName: '同事', activeAtMillis: 0, unreadCount: 0,
+    }
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      requireSession: vi.fn(async () => session),
+      stateStore: { uniqueCode: vi.fn(async () => 'timeline-extension-signing-key') },
+      authenticatedChatPost: vi.fn(async () => ({
+        items: [{
+          relation: {
+            chat_session_uid: 'chat-private', rel_uid: 'relation-child', record_uid: 'record-child',
+            record_owner_user_id: 42, sender_user_id: 42, display_name_snapshot: '我', seq: 12,
+            attach_at: 1_786_000_010_000,
+          },
+          record: { status: 1, payload: {
+            record_uid: 'record-child', title: '', text_content: '延展正文', template_kind: 1, display_kind: 0,
+          } },
+          extension_edge: {
+            parent_record_uid: 'record-parent', parent_record_owner_user_id: 7,
+            root_record_uid: 'record-parent', root_record_owner_user_id: 7,
+          },
+          extension_parent_preview: {
+            relation: {
+              chat_session_uid: 'chat-private', rel_uid: 'relation-parent', record_uid: 'record-parent',
+              record_owner_user_id: 7, sender_user_id: 7, display_name_snapshot: '同事', seq: 11,
+              attach_at: 1_786_000_000_000,
+            },
+            record: { status: 1, payload: {
+              record_uid: 'record-parent', title: '', text_content: '原消息内容', template_kind: 2, display_kind: 0,
+            } },
+          },
+        }],
+        has_more: false,
+      })),
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({
+        version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事',
+      })),
+      sourceItem: vi.fn(async () => sourceItem),
+    }
+    const media = {
+      recordContentPayload: vi.fn(() => ({})),
+      richContentBlocks: vi.fn((raw: unknown) => {
+        const relation = (raw as { relation?: { record_uid?: string } }).relation
+        return relation?.record_uid === 'record-parent' ? [{
+          kind: 'image', mediaRef: 'parent-image-ref', fileName: 'parent.png', mimeType: 'image/png', size: 12, sortOrder: 0,
+        }] : []
+      }),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never, { publicProfilesByUserIds: vi.fn(async () => new Map()) } as never,
+      media as never, {} as never, {} as never,
+      { currentUserAgentSourceFallback: vi.fn(() => undefined) } as never,
+      { timelineAiPolish: vi.fn(() => undefined) } as never, {} as never,
+    )
+
+    const page = await chat.readSource('source-private')
+
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0]).toMatchObject({
+      itemUid: 'record-child', textContent: '延展正文', extensionParentRecordUid: 'record-parent',
+      extensionParent: {
+        itemUid: 'record-parent', senderName: '同事', textContent: '原消息内容',
+        recordOwnerUserId: 7, sequence: 11, sendAtMillis: 1_786_000_000_000,
+        contentBlocks: [{ kind: 'image', mediaRef: 'parent-image-ref', fileName: 'parent.png' }],
+      },
+    })
+  })
+
+  it('loads a continuous chat window around an extension parent for exact cross-page location', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const sourceItem = {
+      sourceRef: 'source-private', sourceKey: 'chat:private', kind: 'private_chat' as const,
+      displayName: '同事', activeAtMillis: 0, unreadCount: 0,
+    }
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      requireSession: vi.fn(async () => session),
+      stateStore: { uniqueCode: vi.fn(async () => 'timeline-around-signing-key') },
+      authenticatedChatPost: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        expect(path).toBe('/api/v1/chat/timeline/around')
+        expect(body).toEqual({
+          chat_session_uid: 'chat-private', record_uid: 'record-parent', record_owner_user_id: 7,
+          before_limit: 20, after_limit: 20,
+        })
+        return {
+          chat_session_uid: 'chat-private', anchor_seq: 11, anchor_index: 1,
+          items: [
+            { relation: { rel_uid: 'rel-10', record_uid: 'record-10', record_owner_user_id: 7, sender_user_id: 7, display_name_snapshot: '同事', seq: 10, attach_at: 1000 }, record: { status: 1, payload: { record_uid: 'record-10', text_content: 'before' } } },
+            { relation: { rel_uid: 'rel-parent', record_uid: 'record-parent', record_owner_user_id: 7, sender_user_id: 7, display_name_snapshot: '同事', seq: 11, attach_at: 1100 }, record: { status: 1, payload: { record_uid: 'record-parent', text_content: 'anchor' } } },
+            { relation: { rel_uid: 'rel-12', record_uid: 'record-12', record_owner_user_id: 42, sender_user_id: 42, display_name_snapshot: '我', seq: 12, attach_at: 1200 }, record: { status: 1, payload: { record_uid: 'record-12', text_content: 'after' } } },
+          ],
+          older_has_more: true, older_cursor_seq: 10,
+          newer_has_more: true, newer_cursor_seq: 12, latest_known_seq: 30,
+        }
+      }),
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
+      sourceItem: vi.fn(async () => sourceItem),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never,
+      { publicProfilesByUserIds: vi.fn(async () => new Map()), sealProfileImageRef: vi.fn(async () => 'avatar-ref') } as never,
+      { richContentBlocks: vi.fn(() => []), recordContentPayload: vi.fn(() => ({})) } as never, {} as never, {} as never,
+      { currentUserAgentSourceFallback: vi.fn(() => undefined) } as never,
+      { timelineAiPolish: vi.fn(() => undefined) } as never, {} as never,
+    )
+
+    const page = await chat.readSourceAround('source-private', 'record-parent', 7, { beforeLimit: 20, afterLimit: 20 })
+
+    expect(page).toMatchObject({
+      source: sourceItem, anchorItemUid: 'record-parent', anchorSequence: 11, anchorIndex: 1,
+      olderHasMore: true, olderCursor: { beforeSequence: 10 },
+      newerHasMore: true, newerCursor: { afterSequence: 12 }, latestKnownSequence: 30,
+    })
+    expect(page.items.map(item => item.itemUid)).toEqual(['record-10', 'record-parent', 'record-12'])
+  })
+
+  it('continues an around window until the tail cursor stops advancing without a has_more field', async () => {
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      stateStore: { uniqueCode: vi.fn(async () => 'timeline-tail-signing-key') },
+      authenticatedChatPost: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        expect(path).toBe('/api/v1/chat/timeline/tail')
+        expect(body).toMatchObject({ chat_session_uid: 'chat-private', limit: 20 })
+        if (body.after_seq === 13) return { items: [], next_after_seq: 13 }
+        expect(body.after_seq).toBe(12)
+        return {
+          items: [{
+            relation: { rel_uid: 'rel-13', record_uid: 'record-13', record_owner_user_id: 42, sender_user_id: 42, display_name_snapshot: '我', seq: 13, attach_at: 1300 },
+            record: { status: 1, payload: { record_uid: 'record-13', text_content: 'newer' } },
+          }],
+          next_after_seq: 13,
+        }
+      }),
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
+      sourceItem: vi.fn(async () => ({ sourceRef: 'source-private', kind: 'private_chat', displayName: '同事', activeAtMillis: 0, unreadCount: 0 })),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never,
+      { publicProfilesByUserIds: vi.fn(async () => new Map()), sealProfileImageRef: vi.fn(async () => 'avatar-ref') } as never,
+      { richContentBlocks: vi.fn(() => []), recordContentPayload: vi.fn(() => ({})) } as never,
+      {} as never, {} as never,
+      { currentUserAgentSourceFallback: vi.fn(() => undefined) } as never,
+      { timelineAiPolish: vi.fn(() => undefined) } as never, {} as never,
+    )
+
+    const firstPage = await chat.readSource('source-private', { cursor: { afterSequence: 12 }, limit: 20 })
+    const exhaustedPage = await chat.readSource('source-private', { cursor: { afterSequence: 13 }, limit: 20 })
+
+    expect(firstPage).toMatchObject({ hasMore: true, nextCursor: { afterSequence: 13 } })
+    expect(firstPage.items.map(item => item.itemUid)).toEqual(['record-13'])
+    expect(exhaustedPage).toMatchObject({ hasMore: false })
+    expect(exhaustedPage.nextCursor).toBeUndefined()
+  })
+
+  it('hydrates a send-to-self extension parent from the same refreshed timeline page', async () => {
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      stateStore: { uniqueCode: vi.fn(async () => 'record-extension-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedPost: vi.fn(async () => ({
+        items: [
+          { record_uid: 'record-child', text_content: '延展正文', parent_record_uid: 'record-parent' },
+          { record_uid: 'record-parent', text_content: '原快记内容' },
+        ],
+        has_more: false,
+      })),
+    }
+    const sourceItem = {
+      sourceRef: 'source-self', kind: 'send_to_self' as const, displayName: '发给自己',
+      activeAtMillis: 0, unreadCount: 0,
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({
+        version: 1, userId: 42, kind: 'send_to_self', ownerRef: 'all', displayName: '发给自己',
+      })),
+      sourceItem: vi.fn(async () => sourceItem),
+    }
+    const record = {
+      recordUid: vi.fn((raw: { record_uid: string }) => raw.record_uid),
+      recordTimelineItemFromRaw: vi.fn((raw: {
+        record_uid: string
+        text_content: string
+        parent_record_uid?: string
+      }) => ({
+        itemUid: raw.record_uid,
+        senderName: '我',
+        isMe: true,
+        sendAtMillis: raw.record_uid === 'record-child' ? 2 : 1,
+        title: '',
+        textContent: raw.text_content,
+        status: 1,
+        ...(raw.parent_record_uid === undefined ? {} : { extensionParentRecordUid: raw.parent_record_uid }),
+      })),
+    }
+    const media = {
+      hydrateRecordMediaPage: vi.fn(async () => ({
+        displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set(),
+      })),
+    }
+    const privacy = { lockedRecordUids: vi.fn(async () => new Set<string>()) }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, media as never, record as never,
+      {} as never, {} as never, {} as never, {} as never, privacy as never,
+    )
+
+    const page = await chat.readSource('source-self')
+
+    expect(page.items[0]).toMatchObject({
+      itemUid: 'record-child',
+      extensionParentRecordUid: 'record-parent',
+      extensionParent: {
+        itemUid: 'record-parent', senderName: '我', title: '', textContent: '原快记内容',
+      },
+    })
+  })
   it('returns a source-bound signed action reference immediately for every text and rich send source', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const sourceKinds = ['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic'] as const
@@ -918,7 +1143,458 @@ describe('ChatService', () => {
         recordUid: 'record-b',
         recordOwnerUserId: 13,
         chatSessionUid: 'chat-1',
-      })
+    })
+  })
+
+  it('loads quick-note extensions from the durable chat tree identity without creating a copy link', async () => {
+    const worldPost = vi.fn(async () => { throw new Error('chat detail must not use the public-record extension list') })
+    const chatPost = vi.fn(async (path: string, body: Record<string, unknown>) => {
+      if (path !== '/api/v1/chats/extensions/tree/page') throw new Error(`unexpected chat path: ${path}`)
+      return {
+        chat_session_uid: 'chat-1',
+        parent: {
+          relation: {
+            chat_session_uid: 'chat-1', rel_uid: 'rel-snapshot-1', record_uid: 'record-snapshot-1',
+            record_owner_user_id: 42, sender_user_id: 42, display_name_snapshot: '测试用户', seq: 9,
+            attach_at: 1_787_735_000_000,
+          },
+          record: { status: 1, payload: { record_uid: 'record-snapshot-1', text_content: '原快记' } },
+        },
+        children: [{
+          edge: {
+            chat_session_uid: 'chat-1', parent_record_owner_user_id: 42, parent_record_uid: 'record-snapshot-1',
+            child_record_owner_user_id: 17, child_record_uid: 'extension-record-1',
+            root_record_owner_user_id: 42, root_record_uid: 'record-snapshot-1', source_mode: 1,
+            created_at: 1_787_735_200_000, updated_at: 1_787_735_200_000,
+          },
+          item: {
+            relation: {
+              chat_session_uid: 'chat-1', rel_uid: 'rel-extension-1', record_uid: 'extension-record-1',
+              record_owner_user_id: 7, sender_user_id: 7, display_name_snapshot: '延展者', seq: 10,
+              attach_at: 1_787_735_200_000,
+            },
+            record: { status: 1, payload: {
+              record_uid: 'extension-record-1', text_content: '补充信息', template_kind: 1, display_kind: 0,
+            } },
+          },
+        }],
+        has_more: false,
+        next_after_cursor: null,
+      }
+    })
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedWorldPost: worldPost,
+      authenticatedChatPost: chatPost,
+    }
+    const source = { openSourceRef: vi.fn(async () => ({
+      version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
+    })) }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await expect((chat as unknown as {
+      sourceMessageExtensionContext(sourceRef: string, actionRef: string): Promise<unknown>
+    }).sourceMessageExtensionContext('opaque-source', snapshotActionRef())).resolves.toEqual({
+      parentRecordUid: 'record-snapshot-1',
+      extensionCount: 1,
+      extensions: [expect.objectContaining({
+        recordUid: 'extension-record-1', textContent: '补充信息',
+        parentRecordUid: 'record-snapshot-1', recordOwnerUserId: 17, level: 2,
+      })],
+    })
+    expect(chatPost).toHaveBeenCalledWith(
+      '/api/v1/chats/extensions/tree/page',
+      {
+        chat_session_uid: 'chat-1', parent_record_owner_user_id: 42,
+        parent_record_uid: 'record-snapshot-1', limit: 100,
+      },
+      expect.anything(), undefined,
+    )
+    expect(worldPost).not.toHaveBeenCalled()
+  })
+
+  it('creates a private-chat extension child through the desktop chat contract', async () => {
+    const childRecordUid = '11111111-1111-4111-8111-111111111111'
+    const childRelationUid = '22222222-2222-4222-8222-222222222222'
+    const worldPost = vi.fn(async () => { throw new Error('private chat extension must not use the public-record API') })
+    const chatPost = vi.fn(async (path: string, body: Record<string, unknown>) => {
+      if (path !== '/api/v1/chats/extensions/children/create') throw new Error(`unexpected chat path: ${path}`)
+      return {
+        chat_session_uid: body.chat_session_uid,
+        parent_record_owner_user_id: body.parent_record_owner_user_id,
+        parent_record_uid: body.parent_record_uid,
+        child_record_uid: body.child_record_uid,
+        child_rel_uid: body.child_rel_uid,
+        root_record_owner_user_id: 42,
+        root_record_uid: 'record-snapshot-1',
+        seq: 10,
+      }
+    })
+    const runtime = {
+      config,
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedWorldPost: worldPost,
+      authenticatedChatPost: chatPost,
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({
+        version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
+      })),
+      invalidateSourceListCache: vi.fn(),
+    }
+    const profile = { refreshProfile: vi.fn(async () => ({ profile: {
+      userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: 'profile-avatar-42',
+      arkmeId: 'doge', accountType: 1, createdAt: 1,
+      bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
+    }, cachedAtMillis: 1, revision: 1 })) }
+    const assets = [
+      { fileAssetUid: 'asset-image-1234', fileName: 'photo.png', mimeType: 'image/png', size: 12, fileKind: 1 as const },
+      { fileAssetUid: 'asset-file-12345', fileName: 'brief.pdf', mimeType: 'application/pdf', size: 34, fileKind: 4 as const },
+    ]
+    const record = { createFileAssetsForConversation: vi.fn(), createTextForConversation: vi.fn() }
+    const realtime = {
+      nextChatClientRevision: vi.fn(() => 6),
+      emitChatClientEvent: vi.fn(),
+      scheduleChatSessionProjection: vi.fn(),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, {} as never, record as never,
+      {} as never, {} as never, {} as never, realtime as never,
+    )
+
+    await expect((chat as unknown as {
+      extendSourceMessage(
+        sourceRef: string,
+        actionRef: string,
+        text: string,
+        recordUid: string,
+        assets: typeof assets,
+        options: { relationUid: string },
+      ): Promise<unknown>
+    }).extendSourceMessage(
+      'opaque-source', snapshotActionRef(), ' 附件延展 ',
+      childRecordUid, assets, { relationUid: childRelationUid },
+    )).resolves.toMatchObject({
+      recordUid: childRecordUid,
+      parentRecordUid: 'record-snapshot-1',
+      status: 1,
+      localState: 'synced',
+      extension: { textContent: '附件延展', templateKind: 2 },
+    })
+    expect(chatPost).toHaveBeenCalledWith(
+      '/api/v1/chats/extensions/children/create',
+      {
+        chat_session_uid: 'chat-1',
+        parent_record_owner_user_id: 42,
+        parent_record_uid: 'record-snapshot-1',
+        child_record_uid: childRecordUid,
+        child_rel_uid: childRelationUid,
+        template_kind: 2,
+        sender_avatar_url: 'profile-avatar-42',
+        text_content: '附件延展',
+        content_payload: {
+          payload_kind: 2,
+          schema_version: 1,
+          text_state: 1,
+          media_refs: [
+            {
+              file_asset_uid: 'asset-image-1234', content_file_role: 1, render_role: 1, sort_order: 0,
+              file_name: 'photo.png', file_kind: 1, mime_type: 'image/png', size: 12,
+            },
+            {
+              file_asset_uid: 'asset-file-12345', content_file_role: 1, render_role: 1, sort_order: 1,
+              file_name: 'brief.pdf', file_kind: 4, mime_type: 'application/pdf', size: 34,
+            },
+          ],
+        },
+        create_at: expect.any(Number),
+      },
+      expect.anything(),
+      undefined,
+    )
+    expect(worldPost).not.toHaveBeenCalled()
+    expect(record.createTextForConversation).not.toHaveBeenCalled()
+    expect(record.createFileAssetsForConversation).not.toHaveBeenCalled()
+    expect(realtime.scheduleChatSessionProjection).toHaveBeenCalledWith('chat-1', 10)
+  })
+
+  it('validates and extends a selected descendant quick note in the current chat', async () => {
+    const childRecordUid = '11111111-1111-4111-8111-111111111111'
+    const childRelationUid = '22222222-2222-4222-8222-222222222222'
+    const worldPost = vi.fn(async () => { throw new Error('chat descendant must not use the public-record extension list') })
+    const chatPost = vi.fn(async (path: string, body: Record<string, unknown>) => {
+      if (path === '/api/v1/chats/extensions/tree/page') return {
+        chat_session_uid: 'chat-1',
+        parent: {
+          relation: {
+            chat_session_uid: 'chat-1', rel_uid: 'rel-snapshot-1', record_uid: 'record-snapshot-1',
+            record_owner_user_id: 42, sender_user_id: 42, display_name_snapshot: '测试用户', seq: 9,
+            attach_at: 1_787_735_000_000,
+          },
+          record: { status: 1, payload: { record_uid: 'record-snapshot-1', text_content: '原快记' } },
+        },
+        children: [{
+          edge: {
+            chat_session_uid: 'chat-1', parent_record_owner_user_id: 42, parent_record_uid: 'record-snapshot-1',
+            child_record_owner_user_id: 17, child_record_uid: 'extension-level-two',
+            root_record_owner_user_id: 42, root_record_uid: 'record-snapshot-1', source_mode: 1,
+            created_at: 1_787_735_200_000, updated_at: 1_787_735_200_000,
+          },
+          item: {
+            relation: {
+              chat_session_uid: 'chat-1', rel_uid: 'rel-extension-1', record_uid: 'extension-level-two',
+              record_owner_user_id: 7, sender_user_id: 7, display_name_snapshot: '延展者', seq: 10,
+              attach_at: 1_787_735_200_000,
+            },
+            record: { status: 1, payload: {
+              record_uid: 'extension-level-two', text_content: '二级延展', template_kind: 1, display_kind: 0,
+            } },
+          },
+        }],
+        has_more: false,
+        next_after_cursor: null,
+      }
+      if (path === '/api/v1/chats/extensions/children/create') return {
+        child_record_uid: body.child_record_uid,
+        child_rel_uid: body.child_rel_uid,
+        seq: 20,
+      }
+      throw new Error(`unexpected chat path: ${path}`)
+    })
+    const runtime = {
+      config,
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedWorldPost: worldPost,
+      authenticatedChatPost: chatPost,
+    }
+    const source = { openSourceRef: vi.fn(async () => ({
+      version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
+    })) }
+    const profile = { refreshProfile: vi.fn(async () => ({ profile: {
+      userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
+      createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+    } })) }
+    const realtime = { scheduleChatSessionProjection: vi.fn() }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, realtime as never,
+    )
+
+    await expect(chat.extendSourceMessage(
+      'opaque-source', snapshotActionRef(), '三级延展', childRecordUid, [],
+      { relationUid: childRelationUid, parentRecordUid: 'extension-level-two' },
+    )).resolves.toMatchObject({
+      parentRecordUid: 'extension-level-two',
+      extension: { parentRecordUid: 'extension-level-two', level: 3, textContent: '三级延展' },
+    })
+    expect(worldPost).not.toHaveBeenCalled()
+    expect(chatPost).toHaveBeenCalledWith('/api/v1/chats/extensions/tree/page', {
+      chat_session_uid: 'chat-1', parent_record_owner_user_id: 42,
+      parent_record_uid: 'record-snapshot-1', limit: 100,
+    }, expect.anything(), undefined)
+    expect(chatPost).toHaveBeenCalledWith(
+      '/api/v1/chats/extensions/children/create',
+      expect.objectContaining({
+        chat_session_uid: 'chat-1',
+        parent_record_owner_user_id: 17,
+        parent_record_uid: 'extension-level-two',
+        child_record_uid: childRecordUid,
+        child_rel_uid: childRelationUid,
+      }),
+      expect.anything(), undefined,
+    )
+  })
+
+  it('creates a group-chat extension child through the same durable desktop chat contract', async () => {
+    const childRecordUid = '11111111-1111-4111-8111-111111111111'
+    const childRelationUid = '22222222-2222-4222-8222-222222222222'
+    const chatPost = vi.fn(async (path: string, body: Record<string, unknown>) => {
+      if (path !== '/api/v1/chats/extensions/children/create') throw new Error(`unexpected chat path: ${path}`)
+      return { child_record_uid: body.child_record_uid, child_rel_uid: body.child_rel_uid, seq: 18 }
+    })
+    const runtime = {
+      config,
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: chatPost,
+      authenticatedWorldPost: vi.fn(async () => { throw new Error('group chat extension must not use the public-record API') }),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({
+      version: 1, userId: 42, kind: 'group_chat', ownerRef: 'chat-1', displayName: '512',
+    })) }
+    const profile = { refreshProfile: vi.fn(async () => ({ profile: {
+      userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
+      createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
+    } })) }
+    const realtime = { scheduleChatSessionProjection: vi.fn() }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, realtime as never,
+    )
+
+    await expect(chat.extendSourceMessage(
+      'opaque-source', snapshotActionRef(), '群聊延展', childRecordUid, [], { relationUid: childRelationUid },
+    )).resolves.toMatchObject({
+      recordUid: childRecordUid,
+      parentRecordUid: 'record-snapshot-1',
+      relationUid: childRelationUid,
+      sequence: 18,
+      localState: 'synced',
+      extension: { textContent: '群聊延展' },
+    })
+    expect(chatPost).toHaveBeenCalledTimes(1)
+    expect(runtime.authenticatedWorldPost).not.toHaveBeenCalled()
+    expect(realtime.scheduleChatSessionProjection).toHaveBeenCalledWith('chat-1', 18)
+  })
+
+  it('creates a send-to-self extension through the durable desktop record-extension contract', async () => {
+    const childRecordUid = '11111111-1111-4111-8111-111111111111'
+    const assets = [{
+      fileAssetUid: 'asset-image-1234', fileName: 'photo.png', mimeType: 'image/png', size: 12, fileKind: 1 as const,
+    }]
+    const runtime = {
+      config,
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedWorldPost: vi.fn(async () => { throw new Error('record extension must not use the public-record API') }),
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({
+        version: 1, userId: 42, kind: 'send_to_self', ownerRef: 'all', displayName: '发给自己',
+      })),
+      invalidateSourceListCache: vi.fn(),
+    }
+    const profile = { refreshProfile: vi.fn(async () => ({ profile: {
+      userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: 'profile-avatar-42',
+      arkmeId: 'doge', accountType: 1, createdAt: 1,
+      bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
+    }, cachedAtMillis: 1, revision: 1 })) }
+    const record = {
+      createExtensionForConversation: vi.fn(async () => ({ recordUid: childRecordUid, status: 1, localState: 'synced' })),
+      createTextForConversation: vi.fn(),
+      createFileAssetsForConversation: vi.fn(),
+    }
+    const realtime = { nextChatClientRevision: vi.fn(() => 7), emitChatClientEvent: vi.fn() }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, {} as never, record as never,
+      {} as never, {} as never, {} as never, realtime as never,
+    )
+    const recordActionRef = snapshotActionRef({
+      sourceKind: 'record', sourceOwnerRef: 'all', chatSessionUid: '', relationUid: '',
+      recordOwnerUserId: 42, recordUid: 'record-snapshot-1', senderUserId: 42,
+    })
+
+    await expect(chat.extendSourceMessage(
+      'opaque-source', recordActionRef, ' 附件延展 ', childRecordUid, assets,
+    )).resolves.toMatchObject({
+      recordUid: childRecordUid,
+      parentRecordUid: 'record-snapshot-1',
+      status: 1,
+      localState: 'synced',
+      extension: { textContent: '附件延展', templateKind: 2 },
+    })
+    expect(record.createExtensionForConversation).toHaveBeenCalledWith(
+      'record-snapshot-1', childRecordUid, '附件延展', assets,
+    )
+    expect(record.createTextForConversation).not.toHaveBeenCalled()
+    expect(record.createFileAssetsForConversation).not.toHaveBeenCalled()
+    expect(runtime.authenticatedWorldPost).not.toHaveBeenCalled()
+    expect(source.invalidateSourceListCache).toHaveBeenCalledWith(42, 'send_to_self')
+    expect(realtime.emitChatClientEvent).toHaveBeenCalledWith({ type: 'projection-invalidated', revision: 7, projection: 'record' })
+  })
+
+  it('creates a topic extension through the desktop topic-extension endpoint', async () => {
+    const childRecordUid = '11111111-1111-4111-8111-111111111111'
+    const assets = [{
+      fileAssetUid: 'asset-image-1234', fileName: 'photo.png', mimeType: 'image/png', size: 12, fileKind: 1 as const,
+    }]
+    const authenticatedPost = vi.fn(async (path: string, body: Record<string, unknown>) => {
+      if (path !== '/api/v1/topics/records/extensions/create') throw new Error(`unexpected record path: ${path}`)
+      return {
+        record_uid: body.record_uid,
+        record_status: 1,
+        topic_uid: body.topic_uid,
+        rel_uid: 'rel-topic-child-1',
+        relation_status: 1,
+        edge_uid: 'edge-topic-child-1',
+        parent_record_uid: body.parent_record_uid,
+        root_record_uid: body.parent_record_uid,
+        edge_status: 1,
+      }
+    })
+    const runtime = {
+      config,
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedPost,
+      authenticatedWorldPost: vi.fn(async () => { throw new Error('topic extension must not use the public-record API') }),
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({
+        version: 1, userId: 42, kind: 'topic', ownerRef: 'topic-1', displayName: '实习性',
+      })),
+      invalidateSourceListCache: vi.fn(),
+    }
+    const profile = { refreshProfile: vi.fn(async () => ({ profile: {
+      userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: 'profile-avatar-42',
+      arkmeId: 'doge', accountType: 1, createdAt: 1,
+      bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
+    } })) }
+    const record = { createExtensionForConversation: vi.fn() }
+    const realtime = { nextChatClientRevision: vi.fn(() => 8), emitChatClientEvent: vi.fn() }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, {} as never, record as never,
+      {} as never, {} as never, {} as never, realtime as never,
+    )
+    const topicActionRef = snapshotActionRef({
+      sourceKind: 'record', sourceOwnerRef: 'topic-1', chatSessionUid: '', relationUid: '',
+      recordOwnerUserId: 42, recordUid: 'record-snapshot-1', senderUserId: 42,
+    })
+
+    await expect(chat.extendSourceMessage(
+      'opaque-topic-source', topicActionRef, ' 主题延展 ', childRecordUid, assets,
+    )).resolves.toMatchObject({
+      recordUid: childRecordUid,
+      parentRecordUid: 'record-snapshot-1',
+      relationUid: 'rel-topic-child-1',
+      status: 1,
+      localState: 'synced',
+      extension: { textContent: '主题延展', templateKind: 2 },
+    })
+    expect(authenticatedPost).toHaveBeenCalledWith(
+      '/api/v1/topics/records/extensions/create',
+      {
+        topic_uid: 'topic-1',
+        parent_record_uid: 'record-snapshot-1',
+        record_uid: childRecordUid,
+        template_kind: 2,
+        title: '',
+        text_content: '主题延展',
+        content_payload: {
+          payload_kind: 2,
+          schema_version: 1,
+          text_state: 1,
+          media_refs: [{
+            file_asset_uid: 'asset-image-1234', content_file_role: 1, render_role: 1, sort_order: 0,
+            file_name: 'photo.png', file_kind: 1, mime_type: 'image/png', size: 12,
+          }],
+        },
+        send_at: expect.any(Number),
+      },
+      expect.anything(),
+      undefined,
+    )
+    expect(record.createExtensionForConversation).not.toHaveBeenCalled()
+    expect(runtime.authenticatedWorldPost).not.toHaveBeenCalled()
+    expect(source.invalidateSourceListCache).toHaveBeenCalledWith(42, 'send_to_self')
+    expect(realtime.emitChatClientEvent).toHaveBeenCalledWith({ type: 'projection-invalidated', revision: 8, projection: 'record' })
   })
 
   it('resolves normal message copy links using the Flutter source anchor field names', async () => {

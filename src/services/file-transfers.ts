@@ -343,6 +343,45 @@ export class FileTransfers {
       return clone(task)
     })
   }
+  async uploadRefs(fileRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeUploadedAsset[]> {
+    const userId = await this.ports.currentUser()
+    if (fileRefs.length < 1 || fileRefs.length > this.policy.maxAttachments
+      || new Set(fileRefs).size !== fileRefs.length || fileRefs.some(ref => !REF.test(ref))) {
+      throw fail('file-upload-invalid', '请选择 1 至 9 个有效附件')
+    }
+    return await this.exclusive(async () => {
+      await this.assertUser(userId, signal)
+      const state = await this.state(userId)
+      const controller = new AbortController()
+      const abort = () => { controller.abort(signal?.reason) }
+      signal?.addEventListener('abort', abort, { once: true })
+      this.controllers.add(controller)
+      try {
+        const assets: ArkmeUploadedAsset[] = []
+        for (const fileRef of fileRefs) {
+          await this.assertUser(userId, controller.signal)
+          const stored = state.files[fileRef]
+          if (stored === undefined) throw fail('file-local-missing', '本地附件已不存在')
+          let asset = stored.asset
+            ?? Object.values(state.files).find(other => other.sha256 === stored.sha256 && other.fileKind === stored.fileKind && other.asset)?.asset
+          if (asset === undefined) {
+            asset = await this.ports.upload(
+              this.path(userId, fileRef), stored, () => {}, userId, controller.signal,
+            )
+          }
+          asset = { ...asset, fileName: stored.fileName }
+          stored.asset = asset
+          await this.save(userId, state)
+          assets.push(asset)
+        }
+        await this.assertUser(userId, controller.signal)
+        return clone(assets)
+      } finally {
+        signal?.removeEventListener('abort', abort)
+        this.controllers.delete(controller)
+      }
+    })
+  }
   async retry(taskRef: string): Promise<ArkmeFileSendTask> {
     const userId = await this.ports.currentUser()
     return this.exclusive(async () => {

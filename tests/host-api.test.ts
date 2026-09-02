@@ -37,6 +37,7 @@ function fakeService() {
     relatedQuickNotesFromMessage: vi.fn(async (sourceRef: string, messageActionRef: string) => ({ sourceRef, messageActionRef })),
     relatedQuickNotesFromMoment: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
     relatedQuickNoteDetail: vi.fn(async (sourceRef: string, relatedRef: string) => ({ sourceRef, relatedRef })),
+    readSourceAround: vi.fn(async (sourceRef: string, itemUid: string, recordOwnerUserId: number, options: unknown) => ({ sourceRef, itemUid, recordOwnerUserId, options })),
     listSourceMembers: vi.fn(async (sourceRef: string, options: unknown) => ({ sourceRef, options })),
     sourceMemberRecords: vi.fn(async (sourceRef: string, memberRef: string, mode: string, options: unknown) => ({ sourceRef, memberRef, mode, options })),
     messageReadReceiptSummaries: vi.fn(async (sourceRef: string, items: unknown, options: unknown) => ({ sourceRef, items, options })),
@@ -51,6 +52,8 @@ function fakeService() {
     copySourceMessageLink: vi.fn(async (sourceRef: string, actionRefs: unknown, options: unknown) => ({ sourceRef, actionRefs, options })),
     resolveMessageCopyLink: vi.fn(async (sid: string, options: unknown) => ({ sid, options })),
     extendMessageCopyLink: vi.fn(async (sid: string, itemIndex: number, textContent: string, recordUid: string, options: unknown) => ({ sid, itemIndex, textContent, recordUid, options })),
+    sourceMessageExtensionContext: vi.fn(async (sourceRef: string, messageActionRef: string, options: unknown) => ({ sourceRef, messageActionRef, options })),
+    extendSourceMessage: vi.fn(async (sourceRef: string, messageActionRef: string, textContent: string, recordUid: string, fileRefs: unknown, options: unknown) => ({ sourceRef, messageActionRef, textContent, recordUid, fileRefs, options })),
     sharedRecordingDetail: vi.fn(async (detailRef: string, options: unknown) => ({ detailRef, options })),
     forwardSourceMessages: vi.fn(async (sourceRef: string, actionRefs: unknown, options: unknown) => ({ sourceRef, actionRefs, options })),
     sendSourceText: vi.fn(async (_sourceRef: string, _text: string, options: unknown) => options),
@@ -447,6 +450,17 @@ describe('group AI polish Host API dispatch', () => {
 })
 
 describe('conversation member Host API dispatch', () => {
+  it('forwards the exact record identity and bounded around window', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.timeline-around', {
+      sourceRef: 'source-ref', itemUid: 'record-parent', recordOwnerUserId: 7,
+      beforeLimit: 20, afterLimit: 21, chatSessionUid: 'must-not-forward',
+    })
+    expect(service.readSourceAround).toHaveBeenCalledWith('source-ref', 'record-parent', 7, {
+      beforeLimit: 20, afterLimit: 21,
+    })
+  })
+
   it('forwards only opaque member references and bounded paging fields', async () => {
     const service = fakeService()
     const signal = new AbortController().signal
@@ -657,6 +671,14 @@ describe('message action Host API dispatch', () => {
     await dispatchArkmeHostOperation(service as never, 'source.message-copy-link.extend', {
       sid: 'U2HQgn1RhPJZaFmx', itemIndex: 1, textContent: ' 延展 ', recordUid: 'record-1', relationUid: 'must-not-forward',
     })
+    await dispatchArkmeHostOperation(service as never, 'source.message-extension.context', {
+      sourceRef: 'source-ref', messageActionRef: 'action-1', sid: 'must-not-forward',
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.message-extension.extend', {
+      sourceRef: 'source-ref', messageActionRef: 'action-1', textContent: ' 附件延展 ', recordUid: 'record-2',
+      relationUid: 'relation-2', parentRecordUid: 'parent-extension-2',
+      fileRefs: ['file-1', '', 'file-2'], sid: 'must-not-forward',
+    })
     await dispatchArkmeHostOperation(service as never, 'source.forward-messages', {
       sourceRef: 'source-ref', actionRefs: ['action-1'], recordUid: 'record-1', relationUid: 'rel-1',
       targetSourceRef: 'target-source-ref', commentText: ' 附言 ',
@@ -669,6 +691,12 @@ describe('message action Host API dispatch', () => {
     expect(service.copySourceMessageLink).toHaveBeenCalledWith('source-ref', ['action-1', 'action-2'], expect.any(Object))
     expect(service.resolveMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', expect.any(Object))
     expect(service.extendMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', 1, ' 延展 ', 'record-1', expect.any(Object))
+    expect(service.sourceMessageExtensionContext).toHaveBeenCalledWith('source-ref', 'action-1', expect.any(Object))
+    expect(service.extendSourceMessage).toHaveBeenCalledWith(
+      'source-ref', 'action-1', ' 附件延展 ', 'record-2', ['file-1', 'file-2'], {
+        relationUid: 'relation-2', parentRecordUid: 'parent-extension-2',
+      },
+    )
     expect(service.forwardSourceMessages).toHaveBeenCalledWith('source-ref', ['action-1'], {
       recordUid: 'record-1',
       relationUid: 'rel-1',

@@ -62,9 +62,34 @@ function activeMembers(count: number): ArkmeConversationMemberItem[] {
   }))
 }
 
+function deferred<Value>() {
+  let resolve!: (value: Value) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 describe('conversation send directory projection', () => {
   let renderer: ReactTestRenderer | undefined
   let timeline: ArkmeTimelineItem[]
+  let aroundTimeline: ArkmeTimelineItem[] | undefined
+  let aroundOlderHasMore = false
+  let aroundOlderCursor: { beforeSequence: number } | undefined
+  let aroundNewerHasMore = false
+  let aroundNewerCursor: { afterSequence: number } | undefined
+  let newerTimelinePages = new Map<number, {
+    items: ArkmeTimelineItem[]
+    hasMore: boolean
+    nextCursor?: { afterSequence: number }
+  }>()
+  let olderTimelinePages = new Map<number, {
+    items: ArkmeTimelineItem[]
+    hasMore: boolean
+    nextCursor?: { beforeSequence: number }
+  }>()
   let copiedQuickLinkExtensionText = ''
   let activeSource = target
 
@@ -99,6 +124,13 @@ describe('conversation send directory projection', () => {
 
   beforeEach(() => {
     timeline = []
+    aroundTimeline = undefined
+    aroundOlderHasMore = false
+    aroundOlderCursor = undefined
+    aroundNewerHasMore = false
+    aroundNewerCursor = undefined
+    newerTimelinePages = new Map()
+    olderTimelinePages = new Map()
     copiedQuickLinkExtensionText = ''
     activeSource = target
     vi.spyOn(Date, 'now').mockReturnValue(48)
@@ -138,10 +170,15 @@ describe('conversation send directory projection', () => {
     mocks.callArkme.mockReset()
     mocks.callArkme.mockImplementation(async (operation: string, params?: {
       sid?: string
+      sourceRef?: string
+      messageActionRef?: string
       textContent?: string
       recordUid?: string
+      fileRefs?: string[]
       targetSourceRef?: string
       directory?: 'root' | 'send_to_self'
+      itemUid?: string
+      cursor?: { beforeSequence?: number; afterSequence?: number }
     }) => {
       if (operation === 'user.profile') return {
         profile: {
@@ -152,7 +189,22 @@ describe('conversation send directory projection', () => {
         revision: 1,
       }
       if (operation === 'source.members') return { source: activeSource, items: [], total: 0, activeCount: 0 }
-      if (operation === 'source.timeline') return { source: activeSource, items: timeline, hasMore: false }
+      if (operation === 'source.timeline') {
+        const beforeSequence = params?.cursor?.beforeSequence
+        const olderPage = beforeSequence === undefined ? undefined : olderTimelinePages.get(beforeSequence)
+        if (olderPage !== undefined) return { source: target, ...olderPage }
+        const afterSequence = params?.cursor?.afterSequence
+        const newerPage = afterSequence === undefined ? undefined : newerTimelinePages.get(afterSequence)
+        if (newerPage !== undefined) return { source: target, ...newerPage }
+        return { source: activeSource, items: timeline, hasMore: false }
+      }
+      if (operation === 'source.timeline-around' && aroundTimeline !== undefined) return {
+        source: activeSource, items: aroundTimeline,
+        anchorItemUid: params?.itemUid, anchorSequence: 11, anchorIndex: 1,
+        olderHasMore: aroundOlderHasMore, newerHasMore: aroundNewerHasMore,
+        ...(aroundOlderCursor === undefined ? {} : { olderCursor: aroundOlderCursor }),
+        ...(aroundNewerCursor === undefined ? {} : { newerCursor: aroundNewerCursor }),
+      }
       if (operation === 'sources.list') return {
         directory: params?.directory ?? 'root',
         items: params?.directory === 'send_to_self' ? [] : activeSource === group ? [other, target, group] : [other, target],
@@ -160,6 +212,10 @@ describe('conversation send directory projection', () => {
       }
       if (operation === 'source.interwoven-moments') return {
         state: 'disabled', moments: [], preparedAtMillis: 48,
+      }
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.message-extension.context') return {
+        parentRecordUid: 'parent-record', extensionCount: 0, extensions: [],
       }
       if (operation === 'source.message-copy-link.resolve') return {
         sid: params?.sid ?? 'U2HQgn1RhPJZaFmx',
@@ -237,6 +293,17 @@ describe('conversation send directory projection', () => {
             mediaItems: [],
           },
         }
+      }
+      if (operation === 'source.message-extension.extend') return {
+        recordUid: params?.recordUid ?? 'record-new',
+        parentRecordUid: 'parent-record',
+        status: 1,
+        localState: 'synced',
+        extension: {
+          recordUid: params?.recordUid ?? 'record-new', level: 2, sourceKind: 'record_extension',
+          senderDisplayName: '狗才', title: '', textContent: params?.textContent ?? '', sendAtMillis: 48,
+          templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [],
+        },
       }
       throw new Error(`unexpected operation ${operation}`)
     })
@@ -436,7 +503,7 @@ describe('conversation send directory projection', () => {
     })
     const menu = renderer!.root.findByProps({ 'aria-label': '消息操作' })
     await act(async () => {
-      menu.findAllByProps({ role: 'menuitem' })[3]!.props.onClick()
+      menu.findAllByProps({ role: 'menuitem' })[4]!.props.onClick()
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -464,7 +531,7 @@ describe('conversation send directory projection', () => {
       })
     })
     const menu = renderer!.root.findByProps({ 'aria-label': '消息操作' })
-    act(() => { menu.findAllByProps({ role: 'menuitem' })[2]!.props.onClick() })
+    act(() => { menu.findAllByProps({ role: 'menuitem' })[3]!.props.onClick() })
   }
 
   it('anchors the themed multi-select control to the avatar top and renders exit as a standard toolbar action', async () => {
@@ -2345,6 +2412,1169 @@ describe('conversation send directory projection', () => {
     expect(arkmeChatDirectory.getSnapshot().sources[1]).toMatchObject({
       latestPreview: '@狗才 1', activeAtMillis: 22, unreadCount: 0, latestSequence: 8,
     })
+  })
+
+  it('switches the current conversation composer into source-message extension mode without opening the detail drawer', async () => {
+    timeline = [{
+      itemUid: 'extension-source', messageActionRef: 'opaque-extension-action',
+      senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '这个谁解答一下', status: 1,
+      contentBlocks: [{
+        kind: 'image', mediaRef: 'opaque-image', fileName: 'question.png', mimeType: 'image/png', size: 12, sortOrder: 0,
+      }],
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+    const bubble = renderer!.root.findByProps({ 'aria-label': '打开快记详情' })
+    act(() => {
+      bubble.props.onContextMenu({ preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180 })
+    })
+    const menu = renderer!.root.findByProps({ 'aria-label': '消息操作' })
+    const extendAction = menu.findAll(node => node.props.role === 'menuitem'
+      && node.findAll(child => child.children.includes('延展')).length > 0)[0]
+    expect(extendAction).toBeDefined()
+    await act(async () => { extendAction!.props.onClick(); await Promise.resolve() })
+
+    expect(renderer!.root.findAllByProps({ 'data-arkme-note-detail': 'true' })).toHaveLength(0)
+    const targetPreview = renderer!.root.findByProps({ 'data-arkme-composer-extension-target': 'true' })
+    expect(targetPreview.findAll(node => node.children.includes('这个谁解答一下')).length).toBeGreaterThan(0)
+    expect(targetPreview.findAll(node => node.children.includes('question.png')).length).toBeGreaterThan(0)
+    expect(targetPreview.props.style).toMatchObject({
+      margin: 0,
+      borderRadius: '12px 12px 0 0',
+      borderBottom: 0,
+      background: 'var(--dsw-alias-fill-secondary, var(--dsw-alias-bg-module-platform, #f2f2f2))',
+      boxShadow: 'inset 0 -1px 0 var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10))',
+    })
+    expect(targetPreview.findAll(node => node.children.some(child => typeof child === 'string' && child.includes('正在延展')))).toHaveLength(0)
+    const destinationHint = renderer!.root.findByProps({ 'data-arkme-composer-destination-hint': 'true' })
+    expect(destinationHint.findAll(node => node.children.includes('正在给 '))).toHaveLength(1)
+    expect(destinationHint.findAll(node => node.children.includes('Harness4')).length).toBeGreaterThan(0)
+    expect(destinationHint.findAll(node => node.children.includes(' 发消息'))).toHaveLength(1)
+    const composerSurface = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
+    expect(composerSurface.props.style).toMatchObject({
+      borderRadius: '0 0 15px 15px',
+      background: 'var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-2, #ffffff))',
+    })
+    const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    expect(composer.props.placeholder).toBe('发送到「Harness4」…')
+    await act(async () => { composer.props.onTextChange('我的补充'); await Promise.resolve() })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-extension.extend', {
+      sourceRef: 'source-harness',
+      messageActionRef: 'opaque-extension-action',
+      textContent: '我的补充',
+      recordUid: 'record-new',
+      relationUid: 'relation-new',
+      fileRefs: [],
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-composer-extension-target': 'true' })).toHaveLength(0)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.placeholder).toBe('发消息给@Harness…')
+  })
+
+  it('omits the non-text fallback label when extending an attachment-only quick note', async () => {
+    timeline = [{
+      itemUid: 'extension-image-source', messageActionRef: 'opaque-extension-image-action',
+      senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '', status: 1,
+      contentBlocks: [{
+        kind: 'image', mediaRef: 'opaque-image', fileName: 'question.png', mimeType: 'image/png', size: 12, sortOrder: 0,
+      }],
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+    const bubble = renderer!.root.findByProps({ 'aria-label': '打开快记详情' })
+    act(() => bubble.props.onContextMenu({ preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180 }))
+    const menu = renderer!.root.findByProps({ 'aria-label': '消息操作' })
+    const extendAction = menu.findAll(node => node.props.role === 'menuitem'
+      && node.findAll(child => child.children.includes('延展')).length > 0)[0]!
+    await act(async () => { extendAction.props.onClick(); await Promise.resolve() })
+
+    const targetPreview = renderer!.root.findByProps({ 'data-arkme-composer-extension-target': 'true' })
+    expect(targetPreview.findAll(node => node.children.includes('非文本快记'))).toHaveLength(0)
+    expect(targetPreview.findAll(node => node.children.includes('question.png')).length).toBeGreaterThan(0)
+  })
+
+  it('uses the desktop six-node extension icon in the message action menu', async () => {
+    timeline = [{
+      itemUid: 'extension-icon-source', messageActionRef: 'opaque-extension-icon-action',
+      senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '测试', status: 1,
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+    const bubble = renderer!.root.findByProps({ 'aria-label': '打开快记详情' })
+    act(() => bubble.props.onContextMenu({ preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180 }))
+
+    const icon = renderer!.root.findByProps({ 'data-arkme-message-extension-icon': 'desktop' })
+    expect(icon.props.viewBox).toBe('0 0 16 16')
+    expect(icon.findAllByType('circle')).toHaveLength(5)
+    expect(icon.findAllByType('path')).toHaveLength(2)
+  })
+
+  it('shows a successful private-chat extension as a desktop-style compound message', async () => {
+    timeline = [{
+      itemUid: 'extension-parent', messageActionRef: 'opaque-extension-parent-action',
+      senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '原消息内容', status: 1,
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+    const bubble = renderer!.root.findByProps({ 'aria-label': '打开快记详情' })
+    act(() => bubble.props.onContextMenu({ preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180 }))
+    const menu = renderer!.root.findByProps({ 'aria-label': '消息操作' })
+    const extendAction = menu.findAll(node => node.props.role === 'menuitem'
+      && node.findAll(child => child.children.includes('延展')).length > 0)[0]!
+    await act(async () => { extendAction.props.onClick(); await Promise.resolve() })
+    await act(async () => {
+      renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('延展正文')
+      await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const sentRow = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'record-new' })
+    expect(sentRow.findAll(node => node.children.includes('延展正文')).length).toBeGreaterThan(0)
+    const extensionCluster = sentRow.findByProps({ 'data-arkme-extension-message-cluster': 'true' })
+    expect(extensionCluster.props.style).toMatchObject({ alignItems: 'flex-end', gap: 0 })
+    const parentPreview = sentRow.findByProps({ 'data-arkme-extension-parent-preview': 'extension-parent' })
+    expect(parentPreview.findAll(node => node.children.includes('原消息内容')).length).toBeGreaterThan(0)
+    expect(parentPreview.props.style).toMatchObject({
+      marginRight: 54,
+      background: 'linear-gradient(180deg, var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8)) 0%, transparent 68.06%)',
+    })
+    const childLine = extensionCluster.findByProps({ 'data-arkme-extension-child-line': 'true' })
+    expect(childLine.props.style).toMatchObject({ flexDirection: 'row-reverse', gap: 10 })
+    expect(childLine.findByProps({ 'data-arkme-message-content-line': 'record-new' })).toBeDefined()
+    expect(childLine.findAllByProps({ 'data-arkme-extension-parent-preview': 'extension-parent' })).toHaveLength(0)
+  })
+
+  it('uses a pointer cursor for a clickable extension parent preview', async () => {
+    timeline = [{
+      itemUid: 'extension-child', senderName: '我', isMe: true, sendAtMillis: 12,
+      title: '', textContent: '延展内容', status: 1, sequence: 12,
+      extensionParentRecordUid: 'extension-parent-old',
+      extensionParent: {
+        itemUid: 'extension-parent-old', senderName: '同事', title: '', textContent: '较早的原快记',
+        recordOwnerUserId: 7, sequence: 11, sendAtMillis: 11,
+      },
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+
+    const parentPreview = renderer!.root.findByProps({
+      'data-arkme-extension-parent-preview': 'extension-parent-old',
+    })
+    expect(parentPreview.props.role).toBe('button')
+    expect(parentPreview.props.style.cursor).toBe('pointer')
+  })
+
+  it('centers the around-loaded extension parent in the conversation viewport', async () => {
+    timeline = [{
+      itemUid: 'extension-child', senderName: '我', isMe: true, sendAtMillis: 12,
+      title: '', textContent: '延展内容', status: 1, sequence: 12,
+      extensionParentRecordUid: 'extension-parent-old',
+      extensionParent: {
+        itemUid: 'extension-parent-old', senderName: '同事', title: '', textContent: '较早的原快记',
+        recordOwnerUserId: 7, sequence: 11, sendAtMillis: 11,
+      },
+    }]
+    aroundTimeline = [{
+      itemUid: 'before-parent', senderName: '同事', isMe: false, sendAtMillis: 10,
+      title: '', textContent: '更早', status: 1, sequence: 10,
+    }, {
+      itemUid: 'extension-parent-old', senderName: '同事', isMe: false, sendAtMillis: 11,
+      title: '', textContent: '较早的原快记', status: 1, sequence: 11,
+    }, timeline[0]!]
+    const scrollTo = vi.fn()
+    const targetRow = {
+      dataset: {
+        arkmeConversationRow: 'message:extension-parent-old',
+        arkmeMessageItemUid: 'extension-parent-old',
+      },
+      getBoundingClientRect: () => {
+        const top = 490 - conversationBody.scrollTop
+        return { left: 0, top, right: 600, bottom: top + 80, width: 600, height: 80 }
+      },
+    }
+    const conversationBody = {
+      scrollTop: 40,
+      scrollHeight: 1_500,
+      clientHeight: 600,
+      scrollTo,
+      querySelectorAll: vi.fn(() => [targetRow]),
+      getBoundingClientRect: () => ({ left: 0, top: 100, right: 600, bottom: 700, width: 600, height: 600 }),
+    }
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => {
+          if (element.props.className === 'arkme-conversation-panel') {
+            return { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          }
+          if (element.props.className === 'arkme-conversation-body') return conversationBody
+          return null
+        },
+      })
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    const parentPreview = renderer!.root.findByProps({ 'data-arkme-extension-parent-preview': 'extension-parent-old' })
+    await act(async () => {
+      parentPreview.props.onClick()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline-around', {
+      sourceRef: 'source-harness', itemUid: 'extension-parent-old', recordOwnerUserId: 7,
+      beforeLimit: 20, afterLimit: 20,
+    }, expect.any(AbortSignal))
+    expect(renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'extension-parent-old' })).toBeDefined()
+    expect(scrollTo).toHaveBeenCalledWith({ top: 130, behavior: 'auto' })
+  })
+
+  it('keeps an around-loaded locate window continuous when the latest realtime item is retained', async () => {
+    const latestExtension: ArkmeTimelineItem = {
+      itemUid: 'extension-child-latest', senderName: '我', isMe: true, sendAtMillis: 50,
+      title: '', textContent: '当前延展内容', status: 1, sequence: 50,
+      extensionParentRecordUid: 'extension-parent-old',
+      extensionParent: {
+        itemUid: 'extension-parent-old', senderName: '同事', title: '', textContent: '较早的原快记',
+        recordOwnerUserId: 7, sequence: 11, sendAtMillis: 11,
+      },
+    }
+    timeline = [latestExtension]
+    aroundTimeline = [{
+      itemUid: 'before-parent', senderName: '同事', isMe: false, sendAtMillis: 10,
+      title: '', textContent: '更早', status: 1, sequence: 10,
+    }, {
+      itemUid: 'extension-parent-old', senderName: '同事', isMe: false, sendAtMillis: 11,
+      title: '', textContent: '较早的原快记', status: 1, sequence: 11,
+    }, {
+      itemUid: 'after-parent', senderName: '同事', isMe: false, sendAtMillis: 12,
+      title: '', textContent: '稍后', status: 1, sequence: 12,
+    }]
+    arkmeChatTimelineDelta.publish([{ source: target, items: [latestExtension] }])
+    const scrollTo = vi.fn()
+    const targetRow = {
+      dataset: {
+        arkmeConversationRow: 'message:extension-parent-old',
+        arkmeMessageItemUid: 'extension-parent-old',
+      },
+      getBoundingClientRect: () => {
+        const top = 390 - conversationBody.scrollTop
+        return { left: 0, top, right: 600, bottom: top + 80, width: 600, height: 80 }
+      },
+    }
+    const conversationBody = {
+      scrollTop: 0,
+      scrollHeight: 1_500,
+      clientHeight: 600,
+      scrollTo,
+      querySelectorAll: vi.fn(() => [targetRow]),
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600 }),
+    }
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => {
+          if (element.props.className === 'arkme-conversation-panel') {
+            return { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          }
+          if (element.props.className === 'arkme-conversation-body') return conversationBody
+          return null
+        },
+      })
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    const parentPreview = renderer!.root.findByProps({
+      'data-arkme-extension-parent-preview': 'extension-parent-old',
+    })
+    await act(async () => {
+      parentPreview.props.onClick()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    const visibleItemUids = renderer!.root
+      .findAll(node => typeof node.props['data-arkme-message-item-uid'] === 'string')
+      .map(node => node.props['data-arkme-message-item-uid'])
+    expect(visibleItemUids).toEqual(['before-parent', 'extension-parent-old', 'after-parent'])
+    expect(scrollTo).toHaveBeenCalledTimes(1)
+    expect(scrollTo).toHaveBeenCalledWith({ top: 130, behavior: 'auto' })
+  })
+
+  it('does not let an older background latest response replace an installed around window', async () => {
+    const latestExtension: ArkmeTimelineItem = {
+      itemUid: 'extension-child-latest', senderName: '我', isMe: true, sendAtMillis: 50,
+      title: '', textContent: '当前延展内容', status: 1, sequence: 50,
+      extensionParentRecordUid: 'extension-parent-old',
+      extensionParent: {
+        itemUid: 'extension-parent-old', senderName: '同事', title: '', textContent: '较早的原快记',
+        recordOwnerUserId: 7, sequence: 11, sendAtMillis: 11,
+      },
+    }
+    timeline = [latestExtension]
+    aroundTimeline = [{
+      itemUid: 'before-parent', senderName: '同事', isMe: false, sendAtMillis: 10,
+      title: '', textContent: '更早', status: 1, sequence: 10,
+    }, {
+      itemUid: 'extension-parent-old', senderName: '同事', isMe: false, sendAtMillis: 11,
+      title: '', textContent: '较早的原快记', status: 1, sequence: 11,
+    }, {
+      itemUid: 'after-parent', senderName: '同事', isMe: false, sendAtMillis: 12,
+      title: '', textContent: '稍后', status: 1, sequence: 12,
+    }]
+    const conversationBody = {
+      scrollTop: 0, scrollHeight: 1_500, clientHeight: 600, scrollTo: vi.fn(),
+      querySelectorAll: vi.fn(() => renderer?.root.findAllByProps({
+        'data-arkme-message-item-uid': 'extension-parent-old',
+      }).length === 1 ? [{
+          dataset: { arkmeMessageItemUid: 'extension-parent-old' },
+          getBoundingClientRect: () => ({ left: 0, top: 300, right: 600, bottom: 380, width: 600, height: 80 }),
+        }] : []),
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600 }),
+    }
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-body'
+          ? conversationBody
+          : element.props.className === 'arkme-conversation-panel'
+            ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+            : null,
+      })
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    const staleLatest = deferred<unknown>()
+    const previousImplementation = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: unknown, signal?: AbortSignal) => {
+      if (operation === 'source.timeline' && (params as { cursor?: unknown } | undefined)?.cursor === undefined) {
+        return await staleLatest.promise
+      }
+      return await previousImplementation(operation, params, signal)
+    })
+    await act(async () => {
+      arkmeUi.chatChanged()
+      await Promise.resolve(); await Promise.resolve()
+    })
+    const parentPreview = renderer!.root.findByProps({
+      'data-arkme-extension-parent-preview': 'extension-parent-old',
+    })
+    await act(async () => {
+      parentPreview.props.onClick()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    await act(async () => {
+      staleLatest.resolve({ source: target, items: [latestExtension], hasMore: false })
+      await staleLatest.promise
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    const visibleItemUids = renderer!.root
+      .findAll(node => typeof node.props['data-arkme-message-item-uid'] === 'string')
+      .map(node => node.props['data-arkme-message-item-uid'])
+    expect(visibleItemUids).toEqual(['before-parent', 'extension-parent-old', 'after-parent'])
+    expect(conversationBody.scrollTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not start a background latest refresh while an around request is pending', async () => {
+    const latestExtension: ArkmeTimelineItem = {
+      itemUid: 'extension-child-latest', senderName: '我', isMe: true, sendAtMillis: 50,
+      title: '', textContent: '当前延展内容', status: 1, sequence: 50,
+      extensionParentRecordUid: 'extension-parent-old',
+      extensionParent: {
+        itemUid: 'extension-parent-old', senderName: '同事', title: '', textContent: '较早的原快记',
+        recordOwnerUserId: 7, sequence: 11, sendAtMillis: 11,
+      },
+    }
+    timeline = [latestExtension]
+    const pendingAround = deferred<unknown>()
+    const pendingLatest = deferred<unknown>()
+    let pendingBackgroundCalls = 0
+    const conversationBody = {
+      scrollTop: 0, scrollHeight: 1_500, clientHeight: 600, scrollTo: vi.fn(),
+      querySelectorAll: vi.fn(() => renderer?.root.findAllByProps({
+        'data-arkme-message-item-uid': 'extension-parent-old',
+      }).length === 1 ? [{
+          dataset: { arkmeMessageItemUid: 'extension-parent-old' },
+          getBoundingClientRect: () => ({ left: 0, top: 300, right: 600, bottom: 380, width: 600, height: 80 }),
+        }] : []),
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600 }),
+    }
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-body'
+          ? conversationBody
+          : element.props.className === 'arkme-conversation-panel'
+            ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+            : null,
+      })
+      await Promise.resolve(); await Promise.resolve()
+    })
+    const previousImplementation = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: unknown, signal?: AbortSignal) => {
+      if (operation === 'source.timeline-around') return await pendingAround.promise
+      if (operation === 'source.timeline' && (params as { cursor?: unknown } | undefined)?.cursor === undefined) {
+        pendingBackgroundCalls += 1
+        return await pendingLatest.promise
+      }
+      return await previousImplementation(operation, params, signal)
+    })
+
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-arkme-extension-parent-preview': 'extension-parent-old' }).props.onClick()
+      await Promise.resolve(); await Promise.resolve()
+    })
+    await act(async () => {
+      arkmeUi.chatChanged()
+      await Promise.resolve(); await Promise.resolve()
+    })
+    await act(async () => {
+      pendingAround.resolve({
+        source: target,
+        items: [{
+          itemUid: 'before-parent', senderName: '同事', isMe: false, sendAtMillis: 10,
+          title: '', textContent: '更早', status: 1, sequence: 10,
+        }, {
+          itemUid: 'extension-parent-old', senderName: '同事', isMe: false, sendAtMillis: 11,
+          title: '', textContent: '较早的原快记', status: 1, sequence: 11,
+        }, {
+          itemUid: 'after-parent', senderName: '同事', isMe: false, sendAtMillis: 12,
+          title: '', textContent: '稍后', status: 1, sequence: 12,
+        }],
+        anchorItemUid: 'extension-parent-old', anchorSequence: 11, anchorIndex: 1,
+        olderHasMore: false, newerHasMore: false,
+      })
+      await pendingAround.promise
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    pendingLatest.resolve({ source: target, items: [latestExtension], hasMore: false })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(pendingBackgroundCalls).toBe(0)
+    expect(renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'extension-parent-old' })).toBeDefined()
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': latestExtension.itemUid })).toHaveLength(0)
+  })
+
+  it('merges simultaneous older and newer around pages without cancelling either direction', async () => {
+    timeline = [{
+      itemUid: 'extension-child', senderName: '我', isMe: true, sendAtMillis: 50,
+      title: '', textContent: '当前延展内容', status: 1, sequence: 50,
+      extensionParentRecordUid: 'extension-parent-old',
+      extensionParent: {
+        itemUid: 'extension-parent-old', senderName: '同事', title: '', textContent: '较早的原快记',
+        recordOwnerUserId: 7, sequence: 11, sendAtMillis: 11,
+      },
+    }]
+    aroundTimeline = [{
+      itemUid: 'extension-parent-old', senderName: '同事', isMe: false, sendAtMillis: 11,
+      title: '', textContent: '较早的原快记', status: 1, sequence: 11,
+    }, {
+      itemUid: 'after-parent-12', senderName: '同事', isMe: false, sendAtMillis: 12,
+      title: '', textContent: '稍后', status: 1, sequence: 12,
+    }]
+    aroundOlderHasMore = true
+    aroundOlderCursor = { beforeSequence: 11 }
+    aroundNewerHasMore = true
+    aroundNewerCursor = { afterSequence: 12 }
+    const olderPage = deferred<unknown>()
+    const newerPage = deferred<unknown>()
+    const previousImplementation = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: unknown, signal?: AbortSignal) => {
+      const cursor = (params as { cursor?: { beforeSequence?: number; afterSequence?: number } } | undefined)?.cursor
+      const pending = cursor?.beforeSequence === 11 ? olderPage : cursor?.afterSequence === 12 ? newerPage : undefined
+      if (operation === 'source.timeline' && pending !== undefined) {
+        signal?.addEventListener('abort', () => { pending.reject(new DOMException('Aborted', 'AbortError')) }, { once: true })
+        return await pending.promise
+      }
+      return await previousImplementation(operation, params, signal)
+    })
+    const olderObservers: IntersectionObserverCallback[] = []
+    const newerObservers: IntersectionObserverCallback[] = []
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+        if (options?.rootMargin === '120px 0px 0px') olderObservers.push(callback)
+        if (options?.rootMargin === '0px 0px 120px') newerObservers.push(callback)
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+      takeRecords() { return [] }
+      readonly root = null
+      readonly rootMargin = ''
+      readonly thresholds = []
+    })
+    const conversationBody = {
+      scrollTop: 0, scrollHeight: 1_500, clientHeight: 600, scrollTo: vi.fn(),
+      querySelectorAll: vi.fn(() => renderer?.root.findAllByProps({
+        'data-arkme-message-item-uid': 'extension-parent-old',
+      }).length === 1 ? [{
+          dataset: { arkmeMessageItemUid: 'extension-parent-old' },
+          getBoundingClientRect: () => ({ left: 0, top: 300, right: 600, bottom: 380, width: 600, height: 80 }),
+        }] : []),
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600 }),
+    }
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-body'
+          ? conversationBody
+          : element.props.className === 'arkme-conversation-panel'
+            ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+            : element.props.style?.width === '100%' && element.props.style?.height === 1 ? {} : null,
+      })
+      await Promise.resolve(); await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-arkme-extension-parent-preview': 'extension-parent-old' }).props.onClick()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    expect(olderObservers).toHaveLength(1)
+    expect(newerObservers).toHaveLength(1)
+
+    act(() => {
+      olderObservers.at(-1)!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+      newerObservers.at(-1)!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+    })
+    await act(async () => {
+      newerPage.resolve({ source: target, items: [{
+        itemUid: 'newer-13', senderName: '同事', isMe: false, sendAtMillis: 13,
+        title: '', textContent: '更新', status: 1, sequence: 13,
+      }], hasMore: true, nextCursor: { afterSequence: 13 } })
+      olderPage.resolve({ source: target, items: [{
+        itemUid: 'older-10', senderName: '同事', isMe: false, sendAtMillis: 10,
+        title: '', textContent: '更早', status: 1, sequence: 10,
+      }], hasMore: true, nextCursor: { beforeSequence: 10 } })
+      await Promise.all([olderPage.promise, newerPage.promise])
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    expect(renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'older-10' })).toBeDefined()
+    expect(renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'newer-13' })).toBeDefined()
+    await act(async () => {
+      olderObservers.at(-1)!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+      newerObservers.at(-1)!([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver)
+      newerObservers.at(-1)!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', {
+      sourceRef: target.sourceRef, limit: 40, cursor: { beforeSequence: 10 },
+    }, expect.any(AbortSignal))
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', {
+      sourceRef: target.sourceRef, limit: 40, cursor: { afterSequence: 13 },
+    }, expect.any(AbortSignal))
+  })
+
+  it('loads only one newer page until the bottom sentinel leaves and re-enters', async () => {
+    const latestExtension: ArkmeTimelineItem = {
+      itemUid: 'extension-child-latest', senderName: '我', isMe: true, sendAtMillis: 50,
+      title: '', textContent: '当前延展内容', status: 1, sequence: 50,
+      extensionParentRecordUid: 'extension-parent-old',
+      extensionParent: {
+        itemUid: 'extension-parent-old', senderName: '同事', title: '', textContent: '较早的原快记',
+        recordOwnerUserId: 7, sequence: 11, sendAtMillis: 11,
+      },
+    }
+    const page13: ArkmeTimelineItem = {
+      itemUid: 'after-parent-13', senderName: '同事', isMe: false, sendAtMillis: 13,
+      title: '', textContent: '更新一页', status: 1, sequence: 13,
+    }
+    const liveDelta: ArkmeTimelineItem = {
+      itemUid: 'live-after-locate', senderName: '同事', isMe: false, sendAtMillis: 51,
+      title: '', textContent: '已经回到实时窗口', status: 1, sequence: 51,
+    }
+    timeline = [latestExtension]
+    aroundTimeline = [{
+      itemUid: 'extension-parent-old', senderName: '同事', isMe: false, sendAtMillis: 11,
+      title: '', textContent: '较早的原快记', status: 1, sequence: 11,
+    }, {
+      itemUid: 'after-parent-12', senderName: '同事', isMe: false, sendAtMillis: 12,
+      title: '', textContent: '稍后', status: 1, sequence: 12,
+    }]
+    aroundNewerHasMore = true
+    aroundNewerCursor = { afterSequence: 12 }
+    newerTimelinePages.set(12, { items: [page13], hasMore: true, nextCursor: { afterSequence: 13 } })
+    newerTimelinePages.set(13, { items: [latestExtension], hasMore: false })
+    arkmeChatTimelineDelta.publish([{ source: target, items: [latestExtension] }])
+    const newerObservers: IntersectionObserverCallback[] = []
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+        if (options?.rootMargin === '0px 0px 120px') newerObservers.push(callback)
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+      takeRecords() { return [] }
+      readonly root = null
+      readonly rootMargin = ''
+      readonly thresholds = []
+    })
+    const targetRow = {
+      dataset: {
+        arkmeConversationRow: 'message:extension-parent-old',
+        arkmeMessageItemUid: 'extension-parent-old',
+      },
+      getBoundingClientRect: () => {
+        const top = 390 - conversationBody.scrollTop
+        return { left: 0, top, right: 600, bottom: top + 80, width: 600, height: 80 }
+      },
+    }
+    const conversationBody = {
+      scrollTop: 0,
+      scrollHeight: 1_500,
+      clientHeight: 600,
+      scrollTo: vi.fn(),
+      querySelectorAll: vi.fn(() => [targetRow]),
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600 }),
+    }
+    const sentinel = {}
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => {
+          if (element.props.className === 'arkme-conversation-panel') {
+            return { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          }
+          if (element.props.className === 'arkme-conversation-body') return conversationBody
+          if (element.props.style?.width === '100%' && element.props.style?.height === 1) return sentinel
+          return null
+        },
+      })
+      await Promise.resolve(); await Promise.resolve()
+    })
+    const parentPreview = renderer!.root.findByProps({
+      'data-arkme-extension-parent-preview': 'extension-parent-old',
+    })
+    await act(async () => {
+      parentPreview.props.onClick()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    expect(newerObservers).toHaveLength(1)
+    await act(async () => {
+      newerObservers.at(-1)!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', {
+      sourceRef: target.sourceRef, limit: 40, cursor: { afterSequence: 12 },
+    }, expect.any(AbortSignal))
+    expect(renderer!.root.findByProps({ 'data-arkme-message-item-uid': page13.itemUid })).toBeDefined()
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': latestExtension.itemUid })).toHaveLength(0)
+
+    await act(async () => {
+      newerObservers.at(-1)!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    expect(mocks.callArkme).not.toHaveBeenCalledWith('source.timeline', {
+      sourceRef: target.sourceRef, limit: 40, cursor: { afterSequence: 13 },
+    }, expect.any(AbortSignal))
+
+    await act(async () => {
+      newerObservers.at(-1)!([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver)
+      newerObservers.at(-1)!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', {
+      sourceRef: target.sourceRef, limit: 40, cursor: { afterSequence: 13 },
+    }, expect.any(AbortSignal))
+    await act(async () => {
+      arkmeChatTimelineDelta.publish([{ source: target, items: [liveDelta] }])
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findByProps({ 'data-arkme-message-item-uid': liveDelta.itemUid })).toBeDefined()
+  })
+
+  it('positions the first newly loaded newer message at the top of the conversation viewport', async () => {
+    const latestExtension: ArkmeTimelineItem = {
+      itemUid: 'extension-child-latest', senderName: '我', isMe: true, sendAtMillis: 50,
+      title: '', textContent: '当前延展内容', status: 1, sequence: 50,
+      extensionParentRecordUid: 'extension-parent-old',
+      extensionParent: {
+        itemUid: 'extension-parent-old', senderName: '同事', title: '', textContent: '较早的原快记',
+        recordOwnerUserId: 7, sequence: 11, sendAtMillis: 11,
+      },
+    }
+    const firstNewerItem: ArkmeTimelineItem = {
+      itemUid: 'after-parent-13', senderName: '同事', isMe: false, sendAtMillis: 13,
+      title: '', textContent: '本次新页第一条', status: 1, sequence: 13,
+    }
+    const secondNewerItem: ArkmeTimelineItem = {
+      itemUid: 'after-parent-14', senderName: '同事', isMe: false, sendAtMillis: 14,
+      title: '', textContent: '本次新页第二条', status: 1, sequence: 14,
+    }
+    timeline = [latestExtension]
+    aroundTimeline = [{
+      itemUid: 'extension-parent-old', senderName: '同事', isMe: false, sendAtMillis: 11,
+      title: '', textContent: '较早的原快记', status: 1, sequence: 11,
+    }, {
+      itemUid: 'after-parent-12', senderName: '同事', isMe: false, sendAtMillis: 12,
+      title: '', textContent: '稍后', status: 1, sequence: 12,
+    }]
+    aroundNewerHasMore = true
+    aroundNewerCursor = { afterSequence: 12 }
+    newerTimelinePages.set(12, {
+      items: [firstNewerItem, secondNewerItem], hasMore: true, nextCursor: { afterSequence: 14 },
+    })
+    const newerObservers: IntersectionObserverCallback[] = []
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+        if (options?.rootMargin === '0px 0px 120px') newerObservers.push(callback)
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+      takeRecords() { return [] }
+      readonly root = null
+      readonly rootMargin = ''
+      readonly thresholds = []
+    })
+    let scrollTop = 0
+    const targetRow = {
+      dataset: {
+        arkmeConversationRow: 'message:extension-parent-old',
+        arkmeMessageItemUid: 'extension-parent-old',
+      },
+      getBoundingClientRect: () => {
+        const top = 390 - scrollTop
+        return { left: 0, top, right: 600, bottom: top + 80, width: 600, height: 80 }
+      },
+    }
+    const firstNewerRow = {
+      dataset: {
+        arkmeConversationRow: 'message:after-parent-13',
+        arkmeMessageItemUid: 'after-parent-13',
+      },
+      getBoundingClientRect: () => {
+        const top = 1_200 - scrollTop
+        return { left: 0, top, right: 600, bottom: top + 80, width: 600, height: 80 }
+      },
+    }
+    const newerPageRendered = () => {
+      try {
+        return renderer?.root.findAllByProps({
+          'data-arkme-message-item-uid': firstNewerItem.itemUid,
+        }).length === 1
+      } catch {
+        return false
+      }
+    }
+    const conversationBody = {
+      get scrollTop() { return scrollTop },
+      set scrollTop(value: number) { scrollTop = value },
+      get scrollHeight() { return newerPageRendered() ? 2_400 : 1_200 },
+      clientHeight: 600,
+      scrollTo: vi.fn((options: ScrollToOptions) => { scrollTop = options.top ?? scrollTop }),
+      querySelectorAll: vi.fn(() => newerPageRendered() ? [targetRow, firstNewerRow] : [targetRow]),
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600 }),
+    }
+    const sentinel = {}
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => {
+          if (element.props.className === 'arkme-conversation-panel') {
+            return { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          }
+          if (element.props.className === 'arkme-conversation-body') return conversationBody
+          if (element.props.style?.width === '100%' && element.props.style?.height === 1) return sentinel
+          return null
+        },
+      })
+      await Promise.resolve(); await Promise.resolve()
+    })
+    const parentPreview = renderer!.root.findByProps({
+      'data-arkme-extension-parent-preview': 'extension-parent-old',
+    })
+    await act(async () => {
+      parentPreview.props.onClick()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    scrollTop = 600
+    await act(async () => {
+      newerObservers.at(-1)!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    expect(renderer!.root.findByProps({ 'data-arkme-message-item-uid': firstNewerItem.itemUid })).toBeDefined()
+    expect(firstNewerRow.getBoundingClientRect().top).toBe(conversationBody.getBoundingClientRect().top)
+  })
+
+  it('uses a layout-neutral desktop-style backdrop for a located quick note', async () => {
+    timeline = [{
+      itemUid: 'highlight-target', senderName: '同事', isMe: false, sendAtMillis: 11,
+      title: '', textContent: '需要定位的快记', status: 1, sequence: 11,
+    }]
+    const targetRow = {
+      dataset: { arkmeConversationRow: 'message:highlight-target', arkmeMessageItemUid: 'highlight-target' },
+      getBoundingClientRect: () => ({ left: 0, top: 240, right: 600, bottom: 320, width: 600, height: 80 }),
+    }
+    const conversationBody = {
+      scrollTop: 0,
+      scrollHeight: 900,
+      clientHeight: 600,
+      scrollTo: vi.fn(),
+      querySelectorAll: vi.fn(() => [targetRow]),
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600 }),
+    }
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => {
+          if (element.props.className === 'arkme-conversation-panel') {
+            return { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          }
+          if (element.props.className === 'arkme-conversation-body') return conversationBody
+          return null
+        },
+      })
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    act(() => { arkmeUi.showConversationTarget(target, 'highlight-target', 11) })
+
+    const locatedRow = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'highlight-target' })
+    expect(locatedRow.props.style).toMatchObject({
+      background: 'transparent',
+      position: 'relative',
+      isolation: 'isolate',
+      transition: 'background-color .3s ease',
+    })
+    expect(locatedRow.props.style.padding).toBeUndefined()
+    expect(locatedRow.props.style.margin).toBeUndefined()
+    expect(renderer!.root.findByProps({ 'data-arkme-highlight-backdrop': 'true' }).props.style).toMatchObject({
+      position: 'absolute',
+      top: -6,
+      right: -6,
+      bottom: 12,
+      left: -6,
+      background: 'var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, 0.10))',
+      pointerEvents: 'none',
+      zIndex: -1,
+    })
+    expect(locatedRow.props.style.outline).toBeUndefined()
+    expect(locatedRow.props.style.borderRadius).toBeUndefined()
+  })
+
+  it('keeps a located quick note highlighted after the previous timeout window', async () => {
+    vi.useFakeTimers()
+    Object.assign(window, {
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
+    })
+    try {
+      timeline = [{
+        itemUid: 'persistent-highlight-target', senderName: '同事', isMe: false, sendAtMillis: 12,
+        title: '', textContent: '高亮不应自动消失', status: 1, sequence: 12,
+      }]
+      const targetRow = {
+        dataset: {
+          arkmeConversationRow: 'message:persistent-highlight-target',
+          arkmeMessageItemUid: 'persistent-highlight-target',
+        },
+        getBoundingClientRect: () => ({ left: 0, top: 240, right: 600, bottom: 320, width: 600, height: 80 }),
+      }
+      const conversationBody = {
+        scrollTop: 0,
+        scrollHeight: 900,
+        clientHeight: 600,
+        scrollTo: vi.fn(),
+        querySelectorAll: vi.fn(() => [targetRow]),
+        getBoundingClientRect: () => ({ left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600 }),
+      }
+      await act(async () => {
+        renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+          createNodeMock: element => {
+            if (element.props.className === 'arkme-conversation-panel') {
+              return { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+            }
+            if (element.props.className === 'arkme-conversation-body') return conversationBody
+            return null
+          },
+        })
+        await Promise.resolve(); await Promise.resolve()
+      })
+
+      act(() => { arkmeUi.showConversationTarget(target, 'persistent-highlight-target', 12) })
+      act(() => { vi.advanceTimersByTime(2_500) })
+
+      const highlightedRow = renderer!.root.findByProps({
+        'data-arkme-message-item-uid': 'persistent-highlight-target',
+      })
+      expect(highlightedRow.findByProps({
+        'data-arkme-highlight-backdrop': 'true',
+      })).toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears a located quick note highlight only when another area is pressed', async () => {
+    const pointerdownListeners = new Set<(event: PointerEvent) => void>()
+    vi.stubGlobal('document', {
+      activeElement: null,
+      body: { style: { overflow: '' } },
+      addEventListener: vi.fn((type: string, listener: (event: PointerEvent) => void) => {
+        if (type === 'pointerdown') pointerdownListeners.add(listener)
+      }),
+      removeEventListener: vi.fn((type: string, listener: (event: PointerEvent) => void) => {
+        if (type === 'pointerdown') pointerdownListeners.delete(listener)
+      }),
+      querySelector: vi.fn(() => null),
+    })
+    timeline = [{
+      itemUid: 'click-away-highlight-target', senderName: '同事', isMe: false, sendAtMillis: 13,
+      title: '', textContent: '点击外部才取消高亮', status: 1, sequence: 13,
+    }]
+    const targetRow = {
+      dataset: {
+        arkmeConversationRow: 'message:click-away-highlight-target',
+        arkmeMessageItemUid: 'click-away-highlight-target',
+      },
+      getBoundingClientRect: () => ({ left: 0, top: 240, right: 600, bottom: 320, width: 600, height: 80 }),
+    }
+    const conversationBody = {
+      scrollTop: 0,
+      scrollHeight: 900,
+      clientHeight: 600,
+      scrollTo: vi.fn(),
+      querySelectorAll: vi.fn(() => [targetRow]),
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600 }),
+    }
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => {
+          if (element.props.className === 'arkme-conversation-panel') {
+            return { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          }
+          if (element.props.className === 'arkme-conversation-body') return conversationBody
+          return null
+        },
+      })
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    await act(async () => {
+      arkmeUi.showConversationTarget(target, 'click-away-highlight-target', 13)
+      await Promise.resolve()
+    })
+    const pointerdown = [...pointerdownListeners].at(-1)
+    expect(pointerdown).toBeDefined()
+
+    act(() => {
+      pointerdown!({
+        button: 0,
+        target: {
+          closest: () => ({
+            getAttribute: (name: string) => name === 'data-arkme-message-item-uid'
+              ? 'click-away-highlight-target'
+              : null,
+          }),
+        },
+      } as unknown as PointerEvent)
+    })
+    const highlightedRow = renderer!.root.findByProps({
+      'data-arkme-message-item-uid': 'click-away-highlight-target',
+    })
+    expect(highlightedRow.findByProps({
+      'data-arkme-highlight-backdrop': 'true',
+    })).toBeDefined()
+
+    act(() => {
+      pointerdown!({ button: 0, target: { closest: () => null } } as unknown as PointerEvent)
+    })
+    expect(renderer!.root.findByProps({
+      'data-arkme-message-item-uid': 'click-away-highlight-target',
+    }).findAllByProps({ 'data-arkme-highlight-backdrop': 'true' })).toHaveLength(0)
+  })
+
+  it('projects a detail-drawer extension into the current conversation and retains it through the immediate refresh', async () => {
+    timeline = [{
+      itemUid: 'parent-record', messageActionRef: 'opaque-detail-extension-action',
+      senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '详情中的原快记', status: 1,
+    }]
+    vi.stubGlobal('HTMLElement', class {})
+    vi.stubGlobal('document', {
+      activeElement: null,
+      body: { style: { overflow: '' } },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      querySelector: vi.fn(() => null),
+    })
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve(); await Promise.resolve()
+    })
+    const bubble = renderer!.root.findByProps({ 'aria-label': '打开快记详情' })
+    const trigger = {}
+    await act(async () => {
+      bubble.props.onKeyDown({ key: 'Enter', target: trigger, currentTarget: trigger, preventDefault: vi.fn() })
+      await Promise.resolve(); await Promise.resolve()
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-note-detail': 'true' })).toHaveLength(1)
+    act(() => {
+      renderer!.root.findByProps({ 'aria-label': '延展此快记' }).props.onChange({ target: { value: '抽屉发送的新延展' } })
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '发送延展' }).props.onClick()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    const sentRow = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'record-new' })
+    expect(sentRow.findAll(node => node.children.includes('抽屉发送的新延展')).length).toBeGreaterThan(0)
+    expect(sentRow.findByProps({ 'data-arkme-extension-parent-preview': 'parent-record' })
+      .findAll(node => node.children.includes('详情中的原快记')).length).toBeGreaterThan(0)
+    expect(renderer!.root.findAllByProps({
+      'data-arkme-note-extension-item': 'record-new',
+    })).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline').length).toBeGreaterThan(1)
+  })
+
+  it('reuses the extension record uid after failure and removes staged attachments only after success', async () => {
+    timeline = [{
+      itemUid: 'extension-retry-source', messageActionRef: 'opaque-extension-retry-action',
+      senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '带附件的问题', status: 1,
+    }]
+    const uuids = [
+      '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+      '33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444',
+    ]
+    vi.stubGlobal('crypto', { randomUUID: vi.fn(() => uuids.shift()) })
+    const defaultCall = mocks.callArkme.getMockImplementation()!
+    let extensionAttempts = 0
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'source.message-extension.extend') {
+        extensionAttempts += 1
+        if (extensionAttempts === 1) throw new Error('网络中断')
+        return {
+          recordUid: params?.recordUid, parentRecordUid: 'parent-record', status: 1, localState: 'synced',
+          extension: { recordUid: params?.recordUid, level: 2, sourceKind: 'record_extension', senderDisplayName: '狗才', title: '', textContent: params?.textContent, sendAtMillis: 48, templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [] },
+        }
+      }
+      if (operation === 'files.local.remove') return {}
+      return defaultCall(operation, params)
+    })
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+    const bubble = renderer!.root.findByProps({ 'aria-label': '打开快记详情' })
+    act(() => bubble.props.onContextMenu({ preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180 }))
+    const menu = renderer!.root.findByProps({ 'aria-label': '消息操作' })
+    const extendAction = menu.findAll(node => node.props.role === 'menuitem'
+      && node.findAll(child => child.children.includes('延展')).length > 0)[0]!
+    await act(async () => { extendAction.props.onClick(); await Promise.resolve() })
+    const draftKey = arkmeSourceComposerDraftKey(42, target)!
+    arkmeComposerDraftStore.setText(draftKey, '失败后重试')
+    arkmeComposerDraftStore.appendAttachments(draftKey, [{ localFile: {
+      fileRef: 'arkme-file-v1.55555555-5555-4555-8555-555555555555',
+      fileName: 'evidence.pdf', mimeType: 'application/pdf', size: 12, fileKind: 4,
+    } }])
+
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+      await Promise.resolve(); await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    const extensionCalls = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-extension.extend')
+    expect(extensionCalls).toHaveLength(2)
+    expect(extensionCalls[0]?.[1]?.recordUid).toBe('11111111-1111-4111-8111-111111111111')
+    expect(extensionCalls[1]?.[1]?.recordUid).toBe(extensionCalls[0]?.[1]?.recordUid)
+    expect(extensionCalls[0]?.[1]?.relationUid).toBe('22222222-2222-4222-8222-222222222222')
+    expect(extensionCalls[1]?.[1]?.relationUid).toBe(extensionCalls[0]?.[1]?.relationUid)
+    expect(mocks.callArkme).toHaveBeenCalledWith('files.local.remove', {
+      fileRef: 'arkme-file-v1.55555555-5555-4555-8555-555555555555',
+    })
+  })
+
+  it('restores the desktop composer focus fill and centered paper-plane action', async () => {
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+
+    const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    let composerShell = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
+    let sendButton = renderer!.root.findByProps({ 'aria-label': '发送消息' })
+
+    expect(composerShell.props.style).toMatchObject({
+      background: arkmeTheme.input,
+      boxShadow: 'none',
+    })
+    expect(composerShell.props).toMatchObject({
+      'data-arkme-primary-composer': 'true',
+      'data-arkme-composer-focused': 'false',
+    })
+    expect(sendButton.props.disabled).toBe(true)
+    expect(sendButton.props.style).toMatchObject({
+      width: 36,
+      height: 28,
+      borderRadius: 14,
+      background: '#DCE1E9',
+      color: '#fff',
+    })
+
+    act(() => { composer.props.onFocus() })
+    composerShell = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
+    expect(composerShell.props.style).toMatchObject({
+      background: 'color-mix(in srgb, var(--dsw-alias-bg-base, #ffffff) 97%, #000000)',
+      boxShadow: 'none',
+    })
+    expect(composerShell.props['data-arkme-composer-focused']).toBe('true')
+
+    await act(async () => {
+      composer.props.onTextChange('继续输入')
+      await Promise.resolve()
+    })
+    sendButton = renderer!.root.findByProps({ 'aria-label': '发送消息' })
+    expect(sendButton.props.disabled).toBe(false)
+    expect(sendButton.props.style).toMatchObject({ background: '#09B83E', cursor: 'pointer' })
+    expect(sendButton.findByType('svg').props).toMatchObject({
+      viewBox: '9.7 6.1 16 16',
+      width: '16',
+      height: '16',
+    })
+    expect(sendButton.findByType('path').props.d).toContain('M23.5521 7.04659')
   })
 
   it('extends the copied quick-link detail record from the footer input', async () => {

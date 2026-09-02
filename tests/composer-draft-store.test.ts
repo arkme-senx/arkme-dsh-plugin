@@ -100,6 +100,39 @@ describe('Arkme composer draft store', () => {
     expect(store.get(b).text).toBe('另一个账号')
   })
 
+  it('retains the same submission identity when an unchanged draft is restored after a failed extension send', () => {
+    const ids = [
+      '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+      '33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444',
+    ]
+    vi.stubGlobal('crypto', { randomUUID: vi.fn(() => ids.shift()) })
+    const store = new ArkmeComposerDraftStore()
+    const key = arkmeSourceComposerDraftKey(1001, { kind: 'private_chat', sourceRef: 'source-a' })!
+    store.setText(key, '待延展内容')
+    const first = store.beginFileSend(key)
+    const pending = store.take(key)
+    store.restore(key, pending)
+
+    expect(store.beginFileSend(key)).toEqual(first)
+    store.setText(key, '内容已修改')
+    expect(store.beginFileSend(key)).not.toEqual(first)
+  })
+
+  it('does not reuse a submission identity across extension targets or normal sends', () => {
+    const ids = [
+      '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+      '33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444',
+      '55555555-5555-4555-8555-555555555555', '66666666-6666-4666-8666-666666666666',
+    ]
+    vi.stubGlobal('crypto', { randomUUID: vi.fn(() => ids.shift()) })
+    const store = new ArkmeComposerDraftStore()
+    const key = arkmeSourceComposerDraftKey(1001, { kind: 'private_chat', sourceRef: 'source-a' })!
+    store.setText(key, '同一份草稿')
+    const targetA = store.beginFileSend(key, 'extension:source-a:action-a')
+    expect(store.beginFileSend(key, 'extension:source-a:action-b')).not.toEqual(targetA)
+    expect(store.beginFileSend(key)).not.toEqual(targetA)
+  })
+
   it('removes an attachment idempotently and releases its preview exactly once', () => {
     const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
     const store = new ArkmeComposerDraftStore()

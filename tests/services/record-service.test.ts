@@ -21,6 +21,43 @@ describe('RecordService', () => {
     expect(arkmeRecordCaptureContextPayload({ electric: 100, charge: 1 })).toEqual({ electric: 100, charge: 1 })
   })
 
+  it('restores a record extension parent preview from the durable home-feed contract', () => {
+    const media = {
+      richContentBlocks: vi.fn((raw: unknown) => {
+        const core = (raw as { record_core?: { record_uid?: string } }).record_core
+        return core?.record_uid === 'record-parent' ? [{
+          kind: 'image', mediaRef: 'parent-image-ref', fileName: 'parent.png', mimeType: 'image/png', size: 12, sortOrder: 0,
+        }] : []
+      }),
+    }
+    const service = new RecordService({} as ServiceRuntime, media as never, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+
+    expect(service.recordTimelineItemFromRaw({
+      record_uid: 'record-child',
+      send_at: 300,
+      record_core: {
+        record_uid: 'record-child', text_content: '延展正文', template_kind: 1, status: 1,
+        parent_record_uid: 'record-parent',
+        extension_parent_preview: {
+          record: {
+            record_uid: 'record-parent', nickname: '我', title: '', text_content: '原快记内容',
+            template_kind: 2, status: 1,
+          },
+        },
+      },
+    }, 42, { isMe: true })).toMatchObject({
+      itemUid: 'record-child',
+      textContent: '延展正文',
+      extensionParentRecordUid: 'record-parent',
+      extensionParent: {
+        itemUid: 'record-parent', senderName: '我', title: '', textContent: '原快记内容',
+        contentBlocks: [{ kind: 'image', mediaRef: 'parent-image-ref', fileName: 'parent.png' }],
+      },
+    })
+  })
+
   it('keeps composer duration and browser context through a failed write and durable retry', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
@@ -157,6 +194,57 @@ describe('RecordService', () => {
       send_at: expect.any(Number),
     })
     expect(requestBody).not.toHaveProperty('file_assets')
+  })
+
+  it('creates a durable record extension with the desktop endpoint and parent edge', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let requestPath = ''
+    let requestBody: Record<string, unknown> | undefined
+    const fetchImpl = vi.fn(async (input, init) => {
+      requestPath = String(input)
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return new Response(JSON.stringify({ code: 0, data: {
+        record_uid: requestBody.record_uid,
+        record_status: 1,
+        edge_uid: 'edge-extension-1',
+        parent_record_uid: requestBody.parent_record_uid,
+        root_record_uid: requestBody.parent_record_uid,
+        edge_status: 1,
+      } }), { status: 200 })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+    const service = new RecordService(runtime, {} as MediaService, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+    const childRecordUid = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
+
+    await expect(service.createExtensionForConversation(
+      'parent-record-1',
+      childRecordUid,
+      '附件延展',
+      [{ fileAssetUid: 'asset-12345678', fileName: 'a.png', mimeType: 'image/png', size: 128, fileKind: 1 }],
+    )).resolves.toEqual({ recordUid: childRecordUid, status: 1, localState: 'synced' })
+    expect(requestPath).toBe('https://record.test/api/v1/records/extensions/create')
+    expect(requestBody).toEqual({
+      parent_record_uid: 'parent-record-1',
+      record_uid: childRecordUid,
+      template_kind: 2,
+      title: '',
+      text_content: '附件延展',
+      content_payload: {
+        payload_kind: 2,
+        schema_version: 1,
+        text_state: 1,
+        media_refs: [{
+          file_asset_uid: 'asset-12345678', content_file_role: 1, render_role: 1, sort_order: 0,
+          file_name: 'a.png', file_kind: 1, mime_type: 'image/png', size: 128,
+        }],
+      },
+      send_at: expect.any(Number),
+    })
   })
 
   it('creates a DSH Agent input Record through the fixed-source route', async () => {

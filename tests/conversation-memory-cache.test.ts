@@ -5,6 +5,8 @@ import {
   ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS,
   ArkmeConversationMemoryCache,
   arkmeConversationRestoredScrollTop,
+  arkmeConversationTimelineDeltaItems,
+  arkmeConversationTimelineSequenceRange,
   arkmeConversationTimelineContentEqual,
   arkmeShouldRefreshChatTimeline,
   arkmeShouldRefreshRecordTimeline,
@@ -128,6 +130,64 @@ describe('ArkmeConversationMemoryCache', () => {
 
     expect(arkmeConversationTimelineContentEqual(before, refreshed)).toBe(true)
     expect(arkmeConversationTimelineContentEqual(before, changed)).toBe(false)
+  })
+
+  it('treats an anchored around window as distinct from the live latest window', () => {
+    const latest = { ...timeline('message-one'), mode: 'latest' as const }
+    const around = { ...timeline('message-one'), mode: 'around' as const }
+
+    expect(arkmeConversationTimelineContentEqual(latest, around)).toBe(false)
+  })
+
+  it('keeps the around server range fixed when optimistic items extend beyond the window', () => {
+    const aroundItems = [10, 11, 12].map(sequence => ({
+      itemUid: `around-${String(sequence)}`, senderName: '小林', isMe: false, sendAtMillis: sequence,
+      title: '', textContent: String(sequence), status: 1 as const, sequence,
+    }))
+    const range = arkmeConversationTimelineSequenceRange(aroundItems)
+    const optimisticItem: ArkmeTimelineItem = {
+      itemUid: 'optimistic-50', senderName: '我', isMe: true, sendAtMillis: 50,
+      title: '', textContent: '本地发送', status: 1, sequence: 50,
+    }
+    const retainedMiddleItem: ArkmeTimelineItem = {
+      itemUid: 'retained-20', senderName: '小林', isMe: false, sendAtMillis: 20,
+      title: '', textContent: '不连续的实时数据', status: 1, sequence: 20,
+    }
+
+    expect(range).toEqual({ minimumSequence: 10, maximumSequence: 12 })
+    expect(arkmeConversationTimelineDeltaItems(
+      'around', range, [...aroundItems, optimisticItem], [retainedMiddleItem],
+    )).toEqual([])
+  })
+
+  it('persists around mode, range and both paging cursors through local cache writes', () => {
+    const cache = new ArkmeConversationMemoryCache()
+    const base = timeline('message-one')
+    cache.storeTimeline('private-one', {
+      ...base,
+      mode: 'around',
+      aroundSequenceRange: { minimumSequence: 10, maximumSequence: 12 },
+      hasMore: true,
+      nextCursor: { beforeSequence: 10 },
+      newerHasMore: true,
+      newerCursor: { afterSequence: 12 },
+    })
+
+    cache.storeTimeline('private-one', {
+      ...base,
+      mode: 'around',
+      hasMore: true,
+      nextCursor: { beforeSequence: 10 },
+      newerHasMore: true,
+      newerCursor: { afterSequence: 12 },
+    })
+
+    expect(cache.getTimeline('private-one')).toMatchObject({
+      mode: 'around',
+      aroundSequenceRange: { minimumSequence: 10, maximumSequence: 12 },
+      nextCursor: { beforeSequence: 10 },
+      newerCursor: { afterSequence: 12 },
+    })
   })
 
   it('restores each conversation viewport and keeps bottom-pinned conversations at the bottom', () => {

@@ -190,6 +190,54 @@ function sourceRefFor(
 }
 
 describe('ArkmeService', () => {
+  it('validates the signed source message before uploading extension attachments', async () => {
+    const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore())
+    const validationError = new ArkmePluginError('message-action-ref-invalid', '消息操作凭据无效', false)
+    const sourceMessageExtensionContext = vi.fn(async () => { throw validationError })
+    const extendSourceMessage = vi.fn()
+    const uploadRefs = vi.fn(async () => [])
+    Object.assign(service as unknown as Record<string, unknown>, {
+      chat: { sourceMessageExtensionContext, extendSourceMessage },
+      fileTransfers: { uploadRefs, cancelActive: vi.fn() },
+    })
+
+    await expect(service.extendSourceMessage(
+      'opaque-source', 'invalid-action', '附件延展',
+      '11111111-1111-4111-8111-111111111111', ['arkme-file-v1.22222222-2222-4222-8222-222222222222'],
+    )).rejects.toBe(validationError)
+    expect(sourceMessageExtensionContext).toHaveBeenCalledWith('opaque-source', 'invalid-action', {})
+    expect(uploadRefs).not.toHaveBeenCalled()
+    expect(extendSourceMessage).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
+  it('rejects a stale nested extension target before uploading attachments', async () => {
+    const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore())
+    const sourceMessageExtensionContext = vi.fn(async () => ({
+      parentRecordUid: 'record-root',
+      extensionCount: 1,
+      extensions: [{ recordUid: 'record-current-child' }],
+    }))
+    const extendSourceMessage = vi.fn()
+    const uploadRefs = vi.fn(async () => [])
+    Object.assign(service as unknown as Record<string, unknown>, {
+      chat: { sourceMessageExtensionContext, extendSourceMessage },
+      fileTransfers: { uploadRefs, cancelActive: vi.fn() },
+    })
+
+    await expect(service.extendSourceMessage(
+      'opaque-source', 'signed-action', '附件延展',
+      '11111111-1111-4111-8111-111111111111', ['arkme-file-v1.22222222-2222-4222-8222-222222222222'],
+      { parentRecordUid: 'record-stale-child' },
+    )).rejects.toMatchObject({ code: 'source-message-extension-target-invalid', retryable: true })
+    expect(sourceMessageExtensionContext).toHaveBeenCalledWith(
+      'opaque-source', 'signed-action', { parentRecordUid: 'record-stale-child' },
+    )
+    expect(uploadRefs).not.toHaveBeenCalled()
+    expect(extendSourceMessage).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
   it('owns directory services, routes unmarked lists separately, injects media, and clears their refs', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -487,6 +535,7 @@ describe('ArkmeService', () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const lowerBound = new Date(1970, 0, 1).getTime()
+    const timezoneOffset = -new Date(lowerBound).getTimezoneOffset() * 60_000
     const bodies: Record<string, unknown>[] = []
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
@@ -508,7 +557,10 @@ describe('ArkmeService', () => {
       .resolves.toMatchObject({ fromStamp: lowerBound, days: [] })
     await expect(service.recordingTranscript(lowerBound)).resolves.toMatchObject({ state: 'empty', items: [] })
     expect(bodies).toContainEqual({ from_stamp: lowerBound, to_stamp: lowerBound + 24 * 60 * 60 * 1_000 })
-    expect(bodies).toContainEqual({ start_at: lowerBound, tz_offset: -new Date(lowerBound).getTimezoneOffset() * 60_000 })
+    expect(bodies).toContainEqual({
+      start_at: lowerBound,
+      tz_offset: timezoneOffset === 0 ? 0 : timezoneOffset,
+    })
   })
 
   it('reads record calendar buckets and day records from the Record origin', async () => {
