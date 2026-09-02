@@ -525,8 +525,8 @@ const styles: Record<string, CSSProperties> = {
     background: `linear-gradient(180deg, ${arkmeTheme.subtle} 0%, transparent 68.06%)`,
     color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '16px',
   },
-  extensionParentPreviewMe: { marginRight: 54 },
-  extensionParentPreviewOther: { marginLeft: 54 },
+  extensionParentPreviewMe: { marginRight: ARKME_MESSAGE_AVATAR_SIZE + 10 },
+  extensionParentPreviewOther: { marginLeft: ARKME_MESSAGE_AVATAR_SIZE + 10 },
   extensionParentText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   extensionParentMedia: { display: 'flex', flex: 'none', gap: 4 },
   extensionParentImage: { width: 32, height: 32, display: 'block', objectFit: 'cover', borderRadius: 5, background: arkmeTheme.subtle },
@@ -6238,7 +6238,7 @@ export function ArkmeSurface({
                         ...(isForwardMessageCard ? styles.forwardMessageBody : {}),
                         ...(isSharedRecordingCard ? styles.sharedRecordingMessageBody : {}),
                       }}>
-                        {!isSharedRecordingCard && <ArkmeTimelineMessageHeader item={item} {...(selfProfile === undefined ? {} : { profile: selfProfile })} />}
+                        {!isSharedRecordingCard && !isExtensionMessage && !item.isMe && <ArkmeTimelineMessageHeader item={item} {...(selfProfile === undefined ? {} : { profile: selfProfile })} />}
                         {(() => {
                           const messageBubble = <div
                             role="button"
@@ -6353,6 +6353,7 @@ export function ArkmeSurface({
                                 ...styles.extensionChildBody,
                                 ...(item.isMe ? styles.extensionChildBodyMe : {}),
                               }}>
+                                {!item.isMe && <ArkmeTimelineMessageHeader item={item} {...(selfProfile === undefined ? {} : { profile: selfProfile })} />}
                                 {messageContentLine}
                                 {topicBadge}
                               </div>

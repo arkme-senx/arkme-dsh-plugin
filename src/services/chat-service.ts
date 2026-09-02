@@ -859,6 +859,77 @@ function chatExtensionTreeItemFromData(
   }
 }
 
+interface ArkmeExtensionMediaProjection {
+  extension: ArkmeMessageCopyLinkExtensionItem
+  mediaRecord: Record<string, unknown>
+}
+
+function extensionMediaRecord(
+  recordUid: string,
+  contentPayload: Record<string, unknown>,
+  displayItems: unknown[] = [],
+): Record<string, unknown> {
+  return {
+    record_uid: recordUid,
+    content_payload: contentPayload,
+    ...(displayItems.length === 0 ? {} : { media_display_items: displayItems }),
+  }
+}
+
+function publicExtensionMediaRecord(value: unknown, recordUid: string): Record<string, unknown> {
+  const data = objectValue(value)
+  const core = objectValue(data.record_core ?? data.recordCore)
+  const contentPayload = objectValue(data.content_payload ?? data.contentPayload
+    ?? core.content_payload ?? core.contentPayload)
+  const mediaItems = listValue(data.media_items ?? data.mediaItems ?? core.media_items ?? core.mediaItems)
+  const mediaRefs = listValue(contentPayload.media_refs ?? contentPayload.mediaRefs)
+  const displayItems = [
+    ...listValue(data.media_display_items ?? data.mediaDisplayItems),
+    ...listValue(core.media_display_items ?? core.mediaDisplayItems),
+    ...mediaItems,
+  ]
+  return extensionMediaRecord(recordUid, {
+    ...contentPayload,
+    ...((mediaRefs.length > 0 || mediaItems.length === 0) ? {} : { media_refs: mediaItems }),
+  }, displayItems)
+}
+
+function chatExtensionMediaRecord(value: unknown, recordUid: string): Record<string, unknown> {
+  const child = objectValue(value)
+  const item = objectValue(child.item)
+  const record = objectValue(item.record)
+  const payload = objectValue(record.payload)
+  const contentPayload = objectValue(payload.content_payload ?? payload.contentPayload
+    ?? record.content_payload ?? record.contentPayload)
+  const displayItems = [
+    ...listValue(child.media_display_items ?? child.mediaDisplayItems),
+    ...listValue(item.media_display_items ?? item.mediaDisplayItems),
+    ...listValue(record.media_display_items ?? record.mediaDisplayItems),
+    ...listValue(payload.media_display_items ?? payload.mediaDisplayItems),
+  ]
+  return extensionMediaRecord(recordUid, contentPayload, displayItems)
+}
+
+function uploadedExtensionMediaRecord(
+  recordUid: string,
+  assets: readonly ArkmeUploadedAsset[],
+): Record<string, unknown> {
+  return extensionMediaRecord(recordUid, {
+    payload_kind: 2,
+    schema_version: 1,
+    media_refs: assets.map((asset, index) => ({
+      file_asset_uid: asset.fileAssetUid,
+      content_file_role: 1,
+      render_role: 1,
+      sort_order: index,
+      file_name: asset.fileName,
+      file_kind: asset.fileKind,
+      mime_type: asset.mimeType,
+      size: asset.size,
+    })),
+  })
+}
+
 function messageCopyLinkRecordContextFromData(data: Record<string, unknown>): ArkmeMessageCopyLinkRecordContext | undefined {
   const context = objectValue(data.record_context ?? data.recordContext)
   const rawExtensions = listValue(
@@ -1225,6 +1296,78 @@ export class ChatService {
     private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
     private readonly messageActions?: MessageActionService,
   ) {}
+
+  private async hydrateExtensionMedia(
+    projections: readonly ArkmeExtensionMediaProjection[],
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageCopyLinkExtensionItem[]> {
+    const mediaProjections = projections.filter(({ extension }) => extension.mediaItems.length > 0)
+    if (mediaProjections.length === 0) return projections.map(({ extension }) => extension)
+    let directlyHydrated: Map<string, ReturnType<MediaService['richContentBlocks']>>
+    try {
+      directlyHydrated = new Map(mediaProjections.map(({ extension, mediaRecord }) => [
+        extension.recordUid,
+        this.media.richContentBlocks(mediaRecord, session.userId),
+      ] as const))
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      const mediaRecordUids = new Set(mediaProjections.map(({ extension }) => extension.recordUid))
+      return projections.map(({ extension }) => mediaRecordUids.has(extension.recordUid)
+        ? { ...extension, mediaUnavailable: true }
+        : extension)
+    }
+    const unresolved = mediaProjections.filter(({ extension }) => (directlyHydrated.get(extension.recordUid)?.length ?? 0) === 0)
+    if (unresolved.length === 0) {
+      return projections.map(({ extension }) => {
+        const contentBlocks = directlyHydrated.get(extension.recordUid)
+        return contentBlocks === undefined ? extension : { ...extension, contentBlocks }
+      })
+    }
+    try {
+      const media = await this.media.hydrateRecordMediaPage(
+        unresolved.map(({ mediaRecord }) => mediaRecord),
+        session,
+        signal,
+      )
+      const hydratedByRecordUid = new Map(mediaProjections.map(({ extension, mediaRecord }) => {
+        const directContentBlocks = directlyHydrated.get(extension.recordUid) ?? []
+        const displayItems = directContentBlocks.length > 0
+          ? []
+          : media.displayItemsByRecordUid.get(extension.recordUid) ?? []
+        const contentBlocks = directContentBlocks.length > 0
+          ? directContentBlocks
+          : this.media.richContentBlocks(mediaRecord, session.userId, displayItems)
+        return [extension.recordUid, {
+          ...extension,
+          ...(contentBlocks.length === 0 ? { mediaUnavailable: true } : { contentBlocks }),
+        }] as const
+      }))
+      return projections.map(({ extension }) => hydratedByRecordUid.get(extension.recordUid) ?? extension)
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      const mediaRecordUids = new Set(mediaProjections.map(({ extension }) => extension.recordUid))
+      return projections.map(({ extension }) => {
+        const contentBlocks = directlyHydrated.get(extension.recordUid) ?? []
+        if (contentBlocks.length > 0) return { ...extension, contentBlocks }
+        return mediaRecordUids.has(extension.recordUid) ? { ...extension, mediaUnavailable: true } : extension
+      })
+    }
+  }
+
+  private async hydrateUploadedExtension(
+    extension: ArkmeMessageCopyLinkExtensionItem,
+    assets: readonly ArkmeUploadedAsset[],
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageCopyLinkExtensionItem> {
+    if (assets.length === 0) return extension
+    const hydrated = await this.hydrateExtensionMedia([{
+      extension,
+      mediaRecord: uploadedExtensionMediaRecord(extension.recordUid, assets),
+    }], session, signal)
+    return hydrated[0] ?? { ...extension, mediaUnavailable: true }
+  }
 
   async readDirectBotConversation(
     botId: string,
@@ -2361,9 +2504,14 @@ export class ChatService {
             ) as Record<string, unknown>
             const rawItems = listValue(data.list ?? data.items)
             if (offset === 0) total = Math.max(0, integerLikeValue(data.total))
-            const pageItems = rawItems
-              .map((raw) => messageCopyLinkExtensionItemFromData(raw))
-              .filter((item): item is ArkmeMessageCopyLinkExtensionItem => item !== undefined)
+            const pageProjections = rawItems.flatMap((raw): ArkmeExtensionMediaProjection[] => {
+              const extension = messageCopyLinkExtensionItemFromData(raw)
+              return extension === undefined ? [] : [{
+                extension,
+                mediaRecord: publicExtensionMediaRecord(raw, extension.recordUid),
+              }]
+            })
+            const pageItems = await this.hydrateExtensionMedia(pageProjections, session, signal)
             extensions.push(...pageItems)
             if (rawItems.length === 0) break
             offset += rawItems.length
@@ -2413,9 +2561,14 @@ export class ChatService {
       session,
       signal,
     )
-    const extensions = listValue(data.children)
-      .map(child => chatExtensionTreeItemFromData(child, parentRecordUid))
-      .filter((item): item is ArkmeMessageCopyLinkExtensionItem => item !== undefined)
+    const projections = listValue(data.children).flatMap((child): ArkmeExtensionMediaProjection[] => {
+      const extension = chatExtensionTreeItemFromData(child, parentRecordUid)
+      return extension === undefined ? [] : [{
+        extension,
+        mediaRecord: chatExtensionMediaRecord(child, extension.recordUid),
+      }]
+    })
+    const extensions = (await this.hydrateExtensionMedia(projections, session, signal))
       .sort((left, right) => right.sendAtMillis - left.sendAtMillis)
     const extensionCount = Math.max(integerLikeValue(data.total), extensions.length)
     return extensionCount <= 0 ? undefined : { extensionCount, extensions }
@@ -2538,6 +2691,22 @@ export class ChatService {
       const createdRecordUid = stringValue(data.child_record_uid).trim() || normalizedUid
       const sequence = numberValue(data.seq)
       this.realtime.scheduleChatSessionProjection(reference.chatSessionUid, sequence)
+      const extension = await this.hydrateUploadedExtension({
+        recordUid: createdRecordUid,
+        parentRecordUid: reference.recordUid,
+        recordOwnerUserId: session.userId,
+        level: extensionLevel,
+        sourceKind: 'record_extension',
+        senderDisplayName: profile.nickname.trim() || profile.displayName.trim() || '我',
+        ...(profile.avatarRef.trim() === '' ? {} : { senderAvatarUrl: profile.avatarRef.trim() }),
+        title: '',
+        textContent: normalizedText,
+        sendAtMillis,
+        templateKind: assets.length === 0 ? 1 : 2,
+        displayKind: 0,
+        officialMark: 0,
+        mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
+      }, assets, session, options.signal)
       return {
         recordUid: createdRecordUid,
         parentRecordUid: reference.recordUid,
@@ -2545,22 +2714,7 @@ export class ChatService {
         ...(sequence > 0 ? { sequence } : {}),
         status: 1,
         localState: 'synced',
-        extension: {
-          recordUid: createdRecordUid,
-          parentRecordUid: reference.recordUid,
-          recordOwnerUserId: session.userId,
-          level: extensionLevel,
-          sourceKind: 'record_extension',
-          senderDisplayName: profile.nickname.trim() || profile.displayName.trim() || '我',
-          ...(profile.avatarRef.trim() === '' ? {} : { senderAvatarUrl: profile.avatarRef.trim() }),
-          title: '',
-          textContent: normalizedText,
-          sendAtMillis,
-          templateKind: assets.length === 0 ? 1 : 2,
-          displayKind: 0,
-          officialMark: 0,
-          mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
-        },
+        extension,
       }
     }
     if (source.kind === 'topic') {
@@ -2613,28 +2767,29 @@ export class ChatService {
         revision: this.realtime.nextChatClientRevision(),
         projection: 'record',
       })
+      const extension = await this.hydrateUploadedExtension({
+        recordUid: createdRecordUid,
+        parentRecordUid: reference.recordUid,
+        recordOwnerUserId: session.userId,
+        level: extensionLevel,
+        sourceKind: 'record_extension',
+        senderDisplayName: profile.nickname.trim() || profile.displayName.trim() || '我',
+        ...(profile.avatarRef.trim() === '' ? {} : { senderAvatarUrl: profile.avatarRef.trim() }),
+        title: '',
+        textContent: normalizedText,
+        sendAtMillis,
+        templateKind: assets.length === 0 ? 1 : 2,
+        displayKind: 0,
+        officialMark: 0,
+        mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
+      }, assets, session, options.signal)
       return {
         recordUid: createdRecordUid,
         parentRecordUid: createdParentUid,
         ...(relationUid === '' ? {} : { relationUid }),
         status: numberValue(data.record_status ?? data.status),
         localState: 'synced',
-        extension: {
-          recordUid: createdRecordUid,
-          parentRecordUid: reference.recordUid,
-          recordOwnerUserId: session.userId,
-          level: extensionLevel,
-          sourceKind: 'record_extension',
-          senderDisplayName: profile.nickname.trim() || profile.displayName.trim() || '我',
-          ...(profile.avatarRef.trim() === '' ? {} : { senderAvatarUrl: profile.avatarRef.trim() }),
-          title: '',
-          textContent: normalizedText,
-          sendAtMillis,
-          templateKind: assets.length === 0 ? 1 : 2,
-          displayKind: 0,
-          officialMark: 0,
-          mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
-        },
+        extension,
       }
     }
     if (source.kind === 'send_to_self' || source.kind === 'default_category') {
@@ -2654,28 +2809,29 @@ export class ChatService {
         revision: this.realtime.nextChatClientRevision(),
         projection: 'record',
       })
+      const extension = await this.hydrateUploadedExtension({
+        recordUid: recordResult.recordUid,
+        parentRecordUid: reference.recordUid,
+        recordOwnerUserId: session.userId,
+        level: extensionLevel,
+        sourceKind: 'record_extension',
+        senderDisplayName: profile.nickname.trim() || profile.displayName.trim() || '我',
+        ...(profile.avatarRef.trim() === '' ? {} : { senderAvatarUrl: profile.avatarRef.trim() }),
+        title: '',
+        textContent: normalizedText,
+        sendAtMillis,
+        templateKind: assets.length === 0 ? 1 : 2,
+        displayKind: 0,
+        officialMark: 0,
+        mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
+      }, assets, session, options.signal)
       return {
         recordUid: recordResult.recordUid,
         parentRecordUid: reference.recordUid,
         status: recordResult.status,
         localState: recordResult.localState,
         ...(recordResult.error === undefined ? {} : { error: recordResult.error }),
-        extension: {
-          recordUid: recordResult.recordUid,
-          parentRecordUid: reference.recordUid,
-          recordOwnerUserId: session.userId,
-          level: extensionLevel,
-          sourceKind: 'record_extension',
-          senderDisplayName: profile.nickname.trim() || profile.displayName.trim() || '我',
-          ...(profile.avatarRef.trim() === '' ? {} : { senderAvatarUrl: profile.avatarRef.trim() }),
-          title: '',
-          textContent: normalizedText,
-          sendAtMillis,
-          templateKind: assets.length === 0 ? 1 : 2,
-          displayKind: 0,
-          officialMark: 0,
-          mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
-        },
+        extension,
       }
     }
     const existingContext = await this.loadMessageCopyLinkPublicExtensions(
@@ -2784,25 +2940,26 @@ export class ChatService {
       revision: this.realtime.nextChatClientRevision(),
       projection: 'record',
     })
+    const extension = await this.hydrateUploadedExtension({
+      recordUid: publishedRecordUid,
+      level: 2,
+      sourceKind: 'record_extension',
+      senderDisplayName,
+      ...(senderAvatarUrl === '' ? {} : { senderAvatarUrl }),
+      title: '',
+      textContent: normalizedText,
+      sendAtMillis,
+      templateKind: assets.length === 0 ? 1 : 2,
+      displayKind: 0,
+      officialMark: 0,
+      mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
+    }, assets, session, options.signal)
     return {
       recordUid: publishedRecordUid,
       parentRecordUid: reference.recordUid,
       status: numberValue(data.status ?? data.check_status ?? createdRecordStatus),
       localState: 'synced',
-      extension: {
-        recordUid: publishedRecordUid,
-        level: 2,
-        sourceKind: 'record_extension',
-        senderDisplayName,
-        ...(senderAvatarUrl === '' ? {} : { senderAvatarUrl }),
-        title: '',
-        textContent: normalizedText,
-        sendAtMillis,
-        templateKind: assets.length === 0 ? 1 : 2,
-        displayKind: 0,
-        officialMark: 0,
-        mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
-      },
+      extension,
     }
   }
 

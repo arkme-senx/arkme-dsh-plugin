@@ -73,7 +73,6 @@ const styles: Record<string, CSSProperties> = {
   extensionContextHead: { display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 },
   extensionContextName: { flex: 1, minWidth: 0, color: arkmeTheme.secondary, fontSize: 13, lineHeight: '20px', fontWeight: 500, overflowWrap: 'anywhere' },
   extensionContextTime: { flex: 'none', color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px' },
-  extensionContextMedia: { marginTop: 5, color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px', overflowWrap: 'anywhere' },
   extensionContextStatus: { display: 'flex', alignItems: 'center', gap: 8, color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '20px' },
   extensionContextRetry: { padding: 0, border: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit' },
   extensionContextAvatarImage: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
@@ -399,6 +398,8 @@ function detailExtensionTimelineItem(item: ArkmeMessageCopyLinkExtensionItem): A
     status: 1,
     templateKind: item.templateKind,
     displayKind: item.displayKind,
+    ...(item.contentBlocks === undefined ? {} : { contentBlocks: item.contentBlocks }),
+    ...(item.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
     ...(avatar !== '' && !/^(https?:|data:|blob:)/iu.test(avatar) ? { avatarRef: avatar } : {}),
   }
 }
@@ -477,7 +478,6 @@ function DetailExtensionContext({ state, optimistic, selectedRecordUid, sourceRe
     <div style={styles.extensionContextTitle} data-arkme-note-extension-count="true">共{extensionCount}条延展</div>
     <div style={styles.extensionContextList}>{orderedDetailExtensions(extensions, context?.parentRecordUid ?? '').map(({ item: extension, nested }) => {
       const timelineItem = detailExtensionTimelineItem(extension)
-      const mediaLabel = extension.mediaItems.map(media => media.fileName.trim()).filter(Boolean).join('、')
       const selected = extension.recordUid === selectedRecordUid
       return <div key={extension.recordUid} style={{
         ...styles.extensionContextRow,
@@ -501,7 +501,6 @@ function DetailExtensionContext({ state, optimistic, selectedRecordUid, sourceRe
             {...(shareWebsite === undefined ? {} : { shareWebsite })}
             {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
           />
-          {mediaLabel !== '' && <div style={styles.extensionContextMedia}>{mediaLabel}</div>}
         </div>
       </div>
     })}</div>

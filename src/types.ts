@@ -1885,6 +1885,10 @@ export interface ArkmeMessageCopyLinkSnapshotItem {
   displayKind: number
   officialMark: number
   mediaItems: ArkmeMessageCopyLinkMediaItem[]
+  /** Browser-safe rich media resolved by the Host for detail rendering. */
+  contentBlocks?: ArkmeContentBlock[]
+  /** Media metadata exists but its authorized display projection is unavailable. */
+  mediaUnavailable?: boolean
   structuredContent?: ArkmeMessageCopyLinkStructuredContent
 }
 

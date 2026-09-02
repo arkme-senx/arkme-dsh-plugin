@@ -243,7 +243,14 @@ describe('normal timeline related quick note drawer', () => {
           recordUid: 'extension-newer', level: 2, sourceKind: 'record_extension', senderDisplayName: '狗才',
           senderAvatarUrl: 'opaque-avatar', title: '', textContent: '新的延展正文', sendAtMillis: 1_710_000_120_000,
           templateKind: 2, displayKind: 0, officialMark: 0,
-          mediaItems: [{ fileKind: 1, fileName: '补充截图.png', size: 12 }],
+          mediaItems: [
+            { fileKind: 1, fileName: '补充截图.png', size: 12 },
+            { fileKind: 4, fileName: '补充方案.pdf', size: 34 },
+          ],
+          contentBlocks: [
+            { kind: 'image', mediaRef: 'extension-image-ref', originalRef: 'extension-image-original-ref', fileName: '补充截图.png', mimeType: 'image/png', size: 12, sortOrder: 0 },
+            { kind: 'file', mediaRef: 'extension-file-ref', originalRef: 'extension-file-original-ref', fileName: '补充方案.pdf', mimeType: 'application/pdf', size: 34, sortOrder: 1 },
+          ],
         }, {
           recordUid: 'extension-older', level: 2, sourceKind: 'record_extension', senderDisplayName: '小林',
           title: '', textContent: '较早的延展正文', sendAtMillis: 1_710_000_060_000,
@@ -270,7 +277,10 @@ describe('normal timeline related quick note drawer', () => {
     const newer = renderer.root.findByProps({ 'data-arkme-note-extension-item': 'extension-newer' })
     expect(newer.findAll(node => node.children.includes('狗才'))).not.toHaveLength(0)
     expect(newer.findAll(node => node.children.includes('新的延展正文'))).not.toHaveLength(0)
-    expect(newer.findAll(node => node.children.includes('补充截图.png'))).not.toHaveLength(0)
+    expect(newer.findAllByProps({ alt: '补充截图.png' })).toHaveLength(1)
+    expect(newer.findAllByProps({ 'data-arkme-file-card': 'file' })).toHaveLength(1)
+    expect(newer.findAll(node => node.children.includes('补充方案.pdf'))).not.toHaveLength(0)
+    expect(newer.findAll(node => node.children.includes('暂不支持的非文本内容'))).toHaveLength(0)
     const rows = renderer.root.findAll(node => typeof node.props['data-arkme-note-extension-item'] === 'string')
     expect(rows.map(row => row.props['data-arkme-note-extension-item'])).toEqual(['extension-newer', 'extension-older'])
   })

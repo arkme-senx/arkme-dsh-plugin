@@ -18,7 +18,7 @@ vi.mock('react-dom', () => ({
 }))
 
 import {
-  ArkmeConfirmedSendRetentionOwner, ArkmeSurface, arkmeBackgroundSoundCaptureFailureFeedback,
+  ArkmeConfirmedSendRetentionOwner, ArkmeSurface, ArkmeTimelineMessageHeader, arkmeBackgroundSoundCaptureFailureFeedback,
   arkmeGroupMentionCandidates, arkmeRealtimeDeltaCoversTimelineGap,
 } from '../src/client/ArkmeSidebar.js'
 import { ArkmeClientError } from '../src/client/api.js'
@@ -636,10 +636,29 @@ describe('conversation send directory projection', () => {
     expect(checkbox.props.style).toMatchObject({ justifySelf: 'center', width: 32, height: 32 })
     expect(checkbox.props.style.position).toBeUndefined()
     expect(row.findAllByProps({ 'data-arkme-message-avatar': 'true' })).toHaveLength(0)
+    expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
     const messageLine = row.find(node => node.type === 'div' && node.props.style?.width === 'min(600px, 100%)')
     expect(messageLine.props.style).toMatchObject({
       gridColumn: '2', minWidth: 0, justifySelf: 'center', justifyContent: 'center', marginBottom: 0,
     })
+  })
+
+  it('hides sender and time metadata for a self-authored quick note', async () => {
+    timeline = [{
+      itemUid: 'own-message-without-metadata', senderName: '狗才', isMe: true,
+      sendAtMillis: 1, title: '', textContent: '自己的快记', status: 1,
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+
+    const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'own-message-without-metadata' })
+    expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
   })
 
   it('keeps the forward picker mounted while rapid comment changes are deferred', async () => {
@@ -2568,13 +2587,40 @@ describe('conversation send directory projection', () => {
     const parentPreview = sentRow.findByProps({ 'data-arkme-extension-parent-preview': 'extension-parent' })
     expect(parentPreview.findAll(node => node.children.includes('原消息内容')).length).toBeGreaterThan(0)
     expect(parentPreview.props.style).toMatchObject({
-      marginRight: 54,
+      marginRight: 44,
       background: 'linear-gradient(180deg, var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8)) 0%, transparent 68.06%)',
     })
     const childLine = extensionCluster.findByProps({ 'data-arkme-extension-child-line': 'true' })
     expect(childLine.props.style).toMatchObject({ flexDirection: 'row-reverse', gap: 10 })
+    expect(extensionCluster.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
     expect(childLine.findByProps({ 'data-arkme-message-content-line': 'record-new' })).toBeDefined()
     expect(childLine.findAllByProps({ 'data-arkme-extension-parent-preview': 'extension-parent' })).toHaveLength(0)
+  })
+
+  it('aligns a received extension preview with the sender and content column', async () => {
+    timeline = [{
+      itemUid: 'received-extension-child', senderName: '同事', isMe: false, sendAtMillis: 12,
+      title: '', textContent: '补充内容', status: 1,
+      extensionParentRecordUid: 'received-extension-parent',
+      extensionParent: {
+        itemUid: 'received-extension-parent', senderName: '同事', title: '', textContent: '原快记',
+        recordOwnerUserId: 7, sequence: 11, sendAtMillis: 11,
+      },
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+
+    const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'received-extension-child' })
+    const preview = row.findByProps({ 'data-arkme-extension-parent-preview': 'received-extension-parent' })
+    expect(preview.props.style.marginLeft).toBe(44)
+    const childLine = row.findByProps({ 'data-arkme-extension-child-line': 'true' })
+    expect(childLine.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(1)
   })
 
   it('uses a pointer cursor for a clickable extension parent preview', async () => {
