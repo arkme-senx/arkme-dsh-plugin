@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
   arkmeSelfDirectorySources, arkmeSendToSelfDirectoryPresentation, arkmeSourceTimeLabel,
   isArkmeChatDirectorySource, isArkmeSelfWorkspaceSource, sortArkmeSources,
 } from '../src/client/source-list.js'
 import {
-  arkmeRootChatPreview, arkmeRootChatPreviewParts, arkmeRootChatUnreadPlacement,
+  ArkmeRootChatPreview, arkmeRootChatPreview, arkmeRootChatPreviewParts, arkmeRootChatUnreadPlacement,
 } from '../src/client/ArkmeVirtualWorkspace.js'
 
 function source(
@@ -71,6 +73,15 @@ describe('Arkme send-to-self source list', () => {
     expect(arkmeRootChatUnreadPlacement(groupChat)).toBe('avatar')
     expect(arkmeRootChatPreview(privateChat)).toBe('私聊消息')
     expect(arkmeRootChatPreview({ ...privateChat, latestPreview: '[jm_emoji:silent_face]' })).toBe('😶')
+    expect(arkmeRootChatPreviewParts({ ...privateChat, latestPreview: '[jm_emoji:silent_face]' }).preview)
+      .toBe('[jm_emoji:silent_face]')
+    const emojiPreview = renderToStaticMarkup(createElement(ArkmeRootChatPreview, {
+      source: { ...privateChat, latestPreview: '[jm_emoji:silent_face]' },
+    }))
+    expect(emojiPreview).toContain('data-arkme-rich-emoji="silent_face"')
+    expect(emojiPreview).toContain('data:image/svg+xml;base64,')
+    expect(emojiPreview).not.toContain('😶')
+    expect(emojiPreview).not.toContain('[jm_emoji:silent_face]')
     expect(arkmeRootChatUnreadPlacement(privateChat)).toBe('avatar')
     expect(arkmeRootChatUnreadPlacement({ ...groupChat, isMuted: true, badgeUnreadCount: 0 })).toBe('dot')
     expect(arkmeRootChatUnreadPlacement({
