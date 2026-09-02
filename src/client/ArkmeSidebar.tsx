@@ -6484,6 +6484,7 @@ export function ArkmeSurface({
               <button type="button" role="menuitem" style={styles.addMenuItem} onClick={() => { setLongArticleCreating(true); setAddMenuOpen(false) }}><span aria-hidden>✎</span>写长文</button>
             </div>}
             <input ref={fileInputRef} type="file" multiple hidden onChange={event => { void selectFiles(event.currentTarget.files) }} />
+            <div className="arkme-conversation-input-card">
             {attachments.length > 0 && <ArkmeAttachmentStrip attachments={attachments} disabled={preparingFiles}
               onMove={(from, to) => arkmeComposerDraftStore.moveAttachment(composerDraftKey, from, to)}
               onPreview={attachment => { if (attachment.localFile !== undefined) setDraftPreview(localFileBlock(attachment.localFile)) }}
@@ -6590,6 +6591,7 @@ export function ArkmeSurface({
                   if (canSend) void send()
                 }
               }} />
+            </div>
             <div style={styles.tools}><div style={styles.toolGroup}><button ref={addMenuTriggerRef} type="button" style={styles.plus} aria-label="添加内容" aria-haspopup="menu" aria-expanded={addMenuOpen} disabled={preparingFiles} onClick={() => { setAddMenuOpen(value => !value) }}>{preparingFiles ? <ArkmeFilePreparingIndicator /> : '+'}</button><ArkmeEmojiPicker
               key={`emoji-picker:${conversationOverlayKey}`}
               disabled={preparingFiles}
