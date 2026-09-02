@@ -91,6 +91,17 @@ function fakeService() {
     billingOrderStatus: vi.fn(async (orderId: string) => ({ orderId, status: 'pending' })),
     checkArkmeIdAvailability: vi.fn(async (arkmeId: string) => ({ available: true, reason: '', arkmeId })),
     setArkmeIdOnce: vi.fn(async (arkmeId: string) => ({ arkmeId, changed: true, canUpdate: false, revision: 2 })),
+    userBanStatus: vi.fn(async (sourceRef: string) => ({
+      sourceRef, targetUserId: 42, displayName: '何', exists: false, banned: false,
+    })),
+    banPrivateChatUser: vi.fn(async (sourceRef: string, remark: string) => ({
+      sourceRef, targetUserId: 42, displayName: '何', status: 'banned', operatorUserId: 7, remark,
+      bannedAtMillis: 1, unbannedAtMillis: 0, updatedAtMillis: 1,
+    })),
+    unbanPrivateChatUser: vi.fn(async (sourceRef: string, remark: string) => ({
+      sourceRef, targetUserId: 42, displayName: '何', status: 'unbanned', operatorUserId: 7, remark,
+      bannedAtMillis: 1, unbannedAtMillis: 2, updatedAtMillis: 2,
+    })),
   }
 }
 
@@ -116,6 +127,61 @@ describe('account settings Host API dispatch', () => {
 
     expect(service.checkArkmeIdAvailability).toHaveBeenCalledWith('  Lucis_01  ')
     expect(service.setArkmeIdOnce).toHaveBeenCalledWith('Lucis_01')
+  })
+})
+
+describe('user-ban Host API dispatch', () => {
+  it('forwards only the account-bound private-chat source and bounded remark', async () => {
+    const service = fakeService()
+
+    const status = await dispatchArkmeHostOperation(service as never, 'user-ban.status', {
+      sourceRef: 'source-ref', userId: 999, accessToken: 'secret',
+    })
+    const banned = await dispatchArkmeHostOperation(service as never, 'user-ban.ban', {
+      sourceRef: 'source-ref', remark: '私聊复核', userId: 999,
+    })
+    const unbanned = await dispatchArkmeHostOperation(service as never, 'user-ban.unban', {
+      sourceRef: 'source-ref', remark: '复核通过', operatorId: 999,
+    })
+
+    expect(service.userBanStatus).toHaveBeenCalledWith('source-ref', undefined)
+    expect(service.banPrivateChatUser).toHaveBeenCalledWith('source-ref', '私聊复核', undefined)
+    expect(service.unbanPrivateChatUser).toHaveBeenCalledWith('source-ref', '复核通过', undefined)
+    expect(status).toEqual({ sourceRef: 'source-ref', displayName: '何', exists: false, banned: false })
+    expect(banned).not.toHaveProperty('targetUserId')
+    expect(banned).not.toHaveProperty('operatorUserId')
+    expect(unbanned).not.toHaveProperty('targetUserId')
+  })
+
+  it('requires the active same-origin Browser before a ban mutation', async () => {
+    const service = fakeService()
+    const server = createServer(createArkmeHostApi(service as never, {
+      expectedPort: 3080,
+      allowNonLoopback: false,
+    }))
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('test server address missing')
+    const endpoint = `http://127.0.0.1:${String(address.port)}/arkme-self/api`
+    const body = JSON.stringify({ operation: 'user-ban.ban', params: { sourceRef: 'source-ref', remark: '私聊复核' } })
+    try {
+      const rejected = await fetch(endpoint, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+      })
+      expect(rejected.status).toBe(403)
+      await expect(rejected.json()).resolves.toMatchObject({ ok: false, error: { code: 'origin-required' } })
+      expect(service.banPrivateChatUser).not.toHaveBeenCalled()
+
+      const accepted = await fetch(endpoint, {
+        method: 'POST', headers: { Origin: 'http://127.0.0.1:3080', 'Content-Type': 'application/json' }, body,
+      })
+      expect(accepted.status).toBe(200)
+      expect(service.banPrivateChatUser).toHaveBeenCalledWith('source-ref', '私聊复核', expect.any(AbortSignal))
+    } finally {
+      server.close()
+      await once(server, 'close')
+    }
   })
 })
 

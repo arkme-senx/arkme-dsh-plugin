@@ -22,6 +22,7 @@ import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { ArkmeGlobalSearchDialog, type ArkmeDshMessageSearchResult } from './ArkmeSearchSurface.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import { ArkmeQuickAddButton } from './ArkmeQuickAdd.js'
@@ -596,13 +597,12 @@ function timeLabel(value: number): string {
 
 export function arkmeRootChatPreview(source: ArkmeSourceItem): string {
   const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
-  return `${mentionPrefix}${preview}`.trim()
+  return arkmeEmojiPlainText(`${mentionPrefix}${preview}`).trim()
 }
 
 export function arkmeRootChatPreviewParts(source: ArkmeSourceItem): { mentionPrefix: string; preview: string } {
-  const preview = arkmeEmojiPlainText(
-    source.latestPreview ?? (source.kind === 'group_chat' ? '群聊' : ''),
-  ).replace(/\s+/g, ' ').trim()
+  const preview = (source.latestPreview ?? (source.kind === 'group_chat' ? '群聊' : ''))
+    .replace(/\s+/g, ' ').trim()
   const mentionPrefix = source.kind === 'group_chat' && source.hasUnreadMention === true && preview !== ''
     ? '[有人@我] '
     : ''
@@ -622,11 +622,11 @@ export function arkmeRootChatUnreadPlacement(source: {
     : 'none'
 }
 
-function ArkmeRootChatPreview({ source }: { source: ArkmeSourceItem }) {
+export function ArkmeRootChatPreview({ source }: { source: ArkmeSourceItem }) {
   const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
   return <span style={styles.preview}>
     {mentionPrefix !== '' && <span style={styles.mentionPreviewPrefix}>{mentionPrefix}</span>}
-    {preview}
+    <ArkmeRichText text={preview} emojiSize={20} renderLink={link => link.text} />
   </span>
 }
 

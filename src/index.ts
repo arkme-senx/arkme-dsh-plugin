@@ -24,6 +24,15 @@ import { createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFile
 import { createArkmeRecordingImportHandler, scavengeRecordingImportTemporaryFiles } from './recording-import-routes.js'
 import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
 import { createArkmeSecureValueStore, createArkmeSessionStore } from './keychain-store.js'
+import { HttpManagedOpenApiControlPlane } from './openapi-mcp/control-plane.js'
+import { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
+import { SecureManagedOpenApiCredentialStore } from './openapi-mcp/credential-store.js'
+import { registerManagedOpenApiMcpExecutionFence } from './openapi-mcp/execution-fence.js'
+import { HttpOpenApiMcpManifestSource } from './openapi-mcp/manifest-source.js'
+import { CordisOpenApiMcpRuntime } from './openapi-mcp/mcp-runtime.js'
+import { FileOpenApiMcpReconcileLock, managedOpenApiMcpReconcileLockPath } from './openapi-mcp/reconcile-lock.js'
+import { ObservedArkmeSessionStore } from './openapi-mcp/session-observer.js'
+import { registerOpenApiMcpLifecycleTools } from './openapi-mcp/status-tool.js'
 import { ArkmeLocalDatabase } from './local-database.js'
 import { registerManagedAiProvider } from './managed-ai/adapter.js'
 import {
@@ -82,6 +91,8 @@ export interface Config {
   relationBaseUrl: string
   intelligentBaseUrl: string
   audioBaseUrl: string
+  openApiBaseUrl: string
+  openApiMcpEnabled: boolean
   extensionPublishBaseUrl: string
   extensionArtifactDirectory: string
   extensionTrustedSigningKeys: string
@@ -131,6 +142,8 @@ export const Config: Schema<Config> = Schema.object({
   relationBaseUrl: Schema.string().default('https://jotmo-relation.senguo.me'),
   intelligentBaseUrl: Schema.string().default('https://jotmo-intelligent.senguo.me'),
   audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
+  openApiBaseUrl: Schema.string().default(''),
+  openApiMcpEnabled: Schema.boolean().default(true),
   extensionPublishBaseUrl: Schema.string().default(''),
   extensionArtifactDirectory: Schema.string().default(''),
   extensionTrustedSigningKeys: Schema.string().default(ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS),
@@ -252,9 +265,31 @@ export function apply(ctx: Context, config: Config): void {
   const stateDirectory = config.stateDirectory.trim() || join(dshHome, 'arkme-self', config.environment)
   const stateStore = new ArkmeStateStore(stateDirectory)
   const localDatabase = new ArkmeLocalDatabase(stateDirectory, stateStore)
-  const sessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}`)
+  const rawSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}`)
+  const sessionStore = new ObservedArkmeSessionStore(rawSessionStore)
   const pendingSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}.pending-binding`)
   const service = new ArkmeService({ ...config, fileStateDirectory: join(stateDirectory, 'files') }, sessionStore, localDatabase, fetch, pendingSessionStore)
+  const openApiMcpCredentialNamespace = `${config.keychainServicePrefix}.${config.environment}.openapi-mcp`
+  const openApiMcpController = new ManagedOpenApiMcpController({
+    enabled: config.openApiMcpEnabled,
+    sessionStore,
+    accessCredentialProvider: service,
+    controlPlane: new HttpManagedOpenApiControlPlane(config.openApiBaseUrl, fetch, config.requestTimeoutMs),
+    manifestSource: new HttpOpenApiMcpManifestSource(config.openApiBaseUrl, fetch, config.requestTimeoutMs),
+    credentialStore: new SecureManagedOpenApiCredentialStore(createArkmeSecureValueStore(openApiMcpCredentialNamespace)),
+    runtime: new CordisOpenApiMcpRuntime(ctx, config.openApiBaseUrl, config.requestTimeoutMs),
+    reconcileLock: new FileOpenApiMcpReconcileLock(managedOpenApiMcpReconcileLockPath(openApiMcpCredentialNamespace)),
+    logger: ctx.logger,
+  })
+  sessionStore.attach(openApiMcpController)
+  ctx.effect(
+    () => ctx.tools.guard(execution => openApiMcpController.guardToolExecution(execution.name)),
+    'dsh-arkme: managed OpenAPI MCP account guard',
+  )
+  ctx.effect(
+    () => registerManagedOpenApiMcpExecutionFence(ctx, openApiMcpController),
+    'dsh-arkme: managed OpenAPI MCP execution fence',
+  )
   service.attachLocalFileOpener(async (path, signal) => {
     await openDshHostPath(ctx, path, signal)
   })
@@ -372,6 +407,7 @@ export function apply(ctx: Context, config: Config): void {
   })
   registerDSHAgentInputRecordSync(ctx, service)
   registerArkmeTools(ctx, service, config.toolProfile)
+  if (config.openApiMcpEnabled) registerOpenApiMcpLifecycleTools(ctx, openApiMcpController)
   ctx.inject(['dynamicCordisRunner', 'agents'], dynamicCtx => {
     const runner = (dynamicCtx as Context & { dynamicCordisRunner: DynamicCordisRunnerLike }).dynamicCordisRunner
     const agents = (dynamicCtx as Context & { agents: ArkmeAgentRegistryLike }).agents
@@ -532,6 +568,7 @@ export function apply(ctx: Context, config: Config): void {
     ownedExtensionInventory: () => ownedExtensionInventory,
     remoteHost: () => remoteHost,
     desktopQuarantine,
+    openApiMcpController,
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {
@@ -588,6 +625,10 @@ export function apply(ctx: Context, config: Config): void {
     extensionStore.close()
     ownedExtensionStore.close()
   }, 'dsh-arkme: local cache database')
+  ctx.effect(() => {
+    openApiMcpController.start()
+    return async () => { await openApiMcpController.dispose() }
+  }, 'dsh-arkme: managed OpenAPI MCP lifecycle')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
   ctx.effect(async () => {
     const protectedRecordingPaths = new Set((await stateStore.listAllRecordingImportJobs())
@@ -679,14 +720,15 @@ export function apply(ctx: Context, config: Config): void {
 }
 
 export function resolveArkmeConfig(ctx: Context, config: Config): Config {
-  const resolved = config.dataBaseUrl.trim() === ''
-    ? {
-        ...config,
-        dataBaseUrl: config.environment === 'prod'
-          ? 'https://data.jotmo.cc'
-          : 'https://jotmo-data.senguo.me',
-      }
-    : config
+  const resolved = {
+    ...config,
+    dataBaseUrl: config.dataBaseUrl.trim() === ''
+      ? config.environment === 'prod' ? 'https://data.jotmo.cc' : 'https://jotmo-data.senguo.me'
+      : config.dataBaseUrl,
+    openApiBaseUrl: (config.openApiBaseUrl.trim() === ''
+      ? config.environment === 'prod' ? 'https://openapi.jotmo.cc' : 'https://jotmo-openapi.senguo.me'
+      : config.openApiBaseUrl).replace(/\/+$/, ''),
+  }
   validateConfig(ctx, resolved)
   return resolved
 }
@@ -709,6 +751,7 @@ function validateConfig(ctx: Context, config: Config): void {
       config.relationBaseUrl,
       config.intelligentBaseUrl,
       config.audioBaseUrl,
+      ...(config.openApiMcpEnabled ? [config.openApiBaseUrl] : []),
       ...(config.dshRemoteFeatureEnabled ? [config.dshRemoteRealtimeBaseUrl] : []),
     ].filter(origin => new URL(origin).hostname.endsWith('.senguo.me'))
     if (testDefaults.length > 0) {
@@ -745,13 +788,15 @@ function validateConfig(ctx: Context, config: Config): void {
     ['relationBaseUrl', config.relationBaseUrl],
     ['intelligentBaseUrl', config.intelligentBaseUrl],
     ['audioBaseUrl', config.audioBaseUrl],
+    ...(config.openApiMcpEnabled ? [['openApiBaseUrl', config.openApiBaseUrl] as const] : []),
     ['shareWebsite', config.shareWebsite],
     ...(config.dshRemoteFeatureEnabled
       ? [['dshRemoteRealtimeBaseUrl', config.dshRemoteRealtimeBaseUrl] as const]
       : []),
   ] as const) {
     const url = new URL(raw)
-    if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {
+    if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/'
+      || label === 'openApiBaseUrl' && (url.search !== '' || url.hash !== '')) {
       throw new Error(`dsh-arkme: ${label} must be an HTTPS origin without credentials or path`)
     }
   }
@@ -879,6 +924,7 @@ export type {
   ArkmeWechatPhoneEvidence,
   ArkmeWechatPhonePage,
 } from './types.js'
+export type { OpenApiMcpState, OpenApiMcpStatus } from './openapi-mcp/types.js'
 export {
   ARKME_PROVIDER_CONTRACT_VERSION,
   ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES,

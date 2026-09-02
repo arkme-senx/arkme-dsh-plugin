@@ -17,6 +17,8 @@
         audioBaseUrl: https://audio.jotmo.cc
         dshRemoteFeatureEnabled: true
         dshRemoteRealtimeBaseUrl: https://realtime.jotmo.cc
+        openApiBaseUrl: https://openapi.jotmo.cc
+        openApiMcpEnabled: true
         extensionPublishBaseUrl: https://extension-publish.jotmo.cc
         shareWebsite: https://jiwo.cc
         extensionArtifactDirectory: ''

@@ -95,6 +95,24 @@ describe('ServiceRuntime', () => {
     expect(stored.accessToken).toBe('new-access')
   })
 
+  it('invalidates a legacy stored session without conflating generic account-inactive with a ban', async () => {
+    const stored = { accessToken: 'legacy-access', refreshToken: 'legacy-refresh', userId: 42 }
+    const deleteSession = vi.fn()
+    const runtime = runtimeFixture(vi.fn(async () => new Response(JSON.stringify({
+      code: 1004,
+      message: '账号异常',
+    }), { status: 200 })), {
+      async read() { return stored }, async write() {}, delete: deleteSession,
+    })
+
+    await expect(runtime.refreshAccessToken(stored)).rejects.toMatchObject({
+      code: 'account-unavailable',
+      httpStatus: 403,
+      retryable: false,
+    })
+    expect(deleteSession).toHaveBeenCalledOnce()
+  })
+
   it('retries an authenticated request once with a refreshed token', async () => {
     let stored = {
       accessToken: 'expired-access',

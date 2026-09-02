@@ -4727,6 +4727,24 @@ export class ChatService {
       options.signal,
     )
   }
+
+  async resolvePrivateChatPeer(
+    sourceRef: string,
+    signal?: AbortSignal,
+  ): Promise<{ userId: number; displayName: string }> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat') {
+      throw new ArkmePluginError('user-ban-private-chat-required', '封禁操作仅支持一对一私聊用户', false)
+    }
+    const peerIds = [...new Set((await this.rawChatMembers(source.ownerRef, true, session, signal))
+      .map(item => Math.trunc(numberValue(item.user_id)))
+      .filter(userId => Number.isSafeInteger(userId) && userId > 0 && userId !== session.userId))]
+    if (peerIds.length !== 1) {
+      throw new ArkmePluginError('user-ban-peer-invalid', '无法确认当前私聊用户，请刷新会话后重试', true, 409)
+    }
+    return { userId: peerIds[0]!, displayName: source.displayName }
+  }
   
   private async rawChatMembers(
     chatSessionUid: string,

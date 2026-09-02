@@ -150,6 +150,9 @@ describe('registerArkmeTools', () => {
       'arkme_conversation_mark_read',
       'arkme_message_report',
       'arkme_related_recordings_read',
+      'arkme_user_ban_status',
+      'arkme_user_ban',
+      'arkme_user_unban',
       'arkme_group_ai_polish_manage',
       'arkme_favorite_stickers_list',
       'arkme_favorite_sticker_add',
@@ -347,6 +350,72 @@ describe('registerArkmeTools', () => {
     expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
     expect(prepared.isError ? '' : prepared.value).toContain(prompt)
     expect(write).not.toHaveBeenCalled()
+  })
+
+  it('reads a private-chat ban state without exposing bound identifiers', async () => {
+    const ctx = await setup()
+    const userBanStatus = vi.fn(async () => ({
+      sourceRef: 'arkme-source-v1.account-bound', targetUserId: 91, displayName: '小林',
+      exists: true, banned: true,
+      record: {
+        sourceRef: 'arkme-source-v1.account-bound', targetUserId: 91, displayName: '小林',
+        status: 'banned' as const, operatorUserId: 42, remark: '违规操作',
+        bannedAtMillis: 1_900_000_000_000, unbannedAtMillis: 0, updatedAtMillis: 1_900_000_000_000,
+      },
+    }))
+    await mountArkmeTools(ctx, 'business', { ...ports, userBanStatus } as unknown as ArkmeToolPorts)
+    const signal = new AbortController().signal
+    const result = await ctx.tools.execute({
+      callId: CallId('user-ban-status'), name: 'arkme_user_ban_status',
+      arguments: { source_ref: 'arkme-source-v1.account-bound' }, signal,
+    })
+
+    expect(result.isError).toBe(false)
+    expect(result.isError ? '' : result.value).toContain('小林')
+    expect(result.isError ? '' : result.value).toContain('banned')
+    expect(result.isError ? '' : result.value).not.toContain('arkme-source-v1.account-bound')
+    expect(result.isError ? '' : result.value).not.toContain('91')
+    expect(userBanStatus).toHaveBeenCalledWith('arkme-source-v1.account-bound', signal)
+  })
+
+  it('rechecks the private-chat peer after confirmation before a ban write', async () => {
+    const ctx = await setup()
+    const sourceRef = 'arkme-source-v1.account-bound'
+    const userBanStatus = vi
+      .fn()
+      .mockResolvedValueOnce({ sourceRef, targetUserId: 91, displayName: '小林', exists: false, banned: false })
+      .mockResolvedValueOnce({ sourceRef, targetUserId: 92, displayName: '小周', exists: false, banned: false })
+    const banPrivateChatUser = vi.fn()
+    await mountArkmeTools(ctx, 'business', {
+      ...ports, userBanStatus, banPrivateChatUser,
+    } as unknown as ArkmeToolPorts)
+    const events: Array<Record<string, unknown>> = [
+      { seq: 0, type: 'turn/start', data: { turn: 1 } },
+      { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '封禁这个私聊用户' }], source: { kind: 'user' } } },
+    ]
+    const agent = {
+      id: SessionId('session-user-ban-target-fence'), session: { get events() { return events } },
+    } as unknown as Agent
+    const signal = new AbortController().signal
+    const args = { source_ref: sourceRef, remark: '违规操作' }
+
+    const prepared = await ctx.tools.execute({
+      callId: CallId('user-ban-prepare'), name: 'arkme_user_ban', arguments: args, agent, signal,
+    })
+    expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
+    expect(prepared.isError ? '' : prepared.value).toContain('其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效')
+    expect(banPrivateChatUser).not.toHaveBeenCalled()
+
+    events.push({
+      seq: 2, type: 'user/message', data: { content: [{ type: 'text', text: '确认封禁' }], source: { kind: 'user' } },
+    })
+    const confirmed = await ctx.tools.execute({
+      callId: CallId('user-ban-confirm'), name: 'arkme_user_ban', arguments: args, agent, signal,
+    })
+    expect(confirmed.isError).toBe(true)
+    expect(confirmed.isError ? confirmed.error.message : '').toContain('封禁目标已变化')
+    expect(userBanStatus).toHaveBeenCalledTimes(2)
+    expect(banPrivateChatUser).not.toHaveBeenCalled()
   })
 
   it('binds background-sound confirmation to the account verified during prepare', async () => {

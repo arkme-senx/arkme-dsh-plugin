@@ -17,6 +17,7 @@ import type { ArkmeVoiceprintToolPort } from './voiceprint.js'
 import type { ArkmeExtensionReviewToolPort } from './extensions.js'
 import type { ArkmeGroupToolPort } from './groups.js'
 import type { ArkmeFileToolPort } from './files.js'
+import type { ArkmeUserBanToolPort } from './user-ban.js'
 
 export interface ArkmeCoreToolPorts extends
   ArkmeFileToolPort,
@@ -36,6 +37,7 @@ export interface ArkmeCoreToolPorts extends
   ArkmeExtensionReviewToolPort,
   ArkmeGroupToolPort,
   ArkmeWechatToolPort,
+  ArkmeUserBanToolPort,
   ArkmeVoiceprintToolPort {}
 
 export interface ArkmeToolPorts extends ArkmeCoreToolPorts, ArkmeMediaToolPort {}
@@ -48,4 +50,5 @@ export type {
   ArkmeVoiceprintToolPort,
   ArkmeExtensionReviewToolPort,
   ArkmeGroupToolPort,
+  ArkmeUserBanToolPort,
 }

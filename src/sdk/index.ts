@@ -85,6 +85,8 @@ import type {
   ArkmeTimelineAroundPage,
   ArkmeTimelinePage,
   ArkmeUserProfileSnapshot,
+  ArkmeUserBanRecord,
+  ArkmeUserBanSnapshot,
   ArkmeUploadedAsset,
   ArkmeWorldAuthorLabel,
   ArkmeWorldFeedPage,
@@ -250,6 +252,8 @@ export type {
   ArkmeTimelinePage,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
+  ArkmeUserBanRecord,
+  ArkmeUserBanSnapshot,
   ArkmeUploadedAsset,
   ArkmeWorldFeedItem,
   ArkmeWorldInteractionCreateResult,
@@ -307,6 +311,8 @@ export type {
   DshRemoteStatus,
 } from '../dsh-remote/types.js'
 import type { DshRemoteStatus } from '../dsh-remote/types.js'
+export type { OpenApiMcpStatus } from '../openapi-mcp/types.js'
+import type { OpenApiMcpStatus } from '../openapi-mcp/types.js'
 export type {
   ArkmeOutgoingCallFailureCode,
   ArkmeOutgoingCallMediaType,
@@ -396,6 +402,16 @@ export class ArkmeSdk {
 
   async state(signal?: AbortSignal): Promise<ArkmeProviderState> {
     return await this.call<ArkmeProviderState>('provider.state', undefined, signal)
+  }
+
+  /** Read the credential-free managed OpenAPI MCP lifecycle projection. */
+  async openApiMcpStatus(signal?: AbortSignal): Promise<OpenApiMcpStatus> {
+    return await this.call<OpenApiMcpStatus>('openapi.mcp.status', undefined, signal)
+  }
+
+  /** Retry a degraded managed MCP connection without exposing or accepting credentials. */
+  async retryOpenApiMcp(signal?: AbortSignal): Promise<OpenApiMcpStatus> {
+    return await this.call<OpenApiMcpStatus>('openapi.mcp.retry', undefined, signal)
   }
 
   /** Read Browser-safe installed extension projections without Host filesystem paths or runtime IDs. */
@@ -606,6 +622,34 @@ export class ArkmeSdk {
       undefined,
       options.signal,
     )
+  }
+
+  /** Employee-only current-state lookup for the user bound to a private-chat source. */
+  async userBanStatus(sourceRef: string, signal?: AbortSignal): Promise<ArkmeUserBanSnapshot> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme private-chat source reference must not be empty')
+    return await this.call<ArkmeUserBanSnapshot>('user-ban.status', { sourceRef }, signal)
+  }
+
+  /** Employee-only idempotent ban. Callers must obtain explicit human approval first. */
+  async banPrivateChatUser(
+    sourceRef: string,
+    remark = '',
+    signal?: AbortSignal,
+  ): Promise<ArkmeUserBanRecord> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme private-chat source reference must not be empty')
+    if (Array.from(remark.trim()).length > 255) throw new TypeError('Arkme user-ban remark must be at most 255 characters')
+    return await this.call<ArkmeUserBanRecord>('user-ban.ban', { sourceRef, remark: remark.trim() }, signal)
+  }
+
+  /** Employee-only idempotent unban. Callers must obtain explicit human approval first. */
+  async unbanPrivateChatUser(
+    sourceRef: string,
+    remark = '',
+    signal?: AbortSignal,
+  ): Promise<ArkmeUserBanRecord> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme private-chat source reference must not be empty')
+    if (Array.from(remark.trim()).length > 255) throw new TypeError('Arkme user-ban remark must be at most 255 characters')
+    return await this.call<ArkmeUserBanRecord>('user-ban.unban', { sourceRef, remark: remark.trim() }, signal)
   }
 
   async backgroundSoundPreference(signal?: AbortSignal): Promise<ArkmeBackgroundSoundPreference> {

@@ -11,6 +11,7 @@ import type {
   ArkmeMessageReportType,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRecordCaptureContext, ArkmeRecordLocationCapture, ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
+  ArkmeUserBanOwnerRecord, ArkmeUserBanOwnerSnapshot, ArkmeUserBanRecord, ArkmeUserBanSnapshot,
   ArkmeWorldPublishFileAsset,
 } from './types.js'
 import type { ArkmeCaptchaResult } from './types.js'
@@ -29,6 +30,7 @@ import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
 import { arkmeRequiredLinkMetadataFallback } from './link-metadata.js'
 import type { ArkmeFileBackgroundSoundInput } from './file-transfer-contract.js'
 import { arkmeFileBackgroundSound, arkmeRichBackgroundSound } from './record-background-sound.js'
+import type { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
 
 const MAX_STANDARD_REQUEST_BYTES = 128 * 1024
 const MAX_MESSAGE_ACTION_REF_CHARS = 1024 * 1024
@@ -97,6 +99,28 @@ function writeJson(res: ServerResponse, status: number, body: ArkmePluginRespons
 
 function stringParam(params: Record<string, unknown>, key: string): string {
   return typeof params[key] === 'string' ? params[key] : ''
+}
+
+function browserUserBanRecord(record: ArkmeUserBanOwnerRecord): ArkmeUserBanRecord {
+  return {
+    sourceRef: record.sourceRef,
+    displayName: record.displayName,
+    status: record.status,
+    remark: record.remark,
+    bannedAtMillis: record.bannedAtMillis,
+    unbannedAtMillis: record.unbannedAtMillis,
+    updatedAtMillis: record.updatedAtMillis,
+  }
+}
+
+function browserUserBanSnapshot(snapshot: ArkmeUserBanOwnerSnapshot): ArkmeUserBanSnapshot {
+  return {
+    sourceRef: snapshot.sourceRef,
+    displayName: snapshot.displayName,
+    exists: snapshot.exists,
+    banned: snapshot.banned,
+    ...(snapshot.record === undefined ? {} : { record: browserUserBanRecord(snapshot.record) }),
+  }
 }
 
 function billingIdentifierParam(
@@ -739,6 +763,7 @@ export interface ArkmeHostApiOptions {
   ownedExtensionInventory?: () => ArkmeOwnedExtensionInventory | undefined
   remoteHost?: () => DshRemoteHostFacade | undefined
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>
+  openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
@@ -773,9 +798,12 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (request.operation === 'link.metadata' && origin === undefined) {
         throw new ArkmePluginError('origin-required', '网址名称解析必须从当前 DSH 页面发起', false, 403)
       }
-      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.speaker.assign-item']
+      if (['user-ban.ban', 'user-ban.unban'].includes(request.operation) && origin === undefined) {
+        throw new ArkmePluginError('origin-required', '封禁操作必须从当前 DSH 页面发起', false, 403)
+      }
+      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'openapi.mcp.reauthorize']
         .includes(request.operation) && origin === undefined) {
-        throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
+        throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
       const value = await dispatchArkmeHostOperation(
         service,
@@ -788,6 +816,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         controller.signal,
         options.remoteHost?.(),
         options.desktopQuarantine,
+        options.openApiMcpController,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -825,6 +854,7 @@ export async function dispatchArkmeHostOperation(
   requestSignal?: AbortSignal,
   remoteHost?: DshRemoteHostFacade,
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>,
+  openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': return service.providerCapabilities()
@@ -868,6 +898,17 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'code'),
     )
     case 'auth.logout': return await service.logout()
+    case 'user-ban.status': return browserUserBanSnapshot(await service.userBanStatus(
+      stringParam(params, 'sourceRef'), requestSignal,
+    ))
+    case 'user-ban.ban': return browserUserBanRecord(await service.banPrivateChatUser(
+      stringParam(params, 'sourceRef'), stringParam(params, 'remark'), requestSignal,
+    ))
+    case 'user-ban.unban': return browserUserBanRecord(await service.unbanPrivateChatUser(
+      stringParam(params, 'sourceRef'), stringParam(params, 'remark'), requestSignal,
+    ))
+    case 'openapi.mcp.status': return requireOpenApiMcpController(openApiMcpController).status()
+    case 'openapi.mcp.retry': return await requireOpenApiMcpController(openApiMcpController).retry()
     case 'remote.getStatus': return requireRemoteHost(remoteHost).getStatus()
     case 'remote.renameDesktop': return await requireRemoteHost(remoteHost).renameDesktop(stringParam(params, 'displayName'))
     case 'billing.quota': return await service.billingQuota()
@@ -1895,6 +1936,15 @@ export async function dispatchArkmeHostOperation(
     )
     default: throw new ArkmePluginError('operation-unknown', '不支持的Arkme 插件操作', false, 404)
   }
+}
+
+function requireOpenApiMcpController(
+  controller: Pick<ManagedOpenApiMcpController, 'status' | 'retry'> | undefined,
+): Pick<ManagedOpenApiMcpController, 'status' | 'retry'> {
+  if (controller === undefined) {
+    throw new ArkmePluginError('openapi-mcp-unavailable', 'OpenAPI MCP 托管能力当前不可用', true, 503)
+  }
+  return controller
 }
 
 function requireUpdateManager(
