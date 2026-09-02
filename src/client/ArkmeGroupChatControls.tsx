@@ -7,6 +7,7 @@ import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ArrowUp } from '@phosphor-icons/react/dist/icons/ArrowUp'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
+import { Prohibit } from '@phosphor-icons/react/dist/icons/Prohibit'
 import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import qrcode from 'qrcode-generator'
@@ -34,6 +35,7 @@ import type {
   ArkmeSourceItem,
 } from '../types.js'
 import { callArkme } from './api.js'
+import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { isArkmeRequestAbort, retryArkmeRead } from './read-retry.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
@@ -51,6 +53,7 @@ const colors = {
 
 const GROUP_SETTINGS_MENU_WIDTH = 248
 const AI_POLISH_PANEL_WIDTH = 408
+const GROUP_JOIN_RESTRICTIONS_PANEL_WIDTH = 320
 
 export const ARKME_GROUP_HEADER_ICON_COLOR = arkmeTheme.secondary
 
@@ -135,6 +138,57 @@ const styles: Record<string, CSSProperties> = {
   badge: { flex: 'none', color: colors.primary, fontSize: 11, lineHeight: '16px' },
   empty: { padding: '38px 18px', color: colors.secondary, fontSize: 13, textAlign: 'center' },
   loading: { padding: '14px 16px', color: colors.secondary, fontSize: 13, textAlign: 'center' },
+  restrictionDrawer: {
+    position: 'absolute', top: 68, right: 0, bottom: 0, zIndex: 8,
+    width: GROUP_JOIN_RESTRICTIONS_PANEL_WIDTH, maxWidth: '92%', overflow: 'hidden',
+    display: 'flex', flexDirection: 'column', background: colors.panel,
+    borderLeft: `1px solid ${colors.border}`, borderRadius: '12px 0 0 0',
+    boxShadow: '-8px 14px 28px rgba(24, 29, 36, .1)',
+  },
+  restrictionHeader: {
+    flex: 'none', height: 54, padding: '0 10px 0 16px', boxSizing: 'border-box',
+    display: 'flex', alignItems: 'center', borderBottom: `1px solid ${arkmeTheme.borderSoft}`,
+  },
+  restrictionTitle: {
+    minWidth: 0, flex: 1, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    color: colors.text, fontSize: 16, lineHeight: '22px', fontWeight: 600,
+  },
+  restrictionClose: {
+    width: 32, height: 32, flex: 'none', padding: 0, border: 0, borderRadius: 8,
+    display: 'grid', placeItems: 'center', background: 'transparent', color: colors.secondary,
+    cursor: 'pointer', transition: 'background-color 120ms ease, color 120ms ease',
+  },
+  restrictionDescription: {
+    flex: 'none', margin: 0, padding: '12px 16px', borderBottom: `1px solid ${colors.border}`,
+    color: colors.secondary, fontSize: 12, lineHeight: '18px',
+  },
+  restrictionBody: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 12px 18px' },
+  restrictionRow: {
+    width: '100%', minHeight: 58, padding: '10px 4px', border: 0,
+    borderBottom: `1px solid ${arkmeTheme.borderSoft}`, background: 'transparent',
+    boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 10, color: colors.text,
+  },
+  restrictionStatus: { display: 'block', color: colors.secondary, fontSize: 12, lineHeight: '18px' },
+  restrictionAction: {
+    minWidth: 82, height: 34, flex: 'none', padding: '0 12px', border: `1px solid ${colors.border}`,
+    borderRadius: 9, background: arkmeTheme.elevated, color: colors.text,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'pointer', font: 'inherit', fontSize: 13, whiteSpace: 'nowrap',
+    transition: 'background-color 120ms ease, opacity 120ms ease',
+  },
+  restrictionError: {
+    margin: '10px 4px 0', padding: '9px 10px', borderRadius: 8,
+    display: 'flex', alignItems: 'center', gap: 8, background: arkmeTheme.dangerSoft,
+    color: arkmeTheme.danger, fontSize: 12, lineHeight: '18px',
+  },
+  restrictionRetry: {
+    minHeight: 30, flex: 'none', marginLeft: 'auto', padding: '0 8px', border: 0, borderRadius: 7,
+    background: 'transparent', color: arkmeTheme.danger, cursor: 'pointer', font: 'inherit', fontWeight: 600,
+  },
+  restrictionLoadMore: {
+    width: '100%', minHeight: 34, marginTop: 8, padding: '0 12px', border: 0, borderRadius: 9,
+    background: 'transparent', color: colors.primary, cursor: 'pointer', font: 'inherit', fontSize: 12, fontWeight: 600,
+  },
   menuScrim: ARKME_CONVERSATION_SETTINGS_MENU_SCRIM_STYLE,
   aiModalScrim: {
     position: 'absolute', inset: 0, zIndex: 11, padding: 24, display: 'grid', placeItems: 'center',
@@ -1259,7 +1313,7 @@ function GroupSettingsMenu(props: {
         onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
         onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
         onClick={props.onRestrictionsOpen}
-      ><span aria-hidden style={{ width: 20, textAlign: 'center' }}>⊘</span><span>禁止加入名单</span><span aria-hidden style={{ marginLeft: 'auto', color: colors.secondary }}>›</span></button>}
+      ><span aria-hidden style={{ width: 20, display: 'grid', placeItems: 'center' }}><Prohibit size={18} /></span><span>禁止加入名单</span><span aria-hidden style={{ marginLeft: 'auto', color: colors.secondary }}>›</span></button>}
       <button
         type="button"
         role="menuitem"
@@ -1318,16 +1372,20 @@ function GroupJoinRestrictionsPanel(props: {
   source: ArkmeSourceItem
   open: boolean
   onClose: () => void
+  onStatus: (message: string) => void
 }) {
   const [items, setItems] = useState<ArkmeGroupJoinRestrictionPage['items']>([])
   const [cursor, setCursor] = useState<string>()
   const [loading, setLoading] = useState(false)
   const [busyMemberRef, setBusyMemberRef] = useState('')
-  const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [mutationError, setMutationError] = useState('')
+  const [confirmationTarget, setConfirmationTarget] = useState<ArkmeGroupJoinRestrictionPage['items'][number]>()
   const requestRef = useRef<AbortController>()
   const mutationRef = useRef<AbortController>()
   const busyMemberRefRef = useRef('')
   const mountedRef = useRef(true)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     mountedRef.current = true
@@ -1343,7 +1401,7 @@ function GroupJoinRestrictionsPanel(props: {
     const controller = new AbortController()
     requestRef.current = controller
     setLoading(true)
-    setError('')
+    setLoadError('')
     void callArkme<ArkmeGroupJoinRestrictionPage>('group.join-restrictions', {
       sourceRef: props.source.sourceRef,
       limit: 30,
@@ -1355,7 +1413,7 @@ function GroupJoinRestrictionsPanel(props: {
         : [...current, ...page.items.filter(item => !current.some(existing => existing.memberRef === item.memberRef))])
       setCursor(page.nextCursor)
     }).catch(caught => {
-      if (!controller.signal.aborted) setError(errorMessage(caught) || '限制名单读取失败，请稍后重试')
+      if (!controller.signal.aborted) setLoadError(errorMessage(caught) || '限制名单读取失败，请稍后重试')
     }).finally(() => {
       if (requestRef.current !== controller) return
       requestRef.current = undefined
@@ -1367,11 +1425,15 @@ function GroupJoinRestrictionsPanel(props: {
     if (!props.open) {
       setLoading(false)
       setBusyMemberRef('')
+      setConfirmationTarget(undefined)
       return
     }
     setItems([])
     setCursor(undefined)
     setBusyMemberRef('')
+    setLoadError('')
+    setMutationError('')
+    setConfirmationTarget(undefined)
     load()
     return () => {
       requestRef.current?.abort()
@@ -1380,63 +1442,122 @@ function GroupJoinRestrictionsPanel(props: {
     }
   }, [load, props.open])
 
+  useEffect(() => {
+    if (!props.open || typeof document === 'undefined') return
+    closeButtonRef.current?.focus({ preventScroll: true })
+  }, [props.open])
+
+  useEffect(() => {
+    if (!props.open || typeof document === 'undefined') return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || confirmationTarget !== undefined || busyMemberRefRef.current !== '') return
+      event.preventDefault()
+      props.onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('keydown', onKeyDown) }
+  }, [confirmationTarget, props.onClose, props.open])
+
+  const liftRestriction = useCallback((item: ArkmeGroupJoinRestrictionPage['items'][number]) => {
+    if (busyMemberRefRef.current !== '') return
+    const controller = new AbortController()
+    mutationRef.current = controller
+    busyMemberRefRef.current = item.memberRef
+    setBusyMemberRef(item.memberRef)
+    setMutationError('')
+    void callArkme<ArkmeGroupJoinRestrictionMutationResult>('group.join-restriction.set', {
+      sourceRef: props.source.sourceRef,
+      memberRef: item.memberRef,
+      restricted: false,
+    }, controller.signal).then(result => {
+      if (!mountedRef.current || mutationRef.current !== controller) return
+      if (result.restricted) {
+        setMutationError('解除结果未确认，请重试')
+        return
+      }
+      setItems(current => current.filter(value => value.memberRef !== item.memberRef))
+      setConfirmationTarget(undefined)
+      props.onStatus(`已解除对 ${item.displayName} 的加入限制`)
+      globalThis.queueMicrotask(() => { closeButtonRef.current?.focus({ preventScroll: true }) })
+    }).catch(caught => {
+      if (mountedRef.current && mutationRef.current === controller && !controller.signal.aborted) {
+        setMutationError(errorMessage(caught) || '解除限制失败，请稍后重试')
+      }
+    }).finally(() => {
+      if (mutationRef.current !== controller) return
+      mutationRef.current = undefined
+      busyMemberRefRef.current = ''
+      if (mountedRef.current) setBusyMemberRef('')
+    })
+  }, [props.onStatus, props.source.sourceRef])
+
   if (!props.open) return null
   return <>
-    <div style={styles.drawerScrim} aria-hidden onPointerDown={event => { event.preventDefault(); props.onClose() }} />
-    <aside style={styles.drawer} aria-label="禁止加入名单">
-      <div style={styles.drawerHeader}>
-        <h3 style={{ ...styles.drawerTitle, fontSize: 16, fontWeight: 500 }}>禁止加入名单</h3>
-        <button type="button" aria-label="关闭禁止加入名单" style={styles.closeButton} onClick={props.onClose}><X size={18} /></button>
+    <div style={styles.drawerScrim} aria-hidden onPointerDown={event => {
+      event.preventDefault()
+      if (busyMemberRefRef.current === '') props.onClose()
+    }} />
+    <aside
+      style={styles.restrictionDrawer}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="arkme-group-join-restrictions-title"
+      aria-busy={busyMemberRef !== '' || undefined}
+    >
+      <div style={styles.restrictionHeader}>
+        <h3 id="arkme-group-join-restrictions-title" style={styles.restrictionTitle}>禁止加入名单</h3>
+        <button
+          ref={closeButtonRef}
+          type="button"
+          aria-label="关闭禁止加入名单"
+          disabled={busyMemberRef !== ''}
+          style={{ ...styles.restrictionClose, opacity: busyMemberRef === '' ? 1 : .45 }}
+          onMouseEnter={event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = colors.subtle }}
+          onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+          onClick={props.onClose}
+        ><X size={18} /></button>
       </div>
-      <p style={{ margin: 0, padding: '12px 18px', borderBottom: `1px solid ${colors.border}`, color: colors.secondary, fontSize: 12, lineHeight: '18px' }}>
-        名单中的用户无法通过邀请或添加再次加入此群。
+      <p style={styles.restrictionDescription}>
+        名单中的用户无法通过邀请、添加或入群审批再次加入此群。
       </p>
-      <div style={styles.drawerBody}>
+      <div style={styles.restrictionBody}>
         {loading && items.length === 0 ? <div style={styles.loading}>正在读取限制名单…</div> : null}
-        {!loading && error === '' && items.length === 0 ? <div style={styles.empty}>暂无被限制的用户</div> : null}
-        {items.map(item => <div key={item.memberRef} style={{ ...styles.memberRow, cursor: 'default' }}>
+        {!loading && loadError === '' && items.length === 0 ? <div style={styles.empty}>暂无被限制的用户</div> : null}
+        {items.map(item => <div key={item.memberRef} style={styles.restrictionRow}>
           <Avatar imageRef={item.avatarRef} />
           <span style={styles.memberMain}>
             <span style={styles.memberName}>{item.displayName}</span>
-            <span style={{ color: colors.secondary, fontSize: 12 }}>已禁止再次加入</span>
+            <span style={styles.restrictionStatus}>已禁止再次加入</span>
           </span>
-          <button type="button" disabled={busyMemberRef !== ''} style={{
-            height: 30, padding: '0 10px', border: `1px solid ${colors.border}`, borderRadius: 7,
-            background: colors.panel, color: colors.primary, opacity: busyMemberRef !== '' ? .5 : 1,
-          }} onClick={() => {
-            if (!window.confirm(`允许 ${item.displayName} 再次加入此群吗？`)) return
-            if (busyMemberRefRef.current !== '') return
-            const controller = new AbortController()
-            mutationRef.current = controller
-            busyMemberRefRef.current = item.memberRef
-            setBusyMemberRef(item.memberRef)
-            setError('')
-            void callArkme<ArkmeGroupJoinRestrictionMutationResult>('group.join-restriction.set', {
-              sourceRef: props.source.sourceRef,
-              memberRef: item.memberRef,
-              restricted: false,
-            }, controller.signal).then(result => {
-              if (mountedRef.current && mutationRef.current === controller && !result.restricted) {
-                setItems(current => current.filter(value => value.memberRef !== item.memberRef))
-              }
-            }).catch(caught => {
-              if (mountedRef.current && mutationRef.current === controller && !controller.signal.aborted) {
-                setError(errorMessage(caught) || '解除限制失败，请稍后重试')
-              }
-            }).finally(() => {
-              if (mutationRef.current !== controller) return
-              mutationRef.current = undefined
-              busyMemberRefRef.current = ''
-              if (mountedRef.current) setBusyMemberRef('')
-            })
-          }}>{busyMemberRef === item.memberRef ? '处理中…' : '允许加入'}</button>
+          <button
+            type="button"
+            disabled={busyMemberRef !== ''}
+            style={{ ...styles.restrictionAction, opacity: busyMemberRef === '' ? 1 : .45 }}
+            onMouseEnter={event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = arkmeTheme.hover }}
+            onMouseLeave={event => { event.currentTarget.style.background = arkmeTheme.elevated }}
+            onClick={() => { setMutationError(''); setConfirmationTarget(item) }}
+          >解除限制</button>
         </div>)}
-        {error === '' ? null : <div role="alert" style={{ padding: 12, color: arkmeTheme.danger, fontSize: 12 }}>{error}</div>}
-        {cursor !== undefined ? <button type="button" disabled={loading} style={{ ...styles.closeButton, width: '100%', height: 36, color: colors.primary }} onClick={() => { load(cursor) }}>
+        {loadError === '' ? null : <div role="alert" style={styles.restrictionError}>
+          <span style={{ minWidth: 0, flex: 1, overflowWrap: 'anywhere' }}>{loadError}</span>
+          <button type="button" disabled={loading} style={styles.restrictionRetry} onClick={() => { load(cursor) }}>重试</button>
+        </div>}
+        {cursor !== undefined && loadError === '' ? <button type="button" disabled={loading} style={{ ...styles.restrictionLoadMore, opacity: loading ? .45 : 1 }} onClick={() => { load(cursor) }}>
           {loading ? '加载中…' : '加载更多'}
         </button> : null}
       </div>
     </aside>
+    {confirmationTarget === undefined ? null : <ArkmeConfirmDialog
+      titleId="arkme-group-join-restriction-lift-title"
+      title="解除加入限制？"
+      description={`解除后，${confirmationTarget.displayName} 不会自动加入群聊，仍需通过邀请、添加或入群审批。`}
+      error={mutationError}
+      busy={busyMemberRef === confirmationTarget.memberRef}
+      confirmLabel="解除限制"
+      busyLabel="解除中…"
+      onClose={() => { setMutationError(''); setConfirmationTarget(undefined) }}
+      onConfirm={() => { liftRestriction(confirmationTarget) }}
+    />}
   </>
 }
 
@@ -1503,6 +1624,7 @@ export function ArkmeGroupChatControls(props: {
   onMembersChanged?: () => void
   aiPolishSettings?: ArkmeGroupAiPolishSnapshot | undefined
   onAiPolishSettingsChanged?: (settings: ArkmeGroupAiPolishSnapshot) => void
+  onStatus?: (message: string) => void
   onError: (message: string) => void
 }) {
   const [localMembersOpen, setLocalMembersOpen] = useState(false)
@@ -1582,6 +1704,11 @@ export function ArkmeGroupChatControls(props: {
     setRestrictionsOpen(true)
   }, [])
 
+  const closeRestrictions = useCallback(() => {
+    setRestrictionsOpen(false)
+    globalThis.queueMicrotask(() => { settingsButtonRef.current?.focus({ preventScroll: true }) })
+  }, [])
+
   return <>
     <div style={styles.headerActions}>
       <ArkmeConversationHeaderIconButton label="查看群成员" onClick={openMembers}><ClientIcon src={icons.members} size={24} /></ArkmeConversationHeaderIconButton>
@@ -1617,7 +1744,8 @@ export function ArkmeGroupChatControls(props: {
       <GroupJoinRestrictionsPanel
         source={props.source}
         open={restrictionsOpen}
-        onClose={() => { setRestrictionsOpen(false) }}
+        onClose={closeRestrictions}
+        onStatus={message => { props.onStatus?.(message) }}
       />
       <GroupMembersDrawer
         source={props.source}

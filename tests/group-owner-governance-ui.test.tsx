@@ -64,17 +64,19 @@ describe('group owner governance UI', () => {
 
   it('keeps removal separate from the optional future-join restriction and deduplicates submit', async () => {
     mocks.callArkme.mockImplementation(async () => await new Promise(() => undefined))
+    const onClose = vi.fn()
     await act(async () => {
       renderer = create(<ArkmeGroupMemberRemoveDialog
         sourceRef="group-ref"
         member={member}
-        onClose={vi.fn()}
+        onClose={onClose}
         onRemoved={vi.fn()}
       />)
     })
     const text = JSON.stringify(renderer!.toJSON())
     expect(text).toContain('禁止再次加入此群')
     expect(text).toContain('可在群聊设置中解除')
+    expect(text).toContain('邀请、添加或入群审批')
     expect(renderer!.root.findByProps({ role: 'dialog' }).props['aria-modal']).toBe('true')
     const checkbox = renderer!.root.findByType('input')
     await act(async () => { checkbox.props.onChange({ currentTarget: { checked: true } }) })
@@ -88,5 +90,13 @@ describe('group owner governance UI', () => {
     expect(mocks.callArkme).toHaveBeenCalledWith('group.member-remove', {
       sourceRef: 'group-ref', memberRef: member.memberRef, preventRejoin: true,
     }, expect.any(AbortSignal))
+    const buttons = renderer!.root.findAllByType('button')
+    expect(buttons.every(button => button.props.disabled === true)).toBe(true)
+    const backdrop = renderer!.root.findByProps({ 'data-arkme-confirm-dialog-backdrop': 'true' })
+    await act(async () => {
+      const target = {}
+      backdrop.props.onMouseDown({ target, currentTarget: target })
+    })
+    expect(onClose).not.toHaveBeenCalled()
   })
 })

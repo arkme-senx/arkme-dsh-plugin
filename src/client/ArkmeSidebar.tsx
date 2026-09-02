@@ -6046,6 +6046,7 @@ export function ArkmeSurface({
             onMemberOpen={openMemberProfile}
             onMemberContextMenu={openMemberMenu}
             onMembersChanged={() => { setConversationMembersRefreshRevision(value => value + 1) }}
+            onStatus={showMessageActionStatus}
             onError={setError}
           />}
           {shouldShowPrivateChatActions(authenticated, source?.kind) && <div style={{
@@ -6900,18 +6901,23 @@ export function ArkmeSurface({
             style={styles.messageActionMenuItem}
             onClick={() => { openMessageReport(messageMenuItem) }}
           ><span style={styles.messageActionMenuIcon} aria-hidden><ArkmeMessageActionIcon kind="report" /></span><span style={styles.messageActionMenuText}>{ARKME_MESSAGE_REPORT_ACTION_LABEL}</span></button>}
-          {arkmeCanWithdrawTimelineMessage(source, messageMenuItem, groupSelfRole) && <button
-            type="button"
-            role="menuitem"
-            style={{ ...styles.messageActionMenuItem, color: arkmeTheme.danger }}
-            onClick={() => { openMessageWithdrawal(messageMenuItem) }}
-          ><span style={styles.messageActionMenuIcon} aria-hidden><ArkmeMessageActionIcon kind="withdraw" /></span><span style={styles.messageActionMenuText}>撤回</span></button>}
           {arkmeCanOpenMessageSnapshot(messageMenuItem) && <button
             type="button"
             role="menuitem"
-            style={{ ...styles.messageActionMenuItem, borderTop: `1px solid ${colors.border}`, borderRadius: 0, marginTop: 4, paddingTop: 10 }}
+            style={{
+              ...styles.messageActionMenuItem,
+              ...(arkmeCanWithdrawTimelineMessage(source, messageMenuItem, groupSelfRole)
+                ? {}
+                : { borderTop: `1px solid ${colors.border}`, borderRadius: 0, marginTop: 4, paddingTop: 10 }),
+            }}
             onClick={() => { openMessageSnapshot(messageMenuItem) }}
           ><span style={styles.messageActionMenuIcon} aria-hidden>ⓘ</span><span style={styles.messageActionMenuText}>{ARKME_MESSAGE_ACTION_DETAIL_LABEL}</span></button>}
+          {arkmeCanWithdrawTimelineMessage(source, messageMenuItem, groupSelfRole) && <button
+            type="button"
+            role="menuitem"
+            style={{ ...styles.messageActionMenuItem, borderTop: `1px solid ${colors.border}`, borderRadius: 0, marginTop: 4, paddingTop: 10, color: arkmeTheme.danger }}
+            onClick={() => { openMessageWithdrawal(messageMenuItem) }}
+          ><span style={{ ...styles.messageActionMenuIcon, color: arkmeTheme.danger }} aria-hidden><ArkmeMessageActionIcon kind="withdraw" /></span><span style={styles.messageActionMenuText}>撤回</span></button>}
         </div>}
         {activeConversation && messageReportItem !== undefined && <ArkmeMessageReportDialog
           item={messageReportItem}
