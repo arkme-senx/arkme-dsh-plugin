@@ -25,7 +25,7 @@ export type OpenApiMcpState =
   | 'ready'
   | 'degraded'
 
-/** Browser/model-safe lifecycle projection. It intentionally contains no principal or credential identifier. */
+/** Credential-free lifecycle status for Host API, SDK, UI, and internal diagnostics. */
 export interface OpenApiMcpStatus {
   state: OpenApiMcpState
   retryable: boolean

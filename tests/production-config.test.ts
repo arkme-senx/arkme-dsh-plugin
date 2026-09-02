@@ -26,6 +26,8 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('dshRemoteFeatureEnabled: true')
     expect(patch).toContain('dshRemoteRealtimeBaseUrl: https://realtime.jotmo.cc')
     expect(patch).toContain('extensionPublishBaseUrl: https://extension-publish.jotmo.cc')
+    expect(patch).toContain('openApiBaseUrl: https://openapi.jotmo.cc')
+    expect(patch).toContain('openApiMcpEnabled: true')
     expect(patch).toContain('shareWebsite: https://jiwo.cc')
     expect(patch).toContain('prod-ed25519-20260819-1')
     expect(JSON.parse(ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS)).toEqual({
