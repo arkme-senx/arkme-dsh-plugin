@@ -1201,6 +1201,165 @@ describe('Arkme managed model adapter', () => {
     expect(attemptKeys[1]).not.toBe(attemptKeys[0])
   })
 
+  it('re-uploads a locally available image once when the server asset handle requires refresh', async () => {
+    const data = Uint8Array.of(7, 8, 9)
+    const attachment = {
+      attachmentId: AttachmentId('server-refresh-image'),
+      mediaType: 'image/png' as const,
+      bytes: data.byteLength,
+      width: 16,
+      height: 16,
+      name: 'server-refresh.png',
+    }
+    const capability: ManagedModelCapability = {
+      contractVersion: 'test-server-refresh-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'],
+        maximumImages: 1,
+        maximumBytesPerImage: data.byteLength,
+        countDimensionLimits: [],
+        evidence: {
+          providerReferenceUrl: 'https://example.test/provider-contract',
+          verifiedOn: '2026-08-31',
+          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
+          platformGuardrailFields: [],
+        },
+      },
+    }
+    const readImage = vi.fn(async () => ({ ref: attachment, data }))
+    const chatAssetRefs: string[] = []
+    let prepareCalls = 0
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => ({ readImage }),
+      fetchImpl: async (input, init) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          prepareCalls++
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              upload_uid: `mai_upload_refresh_${String(prepareCalls)}`,
+              asset_ref: `mai_asset_refresh_${String(prepareCalls)}`,
+              status: 'completed',
+              expires_at: Date.now() + 10 * 60_000,
+              asset_expires_at: Date.now() + 60 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url.endsWith('/chat/completions')) {
+          const body = JSON.parse(String(init?.body)) as { messages: Array<{ content: Array<{ type: string, asset_ref?: string }> }> }
+          chatAssetRefs.push(body.messages[0]?.content.find(part => part.type === 'image_asset')?.asset_ref ?? '')
+          if (chatAssetRefs.length === 1) {
+            return new Response(JSON.stringify({
+              error: {
+                code: 'input_asset_refresh_required',
+                type: 'invalid_request_error',
+                message: 'Managed AI input asset must be refreshed',
+              },
+            }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+          }
+          return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          })
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+
+    const chunks: StreamChunk[] = []
+    for await (const chunk of transport.stream({
+      provider: ARKME_MANAGED_PROVIDER,
+      model: 'server-refresh-image',
+      messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+    }, capability)) chunks.push(chunk)
+
+    expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+    expect(readImage).toHaveBeenCalledTimes(2)
+    expect(prepareCalls).toBe(2)
+    expect(chatAssetRefs).toEqual(['mai_asset_refresh_1', 'mai_asset_refresh_2'])
+  })
+
+  it('does not re-upload an intrinsically invalid image request', async () => {
+    const data = Uint8Array.of(10, 11, 12)
+    const attachment = {
+      attachmentId: AttachmentId('invalid-server-image'),
+      mediaType: 'image/png' as const,
+      bytes: data.byteLength,
+      width: 16,
+      height: 16,
+    }
+    const capability: ManagedModelCapability = {
+      contractVersion: 'test-invalid-server-image-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'],
+        maximumImages: 1,
+        maximumBytesPerImage: data.byteLength,
+        countDimensionLimits: [],
+        evidence: {
+          providerReferenceUrl: 'https://example.test/provider-contract',
+          verifiedOn: '2026-08-31',
+          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
+          platformGuardrailFields: [],
+        },
+      },
+    }
+    const readImage = vi.fn(async () => ({ ref: attachment, data }))
+    let prepareCalls = 0
+    let chatCalls = 0
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => ({ readImage }),
+      fetchImpl: async (input) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          prepareCalls++
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              upload_uid: 'mai_upload_invalid_request',
+              asset_ref: 'mai_asset_invalid_request',
+              status: 'completed',
+              expires_at: Date.now() + 10 * 60_000,
+              asset_expires_at: Date.now() + 60 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url.endsWith('/chat/completions')) {
+          chatCalls++
+          return new Response(JSON.stringify({
+            error: {
+              code: 'invalid_input_asset',
+              type: 'invalid_request_error',
+              message: 'Invalid managed AI input asset',
+            },
+          }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+
+    const stream = transport.stream({
+      provider: ARKME_MANAGED_PROVIDER,
+      model: 'invalid-server-image',
+      messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+    }, capability)
+
+    await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(readImage).toHaveBeenCalledTimes(1)
+    expect(prepareCalls).toBe(1)
+    expect(chatCalls).toBe(1)
+  })
+
   it('uses a newly discovered Arkme model id on the managed chat route', async () => {
     let requestedModel: unknown
     const server = createServer(async (req, res) => {
@@ -1349,6 +1508,31 @@ describe('Arkme managed model adapter', () => {
       const afterMalformedRefresh = await adapter.listModels(ARKME_MANAGED_PROVIDER)
 
       expect(afterMalformedRefresh).toEqual(first)
+      expect(catalogFetch).toHaveBeenCalledTimes(2)
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+  it('stops using a last-good catalog after the bounded control-plane outage window', async () => {
+    let now = 10_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const catalogFetch = vi.fn()
+      .mockResolvedValueOnce(managedCatalogResponse())
+      .mockRejectedValueOnce(new Error('catalog unavailable'))
+    try {
+      const adapter = createManagedAiLlmAdapter({
+        intelligentBaseUrl: 'https://intelligent.test',
+        credentialOwner: {
+          resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
+        },
+        resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+        fetchImpl: catalogFetch,
+      })
+
+      await adapter.listModels(ARKME_MANAGED_PROVIDER)
+      now += 5 * 60_000
+      await expect(adapter.listModels(ARKME_MANAGED_PROVIDER)).rejects.toMatchObject({ code: 'TRANSPORT' })
       expect(catalogFetch).toHaveBeenCalledTimes(2)
     } finally {
       nowSpy.mockRestore()

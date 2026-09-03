@@ -103,11 +103,16 @@ interface ManagedEnvelope {
   data?: unknown
 }
 
-class ManagedAiApplicationError extends LlmError {
+class ManagedAiProtocolError extends LlmError {
   readonly applicationCode: string
 
-  constructor(message: string, code: 'INVALID_REQUEST' | 'SERVER', applicationCode: string) {
-    super(message, code)
+  constructor(
+    message: string,
+    code: string,
+    applicationCode: string,
+    options?: ConstructorParameters<typeof LlmError>[2],
+  ) {
+    super(message, code, options)
     this.applicationCode = applicationCode
   }
 }
@@ -300,7 +305,8 @@ async function parseHttpError(response: Response): Promise<LlmError> {
     : `Arkme AI HTTP ${response.status}`
   const delay = retryAfterMs(response.headers.get('retry-after'))
   const requestId = responseRequestId(response.headers)
-  return new LlmError(message, errorCode(response.status, body), {
+  const applicationCode = typeof providerError?.code === 'string' ? providerError.code : ''
+  return new ManagedAiProtocolError(message, errorCode(response.status, body), applicationCode, {
     status: response.status,
     ...(delay === undefined ? {} : { providerRetryAfterMs: delay }),
     ...(requestId === undefined ? {} : { requestId }),
@@ -338,6 +344,14 @@ function requestImageAttachments(options: GenerateOptions): ImageAttachmentRef[]
     }
   }
   return result
+}
+
+function inputAssetCacheKey(bearer: string, attachment: ImageAttachmentRef): string {
+  // A plugin process can survive logout/login. Scope every local asset handle
+  // to an irreversible credential fingerprint so one account never reuses
+  // another account's opaque asset_ref.
+  const ownerScope = createHash('sha256').update(bearer).digest('hex').slice(0, 24)
+  return `${ownerScope}\u0000${String(attachment.attachmentId)}`
 }
 
 function assertImageRequestWithinCapability(
@@ -800,41 +814,54 @@ export class ManagedAiTransport {
       ? consumer.signal
       : AbortSignal.any([callerSignal, consumer.signal])
     try {
-      assertImageRequestWithinCapability(requestImageAttachments(request), capability)
+      const imageAttachments = requestImageAttachments(request)
+      assertImageRequestWithinCapability(imageAttachments, capability)
       const bearer = await this.options.resolveBearer()
       const imageCapability = capability.image
-      const body = await serializeRequest(request, async (attachment) => {
-        if (!capability.inputModalities.includes('image') || imageCapability === undefined) {
-          throw new LlmError('当前 Arkme 模型不支持图片输入', 'UNSUPPORTED_CONTENT')
-        }
-        const uploaded = await this.resolveInputAsset(
-          request.model,
-          capability.contractVersion,
-          attachment,
-          imageCapability,
-          bearer,
+      for (let dispatchAttempt = 0; ; dispatchAttempt++) {
+        const body = await serializeRequest(request, async (attachment) => {
+          if (!capability.inputModalities.includes('image') || imageCapability === undefined) {
+            throw new LlmError('当前 Arkme 模型不支持图片输入', 'UNSUPPORTED_CONTENT')
+          }
+          const uploaded = await this.resolveInputAsset(
+            request.model,
+            capability.contractVersion,
+            attachment,
+            imageCapability,
+            bearer,
+            signal,
+          )
+          return uploaded.assetRef
+        }, signal)
+        if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+        const response = await this.options.fetchImpl(`${this.options.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${bearer}`,
+            Accept: 'text/event-stream',
+            'Content-Type': 'application/json',
+            ...attributionHeaders(),
+            'X-DeepSeek-Harness-User-ID': String(this.options.resolveAnonymousUserId()),
+            ...(request.sessionId === undefined ? {} : { 'X-DeepSeek-Harness-Session-ID': String(request.sessionId) }),
+            ...(request.purpose === 'compaction' ? { 'X-DeepSeek-Harness-Compact': '1' } : {}),
+          },
+          body: JSON.stringify(body),
           signal,
-        )
-        return uploaded.assetRef
-      }, signal)
-      if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
-      const response = await this.options.fetchImpl(`${this.options.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${bearer}`,
-          Accept: 'text/event-stream',
-          'Content-Type': 'application/json',
-          ...attributionHeaders(),
-          'X-DeepSeek-Harness-User-ID': String(this.options.resolveAnonymousUserId()),
-          ...(request.sessionId === undefined ? {} : { 'X-DeepSeek-Harness-Session-ID': String(request.sessionId) }),
-          ...(request.purpose === 'compaction' ? { 'X-DeepSeek-Harness-Compact': '1' } : {}),
-        },
-        body: JSON.stringify(body),
-        signal,
-      })
-      if (!response.ok) throw await parseHttpError(response)
-      if (response.body === null) throw new LlmError('Arkme AI returned no response body', 'EMPTY_RESPONSE')
-      yield* translate(parseSse(response.body, consumer))
+        })
+        if (!response.ok) {
+          const error = await parseHttpError(response)
+          if (dispatchAttempt === 0 && imageAttachments.length > 0
+            && error instanceof ManagedAiProtocolError
+            && error.applicationCode === 'input_asset_refresh_required') {
+            this.forgetInputAssets(imageAttachments, bearer)
+            continue
+          }
+          throw error
+        }
+        if (response.body === null) throw new LlmError('Arkme AI returned no response body', 'EMPTY_RESPONSE')
+        yield* translate(parseSse(response.body, consumer))
+        return
+      }
     } catch (error) {
       if (callerSignal?.aborted === true) {
         throw new LlmError('Arkme AI request aborted by caller', 'ABORTED', { cause: error })
@@ -854,11 +881,7 @@ export class ManagedAiTransport {
     bearer: string,
     signal: AbortSignal,
   ): Promise<CachedInputAsset> {
-    // A plugin process can survive logout/login. Scope every local asset handle
-    // to an irreversible credential fingerprint so one account never reuses
-    // another account's opaque asset_ref or upload generation.
-    const ownerScope = createHash('sha256').update(bearer).digest('hex').slice(0, 24)
-    const key = `${ownerScope}\u0000${String(attachment.attachmentId)}`
+    const key = inputAssetCacheKey(bearer, attachment)
     const cached = this.assetCache.get(key)
     if (cached !== undefined && cached.expiresAt - ASSET_EXPIRY_SAFETY_MS > Date.now()) return cached
     if (cached !== undefined) this.assetCache.delete(key)
@@ -889,6 +912,10 @@ export class ManagedAiTransport {
         inFlight.controller.abort(new DOMException('No managed image upload waiters remain', 'AbortError'))
       }
     }
+  }
+
+  private forgetInputAssets(attachments: readonly ImageAttachmentRef[], bearer: string): void {
+    for (const attachment of attachments) this.assetCache.delete(inputAssetCacheKey(bearer, attachment))
   }
 
   private async uploadInputAsset(
@@ -933,7 +960,7 @@ export class ManagedAiTransport {
         // generation is terminal (most commonly its 15-minute session expired).
         // Rotate once inside the same DSH request so a recoverable upload does
         // not surface as a user-visible model failure.
-        if (error instanceof ManagedAiApplicationError
+        if (error instanceof ManagedAiProtocolError
           && error.applicationCode === 'input_asset_upload_conflict'
           && prepareAttempt === 0) {
           idempotencyKey = `dsh-${sha256.slice(0, 24)}-${randomUUID()}`
@@ -947,7 +974,7 @@ export class ManagedAiTransport {
         // A transport/server/malformed-response failure may have committed
         // prepare before its response was lost, so retain the attempt key. An
         // explicit application rejection proves this generation cannot resume.
-        if (error instanceof ManagedAiApplicationError && error.code === 'INVALID_REQUEST') {
+        if (error instanceof ManagedAiProtocolError && error.code === 'INVALID_REQUEST') {
           this.assetAttemptKeys.delete(attemptIdentity)
         }
         throw error
@@ -1113,7 +1140,7 @@ export class ManagedAiTransport {
       const code = typeof details?.error_code === 'string' ? details.error_code : 'MANAGED_AI_FAILED'
       const invalid = code.startsWith('invalid_') || code.includes('expired') || code.includes('not_found')
         || code.includes('conflict') || code.includes('quota_exceeded')
-      throw new ManagedAiApplicationError(
+      throw new ManagedAiProtocolError(
         envelope?.message ?? 'Arkme AI 资产请求失败',
         invalid ? 'INVALID_REQUEST' : 'SERVER',
         code,
