@@ -53,7 +53,7 @@ export interface OpenApiMcpSessionTransition {
 }
 
 export interface ManagedOpenApiMcpControllerOptions {
-  enabled: boolean
+  mountMcp: boolean
   sessionStore: ArkmeSessionStore
   accessCredentialProvider: ManagedAccessCredentialProvider
   controlPlane: ManagedOpenApiControlPlane
@@ -96,12 +96,12 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     this.now = options.now ?? Date.now
     this.random = options.random ?? Math.random
     this.currentStatus = {
-      state: options.enabled ? 'reconciling' : 'inactive', retryable: false, userAction: 'none',
+      state: options.mountMcp ? 'reconciling' : 'inactive', retryable: false, userAction: 'none',
     }
   }
 
   start(): void {
-    if (!this.options.enabled || this.disposed) return
+    if (!this.options.mountMcp || this.disposed) return
     const operationEpoch = this.epoch
     void this.enqueue(async () => { await this.reconcileCredential(operationEpoch) })
   }
@@ -153,7 +153,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     callerSignal: AbortSignal,
     execute: (apiKey: SecretValue, signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
-    if (!this.options.enabled || this.disposed) throw new ManagedOpenApiCredentialUnavailableError()
+    if (this.disposed) throw new ManagedOpenApiCredentialUnavailableError()
     let credential = this.currentCredential()
     if (credential === undefined) {
       await this.ensureCredential(callerSignal)
@@ -204,7 +204,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   }
 
   async retry(): Promise<OpenApiMcpStatus> {
-    if (!this.options.enabled || this.disposed) return this.status()
+    if (!this.options.mountMcp || this.disposed) return this.status()
     this.cancelCurrent(false)
     this.credentialFailures = 0
     this.manifestFailures = 0
@@ -244,13 +244,14 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     const operationEpoch = this.epoch
     void this.enqueue(async () => {
       await this.cleanupTransitionCredential(ticket.nextPrincipal)
-      await this.reconcileCredential(operationEpoch)
+      if (this.options.mountMcp) await this.reconcileCredential(operationEpoch)
     })
   }
 
   rolledBack(ticket: OpenApiMcpSessionTransition): void {
     if (!ticket.changed || this.disposed) return
     this.cancelCurrent(true)
+    if (!this.options.mountMcp) return
     const operationEpoch = this.epoch
     void this.enqueue(async () => { await this.reconcileCredential(operationEpoch) })
   }
@@ -269,14 +270,17 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   }
 
   private async reconcileCredential(operationEpoch: number, background = false): Promise<void> {
-    if (this.disposed || !this.options.enabled || operationEpoch !== this.epoch) return
+    if (this.disposed || operationEpoch !== this.epoch) return
     const abort = new AbortController()
     this.activeAbort = abort
     const progress: { phase: 'credential' | 'manifest' } = { phase: 'credential' }
     const activeCredentialExpired = this.activeCredential !== undefined
       && this.activeCredential.expiresAtMillis <= this.now()
-    if (activeCredentialExpired) this.disableToolExecution()
-    if ((!background || activeCredentialExpired) && !this.toolExecutionEnabled) {
+    if (activeCredentialExpired) {
+      this.disableToolExecution()
+      this.disableCredentialExecution()
+    }
+    if (this.options.mountMcp && (!background || activeCredentialExpired) && !this.toolExecutionEnabled) {
       this.setStatus({ state: 'reconciling', retryable: false, userAction: 'none' })
     }
     try {
@@ -292,7 +296,10 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
           const credential = await this.readLocalCredential()
           if (credential !== undefined) await this.discardLocalCredential(credential)
         })
-        this.setStatus({ state: 'inactive', retryable: false, userAction: 'login' })
+        this.setStatus({
+          state: 'inactive', retryable: false,
+          userAction: this.options.mountMcp ? 'login' : 'none',
+        })
         return
       }
       if (principal === undefined) {
@@ -364,13 +371,18 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
         return { credential: desired, reconcileAfterMillis: result.reconcileAfterSeconds * 1000 }
       })
       this.assertCurrent(operationEpoch, abort.signal)
-      if (!this.mountMatchesCredential(outcome.credential, principal)) {
+      if (this.options.mountMcp && !this.mountMatchesCredential(outcome.credential, principal)) {
         this.disableToolExecution()
         this.beginMountCleanup()
       }
       this.activeCredential = outcome.credential
       this.credentialFailures = 0
       this.scheduleCredential(outcome.reconcileAfterMillis, operationEpoch)
+
+      if (!this.options.mountMcp) {
+        this.setStatus({ state: 'inactive', retryable: false, userAction: 'none' })
+        return
+      }
 
       progress.phase = 'manifest'
       await this.refreshManifestFor(outcome.credential, principal, operationEpoch, abort.signal)
@@ -385,7 +397,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   }
 
   private async refreshManifest(operationEpoch: number): Promise<void> {
-    if (this.disposed || !this.options.enabled || operationEpoch !== this.epoch) return
+    if (this.disposed || !this.options.mountMcp || operationEpoch !== this.epoch) return
     const abort = new AbortController()
     this.activeAbort = abort
     try {
@@ -433,7 +445,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
       session = await this.options.sessionStore.read()
     } catch {
       this.scheduleCredential(credentialRetryDelay(this.credentialFailures), operationEpoch)
-      this.setStatusFromExecutionAvailability()
+      this.setStatusAfterCredentialFailure()
       return
     }
     if (session === undefined) {
@@ -441,6 +453,14 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
       return
     }
     this.scheduleCredential(credentialRetryDelay(this.credentialFailures), operationEpoch)
+    this.setStatusAfterCredentialFailure()
+  }
+
+  private setStatusAfterCredentialFailure(): void {
+    if (!this.options.mountMcp) {
+      this.setStatus({ state: 'inactive', retryable: false, userAction: 'none' })
+      return
+    }
     this.setStatusFromExecutionAvailability()
   }
 

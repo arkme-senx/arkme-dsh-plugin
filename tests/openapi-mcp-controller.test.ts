@@ -128,6 +128,7 @@ function setup(input: {
   credential?: ManagedOpenApiCredential
   ensure?: ManagedOpenApiControlResult
   manifest?: OpenApiMcpManifest
+  mountMcp?: boolean
   now?: () => number
 } = {}) {
   const order: string[] = []
@@ -142,7 +143,7 @@ function setup(input: {
   const manifestSource: OpenApiMcpManifestSource = { read: vi.fn(async () => input.manifest ?? manifest()) }
   const logger = { warn: vi.fn() }
   const controller = new ManagedOpenApiMcpController({
-    enabled: true, sessionStore: session,
+    mountMcp: input.mountMcp ?? true, sessionStore: session,
     accessCredentialProvider: { resolveManagedAccessCredential: vi.fn(async () => new SecretValue('access-secret')) },
     controlPlane: control, manifestSource, credentialStore: credentials, runtime, reconcileLock: new ImmediateLock(), logger,
     now: input.now ?? (() => now), random: () => 0.5,
@@ -158,7 +159,7 @@ describe('managed OpenAPI MCP controller', () => {
     await fixture.controller.dispose()
 
     const disabled = new ManagedOpenApiMcpController({
-      enabled: false,
+      mountMcp: false,
       sessionStore: fixture.session,
       accessCredentialProvider: { resolveManagedAccessCredential: vi.fn(async () => new SecretValue('access-secret')) },
       controlPlane: fixture.control,
@@ -182,6 +183,26 @@ describe('managed OpenAPI MCP controller', () => {
     expect(fixture.controller.guardToolExecution('mcp__arkme__profile_get')).toBeUndefined()
     expect(JSON.stringify(fixture.controller.status())).not.toContain(keyId1)
     expect(JSON.stringify(fixture.controller.status())).not.toContain('42')
+    await fixture.controller.dispose()
+  })
+
+  it('keeps credential-backed REST available when managed MCP mounting is disabled', async () => {
+    const fixture = setup({ mountMcp: false })
+
+    fixture.controller.start()
+    expect(fixture.control.ensure).not.toHaveBeenCalled()
+    const credential = await fixture.controller.executeWithCredential(
+      new AbortController().signal,
+      async apiKey => apiKey.reveal(),
+    )
+
+    expect(credential).toBe(apiKey1)
+    expect(fixture.control.ensure).toHaveBeenCalledOnce()
+    expect(fixture.manifestSource.read).not.toHaveBeenCalled()
+    expect(fixture.runtime.mountedKeys).toEqual([])
+    expect(fixture.controller.status()).toMatchObject({
+      state: 'inactive', retryable: false, userAction: 'none',
+    })
     await fixture.controller.dispose()
   })
 
@@ -802,7 +823,7 @@ describe('managed OpenAPI MCP controller', () => {
       disconnect: vi.fn(async () => undefined),
     }
     const controller = new ManagedOpenApiMcpController({
-      enabled: true, sessionStore: observedSession,
+      mountMcp: true, sessionStore: observedSession,
       accessCredentialProvider: { resolveManagedAccessCredential: vi.fn(async () => new SecretValue('access-secret')) },
       controlPlane: control, manifestSource: { read: vi.fn(async () => manifest()) },
       credentialStore: credentials, runtime, reconcileLock: new ImmediateLock(),
@@ -833,7 +854,7 @@ describe('managed OpenAPI MCP controller', () => {
       disconnect: vi.fn(async () => undefined),
     }
     const controller = new ManagedOpenApiMcpController({
-      enabled: true, sessionStore: observedSession,
+      mountMcp: true, sessionStore: observedSession,
       accessCredentialProvider: {
         resolveManagedAccessCredential: vi.fn(async () => {
           await observedSession.delete()
@@ -864,7 +885,7 @@ describe('managed OpenAPI MCP controller', () => {
       disconnect: vi.fn(async () => undefined),
     }
     const controller = new ManagedOpenApiMcpController({
-      enabled: true, sessionStore: observedSession,
+      mountMcp: true, sessionStore: observedSession,
       accessCredentialProvider: { resolveManagedAccessCredential: vi.fn(async () => new SecretValue('access-secret')) },
       controlPlane: control, manifestSource: { read: vi.fn(async () => manifest()) },
       credentialStore: credentials, runtime: new FakeRuntime([]), reconcileLock: new ImmediateLock(),
@@ -891,7 +912,7 @@ describe('managed OpenAPI MCP controller', () => {
       disconnect: vi.fn(async () => undefined),
     }
     const controller = new ManagedOpenApiMcpController({
-      enabled: true, sessionStore: innerSession,
+      mountMcp: true, sessionStore: innerSession,
       accessCredentialProvider: { resolveManagedAccessCredential: vi.fn(async () => new SecretValue('access-secret')) },
       controlPlane: control, manifestSource: { read: vi.fn(async () => manifest()) },
       credentialStore: credentials, runtime, reconcileLock: new ImmediateLock(),
@@ -925,7 +946,7 @@ describe('managed OpenAPI MCP controller', () => {
         disconnect,
       }
       const controller = new ManagedOpenApiMcpController({
-        enabled: true, sessionStore: observedSession,
+        mountMcp: true, sessionStore: observedSession,
         accessCredentialProvider: { resolveManagedAccessCredential: vi.fn(async () => new SecretValue('access-secret')) },
         controlPlane: control, manifestSource: { read: vi.fn(async () => manifest()) },
         credentialStore: credentials, runtime: new FakeRuntime([]), reconcileLock: new ImmediateLock(),
@@ -969,7 +990,7 @@ describe('managed OpenAPI MCP controller', () => {
       disconnect: vi.fn(async () => undefined),
     }
     const controller = new ManagedOpenApiMcpController({
-      enabled: true, sessionStore: observedSession,
+      mountMcp: true, sessionStore: observedSession,
       accessCredentialProvider: { resolveManagedAccessCredential: vi.fn(async () => new SecretValue('access-secret')) },
       controlPlane: control, manifestSource: { read: vi.fn(async () => manifest()) },
       credentialStore: credentials, runtime, reconcileLock: new ImmediateLock(),
@@ -1019,7 +1040,7 @@ describe('managed OpenAPI MCP controller', () => {
       disconnect: vi.fn(async () => undefined),
     }
     const controller = new ManagedOpenApiMcpController({
-      enabled: true, sessionStore: observedSession,
+      mountMcp: true, sessionStore: observedSession,
       accessCredentialProvider: { resolveManagedAccessCredential: vi.fn(async () => new SecretValue('access-secret')) },
       controlPlane: control, manifestSource: { read: vi.fn(async () => manifest()) },
       credentialStore: credentials, runtime, reconcileLock: new ImmediateLock(),

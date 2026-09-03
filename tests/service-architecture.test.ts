@@ -115,6 +115,14 @@ describe('Arkme service architecture', () => {
       .toEqual(expectedServiceFiles)
   })
 
+  it('keeps Team business availability independent from managed MCP mounting', () => {
+    const compositionRoot = readFileSync(join(root, 'src/index.ts'), 'utf8')
+    expect(compositionRoot).toContain('const teamService = new TeamService(')
+    expect(compositionRoot).toContain('mountMcp: config.openApiMcpEnabled')
+    expect(compositionRoot).toContain('teamService,')
+    expect(compositionRoot).not.toMatch(/const teamService\s*=\s*config\.openApiMcpEnabled/u)
+  })
+
   it('keeps the compatibility facade free of business transport and state owners', () => {
     const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
     expect(facade).not.toMatch(/\/api\//)
