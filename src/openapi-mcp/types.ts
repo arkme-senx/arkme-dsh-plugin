@@ -105,6 +105,14 @@ export class ManagedOpenApiMcpExecutionSupersededError extends Error {
   }
 }
 
+/** Credential-free signal that a managed credential lease crossed an account change. */
+export class ManagedOpenApiCredentialSupersededError extends Error {
+  constructor() {
+    super('Arkme OpenAPI credential changed while this call was running; retry the request')
+    this.name = 'ManagedOpenApiCredentialSupersededError'
+  }
+}
+
 /** Credential-free signal that no usable managed credential is currently available. */
 export class ManagedOpenApiCredentialUnavailableError extends Error {
   constructor() {

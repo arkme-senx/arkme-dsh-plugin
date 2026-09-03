@@ -1,7 +1,7 @@
 import {
   ManagedOpenApiCredentialRejectedError,
+  ManagedOpenApiCredentialSupersededError,
   ManagedOpenApiCredentialUnavailableError,
-  ManagedOpenApiMcpExecutionSupersededError,
   type ManagedOpenApiCredentialExecutor,
 } from './openapi-mcp/types.js'
 import { readBoundedResponse } from './openapi-mcp/bounded-response.js'
@@ -118,7 +118,7 @@ export class HttpOpenApiCapabilityGateway implements OpenApiTeamCapabilityClient
       if (error instanceof ManagedOpenApiCredentialUnavailableError) {
         throw new OpenApiCapabilityError('login-required', '请先登录并等待 Arkme 开放平台连接就绪', true)
       }
-      if (error instanceof ManagedOpenApiMcpExecutionSupersededError) {
+      if (error instanceof ManagedOpenApiCredentialSupersededError) {
         throw new OpenApiCapabilityError('account-changed', '账号已切换，请重试团队请求', true)
       }
       if (error instanceof ManagedOpenApiCredentialRejectedError) {

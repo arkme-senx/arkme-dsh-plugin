@@ -12,7 +12,11 @@ import type {
   ManagedOpenApiCredentialStore, OpenApiMcpManifest, OpenApiMcpManifestSource,
   OpenApiMcpMount, OpenApiMcpReconcileLock, OpenApiMcpRuntime,
 } from '../src/openapi-mcp/types.js'
-import { ManagedOpenApiCredentialRejectedError, ManagedOpenApiMcpExecutionSupersededError } from '../src/openapi-mcp/types.js'
+import {
+  ManagedOpenApiCredentialRejectedError,
+  ManagedOpenApiCredentialSupersededError,
+  ManagedOpenApiMcpExecutionSupersededError,
+} from '../src/openapi-mcp/types.js'
 import { SecretValue } from '../src/secret-value.js'
 
 const keyId1 = '0123456789abcdef01234567'
@@ -1118,7 +1122,7 @@ describe('managed OpenAPI MCP controller', () => {
     })
     confirmation.resolve(ready())
 
-    await expect(pending).rejects.toBeInstanceOf(ManagedOpenApiMcpExecutionSupersededError)
+    await expect(pending).rejects.toBeInstanceOf(ManagedOpenApiCredentialSupersededError)
     expect(execute).not.toHaveBeenCalled()
     fixture.controller.rolledBack(ticket)
     await fixture.controller.dispose()
@@ -1141,7 +1145,7 @@ describe('managed OpenAPI MCP controller', () => {
       refreshToken: 'new-refresh',
     })
 
-    await expect(pending).rejects.toBeInstanceOf(ManagedOpenApiMcpExecutionSupersededError)
+    await expect(pending).rejects.toBeInstanceOf(ManagedOpenApiCredentialSupersededError)
     await fixture.controller.dispose()
   })
 

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { HttpOpenApiCapabilityGateway } from '../src/openapi-capability-gateway.js'
 import {
   ManagedOpenApiCredentialUnavailableError,
-  ManagedOpenApiMcpExecutionSupersededError,
+  ManagedOpenApiCredentialSupersededError,
   type ManagedOpenApiCredentialExecutor,
 } from '../src/openapi-mcp/types.js'
 import { SecretValue } from '../src/secret-value.js'
@@ -52,7 +52,7 @@ describe('HttpOpenApiCapabilityGateway', () => {
 
   it.each([
     { error: new ManagedOpenApiCredentialUnavailableError(), code: 'login-required' },
-    { error: new ManagedOpenApiMcpExecutionSupersededError(), code: 'account-changed' },
+    { error: new ManagedOpenApiCredentialSupersededError(), code: 'account-changed' },
   ])('normalizes managed lifecycle failures at the transport boundary', async ({ error, code }) => {
     const credentials: ManagedOpenApiCredentialExecutor = {
       executeWithCredential: async () => { throw error },
