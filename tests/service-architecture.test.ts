@@ -84,6 +84,7 @@ const expectedServiceFiles = [
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'contact-service.ts', 'contact-directory-service.ts', 'unmarked-speaker-service.ts',
+  'team-service.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
   'link-metadata-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts',
 ].sort()

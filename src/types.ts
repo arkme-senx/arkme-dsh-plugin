@@ -122,7 +122,7 @@ export type ArkmeDirectoryItem =
   | { kind: 'group'; sourceRef: string; displayName: string; avatarRef?: string; groupAvatar?: ArkmeGroupAvatarPresentation }
   | { kind: 'bot'; bot: ArkmeBotSummary }
   | { kind: 'unmarked-speaker'; candidateRef: string; speakerToken?: string; displayName: string; subtitle: string }
-  | { kind: 'team'; rowKey: string; displayName: string; publicId?: string; avatarRef?: string }
+  | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole }
   | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; letter: string }
 
 export interface ArkmeDirectoryPage {
@@ -135,6 +135,79 @@ export interface ArkmeDirectoryPage {
   retryAfterMillis?: number
   cursorStale?: boolean
 }
+
+export type ArkmeTeamRole = 'owner' | 'admin' | 'member'
+export type ArkmeTeamIdentityState = 'ready' | 'incomplete' | 'unavailable'
+export type ArkmeTeamCreateRejectReason = 'jotmo_id_unavailable' | 'idempotency_conflict'
+export type ArkmeTeamJoinRejectReason = 'team_not_found'
+export type ArkmeTeamMembershipState = 'joined' | 'already_member' | 'owner'
+
+export interface ArkmeTeam {
+  teamRef: string
+  name: string
+  jotmoId: string
+  currentUserRole: ArkmeTeamRole
+  createdAtMillis: number
+  updatedAtMillis: number
+}
+
+export interface ArkmeTeamPage {
+  items: ArkmeTeam[]
+  totalCount: number
+  hasMore: boolean
+  nextPageCursor?: string
+}
+
+export interface ArkmeTeamResolveItem {
+  itemId: string
+  query: string
+  limit?: number
+  pageCursor?: string
+}
+
+export interface ArkmeTeamResolution {
+  itemId: string
+  candidates: ArkmeTeam[]
+  hasMore: boolean
+  nextPageCursor?: string
+}
+
+export interface ArkmeTeamMember {
+  userRef: string
+  displayName: string
+  jotmoId?: string
+  identityState: ArkmeTeamIdentityState
+  role: ArkmeTeamRole
+  joinedAtMillis: number
+}
+
+export interface ArkmeTeamMemberPage {
+  team: ArkmeTeam
+  items: ArkmeTeamMember[]
+  totalCount: number
+  hasMore: boolean
+  nextPageCursor?: string
+}
+
+export interface ArkmeTeamCreateItem {
+  itemId: string
+  idempotencyKey: string
+  name: string
+  jotmoId: string
+}
+
+export interface ArkmeTeamJoinItem {
+  itemId: string
+  jotmoId: string
+}
+
+export type ArkmeTeamCreateResult =
+  | { itemId: string; status: 'succeeded'; team: ArkmeTeam }
+  | { itemId: string; status: 'rejected'; reason: ArkmeTeamCreateRejectReason }
+
+export type ArkmeTeamJoinResult =
+  | { itemId: string; status: 'succeeded'; membershipState: ArkmeTeamMembershipState; team: ArkmeTeam }
+  | { itemId: string; status: 'rejected'; reason: ArkmeTeamJoinRejectReason }
 
 export interface ArkmeDirectoryContactProfile {
   contactRef: string
@@ -1117,6 +1190,12 @@ export interface ArkmeProviderCapabilities {
     extensionManagement?: true
     /** Owner-authorized extension name, description, and private/public visibility editing is available. */
     extensionMetadataEdit?: true
+    /** OpenAPI-backed current-account Team directory is available. */
+    teamDirectory?: true
+    /** Team member pages can be read with opaque team and user references. */
+    teamMembers?: true
+    /** Explicit create and join-by-Jotmo-ID Team governance is available. */
+    teamGovernance?: true
     /** Extension-level icon upload and same-origin rendering are available. */
     extensionIcons?: true
     /** Extension-level preview gallery SDK and Tool mutations are available. */
@@ -3040,6 +3119,11 @@ export type ArkmePluginOperation =
   | 'user-ban.unban'
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
+  | 'team.list'
+  | 'team.resolve'
+  | 'team.members.list'
+  | 'team.create'
+  | 'team.join-by-jotmo-id'
   | 'remote.getStatus'
   | 'remote.renameDesktop'
   | 'billing.quota'

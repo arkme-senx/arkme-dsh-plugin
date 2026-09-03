@@ -30,6 +30,8 @@ import { SecureManagedOpenApiCredentialStore } from './openapi-mcp/credential-st
 import { registerManagedOpenApiMcpExecutionFence } from './openapi-mcp/execution-fence.js'
 import { HttpOpenApiMcpManifestSource } from './openapi-mcp/manifest-source.js'
 import { CordisOpenApiMcpRuntime } from './openapi-mcp/mcp-runtime.js'
+import { HttpOpenApiCapabilityGateway } from './openapi-capability-gateway.js'
+import { TeamService } from './services/team-service.js'
 import { FileOpenApiMcpReconcileLock, managedOpenApiMcpReconcileLockPath } from './openapi-mcp/reconcile-lock.js'
 import { ObservedArkmeSessionStore } from './openapi-mcp/session-observer.js'
 import { registerOpenApiMcpLifecycleTools } from './openapi-mcp/status-tool.js'
@@ -282,6 +284,9 @@ export function apply(ctx: Context, config: Config): void {
     reconcileLock: new FileOpenApiMcpReconcileLock(managedOpenApiMcpReconcileLockPath(openApiMcpCredentialNamespace)),
     logger: ctx.logger,
   })
+  const teamService = config.openApiMcpEnabled
+    ? new TeamService(new HttpOpenApiCapabilityGateway(config.openApiBaseUrl, openApiMcpController, fetch))
+    : undefined
   sessionStore.attach(openApiMcpController)
   ctx.effect(
     () => ctx.tools.guard(execution => openApiMcpController.guardToolExecution(execution.name)),
@@ -590,6 +595,7 @@ export function apply(ctx: Context, config: Config): void {
     remoteHost: () => remoteHost,
     desktopQuarantine,
     openApiMcpController,
+    ...(teamService === undefined ? {} : { teamService }),
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {

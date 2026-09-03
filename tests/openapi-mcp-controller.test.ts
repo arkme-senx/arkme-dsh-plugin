@@ -4,7 +4,6 @@ import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from '../src/keychain-store.js'
 import {
   ManagedOpenApiMcpController,
-  ManagedOpenApiMcpExecutionSupersededError,
 } from '../src/openapi-mcp/controller.js'
 import { InvalidManagedOpenApiCredentialError } from '../src/openapi-mcp/credential-store.js'
 import { ObservedArkmeSessionStore } from '../src/openapi-mcp/session-observer.js'
@@ -13,6 +12,7 @@ import type {
   ManagedOpenApiCredentialStore, OpenApiMcpManifest, OpenApiMcpManifestSource,
   OpenApiMcpMount, OpenApiMcpReconcileLock, OpenApiMcpRuntime,
 } from '../src/openapi-mcp/types.js'
+import { ManagedOpenApiCredentialRejectedError, ManagedOpenApiMcpExecutionSupersededError } from '../src/openapi-mcp/types.js'
 import { SecretValue } from '../src/secret-value.js'
 
 const keyId1 = '0123456789abcdef01234567'
@@ -115,6 +115,13 @@ function stored(generation = 1): ManagedOpenApiCredential {
 
 function storedFor(userId: number, loginDeviceId: number): ManagedOpenApiCredential {
   return { ...stored(), userId, loginDeviceId }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((accept, decline) => { resolve = accept; reject = decline })
+  return { promise, resolve, reject }
 }
 
 function setup(input: {
@@ -1040,6 +1047,92 @@ describe('managed OpenAPI MCP controller', () => {
     expect(fixture.controller.status()).toMatchObject({ state: 'degraded', retryable: true, userAction: 'none' })
     expect(fixture.logger.warn).toHaveBeenCalledWith(expect.stringContaining('(%s)'), 'runtime')
     expect(JSON.stringify(fixture.logger.warn.mock.calls)).not.toContain('access-secret')
+    await fixture.controller.dispose()
+  })
+
+  it('leases the current managed key without exposing it in controller state', async () => {
+    const fixture = setup()
+    await fixture.controller.retry()
+
+    const value = await fixture.controller.executeWithCredential(
+      new AbortController().signal,
+      async (key, signal) => ({ key: key.reveal(), aborted: signal.aborted }),
+    )
+
+    expect(value).toEqual({ key: apiKey1, aborted: false })
+    expect(JSON.stringify(fixture.controller.status())).not.toContain(apiKey1)
+    await fixture.controller.dispose()
+  })
+
+  it('shares cold credential preparation and does not lease a cached key before control-plane confirmation', async () => {
+    const fixture = setup({ credential: stored() })
+    const confirmation = deferred<ManagedOpenApiControlResult>()
+    vi.mocked(fixture.control.ensure).mockImplementationOnce(async () => await confirmation.promise)
+    const execute = vi.fn(async (key: SecretValue) => key.reveal())
+
+    const first = fixture.controller.executeWithCredential(new AbortController().signal, execute)
+    const second = fixture.controller.executeWithCredential(new AbortController().signal, execute)
+    await vi.waitFor(() => { expect(fixture.control.ensure).toHaveBeenCalledOnce() })
+    expect(execute).not.toHaveBeenCalled()
+
+    confirmation.resolve(ready())
+    await expect(Promise.all([first, second])).resolves.toEqual([apiKey1, apiKey1])
+    expect(fixture.control.ensure).toHaveBeenCalledOnce()
+    expect(execute).toHaveBeenCalledTimes(2)
+    await fixture.controller.dispose()
+  })
+
+  it('fences a cold credential waiter when its account generation changes', async () => {
+    const fixture = setup({ credential: stored() })
+    const confirmation = deferred<ManagedOpenApiControlResult>()
+    vi.mocked(fixture.control.ensure).mockImplementationOnce(async () => await confirmation.promise)
+    const execute = vi.fn(async (key: SecretValue) => key.reveal())
+    const pending = fixture.controller.executeWithCredential(new AbortController().signal, execute)
+    await vi.waitFor(() => { expect(fixture.control.ensure).toHaveBeenCalledOnce() })
+
+    const ticket = await fixture.controller.prepare(activeSession(), {
+      userId: 99,
+      accessToken: jwt(99, 8),
+      refreshToken: 'new-refresh',
+    })
+    confirmation.resolve(ready())
+
+    await expect(pending).rejects.toBeInstanceOf(ManagedOpenApiMcpExecutionSupersededError)
+    expect(execute).not.toHaveBeenCalled()
+    fixture.controller.rolledBack(ticket)
+    await fixture.controller.dispose()
+  })
+
+  it('aborts an in-flight REST credential lease as soon as the account changes', async () => {
+    const fixture = setup()
+    await fixture.controller.retry()
+    const pending = fixture.controller.executeWithCredential(
+      new AbortController().signal,
+      async (_key, signal) => await new Promise<string>((resolve, reject) => {
+        signal.addEventListener('abort', () => { reject(signal.reason) }, { once: true })
+        void resolve
+      }),
+    )
+
+    await fixture.controller.prepare(activeSession(), {
+      userId: 99,
+      accessToken: jwt(99, 8),
+      refreshToken: 'new-refresh',
+    })
+
+    await expect(pending).rejects.toBeInstanceOf(ManagedOpenApiMcpExecutionSupersededError)
+    await fixture.controller.dispose()
+  })
+
+  it('feeds a REST key rejection back into the existing credential reconciler', async () => {
+    const fixture = setup()
+    await fixture.controller.retry()
+    await expect(fixture.controller.executeWithCredential(
+      new AbortController().signal,
+      async () => { throw new ManagedOpenApiCredentialRejectedError() },
+    )).rejects.toBeInstanceOf(ManagedOpenApiCredentialRejectedError)
+
+    await vi.waitFor(() => { expect(fixture.control.ensure).toHaveBeenCalledTimes(2) })
     await fixture.controller.dispose()
   })
 })

@@ -77,6 +77,23 @@ if ((await arkme.capabilities()).features.extensionPreviews === true && userConf
 
 The SDK communicates only with the same-origin Provider route. Consumers must not read OS credential-store entries, SQLite files, state files, or tokens directly.
 
+## Team capability
+
+`capabilities().features.teamDirectory`, `teamMembers`, and `teamGovernance` advertise the complete Team contract. Consumers call `listTeams()` or `resolveTeams()` to obtain an opaque, account-scoped `teamRef`, then pass that reference unchanged to `listTeamMembers()`. A display name or public Jotmo ID must never be substituted for `teamRef`; member `userRef` and Team `teamRef` are distinct reference types and are not interchangeable.
+
+`createTeams()` requires one stable idempotency key per item. `joinTeamsByJotmoID()` accepts only the exact public Team Jotmo ID and reports whether the current account is the owner, was already a member, or joined now. Both mutations must originate from a current same-origin human UI action. Consumers must not receive, persist, or reconstruct the managed OpenAPI credential, backend numeric IDs, owner request IDs, or internal cursors.
+
+Member identity is an enrichment owned outside Team membership. `identityState=unavailable` or `incomplete` keeps the authoritative membership row visible while telling the Consumer not to invent a display identity. Consumers discard Team pages and cursors on account change, propagate `AbortSignal`, and retry from a fresh list after an authorization or lifecycle error.
+
+| Capability | Built-in UI | Browser SDK | DSH model Tool | Shared owner |
+| --- | --- | --- | --- | --- |
+| List/resolve my Teams | Contacts → Team directory | `listTeams()`, `resolveTeams()` | `list_my_teams`, `resolve_my_teams` | OpenAPI Team capability registry → Team query owner |
+| List Team members | Team detail with loading, partial identity, pagination and retry states | `listTeamMembers()` | `list_team_members` | OpenAPI Team capability registry → Team membership owner + public identity batch reader |
+| Create Team | No built-in entry | `createTeams()` from a confirmed same-origin UI | `create_teams` after explicit user intent | OpenAPI Team capability registry → existing Team create command |
+| Join by public ID | No built-in entry | `joinTeamsByJotmoID()` from a confirmed same-origin UI | `join_teams_by_jotmo_id` after explicit user intent | OpenAPI Team capability registry → existing Team join command |
+
+The built-in UI and Browser SDK enter through the same injected `TeamServicePort`; model Tools use the OpenAPI MCP projection of the same capability definitions. REST and MCP therefore share one authorization, validation, idempotency, cursor, error, and result contract without routing model traffic through the browser Host.
+
 `capabilities().features.myExtensions` advertises the current-account extension inventory. `myExtensions()` merges only Host-approved live Cordis, Profile-resolved and cloud-owned facts; consumers must use its states and `publish` result without rescanning Profile files or inferring ownership from names. Every publishable item carries one Host-derived route: `dynamic-cordis-v2` means `artifactContractVersion=2` and `artifactKind=dsh-bundle-tgz` for a live current-session Dynamic Cordis Package; `profile-native-v3` means `artifactContractVersion=3` and `artifactKind=dsh-native-package-tgz` for an installed or Profile-local DSH Bundle. Callers pass `ownedRef` unchanged and never choose a mode themselves. A GitHub repository URL is optional provenance metadata, not a third upload route, publication credential or cloud clone/build request. A third-party registry/Git dependency appears only when its actually resolved package declares `dsh.bundle.patch`; it is a V3 publication candidate rather than an assertion that the current account authored the upstream code. `publisher_role` is server-owned: explicit values win, while historical rows without a role resolve to importer only when they have GitHub provenance. Consumers never submit this role. `ownedRef` is short-lived and account-bound. `publishMyExtension()` requires a current explicit human request and can publish only the exact Cordis Package, resolved Bundle directory or local Bundle tgz behind that ref; consumers must refresh the list after expiry or account switch. Profile paths, Agent IDs, source archives, artifact upload requests and signing material never enter this contract.
 
 Plugin update discovery and acknowledgement are lifecycle concerns owned by the bundled Arkme UI. They are intentionally absent from the public Browser SDK, Host `arkmeData` service and model tool catalog. Consumers must not invoke raw `plugin.update.*` operations or attempt to mutate a DSH profile.

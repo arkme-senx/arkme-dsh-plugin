@@ -13,6 +13,10 @@ import {
   type ManagedOpenApiControlPlane,
   type ManagedOpenApiCredential,
   type ManagedOpenApiCredentialStore,
+  type ManagedOpenApiCredentialExecutor,
+  ManagedOpenApiCredentialRejectedError,
+  ManagedOpenApiCredentialUnavailableError,
+  ManagedOpenApiMcpExecutionSupersededError,
   type OpenApiMcpManifest,
   type OpenApiMcpManifestSource,
   type OpenApiMcpMount,
@@ -62,16 +66,8 @@ export interface ManagedOpenApiMcpControllerOptions {
   random?: () => number
 }
 
-/** Fixed, credential-free failure used when a managed call crosses a lifecycle boundary. */
-export class ManagedOpenApiMcpExecutionSupersededError extends Error {
-  constructor() {
-    super('Arkme OpenAPI MCP tools changed while this call was running; retry the request')
-    this.name = 'ManagedOpenApiMcpExecutionSupersededError'
-  }
-}
-
 /** Sole owner of managed Key reconciliation and the official MCP Client mount lifecycle. */
-export class ManagedOpenApiMcpController implements SessionTransitionObserver<OpenApiMcpSessionTransition> {
+export class ManagedOpenApiMcpController implements SessionTransitionObserver<OpenApiMcpSessionTransition>, ManagedOpenApiCredentialExecutor {
   private readonly now: () => number
   private readonly random: () => number
   private currentStatus: OpenApiMcpStatus
@@ -87,6 +83,8 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   private mountTransition: Promise<void> | undefined
   private mountCleanup: Promise<void> = Promise.resolve()
   private readonly toolExecutionAborts = new Set<AbortController>()
+  private readonly credentialExecutionAborts = new Set<AbortController>()
+  private credentialPreparation: Promise<void> | undefined
   private toolExecutionEnabled = false
   private credentialFailures = 0
   private manifestFailures = 0
@@ -148,6 +146,61 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     } finally {
       this.toolExecutionAborts.delete(lifecycleAbort)
     }
+  }
+
+  /** Leases the current managed API Key to one infrastructure callback and fences account changes. */
+  async executeWithCredential<T>(
+    callerSignal: AbortSignal,
+    execute: (apiKey: SecretValue, signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    if (!this.options.enabled || this.disposed) throw new ManagedOpenApiCredentialUnavailableError()
+    let credential = this.currentCredential()
+    if (credential === undefined) {
+      await this.ensureCredential(callerSignal)
+      credential = this.currentCredential()
+    }
+    if (credential === undefined) throw new ManagedOpenApiCredentialUnavailableError()
+    const snapshot = {
+      epoch: this.epoch,
+      principal: { ...this.activePrincipal! },
+      keyId: credential.keyId,
+      generation: credential.generation,
+    }
+    const lifecycleAbort = new AbortController()
+    this.credentialExecutionAborts.add(lifecycleAbort)
+    const signal = AbortSignal.any([callerSignal, lifecycleAbort.signal])
+    try {
+      const result = await execute(new SecretValue(credential.apiKey), signal)
+      if (lifecycleAbort.signal.aborted || !this.credentialLeaseMatches(snapshot)) {
+        throw new ManagedOpenApiMcpExecutionSupersededError()
+      }
+      return result
+    } catch (error) {
+      if (lifecycleAbort.signal.aborted || !this.credentialLeaseMatches(snapshot)) {
+        throw new ManagedOpenApiMcpExecutionSupersededError()
+      }
+      if (error instanceof ManagedOpenApiCredentialRejectedError) this.scheduleCredentialDiagnostic()
+      throw error
+    } finally {
+      this.credentialExecutionAborts.delete(lifecycleAbort)
+    }
+  }
+
+  private async ensureCredential(callerSignal: AbortSignal): Promise<void> {
+    const operationEpoch = this.epoch
+    let preparation = this.credentialPreparation
+    if (preparation === undefined) {
+      preparation = this.enqueue(async () => {
+        if (this.currentCredential() === undefined) await this.reconcileCredential(operationEpoch)
+      })
+      this.credentialPreparation = preparation
+      void preparation.then(
+        () => { if (this.credentialPreparation === preparation) this.credentialPreparation = undefined },
+        () => { if (this.credentialPreparation === preparation) this.credentialPreparation = undefined },
+      )
+    }
+    await waitForSignal(preparation, callerSignal)
+    if (operationEpoch !== this.epoch) throw new ManagedOpenApiMcpExecutionSupersededError()
   }
 
   async retry(): Promise<OpenApiMcpStatus> {
@@ -231,6 +284,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
       const session = await this.options.sessionStore.read()
       const principal = openApiMcpPrincipal(session)
       if (session === undefined) {
+        this.disableCredentialExecution()
         this.activePrincipal = undefined
         this.activeCredential = undefined
         await this.disposeMount()
@@ -242,6 +296,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
         return
       }
       if (principal === undefined) {
+        this.disableCredentialExecution()
         this.activePrincipal = undefined
         this.activeCredential = undefined
         await this.disposeMount()
@@ -260,7 +315,12 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
           await this.discardLocalCredential(credential)
           credential = undefined
         }
-        this.activeCredential = credential
+        const activeCredential = this.activeCredential
+        if (activeCredential !== undefined && (credential === undefined
+          || !sameManagedCredential(activeCredential, credential))) {
+          this.disableCredentialExecution()
+          this.activeCredential = undefined
+        }
         const accessToken = await this.resolveAccessCredential(principal, operationEpoch, abort.signal)
         const result = await this.options.controlPlane.ensure(accessToken, credential === undefined ? undefined : {
           keyId: credential.keyId,
@@ -408,8 +468,26 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     })
   }
 
+  private scheduleCredentialDiagnostic(): void {
+    if (this.disposed || this.diagnosticPending) return
+    this.diagnosticPending = true
+    const operationEpoch = this.epoch
+    queueMicrotask(() => {
+      void this.enqueue(async () => {
+        try {
+          if (!this.disposed && operationEpoch === this.epoch) {
+            await this.reconcileCredential(operationEpoch, true)
+          }
+        } finally {
+          this.diagnosticPending = false
+        }
+      })
+    })
+  }
+
   private async adoptPrincipal(principal: OpenApiMcpPrincipal): Promise<void> {
     if (samePrincipal(this.activePrincipal, principal)) return
+    this.disableCredentialExecution()
     this.activePrincipal = principal
     this.activeCredential = undefined
     await this.disposeMount()
@@ -509,6 +587,33 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     this.toolExecutionAborts.clear()
   }
 
+  private disableCredentialExecution(): void {
+    for (const abort of this.credentialExecutionAborts) {
+      abort.abort(new ManagedOpenApiMcpExecutionSupersededError())
+    }
+    this.credentialExecutionAborts.clear()
+  }
+
+  private currentCredential(): ManagedOpenApiCredential | undefined {
+    const credential = this.activeCredential
+    const principal = this.activePrincipal
+    if (credential === undefined || principal === undefined || credential.expiresAtMillis <= this.now()
+      || !credentialBelongsTo(credential, principal)) return undefined
+    return credential
+  }
+
+  private credentialLeaseMatches(snapshot: {
+    epoch: number
+    principal: OpenApiMcpPrincipal
+    keyId: string
+    generation: number
+  }): boolean {
+    const credential = this.currentCredential()
+    return snapshot.epoch === this.epoch && credential !== undefined
+      && credential.keyId === snapshot.keyId && credential.generation === snapshot.generation
+      && samePrincipal(this.activePrincipal, snapshot.principal)
+  }
+
   private executionMatches(mounted: MountedCredential): boolean {
     const credential = this.activeCredential
     return !this.disposed && credential !== undefined && credential.expiresAtMillis > this.now()
@@ -526,6 +631,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   }
 
   private async removeLocalCredential(): Promise<void> {
+    this.disableCredentialExecution()
     this.activeCredential = undefined
     try { await this.options.credentialStore.delete() } catch { this.warn('credential-delete') }
   }
@@ -654,6 +760,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
 
   private cancelCurrent(quarantineTools: boolean): void {
     this.epoch++
+    this.credentialPreparation = undefined
     this.activeAbort?.abort(new Error('OpenAPI MCP lifecycle superseded'))
     this.activeAbort = undefined
     if (this.credentialTimer !== undefined) clearTimeout(this.credentialTimer)
@@ -662,6 +769,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     this.manifestTimer = undefined
     this.credentialNextAtMillis = undefined
     this.manifestNextAtMillis = undefined
+    this.disableCredentialExecution()
     if (quarantineTools) this.disableToolExecution()
   }
 
@@ -690,6 +798,11 @@ function samePrincipal(left: OpenApiMcpPrincipal | undefined, right: OpenApiMcpP
   return left?.userId === right.userId && left.loginDeviceId === right.loginDeviceId
 }
 
+function sameManagedCredential(left: ManagedOpenApiCredential, right: ManagedOpenApiCredential): boolean {
+  return left.userId === right.userId && left.loginDeviceId === right.loginDeviceId
+    && left.keyId === right.keyId && left.generation === right.generation && left.apiKey === right.apiKey
+}
+
 function managedCredentialDigest(credential: ManagedOpenApiCredential): string {
   return createHash('sha256').update(credential.apiKey, 'utf8').digest('hex')
 }
@@ -714,6 +827,27 @@ function failureCategory(error: unknown): string {
   if (error instanceof OpenApiControlPlaneError) return `control-${error.kind}`
   if (error instanceof OpenApiMcpManifestError) return `manifest-${error.kind}`
   return 'runtime'
+}
+
+function waitForSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException('Aborted', 'AbortError'))
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      signal.removeEventListener('abort', onAbort)
+      reject(signal.reason ?? new DOMException('Aborted', 'AbortError'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      value => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
 }
 
 async function waitWithoutKeepingProcessAlive(delayMillis: number): Promise<void> {
