@@ -1710,9 +1710,106 @@ describe('Arkme managed model adapter', () => {
     expect(chunks).toContainEqual({ type: 'finish', reason: { kind: 'stop' } })
   })
 
+  it('preserves a historical image and usage when DSH compacts the conversation', async () => {
+    const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+    const attachment = {
+      attachmentId: AttachmentId('compaction-history-image'),
+      mediaType: 'image/png' as const,
+      bytes: imageBytes.byteLength,
+      width: 1,
+      height: 1,
+    }
+    const readImage = vi.fn(async () => ({ ref: attachment, data: imageBytes }))
+    let chatHeaders: Headers | undefined
+    let chatBody: Record<string, unknown> | undefined
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => ({ readImage }),
+      fetchImpl: async (input, init) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              upload_uid: 'mai_upload_compaction',
+              asset_ref: 'mai_asset_compaction',
+              status: 'completed',
+              expires_at: Date.now() + 60_000,
+              asset_expires_at: Date.now() + 60 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url.endsWith('/chat/completions')) {
+          chatHeaders = new Headers(init?.headers)
+          chatBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+          return new Response([
+            'data: {"choices":[{"index":0,"delta":{"content":"summary"},"finish_reason":"stop"}]}',
+            '',
+            'data: {"choices":[],"usage":{"prompt_tokens":30,"completion_tokens":5,"total_tokens":35,"prompt_tokens_details":{"cached_tokens":10}}}',
+            '',
+            'data: [DONE]',
+            '',
+          ].join('\n') + '\n', { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const capability: ManagedModelCapability = {
+      contractVersion: 'compaction-image-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'], maximumImages: 1,
+        maximumBytesPerImage: imageBytes.byteLength, maximumPixels: 1,
+        countDimensionLimits: [], tokenEstimator: 'deepseek-upper-384-v1',
+        evidence: {
+          providerReferenceUrl: 'https://example.test/provider-contract', verifiedOn: '2026-09-03',
+          providerDocumentedFields: ['allowed_media_types', 'maximum_bytes_per_image'],
+          platformGuardrailFields: ['maximum_images', 'maximum_pixels', 'token_estimator'],
+        },
+      },
+    }
+
+    const chunks: StreamChunk[] = []
+    for await (const chunk of transport.stream({
+      provider: ARKME_MANAGED_PROVIDER,
+      model: 'compaction-image-model',
+      purpose: 'compaction',
+      sessionId: 'session-with-image' as never,
+      messages: [
+        createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } }),
+        createUserMessage({ content: [{ type: 'text', text: '请压缩以上上下文' }], source: { kind: 'user' } }),
+      ],
+    }, capability)) chunks.push(chunk)
+
+    expect(readImage).toHaveBeenCalledTimes(1)
+    expect(chatHeaders?.get('X-DeepSeek-Harness-Compact')).toBe('1')
+    expect(chatHeaders?.get('X-DeepSeek-Harness-Session-ID')).toBe('session-with-image')
+    expect(chatBody).toMatchObject({
+      model: 'compaction-image-model',
+      messages: [
+        { role: 'user', content: [{ type: 'image_asset', asset_ref: 'mai_asset_compaction' }] },
+        { role: 'user', content: '请压缩以上上下文' },
+      ],
+    })
+    expect(chunks).toContainEqual({
+      type: 'usage', usage: { inputTokens: 20, outputTokens: 5, cacheReadTokens: 10 },
+    })
+    expect(chunks).toContainEqual({ type: 'finish', reason: { kind: 'stop' } })
+  })
+
   it('turns an explicit HTTP 402 into a stable Arkme recharge prompt', async () => {
+    let compactHeader = ''
     const server = createServer(async (req, res) => {
       for await (const _chunk of req) { /* Drain the request before responding. */ }
+      if (req.url?.endsWith('/models/query') === true) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ code: 200, message: '请求成功', data: { item_ls: MANAGED_CATALOG_ITEMS } }))
+        return
+      }
+      compactHeader = req.headers['x-deepseek-harness-compact'] ?? ''
       res.writeHead(402, {
         'Content-Type': 'application/json',
         'X-Request-ID': 'mai_req_balance',
@@ -1742,6 +1839,7 @@ describe('Arkme managed model adapter', () => {
       const stream = adapter.stream({
         provider: ARKME_MANAGED_PROVIDER,
         model: ARKME_MANAGED_MODEL,
+        purpose: 'compaction',
         messages: [createUserMessage({
           content: [{ type: 'text', text: '测试' }],
           source: { kind: 'user' },
@@ -1758,6 +1856,7 @@ describe('Arkme managed model adapter', () => {
           requestId: 'mai_req_balance',
         },
       })
+      expect(compactHeader).toBe('1')
     } finally {
       await new Promise<void>(resolve => { server.close(() => { resolve() }) })
     }
