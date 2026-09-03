@@ -418,7 +418,6 @@ function parseImageCapability(value: unknown): ManagedImageCapability {
   const maximumWidth = optionalCapabilityInteger(source, 'maximum_width', '图片宽度上限')
   const maximumHeight = optionalCapabilityInteger(source, 'maximum_height', '图片高度上限')
   const maximumAspectRatio = optionalCapabilityInteger(source, 'maximum_aspect_ratio', '图片宽高比上限')
-  const providerMaxPixels = optionalCapabilityInteger(source, 'provider_max_pixels', '供应商图片处理像素')
   const effectiveMaximumTotalBytes = maximumTotalBytes ?? maximumImages * maximumBytesPerImage
   if ((minimumWidth === undefined) !== (minimumHeight === undefined)
     || (maximumWidth === undefined) !== (maximumHeight === undefined)
@@ -436,6 +435,8 @@ function parseImageCapability(value: unknown): ManagedImageCapability {
     throw new LlmError('Arkme 模型目录中的图片数量维度规则无效', 'MALFORMED_RESPONSE')
   }
   let previousMinimum = 0
+  let previousMaximumWidth = maximumWidth
+  let previousMaximumHeight = maximumHeight
   const countDimensionLimits = (rawCountLimits ?? []).map((value) => {
     const limit = asRecord(value)
     if (limit === undefined) throw new LlmError('Arkme 模型目录中的图片数量维度规则无效', 'MALFORMED_RESPONSE')
@@ -443,48 +444,36 @@ function parseImageCapability(value: unknown): ManagedImageCapability {
     const maximumLimitWidth = requiredCapabilityInteger(limit, 'maximum_width', '图片数量维度宽度')
     const maximumLimitHeight = requiredCapabilityInteger(limit, 'maximum_height', '图片数量维度高度')
     if (minimumImages <= 1 || minimumImages > maximumImages || minimumImages <= previousMinimum
-      || (maximumWidth !== undefined && maximumLimitWidth > maximumWidth)
-      || (maximumHeight !== undefined && maximumLimitHeight > maximumHeight)) {
+      || (minimumWidth !== undefined && maximumLimitWidth < minimumWidth)
+      || (minimumHeight !== undefined && maximumLimitHeight < minimumHeight)
+      || (previousMaximumWidth !== undefined && maximumLimitWidth > previousMaximumWidth)
+      || (previousMaximumHeight !== undefined && maximumLimitHeight > previousMaximumHeight)) {
       throw new LlmError('Arkme 模型目录中的图片数量维度规则无效', 'MALFORMED_RESPONSE')
     }
     previousMinimum = minimumImages
+    previousMaximumWidth = maximumLimitWidth
+    previousMaximumHeight = maximumLimitHeight
     return { minimumImages, maximumWidth: maximumLimitWidth, maximumHeight: maximumLimitHeight }
   })
-  requiredCapabilityText(source, 'token_estimator', '图片 Token 估算器')
-  const evidence = asRecord(source.evidence)
-  if (evidence === undefined) throw new LlmError('Arkme 模型目录中的图片能力证据无效', 'MALFORMED_RESPONSE')
-  const expectedEvidenceFields = new Set([
-    'allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator',
-    ...(maximumPixels === undefined ? [] : ['maximum_pixels']),
-    ...(minimumWidth === undefined ? [] : ['minimum_width', 'minimum_height']),
-    ...(maximumTotalBytes === undefined ? [] : ['maximum_total_bytes']),
-    ...(maximumWidth === undefined ? [] : ['maximum_width', 'maximum_height']),
-    ...(maximumAspectRatio === undefined ? [] : ['maximum_aspect_ratio']),
-    ...(countDimensionLimits.length === 0 ? [] : ['count_dimension_limits']),
-    ...(providerMaxPixels === undefined ? [] : ['provider_max_pixels']),
-  ])
-  const parseEvidenceFields = (key: string, required: boolean): string[] => {
-    const value = evidence[key]
-    if (value === undefined && !required) return []
-    if (!Array.isArray(value) || (required && value.length === 0)) {
-      throw new LlmError('Arkme 模型目录中的图片能力证据无效', 'MALFORMED_RESPONSE')
-    }
-    const fields: string[] = []
-    for (const item of value) {
-      if (typeof item !== 'string' || !expectedEvidenceFields.has(item) || fields.includes(item)) {
-        throw new LlmError('Arkme 模型目录中的图片能力证据无效', 'MALFORMED_RESPONSE')
-      }
-      fields.push(item)
-    }
-    return fields
+  const rawMediaLimits = source.media_type_dimension_limits
+  if (rawMediaLimits !== undefined && !Array.isArray(rawMediaLimits)) {
+    throw new LlmError('Arkme 模型目录中的图片格式维度规则无效', 'MALFORMED_RESPONSE')
   }
-  const providerDocumentedFields = parseEvidenceFields('provider_documented_fields', true)
-  const platformGuardrailFields = parseEvidenceFields('platform_guardrail_fields', false)
-  const classified = new Set([...providerDocumentedFields, ...platformGuardrailFields])
-  if (classified.size !== providerDocumentedFields.length + platformGuardrailFields.length
-    || classified.size !== expectedEvidenceFields.size) {
-    throw new LlmError('Arkme 模型目录中的图片能力证据不完整', 'MALFORMED_RESPONSE')
-  }
+  const limitedMediaTypes = new Set<string>()
+  const mediaTypeDimensionLimits = (rawMediaLimits ?? []).map((value) => {
+    const limit = asRecord(value)
+    if (limit === undefined) throw new LlmError('Arkme 模型目录中的图片格式维度规则无效', 'MALFORMED_RESPONSE')
+    const mediaType = requiredCapabilityText(limit, 'media_type', '图片格式维度类型')
+    const maximumLongEdge = requiredCapabilityInteger(limit, 'maximum_long_edge', '图片格式长边上限')
+    const maximumShortEdge = requiredCapabilityInteger(limit, 'maximum_short_edge', '图片格式短边上限')
+    if (!allowedMediaTypes.includes(mediaType) || limitedMediaTypes.has(mediaType) || maximumLongEdge < maximumShortEdge
+      || (minimumWidth !== undefined && (maximumLongEdge < Math.max(minimumWidth, minimumHeight!)
+        || maximumShortEdge < Math.min(minimumWidth, minimumHeight!)))) {
+      throw new LlmError('Arkme 模型目录中的图片格式维度规则无效', 'MALFORMED_RESPONSE')
+    }
+    limitedMediaTypes.add(mediaType)
+    return { mediaType, maximumLongEdge, maximumShortEdge }
+  })
   return {
     allowedMediaTypes,
     maximumImages,
@@ -496,14 +485,8 @@ function parseImageCapability(value: unknown): ManagedImageCapability {
     ...(maximumWidth === undefined ? {} : { maximumWidth }),
     ...(maximumHeight === undefined ? {} : { maximumHeight }),
     ...(maximumAspectRatio === undefined ? {} : { maximumAspectRatio }),
-    ...(providerMaxPixels === undefined ? {} : { providerMaxPixels }),
     countDimensionLimits,
-    evidence: {
-      providerReferenceUrl: requiredCapabilityText(evidence, 'provider_reference_url', '图片能力官方来源'),
-      verifiedOn: requiredCapabilityText(evidence, 'verified_on', '图片能力核对日期'),
-      providerDocumentedFields,
-      platformGuardrailFields,
-    },
+    mediaTypeDimensionLimits,
   }
 }
 
@@ -516,8 +499,6 @@ function parseCapability(value: unknown): ManagedModelCapability {
   if (!inputModalities.includes('text')) {
     throw new LlmError('Arkme 模型目录中的输入模态缺少文本', 'MALFORMED_RESPONSE')
   }
-  requiredCapabilityText(source, 'materialization_mode', '媒体物化模式')
-  requiredCapabilityText(source, 'usage_schema', '用量合同')
   const hasImage = inputModalities.includes('image')
   if (!hasImage && source.image !== undefined) {
     throw new LlmError('Arkme 模型目录中的图片能力与输入模态不一致', 'MALFORMED_RESPONSE')

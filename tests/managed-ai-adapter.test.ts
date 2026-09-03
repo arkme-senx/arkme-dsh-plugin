@@ -23,8 +23,6 @@ const TEXT_CAPABILITY = {
   contract_version: 'text-chat-v1',
   input_modalities: ['text'],
   output_modalities: ['text'],
-  materialization_mode: 'none-v1',
-  usage_schema: 'cache-split-token-v1',
 }
 
 const MANAGED_CATALOG_ITEMS = [
@@ -156,13 +154,6 @@ describe('Arkme managed model adapter', () => {
         maximum_images: 2,
         maximum_bytes_per_image: 10 * 1024 * 1024,
         maximum_pixels: 40_000_001,
-        token_estimator: 'maximum-input-exposure-v1',
-        evidence: {
-          provider_reference_url: 'https://example.test/vision',
-          verified_on: '2026-08-31',
-          provider_documented_fields: ['allowed_media_types', 'maximum_bytes_per_image'],
-          platform_guardrail_fields: ['maximum_images', 'maximum_pixels', 'token_estimator'],
-        },
       },
     },
     {
@@ -172,13 +163,6 @@ describe('Arkme managed model adapter', () => {
         maximum_images: 2_048,
         maximum_bytes_per_image: 64 * 1024 * 1024,
         maximum_pixels: 40_000_000,
-        token_estimator: 'maximum-input-exposure-v1',
-        evidence: {
-          provider_reference_url: 'https://example.test/vision',
-          verified_on: '2026-08-31',
-          provider_documented_fields: ['allowed_media_types', 'maximum_bytes_per_image'],
-          platform_guardrail_fields: ['maximum_images', 'maximum_pixels', 'token_estimator'],
-        },
       },
     },
     {
@@ -189,15 +173,35 @@ describe('Arkme managed model adapter', () => {
         maximum_bytes_per_image: 10 * 1024 * 1024,
         maximum_total_bytes: 1024 * 1024 * 1024 + 1,
         maximum_pixels: 40_000_000,
-        token_estimator: 'maximum-input-exposure-v1',
-        evidence: {
-          provider_reference_url: 'https://example.test/vision',
-          verified_on: '2026-08-31',
-          provider_documented_fields: ['allowed_media_types', 'maximum_bytes_per_image'],
-          platform_guardrail_fields: [
-            'maximum_images', 'maximum_total_bytes', 'maximum_pixels', 'token_estimator',
-          ],
-        },
+      },
+    },
+    {
+      name: 'loosening request-count dimension rule',
+      image: {
+        allowed_media_types: ['image/png'],
+        maximum_images: 20,
+        maximum_bytes_per_image: 10 * 1024 * 1024,
+        maximum_pixels: 40_000_000,
+        maximum_width: 8192,
+        maximum_height: 8192,
+        count_dimension_limits: [
+          { minimum_images: 10, maximum_width: 2048, maximum_height: 2048 },
+          { minimum_images: 15, maximum_width: 4096, maximum_height: 4096 },
+        ],
+      },
+    },
+    {
+      name: 'format dimension below model minimum',
+      image: {
+        allowed_media_types: ['image/webp'],
+        maximum_images: 2,
+        maximum_bytes_per_image: 10 * 1024 * 1024,
+        maximum_pixels: 40_000_000,
+        minimum_width: 11,
+        minimum_height: 11,
+        media_type_dimension_limits: [
+          { media_type: 'image/webp', maximum_long_edge: 20, maximum_short_edge: 10 },
+        ],
       },
     },
   ])('rejects catalog image capability above the client $name', async ({ image }) => {
@@ -215,8 +219,6 @@ describe('Arkme managed model adapter', () => {
           input_modalities: ['text', 'image'],
           output_modalities: ['text'],
           image,
-          materialization_mode: 'oss-signed-url-v1',
-          usage_schema: 'cache-split-token-v1',
         },
       }]),
     })
@@ -249,19 +251,7 @@ describe('Arkme managed model adapter', () => {
         maximum_width: 8192,
         maximum_height: 8192,
         count_dimension_limits: [{ minimum_images: 15, maximum_width: 4096, maximum_height: 4096 }],
-        token_estimator: 'deepseek-upper-384-v1',
-        evidence: {
-          provider_reference_url: 'https://api-docs.deepseek.com/guides/vision/',
-          verified_on: '2026-08-31',
-          provider_documented_fields: [
-            'allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'maximum_total_bytes',
-            'maximum_width', 'maximum_height', 'count_dimension_limits', 'token_estimator',
-          ],
-          platform_guardrail_fields: ['maximum_pixels'],
-        },
       },
-      materialization_mode: 'deepseek-files-v1',
-      usage_schema: 'cache-split-token-v1',
     }
     const catalogItem = {
       ...MANAGED_CATALOG_ITEMS[0],
@@ -391,12 +381,13 @@ describe('Arkme managed model adapter', () => {
     expect(prepare?.body).toMatchObject({ asset: { sha256: expect.stringMatching(/^[0-9a-f]{64}$/u) } })
     const oss = calls.find(call => call.url === 'https://managed-ai.oss.test/')
     expect(oss?.method).toBe('POST')
-    const form = oss?.body as FormData
-    expect(form.get('key')).toBe('managed/input.png')
-    expect(form.get('policy')).toBe('signed-policy')
-    const formEntries = [...form.entries()]
-    expect(formEntries.at(-1)?.[0]).toBe('file')
-    expect(Buffer.from(await (form.get('file') as Blob).arrayBuffer())).toEqual(Buffer.from(imageBytes))
+    const multipartChunks: Buffer[] = []
+    for await (const chunk of oss?.body as AsyncIterable<Uint8Array>) multipartChunks.push(Buffer.from(chunk))
+    const multipart = Buffer.concat(multipartChunks)
+    expect(multipart.toString('latin1')).toContain('name="key"\r\n\r\nmanaged/input.png\r\n')
+    expect(multipart.toString('latin1')).toContain('name="policy"\r\n\r\nsigned-policy\r\n')
+    expect(multipart.toString('latin1')).toContain('name="file"; filename="asset"\r\nContent-Type: image/png\r\n\r\n')
+    expect(multipart.includes(Buffer.from(imageBytes))).toBe(true)
     const chat = calls.find(call => call.url.endsWith('/chat/completions'))
     expect(chat?.body).toMatchObject({
       model: 'deepseek-v4-flash-vision-exp',
@@ -435,12 +426,7 @@ describe('Arkme managed model adapter', () => {
         maximumImages: 1,
         maximumBytesPerImage: data.byteLength,
         countDimensionLimits: [],
-        evidence: {
-          providerReferenceUrl: 'https://example.test/provider-contract',
-          verifiedOn: '2026-09-01',
-          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image'],
-          platformGuardrailFields: [],
-        },
+        mediaTypeDimensionLimits: [],
       },
     }
     const fetchImpl = vi.fn(async () => {
@@ -488,12 +474,7 @@ describe('Arkme managed model adapter', () => {
         maximumImages: 1,
         maximumBytesPerImage: data.byteLength,
         countDimensionLimits: [],
-        evidence: {
-          providerReferenceUrl: 'https://example.test/provider-contract',
-          verifiedOn: '2026-09-01',
-          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image'],
-          platformGuardrailFields: [],
-        },
+        mediaTypeDimensionLimits: [],
       },
     }
     let clock = 1_788_192_000_000
@@ -601,12 +582,7 @@ describe('Arkme managed model adapter', () => {
       outputModalities: ['text'],
       image: {
         allowedMediaTypes: ['image/png'], maximumImages: 1, maximumBytesPerImage: data.byteLength,
-        maximumPixels: 40_000_000, countDimensionLimits: [],
-        evidence: {
-          providerReferenceUrl: 'https://example.test/provider-contract', verifiedOn: '2026-09-01',
-          providerDocumentedFields: ['allowed_media_types', 'maximum_bytes_per_image'],
-          platformGuardrailFields: ['maximum_images', 'maximum_pixels', 'token_estimator'],
-        },
+        maximumPixels: 40_000_000, countDimensionLimits: [], mediaTypeDimensionLimits: [],
       },
     })
 
@@ -619,7 +595,7 @@ describe('Arkme managed model adapter', () => {
       input_modalities: ['text', 'image'],
       output_modalities: ['text'],
       image: {
-        allowed_media_types: ['image/jpeg', 'image/png'],
+        allowed_media_types: ['image/jpeg', 'image/png', 'image/webp'],
         maximum_images: 2_048,
         maximum_bytes_per_image: 20 * 1024 * 1024,
         maximum_total_bytes: 1024 * 1024 * 1024,
@@ -627,20 +603,8 @@ describe('Arkme managed model adapter', () => {
         minimum_width: 11,
         minimum_height: 11,
         maximum_aspect_ratio: 200,
-        provider_max_pixels: 2_621_440,
-        token_estimator: 'qwen-32px-default-v1',
-        evidence: {
-          provider_reference_url: 'https://help.aliyun.com/zh/model-studio/vision',
-          verified_on: '2026-08-31',
-          provider_documented_fields: [
-            'maximum_images', 'maximum_bytes_per_image', 'minimum_width', 'minimum_height',
-            'maximum_aspect_ratio', 'provider_max_pixels', 'token_estimator',
-          ],
-          platform_guardrail_fields: ['allowed_media_types', 'maximum_total_bytes', 'maximum_pixels'],
-        },
+        media_type_dimension_limits: [{ media_type: 'image/webp', maximum_long_edge: 3840, maximum_short_edge: 2160 }],
       },
-      materialization_mode: 'oss-signed-url-v1',
-      usage_schema: 'cache-split-token-v1',
     }
     const reader = vi.fn()
     const adapter = createManagedAiLlmAdapter({
@@ -677,6 +641,181 @@ describe('Arkme managed model adapter', () => {
     expect(reader).not.toHaveBeenCalled()
   })
 
+  it('retries one fresh upload generation when completion reports exact expiry', async () => {
+    const data = Uint8Array.of(1, 2, 3)
+    const attachment = {
+      attachmentId: AttachmentId('completion-expiry-image'),
+      mediaType: 'image/png' as const,
+      bytes: data.byteLength,
+      width: 16,
+      height: 16,
+    }
+    const capability: ManagedModelCapability = {
+      contractVersion: 'completion-expiry-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'], maximumImages: 1, maximumBytesPerImage: data.byteLength,
+        maximumPixels: 40_000_000, countDimensionLimits: [], mediaTypeDimensionLimits: [],
+      },
+    }
+    const attemptKeys: string[] = []
+    let prepareCalls = 0
+    let uploadCalls = 0
+    let completeCalls = 0
+    let abortCalls = 0
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => ({ readImage: async () => ({ ref: attachment, data }) }),
+      fetchImpl: async (input, init) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          prepareCalls++
+          const body = JSON.parse(String(init?.body)) as { idempotency_key: string }
+          attemptKeys.push(body.idempotency_key)
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              upload_uid: `mai_upload_expiry_${String(prepareCalls)}`,
+              asset_ref: `mai_asset_expiry_${String(prepareCalls)}`,
+              status: 'prepared',
+              upload: {
+                method: 'POST', url: `https://managed-ai.oss.test/${String(prepareCalls)}`,
+                fields: { key: `managed/${String(prepareCalls)}.png`, policy: 'signed-policy' }, file_field: 'file',
+              },
+              expires_at: Date.now() + 10 * 60_000,
+              asset_expires_at: Date.now() + 60 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url.startsWith('https://managed-ai.oss.test/')) {
+          uploadCalls++
+          return new Response(null, { status: 204 })
+        }
+        if (url.endsWith('/input-assets/uploads/complete')) {
+          completeCalls++
+          if (completeCalls === 1) {
+            return new Response(JSON.stringify({
+              code: 1001,
+              message: '上传会话已过期',
+              data: { error_code: 'input_asset_upload_expired' },
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+          }
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              asset_ref: 'mai_asset_expiry_2', status: 'ready',
+              expires_at: Date.now() + 60 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url.endsWith('/input-assets/uploads/abort')) {
+          abortCalls++
+          return new Response(JSON.stringify({ code: 200, data: { aborted: true } }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        if (url.endsWith('/chat/completions')) {
+          return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          })
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+
+    const chunks: StreamChunk[] = []
+    for await (const chunk of transport.stream({
+      provider: ARKME_MANAGED_PROVIDER,
+      model: 'completion-expiry-image',
+      messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+    }, capability)) chunks.push(chunk)
+
+    expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+    expect([prepareCalls, uploadCalls, completeCalls, abortCalls]).toEqual([2, 2, 2, 1])
+    expect(attemptKeys).toHaveLength(2)
+    expect(attemptKeys[1]).not.toBe(attemptKeys[0])
+  })
+
+  it('best-effort aborts the server upload after the last local waiter cancels', async () => {
+    const data = Uint8Array.of(4, 5, 6)
+    const attachment = {
+      attachmentId: AttachmentId('last-waiter-cancel-image'),
+      mediaType: 'image/png' as const,
+      bytes: data.byteLength,
+      width: 16,
+      height: 16,
+    }
+    const capability: ManagedModelCapability = {
+      contractVersion: 'last-waiter-cancel-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'], maximumImages: 1, maximumBytesPerImage: data.byteLength,
+        maximumPixels: 40_000_000, countDimensionLimits: [], mediaTypeDimensionLimits: [],
+      },
+    }
+    let markUploadStarted!: () => void
+    const uploadStarted = new Promise<void>(resolve => { markUploadStarted = resolve })
+    let abortCalls = 0
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => ({ readImage: async () => ({ ref: attachment, data }) }),
+      fetchImpl: async (input, init) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              upload_uid: 'mai_upload_last_waiter', asset_ref: 'mai_asset_last_waiter', status: 'prepared',
+              upload: {
+                method: 'POST', url: 'https://managed-ai.oss.test/cancel',
+                fields: { key: 'managed/cancel.png', policy: 'signed-policy' }, file_field: 'file',
+              },
+              expires_at: Date.now() + 10 * 60_000,
+              asset_expires_at: Date.now() + 60 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url === 'https://managed-ai.oss.test/cancel') {
+          markUploadStarted()
+          return await new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal
+            signal?.addEventListener('abort', () => { reject(signal.reason) }, { once: true })
+          })
+        }
+        if (url.endsWith('/input-assets/uploads/abort')) {
+          abortCalls++
+          return new Response(JSON.stringify({ code: 200, data: { aborted: true } }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const controller = new AbortController()
+    const result = (async () => {
+      for await (const _chunk of transport.stream({
+        provider: ARKME_MANAGED_PROVIDER,
+        model: 'last-waiter-cancel-image',
+        signal: controller.signal,
+        messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+      }, capability)) { /* no-op */ }
+    })()
+
+    await uploadStarted
+    controller.abort()
+    await expect(result).rejects.toMatchObject({ code: 'ABORTED' })
+    await vi.waitFor(() => { expect(abortCalls).toBe(1) })
+  })
+
   it('keeps a shared image upload alive when only one concurrent caller aborts', async () => {
     const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
     const attachment = {
@@ -698,15 +837,7 @@ describe('Arkme managed model adapter', () => {
         maximumWidth: 8192,
         maximumHeight: 8192,
         countDimensionLimits: [],
-        evidence: {
-          providerReferenceUrl: 'https://api-docs.deepseek.com/guides/vision/',
-          verifiedOn: '2026-08-31',
-          providerDocumentedFields: [
-            'allowed_media_types', 'maximum_images', 'maximum_bytes_per_image',
-            'maximum_width', 'maximum_height', 'token_estimator',
-          ],
-          platformGuardrailFields: [],
-        },
+        mediaTypeDimensionLimits: [],
       },
     }
     let releaseRead!: () => void
@@ -777,6 +908,77 @@ describe('Arkme managed model adapter', () => {
     expect(chatCalls).toBe(1)
   })
 
+  it('scopes completed asset handles by account, attachment, public model, contract, and effective rule', async () => {
+    const data = Uint8Array.of(7, 8, 9)
+    const attachment = {
+      attachmentId: AttachmentId('model-scoped-cache-image'),
+      mediaType: 'image/png' as const,
+      bytes: data.byteLength,
+      width: 16,
+      height: 16,
+    }
+    const capability: ManagedModelCapability = {
+      contractVersion: 'model-scoped-cache-v1',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'], maximumImages: 20, maximumBytesPerImage: data.byteLength,
+        maximumPixels: 40_000_000,
+        countDimensionLimits: [{ minimumImages: 15, maximumWidth: 32, maximumHeight: 32 }],
+        mediaTypeDimensionLimits: [],
+      },
+    }
+    const readImage = vi.fn(async () => ({ ref: attachment, data }))
+    const preparedModels: string[] = []
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => ({ readImage }),
+      fetchImpl: async (input, init) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          const body = JSON.parse(String(init?.body)) as { public_model_code: string }
+          preparedModels.push(body.public_model_code)
+          return new Response(JSON.stringify({
+            code: 200,
+            data: {
+              upload_uid: `mai_upload_${String(preparedModels.length)}`,
+              asset_ref: `mai_asset_${String(preparedModels.length)}`,
+              status: 'completed',
+              expires_at: Date.now() + 10 * 60_000,
+              asset_expires_at: Date.now() + 60 * 60_000,
+            },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (url.endsWith('/chat/completions')) {
+          return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          })
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const collect = async (model: string, images: typeof attachment[]) => {
+      for await (const _chunk of transport.stream({
+        provider: ARKME_MANAGED_PROVIDER,
+        model,
+        messages: [createUserMessage({
+          content: images.map(image => ({ type: 'image' as const, attachment: image })),
+          source: { kind: 'user' },
+        })],
+      }, capability)) { /* no-op */ }
+    }
+
+    await collect('model-a', [attachment])
+    await collect('model-b', [attachment])
+    await collect('model-b', Array.from({ length: 15 }, () => attachment))
+
+    expect(preparedModels).toEqual(['model-a', 'model-b', 'model-b'])
+    expect(readImage).toHaveBeenCalledTimes(3)
+  })
+
   it('bounds direct-to-OSS preparation concurrency while preserving all image positions', async () => {
     const attachments = Array.from({ length: 5 }, (_, index) => ({
       attachmentId: AttachmentId(`bounded-managed-image-${String(index)}`),
@@ -795,12 +997,7 @@ describe('Arkme managed model adapter', () => {
         maximumImages: attachments.length,
         maximumBytesPerImage: 1,
         countDimensionLimits: [],
-        evidence: {
-          providerReferenceUrl: 'https://example.test/provider-contract',
-          verifiedOn: '2026-08-31',
-          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
-          platformGuardrailFields: [],
-        },
+        mediaTypeDimensionLimits: [],
       },
     }
     let releaseReads!: () => void
@@ -894,12 +1091,7 @@ describe('Arkme managed model adapter', () => {
         maximumImages: attachments.length,
         maximumBytesPerImage: 1,
         countDimensionLimits: [],
-        evidence: {
-          providerReferenceUrl: 'https://example.test/provider-contract',
-          verifiedOn: '2026-08-31',
-          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
-          platformGuardrailFields: [],
-        },
+        mediaTypeDimensionLimits: [],
       },
     }
     let markFourReads!: () => void
@@ -970,12 +1162,7 @@ describe('Arkme managed model adapter', () => {
         maximumImages: 1,
         maximumBytesPerImage: data.byteLength,
         countDimensionLimits: [],
-        evidence: {
-          providerReferenceUrl: 'https://example.test/provider-contract',
-          verifiedOn: '2026-08-31',
-          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
-          platformGuardrailFields: [],
-        },
+        mediaTypeDimensionLimits: [],
       },
     }
     const attemptKeys: string[] = []
@@ -1047,12 +1234,7 @@ describe('Arkme managed model adapter', () => {
         maximumImages: 1,
         maximumBytesPerImage: data.byteLength,
         countDimensionLimits: [],
-        evidence: {
-          providerReferenceUrl: 'https://example.test/provider-contract',
-          verifiedOn: '2026-08-31',
-          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
-          platformGuardrailFields: [],
-        },
+        mediaTypeDimensionLimits: [],
       },
     }
     const attemptKeys: string[] = []
@@ -1127,12 +1309,7 @@ describe('Arkme managed model adapter', () => {
         maximumImages: 1,
         maximumBytesPerImage: data.byteLength,
         countDimensionLimits: [],
-        evidence: {
-          providerReferenceUrl: 'https://example.test/provider-contract',
-          verifiedOn: '2026-08-31',
-          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
-          platformGuardrailFields: [],
-        },
+        mediaTypeDimensionLimits: [],
       },
     }
     const attemptKeys: string[] = []
@@ -1220,12 +1397,7 @@ describe('Arkme managed model adapter', () => {
         maximumImages: 1,
         maximumBytesPerImage: data.byteLength,
         countDimensionLimits: [],
-        evidence: {
-          providerReferenceUrl: 'https://example.test/provider-contract',
-          verifiedOn: '2026-08-31',
-          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
-          platformGuardrailFields: [],
-        },
+        mediaTypeDimensionLimits: [],
       },
     }
     const readImage = vi.fn(async () => ({ ref: attachment, data }))
@@ -1303,12 +1475,7 @@ describe('Arkme managed model adapter', () => {
         maximumImages: 1,
         maximumBytesPerImage: data.byteLength,
         countDimensionLimits: [],
-        evidence: {
-          providerReferenceUrl: 'https://example.test/provider-contract',
-          verifiedOn: '2026-08-31',
-          providerDocumentedFields: ['allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'token_estimator'],
-          platformGuardrailFields: [],
-        },
+        mediaTypeDimensionLimits: [],
       },
     }
     const readImage = vi.fn(async () => ({ ref: attachment, data }))
@@ -1763,12 +1930,7 @@ describe('Arkme managed model adapter', () => {
       image: {
         allowedMediaTypes: ['image/png'], maximumImages: 1,
         maximumBytesPerImage: imageBytes.byteLength, maximumPixels: 1,
-        countDimensionLimits: [], tokenEstimator: 'deepseek-upper-384-v1',
-        evidence: {
-          providerReferenceUrl: 'https://example.test/provider-contract', verifiedOn: '2026-09-03',
-          providerDocumentedFields: ['allowed_media_types', 'maximum_bytes_per_image'],
-          platformGuardrailFields: ['maximum_images', 'maximum_pixels', 'token_estimator'],
-        },
+        countDimensionLimits: [], mediaTypeDimensionLimits: [],
       },
     }
 

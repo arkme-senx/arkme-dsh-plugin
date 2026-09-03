@@ -18,6 +18,15 @@ import type {
   StoredImageAttachment,
 } from '@deepseek-ai/dsh-attachment'
 import type { AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
+import {
+  assertImageRequestCanBePrepared,
+  assertPreparedImageRequestBytes,
+  effectiveImageRules,
+  imagePreparationVariant,
+  prepareManagedImage,
+} from './image-preparer.js'
+import type { EffectiveImageRules, PreparedManagedImage } from './image-preparer.js'
+import { createMultipartUploadBody } from './multipart-upload.js'
 
 const STREAM_IDLE_TIMEOUT_MS = 300_000
 const MAX_SSE_EVENT_CHARS = 4 << 20
@@ -47,18 +56,16 @@ export interface ManagedImageCapability {
   maximumWidth?: number
   maximumHeight?: number
   maximumAspectRatio?: number
-  providerMaxPixels?: number
   countDimensionLimits: ReadonlyArray<{
     minimumImages: number
     maximumWidth: number
     maximumHeight: number
   }>
-  evidence: {
-    providerReferenceUrl: string
-    verifiedOn: string
-    providerDocumentedFields: readonly string[]
-    platformGuardrailFields: readonly string[]
-  }
+  mediaTypeDimensionLimits: ReadonlyArray<{
+    mediaType: string
+    maximumLongEdge: number
+    maximumShortEdge: number
+  }>
 }
 
 export interface ManagedModelCapability {
@@ -83,6 +90,7 @@ export interface ManagedAiTransportOptions {
 interface CachedInputAsset {
   assetRef: string
   expiresAt: number
+  sizeBytes: number
 }
 
 interface InFlightInputAsset {
@@ -313,28 +321,6 @@ async function parseHttpError(response: Response): Promise<LlmError> {
   })
 }
 
-function assertAttachmentWithinCapability(
-  attachment: ImageAttachmentRef,
-  capability: ManagedImageCapability,
-): void {
-  const pixels = attachment.width * attachment.height
-  if (!capability.allowedMediaTypes.includes(attachment.mediaType)
-    || !Number.isSafeInteger(attachment.bytes) || attachment.bytes <= 0
-    || !Number.isSafeInteger(attachment.width) || attachment.width <= 0
-    || !Number.isSafeInteger(attachment.height) || attachment.height <= 0
-    || attachment.bytes > capability.maximumBytesPerImage
-    || !Number.isSafeInteger(pixels) || pixels <= 0
-    || (capability.maximumPixels !== undefined && pixels > capability.maximumPixels)
-    || (capability.minimumWidth !== undefined && attachment.width < capability.minimumWidth)
-    || (capability.minimumHeight !== undefined && attachment.height < capability.minimumHeight)
-    || (capability.maximumWidth !== undefined && attachment.width > capability.maximumWidth)
-    || (capability.maximumHeight !== undefined && attachment.height > capability.maximumHeight)
-    || (capability.maximumAspectRatio !== undefined
-      && Math.max(attachment.width, attachment.height) > Math.min(attachment.width, attachment.height) * capability.maximumAspectRatio)) {
-    throw new LlmError('图片不符合当前 Arkme 模型的输入限制', 'INVALID_REQUEST')
-  }
-}
-
 function requestImageAttachments(options: GenerateOptions): ImageAttachmentRef[] {
   const result: ImageAttachmentRef[] = []
   for (const message of options.messages) {
@@ -346,12 +332,22 @@ function requestImageAttachments(options: GenerateOptions): ImageAttachmentRef[]
   return result
 }
 
-function inputAssetCacheKey(bearer: string, attachment: ImageAttachmentRef): string {
+function inputAssetOwnerAttachmentScope(bearer: string, attachment: ImageAttachmentRef): string {
   // A plugin process can survive logout/login. Scope every local asset handle
   // to an irreversible credential fingerprint so one account never reuses
   // another account's opaque asset_ref.
   const ownerScope = createHash('sha256').update(bearer).digest('hex').slice(0, 24)
   return `${ownerScope}\u0000${String(attachment.attachmentId)}`
+}
+
+function inputAssetCacheKey(
+  bearer: string,
+  attachment: ImageAttachmentRef,
+  model: string,
+  contractVersion: string,
+  rules: EffectiveImageRules,
+): string {
+  return `${inputAssetOwnerAttachmentScope(bearer, attachment)}\u0000${model}\u0000${contractVersion}\u0000${imagePreparationVariant(rules)}`
 }
 
 function assertImageRequestWithinCapability(
@@ -366,27 +362,7 @@ function assertImageRequestWithinCapability(
   if (attachments.length > image.maximumImages) {
     throw new LlmError('图片数量超过当前 Arkme 模型的输入上限', 'INVALID_REQUEST')
   }
-  let maximumWidth = image.maximumWidth
-  let maximumHeight = image.maximumHeight
-  for (const limit of image.countDimensionLimits) {
-    if (attachments.length >= limit.minimumImages) {
-      maximumWidth = limit.maximumWidth
-      maximumHeight = limit.maximumHeight
-    }
-  }
-  let totalBytes = 0
-  for (const attachment of attachments) {
-    assertAttachmentWithinCapability(attachment, image)
-    if ((maximumWidth !== undefined && attachment.width > maximumWidth)
-      || (maximumHeight !== undefined && attachment.height > maximumHeight)) {
-      throw new LlmError('当前图片数量下的图片边长超过模型上限', 'INVALID_REQUEST')
-    }
-    totalBytes += attachment.bytes
-    if (!Number.isSafeInteger(totalBytes)) throw new LlmError('图片总大小无效', 'INVALID_REQUEST')
-  }
-  if (image.maximumTotalBytes !== undefined && totalBytes > image.maximumTotalBytes) {
-    throw new LlmError('图片总大小超过当前 Arkme 模型的输入上限', 'INVALID_REQUEST')
-  }
+  assertImageRequestCanBePrepared(attachments, image)
 }
 
 function assertStoredAttachment(expected: ImageAttachmentRef, stored: StoredImageAttachment): void {
@@ -819,6 +795,7 @@ export class ManagedAiTransport {
       const bearer = await this.options.resolveBearer()
       const imageCapability = capability.image
       for (let dispatchAttempt = 0; ; dispatchAttempt++) {
+        let resolvedImageBytes = 0
         const body = await serializeRequest(request, async (attachment) => {
           if (!capability.inputModalities.includes('image') || imageCapability === undefined) {
             throw new LlmError('当前 Arkme 模型不支持图片输入', 'UNSUPPORTED_CONTENT')
@@ -828,11 +805,19 @@ export class ManagedAiTransport {
             capability.contractVersion,
             attachment,
             imageCapability,
+            effectiveImageRules(imageCapability, imageAttachments.length, attachment.mediaType),
             bearer,
             signal,
           )
+          resolvedImageBytes += uploaded.sizeBytes
+          if (!Number.isSafeInteger(resolvedImageBytes)) {
+            throw new LlmError('处理后的图片总大小无效', 'INVALID_REQUEST')
+          }
           return uploaded.assetRef
         }, signal)
+        if (imageAttachments.length > 0 && imageCapability !== undefined) {
+          assertPreparedImageRequestBytes(resolvedImageBytes, imageCapability)
+        }
         if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
         const response = await this.options.fetchImpl(`${this.options.baseUrl}/chat/completions`, {
           method: 'POST',
@@ -878,19 +863,20 @@ export class ManagedAiTransport {
     contractVersion: string,
     attachment: ImageAttachmentRef,
     capability: ManagedImageCapability,
+    rules: EffectiveImageRules,
     bearer: string,
     signal: AbortSignal,
   ): Promise<CachedInputAsset> {
-    const key = inputAssetCacheKey(bearer, attachment)
+    const key = inputAssetCacheKey(bearer, attachment, model, contractVersion, rules)
     const cached = this.assetCache.get(key)
     if (cached !== undefined && cached.expiresAt - ASSET_EXPIRY_SAFETY_MS > Date.now()) return cached
     if (cached !== undefined) this.assetCache.delete(key)
-    const uploadKey = `${key}\u0000${model}\u0000${contractVersion}`
+    const uploadKey = key
     let inFlight = this.assetUploads.get(uploadKey)
     if (inFlight === undefined) {
       const controller = new AbortController()
       let entry!: InFlightInputAsset
-      const promise = this.uploadInputAsset(model, contractVersion, attachment, capability, bearer, controller.signal)
+      const promise = this.uploadInputAsset(model, contractVersion, attachment, capability, rules, bearer, controller.signal)
         .then((asset) => {
           this.rememberInputAsset(key, asset)
           return asset
@@ -915,7 +901,12 @@ export class ManagedAiTransport {
   }
 
   private forgetInputAssets(attachments: readonly ImageAttachmentRef[], bearer: string): void {
-    for (const attachment of attachments) this.assetCache.delete(inputAssetCacheKey(bearer, attachment))
+    for (const attachment of attachments) {
+      const prefix = `${inputAssetOwnerAttachmentScope(bearer, attachment)}\u0000`
+      for (const key of this.assetCache.keys()) {
+        if (key.startsWith(prefix)) this.assetCache.delete(key)
+      }
+    }
   }
 
   private async uploadInputAsset(
@@ -923,6 +914,7 @@ export class ManagedAiTransport {
     contractVersion: string,
     attachment: ImageAttachmentRef,
     capability: ManagedImageCapability,
+    rules: EffectiveImageRules,
     bearer: string,
     signal: AbortSignal,
   ): Promise<CachedInputAsset> {
@@ -935,87 +927,94 @@ export class ManagedAiTransport {
       throw attachmentReadError(error, signal)
     }
     assertStoredAttachment(attachment, stored)
-    assertAttachmentWithinCapability(stored.ref, capability)
-    const sha256 = createHash('sha256').update(stored.data).digest('hex')
-    const ownerScope = createHash('sha256').update(bearer).digest('hex').slice(0, 24)
-    const attemptIdentity = `${ownerScope}\u0000${String(attachment.attachmentId)}\u0000${model}\u0000${contractVersion}`
-    const now = Date.now()
+    const image = await prepareManagedImage(stored, capability, rules, signal)
+    const sha256 = createHash('sha256').update(image.data).digest('hex')
+    const attemptIdentity = inputAssetCacheKey(bearer, attachment, model, contractVersion, rules)
     const retainedAttempt = this.assetAttemptKeys.get(attemptIdentity)
-    if (retainedAttempt !== undefined && retainedAttempt.expiresAt <= now) {
-      this.assetAttemptKeys.delete(attemptIdentity)
-    }
-    let idempotencyKey = retainedAttempt !== undefined && retainedAttempt.expiresAt > now
-      ? retainedAttempt.idempotencyKey
-      : `dsh-${sha256.slice(0, 24)}-${randomUUID()}`
-    if (retainedAttempt === undefined || retainedAttempt.expiresAt <= now) {
-      this.rememberInputAssetAttempt(attemptIdentity, idempotencyKey, now + INPUT_ASSET_ATTEMPT_RECOVERY_RETENTION_MS)
-    }
-    let prepared: PreparedUpload
-    for (let prepareAttempt = 0; ; prepareAttempt++) {
+
+    for (let generationAttempt = 0; generationAttempt < 2; generationAttempt++) {
+      const now = Date.now()
+      if (retainedAttempt !== undefined && retainedAttempt.expiresAt <= now) {
+        this.assetAttemptKeys.delete(attemptIdentity)
+      }
+      let idempotencyKey = generationAttempt === 0 && retainedAttempt !== undefined && retainedAttempt.expiresAt > now
+        ? retainedAttempt.idempotencyKey
+        : `dsh-${sha256.slice(0, 24)}-${randomUUID()}`
+      if (generationAttempt > 0 || retainedAttempt === undefined || retainedAttempt.expiresAt <= now) {
+        this.rememberInputAssetAttempt(attemptIdentity, idempotencyKey, now + INPUT_ASSET_ATTEMPT_RECOVERY_RETENTION_MS)
+      }
+
+      let prepared: PreparedUpload
+      for (let prepareAttempt = 0; ; prepareAttempt++) {
+        try {
+          prepared = await this.prepareUpload(model, contractVersion, image, sha256, idempotencyKey, bearer, signal)
+          break
+        } catch (error) {
+          if (error instanceof ManagedAiProtocolError
+            && error.applicationCode === 'input_asset_upload_conflict'
+            && prepareAttempt === 0) {
+            idempotencyKey = `dsh-${sha256.slice(0, 24)}-${randomUUID()}`
+            this.rememberInputAssetAttempt(
+              attemptIdentity,
+              idempotencyKey,
+              Date.now() + INPUT_ASSET_ATTEMPT_RECOVERY_RETENTION_MS,
+            )
+            continue
+          }
+          if (error instanceof ManagedAiProtocolError && error.code === 'INVALID_REQUEST') {
+            this.assetAttemptKeys.delete(attemptIdentity)
+          }
+          throw error
+        }
+      }
+      if (prepared.status === 'completed') {
+        this.assetAttemptKeys.delete(attemptIdentity)
+        return { assetRef: prepared.assetRef, expiresAt: prepared.assetExpiresAt, sizeBytes: image.ref.bytes }
+      }
+      this.rememberInputAssetAttempt(attemptIdentity, idempotencyKey, prepared.uploadExpiresAt)
+      if (prepared.upload === undefined) throw new LlmError('Arkme AI 未返回上传参数', 'MALFORMED_RESPONSE')
       try {
-        prepared = await this.prepareUpload(model, contractVersion, stored, sha256, idempotencyKey, bearer, signal)
-        break
+        const multipart = createMultipartUploadBody(
+          prepared.upload.fields,
+          prepared.upload.fileField,
+          image.ref.mediaType,
+          image.data,
+        )
+        const response = await this.options.fetchImpl(prepared.upload.url, {
+          method: prepared.upload.method,
+          headers: {
+            'Content-Type': multipart.contentType,
+            'Content-Length': String(multipart.contentLength),
+          },
+          body: multipart.body as unknown as BodyInit,
+          // Node fetch requires duplex for a streaming request body. This is a
+          // host-only transport and never crosses the browser boundary.
+          duplex: 'half',
+          signal,
+        } as RequestInit & { duplex: 'half' })
+        if (response.body !== null) await response.body.cancel()
+        if (!response.ok && response.status !== 409) {
+          throw new LlmError(`图片上传失败 (HTTP ${response.status})`, 'TRANSPORT')
+        }
+        const completed = await this.completeUpload(prepared.uploadUid, image.ref.bytes, bearer, signal)
+        this.assetAttemptKeys.delete(attemptIdentity)
+        return completed
       } catch (error) {
-        // The server reports this code only when the retained idempotency
-        // generation is terminal (most commonly its 15-minute session expired).
-        // Rotate once inside the same DSH request so a recoverable upload does
-        // not surface as a user-visible model failure.
         if (error instanceof ManagedAiProtocolError
-          && error.applicationCode === 'input_asset_upload_conflict'
-          && prepareAttempt === 0) {
-          idempotencyKey = `dsh-${sha256.slice(0, 24)}-${randomUUID()}`
-          this.rememberInputAssetAttempt(
-            attemptIdentity,
-            idempotencyKey,
-            Date.now() + INPUT_ASSET_ATTEMPT_RECOVERY_RETENTION_MS,
-          )
+          && error.applicationCode === 'input_asset_upload_expired'
+          && generationAttempt === 0) {
+          await this.abortUploadBestEffort(prepared.uploadUid, bearer)
+          this.assetAttemptKeys.delete(attemptIdentity)
           continue
         }
-        // A transport/server/malformed-response failure may have committed
-        // prepare before its response was lost, so retain the attempt key. An
-        // explicit application rejection proves this generation cannot resume.
-        if (error instanceof ManagedAiProtocolError && error.code === 'INVALID_REQUEST') {
+        if (signal.aborted) void this.abortUploadBestEffort(prepared.uploadUid, bearer)
+        if (error instanceof LlmError && error.code === 'INVALID_REQUEST') {
           this.assetAttemptKeys.delete(attemptIdentity)
         }
         throw error
       }
     }
-    if (prepared.status === 'completed') {
-      this.assetAttemptKeys.delete(attemptIdentity)
-      return { assetRef: prepared.assetRef, expiresAt: prepared.assetExpiresAt }
-    }
-    this.rememberInputAssetAttempt(attemptIdentity, idempotencyKey, prepared.uploadExpiresAt)
-    if (prepared.upload === undefined) throw new LlmError('Arkme AI 未返回上传参数', 'MALFORMED_RESPONSE')
-    try {
-      const uploadBody = new FormData()
-      for (const [name, value] of Object.entries(prepared.upload.fields)) uploadBody.append(name, value)
-      uploadBody.append(
-        prepared.upload.fileField,
-        new Blob([stored.data as BlobPart], { type: stored.ref.mediaType }),
-        'asset',
-      )
-      const response = await this.options.fetchImpl(prepared.upload.url, {
-        method: prepared.upload.method,
-        body: uploadBody,
-        signal,
-      })
-      if (response.body !== null) await response.body.cancel()
-      if (!response.ok && response.status !== 409) {
-        throw new LlmError(`图片上传失败 (HTTP ${response.status})`, 'TRANSPORT')
-      }
-      const completed = await this.completeUpload(prepared.uploadUid, bearer, signal)
-      this.assetAttemptKeys.delete(attemptIdentity)
-      return completed
-    } catch (error) {
-      // POST and complete are both ambiguous across cancellation or transport
-      // loss. Keep the generation so the next prepare can issue a fresh grant or
-      // return its already-completed asset. A server INVALID_REQUEST is the
-      // only proof that this upload generation is terminal.
-      if (error instanceof LlmError && error.code === 'INVALID_REQUEST') {
-        this.assetAttemptKeys.delete(attemptIdentity)
-      }
-      throw error
-    }
+    throw new LlmError('Arkme AI 图片上传已过期，请重试', 'INVALID_REQUEST')
   }
 
   private rememberInputAsset(key: string, asset: CachedInputAsset): void {
@@ -1048,7 +1047,7 @@ export class ManagedAiTransport {
   private async prepareUpload(
     model: string,
     contractVersion: string,
-    stored: StoredImageAttachment,
+    image: PreparedManagedImage,
     sha256: string,
     idempotencyKey: string,
     bearer: string,
@@ -1061,10 +1060,10 @@ export class ManagedAiTransport {
       asset: {
         kind: 'image',
         sha256,
-        media_type: stored.ref.mediaType,
-        size_bytes: stored.ref.bytes,
-        width: stored.ref.width,
-        height: stored.ref.height,
+        media_type: image.ref.mediaType,
+        size_bytes: image.ref.bytes,
+        width: image.ref.width,
+        height: image.ref.height,
       },
     }, bearer, signal)
     const source = asRecord(data)
@@ -1097,6 +1096,7 @@ export class ManagedAiTransport {
 
   private async completeUpload(
     uploadUid: string,
+    sizeBytes: number,
     bearer: string,
     signal: AbortSignal,
   ): Promise<CachedInputAsset> {
@@ -1110,6 +1110,18 @@ export class ManagedAiTransport {
     return {
       assetRef: requiredString(source, 'asset_ref'),
       expiresAt: requiredPositiveInteger(source, 'expires_at'),
+      sizeBytes,
+    }
+  }
+
+  private async abortUploadBestEffort(uploadUid: string, bearer: string): Promise<void> {
+    try {
+      await this.postEnvelope('/input-assets/uploads/abort', {
+        upload_uid: uploadUid,
+      }, bearer, AbortSignal.timeout(5_000))
+    } catch {
+      // The server cleanup worker remains authoritative when this detached
+      // cancellation cleanup cannot reach the control plane.
     }
   }
 
