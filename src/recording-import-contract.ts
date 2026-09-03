@@ -2,11 +2,98 @@ import {
   MAX_RECORDING_IMPORT_BYTES,
   MAX_RECORDING_IMPORT_DURATION_MILLIS,
   type PublicRecordingImportJob,
+  type PublicRecordingImportCurrentItem,
+  type PublicRecordingImportCurrentSnapshot,
+  type PublicRecordingImportOwnerTask,
+  type PublicRecordingImportHistoryItem,
+  type PublicRecordingImportHistoryPage,
+  type PublicRecordingImportProcessingTiming,
+  type RecordingImportDisplayStatus,
   type RecordingImportPhase,
+  type RecordingImportTimingState,
 } from './recording-import-shared.js'
 
 export { MAX_RECORDING_IMPORT_BYTES, MAX_RECORDING_IMPORT_DURATION_MILLIS }
-export type { PublicRecordingImportJob, RecordingImportPhase }
+export type {
+  PublicRecordingImportJob,
+  PublicRecordingImportCurrentItem,
+  PublicRecordingImportCurrentSnapshot,
+  PublicRecordingImportOwnerTask,
+  PublicRecordingImportHistoryItem,
+  PublicRecordingImportHistoryPage,
+  PublicRecordingImportProcessingTiming,
+  RecordingImportDisplayStatus,
+  RecordingImportPhase,
+}
+
+export interface RecordingImportOwnerSession {
+  sessionId: string
+  ownership: 'self' | 'other'
+  fileName: string
+  fileSize: number
+  parsedSize: number
+  durationMillis: number
+  startAtMillis: number
+  endAtMillis: number
+  createdAtMillis: number
+  updatedAtMillis: number
+  hasFinishedUpload: boolean
+}
+
+export interface RecordingImportOwnerProgress {
+  displayStatus?: Extract<RecordingImportDisplayStatus,
+    'speaker-waiting' | 'speaker-recognizing' | 'transcript-waiting' | 'transcribing' | 'completed' | 'partial' | 'failed' | 'unavailable'>
+  timingState: RecordingImportTimingState
+  processingTiming?: PublicRecordingImportProcessingTiming
+}
+
+export interface RecordingImportOwnerTaskSnapshot {
+  session: RecordingImportOwnerSession
+  processingCompleted: boolean
+  progress?: RecordingImportOwnerProgress
+}
+
+export interface RecordingImportOwnerGateway {
+  findExistingFileNames(input: {
+    viewerUserId: number
+    fileNames: readonly string[]
+    signal?: AbortSignal
+  }): Promise<string[]>
+  listOwnerTasks(input: {
+    viewerUserId: number
+    scope: 'active' | 'completed'
+    toMillis: number
+    limit: number
+    offset: number
+    signal?: AbortSignal
+  }): Promise<{
+    tasks: RecordingImportOwnerTaskSnapshot[]
+    total?: number
+    hasMore: boolean
+  }>
+  loadOwnerSession(input: {
+    viewerUserId: number
+    sessionId: string
+    signal?: AbortSignal
+  }): Promise<RecordingImportOwnerSession>
+  updateOwnerSessionStart(input: {
+    viewerUserId: number
+    sessionId: string
+    startAtMillis: number
+    signal?: AbortSignal
+  }): Promise<void>
+  updateOwnerSessionOwnership(input: {
+    viewerUserId: number
+    sessionId: string
+    belongUserId: number
+    signal?: AbortSignal
+  }): Promise<void>
+  deleteOwnerSession(input: {
+    viewerUserId: number
+    sessionId: string
+    signal?: AbortSignal
+  }): Promise<void>
+}
 
 export type RecordingImportFileKind = 'wav' | 'mp3' | 'm4a'
 
@@ -160,7 +247,20 @@ export function toPublicRecordingImportJob(
   importRef: string,
 ): PublicRecordingImportJob {
   const progress = job.fileSize <= 0 ? 0 : Math.min(1, Math.max(0, job.uploadedBytes / job.fileSize))
+  const status = job.phase === 'prepared' ? 'preparing'
+    : job.phase === 'uploading' ? 'uploading'
+      : job.phase === 'finalizing' ? 'processing'
+        : job.phase === 'accepted' ? 'accepted'
+        : job.phase === 'failed' ? 'failed'
+          : 'cancelled'
+  const statusDetail = job.phase === 'prepared' ? '准备中'
+    : job.phase === 'uploading' ? '上传中'
+      : job.phase === 'finalizing' ? '处理中'
+        : job.phase === 'accepted' ? 'Audio 已接收'
+        : job.phase === 'failed' ? (job.errorMessage?.trim() || '导入失败')
+          : '已取消'
   return {
+    kind: 'local',
     importRef,
     revision: job.revision,
     phase: job.phase,
@@ -168,7 +268,11 @@ export function toPublicRecordingImportJob(
     fileName: job.fileName,
     fileSize: job.fileSize,
     durationMillis: job.durationMillis,
+    startAtMillis: job.startAtMillis,
+    endAtMillis: job.startAtMillis + job.durationMillis,
     progress,
+    status,
+    statusDetail,
     createdAtMillis: job.createdAtMillis,
     updatedAtMillis: job.updatedAtMillis,
     ...(job.errorCode === undefined ? {} : { errorCode: job.errorCode }),

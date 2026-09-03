@@ -61,6 +61,26 @@ export class DshRemoteHttpControlPlane implements DshRemoteControlPlane {
     return await this.post(`${BASE}/session-turns/complete`, input, signal)
   }
 
+  async turnObjectUploadCapabilities(signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.post(`${BASE}/session-turn-objects/capabilities`, {}, signal)
+  }
+
+  async knownHistorySessions(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.post(`${BASE}/session-turn-objects/known-sessions`, input, signal)
+  }
+
+  async prepareSessionTurnUpload(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.post(`${BASE}/session-turns/prepare-upload`, input, signal)
+  }
+
+  async commitSessionTurnUpload(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.post(`${BASE}/session-turns/commit-upload`, input, signal)
+  }
+
+  async completeSessionTurnObjectHistory(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.post(`${BASE}/session-turn-objects/complete`, input, signal)
+  }
+
 }
 
 export function mapDshRemoteControlPlaneError(error: unknown): DshRemoteError {
@@ -80,7 +100,7 @@ export function mapDshRemoteControlPlaneError(error: unknown): DshRemoteError {
     error instanceof Error ? error.message : '远控控制面请求失败',
     ['REMOTE_NETWORK_UNAVAILABLE', 'REMOTE_TRANSPORT_FAILED', 'RUNTIME_OFFLINE',
       'HOST_CHANNEL_NOT_READY', 'HOST_GENERATION_STALE', 'REPLAY_GAP',
-      'REMOTE_REALTIME_UNAVAILABLE'].includes(mappedCode),
+      'REMOTE_REALTIME_UNAVAILABLE', 'REMOTE_STORAGE_FAILED'].includes(mappedCode),
     {}, { cause: error },
   )
 }

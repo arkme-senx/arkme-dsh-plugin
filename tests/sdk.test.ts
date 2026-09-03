@@ -598,6 +598,7 @@ describe('Arkme SDK', () => {
               messageReadReceipts: true,
               messageReport: true,
               userBanManagement: true,
+              groupOwnerGovernance: true,
               extensionManagement: true,
               extensionIcons: true,
             },
@@ -644,7 +645,16 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.capabilities()).resolves.toMatchObject({
       contractVersion: 1,
-      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true, messageReadReceipts: true, messageReport: true, userBanManagement: true, accountSettings: true },
+      features: {
+        outgoingCall: true,
+        extensionManagement: true,
+        extensionIcons: true,
+        messageReadReceipts: true,
+        messageReport: true,
+        userBanManagement: true,
+        groupOwnerGovernance: true,
+        accountSettings: true,
+      },
       limits: { maxMessageReadReceiptItems: 50 },
     })
     await expect(sdk.search('复盘', { limit: 5, syncAll: true })).resolves.toMatchObject({ revision: 4 })
@@ -876,6 +886,43 @@ describe('Arkme SDK', () => {
       { operation: 'group.members.add', params: { sourceRef: 'group-ref', candidateRefs: ['candidate-ref'] } },
       { operation: 'group.bots', params: { sourceRef: 'group-ref' } },
       { operation: 'group.bot.add', params: { sourceRef: 'group-ref', botRef: 'bot-ref' } },
+    ])
+  })
+
+  it('exposes opaque group moderation operations without raw identities', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'source.message-withdraw') return success({
+          messageWithdrawalRef: request.params?.messageWithdrawalRef,
+          timelineItemKey: 'timeline-item-key', withdrawnAtMillis: 123, alreadyWithdrawn: false,
+        })
+        if (request.operation === 'group.member-remove') return success({
+          sourceRef: request.params?.sourceRef, memberRef: request.params?.memberRef,
+          status: 'removed', joinRestricted: request.params?.preventRejoin,
+        })
+        if (request.operation === 'group.join-restrictions') return success({
+          sourceRef: request.params?.sourceRef, items: [], nextCursor: 'next-cursor',
+        })
+        if (request.operation === 'group.join-restriction.set') return success({
+          sourceRef: request.params?.sourceRef, memberRef: request.params?.memberRef,
+          restricted: request.params?.restricted,
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.withdrawGroupMessage(' withdrawal-ref ')).resolves.toMatchObject({ timelineItemKey: 'timeline-item-key' })
+    await expect(sdk.removeGroupMember(' group-ref ', ' member-ref ', { preventRejoin: true })).resolves.toMatchObject({ joinRestricted: true })
+    await expect(sdk.listGroupJoinRestrictions(' group-ref ', { limit: 20 })).resolves.toMatchObject({ nextCursor: 'next-cursor' })
+    await expect(sdk.setGroupJoinRestriction(' group-ref ', ' member-ref ', false)).resolves.toMatchObject({ restricted: false })
+    expect(calls).toEqual([
+      { operation: 'source.message-withdraw', params: { messageWithdrawalRef: 'withdrawal-ref' } },
+      { operation: 'group.member-remove', params: { sourceRef: 'group-ref', memberRef: 'member-ref', preventRejoin: true } },
+      { operation: 'group.join-restrictions', params: { sourceRef: 'group-ref', limit: 20 } },
+      { operation: 'group.join-restriction.set', params: { sourceRef: 'group-ref', memberRef: 'member-ref', restricted: false } },
     ])
   })
 

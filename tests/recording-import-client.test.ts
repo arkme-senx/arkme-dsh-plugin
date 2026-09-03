@@ -9,6 +9,7 @@ import {
   recordingImportLocalInputValue,
   recordingImportStartFromFileName,
 } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
+import { desktopRecorderImaAdpcmMonoWav } from './recording-import-ima-adpcm-fixture.js'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -61,6 +62,25 @@ describe('recording import client gateway', () => {
       ok: true,
       format: 'M4A',
       durationMillis: 7_727_000,
+    })
+  })
+
+  it('accepts a desktop IMA ADPCM WAV before upload', async () => {
+    const file = new File([desktopRecorderImaAdpcmMonoWav()], 'R20260826-014759.WAV', { type: 'audio/wav' })
+
+    await expect(inspectArkmeRecordingSelection(file)).resolves.toEqual({
+      ok: true,
+      format: 'WAV',
+      durationMillis: 1_010,
+    })
+  })
+
+  it('does not let IMA ADPCM support bypass the declared file format check', async () => {
+    const disguised = new File([desktopRecorderImaAdpcmMonoWav()], 'disguised.mp3', { type: 'audio/mpeg' })
+
+    await expect(inspectArkmeRecordingSelection(disguised)).resolves.toEqual({
+      ok: false,
+      message: '录音格式与文件内容不一致',
     })
   })
 

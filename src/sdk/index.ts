@@ -37,6 +37,9 @@ import type {
   ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddResult,
+  ArkmeGroupMemberRemoveResult,
+  ArkmeGroupJoinRestrictionMutationResult,
+  ArkmeGroupJoinRestrictionPage,
   ArkmeGroupAiPolishMutationResult,
   ArkmeGroupAiPolishRuleCandidate,
   ArkmeGroupAiPolishSnapshot,
@@ -54,6 +57,7 @@ import type {
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmeMessageReportResult,
+  ArkmeMessageWithdrawalResult,
   ArkmeMessageReportType,
   ArkmeMessageCopyLinkExtendResult,
   ArkmeMessageCopyLinkResult,
@@ -178,6 +182,9 @@ export type {
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddItemResult,
   ArkmeGroupMemberAddResult,
+  ArkmeGroupMemberRemoveResult,
+  ArkmeGroupJoinRestrictionMutationResult,
+  ArkmeGroupJoinRestrictionPage,
   ArkmeGroupMemberAddStatus,
   ArkmeGroupAiPolishMutationResult,
   ArkmeGroupAiPolishRule,
@@ -205,6 +212,7 @@ export type {
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmeMessageReportResult,
+  ArkmeMessageWithdrawalResult,
   ArkmeMessageReportType,
   ArkmeMessageCopyLinkExtendResult,
   ArkmeMessageCopyLinkResult,
@@ -1331,6 +1339,45 @@ export class ArkmeSdk {
     return await this.call<ArkmeGroupMemberAddResult>('group.members.add', { sourceRef, candidateRefs: refs }, signal)
   }
 
+  async removeGroupMember(
+    sourceRef: string,
+    memberRef: string,
+    options: { preventRejoin?: boolean; signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupMemberRemoveResult> {
+    if (sourceRef.trim() === '' || memberRef.trim() === '') {
+      throw new TypeError('Arkme group source and member references must not be empty')
+    }
+    return await this.call<ArkmeGroupMemberRemoveResult>('group.member-remove', {
+      sourceRef: sourceRef.trim(), memberRef: memberRef.trim(), preventRejoin: options.preventRejoin === true,
+    }, options.signal)
+  }
+
+  async listGroupJoinRestrictions(
+    sourceRef: string,
+    options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupJoinRestrictionPage> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
+    return await this.call<ArkmeGroupJoinRestrictionPage>('group.join-restrictions', {
+      sourceRef: sourceRef.trim(),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor.trim() }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    }, options.signal)
+  }
+
+  async setGroupJoinRestriction(
+    sourceRef: string,
+    memberRef: string,
+    restricted: boolean,
+    signal?: AbortSignal,
+  ): Promise<ArkmeGroupJoinRestrictionMutationResult> {
+    if (sourceRef.trim() === '' || memberRef.trim() === '' || typeof restricted !== 'boolean') {
+      throw new TypeError('Arkme group source, member reference, and restriction are required')
+    }
+    return await this.call<ArkmeGroupJoinRestrictionMutationResult>('group.join-restriction.set', {
+      sourceRef: sourceRef.trim(), memberRef: memberRef.trim(), restricted,
+    }, signal)
+  }
+
   async listGroupBots(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupBotCandidateList> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
     return await this.call<ArkmeGroupBotCandidateList>('group.bots', { sourceRef }, signal)
@@ -1483,6 +1530,19 @@ export class ArkmeSdk {
       ...(reason === '' ? {} : { reason }),
       requestUid,
     }, options.signal)
+  }
+
+  async withdrawGroupMessage(
+    messageWithdrawalRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageWithdrawalResult> {
+    const normalized = messageWithdrawalRef.trim()
+    if (normalized === '' || normalized.length > 4_096) {
+      throw new TypeError('Arkme message withdrawal reference must not be empty or exceed 4096 characters')
+    }
+    return await this.call<ArkmeMessageWithdrawalResult>('source.message-withdraw', {
+      messageWithdrawalRef: normalized,
+    }, signal)
   }
 
   async resolveMessageCopyLink(

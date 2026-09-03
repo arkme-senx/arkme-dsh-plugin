@@ -19,6 +19,14 @@ describe('Backend login-only DSH remote control plane', () => {
     await plane.completeSessionTurnHistory({
       runtime_ref: 'runtime-01', host_generation: 7, session_ref: 'session-01', through_seq: 8,
     })
+    await plane.turnObjectUploadCapabilities()
+    await plane.knownHistorySessions({ session_refs: ['session-01'] })
+    await plane.prepareSessionTurnUpload({ runtime_ref: 'runtime-01', session_ref: 'session-01' })
+    await plane.commitSessionTurnUpload({ upload_id: 'upload-01', content_sha256: 'abc' })
+    await plane.completeSessionTurnObjectHistory({
+      runtime_ref: 'runtime-01', host_generation: 7, session_ref: 'session-01', through_seq: 8,
+      committed_turn_count: 1, last_committed_turn_ref: 'turn-1', last_committed_end_seq: 8,
+    })
     expect(post.mock.calls.map(call => call[0])).toEqual([
       '/api/v1/dsh-remote/desktops/register',
       '/api/v1/dsh-remote/desktops/desktop-01/runtimes/register',
@@ -30,6 +38,11 @@ describe('Backend login-only DSH remote control plane', () => {
       '/api/v1/dsh-remote/session-events/complete',
       '/api/v1/dsh-remote/session-turns/sync',
       '/api/v1/dsh-remote/session-turns/complete',
+      '/api/v1/dsh-remote/session-turn-objects/capabilities',
+      '/api/v1/dsh-remote/session-turn-objects/known-sessions',
+      '/api/v1/dsh-remote/session-turns/prepare-upload',
+      '/api/v1/dsh-remote/session-turns/commit-upload',
+      '/api/v1/dsh-remote/session-turn-objects/complete',
     ])
     expect(JSON.stringify(post.mock.calls)).not.toMatch(/pairing|binding|credential|grant/)
   })
@@ -45,5 +58,11 @@ describe('Backend login-only DSH remote control plane', () => {
     expect(mapDshRemoteControlPlaneError(new Error('unknown'))).toMatchObject({
       code: 'REMOTE_TRANSPORT_FAILED', retryable: true,
     })
+    expect(mapDshRemoteControlPlaneError(Object.assign(new Error('temporary head failure'), {
+      code: 'REMOTE_STORAGE_FAILED',
+    }))).toMatchObject({ code: 'REMOTE_STORAGE_FAILED', retryable: true })
+    expect(mapDshRemoteControlPlaneError(Object.assign(new Error('hash mismatch'), {
+      code: 'REMOTE_PROJECTION_CONFLICT',
+    }))).toMatchObject({ code: 'REMOTE_PROJECTION_CONFLICT', retryable: false })
   })
 })

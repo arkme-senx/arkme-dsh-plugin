@@ -1957,21 +1957,3 @@ body[data-ds-dark-theme] .arkme-detail-extension-input-shell {
   outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8);
   outline-offset: 2px;
 }
-
-.arkme-world-extension-activity:hover {
-  background: var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, 0.06)) !important;
-}
-.arkme-world-extension-activity:active {
-  background: var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, 0.10)) !important;
-}
-.arkme-world-extension-activity:focus-visible {
-  outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8);
-  outline-offset: 2px;
-}
-@media (max-width: 680px) {
-  .arkme-world-extension-activity {
-    grid-template-columns: 48px minmax(0, 1fr) !important;
-    gap: 11px !important;
-    padding: 13px !important;
-  }
-}

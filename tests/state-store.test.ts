@@ -88,6 +88,20 @@ describe('ArkmeStateStore', () => {
     await expect(reloaded.listAllRecordingImportJobs()).resolves.toHaveLength(1)
   })
 
+  it('removes only the exact account-scoped recording import job', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-remove-'))
+    const store = new ArkmeStateStore(root)
+    await store.putRecordingImportJob(10001, recordingJob())
+    await store.putRecordingImportJob(10001, recordingJob({ jobId: 'job-2' }))
+    await store.putRecordingImportJob(10002, recordingJob({ jobId: 'job-other', userId: 10002, belongUserId: 10002 }))
+
+    await store.removeRecordingImportJob(10001, 'job-1')
+
+    await expect(store.getRecordingImportJob(10001, 'job-1')).resolves.toBeUndefined()
+    await expect(store.getRecordingImportJob(10001, 'job-2')).resolves.toBeDefined()
+    await expect(store.getRecordingImportJob(10002, 'job-other')).resolves.toBeDefined()
+  })
+
   it('does not share mutable upload checkpoints across the state-store boundary', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-checkpoint-copy-'))
     const store = new ArkmeStateStore(root)
@@ -135,6 +149,19 @@ describe('ArkmeStateStore', () => {
     expect(await store.admitRecordingImportJob(10001, first, 20)).toMatchObject({ kind: 'inserted' })
     await expect(store.admitRecordingImportJob(10001, second, 20)).resolves.toEqual({ kind: 'duplicate-file-name' })
     await expect(store.listRecordingImportJobs(10001)).resolves.toHaveLength(1)
+  })
+
+  it('uses the desktop case-insensitive Audio owner file-name identity for admission', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-filename-case-dedupe-'))
+    const store = new ArkmeStateStore(root)
+    const first = recordingJob({ jobId: 'job-first', fileName: 'Meeting.WAV' })
+    const second = recordingJob({
+      jobId: 'job-second', fileName: 'meeting.wav', sourceHandle: '/private/second.upload',
+      fileSize: first.fileSize + 1, sha256: 'b'.repeat(64),
+    })
+
+    await expect(store.admitRecordingImportJob(10001, first, 20)).resolves.toMatchObject({ kind: 'inserted' })
+    await expect(store.admitRecordingImportJob(10001, second, 20)).resolves.toEqual({ kind: 'duplicate-file-name' })
   })
 
   it('does not let terminal local history replace the Audio owner duplicate decision', async () => {

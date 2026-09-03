@@ -8,6 +8,7 @@ import {
   type RecordingImportJob,
   type RecordingImportPhase,
 } from './recording-import-contract.js'
+import { recordingImportFileNameKey } from './recording-import-shared.js'
 import { securePrivateDirectory, securePrivateFile } from './private-filesystem.js'
 
 interface PersistedState {
@@ -292,7 +293,8 @@ export class ArkmeStateStore {
         admission = { kind: 'existing', job: cloneRecordingImportJob(existing) }
         return
       }
-      if (unresolved.some(candidate => candidate.fileName === job.fileName)) {
+      const fileNameKey = recordingImportFileNameKey(job.fileName)
+      if (unresolved.some(candidate => recordingImportFileNameKey(candidate.fileName) === fileNameKey)) {
         admission = { kind: 'duplicate-file-name' }
         return
       }
@@ -325,6 +327,16 @@ export class ArkmeStateStore {
       replaced = true
     })
     return replaced
+  }
+
+  async removeRecordingImportJob(userId: number, jobId: string): Promise<void> {
+    await this.update(state => {
+      const userKey = String(userId)
+      const jobs = state.recordingImportJobsByUser[userKey]
+      if (jobs === undefined) return
+      delete jobs[jobId]
+      if (Object.keys(jobs).length === 0) delete state.recordingImportJobsByUser[userKey]
+    })
   }
 
   async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void> {

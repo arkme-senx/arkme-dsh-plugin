@@ -193,4 +193,20 @@ describe('Realtime login-only remote transport wire', () => {
     expect(socket.readyState).toBe(3)
     expect(disconnected).toEqual([{ code: 'CONNECTION_REPLACED', retryable: true }])
   })
+
+  it('fails the physical connection when a logical subscription reports an unsolicited error', async () => {
+    const { socket, transport } = await connectedTransport()
+    const disconnected: Array<{ code?: string; retryable?: boolean }> = []
+    transport.subscribeDisconnect(error => {
+      disconnected.push(error instanceof DshRemoteError ? { code: error.code, retryable: error.retryable } : {})
+    })
+
+    socket.serverFrame({
+      type: 'error', channel_ref: target.runtimeRef,
+      code: 'REPLAY_GAP', message: 'live channel sequence gap detected', retryable: true,
+    })
+
+    expect(socket.readyState).toBe(3)
+    expect(disconnected).toEqual([{ code: 'REPLAY_GAP', retryable: true }])
+  })
 })

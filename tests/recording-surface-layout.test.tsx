@@ -6,6 +6,10 @@ import * as recordingSurface from '../src/client/ArkmeRecordingSurface.js'
 import type { ArkmeRecordingWorkbenchItem } from '../src/types.js'
 
 const { ArkmeRecordingSurface } = recordingSurface
+const recordingSurfaceElement = () => <ArkmeRecordingSurface
+  onOpenRecordingImport={() => {}}
+  recordingRefreshRevision={0}
+/>
 
 function styleMap(value: string): Map<string, string> {
   return new Map(value.split(';').filter(Boolean).map(rule => {
@@ -22,7 +26,7 @@ function matchStyle(markup: string, pattern: RegExp): Map<string, string> {
 
 describe('ArkmeRecordingSurface layout', () => {
   it('keeps the desktop workbench behavior while allowing the DSH layout to adapt', () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
     const root = matchStyle(markup, /^<div style="([^"]+)"/)
 
     expect(root.get('overflow')).toBe('hidden')
@@ -49,7 +53,7 @@ describe('ArkmeRecordingSurface layout', () => {
   })
 
   it('uses desktop-owned month and year menus instead of native selects that escape the host layer', async () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 
     expect(markup).toContain('aria-label="选择月份"')
@@ -62,7 +66,7 @@ describe('ArkmeRecordingSurface layout', () => {
   })
 
   it('keeps one responsive presentation without changing the recording business owner', () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
     expect(markup).toContain('data-arkme-recording-layout="wide"')
     expect(recordingSurface).toHaveProperty('recordingWorkbenchLayoutMode')
     expect(markup).toContain('grid-template-columns:repeat(7,minmax(0,1fr))')
@@ -71,11 +75,13 @@ describe('ArkmeRecordingSurface layout', () => {
   it('remounts the complete recording workbench when the authenticated account changes', async () => {
     const sidebarSource = await readFile(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
 
-    expect(sidebarSource).toContain("<ArkmeRecordingSurface key={`recordings:${auth?.status ?? 'unknown'}:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`} />")
+    expect(sidebarSource).toContain("key={`recordings:${auth?.status ?? 'unknown'}:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}")
+    expect(sidebarSource).toContain('onOpenRecordingImport={openRecordingImport}')
+    expect(sidebarSource).toContain("key={`recording-import:${authenticatedAccountKey ?? 'unknown'}`}")
   })
 
   it('uses the existing Arkme theme owner instead of hard-coded light-only colors', async () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
     const timelineSource = await readFile(new URL('../src/client/recordings/ArkmeRecordingTimeline.tsx', import.meta.url), 'utf8')
     const importSource = await readFile(new URL('../src/client/recordings/ArkmeRecordingImportDialog.tsx', import.meta.url), 'utf8')
@@ -112,7 +118,7 @@ describe('ArkmeRecordingSurface layout', () => {
   })
 
   it('keeps the page fixed and scrolls only the recording analysis pane', async () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
     const root = matchStyle(markup, /^<div style="([^"]+)"/)
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 
@@ -290,7 +296,7 @@ describe('ArkmeRecordingSurface layout', () => {
   })
 
   it('shows the desktop transcript import-and-transcribe skeleton while the day is loading', () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
 
     expect(markup).toContain('aria-label="转写加载中"')
     expect(markup).toContain('音频文字正在导入&amp;转写中')

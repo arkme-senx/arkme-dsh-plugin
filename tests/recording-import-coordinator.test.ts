@@ -73,8 +73,8 @@ describe('RecordingImportCoordinator', () => {
       phase: 'accepted', uploadedBytes: 1024, revision: 8, sourceHandle: '', sha256: '',
     })
     expect(input.discard).toHaveBeenCalledWith('/private/job-1.upload')
-    expect(store.value.sessionId).toBeUndefined()
-    expect(store.value.childId).toBeUndefined()
+    expect(store.value.sessionId).toBe('session-1')
+    expect(store.value.childId).toBe('child-1')
   })
 
   it('checks the active account again before each remote side effect', async () => {

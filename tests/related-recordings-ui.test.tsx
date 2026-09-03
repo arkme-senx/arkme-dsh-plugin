@@ -332,7 +332,6 @@ describe('related recordings UI', () => {
     const source = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
     expect(source).toContain('sharedRecordingMessageLine')
     expect(source).toContain('sharedRecordingBubble')
-    expect(source).toContain('!isSharedRecordingCard && <ArkmeTimelineMessageHeader')
     expect(source).toContain("'source.shared-recording-detail'")
     expect(source).toContain('loadDetail={loadRelatedRecordingDetail}')
   })

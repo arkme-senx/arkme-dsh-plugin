@@ -393,6 +393,9 @@ export function ArkmePersistentSidebar({
           arkmeContactsTab.activateAccount(contactsAccountKey)
           handoffControllerRef.current?.abort()
           handoffControllerRef.current = undefined
+          void callArkme('conversation.directory.visibility.set', {
+            entryKind: 'bot', entryRef: bot.botRef, hidden: false,
+          }).catch(() => undefined)
           arkmeUi.openBotConversation(bot)
         }}
       /> : <ArkmeNavigation

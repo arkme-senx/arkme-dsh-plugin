@@ -47,6 +47,43 @@ describe('NodeArkmeLinkDocumentReader', () => {
     expect(transport.read).not.toHaveBeenCalled()
   })
 
+  it('allows proxy fake-ip DNS answers while still passing a vetted snapshot to transport', async () => {
+    const addresses: LookupAddress[] = [
+      { address: '198.18.0.207', family: 4 },
+    ]
+    const resolver: ArkmeHostAddressResolver = { lookup: vi.fn(async () => addresses) }
+    const transport: ArkmePinnedDocumentTransport = {
+      read: vi.fn(async () => ({ status: 200, contentType: 'text/html', body: '<title>Proxy routed</title>' })),
+    }
+    const reader = new NodeArkmeLinkDocumentReader(resolver, transport)
+
+    await expect(reader.read(new URL('https://mp.weixin.qq.com/s/example'))).resolves.toMatchObject({
+      status: 200,
+      body: '<title>Proxy routed</title>',
+    })
+    expect(transport.read).toHaveBeenCalledWith(
+      new URL('https://mp.weixin.qq.com/s/example'),
+      addresses,
+      {},
+    )
+  })
+
+  it('rejects mixed proxy fake-ip/private DNS answers before opening a connection', async () => {
+    const resolver: ArkmeHostAddressResolver = {
+      lookup: vi.fn(async () => [
+        { address: '198.18.0.207', family: 4 },
+        { address: '127.0.0.1', family: 4 },
+      ]),
+    }
+    const transport: ArkmePinnedDocumentTransport = { read: vi.fn() }
+    const reader = new NodeArkmeLinkDocumentReader(resolver, transport)
+
+    await expect(reader.read(new URL('https://example.com'))).rejects.toMatchObject({
+      code: 'link-metadata-url-unsafe',
+    })
+    expect(transport.read).not.toHaveBeenCalled()
+  })
+
   it('passes only the vetted DNS snapshot to the pinned transport', async () => {
     const addresses: LookupAddress[] = [
       { address: '8.8.8.8', family: 4 },
@@ -89,6 +126,35 @@ describe('NodeArkmeHostAddressResolver', () => {
 
     await expect(pending).rejects.toThrow('deadline')
     expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('falls back to the system resolver when dedicated DNS resolution is refused', async () => {
+    const refused = Object.assign(new Error('dns refused'), { code: 'ECONNREFUSED' })
+    const systemAddresses: LookupAddress[] = [{ address: '198.18.0.207', family: 4 }]
+    const systemLookup = vi.fn(async () => systemAddresses)
+    const resolver = new NodeArkmeHostAddressResolver(() => ({
+      resolve4: vi.fn(async () => { throw refused }),
+      resolve6: vi.fn(async () => { throw refused }),
+      cancel: vi.fn(),
+    }), systemLookup)
+
+    await expect(resolver.lookup('mp.weixin.qq.com')).resolves.toEqual(systemAddresses)
+    expect(systemLookup).toHaveBeenCalledWith('mp.weixin.qq.com')
+  })
+
+  it('does not start a system resolver fallback after the caller aborts', async () => {
+    const refused = Object.assign(new Error('dns refused'), { code: 'ECONNREFUSED' })
+    const systemLookup = vi.fn(async () => [{ address: '198.18.0.207', family: 4 }])
+    const resolver = new NodeArkmeHostAddressResolver(() => ({
+      resolve4: vi.fn(async () => { throw refused }),
+      resolve6: vi.fn(async () => { throw refused }),
+      cancel: vi.fn(),
+    }), systemLookup)
+    const controller = new AbortController()
+    controller.abort(new Error('deadline'))
+
+    await expect(resolver.lookup('mp.weixin.qq.com', { signal: controller.signal })).rejects.toThrow('deadline')
+    expect(systemLookup).not.toHaveBeenCalled()
   })
 })
 

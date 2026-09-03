@@ -20,7 +20,7 @@ import { arkmeTheme } from './arkme-theme.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeUi } from './ui-controller.js'
-import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle } from './recordings/ArkmeRecordingImportDialog.js'
+import { ArkmeRecordingImportTrigger } from './recordings/ArkmeRecordingImportDialog.js'
 import { ArkmeRecordingSpeakerEditor, type RecordingSpeakerPopoverAnchor } from './recordings/ArkmeRecordingSpeakerEditor.js'
 import { ArkmeRecordingTimeline } from './recordings/ArkmeRecordingTimeline.js'
 import { recordingEmptyIllustration } from './recordings/recording-empty-illustration.js'
@@ -418,11 +418,15 @@ function VersionPicker({ versions, selectedId, onChange }: {
   </div>
 }
 
-export function ArkmeRecordingSurface() {
+export interface ArkmeRecordingSurfaceProps {
+  onOpenRecordingImport(defaultStartAtMillis: number): void
+  recordingRefreshRevision: number
+}
+
+export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshRevision }: ArkmeRecordingSurfaceProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const workbenchEnabled = auth.config?.recordingWorkbenchEnabled !== false
-  const recordingImportPath = auth.config?.recordingImportPath ?? '/arkme-self/api/recording/import'
   const recordingMediaPath = auth.config?.mediaPath ?? '/arkme-self/api/media'
   const today = useRecordingCurrentLocalDay()
   const [selectedDate, setSelectedDate] = useState(today)
@@ -436,13 +440,10 @@ export function ArkmeRecordingSurface() {
   const [dayError, setDayError] = useState('')
   const [summaryVersionId, setSummaryVersionId] = useState('')
   const [timelineVersionId, setTimelineVersionId] = useState('')
-  const [calendarRefreshKey, setCalendarRefreshKey] = useState(0)
-  const [dayRefreshKey, setDayRefreshKey] = useState(0)
   const [editingSpeaker, setEditingSpeaker] = useState<{ item: ArkmeRecordingWorkbenchItem; anchor: RecordingSpeakerPopoverAnchor; forceBatchUpdate: boolean }>()
   const [selectedTimelineMillis, setSelectedTimelineMillis] = useState<number>()
   const [analysisMaximized, setAnalysisMaximized] = useState(false)
   const [exportNotice, setExportNotice] = useState('')
-  const importDialogRef = useRef<ArkmeRecordingImportDialogHandle>(null)
   const playback = useRecordingPlayback(recordingMediaPath)
   const layoutMode = useSyncExternalStore(subscribeRecordingLayout, currentRecordingLayoutMode, () => 'wide')
 
@@ -475,7 +476,7 @@ export function ArkmeRecordingSurface() {
       .catch(error => { if (!controller.signal.aborted) { setCalendar(undefined); setCalendarError(errorMessage(error)) } })
       .finally(() => { if (!controller.signal.aborted) setCalendarLoading(false) })
     return () => { controller.abort() }
-  }, [visibleMonth, calendarRefreshKey])
+  }, [visibleMonth, recordingRefreshRevision])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -491,7 +492,7 @@ export function ArkmeRecordingSurface() {
       .catch(error => { if (!controller.signal.aborted) setDayError(errorMessage(error)) })
       .finally(() => { if (!controller.signal.aborted) setDayLoading(false) })
     return () => { controller.abort() }
-  }, [selectedDate, dayRefreshKey])
+  }, [selectedDate, recordingRefreshRevision])
 
   const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(item => [dateKey(item.dateStamp), item])), [calendar])
   const monthDates = useMemo(() => monthCalendarCells(visibleMonth), [visibleMonth])
@@ -571,7 +572,6 @@ export function ArkmeRecordingSurface() {
     </>
   }
 
-  const refreshRecordings = () => { setCalendarRefreshKey(value => value + 1); setDayRefreshKey(value => value + 1) }
   const downloadCurrent = () => {
     if (typeof document === 'undefined') return
     const content = activeTab === 'transcript' ? transcriptItems.map(item => `${item.speakerLabel} [${timeLabel(item.startAtMillis)}]\n${item.text}`).join('\n\n')
@@ -605,11 +605,11 @@ export function ArkmeRecordingSurface() {
           return <button key={value.getTime()} type="button" style={{ ...styles.monthDay, ...styles.cellHeight, ...(selected ? styles.daySelected : {}), ...(future ? styles.monthDayDisabled : {}) }} aria-label={new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(value)} aria-pressed={selected} disabled={future} onClick={() => { chooseDate(value) }}><strong style={styles.monthDayNumber}>{value.getDate()}</strong><span style={styles.lunar}>{dateKey(value) === dateKey(today) ? '今天' : lunarDayLabel(value)}</span>{meta !== undefined && meta.durationMillis > 0 && <span style={{ ...styles.monthDuration, ...(meta.durationMillis <= 60 * 60 * 1_000 ? styles.monthDurationBrief : {}), ...(selected ? styles.selectedMonthDuration : {}) }}>{recordingCalendarDuration(meta.durationMillis)}</span>}{meta !== undefined && meta.unreviewedCount > 0 && <span aria-label="新录音" style={{ position: 'absolute', bottom: 5, width: 4, height: 4, borderRadius: 4, background: colors.accent }} />}</button>
         })}</div></div>
       </section>
-      <div style={styles.toolbar}>{workbenchEnabled && <ArkmeRecordingImportDialog ref={importDialogRef} importPath={recordingImportPath} defaultStartAtMillis={selectedDate.getTime()} currentUserId={auth.auth?.userId ?? 0} onAccepted={refreshRecordings} />}</div>
+      <div style={styles.toolbar}>{workbenchEnabled && <ArkmeRecordingImportTrigger onClick={() => { onOpenRecordingImport(selectedDate.getTime()) }} />}</div>
       {calendarError !== '' && <div style={styles.error} role="alert">{calendarError}</div>}{calendarLoading && calendar === undefined && <div style={styles.status}>正在读取录音…</div>}
     </aside>}
     <section style={styles.content} aria-label="录音详情">
-      <div style={styles.dayTimeline}>{workbenchEnabled && <ArkmeRecordingTimeline items={transcriptItems} dayStartMillis={selectedDate.getTime()} loading={dayLoading || day?.transcript.state === 'processing'} emptyState={emptyDay} onEditSpeaker={(item, anchor) => { setEditingSpeaker(current => current?.item.itemRef === item.itemRef ? undefined : { item, anchor, forceBatchUpdate: true }) }} onImportAudio={() => { importDialogRef.current?.open() }} {...(selectedTimelineMillis === undefined ? {} : { playheadMillis: selectedTimelineMillis })} isPlaying={playback.isPlaying} onSelectAtMillis={setSelectedTimelineMillis} onTogglePlayback={() => { if (playback.isPlaying) playback.pause(); else if (transcriptItems[0] !== undefined) void playback.playAt(transcriptItems, selectedTimelineMillis ?? playback.positionAtMillis ?? transcriptItems[0].startAtMillis) }} />}{workbenchEnabled && playback.error !== '' && <div style={styles.error} role="alert">{playback.error}</div>}</div>
+      <div style={styles.dayTimeline}>{workbenchEnabled && <ArkmeRecordingTimeline items={transcriptItems} dayStartMillis={selectedDate.getTime()} loading={dayLoading || day?.transcript.state === 'processing'} emptyState={emptyDay} onEditSpeaker={(item, anchor) => { setEditingSpeaker(current => current?.item.itemRef === item.itemRef ? undefined : { item, anchor, forceBatchUpdate: true }) }} onImportAudio={() => { onOpenRecordingImport(selectedDate.getTime()) }} {...(selectedTimelineMillis === undefined ? {} : { playheadMillis: selectedTimelineMillis })} isPlaying={playback.isPlaying} onSelectAtMillis={setSelectedTimelineMillis} onTogglePlayback={() => { if (playback.isPlaying) playback.pause(); else if (transcriptItems[0] !== undefined) void playback.playAt(transcriptItems, selectedTimelineMillis ?? playback.positionAtMillis ?? transcriptItems[0].startAtMillis) }} />}{workbenchEnabled && playback.error !== '' && <div style={styles.error} role="alert">{playback.error}</div>}</div>
       {emptyDay ? <ArkmeRecordingEmptyState /> : <div style={styles.analysis}><nav style={styles.tabs} aria-label="录音内容"><span style={styles.tabList}>{([['transcript', '转写 · 系统', FileText], ['summary', '总结', Sparkle], ['timeline', '时间轴', ClockCounterClockwise]] as const).map(([id, label, Icon]) => <span key={id} style={styles.tabSlot}><button type="button" style={{ ...styles.tab, ...(activeTab === id ? styles.tabActive : {}) }} aria-current={activeTab === id ? 'page' : undefined} onClick={() => { setActiveTab(id); setEditingSpeaker(undefined); setExportNotice('') }}><Icon size={14} aria-hidden />{label}{activeTab === id && <span style={styles.tabIndicator} />}</button></span>)}</span><span style={styles.actionCluster}><span style={{ width: 28 }} /><button type="button" aria-label={analysisMaximized ? '缩小' : '最大化'} style={styles.actionButton} onClick={() => { setAnalysisMaximized(value => !value) }}><ArrowsOut size={16} /></button><button type="button" aria-label="导出" style={styles.actionButton} onClick={downloadCurrent}><Export size={16} /></button></span></nav><div style={{ ...styles.pane, ...(activeTab === 'transcript' ? styles.transcriptPane : {}) }}>{exportNotice !== '' && <div role="status" style={styles.status}>{exportNotice}</div>}{dayError !== '' ? <div style={styles.error} role="alert">{dayError}</div> : activeTab === 'transcript' ? renderTranscript() : activeTab === 'summary' ? renderSummary() : renderTimeline()}</div></div>}
     </section>
     {workbenchEnabled && editingSpeaker !== undefined && <ArkmeRecordingSpeakerEditor

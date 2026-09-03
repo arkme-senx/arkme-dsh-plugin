@@ -16,6 +16,7 @@ import {
   ArkmeMemberJoinNotice, arkmeConversationJoinEventsInLoadedWindow, arkmeMemberJoinDisplayName,
   arkmeMemberJoinTimeLabel, arkmeVisibleMemberJoinInvitees, arkmeComposerMentionTrigger,
   arkmeGroupMentionCandidates, arkmeMentionCandidateMatches, arkmeMentionCandidatePrimaryText,
+  arkmeSelectedTimelineItems, arkmeTimelineOccurrenceKey,
 } from '../src/client/ArkmeSidebar.js'
 
 const member: ArkmeConversationMemberItem = {
@@ -35,6 +36,18 @@ describe('chat member action menu placement', () => {
     )).toEqual({ left: 40, top: 112, placement: 'below' })
   })
 
+  it('keeps message interaction selection bound to the exact relation occurrence', () => {
+    const base = {
+      itemUid: 'shared-record', senderName: '小林', isMe: false, sendAtMillis: 1,
+      title: '', textContent: '消息', status: 1, messageActionRef: 'action-ref',
+    }
+    const first = { ...base, timelineItemKey: 'timeline-key-1' }
+    const second = { ...base, timelineItemKey: 'timeline-key-2' }
+    expect(arkmeTimelineOccurrenceKey(first)).toBe('timeline-key-1')
+    expect(arkmeSelectedTimelineItems([first, second], new Set(['timeline-key-2'])))
+      .toEqual([second])
+  })
+
   it('detects a composer @ trigger only at the active caret token', () => {
     expect(arkmeComposerMentionTrigger('@', 1)).toEqual({ startIndex: 0, endIndex: 1, query: '' })
     expect(arkmeComposerMentionTrigger('@小', 2)).toEqual({ startIndex: 0, endIndex: 2, query: '小' })
@@ -47,20 +60,28 @@ describe('chat member action menu placement', () => {
   it('matches mention candidates by viewer label, public mention, member, or secondary name', () => {
     const candidate = {
       ...member,
-      displayName: '我的私有备注', mentionDisplayName: 'Tison', memberName: 'Lin', secondaryName: '设计师',
+      displayName: '我的私有备注', mentionDisplayName: 'Tison', mentionSecondaryName: '我的私有备注',
+      memberName: 'Lin', secondaryName: '设计师',
     }
     expect(arkmeMentionCandidateMatches(candidate, '')).toBe(true)
     expect(arkmeMentionCandidateMatches(candidate, 'tison')).toBe(true)
     expect(arkmeMentionCandidateMatches(candidate, 'lin')).toBe(true)
     expect(arkmeMentionCandidateMatches(candidate, '设计')).toBe(true)
+    expect(arkmeMentionCandidateMatches(candidate, '私有备注')).toBe(true)
     expect(arkmeMentionCandidateMatches(candidate, '周')).toBe(false)
   })
 
-  it('renders a member mention candidate with the secondary name in parentheses', () => {
-    expect(arkmeMentionCandidatePrimaryText({ kind: 'member', displayName: '菜市场', secondaryName: '阿萨' }))
-      .toBe('菜市场（阿萨）')
-    expect(arkmeMentionCandidatePrimaryText({ kind: 'member', displayName: '菜市场', secondaryName: '菜市场' }))
+  it('renders a public mention name first and the private viewer label in parentheses', () => {
+    expect(arkmeMentionCandidatePrimaryText({
+      kind: 'member', displayName: '我的私有备注', mentionDisplayName: '菜市场', mentionSecondaryName: '我的私有备注',
+    })).toBe('菜市场（我的私有备注）')
+    expect(arkmeMentionCandidatePrimaryText({
+      kind: 'member', displayName: '菜市场', mentionDisplayName: '菜市场', mentionSecondaryName: '菜市场',
+    }))
       .toBe('菜市场')
+    expect(arkmeMentionCandidatePrimaryText({
+      kind: 'member', displayName: '私聊旧快照', mentionDisplayName: '菜市场',
+    })).toBe('菜市场')
     expect(arkmeMentionCandidatePrimaryText({ kind: 'bot', displayName: 'Purge', secondaryName: 'Bot' }))
       .toBe('Purge')
   })
@@ -119,6 +140,19 @@ describe('chat member action menu placement', () => {
     expect(menu).toContain('>2<')
     expect(menu).toContain('>7<')
     expect(menu).toContain('background:var(--dsw-specific-menu')
+
+    const ownerMenu = renderToStaticMarkup(createElement(ArkmeMemberActionMenu, {
+      member,
+      sourceKind: 'group_chat',
+      position: { left: 10, top: 20, placement: 'below' },
+      onMention: () => undefined,
+      onRecords: () => undefined,
+      canRemove: true,
+      onRemove: () => undefined,
+      onClose: () => undefined,
+    }))
+    expect(ownerMenu).toContain('移出群聊')
+    expect(arkmeMemberActionMenuRowCount(member, 'group_chat', true)).toBe(4)
 
     const card = renderToStaticMarkup(createElement(ArkmeMemberProfileCard, {
       member,

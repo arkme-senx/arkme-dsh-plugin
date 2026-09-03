@@ -6,7 +6,7 @@ import type {
   ArkmeSelfRecordItem,
   ArkmeSelfSummary,
   ArkmeSourceDirectory,
-  ArkmeSourceDirectoryPolicyResult,
+  ArkmeSourceDirectoryPinResult,
   ArkmeSourceItem,
   ArkmeSourceKind,
   ArkmeSourceList,
@@ -20,6 +20,10 @@ import type {
 } from '../types.js'
 import { ProfileService, type ArkmePublicProfile } from './profile-service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
+import {
+  CHAT_SESSION_CONVERSATION_LIST_ENTITY,
+  type ConversationListPreferenceEntry,
+} from './conversation-list-preference-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { arkmeMentionMetadataMentionsViewer } from '../mention-metadata.js'
 import { arkmeMediaKind } from '../file-transfer-contract.js'
@@ -33,7 +37,8 @@ export interface ArkmeSourceRefPayload {
   displayName: string
   botGroupTarget?: ArkmeGroupBotBindingTarget
   sidebarSubjectUid?: string
-  sidebarHiddenAnchorTimestamp?: number
+  conversationListActivityAtMillis?: number
+  conversationListLatestSequence?: number
 }
 
 export interface ArkmeGroupBotBindingTarget {
@@ -48,9 +53,15 @@ export interface ArkmeGroupAvatarSnapshotProjection {
   memberIds: number[]
 }
 
-interface ArkmeChatSidebarTarget {
-  subjectUid: string
-  hiddenAnchorTimestamp: number
+interface ArkmeChatDirectoryMetadata {
+  subjectUid?: string
+  activityAtMillis: number
+  latestSequence: number
+}
+
+export interface ArkmePrivateChatViewerLabel {
+  displayName: string
+  remark: string
 }
 
 interface CacheEntry<T> { value: T; expiresAtMillis: number }
@@ -134,11 +145,12 @@ export function arkmeGroupBotBindingBody(
   return { subject_uid: source.ownerRef }
 }
 
-function arkmeChatSidebarTargetFromBundle(
+function arkmeChatDirectoryMetadataFromBundle(
   bundle: Record<string, unknown>,
   fallbackSubjectUid = '',
-): ArkmeChatSidebarTarget | undefined {
+): ArkmeChatDirectoryMetadata {
   const chatSession = objectValue(bundle.session)
+  const unread = objectValue(bundle.unread_snapshot)
   const subjectUid = stringValue(
     bundle.subject_uid ?? bundle.subjectUid
     ?? bundle.topic_uid ?? bundle.topicUid
@@ -146,13 +158,21 @@ function arkmeChatSidebarTargetFromBundle(
     ?? chatSession.topic_uid ?? chatSession.topicUid
     ?? fallbackSubjectUid,
   ).trim()
-  if (subjectUid === '') return undefined
   return {
-    subjectUid,
-    hiddenAnchorTimestamp: Math.max(0, numberValue(
-      bundle.sort_active_at ?? bundle.last_active_at ?? chatSession.last_active_at,
-    )),
+    ...(subjectUid === '' ? {} : { subjectUid }),
+    activityAtMillis: arkmeChatSortActiveAt(bundle, chatSession),
+    latestSequence: Math.max(0, numberValue(unread.session_last_seq ?? chatSession.last_seq)),
   }
+}
+
+function arkmeChatSortActiveAt(
+  bundle: Record<string, unknown>,
+  chatSession: Record<string, unknown>,
+): number {
+  const projected = numberValue(bundle.sort_active_at)
+  return Math.max(0, projected > 0
+    ? projected
+    : numberValue(bundle.last_active_at ?? chatSession.last_active_at))
 }
 
 function backendBooleanValue(value: unknown): boolean | undefined {
@@ -440,20 +460,32 @@ export class SourceService {
     userIds: readonly number[],
     options: { signal?: AbortSignal } = {},
   ): Promise<Map<number, string>> {
+    const labels = await this.privateChatViewerLabelsByUserIds(userIds, options)
+    return new Map([...labels].map(([userId, label]) => [userId, label.displayName]))
+  }
+
+  /**
+   * Resolve the current viewer's private-chat display label and its exact
+   * remark source without compressing fallback snapshots into remark facts.
+   */
+  async privateChatViewerLabelsByUserIds(
+    userIds: readonly number[],
+    options: { signal?: AbortSignal } = {},
+  ): Promise<Map<number, ArkmePrivateChatViewerLabel>> {
     const session = await this.runtime.requireSession()
     const remaining = new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0 && userId !== session.userId))
-    const displayNames = new Map<number, string>()
+    const labels = new Map<number, ArkmePrivateChatViewerLabel>()
     let pageCursor: Record<string, unknown> | undefined
 
     // The chat directory is paged newest-first. Bound the scan so an unusually
-    // large history cannot make rendering a World page unbounded.
+    // large history cannot make a viewer-label projection unbounded.
     for (let page = 0; page < 20 && remaining.size > 0; page += 1) {
       const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
         '/api/v1/chats/list',
         { limit: 50, ...(pageCursor === undefined ? {} : { page_cursor: pageCursor }) },
         session,
         options.signal,
-        { lane: 'background-read', key: `world-author-labels:${pageCursor === undefined ? 'first' : String(page)}` },
+        { lane: 'background-read', key: `private-chat-viewer-labels:${pageCursor === undefined ? 'first' : String(page)}` },
       )
       for (const raw of listValue(data.items)) {
         const bundle = objectValue(raw)
@@ -464,12 +496,13 @@ export class SourceService {
         if (!remaining.has(targetUserId)) continue
         const supplement = objectValue(bundle.private_supplement)
         const counterpart = objectValue(bundle.private_counterpart)
-        const displayName = stringValue(supplement.remark).trim()
+        const remark = stringValue(supplement.remark).trim()
+        const displayName = remark
           || stringValue(supplement.counterpart_name_snapshot).trim()
           || stringValue(counterpart.display_name_snapshot).trim()
           || stringValue(supplement.pending_name).trim()
           || stringValue(counterpart.visible_phone).trim()
-        if (displayName !== '') displayNames.set(targetUserId, displayName)
+        if (displayName !== '') labels.set(targetUserId, { displayName, remark })
         remaining.delete(targetUserId)
       }
       if (data.has_more !== true) break
@@ -477,7 +510,7 @@ export class SourceService {
       if (Object.keys(next).length === 0) break
       pageCursor = next
     }
-    return displayNames
+    return labels
   }
 
   /**
@@ -1036,28 +1069,27 @@ export class SourceService {
     }
   }
 
-  async setChatDirectoryPolicy(
+  async setChatDirectoryPin(
     sourceRef: string,
-    options: { pinned?: boolean; hidden?: boolean; signal?: AbortSignal } = {},
-  ): Promise<ArkmeSourceDirectoryPolicyResult> {
+    pinned: boolean,
+    signal?: AbortSignal,
+  ): Promise<ArkmeSourceDirectoryPinResult> {
     const session = await this.runtime.requireSession()
     const source = await this.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
       throw new ArkmePluginError('chat-directory-policy-invalid', '仅支持更新私聊或群聊的会话列表状态', false)
     }
-    const sidebarTarget = await this.resolveChatSidebarTarget(source, session, options.signal)
+    const pinTarget = await this.resolveChatPinTarget(source, session, signal)
     const current = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-      '/api/v1/chats/policy/get', { chat_session_uid: source.ownerRef }, session, options.signal,
+      '/api/v1/chats/policy/get', { chat_session_uid: source.ownerRef }, session, signal,
     )
-    const pinned = options.pinned ?? numberValue(current.pin_state) === 2
-    const hidden = options.hidden ?? numberValue(current.show_in_home_state) === 2
     const updatedAt = Date.now()
-    const writes: Array<Promise<unknown>> = [
+    await Promise.all([
       this.runtime.authenticatedChatPost<Record<string, unknown>>(
         '/api/v1/chats/policy/update',
         {
           chat_session_uid: source.ownerRef,
-          show_in_home_state: hidden ? 2 : 1,
+          show_in_home_state: numberValue(current.show_in_home_state) || 1,
           privacy_state: numberValue(current.privacy_state) || 1,
           mute_state: numberValue(current.mute_state) || 1,
           pin_state: pinned ? 2 : 1,
@@ -1066,55 +1098,77 @@ export class SourceService {
           update_at: updatedAt,
         },
         session,
-        options.signal,
+        signal,
       ),
-    ]
-    if (options.hidden !== undefined) {
-      writes.push(this.runtime.authenticatedSubjectPost<Record<string, unknown>>(
-        '/api/v1/subject/batch-set-sidebar-hidden-status',
-        {
-          items: [{
-            subject_uid: sidebarTarget.subjectUid,
-            hidden,
-            hidden_anchor_timestamp: hidden
-              ? Math.max(1, sidebarTarget.hiddenAnchorTimestamp || updatedAt)
-              : 0,
-          }],
-        },
-        session,
-        options.signal,
-      ))
-    }
-    if (options.pinned !== undefined) {
-      writes.push(this.runtime.authenticatedPost<Record<string, unknown>>(
+      this.runtime.authenticatedPost<Record<string, unknown>>(
         '/api/v1/topics/pin/set',
         {
-          topic_uid: sidebarTarget.subjectUid,
+          topic_uid: pinTarget.subjectUid,
           pin_state: pinned ? 1 : 2,
           ...(pinned ? { pinned_at: updatedAt } : {}),
         },
         session,
-        options.signal,
-      ))
-    }
-    await Promise.all(writes)
+        signal,
+      ),
+    ])
     const cacheKey = `${String(session.userId)}:${source.ownerRef}`
     const cached = this.chatSourceCache.get(cacheKey)
     if (cached !== undefined) this.storeChatSourceByKey(cacheKey, { ...cached, isPinned: pinned })
     this.sourceListCache.clear()
-    return { sourceRef, pinned, hidden }
+    return { sourceRef, pinned }
   }
 
-  private async resolveChatSidebarTarget(
+  async chatConversationListPreferenceEntry(
+    sourceRef: string,
+    signal?: AbortSignal,
+  ): Promise<ConversationListPreferenceEntry> {
+    const session = await this.runtime.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
+      throw new ArkmePluginError('chat-directory-policy-invalid', '仅支持读取私聊或群聊的会话列表状态', false)
+    }
+    if (signal?.aborted === true) throw new DOMException('The operation was aborted', 'AbortError')
+    const cached = this.chatSourceCache.get(`${String(session.userId)}:${source.ownerRef}`)
+    return {
+      ownerUserId: session.userId,
+      ref: { entityKind: CHAT_SESSION_CONVERSATION_LIST_ENTITY, entityUid: source.ownerRef },
+      evidence: {
+        sequence: Math.max(source.conversationListLatestSequence ?? 0, cached?.latestSequence ?? 0),
+        activityAtMillis: Math.max(source.conversationListActivityAtMillis ?? 0, cached?.activeAtMillis ?? 0),
+      },
+    }
+  }
+
+  async chatConversationListPreferenceEntryBySessionUid(
+    chatSessionUid: string,
+    expectedOwnerUserId: number,
+  ): Promise<ConversationListPreferenceEntry> {
+    const session = await this.runtime.requireSession()
+    const entityUid = chatSessionUid.trim()
+    if (session.userId !== expectedOwnerUserId) {
+      throw new ArkmePluginError('login-context-changed', '登录账号已切换，请重试当前操作', false, 409)
+    }
+    if (entityUid === '') {
+      throw new ArkmePluginError('chat-directory-preference-identity-invalid', '会话列表身份无效', false, 400)
+    }
+    const cached = this.chatSourceCache.get(`${String(session.userId)}:${entityUid}`)
+    return {
+      ownerUserId: session.userId,
+      ref: { entityKind: CHAT_SESSION_CONVERSATION_LIST_ENTITY, entityUid },
+      evidence: {
+        sequence: cached?.latestSequence ?? 0,
+        activityAtMillis: cached?.activeAtMillis ?? 0,
+      },
+    }
+  }
+
+  private async resolveChatPinTarget(
     source: ArkmeSourceRefPayload,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-  ): Promise<ArkmeChatSidebarTarget> {
+  ): Promise<{ subjectUid: string }> {
     if (source.sidebarSubjectUid !== undefined && source.sidebarSubjectUid.trim() !== '') {
-      return {
-        subjectUid: source.sidebarSubjectUid.trim(),
-        hiddenAnchorTimestamp: Math.max(0, source.sidebarHiddenAnchorTimestamp ?? 0),
-      }
+      return { subjectUid: source.sidebarSubjectUid.trim() }
     }
     const detail = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
       '/api/v1/chats/detail',
@@ -1123,11 +1177,11 @@ export class SourceService {
       signal,
       { lane: 'interactive-read', key: `chat-sidebar-target:${source.ownerRef}`, failureCooldownMs: 2_000 },
     )
-    const target = arkmeChatSidebarTargetFromBundle(
+    const target = arkmeChatDirectoryMetadataFromBundle(
       detail,
       source.kind === 'group_chat' ? source.ownerRef : '',
     )
-    if (target === undefined) {
+    if (target.subjectUid === undefined) {
       throw new ArkmePluginError(
         'chat-sidebar-target-unavailable',
         '未能定位该会话的跨端侧边栏数据，请刷新后重试',
@@ -1135,7 +1189,7 @@ export class SourceService {
         502,
       )
     }
-    return target
+    return { subjectUid: target.subjectUid }
   }
 
   async listGroupSources(
@@ -1434,8 +1488,8 @@ export class SourceService {
             ? undefined
             : backendMentionState === true || latestPreviewMentionsViewer
       const botGroupTarget = kind === 'group_chat' ? arkmeGroupBotBindingTargetFromBundle(bundle) : undefined
-      const sidebarTarget = arkmeChatSidebarTargetFromBundle(bundle, kind === 'group_chat' ? uid : '')
       const cached = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
+      const chatDirectoryMetadata = arkmeChatDirectoryMetadataFromBundle(bundle, kind === 'group_chat' ? uid : '')
       const item: ArkmeSourceItem = {
         sourceRef: await this.sealSourceRef(
           session.userId,
@@ -1444,7 +1498,7 @@ export class SourceService {
           displayName,
           {
             ...(botGroupTarget === undefined ? {} : { botGroupTarget }),
-            ...(sidebarTarget === undefined ? {} : { sidebarTarget }),
+            chatDirectoryMetadata,
           },
         ),
         sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
@@ -1460,7 +1514,7 @@ export class SourceService {
           ? { groupAvatar: cloneSourceItem(cached).groupAvatar }
           : {}),
         ...(preview === '' ? {} : { latestPreview: preview }),
-        activeAtMillis: numberValue(bundle.sort_active_at ?? chatSession.last_active_at),
+        activeAtMillis: arkmeChatSortActiveAt(bundle, chatSession),
         ...attention,
         ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
         isPinned,
@@ -1695,6 +1749,13 @@ export class SourceService {
     return `arkme-chat-source-v1.${digest}`
   }
 
+  async chatTimelineItemKey(userId: number, chatSessionUid: string, relationUid: string): Promise<string> {
+    const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
+      .update(`chat-timeline-item-key-v1:${String(userId)}:${chatSessionUid.trim()}:${relationUid.trim()}`)
+      .digest('base64url')
+    return `arkme-chat-timeline-item-v1.${digest}`
+  }
+
   async topicHierarchyKey(userId: number, topicUid: string): Promise<string> {
     const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`topic-hierarchy-key-v1:${String(userId)}:${topicUid.trim()}`)
@@ -1709,12 +1770,12 @@ export class SourceService {
     displayName: string,
     options: {
       botGroupTarget?: ArkmeGroupBotBindingTarget
-      sidebarTarget?: ArkmeChatSidebarTarget
+      chatDirectoryMetadata?: ArkmeChatDirectoryMetadata
     } = {},
   ): Promise<string> {
     const botGroupTarget = kind === 'group_chat' ? sanitizeGroupBotBindingTarget(options.botGroupTarget) : undefined
-    const sidebarTarget = kind === 'private_chat' || kind === 'group_chat'
-      ? options.sidebarTarget
+    const chatDirectoryMetadata = kind === 'private_chat' || kind === 'group_chat'
+      ? options.chatDirectoryMetadata
       : undefined
     const payload = encodeOpaqueJson({
       version: 1,
@@ -1723,9 +1784,12 @@ export class SourceService {
       ownerRef,
       displayName,
       ...(botGroupTarget === undefined ? {} : { botGroupTarget }),
-      ...(sidebarTarget === undefined ? {} : {
-        sidebarSubjectUid: sidebarTarget.subjectUid,
-        sidebarHiddenAnchorTimestamp: sidebarTarget.hiddenAnchorTimestamp,
+      ...(chatDirectoryMetadata === undefined ? {} : {
+        ...(chatDirectoryMetadata.subjectUid === undefined ? {} : {
+          sidebarSubjectUid: chatDirectoryMetadata.subjectUid,
+        }),
+        conversationListActivityAtMillis: chatDirectoryMetadata.activityAtMillis,
+        conversationListLatestSequence: chatDirectoryMetadata.latestSequence,
       }),
     } satisfies ArkmeSourceRefPayload)
     const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest('base64url')
@@ -1762,8 +1826,11 @@ export class SourceService {
       })() : {}),
       ...((kind === 'private_chat' || kind === 'group_chat') ? (() => {
         const sidebarSubjectUid = stringValue(parsed.sidebarSubjectUid).trim()
-        const sidebarHiddenAnchorTimestamp = Math.max(0, numberValue(parsed.sidebarHiddenAnchorTimestamp))
-        return sidebarSubjectUid === '' ? {} : { sidebarSubjectUid, sidebarHiddenAnchorTimestamp }
+        return {
+          ...(sidebarSubjectUid === '' ? {} : { sidebarSubjectUid }),
+          conversationListActivityAtMillis: Math.max(0, numberValue(parsed.conversationListActivityAtMillis)),
+          conversationListLatestSequence: Math.max(0, numberValue(parsed.conversationListLatestSequence)),
+        }
       })() : {}),
     }
     if (parsed.version !== 1 || result.userId !== expectedUserId || !isSourceKind(kind)
@@ -1785,19 +1852,21 @@ export class SourceService {
         source.displayName,
         {
           ...(source.botGroupTarget === undefined ? {} : { botGroupTarget: source.botGroupTarget }),
-          ...(source.sidebarSubjectUid === undefined ? {} : {
-            sidebarTarget: {
-              subjectUid: source.sidebarSubjectUid,
-              hiddenAnchorTimestamp: source.sidebarHiddenAnchorTimestamp ?? 0,
-            },
-          }),
+          chatDirectoryMetadata: {
+            ...(source.sidebarSubjectUid === undefined ? {} : { subjectUid: source.sidebarSubjectUid }),
+            activityAtMillis: source.conversationListActivityAtMillis ?? 0,
+            latestSequence: source.conversationListLatestSequence ?? 0,
+          },
         },
       ),
       ...(sourceKey === undefined ? {} : { sourceKey }),
       kind: source.kind,
       displayName: source.displayName,
-      activeAtMillis: 0,
+      activeAtMillis: source.conversationListActivityAtMillis ?? 0,
       unreadCount: 0,
+      ...((source.conversationListLatestSequence ?? 0) > 0
+        ? { latestSequence: source.conversationListLatestSequence }
+        : {}),
     }
   }
 
@@ -1848,7 +1917,7 @@ export class SourceService {
           ? cached?.hasUnreadMention
           : backendMentionState === true || latestMentionsViewer
     const botGroupTarget = kind === 'group_chat' ? arkmeGroupBotBindingTargetFromBundle(bundle) : undefined
-    const sidebarTarget = arkmeChatSidebarTargetFromBundle(bundle, kind === 'group_chat' ? uid : '')
+    const chatDirectoryMetadata = arkmeChatDirectoryMetadataFromBundle(bundle, kind === 'group_chat' ? uid : '')
     return {
       sourceRef: await this.sealSourceRef(
         session.userId,
@@ -1857,7 +1926,7 @@ export class SourceService {
         displayName,
         {
           ...(botGroupTarget === undefined ? {} : { botGroupTarget }),
-          ...(sidebarTarget === undefined ? {} : { sidebarTarget }),
+          chatDirectoryMetadata,
         },
       ),
       sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
@@ -1868,7 +1937,7 @@ export class SourceService {
       ...(cached?.groupAvatar === undefined ? {} : { groupAvatar: cached.groupAvatar }),
       ...(latestPreview === undefined || latestPreview === '' ? {} : { latestPreview }),
       activeAtMillis: Math.max(
-        numberValue(bundle.sort_active_at ?? chatSession.last_active_at),
+        arkmeChatSortActiveAt(bundle, chatSession),
         latestItem?.sendAtMillis ?? 0,
       ),
       ...attention,

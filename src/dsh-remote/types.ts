@@ -7,6 +7,7 @@ export const DSH_REMOTE_MAX_PAGE_ITEMS = 50
 // stop at the conservative inner-result budget below before this ceiling can be
 // reached.
 export const DSH_REMOTE_MAX_SNAPSHOT_BYTES = 512 * 1024
+export const DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES = 64 * 1024 * 1024
 export const DSH_REMOTE_MAX_PAGE_RESULT_BYTES = 40 * 1024
 export const DSH_REMOTE_MAX_TEXT_CODE_POINTS = 20_000
 export const DSH_REMOTE_MAX_MODEL_OPTIONS = 100
@@ -100,6 +101,8 @@ export interface DshRemoteStatus {
   hostGeneration: number
   capabilities: DshRemoteCapability[]
   unavailableReason?: string
+  historySyncWarning?: string
+  projectionWarning?: string
   revision: number
 }
 
@@ -127,13 +130,26 @@ export interface DshRemoteControlPlane {
   syncWorkspaces(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
   syncSessions(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
   completeProjectionSnapshot(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Legacy write contract retained for already shipped clients; the current Host does not invoke it. */
   appendSessionEvents(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Legacy write contract retained for already shipped clients; the current Host does not invoke it. */
   sessionEventSyncStatuses(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Legacy write contract retained for already shipped clients; the current Host does not invoke it. */
   completeSessionEventHistory(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
-  /** Optional during rolling upgrades; raw HistoryEntry remains the fallback. */
+  /** Legacy write contract retained for already shipped clients; the current Host does not invoke it. */
   syncSessionTurns?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
-  /** Optional during rolling upgrades; raw HistoryEntry remains the fallback. */
+  /** Legacy write contract retained for already shipped clients; the current Host does not invoke it. */
   completeSessionTurnHistory?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Detects the Backend-owned Turn object storage contract without a version hard gate. */
+  turnObjectUploadCapabilities?(signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Intersects local opaque Session refs with the signed-in Backend account. */
+  knownHistorySessions?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Host-internal Turn object upload contract. Signed URLs never cross into Browser/SDK/Tools. */
+  prepareSessionTurnUpload?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Commits an exact object only after Backend integrity verification. */
+  commitSessionTurnUpload?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Finalizes one stable local history cut after every OSS Turn is committed. */
+  completeSessionTurnObjectHistory?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
 }
 
 export type DshRemoteTimelineNodeKind =

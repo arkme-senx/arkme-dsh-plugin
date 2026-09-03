@@ -7,6 +7,7 @@ import type {
 } from '../types.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
+import { ArkmeMentionText } from './ArkmeRichText.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 export type ArkmeRelatedQuickNotesLoadState =
@@ -131,7 +132,10 @@ export function ArkmeRelatedQuickNotesCard({
       <CaretRight size={14} color={arkmeTheme.tertiary} aria-hidden />
     </span>
     <span style={styles.previewList}>
-      {state.list.items.slice(0, 2).map(item => <span key={item.relatedRef} style={styles.preview}>{notePreview(item)}</span>)}
+      {state.list.items.slice(0, 2).map(item => {
+        const preview = notePreview(item)
+        return <span key={item.relatedRef} style={styles.preview}><ArkmeMentionText text={preview} /></span>
+      })}
     </span>
   </button>
 }
@@ -177,7 +181,7 @@ export function ArkmeRelatedQuickNotesList({
             <span style={styles.sender}>{item.senderName}</span>
             {time !== undefined && <time style={styles.time} dateTime={time.iso}>{time.label}</time>}
           </span>
-          <span style={styles.rowText}>{preview}</span>
+          <span style={styles.rowText}><ArkmeMentionText text={preview} /></span>
           {item.sourceLabel !== undefined && item.sourceLabel.trim() !== ''
             && <span style={styles.sourceLabel}>{item.sourceLabel}</span>}
         </span>
@@ -225,6 +229,7 @@ export function ArkmeRelatedQuickNoteDetail({
     <ArkmeMessageContent
       presentation="detail"
       item={{ ...state.detail, itemUid: state.detail.relatedRef }}
+      highlightMentions
       {...(sourceRef === undefined ? {} : { sourceRef })}
       {...(shareWebsite === undefined ? {} : { shareWebsite })}
       {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}

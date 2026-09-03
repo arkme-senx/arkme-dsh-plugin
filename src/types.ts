@@ -430,6 +430,8 @@ export interface ArkmeBotSummary {
   createdAtMillis?: number
   /** Latest private-chat message time, when the conversation directory has been hydrated. */
   latestMessageAtMillis?: number
+  /** Latest Bot-owner activity used for ordering and direct-Bot visibility restoration. */
+  conversationListActivityAtMillis?: number
   /** Safe preview of the latest private-chat message. */
   latestMessagePreview?: string
   /** Unread count projected from the canonical Chat conversation, when Chat owns the Bot conversation. */
@@ -1078,6 +1080,8 @@ export interface ArkmeProviderCapabilities {
     messageReport?: true
     /** Employee-only, source-bound private-chat user ban inspection and mutation are available. */
     userBanManagement?: true
+    /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
+    groupOwnerGovernance?: true
     richContentRead: boolean
     richContentSend: boolean
     /** Explicit text background-sound descriptors are supported by direct and durable rich sends. */
@@ -1299,11 +1303,21 @@ export interface ArkmeSourceItem {
   recordCount?: number
 }
 
-/** Result of a server-backed conversation-directory policy mutation. */
-export interface ArkmeSourceDirectoryPolicyResult {
+/** Result of the existing Chat pin mutation; sidebar visibility is a separate capability. */
+export interface ArkmeSourceDirectoryPinResult {
   sourceRef: string
   pinned: boolean
+}
+
+export interface ArkmeConversationDirectoryVisibilityItem {
+  entryKind: 'source' | 'bot'
+  entryRef: string
   hidden: boolean
+}
+
+/** Browser-safe view of the Chat-owned sidebar visibility facts. */
+export interface ArkmeConversationDirectoryVisibility {
+  items: ArkmeConversationDirectoryVisibilityItem[]
 }
 
 export interface ArkmeSourceList {
@@ -1424,8 +1438,12 @@ export interface ArkmeMessageSnapshotDetail {
 
 export interface ArkmeTimelineItem {
   itemUid: string
+  /** Account- and conversation-bound stable key used only for realtime timeline invalidation. */
+  timelineItemKey?: string
   /** Account-bound opaque reference for reporting this concrete group-chat message. */
   messageRef?: string
+  /** Account-bound opaque reference for owner withdrawal of this concrete group-chat message. */
+  messageWithdrawalRef?: string
   /** Account- and conversation-bound opaque reference for copy-link and forward actions. */
   messageActionRef?: string
   /** Account- and conversation-bound opaque reference for actions on the sender. */
@@ -1831,6 +1849,13 @@ export interface ArkmeMessageReportResult {
   status: number
 }
 
+export interface ArkmeMessageWithdrawalResult {
+  messageWithdrawalRef: string
+  timelineItemKey: string
+  withdrawnAtMillis: number
+  alreadyWithdrawn: boolean
+}
+
 export interface ArkmeMessageCopyLinkResult {
   sid: string
   url: string
@@ -1885,6 +1910,10 @@ export interface ArkmeMessageCopyLinkSnapshotItem {
   displayKind: number
   officialMark: number
   mediaItems: ArkmeMessageCopyLinkMediaItem[]
+  /** Browser-safe rich media resolved by the Host for detail rendering. */
+  contentBlocks?: ArkmeContentBlock[]
+  /** Media metadata exists but its authorized display projection is unavailable. */
+  mediaUnavailable?: boolean
   structuredContent?: ArkmeMessageCopyLinkStructuredContent
 }
 
@@ -2123,6 +2152,8 @@ export interface ArkmeConversationMemberItem {
   mentionRef?: string
   /** Public/group-safe name bound to mentionRef; never contains the viewer's private contact label. */
   mentionDisplayName?: string
+  /** Viewer-private label shown only as supporting text in a mention candidate. */
+  mentionSecondaryName?: string
   /** Viewer-facing label; it may be the current viewer's private contact remark. */
   displayName: string
   memberName?: string
@@ -2135,6 +2166,35 @@ export interface ArkmeConversationMemberItem {
   joinedAtMillis: number
   recordCount: number
   mentionCount: number
+}
+
+export interface ArkmeGroupMemberRemoveResult {
+  sourceRef: string
+  memberRef: string
+  status: 'removed'
+  joinRestricted: boolean
+}
+
+export interface ArkmeGroupJoinRestrictionItem {
+  memberRef: string
+  displayName: string
+  memberName?: string
+  secondaryName?: string
+  avatarRef?: string
+  restrictedAtMillis: number
+}
+
+export interface ArkmeGroupJoinRestrictionPage {
+  sourceRef: string
+  items: ArkmeGroupJoinRestrictionItem[]
+  nextCursor?: string
+}
+
+export interface ArkmeGroupJoinRestrictionMutationResult {
+  sourceRef: string
+  memberRef: string
+  restricted: boolean
+  updatedAtMillis?: number
 }
 
 export type ArkmeConversationMemberJoinAction = 'invite' | 'direct_add'
@@ -2868,6 +2928,15 @@ export type ArkmeChatClientEvent = {
   revision: number
   updates: Array<{ sourceKey?: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }>
 } | {
+  type: 'timeline-changed'
+  revision: number
+  sourceKey: string
+  timelineItemKey: string
+  changeKind: 'deleted' | 'recovered' | 'reedited' | 'extended'
+  changeVersion: number
+  relationTerminal: boolean
+  throughSequence: number
+} | {
   type: 'attention-summary'
   revision: number
   summary: ArkmeChatAttentionSummary
@@ -2900,6 +2969,9 @@ export type ArkmeChatClientEvent = {
   /** Account-bound conversation identity; raw Chat session and reader identities stay in Host memory. */
   sourceKey: string
   throughSequence: number
+} | {
+  type: 'conversation-list-preference-invalidated'
+  revision: number
 }
 
 export type ArkmePluginOperation =
@@ -2992,6 +3064,8 @@ export type ArkmePluginOperation =
   | 'extensions.reviews.create'
   | 'extensions.audit.check'
   | 'sources.list'
+  | 'conversation.directory.visibility.query'
+  | 'conversation.directory.visibility.set'
   | 'source.directory.policy.set'
   | 'source.timeline'
   | 'source.timeline-around'
@@ -3001,6 +3075,7 @@ export type ArkmePluginOperation =
   | 'source.read-receipts.summary-list'
   | 'source.read-receipts.detail'
   | 'source.message-report'
+  | 'source.message-withdraw'
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
@@ -3025,6 +3100,9 @@ export type ArkmePluginOperation =
   | 'group.member-candidates'
   | 'group.invite-preview'
   | 'group.members.add'
+  | 'group.member-remove'
+  | 'group.join-restrictions'
+  | 'group.join-restriction.set'
   | 'group.bots'
   | 'group.bot.add'
   | 'group.settings'
@@ -3124,9 +3202,13 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.day'
   | 'recordings.import.preflight'
   | 'recordings.import.list'
+  | 'recordings.import.history'
   | 'recordings.import.status'
   | 'recordings.import.retry'
   | 'recordings.import.cancel'
+  | 'recordings.import.session.update-start'
+  | 'recordings.import.session.update-ownership'
+  | 'recordings.import.session.delete'
   | 'recordings.playback.open'
   | 'recordings.speaker.options'
   | 'recordings.speaker.assign-item'

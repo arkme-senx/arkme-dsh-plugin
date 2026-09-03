@@ -8,11 +8,13 @@ import type {
   ArkmeConversationMemberRecordMode,
   ArkmeConversationMemberRecordPage,
   ArkmeGroupAvatarFallback,
+  ArkmeGroupMemberRemoveResult,
   ArkmeSourceItem,
   ArkmeTimelineItem,
 } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
@@ -246,8 +248,9 @@ function menuRows(member: ArkmeConversationMemberItem, sourceKind: ArkmeSourceIt
 export function arkmeMemberActionMenuRowCount(
   member: ArkmeConversationMemberItem,
   sourceKind: ArkmeSourceItem['kind'],
+  canRemove = false,
 ): number {
-  return menuRows(member, sourceKind)
+  return menuRows(member, sourceKind) + (canRemove ? 1 : 0)
 }
 
 export function ArkmeMemberActionMenu(props: {
@@ -256,6 +259,8 @@ export function ArkmeMemberActionMenu(props: {
   position: ArkmeMemberMenuPosition
   onMention: () => void
   onRecords: (mode: ArkmeConversationMemberRecordMode) => void
+  canRemove?: boolean
+  onRemove?: () => void
   onClose: () => void
 }) {
   const menuRef = useRef<HTMLDivElement>(null)
@@ -304,7 +309,79 @@ export function ArkmeMemberActionMenu(props: {
       onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
       <span style={styles.menuLabel}>{ownerLabel}</span><span style={styles.menuCount}>{props.member.recordCount}</span>
     </button>
+    {props.canRemove === true && props.onRemove !== undefined && <>
+      <div style={styles.divider} />
+      <button type="button" role="menuitem" style={{ ...styles.menuRow, color: arkmeTheme.danger }} onClick={props.onRemove}
+        onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.dangerSoft }}
+        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
+        <span style={styles.menuLabel}>移出群聊</span>
+      </button>
+    </>}
   </div>
+}
+
+export function ArkmeGroupMemberRemoveDialog(props: {
+  sourceRef: string
+  member: ArkmeConversationMemberItem
+  onClose: () => void
+  onRemoved: (result: ArkmeGroupMemberRemoveResult) => void
+}) {
+  const [preventRejoin, setPreventRejoin] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const requestRef = useRef<AbortController>()
+  const busyRef = useRef(false)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      requestRef.current?.abort()
+    }
+  }, [])
+  return <ArkmeConfirmDialog
+    titleId="arkme-member-remove-title"
+    title="移出群聊？"
+    description={`${props.member.displayName} 将无法继续查看或发送群消息。`}
+    error={error}
+    busy={busy}
+    confirmLabel="确认移除"
+    busyLabel="移除中…"
+    confirmTone="danger"
+    onClose={props.onClose}
+    onConfirm={() => {
+          if (busyRef.current) return
+          const controller = new AbortController()
+          requestRef.current = controller
+          busyRef.current = true
+          setBusy(true)
+          setError('')
+          void callArkme<ArkmeGroupMemberRemoveResult>('group.member-remove', {
+            sourceRef: props.sourceRef,
+            memberRef: props.member.memberRef,
+            preventRejoin,
+          }, controller.signal).then(result => {
+            if (mountedRef.current) props.onRemoved(result)
+          }).catch(caught => {
+            if (mountedRef.current && !controller.signal.aborted) setError(errorMessage(caught) || '移除失败，请稍后重试')
+          }).finally(() => {
+            if (requestRef.current === controller) requestRef.current = undefined
+            busyRef.current = false
+            if (mountedRef.current) setBusy(false)
+          })
+        }}
+  >
+    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 18, color: arkmeTheme.text, fontSize: 13, lineHeight: '20px', cursor: busy ? 'default' : 'pointer' }}>
+      <input
+        type="checkbox"
+        checked={preventRejoin}
+        disabled={busy}
+        style={{ width: 16, height: 16, flex: 'none', margin: '3px 0 0', accentColor: arkmeTheme.info }}
+        onChange={event => { setPreventRejoin(event.currentTarget.checked); setError('') }}
+      />
+      <span><strong style={{ display: 'block', fontWeight: 600 }}>禁止再次加入此群</strong><span style={{ display: 'block', marginTop: 2, color: arkmeTheme.secondary }}>开启后，后续邀请、添加或入群审批都会被拒绝，可在群聊设置中解除。</span></span>
+    </label>
+  </ArkmeConfirmDialog>
 }
 
 export function arkmeMemberProfileNames(

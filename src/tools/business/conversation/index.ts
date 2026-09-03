@@ -8,6 +8,7 @@ import { messageReadReceiptToolModules } from './read-receipts.js'
 import { relatedRecordingsToolModule } from './related-recordings.js'
 import { userBanToolModules } from './user-ban.js'
 import { reportMessageToolModule } from './report-message.js'
+import { withdrawMessageToolModule } from './withdraw-message.js'
 import { sendDirectTextToolModule } from './send-direct-text.js'
 import { sendTextToolModule } from './send-text.js'
 import { startCallToolModule } from './start-call.js'
@@ -22,6 +23,7 @@ export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
   ...messageReadReceiptToolModules,
   conversationMarkReadToolModule,
   reportMessageToolModule,
+  withdrawMessageToolModule,
   relatedRecordingsToolModule,
   ...userBanToolModules,
   groupAiPolishToolModule,

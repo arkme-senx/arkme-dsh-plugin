@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { LinkIcon } from '@phosphor-icons/react/dist/csr/Link'
+import { arkmeIsGenericLinkMetadataTitle } from '../link-metadata.js'
 import { arkmeTheme } from './arkme-theme.js'
 import {
   arkmeLinkMetadataResolver,
@@ -20,7 +21,12 @@ const linkPresentationStyle: CSSProperties = {
   verticalAlign: 'text-bottom',
 }
 const linkIconStyle: CSSProperties = { width: 16, height: 16, flex: 'none' }
-const rawLinkLabelStyle: CSSProperties = { minWidth: 0 }
+const rawLinkLabelStyle: CSSProperties = {
+  minWidth: 0,
+  overflowWrap: 'anywhere',
+  wordBreak: 'break-word',
+  whiteSpace: 'normal',
+}
 const resolvedLinkLabelStyle: CSSProperties = {
   ...rawLinkLabelStyle,
   overflow: 'hidden',
@@ -28,48 +34,63 @@ const resolvedLinkLabelStyle: CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-function ArkmeResolvedTextLink({ href, text, metadataResolver }: {
+export const ARKME_LINK_FALLBACK_LABEL = '分享链接'
+export type ArkmeLinkLabelMode = 'raw' | 'resolved'
+
+function arkmeResolvedLinkTitle(title: string | undefined, href: string): string {
+  const trimmed = title?.trim() ?? ''
+  return !arkmeIsGenericLinkMetadataTitle(trimmed) && trimmed !== href ? trimmed : ''
+}
+
+export function ArkmeTextLink({ href, text, linkLabelMode = 'resolved', fallbackLabel = ARKME_LINK_FALLBACK_LABEL, metadataResolver = arkmeLinkMetadataResolver }: {
   href: string
   text: string
-  metadataResolver: ArkmeLinkMetadataResolver
+  linkLabelMode?: ArkmeLinkLabelMode
+  fallbackLabel?: string
+  metadataResolver?: ArkmeLinkMetadataResolver
 }) {
   const [title, setTitle] = useState('')
+  const shouldResolve = linkLabelMode === 'resolved' && arkmeShouldResolveLinkMetadata(href)
 
   useEffect(() => {
     let active = true
     setTitle('')
-    if (!arkmeShouldResolveLinkMetadata(href)) return () => { active = false }
+    if (!shouldResolve) return () => { active = false }
     void metadataResolver.resolve(href)
       .then(metadata => {
-        if (active) setTitle(metadata?.title.trim() ?? '')
+        if (active) setTitle(arkmeResolvedLinkTitle(metadata?.title, href))
       })
       .catch(() => undefined)
     return () => { active = false }
-  }, [href, metadataResolver])
+  }, [href, metadataResolver, shouldResolve])
 
-  const resolved = title !== ''
+  const resolved = linkLabelMode === 'resolved' && title !== ''
+  const fallback = shouldResolve && !resolved
+  const label = resolved ? title : fallback ? fallbackLabel : text
   return <a
     href={href}
     target="_blank"
     rel="noopener noreferrer"
-    title={resolved ? href : undefined}
+    title={resolved || fallback ? href : undefined}
     style={linkPresentationStyle}
     data-arkme-text-link="true"
-    data-arkme-link-title={resolved ? 'resolved' : 'raw'}
+    data-arkme-link-title={resolved ? 'resolved' : fallback ? 'fallback' : 'raw'}
   >
     <LinkIcon aria-hidden style={linkIconStyle} data-arkme-link-icon="true" />
     <span
-      style={resolved ? resolvedLinkLabelStyle : rawLinkLabelStyle}
+      style={resolved || fallback ? resolvedLinkLabelStyle : rawLinkLabelStyle}
       data-arkme-link-label="true"
-    >{resolved ? title : text}</span>
+    >{label}</span>
   </a>
 }
 
-export function ArkmeLinkText({ text, renderText, renderLink, metadataResolver = arkmeLinkMetadataResolver }: {
+export function ArkmeLinkText({ text, renderText, renderLink, linkLabelMode = 'resolved', metadataResolver = arkmeLinkMetadataResolver, fallbackLabel = ARKME_LINK_FALLBACK_LABEL }: {
   text: string
   renderText?: (text: string) => ReactNode
   renderLink?: ArkmeLinkRenderer
+  linkLabelMode?: ArkmeLinkLabelMode
   metadataResolver?: ArkmeLinkMetadataResolver
+  fallbackLabel?: string
 }) {
   return <>{textLinkRuns(text).map((run, index) => {
     if (run.kind === 'text') {
@@ -79,9 +100,11 @@ export function ArkmeLinkText({ text, renderText, renderLink, metadataResolver =
     }
     const projection = renderLink?.(run)
     return <Fragment key={`${String(index)}:link:${run.href}`}>
-      {projection === undefined ? <ArkmeResolvedTextLink
+      {projection === undefined ? <ArkmeTextLink
         href={run.href}
         text={run.text}
+        linkLabelMode={linkLabelMode}
+        fallbackLabel={fallbackLabel}
         metadataResolver={metadataResolver}
       /> : projection}
     </Fragment>

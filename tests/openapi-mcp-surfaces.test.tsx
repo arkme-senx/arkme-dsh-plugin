@@ -76,17 +76,26 @@ describe('managed OpenAPI MCP Host, SDK, UI and Tool adapters', () => {
   })
 
   it('registers credential-free lifecycle Tools against the same controller', async () => {
-    const definitions: Array<{ name: string; execute(args: unknown, exec: unknown): Promise<unknown> }> = []
+    const definitions: Array<{
+      name: string
+      description: string
+      execute(args: unknown, exec: unknown): Promise<unknown>
+    }> = []
     const controller = { status: vi.fn(() => ready), retry: vi.fn(async () => ready) }
     registerOpenApiMcpLifecycleTools({ tools: { register(value: typeof definitions[number]) { definitions.push(value) } } } as never, controller)
 
     expect(definitions.map(definition => definition.name)).toEqual([
       'arkme_openapi_mcp_status', 'arkme_openapi_mcp_retry',
     ])
-    await expect(definitions[0]?.execute({}, {})).resolves.toBe(JSON.stringify(ready))
-    await expect(definitions[1]?.execute({}, {})).resolves.toBe(JSON.stringify(ready))
+    const modelStatus = JSON.stringify({ state: 'ready', retryable: false, userAction: 'none' })
+    await expect(definitions[0]?.execute({}, {})).resolves.toBe(modelStatus)
+    await expect(definitions[1]?.execute({}, {})).resolves.toBe(modelStatus)
     expect(controller.status).toHaveBeenCalledOnce()
     expect(controller.retry).toHaveBeenCalledOnce()
-    expect(JSON.stringify(await definitions[0]?.execute({}, {}))).not.toContain('apiKey')
+    expect(JSON.stringify(await definitions[0]?.execute({}, {}))).not.toContain('nextReconcileAtMillis')
+    expect(definitions[0]?.description).toContain('inactive, reconciling, ready, or degraded')
+    expect(definitions[0]?.description).toContain('none or login')
+    expect(definitions[0]?.description).toContain('mounted and executable')
+    expect(definitions[1]?.description).toContain('degraded and retryable is true')
   })
 })

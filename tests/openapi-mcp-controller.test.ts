@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
+import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from '../src/keychain-store.js'
 import {
   ManagedOpenApiMcpController,
@@ -120,6 +121,7 @@ function setup(input: {
   credential?: ManagedOpenApiCredential
   ensure?: ManagedOpenApiControlResult
   manifest?: OpenApiMcpManifest
+  now?: () => number
 } = {}) {
   const order: string[] = []
   const session = new MemorySessionStore(activeSession())
@@ -136,7 +138,7 @@ function setup(input: {
     enabled: true, sessionStore: session,
     accessCredentialProvider: { resolveManagedAccessCredential: vi.fn(async () => new SecretValue('access-secret')) },
     controlPlane: control, manifestSource, credentialStore: credentials, runtime, reconcileLock: new ImmediateLock(), logger,
-    now: () => now, random: () => 0.5,
+    now: input.now ?? (() => now), random: () => 0.5,
   })
   return { controller, session, credentials, runtime, control, manifestSource, order, logger }
 }
@@ -344,24 +346,194 @@ describe('managed OpenAPI MCP controller', () => {
     await fixture.controller.dispose()
   })
 
-  it('fails closed on an unattested rollout candidate and recovers on the next matching instance', async () => {
-    const fixture = setup({ credential: stored(), ensure: ready(), manifest: manifest(revision1) })
+  it('keeps a healthy mount usable through a control-plane failure and recovers automatically', async () => {
+    vi.useFakeTimers()
+    try {
+      const fixture = setup({ credential: stored(), ensure: ready() })
+      await fixture.controller.retry()
+      vi.mocked(fixture.control.ensure).mockRejectedValueOnce(new Error('control unavailable'))
+
+      await fixture.controller.retry()
+
+      expect(fixture.control.ensure).toHaveBeenCalledTimes(2)
+      expect(fixture.controller.status()).toMatchObject({
+        state: 'ready', retryable: false, userAction: 'none', nextReconcileAtMillis: now + 60_000,
+      })
+      expect(fixture.controller.guardToolExecution('mcp__arkme__profile_get')).toBeUndefined()
+      expect(fixture.runtime.disposed).toBe(0)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(fixture.control.ensure).toHaveBeenCalledTimes(3)
+      expect(fixture.runtime.mountedKeys).toEqual([apiKey1])
+      expect(fixture.controller.status().state).toBe('ready')
+      await fixture.controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('denies a stale mounted generation after another controller advances secure storage', async () => {
+    const fixture = setup({ credential: stored(), ensure: ready() })
     await fixture.controller.retry()
-    vi.mocked(fixture.manifestSource.read).mockResolvedValue(manifest(revision2))
-    fixture.runtime.failReady = true
+    fixture.credentials.value = { ...stored(2), apiKey: apiKey2 }
+    vi.mocked(fixture.control.ensure).mockRejectedValueOnce(new Error('control unavailable'))
 
     await fixture.controller.retry()
 
     expect(fixture.controller.status()).toMatchObject({ state: 'degraded', retryable: true })
-    expect(fixture.controller.guardToolExecution('mcp__arkme__profile_get')).toBeUndefined()
-    expect(fixture.runtime.mountedManifests.at(-1)?.catalogRevision).toBe(revision2)
+    expect(fixture.controller.guardToolExecution('mcp__arkme__profile_get')).toContain('not ready')
+    const execute = vi.fn(async () => ({ isError: false, content: [] }) as ToolExecutionResult)
+    await expect(fixture.controller.executeManagedTool(
+      'mcp__arkme__profile_get', new AbortController().signal, execute,
+    )).rejects.toBeInstanceOf(ManagedOpenApiMcpExecutionSupersededError)
+    expect(execute).not.toHaveBeenCalled()
+    expect(fixture.runtime.disposed).toBe(0)
 
-    fixture.runtime.failReady = false
+    vi.mocked(fixture.control.ensure).mockResolvedValue(ready(2))
     await fixture.controller.retry()
 
+    expect(fixture.runtime.mountedKeys).toEqual([apiKey1, apiKey2])
+    expect(fixture.runtime.disposed).toBe(1)
     expect(fixture.controller.status().state).toBe('ready')
-    expect(fixture.runtime.mountedManifests.at(-1)?.catalogRevision).toBe(revision2)
     await fixture.controller.dispose()
+  })
+
+  it('never lets control-plane backoff outlive the current credential and rotates at expiry', async () => {
+    vi.useFakeTimers()
+    try {
+      let currentNow = now
+      const fixture = setup({ credential: stored(), ensure: ready(), now: () => currentNow })
+      await fixture.controller.retry()
+      const expiresAtMillis = fixture.credentials.value?.expiresAtMillis
+      if (expiresAtMillis === undefined) throw new Error('missing managed credential expiry')
+      currentNow = expiresAtMillis - 30_000
+      vi.mocked(fixture.control.ensure)
+        .mockRejectedValueOnce(new Error('control unavailable'))
+        .mockResolvedValueOnce({
+          ...issued(apiKey2, 2),
+          expiresAtMillis: expiresAtMillis + 30 * 24 * 60 * 60_000,
+        })
+
+      await fixture.controller.retry()
+
+      expect(fixture.controller.status()).toMatchObject({
+        state: 'ready', retryable: false, userAction: 'none', nextReconcileAtMillis: expiresAtMillis,
+      })
+      const execute = vi.fn(async () => ({ isError: false, content: [] }) as ToolExecutionResult)
+      currentNow = expiresAtMillis
+      await expect(fixture.controller.executeManagedTool(
+        'mcp__arkme__profile_get', new AbortController().signal, execute,
+      )).rejects.toBeInstanceOf(ManagedOpenApiMcpExecutionSupersededError)
+      expect(execute).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(30_000)
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(fixture.control.ensure).toHaveBeenCalledTimes(3)
+      expect(fixture.credentials.value).toMatchObject({ generation: 2, apiKey: apiKey2 })
+      expect(fixture.runtime.mountedKeys).toEqual([apiKey1, apiKey2])
+      expect(fixture.controller.status().state).toBe('ready')
+      await fixture.controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a healthy mount usable through a transient active-session read failure', async () => {
+    vi.useFakeTimers()
+    try {
+      const fixture = setup({ credential: stored(), ensure: ready() })
+      await fixture.controller.retry()
+      vi.spyOn(fixture.session, 'read')
+        .mockRejectedValueOnce(new Error('keychain temporarily unavailable'))
+        .mockRejectedValueOnce(new Error('keychain temporarily unavailable'))
+
+      await fixture.controller.retry()
+
+      expect(fixture.controller.status()).toMatchObject({
+        state: 'ready', retryable: false, userAction: 'none', nextReconcileAtMillis: now + 60_000,
+      })
+      expect(fixture.controller.guardToolExecution('mcp__arkme__profile_get')).toBeUndefined()
+      expect(fixture.runtime.disposed).toBe(0)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(fixture.control.ensure).toHaveBeenCalledTimes(2)
+      expect(fixture.runtime.mountedKeys).toEqual([apiKey1])
+      expect(fixture.controller.status().state).toBe('ready')
+      await fixture.controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('quarantines an expired credential and recovers automatically with a newly issued generation', async () => {
+    vi.useFakeTimers()
+    try {
+      let currentNow = now
+      const fixture = setup({ credential: stored(), ensure: ready(), now: () => currentNow })
+      await fixture.controller.retry()
+      currentNow = now + 30 * 24 * 60 * 60_000 + 1
+      vi.mocked(fixture.control.ensure)
+        .mockRejectedValueOnce(new Error('control unavailable'))
+        .mockResolvedValueOnce({
+          ...issued(apiKey2, 2),
+          expiresAtMillis: currentNow + 30 * 24 * 60 * 60_000,
+        })
+
+      await fixture.controller.retry()
+
+      expect(fixture.controller.status()).toMatchObject({
+        state: 'degraded', retryable: true, userAction: 'none',
+        nextReconcileAtMillis: currentNow + 60_000,
+      })
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(fixture.control.ensure).toHaveBeenCalledTimes(3)
+      expect(fixture.credentials.value).toMatchObject({ generation: 2, apiKey: apiKey2 })
+      expect(fixture.runtime.mountedKeys).toEqual([apiKey1, apiKey2])
+      expect(fixture.runtime.disposed).toBe(1)
+      expect(fixture.controller.status().state).toBe('ready')
+      await fixture.controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('fails closed on an unattested rollout candidate and recovers automatically on a matching instance', async () => {
+    vi.useFakeTimers()
+    try {
+      const fixture = setup({ credential: stored(), ensure: ready(), manifest: manifest(revision1) })
+      await fixture.controller.retry()
+      vi.mocked(fixture.manifestSource.read).mockResolvedValue(manifest(revision2))
+      fixture.runtime.failReady = true
+
+      await fixture.controller.retry()
+
+      expect(fixture.controller.status()).toMatchObject({ state: 'degraded', retryable: true })
+      expect(fixture.controller.guardToolExecution('mcp__arkme__profile_get')).toBeUndefined()
+      expect(fixture.runtime.mountedManifests.at(-1)?.catalogRevision).toBe(revision2)
+
+      fixture.runtime.failReady = false
+      await vi.advanceTimersByTimeAsync(60_000)
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(fixture.controller.status().state).toBe('ready')
+      expect(fixture.runtime.mountedManifests.at(-1)?.catalogRevision).toBe(revision2)
+      await fixture.controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('persists a renewed expiry without remounting an unchanged MCP contract', async () => {

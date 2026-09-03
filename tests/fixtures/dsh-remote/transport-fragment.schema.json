@@ -13,10 +13,10 @@
     "protocol_major": {"const": 1},
     "kind": {"const": "fragment"},
     "transfer_ref": {"type": "string", "minLength": 8, "maxLength": 128},
-    "fragment_index": {"type": "integer", "minimum": 0, "maximum": 255},
-    "fragment_count": {"type": "integer", "minimum": 2, "maximum": 256},
-    "payload_bytes": {"type": "integer", "minimum": 1, "maximum": 524288},
+    "fragment_index": {"type": "integer", "minimum": 0, "maximum": 2047},
+    "fragment_count": {"type": "integer", "minimum": 2, "maximum": 2048},
+    "payload_bytes": {"type": "integer", "minimum": 1, "maximum": 67108864},
     "payload_sha256": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
-    "chunk": {"type": "string", "minLength": 1, "maxLength": 32768}
+    "chunk": {"type": "string", "minLength": 1, "maxLength": 43692}
   }
 }

@@ -1,6 +1,11 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ArkmeConversationMemberItem, ArkmeSourceItem, ArkmeTimelineItem } from '../src/types.js'
+import type {
+  ArkmeConversationMemberItem,
+  ArkmeMessageCopyLinkSnapshotItem,
+  ArkmeSourceItem,
+  ArkmeTimelineItem,
+} from '../src/types.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 
@@ -18,7 +23,7 @@ vi.mock('react-dom', () => ({
 }))
 
 import {
-  ArkmeConfirmedSendRetentionOwner, ArkmeSurface, arkmeBackgroundSoundCaptureFailureFeedback,
+  ArkmeConfirmedSendRetentionOwner, ArkmeSurface, ArkmeTimelineMessageHeader, arkmeBackgroundSoundCaptureFailureFeedback,
   arkmeGroupMentionCandidates, arkmeRealtimeDeltaCoversTimelineGap,
 } from '../src/client/ArkmeSidebar.js'
 import { ArkmeClientError } from '../src/client/api.js'
@@ -72,6 +77,15 @@ function deferred<Value>() {
   return { promise, resolve, reject }
 }
 
+function renderedText(value: unknown): string {
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  if (Array.isArray(value)) return value.map(renderedText).join('')
+  if (value !== null && typeof value === 'object' && 'children' in value) {
+    return renderedText((value as { children?: unknown }).children)
+  }
+  return ''
+}
+
 describe('conversation send directory projection', () => {
   let renderer: ReactTestRenderer | undefined
   let timeline: ArkmeTimelineItem[]
@@ -91,6 +105,7 @@ describe('conversation send directory projection', () => {
     nextCursor?: { beforeSequence: number }
   }>()
   let copiedQuickLinkExtensionText = ''
+  let copiedQuickLinkItems: ArkmeMessageCopyLinkSnapshotItem[]
   let activeSource = target
 
   it.each([
@@ -132,6 +147,18 @@ describe('conversation send directory projection', () => {
     newerTimelinePages = new Map()
     olderTimelinePages = new Map()
     copiedQuickLinkExtensionText = ''
+    copiedQuickLinkItems = [{
+      sourceKind: 'chat_record',
+      senderDisplayName: '1D3E',
+      senderAvatarUrl: '',
+      title: '',
+      textContent: 'bot相关接口有点问题，会优化下',
+      sendAtMillis: 1_775_399_700_000,
+      templateKind: 1,
+      displayKind: 0,
+      officialMark: 0,
+      mediaItems: [],
+    }]
     activeSource = target
     vi.spyOn(Date, 'now').mockReturnValue(48)
     const localStorage = new Map<string, string>()
@@ -229,18 +256,7 @@ describe('conversation send directory projection', () => {
           recordOwnerUserId: 42,
           sequence: 8,
         }],
-        items: [{
-          sourceKind: 'chat_record',
-          senderDisplayName: '1D3E',
-          senderAvatarUrl: '',
-          title: '',
-          textContent: 'bot相关接口有点问题，会优化下',
-          sendAtMillis: 1_775_399_700_000,
-          templateKind: 1,
-          displayKind: 0,
-          officialMark: 0,
-          mediaItems: [],
-        }],
+        items: copiedQuickLinkItems,
         presentation: [{ kind: 'item', itemIndex: 0 }],
         ...(copiedQuickLinkExtensionText === '' ? {} : {
           recordContext: {
@@ -350,6 +366,26 @@ describe('conversation send directory projection', () => {
 
     expect(arkmeGroupMentionCandidates('', [], [member]).map(candidate => candidate.kind))
       .toEqual(['all'])
+  })
+
+  it('highlights visible @ mentions in private conversation bubbles for self and peer messages', async () => {
+    timeline = [{
+      itemUid: 'received-mention', sequence: 1, senderName: '朋友', isMe: false,
+      sendAtMillis: 1, title: '', textContent: '收到 @狗才', status: 1,
+    }, {
+      itemUid: 'self-mention', sequence: 2, senderName: '狗才', isMe: true,
+      sendAtMillis: 2, title: '', textContent: '@🚀助手 我来处理', status: 1,
+    }]
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    const highlighted = renderer.root.findAll(node =>
+      node.type === 'span' && node.props.style?.color === 'var(--dsw-alias-state-business-primary, #3964fe)',
+    ).map(node => renderedText(node.children))
+    expect(highlighted).toEqual(expect.arrayContaining(['@狗才', '@🚀助手']))
   })
 
   it('lets the user remove terminal local file tasks without hiding an unknown remote outcome', async () => {
@@ -636,10 +672,29 @@ describe('conversation send directory projection', () => {
     expect(checkbox.props.style).toMatchObject({ justifySelf: 'center', width: 32, height: 32 })
     expect(checkbox.props.style.position).toBeUndefined()
     expect(row.findAllByProps({ 'data-arkme-message-avatar': 'true' })).toHaveLength(0)
+    expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
     const messageLine = row.find(node => node.type === 'div' && node.props.style?.width === 'min(600px, 100%)')
     expect(messageLine.props.style).toMatchObject({
       gridColumn: '2', minWidth: 0, justifySelf: 'center', justifyContent: 'center', marginBottom: 0,
     })
+  })
+
+  it('hides sender and time metadata for a self-authored quick note', async () => {
+    timeline = [{
+      itemUid: 'own-message-without-metadata', senderName: '狗才', isMe: true,
+      sendAtMillis: 1, title: '', textContent: '自己的快记', status: 1,
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+
+    const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'own-message-without-metadata' })
+    expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
   })
 
   it('keeps the forward picker mounted while rapid comment changes are deferred', async () => {
@@ -1229,6 +1284,7 @@ describe('conversation send directory projection', () => {
           memberRef: 'arkme-chat-member-v1.stable.signature',
           mentionRef: 'arkme-chat-human-mention-v1.mention.signature',
           mentionDisplayName: 'Tison',
+          mentionSecondaryName: '我的私有备注',
           displayName: '我的私有备注',
           secondaryName: 'Tison',
           role: 'member', status: 'active', isSelf: false, isOwner: false,
@@ -1262,7 +1318,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     const tisonOption = renderer!.root.findAllByProps({ role: 'option' }).find(option =>
-      option.findAll(node => node.type === 'span' && node.children.join('') === '我的私有备注（Tison）').length > 0)
+      option.findAll(node => node.type === 'span' && node.children.join('') === 'Tison（我的私有备注）').length > 0)
     expect(tisonOption).toBeDefined()
     await act(async () => {
       tisonOption!.props.onMouseDown({ preventDefault: vi.fn() })
@@ -1307,7 +1363,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     const fileMentionOption = renderer!.root.findAllByProps({ role: 'option' }).find(option =>
-      option.findAll(node => node.type === 'span' && node.children.join('') === '我的私有备注（Tison）').length > 0)
+      option.findAll(node => node.type === 'span' && node.children.join('') === 'Tison（我的私有备注）').length > 0)
     expect(fileMentionOption).toBeDefined()
     await act(async () => {
       fileMentionOption!.props.onMouseDown({ preventDefault: vi.fn() })
@@ -1358,7 +1414,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     const retryOption = renderer!.root.findAllByProps({ role: 'option' }).find(option =>
-      option.findAll(node => node.type === 'span' && node.children.join('') === '我的私有备注（Tison）').length > 0)
+      option.findAll(node => node.type === 'span' && node.children.join('') === 'Tison（我的私有备注）').length > 0)
     expect(retryOption).toBeDefined()
     await act(async () => {
       retryOption!.props.onMouseDown({ preventDefault: vi.fn() })
@@ -2568,13 +2624,40 @@ describe('conversation send directory projection', () => {
     const parentPreview = sentRow.findByProps({ 'data-arkme-extension-parent-preview': 'extension-parent' })
     expect(parentPreview.findAll(node => node.children.includes('原消息内容')).length).toBeGreaterThan(0)
     expect(parentPreview.props.style).toMatchObject({
-      marginRight: 54,
+      marginRight: 44,
       background: 'linear-gradient(180deg, var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8)) 0%, transparent 68.06%)',
     })
     const childLine = extensionCluster.findByProps({ 'data-arkme-extension-child-line': 'true' })
     expect(childLine.props.style).toMatchObject({ flexDirection: 'row-reverse', gap: 10 })
+    expect(extensionCluster.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
     expect(childLine.findByProps({ 'data-arkme-message-content-line': 'record-new' })).toBeDefined()
     expect(childLine.findAllByProps({ 'data-arkme-extension-parent-preview': 'extension-parent' })).toHaveLength(0)
+  })
+
+  it('aligns a received extension preview with the sender and content column', async () => {
+    timeline = [{
+      itemUid: 'received-extension-child', senderName: '同事', isMe: false, sendAtMillis: 12,
+      title: '', textContent: '补充内容', status: 1,
+      extensionParentRecordUid: 'received-extension-parent',
+      extensionParent: {
+        itemUid: 'received-extension-parent', senderName: '同事', title: '', textContent: '原快记',
+        recordOwnerUserId: 7, sequence: 11, sendAtMillis: 11,
+      },
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+
+    const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'received-extension-child' })
+    const preview = row.findByProps({ 'data-arkme-extension-parent-preview': 'received-extension-parent' })
+    expect(preview.props.style.marginLeft).toBe(44)
+    const childLine = row.findByProps({ 'data-arkme-extension-child-line': 'true' })
+    expect(childLine.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(1)
   })
 
   it('uses a pointer cursor for a clickable extension parent preview', async () => {
@@ -3575,6 +3658,72 @@ describe('conversation send directory projection', () => {
       height: '16',
     })
     expect(sendButton.findByType('path').props.d).toContain('M23.5521 7.04659')
+  })
+
+  it('keeps a raw URL label in a single copied quick-link detail record', async () => {
+    copiedQuickLinkItems[0] = {
+      ...copiedQuickLinkItems[0]!,
+      textContent: '单条 https://example.com/single',
+    }
+    timeline = [{
+      itemUid: 'copy-link-message', senderName: '1D3E', isMe: false, sendAtMillis: 1, status: 1,
+      title: '', textContent: 'https://jiwo.cc/s/U2HQgn1RhPJZaFmx', templateKind: 1, displayKind: 0,
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+
+    const quickLink = renderer!.root.findByProps({ 'data-arkme-inline-link': 'message-copy-link' })
+    await act(async () => {
+      quickLink.props.onClick({ stopPropagation: vi.fn() })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const detail = renderer!.root.findByProps({ 'data-arkme-copy-link-detail': 'true' })
+    const link = detail.find(node => node.type === 'a' && node.props.href === 'https://example.com/single')
+    expect(link.findByProps({ 'data-arkme-link-label': 'true' }).children).toEqual([
+      'https://example.com/single',
+    ])
+  })
+
+  it('keeps raw URL labels in multi-record and extension copied-link details', async () => {
+    copiedQuickLinkItems = [
+      { ...copiedQuickLinkItems[0]!, textContent: '第一条 https://example.com/first' },
+      {
+        ...copiedQuickLinkItems[0]!,
+        senderDisplayName: '狗才',
+        sendAtMillis: 1_775_399_800_000,
+        textContent: '第二条 https://example.com/second',
+      },
+    ]
+    copiedQuickLinkExtensionText = '延展 https://example.com/extension'
+    timeline = [{
+      itemUid: 'copy-link-message', senderName: '1D3E', isMe: false, sendAtMillis: 1, status: 1,
+      title: '', textContent: 'https://jiwo.cc/s/U2HQgn1RhPJZaFmx', templateKind: 1, displayKind: 0,
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+
+    const quickLink = renderer!.root.findByProps({ 'data-arkme-inline-link': 'message-copy-link' })
+    await act(async () => {
+      quickLink.props.onClick({ stopPropagation: vi.fn() })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const detail = renderer!.root.findByProps({ 'data-arkme-copy-link-detail': 'true' })
+    for (const href of [
+      'https://example.com/first',
+      'https://example.com/second',
+      'https://example.com/extension',
+    ]) {
+      const link = detail.find(node => node.type === 'a' && node.props.href === href)
+      expect(link.findByProps({ 'data-arkme-link-label': 'true' }).children).toEqual([href])
+    }
   })
 
   it('extends the copied quick-link detail record from the footer input', async () => {

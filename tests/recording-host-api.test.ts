@@ -36,12 +36,18 @@ describe('recording UI-only host operations', () => {
 
   it('dispatches only opaque recording import control operations', async () => {
     const recordingImportPreflight = vi.fn(async () => ({ duplicateFileNames: ['old.m4a'] }))
-    const recordingImportList = vi.fn(async () => [])
+    const recordingImportList = vi.fn(async () => ({ items: [], owner: { state: 'available' as const } }))
     const recordingImportStatus = vi.fn(async () => ({ importRef: 'opaque', phase: 'uploading' }))
     const retryRecordingImport = vi.fn(async () => ({ importRef: 'opaque', phase: 'failed' }))
     const cancelRecordingImport = vi.fn(async () => ({ importRef: 'opaque', phase: 'cancelled' }))
+    const recordingImportHistory = vi.fn(async () => ({ items: [], offset: 0, hasMore: false }))
+    const updateRecordingImportSessionStart = vi.fn(async () => undefined)
+    const updateRecordingImportSessionOwnership = vi.fn(async () => undefined)
+    const deleteRecordingImportSession = vi.fn(async () => undefined)
     const service = {
       recordingImportPreflight, recordingImportList, recordingImportStatus, retryRecordingImport, cancelRecordingImport,
+      recordingImportHistory, updateRecordingImportSessionStart, updateRecordingImportSessionOwnership,
+      deleteRecordingImportSession,
     } as unknown as ArkmeService
 
     await dispatchArkmeHostOperation(service, 'recordings.import.preflight', { fileNames: ['new.m4a', 'old.m4a'] })
@@ -49,11 +55,23 @@ describe('recording UI-only host operations', () => {
     await dispatchArkmeHostOperation(service, 'recordings.import.status', { importRef: 'opaque' })
     await dispatchArkmeHostOperation(service, 'recordings.import.retry', { importRef: 'opaque', expectedRevision: 3 })
     await dispatchArkmeHostOperation(service, 'recordings.import.cancel', { importRef: 'opaque', expectedRevision: 4 })
+    await dispatchArkmeHostOperation(service, 'recordings.import.history', { toMillis: 20, limit: 50, offset: 2 })
+    await dispatchArkmeHostOperation(service, 'recordings.import.session.update-start', {
+      sessionRef: 'session-opaque', startAtMillis: 10,
+    })
+    await dispatchArkmeHostOperation(service, 'recordings.import.session.update-ownership', {
+      sessionRef: 'session-opaque', ownership: 'other',
+    })
+    await dispatchArkmeHostOperation(service, 'recordings.import.session.delete', { sessionRef: 'session-opaque' })
 
     expect(recordingImportPreflight).toHaveBeenCalledWith(['new.m4a', 'old.m4a'], undefined)
     expect(recordingImportStatus).toHaveBeenCalledWith('opaque')
     expect(retryRecordingImport).toHaveBeenCalledWith('opaque', 3)
     expect(cancelRecordingImport).toHaveBeenCalledWith('opaque', 4)
+    expect(recordingImportHistory).toHaveBeenCalledWith({ toMillis: 20, limit: 50, offset: 2 }, undefined)
+    expect(updateRecordingImportSessionStart).toHaveBeenCalledWith('session-opaque', 10, undefined)
+    expect(updateRecordingImportSessionOwnership).toHaveBeenCalledWith('session-opaque', 'other', undefined)
+    expect(deleteRecordingImportSession).toHaveBeenCalledWith('session-opaque', undefined)
   })
 
   it('dispatches opaque playback and owner-supported speaker assignment commands', async () => {

@@ -1,10 +1,10 @@
 import { callArkme as callProvider } from '../sdk/index.js'
-import type { PublicRecordingImportJob } from '../recording-import-shared.js'
+import type { PublicRecordingImportCurrentItem, PublicRecordingImportJob } from '../recording-import-shared.js'
 import type { ArkmePluginOperation } from '../types.js'
 
 export { ArkmeClientError } from '../sdk/index.js'
 
-export type RecordingImportSnapshot = PublicRecordingImportJob
+export type RecordingImportSnapshot = PublicRecordingImportCurrentItem
 
 function recordingImportMime(file: File): string {
   if (file.type !== '') return file.type
@@ -18,7 +18,7 @@ export async function uploadArkmeRecording(
   startAtMillis: number,
   belongUserId: number,
   signal?: AbortSignal,
-): Promise<RecordingImportSnapshot> {
+): Promise<PublicRecordingImportJob> {
   const response = await fetch(importPath, {
     method: 'POST',
     headers: {
@@ -32,7 +32,7 @@ export async function uploadArkmeRecording(
     redirect: 'error',
     ...(signal === undefined ? {} : { signal }),
   })
-  let payload: { ok: boolean; value?: RecordingImportSnapshot; error?: { message?: string } }
+  let payload: { ok: boolean; value?: PublicRecordingImportJob; error?: { message?: string } }
   try {
     payload = await response.json() as typeof payload
   } catch (reason) {
@@ -80,10 +80,14 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'recordings.calendar'
   | 'recordings.day'
   | 'recordings.import.list'
+  | 'recordings.import.history'
   | 'recordings.import.preflight'
   | 'recordings.import.status'
   | 'recordings.import.retry'
   | 'recordings.import.cancel'
+  | 'recordings.import.session.update-start'
+  | 'recordings.import.session.update-ownership'
+  | 'recordings.import.session.delete'
   | 'recordings.playback.open'
   | 'recordings.speaker.options'
   | 'recordings.speaker.assign-item'

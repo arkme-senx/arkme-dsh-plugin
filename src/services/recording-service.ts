@@ -5,11 +5,22 @@ import {
   sameRecordingImportIdentity,
   toPublicRecordingImportJob,
   type PublicRecordingImportJob,
+  type PublicRecordingImportCurrentSnapshot,
+  type PublicRecordingImportHistoryItem,
+  type PublicRecordingImportHistoryPage,
+  type PublicRecordingImportOwnerTask,
+  type PublicRecordingImportProcessingTiming,
+  type RecordingImportDisplayStatus,
   type RecordingImportJob,
+  type RecordingImportOwnerProgress,
+  type RecordingImportOwnerSession,
+  type RecordingImportOwnerTaskSnapshot,
+  type RecordingImportOwnerGateway,
   type RecordingImportSource,
 } from '../recording-import-contract.js'
 import { RecordingImportCoordinator, type RecordingImportGateway } from '../recording-import-coordinator.js'
 import { openRecordingImportRef, sealRecordingImportRef } from '../recording-import-ref.js'
+import { recordingImportFileNameKey } from '../recording-import-shared.js'
 import {
   isRecordingInstantOnOrAfterUnixEpoch,
   isRecordingLocalDateOnOrAfterMinimum,
@@ -66,6 +77,7 @@ export interface ArkmeRecordingUserCandidateReader {
 
 export interface RecordingServiceDependencies {
   recordingImportGateway: RecordingImportGateway
+  recordingImportOwnerGateway: RecordingImportOwnerGateway
   recordingImportSource: RecordingImportSource
   profile?: ArkmeRecordingProfileReader
   media?: ArkmeRecordingMediaIssuer
@@ -134,9 +146,54 @@ function safeFailureMessage(error: unknown): string {
   return '未知错误'
 }
 
+function recordingImportErrorCode(error: unknown): string | undefined {
+  if (error === null || typeof error !== 'object' || !('code' in error)) return undefined
+  return typeof error.code === 'string' ? error.code : undefined
+}
+
 const RECORDING_IMPORT_VISIBLE_LIMIT = 20
 const RECORDING_IMPORT_UNRESOLVED_LIMIT = 20
+const RECORDING_IMPORT_HISTORY_MAX_PAGE_SIZE = 50
+const RECORDING_IMPORT_SESSION_REF_PREFIX = 'arkme-recording-import-session-v1'
 type ArkmeRecordingPrivateTranscriptSection = ArkmeRecordingTranscriptSection<ArkmeRecordingPrivateTranscriptItem>
+
+interface RecordingImportSessionRefPayload {
+  version: 1
+  viewerUserId: number
+  sessionId: string
+}
+
+function recordingImportOwnerStatus(
+  task: RecordingImportOwnerTaskSnapshot,
+): { status: RecordingImportDisplayStatus; statusDetail: string } {
+  const owner = task.session
+  const ownerProgress = task.progress
+  if (!owner.hasFinishedUpload) return { status: 'uploading', statusDetail: '上传中' }
+  if (task.processingCompleted) {
+    if (ownerProgress?.displayStatus === 'partial') return { status: 'partial', statusDetail: '部分完成' }
+    if (ownerProgress?.displayStatus === 'failed') return { status: 'failed', statusDetail: '处理失败' }
+    if (ownerProgress?.displayStatus === 'completed') return { status: 'completed', statusDetail: '导入完成' }
+    return { status: 'completed', statusDetail: '已完成' }
+  }
+  if (['completed', 'partial', 'failed'].includes(ownerProgress?.displayStatus ?? '')) {
+    return { status: 'processing', statusDetail: '处理中' }
+  }
+  switch (ownerProgress?.displayStatus) {
+    case 'speaker-waiting': return { status: 'speaker-waiting', statusDetail: '等待识别说话人' }
+    case 'speaker-recognizing': return { status: 'speaker-recognizing', statusDetail: '说话人识别中' }
+    case 'transcript-waiting': return { status: 'transcript-waiting', statusDetail: '等待转写' }
+    case 'transcribing': return { status: 'transcribing', statusDetail: '转写中' }
+    case 'unavailable': return { status: 'unavailable', statusDetail: '状态不可用' }
+    default: return { status: 'waiting', statusDetail: '等待中' }
+  }
+}
+
+function recordingImportProcessingDuration(
+  timing?: PublicRecordingImportProcessingTiming,
+): number | undefined {
+  if (timing === undefined || timing.timingState === 'unavailable') return undefined
+  return Math.max(0, timing.totalDurationMillis)
+}
 
 export class RecordingService {
   private readonly recordingImports: RecordingImportCoordinator
@@ -149,6 +206,7 @@ export class RecordingService {
   private readonly media: ArkmeRecordingMediaIssuer | undefined
   private readonly userCandidates: ArkmeRecordingUserCandidateReader | undefined
   private readonly recordingImportSource: RecordingImportSource
+  private readonly recordingImportOwnerGateway: RecordingImportOwnerGateway
 
   constructor(
     private readonly runtime: ServiceRuntime,
@@ -158,6 +216,7 @@ export class RecordingService {
     this.media = dependencies.media
     this.userCandidates = dependencies.userCandidates
     this.recordingImportSource = dependencies.recordingImportSource
+    this.recordingImportOwnerGateway = dependencies.recordingImportOwnerGateway
     this.recordingImports = new RecordingImportCoordinator(
       runtime.stateStore,
       dependencies.recordingImportGateway,
@@ -367,15 +426,37 @@ export class RecordingService {
 
   async recordingImportPreflight(fileNames: string[], signal?: AbortSignal): Promise<{ duplicateFileNames: string[] }> {
     this.assertWorkbenchEnabled()
-    const normalized = [...new Set(fileNames.map(value => value.trim()).filter(value => value !== ''))]
-    if (normalized.length === 0 || normalized.length > 100 || normalized.some(value => value.length > 255)) {
+    const candidatesByKey = new Map<string, string>()
+    for (const value of fileNames) {
+      const candidate = value.trim()
+      const key = recordingImportFileNameKey(candidate)
+      if (key !== '' && !candidatesByKey.has(key)) candidatesByKey.set(key, candidate)
+    }
+    const candidates = [...candidatesByKey.values()]
+    if (candidates.length === 0 || candidates.some(value => value.length > 255)) {
       throw new ArkmePluginError('recording-import-preflight-invalid', '待检查录音文件名无效', false)
     }
-    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-      '/api/v1/audio/check-exist-same-orig', { orig_names: normalized }, await this.runtime.requireSession(), signal,
+    const session = await this.runtime.requireSession()
+    const unresolvedLocalFileNameKeys = new Set(
+      (await this.runtime.stateStore.listRecordingImportJobs(session.userId))
+        .filter(job => !['accepted', 'cancelled'].includes(job.phase))
+        .map(job => recordingImportFileNameKey(job.fileName)),
     )
-    const duplicates = new Set(listValue(data.exist_names).map(stringValue).map(value => value.trim()).filter(value => value !== ''))
-    return { duplicateFileNames: normalized.filter(value => duplicates.has(value)) }
+    const audioOwnerFileNameKeys = new Set<string>()
+    for (const value of await this.recordingImportOwnerGateway.findExistingFileNames({
+      viewerUserId: session.userId,
+      fileNames: candidates,
+      ...(signal === undefined ? {} : { signal }),
+    })) {
+      const key = recordingImportFileNameKey(value)
+      if (key !== '') audioOwnerFileNameKeys.add(key)
+    }
+    return {
+      duplicateFileNames: candidates.filter(
+        value => unresolvedLocalFileNameKeys.has(recordingImportFileNameKey(value))
+          || audioOwnerFileNameKeys.has(recordingImportFileNameKey(value)),
+      ),
+    }
   }
 
   async acceptRecordingImport(
@@ -418,7 +499,8 @@ export class RecordingService {
       await this.recordingImportSource.discard(sourceHandle).catch(() => undefined)
       return toPublicRecordingImportJob(existing, await this.recordingImportRef(existing))
     }
-    if (unresolvedJobs.some(job => job.fileName === metadata.fileName)) {
+    const fileNameKey = recordingImportFileNameKey(metadata.fileName)
+    if (unresolvedJobs.some(job => recordingImportFileNameKey(job.fileName) === fileNameKey)) {
       throw new ArkmePluginError(
         'recording-import-duplicate-in-progress',
         '同名录音正在导入，请等待当前任务完成或取消后重试',
@@ -496,7 +578,7 @@ export class RecordingService {
     return toPublicRecordingImportJob(job, importRef)
   }
 
-  async recordingImportList(): Promise<PublicRecordingImportJob[]> {
+  async recordingImportList(signal?: AbortSignal): Promise<PublicRecordingImportCurrentSnapshot> {
     this.assertWorkbenchEnabled()
     const session = await this.runtime.requireSession()
     const jobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
@@ -505,10 +587,142 @@ export class RecordingService {
     }
     const newestFirst = (left: RecordingImportJob, right: RecordingImportJob) => right.createdAtMillis - left.createdAtMillis
     const unresolved = jobs.filter(job => !['accepted', 'cancelled'].includes(job.phase)).sort(newestFirst)
-    const accepted = jobs.filter(job => job.phase === 'accepted').sort(newestFirst)
-      .slice(0, Math.max(0, RECORDING_IMPORT_VISIBLE_LIMIT - unresolved.length))
-    const visible = [...unresolved, ...accepted].sort(newestFirst)
-    return await Promise.all(visible.map(async job => toPublicRecordingImportJob(job, await this.recordingImportRef(job))))
+    let activeOwnerTasks: Awaited<ReturnType<RecordingImportOwnerGateway['listOwnerTasks']>>['tasks'] | undefined
+    let owner: PublicRecordingImportCurrentSnapshot['owner'] = { state: 'available' }
+    try {
+      activeOwnerTasks = (await this.recordingImportOwnerGateway.listOwnerTasks({
+        viewerUserId: session.userId,
+        scope: 'active', toMillis: Date.now(), limit: RECORDING_IMPORT_VISIBLE_LIMIT, offset: 0,
+        ...(signal === undefined ? {} : { signal }),
+      })).tasks
+    } catch (error) {
+      if (signal?.aborted === true
+        || recordingImportErrorCode(error) === 'recording-import-account-mismatch') throw error
+      owner = { state: 'unavailable', message: 'Audio 上传任务读取失败，请稍后重试' }
+      /* Unresolved local jobs remain actionable when the owner list is temporarily unavailable. */
+    }
+    const visibleLocal = unresolved
+    const projectedLocal = await Promise.all(visibleLocal.map(async job =>
+      toPublicRecordingImportJob(job, await this.recordingImportRef(job))))
+    if (activeOwnerTasks === undefined) return { items: projectedLocal, owner }
+    const ownerRefKey = await this.recordingRefKey(RECORDING_IMPORT_SESSION_REF_PREFIX)
+    const unresolvedOwnerSessionIds = new Set(unresolved.flatMap(job => job.sessionId === undefined ? [] : [job.sessionId]))
+    const projectedOwner = await Promise.all(activeOwnerTasks
+      .filter(task => !unresolvedOwnerSessionIds.has(task.session.sessionId))
+      .map(async task => await this.projectRecordingImportOwnerTask(
+        task,
+        session.userId,
+        ownerRefKey,
+      )))
+    return {
+      items: [...projectedLocal, ...projectedOwner]
+        .sort((left, right) => right.createdAtMillis - left.createdAtMillis),
+      owner,
+    }
+  }
+
+  async recordingImportHistory(input: {
+    toMillis: number
+    limit: number
+    offset: number
+  }, signal?: AbortSignal): Promise<PublicRecordingImportHistoryPage> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const toMillis = Math.trunc(input.toMillis)
+    const limit = Math.trunc(input.limit)
+    const offset = Math.trunc(input.offset)
+    if (!Number.isSafeInteger(toMillis) || toMillis <= 0 || !Number.isSafeInteger(limit)
+      || limit < 1 || limit > RECORDING_IMPORT_HISTORY_MAX_PAGE_SIZE
+      || !Number.isSafeInteger(offset) || offset < 0) {
+      throw new ArkmePluginError('recording-import-history-invalid', '已完成任务查询参数无效', false)
+    }
+    const page = await this.recordingImportOwnerGateway.listOwnerTasks({
+      viewerUserId: session.userId,
+      scope: 'completed', toMillis, limit, offset,
+      ...(signal === undefined ? {} : { signal }),
+    })
+    if (page.tasks.some(task => !task.session.hasFinishedUpload || !task.processingCompleted)) {
+      throw new ArkmePluginError(
+        'recording-import-history-owner-invalid',
+        '已完成任务数据暂不可用，请稍后重试',
+        true,
+        502,
+      )
+    }
+    const ownerRefKey = await this.recordingRefKey(RECORDING_IMPORT_SESSION_REF_PREFIX)
+    const items = await Promise.all(page.tasks.map(async task => await this.projectRecordingImportHistoryItem(
+      task,
+      session.userId,
+      ownerRefKey,
+    )))
+    return {
+      items,
+      ...(page.total === undefined ? {} : { total: page.total }),
+      offset,
+      hasMore: page.hasMore,
+    }
+  }
+
+  async updateRecordingImportSessionStart(
+    sessionRef: string,
+    startAtMillis: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    this.assertWorkbenchEnabled()
+    const start = Math.trunc(startAtMillis)
+    if (!isRecordingInstantOnOrAfterUnixEpoch(start) || start > Date.now()) {
+      throw new ArkmePluginError('recording-import-start-invalid', '录音开始时间无效', false)
+    }
+    const session = await this.runtime.requireSession()
+    const target = await this.openRecordingImportSessionRef(sessionRef)
+    await this.assertRecordingImportOwnerMutationSafe(session.userId, target.sessionId)
+    const owner = await this.recordingImportOwnerGateway.loadOwnerSession({
+      viewerUserId: session.userId,
+      sessionId: target.sessionId,
+      ...(signal === undefined ? {} : { signal }),
+    })
+    if (start + owner.durationMillis > Date.now()) {
+      throw new ArkmePluginError('recording-import-end-invalid', '录音结束时间不能晚于当前时间', false)
+    }
+    await this.recordingImportOwnerGateway.updateOwnerSessionStart({
+      viewerUserId: session.userId,
+      sessionId: target.sessionId,
+      startAtMillis: start,
+      ...(signal === undefined ? {} : { signal }),
+    })
+  }
+
+  async updateRecordingImportSessionOwnership(
+    sessionRef: string,
+    ownership: 'self' | 'other',
+    signal?: AbortSignal,
+  ): Promise<void> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const target = await this.openRecordingImportSessionRef(sessionRef)
+    const belongUserId = ownership === 'self' ? session.userId : 0
+    await this.assertRecordingImportOwnerMutationSafe(session.userId, target.sessionId)
+    await this.recordingImportOwnerGateway.updateOwnerSessionOwnership({
+      viewerUserId: session.userId,
+      sessionId: target.sessionId,
+      belongUserId,
+      ...(signal === undefined ? {} : { signal }),
+    })
+  }
+
+  async deleteRecordingImportSession(sessionRef: string, signal?: AbortSignal): Promise<void> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const target = await this.openRecordingImportSessionRef(sessionRef)
+    await this.assertRecordingImportOwnerMutationSafe(session.userId, target.sessionId)
+    const jobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
+    await this.recordingImportOwnerGateway.deleteOwnerSession({
+      viewerUserId: session.userId,
+      sessionId: target.sessionId,
+      ...(signal === undefined ? {} : { signal }),
+    })
+    await Promise.all(jobs.filter(job => job.sessionId === target.sessionId)
+      .map(async job => await this.runtime.stateStore.removeRecordingImportJob(session.userId, job.jobId)))
   }
 
   async retryRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> {
@@ -612,6 +826,118 @@ export class RecordingService {
       }
       throw error
     }
+  }
+
+  private async projectRecordingImportHistoryItem(
+    task: RecordingImportOwnerTaskSnapshot,
+    viewerUserId?: number,
+    ownerRefKey?: Buffer,
+  ): Promise<PublicRecordingImportHistoryItem> {
+    const owner = task.session
+    const ownerProgress = task.progress
+    const status = recordingImportOwnerStatus(task)
+    const processingDurationMillis = recordingImportProcessingDuration(ownerProgress?.processingTiming)
+    return {
+      taskKey: await this.recordingImportTaskKey(owner.sessionId, viewerUserId, ownerRefKey),
+      sessionRef: await this.recordingImportSessionRef(owner, viewerUserId, ownerRefKey),
+      ownership: owner.ownership,
+      fileName: owner.fileName,
+      fileSize: owner.fileSize,
+      parsedSize: owner.parsedSize,
+      durationMillis: owner.durationMillis,
+      startAtMillis: owner.startAtMillis,
+      endAtMillis: owner.endAtMillis,
+      progress: 1,
+      status: status.status,
+      statusDetail: status.statusDetail,
+      ...(processingDurationMillis === undefined ? {} : { processingDurationMillis }),
+      createdAtMillis: owner.createdAtMillis,
+      updatedAtMillis: owner.updatedAtMillis,
+      ...(ownerProgress?.processingTiming === undefined ? {} : { processing: ownerProgress.processingTiming }),
+    }
+  }
+
+  private async projectRecordingImportOwnerTask(
+    task: RecordingImportOwnerTaskSnapshot,
+    viewerUserId?: number,
+    ownerRefKey?: Buffer,
+  ): Promise<PublicRecordingImportOwnerTask> {
+    const owner = task.session
+    const ownerProgress = task.progress
+    const status = recordingImportOwnerStatus(task)
+    const processingDurationMillis = recordingImportProcessingDuration(ownerProgress?.processingTiming)
+    return {
+      kind: 'owner',
+      taskKey: await this.recordingImportTaskKey(owner.sessionId, viewerUserId, ownerRefKey),
+      sessionRef: await this.recordingImportSessionRef(owner, viewerUserId, ownerRefKey),
+      ownership: owner.ownership,
+      fileName: owner.fileName,
+      fileSize: owner.fileSize,
+      parsedSize: owner.parsedSize,
+      durationMillis: owner.durationMillis,
+      startAtMillis: owner.startAtMillis,
+      endAtMillis: owner.endAtMillis,
+      progress: owner.hasFinishedUpload ? 1 : owner.fileSize <= 0 ? 0 : Math.min(1, owner.parsedSize / owner.fileSize),
+      status: status.status,
+      statusDetail: status.statusDetail,
+      ...(processingDurationMillis === undefined ? {} : { processingDurationMillis }),
+      createdAtMillis: owner.createdAtMillis,
+      updatedAtMillis: owner.updatedAtMillis,
+      ...(ownerProgress?.processingTiming === undefined ? {} : { processing: ownerProgress.processingTiming }),
+    }
+  }
+
+  private async recordingImportTaskKey(sessionId: string, viewerUserId?: number, refKey?: Buffer): Promise<string> {
+    const userId = viewerUserId ?? (await this.runtime.requireSession()).userId
+    return createHmac('sha256', refKey ?? await this.recordingRefKey(RECORDING_IMPORT_SESSION_REF_PREFIX))
+      .update(`${String(userId)}\0${sessionId}`)
+      .digest('base64url')
+  }
+
+  private async recordingImportSessionRef(
+    owner: Pick<RecordingImportOwnerSession, 'sessionId'>,
+    viewerUserId?: number,
+    refKey?: Buffer,
+  ): Promise<string> {
+    const userId = viewerUserId ?? (await this.runtime.requireSession()).userId
+    const payload: RecordingImportSessionRefPayload = {
+      version: 1,
+      viewerUserId: userId,
+      sessionId: owner.sessionId,
+    }
+    return this.sealRecordingRefWithKey(
+      RECORDING_IMPORT_SESSION_REF_PREFIX,
+      payload,
+      refKey ?? await this.recordingRefKey(RECORDING_IMPORT_SESSION_REF_PREFIX),
+    )
+  }
+
+  private async openRecordingImportSessionRef(sessionRef: string): Promise<RecordingImportSessionRefPayload> {
+    const raw = await this.openRecordingRef(RECORDING_IMPORT_SESSION_REF_PREFIX, sessionRef)
+    const payload: RecordingImportSessionRefPayload = {
+      version: 1,
+      viewerUserId: numberValue(raw.viewerUserId),
+      sessionId: stringValue(raw.sessionId).trim(),
+    }
+    if (payload.sessionId === '') {
+      throw new ArkmePluginError('recording-import-session-ref-invalid', '录音导入任务引用无效', false)
+    }
+    return payload
+  }
+
+  private async assertRecordingImportOwnerMutationSafe(
+    userId: number,
+    sessionId: string,
+  ): Promise<void> {
+    const active = (await this.runtime.stateStore.listRecordingImportJobs(userId))
+      .find(job => job.sessionId === sessionId && !['accepted', 'cancelled'].includes(job.phase))
+    if (active === undefined) return
+    throw new ArkmePluginError(
+      'recording-import-owner-mutation-active',
+      '录音仍在本机上传任务中，请先重试或取消当前任务',
+      false,
+      409,
+    )
   }
 
   async recordingCalendar(

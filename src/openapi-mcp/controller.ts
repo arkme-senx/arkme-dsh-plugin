@@ -114,7 +114,8 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
 
   guardToolExecution(toolName: string): string | undefined {
     const ownsManagedNamespace = this.mounted !== undefined || this.mountTransition !== undefined
-    if (!toolName.startsWith(MANAGED_TOOL_PREFIX) || !ownsManagedNamespace || this.toolExecutionEnabled) return undefined
+    if (!toolName.startsWith(MANAGED_TOOL_PREFIX) || !ownsManagedNamespace) return undefined
+    if (this.mounted !== undefined && this.executionMatches(this.mounted)) return undefined
     return 'Arkme OpenAPI MCP tools are not ready for the current account'
   }
 
@@ -219,10 +220,14 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
     const abort = new AbortController()
     this.activeAbort = abort
     const progress: { phase: 'credential' | 'manifest' } = { phase: 'credential' }
-    if (!background && !this.toolExecutionEnabled) {
+    const activeCredentialExpired = this.activeCredential !== undefined
+      && this.activeCredential.expiresAtMillis <= this.now()
+    if (activeCredentialExpired) this.disableToolExecution()
+    if ((!background || activeCredentialExpired) && !this.toolExecutionEnabled) {
       this.setStatus({ state: 'reconciling', retryable: false, userAction: 'none' })
     }
     try {
+      if (activeCredentialExpired) await this.disposeMount()
       const session = await this.options.sessionStore.read()
       const principal = openApiMcpPrincipal(session)
       if (session === undefined) {
@@ -368,7 +373,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
       session = await this.options.sessionStore.read()
     } catch {
       this.scheduleCredential(credentialRetryDelay(this.credentialFailures), operationEpoch)
-      this.setDegradedStatus()
+      this.setStatusFromExecutionAvailability()
       return
     }
     if (session === undefined) {
@@ -376,15 +381,14 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
       return
     }
     this.scheduleCredential(credentialRetryDelay(this.credentialFailures), operationEpoch)
-    this.setDegradedStatus()
+    this.setStatusFromExecutionAvailability()
   }
 
   private async handleManifestFailure(error: unknown, operationEpoch: number): Promise<void> {
     this.manifestFailures++
     this.warn(failureCategory(error))
     this.scheduleManifest(manifestRetryDelay(this.manifestFailures), operationEpoch)
-    if (this.toolExecutionEnabled && this.mounted !== undefined) this.setReadyStatus()
-    else this.setDegradedStatus()
+    this.setStatusFromExecutionAvailability()
   }
 
   private scheduleDiagnosticReconcile(mounted: MountedCredential): void {
@@ -506,7 +510,11 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   }
 
   private executionMatches(mounted: MountedCredential): boolean {
-    return !this.disposed && this.toolExecutionEnabled && this.mounted === mounted
+    const credential = this.activeCredential
+    return !this.disposed && credential !== undefined && credential.expiresAtMillis > this.now()
+      && credential.keyId === mounted.keyId && credential.generation === mounted.generation
+      && credentialBelongsTo(credential, mounted.principal)
+      && this.toolExecutionEnabled && this.mounted === mounted
       && samePrincipal(this.activePrincipal, mounted.principal)
   }
 
@@ -575,7 +583,14 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
   private scheduleCredential(delayMillis: number, operationEpoch: number): number {
     if (this.credentialTimer !== undefined) clearTimeout(this.credentialTimer)
     const jittered = this.jitter(delayMillis, 7 * 24 * 60 * 60_000)
-    const next = this.now() + jittered
+    const scheduledAt = this.now()
+    const remainingValidity = this.activeCredential === undefined
+      ? undefined
+      : this.activeCredential.expiresAtMillis - scheduledAt
+    const boundedDelay = remainingValidity !== undefined && remainingValidity > 0
+      ? Math.min(jittered, remainingValidity)
+      : jittered
+    const next = scheduledAt + boundedDelay
     this.credentialNextAtMillis = next
     this.credentialTimer = setTimeout(() => {
       this.credentialTimer = undefined
@@ -583,7 +598,7 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
       if (!this.disposed && operationEpoch === this.epoch) {
         void this.enqueue(async () => { await this.reconcileCredential(operationEpoch) })
       }
-    }, jittered)
+    }, boundedDelay)
     this.credentialTimer.unref()
     return next
   }
@@ -629,6 +644,12 @@ export class ManagedOpenApiMcpController implements SessionTransitionObserver<Op
       state: 'degraded', retryable: true, userAction: 'none',
       ...(next === undefined ? {} : { nextReconcileAtMillis: next }),
     })
+  }
+
+  private setStatusFromExecutionAvailability(): void {
+    const mounted = this.mounted
+    if (mounted !== undefined && this.executionMatches(mounted)) this.setReadyStatus()
+    else this.setDegradedStatus()
   }
 
   private cancelCurrent(quarantineTools: boolean): void {

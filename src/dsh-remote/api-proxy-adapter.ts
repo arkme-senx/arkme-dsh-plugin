@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { realpath, stat } from 'node:fs/promises'
 import {
+  DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES,
   DSH_REMOTE_MAX_PAGE_ITEMS,
   DSH_REMOTE_MAX_PAGE_RESULT_BYTES,
   DSH_REMOTE_MAX_MODEL_OPTIONS,
@@ -502,11 +503,11 @@ export class DshApiProxyAdapter {
         ...(firstSeq === undefined || (!value.hasMore && !truncatedByBudget) ? {} : { nextCursor: firstSeq }),
         ...(value.projections === undefined ? {} : { projectionAsOfSeq: value.projections.asOfSeq }),
       }
-      if (jsonBytes(candidate) <= DSH_REMOTE_MAX_SNAPSHOT_BYTES) break
+      if (jsonBytes(candidate) <= DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES) break
       entries.shift()
       truncatedByBudget = true
     }
-    if (entries.length === 0 && truncatedByBudget) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '单条 DSH 历史投影超过远控帧容量')
+    if (entries.length === 0 && truncatedByBudget) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '单条 DSH 历史投影超过 64MiB 安全上限')
     const firstSeq = truncatedByBudget ? entries[0]?.event.seq : value.events[0]?.event.seq
     return {
       entries,
