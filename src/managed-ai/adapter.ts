@@ -26,6 +26,7 @@ export const ARKME_MANAGED_MODEL = 'deepseek-v4-flash'
 
 const ARKME_MANAGED_PROVIDER_NAME = 'Arkme · 余额计费'
 const ARKME_MANAGED_CATALOG_TTL_MS = 60_000
+const ARKME_MANAGED_CATALOG_MAX_STALE_MS = 5 * ARKME_MANAGED_CATALOG_TTL_MS
 const ARKME_MANAGED_CATALOG_TIMEOUT_MS = 10_000
 const ARKME_MANAGED_MAXIMUM_IMAGE_PIXELS = 40_000_000
 const ARKME_MANAGED_MAXIMUM_REQUEST_IMAGE_BYTES = 1 << 30
@@ -635,6 +636,10 @@ class ManagedModelCatalog {
     return this.hasRemoteSnapshot && Date.now() - this.refreshedAt < ARKME_MANAGED_CATALOG_TTL_MS
   }
 
+  private canUseLastGood(): boolean {
+    return this.hasRemoteSnapshot && Date.now() - this.refreshedAt < ARKME_MANAGED_CATALOG_MAX_STALE_MS
+  }
+
   private async fetchCatalog(signal?: AbortSignal): Promise<void> {
     const controller = new AbortController()
     let timedOut = false
@@ -711,7 +716,7 @@ class ManagedModelCatalog {
     try {
       await this.refresh()
     } catch (error) {
-      if (!this.hasRemoteSnapshot) throw error
+      if (!this.canUseLastGood()) throw error
     }
   }
 
@@ -721,7 +726,7 @@ class ManagedModelCatalog {
     try {
       await this.refresh(signal)
     } catch (error) {
-      if (signal?.aborted === true || !this.hasRemoteSnapshot || !known) throw error
+      if (signal?.aborted === true || !this.canUseLastGood() || !known) throw error
     }
   }
 
