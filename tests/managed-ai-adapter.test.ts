@@ -1257,6 +1257,11 @@ describe('Arkme managed model adapter', () => {
   it('keeps the first non-empty tool identity when later SSE deltas contain empty fields', async () => {
     const server = createServer(async (req, res) => {
       for await (const _chunk of req) { /* Drain the request before responding. */ }
+      if (req.url?.endsWith('/models/query') === true) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ code: 200, message: '请求成功', data: { item_ls: MANAGED_CATALOG_ITEMS } }))
+        return
+      }
       res.writeHead(200, { 'Content-Type': 'text/event-stream' })
       res.end([
         'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_weather","type":"function","function":{"name":"web_search","arguments":""}}]},"finish_reason":null}]}',
