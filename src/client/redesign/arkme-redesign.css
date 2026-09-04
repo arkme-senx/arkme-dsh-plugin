@@ -196,14 +196,20 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
 .arkme-update-progress.is-indeterminate span { width: 34%; animation: arkme-update-indeterminate 1.25s ease-in-out infinite; }
 .arkme-update-capsule > b { color: #656a75; font-size: 10px; font-weight: 500; font-variant-numeric: tabular-nums; text-align: right; }
 .arkme-update-capsule[data-layout="progress"] { grid-template-columns: minmax(0,1fr) minmax(40px,.8fr) 34px 28px; }
-.arkme-update-capsule[data-layout="action"] { width: 306px; grid-template-columns: minmax(0,1fr) auto 28px; }
-.arkme-update-capsule[data-layout="action"] .arkme-update-capsule-copy small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; white-space: normal; overflow-wrap: anywhere; font-size: 11px; line-height: 1.45; }
+.arkme-update-capsule[data-layout="action"],
+.arkme-update-capsule[data-layout="ready-action"] { width: 380px; }
+.arkme-update-capsule[data-layout="action"] { grid-template-columns: minmax(0,1fr) auto 28px; }
+.arkme-update-capsule[data-layout="ready-action"] { grid-template-columns: minmax(0,1fr) auto; padding-right: 16px; }
+.arkme-update-capsule:is([data-layout="action"], [data-layout="ready-action"]) .arkme-update-capsule-copy small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; white-space: normal; overflow-wrap: anywhere; font-size: 11px; line-height: 1.45; }
 .arkme-update-capsule[data-layout="restarting"] { width: 218px; grid-template-columns: minmax(0,1fr); padding-right: 14px; }
 .arkme-update-capsule.is-restarting .arkme-update-capsule-copy { justify-self: center; text-align: center; }
 .arkme-update-ready-action { width: auto; height: 32px; padding: 0 11px; border: 0; border-radius: 10px; background: #242731; color: #fff; cursor: pointer; font: inherit; font-size: 10px; font-weight: 550; white-space: nowrap; }
 .arkme-update-ready-action:hover { background: #151821; }
 .arkme-update-ready-action:disabled { opacity: .65; cursor: wait; }
 .arkme-update-ready-action:focus-visible { outline: 2px solid #6779b5; outline-offset: 2px; }
+.arkme-update-ready-actions { display: flex; align-items: center; gap: 6px; }
+.arkme-update-later-action { height: 32px; padding: 0 8px; border: 0; border-radius: 9px; background: transparent; color: #737781; cursor: pointer; font: inherit; font-size: 10px; white-space: nowrap; }
+.arkme-update-later-action:hover { background: #f0f1f3; color: #343841; }
 .arkme-update-capsule-close { width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: #8a8e97; cursor: pointer; }
 .arkme-update-capsule-close:hover { background: #f0f1f3; color: #343841; }
 @keyframes arkme-update-spin { to { transform: rotate(360deg); } }

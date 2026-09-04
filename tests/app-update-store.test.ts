@@ -108,4 +108,24 @@ describe('ArkmeAppUpdateStore', () => {
     await download
     stop()
   })
+
+  it('calls the protected desktop install bridge and immediately locks duplicate UI actions', async () => {
+    let finishInstall: ((status: { status: 'installing', currentVersion: string }) => void) | undefined
+    const install = vi.fn().mockImplementation(async () => await new Promise(resolve => { finishInstall = resolve }))
+    vi.stubGlobal('arkmeDesktop', {
+      update: {
+        status: vi.fn(),
+        check: vi.fn(),
+        download: vi.fn(),
+        install,
+        showInFolder: vi.fn(),
+      },
+    })
+    const store = new ArkmeAppUpdateStore()
+    const task = store.install()
+    expect(store.getSnapshot()).toMatchObject({ busy: true })
+    finishInstall?.({ status: 'installing', currentVersion: '1.2.0' })
+    await task
+    expect(install).toHaveBeenCalledOnce()
+  })
 })

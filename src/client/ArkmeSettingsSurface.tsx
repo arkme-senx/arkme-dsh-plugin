@@ -167,7 +167,7 @@ interface VersionSettingsRowProps {
   title: string
   version: string
   feedback?: string
-  actionLabel?: '检查更新' | '检查中…' | '立即更新' | '下载中…' | '打开安装包'
+  actionLabel?: '检查更新' | '检查中…' | '立即更新' | '下载中…' | '打开安装包' | '重启并安装' | '安装中…'
   disabled?: boolean
   loading?: boolean
   onAction?: () => void
@@ -546,7 +546,7 @@ export interface ArkmeAppUpdateRow {
   label: string
   current: string
   latest: string
-  action: 'check' | 'download' | 'open' | 'busy'
+  action: 'check' | 'download' | 'install' | 'open' | 'busy'
   feedback?: string
   downloadedFilePath?: string
 }
@@ -582,12 +582,12 @@ export function updateVersionText(current: string, latest: string): string {
 }
 
 export function buildArkmeAppUpdateRow(input: {
-  app?: Pick<ArkmeAppUpdateSnapshot, 'status' | 'currentVersion' | 'noUpdateAvailable' | 'latestVersion' | 'error' | 'downloadedFilePath'>
+  app?: Pick<ArkmeAppUpdateSnapshot, 'status' | 'currentVersion' | 'noUpdateAvailable' | 'latestVersion' | 'error' | 'failureStage' | 'installMode' | 'downloadedFilePath'>
   appError?: string
 }): ArkmeAppUpdateRow {
   const status = input.app?.status
   const unavailable = input.app === undefined && input.appError?.trim() !== undefined && input.appError.trim() !== ''
-  const busy = status === 'checking' || status === 'downloading'
+  const busy = status === 'checking' || status === 'downloading' || status === 'installing'
   const feedback = input.appError?.trim()
     ? `检查失败：${input.appError.trim()}`
     : status === 'checking'
@@ -599,17 +599,27 @@ export function buildArkmeAppUpdateRow(input: {
           : status === 'downloading'
             ? '正在下载更新包'
             : status === 'downloaded'
-              ? '下载完成，可打开所在文件夹定位安装包'
+              ? input.app?.installMode === 'in-app'
+                ? '下载完成，可重启并安装新版本'
+                : '下载完成，可打开所在文件夹定位安装包'
+              : status === 'installing'
+                ? '正在停止 Harness 并安装新版本…'
               : status === 'failed'
-                ? `检查失败：${input.app?.error || '请稍后重试'}`
+                ? `${input.app?.failureStage === 'download' ? '下载' : input.app?.failureStage === 'install' ? '安装' : '检查'}失败：${input.app?.error || '请稍后重试'}`
                 : undefined
   return {
     label: 'APP',
     current: versionLabel(input.app?.currentVersion),
     latest: versionLabel(input.app?.latestVersion ?? input.app?.currentVersion),
-    action: unavailable || busy ? 'busy' : status === 'downloaded' ? 'open' : status === 'available' ? 'download' : 'check',
+    action: unavailable || busy
+      ? 'busy'
+      : status === 'downloaded'
+        ? input.app?.installMode === 'in-app' ? 'install' : 'open'
+        : status === 'available' ? 'download' : 'check',
     ...(feedback === undefined ? {} : { feedback }),
-    ...(input.app?.downloadedFilePath === undefined ? {} : { downloadedFilePath: input.app.downloadedFilePath }),
+    ...(input.app?.installMode === 'in-app' || input.app?.downloadedFilePath === undefined
+      ? {}
+      : { downloadedFilePath: input.app.downloadedFilePath }),
   }
 }
 
@@ -851,12 +861,17 @@ export function ArkmeSettingsSurface() {
     ? '检查更新'
     : appUpdateRow.action === 'download'
       ? '立即更新'
+      : appUpdateRow.action === 'install'
+        ? '重启并安装'
       : appUpdateRow.action === 'open'
         ? '打开安装包'
-        : appUpdateState.status?.status === 'downloading' ? '下载中…' : '检查中…'
+        : appUpdateState.status?.status === 'downloading'
+          ? '下载中…'
+          : appUpdateState.status?.status === 'installing' ? '安装中…' : '检查中…'
   const runAppUpdateAction = (row: ArkmeAppUpdateRow) => {
     if (row.action === 'busy') return
     if (row.action === 'download') arkmeUpdateUi.open('app')
+    else if (row.action === 'install') void arkmeAppUpdateStore.install()
     else if (row.action === 'open') void arkmeAppUpdateStore.showDownloadedFile()
     else void arkmeAppUpdateStore.refresh(true)
   }

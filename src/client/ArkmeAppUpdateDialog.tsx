@@ -55,7 +55,7 @@ export function shouldShowArkmeAppUpdateDialog(
   status: ArkmeAppUpdateSnapshot | undefined,
   dismissedVersion: string | undefined,
 ): boolean {
-  if (status === undefined || !['available', 'downloading', 'downloaded'].includes(status.status)) return false
+  if (status === undefined || !['available', 'downloading', 'downloaded', 'installing'].includes(status.status)) return false
   return dismissedVersion === undefined || status.latestVersion !== dismissedVersion
 }
 
@@ -71,22 +71,28 @@ export function ArkmeAppUpdateDialog() {
   const dismiss = () => setDismissedVersion(status.latestVersion)
   const downloading = status.status === 'downloading'
   const downloaded = status.status === 'downloaded'
+  const installing = status.status === 'installing'
+  const inApp = status.installMode === 'in-app'
 
   return <div style={styles.backdrop} role="presentation">
     <section style={styles.dialog} role="dialog" aria-modal="true" aria-label="Arkme APP 更新">
-      <h2 style={styles.title}>{downloaded ? '更新包下载完成' : downloading ? '正在下载更新包' : '发现新版本'}</h2>
+      <h2 style={styles.title}>{installing ? '正在安装更新' : downloaded ? '更新包下载完成' : downloading ? '正在下载更新包' : '发现新版本'}</h2>
       <p style={styles.version}>当前 {versionLabel(status.currentVersion)} → 最新 {versionLabel(status.latestVersion)}</p>
       {!downloading && !downloaded && status.releaseNotes?.trim() && <p style={styles.notes}>{status.releaseNotes.trim()}</p>}
       {downloading && <>
         <div style={styles.progressTrack} aria-label="下载进度"><div style={{ ...styles.progressValue, width: progressPercentage(status) }} /></div>
         <p style={styles.progressText}>{progressText(status)}</p>
       </>}
-      {downloaded && <p style={styles.notes}>安装包已下载到本机，可打开所在文件夹进行安装。</p>}
+      {downloaded && <p style={styles.notes}>{inApp ? '更新包已验证，可在准备好后重启并安装。' : '安装包已下载到本机，可打开所在文件夹进行安装。'}</p>}
+      {installing && <p style={styles.notes}>正在停止 Harness 并启动安装程序，请勿重复操作。</p>}
       <div style={styles.actions}>
-        {!downloading && <button type="button" style={styles.button} onClick={dismiss}>{downloaded ? '关闭' : '稍后'}</button>}
+        {!downloading && !installing && <button type="button" style={styles.button} onClick={dismiss}>{downloaded && inApp ? '稍后重启' : downloaded ? '关闭' : '稍后'}</button>}
         {downloaded
-          ? <button type="button" style={styles.primaryButton} onClick={() => { void arkmeAppUpdateStore.showDownloadedFile() }}>打开所在文件夹</button>
-          : <button type="button" style={styles.primaryButton} disabled={state.busy} onClick={() => { void arkmeAppUpdateStore.download() }}>{downloading ? '正在下载…' : '下载更新包'}</button>}
+          ? <button type="button" style={styles.primaryButton} onClick={() => {
+            if (inApp) void arkmeAppUpdateStore.install()
+            else void arkmeAppUpdateStore.showDownloadedFile()
+          }}>{inApp ? '重启并安装' : '打开所在文件夹'}</button>
+          : !installing && <button type="button" style={styles.primaryButton} disabled={state.busy} onClick={() => { void arkmeAppUpdateStore.download() }}>{downloading ? '正在下载…' : '下载更新包'}</button>}
       </div>
     </section>
   </div>
