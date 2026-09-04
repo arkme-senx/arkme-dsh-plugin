@@ -224,7 +224,7 @@ describe('AudioRecordingImportGateway', () => {
     expect(completed.tasks.map(item => item.session.sessionId)).toEqual(['completed', 'failed'])
   })
 
-  it('filters active/completed rows from the real desktop Audio session contract and projects real timing rows', async () => {
+  it('projects the desktop import_progress contract without treating model telemetry as the business timeline', async () => {
     const posts: Array<{ path: string; body: Record<string, unknown> }> = []
     const runtime = {
       config: { environment: 'test' },
@@ -248,11 +248,25 @@ describe('AudioRecordingImportGateway', () => {
             stage: 'vad', outcome: 'success', started_at_ms: 1_725_000_004_100,
             ended_at_ms: 1_725_000_012_100, duration_ms: 8_000, provider: 'sensevoice',
             model: 'silero-vad', model_version: 'v1',
-          }, {
-            stage: 'asr', outcome: 'success', started_at_ms: 1_725_000_004_100,
-            ended_at_ms: 1_725_000_017_100, duration_ms: 13_000, provider: 'sensevoice',
-            model: 'sensevoice', model_version: 'v1',
           }],
+          import_progress: {
+            status: 3,
+            total_duration_ms: 21_000,
+            server_now_ms: 1_725_000_021_100,
+            row_ls: [{
+              code: 'upload', status: 3, started_at_ms: 1_725_000_000_100,
+              ended_at_ms: 1_725_000_004_100, duration_ms: 4_000,
+              provider: '', model: '', model_version: '', model_duration_ms: 0,
+              next_relation: 'wait', relation_duration_ms: 2_000,
+            }, {
+              code: 'primary_transcript', status: 3, started_at_ms: 1_725_000_006_100,
+              ended_at_ms: 1_725_000_021_100, duration_ms: 15_000,
+              provider: 'sensevoice', model: 'sensevoice-small', model_version: 'v2',
+              model_duration_ms: 13_000, next_relation: 'sidecar', relation_duration_ms: 0,
+            }, {
+              code: 'not-a-desktop-stage', status: 3, duration_ms: 2_000,
+            }],
+          },
         }] }
         throw new Error(`unexpected owner request: ${path}`)
       },
@@ -272,16 +286,24 @@ describe('AudioRecordingImportGateway', () => {
           startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_060_000,
           hasFinishedUpload: true, ownership: 'self',
         }),
-        progress: expect.objectContaining({
-          displayStatus: 'completed', timingState: 'completed',
-          processingTiming: expect.objectContaining({
-            timingState: 'completed', totalDurationMillis: 21_000,
+        progress: {
+          displayStatus: 'completed',
+          importProgress: {
+            status: 'completed', totalDurationMillis: 21_000,
+            serverNowMillis: 1_725_000_021_100,
+            observedAtMillis: expect.any(Number),
             rows: [
-              expect.objectContaining({ stage: 'vad', outcome: 'success', durationMillis: 8_000 }),
-              expect.objectContaining({ stage: 'asr', outcome: 'success', durationMillis: 13_000 }),
+              expect.objectContaining({
+                code: 'upload', status: 'completed', durationMillis: 4_000,
+                nextRelation: 'wait', relationDurationMillis: 2_000,
+              }),
+              expect.objectContaining({
+                code: 'primary_transcript', status: 'completed', durationMillis: 15_000,
+                modelDurationMillis: 13_000, nextRelation: 'sidecar',
+              }),
             ],
-          }),
-        }),
+          },
+        },
       }],
     })
     await expect(gateway.listOwnerTasks({
@@ -436,7 +458,7 @@ describe('AudioRecordingImportGateway', () => {
     })
   })
 
-  it('preserves owner timing state when processing rows are temporarily empty', async () => {
+  it('keeps owner status available while business-progress rows are temporarily absent', async () => {
     const gateway = gatewayForOwnerProgress([{
       session_id: 'session-1', timing_state: 'processing', child_status_ls: [{ status: 4 }],
       processing_timing_ls: [],
@@ -448,10 +470,6 @@ describe('AudioRecordingImportGateway', () => {
     })
     expect(page.tasks[0]?.progress).toEqual({
       displayStatus: 'transcribing',
-      timingState: 'processing',
-      processingTiming: {
-        timingState: 'processing', totalDurationMillis: 0, rows: [],
-      },
     })
   })
 
@@ -475,7 +493,7 @@ describe('AudioRecordingImportGateway', () => {
     })).rejects.toBe(cancelled)
   })
 
-  it('fails malformed child statuses closed and rejects invalid timing facts instead of normalizing them', async () => {
+  it('fails malformed child statuses closed and ignores unrelated model-timing telemetry', async () => {
     const gateway = gatewayForOwnerProgress([{
       session_id: 'session-1', timing_state: 'completed',
       child_status_ls: [{ status: 5 }, { status: 7 }],
@@ -492,21 +510,18 @@ describe('AudioRecordingImportGateway', () => {
     })
     expect(page.tasks[0]?.progress).toEqual({
       displayStatus: 'unavailable',
-      timingState: 'completed',
-      processingTiming: { timingState: 'unavailable', totalDurationMillis: 0, rows: [] },
     })
   })
 
-  it('does not publish a partial processing total when one owner timing row is malformed', async () => {
+  it('keeps valid business stages and clamps malformed duration values like desktop', async () => {
     const gateway = gatewayForOwnerProgress([{
       session_id: 'session-1', timing_state: 'completed', child_status_ls: [{ status: 5 }],
-      processing_timing_ls: [{
-        stage: 'vad', outcome: 'success', started_at_ms: 1_725_000_004_100,
-        ended_at_ms: 1_725_000_012_100, duration_ms: 8_000, provider: 'sensevoice', model: 'silero-vad',
+      import_progress: { status: 3, total_duration_ms: 8_000, server_now_ms: 1_725_000_012_100, row_ls: [{
+        code: 'voice_recognition', status: 3, started_at_ms: 1_725_000_004_100,
+        ended_at_ms: 1_725_000_012_100, duration_ms: -1, provider: 'sensevoice', model: 'fsmn-campplus',
       }, {
-        stage: 'asr', outcome: 'success', started_at_ms: 1_725_000_012_100,
-        ended_at_ms: 1_725_000_017_100, duration_ms: -1, provider: 'sensevoice', model: 'sensevoice',
-      }],
+        code: 'legacy_asr', status: 3, duration_ms: 9_000,
+      }] },
     }])
 
     const page = await gateway.listOwnerTasks({
@@ -515,8 +530,10 @@ describe('AudioRecordingImportGateway', () => {
     })
     expect(page.tasks[0]?.progress).toEqual({
       displayStatus: 'completed',
-      timingState: 'completed',
-      processingTiming: { timingState: 'unavailable', totalDurationMillis: 0, rows: [] },
+      importProgress: expect.objectContaining({
+        status: 'completed', totalDurationMillis: 8_000,
+        rows: [expect.objectContaining({ code: 'voice_recognition', durationMillis: 0 })],
+      }),
     })
   })
 

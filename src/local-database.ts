@@ -9,6 +9,7 @@ import type {
   ArkmePendingWrite,
   ArkmeRecordCaptureContext,
   ArkmeRecordCursor,
+  ArkmeRecordReeditDraft,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
@@ -478,6 +479,32 @@ export class ArkmeLocalDatabase {
 
   async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void> {
     await this.operationalState.removeLongArticleDraft(userId, sourceRef, itemUid)
+  }
+
+  async getRecordReeditDraft(
+    userId: number,
+    sourceIdentityKey: string,
+    itemUid: string,
+  ): Promise<ArkmeRecordReeditDraft | undefined> {
+    return await this.operationalState.getRecordReeditDraft(userId, sourceIdentityKey, itemUid)
+  }
+
+  async putRecordReeditDraft(
+    userId: number,
+    draft: Omit<ArkmeRecordReeditDraft, 'draftRevision'>,
+  ): Promise<ArkmeRecordReeditDraft> {
+    return await this.operationalState.putRecordReeditDraft(userId, draft)
+  }
+
+  async removeRecordReeditDraft(
+    userId: number,
+    sourceIdentityKey: string,
+    itemUid: string,
+    expectedRevision: number,
+  ): Promise<boolean> {
+    return await this.operationalState.removeRecordReeditDraft(
+      userId, sourceIdentityKey, itemUid, expectedRevision,
+    )
   }
 
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {

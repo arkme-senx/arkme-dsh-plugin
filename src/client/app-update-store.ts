@@ -5,14 +5,19 @@ export type ArkmeAppUpdateStatus =
   | 'available'
   | 'downloading'
   | 'downloaded'
+  | 'installing'
   | 'failed'
 
 export interface ArkmeAppUpdateSnapshot {
   status: ArkmeAppUpdateStatus
   currentVersion: string
+  currentVersionCode?: number
+  installMode?: 'in-app' | 'manual'
   noUpdateAvailable?: boolean
   latestVersion?: string
+  latestVersionCode?: number
   releaseNotes?: string
+  failureStage?: 'check' | 'download' | 'install'
   error?: string
   downloadedBytes?: number
   totalBytes?: number
@@ -32,6 +37,7 @@ interface ArkmeDesktopUpdateBridge {
   status: () => Promise<ArkmeAppUpdateSnapshot | null>
   check: () => Promise<ArkmeAppUpdateSnapshot | null>
   download: () => Promise<ArkmeAppUpdateSnapshot | null>
+  install: () => Promise<ArkmeAppUpdateSnapshot | null>
   showInFolder: () => Promise<boolean>
 }
 
@@ -48,6 +54,7 @@ export class ArkmeAppUpdateStore {
   private snapshot: ArkmeAppUpdateStoreSnapshot = { checked: false, busy: false, error: '' }
   private pendingRefresh: Promise<ArkmeAppUpdateSnapshot | undefined> | undefined
   private pendingDownload: Promise<ArkmeAppUpdateSnapshot | undefined> | undefined
+  private pendingInstall: Promise<ArkmeAppUpdateSnapshot | undefined> | undefined
   private statusPoller: ReturnType<typeof setInterval> | undefined
 
   subscribe = (listener: () => void): (() => void) => {
@@ -61,7 +68,7 @@ export class ArkmeAppUpdateStore {
     void this.refresh(true)
     this.statusPoller = setInterval(() => {
       const status = this.snapshot.status?.status
-      if (status === 'checking' || status === 'downloading') void this.refresh(false)
+      if (status === 'checking' || status === 'downloading' || status === 'installing') void this.refresh(false)
     }, APP_UPDATE_STATUS_POLL_INTERVAL_MS)
     return () => {
       if (this.statusPoller !== undefined) clearInterval(this.statusPoller)
@@ -132,6 +139,43 @@ export class ArkmeAppUpdateStore {
       const message = error instanceof Error ? error.message : String(error)
       this.setSnapshot({ ...this.snapshot, error: message })
     }
+  }
+
+  async install(): Promise<ArkmeAppUpdateSnapshot | undefined> {
+    if (this.pendingInstall !== undefined) return await this.pendingInstall
+    const bridge = updateBridge()
+    if (bridge === undefined) {
+      this.setSnapshot({ ...this.snapshot, checked: true, busy: false, error: 'APP 更新只在 Arkme 桌面端可用' })
+      return undefined
+    }
+    this.setSnapshot({
+      ...this.snapshot,
+      busy: true,
+      error: '',
+      ...(this.snapshot.status === undefined
+        ? {}
+        : { status: { ...this.snapshot.status, status: 'installing' as const } }),
+    })
+    const task = bridge.install()
+      .then(status => {
+        const normalized = status ?? undefined
+        this.setSnapshot({ ...this.snapshot, checked: true, busy: false, ...(normalized === undefined ? {} : { status: normalized }), error: '' })
+        return normalized
+      })
+      .catch(error => {
+        const message = error instanceof Error ? error.message : String(error)
+        this.setSnapshot({ ...this.snapshot, checked: true, busy: false, error: message })
+        return undefined
+      })
+      .finally(() => { this.pendingInstall = undefined })
+    this.pendingInstall = task
+    return await task
+  }
+
+  async retry(): Promise<ArkmeAppUpdateSnapshot | undefined> {
+    return this.snapshot.status?.failureStage === 'download'
+      ? await this.download()
+      : await this.refresh(true)
   }
 
   private async callDownload(): Promise<ArkmeAppUpdateSnapshot | undefined> {

@@ -7,10 +7,9 @@ import {
   type PublicRecordingImportOwnerTask,
   type PublicRecordingImportHistoryItem,
   type PublicRecordingImportHistoryPage,
-  type PublicRecordingImportProcessingTiming,
+  type PublicRecordingImportProgress,
   type RecordingImportDisplayStatus,
   type RecordingImportPhase,
-  type RecordingImportTimingState,
 } from './recording-import-shared.js'
 
 export { MAX_RECORDING_IMPORT_BYTES, MAX_RECORDING_IMPORT_DURATION_MILLIS }
@@ -21,7 +20,7 @@ export type {
   PublicRecordingImportOwnerTask,
   PublicRecordingImportHistoryItem,
   PublicRecordingImportHistoryPage,
-  PublicRecordingImportProcessingTiming,
+  PublicRecordingImportProgress,
   RecordingImportDisplayStatus,
   RecordingImportPhase,
 }
@@ -43,8 +42,7 @@ export interface RecordingImportOwnerSession {
 export interface RecordingImportOwnerProgress {
   displayStatus?: Extract<RecordingImportDisplayStatus,
     'speaker-waiting' | 'speaker-recognizing' | 'transcript-waiting' | 'transcribing' | 'completed' | 'partial' | 'failed' | 'unavailable'>
-  timingState: RecordingImportTimingState
-  processingTiming?: PublicRecordingImportProcessingTiming
+  importProgress?: PublicRecordingImportProgress
 }
 
 export interface RecordingImportOwnerTaskSnapshot {

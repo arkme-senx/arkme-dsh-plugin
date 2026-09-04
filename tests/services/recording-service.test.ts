@@ -13,6 +13,7 @@ import {
   type RecordingImportOwnerGateway,
   type RecordingImportOwnerProgress,
   type RecordingImportOwnerSession,
+  type PublicRecordingImportProgress,
 } from '../../src/recording-import-contract.js'
 import type { RecordingImportGateway } from '../../src/recording-import-coordinator.js'
 
@@ -37,6 +38,226 @@ describe('RecordingService', () => {
     bytes.writeUInt32LE(dataSize, 40)
     return bytes
   }
+
+  it('starts summary generation with the desktop transcript contract and returns the owner processing projection', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const dayStart = new Date(2026, 7, 31).getTime()
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ path, body })
+      let data: Record<string, unknown> = {}
+      if (path.endsWith('/one-day-trans')) data = {
+        session_ls: [{
+          id: 'session-secret', belong_usr: 42, start_at: dayStart + 14 * 3_600_000,
+          end_at: dayStart + 14 * 3_600_000 + 5_000, spk_ls: [{ num: 1, spk_id: 'speaker-secret' }],
+        }],
+        child_ls: [{
+          id: 'child-secret', session_id: 'session-secret', start_at: 0,
+          asr: [{ s: 0, e: 5_000, n: 1, t: '完成方案评审', p: '工作' }],
+        }],
+      }
+      if (path.endsWith('/get-speaker-ls')) data = {
+        spk_ls: [{ speaker_id: 'speaker-secret', nick_name: '我', ref_usr_id: 42 }],
+      }
+      if (path.endsWith('/summary/create')) data = { summary_id: 'summary-opaque', flag: 1 }
+      if (path.endsWith('/list-timeline-by-range')) data = {
+        audio_summary_ls: [{ id: 'summary-opaque', kind: 1, status: 1, create_at: Date.now() }],
+      }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      dependencies(),
+    )
+
+    await expect(service.generateRecordingProjection(dayStart, 'timeline', 'dashscope/qwen3-max')).resolves.toMatchObject({
+      state: 'processing', items: [expect.objectContaining({ id: 'summary-opaque', status: 'processing' })],
+    })
+    const create = requests.find(request => request.path.endsWith('/summary/create'))
+    const timezoneOffset = -new Date(dayStart).getTimezoneOffset() * 60_000
+    expect(create?.body).toMatchObject({
+      date_stamp: dayStart,
+      // JSON serialization normalizes UTC's negative zero to positive zero.
+      tz_offset: timezoneOffset === 0 ? 0 : timezoneOffset,
+      from_stamp: dayStart + 14 * 3_600_000,
+      to_stamp: dayStart + 14 * 3_600_000 + 5_000,
+      model_type: 1,
+      prompt_ver: 1,
+      route_key: 'dashscope/qwen3-max',
+      kind: 1,
+    })
+    expect(create?.body.transcripts).toContain('说话人：我')
+    expect(create?.body.transcripts).toContain('其中，我是我自己')
+    expect(JSON.stringify(create?.body)).not.toContain('session-secret')
+    expect(JSON.stringify(create?.body)).not.toContain('child-secret')
+    expect(JSON.stringify(create?.body)).not.toContain('speaker-secret')
+  })
+
+  it('does not create summary data while the selected day has no completed transcript', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const dayStart = new Date(2026, 7, 31).getTime()
+    const paths: string[] = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      paths.push(path)
+      const data = path.endsWith('/one-day-trans') ? { session_ls: [], child_ls: [] } : { spk_ls: [] }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      dependencies(),
+    )
+
+    await expect(service.generateRecordingProjection(dayStart, 'summary')).rejects.toMatchObject({
+      code: 'recording-generation-transcript-empty', retryable: false,
+    })
+    expect(paths.some(path => path.endsWith('/summary/create'))).toBe(false)
+  })
+
+  it('generates from completed transcript items while another Audio child is still transcribing', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const dayStart = new Date(2026, 7, 31).getTime()
+    const paths: string[] = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      paths.push(path)
+      let data: Record<string, unknown> = {}
+      if (path.endsWith('/one-day-trans')) data = {
+        session_ls: [{
+          id: 'session', belong_usr: 42, start_at: dayStart, end_at: dayStart + 120_000,
+          spk_ls: [{ num: 1, spk_id: 'speaker' }],
+        }],
+        child_ls: [
+          { id: 'completed', session_id: 'session', start_at: 0, asr: [{ s: 0, e: 5_000, n: 1, t: '已经完成的转写' }] },
+          { id: 'pending', session_id: 'session', start_at: 60_000, duration: 60_000, has_asr: false, asr: [] },
+        ],
+      }
+      if (path.endsWith('/get-speaker-ls')) data = {
+        spk_ls: [{ speaker_id: 'speaker', nick_name: '我', ref_usr_id: 42 }],
+      }
+      if (path.endsWith('/summary/create')) data = { summary_id: 'summary-partial', flag: 1 }
+      if (path.endsWith('/list-timeline-by-range')) data = {
+        audio_summary_ls: [{ id: 'summary-partial', kind: 2, status: 1, create_at: Date.now() }],
+      }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      dependencies(),
+    )
+
+    await expect(service.generateRecordingProjection(dayStart, 'summary')).resolves.toMatchObject({
+      state: 'processing', items: [expect.objectContaining({ id: 'summary-partial' })],
+    })
+    expect(paths.filter(path => path.endsWith('/summary/create'))).toHaveLength(1)
+  })
+
+  it('rejects an invalid Audio summary route before reading or writing owner data', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async () => new Response('{}')) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      dependencies(),
+    )
+
+    await expect(service.generateRecordingProjection(new Date(2026, 7, 31).getTime(), 'summary', 'x'.repeat(257)))
+      .rejects.toMatchObject({ code: 'recording-summary-model-route-invalid', retryable: false })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('keeps Audio summary model configuration distinct from other product model lists', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      requests.push({ path, body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown> })
+      const data = path.endsWith('/model-config/list') ? {
+        item: {
+          default_route_key: 'dashscope/qwen3-max', effective_route_key: 'dashscope/glm-5',
+          personal_route_key: 'dashscope/glm-5',
+          allowed_route_options: [
+            { route_key: 'dashscope/qwen3-max', provider: 'dashscope', model_key: 'qwen3-max', display_name: 'Qwen3 Max' },
+            { route_key: 'dashscope/glm-5', provider: 'dashscope', model_key: 'glm-5', display_name: 'GLM-5' },
+          ],
+        },
+      } : {}
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      dependencies(),
+    )
+
+    await expect(service.recordingSummaryModelConfig()).resolves.toEqual({
+      defaultRouteKey: 'dashscope/qwen3-max', effectiveRouteKey: 'dashscope/glm-5',
+      personalRouteKey: 'dashscope/glm-5',
+      options: [
+        { routeKey: 'dashscope/qwen3-max', provider: 'dashscope', modelKey: 'qwen3-max', displayName: 'Qwen3 Max' },
+        { routeKey: 'dashscope/glm-5', provider: 'dashscope', modelKey: 'glm-5', displayName: 'GLM-5' },
+      ],
+    })
+    await expect(service.setRecordingSummaryModelRoute(' dashscope/qwen3-max ')).resolves.toEqual({
+      effectiveRouteKey: 'dashscope/qwen3-max',
+    })
+    expect(requests.at(-1)).toEqual({
+      path: '/api/v1/audio-summary/model-config/set', body: { route_key: 'dashscope/qwen3-max' },
+    })
+  })
+
+  it('keeps an accepted generation in processing when the immediate owner projection refresh fails', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const dayStart = new Date(2026, 7, 31).getTime()
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      if (path.endsWith('/list-timeline-by-range')) return new Response('upstream unavailable', { status: 503 })
+      let data: Record<string, unknown> = {}
+      if (path.endsWith('/one-day-trans')) data = {
+        session_ls: [{ id: 'session', belong_usr: 42, start_at: dayStart, end_at: dayStart + 5_000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
+        child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 0, e: 5_000, n: 1, t: '完成评审' }] }],
+      }
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: 'speaker', nick_name: '我', ref_usr_id: 42 }] }
+      if (path.endsWith('/summary/create')) data = { summary_id: 'accepted-summary', flag: 1 }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      dependencies(),
+    )
+
+    await expect(service.generateRecordingProjection(dayStart, 'summary')).resolves.toEqual({
+      state: 'processing', items: [], message: '内容仍在生成',
+    })
+  })
 
   it('projects an Audio owner child awaiting ASR as processing instead of an empty day', async () => {
     const sessions: ArkmeSessionStore = {
@@ -434,11 +655,11 @@ describe('RecordingService', () => {
       }] : [])]
       const progress = new Map(sessions.map(owner => [owner.sessionId, {
         displayStatus: owner.sessionId === 'session-completed' ? 'completed' as const : 'transcribing' as const,
-        timingState: owner.sessionId === 'session-completed' ? 'completed' as const : 'processing' as const,
-        processingTiming: {
-          timingState: owner.sessionId === 'session-completed' ? 'completed' as const : 'processing' as const,
-          totalDurationMillis: 18_000, rows: [],
-        },
+        importProgress: ownerProgress(
+          owner.sessionId === 'session-completed' ? 'completed' : 'processing',
+          startAtMillis,
+          18_000,
+        ),
       }]))
       return ownerPage(
         sessions,
@@ -454,7 +675,8 @@ describe('RecordingService', () => {
     expect(current).toContainEqual(expect.objectContaining({
       kind: 'owner',
       fileName: 'processing.m4a', status: 'uploading', statusDetail: '上传中',
-      startAtMillis, endAtMillis: startAtMillis + 60_000, processingDurationMillis: 18_000,
+      startAtMillis, endAtMillis: startAtMillis + 60_000,
+      importProgress: expect.objectContaining({ totalDurationMillis: 18_000 }),
       sessionRef: expect.stringMatching(/^arkme-recording-import-session-v1\./),
     }))
     expect(current.find(item => item.fileName === 'processing.m4a')).not.toHaveProperty('importRef')
@@ -470,7 +692,8 @@ describe('RecordingService', () => {
       items: [expect.objectContaining({
         taskKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
         sessionRef: expect.stringMatching(/^arkme-recording-import-session-v1\./),
-        fileName: 'completed.m4a', status: 'completed', processingDurationMillis: 18_000,
+        fileName: 'completed.m4a', status: 'completed',
+        importProgress: expect.objectContaining({ totalDurationMillis: 18_000 }),
       })],
       total: 1, offset: 0, hasMore: false,
     })
@@ -502,6 +725,42 @@ describe('RecordingService', () => {
         message: 'Audio 上传任务读取失败，请稍后重试',
       },
     })
+  })
+
+  it('projects local import timing onto the matching owner task during the handoff', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-owner-timing-handoff-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const startedAtMillis = 1_725_000_000_000
+    const acceptedAtMillis = startedAtMillis + 10_000
+    await store.putRecordingImportJob(42, {
+      ...failedImportJob(1, startedAtMillis),
+      jobId: 'accepted-owner-timing', revision: 8, phase: 'accepted', failedFromPhase: undefined,
+      fileName: 'handoff.m4a', mimeType: 'audio/mp4', sessionId: 'session-owner-timing',
+      uploadedBytes: 1_024, errorCode: undefined, errorMessage: undefined, retryable: undefined,
+      sourceHandle: '', sha256: '', createdAtMillis: startedAtMillis, updatedAtMillis: acceptedAtMillis,
+    })
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async () => ownerPage([{
+      sessionId: 'session-owner-timing', ownership: 'self', fileName: 'handoff.m4a',
+      fileSize: 1_024, parsedSize: 1_024, durationMillis: 60_000,
+      startAtMillis: startedAtMillis, endAtMillis: startedAtMillis + 60_000,
+      createdAtMillis: startedAtMillis, updatedAtMillis: acceptedAtMillis,
+      hasFinishedUpload: true,
+    }]))
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+
+    const current = await service.recordingImportList()
+
+    expect(current.items).toEqual([expect.objectContaining({
+      kind: 'owner', fileName: 'handoff.m4a', status: 'waiting',
+      localImportTiming: { startedAtMillis, acceptedAtMillis },
+    })])
+    expect(current.items[0]).not.toHaveProperty('importRef')
+    expect(JSON.stringify(current)).not.toContain('session-owner-timing')
   })
 
   it('does not downgrade a cancelled owner read into an empty current-task result', async () => {
@@ -624,8 +883,7 @@ describe('RecordingService', () => {
       createdAtMillis: 1_725_000_000_000, updatedAtMillis: 1_725_000_002_000,
       hasFinishedUpload: true,
     }, processingCompleted: true, progress: {
-      displayStatus: 'unavailable', timingState: 'unavailable',
-      processingTiming: { timingState: 'unavailable', totalDurationMillis: 0, rows: [] },
+      displayStatus: 'unavailable',
     } }], total: 1, hasMore: false }))
     const service = new RecordingService(
       new ServiceRuntime(config, sessions, new ArkmeStateStore(root)),
@@ -636,11 +894,9 @@ describe('RecordingService', () => {
       toMillis: 1_725_100_000_000, limit: 50, offset: 0,
     })
     expect(history).toEqual(expect.objectContaining({
-      items: [expect.objectContaining({ status: 'completed', processing: {
-        timingState: 'unavailable', totalDurationMillis: 0, rows: [],
-      } })],
+      items: [expect.objectContaining({ status: 'completed' })],
     }))
-    expect(history.items[0]).not.toHaveProperty('processingDurationMillis')
+    expect(history.items[0]).not.toHaveProperty('importProgress')
   })
 
   it('does not let stale active child detail downgrade the Audio owner completion fact', async () => {
@@ -657,8 +913,8 @@ describe('RecordingService', () => {
       createdAtMillis: 1_725_000_000_000, updatedAtMillis: 1_725_000_002_000,
       hasFinishedUpload: true,
     }, processingCompleted: true, progress: {
-      displayStatus: 'transcribing', timingState: 'processing',
-      processingTiming: { timingState: 'processing', totalDurationMillis: 0, rows: [] },
+      displayStatus: 'transcribing',
+      importProgress: ownerProgress('processing', 1_725_000_000_000, 0),
     } }], total: 1, hasMore: false }))
     const service = new RecordingService(
       new ServiceRuntime(config, sessions, new ArkmeStateStore(root)),
@@ -830,11 +1086,7 @@ describe('RecordingService', () => {
       }] : []
       return ownerPage(sessions, new Map([['session-not-completed', {
       displayStatus: 'completed' as const,
-      timingState: 'completed' as const,
-      processingTiming: {
-        timingState: 'completed' as const,
-        totalDurationMillis: 2_000, rows: [],
-      },
+      importProgress: ownerProgress('completed', startAtMillis, 2_000),
       }]]))
     })
     const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
@@ -1369,6 +1621,32 @@ describe('RecordingService', () => {
   })
 })
 
+function ownerProgress(
+  status: PublicRecordingImportProgress['status'],
+  startedAtMillis: number,
+  totalDurationMillis: number,
+): PublicRecordingImportProgress {
+  return {
+    status,
+    totalDurationMillis,
+    serverNowMillis: startedAtMillis + totalDurationMillis,
+    observedAtMillis: startedAtMillis + totalDurationMillis,
+    rows: [{
+      code: 'upload',
+      status,
+      startedAtMillis,
+      endedAtMillis: status === 'processing' ? 0 : startedAtMillis + totalDurationMillis,
+      durationMillis: totalDurationMillis,
+      provider: '',
+      model: '',
+      modelVersion: '',
+      modelDurationMillis: 0,
+      nextRelation: '',
+      relationDurationMillis: 0,
+    }],
+  }
+}
+
 function ownerPage(
   sessions: RecordingImportOwnerSession[],
   progress = new Map<string, RecordingImportOwnerProgress>(),
@@ -1411,6 +1689,10 @@ function dependencies(
   return {
     recordingImportGateway,
     recordingImportOwnerGateway: recordingImportGateway,
+    forwardGateway: {
+      supportsRecordTargets: async () => false,
+      forward: async () => { throw new Error('Unexpected forward in recording read/import test') },
+    },
     recordingImportSource: new LocalRecordingImportSource(),
     ...overrides,
   }

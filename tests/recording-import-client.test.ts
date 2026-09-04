@@ -11,7 +11,33 @@ import {
 } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
 import { desktopRecorderImaAdpcmMonoWav } from './recording-import-ima-adpcm-fixture.js'
 
-afterEach(() => { vi.unstubAllGlobals() })
+class FakeUploadRequest {
+  static current: FakeUploadRequest | undefined
+  readonly upload: { onprogress?: (event: { loaded: number; total: number }) => void } = {}
+  readonly headers = new Map<string, string>()
+  status = 0
+  responseText = ''
+  method = ''
+  url = ''
+  body?: Document | XMLHttpRequestBodyInit | null
+  aborted = false
+  onload?: () => void
+  onerror?: () => void
+  onabort?: () => void
+
+  constructor() { FakeUploadRequest.current = this }
+  open(method: string, url: string) { this.method = method; this.url = url }
+  setRequestHeader(name: string, value: string) { this.headers.set(name, value) }
+  send(body?: Document | XMLHttpRequestBodyInit | null) { this.body = body }
+  abort() { this.aborted = true; this.onabort?.() }
+  emitProgress(loaded: number, total: number) { this.upload.onprogress?.({ loaded, total }) }
+  respond(status: number, body: string) { this.status = status; this.responseText = body; this.onload?.() }
+}
+
+afterEach(() => {
+  FakeUploadRequest.current = undefined
+  vi.unstubAllGlobals()
+})
 
 describe('recording import client gateway', () => {
   it('preserves second precision for the imported recording start time', () => {
@@ -85,43 +111,84 @@ describe('recording import client gateway', () => {
   })
 
   it('owns the same-origin raw upload request outside the React surface', async () => {
-    const fetch = vi.fn(async () => new Response(JSON.stringify({
+    vi.stubGlobal('XMLHttpRequest', FakeUploadRequest)
+    const file = new File(['abc'], '会议.m4a', { type: '' })
+    const controller = new AbortController()
+    const result = uploadArkmeRecording(
+      '/arkme-self/api/recording/import', file, 1_725_000_000_000, 0, { signal: controller.signal },
+    )
+    const request = FakeUploadRequest.current
+
+    expect(request).toMatchObject({ method: 'POST', url: '/arkme-self/api/recording/import', body: file })
+    expect(request?.headers).toEqual(new Map([
+      ['Content-Type', 'audio/mp4'],
+      ['X-Arkme-File-Name', encodeURIComponent('会议.m4a')],
+      ['X-Arkme-Start-At', '1725000000000'],
+      ['X-Arkme-Belong-User', '0'],
+    ]))
+    request?.respond(202, JSON.stringify({
       ok: true,
       value: {
         importRef: 'opaque', revision: 1, phase: 'prepared', fileName: '会议.m4a',
         fileSize: 3, durationMillis: 1_000, progress: 0,
       },
-    }), { status: 202, headers: { 'content-type': 'application/json' } }))
-    vi.stubGlobal('fetch', fetch)
-    const file = new File(['abc'], '会议.m4a', { type: '' })
-    const controller = new AbortController()
-
-    await expect(uploadArkmeRecording('/arkme-self/api/recording/import', file, 1_725_000_000_000, 0, controller.signal))
-      .resolves.toMatchObject({ importRef: 'opaque', phase: 'prepared' })
-    expect(fetch).toHaveBeenCalledWith('/arkme-self/api/recording/import', expect.objectContaining({
-      method: 'POST', body: file, credentials: 'same-origin', redirect: 'error',
-      signal: controller.signal,
-      headers: expect.objectContaining({
-        'Content-Type': 'audio/mp4',
-        'X-Arkme-File-Name': encodeURIComponent('会议.m4a'),
-        'X-Arkme-Start-At': '1725000000000',
-        'X-Arkme-Belong-User': '0',
-      }),
     }))
+    await expect(result).resolves.toMatchObject({ importRef: 'opaque', phase: 'prepared' })
+  })
+
+  it('reports the browser-to-Host transfer progress through the upload observer', async () => {
+    vi.stubGlobal('XMLHttpRequest', FakeUploadRequest)
+    const observed: Array<{ uploadedBytes: number; totalBytes: number }> = []
+    const result = uploadArkmeRecording('/arkme-self/api/recording/import', new File(['abcd'], '会议.m4a'), 1, 0, {
+      onProgress: progress => { observed.push(progress) },
+    })
+
+    expect(FakeUploadRequest.current).toBeDefined()
+    FakeUploadRequest.current?.emitProgress(3, 4)
+    FakeUploadRequest.current?.respond(202, JSON.stringify({
+      ok: true,
+      value: {
+        importRef: 'opaque', revision: 1, phase: 'prepared', fileName: '会议.m4a',
+        fileSize: 4, durationMillis: 1_000, progress: 0,
+      },
+    }))
+    await expect(result).resolves.toMatchObject({ importRef: 'opaque', phase: 'prepared' })
+    expect(observed).toEqual([
+      { uploadedBytes: 0, totalBytes: 4 },
+      { uploadedBytes: 3, totalBytes: 4 },
+      { uploadedBytes: 4, totalBytes: 4 },
+    ])
+  })
+
+  it('aborts the browser transfer when its existing lifecycle signal is cancelled', async () => {
+    vi.stubGlobal('XMLHttpRequest', FakeUploadRequest)
+    const controller = new AbortController()
+    const result = uploadArkmeRecording(
+      '/arkme-self/api/recording/import', new File(['abc'], '会议.m4a'), 1, 0, { signal: controller.signal },
+    )
+    const rejection = expect(result).rejects.toMatchObject({ name: 'AbortError' })
+
+    controller.abort()
+
+    await rejection
+    expect(FakeUploadRequest.current?.aborted).toBe(true)
   })
 
   it('returns the bounded Host error rather than accepting an invalid response', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+    vi.stubGlobal('XMLHttpRequest', FakeUploadRequest)
+    const result = uploadArkmeRecording('/arkme-self/api/recording/import', new File(['x'], 'bad.mp3'), 1)
+    const rejection = expect(result).rejects.toThrow('录音格式与文件内容不一致')
+    FakeUploadRequest.current?.respond(400, JSON.stringify({
       ok: false, error: { message: '录音格式与文件内容不一致' },
-    }), { status: 400, headers: { 'content-type': 'application/json' } })))
-    await expect(uploadArkmeRecording('/arkme-self/api/recording/import', new File(['x'], 'bad.mp3'), 1))
-      .rejects.toThrow('录音格式与文件内容不一致')
+    }))
+    await rejection
   })
 
   it('returns a bounded error when the loopback route does not return JSON', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('Bad Gateway', { status: 502 })))
-
-    await expect(uploadArkmeRecording('/arkme-self/api/recording/import', new File(['x'], 'bad.mp3'), 1))
-      .rejects.toThrow('录音导入失败')
+    vi.stubGlobal('XMLHttpRequest', FakeUploadRequest)
+    const result = uploadArkmeRecording('/arkme-self/api/recording/import', new File(['x'], 'bad.mp3'), 1)
+    const rejection = expect(result).rejects.toThrow('录音导入失败')
+    FakeUploadRequest.current?.respond(502, 'Bad Gateway')
+    await rejection
   })
 })

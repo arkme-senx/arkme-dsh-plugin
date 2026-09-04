@@ -8,11 +8,11 @@ import {
   type RecordingImportOwnerGateway,
 } from '../recording-import-contract.js'
 import type {
-  PublicRecordingImportProcessingTiming,
-  PublicRecordingImportProcessingTimingRow,
+  PublicRecordingImportProgress,
+  PublicRecordingImportProgressRow,
   RecordingImportDisplayStatus,
-  RecordingImportProcessingOutcome,
-  RecordingImportProcessingStage,
+  RecordingImportProgressCode,
+  RecordingImportProgressStatus,
 } from '../recording-import-shared.js'
 import { recordingImportFileNameKey } from '../recording-import-shared.js'
 import type { RecordingImportGateway } from '../recording-import-coordinator.js'
@@ -58,8 +58,13 @@ const AUDIO_IMPORT_DUPLICATE_BATCH_SIZE = 100
 const AUDIO_IMPORT_PROGRESS_BATCH_SIZE = 100
 const AUDIO_IMPORT_OWNER_PAGE_SIZE = 100
 
-const PROCESSING_STAGES = new Set<RecordingImportProcessingStage>(['sd', 'vad', 'asr'])
-const PROCESSING_OUTCOMES = new Set<RecordingImportProcessingOutcome>(['success', 'failed'])
+const IMPORT_PROGRESS_CODES = new Set<RecordingImportProgressCode>([
+  'upload',
+  'import',
+  'voice_recognition',
+  'primary_transcript',
+  'enhancement_transcript',
+])
 
 type AudioOssClientFactory = (options: ConstructorParameters<typeof OSS>[0]) => AudioOssClient
 
@@ -75,50 +80,65 @@ function nonNegativeIntegerValue(value: unknown): number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 0
 }
 
-function processingTimingState(value: unknown): RecordingImportOwnerProgress['timingState'] {
-  return value === 'processing' || value === 'completed' ? value : 'unavailable'
+function wireIntegerValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const parsed = Math.trunc(value)
+    return Number.isSafeInteger(parsed) ? parsed : 0
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Math.trunc(Number(value))
+    if (Number.isSafeInteger(parsed)) return parsed
+  }
+  return 0
 }
 
-function processingTimingRow(value: unknown): PublicRecordingImportProcessingTimingRow | undefined {
+function positiveOrZero(value: unknown): number {
+  return Math.max(0, wireIntegerValue(value))
+}
+
+function importProgressStatus(value: unknown): RecordingImportProgressStatus {
+  switch (wireIntegerValue(value)) {
+    case 1: return 'pending'
+    case 2: return 'processing'
+    case 3: return 'completed'
+    case 4: return 'partial'
+    case 5: return 'failed'
+    default: return 'unavailable'
+  }
+}
+
+function importProgressRow(value: unknown): PublicRecordingImportProgressRow | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const raw = value as Record<string, unknown>
-  const stage = stringValue(raw.stage).trim().toLowerCase() as RecordingImportProcessingStage
-  const outcome = stringValue(raw.outcome).trim().toLowerCase() as RecordingImportProcessingOutcome
-  const startedAtMillis = optionalIntegerValue(raw.started_at_ms)
-  const endedAtMillis = optionalIntegerValue(raw.ended_at_ms)
-  const durationMillis = optionalIntegerValue(raw.duration_ms)
-  const provider = stringValue(raw.provider).trim()
-  const model = stringValue(raw.model).trim()
-  if (!PROCESSING_STAGES.has(stage) || !PROCESSING_OUTCOMES.has(outcome)
-    || startedAtMillis === undefined || endedAtMillis === undefined || durationMillis === undefined
-    || startedAtMillis <= 0 || endedAtMillis < startedAtMillis || durationMillis < 0
-    || provider === '' || model === '') return undefined
+  const code = stringValue(raw.code).trim() as RecordingImportProgressCode
+  if (!IMPORT_PROGRESS_CODES.has(code)) return undefined
   return {
-    stage,
-    outcome,
-    startedAtMillis,
-    endedAtMillis,
-    durationMillis,
-    provider,
-    model,
+    code,
+    status: importProgressStatus(raw.status),
+    startedAtMillis: positiveOrZero(raw.started_at_ms),
+    endedAtMillis: positiveOrZero(raw.ended_at_ms),
+    durationMillis: positiveOrZero(raw.duration_ms),
+    provider: stringValue(raw.provider).trim(),
+    model: stringValue(raw.model).trim(),
     modelVersion: stringValue(raw.model_version).trim(),
+    modelDurationMillis: positiveOrZero(raw.model_duration_ms),
+    nextRelation: stringValue(raw.next_relation).trim(),
+    relationDurationMillis: positiveOrZero(raw.relation_duration_ms),
   }
 }
 
-function processingTiming(value: unknown, timingState: RecordingImportOwnerProgress['timingState']): PublicRecordingImportProcessingTiming {
-  if (!Array.isArray(value)) return { timingState: 'unavailable', totalDurationMillis: 0, rows: [] }
-  const parsedRows = value.map(processingTimingRow)
-  if (parsedRows.some(row => row === undefined)) {
-    return { timingState: 'unavailable', totalDurationMillis: 0, rows: [] }
-  }
-  const rows = parsedRows as PublicRecordingImportProcessingTimingRow[]
-  const totalDurationMillis = rows.reduce((total, row) => total + row.durationMillis, 0)
-  if (!Number.isSafeInteger(totalDurationMillis)) {
-    return { timingState: 'unavailable', totalDurationMillis: 0, rows: [] }
-  }
+function importProgress(value: unknown, observedAtMillis: number): PublicRecordingImportProgress | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Record<string, unknown>
+  const rows = (Array.isArray(raw.row_ls) ? raw.row_ls : [])
+    .map(importProgressRow)
+    .filter((row): row is PublicRecordingImportProgressRow => row !== undefined)
+  if (rows.length === 0) return undefined
   return {
-    timingState,
-    totalDurationMillis,
+    status: importProgressStatus(raw.status),
+    totalDurationMillis: positiveOrZero(raw.total_duration_ms),
+    serverNowMillis: positiveOrZero(raw.server_now_ms),
+    observedAtMillis,
     rows,
   }
 }
@@ -324,22 +344,22 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
         { session_ids: batch },
         signal,
       )
+      const observedAtMillis = Date.now()
       for (const raw of Array.isArray(data.item_ls) ? data.item_ls : []) {
         const owner = objectValue(raw)
         const sessionId = stringValue(owner.session_id).trim()
         if (sessionId === '' || !batch.includes(sessionId)) continue
         const statusListAvailable = Array.isArray(owner.child_status_ls)
         const rawStatuses = statusListAvailable ? owner.child_status_ls as unknown[] : []
-        const parsedStatuses = rawStatuses.map(child => optionalIntegerValue(objectValue(child).status))
+        const parsedStatuses = rawStatuses.map(child => wireIntegerValue(objectValue(child).status))
         const statusesValid = statusListAvailable && parsedStatuses.every(
-          (status): status is number => status !== undefined && status >= 1 && status <= 6,
+          status => status >= 1 && status <= 6,
         )
         const displayStatus = statusesValid ? ownerDisplayStatus(parsedStatuses) : 'unavailable'
-        const timingState = processingTimingState(owner.timing_state)
+        const progress = importProgress(owner.import_progress, observedAtMillis)
         result.set(sessionId, {
           ...(displayStatus === undefined ? {} : { displayStatus }),
-          timingState,
-          processingTiming: processingTiming(owner.processing_timing_ls, timingState),
+          ...(progress === undefined ? {} : { importProgress: progress }),
         })
       }
     }

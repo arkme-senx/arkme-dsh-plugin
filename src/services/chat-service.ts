@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import { projectForwardRecordingSegment } from '../recording-forward-presentation.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeConversationMemberJoinEvent,
@@ -4582,6 +4583,7 @@ export class ChatService {
           const segmentValues = rawSegments.slice(0, Math.min(500, remainingSegments))
           remainingSegments -= segmentValues.length
           const segments: ArkmeForwardTranscriptSegment[] = segmentValues.map(value => {
+            if (recordingSegments.length > 0) return projectForwardRecordingSegment(value, senderName)
             const segment = objectValue(value)
             const offset = (value: unknown) => Math.max(0, Math.trunc(numberValue(value)))
             const startMillis = offset(segment.start_millis ?? segment.startMillis ?? segment.start_ms ?? segment.startMs)
@@ -4613,7 +4615,7 @@ export class ChatService {
           projectedItems.push({
             senderName,
             ...(senderUserId > 0 ? { avatarRef: await this.profile.sealProfileImageRef(viewerUserId, senderUserId) } : {}),
-            sendAtMillis: epochMillis(item.send_at ?? item.sendAt),
+            sendAtMillis: recordingSegments.length > 0 ? numberValue(item.send_at ?? item.sendAt) : epochMillis(item.send_at ?? item.sendAt),
             title,
             textContent,
             sourceType,

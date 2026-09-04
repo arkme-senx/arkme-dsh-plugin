@@ -61,7 +61,9 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('raw.jotmo_id', '')
     .replaceAll('raw.jotmoId', '')
     .replaceAll('item.jotmo_id', '')
+    .replaceAll('jotmo_ids', '')
     .replaceAll('/api/v1/auth/check-jotmo-id-available', '')
+    .replaceAll('/api/public/v1/auth/get-public-user-by-jotmo-ids', '')
     .replaceAll('/api/v1/auth/update-jotmo-id', '')
     .replaceAll('recipient_jotmo_id', '')
     .replaceAll("'jotmo-userfiles-test'", '')
@@ -113,6 +115,19 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
   return content
     .replaceAll('即我号', '')
     .replaceAll('即我id', '')
+}
+
+function withoutTeamPublicProtocolNames(file: string, content: string): string {
+  const allowedFiles = new Set([
+    join(root, 'docs/consumer-plugin-contract.md'),
+    join(root, 'src/client/redesign/contacts/TeamDetailPane.tsx'),
+    join(root, 'src/openapi-capability-gateway.ts'),
+    join(root, 'src/sdk/index.ts'),
+    join(root, 'src/services/team-service.ts'),
+  ])
+  if (!allowedFiles.has(file)) return content
+  // Team public IDs and the corresponding OpenAPI fields/routes are stable cross-repository protocol names.
+  return content.replace(/jotmo|即我/gi, '')
 }
 
 function withoutOfficialCommunityProductCopy(file: string, content: string): string {
@@ -178,15 +193,18 @@ describe('Arkme plugin identity', () => {
       ...textFiles(join(root, 'src')),
     ]
     const residuals = files.flatMap(file => {
-      const source = withoutOutgoingCallAssetCompatibilityAlias(
+      const source = withoutTeamPublicProtocolNames(
         file,
-        withoutApprovedLinkMetadataCompatibilityAliases(
+        withoutOutgoingCallAssetCompatibilityAlias(
           file,
-          withoutApprovedJiwoScanLoginFeature(
+          withoutApprovedLinkMetadataCompatibilityAliases(
             file,
-            withoutOfficialCommunityProductCopy(
+            withoutApprovedJiwoScanLoginFeature(
               file,
-              withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+              withoutOfficialCommunityProductCopy(
+                file,
+                withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+              ),
             ),
           ),
         ),

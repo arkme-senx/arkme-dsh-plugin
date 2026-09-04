@@ -21,6 +21,14 @@ interface AvatarImageEntry {
 
 interface InMemoryArkmeAvatarImageStoreOptions {
   reader: (imageRef: string) => Promise<ArkmeAvatarImagePayload>
+  onLoadFailure?: (failure: {
+    imageRef: string
+    scopeKey: string | undefined
+    trigger: 'load' | 'revalidate'
+    hasCachedImage: boolean
+    durationMillis: number
+    error: unknown
+  }) => void
   now?: () => number
   ttlMillis?: number
   jitterMillis?: number | (() => number)
@@ -102,6 +110,8 @@ export class InMemoryArkmeAvatarImageStore implements ArkmeAvatarImagePort {
     }
 
     const generation = this.generation
+    const scopeKey = this.scopeKey
+    const startedAtMillis = this.now()
     const entry = existing ?? { expiresAtMillis: 0, pending: undefined }
     const pending = this.schedule(async () => {
       if (generation !== this.generation) throw new Error(AVATAR_IMAGE_SCOPE_CHANGED)
@@ -122,6 +132,14 @@ export class InMemoryArkmeAvatarImageStore implements ArkmeAvatarImagePort {
         if (generation === this.generation && this.entries.get(imageRef) === entry) {
           entry.pending = undefined
           if (entry.value === undefined) this.entries.delete(imageRef)
+          try {
+            this.options.onLoadFailure?.({
+              imageRef, scopeKey, error,
+              trigger: force ? 'revalidate' : 'load',
+              hasCachedImage: entry.value !== undefined,
+              durationMillis: Math.max(0, this.now() - startedAtMillis),
+            })
+          } catch { /* A diagnostic sink must not alter cache behavior or the rejection. */ }
         }
         throw error
       })

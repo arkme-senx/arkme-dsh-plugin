@@ -18,6 +18,7 @@ export type ContactDirectoryLoadMode = 'replace' | 'append' | 'count'
 export type ArkmeDirectorySelection =
   | { kind: 'none' }
   | { kind: 'contact'; contactRef: string }
+  | { kind: 'team'; teamRef: string }
   | { kind: 'unmarked-speaker'; candidateRef: string }
 
 export interface ContactDirectorySectionState {
@@ -105,7 +106,7 @@ export function directoryItemKey(item: ArkmeDirectoryItem): string {
     case 'group': return `group:${item.sourceRef}`
     case 'bot': return `bot:${item.bot.botRef}`
     case 'unmarked-speaker': return `unmarked-speaker:${item.candidateRef}`
-    case 'team': return `team:${item.rowKey}`
+    case 'team': return `team:${item.teamRef}`
     case 'contact': return `contact:${item.contactRef}`
   }
 }
@@ -158,6 +159,11 @@ function selectionAfterReplacement(
   }
   if (section === 'unmarked-speakers' && selection.kind === 'unmarked-speaker') {
     return items.some(item => item.kind === 'unmarked-speaker' && item.candidateRef === selection.candidateRef)
+      ? selection
+      : { kind: 'none' }
+  }
+  if (section === 'teams' && selection.kind === 'team') {
+    return items.some(item => item.kind === 'team' && item.teamRef === selection.teamRef)
       ? selection
       : { kind: 'none' }
   }

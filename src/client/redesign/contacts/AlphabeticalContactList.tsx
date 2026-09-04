@@ -113,25 +113,18 @@ export function DirectoryItemRow({
   onOpenBot,
   onSelect,
 }: DirectoryItemRowProps) {
-  if (item.kind === 'team') {
-    return <div
-      role="listitem"
-      className="arkme-contact-directory-row is-static"
-      data-directory-row-kind="team"
-      data-directory-row-ref={item.rowKey}
-    >{rowContent(item)}</div>
-  }
-
   const selection = item.kind === 'contact'
     ? { kind: 'contact', contactRef: item.contactRef } as const
     : item.kind === 'unmarked-speaker'
       ? { kind: 'unmarked-speaker', candidateRef: item.candidateRef } as const
+      : item.kind === 'team'
+        ? { kind: 'team', teamRef: item.teamRef } as const
       : undefined
   return <button
     type="button"
     className={`arkme-contact-directory-row${selected ? ' is-selected' : ''}`}
     data-directory-row-kind={item.kind}
-    data-directory-row-ref={item.kind === 'group' ? item.sourceRef : item.kind === 'bot' ? item.bot.botRef : selection === undefined ? '' : item.kind === 'contact' ? item.contactRef : item.candidateRef}
+    data-directory-row-ref={item.kind === 'group' ? item.sourceRef : item.kind === 'bot' ? item.bot.botRef : selection === undefined ? '' : item.kind === 'contact' ? item.contactRef : item.kind === 'team' ? item.teamRef : item.candidateRef}
     {...(selection === undefined ? {} : { 'aria-current': selected as true | false })}
     onClick={() => {
       if (item.kind === 'group') onOpenGroup(item.sourceRef)
