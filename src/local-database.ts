@@ -9,6 +9,7 @@ import type {
   ArkmePendingWrite,
   ArkmeRecordCaptureContext,
   ArkmeRecordCursor,
+  ArkmeRecordReeditDraft,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
@@ -480,6 +481,32 @@ export class ArkmeLocalDatabase {
     await this.operationalState.removeLongArticleDraft(userId, sourceRef, itemUid)
   }
 
+  async getRecordReeditDraft(
+    userId: number,
+    sourceIdentityKey: string,
+    itemUid: string,
+  ): Promise<ArkmeRecordReeditDraft | undefined> {
+    return await this.operationalState.getRecordReeditDraft(userId, sourceIdentityKey, itemUid)
+  }
+
+  async putRecordReeditDraft(
+    userId: number,
+    draft: Omit<ArkmeRecordReeditDraft, 'draftRevision'>,
+  ): Promise<ArkmeRecordReeditDraft> {
+    return await this.operationalState.putRecordReeditDraft(userId, draft)
+  }
+
+  async removeRecordReeditDraft(
+    userId: number,
+    sourceIdentityKey: string,
+    itemUid: string,
+    expectedRevision: number,
+  ): Promise<boolean> {
+    return await this.operationalState.removeRecordReeditDraft(
+      userId, sourceIdentityKey, itemUid, expectedRevision,
+    )
+  }
+
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
     return await this.operationalState.listRecordingImportJobs(userId)
   }
@@ -510,6 +537,10 @@ export class ArkmeLocalDatabase {
     expectedRevision: number,
   ): Promise<boolean> {
     return await this.operationalState.replaceRecordingImportJob(userId, job, expectedRevision)
+  }
+
+  async removeRecordingImportJob(userId: number, jobId: string): Promise<void> {
+    await this.operationalState.removeRecordingImportJob(userId, jobId)
   }
 
   async markAttempt(userId: number, recordUid: string, error: string): Promise<void> {

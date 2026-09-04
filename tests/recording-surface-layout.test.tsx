@@ -6,6 +6,10 @@ import * as recordingSurface from '../src/client/ArkmeRecordingSurface.js'
 import type { ArkmeRecordingWorkbenchItem } from '../src/types.js'
 
 const { ArkmeRecordingSurface } = recordingSurface
+const recordingSurfaceElement = () => <ArkmeRecordingSurface
+  onOpenRecordingImport={() => {}}
+  recordingRefreshRevision={0}
+/>
 
 function styleMap(value: string): Map<string, string> {
   return new Map(value.split(';').filter(Boolean).map(rule => {
@@ -22,7 +26,7 @@ function matchStyle(markup: string, pattern: RegExp): Map<string, string> {
 
 describe('ArkmeRecordingSurface layout', () => {
   it('keeps the desktop workbench behavior while allowing the DSH layout to adapt', () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
     const root = matchStyle(markup, /^<div style="([^"]+)"/)
 
     expect(root.get('overflow')).toBe('hidden')
@@ -33,8 +37,9 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(markup).toContain('>导入历史音频<')
     expect(markup).toContain('时间轴')
     expect(markup).toContain('总结')
-    expect(markup).toContain('转写 · 系统')
-    expect(markup.indexOf('>转写 · 系统</button>')).toBeLessThan(markup.indexOf('>总结</button>'))
+    expect(markup).toContain('>转写<span')
+    expect(markup).not.toContain('转写 · 系统')
+    expect(markup.indexOf('>转写<span')).toBeLessThan(markup.indexOf('>总结</button>'))
     expect(markup.indexOf('>总结</button>')).toBeLessThan(markup.indexOf('>时间轴</button>'))
     expect(markup).toContain('aria-current="page"')
   })
@@ -49,20 +54,20 @@ describe('ArkmeRecordingSurface layout', () => {
   })
 
   it('uses desktop-owned month and year menus instead of native selects that escape the host layer', async () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 
     expect(markup).toContain('aria-label="选择月份"')
     expect(markup).toContain('aria-label="选择年份"')
     expect(source).toContain('function RecordingCalendarDropdown')
-    expect(source).toContain('interface RecordingCalendarDropdownAnchor')
-    expect(source).toContain('useState<RecordingCalendarDropdownAnchor>()')
+    expect(source).toContain('interface RecordingDropdownAnchor')
+    expect(source).toContain('useState<RecordingDropdownAnchor>()')
     expect(source).not.toContain('<select aria-label="月份"')
     expect(source).not.toContain('<select aria-label="年份"')
   })
 
   it('keeps one responsive presentation without changing the recording business owner', () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
     expect(markup).toContain('data-arkme-recording-layout="wide"')
     expect(recordingSurface).toHaveProperty('recordingWorkbenchLayoutMode')
     expect(markup).toContain('grid-template-columns:repeat(7,minmax(0,1fr))')
@@ -71,11 +76,13 @@ describe('ArkmeRecordingSurface layout', () => {
   it('remounts the complete recording workbench when the authenticated account changes', async () => {
     const sidebarSource = await readFile(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
 
-    expect(sidebarSource).toContain("<ArkmeRecordingSurface key={`recordings:${auth?.status ?? 'unknown'}:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`} />")
+    expect(sidebarSource).toContain("key={`recordings:${auth?.status ?? 'unknown'}:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}")
+    expect(sidebarSource).toContain('onOpenRecordingImport={openRecordingImport}')
+    expect(sidebarSource).toContain("key={`recording-import:${authenticatedAccountKey ?? 'unknown'}`}")
   })
 
   it('uses the existing Arkme theme owner instead of hard-coded light-only colors', async () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
     const timelineSource = await readFile(new URL('../src/client/recordings/ArkmeRecordingTimeline.tsx', import.meta.url), 'utf8')
     const importSource = await readFile(new URL('../src/client/recordings/ArkmeRecordingImportDialog.tsx', import.meta.url), 'utf8')
@@ -89,6 +96,10 @@ describe('ArkmeRecordingSurface layout', () => {
       expect(childSource).not.toContain("base: '#ffffff'")
       expect(childSource).not.toContain("background: '#ffffff'")
     }
+    expect(importSource).toContain("case 'completed': return arkmeTheme.success")
+    expect(importSource).toContain("case 'partial': return arkmeTheme.warning")
+    expect(importSource).not.toContain("return '#52c41a'")
+    expect(importSource).not.toContain("return '#fa8c16'")
     expect(importSource).toContain("overflowX: 'auto'")
   })
 
@@ -112,7 +123,7 @@ describe('ArkmeRecordingSurface layout', () => {
   })
 
   it('keeps the page fixed and scrolls only the recording analysis pane', async () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
     const root = matchStyle(markup, /^<div style="([^"]+)"/)
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 
@@ -198,23 +209,29 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(source).toContain('{emptyDay ? <ArkmeRecordingEmptyState />')
   })
 
-  it('uses desktop empty panels for summary and analysis timeline without inventing generation actions', () => {
+  it('uses the desktop empty-panel generation actions and hides them while processing', () => {
     const EmptyState = (recordingSurface as typeof recordingSurface & {
-      ArkmeRecordingAnalysisEmptyState: ComponentType<{ kind: 'summary' | 'timeline'; state: 'empty' | 'processing' | 'failed' }>
+      ArkmeRecordingAnalysisEmptyState: ComponentType<{
+        kind: 'summary' | 'timeline'
+        state: 'empty' | 'processing' | 'failed'
+        onGenerate(): void
+      }>
     }).ArkmeRecordingAnalysisEmptyState
 
-    const summary = renderToStaticMarkup(<EmptyState kind="summary" state="empty" />)
-    const summaryLoading = renderToStaticMarkup(<EmptyState kind="summary" state="processing" />)
-    const timelineFailure = renderToStaticMarkup(<EmptyState kind="timeline" state="failed" />)
+    const summary = renderToStaticMarkup(<EmptyState kind="summary" state="empty" onGenerate={() => {}} />)
+    const summaryLoading = renderToStaticMarkup(<EmptyState kind="summary" state="processing" onGenerate={() => {}} />)
+    const timelineFailure = renderToStaticMarkup(<EmptyState kind="timeline" state="failed" onGenerate={() => {}} />)
 
     for (const markup of [summary, summaryLoading, timelineFailure]) {
       expect(markup).toContain('width="186"')
       expect(markup).toContain('height="133"')
-      expect(markup).not.toContain('>点击生成')
     }
-    expect(summary).toContain('暂无总结内容')
+    expect(summary).toContain('暂无总结内容，')
+    expect(summary).toContain('>点击生成总结</button>')
     expect(summaryLoading).toContain('生成总结中...')
-    expect(timelineFailure).toContain('时间轴生成失败')
+    expect(summaryLoading).not.toContain('>点击生成')
+    expect(timelineFailure).toContain('时间轴生成失败，')
+    expect(timelineFailure).toContain('>点击生成时间轴</button>')
   })
 
   it('formats transcript timestamps and durations with the desktop contract', () => {
@@ -290,7 +307,7 @@ describe('ArkmeRecordingSurface layout', () => {
   })
 
   it('shows the desktop transcript import-and-transcribe skeleton while the day is loading', () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
 
     expect(markup).toContain('aria-label="转写加载中"')
     expect(markup).toContain('音频文字正在导入&amp;转写中')

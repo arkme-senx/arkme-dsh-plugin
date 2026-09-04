@@ -73,10 +73,17 @@ interface ArkmeWorldAvatarResolutionCacheEntry {
   expiresAtMillis: number
 }
 
+interface ArkmeWorldExtensionShareCacheEntry {
+  share?: ArkmeWorldExtensionShare
+  expiresAtMillis: number
+}
+
 const ARKME_WORLD_IMAGE_REF_TTL_MILLIS = 15 * 60 * 1000
 const MAX_ARKME_WORLD_IMAGE_REFS = 2048
 const ARKME_WORLD_AVATAR_RESOLUTION_CACHE_TTL_MILLIS = 5 * 60 * 1000
 const MAX_ARKME_WORLD_AVATAR_RESOLUTION_CACHE_ENTRIES = 2048
+const ARKME_WORLD_EXTENSION_SHARE_CACHE_TTL_MILLIS = 5 * 60 * 1000
+const MAX_ARKME_WORLD_EXTENSION_SHARE_CACHE_ENTRIES = 512
 const ARKME_WORLD_RECORD_REF_TTL_MILLIS = 15 * 60 * 1000
 const MAX_ARKME_WORLD_RECORD_REFS = 4096
 const ARKME_VOICEPRINT_PLAY_SCOPE = 2
@@ -182,6 +189,21 @@ function worldExtensionPublicationShare(
     return undefined
   }
   return { ref, url: parsed.href }
+}
+
+function worldExtensionShareFromCatalogDetail(raw: unknown): ArkmeWorldExtensionShare | undefined {
+  const response = objectValue(raw)
+  const extension = objectValue(response.extension ?? response)
+  return worldExtensionPublicationShare({ share: extension.share }, {})
+}
+
+function worldTextWithExtensionShare(textContent: string, share: ArkmeWorldExtensionShare | undefined): string {
+  const content = textContent.trim()
+  if (share === undefined) return content
+  const shareUrl = share.url.trim()
+  if (shareUrl === '') return content
+  if (content.includes(shareUrl)) return content
+  return content === '' ? shareUrl : `${content}\n${shareUrl}`
 }
 
 function isTopLevelWorldRecord(raw: unknown): boolean {
@@ -314,6 +336,8 @@ function worldImageAssetIdentity(raw: string): string {
 export class WorldService {
   private readonly worldImageRefs = new Map<string, ArkmeWorldImageEntry>()
   private readonly worldAvatarResolutionCache = new Map<string, ArkmeWorldAvatarResolutionCacheEntry>()
+  private readonly extensionPublicationShareCache = new Map<string, ArkmeWorldExtensionShareCacheEntry>()
+  private readonly extensionPublicationShareInFlight = new Map<string, Promise<ArkmeWorldExtensionShare | undefined>>()
   private readonly worldRecordRefs = new Map<string, ArkmeWorldRecordRefEntry>()
   private readonly voiceprintSocialCache = new Map<string, ArkmeWorldVoiceprintSocialCacheEntry>()
   private readonly voiceprintSocialInFlight = new Map<string, Promise<ArkmeWorldVoiceprintSocialContext>>()
@@ -329,6 +353,8 @@ export class WorldService {
   dispose(): void {
     this.worldImageRefs.clear()
     this.worldAvatarResolutionCache.clear()
+    this.extensionPublicationShareCache.clear()
+    this.extensionPublicationShareInFlight.clear()
     this.worldRecordRefs.clear()
     this.voiceprintSocialCache.clear()
     this.voiceprintSocialInFlight.clear()
@@ -365,7 +391,7 @@ export class WorldService {
     )
     const rawItems = listValue(data.list)
     const resolvedAvatars = await this.resolveWorldAvatarUrls(rawItems, session, options.signal)
-    const projected = await Promise.all(rawItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars)))
+    const projected = await Promise.all(rawItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars, options.signal)))
     const items = projected.filter((item): item is ArkmeWorldFeedItem => item !== undefined)
     const total = Math.max(0, Math.trunc(numberValue(data.total)))
     const nextOffset = offset + rawItems.length
@@ -391,7 +417,7 @@ export class WorldService {
       const rawItems = listValue(data.list)
       const rootItems = rawItems.filter(isTopLevelWorldRecord)
       const resolvedAvatars = await this.resolveWorldAvatarUrls(rootItems, session, options.signal)
-      const projected = await Promise.all(rootItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars)))
+      const projected = await Promise.all(rootItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars, options.signal)))
       items = projected.filter((item): item is ArkmeWorldFeedItem => item !== undefined)
       total = Math.max(0, Math.trunc(numberValue(data.total)))
       offset += rawItems.length
@@ -426,7 +452,7 @@ export class WorldService {
       total = Math.max(0, Math.trunc(numberValue(data.total)))
       const rootItems = rawItems.filter(isTopLevelWorldRecord)
       const resolvedAvatars = await this.resolveWorldAvatarUrls(rootItems, session, options.signal)
-      const projected = await Promise.all(rootItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars)))
+      const projected = await Promise.all(rootItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars, options.signal)))
       items = projected.filter((item): item is ArkmeWorldFeedItem => item !== undefined)
       offset += rawItems.length
       hasMore = rawItems.length > 0 && offset < total
@@ -1120,6 +1146,7 @@ export class WorldService {
     raw: unknown,
     viewerUserId: number,
     resolvedAvatars: ReadonlyMap<string, string>,
+    signal?: AbortSignal,
   ): Promise<ArkmeWorldFeedItem | undefined> {
     const item = objectValue(raw)
     const recordUid = stringValue(item.record_uid).trim()
@@ -1132,6 +1159,12 @@ export class WorldService {
     const isExtensionPublication = recordType === 'extension_publication'
       && extensionId !== ''
       && extensionVisibility === 'public'
+    let extensionShare = isExtensionPublication
+      ? worldExtensionPublicationShare(rawExtensionPublication, item)
+      : undefined
+    if (isExtensionPublication && extensionShare === undefined) {
+      extensionShare = await this.extensionPublicationShare(extensionId, signal)
+    }
     const rawImages = listValue(item.images).map(stringValue).map(value => value.trim()).filter(value => value !== '')
     const videoCount = listValue(item.videos).length
     const voiceCount = listValue(item.voices).length
@@ -1179,7 +1212,9 @@ export class WorldService {
       ...(avatarRef === undefined ? {} : { avatarRef }),
       ...(avatarRef === undefined && avatarFallback !== undefined ? { avatarFallback } : {}),
       headline,
-      textContent,
+      textContent: isExtensionPublication
+        ? worldTextWithExtensionShare(textContent, extensionShare)
+        : textContent,
       tags: listValue(item.tags).map(stringValue).map(tag => tag.trim()).filter(tag => tag !== ''),
       templateKind: Math.trunc(numberValue(item.template_kind)),
       createdAtMillis: Math.trunc(numberValue(item.created_at)),
@@ -1196,10 +1231,7 @@ export class WorldService {
           version: stringValue(rawExtensionPublication.version).trim(),
           name: stringValue(rawExtensionPublication.name).trim() || '未命名插件',
           description: stringValue(rawExtensionPublication.description).trim(),
-          ...(() => {
-            const share = worldExtensionPublicationShare(rawExtensionPublication, item)
-            return share === undefined ? {} : { share }
-          })(),
+          ...(extensionShare === undefined ? {} : { share: extensionShare }),
           ...(() => {
             const iconRef = stringValue(rawExtensionPublication.icon_ref).trim()
             return iconRef === '' ? {} : { iconRef }
@@ -1214,6 +1246,53 @@ export class WorldService {
           publishedAtMillis: Math.trunc(numberValue(rawExtensionPublication.published_at)),
         },
       } : {}),
+    }
+  }
+
+  private async extensionPublicationShare(extensionId: string, signal?: AbortSignal): Promise<ArkmeWorldExtensionShare | undefined> {
+    const normalized = extensionId.trim()
+    if (normalized === '') return undefined
+    const now = Date.now()
+    const cached = this.extensionPublicationShareCache.get(normalized)
+    if (cached !== undefined && cached.expiresAtMillis > now) return cached.share
+    const inFlight = this.extensionPublicationShareInFlight.get(normalized)
+    if (inFlight !== undefined) return await inFlight
+
+    const load = this.loadExtensionPublicationShare(normalized, signal)
+    this.extensionPublicationShareInFlight.set(normalized, load)
+    try {
+      const share = await load
+      if (this.extensionPublicationShareCache.size >= MAX_ARKME_WORLD_EXTENSION_SHARE_CACHE_ENTRIES) {
+        const oldestKey = this.extensionPublicationShareCache.keys().next().value
+        if (oldestKey !== undefined) this.extensionPublicationShareCache.delete(oldestKey)
+      }
+      this.extensionPublicationShareCache.set(normalized, {
+        ...(share === undefined ? {} : { share }),
+        expiresAtMillis: Date.now() + ARKME_WORLD_EXTENSION_SHARE_CACHE_TTL_MILLIS,
+      })
+      return share
+    } finally {
+      this.extensionPublicationShareInFlight.delete(normalized)
+    }
+  }
+
+  private async loadExtensionPublicationShare(extensionId: string, signal?: AbortSignal): Promise<ArkmeWorldExtensionShare | undefined> {
+    try {
+      const detail = await this.runtime.extensionPost<unknown>(
+        '/api/public/v1/extensions/detail',
+        { extension_id: extensionId },
+        signal,
+        {
+          lane: 'background-read',
+          key: `world-extension-share:${extensionId}`,
+          cacheMs: ARKME_WORLD_EXTENSION_SHARE_CACHE_TTL_MILLIS,
+          failureCooldownMs: 30_000,
+        },
+      )
+      return worldExtensionShareFromCatalogDetail(detail)
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
+      return undefined
     }
   }
 

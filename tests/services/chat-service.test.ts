@@ -72,6 +72,14 @@ function chatMemberRef(
   return `arkme-chat-member-v1.${payload}.${signature}`
 }
 
+async function chatTimelineItemKeyForTest(
+  userId: number,
+  chatSessionUid: string,
+  relationUid: string,
+): Promise<string> {
+  return `timeline:${String(userId)}:${chatSessionUid}:${relationUid}`
+}
+
 describe('ChatService', () => {
   it('projects a private-chat extension child with the desktop parent preview contract', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
@@ -116,6 +124,7 @@ describe('ChatService', () => {
         version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事',
       })),
       sourceItem: vi.fn(async () => sourceItem),
+      chatTimelineItemKey: chatTimelineItemKeyForTest,
     }
     const media = {
       recordContentPayload: vi.fn(() => ({})),
@@ -177,6 +186,7 @@ describe('ChatService', () => {
     const source = {
       openSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
       sourceItem: vi.fn(async () => sourceItem),
+      chatTimelineItemKey: chatTimelineItemKeyForTest,
     }
     const chat = new ChatService(
       runtime as never, source as never,
@@ -218,6 +228,7 @@ describe('ChatService', () => {
     const source = {
       openSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
       sourceItem: vi.fn(async () => ({ sourceRef: 'source-private', kind: 'private_chat', displayName: '同事', activeAtMillis: 0, unreadCount: 0 })),
+      chatTimelineItemKey: chatTimelineItemKeyForTest,
     }
     const chat = new ChatService(
       runtime as never, source as never,
@@ -979,7 +990,10 @@ describe('ChatService', () => {
         send_time_stamp: 1_786_000_003_000, payload: { text_content: '实时消息' },
       } })),
     }
-    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
+    const source = {
+      openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })),
+      chatTimelineItemKey: vi.fn(async () => 'timeline-item-key'),
+    }
     const profile = { sealProfileImageRef: vi.fn(async () => 'avatar-ref') }
     const media = { richContentBlocks: vi.fn(() => []), recordContentPayload: vi.fn(() => ({})) }
     const chat = new ChatService(
@@ -1156,6 +1170,7 @@ describe('ChatService', () => {
       openSourceRef: vi.fn(async () => ({
         version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
       })),
+      chatTimelineItemKey: vi.fn(async () => 'timeline-item-key'),
     }
     const profile = { sealProfileImageRef: vi.fn(async () => 'opaque-avatar') }
     const media = {
@@ -1174,9 +1189,12 @@ describe('ChatService', () => {
         record_owner_user_id: 13, display_name_snapshot: 'B 用户', attach_at: 1_710_000_000_000, seq: 8,
       },
       record: { status: 1, payload: { title: '', text_content: '问题不大', template_kind: 1, display_kind: 0 } },
-    }] }, session, 'chat-1')
+    }] }, session, 'chat-1', 'group_chat')
 
     expect(items[0]?.messageActionRef).toMatch(/^arkme-message-action-v1\./u)
+    expect(items[0]?.messageRef).toMatch(/^arkme-message-v1\./u)
+    expect(items[0]?.messageWithdrawalRef).toMatch(/^arkme-message-withdrawal-v1\./u)
+    expect(items[0]?.timelineItemKey).toBe('timeline-item-key')
     await expect(chat.relatedQuickNoteLocator('source-ref', items[0]?.messageActionRef ?? ''))
       .resolves.toEqual({
         viewerUserId: 42,
@@ -1217,7 +1235,11 @@ describe('ChatService', () => {
               attach_at: 1_787_735_200_000,
             },
             record: { status: 1, payload: {
-              record_uid: 'extension-record-1', text_content: '补充信息', template_kind: 1, display_kind: 0,
+              record_uid: 'extension-record-1', text_content: '补充信息', template_kind: 2, display_kind: 0,
+              content_payload: { media_refs: [
+                { file_asset_uid: 'asset-image-1234', file_name: '补充截图.png', file_kind: 1, mime_type: 'image/png', size: 12, sort_order: 0 },
+                { file_asset_uid: 'asset-file-12345', file_name: '补充方案.pdf', file_kind: 4, mime_type: 'application/pdf', size: 34, sort_order: 1 },
+              ] },
             } },
           },
         }],
@@ -1235,8 +1257,22 @@ describe('ChatService', () => {
     const source = { openSourceRef: vi.fn(async () => ({
       version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
     })) }
+    const contentBlocks = [
+      { kind: 'image', mediaRef: 'extension-image-ref', originalRef: 'extension-image-original-ref', fileAssetUid: 'asset-image-1234', fileName: '补充截图.png', mimeType: 'image/png', size: 12, sortOrder: 0 },
+      { kind: 'file', mediaRef: 'extension-file-ref', originalRef: 'extension-file-original-ref', fileAssetUid: 'asset-file-12345', fileName: '补充方案.pdf', mimeType: 'application/pdf', size: 34, sortOrder: 1 },
+    ]
+    const media = {
+      hydrateRecordMediaPage: vi.fn(async () => ({
+        displayItemsByRecordUid: new Map([['extension-record-1', [
+          { file_asset_uid: 'asset-image-1234', preview_url: 'https://record.test/preview.png', download_url: 'https://record.test/image.png' },
+          { file_asset_uid: 'asset-file-12345', download_url: 'https://record.test/brief.pdf' },
+        ]]]),
+        unavailableRecordUids: new Set<string>(),
+      })),
+      richContentBlocks: vi.fn((_raw: unknown, _viewerUserId: number, displayItems: unknown[] = []) => displayItems.length === 0 ? [] : contentBlocks),
+    }
     const chat = new ChatService(
-      runtime as never, source as never, {} as never, {} as never, {} as never,
+      runtime as never, source as never, {} as never, media as never, {} as never,
       {} as never, {} as never, {} as never, {} as never,
     )
 
@@ -1248,8 +1284,15 @@ describe('ChatService', () => {
       extensions: [expect.objectContaining({
         recordUid: 'extension-record-1', textContent: '补充信息',
         parentRecordUid: 'record-snapshot-1', recordOwnerUserId: 17, level: 2,
+        contentBlocks,
       })],
     })
+    expect(media.hydrateRecordMediaPage).toHaveBeenCalledOnce()
+    expect(media.richContentBlocks).toHaveBeenCalledWith(
+      expect.objectContaining({ record_uid: 'extension-record-1' }),
+      42,
+      expect.any(Array),
+    )
     expect(chatPost).toHaveBeenCalledWith(
       '/api/v1/chats/extensions/tree/page',
       {
@@ -1301,13 +1344,18 @@ describe('ChatService', () => {
       { fileAssetUid: 'asset-file-12345', fileName: 'brief.pdf', mimeType: 'application/pdf', size: 34, fileKind: 4 as const },
     ]
     const record = { createFileAssetsForConversation: vi.fn(), createTextForConversation: vi.fn() }
+    const contentBlocks = [
+      { kind: 'image', mediaRef: 'sent-image-ref', originalRef: 'sent-image-original-ref', fileAssetUid: 'asset-image-1234', fileName: 'photo.png', mimeType: 'image/png', size: 12, sortOrder: 0 },
+      { kind: 'file', mediaRef: 'sent-file-ref', originalRef: 'sent-file-original-ref', fileAssetUid: 'asset-file-12345', fileName: 'brief.pdf', mimeType: 'application/pdf', size: 34, sortOrder: 1 },
+    ]
+    const media = { richContentBlocks: vi.fn(() => contentBlocks) }
     const realtime = {
       nextChatClientRevision: vi.fn(() => 6),
       emitChatClientEvent: vi.fn(),
       scheduleChatSessionProjection: vi.fn(),
     }
     const chat = new ChatService(
-      runtime as never, source as never, profile as never, {} as never, record as never,
+      runtime as never, source as never, profile as never, media as never, record as never,
       {} as never, {} as never, {} as never, realtime as never,
     )
 
@@ -1328,8 +1376,12 @@ describe('ChatService', () => {
       parentRecordUid: 'record-snapshot-1',
       status: 1,
       localState: 'synced',
-      extension: { textContent: '附件延展', templateKind: 2 },
+      extension: { textContent: '附件延展', templateKind: 2, contentBlocks },
     })
+    expect(media.richContentBlocks).toHaveBeenCalledWith(
+      expect.objectContaining({ record_uid: childRecordUid }),
+      42,
+    )
     expect(chatPost).toHaveBeenCalledWith(
       '/api/v1/chats/extensions/children/create',
       {
@@ -2288,7 +2340,7 @@ describe('ChatService', () => {
     }
     const profile = { sealProfileImageRef: vi.fn(async () => 'avatar-ref') }
     const chat = new ChatService(
-      runtime as never, {} as SourceService, profile as never, media as never,
+      runtime as never, { chatTimelineItemKey: async () => 'timeline-item-key' } as SourceService, profile as never, media as never,
       {} as RecordService, {} as BotService, {} as ArkoService,
       { timelineAiPolish: vi.fn(() => undefined) } as never,
       { emitChatClientEvent() {}, nextChatClientRevision() { return 1 }, scheduleChatSessionProjection() {} },

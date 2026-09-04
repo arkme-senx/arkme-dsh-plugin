@@ -31,6 +31,7 @@ function controls(currentSource: ArkmeSourceItem, options: {
   onSourceProjectionUpdated?: (next: ArkmeSourceItem) => void
   onMembershipChanged?: (target: ArkmeGroupActionTarget) => void
   onMessageDndUpdated?: (target: ArkmeGroupActionTarget, messageDnd: boolean) => void
+  onStatus?: (message: string) => void
   onError?: (message: string) => void
 } = {}) {
   return <ArkmeGroupChatControls
@@ -44,6 +45,7 @@ function controls(currentSource: ArkmeSourceItem, options: {
     onMessageDndUpdated={options.onMessageDndUpdated ?? (() => {})}
     onMemberOpen={() => {}}
     onMemberContextMenu={() => {}}
+    onStatus={options.onStatus}
     onError={options.onError ?? (() => {})}
   />
 }
@@ -302,6 +304,101 @@ describe('group settings menu', () => {
     const membershipButton = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
       node.findAll(child => child.children.includes('退出群聊')).length > 0)
     expect(membershipButton?.props.disabled).toBe(true)
+  })
+
+  it('lets only the owner inspect and lift future join restrictions', async () => {
+    const onStatus = vi.fn()
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'group.settings') return {
+        target: source, selfRole: 'owner', selfStatus: 'active', canRename: true,
+        canDissolve: true, canLeave: false, messageDnd: false,
+      }
+      if (operation === 'source.ai-polish.settings') return aiSettings
+      if (operation === 'group.join-restrictions') return {
+        sourceRef: source.sourceRef,
+        items: [{ memberRef: 'member-ref-1', displayName: '小林', restrictedAtMillis: 123 }],
+      }
+      if (operation === 'group.join-restriction.set') return {
+        sourceRef: source.sourceRef, memberRef: 'member-ref-1', restricted: false,
+      }
+      throw new Error(`unexpected ${operation}`)
+    })
+    await act(async () => { renderer = create(controls(source, { onStatus })) })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const entry = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
+      node.findAll(child => child.children.includes('禁止加入名单')).length > 0)!
+    await act(async () => {
+      entry.props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const panel = renderer!.root.findByProps({ 'aria-labelledby': 'arkme-group-join-restrictions-title' })
+    expect(panel.props['aria-modal']).toBe('true')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('小林')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('邀请、添加或入群审批')
+    const lift = renderer!.root.findAllByType('button').find(node => node.children.includes('解除限制'))!
+    expect(lift.props.style).toMatchObject({ height: 34, minWidth: 82 })
+    await act(async () => {
+      lift.props.onClick()
+      await Promise.resolve()
+    })
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'group.join-restriction.set')).toHaveLength(0)
+    expect(window.confirm).not.toHaveBeenCalled()
+    const confirmation = renderer!.root.findByProps({ 'data-arkme-confirm-dialog': 'true' })
+    expect(JSON.stringify(renderer!.toJSON())).toContain('不会自动加入群聊')
+    const confirm = confirmation.findAllByType('button').find(node => node.children.includes('解除限制'))!
+    await act(async () => {
+      confirm.props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(mocks.callArkme).toHaveBeenCalledWith('group.join-restriction.set', {
+      sourceRef: source.sourceRef, memberRef: 'member-ref-1', restricted: false,
+    }, expect.any(AbortSignal))
+    expect(onStatus).toHaveBeenCalledWith('已解除对 小林 的加入限制')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('小林')
+  })
+
+  it('keeps list loading failures separate from mutations and retries the failed page', async () => {
+    let listAttempts = 0
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'group.settings') return {
+        target: source, selfRole: 'owner', selfStatus: 'active', canRename: true,
+        canDissolve: true, canLeave: false, messageDnd: false,
+      }
+      if (operation === 'source.ai-polish.settings') return aiSettings
+      if (operation === 'group.join-restrictions') {
+        listAttempts += 1
+        if (listAttempts === 1) throw new Error('网络异常')
+        return { sourceRef: source.sourceRef, items: [] }
+      }
+      throw new Error(`unexpected ${operation}`)
+    })
+    await act(async () => { renderer = create(controls(source)) })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const entry = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
+      node.findAll(child => child.children.includes('禁止加入名单')).length > 0)!
+    await act(async () => {
+      entry.props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(JSON.stringify(renderer!.toJSON())).toContain('网络异常')
+    await act(async () => {
+      renderer!.root.findAllByType('button').find(node => node.children.includes('重试'))!.props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(listAttempts).toBe(2)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('暂无被限制的用户')
   })
 
   it('uses the current source mute projection while settings are still loading', async () => {

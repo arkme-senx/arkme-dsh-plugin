@@ -7,13 +7,19 @@ export const DSH_REMOTE_MAX_PAGE_ITEMS = 50
 // stop at the conservative inner-result budget below before this ceiling can be
 // reached.
 export const DSH_REMOTE_MAX_SNAPSHOT_BYTES = 512 * 1024
+export const DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES = 64 * 1024 * 1024
 export const DSH_REMOTE_MAX_PAGE_RESULT_BYTES = 40 * 1024
 export const DSH_REMOTE_MAX_TEXT_CODE_POINTS = 20_000
+export const DSH_REMOTE_MAX_MODEL_OPTIONS = 100
 
 export type DshRemoteCapability =
   | 'workspace.list'
   | 'session.list'
   | 'session.create'
+  | 'session.create.model'
+  | 'session.model.get'
+  | 'session.model.select'
+  | 'model.list'
   | 'session.history'
   | 'session.prompt'
   | 'session.prompt.queue'
@@ -27,6 +33,9 @@ export type DshRemoteOperation =
   | 'capabilities.get'
   | 'snapshot.get'
   | 'workspace.list'
+  | 'model.list'
+  | 'session.model.get'
+  | 'session.model.select'
   | 'session.list'
   | 'session.create'
   | 'session.history'
@@ -92,6 +101,8 @@ export interface DshRemoteStatus {
   hostGeneration: number
   capabilities: DshRemoteCapability[]
   unavailableReason?: string
+  historySyncWarning?: string
+  projectionWarning?: string
   revision: number
 }
 
@@ -118,7 +129,77 @@ export interface DshRemoteControlPlane {
   registerRuntime(desktopRef: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
   syncWorkspaces(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
   syncSessions(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  completeProjectionSnapshot(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Legacy write contract retained for already shipped clients; the current Host does not invoke it. */
   appendSessionEvents(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Legacy write contract retained for already shipped clients; the current Host does not invoke it. */
+  sessionEventSyncStatuses(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Legacy write contract retained for already shipped clients; the current Host does not invoke it. */
+  completeSessionEventHistory(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Legacy write contract retained for already shipped clients; the current Host does not invoke it. */
+  syncSessionTurns?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Legacy write contract retained for already shipped clients; the current Host does not invoke it. */
+  completeSessionTurnHistory?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Detects the Backend-owned Turn object storage contract without a version hard gate. */
+  turnObjectUploadCapabilities?(signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Intersects local opaque Session refs with the signed-in Backend account. */
+  knownHistorySessions?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Host-internal Turn object upload contract. Signed URLs never cross into Browser/SDK/Tools. */
+  prepareSessionTurnUpload?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Commits an exact object only after Backend integrity verification. */
+  commitSessionTurnUpload?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Finalizes one stable local history cut after every OSS Turn is committed. */
+  completeSessionTurnObjectHistory?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+}
+
+export type DshRemoteTimelineNodeKind =
+  | 'user'
+  | 'steering'
+  | 'context'
+  | 'assistant'
+  | 'tool'
+  | 'command'
+  | 'compaction'
+  | 'retry'
+  | 'turn_error'
+  | 'max_tokens'
+  | 'unknown'
+
+export type DshRemotePresentationFormat = 'message' | 'content' | 'summary'
+
+export type DshRemotePresentationTone = 'neutral' | 'muted' | 'error'
+
+/** Host-owned render intent; consumers map layout without interpreting raw events. */
+export interface DshRemoteNodePresentation {
+  version: 1
+  format: DshRemotePresentationFormat
+  icon?: 'context' | 'think' | 'tool' | 'search' | 'fetch' | 'terminal' | 'read' | 'edit' | 'code' | 'retry' | 'error' | 'info' | 'command' | 'compact'
+  title?: string
+  summary?: string
+  details?: string
+  tone: DshRemotePresentationTone
+  monospace?: boolean
+}
+
+export interface DshRemoteTimelineNode {
+  node_ref: string
+  kind: DshRemoteTimelineNodeKind
+  ordinal: number
+  anchor_seq: number
+  time: number
+  source_seq_start: number
+  source_seq_end: number
+  data: Record<string, unknown>
+  presentation: DshRemoteNodePresentation
+}
+
+export interface DshRemoteTurnProjection {
+  turn_ref: string
+  start_seq: number
+  end_seq: number
+  status: 'completed' | 'interrupted' | 'error' | 'max_tokens'
+  presentation_version: 1
+  nodes: DshRemoteTimelineNode[]
 }
 
 export interface DshRemoteRealtimeTransport {
@@ -161,7 +242,41 @@ export interface DshRemoteSessionSummary {
   updatedAt: number
   running: boolean
   blank: boolean
+  archived?: boolean
+  origin?: 'subagent'
+  parentSessionId?: string
   projectionAsOfSeq?: number
+  /** Public DSH `goal` projection; absent only when the runtime omits it. */
+  goal?: unknown
+}
+
+export interface DshRemoteModelOption {
+  provider: string
+  providerName: string
+  model: string
+  displayName: string
+  description?: string
+  reasoningEfforts?: DshRemoteReasoningEffortOption[]
+  defaultReasoningEffort?: string
+}
+
+export interface DshRemoteReasoningEffortOption {
+  id: string
+  displayName: string
+  description?: string
+}
+
+export interface DshRemoteModelCatalog {
+  items: DshRemoteModelOption[]
+  failedProviders: Array<{ provider: string; providerName: string }>
+  truncated: boolean
+  defaultSelection?: DshRemoteModelSelection
+}
+
+export interface DshRemoteModelSelection {
+  provider: string
+  model: string
+  reasoningEffort?: string
 }
 
 export interface DshRemoteSnapshot {

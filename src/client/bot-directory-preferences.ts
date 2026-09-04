@@ -4,10 +4,9 @@ const STORAGE_KEY_PREFIX = 'dsh-arkme:bot-directory:v1:user:'
 
 export interface ArkmeBotDirectoryPreferences {
   pinnedKeys: string[]
-  hiddenKeys: string[]
 }
 
-const EMPTY_PREFERENCES: ArkmeBotDirectoryPreferences = { pinnedKeys: [], hiddenKeys: [] }
+const EMPTY_PREFERENCES: ArkmeBotDirectoryPreferences = { pinnedKeys: [] }
 
 function storageOrUndefined(storage?: Storage): Storage | undefined {
   if (storage !== undefined) return storage
@@ -39,7 +38,7 @@ export function readBotDirectoryPreferences(
   if (key === undefined || target === undefined) return EMPTY_PREFERENCES
   try {
     const parsed = JSON.parse(target.getItem(key) ?? '{}') as Record<string, unknown>
-    return { pinnedKeys: uniqueStrings(parsed.pinnedKeys), hiddenKeys: uniqueStrings(parsed.hiddenKeys) }
+    return { pinnedKeys: uniqueStrings(parsed.pinnedKeys) }
   } catch {
     return EMPTY_PREFERENCES
   }
@@ -50,13 +49,6 @@ export function botDirectoryIsPinned(
   bot: Pick<ArkmeBotSummary, 'botRef' | 'directoryKey'>,
 ): boolean {
   return preferences.pinnedKeys.includes(botDirectoryPreferenceKey(bot))
-}
-
-export function botDirectoryIsHidden(
-  preferences: ArkmeBotDirectoryPreferences,
-  bot: Pick<ArkmeBotSummary, 'botRef' | 'directoryKey'>,
-): boolean {
-  return preferences.hiddenKeys.includes(botDirectoryPreferenceKey(bot))
 }
 
 export function writeBotDirectoryPreferences(
@@ -74,12 +66,10 @@ export function writeBotDirectoryPreferences(
 export function updateBotDirectoryPreferences(
   preferences: ArkmeBotDirectoryPreferences,
   bot: Pick<ArkmeBotSummary, 'botRef' | 'directoryKey'>,
-  update: { pinned?: boolean; hidden?: boolean },
+  update: { pinned?: boolean },
 ): ArkmeBotDirectoryPreferences {
   const key = botDirectoryPreferenceKey(bot)
   const pinned = new Set(preferences.pinnedKeys)
-  const hidden = new Set(preferences.hiddenKeys)
   if (update.pinned !== undefined) (update.pinned ? pinned.add(key) : pinned.delete(key))
-  if (update.hidden !== undefined) (update.hidden ? hidden.add(key) : hidden.delete(key))
-  return { pinnedKeys: [...pinned], hiddenKeys: [...hidden] }
+  return { pinnedKeys: [...pinned] }
 }

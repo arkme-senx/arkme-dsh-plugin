@@ -7,7 +7,14 @@ import { LocalRecordingImportSource } from '../../src/recording-import-probe.js'
 import { RecordingService, type RecordingServiceDependencies } from '../../src/services/recording-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { ArkmeStateStore } from '../../src/state-store.js'
-import type { RecordingImportJob } from '../../src/recording-import-contract.js'
+import {
+  RecordingImportContractError,
+  type RecordingImportJob,
+  type RecordingImportOwnerGateway,
+  type RecordingImportOwnerProgress,
+  type RecordingImportOwnerSession,
+  type PublicRecordingImportProgress,
+} from '../../src/recording-import-contract.js'
 import type { RecordingImportGateway } from '../../src/recording-import-coordinator.js'
 
 const config: ArkmeServiceConfig = {
@@ -31,6 +38,224 @@ describe('RecordingService', () => {
     bytes.writeUInt32LE(dataSize, 40)
     return bytes
   }
+
+  it('starts summary generation with the desktop transcript contract and returns the owner processing projection', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const dayStart = new Date(2026, 7, 31).getTime()
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ path, body })
+      let data: Record<string, unknown> = {}
+      if (path.endsWith('/one-day-trans')) data = {
+        session_ls: [{
+          id: 'session-secret', belong_usr: 42, start_at: dayStart + 14 * 3_600_000,
+          end_at: dayStart + 14 * 3_600_000 + 5_000, spk_ls: [{ num: 1, spk_id: 'speaker-secret' }],
+        }],
+        child_ls: [{
+          id: 'child-secret', session_id: 'session-secret', start_at: 0,
+          asr: [{ s: 0, e: 5_000, n: 1, t: '完成方案评审', p: '工作' }],
+        }],
+      }
+      if (path.endsWith('/get-speaker-ls')) data = {
+        spk_ls: [{ speaker_id: 'speaker-secret', nick_name: '我', ref_usr_id: 42 }],
+      }
+      if (path.endsWith('/summary/create')) data = { summary_id: 'summary-opaque', flag: 1 }
+      if (path.endsWith('/list-timeline-by-range')) data = {
+        audio_summary_ls: [{ id: 'summary-opaque', kind: 1, status: 1, create_at: Date.now() }],
+      }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      dependencies(),
+    )
+
+    await expect(service.generateRecordingProjection(dayStart, 'timeline', 'dashscope/qwen3-max')).resolves.toMatchObject({
+      state: 'processing', items: [expect.objectContaining({ id: 'summary-opaque', status: 'processing' })],
+    })
+    const create = requests.find(request => request.path.endsWith('/summary/create'))
+    expect(create?.body).toMatchObject({
+      date_stamp: dayStart,
+      tz_offset: -new Date(dayStart).getTimezoneOffset() * 60_000,
+      from_stamp: dayStart + 14 * 3_600_000,
+      to_stamp: dayStart + 14 * 3_600_000 + 5_000,
+      model_type: 1,
+      prompt_ver: 1,
+      route_key: 'dashscope/qwen3-max',
+      kind: 1,
+    })
+    expect(create?.body.transcripts).toContain('说话人：我')
+    expect(create?.body.transcripts).toContain('其中，我是我自己')
+    expect(JSON.stringify(create?.body)).not.toContain('session-secret')
+    expect(JSON.stringify(create?.body)).not.toContain('child-secret')
+    expect(JSON.stringify(create?.body)).not.toContain('speaker-secret')
+  })
+
+  it('does not create summary data while the selected day has no completed transcript', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const dayStart = new Date(2026, 7, 31).getTime()
+    const paths: string[] = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      paths.push(path)
+      const data = path.endsWith('/one-day-trans') ? { session_ls: [], child_ls: [] } : { spk_ls: [] }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      dependencies(),
+    )
+
+    await expect(service.generateRecordingProjection(dayStart, 'summary')).rejects.toMatchObject({
+      code: 'recording-generation-transcript-empty', retryable: false,
+    })
+    expect(paths.some(path => path.endsWith('/summary/create'))).toBe(false)
+  })
+
+  it('generates from completed transcript items while another Audio child is still transcribing', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const dayStart = new Date(2026, 7, 31).getTime()
+    const paths: string[] = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      paths.push(path)
+      let data: Record<string, unknown> = {}
+      if (path.endsWith('/one-day-trans')) data = {
+        session_ls: [{
+          id: 'session', belong_usr: 42, start_at: dayStart, end_at: dayStart + 120_000,
+          spk_ls: [{ num: 1, spk_id: 'speaker' }],
+        }],
+        child_ls: [
+          { id: 'completed', session_id: 'session', start_at: 0, asr: [{ s: 0, e: 5_000, n: 1, t: '已经完成的转写' }] },
+          { id: 'pending', session_id: 'session', start_at: 60_000, duration: 60_000, has_asr: false, asr: [] },
+        ],
+      }
+      if (path.endsWith('/get-speaker-ls')) data = {
+        spk_ls: [{ speaker_id: 'speaker', nick_name: '我', ref_usr_id: 42 }],
+      }
+      if (path.endsWith('/summary/create')) data = { summary_id: 'summary-partial', flag: 1 }
+      if (path.endsWith('/list-timeline-by-range')) data = {
+        audio_summary_ls: [{ id: 'summary-partial', kind: 2, status: 1, create_at: Date.now() }],
+      }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      dependencies(),
+    )
+
+    await expect(service.generateRecordingProjection(dayStart, 'summary')).resolves.toMatchObject({
+      state: 'processing', items: [expect.objectContaining({ id: 'summary-partial' })],
+    })
+    expect(paths.filter(path => path.endsWith('/summary/create'))).toHaveLength(1)
+  })
+
+  it('rejects an invalid Audio summary route before reading or writing owner data', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async () => new Response('{}')) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      dependencies(),
+    )
+
+    await expect(service.generateRecordingProjection(new Date(2026, 7, 31).getTime(), 'summary', 'x'.repeat(257)))
+      .rejects.toMatchObject({ code: 'recording-summary-model-route-invalid', retryable: false })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('keeps Audio summary model configuration distinct from other product model lists', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      requests.push({ path, body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown> })
+      const data = path.endsWith('/model-config/list') ? {
+        item: {
+          default_route_key: 'dashscope/qwen3-max', effective_route_key: 'dashscope/glm-5',
+          personal_route_key: 'dashscope/glm-5',
+          allowed_route_options: [
+            { route_key: 'dashscope/qwen3-max', provider: 'dashscope', model_key: 'qwen3-max', display_name: 'Qwen3 Max' },
+            { route_key: 'dashscope/glm-5', provider: 'dashscope', model_key: 'glm-5', display_name: 'GLM-5' },
+          ],
+        },
+      } : {}
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      dependencies(),
+    )
+
+    await expect(service.recordingSummaryModelConfig()).resolves.toEqual({
+      defaultRouteKey: 'dashscope/qwen3-max', effectiveRouteKey: 'dashscope/glm-5',
+      personalRouteKey: 'dashscope/glm-5',
+      options: [
+        { routeKey: 'dashscope/qwen3-max', provider: 'dashscope', modelKey: 'qwen3-max', displayName: 'Qwen3 Max' },
+        { routeKey: 'dashscope/glm-5', provider: 'dashscope', modelKey: 'glm-5', displayName: 'GLM-5' },
+      ],
+    })
+    await expect(service.setRecordingSummaryModelRoute(' dashscope/qwen3-max ')).resolves.toEqual({
+      effectiveRouteKey: 'dashscope/qwen3-max',
+    })
+    expect(requests.at(-1)).toEqual({
+      path: '/api/v1/audio-summary/model-config/set', body: { route_key: 'dashscope/qwen3-max' },
+    })
+  })
+
+  it('keeps an accepted generation in processing when the immediate owner projection refresh fails', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const dayStart = new Date(2026, 7, 31).getTime()
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      if (path.endsWith('/list-timeline-by-range')) return new Response('upstream unavailable', { status: 503 })
+      let data: Record<string, unknown> = {}
+      if (path.endsWith('/one-day-trans')) data = {
+        session_ls: [{ id: 'session', belong_usr: 42, start_at: dayStart, end_at: dayStart + 5_000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
+        child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 0, e: 5_000, n: 1, t: '完成评审' }] }],
+      }
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: 'speaker', nick_name: '我', ref_usr_id: 42 }] }
+      if (path.endsWith('/summary/create')) data = { summary_id: 'accepted-summary', flag: 1 }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      dependencies(),
+    )
+
+    await expect(service.generateRecordingProjection(dayStart, 'summary')).resolves.toEqual({
+      state: 'processing', items: [], message: '内容仍在生成',
+    })
+  })
 
   it('projects an Audio owner child awaiting ASR as processing instead of an empty day', async () => {
     const sessions: ArkmeSessionStore = {
@@ -125,6 +350,71 @@ describe('RecordingService', () => {
 
     const cursor = await service.sealRecordingCursor(payload)
     await expect(service.openRecordingCursor(cursor)).resolves.toEqual(payload)
+  })
+
+  it('reports unresolved local jobs and Audio owner matches as separate duplicate sources during preflight', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-preflight-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    await store.putRecordingImportJob(42, {
+      ...failedImportJob(1, Date.now()),
+      fileName: 'local-pending.wav',
+    })
+    const gateway = gatewayNoop()
+    gateway.findExistingFileNames = vi.fn(async () => ['audio-owner.wav'])
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+
+    await expect(service.recordingImportPreflight([
+      'new.wav', 'local-pending.wav', 'audio-owner.wav',
+    ])).resolves.toEqual({
+      duplicateFileNames: ['local-pending.wav', 'audio-owner.wav'],
+    })
+    expect(gateway.findExistingFileNames).toHaveBeenCalledWith({
+      viewerUserId: 42,
+      fileNames: ['new.wav', 'local-pending.wav', 'audio-owner.wav'],
+    })
+  })
+
+  it('matches unresolved local file names using the desktop case-insensitive identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-preflight-case-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    await store.putRecordingImportJob(42, {
+      ...failedImportJob(1, Date.now()),
+      fileName: 'Meeting.WAV',
+    })
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies())
+
+    await expect(service.recordingImportPreflight(['meeting.wav'])).resolves.toEqual({
+      duplicateFileNames: ['meeting.wav'],
+    })
+  })
+
+  it('delegates large desktop selections to the Audio owner port without rejecting valid files', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-preflight-batches-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const gateway = gatewayNoop()
+    gateway.findExistingFileNames = vi.fn(async () => ['recording-101.wav'])
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root)),
+      dependencies(gateway),
+    )
+    const fileNames = Array.from({ length: 101 }, (_, index) => `recording-${String(index + 1)}.wav`)
+
+    await expect(service.recordingImportPreflight(fileNames)).resolves.toEqual({
+      duplicateFileNames: ['recording-101.wav'],
+    })
+    expect(gateway.findExistingFileNames).toHaveBeenCalledOnce()
+    expect(gateway.findExistingFileNames).toHaveBeenCalledWith({ viewerUserId: 42, fileNames })
   })
 
   it('accepts a Host-local file and exposes only an opaque import snapshot', async () => {
@@ -299,10 +589,512 @@ describe('RecordingService', () => {
     }
     const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies())
 
-    const jobs = await service.recordingImportList()
+    const jobs = (await service.recordingImportList()).items
 
     expect(jobs).toHaveLength(21)
     expect(jobs.every(job => job.phase === 'failed' && job.retryable)).toBe(true)
+  })
+
+  it('keeps an exact failed local import actionable when the matching Audio owner session exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-actionable-owner-match-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const failed = { ...failedImportJob(1, Date.now()), sessionId: 'session-failed' }
+    await store.putRecordingImportJob(42, failed)
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async () => ownerPage([{
+      sessionId: 'session-failed', ownership: 'self', fileName: failed.fileName,
+      fileSize: failed.fileSize, parsedSize: 512, durationMillis: failed.durationMillis,
+      startAtMillis: failed.startAtMillis, endAtMillis: failed.startAtMillis + failed.durationMillis,
+      createdAtMillis: failed.createdAtMillis, updatedAtMillis: failed.updatedAtMillis,
+      hasFinishedUpload: false,
+    }]))
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+
+    const current = (await service.recordingImportList()).items
+
+    expect(current).toEqual([expect.objectContaining({
+      kind: 'local', phase: 'failed', importRef: expect.any(String), retryable: true,
+    })])
+  })
+
+  it('keeps unfinished uploads and the completed fold in separate owner projections with opaque session capabilities', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-owner-projections-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const startAtMillis = 1_725_000_000_000
+    await store.putRecordingImportJob(42, {
+      ...failedImportJob(1, startAtMillis),
+      jobId: 'accepted-current', revision: 8, phase: 'accepted', failedFromPhase: undefined,
+      fileName: 'processing.m4a', mimeType: 'audio/mp4', sessionId: 'session-current',
+      startAtMillis, durationMillis: 60_000, fileSize: 1_024, uploadedBytes: 1_024,
+      errorCode: undefined, errorMessage: undefined, retryable: undefined, sourceHandle: '', sha256: '',
+    })
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async input => {
+      const sessions = [{
+        sessionId: input.scope === 'active' ? 'session-current' : 'session-completed',
+        ownership: 'self', fileName: input.scope === 'active' ? 'processing.m4a' : 'completed.m4a',
+        fileSize: 1_024, parsedSize: 512, durationMillis: 60_000, startAtMillis,
+        endAtMillis: startAtMillis + 60_000, createdAtMillis: startAtMillis,
+        updatedAtMillis: startAtMillis + 18_000, hasFinishedUpload: input.scope === 'completed',
+      }, ...(input.scope === 'active' ? [{
+        sessionId: 'session-cross-device', ownership: 'other' as const, fileName: 'desktop-active.wav',
+        fileSize: 4_096, parsedSize: 4_096, durationMillis: 30_000,
+        startAtMillis: startAtMillis + 120_000, endAtMillis: startAtMillis + 150_000,
+        createdAtMillis: startAtMillis + 120_000,
+        updatedAtMillis: startAtMillis + 130_000, hasFinishedUpload: false,
+      }] : [])]
+      const progress = new Map(sessions.map(owner => [owner.sessionId, {
+        displayStatus: owner.sessionId === 'session-completed' ? 'completed' as const : 'transcribing' as const,
+        importProgress: ownerProgress(
+          owner.sessionId === 'session-completed' ? 'completed' : 'processing',
+          startAtMillis,
+          18_000,
+        ),
+      }]))
+      return ownerPage(
+        sessions,
+        progress,
+        input.scope === 'active' ? 2 : 1,
+        input.scope === 'completed' ? new Set(['session-completed']) : new Set(),
+      )
+    })
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+
+    const current = (await service.recordingImportList()).items
+    expect(current).toHaveLength(2)
+    expect(current).toContainEqual(expect.objectContaining({
+      kind: 'owner',
+      fileName: 'processing.m4a', status: 'uploading', statusDetail: '上传中',
+      startAtMillis, endAtMillis: startAtMillis + 60_000,
+      importProgress: expect.objectContaining({ totalDurationMillis: 18_000 }),
+      sessionRef: expect.stringMatching(/^arkme-recording-import-session-v1\./),
+    }))
+    expect(current.find(item => item.fileName === 'processing.m4a')).not.toHaveProperty('importRef')
+    expect(current).toContainEqual(expect.objectContaining({
+      kind: 'owner', fileName: 'desktop-active.wav', ownership: 'other',
+      sessionRef: expect.stringMatching(/^arkme-recording-import-session-v1\./),
+    }))
+    expect(JSON.stringify(current)).not.toContain('session-current')
+    expect(JSON.stringify(current)).not.toContain('session-cross-device')
+
+    const history = await service.recordingImportHistory({ toMillis: startAtMillis + 100_000, limit: 50, offset: 0 })
+    expect(history).toEqual({
+      items: [expect.objectContaining({
+        taskKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+        sessionRef: expect.stringMatching(/^arkme-recording-import-session-v1\./),
+        fileName: 'completed.m4a', status: 'completed',
+        importProgress: expect.objectContaining({ totalDurationMillis: 18_000 }),
+      })],
+      total: 1, offset: 0, hasMore: false,
+    })
+    expect(JSON.stringify(history)).not.toContain('session-completed')
+  })
+
+  it('does not downgrade an accepted Audio session into a local processing task when owner reads fail', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-owner-read-failure-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const startAtMillis = 1_725_000_000_000
+    await store.putRecordingImportJob(42, {
+      ...failedImportJob(1, startAtMillis),
+      jobId: 'accepted-owner-unavailable', revision: 8, phase: 'accepted', failedFromPhase: undefined,
+      sessionId: 'session-owner-unavailable', errorCode: undefined, errorMessage: undefined,
+      retryable: undefined, sourceHandle: '', sha256: '',
+    })
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async () => { throw new Error('owner unavailable') })
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+
+    expect(await service.recordingImportList()).toEqual({
+      items: [],
+      owner: {
+        state: 'unavailable',
+        message: 'Audio 上传任务读取失败，请稍后重试',
+      },
+    })
+  })
+
+  it('projects local import timing onto the matching owner task during the handoff', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-owner-timing-handoff-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const startedAtMillis = 1_725_000_000_000
+    const acceptedAtMillis = startedAtMillis + 10_000
+    await store.putRecordingImportJob(42, {
+      ...failedImportJob(1, startedAtMillis),
+      jobId: 'accepted-owner-timing', revision: 8, phase: 'accepted', failedFromPhase: undefined,
+      fileName: 'handoff.m4a', mimeType: 'audio/mp4', sessionId: 'session-owner-timing',
+      uploadedBytes: 1_024, errorCode: undefined, errorMessage: undefined, retryable: undefined,
+      sourceHandle: '', sha256: '', createdAtMillis: startedAtMillis, updatedAtMillis: acceptedAtMillis,
+    })
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async () => ownerPage([{
+      sessionId: 'session-owner-timing', ownership: 'self', fileName: 'handoff.m4a',
+      fileSize: 1_024, parsedSize: 1_024, durationMillis: 60_000,
+      startAtMillis: startedAtMillis, endAtMillis: startedAtMillis + 60_000,
+      createdAtMillis: startedAtMillis, updatedAtMillis: acceptedAtMillis,
+      hasFinishedUpload: true,
+    }]))
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+
+    const current = await service.recordingImportList()
+
+    expect(current.items).toEqual([expect.objectContaining({
+      kind: 'owner', fileName: 'handoff.m4a', status: 'waiting',
+      localImportTiming: { startedAtMillis, acceptedAtMillis },
+    })])
+    expect(current.items[0]).not.toHaveProperty('importRef')
+    expect(JSON.stringify(current)).not.toContain('session-owner-timing')
+  })
+
+  it('does not downgrade a cancelled owner read into an empty current-task result', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-owner-read-cancelled-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const controller = new AbortController()
+    const cancelled = new Error('owner read cancelled')
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async () => {
+      controller.abort(cancelled)
+      throw cancelled
+    })
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root)),
+      dependencies(gateway),
+    )
+
+    const recordingImportList = service.recordingImportList as unknown as (
+      signal?: AbortSignal,
+    ) => ReturnType<RecordingService['recordingImportList']>
+    await expect(recordingImportList.call(service, controller.signal)).rejects.toBe(cancelled)
+  })
+
+  it('does not downgrade an owner account mismatch into a partial old-account snapshot', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-owner-read-account-switch-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async () => {
+      throw new RecordingImportContractError(
+        'recording-import-account-mismatch',
+        '登录账号已变化，已停止录音导入',
+        true,
+      )
+    })
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root)),
+      dependencies(gateway),
+    )
+
+    await expect(service.recordingImportList())
+      .rejects.toMatchObject({ code: 'recording-import-account-mismatch', retryable: true })
+  })
+
+  it('does not merge a retained local job with a merely similar Audio owner task', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-similar-owner-boundary-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const startAtMillis = 1_725_000_000_000
+    await store.putRecordingImportJob(42, {
+      ...failedImportJob(1, startAtMillis),
+      jobId: 'legacy-accepted', revision: 8, phase: 'accepted', failedFromPhase: undefined,
+      fileName: 'same-name.wav', startAtMillis, belongUserId: 42,
+      sessionId: undefined, errorCode: undefined, errorMessage: undefined,
+      retryable: undefined, sourceHandle: '', sha256: '',
+    })
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async input => ownerPage(input.scope === 'active' ? [{
+      sessionId: 'different-owner-session', ownership: 'self', fileName: 'same-name.wav',
+      fileSize: 16_044, parsedSize: 16_044, durationMillis: 1_000,
+      startAtMillis, endAtMillis: startAtMillis + 1_000,
+      createdAtMillis: startAtMillis, updatedAtMillis: startAtMillis + 2_000,
+      hasFinishedUpload: false,
+    }] : []))
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+
+    const current = (await service.recordingImportList()).items
+
+    expect(current).toEqual([expect.objectContaining({
+      kind: 'owner', fileName: 'same-name.wav', taskKey: expect.any(String),
+    })])
+    expect(current[0]).not.toHaveProperty('importRef')
+  })
+
+  it('fails the completed page closed when the Audio owner violates its completed-scope contract', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-completed-owner-contract-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async () => ({ tasks: [{ session: {
+      sessionId: 'not-completed', ownership: 'self', fileName: 'not-completed.wav',
+      fileSize: 16_044, parsedSize: 16_044, durationMillis: 1_000,
+      startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_001_000,
+      createdAtMillis: 1_725_000_000_000, updatedAtMillis: 1_725_000_002_000,
+      hasFinishedUpload: false,
+    }, processingCompleted: false }], total: 1, hasMore: false }))
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root)),
+      dependencies(gateway),
+    )
+
+    await expect(service.recordingImportHistory({
+      toMillis: 1_725_100_000_000, limit: 50, offset: 0,
+    })).rejects.toMatchObject({
+      code: 'recording-import-history-owner-invalid', retryable: true,
+    })
+  })
+
+  it('keeps an owner-completed task available when optional processing details are unavailable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-completed-progress-unavailable-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async () => ({ tasks: [{ session: {
+      sessionId: 'completed-progress-unavailable', ownership: 'self', fileName: 'completed.wav',
+      fileSize: 16_044, parsedSize: 16_044, durationMillis: 1_000,
+      startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_001_000,
+      createdAtMillis: 1_725_000_000_000, updatedAtMillis: 1_725_000_002_000,
+      hasFinishedUpload: true,
+    }, processingCompleted: true, progress: {
+      displayStatus: 'unavailable',
+    } }], total: 1, hasMore: false }))
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root)),
+      dependencies(gateway),
+    )
+
+    const history = await service.recordingImportHistory({
+      toMillis: 1_725_100_000_000, limit: 50, offset: 0,
+    })
+    expect(history).toEqual(expect.objectContaining({
+      items: [expect.objectContaining({ status: 'completed' })],
+    }))
+    expect(history.items[0]).not.toHaveProperty('importProgress')
+  })
+
+  it('does not let stale active child detail downgrade the Audio owner completion fact', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-completed-stale-detail-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async () => ({ tasks: [{ session: {
+      sessionId: 'completed-stale-detail', ownership: 'self', fileName: 'completed.wav',
+      fileSize: 16_044, parsedSize: 16_044, durationMillis: 1_000,
+      startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_001_000,
+      createdAtMillis: 1_725_000_000_000, updatedAtMillis: 1_725_000_002_000,
+      hasFinishedUpload: true,
+    }, processingCompleted: true, progress: {
+      displayStatus: 'transcribing',
+      importProgress: ownerProgress('processing', 1_725_000_000_000, 0),
+    } }], total: 1, hasMore: false }))
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root)),
+      dependencies(gateway),
+    )
+
+    await expect(service.recordingImportHistory({
+      toMillis: 1_725_100_000_000, limit: 50, offset: 0,
+    })).resolves.toEqual(expect.objectContaining({
+      items: [expect.objectContaining({ status: 'completed', statusDetail: '已完成' })],
+    }))
+  })
+
+  it('routes owner task edits and deletion through opaque capabilities without rewriting local orchestration metadata', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-owner-mutations-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const startAtMillis = 1_725_000_000_000
+    await store.putRecordingImportJob(42, {
+      ...failedImportJob(1, startAtMillis),
+      jobId: 'accepted-owner', revision: 8, phase: 'accepted', failedFromPhase: undefined,
+      fileName: 'owner.wav', sessionId: 'session-owner', startAtMillis,
+      errorCode: undefined, errorMessage: undefined, retryable: undefined, sourceHandle: '', sha256: '',
+    })
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async () => ownerPage([{
+      sessionId: 'session-owner', ownership: 'self', fileName: 'owner.wav', fileSize: 16_044,
+      parsedSize: 16_044, durationMillis: 1_000, startAtMillis, endAtMillis: startAtMillis + 1_000,
+      createdAtMillis: startAtMillis, updatedAtMillis: startAtMillis,
+      hasFinishedUpload: false,
+    }]))
+    gateway.updateOwnerSessionStart = vi.fn(async () => undefined)
+    gateway.loadOwnerSession = vi.fn(async () => ({
+      sessionId: 'session-owner', ownership: 'self', fileName: 'owner.wav', fileSize: 16_044,
+      parsedSize: 16_044, durationMillis: 1_000, startAtMillis, endAtMillis: startAtMillis + 1_000,
+      createdAtMillis: startAtMillis, updatedAtMillis: startAtMillis, hasFinishedUpload: true,
+    }))
+    gateway.updateOwnerSessionOwnership = vi.fn(async () => undefined)
+    gateway.deleteOwnerSession = vi.fn()
+      .mockRejectedValueOnce(new Error('Audio 删除失败'))
+      .mockResolvedValueOnce(undefined)
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    const current = (await service.recordingImportList()).items
+    const ownerTask = current.find(item => item.fileName === 'owner.wav')
+    expect(ownerTask?.sessionRef).toMatch(/^arkme-recording-import-session-v1\./)
+
+    await expect(service.updateRecordingImportSessionStart(
+      ownerTask!.sessionRef!,
+      Date.now() + 60_000,
+    )).rejects.toMatchObject({ code: 'recording-import-start-invalid', retryable: false })
+    expect(gateway.updateOwnerSessionStart).not.toHaveBeenCalled()
+
+    await service.updateRecordingImportSessionStart(ownerTask!.sessionRef!, startAtMillis + 2_000)
+    expect(gateway.loadOwnerSession).toHaveBeenCalledWith({
+      viewerUserId: 42, sessionId: 'session-owner',
+    })
+    expect(gateway.updateOwnerSessionStart).toHaveBeenCalledWith({
+      viewerUserId: 42, sessionId: 'session-owner', startAtMillis: startAtMillis + 2_000,
+    })
+    expect((await store.getRecordingImportJob(42, 'accepted-owner'))?.startAtMillis).toBe(startAtMillis)
+
+    await service.updateRecordingImportSessionOwnership(ownerTask!.sessionRef!, 'other')
+    expect(gateway.updateOwnerSessionOwnership).toHaveBeenCalledWith({
+      viewerUserId: 42, sessionId: 'session-owner', belongUserId: 0,
+    })
+    expect((await store.getRecordingImportJob(42, 'accepted-owner'))?.belongUserId).toBe(42)
+
+    await expect(service.deleteRecordingImportSession(ownerTask!.sessionRef!))
+      .rejects.toThrow('Audio 删除失败')
+    await expect(store.getRecordingImportJob(42, 'accepted-owner')).resolves.toBeDefined()
+
+    await service.deleteRecordingImportSession(ownerTask!.sessionRef!)
+    expect(gateway.deleteOwnerSession).toHaveBeenCalledWith({ viewerUserId: 42, sessionId: 'session-owner' })
+    await expect(store.getRecordingImportJob(42, 'accepted-owner')).resolves.toBeUndefined()
+  })
+
+  it('validates a start edit against the current Audio owner duration rather than the sealed UI snapshot', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-owner-current-duration-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const now = Date.now()
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async () => ownerPage([{
+      sessionId: 'session-current-duration', ownership: 'self', fileName: 'duration.wav',
+      fileSize: 16_044, parsedSize: 16_044, durationMillis: 1_000,
+      startAtMillis: now - 60_000, endAtMillis: now - 59_000,
+      createdAtMillis: now - 60_000, updatedAtMillis: now - 59_000, hasFinishedUpload: true,
+    }]))
+    gateway.loadOwnerSession = vi.fn(async () => ({
+      sessionId: 'session-current-duration', ownership: 'self', fileName: 'duration.wav',
+      fileSize: 160_044, parsedSize: 160_044, durationMillis: 60_000,
+      startAtMillis: now - 60_000, endAtMillis: now,
+      createdAtMillis: now - 60_000, updatedAtMillis: now, hasFinishedUpload: true,
+    }))
+    gateway.updateOwnerSessionStart = vi.fn(async () => undefined)
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root)),
+      dependencies(gateway),
+    )
+    const owner = (await service.recordingImportList()).items.find(item => item.kind === 'owner')
+
+    await expect(service.updateRecordingImportSessionStart(owner!.sessionRef!, now - 1_000))
+      .rejects.toMatchObject({ code: 'recording-import-end-invalid', retryable: false })
+    expect(gateway.loadOwnerSession).toHaveBeenCalledWith({
+      viewerUserId: 42, sessionId: 'session-current-duration',
+    })
+    expect(gateway.updateOwnerSessionStart).not.toHaveBeenCalled()
+  })
+
+  it('blocks owner mutations while the exact local orchestration job is still actionable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-owner-mutation-guard-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const startAtMillis = 1_725_000_000_000
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async () => ownerPage([{
+      sessionId: 'session-owner', ownership: 'self', fileName: 'owner.wav', fileSize: 16_044,
+      parsedSize: 8_000, durationMillis: 1_000, startAtMillis, endAtMillis: startAtMillis + 1_000,
+      createdAtMillis: startAtMillis, updatedAtMillis: startAtMillis, hasFinishedUpload: false,
+    }]))
+    gateway.updateOwnerSessionStart = vi.fn(async () => undefined)
+    gateway.updateOwnerSessionOwnership = vi.fn(async () => undefined)
+    gateway.deleteOwnerSession = vi.fn(async () => undefined)
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    const current = (await service.recordingImportList()).items
+    const owner = current.find(item => item.kind === 'owner')
+    expect(owner).toMatchObject({ kind: 'owner', fileName: 'owner.wav' })
+    await store.putRecordingImportJob(42, {
+      ...failedImportJob(1, startAtMillis),
+      jobId: 'failed-owner', sessionId: 'session-owner', fileName: 'owner.wav',
+    })
+
+    await expect(service.updateRecordingImportSessionStart(owner!.sessionRef!, startAtMillis - 1_000))
+      .rejects.toMatchObject({ code: 'recording-import-owner-mutation-active', retryable: false })
+    await expect(service.updateRecordingImportSessionOwnership(owner!.sessionRef!, 'other'))
+      .rejects.toMatchObject({ code: 'recording-import-owner-mutation-active', retryable: false })
+    await expect(service.deleteRecordingImportSession(owner!.sessionRef!))
+      .rejects.toMatchObject({ code: 'recording-import-owner-mutation-active', retryable: false })
+    expect(gateway.updateOwnerSessionStart).not.toHaveBeenCalled()
+    expect(gateway.updateOwnerSessionOwnership).not.toHaveBeenCalled()
+    expect(gateway.deleteOwnerSession).not.toHaveBeenCalled()
+    await expect(store.getRecordingImportJob(42, 'failed-owner')).resolves.toBeDefined()
+  })
+
+  it('does not confuse terminal processing timing with an unfinished upload', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-owner-completion-authority-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const startAtMillis = 1_725_000_000_000
+    const gateway = gatewayNoop()
+    gateway.listOwnerTasks = vi.fn(async input => {
+      const sessions = input.scope === 'active' ? [{
+      sessionId: 'session-not-completed', ownership: 'self', fileName: 'still-processing.wav',
+      fileSize: 16_044, parsedSize: 16_044, durationMillis: 1_000,
+      startAtMillis, endAtMillis: startAtMillis + 1_000,
+      createdAtMillis: startAtMillis,
+      updatedAtMillis: startAtMillis + 2_000, hasFinishedUpload: false,
+      }] : []
+      return ownerPage(sessions, new Map([['session-not-completed', {
+      displayStatus: 'completed' as const,
+      importProgress: ownerProgress('completed', startAtMillis, 2_000),
+      }]]))
+    })
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+
+    const current = (await service.recordingImportList()).items
+
+    expect(current).toEqual([expect.objectContaining({
+      kind: 'owner', fileName: 'still-processing.wav',
+      status: 'uploading', statusDetail: '上传中',
+    })])
   })
 
   it('bounds unresolved imports before accepting another retained local source', async () => {
@@ -476,7 +1268,7 @@ describe('RecordingService', () => {
     })
     gateway.deleteSession = vi.fn(async () => undefined)
     const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
-    const [failed] = await service.recordingImportList()
+    const [failed] = (await service.recordingImportList()).items
 
     await expect(service.retryRecordingImport(failed!.importRef, 7)).resolves.toMatchObject({
       phase: 'uploading', revision: 8,
@@ -827,20 +1619,74 @@ describe('RecordingService', () => {
   })
 })
 
-function gatewayNoop(): RecordingImportGateway {
+function ownerProgress(
+  status: PublicRecordingImportProgress['status'],
+  startedAtMillis: number,
+  totalDurationMillis: number,
+): PublicRecordingImportProgress {
   return {
+    status,
+    totalDurationMillis,
+    serverNowMillis: startedAtMillis + totalDurationMillis,
+    observedAtMillis: startedAtMillis + totalDurationMillis,
+    rows: [{
+      code: 'upload',
+      status,
+      startedAtMillis,
+      endedAtMillis: status === 'processing' ? 0 : startedAtMillis + totalDurationMillis,
+      durationMillis: totalDurationMillis,
+      provider: '',
+      model: '',
+      modelVersion: '',
+      modelDurationMillis: 0,
+      nextRelation: '',
+      relationDurationMillis: 0,
+    }],
+  }
+}
+
+function ownerPage(
+  sessions: RecordingImportOwnerSession[],
+  progress = new Map<string, RecordingImportOwnerProgress>(),
+  total?: number,
+  processingCompletedSessionIds: ReadonlySet<string> = new Set(),
+) {
+  return {
+    tasks: sessions.map(session => ({
+      session,
+      processingCompleted: processingCompletedSessionIds.has(session.sessionId),
+      ...(progress.has(session.sessionId) ? { progress: progress.get(session.sessionId) } : {}),
+    })),
+    ...(total === undefined ? {} : { total }),
+    hasMore: false,
+  }
+}
+
+function gatewayNoop(): RecordingImportGateway & RecordingImportOwnerGateway {
+  return {
+    async findExistingFileNames() { return [] },
     async ensureSession() { return 'session' },
     async createChild() { return 'child' }, async upload() {},
     async finishChild() {}, async finishSession() {}, async deleteSession() {},
+    async listOwnerTasks() { return ownerPage([]) },
+    async loadOwnerSession({ sessionId }) {
+      return {
+        sessionId, ownership: 'self', fileName: 'owner.wav', fileSize: 16_044, parsedSize: 16_044,
+        durationMillis: 1_000, startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_001_000,
+        createdAtMillis: 1_725_000_000_000, updatedAtMillis: 1_725_000_001_000, hasFinishedUpload: true,
+      }
+    },
+    async updateOwnerSessionStart() {}, async updateOwnerSessionOwnership() {}, async deleteOwnerSession() {},
   }
 }
 
 function dependencies(
-  recordingImportGateway: RecordingImportGateway = gatewayNoop(),
+  recordingImportGateway: RecordingImportGateway & RecordingImportOwnerGateway = gatewayNoop(),
   overrides: Partial<RecordingServiceDependencies> = {},
 ): RecordingServiceDependencies {
   return {
     recordingImportGateway,
+    recordingImportOwnerGateway: recordingImportGateway,
     recordingImportSource: new LocalRecordingImportSource(),
     ...overrides,
   }

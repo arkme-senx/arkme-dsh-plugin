@@ -1,9 +1,12 @@
-import { Resolver } from 'node:dns/promises'
+import { lookup as lookupAddress, Resolver } from 'node:dns/promises'
 import type { LookupAddress } from 'node:dns'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { BlockList, isIP, type LookupFunction } from 'node:net'
-import type { ArkmeLinkMetadata } from '../link-metadata.js'
+import {
+  arkmeIsGenericLinkMetadataTitle,
+  type ArkmeLinkMetadata,
+} from '../link-metadata.js'
 import { ArkmeRequestCoordinator } from '../request-coordinator.js'
 import { ArkmePluginError } from './service.js'
 
@@ -26,8 +29,10 @@ export interface ArkmeLinkDocumentReader {
 }
 
 const blockedAddresses = new BlockList()
+const proxySyntheticAddresses = new BlockList()
 const globalIpv6Addresses = new BlockList()
 globalIpv6Addresses.addSubnet('2000::', 3, 'ipv6')
+proxySyntheticAddresses.addSubnet('198.18.0.0', 15, 'ipv4')
 for (const [network, prefix] of [
   ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8],
   ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24],
@@ -56,6 +61,16 @@ export function isPublicNetworkAddress(address: string): boolean {
     return globalIpv6Addresses.check(address, 'ipv6') && !blockedAddresses.check(address, 'ipv6')
   }
   return false
+}
+
+export function isProxySyntheticNetworkAddress(address: string): boolean {
+  const mapped = ipv4FromMappedIpv6(address)
+  if (mapped !== undefined) return isIP(mapped) === 4 && proxySyntheticAddresses.check(mapped, 'ipv4')
+  return isIP(address) === 4 && proxySyntheticAddresses.check(address, 'ipv4')
+}
+
+function isAllowedLinkMetadataAddress(address: string): boolean {
+  return isPublicNetworkAddress(address) || isProxySyntheticNetworkAddress(address)
 }
 
 function safeWebUrl(raw: string | URL): URL {
@@ -105,6 +120,13 @@ function tagAttributes(tag: string): ReadonlyMap<string, string> {
   return attributes
 }
 
+function preferredDocumentTitle(candidates: readonly (string | undefined)[]): string {
+  for (const candidate of candidates) {
+    if (candidate !== undefined && !arkmeIsGenericLinkMetadataTitle(candidate)) return candidate
+  }
+  return ''
+}
+
 function documentMetadata(url: URL, html: string): ArkmeLinkMetadata | null {
   const metadata = new Map<string, string>()
   for (const match of html.matchAll(/<meta\b[^>]*>/giu)) {
@@ -115,9 +137,11 @@ function documentMetadata(url: URL, html: string): ArkmeLinkMetadata | null {
     if (content !== '') metadata.set(property, content)
   }
   const documentTitle = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/iu.exec(html)?.[1]
-  const title = metadata.get('og:title')
-    ?? metadata.get('twitter:title')
-    ?? (documentTitle === undefined ? '' : normalizedTitle(documentTitle))
+  const title = preferredDocumentTitle([
+    metadata.get('og:title'),
+    metadata.get('twitter:title'),
+    documentTitle === undefined ? undefined : normalizedTitle(documentTitle),
+  ])
   if (title === '') return null
   const description = metadata.get('og:description') ?? metadata.get('description')
   const siteName = metadata.get('og:site_name') ?? url.hostname.replace(/^www\./iu, '')
@@ -157,6 +181,8 @@ export interface ArkmeCancelableDnsResolver {
   cancel(): void
 }
 
+export type ArkmeSystemAddressLookup = (hostname: string) => Promise<LookupAddress[]>
+
 export interface ArkmePinnedDocumentTransport {
   read(
     url: URL,
@@ -166,7 +192,11 @@ export interface ArkmePinnedDocumentTransport {
 }
 
 export class NodeArkmeHostAddressResolver implements ArkmeHostAddressResolver {
-  constructor(private readonly resolverFactory: () => ArkmeCancelableDnsResolver = () => new Resolver()) {}
+  constructor(
+    private readonly resolverFactory: () => ArkmeCancelableDnsResolver = () => new Resolver(),
+    private readonly systemLookup: ArkmeSystemAddressLookup = async hostname =>
+      await lookupAddress(hostname, { all: true, verbatim: true }),
+  ) {}
 
   async lookup(hostname: string, options: { signal?: AbortSignal } = {}): Promise<LookupAddress[]> {
     options.signal?.throwIfAborted()
@@ -191,7 +221,13 @@ export class NodeArkmeHostAddressResolver implements ArkmeHostAddressResolver {
       ]
     } catch (error) {
       options.signal?.throwIfAborted()
-      throw error
+      try {
+        const addresses = await this.systemLookup(hostname)
+        options.signal?.throwIfAborted()
+        return addresses
+      } catch {
+        throw error
+      }
     } finally {
       options.signal?.removeEventListener('abort', abort)
     }
@@ -307,7 +343,7 @@ export class NodeArkmeLinkDocumentReader implements ArkmeLinkDocumentReader {
     } catch (error) {
       throw pluginError(error)
     }
-    if (addresses.length === 0 || addresses.some(item => !isPublicNetworkAddress(item.address))) {
+    if (addresses.length === 0 || addresses.some(item => !isAllowedLinkMetadataAddress(item.address))) {
       throw new ArkmePluginError('link-metadata-url-unsafe', '该网址不允许解析标题', false, 400)
     }
     return await this.transport.read(url, addresses, options)

@@ -43,7 +43,7 @@ const CONTACT_DIRECTORY_REF_CAP = 2_000
 const CONTACT_DIRECTORY_PAGE_LIMIT = 50
 const CONTACT_DIRECTORY_MAX_SOURCE_PAGES = 20
 const CONTACT_DIRECTORY_REF_PATTERN = /^arkme-directory-contact-v1\.[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const OFFSET_CURSOR_PATTERN = /^arkme-directory-offset-v1\.(bots|teams|contacts)\.([0-9]+)\.([A-Za-z0-9_-]+)$/
+const OFFSET_CURSOR_PATTERN = /^arkme-directory-offset-v1\.(bots|contacts)\.([0-9]+)\.([A-Za-z0-9_-]+)$/
 
 function numberValue(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value)
@@ -121,19 +121,18 @@ export class ContactDirectoryService {
     section: ArkmeDirectorySectionKind,
     options: { limit?: number; cursor?: string; countOnly?: boolean; refresh?: boolean; signal?: AbortSignal } = {},
   ): Promise<ArkmeDirectoryPage> {
-    if (section === 'unmarked-speakers') {
-      throw new ArkmePluginError('directory-section-not-owned', '未标记说话人目录由独立服务提供', false, 501)
+    if (section === 'unmarked-speakers' || section === 'teams') {
+      throw new ArkmePluginError('directory-section-not-owned', '该目录由独立业务服务提供', false, 501)
     }
     if (options.countOnly === true) return await this.count(section, options.signal)
     switch (section) {
       case 'groups': return await this.listGroups(options)
       case 'bots': return await this.listBots(options)
-      case 'teams': return await this.listTeams(options)
       case 'contacts': return await this.listContacts(options)
     }
   }
 
-  private async count(section: Exclude<ArkmeDirectorySectionKind, 'unmarked-speakers'>, signal?: AbortSignal): Promise<ArkmeDirectoryPage> {
+  private async count(section: Exclude<ArkmeDirectorySectionKind, 'unmarked-speakers' | 'teams'>, signal?: AbortSignal): Promise<ArkmeDirectoryPage> {
     const session = await this.runtime.requireSession()
     let total = 0
     switch (section) {
@@ -143,14 +142,6 @@ export class ContactDirectoryService {
       case 'bots':
         total = await this.bot.countBots(signal === undefined ? {} : { signal })
         break
-      case 'teams': {
-        const data = await this.runtime.authenticatedTeamPost<Record<string, unknown>>(
-          '/api/v1/team/list-mine', { limit: 0 }, session, signal,
-          { lane: 'interactive-read', key: 'directory:teams:count', failureCooldownMs: 2_000 },
-        )
-        total = Math.max(0, numberValue(data.total ?? data.total_count))
-        break
-      }
       case 'contacts': {
         total = (await this.loadMergedContactDescriptors(
           session, signal === undefined ? {} : { signal },
@@ -236,39 +227,6 @@ export class ContactDirectoryService {
     return {
       section: 'bots', items, total: bots.length, hasMore,
       ...(hasMore ? { nextCursor: await this.sealOffsetCursor('bots', offset + slice.length, session.userId) } : {}),
-    }
-  }
-
-  private async listTeams(
-    options: { limit?: number; cursor?: string; refresh?: boolean; signal?: AbortSignal },
-  ): Promise<ArkmeDirectoryPage> {
-    const session = await this.runtime.requireSession()
-    const limit = boundedLimit(options.limit)
-    const offset = await this.openOffsetCursor('teams', options.cursor, session.userId)
-    const data = await this.runtime.authenticatedTeamPost<Record<string, unknown>>(
-      '/api/v1/team/list-mine', {}, session, options.signal,
-      {
-        lane: 'interactive-read', key: 'directory:teams', failureCooldownMs: 2_000,
-        bypassCache: options.refresh === true,
-      },
-    )
-    const projected: ArkmeDirectoryItem[] = []
-    for (const value of listValue(data.teams ?? data.items ?? data.list)) {
-      const raw = objectValue(value)
-      const teamId = numberValue(raw.team_id ?? raw.teamId ?? raw.id)
-      const displayName = stringValue(raw.name ?? raw.team_name ?? raw.teamName).trim()
-      if (teamId <= 0 || displayName === '') continue
-      const publicId = stringValue(raw.jotmo_id ?? raw.jotmoId).trim()
-      projected.push({
-        kind: 'team', rowKey: await this.teamRowKey(session.userId, teamId), displayName,
-        ...(publicId === '' ? {} : { publicId }),
-      })
-    }
-    const slice = projected.slice(offset, offset + limit)
-    const hasMore = offset + slice.length < projected.length
-    return {
-      section: 'teams', items: slice, total: projected.length, hasMore,
-      ...(hasMore ? { nextCursor: await this.sealOffsetCursor('teams', offset + slice.length, session.userId) } : {}),
     }
   }
 
@@ -480,15 +438,8 @@ export class ContactDirectoryService {
     }
   }
 
-  private async teamRowKey(viewerUserId: number, teamId: number): Promise<string> {
-    const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
-      .update(`directory-team-row-v1:${String(viewerUserId)}:${String(teamId)}`)
-      .digest('base64url')
-    return `arkme-directory-team-row-v1.${digest}`
-  }
-
   private async sealOffsetCursor(
-    section: 'bots' | 'teams' | 'contacts', offset: number, viewerUserId: number,
+    section: 'bots' | 'contacts', offset: number, viewerUserId: number,
   ): Promise<string> {
     const normalizedOffset = Math.max(0, Math.trunc(offset))
     const payload = `${section}:${String(viewerUserId)}:${String(normalizedOffset)}`
@@ -497,7 +448,7 @@ export class ContactDirectoryService {
   }
 
   private async openOffsetCursor(
-    section: 'bots' | 'teams' | 'contacts', cursor: string | undefined, viewerUserId: number,
+    section: 'bots' | 'contacts', cursor: string | undefined, viewerUserId: number,
   ): Promise<number> {
     const normalized = cursor?.trim() ?? ''
     if (normalized === '') return 0

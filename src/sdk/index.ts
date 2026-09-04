@@ -37,6 +37,9 @@ import type {
   ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddResult,
+  ArkmeGroupMemberRemoveResult,
+  ArkmeGroupJoinRestrictionMutationResult,
+  ArkmeGroupJoinRestrictionPage,
   ArkmeGroupAiPolishMutationResult,
   ArkmeGroupAiPolishRuleCandidate,
   ArkmeGroupAiPolishSnapshot,
@@ -54,6 +57,7 @@ import type {
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmeMessageReportResult,
+  ArkmeMessageWithdrawalResult,
   ArkmeMessageReportType,
   ArkmeMessageCopyLinkExtendResult,
   ArkmeMessageCopyLinkResult,
@@ -66,6 +70,8 @@ import type {
   ArkmeOfficialAuthorProfile,
   ArkmeOpenPrivateChatResult,
   ArkmePendingWrite,
+  ArkmeRecordSearchResult,
+  ArkmeRecordTagList,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageOptions,
@@ -84,6 +90,14 @@ import type {
   ArkmeTimelineCursor,
   ArkmeTimelineAroundPage,
   ArkmeTimelinePage,
+  ArkmeTeamCreateItem,
+  ArkmeTeamCreateResult,
+  ArkmeTeamJoinItem,
+  ArkmeTeamJoinResult,
+  ArkmeTeamMemberPage,
+  ArkmeTeamPage,
+  ArkmeTeamResolution,
+  ArkmeTeamResolveItem,
   ArkmeUserProfileSnapshot,
   ArkmeUserBanRecord,
   ArkmeUserBanSnapshot,
@@ -178,6 +192,9 @@ export type {
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddItemResult,
   ArkmeGroupMemberAddResult,
+  ArkmeGroupMemberRemoveResult,
+  ArkmeGroupJoinRestrictionMutationResult,
+  ArkmeGroupJoinRestrictionPage,
   ArkmeGroupMemberAddStatus,
   ArkmeGroupAiPolishMutationResult,
   ArkmeGroupAiPolishRule,
@@ -205,6 +222,7 @@ export type {
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmeMessageReportResult,
+  ArkmeMessageWithdrawalResult,
   ArkmeMessageReportType,
   ArkmeMessageCopyLinkExtendResult,
   ArkmeMessageCopyLinkResult,
@@ -225,6 +243,7 @@ export type {
   ArkmeMessageReadReceiptSummaryList,
   ArkmeOfficialAuthorProfile,
   ArkmePendingWrite,
+  ArkmeRecordTagList,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingItem,
   ArkmeRelatedRecordingMonthBucket,
@@ -250,6 +269,21 @@ export type {
   ArkmeForwardRecordPreviewItem,
   ArkmeForwardTranscriptSegment,
   ArkmeTimelinePage,
+  ArkmeTeam,
+  ArkmeTeamCreateItem,
+  ArkmeTeamCreateRejectReason,
+  ArkmeTeamCreateResult,
+  ArkmeTeamIdentityState,
+  ArkmeTeamJoinItem,
+  ArkmeTeamJoinRejectReason,
+  ArkmeTeamJoinResult,
+  ArkmeTeamMember,
+  ArkmeTeamMemberPage,
+  ArkmeTeamMembershipState,
+  ArkmeTeamPage,
+  ArkmeTeamResolution,
+  ArkmeTeamResolveItem,
+  ArkmeTeamRole,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
   ArkmeUserBanRecord,
@@ -311,6 +345,8 @@ export type {
   DshRemoteStatus,
 } from '../dsh-remote/types.js'
 import type { DshRemoteStatus } from '../dsh-remote/types.js'
+export type { OpenApiMcpStatus } from '../openapi-mcp/types.js'
+import type { OpenApiMcpStatus } from '../openapi-mcp/types.js'
 export type {
   ArkmeOutgoingCallFailureCode,
   ArkmeOutgoingCallMediaType,
@@ -400,6 +436,53 @@ export class ArkmeSdk {
 
   async state(signal?: AbortSignal): Promise<ArkmeProviderState> {
     return await this.call<ArkmeProviderState>('provider.state', undefined, signal)
+  }
+
+  /** Read the credential-free managed OpenAPI MCP lifecycle projection. */
+  async openApiMcpStatus(signal?: AbortSignal): Promise<OpenApiMcpStatus> {
+    return await this.call<OpenApiMcpStatus>('openapi.mcp.status', undefined, signal)
+  }
+
+  /** Retry a degraded managed MCP connection without exposing or accepting credentials. */
+  async retryOpenApiMcp(signal?: AbortSignal): Promise<OpenApiMcpStatus> {
+    return await this.call<OpenApiMcpStatus>('openapi.mcp.retry', undefined, signal)
+  }
+
+  /** List every Team visible to the current account using opaque OpenAPI references. */
+  async listTeams(
+    options: { limit?: number; pageCursor?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeTeamPage> {
+    return await this.call<ArkmeTeamPage>('team.list', {
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.pageCursor === undefined ? {} : { pageCursor: options.pageCursor }),
+    }, options.signal)
+  }
+
+  /** Resolve exact Team Jotmo IDs or names only within the current account's Teams. */
+  async resolveTeams(items: readonly ArkmeTeamResolveItem[], signal?: AbortSignal): Promise<ArkmeTeamResolution[]> {
+    return await this.call<ArkmeTeamResolution[]>('team.resolve', { items }, signal)
+  }
+
+  /** Read an authorized Team member page without exposing backend numeric identities. */
+  async listTeamMembers(
+    teamRef: string,
+    options: { limit?: number; pageCursor?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeTeamMemberPage> {
+    return await this.call<ArkmeTeamMemberPage>('team.members.list', {
+      teamRef,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.pageCursor === undefined ? {} : { pageCursor: options.pageCursor }),
+    }, options.signal)
+  }
+
+  /** Create Teams as an explicit current-human mutation; each item is independently idempotent. */
+  async createTeams(items: readonly ArkmeTeamCreateItem[], signal?: AbortSignal): Promise<ArkmeTeamCreateResult[]> {
+    return await this.call<ArkmeTeamCreateResult[]>('team.create', { items }, signal)
+  }
+
+  /** Join Teams by exact public Jotmo ID as an explicit current-human mutation. */
+  async joinTeamsByJotmoID(items: readonly ArkmeTeamJoinItem[], signal?: AbortSignal): Promise<ArkmeTeamJoinResult[]> {
+    return await this.call<ArkmeTeamJoinResult[]>('team.join-by-jotmo-id', { items }, signal)
   }
 
   /** Read Browser-safe installed extension projections without Host filesystem paths or runtime IDs. */
@@ -1319,6 +1402,45 @@ export class ArkmeSdk {
     return await this.call<ArkmeGroupMemberAddResult>('group.members.add', { sourceRef, candidateRefs: refs }, signal)
   }
 
+  async removeGroupMember(
+    sourceRef: string,
+    memberRef: string,
+    options: { preventRejoin?: boolean; signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupMemberRemoveResult> {
+    if (sourceRef.trim() === '' || memberRef.trim() === '') {
+      throw new TypeError('Arkme group source and member references must not be empty')
+    }
+    return await this.call<ArkmeGroupMemberRemoveResult>('group.member-remove', {
+      sourceRef: sourceRef.trim(), memberRef: memberRef.trim(), preventRejoin: options.preventRejoin === true,
+    }, options.signal)
+  }
+
+  async listGroupJoinRestrictions(
+    sourceRef: string,
+    options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupJoinRestrictionPage> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
+    return await this.call<ArkmeGroupJoinRestrictionPage>('group.join-restrictions', {
+      sourceRef: sourceRef.trim(),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor.trim() }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    }, options.signal)
+  }
+
+  async setGroupJoinRestriction(
+    sourceRef: string,
+    memberRef: string,
+    restricted: boolean,
+    signal?: AbortSignal,
+  ): Promise<ArkmeGroupJoinRestrictionMutationResult> {
+    if (sourceRef.trim() === '' || memberRef.trim() === '' || typeof restricted !== 'boolean') {
+      throw new TypeError('Arkme group source, member reference, and restriction are required')
+    }
+    return await this.call<ArkmeGroupJoinRestrictionMutationResult>('group.join-restriction.set', {
+      sourceRef: sourceRef.trim(), memberRef: memberRef.trim(), restricted,
+    }, signal)
+  }
+
   async listGroupBots(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupBotCandidateList> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
     return await this.call<ArkmeGroupBotCandidateList>('group.bots', { sourceRef }, signal)
@@ -1471,6 +1593,19 @@ export class ArkmeSdk {
       ...(reason === '' ? {} : { reason }),
       requestUid,
     }, options.signal)
+  }
+
+  async withdrawGroupMessage(
+    messageWithdrawalRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageWithdrawalResult> {
+    const normalized = messageWithdrawalRef.trim()
+    if (normalized === '' || normalized.length > 4_096) {
+      throw new TypeError('Arkme message withdrawal reference must not be empty or exceed 4096 characters')
+    }
+    return await this.call<ArkmeMessageWithdrawalResult>('source.message-withdraw', {
+      messageWithdrawalRef: normalized,
+    }, signal)
   }
 
   async resolveMessageCopyLink(
@@ -1812,6 +1947,26 @@ export class ArkmeSdk {
     return await this.call<ArkmeCreateTextResult>('records.create', {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       textContent,
+    }, options.signal)
+  }
+
+  async tags(options: { limit?: number; signal?: AbortSignal } = {}): Promise<ArkmeRecordTagList> {
+    return await this.call<ArkmeRecordTagList>('records.tags.list', {
+      limit: options.limit ?? 100,
+    }, options.signal)
+  }
+
+  async tagRecords(normalizedTag: string, options: {
+    limit?: number
+    cursorSendAt?: number
+    cursorRecordUid?: string
+    signal?: AbortSignal
+  } = {}): Promise<ArkmeRecordSearchResult> {
+    return await this.call<ArkmeRecordSearchResult>('records.tags.query', {
+      normalizedTag,
+      limit: options.limit ?? 50,
+      ...(options.cursorSendAt === undefined ? {} : { cursorSendAt: options.cursorSendAt }),
+      ...(options.cursorRecordUid?.trim() ? { cursorRecordUid: options.cursorRecordUid.trim() } : {}),
     }, options.signal)
   }
 

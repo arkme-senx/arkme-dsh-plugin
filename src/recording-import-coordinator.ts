@@ -60,8 +60,7 @@ export class RecordingImportCoordinator {
         const sourceHandle = job.sourceHandle
         job = await this.finalize(job, signal)
         job = await this.transition(job, 'accepted', {
-          sourceHandle: '', sha256: '', sessionId: undefined, childId: undefined,
-          childFinished: undefined, uploadCheckpoint: undefined,
+          sourceHandle: '', sha256: '', uploadCheckpoint: undefined,
         })
         await this.source.discard(sourceHandle).catch(() => undefined)
       }

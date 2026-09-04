@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.39",
+  "version": "0.1.42",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -62,13 +62,16 @@
     }
   },
   "arkme": {
+    "desktopAccountScope": {
+      "version": 1
+    },
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.39 更新",
-      "summary": "Dev to master",
-      "publishedAt": "2026-09-01T12:48:29.808Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.39"
+      "title": "Arkme 插件 0.1.42 更新",
+      "summary": "0903-1835",
+      "publishedAt": "2026-09-03T10:36:09.288Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.42"
     }
   },
   "scripts": {
@@ -108,9 +111,13 @@
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.5 || ^0.1.1-rc.2 || ^0.1.2-alpha.1",
     "@deepseek-ai/dsh-client-ui-theme": "^0.1.0-rc.5 || ^0.1.1-rc.2 || ^0.1.2-alpha.1",
     "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.5 || ^0.1.1-rc.2 || ^0.1.2-alpha.1",
+    "@deepseek-ai/dsh-invariants": "^0.1.0-rc.7 || ^0.1.1-rc.2 || ^0.1.2-alpha.1",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.7 || ^0.1.1-rc.2 || ^0.1.2-alpha.1",
     "@deepseek-ai/dsh-llm-deepseek": "^0.1.0-rc.7 || ^0.1.1-rc.2 || ^0.1.2-alpha.1",
+    "@deepseek-ai/dsh-mcp-client": "^0.1.0-rc.7 || ^0.1.1-rc.2 || ^0.1.2-alpha.1",
     "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.5 || ^0.1.1-rc.2 || ^0.1.2-alpha.1",
+    "@deepseek-ai/dsh-subprocess": "^0.1.0-rc.7 || ^0.1.1-rc.2 || ^0.1.2-alpha.1",
+    "@deepseek-ai/dsh-timeout": "^0.1.0-rc.7 || ^0.1.1-rc.2 || ^0.1.2-alpha.1",
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.5 || ^0.1.1-rc.2 || ^0.1.2-alpha.1",
     "@deepseek-ai/schemastery": "^3.18.1",
     "react": "^18.2.0",
@@ -136,8 +143,10 @@
     "@deepseek-ai/dsh-launch-environment": "0.1.0-rc.7",
     "@deepseek-ai/dsh-llm": "0.1.0-rc.7",
     "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.7",
     "@deepseek-ai/dsh-scope": "0.1.0-rc.7",
     "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-subprocess": "0.1.0-rc.7",
     "@deepseek-ai/dsh-timeout": "0.1.0-rc.7",
     "@deepseek-ai/dsh-tools": "0.1.0-rc.7",
     "@deepseek-ai/dsh-typert-registry": "0.1.0-rc.7",

@@ -5,6 +5,7 @@ import {
 import type { ArkmeComposerEmoji, ArkmeComposerMention } from './composer-draft-store.js'
 import { ARKME_COMPOSER_EMOJI_PLACEHOLDER } from './composer-draft-store.js'
 import { arkmeComposerTextRuns } from './ArkmeMentionTextarea.js'
+import { arkmeHashTagTrigger } from '../hashtag.js'
 
 const mentionColor = 'var(--dsw-alias-state-business-primary, #3964fe)'
 
@@ -16,6 +17,7 @@ const styles: Record<string, CSSProperties> = {
     color: 'var(--dsw-alias-label-tertiary, #9097a1)',
   },
   mention: { color: mentionColor },
+  tag: { color: mentionColor, fontWeight: 500 },
   emoji: {
     display: 'inline-flex', width: '1.45em', height: '1.45em', margin: 0,
     alignItems: 'center', justifyContent: 'center', verticalAlign: '-0.34em',
@@ -219,9 +221,10 @@ function renderEditorContents(
   value: string,
   mentions: readonly ArkmeComposerMention[],
   emojis: readonly ArkmeComposerEmoji[],
+  activeHashTagStart?: number,
 ): void {
   const fragment = document.createDocumentFragment()
-  for (const run of arkmeComposerTextRuns(value, mentions, emojis)) {
+  for (const run of arkmeComposerTextRuns(value, mentions, emojis, activeHashTagStart)) {
     if (run.kind === 'emoji' && run.emoji !== undefined) {
       const atom = document.createElement('span')
       atom.contentEditable = 'false'
@@ -238,9 +241,9 @@ function renderEditorContents(
       fragment.append(atom)
       continue
     }
-    if (run.kind === 'mention') {
+    if (run.kind === 'mention' || run.kind === 'tag') {
       const mention = document.createElement('span')
-      applyElementStyles(mention, styles.mention!)
+      applyElementStyles(mention, run.kind === 'tag' ? styles.tag! : styles.mention!)
       mention.textContent = run.text
       fragment.append(mention)
       continue
@@ -308,7 +311,8 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       const active = document.activeElement === root
       const nextSelection = pendingSelectionRef.current
         ?? (active ? editorSelection(root, selectionRef.current) : selectionRef.current)
-      renderEditorContents(root, value, mentions, emojis)
+      const activeHashTagStart = arkmeHashTagTrigger(value, nextSelection.start, nextSelection.end)?.startIndex
+      renderEditorContents(root, value, mentions, emojis, activeHashTagStart)
       setEditorHasContent(value !== '')
       pendingSelectionRef.current = undefined
       selectionRef.current = nextSelection
@@ -318,7 +322,8 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
     const commitDom = (root: HTMLDivElement, nextText = editorSemanticText(root)) => {
       const selection = editorSelection(root, selectionRef.current)
       if (nextText.length > maxLength) {
-        renderEditorContents(root, valueRef.current, mentions, emojis)
+        const activeHashTagStart = arkmeHashTagTrigger(valueRef.current, selectionRef.current.start, selectionRef.current.end)?.startIndex
+        renderEditorContents(root, valueRef.current, mentions, emojis, activeHashTagStart)
         setEditorHasContent(valueRef.current !== '')
         applySelection(selectionRef.current.start, selectionRef.current.end)
         return
@@ -337,6 +342,17 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       selectionRef.current = { start: caret, end: caret }
       pendingSelectionRef.current = selectionRef.current
       onTextChange(nextText)
+    }
+
+    const insertPastedText = (root: HTMLDivElement, text: string) => {
+      const selection = editorSelection(root, selectionRef.current)
+      const nextText = valueRef.current.slice(0, selection.start) + text + valueRef.current.slice(selection.end)
+      if (nextText.length > maxLength) return
+      const caret = selection.start + text.length
+      selectionRef.current = { start: caret, end: caret }
+      pendingSelectionRef.current = selectionRef.current
+      onTextChange(nextText)
+      onSelectionChange?.(nextText, caret, caret)
     }
 
     return <div style={{ ...styles.host, minHeight: style.minHeight, maxHeight: style.maxHeight }}>
@@ -365,7 +381,14 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
         }}
         onFocus={onFocus}
         onBlur={onBlur}
-        onPaste={onPaste}
+        onPaste={event => {
+          onPaste?.(event)
+          if (event.defaultPrevented) return
+          const text = event.clipboardData.getData('text/plain')
+          if (text === '') return
+          event.preventDefault()
+          insertPastedText(event.currentTarget, text)
+        }}
         onKeyDown={event => {
           onKeyDown?.(event)
           if (!event.defaultPrevented && event.key === 'Enter' && event.shiftKey) {

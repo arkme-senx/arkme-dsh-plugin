@@ -18,10 +18,16 @@ const target: DshRemoteRuntimeTarget = { ...preRegistrationTarget, hostLeaseGene
 class FakeSocket implements DshRemoteSocketLike {
   readyState = 0
   readonly sent: string[] = []
+  sendFailure: Error | undefined
   private readonly listeners = new Map<string, Set<(event: { data?: unknown }) => void>>()
 
   open(): void { this.readyState = 1; this.emit('open', {}) }
   send(data: string): void {
+    if (this.sendFailure !== undefined) {
+      const error = this.sendFailure
+      this.sendFailure = undefined
+      throw error
+    }
     this.sent.push(data)
     const frame = JSON.parse(data) as Record<string, unknown>
     const requestId = frame.request_id
@@ -67,14 +73,19 @@ class FakeSocket implements DshRemoteSocketLike {
   private emit(type: string, event: { data?: unknown }): void { for (const listener of this.listeners.get(type) ?? []) listener(event) }
 }
 
-async function connectedTransport(): Promise<{ socket: FakeSocket; transport: ArkmeRemoteRealtimeTransport; signal: AbortSignal }> {
+async function connectedTransport(): Promise<{
+  socket: FakeSocket
+  transport: ArkmeRemoteRealtimeTransport
+  controller: AbortController
+  signal: AbortSignal
+}> {
   const socket = new FakeSocket()
   const transport = new ArkmeRemoteRealtimeTransport(() => socket)
   const controller = new AbortController()
   const connected = transport.connect({ profileRef: target.hostProfileRef, clientRef: target.hostClientRef, signal: controller.signal })
   setTimeout(() => { socket.open() }, 0)
   await connected
-  return { socket, transport, signal: controller.signal }
+  return { socket, transport, controller, signal: controller.signal }
 }
 
 describe('Realtime login-only remote transport wire', () => {
@@ -119,6 +130,20 @@ describe('Realtime login-only remote transport wire', () => {
       target, commandId: 'command-large', direction: 'response',
       payload: { blob: 'x'.repeat(60 * 1024) }, signal,
     })).rejects.toThrow(/publish\/event frame.*60KiB/)
+  })
+
+  it('removes the response waiter when socket send fails before channel abort', async () => {
+    const { socket, transport, controller, signal } = await connectedTransport()
+    socket.sendFailure = new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'socket send failed', true)
+
+    await expect(transport.publish({
+      target, commandId: 'command-send-failure', direction: 'response', payload: { text: 'test' }, signal,
+    })).rejects.toMatchObject({ code: 'REMOTE_TRANSPORT_FAILED', message: 'socket send failed' })
+    expect((transport as unknown as { waiters: Map<string, unknown> }).waiters.size).toBe(0)
+
+    // A later channel shutdown must not reject an orphaned response Promise.
+    controller.abort()
+    await Promise.resolve()
   })
 
   it('keeps a maximum typed read projection inside publish and delivery wrappers', () => {
@@ -167,5 +192,21 @@ describe('Realtime login-only remote transport wire', () => {
     socket.serverFrame({ type: 'connection.replaced', connection_generation: 12 })
     expect(socket.readyState).toBe(3)
     expect(disconnected).toEqual([{ code: 'CONNECTION_REPLACED', retryable: true }])
+  })
+
+  it('fails the physical connection when a logical subscription reports an unsolicited error', async () => {
+    const { socket, transport } = await connectedTransport()
+    const disconnected: Array<{ code?: string; retryable?: boolean }> = []
+    transport.subscribeDisconnect(error => {
+      disconnected.push(error instanceof DshRemoteError ? { code: error.code, retryable: error.retryable } : {})
+    })
+
+    socket.serverFrame({
+      type: 'error', channel_ref: target.runtimeRef,
+      code: 'REPLAY_GAP', message: 'live channel sequence gap detected', retryable: true,
+    })
+
+    expect(socket.readyState).toBe(3)
+    expect(disconnected).toEqual([{ code: 'REPLAY_GAP', retryable: true }])
   })
 })

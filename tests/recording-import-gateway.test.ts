@@ -14,7 +14,543 @@ function job(overrides: Partial<RecordingImportJob> = {}): RecordingImportJob {
   }
 }
 
+function ownerRow(sessionId: string, finishedUpload = true, processingCompleted = false): Record<string, unknown> {
+  return {
+    id: sessionId, source: 2, orig_name: `${sessionId}.wav`, source_size: 1_024, size: 1_024,
+    duration: 1_000, start_at: 1_725_000_000_000, end_at: 1_725_000_001_000,
+    create_at: 1_725_000_000_000, update_at: 1_725_000_001_000, belong_usr: 42,
+    has_finish_spk: finishedUpload,
+    has_done_child: processingCompleted,
+  }
+}
+
+function gatewayForOwnerProgress(itemLs: Array<Record<string, unknown>>): AudioRecordingImportGateway {
+  const runtime = {
+    async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+    async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+      if (path.endsWith('/get-session-ls')) {
+        const scoped = itemLs.filter(item => {
+          const statuses = Array.isArray(item.child_status_ls)
+            ? item.child_status_ls.map(child => Number((child as Record<string, unknown>).status))
+            : []
+          const completed = statuses.length > 0 && statuses.every(status => status === 5 || status === 6)
+          return (body.task_scope === 'completed') === completed
+        })
+        return { session_ls: scoped.map(item => ownerRow(
+          String(item.session_id),
+          true,
+          body.task_scope === 'completed',
+        )) }
+      }
+      if (path.endsWith('/get-session-deal-status')) return { item_ls: itemLs }
+      throw new Error(`unexpected owner request: ${path}`)
+    },
+  } as unknown as ServiceRuntime
+  return new AudioRecordingImportGateway(runtime)
+}
+
 describe('AudioRecordingImportGateway', () => {
+  it('keeps Audio duplicate lookup batching behind the owner gateway', async () => {
+    const posts: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        posts.push({ path, body })
+        const names = body.orig_names as string[]
+        return { exist_names: names.filter((_name, index) => index === 0) }
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+    const names = Array.from({ length: 205 }, (_, index) => `recording-${String(index)}.wav`)
+
+    await expect(gateway.findExistingFileNames({ viewerUserId: 42, fileNames: names })).resolves.toEqual([
+      'recording-0.wav', 'recording-100.wav', 'recording-200.wav',
+    ])
+    expect(posts).toEqual([
+      { path: '/api/v1/audio/check-exist-same-orig', body: { orig_names: names.slice(0, 100) } },
+      { path: '/api/v1/audio/check-exist-same-orig', body: { orig_names: names.slice(100, 200) } },
+      { path: '/api/v1/audio/check-exist-same-orig', body: { orig_names: names.slice(200) } },
+    ])
+  })
+
+  it('rejects owner reads when the active account changes after business scope capture', async () => {
+    const authenticatedAudioPost = vi.fn(async () => ({ session_ls: [ownerRow('wrong-account')] }))
+    const runtime = {
+      async requireSession() { return { userId: 77, accessToken: 'access', refreshToken: 'refresh' } },
+      authenticatedAudioPost,
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'active', toMillis: 1_725_100_000_000, limit: 20, offset: 0,
+    }))
+      .rejects.toMatchObject({ code: 'recording-import-account-mismatch', retryable: true })
+    expect(authenticatedAudioPost).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the active account before every batched duplicate lookup', async () => {
+    let currentUserId = 42
+    const authenticatedAudioPost = vi.fn(async () => {
+      currentUserId = 77
+      return { exist_names: [] }
+    })
+    const runtime = {
+      async requireSession() { return { userId: currentUserId, accessToken: 'access', refreshToken: 'refresh' } },
+      authenticatedAudioPost,
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.findExistingFileNames({
+      viewerUserId: 42,
+      fileNames: Array.from({ length: 101 }, (_, index) => `recording-${String(index)}.wav`),
+    })).rejects.toMatchObject({ code: 'recording-import-account-mismatch', retryable: true })
+    expect(authenticatedAudioPost).toHaveBeenCalledOnce()
+  })
+
+  it('rechecks the active account before every owner page', async () => {
+    let currentUserId = 42
+    const authenticatedAudioPost = vi.fn(async () => {
+      currentUserId = 77
+      return {
+        session_ls: Array.from({ length: 100 }, (_, index) => ownerRow(`session-${String(index)}`, false)),
+      }
+    })
+    const runtime = {
+      async requireSession() { return { userId: currentUserId, accessToken: 'access', refreshToken: 'refresh' } },
+      authenticatedAudioPost,
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'active', toMillis: 1_725_100_000_000, limit: 101, offset: 0,
+    })).rejects.toMatchObject({ code: 'recording-import-account-mismatch', retryable: true })
+    expect(authenticatedAudioPost).toHaveBeenCalledOnce()
+  })
+
+  it('does not downgrade an account switch into optional owner-progress unavailability', async () => {
+    let currentUserId = 42
+    const authenticatedAudioPost = vi.fn(async (path: string) => {
+      if (path.endsWith('/get-session-ls')) {
+        currentUserId = 77
+        return { session_ls: [ownerRow('session-1')] }
+      }
+      return { item_ls: [] }
+    })
+    const runtime = {
+      async requireSession() { return { userId: currentUserId, accessToken: 'access', refreshToken: 'refresh' } },
+      authenticatedAudioPost,
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'active', toMillis: 1_725_100_000_000, limit: 20, offset: 0,
+    })).rejects.toMatchObject({ code: 'recording-import-account-mismatch', retryable: true })
+    expect(authenticatedAudioPost).toHaveBeenCalledOnce()
+  })
+
+  it('does not substitute terminal child statuses for the Audio owner processing-completion fact', async () => {
+    const runtime = {
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        if (path.endsWith('/get-session-ls')) return { session_ls: body.task_scope === 'completed' ? [] : [{
+          ...ownerRow('sealed-but-aggregating'),
+          has_done_child: false,
+        }] }
+        if (path.endsWith('/get-session-deal-status')) return { item_ls: [{
+          session_id: 'sealed-but-aggregating',
+          timing_state: 'processing',
+          child_status_ls: [{ status: 5 }],
+        }] }
+        throw new Error(`unexpected owner request: ${path}`)
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    const active = await gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'active', toMillis: 1_725_100_000_000, limit: 20, offset: 0,
+    })
+    const completed = await gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'completed', toMillis: 1_725_100_000_000, limit: 20, offset: 0,
+    })
+
+    expect(active.tasks.map(item => item.session.sessionId)).toEqual(['sealed-but-aggregating'])
+    expect(completed.tasks).toEqual([])
+  })
+
+  it('partitions only PC-upload sessions by processing terminality instead of upload sealing', async () => {
+    const owner = (id: string, source: number, finishedUpload: boolean, processingCompleted: boolean) => ({
+      id, source, orig_name: `${id}.wav`, source_size: 1_024, size: 1_024,
+      duration: 1_000, start_at: 1_725_000_000_000, end_at: 1_725_000_001_000,
+      create_at: 1_725_000_000_000, update_at: 1_725_000_001_000, belong_usr: 42,
+      has_finish_spk: finishedUpload,
+      has_done_child: processingCompleted,
+    })
+    const runtime = {
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        if (path.endsWith('/get-session-ls')) return { session_ls: [
+          owner('uploading', 2, false, false),
+          owner('processing', 2, true, false),
+          owner('completed', 2, true, true),
+          owner('failed', 2, true, true),
+          owner('long-recording', 1, false, false),
+          owner('voiceprint', 3, true, true),
+        ].filter(item => (body.task_scope === 'completed') === item.has_done_child) }
+        if (path.endsWith('/get-session-deal-status')) return { item_ls: [
+          { session_id: 'processing', timing_state: 'processing', child_status_ls: [{ status: 4 }] },
+          { session_id: 'completed', timing_state: 'completed', child_status_ls: [{ status: 5 }] },
+          { session_id: 'failed', timing_state: 'completed', child_status_ls: [{ status: 6 }] },
+        ] }
+        throw new Error(`unexpected owner request: ${path}`)
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    const active = await gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'active', toMillis: 1_725_100_000_000, limit: 20, offset: 0,
+    })
+    const completed = await gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'completed', toMillis: 1_725_100_000_000, limit: 20, offset: 0,
+    })
+
+    expect(active.tasks.map(item => item.session.sessionId)).toEqual(['uploading', 'processing'])
+    expect(completed.tasks.map(item => item.session.sessionId)).toEqual(['completed', 'failed'])
+  })
+
+  it('projects the desktop import_progress contract without treating model telemetry as the business timeline', async () => {
+    const posts: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        posts.push({ path, body })
+        if (path.endsWith('get-session-ls')) return { session_ls: body.task_scope === 'completed' ? [{
+          id: 'session-1', source: 2, orig_name: 'meeting.m4a', source_size: 1_024, size: 512,
+          duration: 60_000, start_at: 1_725_000_000_000, end_at: 1_725_000_060_000,
+          create_at: 1_725_000_000_100, update_at: 1_725_000_018_100, belong_usr: 42,
+          has_finish_spk: true, has_done_child: true,
+        }] : [{
+          id: 'session-active', source: 2, orig_name: 'active.wav', source_size: 2_048, size: 1_024,
+          duration: 30_000, start_at: 1_725_000_100_000, end_at: 1_725_000_130_000,
+          create_at: 1_725_000_100_100, update_at: 1_725_000_101_100, belong_usr: 0,
+          has_finish_spk: false, has_done_child: false,
+        }] }
+        if (path.endsWith('get-session-deal-status')) return { item_ls: [{
+          session_id: 'session-1', timing_state: 'completed', child_status_ls: [{ status: 5 }],
+          processing_timing_ls: [{
+            stage: 'vad', outcome: 'success', started_at_ms: 1_725_000_004_100,
+            ended_at_ms: 1_725_000_012_100, duration_ms: 8_000, provider: 'sensevoice',
+            model: 'silero-vad', model_version: 'v1',
+          }],
+          import_progress: {
+            status: 3,
+            total_duration_ms: 21_000,
+            server_now_ms: 1_725_000_021_100,
+            row_ls: [{
+              code: 'upload', status: 3, started_at_ms: 1_725_000_000_100,
+              ended_at_ms: 1_725_000_004_100, duration_ms: 4_000,
+              provider: '', model: '', model_version: '', model_duration_ms: 0,
+              next_relation: 'wait', relation_duration_ms: 2_000,
+            }, {
+              code: 'primary_transcript', status: 3, started_at_ms: 1_725_000_006_100,
+              ended_at_ms: 1_725_000_021_100, duration_ms: 15_000,
+              provider: 'sensevoice', model: 'sensevoice-small', model_version: 'v2',
+              model_duration_ms: 13_000, next_relation: 'sidecar', relation_duration_ms: 0,
+            }, {
+              code: 'not-a-desktop-stage', status: 3, duration_ms: 2_000,
+            }],
+          },
+        }] }
+        throw new Error(`unexpected owner request: ${path}`)
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'completed', toMillis: 1_725_100_000_000, limit: 50, offset: 0,
+    })).resolves.toEqual({
+      total: 1,
+      hasMore: false,
+      tasks: [{
+        processingCompleted: true,
+        session: expect.objectContaining({
+          sessionId: 'session-1', fileName: 'meeting.m4a', fileSize: 1_024, parsedSize: 512,
+          startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_060_000,
+          hasFinishedUpload: true, ownership: 'self',
+        }),
+        progress: {
+          displayStatus: 'completed',
+          importProgress: {
+            status: 'completed', totalDurationMillis: 21_000,
+            serverNowMillis: 1_725_000_021_100,
+            observedAtMillis: expect.any(Number),
+            rows: [
+              expect.objectContaining({
+                code: 'upload', status: 'completed', durationMillis: 4_000,
+                nextRelation: 'wait', relationDurationMillis: 2_000,
+              }),
+              expect.objectContaining({
+                code: 'primary_transcript', status: 'completed', durationMillis: 15_000,
+                modelDurationMillis: 13_000, nextRelation: 'sidecar',
+              }),
+            ],
+          },
+        },
+      }],
+    })
+    await expect(gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'active', toMillis: 1_725_100_000_000, limit: 50, offset: 0,
+    })).resolves.toEqual({
+      total: 1,
+      hasMore: false,
+      tasks: [{ processingCompleted: false, session: expect.objectContaining({
+        sessionId: 'session-active', fileName: 'active.wav', hasFinishedUpload: false, ownership: 'other',
+      }) }],
+    })
+    expect(posts).toEqual([
+      { path: '/api/v1/audio/get-session-ls', body: { to_stamp: 1_725_100_000_000, limit: 100, offset: 0, query_new: false, task_scope: 'completed' } },
+      { path: '/api/v1/audio/get-session-deal-status', body: { session_ids: ['session-1'] } },
+      { path: '/api/v1/audio/get-session-ls', body: { to_stamp: 1_725_100_000_000, limit: 100, offset: 0, query_new: false, task_scope: 'active' } },
+    ])
+  })
+
+  it('pages through mixed owner rows to fill the completed fold without a fixed archive ceiling', async () => {
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const owner = (id: string, source: number) => ({
+      id, source, orig_name: `${id}.wav`, source_size: 1_024, size: 1_024,
+      duration: 1_000, start_at: 1_725_000_000_000, end_at: 1_725_000_001_000,
+      create_at: 1_725_000_000_000, update_at: 1_725_000_001_000, belong_usr: 42,
+      has_finish_spk: true, has_done_child: true,
+    })
+    const runtime = {
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        requests.push({ path, body })
+        if (path.endsWith('/get-session-deal-status')) {
+          return { item_ls: (body.session_ids as string[]).map(sessionId => ({
+            session_id: sessionId, timing_state: 'completed', child_status_ls: [{ status: 5 }],
+          })) }
+        }
+        return body.offset === 0
+          ? { session_ls: Array.from({ length: 100 }, (_, index) => owner(`long-recording-${String(index)}`, 1)) }
+          : { session_ls: [owner('completed-1', 2), owner('completed-2', 2), owner('completed-3', 2)] }
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'completed', toMillis: 1_725_100_000_000, limit: 2, offset: 0,
+    })).resolves.toEqual({
+      tasks: [
+        expect.objectContaining({ session: expect.objectContaining({ sessionId: 'completed-1' }) }),
+        expect.objectContaining({ session: expect.objectContaining({ sessionId: 'completed-2' }) }),
+      ],
+      total: 3,
+      hasMore: true,
+    })
+    expect(requests).toEqual([
+      { path: '/api/v1/audio/get-session-ls', body: { to_stamp: 1_725_100_000_000, limit: 100, offset: 0, query_new: false, task_scope: 'completed' } },
+      { path: '/api/v1/audio/get-session-ls', body: { to_stamp: 1_725_100_000_000, limit: 100, offset: 100, query_new: false, task_scope: 'completed' } },
+      { path: '/api/v1/audio/get-session-deal-status', body: { session_ids: ['completed-1', 'completed-2', 'completed-3'] } },
+    ])
+  })
+
+  it('bounds current owner reads once the visible active rows are filled', async () => {
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        requests.push({ path, body })
+        if (path.endsWith('/get-session-deal-status')) return { item_ls: [] }
+        return { session_ls: Array.from({ length: 100 }, (_, index) => ({
+          id: `session-${String(index)}`, source: 2, orig_name: `recording-${String(index)}.wav`,
+          source_size: 1_024, size: 1_024, duration: 1_000,
+          start_at: 1_725_000_000_000 - index, end_at: 1_725_000_001_000 - index,
+          create_at: 1_725_000_000_000 - index, update_at: 1_725_000_001_000 - index,
+          belong_usr: 42, has_finish_spk: index >= 20, has_done_child: false,
+        })) }
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    const page = await gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'active', toMillis: 1_725_100_000_000, limit: 20, offset: 0,
+    })
+
+    expect(page.tasks).toHaveLength(20)
+    expect(page).not.toHaveProperty('total')
+    expect(requests).toHaveLength(2)
+  })
+
+  it('keeps completed-task edits and deletion behind the Audio owner gateway', async () => {
+    const posts: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        posts.push({ path, body }); return {}
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await gateway.updateOwnerSessionStart({
+      viewerUserId: 42, sessionId: 'session-1', startAtMillis: 1_725_000_000_000,
+    })
+    await gateway.updateOwnerSessionOwnership({
+      viewerUserId: 42, sessionId: 'session-1', belongUserId: 0,
+    })
+    await gateway.deleteOwnerSession({ viewerUserId: 42, sessionId: 'session-1' })
+
+    expect(posts).toEqual([
+      { path: '/api/v1/audio/modify-session-start', body: expect.objectContaining({ session_id: 'session-1', start_at: 1_725_000_000_000 }) },
+      { path: '/api/v1/audio/modify-session-belong-usr', body: { session_id: 'session-1', belong_usr: 0 } },
+      { path: '/api/v1/audio/del-session', body: { session_id: 'session-1' } },
+    ])
+  })
+
+  it('loads the current Audio owner fact before validating a start-time mutation', async () => {
+    const runtime = {
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        expect(path).toBe('/api/v1/audio/get-session-by-id')
+        expect(body).toEqual({ session_id: 'session-1' })
+        return {
+          id: 'session-1', source: 2, orig_name: 'meeting.m4a', source_size: 1_024, size: 1_024,
+          duration: 60_000, start_at: 1_725_000_000_000, end_at: 1_725_000_060_000,
+          create_at: 1_725_000_000_100, update_at: 1_725_000_060_100,
+          belong_usr: 42, has_finish_spk: true,
+        }
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.loadOwnerSession({ viewerUserId: 42, sessionId: 'session-1' })).resolves.toMatchObject({
+      sessionId: 'session-1', durationMillis: 60_000, ownership: 'self', hasFinishedUpload: true,
+    })
+  })
+
+  it('rejects owner media intervals that cannot be represented as safe timestamps', async () => {
+    const runtime = {
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost() {
+        return {
+          id: 'session-unsafe', source: 2, orig_name: 'unsafe.wav',
+          duration: Number.MAX_SAFE_INTEGER, start_at: 1_725_000_000_000,
+          belong_usr: 42, has_finish_spk: true,
+        }
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.loadOwnerSession({ viewerUserId: 42, sessionId: 'session-unsafe' })).rejects.toMatchObject({
+      code: 'recording-import-session-invalid', retryable: true,
+    })
+  })
+
+  it('keeps owner status available while business-progress rows are temporarily absent', async () => {
+    const gateway = gatewayForOwnerProgress([{
+      session_id: 'session-1', timing_state: 'processing', child_status_ls: [{ status: 4 }],
+      processing_timing_ls: [],
+    }])
+
+    const page = await gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'active', toMillis: 1_725_100_000_000, limit: 20, offset: 0,
+    })
+    expect(page.tasks[0]?.progress).toEqual({
+      displayStatus: 'transcribing',
+    })
+  })
+
+  it('does not downgrade request cancellation into optional owner-progress unavailability', async () => {
+    const controller = new AbortController()
+    const cancelled = new Error('owner progress request cancelled')
+    const runtime = {
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string) {
+        if (path.endsWith('/get-session-ls')) return { session_ls: [ownerRow('session-1')] }
+        controller.abort(cancelled)
+        throw cancelled
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'active', toMillis: 1_725_100_000_000, limit: 20, offset: 0,
+      signal: controller.signal,
+    })).rejects.toBe(cancelled)
+  })
+
+  it('fails malformed child statuses closed and ignores unrelated model-timing telemetry', async () => {
+    const gateway = gatewayForOwnerProgress([{
+      session_id: 'session-1', timing_state: 'completed',
+      child_status_ls: [{ status: 5 }, { status: 7 }],
+      processing_timing_ls: [{
+        stage: 'asr', outcome: 'success', started_at_ms: 1_725_000_004_100,
+        ended_at_ms: 1_725_000_017_100, duration_ms: -1, provider: 'sensevoice',
+        model: 'sensevoice', model_version: 'v1',
+      }],
+    }])
+
+    const page = await gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'active', toMillis: 1_725_100_000_000, limit: 20, offset: 0,
+    })
+    expect(page.tasks[0]?.progress).toEqual({
+      displayStatus: 'unavailable',
+    })
+  })
+
+  it('keeps valid business stages and clamps malformed duration values like desktop', async () => {
+    const gateway = gatewayForOwnerProgress([{
+      session_id: 'session-1', timing_state: 'completed', child_status_ls: [{ status: 5 }],
+      import_progress: { status: 3, total_duration_ms: 8_000, server_now_ms: 1_725_000_012_100, row_ls: [{
+        code: 'voice_recognition', status: 3, started_at_ms: 1_725_000_004_100,
+        ended_at_ms: 1_725_000_012_100, duration_ms: -1, provider: 'sensevoice', model: 'fsmn-campplus',
+      }, {
+        code: 'legacy_asr', status: 3, duration_ms: 9_000,
+      }] },
+    }])
+
+    const page = await gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'completed', toMillis: 1_725_100_000_000, limit: 20, offset: 0,
+    })
+    expect(page.tasks[0]?.progress).toEqual({
+      displayStatus: 'completed',
+      importProgress: expect.objectContaining({
+        status: 'completed', totalDurationMillis: 8_000,
+        rows: [expect.objectContaining({ code: 'voice_recognition', durationMillis: 0 })],
+      }),
+    })
+  })
+
+  it('keeps Audio child terminal outcomes distinct instead of treating status 5 and 6 as processing', async () => {
+    const gateway = gatewayForOwnerProgress([
+      { session_id: 'done', timing_state: 'completed', child_status_ls: [{ status: 5 }] },
+      { session_id: 'failed', timing_state: 'completed', child_status_ls: [{ status: 6 }] },
+      { session_id: 'partial', timing_state: 'completed', child_status_ls: [{ status: 5 }, { status: 6 }] },
+    ])
+
+    const page = await gateway.listOwnerTasks({
+      viewerUserId: 42,
+      scope: 'completed', toMillis: 1_725_100_000_000, limit: 20, offset: 0,
+    })
+    expect(page.tasks.map(task => task.progress?.displayStatus)).toEqual(['completed', 'failed', 'partial'])
+  })
+
   it('uses the desktop Audio owner contract and keeps STS inside the Host', async () => {
     const posts: Array<{ path: string; body: Record<string, unknown> }> = []
     const runtime = {
@@ -69,6 +605,23 @@ describe('AudioRecordingImportGateway', () => {
     )
     expect(progress).toHaveBeenLastCalledWith(1024, { uploadId: 'upload-1' })
     expect(JSON.stringify(posts)).not.toContain('access_key_secret')
+  })
+
+  it('closes the final owner duplicate race with the same case-insensitive file-name identity', async () => {
+    const runtime = {
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string) {
+        if (path.endsWith('/get-session-ls')) return { session_ls: [] }
+        if (path.endsWith('/check-exist-same-orig')) return { exist_names: ['Meeting.M4A'] }
+        throw new Error(`must not create a duplicate owner session: ${path}`)
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.ensureSession(job())).rejects.toMatchObject({
+      code: 'recording-import-duplicate',
+      retryable: false,
+    })
   })
 
   it('recovers its exact session checkpoint before duplicate-name rejection', async () => {

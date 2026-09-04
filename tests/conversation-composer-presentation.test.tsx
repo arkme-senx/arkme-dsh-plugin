@@ -12,6 +12,14 @@ const locationCaptureModuleUrl = new URL('../src/client/record-capture-location.
 const inputCaptureModuleUrl = new URL('../src/client/record-input-capture.ts', import.meta.url)
 
 describe('Arkme conversation composer presentation', () => {
+  it('owns a stable input card so skins never reparent the rich editor', () => {
+    const redesignCss = readFileSync(new URL('../src/client/redesign/arkme-redesign.css', import.meta.url), 'utf8')
+    expect(sidebarSource).toContain('<div className="arkme-conversation-input-card">')
+    expect(redesignCss).toContain('.arkme-conversation-input-card { display: contents; }')
+    expect(redesignCss).toContain('.arkme-conversation-input-card.arkme-conversation-input-card.arkme-conversation-tools')
+    expect(redesignCss).toContain('display: flex !important;')
+  })
+
   it('keeps file selection in the existing menu instead of exposing the internal cache', () => {
     const menu = sidebarSource.slice(sidebarSource.indexOf('{addMenuOpen &&'), sidebarSource.indexOf('<input ref={fileInputRef}'))
     expect(menu.match(/role="menuitem"/gu)).toHaveLength(2)
@@ -134,7 +142,8 @@ describe('Arkme conversation composer presentation', () => {
     }
     expect(arkoSource).toContain('arkmeConversationComposerHeight(textarea.scrollHeight)')
     expect(sidebarSource).toContain('<ArkmeRichComposerInput')
-    expect(sidebarSource).toContain('onSelectionChange={updateMentionTrigger}')
+    expect(sidebarSource).toContain('onSelectionChange={updateComposerRichTrigger}')
+    expect(sidebarSource).toContain("callArkme<ArkmeRecordTagList>('records.tags.list'")
     expect(sidebarSource).not.toContain('<ArkmeMentionTextarea')
 
     expect(arkoSource).toContain("callArkme<ArkmeArkoAskResult>('arko.ask'")

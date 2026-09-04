@@ -1,4 +1,5 @@
 import type {
+  ArkmeRecordingSummaryModelConfig,
   ArkmeRecordingTimelineEvent,
   ArkmeRecordingTranscriptItem,
   ArkmeRecordingVersion,
@@ -13,6 +14,88 @@ export interface ArkmeRecordingPrivateTranscriptItem extends ArkmeRecordingTrans
   sourceSpeakerNumber: number
   assignmentSpeakerNumber: number
   speakerIdentity: string
+  event?: string
+  /** Owner ASR text kept separate from the cleaned transcript presentation. */
+  generationText?: string
+}
+
+function recordingGenerationDateLabel(value: number): string {
+  const date = new Date(value)
+  return [date.getFullYear(), date.getMonth() + 1, date.getDate()]
+    .map((part, index) => index === 0 ? String(part) : String(part).padStart(2, '0'))
+    .join('-')
+}
+
+function recordingGenerationClockLabel(seconds: number): string {
+  const wholeSeconds = Math.max(0, Math.round(seconds))
+  const hours = Math.floor(wholeSeconds / 3_600)
+  const minutes = Math.floor((wholeSeconds % 3_600) / 60)
+  const remainingSeconds = wholeSeconds % 60
+  return [hours, minutes, remainingSeconds].map(value => String(value).padStart(2, '0')).join(':')
+}
+
+function recordingGenerationDurationLabel(startSeconds: number, endSeconds: number): string {
+  const seconds = Math.max(0, endSeconds - startSeconds)
+  if (seconds < 60) return `${String(seconds)}秒`
+  if (seconds < 3_600) return `${String(Math.floor(seconds / 60))}分${String(seconds % 60)}秒`
+  return `${String(Math.floor(seconds / 3_600))}小时${String(Math.floor((seconds % 3_600) / 60))}分`
+}
+
+export function buildRecordingGenerationTranscript(
+  items: readonly ArkmeRecordingPrivateTranscriptItem[],
+  kind: 'summary' | 'timeline',
+  dayStartMillis: number,
+): string {
+  const available = items
+    .filter(item => item.text.trim() !== '' && item.endAtMillis > item.startAtMillis)
+    .toSorted((left, right) => left.startAtMillis - right.startAtMillis || left.endAtMillis - right.endAtMillis)
+  let selfSpeakerLabel = ''
+  const sections = available.map(item => {
+    if (item.isSelf) selfSpeakerLabel = item.speakerLabel
+    const startSeconds = Math.round((item.startAtMillis - dayStartMillis) / 1_000)
+    const endSeconds = Math.round((item.endAtMillis - dayStartMillis) / 1_000)
+    const event = item.event?.trim() ?? ''
+    const text = item.generationText?.trim() || item.text
+    return [
+      `说话人：${item.speakerLabel}`,
+      ...(item.isSelf ? [] : ['[important_note]: 这句话不是我本人说的']),
+      `[${recordingGenerationDateLabel(item.startAtMillis)} ${recordingGenerationClockLabel(startSeconds)} ${recordingGenerationDurationLabel(startSeconds, endSeconds)}] ${event}：`,
+      text,
+    ].join('\n')
+  })
+  sections.push(selfSpeakerLabel === '' ? '其中，没有发现我自己说的话' : `其中，${selfSpeakerLabel}是我自己`)
+  sections.push([
+    `不需要开头中的声明或推测，直接输出「${kind === 'timeline' ? '时间轴' : '总结'}」正文内容，`,
+    '不需要结语中的「帮我干」的内容，直接生成正文部分',
+    '总结时，不能将不是我说的话，归结为我说的内容',
+    '禁止在输出结果中出现[important_note]等内部字段',
+    ...(kind === 'timeline' ? ['如果某些时段或一整天都没有我的说话的数据，则认为录制都是环境音，以此环境音分析我的一天或每个时间段可能在做什么'] : []),
+  ].join('\n'))
+  return sections.join('\n\n')
+}
+
+export function projectRecordingSummaryModelConfig(value: unknown): ArkmeRecordingSummaryModelConfig {
+  const root = objectValue(value)
+  const nestedItem = objectValue(root.item)
+  const item = Object.keys(nestedItem).length > 0 ? nestedItem : root
+  const seen = new Set<string>()
+  const options = listValue(item.allowed_route_options ?? item.allowedRouteOptions).flatMap(raw => {
+    const option = objectValue(raw)
+    const routeKey = stringValue(option.route_key ?? option.routeKey).trim()
+    if (routeKey === '' || seen.has(routeKey)) return []
+    seen.add(routeKey)
+    const provider = stringValue(option.provider).trim()
+    const modelKey = stringValue(option.model_key ?? option.modelKey).trim()
+    const displayName = stringValue(option.display_name ?? option.displayName).trim() || modelKey || routeKey
+    return [{ routeKey, provider, modelKey, displayName }]
+  })
+  const personalRouteKey = stringValue(item.personal_route_key ?? item.personalRouteKey).trim()
+  return {
+    defaultRouteKey: stringValue(item.default_route_key ?? item.defaultRouteKey).trim(),
+    effectiveRouteKey: stringValue(item.effective_route_key ?? item.effectiveRouteKey).trim(),
+    ...(personalRouteKey === '' ? {} : { personalRouteKey }),
+    options,
+  }
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -74,9 +157,13 @@ function displayVersionTimestamp(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
-export interface ProjectRecordingTranscriptOptions {
+interface RecordingTranscriptWindowOptions {
   dayStartMillis?: number
   dayEndMillis?: number
+}
+
+export interface ProjectRecordingTranscriptOptions extends RecordingTranscriptWindowOptions {
+  viewerUserId: number
 }
 
 interface RecordingSessionInterval {
@@ -124,7 +211,7 @@ function projectEffectiveSessionIntervals(
 
 export function recordingPendingTranscriptionCount(
   response: unknown,
-  options: ProjectRecordingTranscriptOptions = {},
+  options: RecordingTranscriptWindowOptions = {},
 ): number {
   const data = objectValue(response)
   const sessions = new Map<string, Record<string, unknown>>()
@@ -155,8 +242,8 @@ export function recordingPendingTranscriptionCount(
 export function projectRecordingTranscripts(
   response: unknown,
   speakerResponse: unknown,
-  profilesByUserId: ReadonlyMap<number, { displayName: string; avatarRef?: string }> = new Map(),
-  options: ProjectRecordingTranscriptOptions = {},
+  profilesByUserId: ReadonlyMap<number, { displayName: string; avatarRef?: string }>,
+  options: ProjectRecordingTranscriptOptions,
 ): ArkmeRecordingPrivateTranscriptItem[] {
   const data = objectValue(response)
   const sessions = new Map<string, Record<string, unknown>>()
@@ -224,7 +311,8 @@ export function projectRecordingTranscripts(
     for (let index = 0; index < rows.length; index += 1) {
       const row = objectValue(rows[index])
       const isBackground = numberValue(row.b ?? row.background) === 1 || row.background === true
-      const text = stringValue(row.t ?? row.text).trim().replace(isBackground ? /^\(背景音\)\s*/ : /$^/, '')
+      const generationText = stringValue(row.t ?? row.text).trim()
+      const text = generationText.replace(isBackground ? /^\(背景音\)\s*/ : /$^/, '')
       if (text === '') continue
       const sourceSpeakerNumber = numberValue(row.n ?? row.speaker_num)
       const sourceSessionSpeaker = sessionSpeakers.find(
@@ -250,7 +338,7 @@ export function projectRecordingTranscripts(
         formalSpeaker.ref_usr_id ?? formalSpeaker.ref_user_id ?? formalSpeaker.user_id,
       )
       const profile = speakerUserId === undefined ? undefined : profilesByUserId.get(speakerUserId)
-      const isSelf = speakerUserId !== undefined && speakerUserId === numberValue(session.belong_usr)
+      const isSelf = speakerUserId !== undefined && speakerUserId === options.viewerUserId
       const persistentSpeakerNumber = optionalNumberValue(
         assignmentSessionSpeaker.speaker_display_number ?? assignmentSessionSpeaker.speakerDisplayNumber,
       )
@@ -297,6 +385,8 @@ export function projectRecordingTranscripts(
         isSelf,
         isBackground,
         text,
+        ...(generationText === text ? {} : { generationText }),
+        ...(stringValue(row.p).trim() === '' ? {} : { event: stringValue(row.p).trim() }),
         sourceIndex,
         uploadAtMillis,
       })

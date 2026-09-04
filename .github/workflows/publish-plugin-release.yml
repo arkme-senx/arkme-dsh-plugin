@@ -168,7 +168,6 @@ jobs:
         run: |
           corepack enable
           pnpm install --frozen-lockfile
-          pnpm test
           pnpm run typecheck
           pnpm run verify:call-assets
           pnpm run build

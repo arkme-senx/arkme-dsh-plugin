@@ -28,7 +28,7 @@
     "protocol_major": 1,
     "descriptor": {
       "runtime_ref": "runtime_fixture_01",
-      "capabilities": ["session.list", "session.prompt"]
+      "capabilities": ["session.list", "session.prompt", "model.list", "session.create.model", "session.model.get", "session.model.select"]
     }
   },
   "controller_publish": {
@@ -50,8 +50,13 @@
       "host_generation": 7,
       "issued_at": 1787760000000,
       "execute_before": 1787760030000,
-      "operation": "session.list",
-      "body": {}
+      "operation": "session.model.select",
+      "body": {
+        "session_ref": "session_fixture_01",
+        "model_provider": "deepseek-official",
+        "model_id": "deepseek-v4-pro",
+        "reasoning_effort": "max"
+      }
     }
   },
   "trusted_event_metadata": {

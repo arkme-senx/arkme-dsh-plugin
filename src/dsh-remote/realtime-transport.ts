@@ -28,6 +28,13 @@ interface ServerFrame extends Record<string, unknown> {
   request_id?: string
 }
 
+const remoteDiagnosticsEnabled = process.env.ARKME_DSH_REMOTE_DIAGNOSTICS === '1'
+
+function diagnosticRef(value: unknown): string {
+  const normalized = typeof value === 'string' ? value : ''
+  return normalized.length <= 8 ? normalized : normalized.slice(-8)
+}
+
 export interface DshRemoteFrameSizingInput {
   target: DshRemoteRuntimeTarget
   commandId: string
@@ -93,6 +100,11 @@ function validServerFrame(frame: ServerFrame): boolean {
   if (allowed === undefined || Object.keys(frame).some(key => !allowed.has(key))) return false
   if (frame.type === 'connection.ready') return positiveInteger(frame.connection_generation)
   if (frame.type === 'connection.replaced') return true
+  if (frame.type === 'error') {
+    return (frame.request_id === undefined || validRef(frame.request_id))
+      && typeof frame.code === 'string' && typeof frame.message === 'string'
+      && typeof frame.retryable === 'boolean'
+  }
   if (frame.type === 'channel.event') return frame.namespace === 'dsh_remote'
     && validRef(frame.channel_ref) && positiveInteger(frame.seq)
     && frame.event !== null && typeof frame.event === 'object' && !Array.isArray(frame.event)
@@ -314,7 +326,20 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
   private async request(frame: Record<string, unknown>, expectedType: string, signal: AbortSignal): Promise<ServerFrame> {
     const requestId = randomUUID()
     const response = this.waitForRequest(requestId, expectedType, signal)
-    this.send({ ...frame, request_id: requestId })
+    try {
+      this.send({ ...frame, request_id: requestId })
+    } catch (error) {
+      // The waiter must be installed before send because a test socket (and a
+      // sufficiently fast in-process transport) may answer synchronously. If
+      // send itself fails, however, leaving that waiter behind turns the next
+      // channel abort into an unhandled rejection and can terminate DSH via
+      // app-boot's fail-loud handler.
+      const waiter = this.waiters.get(requestId)
+      if (waiter !== undefined) {
+        this.waiters.delete(requestId)
+        waiter.reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    }
     return await response
   }
 
@@ -356,7 +381,24 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
       if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed) || typeof (parsed as { type?: unknown }).type !== 'string') return
       frame = parsed as ServerFrame
     } catch { return }
-    if (!validServerFrame(frame)) return
+    if (remoteDiagnosticsEnabled) {
+      console.info('dsh-arkme: remote_wire_frame', {
+        type: frame.type,
+        requestRef: diagnosticRef(frame.request_id),
+        channelRef: diagnosticRef(frame.channel_ref),
+        fields: Object.keys(frame).sort(),
+      })
+    }
+    if (!validServerFrame(frame)) {
+      if (remoteDiagnosticsEnabled) {
+        console.warn('dsh-arkme: remote_wire_frame_rejected', {
+          type: frame.type,
+          requestRef: diagnosticRef(frame.request_id),
+          fields: Object.keys(frame).sort(),
+        })
+      }
+      return
+    }
     if (frame.type === 'connection.replaced') {
       this.failConnection(new DshRemoteError('CONNECTION_REPLACED', 'Realtime 连接已被同一客户端的新连接替换', true), false)
       return
@@ -367,6 +409,10 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
     if (waiter !== undefined) {
       this.waiters.delete(waiterKey)
       waiter.resolve(frame)
+      return
+    }
+    if (frame.type === 'error') {
+      this.failConnection(remoteError(frame), false)
       return
     }
     if (frame.type === 'channel.event' && typeof frame.channel_ref === 'string') this.channelListeners.get(frame.channel_ref)?.(frame)

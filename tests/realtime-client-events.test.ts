@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
-import { arkmeChatDirectory, arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
+import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
 import {
   arkmeChatDeltaCalendarDateStamps,
@@ -116,6 +116,42 @@ describe('realtime reconcile routing', () => {
     expect(source.url).toBe('/arkme-self/api/events')
     expect(invalidate).toHaveBeenCalledOnce()
     expect(refreshRoot).not.toHaveBeenCalled()
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('applies timeline deletions even when no conversation is in the foreground', async () => {
+    let source!: FakeEventSource
+    class FakeEventSource {
+      onopen: (() => void) | null = null
+      onmessage: ((event: MessageEvent<string>) => void) | null = null
+      constructor(readonly url: string) { source = this }
+      close() {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+    vi.spyOn(arkmeMessageReadReceipts, 'reconcile').mockImplementation(() => undefined)
+    const apply = vi.spyOn(arkmeChatTimelineDelta, 'applyTimelineChange')
+
+    function Harness() {
+      useArkmeRealtimeClientEvents({
+        status: 'authenticated', revision: 1, userId: 10001, environment: 'prod',
+      }, 1, false)
+      return null
+    }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(createElement(Harness)) })
+    await act(async () => {
+      source.onmessage?.({ data: JSON.stringify({
+        type: 'timeline-changed', revision: 1,
+        sourceKey: 'opaque-source', timelineItemKey: 'opaque-item',
+        changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 9,
+      }) } as MessageEvent<string>)
+    })
+    expect(apply).toHaveBeenCalledWith({
+      type: 'timeline-changed', revision: 1,
+      sourceKey: 'opaque-source', timelineItemKey: 'opaque-item',
+      changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 9,
+    })
     await act(async () => { renderer.unmount() })
   })
 })

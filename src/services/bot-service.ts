@@ -23,6 +23,10 @@ import {
   SourceService,
   type ArkmeSourceRefPayload,
 } from './source-service.js'
+import {
+  BOT_DIRECT_CONVERSATION_LIST_ENTITY,
+  type ConversationListPreferenceEntry,
+} from './conversation-list-preference-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 const BOT_CONVERSATION_OWNER = {
@@ -42,6 +46,7 @@ export interface ArkmeBotRefPayload {
   botId: string
   provider: 'openclaw' | 'webhook'
   target: BotConversationTarget
+  conversationListActivityAtMillis: number
 }
 
 interface ArkmeBotRefEntry extends ArkmeBotRefPayload { key: string; expiresAtMillis: number }
@@ -567,14 +572,28 @@ export class BotService {
     const rawStatus = stringValue(raw.status).trim()
     const status: ArkmeBotStatus = rawStatus === 'online' || rawStatus === 'offline' ? rawStatus : 'unknown'
     const createdAtMillis = botPrivateChatTimestamp(raw.created_at ?? raw.createdAt)
+    const conversationListActivityAtMillis = botPrivateChatTimestamp(
+      raw.latest_activity_at ?? raw.latestActivityAt,
+    )
+    const latestMessageAtMillis = botPrivateChatTimestamp(
+      raw.latest_message_at ?? raw.latestMessageAt ?? raw.last_message_at ?? raw.lastMessageAt,
+    )
     return {
-      botRef: this.sealBotRef(userId, botId, provider, target),
+      botRef: this.sealBotRef(
+        userId,
+        botId,
+        provider,
+        target,
+        Math.max(createdAtMillis, conversationListActivityAtMillis, latestMessageAtMillis),
+      ),
       directoryKey: await this.botDirectoryKey(userId, botId),
       name,
       provider,
       description: stringValue(raw.description).trim(),
       status,
       ...(createdAtMillis === 0 ? {} : { createdAtMillis }),
+      ...(conversationListActivityAtMillis === 0 ? {} : { conversationListActivityAtMillis }),
+      ...(latestMessageAtMillis === 0 ? {} : { latestMessageAtMillis }),
       ...this.botAvatarProjection(raw, userId, botId),
     }
   }
@@ -696,6 +715,7 @@ export class BotService {
     botId: string,
     provider: 'openclaw' | 'webhook',
     target: BotConversationTarget | undefined,
+    conversationListActivityAtMillis = 0,
   ): string {
     this.pruneBotRefs()
     const key = `${String(userId)}\u0000${provider}\u0000${botId}`
@@ -705,6 +725,10 @@ export class BotService {
       this.botRefs.set(existingRef!, {
         ...existing,
         ...(target === undefined ? {} : { target }),
+        conversationListActivityAtMillis: Math.max(
+          existing.conversationListActivityAtMillis,
+          conversationListActivityAtMillis,
+        ),
         expiresAtMillis: this.now() + (this.refOptions.ttlMillis ?? BOT_REF_TTL_MILLIS),
       })
       return existingRef!
@@ -716,6 +740,7 @@ export class BotService {
       botId,
       provider,
       target: target ?? { kind: 'unavailable', reason: 'missing' },
+      conversationListActivityAtMillis: Math.max(0, conversationListActivityAtMillis),
       key,
       expiresAtMillis: this.now() + (this.refOptions.ttlMillis ?? BOT_REF_TTL_MILLIS),
     })
@@ -749,6 +774,33 @@ export class BotService {
     }
     const { expiresAtMillis: _expiresAtMillis, key: _key, ...reference } = entry
     return { ...reference }
+  }
+
+  async botConversationListPreferenceEntry(botRef: string): Promise<ConversationListPreferenceEntry> {
+    const session = await this.runtime.requireSession()
+    const bot = await this.openBotRef(botRef, session.userId)
+    if (bot.target.kind === 'chat') {
+      return await this.source.chatConversationListPreferenceEntryBySessionUid(
+        bot.target.chatSessionUid,
+        session.userId,
+      )
+    }
+    if (bot.target.kind === 'unavailable' && bot.target.reason !== 'missing') {
+      throw new ArkmePluginError(
+        'bot-conversation-preference-identity-unavailable',
+        '当前 Bot 会话归属不明确，请刷新后重试',
+        false,
+        409,
+      )
+    }
+    return {
+      ownerUserId: session.userId,
+      ref: { entityKind: BOT_DIRECT_CONVERSATION_LIST_ENTITY, entityUid: bot.botId },
+      evidence: {
+        sequence: 0,
+        activityAtMillis: bot.conversationListActivityAtMillis,
+      },
+    }
   }
 
   private pruneBotRefs(): void {

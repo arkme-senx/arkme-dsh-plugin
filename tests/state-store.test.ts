@@ -63,6 +63,59 @@ describe('ArkmeStateStore', () => {
     await expect(reloaded.getLongArticleDraft(10001, 'source-a')).resolves.toMatchObject({ title: '新建' })
   })
 
+  it('persists re-edit drafts by account, stable source identity, and record with revision CAS', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-reedit-draft-'))
+    const store = new ArkmeStateStore(root)
+    const first = await store.putRecordReeditDraft(10001, {
+      schemaVersion: 1,
+      sourceIdentityKey: 'stable-source-a',
+      lastSourceRef: 'source-ref-old',
+      itemUid: 'record-1',
+      title: '',
+      textContent: '候选正文',
+      baseVersion: 2,
+      baseContentFingerprint: 'a'.repeat(64),
+      editDurationMillis: 0,
+      updatedAtMillis: 100,
+    })
+    expect(first.draftRevision).toBe(1)
+
+    const resumed = await store.putRecordReeditDraft(10001, {
+      ...first,
+      lastSourceRef: 'source-ref-new',
+      baseVersion: 3,
+      baseContentFingerprint: 'b'.repeat(64),
+      updatedAtMillis: 200,
+    })
+    expect(resumed).toMatchObject({
+      draftRevision: 1,
+      lastSourceRef: 'source-ref-new',
+      baseVersion: 3,
+    })
+
+    const changed = await store.putRecordReeditDraft(10001, {
+      ...resumed,
+      textContent: '改口后的候选正文',
+      updatedAtMillis: 300,
+    })
+    expect(changed.draftRevision).toBe(2)
+
+    const reloaded = new ArkmeStateStore(root)
+    await expect(reloaded.getRecordReeditDraft(10001, 'stable-source-a', 'record-1')).resolves.toEqual(changed)
+    await expect(reloaded.getRecordReeditDraft(10002, 'stable-source-a', 'record-1')).resolves.toBeUndefined()
+    await expect(reloaded.getRecordReeditDraft(10001, 'stable-source-b', 'record-1')).resolves.toBeUndefined()
+    await expect(reloaded.getRecordReeditDraft(10001, 'stable-source-a', 'record-2')).resolves.toBeUndefined()
+
+    await expect(reloaded.removeRecordReeditDraft(10001, 'stable-source-a', 'record-1', 1)).resolves.toBe(false)
+    await expect(reloaded.getRecordReeditDraft(10001, 'stable-source-a', 'record-1')).resolves.toMatchObject({
+      draftRevision: 2,
+      updatedAtMillis: 300,
+    })
+
+    await expect(reloaded.removeRecordReeditDraft(10001, 'stable-source-a', 'record-1', 2)).resolves.toBe(true)
+    await expect(reloaded.getRecordReeditDraft(10001, 'stable-source-a', 'record-1')).resolves.toBeUndefined()
+  })
+
   it('persists recording import checkpoints and replaces them with revision CAS', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-import-'))
     const store = new ArkmeStateStore(root)
@@ -86,6 +139,20 @@ describe('ArkmeStateStore', () => {
     })
     await expect(reloaded.listRecordingImportJobs(10001)).resolves.toHaveLength(1)
     await expect(reloaded.listAllRecordingImportJobs()).resolves.toHaveLength(1)
+  })
+
+  it('removes only the exact account-scoped recording import job', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-remove-'))
+    const store = new ArkmeStateStore(root)
+    await store.putRecordingImportJob(10001, recordingJob())
+    await store.putRecordingImportJob(10001, recordingJob({ jobId: 'job-2' }))
+    await store.putRecordingImportJob(10002, recordingJob({ jobId: 'job-other', userId: 10002, belongUserId: 10002 }))
+
+    await store.removeRecordingImportJob(10001, 'job-1')
+
+    await expect(store.getRecordingImportJob(10001, 'job-1')).resolves.toBeUndefined()
+    await expect(store.getRecordingImportJob(10001, 'job-2')).resolves.toBeDefined()
+    await expect(store.getRecordingImportJob(10002, 'job-other')).resolves.toBeDefined()
   })
 
   it('does not share mutable upload checkpoints across the state-store boundary', async () => {
@@ -135,6 +202,19 @@ describe('ArkmeStateStore', () => {
     expect(await store.admitRecordingImportJob(10001, first, 20)).toMatchObject({ kind: 'inserted' })
     await expect(store.admitRecordingImportJob(10001, second, 20)).resolves.toEqual({ kind: 'duplicate-file-name' })
     await expect(store.listRecordingImportJobs(10001)).resolves.toHaveLength(1)
+  })
+
+  it('uses the desktop case-insensitive Audio owner file-name identity for admission', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-filename-case-dedupe-'))
+    const store = new ArkmeStateStore(root)
+    const first = recordingJob({ jobId: 'job-first', fileName: 'Meeting.WAV' })
+    const second = recordingJob({
+      jobId: 'job-second', fileName: 'meeting.wav', sourceHandle: '/private/second.upload',
+      fileSize: first.fileSize + 1, sha256: 'b'.repeat(64),
+    })
+
+    await expect(store.admitRecordingImportJob(10001, first, 20)).resolves.toMatchObject({ kind: 'inserted' })
+    await expect(store.admitRecordingImportJob(10001, second, 20)).resolves.toEqual({ kind: 'duplicate-file-name' })
   })
 
   it('does not let terminal local history replace the Audio owner duplicate decision', async () => {

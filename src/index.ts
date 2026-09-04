@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { readFileSync, realpathSync } from 'node:fs'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -24,6 +24,17 @@ import { createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFile
 import { createArkmeRecordingImportHandler, scavengeRecordingImportTemporaryFiles } from './recording-import-routes.js'
 import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
 import { createArkmeSecureValueStore, createArkmeSessionStore } from './keychain-store.js'
+import { HttpManagedOpenApiControlPlane } from './openapi-mcp/control-plane.js'
+import { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
+import { SecureManagedOpenApiCredentialStore } from './openapi-mcp/credential-store.js'
+import { registerManagedOpenApiMcpExecutionFence } from './openapi-mcp/execution-fence.js'
+import { HttpOpenApiMcpManifestSource } from './openapi-mcp/manifest-source.js'
+import { CordisOpenApiMcpRuntime } from './openapi-mcp/mcp-runtime.js'
+import { HttpOpenApiCapabilityGateway } from './openapi-capability-gateway.js'
+import { TeamService } from './services/team-service.js'
+import { FileOpenApiMcpReconcileLock, managedOpenApiMcpReconcileLockPath } from './openapi-mcp/reconcile-lock.js'
+import { ObservedArkmeSessionStore } from './openapi-mcp/session-observer.js'
+import { registerOpenApiMcpLifecycleTools } from './openapi-mcp/status-tool.js'
 import { ArkmeLocalDatabase } from './local-database.js'
 import { registerManagedAiProvider } from './managed-ai/adapter.js'
 import {
@@ -61,10 +72,12 @@ import { DshApiProxyAdapter, type DshPublicApiProxyLike } from './dsh-remote/api
 import { DshRemoteCommandLedger } from './dsh-remote/command-ledger.js'
 import { DshRemoteHttpControlPlane } from './dsh-remote/control-plane.js'
 import { createDefaultDshRemoteSocket } from './dsh-remote/default-socket-factory.js'
-import { ArkmeRemoteRealtimeHost } from './dsh-remote/host.js'
+import { ArkmeRemoteRealtimeHost, type DshRemoteSessionPersistenceLike } from './dsh-remote/host.js'
 import { ArkmeRemoteRealtimeTransport, type DshRemoteSocketLike } from './dsh-remote/realtime-transport.js'
 import { DshRemoteRuntimeStore } from './dsh-remote/runtime-store.js'
 import { DshRemoteRuntimeSecretBroker } from './dsh-remote/runtime-secret-broker.js'
+import { DshRemoteSessionOwnershipStore } from './dsh-remote/session-ownership-store.js'
+import { DshRemoteTurnUploadOutbox } from './dsh-remote/turn-upload-outbox.js'
 import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 
 export interface Config {
@@ -81,6 +94,8 @@ export interface Config {
   relationBaseUrl: string
   intelligentBaseUrl: string
   audioBaseUrl: string
+  openApiBaseUrl: string
+  openApiMcpEnabled: boolean
   extensionPublishBaseUrl: string
   extensionArtifactDirectory: string
   extensionTrustedSigningKeys: string
@@ -130,6 +145,8 @@ export const Config: Schema<Config> = Schema.object({
   relationBaseUrl: Schema.string().default('https://jotmo-relation.senguo.me'),
   intelligentBaseUrl: Schema.string().default('https://jotmo-intelligent.senguo.me'),
   audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
+  openApiBaseUrl: Schema.string().default(''),
+  openApiMcpEnabled: Schema.boolean().default(true),
   extensionPublishBaseUrl: Schema.string().default(''),
   extensionArtifactDirectory: Schema.string().default(''),
   extensionTrustedSigningKeys: Schema.string().default(ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS),
@@ -235,6 +252,13 @@ function dshRemoteClientId(accessToken: string): number | undefined {
   } catch { return undefined }
 }
 
+export function resolveDshRemoteProfileRef(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const value = env.ARKME_DSH_RUNTIME_SCOPE_REF?.trim() || env.DSH_PROFILE?.trim() || 'web'
+  return /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : 'web'
+}
+
 export function apply(ctx: Context, config: Config): void {
   config = resolveArkmeConfig(ctx, config)
   const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
@@ -244,9 +268,35 @@ export function apply(ctx: Context, config: Config): void {
   const stateDirectory = config.stateDirectory.trim() || join(dshHome, 'arkme-self', config.environment)
   const stateStore = new ArkmeStateStore(stateDirectory)
   const localDatabase = new ArkmeLocalDatabase(stateDirectory, stateStore)
-  const sessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}`)
+  const rawSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}`)
+  const sessionStore = new ObservedArkmeSessionStore(rawSessionStore)
   const pendingSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}.pending-binding`)
   const service = new ArkmeService({ ...config, fileStateDirectory: join(stateDirectory, 'files') }, sessionStore, localDatabase, fetch, pendingSessionStore)
+  const openApiMcpCredentialNamespace = `${config.keychainServicePrefix}.${config.environment}.openapi-mcp`
+  const openApiMcpController = new ManagedOpenApiMcpController({
+    mountMcp: config.openApiMcpEnabled,
+    sessionStore,
+    accessCredentialProvider: service,
+    controlPlane: new HttpManagedOpenApiControlPlane(config.openApiBaseUrl, fetch, config.requestTimeoutMs),
+    manifestSource: new HttpOpenApiMcpManifestSource(config.openApiBaseUrl, fetch, config.requestTimeoutMs),
+    credentialStore: new SecureManagedOpenApiCredentialStore(createArkmeSecureValueStore(openApiMcpCredentialNamespace)),
+    runtime: new CordisOpenApiMcpRuntime(ctx, config.openApiBaseUrl, config.requestTimeoutMs),
+    reconcileLock: new FileOpenApiMcpReconcileLock(managedOpenApiMcpReconcileLockPath(openApiMcpCredentialNamespace)),
+    logger: ctx.logger,
+  })
+  const teamService = new TeamService(
+    new HttpOpenApiCapabilityGateway(config.openApiBaseUrl, openApiMcpController, fetch),
+    service,
+  )
+  sessionStore.attach(openApiMcpController)
+  ctx.effect(
+    () => ctx.tools.guard(execution => openApiMcpController.guardToolExecution(execution.name)),
+    'dsh-arkme: managed OpenAPI MCP account guard',
+  )
+  ctx.effect(
+    () => registerManagedOpenApiMcpExecutionFence(ctx, openApiMcpController),
+    'dsh-arkme: managed OpenAPI MCP execution fence',
+  )
   service.attachLocalFileOpener(async (path, signal) => {
     await openDshHostPath(ctx, path, signal)
   })
@@ -352,6 +402,10 @@ export function apply(ctx: Context, config: Config): void {
   let extensionInstallTasks: ArkmeExtensionInstallTasks | undefined
   let ownedExtensionInventory: ArkmeOwnedExtensionInventory | undefined
   ctx.provide('arkmeData', service)
+  ctx.effect(async () => {
+    await service.accountScope.start()
+    return () => undefined
+  }, 'dsh-arkme: desktop account scope attestation')
   ctx.inject(['llm'], modelCtx => {
     registerManagedAiProvider(modelCtx, {
       intelligentBaseUrl: config.intelligentBaseUrl,
@@ -360,6 +414,7 @@ export function apply(ctx: Context, config: Config): void {
   })
   registerDSHAgentInputRecordSync(ctx, service)
   registerArkmeTools(ctx, service, config.toolProfile)
+  if (config.openApiMcpEnabled) registerOpenApiMcpLifecycleTools(ctx, openApiMcpController)
   ctx.inject(['dynamicCordisRunner', 'agents'], dynamicCtx => {
     const runner = (dynamicCtx as Context & { dynamicCordisRunner: DynamicCordisRunnerLike }).dynamicCordisRunner
     const agents = (dynamicCtx as Context & { agents: ArkmeAgentRegistryLike }).agents
@@ -427,6 +482,30 @@ export function apply(ctx: Context, config: Config): void {
     }, 'dsh-arkme: marketplace dynamic runner bridge')
   })
   ctx.inject(['apiProxy'], apiCtx => {
+    const agentDefaultModel = apiCtx.get('agentDefaultModel') as {
+      currentSelection?: () => unknown
+    } | undefined
+    const sessionPersistence = apiCtx.get('sessionPersistence') as DshRemoteSessionPersistenceLike | undefined
+    const apiProxy = new DshApiProxyAdapter(
+      apiCtx.apiProxy as unknown as DshPublicApiProxyLike,
+      {
+        ...(typeof agentDefaultModel?.currentSelection !== 'function'
+          ? {}
+          : { defaultModelSelection: () => agentDefaultModel.currentSelection!() }),
+      },
+    )
+    service.accountScope.attachGuestConversationProbe(async () => {
+      try {
+        let cursor: string | undefined
+        for (let page = 0; page < 200; page += 1) {
+          const sessions = await apiProxy.sessions({ limit: 50, ...(cursor === undefined ? {} : { cursor }) })
+          if (sessions.items.some(session => !session.blank)) return true
+          if (sessions.nextCursor === undefined) return false
+          cursor = sessions.nextCursor
+        }
+      } catch { /* An unreadable guest profile is claimed whole rather than silently discarded. */ }
+      return true
+    })
     // The default-off feature must not construct platform credential stores,
     // open DSH muxes or otherwise affect the existing Arkme plugin lifecycle.
     if (!config.dshRemoteFeatureEnabled) return
@@ -437,29 +516,30 @@ export function apply(ctx: Context, config: Config): void {
         accessToken: input.accessToken,
         signal: input.signal,
       }))
-    const profileRefValue = process.env.DSH_PROFILE?.trim() || 'web'
-    const profileRef = /^[A-Za-z0-9._:-]{1,128}$/.test(profileRefValue) ? profileRefValue : 'web'
+    const profileRef = resolveDshRemoteProfileRef()
     const hostClientRef = `host_${createHash('sha256').update(`dsh-remote-host-client-v1\n${stateDirectory}\n${profileRef}`).digest('base64url')}`
     const realtime = new ArkmeRemoteRealtimeTransport(async input => {
-      const session = await sessionStore.read()
+      const session = await service.accountScope.scopedSession()
       if (session === undefined) throw new Error('Arkme session is unavailable')
       return await authenticatedSocketFactory({ ...input, accessToken: session.accessToken })
     })
-    const apiProxy = new DshApiProxyAdapter(apiCtx.apiProxy as unknown as DshPublicApiProxyLike)
     const secretBroker = new DshRemoteRuntimeSecretBroker(createArkmeSecureValueStore(
       `${config.keychainServicePrefix}.${config.environment}.dsh-remote-desktop`,
     ))
+    const controlPlane = new DshRemoteHttpControlPlane({
+      post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal),
+    })
     const host = new ArkmeRemoteRealtimeHost({
       featureEnabled: config.dshRemoteFeatureEnabled,
       transportAvailable: true,
       profileRef, hostClientRef, secretBroker,
       runtimeStore: new DshRemoteRuntimeStore(stateDirectory),
-      controlPlane: new DshRemoteHttpControlPlane({
-        post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal),
-      }),
+      sessionOwnership: new DshRemoteSessionOwnershipStore(stateDirectory, profileRef),
+      controlPlane,
       realtime, apiProxy,
+      ...(sessionPersistence === undefined ? {} : { sessionPersistence }),
       readSession: async () => {
-        const session = await sessionStore.read()
+        const session = await service.accountScope.scopedSession()
         if (session === undefined) return undefined
         const clientId = dshRemoteClientId(session.accessToken)
         return clientId === undefined ? undefined : { userId: session.userId, clientId }
@@ -468,11 +548,39 @@ export function apply(ctx: Context, config: Config): void {
         stateDirectory, 'dsh-remote', 'ledger',
         createHash('sha256').update(`dsh-remote-ledger-account-v1\n${accountId}`).digest('base64url'),
       ), key),
+      turnUploadForAccount: (accountId, key, maxObjectBytes, callbacks) => new DshRemoteTurnUploadOutbox({
+        directory: join(
+          stateDirectory, 'dsh-remote', 'history',
+          createHmac('sha256', key)
+            .update(`dsh-remote-history-account-v1\n${accountId}\n${profileRef}`)
+            .digest('base64url'),
+        ),
+        profileRef,
+        key,
+        maxObjectBytes,
+        controlPlane,
+        onError: (error, sessionRef) => {
+          callbacks.onError(error, sessionRef)
+          ctx.logger.warn('dsh-arkme: Turn OSS upload deferred: %s', error instanceof Error ? error.message : String(error))
+        },
+        onFinalized: callbacks.onFinalized,
+      }),
     })
     remoteHost = host
     apiCtx.effect(async () => {
-      await host.start()
+      let lifecycleTail: Promise<void> = Promise.resolve()
+      const reconcile = () => {
+        lifecycleTail = lifecycleTail.then(
+          async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
+          async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
+        )
+      }
+      const unsubscribe = service.accountScope.subscribe(reconcile)
+      service.accountScope.attachScopeCloseBarrier(async () => { await lifecycleTail })
+      await lifecycleTail
       return async () => {
+        unsubscribe()
+        await lifecycleTail
         if (remoteHost === host) remoteHost = undefined
         await host.stop()
       }
@@ -487,6 +595,8 @@ export function apply(ctx: Context, config: Config): void {
     ownedExtensionInventory: () => ownedExtensionInventory,
     remoteHost: () => remoteHost,
     desktopQuarantine,
+    openApiMcpController,
+    teamService,
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {
@@ -543,6 +653,10 @@ export function apply(ctx: Context, config: Config): void {
     extensionStore.close()
     ownedExtensionStore.close()
   }, 'dsh-arkme: local cache database')
+  ctx.effect(() => {
+    openApiMcpController.start()
+    return async () => { await openApiMcpController.dispose() }
+  }, 'dsh-arkme: managed OpenAPI credential and MCP lifecycle')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
   ctx.effect(async () => {
     const protectedRecordingPaths = new Set((await stateStore.listAllRecordingImportJobs())
@@ -634,14 +748,15 @@ export function apply(ctx: Context, config: Config): void {
 }
 
 export function resolveArkmeConfig(ctx: Context, config: Config): Config {
-  const resolved = config.dataBaseUrl.trim() === ''
-    ? {
-        ...config,
-        dataBaseUrl: config.environment === 'prod'
-          ? 'https://data.jotmo.cc'
-          : 'https://jotmo-data.senguo.me',
-      }
-    : config
+  const resolved = {
+    ...config,
+    dataBaseUrl: config.dataBaseUrl.trim() === ''
+      ? config.environment === 'prod' ? 'https://data.jotmo.cc' : 'https://jotmo-data.senguo.me'
+      : config.dataBaseUrl,
+    openApiBaseUrl: (config.openApiBaseUrl.trim() === ''
+      ? config.environment === 'prod' ? 'https://openapi.jotmo.cc' : 'https://jotmo-openapi.senguo.me'
+      : config.openApiBaseUrl).replace(/\/+$/, ''),
+  }
   validateConfig(ctx, resolved)
   return resolved
 }
@@ -664,6 +779,7 @@ function validateConfig(ctx: Context, config: Config): void {
       config.relationBaseUrl,
       config.intelligentBaseUrl,
       config.audioBaseUrl,
+      config.openApiBaseUrl,
       ...(config.dshRemoteFeatureEnabled ? [config.dshRemoteRealtimeBaseUrl] : []),
     ].filter(origin => new URL(origin).hostname.endsWith('.senguo.me'))
     if (testDefaults.length > 0) {
@@ -700,13 +816,15 @@ function validateConfig(ctx: Context, config: Config): void {
     ['relationBaseUrl', config.relationBaseUrl],
     ['intelligentBaseUrl', config.intelligentBaseUrl],
     ['audioBaseUrl', config.audioBaseUrl],
+    ['openApiBaseUrl', config.openApiBaseUrl],
     ['shareWebsite', config.shareWebsite],
     ...(config.dshRemoteFeatureEnabled
       ? [['dshRemoteRealtimeBaseUrl', config.dshRemoteRealtimeBaseUrl] as const]
       : []),
   ] as const) {
     const url = new URL(raw)
-    if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {
+    if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/'
+      || label === 'openApiBaseUrl' && (url.search !== '' || url.hash !== '')) {
       throw new Error(`dsh-arkme: ${label} must be an HTTPS origin without credentials or path`)
     }
   }
@@ -741,6 +859,8 @@ export type {
   ArkmeIdAvailabilitySnapshot,
   ArkmeIdMutationResult,
   ArkmePendingWrite,
+  ArkmeRecordTagItem,
+  ArkmeRecordTagList,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingItem,
   ArkmeRelatedRecordingMonthBucket,
@@ -834,6 +954,7 @@ export type {
   ArkmeWechatPhoneEvidence,
   ArkmeWechatPhonePage,
 } from './types.js'
+export type { OpenApiMcpState, OpenApiMcpStatus } from './openapi-mcp/types.js'
 export {
   ARKME_PROVIDER_CONTRACT_VERSION,
   ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES,

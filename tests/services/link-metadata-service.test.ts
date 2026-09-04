@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ArkmeLinkMetadataService,
   isPublicNetworkAddress,
+  isProxySyntheticNetworkAddress,
   type ArkmeLinkDocument,
   type ArkmeLinkDocumentReader,
 } from '../../src/services/link-metadata-service.js'
@@ -40,6 +41,22 @@ describe('ArkmeLinkMetadataService', () => {
       url: 'https://example.com/article',
       title: 'Jotmo & 即我',
       siteName: 'example.com',
+    })
+  })
+
+  it('skips generic OpenGraph titles and keeps the concrete document title', async () => {
+    const reader = documentReader({
+      'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef': {
+        contentType: 'text/html; charset=utf-8',
+        body: '<html><head><meta name="og:title" content="即我"><title>指尖烟花 - 即我扩展</title></head></html>',
+      },
+    })
+    const service = new ArkmeLinkMetadataService(reader)
+
+    await expect(service.resolve('https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef')).resolves.toEqual({
+      url: 'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef',
+      title: '指尖烟花 - 即我扩展',
+      siteName: 'jiwo.cc',
     })
   })
 
@@ -115,21 +132,31 @@ describe('ArkmeLinkMetadataService', () => {
     expect(isPublicNetworkAddress('2606:4700:4700::1111')).toBe(true)
     for (const address of [
       '0.0.0.0', '10.0.0.1', '100.64.0.1', '127.0.0.1', '169.254.169.254',
-      '192.168.1.1', '198.51.100.1', '224.0.0.1', '::1', '::ffff:127.0.0.1', '::ffff:7f00:1',
+      '192.168.1.1', '198.18.0.207', '198.51.100.1', '224.0.0.1', '::1', '::ffff:127.0.0.1', '::ffff:7f00:1',
       '64:ff9b::7f00:1', '2001::1', '2001:db8::1', '2002::1', '3fff::1',
       'fc00::1', 'fec0::1', 'fe80::1',
     ]) expect(isPublicNetworkAddress(address)).toBe(false)
+  })
+
+  it('recognizes Clash-style fake-ip answers without treating them as public internet addresses', () => {
+    expect(isProxySyntheticNetworkAddress('198.18.0.1')).toBe(true)
+    expect(isProxySyntheticNetworkAddress('198.19.255.254')).toBe(true)
+    expect(isProxySyntheticNetworkAddress('::ffff:198.18.0.207')).toBe(true)
+    expect(isProxySyntheticNetworkAddress('8.8.8.8')).toBe(false)
+    expect(isProxySyntheticNetworkAddress('192.168.1.1')).toBe(false)
   })
 
   it('returns no metadata for non-HTML or title-less documents without blocking the caller', async () => {
     const reader = documentReader({
       'https://example.com/image': { contentType: 'image/png', body: 'not html' },
       'https://example.com/empty': { contentType: 'text/html', body: '<html><head></head></html>' },
+      'https://example.com/generic': { contentType: 'text/html', body: '<html><head><meta name="og:title" content="即我"></head></html>' },
     })
     const service = new ArkmeLinkMetadataService(reader)
 
     await expect(service.resolve('https://example.com/image')).resolves.toBeNull()
     await expect(service.resolve('https://example.com/empty')).resolves.toBeNull()
+    await expect(service.resolve('https://example.com/generic')).resolves.toBeNull()
   })
 
   it('keeps transport absence nullable so each consumer can own its presentation fallback', async () => {

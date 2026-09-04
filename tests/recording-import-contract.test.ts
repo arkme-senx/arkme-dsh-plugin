@@ -64,6 +64,7 @@ describe('recording import contract', () => {
   })
 
   it('rejects files beyond the desktop size and duration boundary', () => {
+    expect(MAX_RECORDING_IMPORT_DURATION_MILLIS).toBe(10 * 60 * 60 * 1_000)
     expect(() => recordingImportFileKind({
       fileName: 'meeting.wav', mimeType: 'audio/wav',
       fileSize: MAX_RECORDING_IMPORT_BYTES + 1, durationMillis: 10_000,
@@ -95,11 +96,14 @@ describe('recording import contract', () => {
     }), 'opaque-ref')
     expect(publicJob).toEqual(expect.objectContaining({
       importRef: 'opaque-ref', phase: 'uploading', progress: 0.5, ownership: 'self',
+      startAtMillis: 1_725_000_000_000,
+      endAtMillis: 1_725_000_060_000,
     }))
     expect(publicJob).not.toHaveProperty('sourceHandle')
     expect(publicJob).not.toHaveProperty('sessionId')
     expect(publicJob).not.toHaveProperty('childId')
     expect(publicJob).not.toHaveProperty('childFinished')
+    expect(publicJob).not.toHaveProperty('processingDurationMillis')
     expect(JSON.stringify(publicJob)).not.toContain('/private/')
   })
 
@@ -109,5 +113,15 @@ describe('recording import contract', () => {
     expect(publicJob.ownership).toBe('other')
     expect(publicJob).not.toHaveProperty('belongUserId')
     expect(JSON.stringify(publicJob)).not.toContain('42')
+  })
+
+  it('keeps local Audio acceptance distinct from owner processing state', () => {
+    const publicJob = toPublicRecordingImportJob(job({ phase: 'accepted' }), 'opaque-ref')
+
+    expect(publicJob).toMatchObject({
+      phase: 'accepted',
+      status: 'accepted',
+      statusDetail: 'Audio 已接收',
+    })
   })
 })

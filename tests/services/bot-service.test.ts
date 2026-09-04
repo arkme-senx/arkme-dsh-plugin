@@ -15,6 +15,66 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('BotService', () => {
+  it('keeps direct Bot and Chat-backed Bot preference identities semantically separate', async () => {
+    const { service, source } = createBotPreferenceFixture([
+      {
+        bot_id: 'same', name: 'Direct Bot', provider: 'openclaw', status: 'online',
+        subject_uid: 'subject-1', created_at: 100,
+      },
+      {
+        bot_id: 'chat-bot', name: 'Chat Bot', provider: 'webhook', status: 'online',
+        chat_session_uid: 'same', created_at: 200,
+      },
+    ])
+    const bots = (await service.listBots()).items
+    source.setChatSource(42, 'same', {
+      sourceRef: 'chat-source-ref',
+      kind: 'private_chat',
+      displayName: 'Chat Bot',
+      activeAtMillis: 333_000,
+      unreadCount: 0,
+      latestSequence: 9,
+    })
+
+    await expect(service.botConversationListPreferenceEntry(bots[0]!.botRef)).resolves.toEqual({
+      ownerUserId: 42,
+      ref: { entityKind: 2, entityUid: 'same' },
+      evidence: { sequence: 0, activityAtMillis: 100_000 },
+    })
+    await expect(service.botConversationListPreferenceEntry(bots[1]!.botRef)).resolves.toEqual({
+      ownerUserId: 42,
+      ref: { entityKind: 1, entityUid: 'same' },
+      evidence: { sequence: 9, activityAtMillis: 333_000 },
+    })
+  })
+
+  it('uses the Bot owner latest activity field as direct-conversation evidence', async () => {
+    const { service } = createBotPreferenceFixture([{
+      bot_id: 'bot-activity', name: 'Active Bot', provider: 'openclaw', status: 'online',
+      subject_uid: 'subject-activity', created_at: 1_788_000_000_000_000,
+      latest_activity_at: 1_788_100_000_000,
+    }])
+    const bot = (await service.listBots()).items[0]!
+
+    await expect(service.botConversationListPreferenceEntry(bot.botRef)).resolves.toMatchObject({
+      ref: { entityKind: 2, entityUid: 'bot-activity' },
+      evidence: { sequence: 0, activityAtMillis: 1_788_100_000_000 },
+    })
+    expect(bot.conversationListActivityAtMillis).toBe(1_788_100_000_000)
+    expect(bot.latestMessageAtMillis).toBeUndefined()
+  })
+
+  it('does not guess a direct preference identity when Bot owners conflict', async () => {
+    const { service } = createBotPreferenceFixture([{
+      bot_id: 'ambiguous', name: 'Ambiguous Bot', provider: 'openclaw', status: 'online',
+      subject_uid: 'subject-1', chat_session_uid: 'chat-1', created_at: 100,
+    }])
+    const botRef = (await service.listBots()).items[0]!.botRef
+
+    await expect(service.botConversationListPreferenceEntry(botRef))
+      .rejects.toMatchObject({ code: 'bot-conversation-preference-identity-unavailable' })
+  })
+
   it('projects an owned Bot without exposing its raw id', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
@@ -130,3 +190,21 @@ describe('BotService', () => {
     expect(() => { service.attachOpenClawProvisioner({} as never) }).toThrow('already attached')
   })
 })
+
+function createBotPreferenceFixture(rawBots: Array<Record<string, unknown>>) {
+  const sessions: ArkmeSessionStore = {
+    async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+    async write() {}, async delete() {},
+  }
+  const runtime = new ServiceRuntime(
+    config,
+    sessions,
+    { async uniqueCode() { return 'device-secret' } } as StateStore,
+    vi.fn(async () => new Response(JSON.stringify({ code: 200, data: { bots: rawBots } }), { status: 200 })) as typeof fetch,
+  )
+  const source = new SourceService(runtime, new ProfileService(runtime), {
+    async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+    recordItem() { return undefined },
+  })
+  return { service: new BotService(runtime, source), source }
+}

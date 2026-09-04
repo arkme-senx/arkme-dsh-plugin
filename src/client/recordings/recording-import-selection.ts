@@ -3,6 +3,7 @@ import {
   MAX_RECORDING_IMPORT_BYTES,
   MAX_RECORDING_IMPORT_DURATION_MILLIS,
 } from '../../recording-import-shared.js'
+import { probeImaAdpcmWave } from '../../recording-wave-probe.js'
 
 export type ArkmeRecordingSelectionFormat = 'WAV' | 'MP3' | 'M4A'
 
@@ -33,8 +34,15 @@ export function validateArkmeRecordingSelection(file: File): ArkmeRecordingSelec
 }
 
 async function probeRecordingFile(file: File): Promise<ArkmeRecordingSelectionProbe> {
-  const input = new Input({ source: new BlobSource(file), formats: [WAVE, MP3, MP4] })
+  let input: Input | undefined
   try {
+    const imaAdpcm = await probeImaAdpcmWave({
+      size: file.size,
+      read: async (offset, length) => new Uint8Array(await file.slice(offset, offset + length).arrayBuffer()),
+    })
+    if (imaAdpcm !== undefined) return { format: 'WAV', durationMillis: imaAdpcm.durationMillis }
+
+    input = new Input({ source: new BlobSource(file), formats: [WAVE, MP3, MP4] })
     if (!await input.canRead()) throw new Error('unreadable')
     const actualFormat = await input.getFormat()
     const format: ArkmeRecordingSelectionFormat | undefined = actualFormat === WAVE
@@ -51,7 +59,7 @@ async function probeRecordingFile(file: File): Promise<ArkmeRecordingSelectionPr
     const seconds = await input.getDurationFromMetadata(audioTracks) ?? await input.computeDuration(audioTracks)
     return { format, durationMillis: Math.round(seconds * 1_000) }
   } finally {
-    input.dispose()
+    input?.dispose()
   }
 }
 

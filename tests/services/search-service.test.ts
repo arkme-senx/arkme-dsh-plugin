@@ -33,6 +33,50 @@ describe('SearchService', () => {
     })
   })
 
+  it('queries the canonical tag projection and maps its record core for search display', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let requestedUrl = ''
+    let requestedBody: Record<string, unknown> = {}
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      requestedUrl = String(input)
+      requestedBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      return new Response(JSON.stringify({ code: 0, data: {
+        items: [{
+          normalized_tag: '项目', tag_text: '项目', record_uid: 'record-tag-1', send_at: 123,
+          record_core: {
+            record_uid: 'record-tag-1', origin_kind: 2, origin_container_ref: 'topic-1',
+            title: '项目复盘', text_content: '进展 #项目', send_at: 123, content_payload: {},
+          },
+        }],
+        next_send_at: 120, next_record_uid: 'record-tag-0', has_more: true,
+      } }), { status: 200 })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+    const profile = new ProfileService(runtime)
+    const media = new MediaService(runtime, profile, {
+      async openWorldImageRef() { throw new Error('unexpected') },
+    }, { recordUid() { return '' } })
+    const record = new RecordService(runtime, media, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+    const service = new SearchService(runtime, record, media)
+
+    await expect(service.searchTagRecords({ normalizedTag: '＃项目', limit: 50 })).resolves.toMatchObject({
+      items: [{
+        recordUid: 'record-tag-1', sourceKind: 2, sourceUid: 'topic-1',
+        title: '项目复盘', textContent: '进展 #项目', snippet: '进展 #项目',
+      }],
+      hasMore: true,
+      nextCursor: '120:record-tag-0',
+      itemCount: 1,
+    })
+    expect(requestedUrl).toBe('https://record.test/api/v1/records/tags/query')
+    expect(requestedBody).toEqual({ normalized_tag: '项目', limit: 50 })
+  })
+
   it('normalizes DSH Agent input records so the client can hide the internal topic', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },

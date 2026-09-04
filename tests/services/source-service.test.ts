@@ -236,11 +236,12 @@ describe('SourceService', () => {
     })
     const source = await service.sourceItem({
       version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '测试会话',
-      sidebarSubjectUid: 'topic-chat-1', sidebarHiddenAnchorTimestamp: 500,
+      sidebarSubjectUid: 'topic-chat-1', conversationListActivityAtMillis: 500,
+      conversationListLatestSequence: 7,
     })
 
-    await expect(service.setChatDirectoryPolicy(source.sourceRef, { pinned: true })).resolves.toEqual({
-      sourceRef: source.sourceRef, pinned: true, hidden: false,
+    await expect(service.setChatDirectoryPin(source.sourceRef, true)).resolves.toEqual({
+      sourceRef: source.sourceRef, pinned: true,
     })
     expect(requests).toHaveLength(3)
     expect(requests[1]).toMatchObject({
@@ -256,7 +257,7 @@ describe('SourceService', () => {
     })
   })
 
-  it('writes removal to the same cloud sidebar-hidden state used by the Flutter clients', async () => {
+  it('resolves Chat preference identity and activity without changing policy state', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
@@ -268,14 +269,6 @@ describe('SourceService', () => {
       const path = new URL(String(input)).pathname
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ path, body })
-      if (path === '/api/v1/chats/policy/get') {
-        return new Response(JSON.stringify({ code: 200, data: {
-          show_in_home_state: 1, privacy_state: 1, mute_state: 1, pin_state: 1, notify_state: 1, status: 1,
-        } }), { status: 200 })
-      }
-      if (path === '/api/v1/chats/policy/update' || path === '/api/v1/subject/batch-set-sidebar-hidden-status') {
-        return new Response(JSON.stringify({ code: 200, data: {} }), { status: 200 })
-      }
       throw new Error(`unexpected path: ${path}`)
     }) as typeof fetch)
     const service = new SourceService(runtime, new ProfileService(runtime), {
@@ -284,21 +277,55 @@ describe('SourceService', () => {
     })
     const source = await service.sourceItem({
       version: 1, userId: 42, kind: 'group_chat', ownerRef: 'chat-group-1', displayName: '测试群聊',
-      sidebarSubjectUid: 'topic-group-1', sidebarHiddenAnchorTimestamp: 123,
+      sidebarSubjectUid: 'topic-group-1', conversationListActivityAtMillis: 123,
+      conversationListLatestSequence: 9,
     })
 
-    await expect(service.setChatDirectoryPolicy(source.sourceRef, { hidden: true })).resolves.toEqual({
-      sourceRef: source.sourceRef, pinned: false, hidden: true,
+    await expect(service.chatConversationListPreferenceEntry(source.sourceRef)).resolves.toEqual({
+      ownerUserId: 42,
+      ref: { entityKind: 1, entityUid: 'chat-group-1' },
+      evidence: { sequence: 9, activityAtMillis: 123 },
     })
-    expect(requests).toContainEqual({
-      path: '/api/v1/subject/batch-set-sidebar-hidden-status',
-      body: {
+    expect(requests).toEqual([])
+  })
+
+  it('uses the session activity fallback when a list row has no positive sort activity', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, vi.fn(async input => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/v1/chats/list') return new Response(JSON.stringify({ code: 200, data: {
         items: [{
-          subject_uid: 'topic-group-1',
-          hidden: true,
-          hidden_anchor_timestamp: 123,
+          sort_active_at: 0,
+          session: {
+            chat_session_uid: 'group-fallback', session_kind: 2, title: '回退群聊',
+            last_active_at: 500, last_seq: 8,
+          },
+          unread_snapshot: { unread_count: 0, session_last_seq: 8 },
         }],
-      },
+        has_more: false,
+      } }), { status: 200 })
+      if (path === '/api/v1/chats/group-avatar-snapshots') {
+        return new Response(JSON.stringify({ code: 200, data: { items: [] } }), { status: 200 })
+      }
+      throw new Error(`unexpected path: ${path}`)
+    }) as typeof fetch)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+
+    const listed = await service.listGroupSources({ refresh: true })
+    const item = listed.items[0]!
+
+    expect(item.activeAtMillis).toBe(500)
+    await expect(service.chatConversationListPreferenceEntry(item.sourceRef)).resolves.toMatchObject({
+      ref: { entityKind: 1, entityUid: 'group-fallback' },
+      evidence: { sequence: 8, activityAtMillis: 500 },
     })
   })
 

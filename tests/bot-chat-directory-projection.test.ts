@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { projectBotChatDirectory } from '../src/client/bot-chat-directory-projection.js'
+import {
+  mergeBotDirectoryActivity,
+  projectBotChatDirectory,
+} from '../src/client/bot-chat-directory-projection.js'
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../src/types.js'
 
 const chatBot: ArkmeBotSummary = {
@@ -23,7 +26,14 @@ describe('Bot Chat directory projection', () => {
 
     expect(projected.sources).toEqual([unrelated])
     expect(projected.bots).toEqual([
-      { ...chatBot, latestMessageAtMillis: 20, latestMessagePreview: '最新 Chat 消息', unreadCount: 3, isMuted: true },
+      {
+        ...chatBot,
+        latestMessageAtMillis: 20,
+        conversationListActivityAtMillis: 20,
+        latestMessagePreview: '最新 Chat 消息',
+        unreadCount: 3,
+        isMuted: true,
+      },
       subjectBot,
     ])
   })
@@ -56,5 +66,22 @@ describe('Bot Chat directory projection', () => {
     expect(projected.bots[0]).toMatchObject({ unreadCount: 3 })
     expect(projected.bots[0]).toMatchObject({ isMuted: true })
     expect(projected.bots[0]).not.toHaveProperty('latestMessagePreview')
+  })
+
+  it('advances existing direct Bot rows from a lightweight owner-list refresh', () => {
+    const current = { ...subjectBot, directoryKey: 'stable-bot', conversationListActivityAtMillis: 20 }
+    const refreshed = {
+      ...subjectBot,
+      botRef: 'rotated-ref',
+      directoryKey: 'stable-bot',
+      conversationListActivityAtMillis: 30,
+    }
+
+    expect(mergeBotDirectoryActivity([current], [refreshed])).toEqual([
+      { ...current, conversationListActivityAtMillis: 30 },
+    ])
+    const unchanged = [current]
+    expect(mergeBotDirectoryActivity(unchanged, [{ ...refreshed, conversationListActivityAtMillis: 10 }]))
+      .toBe(unchanged)
   })
 })

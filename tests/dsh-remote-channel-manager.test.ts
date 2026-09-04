@@ -19,9 +19,10 @@ class MemorySecrets implements ArkmeSecureValueStore {
 
 class FakeRealtime implements DshRemoteRealtimeTransport {
   subscriptions: Array<{ target: DshRemoteRuntimeTarget; afterSequence?: number }> = []
-  publishes: Array<{ target: DshRemoteRuntimeTarget; direction: string; payload: Record<string, unknown> }> = []
+  publishes: Array<{ target: DshRemoteRuntimeTarget; commandId: string; direction: string; payload: Record<string, unknown> }> = []
   onEvent: ((payload: DshRemoteRealtimePayload, metadata: DshRemoteTrustedEventMetadata) => void) | undefined
   failReplayOnce = false
+  failPublishCount = 0
   subscribeDisconnect(): () => void { return () => undefined }
   async connect(): Promise<void> {}
   async disconnect(): Promise<void> {}
@@ -37,7 +38,11 @@ class FakeRealtime implements DshRemoteRealtimeTransport {
     return () => { this.onEvent = undefined }
   }
   async publish(input: Parameters<DshRemoteRealtimeTransport['publish']>[0]): Promise<{ sequence: number }> {
-    this.publishes.push({ target: input.target, direction: input.direction, payload: input.payload })
+    this.publishes.push({ target: input.target, commandId: input.commandId, direction: input.direction, payload: input.payload })
+    if (this.failPublishCount > 0) {
+      this.failPublishCount -= 1
+      throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'retry publish', true)
+    }
     return { sequence: this.publishes.length }
   }
   event(payload: DshRemoteRealtimePayload, metadata: DshRemoteTrustedEventMetadata): void { this.onEvent?.(payload, metadata) }
@@ -63,6 +68,7 @@ function managerFixture(): {
   const manager = new DshRemoteHostChannelManager({
     accountId: '42', profileRef: 'web', hostClientRef: 'host-client-01', runtimeRef: 'runtime-01',
     realtime, secretBroker: new DshRemoteRuntimeSecretBroker(new MemorySecrets()), dispatch,
+    onProjectionError: error => { fatals.push({ projection: error }) },
     onFatal: error => { fatals.push(error) },
   })
   return { manager, realtime, dispatch, fatals }
@@ -97,7 +103,7 @@ describe('account-scoped Runtime channel manager', () => {
     expect(dispatch).toHaveBeenCalledOnce()
   })
 
-  it('ignores Host echoes but treats a stale controller generation as fatal', async () => {
+  it('ignores Host echoes and delegates stale controller leases without restarting the Host', async () => {
     const { manager, realtime, dispatch, fatals } = managerFixture()
     await manager.prepare()
     await manager.activate(9)
@@ -105,8 +111,13 @@ describe('account-scoped Runtime channel manager', () => {
     await Promise.resolve()
     expect(dispatch).not.toHaveBeenCalled()
     realtime.event({ kind: 'request' }, controllerMetadata(8))
-    await vi.waitFor(() => { expect(fatals).toHaveLength(1) })
-    expect(fatals[0]).toMatchObject({ code: 'HOST_GENERATION_STALE', retryable: true })
+    await vi.waitFor(() => { expect(dispatch).toHaveBeenCalledOnce() })
+    await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(1) })
+    expect(dispatch.mock.calls[0]![1]).toMatchObject({
+      serviceLeaseGeneration: 9,
+      metadata: { targetHostLeaseGeneration: 8 },
+    })
+    expect(fatals).toEqual([])
   })
 
   it('recovers a replay gap by subscribing at the live head', async () => {
@@ -125,7 +136,8 @@ describe('account-scoped Runtime channel manager', () => {
     const broker = new DshRemoteRuntimeSecretBroker(secrets)
     const manager = new DshRemoteHostChannelManager({
       accountId: '42', profileRef: 'web', hostClientRef: 'host-client-01', runtimeRef: 'runtime-01',
-      realtime, secretBroker: broker, dispatch: async () => response('request-01') as never, onFatal: () => undefined,
+      realtime, secretBroker: broker, dispatch: async () => response('request-01') as never,
+      onProjectionError: () => undefined, onFatal: () => undefined,
     })
     await manager.prepare()
     await manager.activate(9)
@@ -134,5 +146,31 @@ describe('account-scoped Runtime channel manager', () => {
     await manager.close()
     await expect(broker.runtimeCursor({ accountId: '42', runtimeRef: 'runtime-01', channelRef: 'runtime-01' })).resolves.toBe(17)
     expect([...secrets.values.values()].join('\n')).not.toContain('binding')
+  })
+
+  it('fragments multi-megabyte responses without treating them as a fatal channel error', async () => {
+    const { manager, realtime, dispatch, fatals } = managerFixture()
+    dispatch.mockResolvedValue({ ...response('request-01'), result: { blob: 'x'.repeat(5 * 1024 * 1024) } })
+    await manager.prepare()
+    await manager.activate(9)
+    realtime.event({ kind: 'request' }, controllerMetadata(9))
+    await vi.waitFor(() => { expect(realtime.publishes.length).toBeGreaterThan(1) })
+    expect(realtime.publishes.every(item => item.payload.kind === 'fragment')).toBe(true)
+    expect(new Set(realtime.publishes.map(item => item.commandId)).size).toBe(realtime.publishes.length)
+    expect(fatals).toEqual([])
+  })
+
+  it('retries a retryable frame with the same idempotent command id', async () => {
+    vi.useFakeTimers()
+    const { manager, realtime } = managerFixture()
+    realtime.failPublishCount = 2
+    await manager.prepare()
+    await manager.activate(9)
+    const publish = manager.publishProjectionEvent({ kind: 'event' }, 'projection-01')
+    await vi.advanceTimersByTimeAsync(300)
+    await publish
+    expect(realtime.publishes).toHaveLength(3)
+    expect(new Set(realtime.publishes.map(item => item.commandId))).toEqual(new Set(['projection-01']))
+    vi.useRealTimers()
   })
 })

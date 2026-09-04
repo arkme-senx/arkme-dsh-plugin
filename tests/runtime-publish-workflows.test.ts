@@ -7,6 +7,13 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const workflow = (name: string) => readFile(path.join(repositoryRoot, '.github', 'workflows', name), 'utf8')
 
 describe('Arkme runtime publish workflow boundaries', () => {
+  it('runs tests while preparing the release but not while publishing npm', async () => {
+    const release = await workflow('publish-plugin-release.yml')
+
+    expect(release.match(/pnpm test/g)).toHaveLength(1)
+    expect(release.indexOf('pnpm test')).toBeLessThan(release.indexOf('  publish:'))
+  })
+
   it('dispatches production runtime publishing only after npm release succeeds', async () => {
     const release = await workflow('publish-plugin-release.yml')
     const dispatchJob = release.slice(

@@ -349,7 +349,7 @@ describe('world Provider projection', () => {
     expect(page.items).toMatchObject([{
       recordRef: expect.stringMatching(/^arkme-world-record-v1\./),
       authorName: '发布者',
-      textContent: '发布了一个新的插件',
+      textContent: `发布了一个新的插件\n${extensionShareUrl}`,
       recordType: 'extension_publication',
       extensionPublication: {
         extensionId: 'arkme-tic-tac-toe',
@@ -361,6 +361,83 @@ describe('world Provider projection', () => {
       },
     }])
     expect(JSON.stringify(page)).not.toContain('extension-record-1')
+  })
+
+  it('hydrates extension publication share links from catalog detail when World omits them', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let detailCalls = 0
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
+        expect(body).toEqual({ limit: 20, offset: 0 })
+        return json({ code: 200, data: { list: [
+          {
+            record_uid: 'extension-record-missing-share-1',
+            user_id: 20002,
+            nick_name: '发布者',
+            text_content: '发布了插件《井字棋（联机版）》',
+            record_type: 'extension_publication',
+            images: [],
+            videos: [],
+            voices: [],
+            extend_count: 0,
+            extension_publication: {
+              extension_id: 'ext_0123456789abcdef0123456789abcdef',
+              version: '1.0.4',
+              name: '井字棋（联机版）',
+              visibility: 'public',
+            },
+          },
+          {
+            record_uid: 'extension-record-missing-share-2',
+            user_id: 20002,
+            nick_name: '发布者',
+            text_content: '发布了插件《井字棋（联机版）》',
+            record_type: 'extension_publication',
+            images: [],
+            videos: [],
+            voices: [],
+            extend_count: 0,
+            extension_publication: {
+              extension_id: 'ext_0123456789abcdef0123456789abcdef',
+              version: '1.0.4',
+              name: '井字棋（联机版）',
+              visibility: 'public',
+            },
+          },
+        ], total: 2 } })
+      }
+      if (url === 'https://extensions.test/api/public/v1/extensions/detail') {
+        detailCalls += 1
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer access' })
+        expect(body).toEqual({ extension_id: 'ext_0123456789abcdef0123456789abcdef' })
+        return json({ code: 0, data: { extension: {
+          extension_id: 'ext_0123456789abcdef0123456789abcdef',
+          name: '井字棋（联机版）',
+          visibility: 'public',
+          share: { ref: extensionShareRef, url: extensionShareUrl },
+        } } })
+      }
+      throw new Error(`Unexpected request ${url}`)
+    })
+    const service = new ArkmeService(
+      { ...config, extensionPublishBaseUrl: 'https://extensions.test' },
+      sessions,
+      stateStore as never,
+      fetchImpl,
+    )
+
+    const page = await service.listWorldFeed({ limit: 20, offset: 0 })
+
+    expect(detailCalls).toBe(1)
+    expect(page.items).toHaveLength(2)
+    expect(page.items.map(item => item.textContent)).toEqual([
+      `发布了插件《井字棋（联机版）》\n${extensionShareUrl}`,
+      `发布了插件《井字棋（联机版）》\n${extensionShareUrl}`,
+    ])
+    expect(page.items[0]?.extensionPublication?.share).toEqual({ ref: extensionShareRef, url: extensionShareUrl })
   })
 
   it('uses the current viewer\'s private remark in World and in the chat opened from that World author', async () => {

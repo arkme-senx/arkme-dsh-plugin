@@ -12,6 +12,7 @@ import { copyLinkExtendToolModule } from './conversation/copy-link-extend.js'
 import { messageReadReceiptToolModules } from './conversation/read-receipts.js'
 import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
 import { reportMessageToolModule } from './conversation/report-message.js'
+import { withdrawMessageToolModule } from './conversation/withdraw-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
 import { userBanToolModules } from './conversation/user-ban.js'
 import { sendDirectTextToolModule } from './conversation/send-direct-text.js'
@@ -24,6 +25,7 @@ import { readImageToolModule } from './media/read-image.js'
 import { fileToolModules } from './media/files.js'
 import { recordingToolModules } from './recordings/index.js'
 import { createRecordToolModule } from './records/create.js'
+import { reeditRecordToolModule } from './records/reedit.js'
 import { listImagesToolModule } from './records/images.js'
 import { recentRecordsToolModule } from './records/recent.js'
 import { searchRecordsToolModule } from './records/search.js'
@@ -54,6 +56,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...recordCalendarToolModules,
   listImagesToolModule,
   createRecordToolModule,
+  reeditRecordToolModule,
   ...botToolModules,
   worldRecentToolModule,
   worldMineToolModule,
@@ -76,6 +79,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...messageReadReceiptToolModules,
   conversationMarkReadToolModule,
   reportMessageToolModule,
+  withdrawMessageToolModule,
   relatedRecordingsToolModule,
   ...userBanToolModules,
   groupAiPolishToolModule,

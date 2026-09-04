@@ -2,7 +2,9 @@ import { randomBytes } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   canonicalJson,
+  decryptLedgerPayload,
   decryptXChaCha20Poly1305,
+  encryptLedgerPayload,
   encryptXChaCha20Poly1305,
   hChaCha20,
 } from '../src/dsh-remote/crypto.js'
@@ -18,6 +20,23 @@ describe('local command-ledger cryptography', () => {
     expect(decryptXChaCha20Poly1305(key, encrypted, 'account=42;runtime=runtime-01').toString())
       .toBe('pending command')
     expect(() => decryptXChaCha20Poly1305(key, encrypted, 'account=43;runtime=runtime-01'))
+      .toThrow(/认证失败/)
+  })
+
+  it('uses an authenticated fallback when the host lacks ChaCha20-Poly1305', () => {
+    const key = Buffer.alloc(32, 7)
+    const encrypted = encryptLedgerPayload(
+      key,
+      'pending command',
+      'account=42;runtime=runtime-01',
+      Buffer.alloc(24, 9),
+      [],
+    )
+
+    expect(encrypted.ciphertext).toMatch(/^aes256gcm\./)
+    expect(decryptLedgerPayload(key, encrypted, 'account=42;runtime=runtime-01').toString())
+      .toBe('pending command')
+    expect(() => decryptLedgerPayload(key, encrypted, 'account=43;runtime=runtime-01'))
       .toThrow(/认证失败/)
   })
 

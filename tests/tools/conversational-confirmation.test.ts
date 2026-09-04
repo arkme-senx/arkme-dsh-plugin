@@ -150,4 +150,23 @@ describe('Arkme conversational confirmation', () => {
     await expect(conversation.prepareOrExecute(input)).resolves.toEqual({ expectedUserId: 42 })
     expect(execute).toHaveBeenCalledWith({ expectedUserId: 42 })
   })
+
+  it('blocks a concurrent second execution after one confirmed write starts', async () => {
+    const events: Array<Record<string, unknown>> = [
+      { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [] } },
+    ]
+    const current = agent(events)
+    let finish!: () => void
+    const execute = vi.fn(async () => await new Promise<string>(resolve => { finish = () => resolve('done') }))
+    const conversation = new ArkmeConversationalConfirmation()
+    const input = { agent: current, operationKey: 'record-reedit', arguments: { id: 'a' }, question: '确认编辑？', execute }
+    await conversation.prepareOrExecute(input)
+    events.push({ seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [] } })
+
+    const first = conversation.prepareOrExecute(input)
+    await expect(conversation.prepareOrExecute(input)).rejects.toThrow('正在执行')
+    finish()
+    await expect(first).resolves.toBe('done')
+    expect(execute).toHaveBeenCalledOnce()
+  })
 })

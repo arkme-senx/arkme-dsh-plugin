@@ -18,9 +18,13 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_files_send',
   'arkme_file_task',
   'arkme_id_set',
+  'arkme_record_reedit',
   'arkme_bot_openclaw_connect',
   'arkme_extension_review_create',
   'arkme_group_member_add',
+  'arkme_group_member_remove',
+  'arkme_group_join_restriction_set',
+  'arkme_message_withdraw',
   'arkme_contact_add',
   'arkme_contact_private_chat_open',
   'arkme_group_create',
@@ -77,6 +81,19 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_group_member_add') {
     const count = Array.isArray(args.candidate_refs) ? args.candidate_refs.length : 0
     return `是否确认向这个群聊添加或邀请 ${String(count)} 位成员？成员加入后将可以看到群内后续消息。`
+  }
+  if (name === 'arkme_group_member_remove') {
+    return args.prevent_rejoin === true
+      ? '是否确认将这位成员移出群聊，并禁止其再次加入？'
+      : '是否确认将这位成员移出群聊？本次不会禁止其以后再次加入。'
+  }
+  if (name === 'arkme_group_join_restriction_set') {
+    return args.restricted === true
+      ? '是否确认禁止这位用户以后再次加入该群？此操作本身不会移除当前活跃成员。'
+      : '是否确认解除这位用户的群聊加入限制？'
+  }
+  if (name === 'arkme_message_withdraw') {
+    return '是否确认撤回这条群消息？撤回后所有群成员都无法再查看，但不会移除或限制发送者。'
   }
   if (name === 'arkme_contact_add') {
     const remark = cleanArgument(args.remark, 100)
@@ -152,7 +169,9 @@ function withCoreConversationalConfirmation(
         agent: exec.agent as Agent,
         operationKey: definition.name,
         arguments: args,
-        question,
+        question: hooks?.question === undefined
+          ? question
+          : preparedContext => hooks.question!(args, preparedContext),
         ...(hooks === undefined ? {} : { prepare: async () => await hooks.prepare(args, exec) }),
         execute: async preparedContext => hooks === undefined
           ? await definition.execute(args, exec)

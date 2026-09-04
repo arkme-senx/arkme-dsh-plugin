@@ -27,13 +27,21 @@ import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
 import { DshRemoteError } from './dsh-remote/errors.js'
 import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
-import { arkmeRequiredLinkMetadataFallback } from './link-metadata.js'
+import {
+  arkmeExtensionShareRefFromLink,
+  arkmeIsGenericLinkMetadataTitle,
+  arkmeRequiredLinkMetadataFallback,
+  type ArkmeLinkMetadata,
+} from './link-metadata.js'
 import type { ArkmeFileBackgroundSoundInput } from './file-transfer-contract.js'
 import { arkmeFileBackgroundSound, arkmeRichBackgroundSound } from './record-background-sound.js'
+import type { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
+import type { TeamServicePort } from './services/team-service.js'
 
 const MAX_STANDARD_REQUEST_BYTES = 128 * 1024
 const MAX_MESSAGE_ACTION_REF_CHARS = 1024 * 1024
 const MAX_MESSAGE_REPORT_REF_CHARS = 4_096
+const MAX_MESSAGE_WITHDRAWAL_REF_CHARS = 4_096
 const MAX_RELATED_QUICK_NOTE_REQUEST_BYTES = MAX_MESSAGE_ACTION_REF_CHARS + (64 * 1024)
 const MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES = 10 * 1024 * 1024
 const MAX_REQUEST_BYTES = MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
@@ -122,6 +130,43 @@ function browserUserBanSnapshot(snapshot: ArkmeUserBanOwnerSnapshot): ArkmeUserB
   }
 }
 
+async function resolveExtensionShareLinkMetadata(
+  rawUrl: string,
+  pageMetadata: ArkmeLinkMetadata | null,
+  extensionManager: ArkmeExtensionManager | undefined,
+  signal?: AbortSignal,
+): Promise<ArkmeLinkMetadata | null> {
+  const shareRef = arkmeExtensionShareRefFromLink(rawUrl)
+  if (shareRef === undefined) return pageMetadata
+  const pageTitle = pageMetadata?.title.trim() ?? ''
+  if (pageMetadata !== null && !arkmeIsGenericLinkMetadataTitle(pageTitle) && pageTitle !== rawUrl) return pageMetadata
+  if (extensionManager === undefined) return pageMetadata
+  try {
+    const detail = await extensionManager.readSharedDetail(shareRef, signal)
+    const url = new URL(rawUrl)
+    const siteName = url.hostname.replace(/^www\./iu, '')
+    return {
+      url: url.href,
+      title: detail.name,
+      ...(detail.description.trim() === '' ? {} : { description: detail.description }),
+      ...(siteName === '' ? {} : { siteName }),
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
+    return null
+  }
+}
+
+async function resolveArkmeLinkMetadata(
+  service: ArkmeService,
+  url: string,
+  options: { signal?: AbortSignal },
+  extensionManager?: ArkmeExtensionManager,
+): Promise<ArkmeLinkMetadata | null> {
+  const pageMetadata = await service.resolveLinkMetadata(url, options)
+  return await resolveExtensionShareLinkMetadata(url, pageMetadata, extensionManager, options.signal)
+}
+
 function billingIdentifierParam(
   params: Record<string, unknown>,
   key: string,
@@ -157,6 +202,32 @@ function billingPaymentMethodParam(params: Record<string, unknown>): ArkmeBillin
 function numberParam(params: Record<string, unknown>, key: string, fallback: number): number {
   const value = params[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function optionalNumberParam(params: Record<string, unknown>, key: string): number | undefined {
+  const value = params[key]
+  if (value === undefined) return undefined
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new ArkmePluginError('team-input-invalid', '团队请求参数无效', false, 400)
+  }
+  return value
+}
+
+function optionalTeamStringParam(params: Record<string, unknown>, key: string): string | undefined {
+  const value = params[key]
+  if (value === undefined || value === '') return undefined
+  if (typeof value !== 'string') {
+    throw new ArkmePluginError('team-input-invalid', '团队请求参数无效', false, 400)
+  }
+  return value
+}
+
+function objectArrayParam(params: Record<string, unknown>, key: string): Record<string, unknown>[] {
+  const values = params[key]
+  if (!Array.isArray(values) || values.some(value => value === null || typeof value !== 'object' || Array.isArray(value))) {
+    throw new ArkmePluginError('team-input-invalid', '团队请求参数无效', false, 400)
+  }
+  return values as Record<string, unknown>[]
 }
 
 function captureContextParam(params: Record<string, unknown>): ArkmeRecordCaptureContext | undefined {
@@ -226,6 +297,24 @@ function recordingSpeakerScopeParam(params: Record<string, unknown>): 'item' | '
   throw new ArkmePluginError('recording-speaker-scope-invalid', '说话人修改范围无效', false, 400)
 }
 
+function recordingProjectionKindParam(params: Record<string, unknown>): 'summary' | 'timeline' {
+  const kind = stringParam(params, 'kind')
+  if (kind === 'summary' || kind === 'timeline') return kind
+  throw new ArkmePluginError('recording-generation-kind-invalid', '录音生成类型无效', false, 400)
+}
+
+function recordingSummaryModelRouteParam(params: Record<string, unknown>, required: boolean): string {
+  const routeKey = stringParam(params, 'routeKey').trim()
+  if ((!required && routeKey === '') || (routeKey !== '' && routeKey.length <= 256)) return routeKey
+  throw new ArkmePluginError('recording-summary-model-route-invalid', '录音总结模型无效', false, 400)
+}
+
+function recordingImportOwnershipParam(params: Record<string, unknown>): 'self' | 'other' {
+  const ownership = stringParam(params, 'ownership')
+  if (ownership === 'self' || ownership === 'other') return ownership
+  throw new ArkmePluginError('recording-import-owner-invalid', '录音数据归属无效', false, 400)
+}
+
 function unmarkedSpeakerMarkInputParam(params: Record<string, unknown>): {
   candidateRef: string
   candidateVersion: string
@@ -253,6 +342,12 @@ function conversationMemberRecordModeParam(params: Record<string, unknown>): Ark
   const mode = stringParam(params, 'mode')
   if (mode === 'owner' || mode === 'mentioned') return mode
   throw new ArkmePluginError('chat-member-record-mode-invalid', '成员快记模式无效', false, 400)
+}
+
+function conversationDirectoryEntryKindParam(params: Record<string, unknown>): 'source' | 'bot' {
+  const entryKind = stringParam(params, 'entryKind')
+  if (entryKind === 'source' || entryKind === 'bot') return entryKind
+  throw new ArkmePluginError('conversation-directory-entry-kind-invalid', '会话列表条目类型无效', false, 400)
 }
 
 function extensionCatalogSortParam(params: Record<string, unknown>): ArkmeExtensionCatalogSort | undefined {
@@ -762,6 +857,8 @@ export interface ArkmeHostApiOptions {
   ownedExtensionInventory?: () => ArkmeOwnedExtensionInventory | undefined
   remoteHost?: () => DshRemoteHostFacade | undefined
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>
+  openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>
+  teamService?: TeamServicePort
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
@@ -799,9 +896,9 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['user-ban.ban', 'user-ban.unban'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '封禁操作必须从当前 DSH 页面发起', false, 403)
       }
-      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.speaker.assign-item']
+      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
-        throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
+        throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
       const value = await dispatchArkmeHostOperation(
         service,
@@ -814,6 +911,8 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         controller.signal,
         options.remoteHost?.(),
         options.desktopQuarantine,
+        options.openApiMcpController,
+        options.teamService,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -851,19 +950,32 @@ export async function dispatchArkmeHostOperation(
   requestSignal?: AbortSignal,
   remoteHost?: DshRemoteHostFacade,
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>,
+  openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>,
+  teamService?: TeamServicePort,
 ): Promise<unknown> {
   switch (operation) {
-    case 'provider.capabilities': return service.providerCapabilities()
+    case 'provider.capabilities': {
+      const capabilities = service.providerCapabilities()
+      return teamService === undefined ? capabilities : {
+        ...capabilities,
+        features: {
+          ...capabilities.features,
+          teamDirectory: true as const,
+          teamMembers: true as const,
+          teamGovernance: true as const,
+        },
+      }
+    }
     case 'provider.instance': return { instanceId: ARKME_RUNTIME_INSTANCE_ID }
     case 'provider.state': return await service.providerState()
     case 'chat.realtime.state': return service.chatRealtimeState()
-    case 'link.metadata': return await service.resolveLinkMetadata(
-      stringParam(params, 'url'), requestSignal === undefined ? {} : { signal: requestSignal },
+    case 'link.metadata': return await resolveArkmeLinkMetadata(
+      service, stringParam(params, 'url'), requestSignal === undefined ? {} : { signal: requestSignal }, extensionManager,
     )
     case 'source.link-metadata.resolve': {
       const url = stringParam(params, 'url')
-      return await service.resolveLinkMetadata(
-        url, requestSignal === undefined ? {} : { signal: requestSignal },
+      return await resolveArkmeLinkMetadata(
+        service, url, requestSignal === undefined ? {} : { signal: requestSignal }, extensionManager,
       ) ?? arkmeRequiredLinkMetadataFallback(url)
     }
     case 'plugin.update.status': return await requireUpdateManager(updateManager).status()
@@ -903,6 +1015,58 @@ export async function dispatchArkmeHostOperation(
     case 'user-ban.unban': return browserUserBanRecord(await service.unbanPrivateChatUser(
       stringParam(params, 'sourceRef'), stringParam(params, 'remark'), requestSignal,
     ))
+    case 'openapi.mcp.status': return requireOpenApiMcpController(openApiMcpController).status()
+    case 'openapi.mcp.retry': return await requireOpenApiMcpController(openApiMcpController).retry()
+    case 'team.list': {
+      const limit = optionalNumberParam(params, 'limit')
+      const pageCursor = optionalTeamStringParam(params, 'pageCursor')
+      return await requireTeamService(teamService).list({
+        ...(limit === undefined ? {} : { limit }),
+        ...(pageCursor === undefined ? {} : { pageCursor }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
+    case 'team.resolve': return await requireTeamService(teamService).resolve(
+      objectArrayParam(params, 'items').map(item => {
+        const limit = optionalNumberParam(item, 'limit')
+        const pageCursor = optionalTeamStringParam(item, 'pageCursor')
+        return {
+          itemId: stringParam(item, 'itemId'),
+          query: stringParam(item, 'query'),
+          ...(limit === undefined ? {} : { limit }),
+          ...(pageCursor === undefined ? {} : { pageCursor }),
+        }
+      }),
+      requestSignal,
+    )
+    case 'team.members.list': {
+      const limit = optionalNumberParam(params, 'limit')
+      const pageCursor = optionalTeamStringParam(params, 'pageCursor')
+      return await requireTeamService(teamService).listMembers(
+        stringParam(params, 'teamRef'),
+        {
+          ...(limit === undefined ? {} : { limit }),
+          ...(pageCursor === undefined ? {} : { pageCursor }),
+          ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        },
+      )
+    }
+    case 'team.create': return await requireTeamService(teamService).create(
+      objectArrayParam(params, 'items').map(item => ({
+        itemId: stringParam(item, 'itemId'),
+        idempotencyKey: stringParam(item, 'idempotencyKey'),
+        name: stringParam(item, 'name'),
+        jotmoId: stringParam(item, 'jotmoId'),
+      })),
+      requestSignal,
+    )
+    case 'team.join-by-jotmo-id': return await requireTeamService(teamService).joinByJotmoID(
+      objectArrayParam(params, 'items').map(item => ({
+        itemId: stringParam(item, 'itemId'),
+        jotmoId: stringParam(item, 'jotmoId'),
+      })),
+      requestSignal,
+    )
     case 'remote.getStatus': return requireRemoteHost(remoteHost).getStatus()
     case 'remote.renameDesktop': return await requireRemoteHost(remoteHost).renameDesktop(stringParam(params, 'displayName'))
     case 'billing.quota': return await service.billingQuota()
@@ -948,11 +1112,16 @@ export async function dispatchArkmeHostOperation(
     case 'directory.list': {
       const countOnly = booleanParam(params, 'countOnly')
       const cursor = stringParam(params, 'cursor').trim()
-      return await service.listDirectory(directorySectionParam(params), {
+      const section = directorySectionParam(params)
+      const options = {
         limit: countOnly ? 0 : directoryLimitParam(params),
         ...(countOnly ? { countOnly: true } : {}),
         ...(!countOnly && cursor !== '' ? { cursor } : {}),
-      })
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      }
+      return section === 'teams'
+        ? await requireTeamService(teamService).listDirectory(options)
+        : await service.listDirectory(section, options)
     }
     case 'directory.contact.profile': return await service.directoryContactProfile(
       stringParam(params, 'contactRef').trim(),
@@ -1050,16 +1219,41 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'dateStamp', Number.NaN),
       requestSignal,
     )
+    case 'recordings.summary-model-config': return await service.recordingSummaryModelConfig(requestSignal)
+    case 'recordings.summary-model-config.set': return await service.setRecordingSummaryModelRoute(
+      recordingSummaryModelRouteParam(params, true),
+      requestSignal,
+    )
+    case 'recordings.generate': return await service.generateRecordingProjection(
+      numberParam(params, 'dateStamp', Number.NaN),
+      recordingProjectionKindParam(params),
+      recordingSummaryModelRouteParam(params, false),
+      requestSignal,
+    )
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
       stringListParam(params, 'fileNames'), requestSignal,
     )
-    case 'recordings.import.list': return await service.recordingImportList()
+    case 'recordings.import.list': return await service.recordingImportList(requestSignal)
+    case 'recordings.import.history': return await service.recordingImportHistory({
+      toMillis: numberParam(params, 'toMillis', Number.NaN),
+      limit: Math.trunc(numberParam(params, 'limit', 50)),
+      offset: Math.trunc(numberParam(params, 'offset', 0)),
+    }, requestSignal)
     case 'recordings.import.status': return await service.recordingImportStatus(stringParam(params, 'importRef').trim())
     case 'recordings.import.retry': return await service.retryRecordingImport(
       stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)),
     )
     case 'recordings.import.cancel': return await service.cancelRecordingImport(
       stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)),
+    )
+    case 'recordings.import.session.update-start': return await service.updateRecordingImportSessionStart(
+      stringParam(params, 'sessionRef').trim(), Math.trunc(numberParam(params, 'startAtMillis', Number.NaN)), requestSignal,
+    )
+    case 'recordings.import.session.update-ownership': return await service.updateRecordingImportSessionOwnership(
+      stringParam(params, 'sessionRef').trim(), recordingImportOwnershipParam(params), requestSignal,
+    )
+    case 'recordings.import.session.delete': return await service.deleteRecordingImportSession(
+      stringParam(params, 'sessionRef').trim(), requestSignal,
     )
     case 'recordings.playback.open': return await service.recordingPlayback(
       stringParam(params, 'itemRef').trim(), requestSignal,
@@ -1167,6 +1361,18 @@ export async function dispatchArkmeHostOperation(
     }
     case 'records.summary': return await service.summary()
     case 'records.list': return await service.list(numberParam(params, 'limit', 30), cursorParam(params))
+    case 'records.tags.list': return await service.listRecordTags(numberParam(params, 'limit', 100), requestSignal)
+    case 'records.tags.query': {
+      const cursorSendAt = numberParam(params, 'cursorSendAt', 0)
+      const cursorRecordUid = stringParam(params, 'cursorRecordUid').trim()
+      return await service.searchTagRecords({
+        normalizedTag: stringParam(params, 'normalizedTag'),
+        limit: numberParam(params, 'limit', 50),
+        ...(cursorSendAt <= 0 ? {} : { cursorSendAt }),
+        ...(cursorRecordUid === '' ? {} : { cursorRecordUid }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
     case 'records.create': return await service.createText(
       stringParam(params, 'recordUid'),
       stringParam(params, 'textContent'),
@@ -1325,14 +1531,32 @@ export async function dispatchArkmeHostOperation(
         refresh: booleanParam(params, 'refresh'),
       },
     )
-    case 'source.directory.policy.set': return await service.setChatDirectoryPolicy(
-      stringParam(params, 'sourceRef'),
-      {
-        ...(typeof params.pinned === 'boolean' ? { pinned: params.pinned } : {}),
-        ...(typeof params.hidden === 'boolean' ? { hidden: params.hidden } : {}),
-        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
-      },
+    case 'conversation.directory.visibility.query': return await service.conversationDirectoryVisibilitySnapshot(
+      stringListParam(params, 'sourceRefs').map(value => value.trim()).filter(value => value !== ''),
+      stringListParam(params, 'botRefs').map(value => value.trim()).filter(value => value !== ''),
+      requestSignal,
     )
+    case 'conversation.directory.visibility.set': return await service.setConversationDirectoryVisibility(
+      conversationDirectoryEntryKindParam(params),
+      stringParam(params, 'entryRef').trim(),
+      requiredBooleanParam(params, 'hidden'),
+      requestSignal,
+    )
+    case 'source.directory.policy.set': {
+      if (Object.hasOwn(params, 'hidden')) {
+        throw new ArkmePluginError(
+          'conversation-directory-command-ambiguous',
+          '置顶与移除必须分别提交',
+          false,
+          400,
+        )
+      }
+      return await service.setChatDirectoryPin(
+        stringParam(params, 'sourceRef'),
+        requiredBooleanParam(params, 'pinned'),
+        requestSignal,
+      )
+    }
     case 'source.timeline': {
       const cursor = timelineCursorParam(params)
       return await service.readSource(
@@ -1405,6 +1629,15 @@ export async function dispatchArkmeHostOperation(
       return await service.reportMessage(report.messageRef, report.reportType, {
         ...(report.reason === undefined ? {} : { reason: report.reason }),
         ...(report.requestUid === undefined ? {} : { requestUid: report.requestUid }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
+    case 'source.message-withdraw': {
+      const messageWithdrawalRef = stringParam(params, 'messageWithdrawalRef').trim()
+      if (messageWithdrawalRef === '' || messageWithdrawalRef.length > MAX_MESSAGE_WITHDRAWAL_REF_CHARS) {
+        throw new ArkmePluginError('message-withdrawal-ref-invalid', '消息撤回引用无效', false, 400)
+      }
+      return await service.withdrawGroupMessage(messageWithdrawalRef, {
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       })
     }
@@ -1573,6 +1806,45 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringListParam(params, 'candidateRefs'),
     )
+    case 'group.member-remove': {
+      if (params.preventRejoin !== undefined && typeof params.preventRejoin !== 'boolean') {
+        throw new ArkmePluginError('group-member-remove-invalid', '移除成员参数无效', false, 400)
+      }
+      return await service.removeGroupMember(
+        stringParam(params, 'sourceRef').trim(),
+        stringParam(params, 'memberRef').trim(),
+        {
+          preventRejoin: params.preventRejoin === true,
+          ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        },
+      )
+    }
+    case 'group.join-restrictions': {
+      if ((params.cursor !== undefined && typeof params.cursor !== 'string')
+        || (params.limit !== undefined && (typeof params.limit !== 'number' || !Number.isFinite(params.limit)))) {
+        throw new ArkmePluginError('join-restrictions-invalid', '限制名单分页参数无效', false, 400)
+      }
+      const cursor = stringParam(params, 'cursor').trim()
+      return await service.listGroupJoinRestrictions(
+        stringParam(params, 'sourceRef').trim(),
+        {
+          ...(cursor === '' ? {} : { cursor }),
+          limit: numberParam(params, 'limit', 30),
+          ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        },
+      )
+    }
+    case 'group.join-restriction.set': {
+      if (typeof params.restricted !== 'boolean') {
+        throw new ArkmePluginError('join-restriction-invalid', '加入限制参数无效', false, 400)
+      }
+      return await service.setGroupJoinRestriction(
+        stringParam(params, 'sourceRef').trim(),
+        stringParam(params, 'memberRef').trim(),
+        params.restricted,
+        { ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
+      )
+    }
     case 'group.bots': return await service.listGroupBots(
       stringParam(params, 'sourceRef'),
     )
@@ -1693,6 +1965,36 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'itemUid') || undefined,
     )
+    case 'source.record-reedit.detail': return await service.recordReeditEditor(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'itemUid'),
+    )
+    case 'source.record-reedit.draft.put': {
+      const prepared = await service.prepareRecordReedit({
+        sourceRef: stringParam(params, 'sourceRef'),
+        itemUid: stringParam(params, 'itemUid'),
+        newText: stringParam(params, 'newText'),
+        ...(params.newTitle === undefined ? {} : { newTitle: stringParam(params, 'newTitle') }),
+      }, { expectedBaseVersion: Math.trunc(numberParam(params, 'expectedVersion', 0)) })
+      return { saved: true, draftRevision: prepared.draftRevision }
+    }
+    case 'source.record-reedit.update': {
+      const input = {
+        sourceRef: stringParam(params, 'sourceRef'),
+        itemUid: stringParam(params, 'itemUid'),
+        newText: stringParam(params, 'newText'),
+        ...(params.newTitle === undefined ? {} : { newTitle: stringParam(params, 'newTitle') }),
+      }
+      const expectedBaseVersion = Math.trunc(numberParam(params, 'expectedVersion', 0))
+      const prepared = await service.prepareRecordReedit(input, { expectedBaseVersion })
+      return await service.commitRecordReedit(prepared)
+    }
+    case 'source.record-reedit.draft.delete': {
+      const prepared = await service.prepareDiscardRecordReeditDraft(
+        stringParam(params, 'sourceRef'), stringParam(params, 'itemUid'),
+      )
+      return await service.discardRecordReeditDraft(prepared)
+    }
     case 'calls.outgoing.intent.claim': return await service.claimOutgoingCallIntent()
     case 'calls.outgoing.intent.resolve': {
       const intentId = requiredCallParam(params, 'intentId', 'call-intent-invalid')
@@ -1930,6 +2232,22 @@ export async function dispatchArkmeHostOperation(
     )
     default: throw new ArkmePluginError('operation-unknown', '不支持的Arkme 插件操作', false, 404)
   }
+}
+
+function requireOpenApiMcpController(
+  controller: Pick<ManagedOpenApiMcpController, 'status' | 'retry'> | undefined,
+): Pick<ManagedOpenApiMcpController, 'status' | 'retry'> {
+  if (controller === undefined) {
+    throw new ArkmePluginError('openapi-mcp-unavailable', 'OpenAPI MCP 托管能力当前不可用', true, 503)
+  }
+  return controller
+}
+
+function requireTeamService(service: TeamServicePort | undefined): TeamServicePort {
+  if (service === undefined) {
+    throw new ArkmePluginError('team-openapi-unavailable', '团队开放平台能力当前不可用', true, 503)
+  }
+  return service
 }
 
 function requireUpdateManager(

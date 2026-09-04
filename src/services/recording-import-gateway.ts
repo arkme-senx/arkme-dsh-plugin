@@ -1,8 +1,29 @@
 import OSS from 'ali-oss'
-import { RecordingImportContractError, type RecordingImportJob } from '../recording-import-contract.js'
+import {
+  RecordingImportContractError,
+  type RecordingImportJob,
+  type RecordingImportOwnerProgress,
+  type RecordingImportOwnerSession,
+  type RecordingImportOwnerTaskSnapshot,
+  type RecordingImportOwnerGateway,
+} from '../recording-import-contract.js'
+import type {
+  PublicRecordingImportProgress,
+  PublicRecordingImportProgressRow,
+  RecordingImportDisplayStatus,
+  RecordingImportProgressCode,
+  RecordingImportProgressStatus,
+} from '../recording-import-shared.js'
+import { recordingImportFileNameKey } from '../recording-import-shared.js'
 import type { RecordingImportGateway } from '../recording-import-coordinator.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
-import { ArkmePluginError, objectValue, stringValue, type ServiceRuntime } from './service.js'
+import {
+  ArkmePluginError,
+  objectValue,
+  stringValue,
+  type ArkmeRemoteRequestOptions,
+  type ServiceRuntime,
+} from './service.js'
 
 interface AudioOssClient {
   cancel(): void
@@ -33,6 +54,17 @@ interface RecoveredAudioSession {
 }
 
 const AUDIO_SESSION_RECOVERY_LIMIT = 500
+const AUDIO_IMPORT_DUPLICATE_BATCH_SIZE = 100
+const AUDIO_IMPORT_PROGRESS_BATCH_SIZE = 100
+const AUDIO_IMPORT_OWNER_PAGE_SIZE = 100
+
+const IMPORT_PROGRESS_CODES = new Set<RecordingImportProgressCode>([
+  'upload',
+  'import',
+  'voice_recognition',
+  'primary_transcript',
+  'enhancement_transcript',
+])
 
 type AudioOssClientFactory = (options: ConstructorParameters<typeof OSS>[0]) => AudioOssClient
 
@@ -44,16 +76,346 @@ function optionalIntegerValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) ? value : undefined
 }
 
+function nonNegativeIntegerValue(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 0
+}
+
+function wireIntegerValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const parsed = Math.trunc(value)
+    return Number.isSafeInteger(parsed) ? parsed : 0
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Math.trunc(Number(value))
+    if (Number.isSafeInteger(parsed)) return parsed
+  }
+  return 0
+}
+
+function positiveOrZero(value: unknown): number {
+  return Math.max(0, wireIntegerValue(value))
+}
+
+function importProgressStatus(value: unknown): RecordingImportProgressStatus {
+  switch (wireIntegerValue(value)) {
+    case 1: return 'pending'
+    case 2: return 'processing'
+    case 3: return 'completed'
+    case 4: return 'partial'
+    case 5: return 'failed'
+    default: return 'unavailable'
+  }
+}
+
+function importProgressRow(value: unknown): PublicRecordingImportProgressRow | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Record<string, unknown>
+  const code = stringValue(raw.code).trim() as RecordingImportProgressCode
+  if (!IMPORT_PROGRESS_CODES.has(code)) return undefined
+  return {
+    code,
+    status: importProgressStatus(raw.status),
+    startedAtMillis: positiveOrZero(raw.started_at_ms),
+    endedAtMillis: positiveOrZero(raw.ended_at_ms),
+    durationMillis: positiveOrZero(raw.duration_ms),
+    provider: stringValue(raw.provider).trim(),
+    model: stringValue(raw.model).trim(),
+    modelVersion: stringValue(raw.model_version).trim(),
+    modelDurationMillis: positiveOrZero(raw.model_duration_ms),
+    nextRelation: stringValue(raw.next_relation).trim(),
+    relationDurationMillis: positiveOrZero(raw.relation_duration_ms),
+  }
+}
+
+function importProgress(value: unknown, observedAtMillis: number): PublicRecordingImportProgress | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Record<string, unknown>
+  const rows = (Array.isArray(raw.row_ls) ? raw.row_ls : [])
+    .map(importProgressRow)
+    .filter((row): row is PublicRecordingImportProgressRow => row !== undefined)
+  if (rows.length === 0) return undefined
+  return {
+    status: importProgressStatus(raw.status),
+    totalDurationMillis: positiveOrZero(raw.total_duration_ms),
+    serverNowMillis: positiveOrZero(raw.server_now_ms),
+    observedAtMillis,
+    rows,
+  }
+}
+
+function ownerDisplayStatus(values: readonly number[]): RecordingImportOwnerProgress['displayStatus'] {
+  const statuses = values.filter(value => Number.isSafeInteger(value) && value >= 1 && value <= 6)
+  if (statuses.length === 0) return undefined
+  const active = statuses.filter(value => value <= 4)
+  if (active.length > 0) {
+    switch (Math.min(...active)) {
+      case 1: return 'speaker-waiting'
+      case 2: return 'speaker-recognizing'
+      case 3: return 'transcript-waiting'
+      case 4: return 'transcribing'
+    }
+  }
+  const completedCount = statuses.filter(value => value === 5).length
+  const failedCount = statuses.filter(value => value === 6).length
+  if (completedCount > 0 && failedCount > 0) return 'partial'
+  if (failedCount > 0) return 'failed'
+  if (completedCount > 0) return 'completed'
+  return undefined
+}
+
+function ownerSession(value: unknown, viewerUserId: number): RecordingImportOwnerSession | undefined {
+  const owner = objectValue(value)
+  const sessionId = stringValue(owner.id).trim()
+  const rawStartAtMillis = optionalIntegerValue(owner.start_at)
+  if (optionalIntegerValue(owner.source) !== 2 || sessionId === ''
+    || rawStartAtMillis === undefined || rawStartAtMillis < 0) return undefined
+  const startAtMillis = rawStartAtMillis
+  const durationMillis = optionalIntegerValue(owner.duration)
+  const explicitEndAtMillis = owner.end_at === undefined ? 0 : optionalIntegerValue(owner.end_at)
+  if (durationMillis === undefined || durationMillis < 0 || explicitEndAtMillis === undefined
+    || explicitEndAtMillis < 0) return undefined
+  const inferredEndAtMillis = startAtMillis + durationMillis
+  if (!Number.isSafeInteger(inferredEndAtMillis)) return undefined
+  return {
+    sessionId,
+    ownership: numberValue(owner.belong_usr) === viewerUserId ? 'self' : 'other',
+    fileName: stringValue(owner.orig_name).trim(),
+    fileSize: nonNegativeIntegerValue(owner.source_size),
+    parsedSize: nonNegativeIntegerValue(owner.size),
+    durationMillis,
+    startAtMillis,
+    endAtMillis: explicitEndAtMillis > startAtMillis ? explicitEndAtMillis : inferredEndAtMillis,
+    createdAtMillis: nonNegativeIntegerValue(owner.create_at),
+    updatedAtMillis: nonNegativeIntegerValue(owner.update_at),
+    hasFinishedUpload: owner.has_finish_spk === true,
+  }
+}
+
 function remoteFileName(job: RecordingImportJob): string {
   const extension = job.fileName.trim().toLowerCase().match(/\.[^.]+$/)?.[0] ?? ''
   return `arkme_${job.jobId}_0${extension}`
 }
 
-export class AudioRecordingImportGateway implements RecordingImportGateway {
+export class AudioRecordingImportGateway implements RecordingImportGateway, RecordingImportOwnerGateway {
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly createOssClient: AudioOssClientFactory = options => new OSS(options) as unknown as AudioOssClient,
   ) {}
+
+  async findExistingFileNames(input: {
+    viewerUserId: number
+    fileNames: readonly string[]
+    signal?: AbortSignal
+  }): Promise<string[]> {
+    const existing: string[] = []
+    for (let offset = 0; offset < input.fileNames.length; offset += AUDIO_IMPORT_DUPLICATE_BATCH_SIZE) {
+      const data = await this.authenticatedOwnerPost<Record<string, unknown>>(
+        input.viewerUserId,
+        '/api/v1/audio/check-exist-same-orig',
+        { orig_names: input.fileNames.slice(offset, offset + AUDIO_IMPORT_DUPLICATE_BATCH_SIZE) },
+        input.signal,
+      )
+      if (!Array.isArray(data.exist_names)) continue
+      existing.push(...data.exist_names.map(stringValue).map(value => value.trim()).filter(Boolean))
+    }
+    return existing
+  }
+
+  async listOwnerTasks(input: {
+    viewerUserId: number
+    scope: 'active' | 'completed'
+    toMillis: number
+    limit: number
+    offset: number
+    signal?: AbortSignal
+  }): Promise<{ tasks: RecordingImportOwnerTaskSnapshot[]; total?: number; hasMore: boolean }> {
+    const offset = Math.max(0, Math.trunc(input.offset))
+    const limit = Math.max(0, Math.trunc(input.limit))
+    if (limit === 0) return { tasks: [], hasMore: false }
+    const scoped: RecordingImportOwnerTaskSnapshot[] = []
+    const targetCount = offset + limit + 1
+    let remoteOffset = 0
+    let exhausted = false
+    while (scoped.length < targetCount) {
+      const data = await this.authenticatedOwnerPost<Record<string, unknown>>(
+        input.viewerUserId,
+        '/api/v1/audio/get-session-ls',
+        {
+          to_stamp: Math.trunc(input.toMillis),
+          limit: AUDIO_IMPORT_OWNER_PAGE_SIZE,
+          offset: remoteOffset,
+          query_new: false,
+          task_scope: input.scope,
+        },
+        input.signal,
+      )
+      const rawSessions = Array.isArray(data.session_ls) ? data.session_ls : []
+      const ownerSessions = rawSessions
+        .map(raw => ({ raw: objectValue(raw), session: ownerSession(raw, input.viewerUserId) }))
+        .filter((owner): owner is { raw: Record<string, unknown>; session: RecordingImportOwnerSession } =>
+          owner.session !== undefined)
+      const ownerSnapshots = ownerSessions.map(({ raw, session: owner }) => {
+        if (typeof raw.has_done_child !== 'boolean') {
+          throw new RecordingImportContractError(
+            'recording-import-owner-completion-unavailable',
+            'Audio 暂未返回录音处理终态，请稍后重试',
+            true,
+          )
+        }
+        const processingCompleted = raw.has_done_child
+        if ((input.scope === 'completed') !== processingCompleted) {
+          throw new RecordingImportContractError(
+            'recording-import-owner-scope-invalid',
+            'Audio 返回的录音任务范围无效，请稍后重试',
+            true,
+          )
+        }
+        return { session: owner, processingCompleted }
+      })
+      const sealed = ownerSnapshots.filter(task => task.session.hasFinishedUpload)
+      let progress = new Map<string, RecordingImportOwnerProgress>()
+      if (sealed.length > 0) {
+        try {
+          progress = await this.loadOwnerProgressForSession(
+            input.viewerUserId,
+            sealed.map(task => task.session.sessionId),
+            input.signal,
+          )
+        } catch (error) {
+          if (input.signal?.aborted === true || this.isAccountMismatch(error)) throw error
+          /* Processing details are optional enrichment; owner task scope remains authoritative. */
+        }
+      }
+      for (const task of ownerSnapshots) {
+        const ownerProgress = progress.get(task.session.sessionId)
+        scoped.push({
+          ...task,
+          ...(ownerProgress === undefined ? {} : { progress: ownerProgress }),
+        })
+      }
+      remoteOffset += rawSessions.length
+      if (rawSessions.length < AUDIO_IMPORT_OWNER_PAGE_SIZE) {
+        exhausted = true
+        break
+      }
+    }
+    return {
+      tasks: scoped.slice(offset, offset + limit),
+      ...(exhausted ? { total: scoped.length } : {}),
+      hasMore: scoped.length > offset + limit || !exhausted,
+    }
+  }
+
+  async loadOwnerSession(input: {
+    viewerUserId: number
+    sessionId: string
+    signal?: AbortSignal
+  }): Promise<RecordingImportOwnerSession> {
+    const normalized = input.sessionId.trim()
+    if (normalized === '') {
+      throw new RecordingImportContractError('recording-import-session-invalid', 'Audio 会话引用无效')
+    }
+    const data = await this.authenticatedOwnerPost<Record<string, unknown>>(
+      input.viewerUserId,
+      '/api/v1/audio/get-session-by-id',
+      { session_id: normalized },
+      input.signal,
+    )
+    const owner = ownerSession(data, input.viewerUserId)
+    if (owner === undefined || owner.sessionId !== normalized) {
+      throw new RecordingImportContractError('recording-import-session-invalid', 'Audio 会话数据无效', true)
+    }
+    return owner
+  }
+
+  private async loadOwnerProgressForSession(
+    viewerUserId: number,
+    sessionIds: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<Map<string, RecordingImportOwnerProgress>> {
+    const normalized = [...new Set(sessionIds.map(value => value.trim()).filter(value => value !== ''))]
+    if (normalized.length === 0) return new Map()
+    const result = new Map<string, RecordingImportOwnerProgress>()
+    for (let offset = 0; offset < normalized.length; offset += AUDIO_IMPORT_PROGRESS_BATCH_SIZE) {
+      const batch = normalized.slice(offset, offset + AUDIO_IMPORT_PROGRESS_BATCH_SIZE)
+      const data = await this.authenticatedOwnerPost<Record<string, unknown>>(
+        viewerUserId,
+        '/api/v1/audio/get-session-deal-status',
+        { session_ids: batch },
+        signal,
+      )
+      const observedAtMillis = Date.now()
+      for (const raw of Array.isArray(data.item_ls) ? data.item_ls : []) {
+        const owner = objectValue(raw)
+        const sessionId = stringValue(owner.session_id).trim()
+        if (sessionId === '' || !batch.includes(sessionId)) continue
+        const statusListAvailable = Array.isArray(owner.child_status_ls)
+        const rawStatuses = statusListAvailable ? owner.child_status_ls as unknown[] : []
+        const parsedStatuses = rawStatuses.map(child => wireIntegerValue(objectValue(child).status))
+        const statusesValid = statusListAvailable && parsedStatuses.every(
+          status => status >= 1 && status <= 6,
+        )
+        const displayStatus = statusesValid ? ownerDisplayStatus(parsedStatuses) : 'unavailable'
+        const progress = importProgress(owner.import_progress, observedAtMillis)
+        result.set(sessionId, {
+          ...(displayStatus === undefined ? {} : { displayStatus }),
+          ...(progress === undefined ? {} : { importProgress: progress }),
+        })
+      }
+    }
+    return result
+  }
+
+  async updateOwnerSessionStart(input: {
+    viewerUserId: number
+    sessionId: string
+    startAtMillis: number
+    signal?: AbortSignal
+  }): Promise<void> {
+    await this.authenticatedOwnerPost(
+      input.viewerUserId,
+      '/api/v1/audio/modify-session-start',
+      {
+        session_id: input.sessionId.trim(),
+        start_at: Math.trunc(input.startAtMillis),
+        tz_offset: -new Date(input.startAtMillis).getTimezoneOffset() * 60_000,
+      },
+      input.signal,
+      { lane: 'write', bypassCache: true },
+    )
+  }
+
+  async updateOwnerSessionOwnership(input: {
+    viewerUserId: number
+    sessionId: string
+    belongUserId: number
+    signal?: AbortSignal
+  }): Promise<void> {
+    if (input.belongUserId !== 0 && input.belongUserId !== input.viewerUserId) {
+      throw new ArkmePluginError('recording-import-owner-invalid', '录音数据归属无效', false)
+    }
+    await this.authenticatedOwnerPost(
+      input.viewerUserId,
+      '/api/v1/audio/modify-session-belong-usr',
+      { session_id: input.sessionId.trim(), belong_usr: input.belongUserId },
+      input.signal,
+      { lane: 'write', bypassCache: true },
+    )
+  }
+
+  async deleteOwnerSession(input: {
+    viewerUserId: number
+    sessionId: string
+    signal?: AbortSignal
+  }): Promise<void> {
+    await this.authenticatedOwnerPost(
+      input.viewerUserId,
+      '/api/v1/audio/del-session',
+      { session_id: input.sessionId.trim() },
+      input.signal,
+      { lane: 'write', bypassCache: true },
+    )
+  }
 
   async ensureSession(job: RecordingImportJob, signal?: AbortSignal): Promise<string> {
     const recovered = await this.recoverSession(job, signal)
@@ -66,8 +428,9 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
       session,
       signal,
     )
+    const fileNameKey = recordingImportFileNameKey(job.fileName)
     if ((Array.isArray(duplicate.exist_names) ? duplicate.exist_names : [])
-      .some(value => stringValue(value) === job.fileName)) {
+      .some(value => recordingImportFileNameKey(stringValue(value)) === fileNameKey)) {
       throw new RecordingImportContractError('recording-import-duplicate', '已存在同名录音，请更名后重试')
     }
     const timezoneOffsetMillis = -new Date(job.startAtMillis).getTimezoneOffset() * 60_000
@@ -232,11 +595,35 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
   }
 
   private async requireJobSession(job: RecordingImportJob): Promise<ArkmeSessionCredentials> {
+    return await this.requireViewerSession(job.userId)
+  }
+
+  private async requireViewerSession(viewerUserId: number): Promise<ArkmeSessionCredentials> {
     const session = await this.runtime.requireSession()
-    if (session.userId !== job.userId) {
+    if (session.userId !== viewerUserId) {
       throw new ArkmePluginError('recording-import-account-mismatch', '登录账号已变化，已停止录音导入', true, 403)
     }
     return session
+  }
+
+  private async authenticatedOwnerPost<T>(
+    viewerUserId: number,
+    path: string,
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    return await this.runtime.authenticatedAudioPost<T>(
+      path,
+      body,
+      await this.requireViewerSession(viewerUserId),
+      signal,
+      options,
+    )
+  }
+
+  private isAccountMismatch(error: unknown): boolean {
+    return error instanceof ArkmePluginError && error.code === 'recording-import-account-mismatch'
   }
 
   private async recoverSession(
