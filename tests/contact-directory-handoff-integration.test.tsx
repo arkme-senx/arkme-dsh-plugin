@@ -171,6 +171,10 @@ describe('production Contacts handoff isolation', () => {
     await click(renderer, '测试 Bot')
     expect(arkmeUi.getSnapshot()).toMatchObject({ mode: 'bot', selectedBot: botSummary })
     expect(arkmeUi.getSnapshot().selectedSource).toBeUndefined()
+    expect(testState.callArkme).toHaveBeenCalledWith(
+      'conversation.directory.visibility.set',
+      { entryKind: 'bot', entryRef: botSummary.botRef, hidden: false },
+    )
     expect(testState.callArkme.mock.calls.some(([operation]) => operation === 'directory.bot.open-chat')).toBe(false)
 
     await click(renderer, '联系人')

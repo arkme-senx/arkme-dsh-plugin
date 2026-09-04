@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { act, create } from 'react-test-renderer'
+import { create } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
 import {
   appendWorldPublishFiles,
@@ -76,7 +76,7 @@ const extensionPublicationItem: ArkmeWorldFeedItem = {
   ...item,
   recordRef: 'world_extension_1',
   headline: '',
-  textContent: '',
+  textContent: '发布了插件《井字棋（联机版）》',
   extendCount: 0,
   recordType: 'extension_publication',
   extensionPublication: {
@@ -196,38 +196,33 @@ describe('Arkme native World surface', () => {
       .toContain('color:var(--dsw-alias-label-secondary, #68707c)')
   })
 
-  it('renders extension publications as compact feed-native attachments', () => {
+  it('renders extension publications as plain World text with the share link at the tail', () => {
     const markup = render({ status: 'success', items: [extensionPublicationItem] }, new Set())
-    const activityStyle = styleForDataAttribute(markup, 'data-world-extension-activity', 'compact')
     const playableMarkup = render({ status: 'success', items: [extensionPublicationItem] }, new Set(['world_extension_1']))
 
-    expect(activityStyle).toContain('grid-template-columns:48px minmax(0,1fr)')
-    expect(activityStyle).toContain('border:0')
-    expect(activityStyle).toContain('background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))')
-    expect(activityStyle).toContain('cursor:pointer')
     expect(markup).toContain('aria-label="邀请陈一涵开启声纹"')
     expect(markup).toContain('data-world-voiceprint-invite-icon="microphone"')
     expect(playableMarkup).toContain('aria-label="播放陈一涵的声纹"')
-    expect(markup).toContain('>井字棋（联机版）<')
-    expect(markup).toContain('>v1.0.4<')
-    expect(markup).toContain('>已上架<')
-    expect(markup).toContain('>桌面端<')
-    expect(markup.indexOf('通过 Arkme 私聊进行公平、轻松的井字棋联机对战。')).toBeLessThan(markup.indexOf(extensionShareUrl))
-    expect(markup).toContain('data-world-extension-share-link="true"')
+    expect(markup.indexOf('发布了插件《井字棋（联机版）》')).toBeLessThan(markup.indexOf('data-arkme-link-label="true">井字棋（联机版）</span>'))
+    expect(markup).toContain('data-arkme-text-link="true"')
+    expect(markup).toContain('data-arkme-link-title="fallback"')
+    expect(markup).toContain('data-arkme-link-label="true">井字棋（联机版）</span>')
     expect(markup).toContain(`href="${extensionShareUrl}"`)
-    expect(markup).toContain(`>${extensionShareUrl}</a>`)
+    expect(markup).not.toContain('data-arkme-link-label="true">插件分享链接</span>')
+    expect(markup).not.toContain(`>${extensionShareUrl}</span>`)
     expect(markup).toContain('rel="noopener noreferrer"')
+    expect(markup).not.toContain('data-world-extension-activity')
+    expect(markup).not.toContain('data-world-extension-open')
+    expect(markup).not.toContain('data-world-extension-share-link')
+    expect(markup).not.toContain('>v1.0.4<')
+    expect(markup).not.toContain('>已上架<')
+    expect(markup).not.toContain('>桌面端<')
     expect(markup).not.toContain('>查看详情<')
     expect(markup).not.toContain('arkme-world-extension-open')
-    expect(markup).toContain('role="button"')
-    expect(markup).toContain('tabindex="0"')
-    expect(markup).toContain('aria-label="井字棋（联机版）插件发布动态，点击在市集中查看"')
     expect(markup).not.toContain('在市集中查看</button>')
-    expect(styleForDataAttribute(markup, 'data-world-extension-open', 'detail'))
-      .toContain('cursor:pointer')
   })
 
-  it('opens extension details from the whole publication card', () => {
+  it('keeps extension publication rows out of the marketplace-detail click path', () => {
     const opened: string[] = []
     const renderer = create(<ArkmeWorldContent
       state={{ status: 'success', items: [extensionPublicationItem] }}
@@ -237,23 +232,9 @@ describe('Arkme native World surface', () => {
       {...actions}
       onOpenExtension={extensionId => { opened.push(extensionId) }}
     />)
-    const activity = renderer.root.findByProps({ 'data-world-extension-open': 'detail' })
-    expect(activity.type).toBe('section')
 
-    act(() => { activity.props.onClick() })
-    const keyboardTarget = {}
-    const preventDefault = vi.fn()
-    act(() => {
-      activity.props.onKeyDown({
-        currentTarget: keyboardTarget,
-        target: keyboardTarget,
-        key: 'Enter',
-        preventDefault,
-      })
-    })
-
-    expect(opened).toEqual(['arkme-tic-tac-toe', 'arkme-tic-tac-toe'])
-    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(() => renderer.root.findByProps({ 'data-world-extension-open': 'detail' })).toThrow()
+    expect(opened).toEqual([])
     renderer.unmount()
   })
 
@@ -263,10 +244,24 @@ describe('Arkme native World surface', () => {
     const markup = render({ status: 'success', items: [itemWithCopy] }, new Set())
 
     expect(worldExtensionPublicationTextContent(itemWithCopy)).toBe(`${feedCopy}\n${extensionShareUrl}`)
-    expect(markup.indexOf(feedCopy)).toBeLessThan(markup.indexOf(extensionShareUrl))
+    expect(markup.indexOf(feedCopy)).toBeLessThan(markup.indexOf('data-arkme-link-label="true">井字棋（联机版）</span>'))
     expect(markup).toContain('data-arkme-text-link="true"')
+    expect(markup).toContain('data-arkme-link-label="true">井字棋（联机版）</span>')
     expect(markup).toContain(`href="${extensionShareUrl}"`)
+    expect(markup).not.toContain('data-arkme-link-label="true">插件分享链接</span>')
+    expect(markup).not.toContain(`>${extensionShareUrl}</span>`)
     expect(markup).not.toContain('data-world-extension-share-link="true"')
+  })
+
+  it('renders ordinary World post links through title text instead of visible raw URLs', () => {
+    const url = 'https://example.com/shared-content'
+    const markup = render({ status: 'success', items: [{ ...item, textContent: `看看这个 ${url}` }] }, new Set())
+
+    expect(markup).toContain('看看这个 ')
+    expect(markup).toContain('data-arkme-text-link="true"')
+    expect(markup).toContain('data-arkme-link-label="true">分享链接</span>')
+    expect(markup).toContain(`href="${url}"`)
+    expect(markup).not.toContain(`>${url}</span>`)
   })
 
   it('keeps the expanded comment panel and composer on one semantic surface', () => {

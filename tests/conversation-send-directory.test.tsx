@@ -1,6 +1,11 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ArkmeConversationMemberItem, ArkmeSourceItem, ArkmeTimelineItem } from '../src/types.js'
+import type {
+  ArkmeConversationMemberItem,
+  ArkmeMessageCopyLinkSnapshotItem,
+  ArkmeSourceItem,
+  ArkmeTimelineItem,
+} from '../src/types.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 
@@ -72,6 +77,15 @@ function deferred<Value>() {
   return { promise, resolve, reject }
 }
 
+function renderedText(value: unknown): string {
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  if (Array.isArray(value)) return value.map(renderedText).join('')
+  if (value !== null && typeof value === 'object' && 'children' in value) {
+    return renderedText((value as { children?: unknown }).children)
+  }
+  return ''
+}
+
 describe('conversation send directory projection', () => {
   let renderer: ReactTestRenderer | undefined
   let timeline: ArkmeTimelineItem[]
@@ -91,6 +105,7 @@ describe('conversation send directory projection', () => {
     nextCursor?: { beforeSequence: number }
   }>()
   let copiedQuickLinkExtensionText = ''
+  let copiedQuickLinkItems: ArkmeMessageCopyLinkSnapshotItem[]
   let activeSource = target
 
   it.each([
@@ -132,6 +147,18 @@ describe('conversation send directory projection', () => {
     newerTimelinePages = new Map()
     olderTimelinePages = new Map()
     copiedQuickLinkExtensionText = ''
+    copiedQuickLinkItems = [{
+      sourceKind: 'chat_record',
+      senderDisplayName: '1D3E',
+      senderAvatarUrl: '',
+      title: '',
+      textContent: 'bot相关接口有点问题，会优化下',
+      sendAtMillis: 1_775_399_700_000,
+      templateKind: 1,
+      displayKind: 0,
+      officialMark: 0,
+      mediaItems: [],
+    }]
     activeSource = target
     vi.spyOn(Date, 'now').mockReturnValue(48)
     const localStorage = new Map<string, string>()
@@ -229,18 +256,7 @@ describe('conversation send directory projection', () => {
           recordOwnerUserId: 42,
           sequence: 8,
         }],
-        items: [{
-          sourceKind: 'chat_record',
-          senderDisplayName: '1D3E',
-          senderAvatarUrl: '',
-          title: '',
-          textContent: 'bot相关接口有点问题，会优化下',
-          sendAtMillis: 1_775_399_700_000,
-          templateKind: 1,
-          displayKind: 0,
-          officialMark: 0,
-          mediaItems: [],
-        }],
+        items: copiedQuickLinkItems,
         presentation: [{ kind: 'item', itemIndex: 0 }],
         ...(copiedQuickLinkExtensionText === '' ? {} : {
           recordContext: {
@@ -305,6 +321,11 @@ describe('conversation send directory projection', () => {
           templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [],
         },
       }
+      if (operation === 'records.tags.list') return { items: [
+        { normalizedTag: 'projectalpha', tagText: 'ProjectAlpha', recordCount: 7, latestRecordUid: '', latestSendAtMillis: 0 },
+        { normalizedTag: 'product', tagText: 'Product', recordCount: 3, latestRecordUid: '', latestSendAtMillis: 0 },
+        { normalizedTag: 'meeting', tagText: '会议', recordCount: 2, latestRecordUid: '', latestSendAtMillis: 0 },
+      ] }
       throw new Error(`unexpected operation ${operation}`)
     })
   })
@@ -350,6 +371,52 @@ describe('conversation send directory projection', () => {
 
     expect(arkmeGroupMentionCandidates('', [], [member]).map(candidate => candidate.kind))
       .toEqual(['all'])
+  })
+
+  it('highlights visible @ mentions in private conversation bubbles for self and peer messages', async () => {
+    timeline = [{
+      itemUid: 'received-mention', sequence: 1, senderName: '朋友', isMe: false,
+      sendAtMillis: 1, title: '', textContent: '收到 @狗才', status: 1,
+    }, {
+      itemUid: 'self-mention', sequence: 2, senderName: '狗才', isMe: true,
+      sendAtMillis: 2, title: '', textContent: '@🚀助手 我来处理', status: 1,
+    }]
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    const highlighted = renderer.root.findAll(node =>
+      node.type === 'span' && node.props.style?.color === 'var(--dsw-alias-state-business-primary, #3964fe)',
+    ).map(node => renderedText(node.children))
+    expect(highlighted).toEqual(expect.arrayContaining(['@狗才', '@🚀助手']))
+  })
+
+  it('requests the global search dialog without replacing the conversation when a completed hashtag is clicked', async () => {
+    timeline = [{
+      itemUid: 'tagged-message', sequence: 1, senderName: '朋友', isMe: false,
+      sendAtMillis: 1, title: '', textContent: '跟进 ＃项目，明天复盘', status: 1,
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    const tag = renderer.root.findByProps({ role: 'link' })
+    const preventDefault = vi.fn()
+    const stopPropagation = vi.fn()
+    await act(async () => {
+      tag.props.onClick({ preventDefault, stopPropagation })
+      await Promise.resolve()
+    })
+
+    expect(preventDefault).toHaveBeenCalled()
+    expect(stopPropagation).toHaveBeenCalled()
+    expect(arkmeUi.getSnapshot()).toMatchObject({
+      mode: 'source', searchTarget: { query: '#项目' },
+    })
+    expect(renderer.root.findAllByProps({ 'aria-label': '搜索' }).find(node => node.type === 'input')).toBeUndefined()
   })
 
   it('lets the user remove terminal local file tasks without hiding an unknown remote outcome', async () => {
@@ -815,6 +882,97 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findByProps({ 'data-arkme-read-receipt-indicator': 'unread' })).toBeDefined()
   })
 
+  it('filters hashtag candidates, supports keyboard selection, and keeps Escape dismissed for the current fragment', async () => {
+    const scrollIntoView = vi.fn()
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => {
+          if (element.props['aria-label'] !== '选择标签') return null
+          return { querySelector: () => ({ scrollIntoView }) }
+        },
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('#o')
+      composer.props.onSelectionChange('#o', 2, 2)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const tagList = renderer!.root.findByProps({ 'aria-label': '选择标签' })
+    const options = tagList.findAllByProps({ role: 'option' })
+    expect(options.map(renderedText)).toEqual(['#ProjectAlpha使用 7 次', '#Product使用 3 次'])
+    expect(mocks.callArkme).toHaveBeenCalledWith('records.tags.list', { limit: 100 }, expect.any(AbortSignal))
+
+    await act(async () => {
+      composer.props.onKeyDown({ key: 'ArrowDown', nativeEvent: { isComposing: false }, preventDefault: vi.fn() })
+    })
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest', inline: 'nearest' })
+    expect(scrollIntoView.mock.calls.length).toBeGreaterThanOrEqual(2)
+    await act(async () => {
+      composer.props.onKeyDown({ key: 'Enter', nativeEvent: { isComposing: false }, preventDefault: vi.fn() })
+    })
+    const draftKey = arkmeSourceComposerDraftKey(42, target)!
+    expect(arkmeComposerDraftStore.get(draftKey).text).toBe('#Product ')
+    expect(renderer!.root.findAllByProps({ 'aria-label': '选择标签' })).toHaveLength(0)
+
+    await act(async () => {
+      composer.props.onTextChange('#new')
+      composer.props.onSelectionChange('#new', 4, 4)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findAllByProps({ 'aria-label': '选择标签' })).toHaveLength(1)
+    await act(async () => {
+      composer.props.onKeyDown({ key: 'Escape', nativeEvent: { isComposing: false }, preventDefault: vi.fn() })
+      composer.props.onSelectionChange('#new', 4, 4)
+    })
+    expect(renderer!.root.findAllByProps({ 'aria-label': '选择标签' })).toHaveLength(0)
+  })
+
+  it('keeps a newly sent free tag in the account candidate source after switching conversations', async () => {
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    let composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('#FreshTag')
+      composer.props.onSelectionChange('#FreshTag', 9, 9)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findByProps({ 'aria-label': '选择标签' }).findAllByProps({ role: 'option' })).toHaveLength(0)
+
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findAllByProps({ 'aria-label': '选择标签' })).toHaveLength(0)
+
+    activeSource = other
+    await act(async () => {
+      arkmeUi.selectSource(other)
+      arkmeUi.chatChanged()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('#fresh')
+      composer.props.onSelectionChange('#fresh', 6, 6)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const options = renderer!.root.findByProps({ 'aria-label': '选择标签' }).findAllByProps({ role: 'option' })
+    expect(options.map(renderedText)).toEqual(['#FreshTag使用 1 次'])
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'records.tags.list')).toHaveLength(2)
+  })
+
   it('requests location permission on the first supported send and records that message', async () => {
     const permissionQuery = vi.fn(async () => ({ state: 'prompt' as PermissionState }))
     const getCurrentPosition = vi.fn((success: PositionCallback) => { success({
@@ -1248,6 +1406,7 @@ describe('conversation send directory projection', () => {
           memberRef: 'arkme-chat-member-v1.stable.signature',
           mentionRef: 'arkme-chat-human-mention-v1.mention.signature',
           mentionDisplayName: 'Tison',
+          mentionSecondaryName: '我的私有备注',
           displayName: '我的私有备注',
           secondaryName: 'Tison',
           role: 'member', status: 'active', isSelf: false, isOwner: false,
@@ -1281,7 +1440,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     const tisonOption = renderer!.root.findAllByProps({ role: 'option' }).find(option =>
-      option.findAll(node => node.type === 'span' && node.children.join('') === '我的私有备注（Tison）').length > 0)
+      option.findAll(node => node.type === 'span' && node.children.join('') === 'Tison（我的私有备注）').length > 0)
     expect(tisonOption).toBeDefined()
     await act(async () => {
       tisonOption!.props.onMouseDown({ preventDefault: vi.fn() })
@@ -1326,7 +1485,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     const fileMentionOption = renderer!.root.findAllByProps({ role: 'option' }).find(option =>
-      option.findAll(node => node.type === 'span' && node.children.join('') === '我的私有备注（Tison）').length > 0)
+      option.findAll(node => node.type === 'span' && node.children.join('') === 'Tison（我的私有备注）').length > 0)
     expect(fileMentionOption).toBeDefined()
     await act(async () => {
       fileMentionOption!.props.onMouseDown({ preventDefault: vi.fn() })
@@ -1377,7 +1536,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     const retryOption = renderer!.root.findAllByProps({ role: 'option' }).find(option =>
-      option.findAll(node => node.type === 'span' && node.children.join('') === '我的私有备注（Tison）').length > 0)
+      option.findAll(node => node.type === 'span' && node.children.join('') === 'Tison（我的私有备注）').length > 0)
     expect(retryOption).toBeDefined()
     await act(async () => {
       retryOption!.props.onMouseDown({ preventDefault: vi.fn() })
@@ -3621,6 +3780,72 @@ describe('conversation send directory projection', () => {
       height: '16',
     })
     expect(sendButton.findByType('path').props.d).toContain('M23.5521 7.04659')
+  })
+
+  it('keeps a raw URL label in a single copied quick-link detail record', async () => {
+    copiedQuickLinkItems[0] = {
+      ...copiedQuickLinkItems[0]!,
+      textContent: '单条 https://example.com/single',
+    }
+    timeline = [{
+      itemUid: 'copy-link-message', senderName: '1D3E', isMe: false, sendAtMillis: 1, status: 1,
+      title: '', textContent: 'https://jiwo.cc/s/U2HQgn1RhPJZaFmx', templateKind: 1, displayKind: 0,
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+
+    const quickLink = renderer!.root.findByProps({ 'data-arkme-inline-link': 'message-copy-link' })
+    await act(async () => {
+      quickLink.props.onClick({ stopPropagation: vi.fn() })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const detail = renderer!.root.findByProps({ 'data-arkme-copy-link-detail': 'true' })
+    const link = detail.find(node => node.type === 'a' && node.props.href === 'https://example.com/single')
+    expect(link.findByProps({ 'data-arkme-link-label': 'true' }).children).toEqual([
+      'https://example.com/single',
+    ])
+  })
+
+  it('keeps raw URL labels in multi-record and extension copied-link details', async () => {
+    copiedQuickLinkItems = [
+      { ...copiedQuickLinkItems[0]!, textContent: '第一条 https://example.com/first' },
+      {
+        ...copiedQuickLinkItems[0]!,
+        senderDisplayName: '狗才',
+        sendAtMillis: 1_775_399_800_000,
+        textContent: '第二条 https://example.com/second',
+      },
+    ]
+    copiedQuickLinkExtensionText = '延展 https://example.com/extension'
+    timeline = [{
+      itemUid: 'copy-link-message', senderName: '1D3E', isMe: false, sendAtMillis: 1, status: 1,
+      title: '', textContent: 'https://jiwo.cc/s/U2HQgn1RhPJZaFmx', templateKind: 1, displayKind: 0,
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+
+    const quickLink = renderer!.root.findByProps({ 'data-arkme-inline-link': 'message-copy-link' })
+    await act(async () => {
+      quickLink.props.onClick({ stopPropagation: vi.fn() })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const detail = renderer!.root.findByProps({ 'data-arkme-copy-link-detail': 'true' })
+    for (const href of [
+      'https://example.com/first',
+      'https://example.com/second',
+      'https://example.com/extension',
+    ]) {
+      const link = detail.find(node => node.type === 'a' && node.props.href === href)
+      expect(link.findByProps({ 'data-arkme-link-label': 'true' }).children).toEqual([href])
+    }
   })
 
   it('extends the copied quick-link detail record from the footer input', async () => {

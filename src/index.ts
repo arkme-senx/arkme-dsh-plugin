@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { readFileSync, realpathSync } from 'node:fs'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -70,11 +70,12 @@ import { DshApiProxyAdapter, type DshPublicApiProxyLike } from './dsh-remote/api
 import { DshRemoteCommandLedger } from './dsh-remote/command-ledger.js'
 import { DshRemoteHttpControlPlane } from './dsh-remote/control-plane.js'
 import { createDefaultDshRemoteSocket } from './dsh-remote/default-socket-factory.js'
-import { ArkmeRemoteRealtimeHost } from './dsh-remote/host.js'
+import { ArkmeRemoteRealtimeHost, type DshRemoteSessionPersistenceLike } from './dsh-remote/host.js'
 import { ArkmeRemoteRealtimeTransport, type DshRemoteSocketLike } from './dsh-remote/realtime-transport.js'
 import { DshRemoteRuntimeStore } from './dsh-remote/runtime-store.js'
 import { DshRemoteRuntimeSecretBroker } from './dsh-remote/runtime-secret-broker.js'
 import { DshRemoteSessionOwnershipStore } from './dsh-remote/session-ownership-store.js'
+import { DshRemoteTurnUploadOutbox } from './dsh-remote/turn-upload-outbox.js'
 import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 
 export interface Config {
@@ -478,6 +479,7 @@ export function apply(ctx: Context, config: Config): void {
     const agentDefaultModel = apiCtx.get('agentDefaultModel') as {
       currentSelection?: () => unknown
     } | undefined
+    const sessionPersistence = apiCtx.get('sessionPersistence') as DshRemoteSessionPersistenceLike | undefined
     const apiProxy = new DshApiProxyAdapter(
       apiCtx.apiProxy as unknown as DshPublicApiProxyLike,
       {
@@ -518,16 +520,18 @@ export function apply(ctx: Context, config: Config): void {
     const secretBroker = new DshRemoteRuntimeSecretBroker(createArkmeSecureValueStore(
       `${config.keychainServicePrefix}.${config.environment}.dsh-remote-desktop`,
     ))
+    const controlPlane = new DshRemoteHttpControlPlane({
+      post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal),
+    })
     const host = new ArkmeRemoteRealtimeHost({
       featureEnabled: config.dshRemoteFeatureEnabled,
       transportAvailable: true,
       profileRef, hostClientRef, secretBroker,
       runtimeStore: new DshRemoteRuntimeStore(stateDirectory),
       sessionOwnership: new DshRemoteSessionOwnershipStore(stateDirectory, profileRef),
-      controlPlane: new DshRemoteHttpControlPlane({
-        post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal),
-      }),
+      controlPlane,
       realtime, apiProxy,
+      ...(sessionPersistence === undefined ? {} : { sessionPersistence }),
       readSession: async () => {
         const session = await service.accountScope.scopedSession()
         if (session === undefined) return undefined
@@ -538,6 +542,23 @@ export function apply(ctx: Context, config: Config): void {
         stateDirectory, 'dsh-remote', 'ledger',
         createHash('sha256').update(`dsh-remote-ledger-account-v1\n${accountId}`).digest('base64url'),
       ), key),
+      turnUploadForAccount: (accountId, key, maxObjectBytes, callbacks) => new DshRemoteTurnUploadOutbox({
+        directory: join(
+          stateDirectory, 'dsh-remote', 'history',
+          createHmac('sha256', key)
+            .update(`dsh-remote-history-account-v1\n${accountId}\n${profileRef}`)
+            .digest('base64url'),
+        ),
+        profileRef,
+        key,
+        maxObjectBytes,
+        controlPlane,
+        onError: (error, sessionRef) => {
+          callbacks.onError(error, sessionRef)
+          ctx.logger.warn('dsh-arkme: Turn OSS upload deferred: %s', error instanceof Error ? error.message : String(error))
+        },
+        onFinalized: callbacks.onFinalized,
+      }),
     })
     remoteHost = host
     apiCtx.effect(async () => {
@@ -831,6 +852,8 @@ export type {
   ArkmeIdAvailabilitySnapshot,
   ArkmeIdMutationResult,
   ArkmePendingWrite,
+  ArkmeRecordTagItem,
+  ArkmeRecordTagList,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingItem,
   ArkmeRelatedRecordingMonthBucket,

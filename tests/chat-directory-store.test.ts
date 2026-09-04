@@ -752,6 +752,69 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(store.getSnapshot().itemsBySourceKey['chat:stable-1']?.[0]).toMatchObject({ itemUid: 'item-1', sequence: 9 })
   })
 
+  it('keeps deleted timeline tombstones across stale deltas and clears them on recovery', () => {
+    const store = new ArkmeChatTimelineDeltaStore()
+    const item = {
+      itemUid: 'item-1', timelineItemKey: 'opaque-item-1', senderName: '联系人', isMe: false,
+      sendAtMillis: 1, title: '', textContent: '消息', status: 1, sequence: 9,
+    }
+    store.publish([{ source: { sourceRef: 'source-1', sourceKey: 'chat:stable-1' }, items: [item] }])
+    store.applyTimelineChange({
+      sourceKey: 'chat:stable-1', timelineItemKey: 'opaque-item-1', changeKind: 'deleted', changeVersion: 200, relationTerminal: false, throughSequence: 9,
+    })
+    expect(store.getSnapshotForSource('chat:stable-1')).toMatchObject({
+      items: [], removedItemKeys: ['opaque-item-1'], invalidationRevision: 0,
+    })
+
+    store.publish([{ source: { sourceRef: 'source-1', sourceKey: 'chat:stable-1' }, items: [item] }])
+    expect(store.getSnapshotForSource('chat:stable-1').items).toEqual([])
+    expect(store.getSnapshotForSource('chat:stable-1').removedItemKeys).toEqual(['opaque-item-1'])
+
+    store.applyTimelineChange({
+      sourceKey: 'chat:stable-1', timelineItemKey: 'opaque-item-1', changeKind: 'recovered', changeVersion: 300, relationTerminal: false, throughSequence: 9,
+    })
+    expect(store.getSnapshotForSource('chat:stable-1').removedItemKeys).toEqual([])
+    expect(store.getSnapshotForSource('chat:stable-1').invalidationRevision).toBe(1)
+  })
+
+  it('bounds per-conversation deletion tombstones while retaining the newest invalidations', () => {
+    const store = new ArkmeChatTimelineDeltaStore()
+    for (let index = 0; index < 520; index += 1) {
+      store.applyTimelineChange({
+        sourceKey: 'chat:stable-1', timelineItemKey: `opaque-item-${String(index)}`,
+        changeKind: 'deleted', changeVersion: index + 1, relationTerminal: true, throughSequence: index + 1,
+      })
+    }
+    const snapshot = store.getSnapshotForSource('chat:stable-1')
+    expect(snapshot.removedItemKeys).toHaveLength(512)
+    expect(snapshot.removedItemKeys.at(-1)).toBe('opaque-item-519')
+    expect(snapshot.removedItemKeys).not.toContain('opaque-item-0')
+  })
+
+  it('ignores delayed and duplicate timeline changes without reviving withdrawn messages', () => {
+    const store = new ArkmeChatTimelineDeltaStore()
+    const change = {
+      sourceKey: 'chat:stable-1', timelineItemKey: 'opaque-item-1', throughSequence: 9,
+    }
+    store.applyTimelineChange({ ...change, changeKind: 'deleted', changeVersion: 300, relationTerminal: true })
+    const deleted = store.getSnapshotForSource('chat:stable-1')
+
+    store.applyTimelineChange({ ...change, changeKind: 'deleted', changeVersion: 300, relationTerminal: true })
+    expect(store.getSnapshotForSource('chat:stable-1')).toBe(deleted)
+
+    store.applyTimelineChange({ ...change, changeKind: 'recovered', changeVersion: 299, relationTerminal: false })
+    expect(store.getSnapshotForSource('chat:stable-1')).toBe(deleted)
+    expect(store.getSnapshotForSource('chat:stable-1').removedItemKeys).toEqual(['opaque-item-1'])
+
+    store.applyTimelineChange({ ...change, changeKind: 'recovered', changeVersion: 300, relationTerminal: false })
+    expect(store.getSnapshotForSource('chat:stable-1')).toBe(deleted)
+    expect(store.getSnapshotForSource('chat:stable-1').removedItemKeys).toEqual(['opaque-item-1'])
+
+    store.applyTimelineChange({ ...change, changeKind: 'recovered', changeVersion: 301, relationTerminal: false })
+    expect(store.getSnapshotForSource('chat:stable-1')).toBe(deleted)
+    expect(store.getSnapshotForSource('chat:stable-1').removedItemKeys).toEqual(['opaque-item-1'])
+  })
+
   it('keeps a source delta snapshot stable when only another conversation changes', () => {
     const store = new ArkmeChatTimelineDeltaStore()
     store.publish([{ source: { sourceRef: 'source-1', sourceKey: 'chat:stable-1' }, items: [{

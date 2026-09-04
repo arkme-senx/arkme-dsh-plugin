@@ -36,7 +36,7 @@ const styles: Record<string, CSSProperties> = {
   taskDirectory: { minWidth: 0, flex: 1, overflow: 'hidden', borderLeft: '1px solid #ececef', background: '#fff' },
   sidebarResizeHandle: {
     position: 'absolute', zIndex: 3, top: 0, right: 0, bottom: 0, width: 10,
-    cursor: 'col-resize', touchAction: 'none',
+    cursor: 'ew-resize', touchAction: 'none',
   },
   workspace: {
     width: '100%', height: '100%', minWidth: 0, minHeight: 0,
@@ -292,6 +292,22 @@ export function ArkmePersistentSidebar({
     :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-side="sidebar"] {
       transition: none !important;
     }
+    [data-arkme-owned="persistent-sidebar-resize-handle"]::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 1px;
+      background: var(--dsw-alias-border-l1, #e5e7eb);
+      transition: width 80ms ease, background-color 80ms ease;
+    }
+    [data-arkme-owned="persistent-sidebar-resize-handle"]:hover::after,
+    [data-arkme-owned="persistent-sidebar-resize-handle"]:focus-visible::after,
+    [data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"] [data-arkme-owned="persistent-sidebar-resize-handle"]::after {
+      width: 3px;
+      background: #09b83e;
+    }
   `}</style>
   const sidebarResizeHandle = <div
     data-arkme-owned="persistent-sidebar-resize-handle"
@@ -393,6 +409,9 @@ export function ArkmePersistentSidebar({
           arkmeContactsTab.activateAccount(contactsAccountKey)
           handoffControllerRef.current?.abort()
           handoffControllerRef.current = undefined
+          void callArkme('conversation.directory.visibility.set', {
+            entryKind: 'bot', entryRef: bot.botRef, hidden: false,
+          }).catch(() => undefined)
           arkmeUi.openBotConversation(bot)
         }}
       /> : <ArkmeNavigation

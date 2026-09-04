@@ -352,6 +352,32 @@ export class ArkmeComposerDraftStore {
     return this.insertMentionToken(key, { mentionRef }, displayName, selectionStart, selectionEnd)
   }
 
+  insertHashTag(
+    key: string | undefined,
+    tagName: string,
+    selectionStart: number,
+    selectionEnd = selectionStart,
+  ): number | undefined {
+    const normalizedTag = tagName.trim().replace(/^[#＃]+/u, '')
+    if (key === undefined || normalizedTag === '') return undefined
+    const current = this.get(key)
+    const start = Math.max(0, Math.min(current.text.length, Math.trunc(selectionStart)))
+    const end = Math.max(start, Math.min(current.text.length, Math.trunc(selectionEnd)))
+    const inserted = `#${normalizedTag} `
+    const withoutSelection = current.text.slice(0, start) + current.text.slice(end)
+    const text = current.text.slice(0, start) + inserted + current.text.slice(end)
+    const mentions = reconcileArkmeComposerMentions(current.text, withoutSelection, current.mentions)
+      .map(mention => mention.startIndex >= start
+        ? { ...mention, startIndex: mention.startIndex + inserted.length }
+        : mention)
+    const emojis = reconcileArkmeComposerEmojis(current.text, withoutSelection, current.emojis)
+      .map(emoji => emoji.startIndex >= start
+        ? { ...emoji, startIndex: emoji.startIndex + inserted.length }
+        : emoji)
+    this.store(key, { text, attachments: current.attachments, mentions, emojis })
+    return start + inserted.length
+  }
+
   insertAllMention(
     key: string | undefined,
     selectionStart: number,

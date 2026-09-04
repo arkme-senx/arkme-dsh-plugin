@@ -27,6 +27,7 @@ function sameBot(left: ArkmeBotSummary | undefined, right: ArkmeBotSummary | und
     && left.conversationProjection === right.conversationProjection
     && left.chatSourceKey === right.chatSourceKey
     && left.createdAtMillis === right.createdAtMillis && left.latestMessageAtMillis === right.latestMessageAtMillis
+    && left.conversationListActivityAtMillis === right.conversationListActivityAtMillis
     && left.latestMessagePreview === right.latestMessagePreview && left.unreadCount === right.unreadCount
     && left.isMuted === right.isMuted
 }
@@ -44,6 +45,7 @@ export interface ArkmeUiState {
   notificationActivationRevision?: number
   conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: number }
   recordingTarget?: { dateStamp: number; startAtMillis: number }
+  searchTarget?: { revision: number; query: string }
   extensionShareRef?: string
   extensionShareAction?: ArkmeExtensionShareAction
   extensionDetailId?: string
@@ -94,6 +96,7 @@ export class ArkmeUiController {
   private settingsOpener: (() => void) | undefined
   private conversationTargetRevision = 0
   private notificationActivationRevision = 0
+  private searchTargetRevision = 0
 
   readonly getSnapshot = (): ArkmeUiState => this.state
   /** Navigation and presentation state, stable across projection-only invalidations. */
@@ -227,8 +230,23 @@ export class ArkmeUiController {
 
   showSearch(): void {
     this.leaveContacts()
-    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, searchTarget: _searchTarget, ...rest } = this.state
     this.publish({ ...rest, mode: 'search' })
+  }
+
+  showTagSearch(tagText: string): void {
+    const normalized = tagText.trim().replace(/^[#＃]+/u, '').trim()
+    if (normalized === '') throw new TypeError('搜索标签不能为空')
+    this.publish({
+      ...this.state,
+      searchTarget: { revision: ++this.searchTargetRevision, query: `#${normalized}` },
+    })
+  }
+
+  consumeSearchTarget(revision: number): void {
+    if (this.state.searchTarget?.revision !== revision) return
+    const { searchTarget: _searchTarget, ...rest } = this.state
+    this.publish(rest)
   }
 
   showVoiceprint(): void {
@@ -414,6 +432,8 @@ export class ArkmeUiController {
       && next.conversationTarget?.recordOwnerUserId === this.state.conversationTarget?.recordOwnerUserId
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
+      && next.searchTarget?.revision === this.state.searchTarget?.revision
+      && next.searchTarget?.query === this.state.searchTarget?.query
       && next.extensionShareRef === this.state.extensionShareRef
       && next.extensionShareAction === this.state.extensionShareAction
       && next.extensionDetailId === this.state.extensionDetailId

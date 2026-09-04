@@ -97,6 +97,83 @@ describe('ChatRealtimeService', () => {
     service.dispose()
   })
 
+  it('projects a timeline change to opaque source and item keys without content', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore)
+    const source = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
+    })
+    const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
+    const schedule = vi.spyOn(service, 'scheduleChatSessionProjection').mockImplementation(() => undefined)
+    vi.spyOn(service, 'refreshAttentionSummary').mockResolvedValue()
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+
+    service.handleChatRealtimeNotice({
+      cause: 'chat-hint',
+      state: { revision: 2, connected: true, connectionGeneration: 1 },
+      timelineChanged: {
+        eventUid: 'timeline-event-1', chatSessionUid: 'raw-chat-session', relationUid: 'raw-relation',
+        latestSequence: 9, actorUserId: 10001, changeKind: 'deleted', changeVersion: 123456, relationTerminal: true,
+        eventAtMillis: 123457,
+      },
+    })
+
+    await vi.waitFor(() => { expect(events).toHaveLength(1) })
+    expect(events[0]).toMatchObject({
+      type: 'timeline-changed', changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 9,
+      sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./),
+      timelineItemKey: expect.stringMatching(/^arkme-chat-timeline-item-v1\./),
+    })
+    expect(JSON.stringify(events[0])).not.toContain('raw-chat-session')
+    expect(JSON.stringify(events[0])).not.toContain('raw-relation')
+    expect(schedule).toHaveBeenCalledWith('raw-chat-session', 9)
+    service.dispose()
+  })
+
+  it('drops a timeline invalidation when the authenticated account changes during key projection', async () => {
+    let readCount = 0
+    const sessions: ArkmeSessionStore = {
+      async read() {
+        readCount += 1
+        return readCount === 1
+          ? { userId: 10001, accessToken: 'old-access', refreshToken: 'old-refresh' }
+          : { userId: 10002, accessToken: 'new-access', refreshToken: 'new-refresh' }
+      },
+      async write() {}, async delete() {},
+    }
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore)
+    const source = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
+    })
+    const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
+    const schedule = vi.spyOn(service, 'scheduleChatSessionProjection').mockImplementation(() => undefined)
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+
+    service.handleChatRealtimeNotice({
+      cause: 'chat-hint',
+      state: { revision: 2, connected: true, connectionGeneration: 1 },
+      timelineChanged: {
+        eventUid: 'timeline-event-1', chatSessionUid: 'old-chat-session', relationUid: 'old-relation',
+        latestSequence: 9, actorUserId: 10001, changeKind: 'deleted', changeVersion: 123456, relationTerminal: true,
+        eventAtMillis: 123457,
+      },
+    })
+
+    await vi.waitFor(() => { expect(readCount).toBeGreaterThanOrEqual(2) })
+    expect(events).toEqual([])
+    expect(schedule).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
   it('refreshes the unread directory instead of emitting receipt data for the current user cursor', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
@@ -274,6 +351,48 @@ describe('ChatRealtimeService', () => {
       .toEqual(Array.from({ length: notificationCount }, (_, index) => index)
         .filter(index => index % 4 === 1 && index !== 5)
         .map(index => `event-${String(index)}`))
+    service.dispose()
+  })
+
+  it('relays a same-account preference hint as Browser invalidation without owner payload', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore)
+    const source = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
+    })
+    const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+
+    service.handleChatRealtimeNotice({
+      cause: 'conversation-list-preference-invalidation',
+      state: { revision: 2, connected: true, connectionGeneration: 1 },
+      conversationListPreferenceUpdated: {
+        eventUid: 'preference-event-1', userId: 10001,
+        items: [{ entityKind: 1, entityUid: 'chat-secret', revision: 3 }],
+        acceptedAtMillis: 123459, sourceClientId: 501,
+      },
+    })
+
+    await vi.waitFor(() => { expect(events).toHaveLength(1) })
+    expect(events[0]).toEqual({ type: 'conversation-list-preference-invalidated', revision: 1 })
+    expect(JSON.stringify(events[0])).not.toContain('chat-secret')
+
+    service.handleChatRealtimeNotice({
+      cause: 'conversation-list-preference-invalidation',
+      state: { revision: 2, connected: true, connectionGeneration: 1 },
+      conversationListPreferenceUpdated: {
+        eventUid: 'preference-event-other-account', userId: 20002,
+        items: [{ entityKind: 1, entityUid: 'chat-secret', revision: 3 }],
+        acceptedAtMillis: 123459, sourceClientId: 501,
+      },
+    })
+
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(events).toHaveLength(1)
     service.dispose()
   })
 })

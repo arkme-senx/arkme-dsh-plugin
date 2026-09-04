@@ -512,6 +512,10 @@ export class ArkmeLocalDatabase {
     return await this.operationalState.replaceRecordingImportJob(userId, job, expectedRevision)
   }
 
+  async removeRecordingImportJob(userId: number, jobId: string): Promise<void> {
+    await this.operationalState.removeRecordingImportJob(userId, jobId)
+  }
+
   async markAttempt(userId: number, recordUid: string, error: string): Promise<void> {
     await this.ensureMigrated(userId)
     const result = this.database.prepare(`

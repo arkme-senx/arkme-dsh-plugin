@@ -84,7 +84,12 @@ describe('Arkme long-article link presentation', () => {
       href: 'https://example.com/article',
       target: '_blank',
       rel: 'noopener noreferrer',
+      'data-arkme-link-title': 'raw',
     })
+    expect(link.findByProps({ 'data-arkme-link-label': 'true' }).children).toEqual([
+      'https://example.com/article',
+    ])
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'link.metadata')).toHaveLength(0)
     expect(renderer.root.findAllByType('textarea')).toHaveLength(0)
     expect(renderer.root.findAllByProps({ 'data-arkme-rich-emoji': 'angry_face' })).toHaveLength(0)
     await act(async () => { renderer.unmount() })

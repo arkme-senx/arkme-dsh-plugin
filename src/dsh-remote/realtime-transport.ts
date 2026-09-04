@@ -100,6 +100,11 @@ function validServerFrame(frame: ServerFrame): boolean {
   if (allowed === undefined || Object.keys(frame).some(key => !allowed.has(key))) return false
   if (frame.type === 'connection.ready') return positiveInteger(frame.connection_generation)
   if (frame.type === 'connection.replaced') return true
+  if (frame.type === 'error') {
+    return (frame.request_id === undefined || validRef(frame.request_id))
+      && typeof frame.code === 'string' && typeof frame.message === 'string'
+      && typeof frame.retryable === 'boolean'
+  }
   if (frame.type === 'channel.event') return frame.namespace === 'dsh_remote'
     && validRef(frame.channel_ref) && positiveInteger(frame.seq)
     && frame.event !== null && typeof frame.event === 'object' && !Array.isArray(frame.event)
@@ -404,6 +409,10 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
     if (waiter !== undefined) {
       this.waiters.delete(waiterKey)
       waiter.resolve(frame)
+      return
+    }
+    if (frame.type === 'error') {
+      this.failConnection(remoteError(frame), false)
       return
     }
     if (frame.type === 'channel.event' && typeof frame.channel_ref === 'string') this.channelListeners.get(frame.channel_ref)?.(frame)

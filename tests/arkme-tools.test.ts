@@ -266,6 +266,9 @@ function fakeService(): ArkmeCoreToolPorts & {
     reportMessage: vi.fn(async (messageRef: string, _reportType: 1 | 2 | 3 | 4) => ({
       messageRef, reportUid: 'report-1', status: 1,
     })),
+    withdrawGroupMessage: vi.fn(async (messageWithdrawalRef: string) => ({
+      messageWithdrawalRef, timelineItemKey: 'timeline-item-1', withdrawnAtMillis: 123, alreadyWithdrawn: false,
+    })),
     sendSourceText: vi.fn(async (sourceRef: string, _text: string, options?: { recordUid?: string }) => ({
       sourceRef, itemUid: options?.recordUid ?? 'record-1', status: 1, localState: 'synced' as const,
     })),
@@ -305,6 +308,15 @@ function fakeService(): ArkmeCoreToolPorts & {
         unreadCount: 0,
       },
       status: 'ok' as const,
+    })),
+    listGroupMemberCandidates: vi.fn(async () => ({ items: [], total: 0, hasMore: false, mode: 'direct_add' as const })),
+    addGroupMembers: vi.fn(async () => ({ sourceRef: 'group-source-1', mode: 'direct_add' as const, results: [], addedCount: 0, invitedCount: 0, failedCount: 0 })),
+    removeGroupMember: vi.fn(async (sourceRef: string, memberRef: string, options?: { preventRejoin?: boolean }) => ({
+      sourceRef, memberRef, status: 'removed' as const, joinRestricted: options?.preventRejoin === true,
+    })),
+    listGroupJoinRestrictions: vi.fn(async (sourceRef: string) => ({ sourceRef, items: [] })),
+    setGroupJoinRestriction: vi.fn(async (sourceRef: string, memberRef: string, restricted: boolean) => ({
+      sourceRef, memberRef, restricted,
     })),
     requestOutgoingCall: vi.fn(async (_sourceRef: string, mediaType: 'audio' | 'video') => ({
       status: 'calling' as const,
@@ -937,6 +949,31 @@ describe('Arkme conversation tools', () => {
       requestUid: stableUidForToolCall('message-report', callId),
       signal: expect.any(AbortSignal),
     })
+  })
+
+  it('keeps message withdrawal and member join restriction as separate explicit tools', async () => {
+    const service = fakeService()
+    const tools = createArkmeCoreToolDefinitions(service)
+    const signal = new AbortController().signal
+    const withdraw = tools.find(definition => definition.name === 'arkme_message_withdraw')!
+    const remove = tools.find(definition => definition.name === 'arkme_group_member_remove')!
+    const setRestriction = tools.find(definition => definition.name === 'arkme_group_join_restriction_set')!
+
+    await withdraw.execute({ message_withdrawal_ref: 'withdrawal-ref-1' }, { signal } as never)
+    await remove.execute({
+      group_source_ref: 'group-ref-1', member_ref: 'member-ref-1', prevent_rejoin: false,
+    }, { signal } as never)
+    await setRestriction.execute({
+      group_source_ref: 'group-ref-1', member_ref: 'member-ref-1', restricted: true,
+    }, { signal } as never)
+
+    expect(service.withdrawGroupMessage).toHaveBeenCalledWith('withdrawal-ref-1', { signal })
+    expect(service.removeGroupMember).toHaveBeenCalledWith('group-ref-1', 'member-ref-1', {
+      preventRejoin: false, signal,
+    })
+    expect(service.setGroupJoinRestriction).toHaveBeenCalledWith(
+      'group-ref-1', 'member-ref-1', true, { signal },
+    )
   })
 
   it('generates a group polish rule without writing and enables only with its confirmation reference', async () => {

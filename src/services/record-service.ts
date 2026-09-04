@@ -8,6 +8,7 @@ import type {
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
+  ArkmeRecordTagList,
   ArkmeRecordCaptureContext,
   ArkmeRecordCursor,
   ArkmeSelfRecordItem,
@@ -16,6 +17,7 @@ import type {
   ArkmeTimelineItem,
   ArkmeUploadedAsset,
 } from '../types.js'
+import { arkmeHashTagPayload } from '../hashtag.js'
 import { MediaService } from './media-service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord } from './privacy-visibility.js'
 import type { ArkmeSourceRefPayload } from './source-service.js'
@@ -215,6 +217,67 @@ export class RecordService {
 
   async refreshLatest(): Promise<void> {
     await Promise.all([this.summary(), this.list(50)])
+  }
+
+  async listTags(limit = 100, signal?: AbortSignal): Promise<ArkmeRecordTagList> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/records/tags/list',
+      { limit: Math.max(1, Math.min(200, Math.trunc(limit))) },
+      session,
+      signal,
+    )
+    return {
+      items: listValue(data.items).flatMap(raw => {
+        const item = objectValue(raw)
+        const tagText = stringValue(item.tag_text ?? item.tagText).trim()
+        if (tagText === '') return []
+        return [{
+          normalizedTag: stringValue(item.normalized_tag ?? item.normalizedTag).trim() || tagText.toLowerCase(),
+          tagText,
+          recordCount: Math.max(0, Math.trunc(numberValue(item.record_count ?? item.recordCount))),
+          latestRecordUid: stringValue(item.latest_record_uid ?? item.latestRecordUid).trim(),
+          latestSendAtMillis: Math.max(0, Math.trunc(numberValue(item.latest_send_at ?? item.latestSendAtMillis))),
+        }]
+      }),
+    }
+  }
+
+  /**
+   * Mirrors Flutter's post-commit tag sync. Record creation is already the
+   * commit boundary, so a projection-side failure is diagnostic only and must
+   * never turn an accepted message into a retryable send.
+   */
+  async syncCreatedRecordTags(
+    recordUid: string,
+    textContent: string,
+    expectedUserId?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const tags = arkmeHashTagPayload(textContent)
+    if (tags.length === 0) return
+    try {
+      const session = await this.runtime.requireSession()
+      if (expectedUserId !== undefined && session.userId !== expectedUserId) return
+      await this.runtime.authenticatedPost(
+        '/api/v1/records/tags/set',
+        {
+          record_uid: recordUid.trim(),
+          expected_record_version: 1,
+          tags: tags.map(tag => ({
+            tag_text: tag.tag,
+            start_index: tag.start_index,
+            length: tag.length,
+          })),
+        },
+        session,
+        signal,
+      )
+    } catch (error) {
+      if (signal?.aborted !== true) {
+        console.warn('dsh-arkme: record tag post-commit sync failed', safeFailureMessage(error))
+      }
+    }
   }
 
   async refreshSnapshot(): Promise<ArkmeCachedSnapshot> {
@@ -435,6 +498,7 @@ export class RecordService {
         throw new ArkmePluginError('record-file-asset-invalid', '附件资产参数无效', false)
       }
     }
+    const hashTags = arkmeHashTagPayload(normalizedText)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/create',
       {
@@ -447,6 +511,7 @@ export class RecordService {
           payload_kind: 2,
           schema_version: 1,
           text_state: normalizedText === '' ? 3 : 1,
+          ...(hashTags.length === 0 ? {} : { hash_tags: hashTags }),
           media_refs: assets.map((asset, index) => ({
             file_asset_uid: asset.fileAssetUid,
             content_file_role: 1,
@@ -459,10 +524,12 @@ export class RecordService {
       },
       session,
     )
-    return {
+    const result = {
       recordUid: stringValue(data.record_uid).trim() || normalizedUid,
       status: numberValue(data.status),
     }
+    await this.syncCreatedRecordTags(result.recordUid, normalizedText, session.userId)
+    return result
   }
 
   async createExtensionForConversation(
@@ -490,6 +557,7 @@ export class RecordService {
         throw new ArkmePluginError('record-file-asset-invalid', '附件资产参数无效', false)
       }
     }
+    const hashTags = arkmeHashTagPayload(normalizedText)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/extensions/create',
       {
@@ -502,6 +570,7 @@ export class RecordService {
           payload_kind: assets.length === 0 ? 1 : 2,
           schema_version: 1,
           text_state: normalizedText === '' ? 3 : 1,
+          ...(hashTags.length === 0 ? {} : { hash_tags: hashTags }),
           ...(assets.length === 0 ? {} : {
             media_refs: assets.map((asset, index) => ({
               file_asset_uid: asset.fileAssetUid,
@@ -525,6 +594,7 @@ export class RecordService {
     if (createdRecordUid !== normalizedUid || createdParentUid !== normalizedParentUid || edgeUid === '') {
       throw new ArkmePluginError('record-extension-response-invalid', '延展写入结果无效，请刷新后重试', true, 502)
     }
+    await this.syncCreatedRecordTags(createdRecordUid, normalizedText, session.userId)
     return {
       recordUid: createdRecordUid,
       status: numberValue(data.record_status ?? data.status),
@@ -555,6 +625,7 @@ export class RecordService {
       const captureContext = pending.captureContext === undefined
         ? undefined
         : arkmeRecordCaptureContextPayload(pending.captureContext)
+      const hashTags = arkmeHashTagPayload(pending.textContent)
       const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
         '/api/v1/records/create',
         {
@@ -568,6 +639,9 @@ export class RecordService {
           ...(captureContext === undefined || Object.keys(captureContext).length === 0
             ? {}
             : { capture_context: captureContext }),
+          ...(hashTags.length === 0
+            ? {}
+            : { content_payload: { payload_kind: 1, schema_version: 1, text_state: 1, hash_tags: hashTags } }),
           send_at: pending.sendAtMillis,
         },
         session,
@@ -576,6 +650,7 @@ export class RecordService {
         recordUid: stringValue(data.record_uid) || pending.recordUid,
         status: numberValue(data.status),
       }
+      await this.syncCreatedRecordTags(result.recordUid, pending.textContent, session.userId)
       await this.runtime.stateStore.markSynced(session.userId, pending.recordUid, result.status)
       return result
     } catch (error) {

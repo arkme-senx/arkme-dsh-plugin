@@ -60,6 +60,7 @@ export interface StateStore {
     unresolvedLimit: number,
   ): Promise<RecordingImportAdmission>
   replaceRecordingImportJob(userId: number, job: RecordingImportJob, expectedRevision: number): Promise<boolean>
+  removeRecordingImportJob(userId: number, jobId: string): Promise<void>
 }
 
 export interface ArkmeServiceConfig {

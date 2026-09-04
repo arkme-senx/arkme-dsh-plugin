@@ -19,6 +19,7 @@ function fakeService() {
     heartbeatOutgoingCall: vi.fn(async () => ({ expiresAtMillis: 1 })),
     releaseOutgoingCall: vi.fn(async () => undefined),
     searchRemote: vi.fn(async (input: unknown) => input),
+    searchTagRecords: vi.fn(async (input: unknown) => input),
     searchScene: vi.fn(async (input: unknown) => input),
     searchImages: vi.fn(async (input: unknown) => input),
     searchRecordings: vi.fn(async (input: unknown) => input),
@@ -49,6 +50,7 @@ function fakeService() {
     openPrivateChatFromContact: vi.fn(async (contactRef: string) => ({ source: { sourceRef: `source:${contactRef}` } })),
     openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
     reportMessage: vi.fn(async (messageRef: string, reportType: number, options: unknown) => ({ messageRef, reportType, options })),
+    withdrawGroupMessage: vi.fn(async (messageWithdrawalRef: string, options: unknown) => ({ messageWithdrawalRef, options })),
     copySourceMessageLink: vi.fn(async (sourceRef: string, actionRefs: unknown, options: unknown) => ({ sourceRef, actionRefs, options })),
     resolveMessageCopyLink: vi.fn(async (sid: string, options: unknown) => ({ sid, options })),
     extendMessageCopyLink: vi.fn(async (sid: string, itemIndex: number, textContent: string, recordUid: string, options: unknown) => ({ sid, itemIndex, textContent, recordUid, options })),
@@ -72,6 +74,9 @@ function fakeService() {
     removeLongArticleDraft: vi.fn(async () => undefined),
     listGroupMemberCandidates: vi.fn(async () => ({ items: [] })),
     addGroupMembers: vi.fn(async () => ({ items: [] })),
+    removeGroupMember: vi.fn(async (sourceRef: string, memberRef: string, options: unknown) => ({ sourceRef, memberRef, options })),
+    listGroupJoinRestrictions: vi.fn(async (sourceRef: string, options: unknown) => ({ sourceRef, options, items: [] })),
+    setGroupJoinRestriction: vi.fn(async (sourceRef: string, memberRef: string, restricted: boolean, options: unknown) => ({ sourceRef, memberRef, restricted, options })),
     groupInvitePreview: vi.fn(async () => ({ inviteLink: 'https://example.test/invite' })),
     listGroupBots: vi.fn(async () => ({ items: [] })),
     addGroupBot: vi.fn(async () => ({ installed: true })),
@@ -274,6 +279,90 @@ describe('link metadata Host API dispatch', () => {
       url: 'https://jotmo.ai/path', title: '即我 Jotmo',
     })
     expect(service.resolveLinkMetadata).toHaveBeenCalledWith('https://jotmo.ai/path', { signal: request.signal })
+  })
+
+  it('uses the extension share page title for Arkme extension share links', async () => {
+    const service = fakeService()
+    const url = 'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef'
+    const pageMetadata = {
+      url,
+      title: '指尖烟花 - 即我扩展',
+      siteName: 'jiwo.cc',
+    }
+    service.resolveLinkMetadata.mockResolvedValueOnce(pageMetadata)
+    const request = new AbortController()
+    const extensionManager = {
+      readSharedDetail: vi.fn(async () => ({
+        name: '指尖烟花',
+        description: '点击夜空燃放烟花。',
+        visibility: 'public',
+        share_scope: 'link_readonly',
+        latest_stable_version: '1.0.0',
+        preview_images: [],
+        rating_summary: { average: 0, count: 0, histogram: [0, 0, 0, 0, 0] },
+      })),
+    }
+
+    await expect(dispatchArkmeHostOperation(
+      service as never,
+      'link.metadata',
+      { url },
+      undefined,
+      extensionManager as never,
+      undefined,
+      undefined,
+      request.signal,
+    )).resolves.toEqual({
+      url,
+      title: '指尖烟花 - 即我扩展',
+      siteName: 'jiwo.cc',
+    })
+    expect(service.resolveLinkMetadata).toHaveBeenCalledWith(url, { signal: request.signal })
+    expect(extensionManager.readSharedDetail).not.toHaveBeenCalled()
+  })
+
+  it('falls back to extension share detail when the page title is unavailable', async () => {
+    const service = fakeService()
+    const url = 'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef'
+    const genericPageMetadata = {
+      url,
+      title: '即我',
+      siteName: 'jiwo.cc',
+    }
+    service.resolveLinkMetadata.mockResolvedValueOnce(genericPageMetadata)
+    const request = new AbortController()
+    const extensionManager = {
+      readSharedDetail: vi.fn(async () => ({
+        name: '指尖烟花',
+        description: '点击夜空燃放烟花。',
+        visibility: 'public',
+        share_scope: 'link_readonly',
+        latest_stable_version: '1.0.0',
+        preview_images: [],
+        rating_summary: { average: 0, count: 0, histogram: [0, 0, 0, 0, 0] },
+      })),
+    }
+
+    await expect(dispatchArkmeHostOperation(
+      service as never,
+      'link.metadata',
+      { url },
+      undefined,
+      extensionManager as never,
+      undefined,
+      undefined,
+      request.signal,
+    )).resolves.toEqual({
+      url,
+      title: '指尖烟花',
+      description: '点击夜空燃放烟花。',
+      siteName: 'jiwo.cc',
+    })
+    expect(service.resolveLinkMetadata).toHaveBeenCalledWith(url, { signal: request.signal })
+    expect(extensionManager.readSharedDetail).toHaveBeenCalledWith(
+      'extshare_0123456789abcdef0123456789abcdef',
+      request.signal,
+    )
   })
 
   it('owns the public SDK non-null fallback without forwarding that policy into infrastructure', async () => {
@@ -773,6 +862,38 @@ describe('message action Host API dispatch', () => {
       messageRef: 'arkme-message-v1.payload.signature', reportType: 4, reason: '', requestUid,
     })).rejects.toMatchObject({ code: 'message-report-invalid' })
   })
+
+  it('forwards only opaque group-governance references and explicit options', async () => {
+    const service = fakeService()
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'source.message-withdraw', {
+      messageWithdrawalRef: ' arkme-message-withdrawal-v1.payload.signature ',
+      chatSessionUid: 'must-not-forward', relationUid: 'must-not-forward', actorUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'group.member-remove', {
+      sourceRef: ' group-ref ', memberRef: ' member-ref ', preventRejoin: true, targetUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'group.join-restrictions', {
+      sourceRef: ' group-ref ', cursor: ' cursor-ref ', limit: 25, targetUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'group.join-restriction.set', {
+      sourceRef: ' group-ref ', memberRef: ' member-ref ', restricted: false, targetUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+
+    expect(service.withdrawGroupMessage).toHaveBeenCalledWith('arkme-message-withdrawal-v1.payload.signature', { signal })
+    expect(service.removeGroupMember).toHaveBeenCalledWith('group-ref', 'member-ref', { preventRejoin: true, signal })
+    expect(service.listGroupJoinRestrictions).toHaveBeenCalledWith('group-ref', { cursor: 'cursor-ref', limit: 25, signal })
+    expect(service.setGroupJoinRestriction).toHaveBeenCalledWith('group-ref', 'member-ref', false, { signal })
+    await expect(dispatchArkmeHostOperation(service as never, 'group.join-restriction.set', {
+      sourceRef: 'group-ref', memberRef: 'member-ref',
+    })).rejects.toMatchObject({ code: 'join-restriction-invalid' })
+    await expect(dispatchArkmeHostOperation(service as never, 'group.member-remove', {
+      sourceRef: 'group-ref', memberRef: 'member-ref', preventRejoin: 'true',
+    })).rejects.toMatchObject({ code: 'group-member-remove-invalid' })
+    await expect(dispatchArkmeHostOperation(service as never, 'group.join-restrictions', {
+      sourceRef: 'group-ref', limit: '25',
+    })).rejects.toMatchObject({ code: 'join-restrictions-invalid' })
+  })
 })
 
 describe('related quick note Host API dispatch', () => {
@@ -1182,11 +1303,17 @@ describe('outgoing call Host API dispatch', () => {
     await dispatchArkmeHostOperation(service as never, 'search.recordings', {
       query: '北京', limit: 9, userId: 999,
     })
+    await dispatchArkmeHostOperation(service as never, 'records.tags.query', {
+      normalizedTag: '项目', limit: 25, cursorSendAt: 123, cursorRecordUid: 'record-1', userId: 999,
+    })
 
     expect(service.searchRemote).toHaveBeenCalledWith({ query: '复盘', limit: 12, cursor: 'next-records', searchScope: 'topic', sourceUid: 'topic-1' })
     expect(service.searchScene).toHaveBeenCalledWith({ scene: 'image_video', limit: 8 })
     expect(service.searchImages).toHaveBeenCalledWith({ limit: 50, cursor: 'next-images' })
     expect(service.searchRecordings).toHaveBeenCalledWith({ query: '北京', limit: 9 })
+    expect(service.searchTagRecords).toHaveBeenCalledWith({
+      normalizedTag: '项目', limit: 25, cursorSendAt: 123, cursorRecordUid: 'record-1',
+    })
   })
 
   it('keeps AI video list and signed asset resolution in built-in Host operations', async () => {

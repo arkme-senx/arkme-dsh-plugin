@@ -65,6 +65,15 @@ describe('Arkme local realtime events', () => {
     expect(response.chunks.join('')).toContain('"throughSequence":12')
     expect(response.chunks.join('')).not.toContain('chat_session_uid')
     expect(response.chunks.join('')).not.toContain('reader_user_id')
+    listener?.({
+      type: 'timeline-changed', revision: 5,
+      sourceKey: 'arkme-chat-source-v1.browser-safe',
+      timelineItemKey: 'arkme-chat-timeline-item-v1.browser-safe',
+      changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 12,
+    })
+    expect(response.chunks.join('')).toContain('"type":"timeline-changed"')
+    expect(response.chunks.join('')).toContain('arkme-chat-timeline-item-v1.browser-safe')
+    expect(response.chunks.join('')).not.toContain('rel_uid')
 
     events.close()
     expect(unsubscribe).toHaveBeenCalledOnce()

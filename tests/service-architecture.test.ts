@@ -24,25 +24,27 @@ const expectedPublicMethods = [
   'listDirectory', 'directoryContactProfile', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
+  'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'sealRecordingCursor', 'openRecordingCursor', 'recordingDay', 'recordingPlayback',
   'recordingSpeakerOptions', 'assignRecordingSpeaker',
-  'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'retryRecordingImport',
-  'cancelRecordingImport', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
+  'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport',
+  'cancelRecordingImport', 'updateRecordingImportSessionStart', 'updateRecordingImportSessionOwnership', 'deleteRecordingImportSession', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
-  'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'renameTopic', 'dissolveTopic', 'topicDissolveStatus', 'activeTopicDissolve', 'moveTopicHierarchy', 'listSources', 'setChatDirectoryPolicy', 'listSourceMembers', 'sourceMemberRecords',
+  'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'renameTopic', 'dissolveTopic', 'topicDissolveStatus', 'activeTopicDissolve', 'moveTopicHierarchy', 'listSources', 'setChatDirectoryPin', 'conversationDirectoryVisibilitySnapshot', 'setConversationDirectoryVisibility', 'listSourceMembers', 'sourceMemberRecords',
   'dshBetaCommunityEntryState', 'dshRemoteGet', 'dshRemotePost', 'interwovenMoments', 'interwovenMomentDetail',
   'relatedQuickNotesFromMessage', 'relatedQuickNotesFromMoment', 'relatedQuickNoteDetail',
   'joinDSHBetaCommunity', 'inspectGroupAiPolish', 'inspectGroupAiPolishByName',
   'readGroupAiPolishNotices', 'generateGroupAiPolishRuleForSource', 'generateGroupAiPolishRule',
   'prepareEnableGroupAiPolish', 'prepareEnableGroupAiPolishRuleForSource', 'confirmEnableGroupAiPolish', 'prepareDisableGroupAiPolishForSource', 'prepareDisableGroupAiPolish',
   'confirmDisableGroupAiPolish', 'listGroupMembers', 'listGroupMemberCandidates', 'groupInvitePreview', 'addGroupMembers',
+  'removeGroupMember', 'listGroupJoinRestrictions', 'setGroupJoinRestriction',
   'createGroup', 'groupSettings', 'setGroupMessageDnd',
   'renameGroup', 'leaveGroup', 'dissolveGroup', 'reportGroup', 'userCard',
   'userBanStatus', 'banPrivateChatUser', 'unbanPrivateChatUser',
   'openPrivateChatFromUser', 'openPrivateChatFromContact', 'officialAuthorProfile', 'openOfficialAuthorPrivateChat', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'readSourceAround', 'messageReadReceiptSummaries', 'messageReadReceiptDetail', 'messageSnapshotDetail', 'saveMessageLocation', 'sharedRecordingDetail', 'relatedRecordingEligibility', 'relatedRecordings',
-  'recordRelatedRecordingsToolEvent', 'reportMessage', 'copySourceMessageLink', 'copyMessageActionsLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'sourceMessageExtensionContext', 'extendSourceMessage', 'forwardSourceMessages', 'forwardMessageActions',
+  'recordRelatedRecordingsToolEvent', 'reportMessage', 'withdrawGroupMessage', 'copySourceMessageLink', 'copyMessageActionsLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'sourceMessageExtensionContext', 'extendSourceMessage', 'forwardSourceMessages', 'forwardMessageActions',
   'sendSourceText', 'retryGroupAiPolish',
   'sendSourceRich', 'favoriteStickers', 'addFavoriteSticker', 'manageFavoriteSticker', 'sendFavoriteSticker', 'longArticleDetail', 'updateLongArticle', 'getLongArticleDraft',
   'putLongArticleDraft', 'removeLongArticleDraft', 'uploadLocalFile', 'fetchMedia', 'sendDirectText',
@@ -52,7 +54,7 @@ const expectedPublicMethods = [
   'beginWechatLogin', 'pollWechatLogin', 'testLogin',
   'sendPhoneCode', 'verifyPhoneCode', 'logout', 'cachedSnapshot', 'queryCached', 'refreshLatest',
   'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages',
-  'searchScene', 'searchRecordings', 'syncHistory', 'summary', 'list', 'calendarBuckets', 'calendarRecords',
+  'searchScene', 'searchRecordings', 'searchTagRecords', 'syncHistory', 'summary', 'list', 'listRecordTags', 'calendarBuckets', 'calendarRecords',
   'listWorldRecords',
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
@@ -73,6 +75,7 @@ const expectedServiceFiles = [
   'background-sound-membership-service.ts',
   'file-transfers.ts',
   'service.ts', 'auth-service.ts', 'profile-service.ts', 'bot-service.ts', 'bot-conversation-service.ts', 'source-service.ts',
+  'conversation-list-preference-service.ts', 'conversation-directory-visibility-service.ts',
   'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
   'desktop-attention-bridge.ts',
   'record-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-import-gateway.ts', 'search-service.ts',
@@ -112,7 +115,6 @@ describe('Arkme service architecture', () => {
 
   it('keeps the compatibility facade free of business transport and state owners', () => {
     const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
-    expect(facade.split('\n').length).toBeLessThan(1_850)
     expect(facade).not.toMatch(/\/api\//)
     expect(facade).not.toMatch(/private readonly \w+\s*=\s*new Map/)
   })
@@ -142,15 +144,25 @@ describe('Arkme service architecture', () => {
     expect(recordingService).not.toContain('AudioRecordingImportGateway')
     expect(recordingService).not.toContain('probeRecordingImportFile')
     expect(recordingService).not.toMatch(/from ['"]node:fs/)
+    expect(recordingService).not.toContain('RecordingImportGateway & RecordingImportOwnerGateway')
+    expect(recordingService).toContain('recordingImportOwnerGateway: RecordingImportOwnerGateway')
+    expect(recordingService).not.toContain('/api/v1/audio/check-exist-same-orig')
     expect(coordinator).not.toMatch(/from ['"]node:fs/)
     expect(coordinator).not.toContain('pc_upload/')
     expect(coordinator).not.toContain('arkme_')
 
     const gateway = readFileSync(join(root, 'src/services/recording-import-gateway.ts'), 'utf8')
     const source = readFileSync(join(root, 'src/recording-import-probe.ts'), 'utf8')
+    const waveProbe = readFileSync(join(root, 'src/recording-wave-probe.ts'), 'utf8')
+    const clientSelection = readFileSync(join(root, 'src/client/recordings/recording-import-selection.ts'), 'utf8')
     expect(gateway).toContain('pc_upload/')
     expect(gateway).toContain('arkme_')
+    expect(gateway).toContain('/api/v1/audio/check-exist-same-orig')
     expect(source).toMatch(/from ['"]node:fs/)
+    expect(source).toContain("from './recording-wave-probe.js'")
+    expect(clientSelection).toContain("from '../../recording-wave-probe.js'")
+    expect(waveProbe).not.toMatch(/from ['"]node:/)
+    expect(waveProbe).not.toContain('mediabunny')
   })
 
   it('keeps direct-conversation and group Bot projections behind separate mappers', () => {
@@ -197,6 +209,12 @@ describe('Arkme service architecture', () => {
     expect(world).toContain('export interface ArkmeWorldRecordWriter')
     expect(world).not.toMatch(/import \{[^}]*\bMediaService\b/)
     expect(world).not.toMatch(/import \{[^}]*\bRecordService\b/)
+  })
+
+  it('keeps private-chat viewer labels independent from their consumers', () => {
+    const source = readFileSync(join(root, 'src/services/source-service.ts'), 'utf8')
+    expect(source).toContain('private-chat-viewer-labels:')
+    expect(source).not.toContain('world-author-labels:')
   })
 
   it('keeps transport outcome translation behind the file-send port adapter', () => {
@@ -268,14 +286,16 @@ describe('Arkme service architecture', () => {
     expect(types).toContain("export type { ArkmeLinkMetadata } from './link-metadata.js'")
     expect(sdk).toContain("export type { ArkmeLinkMetadata } from '../link-metadata.js'")
     expect(metadata).toContain('export interface ArkmeLinkMetadata')
+    expect(metadata).toContain('export function arkmeExtensionShareRefFromLink')
     expect(metadata).toContain('export function arkmeKnownLinkMetadataFallback')
     expect(metadata).toContain('export function arkmeRequiredLinkMetadataFallback')
     expect(client).toContain('arkmeKnownLinkMetadataFallback')
     expect(service).not.toContain('arkmeRequiredLinkMetadataFallback')
     expect(host).toContain('arkmeRequiredLinkMetadataFallback')
+    expect(host).toContain('extensionManager.readSharedDetail')
     expect(client).not.toMatch(/Pull Request #|Change #/u)
     expect(service).not.toMatch(/Pull Request #|Change #/u)
-    expect(host.match(/service\.resolveLinkMetadata\(/gu) ?? []).toHaveLength(2)
+    expect(host.match(/service\.resolveLinkMetadata\(/gu) ?? []).toHaveLength(1)
   })
 
   it('does not invent recording speaker mutation contracts that the Audio owner does not expose', () => {

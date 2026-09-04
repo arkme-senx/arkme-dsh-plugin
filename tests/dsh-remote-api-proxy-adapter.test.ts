@@ -7,8 +7,8 @@ import { dshRemoteFrameByteLengths } from '../src/dsh-remote/realtime-transport.
 import { dshRemoteOutboundPayloads } from '../src/dsh-remote/transport-fragment.js'
 import {
   DSH_REMOTE_MAX_FRAME_BYTES,
+  DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES,
   DSH_REMOTE_MAX_PAGE_RESULT_BYTES,
-  DSH_REMOTE_MAX_SNAPSHOT_BYTES,
 } from '../src/dsh-remote/types.js'
 
 function ok<T>(value: T, rpcId = 'rpc') { return { rpcId, result: { ok: true as const, value } } }
@@ -39,7 +39,7 @@ function expectFitsFragmentedFrames(operation: 'session.history', result: unknow
   }
   const frames = dshRemoteOutboundPayloads(response, 'response-history-test')
   expect(frames.length).toBeGreaterThan(1)
-  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(DSH_REMOTE_MAX_SNAPSHOT_BYTES)
+  expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThanOrEqual(DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES)
   for (const [index, frame] of frames.entries()) {
     const sizes = dshRemoteFrameByteLengths({
       target: {
@@ -86,6 +86,10 @@ async function fakeApi(): Promise<{ api: DshPublicApiProxyLike; prompt: ReturnTy
 }
 
 describe('public DSH ApiProxy remote adapter', () => {
+  it('fragments a logical response larger than the snapshot-page ceiling into bounded frames', () => {
+    expectFitsFragmentedFrames('session.history', { blob: 'x'.repeat(5 * 1024 * 1024) })
+  })
+
   it('feature-detects only public capabilities and projects registered workspaces', async () => {
     const { api } = await fakeApi()
     const adapter = new DshApiProxyAdapter(api)
@@ -462,9 +466,9 @@ describe('public DSH ApiProxy remote adapter', () => {
       .resolves.toEqual({ accepted: true })
 
     const history = await adapter.history({ sessionId: sessionIds[0]!, limit: 50 })
-    expect(history.entries.length).toBeGreaterThan(0)
-    expect(history.entries.length).toBeLessThan(50)
-    expect(history.nextCursor).toBeTypeOf('number')
+    expect(history.entries).toHaveLength(50)
+    expect(history.nextCursor).toBeUndefined()
+    expect(Buffer.byteLength(JSON.stringify(history))).toBeGreaterThan(512 * 1024)
     expectFitsFragmentedFrames('session.history', history)
 
     const snapshot = await adapter.snapshot({ limit: 50 })

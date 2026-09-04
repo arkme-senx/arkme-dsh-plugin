@@ -213,6 +213,23 @@ describe('ArkmeUiController', () => {
     })
   })
 
+  it('requests a tag search dialog without replacing the active conversation', () => {
+    const controller = new ArkmeUiController()
+    const source = {
+      sourceRef: 'source-1', kind: 'private_chat' as const, displayName: '联系人', activeAtMillis: 1, unreadCount: 0,
+    }
+    controller.selectSource(source)
+    controller.showTagSearch('＃项目')
+
+    expect(controller.getSnapshot()).toMatchObject({
+      mode: 'source', selectedSource: source, searchTarget: { revision: 1, query: '#项目' },
+    })
+
+    controller.consumeSearchTarget(1)
+    expect(controller.getSnapshot().searchTarget).toBeUndefined()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
+  })
+
   it('opens calls without retaining a conversation source', () => {
     const controller = new ArkmeUiController()
     const source = {

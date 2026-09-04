@@ -116,6 +116,25 @@ describe('DSH completed Turn projector', () => {
     })
   })
 
+  it('keeps legacy unlinked tool events distinct without inventing call ids', () => {
+    const result = projectCompletedTurns([
+      entry('turn/start', 40, { turn: 6 }),
+      entry('tool/call', 41, { turn: 6, step: 1, callId: '', name: '' }),
+      entry('tool/result', 42, {
+        message: { source: { kind: 'tool', callId: '' }, content: [] }, error: null,
+      }, 'append'),
+      entry('tool/result', 43, {
+        message: { source: { kind: 'tool', callId: '' }, content: [] }, error: null,
+      }, 'append'),
+      entry('turn/end', 44, { turn: 6, reason: { kind: 'completed' } }),
+    ])
+
+    expect(result.turns[0]!.nodes.map(node => node.node_ref)).toEqual([
+      'tool:41', 'tool:42', 'tool:43',
+    ])
+    expect(result.turns[0]!.nodes.every(node => node.data.call === undefined || node.source_seq_start === 41)).toBe(true)
+  })
+
   it('keeps replacement compaction and terminal error semantics without duplicating replacement messages', () => {
     const result = projectCompletedTurns([
       entry('turn/start', 10, { turn: 2 }),

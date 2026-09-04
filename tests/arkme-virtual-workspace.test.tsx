@@ -38,6 +38,14 @@ describe('Arkme conversation directory load state', () => {
     expect(embeddedStatuses).not.toContain('重试')
   })
 
+  it('opens the existing global-search dialog for controller tag targets', () => {
+    expect(workspaceSource).toContain('if (ui.searchTarget === undefined) return')
+    expect(workspaceSource).toContain('setGlobalSearchOpen(true)')
+    expect(workspaceSource).toContain('initialQuery: ui.searchTarget.query')
+    expect(workspaceSource).toContain('initialQueryRevision: ui.searchTarget.revision')
+    expect(workspaceSource).toContain('onClose={closeGlobalSearch}')
+  })
+
   it('opens and selects the new Bot through its dedicated private-chat surface', () => {
     expect(workspaceSource).toContain('const createdQuickAddBot = async (bot: ArkmeBotSummary): Promise<void> =>')
     expect(workspaceSource).toContain('setBots(current => sortArkmeBotsByCreatedAt([bot, ...current.filter(item => item.botRef !== bot.botRef)]))')
@@ -59,7 +67,7 @@ describe('Arkme conversation directory load state', () => {
   it('uses the newer of a Bot creation and message time in the shared conversation order', () => {
     expect(botActivityAtMillis({
       botRef: 'bot', name: 'Bot', provider: 'openclaw', description: '', status: 'offline', directChatAvailable: true,
-      createdAtMillis: 100, latestMessageAtMillis: 200,
+      createdAtMillis: 100, latestMessageAtMillis: 150, conversationListActivityAtMillis: 200,
     })).toBe(200)
   })
 
@@ -125,10 +133,19 @@ describe('Arkme conversation directory load state', () => {
 
   it('provides right-click pin and remove actions for chat and Bot rows', () => {
     expect(workspaceSource).toContain("'source.directory.policy.set'")
+    expect(workspaceSource).toContain("'conversation.directory.visibility.query'")
+    expect(workspaceSource).toContain("'conversation.directory.visibility.set'")
+    expect(workspaceSource).toContain("'bots.list'")
+    expect(workspaceSource).toContain('mergeBotDirectoryActivity')
     expect(workspaceSource).toContain('directoryContextRequestRef.current += 1')
     expect(workspaceSource).toContain("setDirectoryContextMenu({ kind: 'source', source, x: event.clientX, y: event.clientY })")
     expect(workspaceSource).toContain("setDirectoryContextMenu({ kind: 'bot', bot, x: event.clientX, y: event.clientY })")
-    expect(workspaceSource).toContain('const updateBotDirectoryPolicy = async')
+    expect(workspaceSource).toContain('const updateConversationDirectoryPin = async')
+    expect(workspaceSource).toContain('const dismissConversationDirectoryEntry = async')
+    expect(workspaceSource).toContain('const current = botChatDirectory.sources.find(')
+    expect(workspaceSource).toContain('source => conversationSourceVisibilityKey(source) === stableKey')
+    expect(workspaceSource).toContain('const current = botChatDirectory.bots.find(')
+    expect(workspaceSource).toContain('bot => conversationBotVisibilityKey(bot) === stableKey')
     expect(workspaceSource).toContain('botDirectoryIsPinned(botDirectoryPreferences, bot)')
     expect(workspaceSource).not.toContain('bots.private-chat.directory-source')
     expect(workspaceSource).toContain('>移除</button>')
@@ -142,10 +159,31 @@ describe('Arkme conversation directory load state', () => {
     expect(workspaceSource).toContain("document.addEventListener('visibilitychange', closeWhenHidden)")
   })
 
-  it('keeps the removed conversation card visible for the desktop-style inline feedback animation', () => {
-    expect(workspaceSource).toContain('window.setTimeout(resolve, 700)')
-    expect(workspaceSource).toContain("transition: 'transform 220ms cubic-bezier(.215, .61, .355, 1), opacity 220ms cubic-bezier(.215, .61, .355, 1)'")
-    expect(workspaceSource).toContain("chatRowRemoveContentHidden: { transform: 'translateX(-8%)', opacity: 0 }")
-    expect(workspaceSource).toContain('已移除对话，可在联系人中找回')
+  it('hides a removed conversation immediately after the owner accepts it', () => {
+    expect(workspaceSource).not.toContain('window.setTimeout(resolve, 700)')
+    expect(workspaceSource).not.toContain('chatRowRemoveContentHidden')
+    expect(workspaceSource).not.toContain('chatRowRemoveOverlayVisible')
+    expect(workspaceSource).toContain('setConversationVisibility(current => dismissConversationVisibilityEntry(')
+    expect(workspaceSource).toContain("setDirectoryActionFeedback('已移除对话，可在联系人中找回')")
+    expect(workspaceSource).toContain('const protectedKeysAtRequest = conversationVisibilityFeedbackRef.current')
+    expect(workspaceSource).toContain('result,\n        protectedKeysAtRequest,')
+    expect(workspaceSource).toContain(
+      'applyConversationVisibilityQueryFailure(\n        current,\n        scope,\n        protectedKeysAtRequest,',
+    )
+  })
+
+  it('does not render a newly loaded owner row before visibility hydration settles', () => {
+    expect(workspaceSource).toContain('const [conversationVisibilityHydrated, setConversationVisibilityHydrated]')
+    expect(workspaceSource).toContain('conversationVisibilityHydrated.has(sourceKey)')
+    expect(workspaceSource).toContain('conversationVisibilityHydrated.has(botKey)')
+    expect(workspaceSource).toContain('setConversationVisibilityHydrated(current => markConversationVisibilityScopeHydrated(')
+  })
+
+  it('retains the confirmed owner overlay while the conversation directory is unmounted', () => {
+    expect(workspaceSource).toContain("if (directory !== 'root') return")
+    expect(workspaceSource).not.toContain("visibilityUserId === undefined || directory !== 'root'")
+    expect(workspaceSource).not.toContain(
+      'if (scope.sourceRefs.length === 0 && scope.botRefs.length === 0) {\n      setConversationVisibility(emptyConversationVisibilityOverlay())',
+    )
   })
 })

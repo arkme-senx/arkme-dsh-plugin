@@ -45,6 +45,10 @@ function list(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
 }
 
+function nonEmptyId(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+}
+
 function isAppendSurface(entry: DshRemoteHistoryEntry): boolean {
   return entry.event.surfaceOp === 'append'
 }
@@ -226,7 +230,7 @@ function projectNodes(entries: DshRemoteHistoryEntry[]): DshRemoteTimelineNode[]
         foldLifecycle(nodes, entry, `retry:${String(data.retryId ?? event.seq)}`, 'retry')
         break
       case 'tool/call': {
-        const ref = `tool:${String(data.callId ?? event.seq)}`
+        const ref = `tool:${nonEmptyId(data.callId) ?? String(event.seq)}`
         upsert(nodes, {
           ref,
           kind: 'tool',
@@ -245,7 +249,7 @@ function projectNodes(entries: DshRemoteHistoryEntry[]): DshRemoteTimelineNode[]
         if (!isAppendSurface(entry)) break
         const message = record(data.message)
         const resultSource = record(message.source)
-        const ref = `tool:${String(resultSource.callId ?? data.callId ?? event.seq)}`
+        const ref = `tool:${nonEmptyId(resultSource.callId) ?? nonEmptyId(data.callId) ?? String(event.seq)}`
         const previous = nodes.get(ref)
         upsert(nodes, {
           ref,

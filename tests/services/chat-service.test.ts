@@ -72,6 +72,14 @@ function chatMemberRef(
   return `arkme-chat-member-v1.${payload}.${signature}`
 }
 
+async function chatTimelineItemKeyForTest(
+  userId: number,
+  chatSessionUid: string,
+  relationUid: string,
+): Promise<string> {
+  return `timeline:${String(userId)}:${chatSessionUid}:${relationUid}`
+}
+
 describe('ChatService', () => {
   it('projects a private-chat extension child with the desktop parent preview contract', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
@@ -116,6 +124,7 @@ describe('ChatService', () => {
         version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事',
       })),
       sourceItem: vi.fn(async () => sourceItem),
+      chatTimelineItemKey: chatTimelineItemKeyForTest,
     }
     const media = {
       recordContentPayload: vi.fn(() => ({})),
@@ -177,6 +186,7 @@ describe('ChatService', () => {
     const source = {
       openSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
       sourceItem: vi.fn(async () => sourceItem),
+      chatTimelineItemKey: chatTimelineItemKeyForTest,
     }
     const chat = new ChatService(
       runtime as never, source as never,
@@ -218,6 +228,7 @@ describe('ChatService', () => {
     const source = {
       openSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
       sourceItem: vi.fn(async () => ({ sourceRef: 'source-private', kind: 'private_chat', displayName: '同事', activeAtMillis: 0, unreadCount: 0 })),
+      chatTimelineItemKey: chatTimelineItemKeyForTest,
     }
     const chat = new ChatService(
       runtime as never, source as never,
@@ -979,7 +990,10 @@ describe('ChatService', () => {
         send_time_stamp: 1_786_000_003_000, payload: { text_content: '实时消息' },
       } })),
     }
-    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
+    const source = {
+      openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })),
+      chatTimelineItemKey: vi.fn(async () => 'timeline-item-key'),
+    }
     const profile = { sealProfileImageRef: vi.fn(async () => 'avatar-ref') }
     const media = { richContentBlocks: vi.fn(() => []), recordContentPayload: vi.fn(() => ({})) }
     const chat = new ChatService(
@@ -1156,6 +1170,7 @@ describe('ChatService', () => {
       openSourceRef: vi.fn(async () => ({
         version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
       })),
+      chatTimelineItemKey: vi.fn(async () => 'timeline-item-key'),
     }
     const profile = { sealProfileImageRef: vi.fn(async () => 'opaque-avatar') }
     const media = {
@@ -1174,9 +1189,12 @@ describe('ChatService', () => {
         record_owner_user_id: 13, display_name_snapshot: 'B 用户', attach_at: 1_710_000_000_000, seq: 8,
       },
       record: { status: 1, payload: { title: '', text_content: '问题不大', template_kind: 1, display_kind: 0 } },
-    }] }, session, 'chat-1')
+    }] }, session, 'chat-1', 'group_chat')
 
     expect(items[0]?.messageActionRef).toMatch(/^arkme-message-action-v1\./u)
+    expect(items[0]?.messageRef).toMatch(/^arkme-message-v1\./u)
+    expect(items[0]?.messageWithdrawalRef).toMatch(/^arkme-message-withdrawal-v1\./u)
+    expect(items[0]?.timelineItemKey).toBe('timeline-item-key')
     await expect(chat.relatedQuickNoteLocator('source-ref', items[0]?.messageActionRef ?? ''))
       .resolves.toEqual({
         viewerUserId: 42,
@@ -2322,7 +2340,7 @@ describe('ChatService', () => {
     }
     const profile = { sealProfileImageRef: vi.fn(async () => 'avatar-ref') }
     const chat = new ChatService(
-      runtime as never, {} as SourceService, profile as never, media as never,
+      runtime as never, { chatTimelineItemKey: async () => 'timeline-item-key' } as SourceService, profile as never, media as never,
       {} as RecordService, {} as BotService, {} as ArkoService,
       { timelineAiPolish: vi.fn(() => undefined) } as never,
       { emitChatClientEvent() {}, nextChatClientRevision() { return 1 }, scheduleChatSessionProjection() {} },

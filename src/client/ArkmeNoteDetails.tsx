@@ -14,6 +14,7 @@ import type {
 } from '../types.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeMediaPreview, ArkmeMessageContent } from './ArkmeRichContent.js'
+import { ArkmeMentionText } from './ArkmeRichText.js'
 import {
   ArkmeRelatedQuickNoteDetail,
   ArkmeRelatedQuickNotesCard,
@@ -447,7 +448,7 @@ function DetailExtensionParent({ parent }: { parent: NonNullable<ArkmeTimelineIt
   const preview = text || attachmentText
   if (preview === '') return null
   return <div style={styles.extensionParent} data-arkme-detail-extension-parent={parent.itemUid}>
-    <span style={styles.extensionParentText}>{preview}</span>
+    <span style={styles.extensionParentText}><ArkmeMentionText text={preview} /></span>
   </div>
 }
 
@@ -497,6 +498,7 @@ function DetailExtensionContext({ state, optimistic, selectedRecordUid, sourceRe
           <ArkmeMessageContent
             presentation="detail"
             item={timelineItem}
+            highlightMentions
             {...(sourceRef === undefined ? {} : { sourceRef })}
             {...(shareWebsite === undefined ? {} : { shareWebsite })}
             {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
@@ -700,6 +702,7 @@ export function ArkmeTimelineDetailDrawer({
       <ArkmeMessageContent
         presentation="detail"
         item={{ ...item, textContent }}
+        highlightMentions
         {...(sourceRef === undefined ? {} : { sourceRef })}
         {...(shareWebsite === undefined ? {} : { shareWebsite })}
         {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
@@ -761,9 +764,9 @@ export function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineIte
     return <div key={index} style={styles.rows}>
       {hasRecordBody && <ForwardDetailRow name={value.senderName} avatarRef={value.avatarRef}
         time={`${firstDate !== lastDate ? `${dateLabel(value.sendAtMillis)} ` : ''}${timeLabel(value.sendAtMillis)}`}>
-        {segments.length === 0 ? <ArkmeMessageContent item={snapshot} presentation="detail" /> : <>
-          {hasDistinctText && <div style={{ marginBottom: 18 }}><ArkmeMessageContent item={{ ...snapshot, contentBlocks: [], mediaUnavailable: false }} presentation="detail" /></div>}
-          {(value.contentBlocks?.length ?? 0) > 0 && <ArkmeMessageContent item={{ ...snapshot, title: '', textContent: '', mediaUnavailable: false }} presentation="detail" />}
+        {segments.length === 0 ? <ArkmeMessageContent item={snapshot} presentation="detail" highlightMentions /> : <>
+          {hasDistinctText && <div style={{ marginBottom: 18 }}><ArkmeMessageContent item={{ ...snapshot, contentBlocks: [], mediaUnavailable: false }} presentation="detail" highlightMentions /></div>}
+          {(value.contentBlocks?.length ?? 0) > 0 && <ArkmeMessageContent item={{ ...snapshot, title: '', textContent: '', mediaUnavailable: false }} presentation="detail" highlightMentions />}
         </>}
       </ForwardDetailRow>}
       {/* Snapshot speaker labels are not account identities. Never reuse the recording author's photo for another speaker. */}
@@ -771,7 +774,7 @@ export function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineIte
         time={`${offsetLabel(segment.startMillis)}–${offsetLabel(segment.endMillis)}`}>
         <ArkmeMessageContent presentation="detail" item={{ ...snapshot, itemUid: `${snapshot.itemUid}-${String(segmentIndex)}`,
           senderName: segment.speakerName, title: '', textContent: segment.textContent,
-          contentBlocks: segment.contentBlocks ?? [], mediaUnavailable: segment.mediaUnavailable === true }} />
+          contentBlocks: segment.contentBlocks ?? [], mediaUnavailable: segment.mediaUnavailable === true }} highlightMentions />
       </ForwardDetailRow>)}
       {segments.length > 0 && value.mediaUnavailable && <p style={styles.notice}>部分媒体暂时无法加载，请刷新对话后重试</p>}
       {value.truncated && <p style={styles.notice}>内容较多，当前展示部分转发内容</p>}

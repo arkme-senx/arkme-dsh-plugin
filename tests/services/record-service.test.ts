@@ -72,11 +72,17 @@ describe('RecordService', () => {
       },
       async markSynced(_userId: number, recordUid: string) { pending = pending.filter(item => item.recordUid !== recordUid) },
     } as StateStore
-    const bodies: Record<string, unknown>[] = []
-    const fetchImpl = vi.fn(async (_input, init) => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn(async (input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
-      bodies.push(body)
-      if (bodies.length === 1) throw new TypeError('offline')
+      const url = String(input)
+      requests.push({ url, body })
+      if (requests.length === 1) throw new TypeError('offline')
+      if (url.endsWith('/api/v1/records/tags/set')) {
+        return new Response(JSON.stringify({ code: 0, data: {
+          record_uid: body.record_uid, semantic_version: 1, projection_refresh_pending: false,
+        } }), { status: 200 })
+      }
       return new Response(JSON.stringify({ code: 0, data: { record_uid: body.record_uid, status: 1 } }), { status: 200 })
     }) as typeof fetch
     const runtime = new ServiceRuntime(config, sessions, stateStore, fetchImpl)
@@ -92,25 +98,72 @@ describe('RecordService', () => {
       clientName: 'Google Chrome（DeepSeek Harness）', networkName: '网络已连接', electric: 100, charge: 1,
     }
 
-    await expect(service.createTextForConversation(recordUid, '浏览器采集验证', {
+    await expect(service.createTextForConversation(recordUid, '#项目 浏览器采集验证', {
       recordDurationMillis: 3_200,
       captureContext,
     })).resolves.toMatchObject({ recordUid, localState: 'failed' })
     expect(pending).toMatchObject([{ recordUid, recordDurationMillis: 3_200, captureContext, attempts: 1 }])
 
     await expect(service.retryPending(recordUid)).resolves.toEqual({ recordUid, status: 1 })
-    expect(bodies).toHaveLength(2)
-    for (const body of bodies) {
+    const createBodies = requests.filter(request => request.url.endsWith('/api/v1/records/create')).map(request => request.body)
+    expect(createBodies).toHaveLength(2)
+    for (const body of createBodies) {
       expect(body).toMatchObject({
         record_uid: recordUid,
-        text_content: '浏览器采集验证',
+        text_content: '#项目 浏览器采集验证',
         record_duration_millis: 3_200,
         capture_context: {
           client_name: 'Google Chrome（DeepSeek Harness）', network_name: '网络已连接', electric: 100, charge: 1,
         },
+        content_payload: {
+          payload_kind: 1, schema_version: 1, text_state: 1,
+          hash_tags: [{ tag: '项目', start_index: 0, length: 3 }],
+        },
       })
     }
+    expect(requests.find(request => request.url.endsWith('/api/v1/records/tags/set'))?.body).toEqual({
+      record_uid: recordUid,
+      expected_record_version: 1,
+      tags: [{ tag_text: '项目', start_index: 0, length: 3 }],
+    })
     expect(pending).toEqual([])
+  })
+
+  it('keeps an accepted record synced when post-commit tag projection sync fails', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let pending: ArkmePendingWrite[] = []
+    const stateStore = {
+      async putPending(_userId: number, item: ArkmePendingWrite) { pending = [structuredClone(item)] },
+      async listPending() { return structuredClone(pending) },
+      async markAttempt() { throw new Error('accepted record must not be marked failed') },
+      async markSynced(_userId: number, recordUid: string) { pending = pending.filter(item => item.recordUid !== recordUid) },
+    } as StateStore
+    const fetchImpl = vi.fn(async (input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      if (String(input).endsWith('/api/v1/records/tags/set')) {
+        return new Response(JSON.stringify({ code: 500, message: 'projection unavailable' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ code: 0, data: { record_uid: body.record_uid, status: 1 } }), { status: 200 })
+    }) as typeof fetch
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const service = new RecordService(
+      new ServiceRuntime(config, sessions, stateStore, fetchImpl),
+      {} as MediaService,
+      { async openSourceRef() { throw new Error('unexpected') } },
+    )
+    const recordUid = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
+
+    await expect(service.createTextForConversation(recordUid, '#项目')).resolves.toEqual({
+      recordUid, status: 1, localState: 'synced',
+    })
+    expect(pending).toEqual([])
+    expect(warn).toHaveBeenCalledWith(
+      'dsh-arkme: record tag post-commit sync failed',
+      'projection unavailable',
+    )
   })
 
   it('does not create a pending record under a different current account', async () => {
@@ -150,6 +203,34 @@ describe('RecordService', () => {
 
     await expect(service.summary()).resolves.toEqual({ recordCount: 3, wordsCount: 120, totalSec: 45 })
     expect(cached).toEqual({ recordCount: 3, wordsCount: 120, totalSec: 45 })
+  })
+
+  it('lists hashtag candidates with their usage counts', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let requestedUrl = ''
+    let requestBody: Record<string, unknown> = {}
+    const fetchImpl = vi.fn(async (input, init) => {
+      requestedUrl = String(input)
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return new Response(JSON.stringify({ code: 0, data: { items: [{
+        normalized_tag: 'project', tag_text: 'Project', record_count: 7,
+        latest_record_uid: 'record-1', latest_send_at: 1_700_000_000_000,
+      }] } }), { status: 200 })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+    const service = new RecordService(runtime, {} as MediaService, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+
+    await expect(service.listTags(100)).resolves.toEqual({ items: [{
+      normalizedTag: 'project', tagText: 'Project', recordCount: 7,
+      latestRecordUid: 'record-1', latestSendAtMillis: 1_700_000_000_000,
+    }] })
+    expect(requestedUrl).toBe('https://record.test/api/v1/records/tags/list')
+    expect(requestBody).toEqual({ limit: 100 })
   })
 
   it('creates a canonical Record whose file assets stay in content_payload media refs', async () => {

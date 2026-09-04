@@ -161,6 +161,16 @@ export function useArkmeRealtimeClientEvents(
           arkmeMessageReadReceipts.invalidate(update.sourceKey, update.throughSequence)
           return
         }
+        if (update.type === 'timeline-changed') {
+          arkmeChatTimelineDelta.applyTimelineChange(update)
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
+          arkmeCalendarInvalidations.publishAll()
+          return
+        }
+        if (update.type === 'conversation-list-preference-invalidated') {
+          arkmeUi.chatChanged()
+          return
+        }
         if (update.type !== 'sessions-delta') return
         arkmeChatDirectory.upsertMany(update.updates.map(item => ({
           source: item.source,

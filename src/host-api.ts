@@ -27,7 +27,12 @@ import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
 import { DshRemoteError } from './dsh-remote/errors.js'
 import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
-import { arkmeRequiredLinkMetadataFallback } from './link-metadata.js'
+import {
+  arkmeExtensionShareRefFromLink,
+  arkmeIsGenericLinkMetadataTitle,
+  arkmeRequiredLinkMetadataFallback,
+  type ArkmeLinkMetadata,
+} from './link-metadata.js'
 import type { ArkmeFileBackgroundSoundInput } from './file-transfer-contract.js'
 import { arkmeFileBackgroundSound, arkmeRichBackgroundSound } from './record-background-sound.js'
 import type { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
@@ -35,6 +40,7 @@ import type { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
 const MAX_STANDARD_REQUEST_BYTES = 128 * 1024
 const MAX_MESSAGE_ACTION_REF_CHARS = 1024 * 1024
 const MAX_MESSAGE_REPORT_REF_CHARS = 4_096
+const MAX_MESSAGE_WITHDRAWAL_REF_CHARS = 4_096
 const MAX_RELATED_QUICK_NOTE_REQUEST_BYTES = MAX_MESSAGE_ACTION_REF_CHARS + (64 * 1024)
 const MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES = 10 * 1024 * 1024
 const MAX_REQUEST_BYTES = MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
@@ -121,6 +127,43 @@ function browserUserBanSnapshot(snapshot: ArkmeUserBanOwnerSnapshot): ArkmeUserB
     banned: snapshot.banned,
     ...(snapshot.record === undefined ? {} : { record: browserUserBanRecord(snapshot.record) }),
   }
+}
+
+async function resolveExtensionShareLinkMetadata(
+  rawUrl: string,
+  pageMetadata: ArkmeLinkMetadata | null,
+  extensionManager: ArkmeExtensionManager | undefined,
+  signal?: AbortSignal,
+): Promise<ArkmeLinkMetadata | null> {
+  const shareRef = arkmeExtensionShareRefFromLink(rawUrl)
+  if (shareRef === undefined) return pageMetadata
+  const pageTitle = pageMetadata?.title.trim() ?? ''
+  if (pageMetadata !== null && !arkmeIsGenericLinkMetadataTitle(pageTitle) && pageTitle !== rawUrl) return pageMetadata
+  if (extensionManager === undefined) return pageMetadata
+  try {
+    const detail = await extensionManager.readSharedDetail(shareRef, signal)
+    const url = new URL(rawUrl)
+    const siteName = url.hostname.replace(/^www\./iu, '')
+    return {
+      url: url.href,
+      title: detail.name,
+      ...(detail.description.trim() === '' ? {} : { description: detail.description }),
+      ...(siteName === '' ? {} : { siteName }),
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
+    return null
+  }
+}
+
+async function resolveArkmeLinkMetadata(
+  service: ArkmeService,
+  url: string,
+  options: { signal?: AbortSignal },
+  extensionManager?: ArkmeExtensionManager,
+): Promise<ArkmeLinkMetadata | null> {
+  const pageMetadata = await service.resolveLinkMetadata(url, options)
+  return await resolveExtensionShareLinkMetadata(url, pageMetadata, extensionManager, options.signal)
 }
 
 function billingIdentifierParam(
@@ -227,6 +270,24 @@ function recordingSpeakerScopeParam(params: Record<string, unknown>): 'item' | '
   throw new ArkmePluginError('recording-speaker-scope-invalid', '说话人修改范围无效', false, 400)
 }
 
+function recordingProjectionKindParam(params: Record<string, unknown>): 'summary' | 'timeline' {
+  const kind = stringParam(params, 'kind')
+  if (kind === 'summary' || kind === 'timeline') return kind
+  throw new ArkmePluginError('recording-generation-kind-invalid', '录音生成类型无效', false, 400)
+}
+
+function recordingSummaryModelRouteParam(params: Record<string, unknown>, required: boolean): string {
+  const routeKey = stringParam(params, 'routeKey').trim()
+  if ((!required && routeKey === '') || (routeKey !== '' && routeKey.length <= 256)) return routeKey
+  throw new ArkmePluginError('recording-summary-model-route-invalid', '录音总结模型无效', false, 400)
+}
+
+function recordingImportOwnershipParam(params: Record<string, unknown>): 'self' | 'other' {
+  const ownership = stringParam(params, 'ownership')
+  if (ownership === 'self' || ownership === 'other') return ownership
+  throw new ArkmePluginError('recording-import-owner-invalid', '录音数据归属无效', false, 400)
+}
+
 function unmarkedSpeakerMarkInputParam(params: Record<string, unknown>): {
   candidateRef: string
   candidateVersion: string
@@ -254,6 +315,12 @@ function conversationMemberRecordModeParam(params: Record<string, unknown>): Ark
   const mode = stringParam(params, 'mode')
   if (mode === 'owner' || mode === 'mentioned') return mode
   throw new ArkmePluginError('chat-member-record-mode-invalid', '成员快记模式无效', false, 400)
+}
+
+function conversationDirectoryEntryKindParam(params: Record<string, unknown>): 'source' | 'bot' {
+  const entryKind = stringParam(params, 'entryKind')
+  if (entryKind === 'source' || entryKind === 'bot') return entryKind
+  throw new ArkmePluginError('conversation-directory-entry-kind-invalid', '会话列表条目类型无效', false, 400)
 }
 
 function extensionCatalogSortParam(params: Record<string, unknown>): ArkmeExtensionCatalogSort | undefined {
@@ -801,7 +868,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['user-ban.ban', 'user-ban.unban'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '封禁操作必须从当前 DSH 页面发起', false, 403)
       }
-      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.speaker.assign-item', 'openapi.mcp.retry']
+      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -861,13 +928,13 @@ export async function dispatchArkmeHostOperation(
     case 'provider.instance': return { instanceId: ARKME_RUNTIME_INSTANCE_ID }
     case 'provider.state': return await service.providerState()
     case 'chat.realtime.state': return service.chatRealtimeState()
-    case 'link.metadata': return await service.resolveLinkMetadata(
-      stringParam(params, 'url'), requestSignal === undefined ? {} : { signal: requestSignal },
+    case 'link.metadata': return await resolveArkmeLinkMetadata(
+      service, stringParam(params, 'url'), requestSignal === undefined ? {} : { signal: requestSignal }, extensionManager,
     )
     case 'source.link-metadata.resolve': {
       const url = stringParam(params, 'url')
-      return await service.resolveLinkMetadata(
-        url, requestSignal === undefined ? {} : { signal: requestSignal },
+      return await resolveArkmeLinkMetadata(
+        service, url, requestSignal === undefined ? {} : { signal: requestSignal }, extensionManager,
       ) ?? arkmeRequiredLinkMetadataFallback(url)
     }
     case 'plugin.update.status': return await requireUpdateManager(updateManager).status()
@@ -1056,16 +1123,41 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'dateStamp', Number.NaN),
       requestSignal,
     )
+    case 'recordings.summary-model-config': return await service.recordingSummaryModelConfig(requestSignal)
+    case 'recordings.summary-model-config.set': return await service.setRecordingSummaryModelRoute(
+      recordingSummaryModelRouteParam(params, true),
+      requestSignal,
+    )
+    case 'recordings.generate': return await service.generateRecordingProjection(
+      numberParam(params, 'dateStamp', Number.NaN),
+      recordingProjectionKindParam(params),
+      recordingSummaryModelRouteParam(params, false),
+      requestSignal,
+    )
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
       stringListParam(params, 'fileNames'), requestSignal,
     )
-    case 'recordings.import.list': return await service.recordingImportList()
+    case 'recordings.import.list': return await service.recordingImportList(requestSignal)
+    case 'recordings.import.history': return await service.recordingImportHistory({
+      toMillis: numberParam(params, 'toMillis', Number.NaN),
+      limit: Math.trunc(numberParam(params, 'limit', 50)),
+      offset: Math.trunc(numberParam(params, 'offset', 0)),
+    }, requestSignal)
     case 'recordings.import.status': return await service.recordingImportStatus(stringParam(params, 'importRef').trim())
     case 'recordings.import.retry': return await service.retryRecordingImport(
       stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)),
     )
     case 'recordings.import.cancel': return await service.cancelRecordingImport(
       stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)),
+    )
+    case 'recordings.import.session.update-start': return await service.updateRecordingImportSessionStart(
+      stringParam(params, 'sessionRef').trim(), Math.trunc(numberParam(params, 'startAtMillis', Number.NaN)), requestSignal,
+    )
+    case 'recordings.import.session.update-ownership': return await service.updateRecordingImportSessionOwnership(
+      stringParam(params, 'sessionRef').trim(), recordingImportOwnershipParam(params), requestSignal,
+    )
+    case 'recordings.import.session.delete': return await service.deleteRecordingImportSession(
+      stringParam(params, 'sessionRef').trim(), requestSignal,
     )
     case 'recordings.playback.open': return await service.recordingPlayback(
       stringParam(params, 'itemRef').trim(), requestSignal,
@@ -1173,6 +1265,18 @@ export async function dispatchArkmeHostOperation(
     }
     case 'records.summary': return await service.summary()
     case 'records.list': return await service.list(numberParam(params, 'limit', 30), cursorParam(params))
+    case 'records.tags.list': return await service.listRecordTags(numberParam(params, 'limit', 100), requestSignal)
+    case 'records.tags.query': {
+      const cursorSendAt = numberParam(params, 'cursorSendAt', 0)
+      const cursorRecordUid = stringParam(params, 'cursorRecordUid').trim()
+      return await service.searchTagRecords({
+        normalizedTag: stringParam(params, 'normalizedTag'),
+        limit: numberParam(params, 'limit', 50),
+        ...(cursorSendAt <= 0 ? {} : { cursorSendAt }),
+        ...(cursorRecordUid === '' ? {} : { cursorRecordUid }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
     case 'records.create': return await service.createText(
       stringParam(params, 'recordUid'),
       stringParam(params, 'textContent'),
@@ -1331,14 +1435,32 @@ export async function dispatchArkmeHostOperation(
         refresh: booleanParam(params, 'refresh'),
       },
     )
-    case 'source.directory.policy.set': return await service.setChatDirectoryPolicy(
-      stringParam(params, 'sourceRef'),
-      {
-        ...(typeof params.pinned === 'boolean' ? { pinned: params.pinned } : {}),
-        ...(typeof params.hidden === 'boolean' ? { hidden: params.hidden } : {}),
-        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
-      },
+    case 'conversation.directory.visibility.query': return await service.conversationDirectoryVisibilitySnapshot(
+      stringListParam(params, 'sourceRefs').map(value => value.trim()).filter(value => value !== ''),
+      stringListParam(params, 'botRefs').map(value => value.trim()).filter(value => value !== ''),
+      requestSignal,
     )
+    case 'conversation.directory.visibility.set': return await service.setConversationDirectoryVisibility(
+      conversationDirectoryEntryKindParam(params),
+      stringParam(params, 'entryRef').trim(),
+      requiredBooleanParam(params, 'hidden'),
+      requestSignal,
+    )
+    case 'source.directory.policy.set': {
+      if (Object.hasOwn(params, 'hidden')) {
+        throw new ArkmePluginError(
+          'conversation-directory-command-ambiguous',
+          '置顶与移除必须分别提交',
+          false,
+          400,
+        )
+      }
+      return await service.setChatDirectoryPin(
+        stringParam(params, 'sourceRef'),
+        requiredBooleanParam(params, 'pinned'),
+        requestSignal,
+      )
+    }
     case 'source.timeline': {
       const cursor = timelineCursorParam(params)
       return await service.readSource(
@@ -1411,6 +1533,15 @@ export async function dispatchArkmeHostOperation(
       return await service.reportMessage(report.messageRef, report.reportType, {
         ...(report.reason === undefined ? {} : { reason: report.reason }),
         ...(report.requestUid === undefined ? {} : { requestUid: report.requestUid }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
+    case 'source.message-withdraw': {
+      const messageWithdrawalRef = stringParam(params, 'messageWithdrawalRef').trim()
+      if (messageWithdrawalRef === '' || messageWithdrawalRef.length > MAX_MESSAGE_WITHDRAWAL_REF_CHARS) {
+        throw new ArkmePluginError('message-withdrawal-ref-invalid', '消息撤回引用无效', false, 400)
+      }
+      return await service.withdrawGroupMessage(messageWithdrawalRef, {
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       })
     }
@@ -1579,6 +1710,45 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringListParam(params, 'candidateRefs'),
     )
+    case 'group.member-remove': {
+      if (params.preventRejoin !== undefined && typeof params.preventRejoin !== 'boolean') {
+        throw new ArkmePluginError('group-member-remove-invalid', '移除成员参数无效', false, 400)
+      }
+      return await service.removeGroupMember(
+        stringParam(params, 'sourceRef').trim(),
+        stringParam(params, 'memberRef').trim(),
+        {
+          preventRejoin: params.preventRejoin === true,
+          ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        },
+      )
+    }
+    case 'group.join-restrictions': {
+      if ((params.cursor !== undefined && typeof params.cursor !== 'string')
+        || (params.limit !== undefined && (typeof params.limit !== 'number' || !Number.isFinite(params.limit)))) {
+        throw new ArkmePluginError('join-restrictions-invalid', '限制名单分页参数无效', false, 400)
+      }
+      const cursor = stringParam(params, 'cursor').trim()
+      return await service.listGroupJoinRestrictions(
+        stringParam(params, 'sourceRef').trim(),
+        {
+          ...(cursor === '' ? {} : { cursor }),
+          limit: numberParam(params, 'limit', 30),
+          ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        },
+      )
+    }
+    case 'group.join-restriction.set': {
+      if (typeof params.restricted !== 'boolean') {
+        throw new ArkmePluginError('join-restriction-invalid', '加入限制参数无效', false, 400)
+      }
+      return await service.setGroupJoinRestriction(
+        stringParam(params, 'sourceRef').trim(),
+        stringParam(params, 'memberRef').trim(),
+        params.restricted,
+        { ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
+      )
+    }
     case 'group.bots': return await service.listGroupBots(
       stringParam(params, 'sourceRef'),
     )

@@ -38,6 +38,15 @@ function fixture() {
 }
 
 describe('ChatService background-sound payload owner', () => {
+  it('emits hash_tags even when a rich send has no media or mention metadata', () => {
+    expect(arkmeRichContentPayload({ textContent: '#项目' }, '#项目')).toEqual({
+      payload_kind: 1,
+      schema_version: 1,
+      text_state: 1,
+      hash_tags: [{ tag: '项目', start_index: 0, length: 3 }],
+    })
+  })
+
   it('merges ordinary media, mention metadata, and explicit background media once', () => {
     const payload = arkmeRichContentPayload({
       textContent: '@小林 看附件',

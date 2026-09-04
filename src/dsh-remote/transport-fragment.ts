@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
-import { DSH_REMOTE_MAX_SNAPSHOT_BYTES } from './types.js'
+import { DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES } from './types.js'
 import { DshRemoteError } from './errors.js'
 
 const DIRECT_PLAINTEXT_BYTES = 32 * 1024
-const FRAGMENT_CHUNK_BYTES = 18 * 1024
-const MAX_FRAGMENT_COUNT = 256
+const FRAGMENT_CHUNK_BYTES = 32 * 1024
+const MAX_FRAGMENT_COUNT = 2048
 
 export interface DshRemoteOutboundPlaintext {
   value: unknown
@@ -25,8 +25,8 @@ export function dshRemoteOutboundPayloads(
 ): DshRemoteOutboundPlaintext[] {
   const encoded = Buffer.from(JSON.stringify(envelope))
   if (encoded.length <= DIRECT_PLAINTEXT_BYTES) return [{ value: envelope }]
-  if (encoded.length > DSH_REMOTE_MAX_SNAPSHOT_BYTES) {
-    throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '完整 DSH 事件超过 512KiB 远控对象上限', false, {
+  if (encoded.length > DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES) {
+    throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '完整 DSH 事件超过 64MiB 安全上限', false, {
       logicalTooLarge: true,
       payloadBytes: encoded.length,
     })

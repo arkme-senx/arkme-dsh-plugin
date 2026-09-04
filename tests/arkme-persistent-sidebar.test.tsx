@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const persistentShellSource = readFileSync(new URL('../src/client/ArkmePersistentShell.tsx', import.meta.url), 'utf8')
+  .replaceAll('\r\n', '\n')
 
 describe('Arkme persistent sidebar', () => {
   it('keeps the conversation directory visible while a Bot chat is focused', () => {

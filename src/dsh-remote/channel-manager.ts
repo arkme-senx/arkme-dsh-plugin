@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { DshRemoteError } from './errors.js'
+import { setTimeout as delay } from 'node:timers/promises'
+import { asDshRemoteError, DshRemoteError } from './errors.js'
 import { DshRemoteRuntimeSecretBroker } from './runtime-secret-broker.js'
 import { dshRemoteOutboundPayloads } from './transport-fragment.js'
 import type {
@@ -21,7 +22,12 @@ export interface DshRemoteHostChannelManagerOptions {
     serviceLeaseGeneration: number
     metadata: DshRemoteTrustedEventMetadata
   }) => Promise<DshRemoteResponse>
+  onProjectionError: (error: unknown) => void
   onFatal: (error: unknown) => void
+}
+
+function logicalPayloadTooLarge(error: unknown): boolean {
+  return error instanceof DshRemoteError && error.details.logicalTooLarge === true
 }
 
 /**
@@ -60,7 +66,10 @@ export class DshRemoteHostChannelManager {
       target: this.target,
       ...(afterSequence === undefined ? {} : { afterSequence }),
       onEvent: (payload, metadata) => {
-        void this.handle(payload, metadata).catch(error => { this.options.onFatal(error) })
+        void this.handle(payload, metadata).catch(error => {
+          if (logicalPayloadTooLarge(error)) this.options.onProjectionError(error)
+          else this.options.onFatal(error)
+        })
       },
       signal: this.controller.signal,
     })
@@ -144,13 +153,23 @@ export class DshRemoteHostChannelManager {
       const frames = dshRemoteOutboundPayloads(envelope, commandId)
       for (const frame of frames) {
         if (!this.status().ready) return
-        await this.options.realtime.publish({
-          target: this.target,
-          commandId: frame.commandId ?? commandId,
-          direction,
-          payload: frame.value as Record<string, unknown>,
-          signal: this.controller.signal,
-        })
+        const frameCommandId = frame.commandId ?? commandId
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            await this.options.realtime.publish({
+              target: this.target,
+              commandId: frameCommandId,
+              direction,
+              payload: frame.value as Record<string, unknown>,
+              signal: this.controller.signal,
+            })
+            break
+          } catch (error) {
+            const remote = asDshRemoteError(error)
+            if (!remote.retryable || attempt >= 2 || this.controller.signal.aborted) throw error
+            await delay(100 * (2 ** attempt), undefined, { signal: this.controller.signal })
+          }
+        }
       }
     }
     const result = this.outboundTail.then(publish)

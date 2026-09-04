@@ -241,7 +241,8 @@ describe('normal timeline related quick note drawer', () => {
         extensionCount: 2,
         extensions: [{
           recordUid: 'extension-newer', level: 2, sourceKind: 'record_extension', senderDisplayName: '狗才',
-          senderAvatarUrl: 'opaque-avatar', title: '', textContent: '新的延展正文', sendAtMillis: 1_710_000_120_000,
+          senderAvatarUrl: 'opaque-avatar', title: '',
+          textContent: '新的延展正文 https://example.com/extension-detail', sendAtMillis: 1_710_000_120_000,
           templateKind: 2, displayKind: 0, officialMark: 0,
           mediaItems: [
             { fileKind: 1, fileName: '补充截图.png', size: 12 },
@@ -276,7 +277,12 @@ describe('normal timeline related quick note drawer', () => {
     expect(renderer.root.findByProps({ 'data-arkme-note-extension-count': 'true' }).children.join('')).toBe('共2条延展')
     const newer = renderer.root.findByProps({ 'data-arkme-note-extension-item': 'extension-newer' })
     expect(newer.findAll(node => node.children.includes('狗才'))).not.toHaveLength(0)
-    expect(newer.findAll(node => node.children.includes('新的延展正文'))).not.toHaveLength(0)
+    expect(newer.findAll(node => node.children.some(child =>
+      typeof child === 'string' && child.includes('新的延展正文')))).not.toHaveLength(0)
+    const extensionLink = newer.find(node => node.type === 'a' && node.props.href === 'https://example.com/extension-detail')
+    expect(extensionLink.findByProps({ 'data-arkme-link-label': 'true' }).children).toEqual([
+      'https://example.com/extension-detail',
+    ])
     expect(newer.findAllByProps({ alt: '补充截图.png' })).toHaveLength(1)
     expect(newer.findAllByProps({ 'data-arkme-file-card': 'file' })).toHaveLength(1)
     expect(newer.findAll(node => node.children.includes('补充方案.pdf'))).not.toHaveLength(0)

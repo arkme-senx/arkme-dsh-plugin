@@ -48,7 +48,6 @@ function inertHost(apiProxy: DshApiProxyAdapter, input: {
   realtime?: DshRemoteRealtimeTransport
   sessionOwnership?: DshRemoteSessionOwnership
   yieldToEventLoop?: () => Promise<void>
-  eagerHistoryBackfill?: boolean
 } = {}): ArkmeRemoteRealtimeHost {
   return new ArkmeRemoteRealtimeHost({
     featureEnabled: true, profileRef: 'web', hostClientRef: 'host-client-01',
@@ -62,20 +61,20 @@ function inertHost(apiProxy: DshApiProxyAdapter, input: {
     ledgerForAccount: () => input.ledger ?? (() => { throw new Error('unused') })(),
     now: input.now ?? (() => 1_500),
     ...(input.yieldToEventLoop === undefined ? {} : { yieldToEventLoop: input.yieldToEventLoop }),
-    ...(input.eagerHistoryBackfill === undefined ? {} : { eagerHistoryBackfill: input.eagerHistoryBackfill }),
   })
 }
 
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme remote Host account contract', () => {
-  it('persists DSH events to Backend even while Realtime is disconnected', async () => {
+  it('never writes legacy history when the Turn Outbox is not ready', async () => {
     const appendSessionEvents = vi.fn(async () => ({}))
+    const publishProjectionEvent = vi.fn(async () => undefined)
     const host = inertHost(new DshApiProxyAdapter({}), {
       controlPlane: { appendSessionEvents } as unknown as DshRemoteControlPlane,
     })
     Object.assign(host, {
-      started: true, connected: false, accountId: '1',
+      started: true, connected: true, accountId: '1', channelManager: { publishProjectionEvent },
       runtime: {
         runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
         hostGeneration: 7, capabilities: ['session.events'], updatedAtMillis: 1,
@@ -86,539 +85,40 @@ describe('Arkme remote Host account contract', () => {
       publishProjectionEvent(value: DshRemoteApiProjectionEvent): Promise<void>
     }).publishProjectionEvent({
       kind: 'session-event', sessionId: 'session-01',
-      entry: { event: { type: 'user/message', seq: 8, time: 1_400, data: { text: 'offline' } } },
+      entry: { event: { type: 'permission/preset', seq: 0, time: 1_400, data: {} } },
     })
-
-    expect(appendSessionEvents).toHaveBeenCalledOnce()
-    expect(appendSessionEvents).toHaveBeenCalledWith(expect.objectContaining({
-      runtime_ref: 'runtime-01', session_ref: 'session-01',
-    }))
-  })
-
-  it('backfills every retained DSH history page before advancing completeness', async () => {
-    const apiProxy = new DshApiProxyAdapter({})
-    vi.spyOn(apiProxy, 'sessions').mockResolvedValue({
-      items: [{
-        sessionId: 'session-01', workspaceId: 'workspace-01', updatedAt: 1,
-        running: false, blank: false, projectionAsOfSeq: 8,
-      }],
-    })
-    const history = vi.spyOn(apiProxy, 'history')
-      .mockResolvedValueOnce({
-        entries: [
-          { event: { type: 'user/message', seq: 7, time: 7, data: { text: 'newer' } } },
-          { event: { type: 'assistant/message', seq: 8, time: 8, data: { text: 'tail' } } },
-        ],
-        hasMore: true, nextCursor: 7, projectionAsOfSeq: 8,
-      })
-      .mockResolvedValueOnce({
-        entries: [
-          { event: { type: 'user/message', seq: 0, time: 0, data: { text: 'oldest' } } },
-        ],
-        hasMore: false, projectionAsOfSeq: 8,
-      })
-    const appendSessionEvents = vi.fn(async () => ({}))
-    const completeSessionEventHistory = vi.fn(async () => ({}))
-    const host = inertHost(apiProxy, {
-      controlPlane: {
-        sessionEventSyncStatuses: async () => ({
-          items: [{
-            session_ref: 'session-01', projection_as_of_seq: 8,
-            last_event_seq: -1, history_complete_through_seq: -2,
-          }],
-        }),
-        appendSessionEvents,
-        completeSessionEventHistory,
-      } as unknown as DshRemoteControlPlane,
-    })
-    Object.assign(host, {
-      started: true, accountId: '1',
-      runtime: {
-        runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
-        hostGeneration: 7, capabilities: ['session.list', 'session.history'], updatedAtMillis: 1,
-      },
-    })
-
-    await (host as unknown as { reconcileAllHistory(): Promise<void> }).reconcileAllHistory()
-
-    expect(history.mock.calls).toEqual([
-      [{ sessionId: 'session-01', limit: 50 }],
-      [{ sessionId: 'session-01', limit: 50, beforeSeq: 7 }],
-    ])
-    expect(appendSessionEvents).toHaveBeenCalledTimes(2)
-    expect(completeSessionEventHistory.mock.invocationCallOrder[0]).toBeGreaterThan(
-      appendSessionEvents.mock.invocationCallOrder.at(-1)!,
-    )
-    expect(completeSessionEventHistory).toHaveBeenCalledWith({
-      runtime_ref: 'runtime-01', host_generation: 7,
-      session_ref: 'session-01', through_seq: 8,
-    })
-  })
-
-  it('yields between retained history pages and bounded Session batches', async () => {
-    const apiProxy = new DshApiProxyAdapter({})
-    const sessions = Array.from({ length: 5 }, (_, index) => ({
-      sessionId: `session-0${String(index + 1)}`,
-      workspaceId: 'workspace-01', updatedAt: 5 - index,
-      running: false, blank: false, projectionAsOfSeq: 1,
-    }))
-    vi.spyOn(apiProxy, 'sessions').mockResolvedValue({ items: sessions })
-    const steps: string[] = []
-    vi.spyOn(apiProxy, 'history').mockImplementation(async input => {
-      steps.push(`history:${input.sessionId}:${String(input.beforeSeq ?? 'head')}`)
-      return input.beforeSeq === undefined
-        ? {
-            entries: [{ event: { type: 'event', seq: 1, time: 1, data: {} } }],
-            hasMore: true, nextCursor: 1, projectionAsOfSeq: 1,
-          }
-        : {
-            entries: [{ event: { type: 'event', seq: 0, time: 0, data: {} } }],
-            hasMore: false, projectionAsOfSeq: 1,
-          }
-    })
-    const yieldToEventLoop = vi.fn(async () => { steps.push('yield') })
-    const host = inertHost(apiProxy, {
-      yieldToEventLoop,
-      controlPlane: {
-        sessionEventSyncStatuses: async () => ({
-          items: sessions.map(session => ({
-            session_ref: session.sessionId, projection_as_of_seq: 1,
-            last_event_seq: -1, history_complete_through_seq: -2,
-          })),
-        }),
-        appendSessionEvents: async () => ({}),
-        completeSessionEventHistory: async () => ({}),
-      } as unknown as DshRemoteControlPlane,
-    })
-    Object.assign(host, {
-      started: true, accountId: '1',
-      runtime: {
-        runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
-        hostGeneration: 7, capabilities: ['session.list', 'session.history'], updatedAtMillis: 1,
-      },
-    })
-
-    await (host as unknown as { reconcileAllHistory(): Promise<void> }).reconcileAllHistory()
-
-    expect(yieldToEventLoop).toHaveBeenCalledTimes(6)
-    const fourthTail = steps.indexOf('history:session-04:1')
-    const fifthHead = steps.indexOf('history:session-05:head')
-    expect(steps.slice(fourthTail + 1, fifthHead)).toContain('yield')
-  })
-
-  it('defers and coalesces background history reconciliation after startup', async () => {
-    vi.useFakeTimers()
-    const host = inertHost(new DshApiProxyAdapter({}), { eagerHistoryBackfill: true })
-    const reconcileAllHistorySafely = vi.fn(async () => undefined)
-    Object.assign(host, {
-      started: true, accountId: '1', reconcileAllHistorySafely,
-      runtime: {
-        runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
-        hostGeneration: 7, capabilities: ['session.list', 'session.history'], updatedAtMillis: 1,
-      },
-    })
-
-    const schedule = (host as unknown as { scheduleHistoryReconcile(): void }).scheduleHistoryReconcile.bind(host)
-    schedule()
-    schedule()
-    await vi.advanceTimersByTimeAsync(29_999)
-    expect(reconcileAllHistorySafely).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(1)
-    expect(reconcileAllHistorySafely).toHaveBeenCalledOnce()
-  })
-
-  it('keeps global cold-history backfill disabled unless the runtime explicitly opts in', async () => {
-    vi.useFakeTimers()
-    const host = inertHost(new DshApiProxyAdapter({}))
-    const reconcileAllHistorySafely = vi.fn(async () => undefined)
-    Object.assign(host, {
-      started: true, accountId: '1', reconcileAllHistorySafely,
-      runtime: {
-        runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
-        hostGeneration: 7, capabilities: ['session.list', 'session.history'], updatedAtMillis: 1,
-      },
-    })
-
-    ;(host as unknown as { scheduleHistoryReconcile(): void }).scheduleHistoryReconcile()
-    await vi.advanceTimersByTimeAsync(30_000)
-
-    expect(reconcileAllHistorySafely).not.toHaveBeenCalled()
-  })
-
-  it('continues backfilling later sessions after one retained history is corrupt', async () => {
-    const apiProxy = new DshApiProxyAdapter({})
-    vi.spyOn(apiProxy, 'sessions').mockResolvedValue({
-      items: [
-        {
-          sessionId: 'session-corrupt', workspaceId: 'workspace-01', updatedAt: 2,
-          running: false, blank: false, projectionAsOfSeq: 8,
-        },
-        {
-          sessionId: 'session-good', workspaceId: 'workspace-01', updatedAt: 1,
-          running: false, blank: false, projectionAsOfSeq: 3,
-        },
-      ],
-    })
-    vi.spyOn(apiProxy, 'history').mockImplementation(async input => {
-      if (input.sessionId === 'session-corrupt') {
-        throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'corrupt history', true)
-      }
-      return {
-        entries: [{ event: { type: 'user/message', seq: 3, time: 3, data: { text: 'good' } } }],
-        hasMore: false,
-        projectionAsOfSeq: 3,
-      }
-    })
-    const appendSessionEvents = vi.fn(async () => ({}))
-    const completeSessionEventHistory = vi.fn(async () => ({}))
-    const host = inertHost(apiProxy, {
-      controlPlane: {
-        sessionEventSyncStatuses: async () => ({ items: [
-          {
-            session_ref: 'session-corrupt', projection_as_of_seq: 8,
-            last_event_seq: -1, history_complete_through_seq: -2,
-          },
-          {
-            session_ref: 'session-good', projection_as_of_seq: 3,
-            last_event_seq: -1, history_complete_through_seq: -2,
-          },
-        ] }),
-        appendSessionEvents,
-        completeSessionEventHistory,
-      } as unknown as DshRemoteControlPlane,
-    })
-    Object.assign(host, {
-      started: true, accountId: '1',
-      runtime: {
-        runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
-        hostGeneration: 7, capabilities: ['session.list', 'session.history'], updatedAtMillis: 1,
-      },
-    })
-
-    await expect(
-      (host as unknown as { reconcileAllHistory(): Promise<void> }).reconcileAllHistory(),
-    ).rejects.toMatchObject({ code: 'REMOTE_INVALID_RESPONSE' })
-    expect(appendSessionEvents).toHaveBeenCalledOnce()
-    expect(appendSessionEvents).toHaveBeenCalledWith(expect.objectContaining({
-      session_ref: 'session-good',
-    }))
-    expect(completeSessionEventHistory).toHaveBeenCalledWith(expect.objectContaining({
-      session_ref: 'session-good', through_seq: 3,
-    }))
-  })
-
-  it('rebuilds completed Turns when raw history is already complete and advances the Turn cut last', async () => {
-    const apiProxy = new DshApiProxyAdapter({})
-    vi.spyOn(apiProxy, 'sessions').mockResolvedValue({
-      items: [{
-        sessionId: 'session-turns', workspaceId: 'workspace-01', updatedAt: 1,
-        running: false, blank: false, projectionAsOfSeq: 3,
-      }],
-    })
-    vi.spyOn(apiProxy, 'history').mockResolvedValue({
-      entries: [
-        { event: { type: 'turn/start', seq: 0, time: 0, data: { turn: 1 } } },
-        { event: { type: 'user/message', seq: 1, time: 1, surfaceOp: 'append', data: {
-          id: 'message-1', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }],
-        } } },
-        { event: { type: 'assistant/message', seq: 2, time: 2, surfaceOp: 'append', data: {
-          turn: 1, step: 1, message: { content: [{ type: 'text', text: 'world' }] },
-        } } },
-        { event: { type: 'turn/end', seq: 3, time: 3, data: { turn: 1, reason: { kind: 'completed' } } } },
-      ],
-      hasMore: false,
-      projectionAsOfSeq: 3,
-    })
-    const appendSessionEvents = vi.fn(async () => ({}))
-    const completeSessionEventHistory = vi.fn(async () => ({}))
-    const syncSessionTurns = vi.fn(async () => ({}))
-    const completeSessionTurnHistory = vi.fn(async () => ({}))
-    const host = inertHost(apiProxy, {
-      controlPlane: {
-        sessionEventSyncStatuses: async () => ({ items: [{
-          session_ref: 'session-turns', projection_as_of_seq: 3,
-          last_event_seq: 3, history_complete_through_seq: 3,
-          turn_projection_as_of_seq: -1, turn_projection_complete_through_seq: -2,
-        }] }),
-        appendSessionEvents,
-        completeSessionEventHistory,
-        syncSessionTurns,
-        completeSessionTurnHistory,
-      } as unknown as DshRemoteControlPlane,
-    })
-    Object.assign(host, {
-      started: true, accountId: '1',
-      runtime: {
-        runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
-        hostGeneration: 7, capabilities: ['session.list', 'session.history'], updatedAtMillis: 1,
-      },
-    })
-
-    await (host as unknown as { reconcileAllHistory(): Promise<void> }).reconcileAllHistory()
-
-    expect(syncSessionTurns).toHaveBeenCalledWith(expect.objectContaining({
-      session_ref: 'session-turns',
-      items: [expect.objectContaining({
-        turn_ref: 'turn:0:3', start_seq: 0, end_seq: 3, status: 'completed',
-        nodes: [
-          expect.objectContaining({ node_ref: 'message:message-1', kind: 'user' }),
-          expect.objectContaining({ node_ref: 'assistant:1:1', kind: 'assistant' }),
-        ],
-      })],
-    }))
-    expect(completeSessionTurnHistory.mock.invocationCallOrder[0]).toBeGreaterThan(
-      syncSessionTurns.mock.invocationCallOrder[0]!,
-    )
-    expect(completeSessionTurnHistory).toHaveBeenCalledWith({
-      runtime_ref: 'runtime-01', host_generation: 7,
-      session_ref: 'session-turns', through_seq: 3,
-    })
-  })
-
-  it('keeps Turn completeness conservative when retained history contains an orphan turn/end', async () => {
-    const apiProxy = new DshApiProxyAdapter({})
-    vi.spyOn(apiProxy, 'sessions').mockResolvedValue({
-      items: [{
-        sessionId: 'session-orphan', workspaceId: 'workspace-01', updatedAt: 1,
-        running: false, blank: false, projectionAsOfSeq: 9,
-      }],
-    })
-    vi.spyOn(apiProxy, 'history').mockResolvedValue({
-      entries: [
-        { event: { type: 'assistant/message', seq: 8, time: 8, surfaceOp: 'append', data: {
-          turn: 3, step: 1, message: { content: [{ type: 'text', text: 'retained tail' }] },
-        } } },
-        { event: { type: 'turn/end', seq: 9, time: 9, data: { turn: 3, reason: { kind: 'completed' } } } },
-      ],
-      hasMore: false,
-      projectionAsOfSeq: 9,
-    })
-    const completeSessionTurnHistory = vi.fn(async () => ({}))
-    const host = inertHost(apiProxy, {
-      controlPlane: {
-        sessionEventSyncStatuses: async () => ({ items: [{
-          session_ref: 'session-orphan', projection_as_of_seq: 9,
-          last_event_seq: 9, history_complete_through_seq: 9,
-          turn_projection_as_of_seq: -1, turn_projection_complete_through_seq: -2,
-        }] }),
-        appendSessionEvents: async () => ({}),
-        completeSessionEventHistory: async () => ({}),
-        syncSessionTurns: async () => ({}),
-        completeSessionTurnHistory,
-      } as unknown as DshRemoteControlPlane,
-    })
-    Object.assign(host, {
-      started: true, accountId: '1',
-      runtime: {
-        runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
-        hostGeneration: 7, capabilities: ['session.list', 'session.history'], updatedAtMillis: 1,
-      },
-    })
-
-    await (host as unknown as { reconcileAllHistory(): Promise<void> }).reconcileAllHistory()
-
-    expect(completeSessionTurnHistory).not.toHaveBeenCalled()
-  })
-
-  it('splits one message-bounded DSH page into Backend batches of at most 100 events', async () => {
-    const apiProxy = new DshApiProxyAdapter({})
-    vi.spyOn(apiProxy, 'sessions').mockResolvedValue({
-      items: [{
-        sessionId: 'large-session', workspaceId: 'workspace-01', updatedAt: 1,
-        running: false, blank: false, projectionAsOfSeq: 200,
-      }],
-    })
-    vi.spyOn(apiProxy, 'history').mockResolvedValue({
-      entries: Array.from({ length: 201 }, (_, seq) => ({
-        event: { type: 'event', seq, time: seq, data: {} },
-      })),
-      hasMore: false,
-      projectionAsOfSeq: 200,
-    })
-    const appendSessionEvents = vi.fn(async () => ({}))
-    const completeSessionEventHistory = vi.fn(async () => ({}))
-    const host = inertHost(apiProxy, {
-      controlPlane: {
-        sessionEventSyncStatuses: async () => ({ items: [{
-          session_ref: 'large-session', projection_as_of_seq: 200,
-          last_event_seq: -1, history_complete_through_seq: -2,
-        }] }),
-        appendSessionEvents,
-        completeSessionEventHistory,
-      } as unknown as DshRemoteControlPlane,
-    })
-    Object.assign(host, {
-      started: true, accountId: '1',
-      runtime: {
-        runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
-        hostGeneration: 7, capabilities: ['session.list', 'session.history'], updatedAtMillis: 1,
-      },
-    })
-
-    await (host as unknown as { reconcileAllHistory(): Promise<void> }).reconcileAllHistory()
-
-    expect(appendSessionEvents.mock.calls.map(call => (call[0].entries as unknown[]).length))
-      .toEqual([100, 100, 1])
-    expect(completeSessionEventHistory).toHaveBeenCalledWith(expect.objectContaining({
-      session_ref: 'large-session', through_seq: 200,
-    }))
-  })
-
-  it('skips a DSH history traversal already proven complete by Backend', async () => {
-    const apiProxy = new DshApiProxyAdapter({})
-    vi.spyOn(apiProxy, 'sessions').mockResolvedValue({
-      items: [{
-        sessionId: 'session-01', workspaceId: 'workspace-01', updatedAt: 1,
-        running: false, blank: false, projectionAsOfSeq: 8,
-      }],
-    })
-    const history = vi.spyOn(apiProxy, 'history')
-    const completeSessionEventHistory = vi.fn(async () => ({}))
-    const host = inertHost(apiProxy, {
-      controlPlane: {
-        sessionEventSyncStatuses: async () => ({
-          items: [{
-            session_ref: 'session-01', projection_as_of_seq: 8,
-            last_event_seq: 8, history_complete_through_seq: 8,
-          }],
-        }),
-        appendSessionEvents: async () => ({}),
-        completeSessionEventHistory,
-      } as unknown as DshRemoteControlPlane,
-    })
-    Object.assign(host, {
-      started: true, accountId: '1',
-      runtime: {
-        runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
-        hostGeneration: 7, capabilities: ['session.list', 'session.history'], updatedAtMillis: 1,
-      },
-    })
-
-    await (host as unknown as { reconcileAllHistory(): Promise<void> }).reconcileAllHistory()
-
-    expect(history).not.toHaveBeenCalled()
-    expect(completeSessionEventHistory).not.toHaveBeenCalled()
-  })
-
-  it('marks an empty retained DSH history complete at seq -1', async () => {
-    const apiProxy = new DshApiProxyAdapter({})
-    vi.spyOn(apiProxy, 'sessions').mockResolvedValue({
-      items: [{
-        sessionId: 'empty-session', workspaceId: 'workspace-01', updatedAt: 1,
-        running: false, blank: true, projectionAsOfSeq: -1,
-      }],
-    })
-    vi.spyOn(apiProxy, 'history').mockResolvedValue({
-      entries: [], hasMore: false, projectionAsOfSeq: -1,
-    })
-    const appendSessionEvents = vi.fn(async () => ({}))
-    const completeSessionEventHistory = vi.fn(async () => ({}))
-    const host = inertHost(apiProxy, {
-      controlPlane: {
-        sessionEventSyncStatuses: async () => ({ items: [{
-          session_ref: 'empty-session', projection_as_of_seq: -1,
-          last_event_seq: -1, history_complete_through_seq: -2,
-        }] }),
-        appendSessionEvents,
-        completeSessionEventHistory,
-      } as unknown as DshRemoteControlPlane,
-    })
-    Object.assign(host, {
-      started: true, accountId: '1',
-      runtime: {
-        runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
-        hostGeneration: 7, capabilities: ['session.list', 'session.history'], updatedAtMillis: 1,
-      },
-    })
-
-    await (host as unknown as { reconcileAllHistory(): Promise<void> }).reconcileAllHistory()
 
     expect(appendSessionEvents).not.toHaveBeenCalled()
-    expect(completeSessionEventHistory).toHaveBeenCalledWith(expect.objectContaining({
-      session_ref: 'empty-session', through_seq: -1,
-    }))
+    expect(publishProjectionEvent).toHaveBeenCalledOnce()
   })
 
-  it('does not advance completeness when DSH history pagination loops', async () => {
-    const apiProxy = new DshApiProxyAdapter({})
-    vi.spyOn(apiProxy, 'sessions').mockResolvedValue({
-      items: [{
-        sessionId: 'session-loop', workspaceId: 'workspace-01', updatedAt: 1,
-        running: false, blank: false, projectionAsOfSeq: 8,
-      }],
-    })
-    const history = vi.spyOn(apiProxy, 'history')
-      .mockResolvedValueOnce({
-        entries: [{ event: { type: 'event', seq: 7, time: 7, data: {} } }],
-        hasMore: true, nextCursor: 7, projectionAsOfSeq: 8,
-      })
-      .mockResolvedValueOnce({
-        entries: [{ event: { type: 'event', seq: 6, time: 6, data: {} } }],
-        hasMore: true, nextCursor: 7, projectionAsOfSeq: 8,
-      })
-    const completeSessionEventHistory = vi.fn(async () => ({}))
-    const host = inertHost(apiProxy, {
-      controlPlane: {
-        sessionEventSyncStatuses: async () => ({ items: [{
-          session_ref: 'session-loop', projection_as_of_seq: 8,
-          last_event_seq: -1, history_complete_through_seq: -2,
-        }] }),
-        appendSessionEvents: async () => ({}),
-        completeSessionEventHistory,
-      } as unknown as DshRemoteControlPlane,
+  it('routes live events to the Turn Outbox only when the rollout owner is installed', async () => {
+    const appendSessionEvents = vi.fn(async () => ({}))
+    const capture = vi.fn(async () => undefined)
+    const host = inertHost(new DshApiProxyAdapter({}), {
+      controlPlane: { appendSessionEvents } as unknown as DshRemoteControlPlane,
     })
     Object.assign(host, {
-      started: true, accountId: '1',
+      started: true, connected: false, accountId: '1',
+      turnUpload: { capture },
       runtime: {
         runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
-        hostGeneration: 7, capabilities: ['session.list', 'session.history'], updatedAtMillis: 1,
+        hostGeneration: 7, capabilities: ['session.events'], updatedAtMillis: 1,
       },
     })
 
-    let failure: unknown
-    try {
-      await (host as unknown as { reconcileAllHistory(): Promise<void> }).reconcileAllHistory()
-    } catch (error) {
-      failure = error
-    }
-    expect(history.mock.calls.map(call => call[0].beforeSeq)).toEqual([undefined, 7])
-    expect(failure).toMatchObject({ code: 'REMOTE_INVALID_RESPONSE' })
-    expect(completeSessionEventHistory).not.toHaveBeenCalled()
+    await (host as unknown as {
+      publishProjectionEvent(value: DshRemoteApiProjectionEvent): Promise<void>
+    }).publishProjectionEvent({
+      kind: 'session-event', sessionId: 'session-01',
+      entry: { event: { type: 'turn/start', seq: 8, time: 1_400, data: {} } },
+    })
+
+    expect(capture).toHaveBeenCalledOnce()
+    expect(appendSessionEvents).not.toHaveBeenCalled()
   })
 
-  it('does not project a late old-account history failure onto the new account', async () => {
-    const apiProxy = new DshApiProxyAdapter({})
-    let rejectSessions!: (error: unknown) => void
-    vi.spyOn(apiProxy, 'sessions').mockImplementation(async () => await new Promise((_, reject) => {
-      rejectSessions = reject
-    }))
-    const host = inertHost(apiProxy)
-    Object.assign(host, {
-      started: true, accountId: '1',
-      runtime: {
-        runtimeRef: 'runtime-01', desktopRef: 'desktop-01', profileRef: 'web', accountId: '1',
-        hostGeneration: 7, capabilities: ['session.list', 'session.history'], updatedAtMillis: 1,
-      },
-    })
-
-    const reconciliation = (host as unknown as {
-      reconcileAllHistorySafely(): Promise<void>
-    }).reconcileAllHistorySafely()
-    Object.assign(host, {
-      accountId: '2',
-      runtime: {
-        runtimeRef: 'runtime-02', desktopRef: 'desktop-02', profileRef: 'web', accountId: '2',
-        hostGeneration: 1, capabilities: ['session.list', 'session.history'], updatedAtMillis: 2,
-      },
-    })
-    rejectSessions(new DshRemoteError('REMOTE_NETWORK_UNAVAILABLE', 'old account failed', true))
-    await reconciliation
-
-    expect(host.getStatus()).toMatchObject({ accountId: '2', runtimeRef: 'runtime-02' })
-    expect(host.getStatus().unavailableReason).not.toBe('old account failed')
-  })
-
-  it('maps public ApiProxy events to Backend history and Runtime channel projections', async () => {
+  it('maps public ApiProxy events to Runtime channel projections without legacy writes', async () => {
     const publishProjectionEvent = vi.fn(async () => undefined)
     const appendSessionEvents = vi.fn(async () => ({}))
     const host = inertHost(new DshApiProxyAdapter({}), {
@@ -641,9 +141,7 @@ describe('Arkme remote Host account contract', () => {
         content: [{ type: 'text', text: 'answer' }], source: { kind: 'assistant' },
       } } },
     })
-    expect(appendSessionEvents).toHaveBeenCalledWith(expect.objectContaining({
-      runtime_ref: 'runtime-01', host_generation: 7, session_ref: 'session-01',
-    }))
+    expect(appendSessionEvents).not.toHaveBeenCalled()
     expect(publishProjectionEvent.mock.calls[0]![0]).toMatchObject({
       kind: 'event', host_generation: 7, operation: 'session.history', session_seq: 8,
       projection_as_of_seq: 8,
@@ -692,12 +190,9 @@ describe('Arkme remote Host account contract', () => {
     expect(syncProjectionSnapshotSafely).toHaveBeenCalledWith()
   })
 
-  it('batches ordered live chunks without waiting for Backend history latency', async () => {
+  it('batches ordered live chunks without calling legacy history', async () => {
     vi.useFakeTimers()
-    const pendingAppends: Array<() => void> = []
-    const appendSessionEvents = vi.fn(async () => await new Promise<void>(resolve => {
-      pendingAppends.push(resolve)
-    }))
+    const appendSessionEvents = vi.fn(async () => ({}))
     const published = vi.fn(async () => undefined)
     const host = inertHost(new DshApiProxyAdapter({}), {
       controlPlane: { appendSessionEvents } as unknown as DshRemoteControlPlane,
@@ -725,16 +220,7 @@ describe('Arkme remote Host account contract', () => {
     expect(published).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(40)
 
-    expect(appendSessionEvents).toHaveBeenCalledOnce()
-    expect(appendSessionEvents).toHaveBeenCalledWith(expect.objectContaining({
-      entries: [
-        expect.objectContaining({ event: expect.objectContaining({ seq: 8 }) }),
-        expect.objectContaining({ event: expect.objectContaining({ seq: 9 }) }),
-        expect.objectContaining({ event: expect.objectContaining({ seq: 10 }) }),
-      ],
-    }))
-    expect((appendSessionEvents.mock.calls[0]![0].entries as Array<Record<string, unknown>>)
-      .every(entry => !Object.hasOwn(entry, 'presentation'))).toBe(true)
+    expect(appendSessionEvents).not.toHaveBeenCalled()
     expect(published).toHaveBeenCalledOnce()
     expect(published).toHaveBeenCalledWith(expect.objectContaining({
       session_seq: 10,
@@ -743,16 +229,12 @@ describe('Arkme remote Host account contract', () => {
         expect.objectContaining({ event: expect.objectContaining({ seq: 10 }) }),
       ]) }),
     }), expect.any(String))
-    for (const resolve of pendingAppends) resolve()
   })
 
   it('keeps live batches independent across Sessions', async () => {
     vi.useFakeTimers()
-    const appendSessionEvents = vi.fn(async () => await new Promise<void>(() => undefined))
     const published = vi.fn(async () => undefined)
-    const host = inertHost(new DshApiProxyAdapter({}), {
-      controlPlane: { appendSessionEvents } as unknown as DshRemoteControlPlane,
-    })
+    const host = inertHost(new DshApiProxyAdapter({}))
     Object.assign(host, {
       started: true, connected: true, channelManager: { publishProjectionEvent: published }, accountId: '1',
       runtime: {
@@ -800,15 +282,13 @@ describe('Arkme remote Host account contract', () => {
     await project(9, 'assistant/chunk')
     await project(10, 'turn/start')
 
-    expect(appendSessionEvents).toHaveBeenCalledOnce()
-    expect((appendSessionEvents.mock.calls[0]![0].entries as Array<{ event: { seq: number } }>).map(item => item.event.seq))
-      .toEqual([8, 9, 10])
+    expect(appendSessionEvents).not.toHaveBeenCalled()
     expect(published).toHaveBeenCalledOnce()
     expect(published).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.objectContaining({ run_state: 'running', presentation_version: 1 }),
     }), expect.any(String))
     await vi.advanceTimersByTimeAsync(40)
-    expect(appendSessionEvents).toHaveBeenCalledOnce()
+    expect(appendSessionEvents).not.toHaveBeenCalled()
     expect(published).toHaveBeenCalledOnce()
   })
 
@@ -836,10 +316,10 @@ describe('Arkme remote Host account contract', () => {
     await (host as unknown as { flushPendingSessionEventBatches(): Promise<void> })
       .flushPendingSessionEventBatches()
 
-    expect(appendSessionEvents).toHaveBeenCalledOnce()
+    expect(appendSessionEvents).not.toHaveBeenCalled()
     expect(published).toHaveBeenCalledOnce()
     await vi.advanceTimersByTimeAsync(40)
-    expect(appendSessionEvents).toHaveBeenCalledOnce()
+    expect(appendSessionEvents).not.toHaveBeenCalled()
   })
 
   it('discards pending live chunks when an account transition suspends the Host', async () => {
@@ -893,55 +373,14 @@ describe('Arkme remote Host account contract', () => {
     })
 
     await Promise.all(Array.from({ length: 50 }, (_, seq) => project(seq)))
-    expect(appendSessionEvents).toHaveBeenCalledOnce()
-    expect((appendSessionEvents.mock.calls[0]![0].entries as unknown[])).toHaveLength(50)
+    expect(appendSessionEvents).not.toHaveBeenCalled()
     expect(published).toHaveBeenCalledOnce()
 
     await project(50)
     ;(host as unknown as { clearPendingSessionEventBatches(): void }).clearPendingSessionEventBatches()
     await vi.advanceTimersByTimeAsync(40)
-    expect(appendSessionEvents).toHaveBeenCalledOnce()
+    expect(appendSessionEvents).not.toHaveBeenCalled()
     expect(published).toHaveBeenCalledOnce()
-  })
-
-  it('syncs a newly-created session row before retrying its first Backend event append', async () => {
-    const publishProjectionEvent = vi.fn(async () => undefined)
-    const appendSessionEvents = vi.fn()
-      .mockRejectedValueOnce(new DshRemoteError(
-        'REMOTE_NOT_FOUND',
-        'missing session projection',
-      ))
-      .mockResolvedValueOnce({})
-    const host = inertHost(new DshApiProxyAdapter({}), {
-      controlPlane: { appendSessionEvents } as unknown as DshRemoteControlPlane,
-    })
-    const syncProjectionSnapshot = vi.fn(async () => undefined)
-    Object.assign(host, {
-      started: true,
-      connected: true,
-      channelManager: { publishProjectionEvent },
-      accountId: '1',
-      syncProjectionSnapshot,
-      runtime: {
-        runtimeRef: 'runtime-01', profileRef: 'web', accountId: '1', hostGeneration: 7,
-        capabilities: ['session.events'], updatedAtMillis: 1,
-      },
-    })
-
-    await (host as unknown as {
-      publishProjectionEvent(value: DshRemoteApiProjectionEvent): Promise<void>
-    }).publishProjectionEvent({
-      kind: 'session-event',
-      sessionId: 'new-session',
-      entry: { event: { type: 'assistant/message', seq: 0, time: 1_400, data: {} } },
-    })
-
-    await vi.waitFor(() => {
-      expect(syncProjectionSnapshot).toHaveBeenCalledOnce()
-      expect(appendSessionEvents).toHaveBeenCalledTimes(2)
-    })
-    expect(syncProjectionSnapshot).toHaveBeenCalledWith(true)
-    expect(publishProjectionEvent).toHaveBeenCalledOnce()
   })
 
   it('drops Backend and Realtime events for a Session owned by another Arkme account', async () => {

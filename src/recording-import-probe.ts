@@ -1,4 +1,4 @@
-import { stat, unlink } from 'node:fs/promises'
+import { open, stat, unlink } from 'node:fs/promises'
 import { FilePathSource, Input, MP3, MP4, WAVE } from 'mediabunny'
 import {
   RecordingImportContractError,
@@ -6,6 +6,7 @@ import {
   type RecordingImportFileKind,
   type RecordingImportSource,
 } from './recording-import-contract.js'
+import { probeImaAdpcmWave } from './recording-wave-probe.js'
 
 export interface RecordingImportProbe {
   kind: RecordingImportFileKind
@@ -21,8 +22,31 @@ export async function probeRecordingImportFile(
     throw new RecordingImportContractError('recording-import-size-mismatch', '录音文件大小与声明不一致')
   }
 
-  const input = new Input({ source: new FilePathSource(filePath), formats: [WAVE, MP3, MP4] })
+  let input: Input | undefined
   try {
+    const handle = await open(filePath, 'r')
+    let imaAdpcm
+    try {
+      imaAdpcm = await probeImaAdpcmWave({
+        size: actualSize,
+        read: async (offset, length) => {
+          const bytes = new Uint8Array(length)
+          const { bytesRead } = await handle.read(bytes, 0, length, offset)
+          return bytes.subarray(0, bytesRead)
+        },
+      })
+    } finally {
+      await handle.close()
+    }
+    if (imaAdpcm !== undefined) {
+      const declaredKind = recordingImportFileKind({ ...metadata, durationMillis: imaAdpcm.durationMillis })
+      if (declaredKind !== 'wav') {
+        throw new RecordingImportContractError('recording-import-format-mismatch', '录音格式与文件内容不一致')
+      }
+      return { kind: 'wav', durationMillis: imaAdpcm.durationMillis }
+    }
+
+    input = new Input({ source: new FilePathSource(filePath), formats: [WAVE, MP3, MP4] })
     if (!await input.canRead()) {
       throw new RecordingImportContractError('recording-import-format-invalid', '无法识别录音文件内容')
     }
@@ -54,7 +78,7 @@ export async function probeRecordingImportFile(
     if (error instanceof RecordingImportContractError) throw error
     throw new RecordingImportContractError('recording-import-probe-failed', '录音文件校验失败')
   } finally {
-    input.dispose()
+    input?.dispose()
   }
 }
 
