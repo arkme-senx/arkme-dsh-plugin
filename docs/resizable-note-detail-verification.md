@@ -31,3 +31,11 @@
 - Targeted resize/drawer/sidebar/identity suites: 28 tests passed. Typecheck and build passed. The existing credential-helper source files were temporarily normalized to LF for build verification and restored byte-for-byte afterward.
 - Full suite: 3549 passed, 55 failed, 4 skipped (22 failed suites). This is not an all-green result and the failures are not all proven pre-existing. No unrelated test fixes are included.
 - A fresh isolated official DSH 0.1.1-rc.1 profile installed the immutable tarball. Installed client SHA256 matches the build. Windows browser verified detail width 405px -> 495px by pointer drag and back to 405px on Enter; targeted 28 tests passed again after review. Sidebar renderer and emoji assets are unchanged from current master. No messages sent or note content changed.
+
+## Review follow-up: regression coverage and baseline comparison
+
+- Added five tests covering parent resize/recovery and observer cleanup, pointer cancellation, lost pointer capture, unavailable storage, all resize keys and the window-resize fallback without ResizeObserver.
+- Compared full suites against an untouched worktree at dev `4f093d0cff3ae98588ee8d9fc85c7bcf5d247696`. This identified two PR-specific outdated assertions still requiring 372px in interwoven and forwarded details. Updated both to the intended 405px default, container cap and accessible resize separator; retained their other content and authorization assertions.
+- Expanded relevant suites: 88 passed. Typecheck and diff check passed. Review found no remaining confirmed resize implementation defect. No runtime code, emoji assets, metadata or version changes in this follow-up; the existing installed client remains byte-identical to the build.
+- Clean dev full run: 3546 passed, 56 failed, 4 skipped. Final PR full run: 3552 passed, 57 failed, 4 skipped. All 56 baseline failing test identities also fail in the PR. The one additional recording-service timeout passes when rerun alone, and its implementation/test files are identical to dev. The suite-load failure is `spawnSync pnpm ENOENT` on both revisions. This comparison does not claim the whole repository is green or repair unrelated baseline issues.
+- Remaining platform evidence limitation: macOS/Linux were not exercised. Windows pointer interaction evidence from the unchanged runtime above remains applicable.

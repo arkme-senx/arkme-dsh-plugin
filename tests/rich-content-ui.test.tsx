@@ -44,7 +44,10 @@ describe('Arkme rich content presentation', () => {
     expect(html).not.toContain('1970')
     expect(html).not.toContain('<audio')
     expect(html).not.toContain('data-arkme-text-collapsible')
-    expect(html).toContain('width:min(372px, 100%)')
+    expect(html).toContain('width:405px')
+    expect(html).toContain('max-width:100%')
+    expect(html).toContain('aria-label="调整快记详情宽度"')
+    expect(html).toContain('aria-valuenow="405"')
   })
   it('shows a single-line forward heading and at most three summary lines without a nested card shell', () => {
     const html = renderToStaticMarkup(<ArkmeMessageContent item={{
