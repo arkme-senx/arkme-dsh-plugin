@@ -56,9 +56,9 @@ interface TurnRow {
   updated_at_millis: number
 }
 
-interface HistoryFinalizationRow {
+interface HistoryCompletionRow {
   session_ref: string
-  source_revision: string
+  source_revision: string | null
   through_seq: number
   state: 'PENDING' | 'FINALIZED'
   attempts: number
@@ -203,6 +203,7 @@ export class DshRemoteTurnUploadOutbox {
   private controller = new AbortController()
   private closed = false
   private pendingSpoolBytes = 0
+  private readonly verifiedHistorySessions = new Set<string>()
 
   constructor(private readonly options: DshRemoteTurnUploadOutboxOptions) {
     if (options.key.length !== 32) throw new TypeError('DshRemoteTurnUploadOutbox key must be 32 bytes')
@@ -254,9 +255,15 @@ export class DshRemoteTurnUploadOutbox {
         ON dsh_turn_upload_v2 (state, next_attempt_at_millis, created_at_millis);
       CREATE INDEX IF NOT EXISTS dsh_turn_upload_v2_session
         ON dsh_turn_upload_v2 (session_ref, start_seq);
-      CREATE TABLE IF NOT EXISTS dsh_history_finalization_v1 (
+      CREATE TABLE IF NOT EXISTS dsh_history_scan_v2 (
         session_ref TEXT PRIMARY KEY,
         source_revision TEXT NOT NULL,
+        completed_through_seq INTEGER NOT NULL,
+        updated_at_millis INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS dsh_history_completion_v2 (
+        session_ref TEXT PRIMARY KEY,
+        source_revision TEXT,
         through_seq INTEGER NOT NULL,
         state TEXT NOT NULL CHECK (state IN ('PENDING', 'FINALIZED')),
         attempts INTEGER NOT NULL,
@@ -264,6 +271,7 @@ export class DshRemoteTurnUploadOutbox {
         created_at_millis INTEGER NOT NULL,
         updated_at_millis INTEGER NOT NULL
       );
+      DROP TABLE IF EXISTS dsh_history_finalization_v1;
       DROP TABLE IF EXISTS dsh_history_backfill_v1;
     `)
     this.secureDatabaseFiles()
@@ -290,7 +298,7 @@ export class DshRemoteTurnUploadOutbox {
         AND prepared_host_generation <> ?
     `).run(runtime.hostGeneration)
     this.database.prepare(`
-      UPDATE dsh_history_finalization_v1
+      UPDATE dsh_history_completion_v2
       SET attempts = 0, next_attempt_at_millis = 0, updated_at_millis = ?
       WHERE state = 'PENDING'
     `).run(this.now())
@@ -366,10 +374,17 @@ export class DshRemoteTurnUploadOutbox {
   }
 
   needsHistoryRevision(sessionRef: string, sourceRevision: string): boolean {
-    const row = this.database.prepare(`
-      SELECT source_revision FROM dsh_history_finalization_v1 WHERE session_ref = ?
-    `).get(sessionRef) as { source_revision: string } | undefined
-    return row?.source_revision !== sourceRevision
+    const known = this.database.prepare(`
+      SELECT 1 AS known
+      WHERE EXISTS (
+        SELECT 1 FROM dsh_history_scan_v2
+        WHERE session_ref = ? AND source_revision = ?
+      ) OR EXISTS (
+        SELECT 1 FROM dsh_history_completion_v2
+        WHERE session_ref = ? AND source_revision = ?
+      )
+    `).get(sessionRef, sourceRevision, sessionRef, sourceRevision)
+    return known === undefined
   }
 
   queueHistoryFinalization(sessionRef: string, sourceRevision: string, throughSeq: number): void {
@@ -377,9 +392,10 @@ export class DshRemoteTurnUploadOutbox {
       sourceRevision.length > 1024 || !Number.isSafeInteger(throughSeq) || throughSeq < -1) {
       throw new DshRemoteError('REMOTE_STORAGE_FAILED', '历史重传 checkpoint 无效')
     }
+    this.verifiedHistorySessions.delete(sessionRef)
     const now = this.now()
     this.database.prepare(`
-      INSERT INTO dsh_history_finalization_v1 (
+      INSERT INTO dsh_history_completion_v2 (
         session_ref, source_revision, through_seq, state, attempts,
         next_attempt_at_millis, created_at_millis, updated_at_millis
       ) VALUES (?, ?, ?, 'PENDING', 0, 0, ?, ?)
@@ -388,9 +404,27 @@ export class DshRemoteTurnUploadOutbox {
         through_seq = excluded.through_seq,
         state = 'PENDING', attempts = 0, next_attempt_at_millis = 0,
         updated_at_millis = excluded.updated_at_millis
-      WHERE dsh_history_finalization_v1.source_revision <> excluded.source_revision
-         OR dsh_history_finalization_v1.through_seq <> excluded.through_seq
+      WHERE excluded.through_seq >= dsh_history_completion_v2.through_seq
+        AND (dsh_history_completion_v2.source_revision IS NOT excluded.source_revision
+          OR dsh_history_completion_v2.through_seq <> excluded.through_seq)
     `).run(sessionRef, sourceRevision, throughSeq, now, now)
+    this.scheduleDrain(0)
+  }
+
+  private queueLiveCompletion(sessionRef: string, throughSeq: number): void {
+    if (!this.verifiedHistorySessions.has(sessionRef)) return
+    const now = this.now()
+    this.database.prepare(`
+      INSERT INTO dsh_history_completion_v2 (
+        session_ref, source_revision, through_seq, state, attempts,
+        next_attempt_at_millis, created_at_millis, updated_at_millis
+      ) VALUES (?, NULL, ?, 'PENDING', 0, 0, ?, ?)
+      ON CONFLICT(session_ref) DO UPDATE SET
+        source_revision = NULL, through_seq = excluded.through_seq,
+        state = 'PENDING', attempts = 0, next_attempt_at_millis = 0,
+        updated_at_millis = excluded.updated_at_millis
+      WHERE excluded.through_seq > dsh_history_completion_v2.through_seq
+    `).run(sessionRef, throughSeq, now, now)
     this.scheduleDrain(0)
   }
 
@@ -468,16 +502,16 @@ export class DshRemoteTurnUploadOutbox {
     `).get(this.now()) as unknown as TurnRow | undefined
   }
 
-  private nextFinalizationReady(): HistoryFinalizationRow | undefined {
+  private nextFinalizationReady(): HistoryCompletionRow | undefined {
     return this.database.prepare(`
-      SELECT * FROM dsh_history_finalization_v1
+      SELECT * FROM dsh_history_completion_v2
       WHERE state = 'PENDING' AND next_attempt_at_millis <= ?
       ORDER BY CASE WHEN attempts = 0 THEN 0 ELSE 1 END, created_at_millis ASC
       LIMIT 1
-    `).get(this.now()) as unknown as HistoryFinalizationRow | undefined
+    `).get(this.now()) as unknown as HistoryCompletionRow | undefined
   }
 
-  private committedHistoryProof(row: HistoryFinalizationRow): {
+  private committedHistoryProof(row: HistoryCompletionRow): {
     turnCount: number
     lastTurnRef: string
     lastEndSeq: number
@@ -504,29 +538,29 @@ export class DshRemoteTurnUploadOutbox {
     }
   }
 
-  private deferFinalization(row: HistoryFinalizationRow, error: unknown): void {
+  private deferFinalization(row: HistoryCompletionRow, error: unknown): void {
     const remote = asDshRemoteError(error)
     const attempts = row.attempts + 1
     const delay = Math.min(RETRY_MAX_MILLIS, this.retryBaseMillis * (2 ** Math.min(6, attempts - 1)))
     const nextAttempt = remote.retryable ? this.now() + delay : Number.MAX_SAFE_INTEGER
     this.database.prepare(`
-      UPDATE dsh_history_finalization_v1
+      UPDATE dsh_history_completion_v2
       SET attempts = ?, next_attempt_at_millis = ?, updated_at_millis = ?
-      WHERE session_ref = ? AND source_revision = ? AND state = 'PENDING'
-    `).run(attempts, nextAttempt, this.now(), row.session_ref, row.source_revision)
+      WHERE session_ref = ? AND source_revision IS ? AND through_seq = ? AND state = 'PENDING'
+    `).run(attempts, nextAttempt, this.now(), row.session_ref, row.source_revision, row.through_seq)
     this.options.onError?.(error, row.session_ref)
     if (remote.retryable) this.scheduleDrain(delay)
   }
 
-  private async finalizeHistory(row: HistoryFinalizationRow, runtime: DshRemoteRuntimeProjection, signal: AbortSignal): Promise<void> {
+  private async finalizeHistory(row: HistoryCompletionRow, runtime: DshRemoteRuntimeProjection, signal: AbortSignal): Promise<void> {
     const proof = this.committedHistoryProof(row)
     if (proof === undefined) {
       const delay = this.retryBaseMillis
       this.database.prepare(`
-        UPDATE dsh_history_finalization_v1
+        UPDATE dsh_history_completion_v2
         SET next_attempt_at_millis = ?, updated_at_millis = ?
-        WHERE session_ref = ? AND source_revision = ? AND state = 'PENDING'
-      `).run(this.now() + delay, this.now(), row.session_ref, row.source_revision)
+        WHERE session_ref = ? AND source_revision IS ? AND through_seq = ? AND state = 'PENDING'
+      `).run(this.now() + delay, this.now(), row.session_ref, row.source_revision, row.through_seq)
       this.scheduleDrain(delay)
       return
     }
@@ -543,12 +577,34 @@ export class DshRemoteTurnUploadOutbox {
       last_committed_turn_ref: proof.lastTurnRef,
       last_committed_end_seq: proof.lastEndSeq,
     }, signal)
-    this.database.prepare(`
-      UPDATE dsh_history_finalization_v1
-      SET state = 'FINALIZED', attempts = 0, next_attempt_at_millis = 0, updated_at_millis = ?
-      WHERE session_ref = ? AND source_revision = ? AND state = 'PENDING'
-    `).run(this.now(), row.session_ref, row.source_revision)
-    this.options.onFinalized?.(row.session_ref)
+    const now = this.now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const updated = this.database.prepare(`
+        UPDATE dsh_history_completion_v2
+        SET state = 'FINALIZED', attempts = 0, next_attempt_at_millis = 0, updated_at_millis = ?
+        WHERE session_ref = ? AND source_revision IS ? AND through_seq = ? AND state = 'PENDING'
+      `).run(now, row.session_ref, row.source_revision, row.through_seq)
+      if (updated.changes > 0 && row.source_revision !== null) {
+        this.database.prepare(`
+          INSERT INTO dsh_history_scan_v2 (
+            session_ref, source_revision, completed_through_seq, updated_at_millis
+          ) VALUES (?, ?, ?, ?)
+          ON CONFLICT(session_ref) DO UPDATE SET
+            source_revision = excluded.source_revision,
+            completed_through_seq = excluded.completed_through_seq,
+            updated_at_millis = excluded.updated_at_millis
+        `).run(row.session_ref, row.source_revision, row.through_seq, now)
+      }
+      this.database.exec('COMMIT')
+      if (updated.changes > 0 && row.source_revision !== null) {
+        this.verifiedHistorySessions.add(row.session_ref)
+      }
+      if (updated.changes > 0) this.options.onFinalized?.(row.session_ref)
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
   }
 
   private async performDrain(): Promise<void> {
@@ -622,6 +678,7 @@ export class DshRemoteTurnUploadOutbox {
         `).run(runtime.hostGeneration, this.now(), row.turn_id)
         this.pendingSpoolBytes = Math.max(0, this.pendingSpoolBytes - row.spool_bytes)
         this.removePayloadFiles(row)
+        this.queueLiveCompletion(row.session_ref, row.end_seq)
         return
       }
       const credential = encryptLedgerPayload(
@@ -692,6 +749,7 @@ export class DshRemoteTurnUploadOutbox {
       `).run(this.now(), row.turn_id)
       this.pendingSpoolBytes = Math.max(0, this.pendingSpoolBytes - row.spool_bytes)
       this.removePayloadFiles(row)
+      this.queueLiveCompletion(row.session_ref, row.end_seq)
     }
   }
 
@@ -891,7 +949,7 @@ export class DshRemoteTurnUploadOutbox {
     const committed = this.database.prepare(`
       SELECT * FROM dsh_turn_upload_v2
       WHERE state = 'COMMITTED' AND session_ref NOT IN (
-        SELECT session_ref FROM dsh_history_finalization_v1 WHERE state = 'PENDING'
+        SELECT session_ref FROM dsh_history_completion_v2 WHERE state = 'PENDING'
       )
     `).all() as unknown as TurnRow[]
     for (const row of committed) this.removePayloadFiles(row)
@@ -899,13 +957,13 @@ export class DshRemoteTurnUploadOutbox {
     this.database.prepare(`
       DELETE FROM dsh_turn_upload_v2
       WHERE state = 'COMMITTED' AND updated_at_millis < ? AND session_ref NOT IN (
-        SELECT session_ref FROM dsh_history_finalization_v1 WHERE state = 'PENDING'
+        SELECT session_ref FROM dsh_history_completion_v2 WHERE state = 'PENDING'
       )
     `).run(cutoff)
     this.database.prepare(`
       DELETE FROM dsh_turn_upload_v2
       WHERE state = 'COMMITTED' AND session_ref NOT IN (
-        SELECT session_ref FROM dsh_history_finalization_v1 WHERE state = 'PENDING'
+        SELECT session_ref FROM dsh_history_completion_v2 WHERE state = 'PENDING'
       ) AND turn_id NOT IN (
         SELECT turn_id FROM dsh_turn_upload_v2
         WHERE state = 'COMMITTED' ORDER BY updated_at_millis DESC LIMIT 10000
@@ -959,7 +1017,9 @@ export class DshRemoteTurnUploadOutbox {
 
   private discardUnrecoverableRow(row: TurnRow): void {
     this.database.prepare('DELETE FROM dsh_turn_upload_v2 WHERE turn_id = ?').run(row.turn_id)
-    this.database.prepare('DELETE FROM dsh_history_finalization_v1 WHERE session_ref = ?').run(row.session_ref)
+    this.database.prepare('DELETE FROM dsh_history_completion_v2 WHERE session_ref = ?').run(row.session_ref)
+    this.database.prepare('DELETE FROM dsh_history_scan_v2 WHERE session_ref = ?').run(row.session_ref)
+    this.verifiedHistorySessions.delete(row.session_ref)
     this.removePayloadFiles(row)
   }
 

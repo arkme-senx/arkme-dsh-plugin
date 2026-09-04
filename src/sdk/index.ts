@@ -70,6 +70,8 @@ import type {
   ArkmeOfficialAuthorProfile,
   ArkmeOpenPrivateChatResult,
   ArkmePendingWrite,
+  ArkmeRecordSearchResult,
+  ArkmeRecordTagList,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageOptions,
@@ -88,6 +90,14 @@ import type {
   ArkmeTimelineCursor,
   ArkmeTimelineAroundPage,
   ArkmeTimelinePage,
+  ArkmeTeamCreateItem,
+  ArkmeTeamCreateResult,
+  ArkmeTeamJoinItem,
+  ArkmeTeamJoinResult,
+  ArkmeTeamMemberPage,
+  ArkmeTeamPage,
+  ArkmeTeamResolution,
+  ArkmeTeamResolveItem,
   ArkmeUserProfileSnapshot,
   ArkmeUserBanRecord,
   ArkmeUserBanSnapshot,
@@ -233,6 +243,7 @@ export type {
   ArkmeMessageReadReceiptSummaryList,
   ArkmeOfficialAuthorProfile,
   ArkmePendingWrite,
+  ArkmeRecordTagList,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingItem,
   ArkmeRelatedRecordingMonthBucket,
@@ -258,6 +269,21 @@ export type {
   ArkmeForwardRecordPreviewItem,
   ArkmeForwardTranscriptSegment,
   ArkmeTimelinePage,
+  ArkmeTeam,
+  ArkmeTeamCreateItem,
+  ArkmeTeamCreateRejectReason,
+  ArkmeTeamCreateResult,
+  ArkmeTeamIdentityState,
+  ArkmeTeamJoinItem,
+  ArkmeTeamJoinRejectReason,
+  ArkmeTeamJoinResult,
+  ArkmeTeamMember,
+  ArkmeTeamMemberPage,
+  ArkmeTeamMembershipState,
+  ArkmeTeamPage,
+  ArkmeTeamResolution,
+  ArkmeTeamResolveItem,
+  ArkmeTeamRole,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
   ArkmeUserBanRecord,
@@ -420,6 +446,43 @@ export class ArkmeSdk {
   /** Retry a degraded managed MCP connection without exposing or accepting credentials. */
   async retryOpenApiMcp(signal?: AbortSignal): Promise<OpenApiMcpStatus> {
     return await this.call<OpenApiMcpStatus>('openapi.mcp.retry', undefined, signal)
+  }
+
+  /** List every Team visible to the current account using opaque OpenAPI references. */
+  async listTeams(
+    options: { limit?: number; pageCursor?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeTeamPage> {
+    return await this.call<ArkmeTeamPage>('team.list', {
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.pageCursor === undefined ? {} : { pageCursor: options.pageCursor }),
+    }, options.signal)
+  }
+
+  /** Resolve exact Team Jotmo IDs or names only within the current account's Teams. */
+  async resolveTeams(items: readonly ArkmeTeamResolveItem[], signal?: AbortSignal): Promise<ArkmeTeamResolution[]> {
+    return await this.call<ArkmeTeamResolution[]>('team.resolve', { items }, signal)
+  }
+
+  /** Read an authorized Team member page without exposing backend numeric identities. */
+  async listTeamMembers(
+    teamRef: string,
+    options: { limit?: number; pageCursor?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeTeamMemberPage> {
+    return await this.call<ArkmeTeamMemberPage>('team.members.list', {
+      teamRef,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.pageCursor === undefined ? {} : { pageCursor: options.pageCursor }),
+    }, options.signal)
+  }
+
+  /** Create Teams as an explicit current-human mutation; each item is independently idempotent. */
+  async createTeams(items: readonly ArkmeTeamCreateItem[], signal?: AbortSignal): Promise<ArkmeTeamCreateResult[]> {
+    return await this.call<ArkmeTeamCreateResult[]>('team.create', { items }, signal)
+  }
+
+  /** Join Teams by exact public Jotmo ID as an explicit current-human mutation. */
+  async joinTeamsByJotmoID(items: readonly ArkmeTeamJoinItem[], signal?: AbortSignal): Promise<ArkmeTeamJoinResult[]> {
+    return await this.call<ArkmeTeamJoinResult[]>('team.join-by-jotmo-id', { items }, signal)
   }
 
   /** Read Browser-safe installed extension projections without Host filesystem paths or runtime IDs. */
@@ -1884,6 +1947,26 @@ export class ArkmeSdk {
     return await this.call<ArkmeCreateTextResult>('records.create', {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       textContent,
+    }, options.signal)
+  }
+
+  async tags(options: { limit?: number; signal?: AbortSignal } = {}): Promise<ArkmeRecordTagList> {
+    return await this.call<ArkmeRecordTagList>('records.tags.list', {
+      limit: options.limit ?? 100,
+    }, options.signal)
+  }
+
+  async tagRecords(normalizedTag: string, options: {
+    limit?: number
+    cursorSendAt?: number
+    cursorRecordUid?: string
+    signal?: AbortSignal
+  } = {}): Promise<ArkmeRecordSearchResult> {
+    return await this.call<ArkmeRecordSearchResult>('records.tags.query', {
+      normalizedTag,
+      limit: options.limit ?? 50,
+      ...(options.cursorSendAt === undefined ? {} : { cursorSendAt: options.cursorSendAt }),
+      ...(options.cursorRecordUid?.trim() ? { cursorRecordUid: options.cursorRecordUid.trim() } : {}),
     }, options.signal)
   }
 

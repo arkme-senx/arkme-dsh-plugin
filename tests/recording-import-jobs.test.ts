@@ -18,7 +18,7 @@ function ownerSnapshot(taskKey: string): PublicRecordingImportOwnerTask {
     kind: 'owner', taskKey, sessionRef: `session-${taskKey}`, ownership: 'self',
     fileName: 'meeting.m4a', fileSize: 10, parsedSize: 10, durationMillis: 1_000,
     startAtMillis: 1, endAtMillis: 1_001, progress: 1,
-    status: 'processing', statusDetail: '处理中', processingDurationMillis: 1,
+    status: 'processing', statusDetail: '处理中',
     createdAtMillis: 1, updatedAtMillis: 1,
   }
 }

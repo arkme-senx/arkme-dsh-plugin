@@ -60,6 +60,7 @@ function sectionItems<K extends ArkmeDirectoryItem['kind']>(
 
 function itemIsSelected(item: ArkmeDirectoryItem, selection: ArkmeDirectorySelection): boolean {
   return (item.kind === 'contact' && selection.kind === 'contact' && item.contactRef === selection.contactRef)
+    || (item.kind === 'team' && selection.kind === 'team' && item.teamRef === selection.teamRef)
     || (item.kind === 'unmarked-speaker'
       && selection.kind === 'unmarked-speaker'
       && item.candidateRef === selection.candidateRef)
@@ -108,7 +109,7 @@ export function ContactDirectoryContent({
                 key={item.kind === 'group' ? item.sourceRef
                   : item.kind === 'bot' ? item.bot.botRef
                     : item.kind === 'unmarked-speaker' ? item.candidateRef
-                      : item.kind === 'team' ? item.rowKey : item.contactRef}
+                      : item.kind === 'team' ? item.teamRef : item.contactRef}
                 item={item}
                 selected={itemIsSelected(item, state.selection)}
                 onSelect={onSelect}
@@ -256,15 +257,18 @@ export function ContactDirectorySurface({
 
   const controlledSelectionKey = selection?.kind === 'contact'
     ? `contact:${selection.contactRef}`
-    : selection?.kind === 'unmarked-speaker'
-      ? `unmarked-speaker:${selection.candidateRef}`
-      : selection?.kind ?? 'uncontrolled'
+    : selection?.kind === 'team'
+      ? `team:${selection.teamRef}`
+      : selection?.kind === 'unmarked-speaker'
+        ? `unmarked-speaker:${selection.candidateRef}`
+        : selection?.kind ?? 'uncontrolled'
   useEffect(() => {
     if (selection === undefined) return
     const current = stateRef.current.selection
     const matches = current.kind === selection.kind
       && (current.kind === 'none'
         || (current.kind === 'contact' && selection.kind === 'contact' && current.contactRef === selection.contactRef)
+        || (current.kind === 'team' && selection.kind === 'team' && current.teamRef === selection.teamRef)
         || (current.kind === 'unmarked-speaker' && selection.kind === 'unmarked-speaker'
           && current.candidateRef === selection.candidateRef))
     if (!matches) commit({ type: 'select', selection })

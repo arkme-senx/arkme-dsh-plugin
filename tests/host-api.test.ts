@@ -19,6 +19,7 @@ function fakeService() {
     heartbeatOutgoingCall: vi.fn(async () => ({ expiresAtMillis: 1 })),
     releaseOutgoingCall: vi.fn(async () => undefined),
     searchRemote: vi.fn(async (input: unknown) => input),
+    searchTagRecords: vi.fn(async (input: unknown) => input),
     searchScene: vi.fn(async (input: unknown) => input),
     searchImages: vi.fn(async (input: unknown) => input),
     searchRecordings: vi.fn(async (input: unknown) => input),
@@ -71,6 +72,19 @@ function fakeService() {
     getLongArticleDraft: vi.fn(async () => undefined),
     putLongArticleDraft: vi.fn(async () => undefined),
     removeLongArticleDraft: vi.fn(async () => undefined),
+    recordReeditEditor: vi.fn(async (sourceRef: string, itemUid: string) => ({ sourceRef, itemUid })),
+    prepareRecordReedit: vi.fn(async (input: unknown) => ({
+      ...(input as Record<string, unknown>), expectedUserId: 42, sourceIdentityKey: 'host-only',
+      draftRevision: 7, baseVersion: 3, baseContentFingerprint: 'fingerprint',
+    })),
+    commitRecordReedit: vi.fn(async () => ({
+      status: 'committed', itemUid: 'record-1', version: 4, revisionUid: 'revision-1', projectionState: 'pending',
+    })),
+    prepareDiscardRecordReeditDraft: vi.fn(async () => ({
+      expectedUserId: 42, sourceRef: 'source-1', sourceIdentityKey: 'host-only', sourceDisplayName: '会话',
+      itemUid: 'record-1', draftRevision: 7, textPreview: '草稿',
+    })),
+    discardRecordReeditDraft: vi.fn(async () => ({ status: 'discarded', itemUid: 'record-1' })),
     listGroupMemberCandidates: vi.fn(async () => ({ items: [] })),
     addGroupMembers: vi.fn(async () => ({ items: [] })),
     removeGroupMember: vi.fn(async (sourceRef: string, memberRef: string, options: unknown) => ({ sourceRef, memberRef, options })),
@@ -1287,6 +1301,35 @@ describe('outgoing call Host API dispatch', () => {
     })
   })
 
+  it('keeps record re-edit owner context inside the Host for UI operations', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.record-reedit.detail', {
+      sourceRef: 'source-1', itemUid: 'record-1', expectedUserId: 999,
+    })
+    const draft = await dispatchArkmeHostOperation(service as never, 'source.record-reedit.draft.put', {
+      sourceRef: 'source-1', itemUid: 'record-1', newText: '草稿正文', expectedVersion: 3, expectedUserId: 999,
+    })
+    const updated = await dispatchArkmeHostOperation(service as never, 'source.record-reedit.update', {
+      sourceRef: 'source-1', itemUid: 'record-1', newText: '最终正文', expectedVersion: 3, ownerUserId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.record-reedit.draft.delete', {
+      sourceRef: 'source-1', itemUid: 'record-1', draftRevision: 999,
+    })
+
+    expect(service.recordReeditEditor).toHaveBeenCalledWith('source-1', 'record-1')
+    expect(service.prepareRecordReedit).toHaveBeenNthCalledWith(1, {
+      sourceRef: 'source-1', itemUid: 'record-1', newText: '草稿正文',
+    }, { expectedBaseVersion: 3 })
+    expect(service.prepareRecordReedit).toHaveBeenNthCalledWith(2, {
+      sourceRef: 'source-1', itemUid: 'record-1', newText: '最终正文',
+    }, { expectedBaseVersion: 3 })
+    expect(draft).toEqual({ saved: true, draftRevision: 7 })
+    expect(service.commitRecordReedit).toHaveBeenCalledWith(expect.objectContaining({ sourceIdentityKey: 'host-only' }))
+    expect(updated).toMatchObject({ status: 'committed', version: 4 })
+    expect(service.prepareDiscardRecordReeditDraft).toHaveBeenCalledWith('source-1', 'record-1')
+    expect(service.discardRecordReeditDraft).toHaveBeenCalledOnce()
+  })
+
   it('dispatches built-in search lanes without forwarding caller account fields', async () => {
     const service = fakeService()
 
@@ -1302,11 +1345,17 @@ describe('outgoing call Host API dispatch', () => {
     await dispatchArkmeHostOperation(service as never, 'search.recordings', {
       query: '北京', limit: 9, userId: 999,
     })
+    await dispatchArkmeHostOperation(service as never, 'records.tags.query', {
+      normalizedTag: '项目', limit: 25, cursorSendAt: 123, cursorRecordUid: 'record-1', userId: 999,
+    })
 
     expect(service.searchRemote).toHaveBeenCalledWith({ query: '复盘', limit: 12, cursor: 'next-records', searchScope: 'topic', sourceUid: 'topic-1' })
     expect(service.searchScene).toHaveBeenCalledWith({ scene: 'image_video', limit: 8 })
     expect(service.searchImages).toHaveBeenCalledWith({ limit: 50, cursor: 'next-images' })
     expect(service.searchRecordings).toHaveBeenCalledWith({ query: '北京', limit: 9 })
+    expect(service.searchTagRecords).toHaveBeenCalledWith({
+      normalizedTag: '项目', limit: 25, cursorSendAt: 123, cursorRecordUid: 'record-1',
+    })
   })
 
   it('keeps AI video list and signed asset resolution in built-in Host operations', async () => {

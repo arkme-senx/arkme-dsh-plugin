@@ -24,6 +24,7 @@ function sameSelection(left: ArkmeDirectorySelection, right: ArkmeDirectorySelec
   return left.kind === right.kind
     && (left.kind === 'none'
       || (left.kind === 'contact' && right.kind === 'contact' && left.contactRef === right.contactRef)
+      || (left.kind === 'team' && right.kind === 'team' && left.teamRef === right.teamRef)
       || (left.kind === 'unmarked-speaker' && right.kind === 'unmarked-speaker'
         && left.candidateRef === right.candidateRef))
 }

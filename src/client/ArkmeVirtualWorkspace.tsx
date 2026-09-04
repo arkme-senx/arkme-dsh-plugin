@@ -959,6 +959,11 @@ export function ArkmeNavigation({
   const activateDirectoryEntry = useCallback((entryId?: string) => { setActiveDirectoryEntryId(entryId) }, [])
   const activateNativeEntry = useCallback(() => { setActiveDirectoryEntryId(undefined) }, [])
   const authenticated = auth?.status === 'authenticated'
+  const closeGlobalSearch = useCallback(() => {
+    setGlobalSearchOpen(false)
+    const revision = arkmeUi.getSnapshot().searchTarget?.revision
+    if (revision !== undefined) arkmeUi.consumeSearchTarget(revision)
+  }, [])
   const rootDirectoryState = arkmeRootDirectoryLoadState({
     authenticated,
     directory,
@@ -1268,6 +1273,10 @@ export function ArkmeNavigation({
     return () => { controller.abort() }
   }, [authenticated, auth?.userId])
   useEffect(() => {
+    if (ui.searchTarget === undefined) return
+    setGlobalSearchOpen(true)
+  }, [ui.searchTarget?.revision])
+  useEffect(() => {
     const removeDeletedBot = (event: Event) => {
       const botRef = (event as CustomEvent<{ botRef?: unknown }>).detail?.botRef
       if (typeof botRef !== 'string') return
@@ -1337,6 +1346,8 @@ export function ArkmeNavigation({
     directoryRequestAbortRef.current?.abort()
     directoryContextRequestRef.current += 1
     setGlobalSearchOpen(false)
+    const searchRevision = arkmeUi.getSnapshot().searchTarget?.revision
+    if (searchRevision !== undefined) arkmeUi.consumeSearchTarget(searchRevision)
     setDirectoryContextMenu(undefined)
     setTopicCreateParent(undefined)
     setTopicCreateParentLevel(undefined)
@@ -2044,17 +2055,21 @@ export function ArkmeNavigation({
       onCancel={cancelTopicCreate} onConfirm={title => { void submitTopicCreate(title) }}
     />}
     {globalSearchOpen && typeof document !== 'undefined' && createPortal(<ArkmeGlobalSearchDialog
+      {...(ui.searchTarget === undefined ? {} : {
+        initialQuery: ui.searchTarget.query,
+        initialQueryRevision: ui.searchTarget.revision,
+      })}
       {...(searchDshMessages === undefined ? {} : { searchDshMessages })}
       onOpenRecord={item => {
         if (item.targetSource === undefined) return
-        setGlobalSearchOpen(false)
+        closeGlobalSearch()
         arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis)
       }}
       onOpenDshSession={sessionId => {
-        setGlobalSearchOpen(false)
+        closeGlobalSearch()
         onOpenDshSession?.(sessionId)
       }}
-      onClose={() => { setGlobalSearchOpen(false) }}
+      onClose={closeGlobalSearch}
     />, document.body)}
     {directoryContextMenu !== undefined && typeof document !== 'undefined' && createPortal(<div
       ref={directoryContextMenuRef}

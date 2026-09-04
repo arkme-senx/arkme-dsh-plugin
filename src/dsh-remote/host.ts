@@ -66,6 +66,16 @@ export interface DshRemoteSessionPersistenceLike {
     meta: DshRemotePersistenceHeader
     events: DshRemoteHistoryEntry['event'][]
   }>
+  /** Public JSONL-backend seam that decodes packed rows without current message-shape validation. */
+  loadStored?(sessionId: string, signal?: AbortSignal): Promise<{
+    meta: DshRemotePersistenceHeader
+    events: DshRemoteHistoryEntry['event'][]
+  } | undefined>
+}
+
+function isLegacyMessageShapeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /(?:lacks an identified message|message has invalid (?:source|content)|message must have (?:model|tool) source|message must contain one tool-result block|message has mismatched tool call ids)/.test(message)
 }
 interface HostRuntimeContext {
   serviceLeaseGeneration: number
@@ -252,6 +262,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private historyObjectBackfillTimer: ReturnType<typeof setTimeout> | undefined
   private historyObjectBackfillFlight: Promise<boolean> | undefined
   private historyObjectBackfillController: AbortController | undefined
+  private readonly historyObjectBackfillFailures = new Map<string, { revision: string; nextAttemptAt: number }>()
   private readonly liveProjectionTails = new Map<string, Promise<void>>()
   private readonly pendingSessionEventBatches = new Map<string, PendingSessionEventBatch>()
   private projectionSyncTail: Promise<void> = Promise.resolve()
@@ -595,7 +606,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         if (this.historyObjectBackfillController === controller) this.historyObjectBackfillController = undefined
         if (this.historyOwnerMatches(accountId, runtime)) {
           if (queued) this.scheduleHistoryObjectBackfill(HISTORY_OBJECT_BACKFILL_NEXT_DELAY_MILLIS)
-          else if (retry || controller.signal.aborted) {
+          else if (retry || controller.signal.aborted || this.historyObjectBackfillFailures.size > 0) {
             this.scheduleHistoryObjectBackfill(HISTORY_OBJECT_BACKFILL_RETRY_DELAY_MILLIS)
           }
         }
@@ -604,12 +615,27 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.historyObjectBackfillTimer.unref()
   }
 
-  private deferHistoryObjectBackfill(): void {
+  private deferHistoryObjectBackfill(delayMillis = HISTORY_OBJECT_BACKFILL_RETRY_DELAY_MILLIS): void {
     if (this.historyObjectBackfillTimer !== undefined) clearTimeout(this.historyObjectBackfillTimer)
     this.historyObjectBackfillTimer = undefined
     this.historyObjectBackfillController?.abort()
     if (this.turnUpload !== undefined) {
-      this.scheduleHistoryObjectBackfill(HISTORY_OBJECT_BACKFILL_RETRY_DELAY_MILLIS)
+      this.scheduleHistoryObjectBackfill(delayMillis)
+    }
+  }
+
+  private async readHistorySource(
+    persistence: DshRemoteSessionPersistenceLike,
+    sessionRef: string,
+    signal: AbortSignal,
+  ): Promise<{ meta: DshRemotePersistenceHeader; events: DshRemoteHistoryEntry['event'][] }> {
+    try {
+      return await persistence.readFrom(sessionRef, 0, signal)
+    } catch (error) {
+      if (!isLegacyMessageShapeError(error) || persistence.loadStored === undefined) throw error
+      const stored = await persistence.loadStored(sessionRef, signal)
+      if (stored === undefined) throw error
+      return stored
     }
   }
 
@@ -643,48 +669,71 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       }
       for (const ref of refs) knownRefs.add(ref)
     }
-    const target = snapshots.find(snapshot => {
+    const validSnapshots = snapshots.filter(snapshot => {
       const ref = snapshot.header.id
       const revision = typeof snapshot.revision === 'string' ? snapshot.revision : ''
       return knownRefs.has(ref) && revision !== '' && revision.length <= 1024
         && outbox.needsHistoryRevision(ref, revision)
     })
-    if (target === undefined) return false
-
-    const revision = target.revision as string
-    const sessionRef = target.header.id
-    const source = await persistence.readFrom(sessionRef, 0, signal)
-    signal.throwIfAborted()
-    this.requireActiveAccount(accountId, runtime.runtimeRef)
-    if (source.meta.id !== sessionRef) {
-      throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '历史 Session 读取结果无效', true)
+    const currentRevisions = new Map(validSnapshots.map(snapshot => [
+      snapshot.header.id,
+      snapshot.revision as string,
+    ]))
+    for (const [sessionRef, failure] of this.historyObjectBackfillFailures) {
+      if (currentRevisions.get(sessionRef) !== failure.revision) this.historyObjectBackfillFailures.delete(sessionRef)
     }
-
-    let turnStart = -1
-    for (let index = 0; index < source.events.length; index += 1) {
-      const event = source.events[index]!
-      if (event.type === 'turn/start') turnStart = index
-      if (event.type !== 'turn/end' || turnStart < 0) continue
-      for (let offset = turnStart; offset <= index; offset += LIVE_EVENT_BATCH_MAX_ITEMS) {
+    const now = this.now()
+    for (const target of validSnapshots) {
+      const revision = target.revision as string
+      const sessionRef = target.header.id
+      const failure = this.historyObjectBackfillFailures.get(sessionRef)
+      if (failure?.revision === revision && failure.nextAttemptAt > now) continue
+      try {
+        const source = await this.readHistorySource(persistence, sessionRef, signal)
         signal.throwIfAborted()
-        const batch = source.events.slice(offset, Math.min(index + 1, offset + LIVE_EVENT_BATCH_MAX_ITEMS))
-          .map(item => ({ event: item }))
-        await outbox.capture(sessionRef, batch)
-        await this.yieldHistoryReconciliation()
-      }
-      turnStart = -1
-    }
+        this.requireActiveAccount(accountId, runtime.runtimeRef)
+        if (source.meta.id !== sessionRef) {
+          throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '历史 Session 读取结果无效', true)
+        }
 
-    const current = (await persistence.listSnapshots(signal))
-      .find(snapshot => snapshot.header.id === sessionRef)
-    signal.throwIfAborted()
-    this.requireActiveAccount(accountId, runtime.runtimeRef)
-    if (current === undefined || current.revision !== revision) return true
-    const throughSeq = source.events.reduce(
-      (latest, event) => Math.max(latest, event.seq), -1,
-    )
-    outbox.queueHistoryFinalization(sessionRef, revision, throughSeq)
-    return true
+        let turnStart = -1
+        for (let index = 0; index < source.events.length; index += 1) {
+          const event = source.events[index]!
+          if (event.type === 'turn/start') turnStart = index
+          if (event.type !== 'turn/end' || turnStart < 0) continue
+          for (let offset = turnStart; offset <= index; offset += LIVE_EVENT_BATCH_MAX_ITEMS) {
+            signal.throwIfAborted()
+            const batch = source.events.slice(offset, Math.min(index + 1, offset + LIVE_EVENT_BATCH_MAX_ITEMS))
+              .map(item => ({ event: item }))
+            await outbox.capture(sessionRef, batch)
+            await this.yieldHistoryReconciliation()
+          }
+          turnStart = -1
+        }
+
+        const current = (await persistence.listSnapshots(signal))
+          .find(snapshot => snapshot.header.id === sessionRef)
+        signal.throwIfAborted()
+        this.requireActiveAccount(accountId, runtime.runtimeRef)
+        this.historyObjectBackfillFailures.delete(sessionRef)
+        if (current === undefined || current.revision !== revision) return true
+        const throughSeq = source.events.reduce(
+          (latest, event) => Math.max(latest, event.seq), -1,
+        )
+        outbox.queueHistoryFinalization(sessionRef, revision, throughSeq)
+        return true
+      } catch (error) {
+        if (signal.aborted) throw error
+        this.historyObjectBackfillFailures.set(sessionRef, {
+          revision,
+          nextAttemptAt: this.now() + HISTORY_OBJECT_BACKFILL_RETRY_DELAY_MILLIS,
+        })
+        this.historySyncError = asDshRemoteError(error)
+        this.historySyncErrorSessionRef = sessionRef
+        this.bump()
+      }
+    }
+    return false
   }
 
   private async ensureAutomaticConnection(): Promise<void> {
@@ -746,6 +795,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.historyObjectBackfillController = undefined
     await this.historyObjectBackfillFlight?.catch(() => undefined)
     this.historyObjectBackfillFlight = undefined
+    this.historyObjectBackfillFailures.clear()
     if (this.historyObjectBackfillTimer !== undefined) clearTimeout(this.historyObjectBackfillTimer)
     this.historyObjectBackfillTimer = undefined
     await this.flushPendingSessionEventBatches()
@@ -885,7 +935,11 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (!this.started || runtime === undefined || accountId === undefined) return
     const issuedAt = this.now()
     if (event.kind === 'session-event') {
-      this.deferHistoryObjectBackfill()
+      this.deferHistoryObjectBackfill(
+        event.entry.event.type === 'turn/end'
+          ? HISTORY_OBJECT_BACKFILL_NEXT_DELAY_MILLIS
+          : HISTORY_OBJECT_BACKFILL_RETRY_DELAY_MILLIS,
+      )
       await this.enqueueSessionEventBatch(accountId, runtime, event.sessionId, event.entry, issuedAt)
       return
     }

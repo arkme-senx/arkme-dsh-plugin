@@ -18,6 +18,7 @@ import { SourceService } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue } from './service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
 import { ARKME_DSH_AGENT_INPUT_CREATION_SOURCE, isDshAgentInputSourceTitle } from '../dsh-agent-input-source.js'
+import { arkmeNormalizedHashTag } from '../hashtag.js'
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -80,6 +81,54 @@ export class SearchService {
       options.signal,
     )
     return await this.withNavigationTargets(this.recordSearchResult(data, lockedRecordUids), options.signal)
+  }
+
+  /** Query the canonical record-tag projection used by Flutter's tag search. */
+  async searchTagRecords(options: {
+    normalizedTag: string
+    limit: number
+    cursorSendAt?: number
+    cursorRecordUid?: string
+    signal?: AbortSignal
+  }): Promise<ArkmeRecordSearchResult> {
+    const normalizedTag = arkmeNormalizedHashTag(options.normalizedTag)
+    if (normalizedTag === '') throw new ArkmePluginError('record-tag-query-empty', '搜索标签不能为空', false)
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/records/tags/query',
+      {
+        normalized_tag: normalizedTag,
+        limit: Math.min(100, Math.max(1, Math.trunc(options.limit))),
+        ...(options.cursorSendAt === undefined ? {} : { cursor_send_at: Math.trunc(options.cursorSendAt) }),
+        ...(options.cursorRecordUid?.trim() ? { cursor_record_uid: options.cursorRecordUid.trim() } : {}),
+      },
+      session,
+      options.signal,
+    )
+    const items = listValue(data.items).map(raw => {
+      const item = objectValue(raw)
+      const core = objectValue(item.record_core)
+      const sourceKind = Math.trunc(numberValue(core.origin_kind))
+      const sourceUid = stringValue(core.origin_container_ref).trim()
+      return {
+        ...item,
+        source_kind: sourceKind,
+        ...(sourceUid === '' ? {} : { source_uid: sourceUid }),
+        route_target_kind: sourceKind === 2 ? 'topic' : 'default_category',
+        match_summary: { snippet: stringValue(core.text_content) },
+      }
+    })
+    const nextSendAt = numberValue(data.next_send_at)
+    const nextRecordUid = stringValue(data.next_record_uid).trim()
+    const result = this.recordSearchResult({
+      items,
+      source_aggregates: [],
+      has_more: booleanValue(data.has_more),
+      query_guard: { state: 'complete' },
+      page_summary: { item_count: items.length },
+      ...(nextSendAt > 0 && nextRecordUid !== '' ? { next_cursor: `${String(nextSendAt)}:${nextRecordUid}` } : {}),
+    })
+    return await this.withNavigationTargets(result, options.signal)
   }
 
   async searchFiles(options: { query?: string; limit: number; cursor?: string; signal?: AbortSignal }): Promise<ArkmeRecordSearchResult> {

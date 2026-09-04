@@ -29,6 +29,7 @@ const ARKME_CONFIRMATION_CONTEXT_HOOKS = Symbol('arkme-confirmation-context-hook
 
 export interface ArkmeConfirmationContextHooks<PreparedContext = unknown> {
   prepare(args: ToolArguments, exec: ToolExecution): PreparedContext | Promise<PreparedContext>
+  question?(args: ToolArguments, preparedContext: PreparedContext): string
   execute(args: ToolArguments, exec: ToolExecution, preparedContext: PreparedContext): ToolExecutionResult
 }
 
@@ -73,14 +74,18 @@ export class ArkmeConversationalConfirmation {
     agent: Agent
     operationKey: string
     arguments: unknown
-    question: string
+    question: string | ((preparedContext: PreparedContext | undefined) => string)
     prepare?: () => PreparedContext | Promise<PreparedContext>
     execute(preparedContext: PreparedContext | undefined): Promise<Result>
   }): Promise<ArkmeConversationalConfirmationRequired | Result> {
     const agentId = requiredAgentId(input.agent)
     const operationKey = input.operationKey.trim()
-    const question = input.question.trim()
-    if (operationKey === '' || question === '') throw new Error('对话确认缺少有效操作或问题')
+    if (operationKey === '') throw new Error('对话确认缺少有效操作或问题')
+    const questionFor = (preparedContext: PreparedContext | undefined): string => {
+      const question = (typeof input.question === 'string' ? input.question : input.question(preparedContext)).trim()
+      if (question === '') throw new Error('对话确认缺少有效操作或问题')
+      return question
+    }
     if (this.running.has(agentId)) throw new Error('已确认的操作正在执行，请勿重复提交')
 
     this.clearExpired()
@@ -88,14 +93,14 @@ export class ArkmeConversationalConfirmation {
     const existing = this.pending.get(agentId)
     if (existing === undefined) {
       const preparedContext = input.prepare === undefined ? undefined : await input.prepare()
-      return this.prepare(agentId, input.agent, operationKey, argumentsFingerprint, question, preparedContext)
+      return this.prepare(agentId, input.agent, operationKey, argumentsFingerprint, questionFor(preparedContext), preparedContext)
     }
 
     const hasLaterMessage = hasLaterDirectUserMessage(input.agent, existing.preparedAfterSeq)
     if (existing.operationKey !== operationKey || existing.argumentsFingerprint !== argumentsFingerprint) {
       if (!hasLaterMessage) throw new Error('当前已有等待用户确认的其他操作，请先在对话中处理该操作')
       const preparedContext = input.prepare === undefined ? undefined : await input.prepare()
-      return this.prepare(agentId, input.agent, operationKey, argumentsFingerprint, question, preparedContext)
+      return this.prepare(agentId, input.agent, operationKey, argumentsFingerprint, questionFor(preparedContext), preparedContext)
     }
     if (!hasLaterMessage) {
       return {

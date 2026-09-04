@@ -292,6 +292,42 @@ describe('composer draft UI projection', () => {
     act(() => { renderer.unmount() })
   })
 
+  it('pastes plain tagged text at the selection and leaves the caret after it for rich-span restoration', () => {
+    stubComposerDom()
+    const onTextChange = vi.fn()
+    const onSelectionChange = vi.fn()
+    let renderer: ReactTestRenderer
+    act(() => {
+      renderer = create(<ArkmeRichComposerInput
+        value="前"
+        mentions={[]}
+        emojis={[]}
+        maxLength={20_000}
+        placeholder="发送消息"
+        ariaLabel="发送消息"
+        disabled={false}
+        style={{ minHeight: 38, fontSize: 13, lineHeight: '21px' }}
+        onTextChange={onTextChange}
+        onSelectionChange={onSelectionChange}
+      />)
+    })
+    const pasted = ' #项目\n＃待办'
+    const preventDefault = vi.fn()
+    act(() => {
+      renderer.root.findByProps({ 'data-arkme-rich-composer': 'true' }).props.onPaste({
+        currentTarget: new FakeComposerElement(),
+        clipboardData: { getData: () => pasted },
+        defaultPrevented: false,
+        preventDefault,
+      })
+    })
+
+    expect(preventDefault).toHaveBeenCalledOnce()
+    expect(onTextChange).toHaveBeenCalledWith(`前${pasted}`)
+    expect(onSelectionChange).toHaveBeenCalledWith(`前${pasted}`, 1 + pasted.length, 1 + pasted.length)
+    act(() => { renderer.unmount() })
+  })
+
   it('restores the empty-draft placeholder when oversized editor content is rejected', () => {
     stubComposerDom()
 

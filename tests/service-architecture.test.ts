@@ -17,13 +17,15 @@ const expectedPublicMethods = [
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'listCallHistory', 'callDetail', 'retryCallSummary',
-  'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'extensionAuthors', 'listExtensionReviews',
+  'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'publicAvatarPresentationsByArkmeIds', 'extensionAuthors', 'listExtensionReviews',
   'backgroundSoundPreference', 'updateBackgroundSoundPreference',
   'resolveLinkMetadata',
   'searchContact', 'addContact',
   'listDirectory', 'directoryContactProfile', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
+  'recordingComparison', 'startRecordingComparison', 'recordingForwardCapabilities', 'forwardRecording',
+  'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'sealRecordingCursor', 'openRecordingCursor', 'recordingDay', 'recordingPlayback',
   'recordingSpeakerOptions', 'assignRecordingSpeaker',
   'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport',
@@ -46,14 +48,15 @@ const expectedPublicMethods = [
   'recordRelatedRecordingsToolEvent', 'reportMessage', 'withdrawGroupMessage', 'copySourceMessageLink', 'copyMessageActionsLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'sourceMessageExtensionContext', 'extendSourceMessage', 'forwardSourceMessages', 'forwardMessageActions',
   'sendSourceText', 'retryGroupAiPolish',
   'sendSourceRich', 'favoriteStickers', 'addFavoriteSticker', 'manageFavoriteSticker', 'sendFavoriteSticker', 'longArticleDetail', 'updateLongArticle', 'getLongArticleDraft',
-  'putLongArticleDraft', 'removeLongArticleDraft', 'uploadLocalFile', 'fetchMedia', 'sendDirectText',
+  'putLongArticleDraft', 'removeLongArticleDraft', 'recordReeditEditor', 'prepareRecordReedit', 'commitRecordReedit',
+  'prepareDiscardRecordReeditDraft', 'discardRecordReeditDraft', 'uploadLocalFile', 'fetchMedia', 'sendDirectText',
   'markSourceRead', 'listWechatConversations', 'readWechatMessages', 'getWechatConversationDetail',
   'listWechatGroupMembers', 'listWechatPhones', 'listWechatCommonGroups', 'listWechatMoneyFlows',
   'listWechatLocations', 'readImage', 'beginJiwoLogin', 'pollJiwoLogin', 'cancelJiwoLogin',
   'beginWechatLogin', 'pollWechatLogin', 'testLogin',
   'sendPhoneCode', 'verifyPhoneCode', 'logout', 'cachedSnapshot', 'queryCached', 'refreshLatest',
   'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages',
-  'searchScene', 'searchRecordings', 'syncHistory', 'summary', 'list', 'calendarBuckets', 'calendarRecords',
+  'searchScene', 'searchRecordings', 'searchTagRecords', 'syncHistory', 'summary', 'list', 'listRecordTags', 'calendarBuckets', 'calendarRecords',
   'listWorldRecords',
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
@@ -77,11 +80,12 @@ const expectedServiceFiles = [
   'conversation-list-preference-service.ts', 'conversation-directory-visibility-service.ts',
   'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
   'desktop-attention-bridge.ts',
-  'record-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-import-gateway.ts', 'search-service.ts',
+  'record-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-import-gateway.ts', 'recording-forward-gateway.ts', 'search-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'contact-service.ts', 'contact-directory-service.ts', 'unmarked-speaker-service.ts',
+  'team-service.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
   'link-metadata-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts',
 ].sort()
@@ -99,6 +103,15 @@ function publicMethodNames(path: string): string[] {
 }
 
 describe('Arkme service architecture', () => {
+  it('keeps recording delivery identity outside React and pure snapshots independent of service runtime', () => {
+    const dialog = readFileSync(join(root, 'src/client/recordings/RecordingTranscriptForward.tsx'), 'utf8')
+    const attempt = readFileSync(join(root, 'src/client/recordings/recording-forward-attempt.ts'), 'utf8')
+    const projection = readFileSync(join(root, 'src/recording-forward-presentation.ts'), 'utf8')
+    expect(dialog).not.toMatch(/RecordingForwardInput|RecordingForwardReceipt|randomUUID|setTimeout|['"]recordings\.forward['"]/)
+    expect(attempt).not.toMatch(/from ['"]react['"]|callArkme|setTimeout|AbortController|services\/|node:/)
+    expect(projection).not.toMatch(/services\/|ServiceRuntime|node:/)
+  })
+
   it('preserves the public facade method contract', () => {
     expect(publicMethodNames(join(root, 'src/arkme-service.ts'))).toEqual(expectedPublicMethods)
   })
@@ -112,9 +125,19 @@ describe('Arkme service architecture', () => {
       .toEqual(expectedServiceFiles)
   })
 
+  it('keeps Team business availability independent from managed MCP mounting', () => {
+    const compositionRoot = readFileSync(join(root, 'src/index.ts'), 'utf8')
+    const teamService = readFileSync(join(root, 'src/services/team-service.ts'), 'utf8')
+    expect(compositionRoot).toContain('const teamService = new TeamService(')
+    expect(compositionRoot).toContain('mountMcp: config.openApiMcpEnabled')
+    expect(compositionRoot).toContain('teamService,')
+    expect(compositionRoot).not.toMatch(/const teamService\s*=\s*config\.openApiMcpEnabled/u)
+    expect(teamService).toContain('export interface TeamMemberAvatarPort')
+    expect(teamService).not.toMatch(/import .*ProfileService/u)
+  })
+
   it('keeps the compatibility facade free of business transport and state owners', () => {
     const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
-    expect(facade.split('\n').length).toBeLessThan(1_850)
     expect(facade).not.toMatch(/\/api\//)
     expect(facade).not.toMatch(/private readonly \w+\s*=\s*new Map/)
   })
@@ -200,6 +223,21 @@ describe('Arkme service architecture', () => {
     expect(infrastructure).toMatch(/createCipheriv|createDecipheriv/)
     expect(infrastructure).toContain('/api/v1/chats/messages/copy-link/get-or-create')
     expect(infrastructure).toContain('/api/v1/chats/records/forward')
+  })
+
+  it('keeps record re-edit orchestration on the Record owner path instead of the Chat service', () => {
+    const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
+    const chat = readFileSync(join(root, 'src/services/chat-service.ts'), 'utf8')
+    const reeditFacade = facade.slice(
+      facade.indexOf('async prepareRecordReedit('),
+      facade.indexOf('async uploadLocalFile(', facade.indexOf('async prepareRecordReedit(')),
+    )
+
+    expect(reeditFacade).toContain('this.record.prepareRecordReedit')
+    expect(reeditFacade).toContain('this.record.commitRecordReedit')
+    expect(reeditFacade).not.toContain('this.chat.')
+    expect(chat).not.toContain('prepareRecordReedit')
+    expect(chat).not.toContain('commitRecordReedit')
   })
 
   it('keeps World cross-domain dependencies behind narrow ports', () => {

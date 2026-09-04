@@ -11,7 +11,6 @@ interface FixtureOptions {
   groups?: Record<string, unknown>
   groupAvatars?: Record<string, unknown>
   bots?: Record<string, unknown>
-  teams?: Record<string, unknown>
   profiles?: Map<number, Record<string, unknown>>
 }
 
@@ -28,7 +27,6 @@ function fixture(options: FixtureOptions = {}) {
       throw new Error(`unexpected chat path: ${path}`)
     }),
     authenticatedBotPost: vi.fn(async () => options.bots ?? { bots: [] }),
-    authenticatedTeamPost: vi.fn(async () => options.teams ?? { teams: [] }),
   }
   const profiles = options.profiles ?? new Map<number, Record<string, unknown>>()
   const profile = {
@@ -84,20 +82,18 @@ describe('ContactDirectoryService', () => {
     })
     await expect(service.openGroupChat(groupRef, deferred.signal)).rejects.toMatchObject({ name: 'AbortError' })
   })
-  it('counts merged contacts without issuing display rows or opaque contact references', async () => {
+  it('counts only the directory sections owned by the contact service without issuing display rows or opaque contact references', async () => {
     const { service, runtime, profile } = fixture({
       groups: { items: [{ session: { chat_session_uid: 'must-not-project', session_kind: 2, title: '群' } }], total: 11 },
       bots: { bots: [{ bot_id: 'must-not-project', name: 'Bot', provider: 'webhook' }], total: 12 },
-      teams: { teams: [{ team_id: 91, name: 'must-not-project' }], total: 13 },
       contacts: { items: [{ user_id: 88, remark: 'must-not-project' }], total: 14 },
     })
 
-    await expect(Promise.all((['groups', 'bots', 'teams', 'contacts'] as const).map(
+    await expect(Promise.all((['groups', 'bots', 'contacts'] as const).map(
       async section => await service.list(section, { countOnly: true }),
     ))).resolves.toEqual([
       { section: 'groups', items: [], total: 11, hasMore: false },
       { section: 'bots', items: [], total: 12, hasMore: false },
-      { section: 'teams', items: [], total: 13, hasMore: false },
       { section: 'contacts', items: [], total: 1, hasMore: false },
     ])
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
@@ -106,10 +102,6 @@ describe('ContactDirectoryService', () => {
     )
     expect(runtime.authenticatedBotPost).toHaveBeenCalledWith(
       '/api/v1/bot/list', { limit: 0 }, session, undefined,
-    )
-    expect(runtime.authenticatedTeamPost).toHaveBeenCalledWith(
-      '/api/v1/team/list-mine', { limit: 0 }, session, undefined,
-      expect.objectContaining({ lane: 'interactive-read' }),
     )
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
       '/api/v1/chats/contacts/list', { limit: 50, offset: 0 }, session, undefined,
@@ -207,29 +199,12 @@ describe('ContactDirectoryService', () => {
     expect(JSON.stringify(page)).not.toContain('bot-private-1')
   })
 
-  it('projects teams to inert row keys, allowed display fields, and no detail reference', async () => {
-    const { service, runtime } = fixture({ teams: { teams: [
-      { team_id: 91, name: '研发组', jotmo_id: 'team_dev', owner_user_id: 7001, avatar: 'https://private.example/team.png' },
-      { team_id: 0, name: '损坏团队', jotmo_id: 'broken' },
-    ] } })
-
-    const page = await service.list('teams', { limit: 0 })
-
-    expect(page).toEqual({
-      section: 'teams', total: 1, hasMore: false,
-      items: [{
-        kind: 'team', rowKey: expect.stringMatching(/^arkme-directory-team-row-v1\./),
-        displayName: '研发组', publicId: 'team_dev',
-      }],
+  it('rejects Team reads because Team has an independent OpenAPI-backed owner', async () => {
+    const { service } = fixture()
+    await expect(service.list('teams')).rejects.toMatchObject({
+      code: 'directory-section-not-owned',
+      httpStatus: 501,
     })
-    expect(page.items[0]).not.toHaveProperty('teamRef')
-    expect(JSON.stringify(page)).not.toContain('91')
-    expect(JSON.stringify(page)).not.toContain('7001')
-    expect(JSON.stringify(page)).not.toContain('private.example')
-    expect(runtime.authenticatedTeamPost).toHaveBeenCalledWith(
-      '/api/v1/team/list-mine', {}, session, undefined,
-      expect.objectContaining({ lane: 'interactive-read' }),
-    )
   })
 
   it('projects contacts with remark, profile nickname, allowed account name, then a safe fallback', async () => {
@@ -430,8 +405,7 @@ describe('ContactDirectoryService', () => {
     expect(first).toMatchObject({ total: 2, hasMore: true, items: [expect.objectContaining({ displayName: '八' })] })
     expect(second).toMatchObject({ total: 2, hasMore: false, items: [expect.objectContaining({ displayName: '九' })] })
 
-    runtime.authenticatedTeamPost.mockRejectedValueOnce(new Error('team unavailable'))
-    await expect(service.list('teams')).rejects.toThrow('team unavailable')
+    await expect(service.list('teams')).rejects.toMatchObject({ code: 'directory-section-not-owned' })
   })
 
   it('expires, caps, and rejects tampered, cross-account, and wrong-type contact refs', async () => {

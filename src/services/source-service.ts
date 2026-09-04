@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeChatAttentionSummary,
@@ -1706,7 +1707,9 @@ export class SourceService {
       } catch (error) {
         // Keep a seeded last-known-good avatar when sealing is temporarily
         // unavailable; this is not a server-owned deletion either.
-        console.warn('dsh-arkme: Private avatar sealing failed:', safeFailureMessage(error))
+        logArkmeAvatarDiagnostic('private_avatar_seal_failed', {
+          environment: this.runtime.config.environment, viewerUserId: session.userId, targetUserId,
+        }, error)
       }
     }
     for (const [index, snapshot] of groupSnapshotsByIndex) {

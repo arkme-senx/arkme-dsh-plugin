@@ -13,6 +13,7 @@ import type {
   ArkmeEnvironment,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
+  ArkmeRecordReeditDraft,
   ArkmeRecordCursor,
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
@@ -50,6 +51,21 @@ export interface StateStore {
   getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined>
   putLongArticleDraft(userId: number, draft: ArkmeLongArticleDraft): Promise<void>
   removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void>
+  getRecordReeditDraft(
+    userId: number,
+    sourceIdentityKey: string,
+    itemUid: string,
+  ): Promise<ArkmeRecordReeditDraft | undefined>
+  putRecordReeditDraft(
+    userId: number,
+    draft: Omit<ArkmeRecordReeditDraft, 'draftRevision'>,
+  ): Promise<ArkmeRecordReeditDraft>
+  removeRecordReeditDraft(
+    userId: number,
+    sourceIdentityKey: string,
+    itemUid: string,
+    expectedRevision: number,
+  ): Promise<boolean>
   listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]>
   listAllRecordingImportJobs(): Promise<RecordingImportJob[]>
   getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined>
@@ -354,10 +370,6 @@ export class ServiceRuntime {
       return Math.max(1_000, error.retryAfterMillis ?? 5_000)
     }
     return 0
-  }
-
-  private teamServiceBaseUrl(): string {
-    return this.config.environment === 'prod' ? 'https://team.jotmo.cc' : 'https://jotmo-team.senguo.me'
   }
 
   async post<T>(
@@ -741,6 +753,31 @@ export class ServiceRuntime {
     }
   }
 
+  /** Read a public auth endpoint while isolating coordination and caching to the active account. */
+  async accountScopedPublicAuthReadPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    viewerUserId: number,
+    signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    return await this.post<T>(
+      this.config.authBaseUrl,
+      path,
+      body,
+      undefined,
+      [200],
+      signal,
+      false,
+      {
+        ...options,
+        scope: this.requestScope(viewerUserId),
+        service: 'auth',
+        lane: options.lane ?? 'background-read',
+      },
+    )
+  }
+
   async authenticatedDshRemotePost<T>(
     path: string,
     body: Record<string, unknown>,
@@ -891,27 +928,6 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
-    }
-  }
-
-  async authenticatedTeamPost<T>(
-    path: string,
-    body: Record<string, unknown>,
-    initialSession?: ArkmeSessionCredentials,
-    signal?: AbortSignal,
-    options: ArkmeRemoteRequestOptions = {},
-  ): Promise<T> {
-    let session = initialSession ?? await this.requireSession()
-    const baseUrl = this.teamServiceBaseUrl()
-    const requestOptions = () => this.authenticatedRequestOptions(session, 'other', 'interactive-read', options)
-    try {
-      return await this.post<T>(baseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
-    } catch (error) {
-      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
-        throw error
-      }
-      session = await this.refreshAccessToken(session)
-      return await this.post<T>(baseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
   }
 

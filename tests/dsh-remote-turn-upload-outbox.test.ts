@@ -53,6 +53,18 @@ describe('DSH remote Turn OSS outbox', () => {
         queued_at_millis INTEGER NOT NULL
       );
       INSERT INTO dsh_history_backfill_v1 VALUES ('session-01', 'revision-1', 1);
+      CREATE TABLE dsh_history_finalization_v1 (
+        session_ref TEXT PRIMARY KEY,
+        source_revision TEXT NOT NULL,
+        through_seq INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        attempts INTEGER NOT NULL,
+        next_attempt_at_millis INTEGER NOT NULL,
+        created_at_millis INTEGER NOT NULL,
+        updated_at_millis INTEGER NOT NULL
+      );
+      INSERT INTO dsh_history_finalization_v1
+        VALUES ('session-01', 'revision-1', 5, 'FINALIZED', 0, 0, 1, 1);
     `)
     database.close()
 
@@ -129,6 +141,60 @@ describe('DSH remote Turn OSS outbox', () => {
     await outbox.drain()
     expect(complete).toHaveBeenCalledOnce()
     await outbox.close()
+  })
+
+  it('advances live completion immediately only after a full-history checkpoint exists', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-turn-live-completion-'))
+    const complete = vi.fn(async () => ({}))
+    const outbox = new DshRemoteTurnUploadOutbox({
+      directory, profileRef: 'web', key: Buffer.alloc(32, 1),
+      controlPlane: backend({ complete }), fetch: uploadCollector([]),
+    })
+    await outbox.activate(runtime)
+    await outbox.capture('session-01', [entry('turn/start', 1), entry('turn/end', 2)])
+    outbox.queueHistoryFinalization('session-01', 'revision-1', 2)
+    await outbox.drain()
+    complete.mockClear()
+
+    await outbox.capture('session-01', [entry('turn/start', 3), entry('turn/end', 4)])
+    await outbox.drain()
+
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({
+      session_ref: 'session-01', through_seq: 4,
+      committed_turn_count: 2, last_committed_end_seq: 4,
+    }), expect.any(AbortSignal))
+    expect(outbox.needsHistoryRevision('session-01', 'revision-1')).toBe(false)
+    await outbox.close()
+  })
+
+  it('requires a current-start history proof before advancing live completion after restart', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-turn-live-restart-proof-'))
+    const first = new DshRemoteTurnUploadOutbox({
+      directory, profileRef: 'web', key: Buffer.alloc(32, 1),
+      controlPlane: backend(), fetch: uploadCollector([]),
+    })
+    await first.activate(runtime)
+    await first.capture('session-01', [entry('turn/start', 1), entry('turn/end', 2)])
+    first.queueHistoryFinalization('session-01', 'revision-1', 2)
+    await first.drain()
+    await first.close()
+
+    const complete = vi.fn(async () => ({}))
+    const second = new DshRemoteTurnUploadOutbox({
+      directory, profileRef: 'web', key: Buffer.alloc(32, 1),
+      controlPlane: backend({ complete }), fetch: uploadCollector([]),
+    })
+    await second.activate(runtime)
+    await second.capture('session-01', [entry('turn/start', 3), entry('turn/end', 4)])
+    await second.drain()
+    expect(complete).not.toHaveBeenCalled()
+
+    second.queueHistoryFinalization('session-01', 'revision-2', 4)
+    await second.drain()
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({
+      session_ref: 'session-01', through_seq: 4, committed_turn_count: 2,
+    }), expect.any(AbortSignal))
+    await second.close()
   })
 
   it('recovers a pending history finalization after restart without recapturing Turn payloads', async () => {

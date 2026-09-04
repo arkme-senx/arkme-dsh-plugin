@@ -36,6 +36,7 @@ import {
 import type { ArkmeFileBackgroundSoundInput } from './file-transfer-contract.js'
 import { arkmeFileBackgroundSound, arkmeRichBackgroundSound } from './record-background-sound.js'
 import type { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
+import type { TeamServicePort } from './services/team-service.js'
 
 const MAX_STANDARD_REQUEST_BYTES = 128 * 1024
 const MAX_MESSAGE_ACTION_REF_CHARS = 1024 * 1024
@@ -203,6 +204,32 @@ function numberParam(params: Record<string, unknown>, key: string, fallback: num
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
+function optionalNumberParam(params: Record<string, unknown>, key: string): number | undefined {
+  const value = params[key]
+  if (value === undefined) return undefined
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new ArkmePluginError('team-input-invalid', '团队请求参数无效', false, 400)
+  }
+  return value
+}
+
+function optionalTeamStringParam(params: Record<string, unknown>, key: string): string | undefined {
+  const value = params[key]
+  if (value === undefined || value === '') return undefined
+  if (typeof value !== 'string') {
+    throw new ArkmePluginError('team-input-invalid', '团队请求参数无效', false, 400)
+  }
+  return value
+}
+
+function objectArrayParam(params: Record<string, unknown>, key: string): Record<string, unknown>[] {
+  const values = params[key]
+  if (!Array.isArray(values) || values.some(value => value === null || typeof value !== 'object' || Array.isArray(value))) {
+    throw new ArkmePluginError('team-input-invalid', '团队请求参数无效', false, 400)
+  }
+  return values as Record<string, unknown>[]
+}
+
 function captureContextParam(params: Record<string, unknown>): ArkmeRecordCaptureContext | undefined {
   const raw = params.captureContext
   if (raw === undefined) return undefined
@@ -268,6 +295,18 @@ function recordingSpeakerScopeParam(params: Record<string, unknown>): 'item' | '
   const scope = stringParam(params, 'scope')
   if (scope === 'item' || scope === 'speaker') return scope
   throw new ArkmePluginError('recording-speaker-scope-invalid', '说话人修改范围无效', false, 400)
+}
+
+function recordingProjectionKindParam(params: Record<string, unknown>): 'summary' | 'timeline' {
+  const kind = stringParam(params, 'kind')
+  if (kind === 'summary' || kind === 'timeline') return kind
+  throw new ArkmePluginError('recording-generation-kind-invalid', '录音生成类型无效', false, 400)
+}
+
+function recordingSummaryModelRouteParam(params: Record<string, unknown>, required: boolean): string {
+  const routeKey = stringParam(params, 'routeKey').trim()
+  if ((!required && routeKey === '') || (routeKey !== '' && routeKey.length <= 256)) return routeKey
+  throw new ArkmePluginError('recording-summary-model-route-invalid', '录音总结模型无效', false, 400)
 }
 
 function recordingImportOwnershipParam(params: Record<string, unknown>): 'self' | 'other' {
@@ -819,6 +858,7 @@ export interface ArkmeHostApiOptions {
   remoteHost?: () => DshRemoteHostFacade | undefined
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>
   openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>
+  teamService?: TeamServicePort
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
@@ -856,7 +896,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['user-ban.ban', 'user-ban.unban'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '封禁操作必须从当前 DSH 页面发起', false, 403)
       }
-      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry']
+      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -872,6 +912,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.remoteHost?.(),
         options.desktopQuarantine,
         options.openApiMcpController,
+        options.teamService,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -910,9 +951,21 @@ export async function dispatchArkmeHostOperation(
   remoteHost?: DshRemoteHostFacade,
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>,
   openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>,
+  teamService?: TeamServicePort,
 ): Promise<unknown> {
   switch (operation) {
-    case 'provider.capabilities': return service.providerCapabilities()
+    case 'provider.capabilities': {
+      const capabilities = service.providerCapabilities()
+      return teamService === undefined ? capabilities : {
+        ...capabilities,
+        features: {
+          ...capabilities.features,
+          teamDirectory: true as const,
+          teamMembers: true as const,
+          teamGovernance: true as const,
+        },
+      }
+    }
     case 'provider.instance': return { instanceId: ARKME_RUNTIME_INSTANCE_ID }
     case 'provider.state': return await service.providerState()
     case 'chat.realtime.state': return service.chatRealtimeState()
@@ -964,6 +1017,56 @@ export async function dispatchArkmeHostOperation(
     ))
     case 'openapi.mcp.status': return requireOpenApiMcpController(openApiMcpController).status()
     case 'openapi.mcp.retry': return await requireOpenApiMcpController(openApiMcpController).retry()
+    case 'team.list': {
+      const limit = optionalNumberParam(params, 'limit')
+      const pageCursor = optionalTeamStringParam(params, 'pageCursor')
+      return await requireTeamService(teamService).list({
+        ...(limit === undefined ? {} : { limit }),
+        ...(pageCursor === undefined ? {} : { pageCursor }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
+    case 'team.resolve': return await requireTeamService(teamService).resolve(
+      objectArrayParam(params, 'items').map(item => {
+        const limit = optionalNumberParam(item, 'limit')
+        const pageCursor = optionalTeamStringParam(item, 'pageCursor')
+        return {
+          itemId: stringParam(item, 'itemId'),
+          query: stringParam(item, 'query'),
+          ...(limit === undefined ? {} : { limit }),
+          ...(pageCursor === undefined ? {} : { pageCursor }),
+        }
+      }),
+      requestSignal,
+    )
+    case 'team.members.list': {
+      const limit = optionalNumberParam(params, 'limit')
+      const pageCursor = optionalTeamStringParam(params, 'pageCursor')
+      return await requireTeamService(teamService).listMembers(
+        stringParam(params, 'teamRef'),
+        {
+          ...(limit === undefined ? {} : { limit }),
+          ...(pageCursor === undefined ? {} : { pageCursor }),
+          ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        },
+      )
+    }
+    case 'team.create': return await requireTeamService(teamService).create(
+      objectArrayParam(params, 'items').map(item => ({
+        itemId: stringParam(item, 'itemId'),
+        idempotencyKey: stringParam(item, 'idempotencyKey'),
+        name: stringParam(item, 'name'),
+        jotmoId: stringParam(item, 'jotmoId'),
+      })),
+      requestSignal,
+    )
+    case 'team.join-by-jotmo-id': return await requireTeamService(teamService).joinByJotmoID(
+      objectArrayParam(params, 'items').map(item => ({
+        itemId: stringParam(item, 'itemId'),
+        jotmoId: stringParam(item, 'jotmoId'),
+      })),
+      requestSignal,
+    )
     case 'remote.getStatus': return requireRemoteHost(remoteHost).getStatus()
     case 'remote.renameDesktop': return await requireRemoteHost(remoteHost).renameDesktop(stringParam(params, 'displayName'))
     case 'billing.quota': return await service.billingQuota()
@@ -1009,11 +1112,16 @@ export async function dispatchArkmeHostOperation(
     case 'directory.list': {
       const countOnly = booleanParam(params, 'countOnly')
       const cursor = stringParam(params, 'cursor').trim()
-      return await service.listDirectory(directorySectionParam(params), {
+      const section = directorySectionParam(params)
+      const options = {
         limit: countOnly ? 0 : directoryLimitParam(params),
         ...(countOnly ? { countOnly: true } : {}),
         ...(!countOnly && cursor !== '' ? { cursor } : {}),
-      })
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      }
+      return section === 'teams'
+        ? await requireTeamService(teamService).listDirectory(options)
+        : await service.listDirectory(section, options)
     }
     case 'directory.contact.profile': return await service.directoryContactProfile(
       stringParam(params, 'contactRef').trim(),
@@ -1109,6 +1217,35 @@ export async function dispatchArkmeHostOperation(
     )
     case 'recordings.day': return await service.recordingDay(
       numberParam(params, 'dateStamp', Number.NaN),
+      requestSignal,
+    )
+    case 'recordings.compare': return await service.recordingComparison(numberParam(params, 'dateStamp', Number.NaN), requestSignal)
+    case 'recordings.compare.start': return await service.startRecordingComparison(numberParam(params, 'dateStamp', Number.NaN), requestSignal)
+    case 'recordings.forward.capabilities': return await service.recordingForwardCapabilities(requestSignal)
+    case 'recordings.forward': {
+      const itemRefs = params.itemRefs
+      if (!Array.isArray(itemRefs) || !itemRefs.every((item): item is string => typeof item === 'string')) {
+        throw new ArkmePluginError('recording-forward-selection-invalid', '录音片段选择无效', false, 400)
+      }
+      if ((params.commentText !== undefined && typeof params.commentText !== 'string') || (params.commentRecordUid !== undefined && typeof params.commentRecordUid !== 'string')) {
+        throw new ArkmePluginError('recording-forward-input-invalid', '录音附言参数无效', false, 400)
+      }
+      return await service.forwardRecording({
+        itemRefs, targetSourceRef: stringParam(params, 'targetSourceRef'),
+        requestId: stringParam(params, 'requestId'), recordUid: stringParam(params, 'recordUid'), sendAtMillis: numberParam(params, 'sendAtMillis', Number.NaN),
+        ...(params.commentText === undefined ? {} : { commentText: stringParam(params, 'commentText') }),
+        ...(params.commentRecordUid === undefined ? {} : { commentRecordUid: stringParam(params, 'commentRecordUid') }),
+      }, requestSignal)
+    }
+    case 'recordings.summary-model-config': return await service.recordingSummaryModelConfig(requestSignal)
+    case 'recordings.summary-model-config.set': return await service.setRecordingSummaryModelRoute(
+      recordingSummaryModelRouteParam(params, true),
+      requestSignal,
+    )
+    case 'recordings.generate': return await service.generateRecordingProjection(
+      numberParam(params, 'dateStamp', Number.NaN),
+      recordingProjectionKindParam(params),
+      recordingSummaryModelRouteParam(params, false),
       requestSignal,
     )
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
@@ -1242,6 +1379,18 @@ export async function dispatchArkmeHostOperation(
     }
     case 'records.summary': return await service.summary()
     case 'records.list': return await service.list(numberParam(params, 'limit', 30), cursorParam(params))
+    case 'records.tags.list': return await service.listRecordTags(numberParam(params, 'limit', 100), requestSignal)
+    case 'records.tags.query': {
+      const cursorSendAt = numberParam(params, 'cursorSendAt', 0)
+      const cursorRecordUid = stringParam(params, 'cursorRecordUid').trim()
+      return await service.searchTagRecords({
+        normalizedTag: stringParam(params, 'normalizedTag'),
+        limit: numberParam(params, 'limit', 50),
+        ...(cursorSendAt <= 0 ? {} : { cursorSendAt }),
+        ...(cursorRecordUid === '' ? {} : { cursorRecordUid }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
     case 'records.create': return await service.createText(
       stringParam(params, 'recordUid'),
       stringParam(params, 'textContent'),
@@ -1834,6 +1983,36 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'itemUid') || undefined,
     )
+    case 'source.record-reedit.detail': return await service.recordReeditEditor(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'itemUid'),
+    )
+    case 'source.record-reedit.draft.put': {
+      const prepared = await service.prepareRecordReedit({
+        sourceRef: stringParam(params, 'sourceRef'),
+        itemUid: stringParam(params, 'itemUid'),
+        newText: stringParam(params, 'newText'),
+        ...(params.newTitle === undefined ? {} : { newTitle: stringParam(params, 'newTitle') }),
+      }, { expectedBaseVersion: Math.trunc(numberParam(params, 'expectedVersion', 0)) })
+      return { saved: true, draftRevision: prepared.draftRevision }
+    }
+    case 'source.record-reedit.update': {
+      const input = {
+        sourceRef: stringParam(params, 'sourceRef'),
+        itemUid: stringParam(params, 'itemUid'),
+        newText: stringParam(params, 'newText'),
+        ...(params.newTitle === undefined ? {} : { newTitle: stringParam(params, 'newTitle') }),
+      }
+      const expectedBaseVersion = Math.trunc(numberParam(params, 'expectedVersion', 0))
+      const prepared = await service.prepareRecordReedit(input, { expectedBaseVersion })
+      return await service.commitRecordReedit(prepared)
+    }
+    case 'source.record-reedit.draft.delete': {
+      const prepared = await service.prepareDiscardRecordReeditDraft(
+        stringParam(params, 'sourceRef'), stringParam(params, 'itemUid'),
+      )
+      return await service.discardRecordReeditDraft(prepared)
+    }
     case 'calls.outgoing.intent.claim': return await service.claimOutgoingCallIntent()
     case 'calls.outgoing.intent.resolve': {
       const intentId = requiredCallParam(params, 'intentId', 'call-intent-invalid')
@@ -2080,6 +2259,13 @@ function requireOpenApiMcpController(
     throw new ArkmePluginError('openapi-mcp-unavailable', 'OpenAPI MCP 托管能力当前不可用', true, 503)
   }
   return controller
+}
+
+function requireTeamService(service: TeamServicePort | undefined): TeamServicePort {
+  if (service === undefined) {
+    throw new ArkmePluginError('team-openapi-unavailable', '团队开放平台能力当前不可用', true, 503)
+  }
+  return service
 }
 
 function requireUpdateManager(

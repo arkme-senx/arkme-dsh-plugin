@@ -61,7 +61,9 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('raw.jotmo_id', '')
     .replaceAll('raw.jotmoId', '')
     .replaceAll('item.jotmo_id', '')
+    .replaceAll('jotmo_ids', '')
     .replaceAll('/api/v1/auth/check-jotmo-id-available', '')
+    .replaceAll('/api/public/v1/auth/get-public-user-by-jotmo-ids', '')
     .replaceAll('/api/v1/auth/update-jotmo-id', '')
     .replaceAll('recipient_jotmo_id', '')
     .replaceAll("'jotmo-userfiles-test'", '')
@@ -115,6 +117,19 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
     .replaceAll('即我id', '')
 }
 
+function withoutTeamPublicProtocolNames(file: string, content: string): string {
+  const allowedFiles = new Set([
+    join(root, 'docs/consumer-plugin-contract.md'),
+    join(root, 'src/client/redesign/contacts/TeamDetailPane.tsx'),
+    join(root, 'src/openapi-capability-gateway.ts'),
+    join(root, 'src/sdk/index.ts'),
+    join(root, 'src/services/team-service.ts'),
+  ])
+  if (!allowedFiles.has(file)) return content
+  // Team public IDs and the corresponding OpenAPI fields/routes are stable cross-repository protocol names.
+  return content.replace(/jotmo|即我/gi, '')
+}
+
 function withoutOfficialCommunityProductCopy(file: string, content: string): string {
   if (file === join(root, 'src/client/ArkmeOfficialCommunityEntry.tsx')) {
     return content.replaceAll('即我社区', '').replaceAll('即我官方群', '')
@@ -155,6 +170,18 @@ function withoutOutgoingCallAssetCompatibilityAlias(file: string, content: strin
   return content.replaceAll('jotmo-video-linear.svg', '')
 }
 
+function withoutApprovedLinkMetadataCompatibilityAliases(file: string, content: string): string {
+  if (file !== join(root, 'src/link-metadata.ts')) return content
+  return content
+    .replaceAll("'即我'", '')
+    .replaceAll("'即我-对话发现自我'", '')
+    .replaceAll("'即我 - 对话发现自我'", '')
+    .replaceAll("'即我-进入Ta的世界'", '')
+    .replaceAll("'即我 - 进入Ta的世界'", '')
+    .replaceAll("'jiwo.cc'", '')
+    .replaceAll("'jotmo-app.senguo.me'", '')
+}
+
 describe('Arkme plugin identity', () => {
   it('removes legacy product identity outside unchanged service infrastructure', () => {
     const files = [
@@ -166,13 +193,19 @@ describe('Arkme plugin identity', () => {
       ...textFiles(join(root, 'src')),
     ]
     const residuals = files.flatMap(file => {
-      const source = withoutOutgoingCallAssetCompatibilityAlias(
+      const source = withoutTeamPublicProtocolNames(
         file,
-        withoutApprovedJiwoScanLoginFeature(
+        withoutOutgoingCallAssetCompatibilityAlias(
           file,
-          withoutOfficialCommunityProductCopy(
+          withoutApprovedLinkMetadataCompatibilityAliases(
             file,
-            withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+            withoutApprovedJiwoScanLoginFeature(
+              file,
+              withoutOfficialCommunityProductCopy(
+                file,
+                withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+              ),
+            ),
           ),
         ),
       )

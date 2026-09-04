@@ -84,7 +84,7 @@ export interface ArkmeAiPolishChatPort {
     initialAiPolish?: Record<string, unknown>,
     contentPayload?: Record<string, unknown>,
     signal?: AbortSignal,
-    options?: { agentAuthored?: boolean },
+    options?: { agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext },
   ): Promise<ArkmeSourceSendResult>
 }
 
@@ -536,19 +536,19 @@ export class GroupAiPolishService {
       recordUid: string,
       relationUid: string,
       session: ArkmeSessionCredentials,
-      options: { agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; signal?: AbortSignal } = {},
+      options: { agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; contentPayload?: Record<string, unknown>; signal?: AbortSignal } = {},
     ): Promise<ArkmeSourceSendResult> {
       let config: ArkmeAiPolishConfigSnapshot
       try {
         config = await this.queryGroupAiPolishConfig(chatSessionUid, session, options.signal)
       } catch {
         return await this.chat.sendChatSourceTextRaw(
-          sourceRef, chatSessionUid, originalText, recordUid, relationUid, session, undefined, undefined, options.signal, options,
+          sourceRef, chatSessionUid, originalText, recordUid, relationUid, session, undefined, options.contentPayload, options.signal, options,
         )
       }
       if (!config.enabled || config.activeRuleUid === '') {
         return await this.chat.sendChatSourceTextRaw(
-          sourceRef, chatSessionUid, originalText, recordUid, relationUid, session, undefined, undefined, options.signal, options,
+          sourceRef, chatSessionUid, originalText, recordUid, relationUid, session, undefined, options.contentPayload, options.signal, options,
         )
       }
       const taskUid = randomUUID()
@@ -569,7 +569,7 @@ export class GroupAiPolishService {
         polished = this.aiPolishTextResult(data)
       } catch (error) {
         const sent = await this.chat.sendChatSourceTextRaw(
-          sourceRef, chatSessionUid, originalText, recordUid, relationUid, session, undefined, undefined, options.signal, options,
+          sourceRef, chatSessionUid, originalText, recordUid, relationUid, session, undefined, options.contentPayload, options.signal, options,
         )
         return this.withFailedAiPolishRetry(
           sent, sourceRef, chatSessionUid, relationUid, recordUid, originalText, 1, session.userId,
@@ -596,7 +596,7 @@ export class GroupAiPolishService {
             prompt: polished.promptVersion,
             ...(Object.keys(polished.extra).length === 0 ? {} : { extra: polished.extra }),
           },
-          undefined,
+          options.contentPayload,
           options.signal,
           options,
         )
@@ -606,7 +606,7 @@ export class GroupAiPolishService {
         }
       }
       const sent = await this.chat.sendChatSourceTextRaw(
-        sourceRef, chatSessionUid, originalText, recordUid, relationUid, session, undefined, undefined, options.signal, options,
+        sourceRef, chatSessionUid, originalText, recordUid, relationUid, session, undefined, options.contentPayload, options.signal, options,
       )
       if (polished.action === 2) {
         return { ...sent, aiPolish: { state: 'kept_original', originalText } }

@@ -29,25 +29,41 @@ export type RecordingImportDisplayStatus =
   | 'cancelled'
   | 'unavailable'
 
-export type RecordingImportTimingState = 'unavailable' | 'processing' | 'completed'
-export type RecordingImportProcessingStage = 'sd' | 'vad' | 'asr'
-export type RecordingImportProcessingOutcome = 'success' | 'failed'
+export type RecordingImportProgressStatus =
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'partial'
+  | 'failed'
+  | 'unavailable'
 
-export interface PublicRecordingImportProcessingTimingRow {
-  stage: RecordingImportProcessingStage
-  outcome: RecordingImportProcessingOutcome
+export type RecordingImportProgressCode =
+  | 'upload'
+  | 'import'
+  | 'voice_recognition'
+  | 'primary_transcript'
+  | 'enhancement_transcript'
+
+export interface PublicRecordingImportProgressRow {
+  code: RecordingImportProgressCode
+  status: RecordingImportProgressStatus
   startedAtMillis: number
   endedAtMillis: number
   durationMillis: number
   provider: string
   model: string
   modelVersion: string
+  modelDurationMillis: number
+  nextRelation: string
+  relationDurationMillis: number
 }
 
-export interface PublicRecordingImportProcessingTiming {
-  timingState: RecordingImportTimingState
+export interface PublicRecordingImportProgress {
+  status: RecordingImportProgressStatus
   totalDurationMillis: number
-  rows: PublicRecordingImportProcessingTimingRow[]
+  serverNowMillis: number
+  observedAtMillis: number
+  rows: PublicRecordingImportProgressRow[]
 }
 
 export interface PublicRecordingImportJob {
@@ -85,10 +101,13 @@ export interface PublicRecordingImportOwnerTask {
   progress: number
   status: RecordingImportDisplayStatus
   statusDetail: string
-  processingDurationMillis?: number
   createdAtMillis: number
   updatedAtMillis: number
-  processing?: PublicRecordingImportProcessingTiming
+  localImportTiming?: {
+    startedAtMillis: number
+    acceptedAtMillis: number
+  }
+  importProgress?: PublicRecordingImportProgress
 }
 
 export type PublicRecordingImportCurrentItem = PublicRecordingImportJob | PublicRecordingImportOwnerTask
@@ -113,10 +132,9 @@ export interface PublicRecordingImportHistoryItem {
   progress: number
   status: RecordingImportDisplayStatus
   statusDetail: string
-  processingDurationMillis?: number
   createdAtMillis: number
   updatedAtMillis: number
-  processing?: PublicRecordingImportProcessingTiming
+  importProgress?: PublicRecordingImportProgress
 }
 
 export interface PublicRecordingImportHistoryPage {

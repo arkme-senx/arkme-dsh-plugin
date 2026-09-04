@@ -557,6 +557,100 @@ describe('Host login-only registration lifecycle', () => {
     await host.stop()
   })
 
+  it('uses the public raw-storage decoder only for legacy message-shape failures', async () => {
+    const outbox = historyOutbox()
+    const legacyEvents = [
+      historyEvent('turn/start', 1),
+      {
+        type: 'tool/result', seq: 2, time: 2, surfaceOp: 'append' as const,
+        data: {
+          message: {
+            id: 'legacy-result', role: 'user', source: { kind: 'tool', callId: '' },
+            content: [{ type: 'tool-result', toolCallId: '', content: [] }],
+          },
+        },
+      },
+      historyEvent('turn/end', 3),
+    ]
+    const readFrom = vi.fn(async () => {
+      throw new Error('session event at seq 2 message must have tool source')
+    })
+    const loadStored = vi.fn(async () => ({ meta: { id: 'session-01' }, events: legacyEvents }))
+    const { host } = await fixture({
+      turnUploadForAccount: () => outbox as unknown as DshRemoteTurnUploadOutbox,
+      turnObjectCapabilities: async () => ({
+        available: true, storage_version: 'oss_turn_v1', coverage: 'live_completed_turns',
+        backfill_mode: 'local_persistence_v1', content_encoding: 'gzip', max_object_bytes: 1024,
+      }),
+      knownHistorySessions: async () => ({ session_refs: ['session-01'] }),
+      sessionPersistence: {
+        listSnapshots: async () => [{ header: { id: 'session-01' }, revision: 'revision-legacy' }],
+        readFrom,
+        loadStored,
+      },
+      yieldToEventLoop: async () => undefined,
+    })
+    await host.start()
+    await vi.waitFor(() => { expect(outbox.activate).toHaveBeenCalledOnce() })
+    const internal = host as unknown as {
+      runtime: { runtimeRef: string }
+      backfillOneHistorySession(accountId: string, runtime: unknown, signal: AbortSignal): Promise<boolean>
+    }
+
+    await expect(internal.backfillOneHistorySession('42', internal.runtime, new AbortController().signal))
+      .resolves.toBe(true)
+    expect(readFrom).toHaveBeenCalledOnce()
+    expect(loadStored).toHaveBeenCalledOnce()
+    expect(outbox.capture).toHaveBeenCalledWith('session-01', legacyEvents.map(event => ({ event })))
+    await host.stop()
+  })
+
+  it('backs off one corrupt session and continues with the next session', async () => {
+    const outbox = historyOutbox()
+    const readFrom = vi.fn(async (sessionRef: string) => {
+      if (sessionRef === 'session-bad') throw new Error('corrupt session log')
+      return {
+        meta: { id: sessionRef },
+        events: [historyEvent('turn/start', 1), historyEvent('turn/end', 2)],
+      }
+    })
+    const snapshots = [
+      { header: { id: 'session-bad' }, revision: 'revision-bad' },
+      { header: { id: 'session-good' }, revision: 'revision-good' },
+    ]
+    const { host, sessionOwnership } = await fixture({
+      turnUploadForAccount: () => outbox as unknown as DshRemoteTurnUploadOutbox,
+      turnObjectCapabilities: async () => ({
+        available: true, storage_version: 'oss_turn_v1', coverage: 'live_completed_turns',
+        backfill_mode: 'local_persistence_v1', content_encoding: 'gzip', max_object_bytes: 1024,
+      }),
+      knownHistorySessions: async () => ({ session_refs: ['session-bad', 'session-good'] }),
+      sessionPersistence: { listSnapshots: async () => snapshots, readFrom },
+      yieldToEventLoop: async () => undefined,
+    })
+    await sessionOwnership.claimUnownedAndListOwned({
+      accountId: '42', sessionRefs: ['session-bad', 'session-good'],
+      origin: 'observed-while-active', nowMillis: 2_000, canClaim: () => true,
+    })
+    await host.start()
+    await vi.waitFor(() => { expect(outbox.activate).toHaveBeenCalledOnce() })
+    const internal = host as unknown as {
+      runtime: { runtimeRef: string }
+      backfillOneHistorySession(accountId: string, runtime: unknown, signal: AbortSignal): Promise<boolean>
+    }
+
+    await expect(internal.backfillOneHistorySession('42', internal.runtime, new AbortController().signal))
+      .resolves.toBe(true)
+    expect(readFrom.mock.calls.map(call => call[0])).toEqual(['session-bad', 'session-good'])
+    expect(outbox.capture).toHaveBeenCalledWith('session-good', expect.any(Array))
+    expect(host.getStatus().historySyncWarning).toBe('corrupt session log')
+
+    await expect(internal.backfillOneHistorySession('42', internal.runtime, new AbortController().signal))
+      .resolves.toBe(false)
+    expect(readFrom.mock.calls.map(call => call[0])).toEqual(['session-bad', 'session-good'])
+    await host.stop()
+  })
+
   it('does not checkpoint a session whose persistence revision changes during the read', async () => {
     const outbox = historyOutbox()
     let snapshotCall = 0

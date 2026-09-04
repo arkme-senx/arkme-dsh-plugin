@@ -121,4 +121,61 @@ describe('Arkme Demo-aligned update surfaces', () => {
     expect(markup).not.toContain('立即重启')
     expect(markup).not.toContain('稍后重启')
   })
+
+  it('offers an explicit restart-and-install choice for a verified in-app package', () => {
+    const item = deriveArkmeUpdatePresentation({
+      app: {
+        checked: true,
+        busy: false,
+        error: '',
+        status: {
+          status: 'downloaded',
+          currentVersion: '1.2.0',
+          currentVersionCode: 10,
+          latestVersion: '1.1.0',
+          latestVersionCode: 11,
+          installMode: 'in-app',
+        },
+      },
+    }).primary
+
+    const markup = renderToStaticMarkup(<ArkmeUpdateTopCapsule
+      item={item!}
+      onClose={() => undefined}
+      onRetry={() => undefined}
+      onOpenDownloaded={() => undefined}
+    />)
+
+    expect(markup).toContain('稍后重启')
+    expect(markup).toContain('重启并安装')
+    expect(markup).toContain('data-layout="ready-action"')
+    expect(markup).not.toContain('打开文件夹')
+    expect(markup).not.toContain('关闭更新进度')
+  })
+
+  it('locks the capsule while the installer is starting', () => {
+    const item = deriveArkmeUpdatePresentation({
+      app: {
+        checked: true,
+        busy: true,
+        error: '',
+        status: {
+          status: 'installing',
+          currentVersion: '1.2.0',
+          latestVersion: '1.3.0',
+          installMode: 'in-app',
+        },
+      },
+    }).primary
+    const markup = renderToStaticMarkup(<ArkmeUpdateTopCapsule
+      item={item!}
+      onClose={() => undefined}
+      onRetry={() => undefined}
+      onOpenDownloaded={() => undefined}
+    />)
+
+    expect(markup).toContain('正在安装更新')
+    expect(markup).toContain('data-layout="restarting"')
+    expect(markup).not.toContain('关闭更新进度')
+  })
 })

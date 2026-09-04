@@ -32,6 +32,7 @@ export const arkmeTheme = {
   accentSoft: 'var(--dsw-alias-state-business-tertiary, #f1f2f6)',
   info: 'var(--dsw-alias-state-business-primary, #3964fe)',
   infoSoft: 'var(--dsw-alias-state-business-tertiary, #e9f0ff)',
+  success: 'var(--dsw-alias-state-success-primary, #52c41a)',
   danger: 'var(--dsw-alias-state-error-primary, #c2413b)',
   dangerSoft: 'var(--dsw-alias-interactive-bg-hover-danger, rgba(194, 65, 59, 0.10))',
   warning: 'var(--dsw-alias-state-warn-label, #a16207)',

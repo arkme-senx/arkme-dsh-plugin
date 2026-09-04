@@ -139,6 +139,44 @@ describe('Arkme search surface', () => {
     act(() => { renderer.unmount() })
   })
 
+  it('prefills a clicked tag, uses global search, and lets result tags replace the active search', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'search.history') return { items: [], hasMore: false }
+      if (operation === 'search.records') return {
+        ...arkmeResults(),
+        items: [{
+          ...arkmeResults().items[0],
+          title: '标签快记',
+          textContent: `进展 #${String(params?.query === '#项目' ? '下一个' : '完成')}`,
+          snippet: `进展 #${String(params?.query === '#项目' ? '下一个' : '完成')}`,
+        }],
+        sourceAggregates: [],
+      }
+      if (operation === 'search.recordings') return { items: [], hasMore: false, queryGuard: { state: 'ok' } }
+      if (operation === 'search.history.create') return { created: true }
+      throw new Error(`unexpected Arkme call: ${operation}`)
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeSearchSurface initialQuery="＃项目" initialQueryRevision={1} />)
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    expect(renderer.root.findByProps({ 'aria-label': '搜索' }).props.value).toBe('#项目')
+    expect(mocks.callArkme).toHaveBeenCalledWith('search.records', { query: '#项目', limit: 50 }, expect.any(AbortSignal))
+    expect(mocks.callArkme).toHaveBeenCalledWith('search.recordings', { query: '#项目', limit: 50 }, expect.any(AbortSignal))
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'records.tags.query')).toBe(false)
+    expect(renderer.root.findAllByProps({ role: 'link' })).toHaveLength(1)
+
+    await act(async () => {
+      renderer.root.findByProps({ role: 'link' }).props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() })
+      await Promise.resolve(); await Promise.resolve()
+    })
+    expect(renderer.root.findByProps({ 'aria-label': '搜索' }).props.value).toBe('#下一个')
+    expect(mocks.callArkme).toHaveBeenCalledWith('search.records', { query: '#下一个', limit: 50 }, expect.any(AbortSignal))
+    act(() => { renderer.unmount() })
+  })
+
   it('keeps quick-category responses when switching from the unified search view', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'search.history') return { items: [], hasMore: false }

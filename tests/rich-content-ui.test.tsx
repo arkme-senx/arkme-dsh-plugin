@@ -28,23 +28,60 @@ describe('Arkme rich content presentation', () => {
     expect(html).not.toContain('<audio')
   })
 
-  it('keeps recording detail text, speaker offsets and only authorized audio, including partial states', () => {
+  it('opens a single recording as desktop read-only segments without duplicating its summary or account avatars', () => {
     const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
       itemUid: 'forward', senderName: '转发者', isMe: true, sendAtMillis: 0, status: 1, title: '', textContent: '',
       forwardRecords: { title: '录音转写', createdAtMillis: 0, summaryLines: [], truncated: true, items: [{
         senderName: '原作者', sendAtMillis: 0, title: '', textContent: '单独的摘要', sourceType: 'long_recording_segments',
-        segments: [{ speakerName: '说话人甲', textContent: '完整片段'.repeat(100), startMillis: 60000, endMillis: 90000 }],
+        segments: [{ speakerNumber: 0, speakerName: '说话人甲', textContent: '完整片段'.repeat(100), startMillis: 60000, endMillis: 90000 }],
       }] },
     }} />)
-    expect(html).toContain('单独的摘要')
+    expect(html).not.toContain('单独的摘要')
     expect(html).toContain('完整片段'.repeat(100))
     expect(html).toContain('说话人甲')
-    expect(html).toContain('01:00–01:30')
+    expect(html).toContain('01:00')
+    expect(html).not.toContain('01:30')
+    expect(html).toContain('data-arkme-forward-recording-detail')
+    expect(html).toContain('background:#ec7fa9')
+    expect(html).not.toContain('头像')
+    expect(html).not.toContain('转发于')
     expect(html).toContain('当前展示部分转发记录')
     expect(html).not.toContain('1970')
     expect(html).not.toContain('<audio')
     expect(html).not.toContain('data-arkme-text-collapsible')
-    expect(html).toContain('width:min(372px, 100%)')
+    expect(html).toContain('width:405px')
+    expect(html).toContain('max-width:100%')
+    expect(html).toContain('aria-label="调整快记详情宽度"')
+    expect(html).toContain('aria-valuenow="405"')
+  })
+
+  it('preserves speaker zero, repeated-speaker colors, hour offsets and the first selected wall-clock time', () => {
+    const start = new Date(2026, 8, 3, 11, 38).getTime()
+    const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
+      itemUid: 'single', senderName: '转发者', isMe: false, sendAtMillis: start + 86400000, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '录音.wav', createdAtMillis: start + 86400000, summaryLines: [], items: [{
+        senderName: '作者', sendAtMillis: start, title: '', textContent: '重复摘要', sourceType: 'long_recording_segments',
+        segments: [0, 0, 2].map((speakerNumber, index) => ({ speakerNumber, speakerName: `说话人${speakerNumber}`, textContent: `片段${index}`, startMillis: 3600000 + index * 1000, endMillis: 3601000 + index * 1000 })),
+      }] },
+    }} />)
+    expect(html.match(/background:#ec7fa9/gu)).toHaveLength(2)
+    expect(html).toContain('background:#80a1ba')
+    expect(html).toContain('01:00:00')
+    expect(html).toContain('12:38')
+    expect(html).not.toContain('重复摘要')
+    expect(html.match(/data-arkme-forward-recording-segment/gu)).toHaveLength(3)
+  })
+
+  it.each(['call', 'mixed', 'empty'] as const)('does not mistake %s forwarding for a single recording snapshot', kind => {
+    const sourceType = kind === 'call' ? 'chat_record' as const : 'long_recording_segments' as const
+    const segment = { speakerName: '甲', textContent: '片段', startMillis: 0, endMillis: 1000 }
+    const value = { sourceType, senderName: '甲', sendAtMillis: 0, title: '', textContent: '消息正文', segments: kind === 'empty' ? [] : [segment] }
+    const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
+      itemUid: 'forward', senderName: '转发者', isMe: true, sendAtMillis: 0, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '转发', createdAtMillis: 0, summaryLines: [], items: kind === 'mixed' ? [value, { ...value, sourceType: 'record' }] : [value] },
+    }} />)
+    expect(html).not.toContain('data-arkme-forward-recording-detail')
+    expect(html).toContain('消息正文')
   })
   it('shows a single-line forward heading and at most three summary lines without a nested card shell', () => {
     const html = renderToStaticMarkup(<ArkmeMessageContent item={{

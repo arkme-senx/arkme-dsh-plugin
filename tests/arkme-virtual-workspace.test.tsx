@@ -38,6 +38,14 @@ describe('Arkme conversation directory load state', () => {
     expect(embeddedStatuses).not.toContain('重试')
   })
 
+  it('opens the existing global-search dialog for controller tag targets', () => {
+    expect(workspaceSource).toContain('if (ui.searchTarget === undefined) return')
+    expect(workspaceSource).toContain('setGlobalSearchOpen(true)')
+    expect(workspaceSource).toContain('initialQuery: ui.searchTarget.query')
+    expect(workspaceSource).toContain('initialQueryRevision: ui.searchTarget.revision')
+    expect(workspaceSource).toContain('onClose={closeGlobalSearch}')
+  })
+
   it('opens and selects the new Bot through its dedicated private-chat surface', () => {
     expect(workspaceSource).toContain('const createdQuickAddBot = async (bot: ArkmeBotSummary): Promise<void> =>')
     expect(workspaceSource).toContain('setBots(current => sortArkmeBotsByCreatedAt([bot, ...current.filter(item => item.botRef !== bot.botRef)]))')

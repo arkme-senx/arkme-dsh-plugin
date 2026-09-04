@@ -2,7 +2,10 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
+vi.mock('../src/client/api.js', () => ({
+  callArkme: mocks.callArkme,
+  ArkmeClientError: class ArkmeClientError extends Error { body = { message: this.message } },
+}))
 
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
 
@@ -41,6 +44,9 @@ describe('recording transcript speaker popover', () => {
         timeline: { state: 'empty', message: '', items: [] },
       }
       if (operation === 'recordings.speaker.options') return []
+      if (operation === 'recordings.summary-model-config') return {
+        defaultRouteKey: '', effectiveRouteKey: '', personalRouteKey: '', options: [],
+      }
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
     vi.stubGlobal('document', {
@@ -67,6 +73,7 @@ describe('recording transcript speaker popover', () => {
     const button = renderer.root.findByProps({ 'aria-label': '编辑说话人 说话人 1' })
     await act(async () => {
       button.props.onClick({
+        stopPropagation() {},
         currentTarget: {
           getBoundingClientRect: () => ({ left: 24, right: 104, top: 120, bottom: 142 }),
         },
