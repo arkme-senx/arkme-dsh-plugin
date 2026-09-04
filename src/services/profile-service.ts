@@ -537,13 +537,12 @@ export class ProfileService {
     const session = await this.runtime.requireSession()
     for (const batch of chunksOf(normalized, 50)) {
       const requested = new Set(batch)
-      const data = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
-        '/api/v1/auth/get-public-user-by-jotmo-ids',
+      const data = await this.runtime.accountScopedPublicAuthReadPost<Record<string, unknown>>(
+        '/api/public/v1/auth/get-public-user-by-jotmo-ids',
         { jotmo_ids: batch },
-        session,
+        session.userId,
         signal,
         {
-          lane: 'background-read',
           key: `public-avatar-presentations:${batch.join('|')}`,
           failureCooldownMs: 5_000,
         },

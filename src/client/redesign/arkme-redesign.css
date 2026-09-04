@@ -1755,27 +1755,25 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
 .arkme-contact-profile-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 10px; background: var(--dsw-alias-state-error-tertiary, #fff1f0); }
 .arkme-contact-profile-status { max-width: 760px; margin: 0 auto; padding: 24px 0; color: var(--dsw-alias-label-secondary, var(--arkme-muted)); font-size: 12px; }
 .arkme-team-detail {
-  min-width: 0; min-height: 0; height: 100%; box-sizing: border-box; padding: 22px clamp(20px, 4vw, 52px) 28px;
-  overflow: hidden; background: var(--dsw-alias-bg-subtle, #f7f7f8);
-}
-.arkme-team-detail-shell {
-  width: min(100%, 920px); min-width: 0; min-height: 0; height: 100%; box-sizing: border-box; display: grid;
-  grid-template-rows: auto minmax(0, 1fr); margin: 0 auto; overflow: hidden; border: 1px solid var(--dsw-alias-border-l1, var(--arkme-line));
-  border-radius: 18px; background: var(--dsw-alias-bg-layer-1, #fff); box-shadow: 0 16px 48px rgba(22, 27, 35, .06);
+  min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden; background: var(--dsw-alias-bg-base, #fff);
 }
 .arkme-team-detail-header {
-  min-width: 0; padding: 28px 30px 26px; display: grid; grid-template-columns: 60px minmax(0, 1fr) auto;
-  align-items: center; gap: 18px; border-bottom: 1px solid var(--dsw-alias-border-l1, var(--arkme-line));
+  min-width: 0; padding: 32px clamp(24px, 5vw, 56px); border-bottom: 1px solid var(--dsw-alias-border-l1, var(--arkme-line));
+}
+.arkme-team-detail-header-main {
+  width: min(100%, 760px); min-width: 0; display: grid; grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center; gap: 18px; margin: 0 auto;
 }
 .arkme-team-detail-glyph {
-  width: 60px; height: 60px; display: grid; place-items: center; border-radius: 18px;
+  width: 72px; height: 72px; display: grid; place-items: center; border-radius: 20px;
   background: var(--dsw-alias-state-business-tertiary, #eef0ff); color: var(--dsw-alias-state-business-primary, #4f5fbf);
-  font-size: 19px; line-height: 1; font-weight: 700;
+  font-size: 20px; line-height: 1; font-weight: 700;
 }
 .arkme-team-detail-summary { min-width: 0; display: grid; gap: 7px; }
 .arkme-team-detail-header h1 {
-  margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 22px; line-height: 30px;
-  font-weight: 680; letter-spacing: -.02em;
+  margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; line-height: 28px;
+  font-weight: 650; letter-spacing: -.02em;
 }
 .arkme-team-detail-meta { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
 .arkme-team-detail-public-id {
@@ -1790,11 +1788,15 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
 .arkme-team-detail-count { min-width: 58px; display: grid; justify-items: end; gap: 1px; color: var(--dsw-alias-label-secondary, #68707c); }
 .arkme-team-detail-count strong { color: var(--dsw-alias-label-primary, #202124); font-size: 21px; line-height: 24px; font-weight: 680; font-variant-numeric: tabular-nums; }
 .arkme-team-detail-count span { font-size: 11px; line-height: 16px; }
-.arkme-team-members { min-width: 0; min-height: 0; box-sizing: border-box; display: grid; grid-template-rows: auto minmax(0, 1fr); padding: 22px 30px 30px; }
-.arkme-team-members > h2 { margin: 0 0 13px; font-size: 15px; line-height: 22px; font-weight: 650; }
+.arkme-team-members {
+  min-width: 0; min-height: 0; box-sizing: border-box; padding: 22px clamp(24px, 5vw, 56px) 32px;
+  overflow-y: auto; background: var(--dsw-alias-bg-subtle, #f7f7f8);
+}
+.arkme-team-members-container { width: min(100%, 760px); min-width: 0; margin: 0 auto; }
+.arkme-team-members h2 { margin: 0 0 13px; font-size: 15px; line-height: 22px; font-weight: 650; }
 .arkme-team-member-list {
-  min-width: 0; min-height: 0; overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1, var(--arkme-line));
-  border-radius: 14px; background: var(--dsw-alias-bg-base, #fff);
+  min-width: 0; overflow: hidden; border: 1px solid var(--dsw-alias-border-l1, var(--arkme-line));
+  border-radius: 14px; background: var(--dsw-alias-bg-layer-1, #fff); box-shadow: 0 8px 24px rgba(22, 27, 35, .035);
 }
 .arkme-team-member-row {
   min-width: 0; min-height: 64px; box-sizing: border-box; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto;
@@ -1951,9 +1953,9 @@ body[data-ds-dark-theme] .arkme-unmarked-speaker-segment-play { background: var(
 body[data-ds-dark-theme] .arkme-unmarked-speaker-choice-option:has(input:checked) { background: var(--dsw-alias-interactive-bg-active); border-color: var(--dsw-alias-state-business-primary); }
 body[data-ds-dark-theme] .arkme-contact-detail > .arkme-contact-world { background: var(--dsw-alias-bg-subtle); }
 body[data-ds-dark-theme] .arkme-contact-world-container { background: var(--dsw-alias-bg-layer-1); box-shadow: none; }
-body[data-ds-dark-theme] .arkme-team-detail { background: var(--dsw-alias-bg-subtle); }
-body[data-ds-dark-theme] .arkme-team-detail-shell { background: var(--dsw-alias-bg-layer-1); box-shadow: none; }
-body[data-ds-dark-theme] .arkme-team-member-list { background: var(--dsw-alias-bg-base); }
+body[data-ds-dark-theme] .arkme-team-detail { background: var(--dsw-alias-bg-base); }
+body[data-ds-dark-theme] .arkme-team-members { background: var(--dsw-alias-bg-subtle); }
+body[data-ds-dark-theme] .arkme-team-member-list { background: var(--dsw-alias-bg-layer-1); box-shadow: none; }
 body[data-ds-dark-theme] .arkme-contact-directory-warning,
 body[data-ds-dark-theme] .arkme-unmarked-speaker-gone,
 body[data-ds-dark-theme] .arkme-contact-world-image-error,
@@ -1991,14 +1993,14 @@ body[data-ds-dark-theme] .arkme-contact-world-load-more { color: var(--dsw-alias
   .arkme-contact-profile-main { grid-template-columns: 56px minmax(0, 1fr) auto; gap: 12px; }
   .arkme-contact-profile-avatar { width: 56px; height: 56px; }
   .arkme-contact-profile-avatar > span { width: 56px !important; height: 56px !important; }
-  .arkme-team-detail { padding: 0; background: var(--dsw-alias-bg-base, #fff); }
-  .arkme-team-detail-shell { width: 100%; border: 0; border-radius: 0; box-shadow: none; }
-  .arkme-team-detail-header { grid-template-columns: 52px minmax(0, 1fr); gap: 14px; padding: 22px 18px 20px; }
-  .arkme-team-detail-glyph { width: 52px; height: 52px; border-radius: 15px; font-size: 17px; }
+  .arkme-team-detail-header { padding: 26px 20px; }
+  .arkme-team-detail-header-main { grid-template-columns: 56px minmax(0, 1fr); gap: 12px; }
+  .arkme-team-detail-glyph { width: 56px; height: 56px; border-radius: 16px; font-size: 18px; }
   .arkme-team-detail-count { grid-column: 2; min-width: 0; display: flex; justify-items: initial; align-items: baseline; gap: 4px; }
   .arkme-team-detail-count strong { font-size: 14px; line-height: 18px; }
   .arkme-team-detail-count span { font-size: 11px; }
-  .arkme-team-members { padding: 18px; }
+  .arkme-team-members { padding: 18px 20px 28px; }
+  .arkme-team-member-list { border-radius: 12px; }
   .arkme-team-member-row { padding-right: 12px; padding-left: 12px; }
   .arkme-contact-world-title { padding-right: 20px; padding-left: 20px; }
   .arkme-directory-unmarked-speaker-detail { padding: 20px 18px 30px; }

@@ -63,7 +63,7 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('item.jotmo_id', '')
     .replaceAll('jotmo_ids', '')
     .replaceAll('/api/v1/auth/check-jotmo-id-available', '')
-    .replaceAll('/api/v1/auth/get-public-user-by-jotmo-ids', '')
+    .replaceAll('/api/public/v1/auth/get-public-user-by-jotmo-ids', '')
     .replaceAll('/api/v1/auth/update-jotmo-id', '')
     .replaceAll('recipient_jotmo_id', '')
     .replaceAll("'jotmo-userfiles-test'", '')

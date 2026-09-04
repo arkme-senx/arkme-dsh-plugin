@@ -86,8 +86,8 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
 
   const { page } = state
   return <section className="arkme-team-detail" data-team-ref={page.team.teamRef}>
-    <div className="arkme-team-detail-shell">
-      <header className="arkme-team-detail-header">
+    <header className="arkme-team-detail-header">
+      <div className="arkme-team-detail-header-main">
         <span className="arkme-team-detail-glyph" aria-hidden>团</span>
         <div className="arkme-team-detail-summary">
           <h1>{page.team.name}</h1>
@@ -102,8 +102,10 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
           <strong>{page.totalCount}</strong>
           <span>位成员</span>
         </span>
-      </header>
-      <section className="arkme-team-members" aria-label={`${page.team.name}的成员`}>
+      </div>
+    </header>
+    <section className="arkme-team-members" aria-label={`${page.team.name}的成员`}>
+      <div className="arkme-team-members-container">
         <h2>团队成员</h2>
         <div className="arkme-team-member-list" role="list">
           {page.items.map(member => <div className="arkme-team-member-row" role="listitem" key={member.userRef}>
@@ -131,7 +133,7 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
             onClick={() => { void load(page.nextPageCursor) }}
           >{state.loadingMore === true ? '加载中…' : '加载更多成员'}</button>}
         </div>
-      </section>
-    </div>
+      </div>
+    </section>
   </section>
 }

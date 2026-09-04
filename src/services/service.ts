@@ -753,6 +753,31 @@ export class ServiceRuntime {
     }
   }
 
+  /** Read a public auth endpoint while isolating coordination and caching to the active account. */
+  async accountScopedPublicAuthReadPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    viewerUserId: number,
+    signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    return await this.post<T>(
+      this.config.authBaseUrl,
+      path,
+      body,
+      undefined,
+      [200],
+      signal,
+      false,
+      {
+        ...options,
+        scope: this.requestScope(viewerUserId),
+        service: 'auth',
+        lane: options.lane ?? 'background-read',
+      },
+    )
+  }
+
   async authenticatedDshRemotePost<T>(
     path: string,
     body: Record<string, unknown>,

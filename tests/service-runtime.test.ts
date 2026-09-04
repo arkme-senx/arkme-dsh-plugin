@@ -166,6 +166,58 @@ describe('ServiceRuntime', () => {
     })
   })
 
+  it('reads public auth data without presenting or mutating the active credential', async () => {
+    const writeSession = vi.fn()
+    const deleteSession = vi.fn()
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      code: 200,
+      data: { items: [] },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof fetch
+    const runtime = runtimeFixture(fetchImpl, {
+      async read() { return { accessToken: 'private-access', refreshToken: 'private-refresh', userId: 42 } },
+      write: writeSession,
+      delete: deleteSession,
+    })
+
+    await expect(runtime.accountScopedPublicAuthReadPost<{ items: unknown[] }>(
+      '/api/public/v1/auth/get-public-user-by-jotmo-ids',
+      { jotmo_ids: ['member_one'] },
+      42,
+    )).resolves.toEqual({ items: [] })
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://auth.test/api/public/v1/auth/get-public-user-by-jotmo-ids',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.not.objectContaining({ Authorization: expect.anything() }),
+      }),
+    )
+    expect(writeSession).not.toHaveBeenCalled()
+    expect(deleteSession).not.toHaveBeenCalled()
+    expect(runtime.requestStats()).toMatchObject({
+      'background-read:auth': expect.objectContaining({ started: 1 }),
+    })
+  })
+
+  it('does not refresh or delete credentials when a public auth read is rejected', async () => {
+    const writeSession = vi.fn()
+    const deleteSession = vi.fn()
+    const fetchImpl = vi.fn(async () => new Response('', { status: 401 })) as typeof fetch
+    const runtime = runtimeFixture(fetchImpl, {
+      async read() { return { accessToken: 'private-access', refreshToken: 'private-refresh', userId: 42 } },
+      write: writeSession,
+      delete: deleteSession,
+    })
+
+    await expect(runtime.accountScopedPublicAuthReadPost(
+      '/api/public/v1/auth/get-public-user-by-jotmo-ids',
+      { jotmo_ids: ['member_one'] },
+      42,
+    )).rejects.toMatchObject({ code: 'auth-http-401' })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(writeSession).not.toHaveBeenCalled()
+    expect(deleteSession).not.toHaveBeenCalled()
+  })
+
   it('marks only genuinely unknown remote write outcomes', async () => {
     const activeSession = { accessToken: 'access', refreshToken: 'refresh-token', userId: 42 }
     const sessionStore: ArkmeSessionStore = {

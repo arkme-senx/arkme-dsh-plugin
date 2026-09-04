@@ -1614,8 +1614,8 @@ describe('ArkmeService', () => {
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
       requests.push(url)
-      if (url.endsWith('/api/v1/auth/get-public-user-by-jotmo-ids')) {
-        expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer access')
+      if (url.endsWith('/api/public/v1/auth/get-public-user-by-jotmo-ids')) {
+        expect(new Headers(init?.headers).get('Authorization')).toBeNull()
         expect(JSON.parse(String(init?.body))).toEqual({ jotmo_ids: ['member_one', 'member_phone'] })
         return json({ code: 200, data: { items: [
           { user_id: 20001, jotmo_id: 'member_one', nick_name: '成员一', head_img: avatarUrl },
@@ -1637,7 +1637,7 @@ describe('ArkmeService', () => {
     const imageRef = presentations.get('member_one')!.avatarRef!
     await expect(service.readImage(imageRef)).resolves.toMatchObject({ mediaType: 'image/png', bytes: png.byteLength })
     expect(requests).toEqual([
-      'https://auth.test/api/v1/auth/get-public-user-by-jotmo-ids',
+      'https://auth.test/api/public/v1/auth/get-public-user-by-jotmo-ids',
       avatarUrl,
     ])
   })
