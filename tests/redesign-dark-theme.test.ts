@@ -40,6 +40,22 @@ describe('Arkme redesign dark theme', () => {
     expect(worldContainerRule).toContain('overflow-y: auto')
   })
 
+  it('keeps Team identity fixed with one scrolling content owner and a natural-height member card', () => {
+    const teamDetailRule = redesignCss.match(/\.arkme-team-detail\s*\{([^{}]+)\}/)?.[1] ?? ''
+    const teamHeaderMainRule = redesignCss.match(/\.arkme-team-detail-header-main\s*\{([^{}]+)\}/)?.[1] ?? ''
+    const teamMembersRule = redesignCss.match(/\.arkme-team-members\s*\{([^{}]+)\}/)?.[1] ?? ''
+    const memberListRule = redesignCss.match(/\.arkme-team-member-list\s*\{([^{}]+)\}/)?.[1] ?? ''
+
+    expect(teamDetailRule).toContain('grid-template-rows: auto minmax(0, 1fr)')
+    expect(teamDetailRule).toContain('overflow: hidden')
+    expect(teamHeaderMainRule).toContain('width: min(100%, 760px)')
+    expect(teamMembersRule).toContain('overflow-y: auto')
+    expect(memberListRule).toContain('overflow: hidden')
+    expect(memberListRule).not.toContain('min-height: 0')
+    expect(memberListRule).not.toContain('overflow-y: auto')
+    expect(redesignCss).not.toContain('.arkme-team-detail-shell')
+  })
+
   it('gives every production Contacts class a substantive scoped rule', () => {
     const contactsDir = fileURLToPath(new URL('../src/client/redesign/contacts/', import.meta.url))
     const contactsClasses = new Set<string>()

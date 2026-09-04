@@ -1,4 +1,6 @@
 import type { ArkmeChatRealtimeNotice } from './chat-realtime.js'
+import { OwnerRecordingForwardGateway } from './services/recording-forward-gateway.js'
+import type { RecordingForwardInput } from './recording-forward-contract.js'
 import type {
   ArkmeDSHBetaCommunityEntryState,
   ArkmeDSHBetaCommunityJoinResult,
@@ -9,6 +11,7 @@ import type {
   ArkmeExtensionReviewPage,
 } from './extensions/types.js'
 import type { ArkmeSessionStore } from './keychain-store.js'
+import type { ArkmeRecordReeditCommitResult, ArkmeRecordReeditDiscardPreparedContext, ArkmeRecordReeditDiscardResult, ArkmeRecordReeditEditorSnapshot, ArkmeRecordReeditPrepareInput, ArkmeRecordReeditPreparedContext } from './record-reedit-contract.js'
 import { createArkmeAccountSessionOwner } from './account-session-owner.js'
 import { resolveManagedAccessCredential } from './managed-access-credential.js'
 import type { createOpenClawProvisioner, OpenClawProvisionResult } from './openclaw/index.js'
@@ -71,7 +74,7 @@ import {
   LocalMessageActionCapabilityCodec,
 } from './services/message-action-infrastructure.js'
 import { OutgoingCallService } from './services/outgoing-call-service.js'
-import { ProfileService } from './services/profile-service.js'
+import { ProfileService, type ArkmePublicAvatarPresentation } from './services/profile-service.js'
 import { RecordService } from './services/record-service.js'
 import { RelatedQuickNoteService } from './services/related-quick-note-service.js'
 import { ArkmePrivacyVisibilityService } from './services/privacy-visibility.js'
@@ -432,6 +435,7 @@ export class ArkmeService {
       recordingImportOwnerGateway: recordingImportGateway,
       recordingImportSource: new LocalRecordingImportSource(),
       profile: this.profile, media: this.media, userCandidates: this.contactDirectory,
+      forwardGateway: new OwnerRecordingForwardGateway(this.runtime, this.source, this.realtime, this.chat),
     })
     this.unmarkedSpeaker = new UnmarkedSpeakerService(this.runtime, this.media)
     this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime)
@@ -829,6 +833,13 @@ export class ArkmeService {
     return await this.linkMetadata.resolve(url, options)
   }
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> { return await this.profile.cachedProfile() }
+  /** @internal Team presentation adapter; public identity remains owned by Backend. */
+  async publicAvatarPresentationsByArkmeIds(
+    arkmeIds: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<Map<string, ArkmePublicAvatarPresentation>> {
+    return await this.profile.publicAvatarPresentationsByArkmeIds(arkmeIds, signal)
+  }
   async searchContact(identifier: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeContactSearchResult> { return await this.contact.search(identifier, options) }
 
   async listDirectory(section: ArkmeDirectorySectionKind, options: { limit?: number; cursor?: string; countOnly?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeDirectoryPage> {
@@ -856,6 +867,10 @@ export class ArkmeService {
   /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal) }
   async sealRecordingCursor(payload: ArkmeRecordingCursorPayload): Promise<string> { return await this.recording.sealRecordingCursor(payload) }
   async openRecordingCursor(cursor: string): Promise<ArkmeRecordingCursorPayload> { return await this.recording.openRecordingCursor(cursor) }
+  async recordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingComparison(dateStamp, signal) }
+  async recordingForwardCapabilities(signal?: AbortSignal) { return await this.recording.recordingForwardCapabilities(signal) }
+  async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
+  async startRecordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.startRecordingComparison(dateStamp, signal) }
   async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal) }
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async recordingSpeakerOptions(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerOption[]> { return await this.recording.recordingSpeakerOptions(itemRef, signal) }
@@ -1380,6 +1395,15 @@ export class ArkmeService {
   async removeLongArticleDraft(sourceRef: string, itemUid?: string): Promise<void> {
     return await this.chat.removeLongArticleDraft(sourceRef, itemUid)
   }
+
+  async prepareRecordReedit(input: ArkmeRecordReeditPrepareInput, options: { expectedBaseVersion?: number } = {}): Promise<ArkmeRecordReeditPreparedContext> { return await this.record.prepareRecordReedit(input, options) }
+  async recordReeditEditor(sourceRef: string, itemUid: string): Promise<ArkmeRecordReeditEditorSnapshot> { return await this.record.recordReeditEditor(sourceRef, itemUid) }
+  async commitRecordReedit(context: ArkmeRecordReeditPreparedContext): Promise<ArkmeRecordReeditCommitResult> {
+    const result = await this.record.commitRecordReedit(context)
+    await this.realtime.invalidateRecordProjection().catch(() => undefined); return result
+  }
+  async prepareDiscardRecordReeditDraft(sourceRef: string, itemUid: string): Promise<ArkmeRecordReeditDiscardPreparedContext> { return await this.record.prepareDiscardRecordReeditDraft(sourceRef, itemUid) }
+  async discardRecordReeditDraft(context: ArkmeRecordReeditDiscardPreparedContext): Promise<ArkmeRecordReeditDiscardResult> { return await this.record.discardRecordReeditDraft(context) }
 
   async uploadLocalFile(
     filePath: string,

@@ -43,7 +43,7 @@ describe('plugin environment validation', () => {
     })).toThrow(/production environment must explicitly configure every service origin/)
   })
 
-  it('requires the managed OpenAPI endpoint to be an HTTPS origin when enabled', () => {
+  it('always requires the managed OpenAPI endpoint used by Team to be an HTTPS origin', () => {
     expect(() => resolveArkmeConfig({ webServer: { host: '127.0.0.1' } } as never, {
       ...productionConfig(), environment: 'test', openApiBaseUrl: 'http://127.0.0.1:8080/path',
     })).toThrow(/openApiBaseUrl must be an HTTPS origin/)
@@ -55,6 +55,18 @@ describe('plugin environment validation', () => {
     expect(resolveArkmeConfig({ webServer: { host: '127.0.0.1' } } as never, {
       ...productionConfig(), environment: 'test', openApiBaseUrl: 'https://openapi.example.com/',
     }).openApiBaseUrl).toBe('https://openapi.example.com')
+
+    expect(() => resolveArkmeConfig({ webServer: { host: '127.0.0.1' } } as never, {
+      ...productionConfig(), environment: 'test', openApiMcpEnabled: false,
+      openApiBaseUrl: 'http://127.0.0.1:8080/path',
+    })).toThrow(/openApiBaseUrl must be an HTTPS origin/)
+  })
+
+  it('rejects a production Team endpoint that leaks test infrastructure even when MCP mounting is disabled', () => {
+    expect(() => resolveArkmeConfig({ webServer: { host: '127.0.0.1' } } as never, {
+      ...productionConfig(), openApiMcpEnabled: false,
+      openApiBaseUrl: 'https://jotmo-openapi.senguo.me',
+    })).toThrow(/production environment must explicitly configure every service origin/)
   })
 
   it('keeps a legacy omitted data service origin distinguishable after schema parsing', () => {

@@ -3,7 +3,7 @@ import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { ProfileService } from '../../src/services/profile-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { arkmeChatConversationPreview, arkmeTimelineConversationPreview, SourceService } from '../../src/services/source-service.js'
-import type { ArkmeSourceList } from '../../src/types.js'
+import type { ArkmeSourceItem, ArkmeSourceList } from '../../src/types.js'
 
 const config: ArkmeServiceConfig = {
   environment: 'test', authBaseUrl: 'https://auth.test', subjectBaseUrl: 'https://subject.test',
@@ -15,6 +15,27 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('logs private avatar sealing failure without dropping the last good presentation', async () => {
+    const runtime = { config } as ServiceRuntime
+    const profile = {
+      publicProfileSummariesByUserIds: vi.fn().mockResolvedValue(new Map([[88, { avatarUrl: 'unused' }]])),
+      sealProfileImageRef: vi.fn().mockRejectedValue(new Error('SECRET_KEYCHAIN_DETAIL')),
+    } as unknown as ProfileService
+    const service = new SourceService(runtime, profile, {} as never)
+    const items: ArkmeSourceItem[] = [{ sourceRef: 'source', kind: 'private_chat', displayName: 'SECRET_NAME', avatarRef: 'old-avatar' }]
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await service.hydrateSourceAvatars(items, new Map([[0, 88]]), new Map(), { userId: 42, accessToken: 'access', refreshToken: 'refresh' })
+      expect(items[0]?.avatarRef).toBe('old-avatar')
+      expect(warn).toHaveBeenCalledOnce()
+      const line = String(warn.mock.calls[0]![0])
+      expect(JSON.parse(line.slice('[ArkmeAvatarDiag] '.length))).toMatchObject({
+        event: 'private_avatar_seal_failed', viewerUserId: 42, targetUserId: 88,
+      })
+      expect(line).not.toMatch(/SECRET|old-avatar/)
+    } finally { warn.mockRestore() }
+  })
+
   it('uses the server-owned full unread summary instead of summing the current page', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

@@ -233,7 +233,10 @@ describe('interwoven UI', () => {
     for (const markup of [loading, error, success, relatedListMarkup, relatedDetailMarkup, degraded, degradedSummary]) {
       expect(markup).toContain('aria-label="关闭快记详情"')
       expect(markup).toContain('position:absolute')
-      expect(markup).toContain('width:min(372px, 100%)')
+      expect(markup).toContain('width:405px')
+      expect(markup).toContain('max-width:100%')
+      expect(markup).toContain('aria-label="调整快记详情宽度"')
+      expect(markup).toContain('aria-valuenow="405"')
       expect(markup).toContain('top:68px')
       expect(markup).not.toContain('top:0;right:0;bottom:0')
       expect(markup).toContain('bottom:0')

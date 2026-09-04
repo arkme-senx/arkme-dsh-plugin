@@ -2,6 +2,7 @@ import type {
   ArkmeRecordingSummaryModelConfig,
   ArkmeRecordingTimelineEvent,
   ArkmeRecordingTranscriptItem,
+  ArkmeRecordingTranscriptSource,
   ArkmeRecordingVersion,
   ArkmeRecordingVersionStatus,
 } from './types.js'
@@ -164,6 +165,7 @@ interface RecordingTranscriptWindowOptions {
 
 export interface ProjectRecordingTranscriptOptions extends RecordingTranscriptWindowOptions {
   viewerUserId: number
+  transcriptSource?: ArkmeRecordingTranscriptSource
 }
 
 interface RecordingSessionInterval {
@@ -213,6 +215,20 @@ export function recordingPendingTranscriptionCount(
   response: unknown,
   options: RecordingTranscriptWindowOptions = {},
 ): number {
+  return recordingChildrenInWindow(response, options).filter(child => child.has_asr === false).length
+}
+
+export function recordingDoubaoProgress(response: unknown, options: RecordingTranscriptWindowOptions = {}) {
+  const children = recordingChildrenInWindow(response, options)
+  return {
+    processingCount: children.filter(child => [1, 2].includes(numberValue(child.doubao_asr_status))).length,
+    candidateCount: children.filter(child => child.has_asr === true && numberValue(child.doubao_asr_status) === 0 && listValue(child.doubao_asr).length === 0).length,
+    failedCount: children.filter(child => numberValue(child.doubao_asr_status) === 5).length,
+    silentCount: children.filter(child => numberValue(child.doubao_asr_status) === 4).length,
+  }
+}
+
+function recordingChildrenInWindow(response: unknown, options: RecordingTranscriptWindowOptions): Record<string, unknown>[] {
   const data = objectValue(response)
   const sessions = new Map<string, Record<string, unknown>>()
   for (const rawSession of listValue(data.session_ls ?? data.sessions)) {
@@ -221,22 +237,20 @@ export function recordingPendingTranscriptionCount(
     if (sessionId !== '') sessions.set(sessionId, session)
   }
   const effectiveSessions = projectEffectiveSessionIntervals(sessions)
-  return listValue(data.child_ls ?? data.children).reduce<number>((count, rawChild) => {
-    const child = objectValue(rawChild)
-    if (child.has_asr !== false) return count
+  return listValue(data.child_ls ?? data.children).map(objectValue).filter(child => {
     const sessionId = stringValue(child.session_id).trim()
     const session = sessions.get(sessionId)
     const effectiveSession = effectiveSessions.get(sessionId)
-    if (session === undefined || effectiveSession === undefined) return count
+    if (session === undefined || effectiveSession === undefined) return false
     const childOffset = numberValue(child.start_at)
     const childStart = childOffset >= 100_000_000_000
       ? childOffset
       : numberValue(session.start_at) + childOffset
     if (childStart < effectiveSession.startAtMillis || childStart > effectiveSession.endAtMillis
       || (options.dayStartMillis !== undefined && childStart < options.dayStartMillis)
-      || (options.dayEndMillis !== undefined && childStart >= options.dayEndMillis)) return count
-    return count + 1
-  }, 0)
+      || (options.dayEndMillis !== undefined && childStart >= options.dayEndMillis)) return false
+    return true
+  })
 }
 
 export function projectRecordingTranscripts(
@@ -307,10 +321,12 @@ export function projectRecordingTranscripts(
     const childStart = childOffset >= 100_000_000_000
       ? childOffset
       : numberValue(session.start_at) + childOffset
-    const rows = listValue(child.asr)
+    const transcriptSource = options.transcriptSource ?? 'system'
+    if (transcriptSource === 'doubao' && [1, 2, 4, 5].includes(numberValue(child.doubao_asr_status))) continue
+    const rows = listValue(transcriptSource === 'system' ? child.asr : child.doubao_asr)
     for (let index = 0; index < rows.length; index += 1) {
       const row = objectValue(rows[index])
-      const isBackground = numberValue(row.b ?? row.background) === 1 || row.background === true
+      const isBackground = transcriptSource === 'system' && (numberValue(row.b ?? row.background) === 1 || row.background === true)
       const generationText = stringValue(row.t ?? row.text).trim()
       const text = generationText.replace(isBackground ? /^\(背景音\)\s*/ : /$^/, '')
       if (text === '') continue
@@ -318,15 +334,22 @@ export function projectRecordingTranscripts(
       const sourceSessionSpeaker = sessionSpeakers.find(
         candidate => numberValue(candidate.num) === sourceSpeakerNumber,
       ) ?? {}
-      const itemAssignedSpeakerId = stringValue(row.q).trim()
+      const identitySource = stringValue(row.speaker_identity_source).trim()
+      const effectiveSpeakerId = stringValue(row.effective_spk_id).trim()
+      const hasEffectiveIdentity = (identitySource === 'item' || identitySource === 'session') && effectiveSpeakerId !== ''
+      const itemAssignedSpeakerId = identitySource === 'system' || (hasEffectiveIdentity && identitySource === 'session')
+        ? '' : hasEffectiveIdentity ? effectiveSpeakerId : stringValue(row.q).trim()
       const assignmentSpeakerNumber = itemAssignedSpeakerId === '' ? sourceSpeakerNumber : -1
       const assignmentSessionSpeaker = itemAssignedSpeakerId === '' ? sourceSessionSpeaker : sessionSpeakers.find(
         candidate => numberValue(candidate.num) === -1
           && stringValue(candidate.spk_id ?? candidate.speaker_id).trim() === itemAssignedSpeakerId,
       ) ?? {}
-      const formalSpeakerId = itemAssignedSpeakerId || stringValue(
+      const sessionSpeakerId = stringValue(
         sourceSessionSpeaker.spk_id ?? sourceSessionSpeaker.speaker_id,
       ).trim()
+      const explicitlyUnassigned = identitySource === 'system'
+        || (itemAssignedSpeakerId === '' && stringValue(row.q_unassigned_spk_id).trim() === sessionSpeakerId && sessionSpeakerId !== '' && !hasEffectiveIdentity)
+      const formalSpeakerId = explicitlyUnassigned ? '' : hasEffectiveIdentity ? effectiveSpeakerId : itemAssignedSpeakerId || sessionSpeakerId
       const innerDisplay = stringValue(assignmentSessionSpeaker.inner_display).trim()
       const speakerIdentity = formalSpeakerId !== ''
         ? `speaker:${formalSpeakerId}`
@@ -365,11 +388,11 @@ export function projectRecordingTranscripts(
         || (options.dayStartMillis !== undefined && rawStartAtMillis < options.dayStartMillis)
         || (options.dayEndMillis !== undefined && rawEndAtMillis > options.dayEndMillis)) continue
       projected.push({
-        itemId: `${childId || sessionId}:${index}`,
+        itemId: `${childId || sessionId}:${index}${transcriptSource === 'doubao' ? ':doubao' : ''}`,
         sessionId,
         childId,
         asrItemIndex: index,
-        transcriptSource: 'system',
+        transcriptSource,
         childAsrItemStartAt: startOffset,
         childAsrItemEndAt: endOffset,
         formalSpeakerId,

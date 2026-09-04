@@ -2,6 +2,13 @@ import type {
   ArkmeCachedQueryResult, ArkmeConversationWriteResult, ArkmeImageSearchResult, ArkmeRecordSearchResult,
   ArkmeRecordingSearchResult, ArkmeSearchSceneKind,
 } from '../../types.js'
+import type {
+  ArkmeRecordReeditCommitResult,
+  ArkmeRecordReeditDiscardPreparedContext,
+  ArkmeRecordReeditDiscardResult,
+  ArkmeRecordReeditPrepareInput,
+  ArkmeRecordReeditPreparedContext,
+} from '../../record-reedit-contract.js'
 
 export interface ArkmeRecordToolPort {
   refreshLatest(): Promise<void>
@@ -35,4 +42,11 @@ export interface ArkmeRecordToolPort {
     signal?: AbortSignal
   }): Promise<ArkmeRecordingSearchResult>
   createTextForConversation(recordUid: string, textContent: string): Promise<ArkmeConversationWriteResult>
+  prepareRecordReedit(input: ArkmeRecordReeditPrepareInput): Promise<ArkmeRecordReeditPreparedContext>
+  commitRecordReedit(context: ArkmeRecordReeditPreparedContext): Promise<ArkmeRecordReeditCommitResult>
+  prepareDiscardRecordReeditDraft(
+    sourceRef: string,
+    itemUid: string,
+  ): Promise<ArkmeRecordReeditDiscardPreparedContext>
+  discardRecordReeditDraft(context: ArkmeRecordReeditDiscardPreparedContext): Promise<ArkmeRecordReeditDiscardResult>
 }

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ComponentType } from 'react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import * as recordingSurface from '../src/client/ArkmeRecordingSurface.js'
 import type { ArkmeRecordingWorkbenchItem } from '../src/types.js'
@@ -37,8 +37,9 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(markup).toContain('>导入历史音频<')
     expect(markup).toContain('时间轴')
     expect(markup).toContain('总结')
-    expect(markup).toContain('转写 · 系统')
-    expect(markup.indexOf('>转写 · 系统</button>')).toBeLessThan(markup.indexOf('>总结</button>'))
+    expect(markup).toContain('>转写<span')
+    expect(markup).not.toContain('转写 · 系统')
+    expect(markup.indexOf('>转写<span')).toBeLessThan(markup.indexOf('>总结</button>'))
     expect(markup.indexOf('>总结</button>')).toBeLessThan(markup.indexOf('>时间轴</button>'))
     expect(markup).toContain('aria-current="page"')
   })
@@ -178,7 +179,16 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(source).not.toContain("'暂停片段'")
     expect(source).not.toContain("'继续播放'")
     expect(source).not.toContain('transcriptActions')
-    expect(source).toContain('onDoubleClick={onSelect}')
+    const onSelect = vi.fn(); const onToggleSelection = vi.fn()
+    const item = { itemId: 'row', speakerColorIndex: 0, speakerLabel: '说话人', text: '正文', startAtMillis: 1000, endAtMillis: 2000 } as ArkmeRecordingWorkbenchItem
+    const normal = recordingSurface.ArkmeRecordingTranscriptRow({ item, selected: false, onEditSpeaker() {}, onSelect })
+    normal.props.onDoubleClick()
+    expect(onSelect).toHaveBeenCalledOnce()
+    const selecting = recordingSurface.ArkmeRecordingTranscriptRow({ item, selected: false, onEditSpeaker() {}, onSelect, onToggleSelection })
+    expect(selecting.props.onDoubleClick).toBeUndefined()
+    selecting.props.onClick()
+    expect(onToggleSelection).toHaveBeenCalledOnce()
+    expect(onSelect).toHaveBeenCalledOnce()
     expect(source).toContain('onSelect={() => { setSelectedTimelineMillis(item.startAtMillis) }}')
   })
 
