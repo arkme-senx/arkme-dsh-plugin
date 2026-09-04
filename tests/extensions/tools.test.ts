@@ -1,3 +1,4 @@
+import { recordDefinitionResults, sessionEvents } from '../helpers/tool-session.js'
 import { describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -11,9 +12,9 @@ import {
 function confirmationAgent(id: string, intent: string) {
   return {
     id,
-    session: { events: [
+    session: { events: sessionEvents([
       { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: intent }] } },
-    ] },
+    ]) },
   }
 }
 
@@ -42,7 +43,7 @@ describe('Arkme extension tools', () => {
     }> = []
     const sections: Array<{ name: string; order: number; text: () => string }> = []
     const context = {
-      tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+      tools: { register: vi.fn(definition => { definitions.push(recordDefinitionResults(definition)) }) },
       systemPrompt: { section: vi.fn(section => { sections.push(section) }) },
       on: vi.fn(),
     }
@@ -410,7 +411,7 @@ describe('Arkme extension tools', () => {
       addPreview,
     }
     registerArkmeExtensionTools({
-      tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+      tools: { register: vi.fn(definition => { definitions.push(recordDefinitionResults(definition)) }) },
       systemPrompt: { section: vi.fn() },
       on: vi.fn(),
       get: vi.fn((name: string) => name === 'attachments' ? attachments : undefined),
@@ -498,7 +499,7 @@ describe('Arkme extension tools', () => {
         addPreview,
       }
       registerArkmeExtensionTools({
-        tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+        tools: { register: vi.fn(definition => { definitions.push(recordDefinitionResults(definition)) }) },
         systemPrompt: { section: vi.fn() },
         on: vi.fn(),
         get: vi.fn(),
@@ -552,7 +553,7 @@ describe('Arkme extension tools', () => {
       }> = []
       const addPreview = vi.fn()
       registerArkmeExtensionTools({
-        tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+        tools: { register: vi.fn(definition => { definitions.push(recordDefinitionResults(definition)) }) },
         systemPrompt: { section: vi.fn() },
         on: vi.fn(),
         get: vi.fn(),
@@ -595,7 +596,7 @@ describe('Arkme extension tools', () => {
         extension_id: 'ext-1', status: 'applied', icon_ref: `icon_v1_${'a'.repeat(64)}`,
       }))
       registerArkmeExtensionTools({
-        tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+        tools: { register: vi.fn(definition => { definitions.push(recordDefinitionResults(definition)) }) },
         systemPrompt: { section: vi.fn() },
         on: vi.fn(),
       } as never, { setIcon } as never, {} as never, { readImage: vi.fn() }, 'business')
@@ -645,7 +646,7 @@ describe('Arkme extension tools', () => {
       }> = []
       const setIcon = vi.fn()
       registerArkmeExtensionTools({
-        tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+        tools: { register: vi.fn(definition => { definitions.push(recordDefinitionResults(definition)) }) },
         systemPrompt: { section: vi.fn() },
         on: vi.fn(),
       } as never, { setIcon } as never, {} as never, { readImage: vi.fn() }, 'business')
@@ -695,7 +696,7 @@ describe('Arkme extension tools', () => {
       }> = []
       const setIcon = vi.fn()
       registerArkmeExtensionTools({
-        tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+        tools: { register: vi.fn(definition => { definitions.push(recordDefinitionResults(definition)) }) },
         systemPrompt: { section: vi.fn() },
         on: vi.fn(),
       } as never, { setIcon } as never, {} as never, { readImage: vi.fn() }, 'business')

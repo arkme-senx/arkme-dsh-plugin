@@ -226,6 +226,27 @@ describe('ArkmeStateStore', () => {
       .resolves.toMatchObject({ kind: 'inserted', job: { jobId: 'job-new' } })
   })
 
+  it('excludes rejected duplicates from admission capacity and bounds their history while retaining recoverable failures', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-rejected-history-'))
+    const store = new ArkmeStateStore(root)
+    await store.putRecordingImportJob(10001, recordingJob({
+      jobId: 'recoverable', fileName: 'recoverable.m4a', phase: 'failed', failedFromPhase: 'prepared',
+      errorCode: 'recording-import-owner-failed', retryable: true, createdAtMillis: 0,
+    }))
+    for (let index = 0; index <= RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT; index += 1) {
+      await store.putRecordingImportJob(10001, recordingJob({
+        jobId: `rejected-${index}`, phase: 'failed', failedFromPhase: 'prepared',
+        errorCode: 'recording-import-duplicate', retryable: false, sourceHandle: '', createdAtMillis: index + 1,
+      }))
+    }
+    const reopened = new ArkmeStateStore(root)
+    expect(await reopened.listRecordingImportJobs(10001)).toHaveLength(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT + 1)
+    expect(await reopened.getRecordingImportJob(10001, 'rejected-0')).toBeUndefined()
+    expect(await reopened.getRecordingImportJob(10001, 'recoverable')).toBeDefined()
+    await expect(reopened.admitRecordingImportJob(10001, recordingJob({ jobId: 'new-attempt' }), 2))
+      .resolves.toMatchObject({ kind: 'inserted' })
+  })
+
   it('atomically enforces the unresolved recording import limit across distinct concurrent jobs', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-admission-limit-'))
     const store = new ArkmeStateStore(root)

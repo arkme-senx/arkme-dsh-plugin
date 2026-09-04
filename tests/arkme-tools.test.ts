@@ -1,3 +1,4 @@
+import { recordDefinitionResults, sessionEvents } from './helpers/tool-session.js'
 import { describe, expect, it, vi } from 'vitest'
 import {
   consumerPluginContract, createArkmeCoreToolDefinitions, ARKME_TOOL_PROMPT, recordUidForToolCall,
@@ -732,7 +733,7 @@ describe('Arkme conversation tools', () => {
     const service = fakeService()
     const ctx = {
       systemPrompt: { section: vi.fn() },
-      tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+      tools: { register: vi.fn(definition => { definitions.push(recordDefinitionResults(definition)) }) },
       on: vi.fn(),
       inject: vi.fn(),
       get: vi.fn(),
@@ -741,9 +742,9 @@ describe('Arkme conversation tools', () => {
     registerArkmeTools(ctx as never, service as never)
     expect(ctx.on).not.toHaveBeenCalled()
 
-    const events: Array<Record<string, unknown>> = [
+    const events = sessionEvents([
       { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '把即我号改成 Chosen_01' }] } },
-    ]
+    ])
     const agent = { id: 'session-id-set', session: { events } }
     const idSet = definitions.find(definition => definition.name === 'arkme_id_set')!
     const idArgs = { arkme_id: 'Chosen_01' }
@@ -1045,7 +1046,7 @@ describe('Arkme conversation tools', () => {
     const service = fakeService()
     const ctx = {
       systemPrompt: { section: vi.fn() },
-      tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+      tools: { register: vi.fn(definition => { definitions.push(recordDefinitionResults(definition)) }) },
       on: vi.fn(),
       inject: vi.fn(),
       get: vi.fn(),
@@ -1056,7 +1057,7 @@ describe('Arkme conversation tools', () => {
       group_source_ref: 'arkme-source-v1.group.sig',
       title: '新产品群',
     }
-    const events: Array<Record<string, unknown>> = [
+    const events = sessionEvents([
       {
         seq: 1,
         type: 'user/message',
@@ -1065,7 +1066,7 @@ describe('Arkme conversation tools', () => {
           content: [{ type: 'text', text: '把产品群改名为新产品群' }],
         },
       },
-    ]
+    ])
     const agent = { id: 'session-group-rename', session: { events } }
 
     const preview = await rename.execute(args, {

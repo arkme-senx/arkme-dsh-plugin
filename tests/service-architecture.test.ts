@@ -28,7 +28,7 @@ const expectedPublicMethods = [
   'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'sealRecordingCursor', 'openRecordingCursor', 'recordingDay', 'recordingPlayback',
   'recordingSpeakerOptions', 'assignRecordingSpeaker',
-  'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport',
+  'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport',
   'cancelRecordingImport', 'updateRecordingImportSessionStart', 'updateRecordingImportSessionOwnership', 'deleteRecordingImportSession', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
@@ -155,6 +155,7 @@ describe('Arkme service architecture', () => {
     const refCodec = readFileSync(join(root, 'src/recording-import-ref.ts'), 'utf8')
     const recordingService = readFileSync(join(root, 'src/services/recording-service.ts'), 'utf8')
     const coordinator = readFileSync(join(root, 'src/recording-import-coordinator.ts'), 'utf8')
+    const directory = readFileSync(join(root, 'src/recording-directory-import.ts'), 'utf8')
 
     expect(contract).toContain('sourceHandle')
     expect(contract).not.toContain('sourceRef')
@@ -173,6 +174,12 @@ describe('Arkme service architecture', () => {
     expect(coordinator).not.toMatch(/from ['"]node:fs/)
     expect(coordinator).not.toContain('pc_upload/')
     expect(coordinator).not.toContain('arkme_')
+    expect(directory).not.toMatch(/from ['"]node:/)
+    expect(directory).not.toMatch(/from ['"].*(?:recording-directory-source|recording-import-probe|services\/recording-service)/)
+    expect(directory).not.toMatch(/\bRecordingImportJob\b/)
+    expect(directory).not.toContain('isUnresolvedRecordingImportJob')
+    expect(directory).not.toContain('temporaryDirectory')
+    expect(recordingService).not.toContain("from '../recording-directory-import.js'")
 
     const gateway = readFileSync(join(root, 'src/services/recording-import-gateway.ts'), 'utf8')
     const source = readFileSync(join(root, 'src/recording-import-probe.ts'), 'utf8')

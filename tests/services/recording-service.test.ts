@@ -1,4 +1,4 @@
-import { access, mkdtemp, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -1666,6 +1666,7 @@ function ownerPage(
 
 function gatewayNoop(): RecordingImportGateway & RecordingImportOwnerGateway {
   return {
+    async findDirectoryImportSessions() { return [] },
     async findExistingFileNames() { return [] },
     async ensureSession() { return 'session' },
     async createChild() { return 'child' }, async upload() {},
@@ -1721,3 +1722,253 @@ function failedImportJob(index: number, createdAtMillis: number): RecordingImpor
     errorMessage: 'owner timeout',
   }
 }
+
+describe('recording import command mutual exclusion', () => {
+  async function fixture(phase: RecordingImportJob['phase'] = 'failed') {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-import-command-'))
+    const store = new ArkmeStateStore(root)
+    const jobs = [0, 1].map(index => ({
+      ...failedImportJob(index, Date.now()), phase: index === 0 ? phase : 'failed' as const,
+      sourceHandle: join(root, `${index}.upload`), sessionId: `session-${index}`, childId: `child-${index}`,
+    }))
+    for (const job of jobs) {
+      await writeFile(job.sourceHandle, Buffer.alloc(job.fileSize))
+      await store.putRecordingImportJob(42, job)
+    }
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const gateway = gatewayNoop()
+    gateway.upload = vi.fn(async () => undefined)
+    gateway.deleteSession = vi.fn(async () => undefined)
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    const { sealRecordingImportRef } = await import('../../src/recording-import-ref.js')
+    const key = await store.uniqueCode()
+    const refs = jobs.map(job => sealRecordingImportRef({ jobId: job.jobId, userId: 42 }, key))
+    return { store, jobs, refs, gateway, service,
+      dispose: async () => { service.dispose(); await rm(root, { recursive: true, force: true }) },
+    }
+  }
+
+  it('rejects retry and duplicate cancellation while deletion is pending without blocking another job', async () => {
+    const f = await fixture()
+    let release!: () => void
+    let started!: () => void
+    const deleting = new Promise<void>(resolve => { started = resolve })
+    const released = new Promise<void>(resolve => { release = resolve })
+    vi.mocked(f.gateway.deleteSession).mockImplementationOnce(async () => { started(); await released })
+    const cancelled = f.service.cancelRecordingImport(f.refs[0]!, 2)
+    try {
+      await deleting
+      await expect(f.service.retryRecordingImport(f.refs[0]!, 2)).rejects.toMatchObject({
+        code: 'recording-import-command-in-progress', retryable: true, httpStatus: 409,
+      })
+      await expect(f.service.cancelRecordingImport(f.refs[0]!, 2)).rejects.toMatchObject({
+        code: 'recording-import-command-in-progress', retryable: true,
+      })
+      await f.service.retryRecordingImport(f.refs[1]!, 2)
+      await expect(f.service.waitRecordingImport(f.refs[1]!)).resolves.toMatchObject({ phase: 'accepted' })
+      expect(vi.mocked(f.gateway.upload).mock.calls.every(([job]) => job.jobId === f.jobs[1]!.jobId)).toBe(true)
+      expect(f.gateway.deleteSession).toHaveBeenCalledTimes(1)
+      release()
+      await expect(cancelled).resolves.toMatchObject({ phase: 'cancelled' })
+      await expect(f.store.getRecordingImportJob(42, f.jobs[0]!.jobId)).resolves.toMatchObject({ phase: 'cancelled' })
+      await expect(access(f.jobs[0]!.sourceHandle)).rejects.toThrow()
+    } finally { release(); await cancelled.catch(() => undefined); await f.dispose() }
+  })
+
+  it('does not restart a persisted runner through resume, list, or wait while its cancellation is deleting', async () => {
+    const f = await fixture('uploading')
+    let release!: () => void
+    let started!: () => void
+    const deleting = new Promise<void>(resolve => { started = resolve })
+    const released = new Promise<void>(resolve => { release = resolve })
+    vi.mocked(f.gateway.deleteSession).mockImplementationOnce(async () => { started(); await released })
+    const cancelled = f.service.cancelRecordingImport(f.refs[0]!, 2)
+    try {
+      await deleting
+      await f.service.resumeRecordingImports()
+      await f.service.recordingImportList()
+      await f.service.waitRecordingImport(f.refs[0]!)
+      expect(f.gateway.upload).not.toHaveBeenCalled()
+      release()
+      await expect(cancelled).resolves.toMatchObject({ phase: 'cancelled' })
+    } finally { release(); await cancelled.catch(() => undefined); await f.dispose() }
+  })
+
+  it('rejects cancellation while retry commits its revision, then permits a normal later cancellation', async () => {
+    const f = await fixture()
+    let release!: () => void
+    let started!: () => void
+    const committing = new Promise<void>(resolve => { started = resolve })
+    const released = new Promise<void>(resolve => { release = resolve })
+    const replace = f.store.replaceRecordingImportJob.bind(f.store)
+    vi.spyOn(f.store, 'replaceRecordingImportJob').mockImplementationOnce(async (...args) => {
+      started(); await released; return await replace(...args)
+    })
+    vi.mocked(f.gateway.upload).mockImplementation(async (_job, _progress, signal) => {
+      await new Promise<void>((_resolve, reject) => {
+        const abort = () => { reject(new Error('aborted')) }
+        signal?.addEventListener('abort', abort, { once: true })
+        if (signal?.aborted) abort()
+      })
+    })
+    const retry = f.service.retryRecordingImport(f.refs[0]!, 2)
+    try {
+      await committing
+      await expect(f.service.cancelRecordingImport(f.refs[0]!, 2)).rejects.toMatchObject({
+        code: 'recording-import-command-in-progress', retryable: true,
+      })
+      expect(f.gateway.deleteSession).not.toHaveBeenCalled()
+      release()
+      const resumed = await retry
+      await expect(f.service.cancelRecordingImport(f.refs[0]!, resumed.revision)).resolves.toMatchObject({ phase: 'cancelled' })
+    } finally { release(); await retry.catch(() => undefined); await f.dispose() }
+  })
+
+  it('releases the command guard after failed owner deletion so the original task remains retryable', async () => {
+    const f = await fixture()
+    vi.mocked(f.gateway.deleteSession).mockRejectedValueOnce(new Error('owner unavailable'))
+    try {
+      await expect(f.service.cancelRecordingImport(f.refs[0]!, 2)).rejects.toThrow('owner unavailable')
+      await expect(f.service.retryRecordingImport(f.refs[0]!, 2)).resolves.toMatchObject({ phase: 'uploading' })
+      await expect(f.service.waitRecordingImport(f.refs[0]!)).resolves.toMatchObject({ phase: 'accepted' })
+    } finally { await f.dispose() }
+  })
+})
+
+describe('recording import admission boundary', () => {
+  it('keeps local retry identity separate from Audio same-name evidence in a directory snapshot', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-directory-snapshot-'))
+    const store = new ArkmeStateStore(root)
+    const job = failedImportJob(1, 1_700_000_000_000)
+    await store.putRecordingImportJob(42, job)
+    const gateway = gatewayNoop()
+    gateway.findExistingFileNames = vi.fn(async () => ['remote.wav'])
+    gateway.findDirectoryImportSessions = vi.fn(async () => [])
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    const controller = new AbortController()
+    const snapshot = await service.recordingDirectorySnapshot([
+      { fileName: job.fileName, startAtMillis: job.startAtMillis },
+      { fileName: 'remote.wav', startAtMillis: 1_700_000_000_000 },
+      { fileName: 'new.wav', startAtMillis: 1_600_000_000_000 },
+    ], 42, controller.signal)
+    expect(snapshot).toMatchObject({ local: [{ identity: { userId: job.userId, fileName: job.fileName, fileSize: job.fileSize, sha256: job.sha256, startAtMillis: job.startAtMillis, belongUserId: job.belongUserId }, task: { importRef: expect.any(String), revision: job.revision, phase: job.phase } }], existingFileNames: ['remote.wav'], owner: [] })
+    expect(Object.keys(snapshot.local[0]!).sort()).toEqual(['identity', 'task'])
+    for (const key of ['sourceHandle', 'sessionId', 'childId', 'uploadCheckpoint', 'failedFromPhase']) {
+      expect(snapshot.local[0]!.identity).not.toHaveProperty(key)
+      expect(snapshot.local[0]!.task).not.toHaveProperty(key)
+    }
+    expect(gateway.findDirectoryImportSessions).toHaveBeenCalledWith({
+      viewerUserId: 42, fileNames: ['remote.wav'], fromMillis: 1_700_000_000_000, toMillis: 1_700_000_000_001, signal: controller.signal,
+    })
+  })
+
+  it('does not load Audio history when no candidate has an owner filename match', async () => {
+    const store = new ArkmeStateStore(await mkdtemp(join(tmpdir(), 'arkme-directory-new-')))
+    const gateway = gatewayNoop()
+    gateway.findDirectoryImportSessions = vi.fn(async () => [])
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    expect(await service.recordingDirectorySnapshot([{ fileName: 'new.wav', startAtMillis: 1_700_000_000_000 }], 42)).toEqual({ local: [], existingFileNames: [], owner: [] })
+    expect(gateway.findDirectoryImportSessions).not.toHaveBeenCalled()
+  })
+
+  it('rejects a directory snapshot if its account changes during owner lookup', async () => {
+    const store = new ArkmeStateStore(await mkdtemp(join(tmpdir(), 'arkme-directory-account-')))
+    let userId = 42
+    const sessions = { read: async () => ({ userId, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const gateway = gatewayNoop()
+    gateway.findExistingFileNames = vi.fn(async () => { userId = 43; return [] })
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    await expect(service.recordingDirectorySnapshot([{ fileName: 'new.wav', startAtMillis: 1_700_000_000_000 }], 42))
+      .rejects.toMatchObject({ code: 'recording-import-account-mismatch' })
+  })
+
+  it('cancels only the directory wait while an admitted upload continues to acceptance', async () => {
+    const store = new ArkmeStateStore(await mkdtemp(join(tmpdir(), 'arkme-directory-wait-')))
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const gateway = gatewayNoop()
+    let release!: () => void
+    let started!: () => void
+    let uploadSignal: AbortSignal | undefined
+    const uploadStarted = new Promise<void>(resolve => { started = resolve })
+    const uploadReleased = new Promise<void>(resolve => { release = resolve })
+    gateway.upload = vi.fn(async (_job, _progress, signal) => { uploadSignal = signal; started(); await uploadReleased })
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway, {
+      recordingImportSource: { inspect: async () => ({ kind: 'wav', durationMillis: 1000 }), discard: vi.fn() },
+    }))
+    try {
+      const job = await service.acceptRecordingImport('/private/test.upload', {
+        fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: 100, sha256: 'a'.repeat(64), startAtMillis: 1_700_000_000_000, belongUserId: 42,
+      }, 42)
+      await uploadStarted
+      const controller = new AbortController()
+      const waiting = service.waitRecordingImport(job.importRef, controller.signal)
+      controller.abort()
+      await expect(waiting).rejects.toThrow()
+      expect(uploadSignal?.aborted).toBe(false)
+      release()
+      await expect(service.waitRecordingImport(job.importRef)).resolves.toMatchObject({ phase: 'accepted' })
+      expect(gateway.upload).toHaveBeenCalledTimes(1)
+    } finally { release(); service.dispose() }
+  })
+
+  it('does not resume a retry cancelled while opening its task reference', async () => {
+    const { sealRecordingImportRef } = await import('../../src/recording-import-ref.js')
+    const root = await mkdtemp(join(tmpdir(), 'arkme-retry-cancel-'))
+    const store = new ArkmeStateStore(root)
+    const failed = failedImportJob(1, 1_700_000_000_000)
+    await store.putRecordingImportJob(42, failed)
+    const ref = sealRecordingImportRef({ jobId: failed.jobId, userId: 42 }, await store.uniqueCode())
+    const controller = new AbortController()
+    const readCode = store.uniqueCode.bind(store)
+    vi.spyOn(store, 'uniqueCode').mockImplementationOnce(async () => { const code = await readCode(); controller.abort(); return code })
+    const gateway = gatewayNoop()
+    gateway.upload = vi.fn()
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    try {
+      await expect(service.retryRecordingImport(ref, failed.revision, controller.signal)).rejects.toThrow()
+      expect(await store.getRecordingImportJob(42, failed.jobId)).toMatchObject({ phase: 'failed', revision: failed.revision })
+      expect(gateway.upload).not.toHaveBeenCalled()
+    } finally { service.dispose() }
+  })
+
+  it('does not admit or upload after cancellation while the audio is being inspected', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-import-cancel-probe-'))
+    const store = new ArkmeStateStore(root)
+    const controller = new AbortController()
+    const gateway = gatewayNoop()
+    gateway.ensureSession = vi.fn(async () => 'session')
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway, {
+      recordingImportSource: { inspect: async () => { controller.abort(); return { kind: 'wav', durationMillis: 1000 } }, discard: vi.fn() },
+    }))
+    try {
+      await expect(service.acceptRecordingImport('/private/cancelled.upload', {
+        fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: 100, sha256: 'a'.repeat(64), startAtMillis: 1_700_000_000_000, belongUserId: 42,
+      }, 42, controller.signal)).rejects.toThrow()
+      expect(await store.listRecordingImportJobs(42)).toEqual([])
+      expect(gateway.ensureSession).not.toHaveBeenCalled()
+    } finally { service.dispose() }
+  })
+
+  it('obtains the response reference before persisting a new task', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-import-ref-failure-'))
+    const store = new ArkmeStateStore(root)
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gatewayNoop(), {
+      recordingImportSource: { inspect: async () => ({ kind: 'wav', durationMillis: 1000 }), discard: vi.fn() },
+    }))
+    vi.spyOn(store, 'uniqueCode').mockRejectedValueOnce(new Error('ref unavailable'))
+    try {
+      await expect(service.acceptRecordingImport('/private/new.upload', {
+        fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: 100, sha256: 'a'.repeat(64), startAtMillis: 1_700_000_000_000, belongUserId: 42,
+      }, 42)).rejects.toThrow('ref unavailable')
+      expect(await store.listRecordingImportJobs(42)).toEqual([])
+    } finally { service.dispose() }
+  })
+})

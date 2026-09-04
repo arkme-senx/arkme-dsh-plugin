@@ -3,6 +3,7 @@ import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import {
   recordingImportCanonicalMimeType,
   sameRecordingImportIdentity,
+  isUnresolvedRecordingImportJob,
   toPublicRecordingImportJob,
   type PublicRecordingImportJob,
   type PublicRecordingImportCurrentSnapshot,
@@ -16,6 +17,8 @@ import {
   type RecordingImportOwnerTaskSnapshot,
   type RecordingImportOwnerGateway,
   type RecordingImportSource,
+  type RecordingDirectoryCandidate,
+  type RecordingDirectorySnapshot,
 } from '../recording-import-contract.js'
 import { RecordingImportCoordinator, type RecordingImportGateway } from '../recording-import-coordinator.js'
 import { openRecordingImportRef, sealRecordingImportRef } from '../recording-import-ref.js'
@@ -198,6 +201,7 @@ function recordingImportOwnerStatus(
 
 export class RecordingService {
   private readonly recordingImports: RecordingImportCoordinator
+  private readonly importCommands = new Set<string>()
   private readonly importRuns = new Map<string, {
     controller: AbortController
     promise: Promise<void>
@@ -478,7 +482,7 @@ export class RecordingService {
     const session = await this.runtime.requireSession()
     const unresolvedLocalFileNameKeys = new Set(
       (await this.runtime.stateStore.listRecordingImportJobs(session.userId))
-        .filter(job => !['accepted', 'cancelled'].includes(job.phase))
+        .filter(isUnresolvedRecordingImportJob)
         .map(job => recordingImportFileNameKey(job.fileName)),
     )
     const audioOwnerFileNameKeys = new Set<string>()
@@ -498,6 +502,38 @@ export class RecordingService {
     }
   }
 
+  async recordingDirectorySnapshot(
+    candidates: readonly RecordingDirectoryCandidate[], expectedUserId: number, signal?: AbortSignal,
+  ): Promise<RecordingDirectorySnapshot> {
+    this.assertWorkbenchEnabled()
+    signal?.throwIfAborted()
+    const session = await this.requireRecordingImportSession(expectedUserId)
+    const jobs = (await this.runtime.stateStore.listRecordingImportJobs(session.userId))
+      .filter(isUnresolvedRecordingImportJob)
+    const existingFileNames = candidates.length === 0 ? [] : await this.recordingImportOwnerGateway.findExistingFileNames({
+      viewerUserId: session.userId, fileNames: candidates.map(file => file.fileName),
+      ...(signal === undefined ? {} : { signal }),
+    })
+    const existingKeys = new Set(existingFileNames.map(recordingImportFileNameKey))
+    const duplicates = candidates.filter(file => existingKeys.has(recordingImportFileNameKey(file.fileName)))
+    const owner = duplicates.length === 0 ? [] : await this.recordingImportOwnerGateway.findDirectoryImportSessions({
+      viewerUserId: session.userId, fileNames: duplicates.map(file => file.fileName),
+      fromMillis: Math.min(...duplicates.map(file => file.startAtMillis)),
+      toMillis: Math.max(...duplicates.map(file => file.startAtMillis)) + 1,
+      ...(signal === undefined ? {} : { signal }),
+    })
+    const local = await Promise.all(jobs.map(async job => ({
+      identity: {
+        userId: job.userId, fileName: job.fileName, fileSize: job.fileSize,
+        sha256: job.sha256, startAtMillis: job.startAtMillis, belongUserId: job.belongUserId,
+      },
+      task: toPublicRecordingImportJob(job, await this.recordingImportRef(job)),
+    })))
+    await this.requireRecordingImportSession(expectedUserId)
+    signal?.throwIfAborted()
+    return { local, existingFileNames, owner }
+  }
+
   async acceptRecordingImport(
     sourceHandle: string,
     metadata: {
@@ -509,7 +545,9 @@ export class RecordingService {
       belongUserId: number
     },
     expectedUserId: number,
+    signal?: AbortSignal,
   ): Promise<PublicRecordingImportJob> {
+    signal?.throwIfAborted()
     this.assertWorkbenchEnabled()
     let session = await this.requireRecordingImportSession(expectedUserId)
     if (!/^[a-f0-9]{64}$/.test(metadata.sha256)) {
@@ -532,11 +570,13 @@ export class RecordingService {
       belongUserId,
     }
     const currentJobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
-    const unresolvedJobs = currentJobs.filter(job => !['accepted', 'cancelled'].includes(job.phase))
+    const unresolvedJobs = currentJobs.filter(isUnresolvedRecordingImportJob)
     const existing = unresolvedJobs.find(job => sameRecordingImportIdentity(job, identity))
     if (existing !== undefined) {
+      const importRef = await this.recordingImportRef(existing)
+      signal?.throwIfAborted()
       await this.recordingImportSource.discard(sourceHandle).catch(() => undefined)
-      return toPublicRecordingImportJob(existing, await this.recordingImportRef(existing))
+      return toPublicRecordingImportJob(existing, importRef)
     }
     const fileNameKey = recordingImportFileNameKey(metadata.fileName)
     if (unresolvedJobs.some(job => recordingImportFileNameKey(job.fileName) === fileNameKey)) {
@@ -555,8 +595,11 @@ export class RecordingService {
         409,
       )
     }
+    signal?.throwIfAborted()
     const probe = await this.recordingImportSource.inspect(sourceHandle, metadata)
+    const signingKey = await this.runtime.stateStore.uniqueCode()
     session = await this.requireRecordingImportSession(expectedUserId)
+    signal?.throwIfAborted()
     if (startAtMillis + probe.durationMillis > Date.now()) {
       throw new ArkmePluginError('recording-import-end-invalid', '录音结束时间不能晚于当前时间', false)
     }
@@ -578,14 +621,16 @@ export class RecordingService {
       createdAtMillis: now,
       updatedAtMillis: now,
     }
+    const importRef = sealRecordingImportRef({ jobId: job.jobId, userId: job.userId }, signingKey)
     const admission = await this.runtime.stateStore.admitRecordingImportJob(
       session.userId,
       job,
       RECORDING_IMPORT_UNRESOLVED_LIMIT,
+      signal,
     )
     if (admission.kind === 'existing') {
       await this.recordingImportSource.discard(sourceHandle).catch(() => undefined)
-      return toPublicRecordingImportJob(admission.job, await this.recordingImportRef(admission.job))
+      return toPublicRecordingImportJob(admission.job, sealRecordingImportRef({ jobId: admission.job.jobId, userId: admission.job.userId }, signingKey))
     }
     if (admission.kind === 'duplicate-file-name') {
       throw new ArkmePluginError(
@@ -604,7 +649,6 @@ export class RecordingService {
       )
     }
     const selected = admission.job
-    const importRef = await this.recordingImportRef(selected)
     this.runRecordingImport(selected)
     return toPublicRecordingImportJob(selected, importRef)
   }
@@ -617,6 +661,28 @@ export class RecordingService {
     return toPublicRecordingImportJob(job, importRef)
   }
 
+  async waitRecordingImport(importRef: string, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
+    this.assertWorkbenchEnabled()
+    signal?.throwIfAborted()
+    const { userId, jobId } = await this.openRecordingImportRef(importRef)
+    const job = await this.runtime.stateStore.getRecordingImportJob(userId, jobId)
+    if (job === undefined) throw new ArkmePluginError('recording-import-not-found', '录音导入任务不存在', false, 404)
+    signal?.throwIfAborted()
+    if (['prepared', 'uploading', 'finalizing'].includes(job.phase)) this.runRecordingImport(job)
+    const run = this.importRuns.get(jobId)?.promise
+    if (run !== undefined) {
+      // Ending a directory invocation stops waiting, not its already admitted upload.
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { reject(signal?.reason) }
+        signal?.addEventListener('abort', abort, { once: true })
+        if (signal?.aborted) abort()
+        void run.then(resolve, reject).finally(() => signal?.removeEventListener('abort', abort))
+      })
+    }
+    signal?.throwIfAborted()
+    return await this.recordingImportStatus(importRef)
+  }
+
   async recordingImportList(signal?: AbortSignal): Promise<PublicRecordingImportCurrentSnapshot> {
     this.assertWorkbenchEnabled()
     const session = await this.runtime.requireSession()
@@ -625,7 +691,7 @@ export class RecordingService {
       if (['prepared', 'uploading', 'finalizing'].includes(job.phase)) this.runRecordingImport(job)
     }
     const newestFirst = (left: RecordingImportJob, right: RecordingImportJob) => right.createdAtMillis - left.createdAtMillis
-    const unresolved = jobs.filter(job => !['accepted', 'cancelled'].includes(job.phase)).sort(newestFirst)
+    const unresolved = jobs.filter(isUnresolvedRecordingImportJob).sort(newestFirst)
     let activeOwnerTasks: Awaited<ReturnType<RecordingImportOwnerGateway['listOwnerTasks']>>['tasks'] | undefined
     let owner: PublicRecordingImportCurrentSnapshot['owner'] = { state: 'available' }
     try {
@@ -773,35 +839,46 @@ export class RecordingService {
       .map(async job => await this.runtime.stateStore.removeRecordingImportJob(session.userId, job.jobId)))
   }
 
-  async retryRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> {
+  async retryRecordingImport(importRef: string, expectedRevision: number, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
+    signal?.throwIfAborted()
     this.assertWorkbenchEnabled()
     const { userId, jobId } = await this.openRecordingImportRef(importRef)
-    const resumed = await this.recordingImports.resumeRetry(userId, jobId, expectedRevision)
-    const priorRun = this.importRuns.get(jobId)?.promise
-    const controller = new AbortController()
-    const run = (priorRun ?? Promise.resolve())
-      .then(async () => { await this.recordingImports.run(userId, jobId, controller.signal) })
-    this.trackRecordingImportRun(jobId, resumed.revision, run, controller)
-    return toPublicRecordingImportJob(resumed, importRef)
+    this.beginRecordingImportCommand(jobId)
+    try {
+      const resumed = await this.recordingImports.resumeRetry(userId, jobId, expectedRevision, signal)
+      const priorRun = this.importRuns.get(jobId)?.promise
+      const controller = new AbortController()
+      const run = (priorRun ?? Promise.resolve())
+        .then(async () => { await this.recordingImports.run(userId, jobId, controller.signal) })
+      this.trackRecordingImportRun(jobId, resumed.revision, run, controller)
+      return toPublicRecordingImportJob(resumed, importRef)
+    } finally {
+      this.importCommands.delete(jobId)
+    }
   }
 
   async cancelRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> {
     this.assertWorkbenchEnabled()
     const { userId, jobId } = await this.openRecordingImportRef(importRef)
-    const active = this.importRuns.get(jobId)
-    if (active !== undefined) {
-      const observed = await this.runtime.stateStore.getRecordingImportJob(userId, jobId)
-      if (observed === undefined || expectedRevision < active.startedRevision || expectedRevision > observed.revision) {
-        throw new ArkmePluginError('recording-import-revision-conflict', '任务状态已变化，请刷新后重试', true, 409)
+    this.beginRecordingImportCommand(jobId)
+    try {
+      const active = this.importRuns.get(jobId)
+      if (active !== undefined) {
+        const observed = await this.runtime.stateStore.getRecordingImportJob(userId, jobId)
+        if (observed === undefined || expectedRevision < active.startedRevision || expectedRevision > observed.revision) {
+          throw new ArkmePluginError('recording-import-revision-conflict', '任务状态已变化，请刷新后重试', true, 409)
+        }
       }
+      active?.controller.abort()
+      await active?.promise
+      const current = active === undefined
+        ? undefined
+        : await this.runtime.stateStore.getRecordingImportJob(userId, jobId)
+      const cancelled = await this.recordingImports.cancel(userId, jobId, current?.revision ?? expectedRevision)
+      return toPublicRecordingImportJob(cancelled, importRef)
+    } finally {
+      this.importCommands.delete(jobId)
     }
-    active?.controller.abort()
-    await active?.promise
-    const current = active === undefined
-      ? undefined
-      : await this.runtime.stateStore.getRecordingImportJob(userId, jobId)
-    const cancelled = await this.recordingImports.cancel(userId, jobId, current?.revision ?? expectedRevision)
-    return toPublicRecordingImportJob(cancelled, importRef)
   }
 
   async resumeRecordingImports(): Promise<void> {
@@ -814,7 +891,7 @@ export class RecordingService {
   }
 
   private runRecordingImport(job: RecordingImportJob): void {
-    if (this.importRuns.has(job.jobId)) return
+    if (this.importCommands.has(job.jobId) || this.importRuns.has(job.jobId)) return
     const controller = new AbortController()
     this.trackRecordingImportRun(
       job.jobId,
@@ -822,6 +899,15 @@ export class RecordingService {
       this.recordingImports.run(job.userId, job.jobId, controller.signal).then(() => undefined),
       controller,
     )
+  }
+
+  private beginRecordingImportCommand(jobId: string): void {
+    if (this.importCommands.has(jobId)) {
+      throw new ArkmePluginError(
+        'recording-import-command-in-progress', '该录音任务正在执行重试或取消，请稍后重试', true, 409,
+      )
+    }
+    this.importCommands.add(jobId)
   }
 
   private async requireRecordingImportSession(expectedUserId: number): Promise<ArkmeSessionCredentials> {

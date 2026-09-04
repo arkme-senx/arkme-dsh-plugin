@@ -527,16 +527,18 @@ export class ArkmeLocalDatabase {
     userId: number,
     job: RecordingImportJob,
     unresolvedLimit: number,
+    signal?: AbortSignal,
   ): ReturnType<ArkmeStateStore['admitRecordingImportJob']> {
-    return await this.operationalState.admitRecordingImportJob(userId, job, unresolvedLimit)
+    return await this.operationalState.admitRecordingImportJob(userId, job, unresolvedLimit, signal)
   }
 
   async replaceRecordingImportJob(
     userId: number,
     job: RecordingImportJob,
     expectedRevision: number,
+    signal?: AbortSignal,
   ): Promise<boolean> {
-    return await this.operationalState.replaceRecordingImportJob(userId, job, expectedRevision)
+    return await this.operationalState.replaceRecordingImportJob(userId, job, expectedRevision, signal)
   }
 
   async removeRecordingImportJob(userId: number, jobId: string): Promise<void> {
