@@ -81,9 +81,11 @@ describe('RecordingService', () => {
       state: 'processing', items: [expect.objectContaining({ id: 'summary-opaque', status: 'processing' })],
     })
     const create = requests.find(request => request.path.endsWith('/summary/create'))
+    const timezoneOffset = -new Date(dayStart).getTimezoneOffset() * 60_000
     expect(create?.body).toMatchObject({
       date_stamp: dayStart,
-      tz_offset: -new Date(dayStart).getTimezoneOffset() * 60_000,
+      // JSON serialization normalizes UTC's negative zero to positive zero.
+      tz_offset: timezoneOffset === 0 ? 0 : timezoneOffset,
       from_stamp: dayStart + 14 * 3_600_000,
       to_stamp: dayStart + 14 * 3_600_000 + 5_000,
       model_type: 1,
