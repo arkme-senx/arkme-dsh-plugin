@@ -65,6 +65,8 @@ import {
 import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeMessageReadReceiptLine } from './ArkmeMessageReadReceipt.js'
+import { ArkmeMessagePreparingIndicator } from './ArkmeMessagePreparingIndicator.js'
+import { useMessagePreparing } from './use-message-preparing.js'
 import {
   ArkmeMessageWithdrawalDialog, arkmeCanWithdrawTimelineMessage,
 } from './ArkmeMessageWithdrawalDialog.js'
@@ -2566,6 +2568,7 @@ export function ArkmeSurface({
   const surfaceRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
+  const endAccessoryRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const newerSentinelRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLDivElement>(null)
@@ -2719,6 +2722,11 @@ export function ArkmeSurface({
   useEffect(() => () => { for (const controller of stageControllers.current) controller.abort() }, [authenticatedUserId])
   const [busy, setBusy] = useState(false)
   const preparingFiles = composerDraftKey !== undefined && preparingKeys.has(composerDraftKey)
+  const messagePreparing = useMessagePreparing({
+    source, accountScope: authenticatedAccountKey,
+    enabled: activeConversation && activeRecordReeditComposer === undefined && !preparingFiles,
+    focused: composerInputFocused,
+  })
   // Transport is per message.  It must never lock the next draft while a previous
   // message waits for the server, otherwise fast keyboard input is dropped.
   const canSend = activeRecordReeditComposer === undefined
@@ -4514,6 +4522,7 @@ export function ArkmeSurface({
     const rawTextContent = serializedDraft.text
     const textContent = rawTextContent.trim()
     if (textContent === '' && readyDraft.attachments.length === 0) return
+    if (sameTargetComposer()) messagePreparing.stop()
     const capturePromise = recordInputCaptureOwner.finishForSubmit(targetDraftKey)
     const locationCaptureRequested = arkmeSourceSupportsLocationCapture(targetSource.kind)
     const locationCapturePromise: Promise<ArkmeRecordLocationForSendResult> = locationCaptureRequested
@@ -5122,6 +5131,19 @@ export function ArkmeSurface({
     activateContextPanel('records')
     setMemberRecords({ member, mode })
   }, [])
+  const focusEditedComposer = useCallback((cursor: number) => {
+    if (composerDraftKey === undefined) return
+    const scope = composerAsyncScopeRef.current
+    requestAnimationFrame(() => {
+      if (composerAsyncScopeRef.current !== scope || !activeConversationRef.current
+        || arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) !== scope.accountKey) return
+      const editor = textareaRef.current
+      if (editor === null || editor.disabled) return
+      editor.focus()
+      editor.setSelectionRange(cursor, cursor)
+      messagePreparing.input(arkmeComposerDraftStore.get(composerDraftKey).text)
+    })
+  }, [composerDraftKey, messagePreparing.input])
   const insertMemberMentionAt = useCallback((
     member: ArkmeConversationMemberItem,
     selectionStart: number,
@@ -5143,11 +5165,8 @@ export function ArkmeSurface({
     setMemberMenu(undefined)
     setMentionTrigger(undefined)
     if (cursor === undefined) return
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus()
-      textareaRef.current?.setSelectionRange(cursor, cursor)
-    })
-  }, [composerDraftKey, composerMentionsEnabled, syncComposerUserInput])
+    focusEditedComposer(cursor)
+  }, [composerDraftKey, composerMentionsEnabled, focusEditedComposer, syncComposerUserInput])
 
   const insertEmoji = useCallback((emoji: ArkmeEmoji) => {
     if (composerDraftKey === undefined || busy) return
@@ -5157,11 +5176,8 @@ export function ArkmeSurface({
     const end = textarea?.selectionEnd ?? start
     const caretIndex = arkmeComposerDraftStore.insertEmoji(composerDraftKey, emoji, start, end)
     if (caretIndex === undefined) return
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus()
-      textareaRef.current?.setSelectionRange(caretIndex, caretIndex)
-    })
-  }, [busy, composerDraftKey, draft, syncComposerUserInput])
+    focusEditedComposer(caretIndex)
+  }, [busy, composerDraftKey, draft, focusEditedComposer, syncComposerUserInput])
   const insertMemberMention = useCallback((member: ArkmeConversationMemberItem) => {
     const textarea = textareaRef.current
     const start = textarea?.selectionStart ?? draft.length
@@ -5180,10 +5196,7 @@ export function ArkmeSurface({
       )
       setMentionTrigger(undefined)
       if (cursor === undefined) return
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus()
-        textareaRef.current?.setSelectionRange(cursor, cursor)
-      })
+      focusEditedComposer(cursor)
       return
     }
     if (member.kind === 'bot') {
@@ -5198,14 +5211,11 @@ export function ArkmeSurface({
       )
       setMentionTrigger(undefined)
       if (cursor === undefined) return
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus()
-        textareaRef.current?.setSelectionRange(cursor, cursor)
-      })
+      focusEditedComposer(cursor)
       return
     }
     insertMemberMentionAt(member, mentionTrigger.startIndex, mentionTrigger.endIndex)
-  }, [composerDraftKey, composerMentionsEnabled, insertMemberMentionAt, mentionTrigger, syncComposerUserInput])
+  }, [composerDraftKey, composerMentionsEnabled, focusEditedComposer, insertMemberMentionAt, mentionTrigger, syncComposerUserInput])
   const insertHashTagCandidate = useCallback((item: ArkmeRecordTagItem) => {
     if (activeRecordReeditComposer !== undefined || hashTagTrigger === undefined || composerDraftKey === undefined) return
     syncComposerUserInput(true)
@@ -5219,11 +5229,8 @@ export function ArkmeSurface({
     activeHashTagStartRef.current = undefined
     dismissedHashTagStartRef.current = undefined
     if (cursor === undefined) return
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus()
-      textareaRef.current?.setSelectionRange(cursor, cursor)
-    })
-  }, [activeRecordReeditComposer, composerDraftKey, hashTagTrigger, syncComposerUserInput])
+    focusEditedComposer(cursor)
+  }, [activeRecordReeditComposer, composerDraftKey, focusEditedComposer, hashTagTrigger, syncComposerUserInput])
   const updateComposerRichTrigger = useCallback((text: string, selectionStart: number, selectionEnd: number) => {
     if (activeRecordReeditComposer !== undefined) {
       setHashTagTrigger(undefined)
@@ -6255,7 +6262,7 @@ export function ArkmeSurface({
     conversationCacheRef.current.storeViewport(pending.sourceKey, arkmeConversationViewport(body))
     pendingViewportRestoreRef.current = undefined
   }, [active, displayRows, timelineStateKey])
-  useConversationResizeAnchor(bodyRef, active && activeConversation ? conversationKey : undefined)
+  useConversationResizeAnchor(bodyRef, active && activeConversation ? conversationKey : undefined, endAccessoryRef)
   const handleConversationScroll = useCallback(() => {
     const body = bodyRef.current
     if (body === null || timelineStateKey === '') return
@@ -6697,6 +6704,7 @@ export function ArkmeSurface({
           </div> : <>
           <div className="arkme-conversation-body" ref={bodyRef} style={{
             ...styles.body,
+            ...(displayRows.length === 0 ? { display: 'flex', flexDirection: 'column' as const } : {}),
             ...(activeSelectMode === undefined ? {} : styles.bodySelectMode),
           }} onScroll={handleConversationScroll}>
             {error !== '' && <div style={styles.error}>{error}</div>}
@@ -6943,6 +6951,13 @@ export function ArkmeSurface({
               })}
             </ul>}
             <div ref={newerSentinelRef} style={styles.sentinel} />
+            <div ref={endAccessoryRef} style={{ flexShrink: 0, ...(displayRows.length === 0 ? { marginTop: 'auto' } : {}) }}>
+              {activeConversation && activeSelectMode === undefined && !newerHasMore
+                && timelineStateKey === conversationKey && timelineLoadingKey !== conversationKey && error === ''
+                && (source?.kind === 'private_chat' || source?.kind === 'group_chat')
+                && source.sourceKey !== undefined && authenticatedAccountKey !== undefined
+                && <ArkmeMessagePreparingIndicator sourceKey={source.sourceKey} accountScope={authenticatedAccountKey} />}
+            </div>
             {newMessageCount > 0 && <button type="button" style={styles.newMessages} onClick={scrollToLatest}>
               {newMessageCount} 条新消息
             </button>}
@@ -7162,8 +7177,9 @@ export function ArkmeSurface({
             </div>}
             <ArkmeRichComposerInput key={activeRecordReeditComposer === undefined ? composerDraftKey : `record-reedit:${activeRecordReeditComposer.generation}`} className="arkme-conversation-textarea" ref={textareaRef} style={{ ...styles.textarea!, ...composerResize.editorStyle }} value={visibleComposerText} mentions={activeRecordReeditComposer === undefined ? composerDraft.mentions : []} emojis={activeRecordReeditComposer === undefined ? composerDraft.emojis : []} maxLength={activeRecordReeditComposer?.snapshot?.maxTextLength ?? 20000} placeholder={effectiveComposerPlaceholder} ariaLabel={activeRecordReeditComposer === undefined ? effectiveComposerPlaceholder : '重新编辑快记'} disabled={activeRecordReeditComposer === undefined ? preparingFiles : activeRecordReeditComposer.loading || activeRecordReeditComposer.busy}
               onTextChange={updateComposerText}
-              onFocus={() => { setComposerInputFocused(true) }}
-              onBlur={() => { setComposerInputFocused(false) }}
+              onInputActivity={messagePreparing.input}
+              onFocus={() => { messagePreparing.focus(true); setComposerInputFocused(true) }}
+              onBlur={() => { messagePreparing.focus(false); setComposerInputFocused(false) }}
               onSelectionChange={updateComposerRichTrigger}
               onPaste={event => {
                 if (activeRecordReeditComposer !== undefined) return
@@ -7229,10 +7245,7 @@ export function ArkmeSurface({
                   )
                   if (caret !== undefined) {
                     event.preventDefault()
-                    requestAnimationFrame(() => {
-                      textareaRef.current?.focus()
-                      textareaRef.current?.setSelectionRange(caret, caret)
-                    })
+                    focusEditedComposer(caret)
                     return
                   }
                 }

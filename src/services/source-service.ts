@@ -1759,6 +1759,23 @@ export class SourceService {
     return `arkme-chat-timeline-item-v1.${digest}`
   }
 
+  async chatPreparingActorKey(viewerUserId: number, chatSessionUid: string, actorUserId: number): Promise<string> {
+    const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
+      .update(`chat-preparing-actor-v1:${String(viewerUserId)}:${chatSessionUid.trim()}:${String(actorUserId)}`)
+      .digest('base64url')
+    return `arkme-chat-preparing-actor-v1.${digest}`
+  }
+
+  async chatPreparingActorPresentation(
+    viewerUserId: number, chatSessionUid: string, actorUserId: number,
+  ): Promise<{ actorKey: string; avatarRef: string }> {
+    const [actorKey, avatarRef] = await Promise.all([
+      this.chatPreparingActorKey(viewerUserId, chatSessionUid, actorUserId),
+      this.profile.sealProfileImageRef(viewerUserId, actorUserId),
+    ])
+    return { actorKey, avatarRef }
+  }
+
   async topicHierarchyKey(userId: number, topicUid: string): Promise<string> {
     const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`topic-hierarchy-key-v1:${String(userId)}:${topicUid.trim()}`)

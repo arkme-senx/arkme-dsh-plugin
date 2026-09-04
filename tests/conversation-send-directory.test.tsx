@@ -1,5 +1,6 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { arkmeMessagePreparing } from '../src/client/message-preparing-store.js'
 import type {
   ArkmeConversationMemberItem,
   ArkmeMessageCopyLinkSnapshotItem,
@@ -829,8 +830,65 @@ describe('conversation send directory projection', () => {
     arkmeChatDirectory.clear()
     arkmeChatTimelineDelta.publish([])
     arkmeMessageReadReceipts.activateAccount(undefined)
+    arkmeMessagePreparing.activateAccount(undefined)
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it.each([target, group])('keeps $kind preparing inside the message viewport after records, without changing records', async chat => {
+    activeSource = chat
+    arkmeChatDirectory.publish([chat])
+    arkmeUi.selectSource(chat)
+    timeline = [{ itemUid: 'latest', sequence: 8, senderName: '朋友', isMe: false,
+      sendAtMillis: 8, title: '', textContent: '最新消息', status: 1 }]
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const body = renderer!.root.findByProps({ className: 'arkme-conversation-body' })
+    const rowsBefore = body.findAll(node => node.props['data-arkme-conversation-row'] !== undefined)
+    await act(async () => {
+      arkmeMessagePreparing.activateAccount('test:42')
+      arkmeMessagePreparing.apply({ type: 'message-preparing', revision: 1, sourceKey: chat.sourceKey!, actorKey: 'peer',
+        prepareAtMillis: 48, expireAtMillis: 5048, preparingState: 1, stateVersion: 48, eventAtMillis: 48 })
+    })
+    const indicator = body.findByProps({ 'data-arkme-message-preparing': true })
+    const accessory = indicator.parent!.parent!
+    expect(accessory.parent).toBe(body)
+    const records = body.findByType('ul')
+    expect(body.children.indexOf(accessory)).toBeGreaterThan(body.children.indexOf(records))
+    expect(body.findAll(node => node.props['data-arkme-conversation-row'] !== undefined)).toEqual(rowsBefore)
+    expect(accessory.props.style?.marginTop).not.toBe('auto')
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation.startsWith('source.message-preparing.'))).toBe(false)
+  })
+
+  it('bottom-aligns the preparing accessory in an empty conversation and removes it when changing chats', async () => {
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    await act(async () => {
+      arkmeMessagePreparing.activateAccount('test:42')
+      arkmeMessagePreparing.apply({ type: 'message-preparing', revision: 1, sourceKey: target.sourceKey!, actorKey: 'peer',
+        prepareAtMillis: 48, expireAtMillis: 5048, preparingState: 1, stateVersion: 48, eventAtMillis: 48 })
+    })
+    const body = renderer!.root.findByProps({ className: 'arkme-conversation-body' })
+    expect(body.props.style).toMatchObject({ display: 'flex', flexDirection: 'column' })
+    const indicator = body.findByProps({ 'data-arkme-message-preparing': true })
+    expect(indicator.parent!.parent!.props.style).toMatchObject({ marginTop: 'auto', flexShrink: 0 })
+    expect(body.findAllByType('ul')).toHaveLength(0)
+    await act(async () => { arkmeUi.selectSource(other) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-preparing': true })).toHaveLength(0)
+  })
+
+  it('does not show preparing while the initial timeline is still loading', async () => {
+    const pending = deferred<unknown>()
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: unknown, signal?: AbortSignal) =>
+      operation === 'source.timeline' ? await pending.promise : await baseCall(operation, params, signal))
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    await act(async () => {
+      arkmeMessagePreparing.activateAccount('test:42')
+      arkmeMessagePreparing.apply({ type: 'message-preparing', revision: 1, sourceKey: target.sourceKey!, actorKey: 'peer',
+        prepareAtMillis: 48, expireAtMillis: 5048, preparingState: 1, stateVersion: 48, eventAtMillis: 48 })
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-preparing': true })).toHaveLength(0)
+    await act(async () => { pending.resolve({ source: target, items: [], hasMore: false }); await pending.promise })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-preparing': true })).toHaveLength(1)
   })
 
   it('does not expose a human mention action without a mention-scoped capability ref', () => {
@@ -1112,6 +1170,17 @@ describe('conversation send directory projection', () => {
     expect(exit.findByType('svg').props.width).toBe(18)
   })
 
+  it('does not expose preparing during message selection', async () => {
+    await enterMessageSelectMode({ itemUid: 'selected', messageActionRef: 'select-ref',
+      senderName: '朋友', isMe: false, sendAtMillis: 8, title: '', textContent: '消息', status: 1 })
+    await act(async () => {
+      arkmeMessagePreparing.activateAccount('test:42')
+      arkmeMessagePreparing.apply({ type: 'message-preparing', revision: 1, sourceKey: target.sourceKey!, actorKey: 'peer',
+        prepareAtMillis: 48, expireAtMillis: 5048, preparingState: 1, stateVersion: 48, eventAtMillis: 48 })
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-preparing': true })).toHaveLength(0)
+  })
+
   it.each([
     {
       label: '自己的短文本',
@@ -1328,6 +1397,59 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     expect(getUserMedia).toHaveBeenCalledOnce()
+  })
+
+  it.each(['report', 'cancel'] as const)('keeps real composer sends and the next draft independent of a pending preparing %s', async blocked => {
+    const pending = deferred<null>()
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === `source.message-preparing.${blocked}`) return await pending.promise
+      if (operation.startsWith('source.message-preparing.')) return null
+      return await baseCall(operation, params, signal)
+    })
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+    vi.useFakeTimers()
+    vi.setSystemTime(100_000)
+    try {
+      const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+      await act(async () => {
+        composer.props.onFocus()
+        composer.props.onTextChange('第一条正文')
+        composer.props.onInputActivity('第一条正文')
+        await vi.advanceTimersByTimeAsync(600)
+      })
+      expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-preparing.report')).toHaveLength(1)
+      await act(async () => {
+        renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      const draftKey = arkmeSourceComposerDraftKey(42, target)!
+      expect(arkmeComposerDraftStore.get(draftKey).text).toBe('')
+      expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.send-text')).toHaveLength(1)
+      await act(async () => {
+        composer.props.onTextChange('下一条草稿')
+        composer.props.onInputActivity('下一条草稿')
+        await vi.advanceTimersByTimeAsync(600)
+      })
+      expect(arkmeComposerDraftStore.get(draftKey).text).toBe('下一条草稿')
+      expect(renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.disabled).toBe(false)
+      await act(async () => {
+        renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.send-text')
+        .map(([, params]) => params.textContent)).toEqual(['第一条正文', '下一条草稿'])
+      const hints = mocks.callArkme.mock.calls.filter(([operation]) => operation.startsWith('source.message-preparing.'))
+      expect(hints.some(([operation]) => operation === `source.message-preparing.${blocked}`)).toBe(true)
+      expect(hints.every(([, params]) => !Object.hasOwn(params, 'textContent'))).toBe(true)
+    } finally {
+      await act(async () => { pending.resolve(null); await vi.advanceTimersByTimeAsync(0); renderer?.unmount() })
+      renderer = undefined
+      vi.useRealTimers()
+    }
   })
 
   it('keeps the owner directory unchanged after send until the authoritative session projection arrives', async () => {
@@ -3642,6 +3764,12 @@ describe('conversation send directory projection', () => {
     })
     expect(olderObservers).toHaveLength(1)
     expect(newerObservers).toHaveLength(1)
+    await act(async () => {
+      arkmeMessagePreparing.activateAccount('test:42')
+      arkmeMessagePreparing.apply({ type: 'message-preparing', revision: 1, sourceKey: target.sourceKey!, actorKey: 'peer',
+        prepareAtMillis: 48, expireAtMillis: 5048, preparingState: 1, stateVersion: 48, eventAtMillis: 48 })
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-preparing': true })).toHaveLength(0)
 
     act(() => {
       olderObservers.at(-1)!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
@@ -3674,6 +3802,7 @@ describe('conversation send directory projection', () => {
     expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', {
       sourceRef: target.sourceRef, limit: 40, cursor: { afterSequence: 13 },
     }, expect.any(AbortSignal))
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-preparing': true })).toHaveLength(1)
   })
 
   it('loads only one newer page until the bottom sentinel leaves and re-enters', async () => {

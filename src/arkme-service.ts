@@ -1435,6 +1435,8 @@ export class ArkmeService {
   }
 
   async markSourceRead(sourceRef: string, readSequence: number, options: { signal?: AbortSignal } = {}): Promise<ArkmeSourceReadResult> { return await this.chat.markSourceRead(sourceRef, readSequence, options) }
+  async reportMessagePreparing(sourceRef: string, prepareAtMillis: number, options: { signal?: AbortSignal } = {}): Promise<void> { await this.chat.reportMessagePreparing(sourceRef, prepareAtMillis, options) }
+  async cancelMessagePreparing(sourceRef: string, cancelAtMillis: number, options: { signal?: AbortSignal } = {}): Promise<void> { await this.chat.cancelMessagePreparing(sourceRef, cancelAtMillis, options) }
 
   async listWechatConversations(
     options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},

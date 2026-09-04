@@ -5,6 +5,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeArkoSurface } from '../src/client/ArkmeArkoSurface.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
+import { useMessagePreparing } from '../src/client/use-message-preparing.js'
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import '../src/client/composer-draft-auth-binding.js'
@@ -56,17 +57,19 @@ class FakeComposerElement extends FakeComposerNode {
 function stubComposerDom(): void {
   vi.stubGlobal('Node', FakeComposerNode)
   vi.stubGlobal('HTMLElement', FakeComposerElement)
-  vi.stubGlobal('document', {
+  vi.stubGlobal('document', Object.assign(new EventTarget(), {
+    visibilityState: 'visible', hasFocus: () => true,
     createDocumentFragment: () => new FakeComposerElement('FRAGMENT'),
     createTextNode: (text: string) => new FakeComposerNode(FakeComposerNode.TEXT_NODE, text),
     getSelection: () => null,
-  })
+  }))
 }
 
 describe('composer draft UI projection', () => {
   afterEach(() => {
     arkmeComposerDraftStore.clearAccount(10001)
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it('projects only the selected conversation draft and restores it after switching back', () => {
@@ -223,6 +226,71 @@ describe('composer draft UI projection', () => {
     act(() => { renderer.unmount() })
   })
 
+  it('reports real IME activity without committing provisional text or restoring drafts as new input', async () => {
+    stubComposerDom(); vi.useFakeTimers(); vi.setSystemTime(100_000)
+    const transport = { report: vi.fn(async () => {}), cancel: vi.fn(async () => {}) }
+    const commit = vi.fn()
+    function Harness() {
+      const preparing = useMessagePreparing({ source: { ...sourceA, sourceKey: 'group-key' },
+        accountScope: 'test:10001', enabled: true, focused: true, transport })
+      return <ArkmeRichComposerInput value="restored" mentions={[]} emojis={[]} maxLength={20_000}
+        placeholder="发送" ariaLabel="发送" disabled={false} style={{}}
+        onTextChange={commit} onInputActivity={preparing.input} />
+    }
+    let renderer!: ReactTestRenderer
+    act(() => { renderer = create(<Harness />) })
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+      expect(transport.report).not.toHaveBeenCalled()
+      const editor = renderer.root.findByProps({ 'data-arkme-rich-composer': 'true' })
+      const root = new FakeComposerElement()
+      const compose = (text: string) => act(() => {
+        root.replaceChildren(new FakeComposerNode(FakeComposerNode.TEXT_NODE, text))
+        editor.props.onInput({ currentTarget: root, nativeEvent: { isComposing: true } })
+      })
+      compose('zhong'); await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+      expect(transport.report).toHaveBeenCalledOnce()
+      for (const text of ['zhongw', 'zhongwen']) {
+        compose(text); await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+      }
+      expect(transport.report).toHaveBeenCalledTimes(3)
+      expect(transport.cancel).not.toHaveBeenCalled()
+      expect(commit).not.toHaveBeenCalled()
+      compose(''); await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      expect(transport.cancel).toHaveBeenCalledOnce()
+      root.replaceChildren(new FakeComposerNode(FakeComposerNode.TEXT_NODE, '中文'))
+      act(() => { editor.props.onCompositionEnd({ currentTarget: root }) })
+      expect(commit).toHaveBeenCalledWith('中文')
+      await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+      expect(transport.report).toHaveBeenCalledTimes(4)
+    } finally { act(() => { renderer.unmount() }) }
+  })
+
+  it.each(['historyUndo', 'historyRedo'])('reports real %s editor input as activity', async inputType => {
+    stubComposerDom(); vi.useFakeTimers(); vi.setSystemTime(100_000)
+    const transport = { report: vi.fn(async () => {}), cancel: vi.fn(async () => {}) }
+    const commit = vi.fn()
+    function Harness() {
+      const preparing = useMessagePreparing({ source: { ...sourceA, sourceKey: 'group-key' },
+        accountScope: 'test:10001', enabled: true, focused: true, transport })
+      return <ArkmeRichComposerInput value="restored" mentions={[]} emojis={[]} maxLength={20_000}
+        placeholder="发送" ariaLabel="发送" disabled={false} style={{}}
+        onTextChange={commit} onInputActivity={preparing.input} />
+    }
+    let renderer!: ReactTestRenderer
+    act(() => { renderer = create(<Harness />) })
+    try {
+      const root = new FakeComposerElement()
+      root.replaceChildren(new FakeComposerNode(FakeComposerNode.TEXT_NODE, 'edited'))
+      act(() => { renderer.root.findByProps({ 'data-arkme-rich-composer': 'true' }).props.onInput({
+        currentTarget: root, nativeEvent: { isComposing: false, inputType },
+      }) })
+      expect(commit).toHaveBeenCalledWith('edited')
+      await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+      expect(transport.report).toHaveBeenCalledOnce()
+    } finally { act(() => { renderer.unmount() }) }
+  })
+
   it('treats the browser empty-editor BR filler as empty after clearing committed text', () => {
     stubComposerDom()
 
@@ -296,6 +364,7 @@ describe('composer draft UI projection', () => {
     stubComposerDom()
     const onTextChange = vi.fn()
     const onSelectionChange = vi.fn()
+    const onInputActivity = vi.fn()
     let renderer: ReactTestRenderer
     act(() => {
       renderer = create(<ArkmeRichComposerInput
@@ -309,6 +378,7 @@ describe('composer draft UI projection', () => {
         style={{ minHeight: 38, fontSize: 13, lineHeight: '21px' }}
         onTextChange={onTextChange}
         onSelectionChange={onSelectionChange}
+        onInputActivity={onInputActivity}
       />)
     })
     const pasted = ' #项目\n＃待办'
@@ -324,6 +394,7 @@ describe('composer draft UI projection', () => {
 
     expect(preventDefault).toHaveBeenCalledOnce()
     expect(onTextChange).toHaveBeenCalledWith(`前${pasted}`)
+    expect(onInputActivity).toHaveBeenCalledWith(`前${pasted}`)
     expect(onSelectionChange).toHaveBeenCalledWith(`前${pasted}`, 1 + pasted.length, 1 + pasted.length)
     act(() => { renderer.unmount() })
   })

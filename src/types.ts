@@ -3081,6 +3081,23 @@ export type ArkmeChatClientEvent = {
   relationTerminal: boolean
   throughSequence: number
 } | {
+  type: 'message-preparing'
+  revision: number
+  sourceKey: string
+  actorKey: string
+  avatarRef?: string
+  prepareAtMillis: number
+  expireAtMillis: number
+  preparingState: 1 | 2
+  stateVersion: number
+  eventAtMillis: number
+} | {
+  type: 'message-arrived'
+  revision: number
+  sourceKey: string
+  actorKey: string
+  eventAtMillis: number
+} | {
   type: 'attention-summary'
   revision: number
   summary: ArkmeChatAttentionSummary
@@ -3223,6 +3240,8 @@ export type ArkmePluginOperation =
   | 'source.members'
   | 'source.member-records'
   | 'source.mark-read'
+  | 'source.message-preparing.report'
+  | 'source.message-preparing.cancel'
   | 'source.read-receipts.summary-list'
   | 'source.read-receipts.detail'
   | 'source.message-report'

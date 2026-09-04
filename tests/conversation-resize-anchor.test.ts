@@ -37,4 +37,38 @@ describe('composer and message viewport resize', () => {
     expect(disconnect).toHaveBeenCalledOnce()
     expect(body.removeEventListener).toHaveBeenCalledWith('scroll', scrolled)
   })
+  it('follows a growing end accessory only near the bottom, without undoing timeline anchors', () => {
+    let resized = () => {}
+    let height = 0
+    const observe = vi.fn()
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized = callback }
+      observe = observe
+      disconnect = disconnect
+    })
+    const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
+      addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    const accessory = { getBoundingClientRect: () => ({ height }) }
+    const cleanup = observeConversationResize(body as unknown as HTMLElement, accessory as unknown as HTMLElement)
+    expect(observe.mock.calls.map(([node]) => node)).toEqual([body, accessory])
+    resized() // initial delivery must not move the viewport
+    expect(body.scrollTop).toBe(1400)
+    height = 120; body.scrollHeight += 120; resized()
+    expect(body.scrollTop).toBe(1520)
+    height = 0; body.scrollHeight -= 120; resized()
+    expect(body.scrollTop).toBe(1400)
+    body.scrollTop = 400
+    height = 120; body.scrollHeight += 120; resized()
+    expect(body.scrollTop).toBe(400)
+    // A concurrent older-page prepend has already restored its own anchor.
+    body.scrollTop += 1000; body.scrollHeight += 1000
+    height = 0; body.scrollHeight -= 120; resized()
+    expect(body.scrollTop).toBe(1400)
+    // Non-accessory content changes belong to the timeline's existing owner.
+    body.scrollTop = 2520; body.scrollHeight = 3240; resized()
+    expect(body.scrollTop).toBe(2520)
+    cleanup()
+    expect(disconnect).toHaveBeenCalledOnce()
+  })
 })

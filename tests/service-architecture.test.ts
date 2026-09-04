@@ -51,6 +51,7 @@ const expectedPublicMethods = [
   'putLongArticleDraft', 'removeLongArticleDraft', 'recordReeditEditor', 'prepareRecordReedit', 'commitRecordReedit',
   'prepareDiscardRecordReeditDraft', 'discardRecordReeditDraft', 'uploadLocalFile', 'fetchMedia', 'sendDirectText',
   'markSourceRead', 'listWechatConversations', 'readWechatMessages', 'getWechatConversationDetail',
+  'reportMessagePreparing', 'cancelMessagePreparing',
   'listWechatGroupMembers', 'listWechatPhones', 'listWechatCommonGroups', 'listWechatMoneyFlows',
   'listWechatLocations', 'readImage', 'beginJiwoLogin', 'pollJiwoLogin', 'cancelJiwoLogin',
   'beginWechatLogin', 'pollWechatLogin', 'testLogin',

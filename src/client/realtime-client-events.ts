@@ -9,6 +9,7 @@ import {
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { forgetNavigationProviderInstance } from './navigation-cache.js'
 import { arkmeMessageReadReceipts } from './message-read-receipt-store.js'
+import { arkmeMessagePreparing } from './message-preparing-store.js'
 import {
   reconcileArkmeProviderInstance, recoverArkmeProviderInstanceDirectory,
 } from './provider-instance-runtime.js'
@@ -67,6 +68,7 @@ export function useArkmeRealtimeClientEvents(
       arkmeInterwovenInvalidation.activateAccount(undefined)
       arkmeAttentionSummary.activateAccount(undefined)
       arkmeMessageReadReceipts.activateAccount(undefined)
+      arkmeMessagePreparing.activateAccount(undefined)
       return
     }
     const authenticatedUserId = auth.userId
@@ -76,6 +78,7 @@ export function useArkmeRealtimeClientEvents(
     arkmeInterwovenInvalidation.activateAccount(authenticatedAccountScope)
     arkmeAttentionSummary.activateAccount(authenticatedUserId, authenticatedAccountScope)
     arkmeMessageReadReceipts.activateAccount(authenticatedUserId)
+    arkmeMessagePreparing.activateAccount(authenticatedAccountScope)
     let stopped = false
     let observedRevision: number | undefined
     let events: EventSource | undefined
@@ -90,6 +93,8 @@ export function useArkmeRealtimeClientEvents(
     }
     if (refreshDirectoryBaseline) void refreshUnread().catch(() => undefined)
     const handleOpen = () => {
+      if (stopped) return
+      arkmeMessagePreparing.reset()
       reconcileReceipts()
       void reconcileArkmeProviderInstance()
         .then(async changed => {
@@ -119,7 +124,16 @@ export function useArkmeRealtimeClientEvents(
         if (!Number.isSafeInteger(update.revision) || update.revision < 0
           || (observedRevision !== undefined && update.revision <= observedRevision)) return
         observedRevision = update.revision
+        if (update.type === 'message-preparing') {
+          arkmeMessagePreparing.apply(update)
+          return
+        }
+        if (update.type === 'message-arrived') {
+          arkmeMessagePreparing.messageArrived(update)
+          return
+        }
         if (update.type === 'reconcile') {
+          arkmeMessagePreparing.reset()
           if (update.attentionSummary !== undefined) arkmeAttentionSummary.apply(update.attentionSummary)
           arkmeInterwovenInvalidation.invalidate()
           reconcileReceipts()
@@ -210,6 +224,7 @@ export function useArkmeRealtimeClientEvents(
       const next = new EventSource('/arkme-self/api/events')
       next.onopen = handleOpen
       next.onmessage = handleMessage
+      next.onerror = () => { if (!stopped) arkmeMessagePreparing.reset() }
       events = next
     }
     const handleVisibilityChange = () => {
@@ -232,6 +247,7 @@ export function useArkmeRealtimeClientEvents(
     browserWindow?.addEventListener('focus', handleWindowFocus)
     return () => {
       stopped = true
+      arkmeMessagePreparing.reset()
       disconnectEvents()
       browserDocument?.removeEventListener('visibilitychange', handleVisibilityChange)
       browserWindow?.removeEventListener('focus', handleWindowFocus)

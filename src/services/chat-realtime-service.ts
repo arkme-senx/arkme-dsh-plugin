@@ -62,6 +62,7 @@ function safeFailureMessage(error: unknown): string {
 }
 
 export class ChatRealtimeService {
+  private disposed = false
   private readonly chatRealtime: ArkmeChatRealtimeRuntime
   private readonly chatClientListeners = new Set<(event: ArkmeChatClientEvent) => void>()
   private readonly pendingChatProjections = new Map<string, PendingChatProjection>()
@@ -114,6 +115,7 @@ export class ChatRealtimeService {
   }
 
   dispose(): void {
+    this.disposed = true
     if (this.projectionTimer !== undefined) clearTimeout(this.projectionTimer)
     if (this.notificationBaselineRetryTimer !== undefined) clearTimeout(this.notificationBaselineRetryTimer)
     if (this.attentionRetryTimer !== undefined) clearTimeout(this.attentionRetryTimer)
@@ -204,12 +206,57 @@ export class ChatRealtimeService {
       void this.handleTimelineChanged(notice.timelineChanged)
       return
     }
+    if (notice.cause === 'chat-hint' && notice.messagePreparing !== undefined) {
+      void this.handleChatActorHint(notice)
+      return
+    }
     if (notice.cause === 'chat-hint' && notice.hint !== undefined) {
+      void this.handleChatActorHint(notice)
       this.scheduleChatSessionProjection(
         notice.hint.chatSessionUid,
         notice.hint.latestSequence,
         { hint: notice.hint, connectionGeneration: notice.state.connectionGeneration, attempts: 0 },
       )
+    }
+  }
+
+  private async handleChatActorHint(notice: ArkmeChatRealtimeNotice): Promise<void> {
+    const hint = notice.messagePreparing ?? notice.hint
+    const signal = notice.connectionSignal
+    const connectionUserId = notice.connectionUserId
+    if (hint === undefined || signal === undefined || connectionUserId === undefined
+      || !notice.state.connected || signal.aborted || this.disposed) return
+    try {
+      const session = await this.runtime.sessionStore.read()
+      if (session?.userId !== connectionUserId || signal.aborted || this.disposed) return
+      const actorUserId = notice.messagePreparing?.actorUserId ?? notice.hint!.senderUserId
+      if (actorUserId === session.userId) return
+      const [sourceKey, presentation] = await Promise.all([
+        this.source.chatDirectorySourceKey(session.userId, hint.chatSessionUid),
+        notice.messagePreparing === undefined
+          ? this.source.chatPreparingActorKey(session.userId, hint.chatSessionUid, actorUserId)
+            .then(actorKey => ({ actorKey }))
+          : this.source.chatPreparingActorPresentation(session.userId, hint.chatSessionUid, actorUserId),
+      ])
+      if (signal.aborted || this.disposed) return
+      const activeSession = await this.runtime.sessionStore.read()
+      if (activeSession?.userId !== connectionUserId || signal.aborted || this.disposed) return
+      if (notice.messagePreparing !== undefined) {
+        const preparing = notice.messagePreparing
+        this.emitChatClientEvent({
+          type: 'message-preparing', revision: this.nextChatClientRevision(), sourceKey, ...presentation,
+          prepareAtMillis: preparing.prepareAtMillis, expireAtMillis: preparing.expireAtMillis,
+          preparingState: preparing.preparingState, stateVersion: preparing.stateVersion,
+          eventAtMillis: preparing.eventAtMillis,
+        })
+      } else {
+        this.emitChatClientEvent({
+          type: 'message-arrived', revision: this.nextChatClientRevision(), sourceKey,
+          actorKey: presentation.actorKey, eventAtMillis: hint.eventAtMillis,
+        })
+      }
+    } catch {
+      console.warn('dsh-arkme: Chat preparing identity projection failed')
     }
   }
 

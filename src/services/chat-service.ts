@@ -4330,6 +4330,66 @@ export class ChatService {
       }
     }
   
+  async reportMessagePreparing(
+    sourceRef: string, prepareAtMillis: number, options: { signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.writeMessagePreparing(sourceRef, prepareAtMillis, false, options.signal)
+  }
+
+  async cancelMessagePreparing(
+    sourceRef: string, cancelAtMillis: number, options: { signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.writeMessagePreparing(sourceRef, cancelAtMillis, true, options.signal)
+  }
+
+  private async writeMessagePreparing(
+    sourceRef: string, stateAtMillis: number, cancel: boolean, signal?: AbortSignal,
+  ): Promise<void> {
+    if (!Number.isSafeInteger(stateAtMillis) || stateAtMillis <= 0
+      || !Number.isSafeInteger(stateAtMillis + 5_000)) {
+      throw new ArkmePluginError('message-preparing-time-invalid', '正在输入时间无效', false, 400)
+    }
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
+      throw new ArkmePluginError('message-preparing-unsupported', '当前会话不支持正在输入', false, 400)
+    }
+    const activeSession = await this.runtime.sessionStore.read()
+    if (activeSession?.userId !== session.userId) {
+      throw new ArkmePluginError('source-ref-invalid', 'Arkme 数据源引用无效', false, 400)
+    }
+    const now = Date.now()
+    // Browser and Host share the device clock. Reject forged future versions that
+    // would suppress legitimate hints or extend their lifetime on native clients.
+    if (stateAtMillis > now + 5_000) {
+      throw new ArkmePluginError('message-preparing-time-invalid', '正在输入时间无效', false, 400)
+    }
+    const remainingMillis = stateAtMillis + 5_000 - now
+    if (!cancel && remainingMillis <= 0) {
+      throw new ArkmePluginError('message-preparing-expired', '正在输入状态已过期', false, 400)
+    }
+    const controller = new AbortController()
+    const abort = () => { controller.abort(signal?.reason) }
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted === true) abort()
+    // The existing request coordinator may queue this mutation. Abort at its lease deadline, not after admission.
+    const timer = setTimeout(() => { controller.abort() }, cancel ? 5_000 : Math.min(5_000, remainingMillis))
+    try {
+      await this.runtime.authenticatedChatPost(
+        cancel ? '/api/v1/chats/messages/preparing/cancel' : '/api/v1/chats/messages/preparing',
+        { chat_session_uid: source.ownerRef, ...(cancel ? { cancel_at: stateAtMillis }
+          : { prepare_at: stateAtMillis, expire_at: stateAtMillis + 5_000 }) },
+        // Optional presence must neither extend its lease into credential refresh
+        // nor publish a cooldown that blocks ordinary Chat actions.
+        session, controller.signal, { publishServiceCooldown: false, refreshOnUnauthorized: false },
+      )
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+    }
+  }
+
   async markSourceRead(
     sourceRef: string,
     readSequence: number,

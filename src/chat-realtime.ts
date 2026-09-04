@@ -9,6 +9,7 @@ export const ARKME_SSE_IDENTITY_VERSION = '2'
 export const ARKME_CHAT_RECEIVE_BIZ_TYPE = 17
 export const ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE = 18
 export const ARKME_CHAT_TIMELINE_CHANGED_BIZ_TYPE = 20
+export const ARKME_CHAT_MESSAGE_PREPARING_BIZ_TYPE = 21
 export const ARKME_PROJECTION_INVALIDATED_BIZ_TYPE = 25
 export const ARKME_CONVERSATION_LIST_PREFERENCE_UPDATED_BIZ_TYPE = 26
 
@@ -67,12 +68,28 @@ export interface ArkmeChatTimelineChangedHint {
   eventAtMillis: number
 }
 
+export interface ArkmeChatMessagePreparingHint {
+  eventUid: string
+  chatSessionUid: string
+  actorUserId: number
+  prepareAtMillis: number
+  expireAtMillis: number
+  preparingState: 1 | 2
+  stateVersion: number
+  eventAtMillis: number
+  sourceClientId: number
+}
+
 export interface ArkmeChatRealtimeNotice {
   state: ArkmeChatRealtimeState
   cause: 'reconcile' | 'chat-hint' | 'projection-invalidation' | 'conversation-list-preference-invalidation' | 'local'
   hint?: ArkmeChatReceiveHint
   readCursorAdvanced?: ArkmeChatReadCursorAdvancedHint
   timelineChanged?: ArkmeChatTimelineChangedHint
+  messagePreparing?: ArkmeChatMessagePreparingHint
+  /** Host-only receiving connection evidence; never project these fields to Browser. */
+  connectionUserId?: number
+  connectionSignal?: AbortSignal
   projectionInvalidation?: ArkmeProjectionInvalidatedHint
   conversationListPreferenceUpdated?: ArkmeConversationListPreferenceUpdatedHint
 }
@@ -184,6 +201,34 @@ const TIMELINE_CHANGED_ALLOWED_FIELDS = new Set([
   't', 'event_uid', 'chat_session_uid', 'rel_uid', 'latest_seq', 'actor_user_id',
   'change_kind', 'change_version', 'relation_terminal', 'event_at', 'source_client_id',
 ])
+
+const MESSAGE_PREPARING_FORBIDDEN_FIELDS = [
+  'rm_subject_id', 'subject_id', 'root_rm_subject_id', 'shared_topic_id', 'sharedTopicId',
+  'receiver_user_ids', 'record', 'record_body', 'record_uid', 'text_content', 'payload', 'draft',
+  'rel_uid', 'latest_seq', 'sender_user_id', 'change_kind', 'change_version', 'read_seq', 'read_at', 'unread_count',
+] as const
+
+/** Preparing is metadata only; allow ordinary protocol extensions, never embedded message/recipient facts. */
+export function decodeArkmeChatMessagePreparingDataLine(line: string): ArkmeChatMessagePreparingHint | undefined {
+  const source = decodeDataLine(line)
+  if (source === undefined || positiveInteger(source.t) !== ARKME_CHAT_MESSAGE_PREPARING_BIZ_TYPE) return undefined
+  if (MESSAGE_PREPARING_FORBIDDEN_FIELDS.some(field => Object.hasOwn(source, field))) return undefined
+  const eventUid = nonEmptyString(source.event_uid)
+  const chatSessionUid = nonEmptyString(source.chat_session_uid)
+  const actorUserId = positiveInteger(source.actor_user_id)
+  const prepareAtMillis = positiveInteger(source.prepare_at)
+  const expireAtMillis = positiveInteger(source.expire_at)
+  const preparingState = positiveInteger(source.preparing_state)
+  const stateVersion = positiveInteger(source.state_version)
+  const eventAtMillis = positiveInteger(source.event_at)
+  const sourceClientId = source.source_client_id === undefined ? 0 : nonNegativeInteger(source.source_client_id)
+  if (eventUid === undefined || chatSessionUid === undefined || actorUserId === undefined
+    || prepareAtMillis === undefined || expireAtMillis === undefined || expireAtMillis < prepareAtMillis
+    || (preparingState !== 1 && preparingState !== 2) || stateVersion === undefined
+    || eventAtMillis === undefined || sourceClientId === undefined) return undefined
+  return { eventUid, chatSessionUid, actorUserId, prepareAtMillis, expireAtMillis,
+    preparingState, stateVersion, eventAtMillis, sourceClientId }
+}
 
 /** Decode one metadata-only timeline invalidation. Record content remains owned by Chat reads. */
 export function decodeArkmeChatTimelineChangedDataLine(line: string): ArkmeChatTimelineChangedHint | undefined {
@@ -538,12 +583,13 @@ export class ArkmeChatRealtimeRuntime {
         buffer += decoder.decode(next.value, { stream: true })
         const lines = buffer.split(/\r?\n/)
         buffer = lines.pop() ?? ''
-        for (const line of lines) this.acceptLine(line)
+        for (const line of lines) this.acceptLine(line, session.userId, controller.signal)
       }
       buffer += decoder.decode()
-      if (buffer !== '') this.acceptLine(buffer)
+      if (buffer !== '') this.acceptLine(buffer, session.userId, controller.signal)
       await reader.cancel().catch(() => undefined)
     } finally {
+      controller.abort()
       if (acceptedAtMillis !== undefined) {
         this.lastConnectionLifetimeMs = Math.max(0, this.now() - acceptedAtMillis)
       }
@@ -583,7 +629,8 @@ export class ArkmeChatRealtimeRuntime {
     }
   }
 
-  private acceptLine(line: string): void {
+  private acceptLine(line: string, connectionUserId: number, connectionSignal: AbortSignal): void {
+    if (connectionSignal.aborted) return
     const conversationListPreferenceUpdated = decodeArkmeConversationListPreferenceUpdatedDataLine(line)
     const projectionInvalidation = conversationListPreferenceUpdated === undefined
       ? decodeArkmeProjectionInvalidatedDataLine(line)
@@ -595,13 +642,14 @@ export class ArkmeChatRealtimeRuntime {
       && projectionInvalidation === undefined && readCursorAdvanced === undefined
       ? decodeArkmeChatTimelineChangedDataLine(line)
       : undefined
+    const messagePreparing = decodeArkmeChatMessagePreparingDataLine(line)
     const hint = conversationListPreferenceUpdated === undefined
       && projectionInvalidation === undefined && readCursorAdvanced === undefined && timelineChanged === undefined
       ? decodeArkmeChatReceiveDataLine(line)
       : undefined
     const eventUid = conversationListPreferenceUpdated?.eventUid
       ?? projectionInvalidation?.eventUid ?? readCursorAdvanced?.eventUid
-      ?? timelineChanged?.eventUid ?? hint?.eventUid
+      ?? timelineChanged?.eventUid ?? messagePreparing?.eventUid ?? hint?.eventUid
     if (eventUid === undefined || this.seenEventUids.has(eventUid)) return
     this.seenEventUids.add(eventUid)
     if (this.seenEventUids.size > MAX_SEEN_EVENTS) {
@@ -612,6 +660,7 @@ export class ArkmeChatRealtimeRuntime {
       ?? projectionInvalidation?.eventAtMillis
       ?? readCursorAdvanced?.eventAtMillis
       ?? timelineChanged?.eventAtMillis
+      ?? messagePreparing?.eventAtMillis
       ?? hint?.eventAtMillis
     if (conversationListPreferenceUpdated !== undefined) {
       this.advanceRevision(
@@ -624,8 +673,10 @@ export class ArkmeChatRealtimeRuntime {
       this.advanceRevision('chat-hint', { timelineChanged })
     } else if (readCursorAdvanced !== undefined) {
       this.advanceRevision('chat-hint', { readCursorAdvanced })
+    } else if (messagePreparing !== undefined) {
+      this.advanceRevision('chat-hint', { messagePreparing, connectionUserId, connectionSignal })
     } else if (hint !== undefined) {
-      this.advanceRevision('chat-hint', { hint })
+      this.advanceRevision('chat-hint', { hint, connectionUserId, connectionSignal })
     }
   }
 
@@ -636,6 +687,9 @@ export class ArkmeChatRealtimeRuntime {
       readCursorAdvanced?: ArkmeChatReadCursorAdvancedHint
       projectionInvalidation?: ArkmeProjectionInvalidatedHint
       timelineChanged?: ArkmeChatTimelineChangedHint
+      messagePreparing?: ArkmeChatMessagePreparingHint
+      connectionUserId?: number
+      connectionSignal?: AbortSignal
       conversationListPreferenceUpdated?: ArkmeConversationListPreferenceUpdatedHint
     } = {},
   ): void {
@@ -644,6 +698,9 @@ export class ArkmeChatRealtimeRuntime {
       readCursorAdvanced,
       projectionInvalidation,
       timelineChanged,
+      messagePreparing,
+      connectionUserId,
+      connectionSignal,
       conversationListPreferenceUpdated,
     } = evidence
     this.revision += 1
@@ -652,6 +709,9 @@ export class ArkmeChatRealtimeRuntime {
       state,
       cause,
       ...(timelineChanged === undefined ? {} : { timelineChanged }),
+      ...(messagePreparing === undefined ? {} : { messagePreparing }),
+      ...(connectionUserId === undefined ? {} : { connectionUserId }),
+      ...(connectionSignal === undefined ? {} : { connectionSignal }),
       ...(hint === undefined ? {} : { hint }),
       ...(readCursorAdvanced === undefined ? {} : { readCursorAdvanced }),
       ...(projectionInvalidation === undefined ? {} : { projectionInvalidation }),
