@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
 import { X } from '@phosphor-icons/react/dist/icons/X'
@@ -227,6 +228,8 @@ export function ArkmeInterwovenDetailAside({
   shareWebsite?: string
 }) {
   const asideBodyRef = useRef<HTMLDivElement>(null)
+  const detailPanelRef = useRef<HTMLElement>(null)
+  const resize = useResizableNoteDetail(detailPanelRef)
   const scrollTopByViewRef = useRef<Record<ArkmeRelatedDrawerView, number>>({
     'source-detail': 0,
     'related-list': 0,
@@ -250,7 +253,8 @@ export function ArkmeInterwovenDetailAside({
   const title = relatedView === 'related-list'
     ? `${String(relatedTotal)} 条相关快记`
     : relatedView === 'related-detail' ? '相关快记详情' : '快记详情'
-  return <aside style={styles.aside} aria-label="快记详情" data-arkme-interwoven-detail>
+  return <aside ref={detailPanelRef} style={{ ...styles.aside, ...resize.style }} aria-label="快记详情" data-arkme-interwoven-detail>
+    {resize.handle}
     <header style={styles.asideHeader}>
       <span style={styles.asideTitleWrap}>
         {relatedView !== 'source-detail' && <button type="button" style={styles.back}

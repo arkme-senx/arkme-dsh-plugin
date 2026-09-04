@@ -30,6 +30,7 @@ import { createArkmeSdk } from '../sdk/index.js'
 import { ArkmeAttachmentStrip, ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
 import { releaseArkmeComposerAttachment, type ArkmeComposerAttachment } from './composer-draft-store.js'
 import { localFileBlock } from './file-send-tasks.js'
+import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 
 const styles: Record<string, CSSProperties> = {
   drawer: { position: 'absolute', top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, zIndex: 10,
@@ -109,6 +110,7 @@ function NoteDetailShell({ title, label, subtitle, footer, onClose, onBack, back
   const closeRef = useRef<HTMLButtonElement>(null)
   const backRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLElement>(null)
+  const resize = useResizableNoteDetail(panelRef)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
   const titleId = useId()
@@ -131,7 +133,8 @@ function NoteDetailShell({ title, label, subtitle, footer, onClose, onBack, back
       if (trigger?.isConnected && (active === document.body || active === null || panel?.contains(active))) trigger.focus({ preventScroll: true })
     }
   }, [])
-  return <aside ref={panelRef} role="dialog" aria-label={label} aria-labelledby={titleId} style={styles.drawer} data-arkme-note-detail="true">
+  return <aside ref={panelRef} role="dialog" aria-label={label} aria-labelledby={titleId} style={{ ...styles.drawer, ...resize.style }} data-arkme-note-detail="true">
+    {resize.handle}
     <header style={styles.header}>
       {onBack !== undefined && <button ref={backRef} type="button" style={styles.back}
         aria-label={backLabel ?? '返回'} onClick={onBack}><ArrowLeft size={18} /></button>}
