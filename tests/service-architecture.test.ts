@@ -17,7 +17,7 @@ const expectedPublicMethods = [
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'listCallHistory', 'callDetail', 'retryCallSummary',
-  'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'extensionAuthors', 'listExtensionReviews',
+  'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'publicAvatarPresentationsByArkmeIds', 'extensionAuthors', 'listExtensionReviews',
   'backgroundSoundPreference', 'updateBackgroundSoundPreference',
   'resolveLinkMetadata',
   'searchContact', 'addContact',
@@ -117,10 +117,13 @@ describe('Arkme service architecture', () => {
 
   it('keeps Team business availability independent from managed MCP mounting', () => {
     const compositionRoot = readFileSync(join(root, 'src/index.ts'), 'utf8')
+    const teamService = readFileSync(join(root, 'src/services/team-service.ts'), 'utf8')
     expect(compositionRoot).toContain('const teamService = new TeamService(')
     expect(compositionRoot).toContain('mountMcp: config.openApiMcpEnabled')
     expect(compositionRoot).toContain('teamService,')
     expect(compositionRoot).not.toMatch(/const teamService\s*=\s*config\.openApiMcpEnabled/u)
+    expect(teamService).toContain('export interface TeamMemberAvatarPort')
+    expect(teamService).not.toMatch(/import .*ProfileService/u)
   })
 
   it('keeps the compatibility facade free of business transport and state owners', () => {

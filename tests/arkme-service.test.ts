@@ -1605,6 +1605,43 @@ describe('ArkmeService', () => {
     expect(requests[1]?.url).not.toContain('test-access-key-secret')
   })
 
+  it('projects public Team member avatars as account-bound image references', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const avatarUrl = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/member.png?x-oss-signature=member-avatar'
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+    const requests: string[] = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      requests.push(url)
+      if (url.endsWith('/api/v1/auth/get-public-user-by-jotmo-ids')) {
+        expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer access')
+        expect(JSON.parse(String(init?.body))).toEqual({ jotmo_ids: ['member_one', 'member_phone'] })
+        return json({ code: 200, data: { items: [
+          { user_id: 20001, jotmo_id: 'member_one', nick_name: '成员一', head_img: avatarUrl },
+          { user_id: 20002, jotmo_id: 'member_phone', nick_name: '成员二', head_img: 'phone_avatar://v1/7/林' },
+        ] } })
+      }
+      if (url === avatarUrl) return new Response(png, {
+        status: 200,
+        headers: { 'Content-Type': 'image/png', 'Content-Length': String(png.byteLength) },
+      })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const presentations = await service.publicAvatarPresentationsByArkmeIds(['member_one', 'member_phone'])
+    expect(presentations.get('member_one')).toEqual({ avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) })
+    expect(presentations.get('member_phone')).toEqual({
+      avatarFallback: { kind: 'phone_default', colorIndex: 7, label: '林' },
+    })
+    const imageRef = presentations.get('member_one')!.avatarRef!
+    await expect(service.readImage(imageRef)).resolves.toMatchObject({ mediaType: 'image/png', bytes: png.byteLength })
+    expect(requests).toEqual([
+      'https://auth.test/api/v1/auth/get-public-user-by-jotmo-ids',
+      avatarUrl,
+    ])
+  })
+
   it('resolves the current user remote profile avatar through its opaque reference', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { ArkmeTeamMember, ArkmeTeamMemberPage, ArkmeTeamRole } from '../../../types.js'
 import { callArkme } from '../../api.js'
+import { ArkmeUserAvatar } from '../../ArkmeAvatar.js'
 
 interface TeamDetailState {
   status: 'loading' | 'ready' | 'error'
@@ -20,13 +21,12 @@ function loadErrorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim() !== '' ? error.message : '团队成员加载失败'
 }
 
-function memberSubtitle(member: ArkmeTeamMember): string {
-  const identity = member.identityState === 'unavailable'
+function memberIdentity(member: ArkmeTeamMember): string {
+  return member.identityState === 'unavailable'
     ? '身份信息暂不可用'
     : member.identityState === 'incomplete'
       ? '身份信息不完整'
-      : member.jotmoId ?? ''
-  return [ROLE_LABELS[member.role], identity].filter(Boolean).join(' · ')
+      : member.jotmoId === undefined ? '即我号暂不可用' : `@${member.jotmoId}`
 }
 
 export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; teamRef: string }) {
@@ -86,29 +86,52 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
 
   const { page } = state
   return <section className="arkme-team-detail" data-team-ref={page.team.teamRef}>
-    <header className="arkme-team-detail-header">
-      <span className="arkme-team-detail-glyph" aria-hidden>团</span>
-      <div>
-        <h1>{page.team.name}</h1>
-        <p>{page.team.jotmoId} · {ROLE_LABELS[page.team.currentUserRole]}</p>
-      </div>
-      <strong>{page.totalCount} 位成员</strong>
-    </header>
-    <div className="arkme-team-member-list" role="list" aria-label={`${page.team.name}的成员`}>
-      {page.items.map(member => <div className="arkme-team-member-row" role="listitem" key={member.userRef}>
-        <span className="arkme-team-member-avatar" aria-hidden>{Array.from(member.displayName)[0] ?? '人'}</span>
-        <span className="arkme-team-member-copy">
-          <strong>{member.displayName}</strong>
-          <small>{memberSubtitle(member)}</small>
+    <div className="arkme-team-detail-shell">
+      <header className="arkme-team-detail-header">
+        <span className="arkme-team-detail-glyph" aria-hidden>团</span>
+        <div className="arkme-team-detail-summary">
+          <h1>{page.team.name}</h1>
+          <div className="arkme-team-detail-meta">
+            <span className="arkme-team-detail-public-id">@{page.team.jotmoId}</span>
+            <span className="arkme-team-role-badge" data-team-role={page.team.currentUserRole}>
+              {ROLE_LABELS[page.team.currentUserRole]}
+            </span>
+          </div>
+        </div>
+        <span className="arkme-team-detail-count" aria-label={`${page.totalCount} 位成员`}>
+          <strong>{page.totalCount}</strong>
+          <span>位成员</span>
         </span>
-      </div>)}
-      {state.message !== undefined && <div className="arkme-team-member-more-error" role="alert">{state.message}</div>}
-      {page.hasMore && page.nextPageCursor !== undefined && <button
-        type="button"
-        className="arkme-team-member-more"
-        disabled={state.loadingMore === true}
-        onClick={() => { void load(page.nextPageCursor) }}
-      >{state.loadingMore === true ? '加载中…' : '加载更多成员'}</button>}
+      </header>
+      <section className="arkme-team-members" aria-label={`${page.team.name}的成员`}>
+        <h2>团队成员</h2>
+        <div className="arkme-team-member-list" role="list">
+          {page.items.map(member => <div className="arkme-team-member-row" role="listitem" key={member.userRef}>
+            <span className="arkme-team-member-avatar">
+              <ArkmeUserAvatar
+                {...(member.avatarRef === undefined ? {} : { avatarRef: member.avatarRef })}
+                {...(member.avatarFallback === undefined ? {} : { fallback: member.avatarFallback })}
+                size={40}
+                label={`${member.displayName}的头像`}
+              />
+            </span>
+            <span className="arkme-team-member-copy">
+              <strong>{member.displayName}</strong>
+              <small>{memberIdentity(member)}</small>
+            </span>
+            <span className="arkme-team-member-role" data-team-member-role={member.role}>
+              {ROLE_LABELS[member.role]}
+            </span>
+          </div>)}
+          {state.message !== undefined && <div className="arkme-team-member-more-error" role="alert">{state.message}</div>}
+          {page.hasMore && page.nextPageCursor !== undefined && <button
+            type="button"
+            className="arkme-team-member-more"
+            disabled={state.loadingMore === true}
+            onClick={() => { void load(page.nextPageCursor) }}
+          >{state.loadingMore === true ? '加载中…' : '加载更多成员'}</button>}
+        </div>
+      </section>
     </div>
   </section>
 }

@@ -72,7 +72,7 @@ import {
   LocalMessageActionCapabilityCodec,
 } from './services/message-action-infrastructure.js'
 import { OutgoingCallService } from './services/outgoing-call-service.js'
-import { ProfileService } from './services/profile-service.js'
+import { ProfileService, type ArkmePublicAvatarPresentation } from './services/profile-service.js'
 import { RecordService } from './services/record-service.js'
 import { RelatedQuickNoteService } from './services/related-quick-note-service.js'
 import { ArkmePrivacyVisibilityService } from './services/privacy-visibility.js'
@@ -830,6 +830,13 @@ export class ArkmeService {
     return await this.linkMetadata.resolve(url, options)
   }
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> { return await this.profile.cachedProfile() }
+  /** @internal Team presentation adapter; public identity remains owned by Backend. */
+  async publicAvatarPresentationsByArkmeIds(
+    arkmeIds: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<Map<string, ArkmePublicAvatarPresentation>> {
+    return await this.profile.publicAvatarPresentationsByArkmeIds(arkmeIds, signal)
+  }
   async searchContact(identifier: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeContactSearchResult> { return await this.contact.search(identifier, options) }
 
   async listDirectory(section: ArkmeDirectorySectionKind, options: { limit?: number; cursor?: string; countOnly?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeDirectoryPage> {

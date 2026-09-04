@@ -286,6 +286,7 @@ export function apply(ctx: Context, config: Config): void {
   })
   const teamService = new TeamService(
     new HttpOpenApiCapabilityGateway(config.openApiBaseUrl, openApiMcpController, fetch),
+    service,
   )
   sessionStore.attach(openApiMcpController)
   ctx.effect(

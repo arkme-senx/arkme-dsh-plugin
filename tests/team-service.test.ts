@@ -37,7 +37,12 @@ function fixture(overrides: Partial<OpenApiTeamCapabilityClient> = {}) {
     })) })),
     ...overrides,
   }
-  return { client, service: new TeamService(client) }
+  const avatars = {
+    publicAvatarPresentationsByArkmeIds: vi.fn(async (arkmeIds: readonly string[], _signal?: AbortSignal) => new Map(
+      arkmeIds.map(arkmeId => [arkmeId, { avatarRef: `avatar:${arkmeId}` }]),
+    )),
+  }
+  return { avatars, client, service: new TeamService(client, avatars) }
 }
 
 describe('TeamService', () => {
@@ -54,7 +59,7 @@ describe('TeamService', () => {
   })
 
   it('projects member identity state and never converts members into contact capabilities', async () => {
-    const { service } = fixture()
+    const { service, avatars } = fixture()
     const page = await service.listMembers(teamRef)
     expect(page).toEqual({
       team: {
@@ -62,13 +67,59 @@ describe('TeamService', () => {
         createdAtMillis: 1_700_000_000_000, updatedAtMillis: 1_700_000_000_001,
       },
       items: [{
-        userRef, displayName: '林一', jotmoId: 'linyi', identityState: 'ready', role: 'owner',
+        userRef, displayName: '林一', jotmoId: 'linyi', avatarRef: 'avatar:linyi', identityState: 'ready', role: 'owner',
         joinedAtMillis: 1_700_000_000_000,
       }],
       totalCount: 1,
       hasMore: false,
     })
+    expect(avatars.publicAvatarPresentationsByArkmeIds).toHaveBeenCalledWith(['linyi'], expect.any(AbortSignal))
     expect(page.items[0]).not.toHaveProperty('contactRef')
+  })
+
+  it('keeps the authoritative member page when optional avatar hydration fails', async () => {
+    const { service, avatars } = fixture()
+    avatars.publicAvatarPresentationsByArkmeIds.mockRejectedValueOnce(new Error('profile unavailable'))
+
+    await expect(service.listMembers(teamRef)).resolves.toMatchObject({
+      items: [{ userRef, displayName: '林一', jotmoId: 'linyi', identityState: 'ready' }],
+      totalCount: 1,
+    })
+  })
+
+  it('does not swallow caller cancellation during optional avatar hydration', async () => {
+    const { service, avatars } = fixture()
+    const controller = new AbortController()
+    const reason = new DOMException('caller cancelled', 'AbortError')
+    avatars.publicAvatarPresentationsByArkmeIds.mockImplementationOnce(async (_arkmeIds, signal) => {
+      controller.abort(reason)
+      signal?.throwIfAborted()
+      return new Map()
+    })
+
+    await expect(service.listMembers(teamRef, { signal: controller.signal })).rejects.toBe(reason)
+  })
+
+  it('bounds optional avatar hydration instead of blocking the member page', async () => {
+    const timeout = new AbortController()
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
+    try {
+      const { service, avatars } = fixture()
+      avatars.publicAvatarPresentationsByArkmeIds.mockImplementationOnce(async (_arkmeIds, signal) => await new Promise(
+        (_resolve, reject) => signal?.addEventListener('abort', () => reject(signal.reason), { once: true }),
+      ))
+
+      const page = service.listMembers(teamRef)
+      await Promise.resolve()
+      await Promise.resolve()
+      timeout.abort(new DOMException('avatar budget exhausted', 'TimeoutError'))
+      await expect(page).resolves.toMatchObject({
+        items: [{ userRef, displayName: '林一', jotmoId: 'linyi', identityState: 'ready' }],
+        totalCount: 1,
+      })
+    } finally {
+      timeoutSpy.mockRestore()
+    }
   })
 
   it('keeps create and join governance results as distinct business contracts', async () => {

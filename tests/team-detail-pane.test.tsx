@@ -2,6 +2,8 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ArkmeTeamMemberPage } from '../src/types.js'
+import { arkmeAvatarImages } from '../src/client/avatar-image-runtime.js'
+import { ArkmeUserAvatar } from '../src/client/ArkmeAvatar.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
@@ -56,30 +58,57 @@ const tick = async () => { await Promise.resolve(); await Promise.resolve() }
 
 describe('TeamDetailPane', () => {
   let renderer: ReactTestRenderer | undefined
+  let avatarScope = 0
 
-  beforeEach(() => { mocks.callArkme.mockReset() })
+  beforeEach(() => {
+    avatarScope += 1
+    arkmeAvatarImages.activateScope(`team-detail:${String(avatarScope)}`)
+    mocks.callArkme.mockReset()
+  })
   afterEach(async () => {
     await act(async () => { renderer?.unmount(); await tick() })
+    arkmeAvatarImages.activateScope(undefined)
     renderer = undefined
   })
 
-  it('renders owner membership facts and identity degradation without inventing identity data', async () => {
-    mocks.callArkme.mockResolvedValue(page(teamRefA, '团队 A', {
-      items: [{
-        userRef: `usr_v1_${'u'.repeat(32)}`,
-        displayName: '身份待恢复成员',
-        identityState: 'unavailable',
-        role: 'owner',
-        joinedAtMillis: 1,
-      }],
-    }))
+  it('renders real member avatars and identity degradation without mixing their semantics', async () => {
+    const teamPage = page(teamRefA, '团队 A', {
+      items: [
+        {
+          userRef: `usr_v1_${'u'.repeat(32)}`,
+          displayName: '头像成员',
+          jotmoId: 'avatar_member',
+          avatarRef: 'avatar-member-one',
+          identityState: 'ready',
+          role: 'owner',
+          joinedAtMillis: 1,
+        },
+        {
+          userRef: `usr_v1_${'v'.repeat(32)}`,
+          displayName: '身份待恢复成员',
+          identityState: 'unavailable',
+          role: 'member',
+          joinedAtMillis: 2,
+        },
+      ],
+      totalCount: 2,
+    })
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.members.list'
+      ? teamPage
+      : { mediaType: 'image/png', bytes: 1, dataBase64: 'AA==' })
 
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
 
     expect(mocks.callArkme).toHaveBeenCalledWith('team.members.list', { teamRef: teamRefA, limit: 50 }, expect.any(AbortSignal))
     expect(renderer!.root.findByProps({ 'data-team-ref': teamRefA })).toBeDefined()
     expect(text(renderer!.root)).toContain('团队 A')
-    expect(text(renderer!.root)).toContain('所有者 · 身份信息暂不可用')
+    expect(text(renderer!.root)).toContain('@team_a')
+    expect(text(renderer!.root)).toContain('@avatar_member')
+    expect(text(renderer!.root)).toContain('身份信息暂不可用')
+    expect(renderer!.root.findByProps({ 'data-team-role': 'member' })).toBeDefined()
+    expect(renderer!.root.findByProps({ 'data-team-member-role': 'owner' })).toBeDefined()
+    expect(renderer!.root.findAllByType(ArkmeUserAvatar).map(avatar => avatar.props.avatarRef))
+      .toEqual(['avatar-member-one', undefined])
   })
 
   it('uses the opaque next cursor and merges a later member page without duplicating rows', async () => {
@@ -122,7 +151,8 @@ describe('TeamDetailPane', () => {
     expect(renderer!.root.findAllByProps({ role: 'listitem' })).toHaveLength(2)
     expect(text(renderer!.root)).not.toContain('团队 A成员')
     expect(text(renderer!.root)).toContain('更新后的成员')
-    expect(text(renderer!.root)).toContain('成员 · 身份信息不完整')
+    expect(text(renderer!.root)).toContain('身份信息不完整')
+    expect(renderer!.root.findByProps({ 'data-team-member-role': 'member' })).toBeDefined()
   })
 
   it('aborts the previous account generation and ignores its late result', async () => {

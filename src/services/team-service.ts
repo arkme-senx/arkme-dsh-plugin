@@ -1,6 +1,7 @@
 import { OpenApiCapabilityError, type OpenApiTeamCapabilityClient } from '../openapi-capability-gateway.js'
 import type {
   ArkmeDirectoryPage,
+  ArkmeGroupAvatarFallback,
   ArkmeTeam,
   ArkmeTeamCreateItem,
   ArkmeTeamCreateResult,
@@ -24,6 +25,7 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
 const TEAM_CREATE_JOTMO_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{5,31}$/
 const TEAM_LOOKUP_JOTMO_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{5,31}$/
 const USER_JOTMO_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{4,31}$/
+const TEAM_MEMBER_AVATAR_BUDGET_MS = 1_500
 
 export interface TeamServicePort {
   list(options?: { limit?: number; pageCursor?: string; signal?: AbortSignal }): Promise<ArkmeTeamPage>
@@ -34,8 +36,18 @@ export interface TeamServicePort {
   listDirectory(options?: { limit?: number; cursor?: string; countOnly?: boolean; signal?: AbortSignal }): Promise<ArkmeDirectoryPage>
 }
 
+export interface TeamMemberAvatarPort {
+  publicAvatarPresentationsByArkmeIds(
+    arkmeIds: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<ReadonlyMap<string, { avatarRef?: string; avatarFallback?: ArkmeGroupAvatarFallback }>>
+}
+
 export class TeamService implements TeamServicePort {
-  constructor(private readonly client: OpenApiTeamCapabilityClient) {}
+  constructor(
+    private readonly client: OpenApiTeamCapabilityClient,
+    private readonly avatars: TeamMemberAvatarPort,
+  ) {}
 
   async list(options: { limit?: number; pageCursor?: string; signal?: AbortSignal } = {}): Promise<ArkmeTeamPage> {
     const limit = pageLimit(options.limit, 100, 50)
@@ -98,7 +110,25 @@ export class TeamService implements TeamServicePort {
     const hasMore = boolean(source.has_more, '团队成员响应无效')
     const nextPageCursor = responseCursor(source.next_page_cursor, hasMore)
     if (items.length > limit || totalCount < items.length) throw invalidResponse()
-    return { team: teamValue, items, totalCount, hasMore, ...(nextPageCursor === undefined ? {} : { nextPageCursor }) }
+    let avatarPresentations: ReadonlyMap<string, { avatarRef?: string; avatarFallback?: ArkmeGroupAvatarFallback }> = new Map()
+    try {
+      const avatarSignal = options.signal === undefined
+        ? AbortSignal.timeout(TEAM_MEMBER_AVATAR_BUDGET_MS)
+        : AbortSignal.any([options.signal, AbortSignal.timeout(TEAM_MEMBER_AVATAR_BUDGET_MS)])
+      avatarPresentations = await this.avatars.publicAvatarPresentationsByArkmeIds(
+        // A public Jotmo ID is only a presentation lookup key here; userRef remains the member identity.
+        items.flatMap(item => item.jotmoId === undefined ? [] : [item.jotmoId]),
+        avatarSignal,
+      )
+    } catch (error) {
+      if (options.signal?.aborted === true) throw options.signal.reason ?? error
+      // Avatar presentation is optional decoration; Team membership remains authoritative.
+    }
+    const presentedItems = items.map(item => {
+      const presentation = item.jotmoId === undefined ? undefined : avatarPresentations.get(item.jotmoId)
+      return presentation === undefined ? item : { ...item, ...presentation }
+    })
+    return { team: teamValue, items: presentedItems, totalCount, hasMore, ...(nextPageCursor === undefined ? {} : { nextPageCursor }) }
   }
 
   async create(items: readonly ArkmeTeamCreateItem[], signal?: AbortSignal): Promise<ArkmeTeamCreateResult[]> {

@@ -176,6 +176,9 @@ export interface ArkmeTeamMember {
   userRef: string
   displayName: string
   jotmoId?: string
+  /** Browser-safe profile image reference resolved by the host presentation layer. */
+  avatarRef?: string
+  avatarFallback?: ArkmeGroupAvatarFallback
   identityState: ArkmeTeamIdentityState
   role: ArkmeTeamRole
   joinedAtMillis: number
