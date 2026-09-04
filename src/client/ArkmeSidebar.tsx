@@ -69,6 +69,8 @@ import {
 } from './ArkmeRichContent.js'
 import { ArkmeAttachmentStrip, ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
+import { useResizableComposer } from './use-resizable-composer.js'
+import { useConversationResizeAnchor } from './conversation-resize-anchor.js'
 import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
 import type { ArkmeEmoji } from './arkme-emoji.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
@@ -2383,6 +2385,7 @@ export function ArkmeSurface({
   const sentinelRef = useRef<HTMLDivElement>(null)
   const newerSentinelRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLDivElement>(null)
+  const composerResize = useResizableComposer(composerRef, activeConversation ? composerDraftKey : undefined, bodyRef)
   const textareaRef = useRef<ArkmeRichComposerHandle>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addMenuRef = useRef<HTMLDivElement>(null)
@@ -5716,6 +5719,7 @@ export function ArkmeSurface({
     conversationCacheRef.current.storeViewport(pending.sourceKey, arkmeConversationViewport(body))
     pendingViewportRestoreRef.current = undefined
   }, [active, displayRows, timelineStateKey])
+  useConversationResizeAnchor(bodyRef, active && activeConversation ? conversationKey : undefined)
   const handleConversationScroll = useCallback(() => {
     const body = bodyRef.current
     if (body === null || timelineStateKey === '') return
@@ -6476,8 +6480,10 @@ export function ArkmeSurface({
               ...styles.composerInner,
               ...(composerInputFocused ? styles.composerInnerFocused : {}),
               ...(activeComposerExtensionTarget === undefined ? {} : styles.composerInnerExtension),
+              ...(composerResize.highlighted ? { border: '1px solid #09B83E', borderRadius: 12 } : {}),
               }}
             >
+            {composerResize.handle}
             {addMenuOpen && <div ref={addMenuRef} style={styles.addMenu} role="menu">
               <button type="button" role="menuitem" style={styles.addMenuItem} onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click() }}><span aria-hidden>📎</span>添加照片和文件</button>
               <div style={styles.menuDivider} />
@@ -6534,7 +6540,7 @@ export function ArkmeSurface({
                   </button>
                 })}
             </div>}
-            <ArkmeRichComposerInput key={composerDraftKey} className="arkme-conversation-textarea" ref={textareaRef} style={styles.textarea!} value={draft} mentions={composerDraft.mentions} emojis={composerDraft.emojis} maxLength={20000} placeholder={effectiveComposerPlaceholder} ariaLabel={effectiveComposerPlaceholder} disabled={preparingFiles}
+            <ArkmeRichComposerInput key={composerDraftKey} className="arkme-conversation-textarea" ref={textareaRef} style={{ ...styles.textarea!, ...composerResize.editorStyle }} value={draft} mentions={composerDraft.mentions} emojis={composerDraft.emojis} maxLength={20000} placeholder={effectiveComposerPlaceholder} ariaLabel={effectiveComposerPlaceholder} disabled={preparingFiles}
               onTextChange={updateComposerText}
               onFocus={() => { setComposerInputFocused(true) }}
               onBlur={() => { setComposerInputFocused(false) }}
