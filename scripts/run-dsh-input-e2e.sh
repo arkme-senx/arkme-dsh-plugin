@@ -2,7 +2,11 @@
 set -euo pipefail
 task_plugin_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 task_workspace="$(cd "$task_plugin_root/.." && pwd)"
-export ARKME_DSH_CHECKOUT="${ARKME_DSH_CHECKOUT:-$task_workspace/deepseek-harness}"
+: "${ARKME_DSH_CHECKOUT:?Set ARKME_DSH_CHECKOUT to an unmodified official DSH checkout}"
+export ARKME_DSH_CHECKOUT
+# Never validate the artifact against a locally patched Host.
+git -C "$ARKME_DSH_CHECKOUT" diff --quiet origin/master HEAD --
+test -z "$(git -C "$ARKME_DSH_CHECKOUT" status --porcelain --untracked-files=no)"
 : "${ARKME_PACKED_PROFILE:?Set ARKME_PACKED_PROFILE to a fresh profile installed with dsh plugin add artifact.tgz}"
 source "${JOTMO_RECORD_E2E_RECORD_REPO_PATH:-$task_workspace/jotmo-record}/test/e2e/compose_helpers.sh"
 

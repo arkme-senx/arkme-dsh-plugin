@@ -24,7 +24,7 @@ export function ArkmeTopicHomeVisibility({ sourceRef }: { sourceRef: string }) {
     return () => { controller.abort() }
   }, [sourceRef, retry])
   return <section aria-label="DSH 输入主题设置" style={{ padding: '8px 16px', fontSize: 12 }}>
-    <span>系统主题 · 仅归档你在 DSH 中手动提交的文本</span>
+      <span>系统主题 · DSH 会话输入记录</span>
     <label style={{ marginLeft: 12 }}><input type="checkbox" checked={value ?? false} disabled={busy || value === undefined}
       onChange={event => {
         if (submitting.current || value === undefined) return

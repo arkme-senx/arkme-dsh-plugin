@@ -1,4 +1,4 @@
-# DSH 人工文本与系统主题跨仓验收
+# DSH 系统主题跨仓验收
 
 `scripts/run-dsh-input-e2e.sh` 使用目标 Harness 自带的 Web scaffold 和无密钥模型回放，在真实 Chrome 中提交文本，再通过正式安装的 Arkme 包进入真实 Record API/Mongo/Redis。测试属于插件仓，不把 Arkme 业务 fixture 放进 Harness 产品代码。
 
@@ -12,7 +12,9 @@ DSH_WEB_TEST_BROWSER_CHANNEL=chrome \
 bash scripts/run-dsh-input-e2e.sh
 ```
 
-验证 Enter、发送按钮和合成事件的差异；前两者仅写入原始文本且恰好一条，后者零归档；服务返回权威主题类型；SDK 和真实 DSH Tool 读取同一首页策略；实际页面不显示发送入口，开关经持久化成功后更新。
+目标 Harness 必须是无产品补丁的官方 origin/master 源码；runner 校验 HEAD 与该引用无差异且 tracked 工作区干净。构建也必须来自该官方源码，不能复用曾打过人工来源补丁的构建产物。
+
+真实输入一次文本验证原有归档仍工作，并验证服务返回权威主题类型；SDK 和真实 DSH Tool 读取同一首页策略；实际页面不显示发送入口，开关经持久化成功后更新。此测试不证明人工来源识别，不要求专用人工提交接口；程序 user 消息可能被收录的既有行为不在本次修复范围。
 
 身份服务和无关 Chat 上游是固定隔离 fixture，不是生产登录验收。Records/Topics/Home 请求全部转发到 runner 自建的真实 Record 栈。临时证书仅用于回环 HTTPS，未关闭全局证书校验。退出时清理本次浏览器、Host、账号凭据、临时目录和 Compose 栈，不触碰常驻 DIC。
 

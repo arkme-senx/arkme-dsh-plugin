@@ -1970,16 +1970,10 @@ export class ArkmeService {
     if (result.localState !== 'failed') await this.realtime.invalidateRecordProjection(); return result
   }
 
-  async captureDSHAgentInputWriter(): Promise<(recordUid: string, text: string, sendAtMillis: number) => Promise<ArkmeCreateTextResult>> {
-    const expectedUserId = this.accountScope.currentUserId()
-    if (expectedUserId === undefined) throw new ArkmePluginError('login-required', '请先登录 Arkme', false, 401)
-    const { userId } = await this.runtime.requireSession()
-    if (userId !== expectedUserId) throw new ArkmePluginError('account-scope-changed', '账号已切换，已停止同步原账号的 DSH 输入', false)
-    return async (recordUid, text, sendAtMillis) => {
-      const result = await this.record.createDSHAgentInputText(recordUid, text, sendAtMillis, userId)
-      await this.realtime.invalidateRecordProjection()
-      return result
-    }
+  async createDSHAgentInputText(recordUid: string, textContent: string, sendAtMillis: number): Promise<ArkmeCreateTextResult> {
+    const result = await this.record.createDSHAgentInputText(recordUid, textContent, sendAtMillis)
+    await this.realtime.invalidateRecordProjection()
+    return result
   }
 
   async pendingWrites(): Promise<ArkmePendingWrite[]> {

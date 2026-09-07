@@ -98,23 +98,6 @@ export class ArkmeAccountSessionOwner {
     return deleted
   }
 
-  /** Commit a refresh result only while its original login still owns the store. */
-  async replaceIfCurrent(expected: ArkmeSessionCredentials, next: ArkmeSessionCredentials | undefined): Promise<boolean> {
-    if (next !== undefined && (next.userId !== expected.userId || next.refreshToken !== expected.refreshToken)) {
-      throw new Error('Credential refresh cannot change the login identity')
-    }
-    await this.start()
-    let applied = false
-    await this.serial(async () => {
-      const current = await this.store.read()
-      if (current?.userId !== expected.userId || current.refreshToken !== expected.refreshToken) return
-      if (next === undefined) await this.transition({ kind: 'guest' }, async () => { await this.store.delete() })
-      else await this.store.write(next)
-      applied = true
-    })
-    return applied
-  }
-
   async scopedSession(): Promise<ArkmeSessionCredentials | undefined> {
     if (this.startTask === undefined) return undefined
     await this.startTask
@@ -128,13 +111,6 @@ export class ArkmeAccountSessionOwner {
   }
 
   ready(): boolean { return this.readyIdentity !== undefined }
-
-  /** Synchronous account identity for work that must not follow an account switch while acquiring credentials. */
-  currentUserId(): number | undefined {
-    return this.readyIdentity?.startsWith('account:') === true
-      ? Number(this.readyIdentity.slice('account:'.length))
-      : undefined
-  }
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener)

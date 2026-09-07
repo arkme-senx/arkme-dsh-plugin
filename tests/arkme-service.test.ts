@@ -758,8 +758,7 @@ describe('ArkmeService', () => {
       timezone: 'Asia/Shanghai',
       limit: 20,
     })).resolves.toMatchObject({ items: [{ textContent: '旧缓存', creationSource: 0 }] })
-    const writeDSHInput = await service.captureDSHAgentInputWriter()
-    await expect(writeDSHInput(
+    await expect(service.createDSHAgentInputText(
       'dc6eb132-1c9d-501d-a0d0-2fae884de198',
       '你好',
       1_787_623_692_290,
@@ -772,21 +771,6 @@ describe('ArkmeService', () => {
 
     expect(requests.filter(item => item.url.endsWith('/api/v1/calendar/records/query'))).toHaveLength(2)
     expect(events).toEqual([expect.objectContaining({ type: 'projection-invalidated', projection: 'record' })])
-    const beforeSwitch = requests.length
-    sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
-    await expect(writeDSHInput('dc6eb132-1c9d-501d-a0d0-2fae884de198', '原账号内容', 1_787_623_692_290))
-      .rejects.toMatchObject({ code: 'account-scope-changed', retryable: false })
-    expect(requests).toHaveLength(beforeSwitch)
-  })
-
-  it('does not capture another account when credentials resolve after a switch', async () => {
-    const sessions = new MemorySessionStore()
-    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
-    const service = new ArkmeService(config, sessions, new MemoryStateStore())
-    await service.accountScope.start()
-    const capture = service.captureDSHAgentInputWriter()
-    sessions.session = { userId: 10002, accessToken: 'other', refreshToken: 'other-refresh' }
-    await expect(capture).rejects.toMatchObject({ code: 'account-scope-changed', retryable: false })
   })
 
   it('loads recording day sections independently and refreshes an expired Audio bearer', async () => {

@@ -31,7 +31,7 @@ const tokenParts = [
 const token = `${tokenParts}.${createHmac('sha256', 'record-e2e-access-token-secret').update(tokenParts).digest('base64url')}`
 
 describe('packed Arkme on the target Harness with the real record owner', () => {
-  it.each(['enter', 'click', 'synthetic'])('%s crosses the real browser/Host/archive chain', async gesture => {
+  it('exposes a read-only system topic and shares home visibility across UI, SDK and Tool', async () => {
     const tls = {
       key: await readFile(process.env.ARKME_E2E_TLS_KEY),
       cert: await readFile(process.env.NODE_EXTRA_CA_CERTS),
@@ -89,7 +89,6 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         replayFixture: resolve(dshRoot, 'snapshots/web/fresh-round-trip/session.v2.jsonl'),
         compareReplaySession: false,
       })
-      expect(typeof scaffold.ctx.get('sessionController').submitText).toBe('function')
       const service = scaffold.ctx.get('arkmeData')
       expect(await service.testLogin(10001)).toMatchObject({ status: 'authenticated', userId: 10001 })
       browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
@@ -102,17 +101,11 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       const input = harnessPage.locator('[data-composer-input]').first()
       await input.fill(prompt)
       const settled = scaffold.whenTurnSettled()
-      if (gesture === 'enter') await input.press('Enter')
-      else if (gesture === 'click') await harnessPage.getByRole('button', { name: 'Send message', exact: true }).click()
-      else await input.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true })
+      await input.press('Enter')
       const sessionId = await settled
-      if (gesture === 'synthetic') {
-        expect(archived).toHaveLength(0)
-        return
-      }
       await expect.poll(() => archived.length).toBe(1)
       expect(archived[0]).toMatchObject({ request: { text_content: prompt }, response: { code: 0 } })
-      expect(Object.keys(archived[0].request).sort()).toEqual(['record_uid', 'send_at', 'text_content'])
+      expect(archived[0].request).toMatchObject({ template_kind: 1, title: '' })
       const sources = await service.listSources('send_to_self', { refresh: true })
       const archive = sources.items.find(item => item.kind === 'topic' && item.topicKind === 3)
       expect(archive).toBeDefined()

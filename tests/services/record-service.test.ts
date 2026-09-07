@@ -1028,40 +1028,6 @@ describe('RecordService', () => {
     })
   })
 
-  it.each([
-    { kind: 'ordinary', text: ' abc ', accepted: true, stored: 'abc' },
-    { kind: 'ordinary', text: ' abcde ', accepted: false, stored: '' },
-    { kind: 'dsh', text: ' ab ', accepted: true, stored: ' ab ' },
-    { kind: 'dsh', text: ' abc ', accepted: false, stored: '' },
-  ])('validates the actual persisted text for $kind: "$text"', async ({ kind, text, accepted, stored }) => {
-    const sessions: ArkmeSessionStore = {
-      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async write() {}, async delete() {},
-    }
-    const stateStore = {
-      putPending: vi.fn(), markSynced: vi.fn(), markAttempt: vi.fn(),
-    } as unknown as StateStore
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: { status: 1 } })))
-    const runtime = new ServiceRuntime({ ...config, maxTextLength: 4 }, sessions, stateStore, fetchImpl)
-    const service = new RecordService(runtime, {} as MediaService, {
-      async openSourceRef() { throw new Error('unexpected') },
-    })
-    const uid = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
-    const result = kind === 'dsh'
-      ? service.createDSHAgentInputText(uid, text, 1713830400000, 42)
-      : service.createText(uid, text)
-    if (!accepted) {
-      await expect(result).rejects.toMatchObject({ code: 'record-text-too-long', retryable: false })
-      expect(fetchImpl).not.toHaveBeenCalled()
-      expect(stateStore.putPending).not.toHaveBeenCalled()
-      return
-    }
-    await expect(result).resolves.toEqual({ recordUid: uid, status: 1 })
-    expect(fetchImpl).toHaveBeenCalledTimes(1)
-    const [, init] = vi.mocked(fetchImpl as typeof fetch).mock.calls[0]!
-    expect(JSON.parse(String(init?.body))).toMatchObject({ text_content: stored })
-  })
-
   it('creates a DSH Agent input Record through the fixed-source route', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
@@ -1087,20 +1053,16 @@ describe('RecordService', () => {
       'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
       '用户在 DSH 的输入',
       1713830400000,
-      42,
     )).resolves.toEqual({ recordUid: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b', status: 1 })
     expect(requestPath).toBe('https://record.test/api/v1/records/dsh-agent-input/create')
     expect(requestBody).toEqual({
       record_uid: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
+      template_kind: 1,
+      title: '',
       text_content: '用户在 DSH 的输入',
       send_at: 1713830400000,
     })
     expect(requestBody).not.toHaveProperty('creation_source')
-    vi.mocked(fetchImpl).mockClear()
-    await expect(service.createDSHAgentInputText(
-      'ccfe56ca-4d7a-4c95-b383-fce1c65a635b', '旧账号的输入', 1713830400000, 43,
-    )).rejects.toMatchObject({ code: 'account-scope-changed', retryable: false })
-    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('excludes DSH Agent input records from the default category page', async () => {

@@ -27,39 +27,6 @@ function fixture(initial?: ArkmeSessionCredentials, commitStatus: 'ready' | 'rel
 }
 
 describe('Arkme account session owner', () => {
-  test('late refresh cannot replace or delete a different login', async () => {
-    const { owner, store } = fixture(credentials(42))
-    await owner.start()
-    await owner.write(credentials(43))
-    expect(await owner.replaceIfCurrent(credentials(42), credentials(42, 'late'))).toBe(false)
-    expect(await owner.replaceIfCurrent(credentials(42), undefined)).toBe(false)
-    expect(await store.read()).toEqual(credentials(43))
-    await owner.write({ ...credentials(42), refreshToken: 'new-login' })
-    expect(await owner.replaceIfCurrent(credentials(42), credentials(42, 'late'))).toBe(false)
-    expect((await store.read())?.refreshToken).toBe('new-login')
-  })
-
-  test('refresh uses the existing serialized owner and preserves account scope', async () => {
-    const { owner, bridge, store } = fixture(credentials(42))
-    await owner.start()
-    expect(await owner.replaceIfCurrent(credentials(42), credentials(42, 'fresh'))).toBe(true)
-    expect(await store.read()).toEqual(credentials(42, 'fresh'))
-    expect(bridge.prepare).not.toHaveBeenCalled()
-    expect(await owner.replaceIfCurrent(credentials(42), undefined)).toBe(true)
-    expect(await store.read()).toBeUndefined()
-    expect(owner.currentUserId()).toBeUndefined()
-  })
-  test('exposes only the synchronously attested account identity', async () => {
-    const { owner } = fixture(credentials(42))
-    expect(owner.currentUserId()).toBeUndefined()
-    await owner.start()
-    expect(owner.currentUserId()).toBe(42)
-    await owner.write(credentials(43))
-    expect(owner.currentUserId()).toBe(43)
-    await owner.delete()
-    expect(owner.currentUserId()).toBeUndefined()
-  })
-
   test('attests the persisted account before exposing it to remote consumers', async () => {
     const { bridge, owner } = fixture(credentials(42))
 

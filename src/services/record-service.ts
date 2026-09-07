@@ -1407,12 +1407,8 @@ export class RecordService {
     recordUid: string,
     textContent: string,
     sendAtMillis: number,
-    expectedUserId: number,
   ): Promise<ArkmeCreateTextResult> {
     const session = await this.runtime.requireSession()
-    if (session.userId !== expectedUserId) {
-      throw new ArkmePluginError('account-scope-changed', '账号已切换，已停止同步原账号的 DSH 输入', false)
-    }
     const normalizedUid = recordUid.trim()
     const normalizedText = textContent.trim()
     const normalizedSendAt = Math.max(0, Math.trunc(sendAtMillis))
@@ -1422,7 +1418,7 @@ export class RecordService {
     if (normalizedText === '') {
       throw new ArkmePluginError('record-text-empty', '请输入要发给自己的内容', false)
     }
-    if (textContent.length > this.runtime.config.maxTextLength) {
+    if (normalizedText.length > this.runtime.config.maxTextLength) {
       throw new ArkmePluginError(
         'record-text-too-long',
         `内容不能超过 ${this.runtime.config.maxTextLength} 个字符`,
@@ -1433,7 +1429,9 @@ export class RecordService {
       '/api/v1/records/dsh-agent-input/create',
       {
         record_uid: normalizedUid,
-        text_content: textContent,
+        template_kind: 1,
+        title: '',
+        text_content: normalizedText,
         send_at: normalizedSendAt > 0 ? normalizedSendAt : Date.now(),
       },
       session,
