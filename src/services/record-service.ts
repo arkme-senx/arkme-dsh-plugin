@@ -1357,7 +1357,7 @@ export class RecordService {
     if (normalizedText === '') {
       throw new ArkmePluginError('record-text-empty', '请输入要发给自己的内容', false)
     }
-    if (textContent.length > this.runtime.config.maxTextLength) {
+    if (normalizedText.length > this.runtime.config.maxTextLength) {
       throw new ArkmePluginError(
         'record-text-too-long',
         `内容不能超过 ${this.runtime.config.maxTextLength} 个字符`,
@@ -1422,7 +1422,7 @@ export class RecordService {
     if (normalizedText === '') {
       throw new ArkmePluginError('record-text-empty', '请输入要发给自己的内容', false)
     }
-    if (normalizedText.length > this.runtime.config.maxTextLength) {
+    if (textContent.length > this.runtime.config.maxTextLength) {
       throw new ArkmePluginError(
         'record-text-too-long',
         `内容不能超过 ${this.runtime.config.maxTextLength} 个字符`,

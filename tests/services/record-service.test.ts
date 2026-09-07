@@ -1028,6 +1028,40 @@ describe('RecordService', () => {
     })
   })
 
+  it.each([
+    { kind: 'ordinary', text: ' abc ', accepted: true, stored: 'abc' },
+    { kind: 'ordinary', text: ' abcde ', accepted: false, stored: '' },
+    { kind: 'dsh', text: ' ab ', accepted: true, stored: ' ab ' },
+    { kind: 'dsh', text: ' abc ', accepted: false, stored: '' },
+  ])('validates the actual persisted text for $kind: "$text"', async ({ kind, text, accepted, stored }) => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const stateStore = {
+      putPending: vi.fn(), markSynced: vi.fn(), markAttempt: vi.fn(),
+    } as unknown as StateStore
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: { status: 1 } })))
+    const runtime = new ServiceRuntime({ ...config, maxTextLength: 4 }, sessions, stateStore, fetchImpl)
+    const service = new RecordService(runtime, {} as MediaService, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+    const uid = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
+    const result = kind === 'dsh'
+      ? service.createDSHAgentInputText(uid, text, 1713830400000, 42)
+      : service.createText(uid, text)
+    if (!accepted) {
+      await expect(result).rejects.toMatchObject({ code: 'record-text-too-long', retryable: false })
+      expect(fetchImpl).not.toHaveBeenCalled()
+      expect(stateStore.putPending).not.toHaveBeenCalled()
+      return
+    }
+    await expect(result).resolves.toEqual({ recordUid: uid, status: 1 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const [, init] = vi.mocked(fetchImpl as typeof fetch).mock.calls[0]!
+    expect(JSON.parse(String(init?.body))).toMatchObject({ text_content: stored })
+  })
+
   it('creates a DSH Agent input Record through the fixed-source route', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
