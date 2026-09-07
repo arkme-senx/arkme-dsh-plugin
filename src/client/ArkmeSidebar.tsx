@@ -2757,7 +2757,7 @@ export function ArkmeSurface({
   const preparingFiles = composerDraftKey !== undefined && preparingKeys.has(composerDraftKey)
   const messagePreparing = useMessagePreparing({
     source, accountScope: authenticatedAccountKey,
-    enabled: activeConversation && activeRecordReeditComposer === undefined && !preparingFiles,
+    enabled: activeConversation && activeRecordReeditComposer === undefined && !preparingFiles && !directAdmission.blocked,
     focused: composerInputFocused,
   })
   // Transport is per message.  It must never lock the next draft while a previous

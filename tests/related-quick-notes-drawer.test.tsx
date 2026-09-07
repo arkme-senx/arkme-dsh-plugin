@@ -33,6 +33,11 @@ vi.mock('../src/sdk/index.js', () => ({
   }),
 }))
 
+vi.mock('@tiptap/react', async importOriginal => {
+  const actual = await importOriginal<typeof import('@tiptap/react')>()
+  return { ...actual, useEditor: () => null }
+})
+
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { ArkmeTimelineDetailDrawer } from '../src/client/ArkmeNoteDetails.js'
 import { ArkmeClientError } from '../src/client/api.js'
@@ -97,17 +102,27 @@ describe('normal timeline related quick note drawer', () => {
       messageCreationBlocked={blocked} messageCreationRestriction="对方已拒收你的消息"
     />
     await act(async () => { renderer = create(drawer(false)); await Promise.resolve() })
-    act(() => renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.onChange({ target: { value: '未发送草稿' } }))
+    const draft = { document: { type: 'doc' }, source: '**未发送草稿**', mentions: [] }
+    act(() => {
+      renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('未发送草稿')
+      renderer.root.findByType(ArkmeRichComposerInput).props.onMarkdownChange(draft)
+    })
     act(() => renderer.update(drawer(true)))
-    const input = renderer.root.findByProps({ 'aria-label': '延展此快记' })
+    const input = renderer.root.findByType(ArkmeRichComposerInput)
     expect(input.props.disabled).toBe(true)
     expect(input.props.value).toBe('未发送草稿')
+    act(() => {
+      input.props.onTextChange('不应覆盖草稿')
+      input.props.onMarkdownChange(undefined)
+    })
     expect(renderer.root.findByProps({ 'aria-label': '添加延展附件' }).props.disabled).toBe(true)
     expect(renderer.root.findByProps({ 'aria-label': '发送延展' }).props.disabled).toBe(true)
     await act(async () => { renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick() })
     expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.message-extension.extend')).toBe(false)
     act(() => renderer.update(drawer(false)))
-    expect(renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.value).toBe('未发送草稿')
+    expect(renderer.root.findByType(ArkmeRichComposerInput).props.value).toBe('未发送草稿')
+    expect(renderer.root.findByType(ArkmeRichComposerInput).props.markdown).toEqual(draft)
+    expect(renderer.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
     act(() => renderer.unmount())
   })
 
