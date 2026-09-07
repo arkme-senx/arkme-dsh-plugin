@@ -118,7 +118,7 @@ export function ArkmePersistentClientRuntime() {
     return arkmePresentationMaintenance.start()
   }, [avatarScopeKey])
 
-  useArkmeRealtimeClientEvents(auth, ui.authRevision, true)
+  useArkmeRealtimeClientEvents(auth, ui.authRevision, true, { ownsMessagePreparing: true })
 
   useEffect(() => {
     if (!shouldRestoreWebAuthenticatedWorkspace(auth, ui.mode)) return

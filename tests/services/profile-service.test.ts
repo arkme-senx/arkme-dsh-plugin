@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { ProfileService } from '../../src/services/profile-service.js'
-import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
+import { ArkmePluginError, ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import type { ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../../src/types.js'
 
 const config: ArkmeServiceConfig = {
@@ -14,6 +14,53 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ProfileService', () => {
+  it('logs a failed public-profile batch with user IDs and preserves the original error', async () => {
+    const error = new ArkmePluginError('arkme-timeout', 'SECRET_MESSAGE', true, 504)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const service = new ProfileService({
+        config, authenticatedAuthPost: vi.fn().mockRejectedValue(error),
+      } as unknown as ServiceRuntime)
+      await expect(service.publicProfileSummariesByUserIds([88, 99], { userId: 42, accessToken: 'SECRET_TOKEN', refreshToken: 'SECRET_REFRESH' }))
+        .rejects.toBe(error)
+      const line = String(warn.mock.calls[0]![0])
+      expect(JSON.parse(line.slice('[ArkmeAvatarDiag] '.length))).toMatchObject({
+        event: 'profile_fetch_failed', viewerUserId: 42, targetUserIds: [88, 99], error: { code: 'arkme-timeout', httpStatus: 504 },
+      })
+      expect(line).not.toContain('SECRET')
+    } finally { warn.mockRestore() }
+  })
+
+  it('logs rejected avatars and missing profiles but keeps ordinary default avatars quiet', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const service = new ProfileService({
+        config, authenticatedAuthPost: vi.fn().mockResolvedValue({ items: [
+          { user_id: 88, head_img: 'https://untrusted.test/private?x-oss-signature=SECRET' },
+          { user_id: 89, head_img: '' },
+          { user_id: 90, head_img: 'phone_avatar://v1/1/AB' },
+          { user_id: 91, head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?x-oss-signature=SECRET' },
+        ] }),
+      } as unknown as ServiceRuntime)
+      const profiles = await service.publicProfileSummariesByUserIds([88, 89, 90, 91, 92], {
+        userId: 42, accessToken: 'SECRET_TOKEN', refreshToken: 'SECRET_REFRESH',
+      })
+      expect(profiles.get(88)?.avatarUrl).toBeUndefined()
+      expect(profiles.get(90)?.avatarFallback).toMatchObject({ kind: 'phone_default' })
+      expect(profiles.get(91)?.avatarUrl).toBeDefined()
+      expect(profiles.has(92)).toBe(false)
+      expect(warn).toHaveBeenCalledTimes(2)
+      const logs = warn.mock.calls.map(([line]) => JSON.parse(String(line).slice('[ArkmeAvatarDiag] '.length)))
+      expect(logs).toEqual([
+        expect.objectContaining({ event: 'profile_avatar_rejected', targetUserId: 88 }),
+        expect.objectContaining({ event: 'profile_missing', targetUserIds: [92] }),
+      ])
+      expect(JSON.stringify(logs)).not.toMatch(/SECRET|https:/)
+      await service.publicProfileSummariesByUserIds([88, 89, 90, 91, 92], { userId: 42, accessToken: 'a', refreshToken: 'r' })
+      expect(warn).toHaveBeenCalledTimes(2)
+    } finally { warn.mockRestore() }
+  })
+
   it('refreshes and persists the current account profile', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

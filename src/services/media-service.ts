@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { avatarReferenceDiagnostic, logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
 import { createReadStream } from 'node:fs'
 import { open as openFile } from 'node:fs/promises'
 import OSS from 'ali-oss'
@@ -612,6 +613,7 @@ export class MediaService {
     if (cached !== undefined) return cached
     const existing = this.imageInFlight.get(cacheKey)
     if (existing !== undefined) return cloneImageBytes(await existing)
+    const startedAtMillis = Date.now()
     const pending = this.withImageDownloadPermit(
       async () => await this.readImageUncached(session, imageRef, byteLimit, options.signal),
     )
@@ -620,6 +622,12 @@ export class MediaService {
       const value = await pending
       this.cacheImage(cacheKey, value)
       return cloneImageBytes(value)
+    } catch (error) {
+      if (isProfileImage) logArkmeAvatarDiagnostic('image_read_failed', {
+        environment: this.runtime.config.environment, viewerUserId: session.userId,
+        ...avatarReferenceDiagnostic(imageRef), durationMillis: Math.max(0, Date.now() - startedAtMillis),
+      }, error)
+      throw error
     } finally {
       if (this.imageInFlight.get(cacheKey) === pending) this.imageInFlight.delete(cacheKey)
     }

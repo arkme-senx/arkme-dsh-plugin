@@ -25,6 +25,7 @@ import { readImageToolModule } from './media/read-image.js'
 import { fileToolModules } from './media/files.js'
 import { recordingToolModules } from './recordings/index.js'
 import { createRecordToolModule } from './records/create.js'
+import { reeditRecordToolModule } from './records/reedit.js'
 import { listImagesToolModule } from './records/images.js'
 import { recentRecordsToolModule } from './records/recent.js'
 import { searchRecordsToolModule } from './records/search.js'
@@ -55,6 +56,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...recordCalendarToolModules,
   listImagesToolModule,
   createRecordToolModule,
+  reeditRecordToolModule,
   ...botToolModules,
   worldRecentToolModule,
   worldMineToolModule,

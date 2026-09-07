@@ -30,6 +30,8 @@ import { SecureManagedOpenApiCredentialStore } from './openapi-mcp/credential-st
 import { registerManagedOpenApiMcpExecutionFence } from './openapi-mcp/execution-fence.js'
 import { HttpOpenApiMcpManifestSource } from './openapi-mcp/manifest-source.js'
 import { CordisOpenApiMcpRuntime } from './openapi-mcp/mcp-runtime.js'
+import { HttpOpenApiCapabilityGateway } from './openapi-capability-gateway.js'
+import { TeamService } from './services/team-service.js'
 import { FileOpenApiMcpReconcileLock, managedOpenApiMcpReconcileLockPath } from './openapi-mcp/reconcile-lock.js'
 import { ObservedArkmeSessionStore } from './openapi-mcp/session-observer.js'
 import { registerOpenApiMcpLifecycleTools } from './openapi-mcp/status-tool.js'
@@ -274,7 +276,7 @@ export function apply(ctx: Context, config: Config): void {
   const service = new ArkmeService({ ...config, fileStateDirectory: join(stateDirectory, 'files') }, sessionStore, localDatabase, fetch, pendingSessionStore)
   const openApiMcpCredentialNamespace = `${config.keychainServicePrefix}.${config.environment}.openapi-mcp`
   const openApiMcpController = new ManagedOpenApiMcpController({
-    enabled: config.openApiMcpEnabled,
+    mountMcp: config.openApiMcpEnabled,
     sessionStore,
     accessCredentialProvider: service,
     controlPlane: new HttpManagedOpenApiControlPlane(config.openApiBaseUrl, fetch, config.requestTimeoutMs),
@@ -284,6 +286,10 @@ export function apply(ctx: Context, config: Config): void {
     reconcileLock: new FileOpenApiMcpReconcileLock(managedOpenApiMcpReconcileLockPath(openApiMcpCredentialNamespace)),
     logger: ctx.logger,
   })
+  const teamService = new TeamService(
+    new HttpOpenApiCapabilityGateway(config.openApiBaseUrl, openApiMcpController, fetch),
+    service,
+  )
   sessionStore.attach(openApiMcpController)
   ctx.effect(
     () => ctx.tools.guard(execution => openApiMcpController.guardToolExecution(execution.name)),
@@ -592,6 +598,7 @@ export function apply(ctx: Context, config: Config): void {
     remoteHost: () => remoteHost,
     desktopQuarantine,
     openApiMcpController,
+    teamService,
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {
@@ -651,7 +658,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => {
     openApiMcpController.start()
     return async () => { await openApiMcpController.dispose() }
-  }, 'dsh-arkme: managed OpenAPI MCP lifecycle')
+  }, 'dsh-arkme: managed OpenAPI credential and MCP lifecycle')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
   ctx.effect(async () => {
     const protectedRecordingPaths = new Set((await stateStore.listAllRecordingImportJobs())
@@ -774,7 +781,7 @@ function validateConfig(ctx: Context, config: Config): void {
       config.relationBaseUrl,
       config.intelligentBaseUrl,
       config.audioBaseUrl,
-      ...(config.openApiMcpEnabled ? [config.openApiBaseUrl] : []),
+      config.openApiBaseUrl,
       ...(config.dshRemoteFeatureEnabled ? [config.dshRemoteRealtimeBaseUrl] : []),
     ].filter(origin => new URL(origin).hostname.endsWith('.senguo.me'))
     if (testDefaults.length > 0) {
@@ -811,7 +818,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['relationBaseUrl', config.relationBaseUrl],
     ['intelligentBaseUrl', config.intelligentBaseUrl],
     ['audioBaseUrl', config.audioBaseUrl],
-    ...(config.openApiMcpEnabled ? [['openApiBaseUrl', config.openApiBaseUrl] as const] : []),
+    ['openApiBaseUrl', config.openApiBaseUrl],
     ['shareWebsite', config.shareWebsite],
     ...(config.dshRemoteFeatureEnabled
       ? [['dshRemoteRealtimeBaseUrl', config.dshRemoteRealtimeBaseUrl] as const]

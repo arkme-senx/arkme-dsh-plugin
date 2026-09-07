@@ -122,7 +122,7 @@ export type ArkmeDirectoryItem =
   | { kind: 'group'; sourceRef: string; displayName: string; avatarRef?: string; groupAvatar?: ArkmeGroupAvatarPresentation }
   | { kind: 'bot'; bot: ArkmeBotSummary }
   | { kind: 'unmarked-speaker'; candidateRef: string; speakerToken?: string; displayName: string; subtitle: string }
-  | { kind: 'team'; rowKey: string; displayName: string; publicId?: string; avatarRef?: string }
+  | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole }
   | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; letter: string }
 
 export interface ArkmeDirectoryPage {
@@ -135,6 +135,82 @@ export interface ArkmeDirectoryPage {
   retryAfterMillis?: number
   cursorStale?: boolean
 }
+
+export type ArkmeTeamRole = 'owner' | 'admin' | 'member'
+export type ArkmeTeamIdentityState = 'ready' | 'incomplete' | 'unavailable'
+export type ArkmeTeamCreateRejectReason = 'jotmo_id_unavailable' | 'idempotency_conflict'
+export type ArkmeTeamJoinRejectReason = 'team_not_found'
+export type ArkmeTeamMembershipState = 'joined' | 'already_member' | 'owner'
+
+export interface ArkmeTeam {
+  teamRef: string
+  name: string
+  jotmoId: string
+  currentUserRole: ArkmeTeamRole
+  createdAtMillis: number
+  updatedAtMillis: number
+}
+
+export interface ArkmeTeamPage {
+  items: ArkmeTeam[]
+  totalCount: number
+  hasMore: boolean
+  nextPageCursor?: string
+}
+
+export interface ArkmeTeamResolveItem {
+  itemId: string
+  query: string
+  limit?: number
+  pageCursor?: string
+}
+
+export interface ArkmeTeamResolution {
+  itemId: string
+  candidates: ArkmeTeam[]
+  hasMore: boolean
+  nextPageCursor?: string
+}
+
+export interface ArkmeTeamMember {
+  userRef: string
+  displayName: string
+  jotmoId?: string
+  /** Browser-safe profile image reference resolved by the host presentation layer. */
+  avatarRef?: string
+  avatarFallback?: ArkmeGroupAvatarFallback
+  identityState: ArkmeTeamIdentityState
+  role: ArkmeTeamRole
+  joinedAtMillis: number
+}
+
+export interface ArkmeTeamMemberPage {
+  team: ArkmeTeam
+  items: ArkmeTeamMember[]
+  totalCount: number
+  hasMore: boolean
+  nextPageCursor?: string
+}
+
+export interface ArkmeTeamCreateItem {
+  itemId: string
+  idempotencyKey: string
+  name: string
+  jotmoId: string
+}
+
+export interface ArkmeTeamJoinItem {
+  itemId: string
+  jotmoId: string
+}
+
+export type ArkmeTeamCreateResult =
+  | { itemId: string; status: 'succeeded'; team: ArkmeTeam }
+  | { itemId: string; status: 'rejected'; reason: ArkmeTeamCreateRejectReason }
+
+export type ArkmeTeamJoinResult =
+  | { itemId: string; status: 'succeeded'; membershipState: ArkmeTeamMembershipState; team: ArkmeTeam }
+  | { itemId: string; status: 'rejected'; reason: ArkmeTeamJoinRejectReason }
 
 export interface ArkmeDirectoryContactProfile {
   contactRef: string
@@ -295,6 +371,8 @@ export interface ArkmeRecordCursor {
 }
 
 export interface ArkmeSelfRecordItem {
+  /** Frozen long-recording selection returned by the Record owner. */
+  forwardRecords?: ArkmeForwardRecordsPreview
   recordUid: string
   sendAtMillis: number
   title: string
@@ -1126,6 +1204,12 @@ export interface ArkmeProviderCapabilities {
     extensionManagement?: true
     /** Owner-authorized extension name, description, and private/public visibility editing is available. */
     extensionMetadataEdit?: true
+    /** OpenAPI-backed current-account Team directory is available. */
+    teamDirectory?: true
+    /** Team member pages can be read with opaque team and user references. */
+    teamMembers?: true
+    /** Explicit create and join-by-Jotmo-ID Team governance is available. */
+    teamGovernance?: true
     /** Extension-level icon upload and same-origin rendering are available. */
     extensionIcons?: true
     /** Extension-level preview gallery SDK and Tool mutations are available. */
@@ -1481,6 +1565,8 @@ export interface ArkmeTimelineItem {
   title: string
   textContent: string
   textFormat?: 'plain' | 'markdown'
+  /** Safe rich preview retained from raw Chat metadata even when media delivery URLs are unavailable. */
+  conversationPreview?: string
   status: number
   sequence?: number
   recordVersion?: number
@@ -1500,7 +1586,7 @@ export interface ArkmeTimelineItem {
   mediaUnavailable?: boolean
   /** Present only for a categorized record in the aggregate “发给自己” feed. */
   selfTopic?: ArkmeTimelineSelfTopic
-  /** Browser-safe Chat forward snapshot. It is present only for explicit `render_kind=forward_records` payloads. */
+  /** Browser-safe Chat forward or Record-owned long-recording selection snapshot. */
   forwardRecords?: ArkmeForwardRecordsPreview
   /** Browser-safe shared recording snapshot. It is present only for explicit `render_kind=shared_recording_memory` payloads. */
   sharedRecording?: ArkmeSharedRecordingPreview
@@ -1622,6 +1708,8 @@ export interface ArkmeForwardRecordsPreview {
 }
 
 export interface ArkmeForwardTranscriptSegment {
+  /** Recording-local speaker number, never an account identity. */
+  speakerNumber?: number
   speakerName: string
   textContent: string
   textFormat?: 'plain' | 'markdown'
@@ -1868,6 +1956,21 @@ export interface ArkmeLongArticleDraft {
   textContent: string
   textFormat?: 'plain' | 'markdown'
   durationMillis: number
+  updatedAtMillis: number
+}
+
+/** Host-owned durable candidate for editing one existing Record. */
+export interface ArkmeRecordReeditDraft {
+  schemaVersion: 1
+  draftRevision: number
+  sourceIdentityKey: string
+  lastSourceRef: string
+  itemUid: string
+  title: string
+  textContent: string
+  baseVersion: number
+  baseContentFingerprint: string
+  editDurationMillis: number
   updatedAtMillis: number
 }
 
@@ -2253,6 +2356,32 @@ export interface ArkmeConversationMemberList {
   joinEvents?: ArkmeConversationMemberJoinEvent[]
 }
 
+export interface ArkmeMemberEvent {
+  eventId: string
+  type: 'left'
+  occurredAtMillis: number
+  displayName: string
+}
+
+export interface ArkmeMemberEventQuery {
+  fromAtMillis: number
+  toAtMillis: number
+  cursor?: string
+  limit?: number
+}
+
+export interface ArkmeMemberEventPage {
+  items: ArkmeMemberEvent[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface ArkmeMemberEventProfile {
+  displayName: string
+  memberName?: string
+  avatarRef?: string
+}
+
 export type ArkmeConversationMemberRecordMode = 'owner' | 'mentioned'
 
 export interface ArkmeConversationMemberRecordPage {
@@ -2400,6 +2529,7 @@ export interface ArkmeRecordingCalendarMonth {
 
 export type ArkmeRecordingProjectionKind = 'summary' | 'timeline'
 export type ArkmeRecordingToolContent = 'transcript' | ArkmeRecordingProjectionKind
+export type ArkmeRecordingTranscriptSource = 'system' | 'doubao'
 
 export interface ArkmeRecordingSummaryModelRouteOption {
   routeKey: string
@@ -2435,7 +2565,7 @@ export interface ArkmeRecordingTranscriptItem {
   sessionId: string
   childId: string
   asrItemIndex: number
-  transcriptSource: ArkmeAiVideoTranscriptSource
+  transcriptSource: ArkmeRecordingTranscriptSource
   startAtMillis: number
   endAtMillis: number
   speakerNumber: number
@@ -2452,6 +2582,8 @@ export interface ArkmeRecordingTranscriptItem {
 export interface ArkmeRecordingWorkbenchItem {
   itemId: string
   itemRef: string
+  transcriptSource: ArkmeRecordingTranscriptSource
+  sessionKey: string
   startAtMillis: number
   endAtMillis: number
   speakerNumber: number
@@ -2536,6 +2668,15 @@ export interface ArkmeRecordingDay {
   transcript: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
   summary: ArkmeRecordingSection<ArkmeRecordingVersion>
   timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
+}
+
+export interface ArkmeRecordingComparison {
+  dateStamp: number
+  system: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
+  doubao: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
+  candidateCount: number
+  failedCount: number
+  silentCount: number
 }
 
 export type ArkmeWechatMessageFilter =
@@ -2988,6 +3129,29 @@ export type ArkmeChatClientEvent = {
   relationTerminal: boolean
   throughSequence: number
 } | {
+  type: 'message-preparing'
+  revision: number
+  sourceKey: string
+  actorKey: string
+  avatarRef?: string
+  prepareAtMillis: number
+  expireAtMillis: number
+  preparingState: 1 | 2
+  stateVersion: number
+  eventAtMillis: number
+  /** Chat SSE connection identity; distinct from the Browser delivery revision. */
+  chatConnectionGeneration: number
+  /** Ordered observation within the Chat SSE runtime; not a preparing state version. */
+  chatRevision: number
+} | {
+  type: 'message-arrived'
+  revision: number
+  sourceKey: string
+  actorKey: string
+  eventAtMillis: number
+  chatConnectionGeneration: number
+  chatRevision: number
+} | {
   type: 'attention-summary'
   revision: number
   summary: ArkmeChatAttentionSummary
@@ -3023,6 +3187,12 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'conversation-list-preference-invalidated'
   revision: number
+} | {
+  type: 'member-events-invalidated'
+  revision: number
+  sourceKey: string
+  eventId: string
+  occurredAtMillis: number
 }
 
 export type ArkmePluginOperation =
@@ -3045,6 +3215,11 @@ export type ArkmePluginOperation =
   | 'user-ban.unban'
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
+  | 'team.list'
+  | 'team.resolve'
+  | 'team.members.list'
+  | 'team.create'
+  | 'team.join-by-jotmo-id'
   | 'remote.getStatus'
   | 'remote.renameDesktop'
   | 'billing.quota'
@@ -3123,8 +3298,13 @@ export type ArkmePluginOperation =
   | 'source.timeline'
   | 'source.timeline-around'
   | 'source.members'
+  | 'source.member-events'
+  | 'source.member-event.profile'
+  | 'source.member-event.private.open'
   | 'source.member-records'
   | 'source.mark-read'
+  | 'source.message-preparing.report'
+  | 'source.message-preparing.cancel'
   | 'source.read-receipts.summary-list'
   | 'source.read-receipts.detail'
   | 'source.message-report'
@@ -3189,6 +3369,10 @@ export type ArkmePluginOperation =
   | 'source.long-article.draft.get'
   | 'source.long-article.draft.put'
   | 'source.long-article.draft.delete'
+  | 'source.record-reedit.detail'
+  | 'source.record-reedit.draft.put'
+  | 'source.record-reedit.draft.delete'
+  | 'source.record-reedit.update'
   | 'calls.outgoing.intent.claim'
   | 'calls.outgoing.intent.resolve'
   | 'calls.outgoing.prepare'
@@ -3253,6 +3437,10 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'dsh-beta-community.join'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'recordings.compare'
+  | 'recordings.compare.start'
+  | 'recordings.forward.capabilities'
+  | 'recordings.forward'
   | 'recordings.summary-model-config'
   | 'recordings.summary-model-config.set'
   | 'recordings.generate'

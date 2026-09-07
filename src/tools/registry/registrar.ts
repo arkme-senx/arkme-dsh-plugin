@@ -18,6 +18,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_files_send',
   'arkme_file_task',
   'arkme_id_set',
+  'arkme_record_reedit',
   'arkme_bot_openclaw_connect',
   'arkme_extension_review_create',
   'arkme_group_member_add',
@@ -168,7 +169,9 @@ function withCoreConversationalConfirmation(
         agent: exec.agent as Agent,
         operationKey: definition.name,
         arguments: args,
-        question,
+        question: hooks?.question === undefined
+          ? question
+          : preparedContext => hooks.question!(args, preparedContext),
         ...(hooks === undefined ? {} : { prepare: async () => await hooks.prepare(args, exec) }),
         execute: async preparedContext => hooks === undefined
           ? await definition.execute(args, exec)

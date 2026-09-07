@@ -33,6 +33,52 @@ function clientSourceFiles(directory: URL, prefix = ''): Array<{ name: string; s
 }
 
 describe('InMemoryArkmeAvatarImageStore', () => {
+  it('reports one failure for a shared load without adding retries or changing the rejection', async () => {
+    let now = 100
+    const pending = deferred<ReturnType<typeof imagePayload>>()
+    const error = new Error('offline')
+    const onLoadFailure = vi.fn()
+    const reader = vi.fn(async () => await pending.promise)
+    const store = new InMemoryArkmeAvatarImageStore({ reader, onLoadFailure, now: () => now })
+    store.activateScope('prod:42')
+    const first = store.load('avatar-a')
+    const duplicate = store.load('avatar-a')
+    now = 175
+    pending.reject(error)
+    const results = await Promise.allSettled([first, duplicate])
+    expect(results).toEqual([{ status: 'rejected', reason: error }, { status: 'rejected', reason: error }])
+    expect(onLoadFailure).toHaveBeenCalledExactlyOnceWith({
+      imageRef: 'avatar-a', scopeKey: 'prod:42', error, trigger: 'load', hasCachedImage: false, durationMillis: 75,
+    })
+    expect(reader).toHaveBeenCalledOnce()
+    expect(store.current('avatar-a')).toBeUndefined()
+  })
+
+  it('reports revalidation failures while preserving the last successful image', async () => {
+    const error = new Error('offline')
+    const onLoadFailure = vi.fn(() => { throw new Error('diagnostic sink failed') })
+    const reader = vi.fn().mockResolvedValueOnce(imagePayload('old')).mockRejectedValueOnce(error)
+    const store = new InMemoryArkmeAvatarImageStore({ reader, onLoadFailure })
+    await store.load('avatar-a')
+    store.subscribe('avatar-a', () => undefined)
+    expect(onLoadFailure).not.toHaveBeenCalled()
+    await expect(store.revalidateActive()).resolves.toBeUndefined()
+    expect(onLoadFailure).toHaveBeenCalledWith(expect.objectContaining({ error, trigger: 'revalidate', hasCachedImage: true }))
+    expect(store.current('avatar-a')).toBe(imageDataUrl('old'))
+  })
+
+  it('does not report expected cancellation when the account scope changes', async () => {
+    const pending = deferred<ReturnType<typeof imagePayload>>()
+    const onLoadFailure = vi.fn()
+    const store = new InMemoryArkmeAvatarImageStore({ reader: async () => await pending.promise, onLoadFailure })
+    store.activateScope('prod:42')
+    const load = store.load('avatar-a')
+    store.activateScope('prod:43')
+    pending.resolve(imagePayload('old-account'))
+    await expect(load).rejects.toThrow('Avatar image scope changed')
+    expect(onLoadFailure).not.toHaveBeenCalled()
+  })
+
   it('single-flights concurrent loads and caches the successful image', async () => {
     const pending = deferred<ReturnType<typeof imagePayload>>()
     const reader = vi.fn(async () => await pending.promise)

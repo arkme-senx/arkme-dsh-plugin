@@ -73,6 +73,7 @@ describe('recording transcript speaker popover', () => {
     const button = renderer.root.findByProps({ 'aria-label': '编辑说话人 说话人 1' })
     await act(async () => {
       button.props.onClick({
+        stopPropagation() {},
         currentTarget: {
           getBoundingClientRect: () => ({ left: 24, right: 104, top: 120, bottom: 142 }),
         },

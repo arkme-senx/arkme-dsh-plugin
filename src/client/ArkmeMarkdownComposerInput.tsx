@@ -59,6 +59,7 @@ export const ArkmeMarkdownComposerInput = forwardRef<ArkmeRichComposerHandle, Ar
       const markdown = arkmeSerializeMarkdownEditor(updated)
       latest.current.onTextChange(projected.text)
       latest.current.onMarkdownChange(markdown, projected.text, projected.mentions, projected.emojis)
+      latest.current.onInputActivity?.(projected.text)
       publishSelection()
     },
     onSelectionUpdate: publishSelection,

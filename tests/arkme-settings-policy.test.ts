@@ -45,6 +45,21 @@ describe('Arkme settings policy', () => {
     })
   })
 
+  it('installs a downloaded verified package in app instead of exposing its cache path', () => {
+    expect(buildArkmeAppUpdateRow({
+      app: {
+        status: 'downloaded',
+        currentVersion: '1.2.0',
+        latestVersion: '1.1.0',
+        installMode: 'in-app',
+        downloadedFilePath: '/private/cache/verified-update.zip',
+      },
+    })).toEqual({
+      label: 'APP', current: 'v1.2.0', latest: 'v1.1.0', action: 'install',
+      feedback: '下载完成，可重启并安装新版本',
+    })
+  })
+
   it('disables the APP row when the desktop update bridge is unavailable', () => {
     expect(buildArkmeAppUpdateRow({
       appError: 'APP 更新只在 Arkme 桌面端可用',

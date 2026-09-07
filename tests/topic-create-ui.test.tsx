@@ -52,7 +52,7 @@ describe('topic create UI', () => {
 
     expect(arkmeConversationComposerLayout.tools.justifyContent).toBe('space-between')
     expect(source).toContain('...arkmeConversationComposerLayout.tools')
-    expect(source.indexOf('aria-label="添加内容"')).toBeLessThan(source.indexOf('aria-label="发送消息"'))
+    expect(source.indexOf('aria-label="添加内容"')).toBeLessThan(source.indexOf('style={{ ...styles.send'))
   })
 
   it('uses a compact trigger and a rounded floating sort menu', () => {

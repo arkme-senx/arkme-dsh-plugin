@@ -104,6 +104,7 @@ describe('registerArkmeTools', () => {
       'arkme_record_calendar_read',
       'arkme_images_list',
       'arkme_record_create',
+      'arkme_record_reedit',
       'arkme_bots_list',
       'arkme_bot_create',
       'arkme_bot_openclaw_connect',
@@ -380,6 +381,128 @@ describe('registerArkmeTools', () => {
     expect(result.isError ? '' : result.value).not.toContain('arkme-source-v1.account-bound')
     expect(result.isError ? '' : result.value).not.toContain('91')
     expect(userBanStatus).toHaveBeenCalledWith('arkme-source-v1.account-bound', signal)
+  })
+
+  it('persists a record re-edit draft before confirmation and commits only after a later user message', async () => {
+    const ctx = await setup()
+    const preparedContext = {
+      expectedUserId: 42,
+      sourceRef: 'arkme-source-v1.secret',
+      sourceIdentityKey: 'arkme-record-reedit-source-v1.secret',
+      sourceKind: 'group_chat' as const,
+      sourceDisplayName: '研发群',
+      itemUid: 'record-secret-1',
+      draftRevision: 3,
+      baseVersion: 8,
+      baseContentFingerprint: 'a'.repeat(64),
+      oldTitle: '',
+      oldTextPreview: '原来的正文',
+      newTitle: '',
+      newTextPreview: '修改后的正文',
+      sendAtMillis: 1_756_800_000_000,
+      preservesAttachments: true,
+    }
+    const prepareRecordReedit = vi.fn(async () => preparedContext)
+    const commitRecordReedit = vi.fn(async () => ({
+      status: 'committed' as const,
+      itemUid: 'record-secret-1',
+      version: 9,
+      revisionUid: 'revision-secret-1',
+      projectionState: 'pending' as const,
+    }))
+    await mountArkmeTools(ctx, 'business', {
+      ...ports, prepareRecordReedit, commitRecordReedit,
+    } as unknown as ArkmeToolPorts)
+    const events: Array<Record<string, unknown>> = [
+      { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '把这条改一下' }] } },
+    ]
+    const agent = {
+      id: SessionId('session-record-reedit'), session: { get events() { return events } },
+    } as unknown as Agent
+    const signal = new AbortController().signal
+    const args = { source_ref: 'arkme-source-v1.secret', item_uid: 'record-secret-1', new_text: '修改后的正文' }
+
+    const prepared = await ctx.tools.execute({
+      callId: CallId('record-reedit-prepare'), name: 'arkme_record_reedit', arguments: args, agent, signal,
+    })
+    expect(prepared.isError).toBe(false)
+    const preparedValue = prepared.isError ? '' : prepared.value
+    expect(preparedValue).toContain('confirmation_required')
+    expect(preparedValue).toContain('研发群')
+    expect(preparedValue).toContain('原来的正文')
+    expect(preparedValue).toContain('修改后的正文')
+    expect(preparedValue).toContain('附件将保持不变')
+    expect(preparedValue).not.toContain('record-secret-1')
+    expect(preparedValue).not.toContain('arkme-record-reedit-source-v1.secret')
+    expect(prepareRecordReedit).toHaveBeenCalledOnce()
+    expect(commitRecordReedit).not.toHaveBeenCalled()
+
+    const repeated = await ctx.tools.execute({
+      callId: CallId('record-reedit-repeat'), name: 'arkme_record_reedit', arguments: args, agent, signal,
+    })
+    expect(repeated.isError ? '' : repeated.value).toContain('confirmation_required')
+    expect(prepareRecordReedit).toHaveBeenCalledOnce()
+    expect(commitRecordReedit).not.toHaveBeenCalled()
+
+    events.push({
+      seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认提交' }] },
+    })
+    const committed = await ctx.tools.execute({
+      callId: CallId('record-reedit-confirm'), name: 'arkme_record_reedit', arguments: args, agent, signal,
+    })
+    expect(committed.isError).toBe(false)
+    const committedValue = committed.isError ? '' : committed.value
+    expect(committedValue).toContain('已更新')
+    expect(committedValue).not.toContain('record-secret-1')
+    expect(committedValue).not.toContain('revision-secret-1')
+    expect(commitRecordReedit).toHaveBeenCalledOnce()
+    expect(commitRecordReedit).toHaveBeenCalledWith(preparedContext)
+  })
+
+  it('confirms discarding only the exact local re-edit draft without committing a record update', async () => {
+    const ctx = await setup()
+    const discardContext = {
+      expectedUserId: 42,
+      sourceRef: 'arkme-source-v1.secret',
+      sourceIdentityKey: 'arkme-record-reedit-source-v1.secret',
+      sourceDisplayName: '即我',
+      itemUid: 'record-secret-1',
+      draftRevision: 4,
+      textPreview: '不再需要的草稿',
+    }
+    const prepareDiscardRecordReeditDraft = vi.fn(async () => discardContext)
+    const discardRecordReeditDraft = vi.fn(async () => ({ status: 'discarded' as const, itemUid: 'record-secret-1' }))
+    const commitRecordReedit = vi.fn()
+    await mountArkmeTools(ctx, 'business', {
+      ...ports, prepareDiscardRecordReeditDraft, discardRecordReeditDraft, commitRecordReedit,
+    } as unknown as ArkmeToolPorts)
+    const events: Array<Record<string, unknown>> = [
+      { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '放弃刚才的草稿' }] } },
+    ]
+    const agent = {
+      id: SessionId('session-record-reedit-discard'), session: { get events() { return events } },
+    } as unknown as Agent
+    const signal = new AbortController().signal
+    const args = { source_ref: 'arkme-source-v1.secret', item_uid: 'record-secret-1', discard_draft: true }
+
+    const prepared = await ctx.tools.execute({
+      callId: CallId('record-reedit-discard-prepare'), name: 'arkme_record_reedit', arguments: args, agent, signal,
+    })
+    expect(prepared.isError ? '' : prepared.value).toContain('线上快记')
+    expect(prepared.isError ? '' : prepared.value).toContain('不再需要的草稿')
+    expect(discardRecordReeditDraft).not.toHaveBeenCalled()
+
+    events.push({
+      seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认放弃' }] },
+    })
+    const discarded = await ctx.tools.execute({
+      callId: CallId('record-reedit-discard-confirm'), name: 'arkme_record_reedit', arguments: args, agent, signal,
+    })
+    expect(discarded.isError).toBe(false)
+    expect(discarded.isError ? '' : discarded.value).toContain('本机草稿已放弃')
+    expect(discarded.isError ? '' : discarded.value).not.toContain('record-secret-1')
+    expect(discardRecordReeditDraft).toHaveBeenCalledWith(discardContext)
+    expect(commitRecordReedit).not.toHaveBeenCalled()
   })
 
   it('rechecks the private-chat peer after confirmation before a ban write', async () => {

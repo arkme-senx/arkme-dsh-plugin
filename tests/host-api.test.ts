@@ -72,6 +72,19 @@ function fakeService() {
     getLongArticleDraft: vi.fn(async () => undefined),
     putLongArticleDraft: vi.fn(async () => undefined),
     removeLongArticleDraft: vi.fn(async () => undefined),
+    recordReeditEditor: vi.fn(async (sourceRef: string, itemUid: string) => ({ sourceRef, itemUid })),
+    prepareRecordReedit: vi.fn(async (input: unknown) => ({
+      ...(input as Record<string, unknown>), expectedUserId: 42, sourceIdentityKey: 'host-only',
+      draftRevision: 7, baseVersion: 3, baseContentFingerprint: 'fingerprint',
+    })),
+    commitRecordReedit: vi.fn(async () => ({
+      status: 'committed', itemUid: 'record-1', version: 4, revisionUid: 'revision-1', projectionState: 'pending',
+    })),
+    prepareDiscardRecordReeditDraft: vi.fn(async () => ({
+      expectedUserId: 42, sourceRef: 'source-1', sourceIdentityKey: 'host-only', sourceDisplayName: '会话',
+      itemUid: 'record-1', draftRevision: 7, textPreview: '草稿',
+    })),
+    discardRecordReeditDraft: vi.fn(async () => ({ status: 'discarded', itemUid: 'record-1' })),
     listGroupMemberCandidates: vi.fn(async () => ({ items: [] })),
     addGroupMembers: vi.fn(async () => ({ items: [] })),
     removeGroupMember: vi.fn(async (sourceRef: string, memberRef: string, options: unknown) => ({ sourceRef, memberRef, options })),
@@ -1286,6 +1299,35 @@ describe('outgoing call Host API dispatch', () => {
       sourceRef: 'source-1', itemUid: 'record-1', title: '草稿', textContent: '正文',
       durationMillis: 500, updatedAtMillis: expect.any(Number),
     })
+  })
+
+  it('keeps record re-edit owner context inside the Host for UI operations', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.record-reedit.detail', {
+      sourceRef: 'source-1', itemUid: 'record-1', expectedUserId: 999,
+    })
+    const draft = await dispatchArkmeHostOperation(service as never, 'source.record-reedit.draft.put', {
+      sourceRef: 'source-1', itemUid: 'record-1', newText: '草稿正文', expectedVersion: 3, expectedUserId: 999,
+    })
+    const updated = await dispatchArkmeHostOperation(service as never, 'source.record-reedit.update', {
+      sourceRef: 'source-1', itemUid: 'record-1', newText: '最终正文', expectedVersion: 3, ownerUserId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.record-reedit.draft.delete', {
+      sourceRef: 'source-1', itemUid: 'record-1', draftRevision: 999,
+    })
+
+    expect(service.recordReeditEditor).toHaveBeenCalledWith('source-1', 'record-1')
+    expect(service.prepareRecordReedit).toHaveBeenNthCalledWith(1, {
+      sourceRef: 'source-1', itemUid: 'record-1', newText: '草稿正文',
+    }, { expectedBaseVersion: 3 })
+    expect(service.prepareRecordReedit).toHaveBeenNthCalledWith(2, {
+      sourceRef: 'source-1', itemUid: 'record-1', newText: '最终正文',
+    }, { expectedBaseVersion: 3 })
+    expect(draft).toEqual({ saved: true, draftRevision: 7 })
+    expect(service.commitRecordReedit).toHaveBeenCalledWith(expect.objectContaining({ sourceIdentityKey: 'host-only' }))
+    expect(updated).toMatchObject({ status: 'committed', version: 4 })
+    expect(service.prepareDiscardRecordReeditDraft).toHaveBeenCalledWith('source-1', 'record-1')
+    expect(service.discardRecordReeditDraft).toHaveBeenCalledOnce()
   })
 
   it('dispatches built-in search lanes without forwarding caller account fields', async () => {

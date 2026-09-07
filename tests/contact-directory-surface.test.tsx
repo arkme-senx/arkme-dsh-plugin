@@ -29,7 +29,7 @@ const items: Record<ArkmeDirectorySectionKind, ArkmeDirectoryItem[]> = {
   'unmarked-speakers': [{
     kind: 'unmarked-speaker', candidateRef: 'candidate-ref', speakerToken: 'B', displayName: '说话人 B', subtitle: '3 天 · 最新：今天 09:28',
   }],
-  teams: [{ kind: 'team', rowKey: 'team-row', displayName: 'Arkme 产品组', publicId: '@arkme-team' }],
+  teams: [{ kind: 'team', teamRef: `team_v1_${'a'.repeat(32)}`, displayName: 'Arkme 产品组', publicId: 'arkme_team', role: 'member' }],
   contacts: [
     { kind: 'contact', contactRef: 'alice', displayName: 'Alice', nickname: 'Alice', remark: '', letter: 'A' },
     { kind: 'contact', contactRef: 'zhang', displayName: '张三', nickname: '张三', remark: '', letter: 'Z' },
@@ -293,12 +293,12 @@ describe('ContactDirectorySurface content', () => {
     expect(onLoadMore).toHaveBeenCalledOnce()
   })
 
-  it('routes group, Bot, contact and unmarked-speaker rows to their distinct callbacks', () => {
+  it('routes group, Bot, contact, Team and unmarked-speaker rows to their distinct callbacks', () => {
     const onOpenGroup = vi.fn()
     const onOpenBot = vi.fn()
     const onSelect = vi.fn()
 
-    for (const item of [items.groups[0], items.bots[0], items.contacts[0], items['unmarked-speakers'][0]]) {
+    for (const item of [items.groups[0], items.bots[0], items.contacts[0], items.teams[0], items['unmarked-speakers'][0]]) {
       if (item === undefined) throw new Error('fixture missing')
       const row = DirectoryItemRow({
         item,
@@ -314,10 +314,11 @@ describe('ContactDirectorySurface content', () => {
     expect(onOpenGroup).toHaveBeenCalledWith('group-ref')
     expect(onOpenBot).toHaveBeenCalledWith(botSummary)
     expect(onSelect).toHaveBeenNthCalledWith(1, { kind: 'contact', contactRef: 'alice' })
-    expect(onSelect).toHaveBeenNthCalledWith(2, { kind: 'unmarked-speaker', candidateRef: 'candidate-ref' })
+    expect(onSelect).toHaveBeenNthCalledWith(2, { kind: 'team', teamRef: `team_v1_${'a'.repeat(32)}` })
+    expect(onSelect).toHaveBeenNthCalledWith(3, { kind: 'unmarked-speaker', candidateRef: 'candidate-ref' })
   })
 
-  it('renders team rows as non-focusable listitems with no click or selected state', () => {
+  it('renders Team rows as selectable buttons using only the opaque Team reference', () => {
     const team = items.teams[0]
     if (team === undefined) throw new Error('fixture missing')
     const row = DirectoryItemRow({
@@ -329,15 +330,12 @@ describe('ContactDirectorySurface content', () => {
     }) as ReactElement<Record<string, unknown>>
     const markup = renderToStaticMarkup(row)
 
-    expect(row.type).toBe('div')
-    expect(row.props.role).toBe('listitem')
-    expect(row.props.onClick).toBeUndefined()
-    expect(row.props.tabIndex).toBeUndefined()
-    expect(row.props['aria-current']).toBeUndefined()
+    expect(row.type).toBe('button')
+    expect(row.props.onClick).toBeTypeOf('function')
+    expect(row.props['aria-current']).toBe(true)
     expect(markup).toContain('data-directory-row-kind="team"')
-    expect(markup).not.toContain('<button')
-    expect(markup).not.toContain('tabindex=')
-    expect(markup).not.toContain('aria-current=')
+    expect(markup).toContain('data-directory-row-ref="team_v1_')
+    expect(markup).toContain('aria-current="true"')
   })
 
   it('renders team rows with a large foreground person and a smaller rear person', () => {
@@ -471,6 +469,38 @@ describe('ContactDirectorySurface content', () => {
     expect(loadPage.mock.calls.filter(([section]) => section === 'groups')).toHaveLength(1)
     await act(async () => { groupHeader.props.onClick(); groupHeader.props.onClick(); await Promise.resolve() })
     expect(loadPage.mock.calls.filter(([section]) => section === 'groups')).toHaveLength(1)
+  })
+
+  it('synchronizes a controlled Team selection once and keeps its opaque reference when control is released', async () => {
+    const initialState = readyState()
+    initialState.sections.contacts.hasMore = false
+    initialState.sections.contacts.nextCursor = undefined
+    const onStateChange = vi.fn()
+    const sharedProps = {
+      accountKey: 'account-a', initialState, cacheFresh: true,
+      onSelectionChange: vi.fn(), onStateChange,
+      onOpenGroup: vi.fn(), onOpenBot: vi.fn(),
+      loadPage: vi.fn(),
+    }
+    const teamSelection = { kind: 'team' as const, teamRef: `team_v1_${'a'.repeat(32)}` }
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ContactDirectorySurface {...sharedProps} selection={teamSelection} />)
+      await Promise.resolve()
+    })
+    expect(onStateChange).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      renderer.update(<ContactDirectorySurface {...sharedProps} selection={{ ...teamSelection }} />)
+      await Promise.resolve()
+    })
+    expect(onStateChange).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      renderer.update(<ContactDirectorySurface {...sharedProps} />)
+      await Promise.resolve()
+    })
+    expect(renderer.root.findByProps({ 'data-directory-row-ref': teamSelection.teamRef }).props['aria-current']).toBe(true)
   })
 
   it('automatically loads every contact page while leaving other section pagination explicit', async () => {

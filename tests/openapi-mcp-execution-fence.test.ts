@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ToolDispatchExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { ManagedOpenApiMcpExecutionSupersededError } from '../src/openapi-mcp/controller.js'
+import { ManagedOpenApiMcpExecutionSupersededError } from '../src/openapi-mcp/types.js'
 import { registerManagedOpenApiMcpExecutionFence } from '../src/openapi-mcp/execution-fence.js'
 
 function success(): ToolExecutionResult {

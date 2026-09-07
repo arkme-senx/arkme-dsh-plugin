@@ -17,6 +17,36 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('MediaService', () => {
+  it('logs the final profile image failure once with its upstream status and no signed URL', async () => {
+    const session = { userId: 42, accessToken: 'SECRET_ACCESS', refreshToken: 'SECRET_REFRESH' }
+    const sessions: ArkmeSessionStore = { async read() { return session }, async write() {}, async delete() {} }
+    const url = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/private.jpg?x-oss-signature=SECRET_SIGNATURE'
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'SECRET_DEVICE_KEY' },
+    } as StateStore, vi.fn(async () => new Response('SECRET_RESPONSE', { status: 403 })))
+    const profile = new ProfileService(runtime)
+    vi.spyOn(profile, 'publicProfilesByUserIds').mockResolvedValue(new Map([[88, {
+      userId: 88, displayName: 'SECRET_NAME', nickname: 'SECRET_NAME', avatarUrl: url,
+    }]]))
+    const media = new MediaService(runtime, profile, {} as never, { recordUid() { return '' } })
+    const ref = await profile.sealProfileImageRef(42, 88)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const results = await Promise.allSettled([media.readImage(ref), media.readImage(ref)])
+      expect(results).toEqual([
+        { status: 'rejected', reason: expect.objectContaining({ code: 'image-download-failed', httpStatus: 502 }) },
+        { status: 'rejected', reason: expect.objectContaining({ code: 'image-download-failed', httpStatus: 502 }) },
+      ])
+      expect(warn).toHaveBeenCalledOnce()
+      const line = String(warn.mock.calls[0]![0])
+      expect(JSON.parse(line.slice('[ArkmeAvatarDiag] '.length))).toMatchObject({
+        event: 'image_read_failed', viewerUserId: 42, referenceTargetUserId: 88,
+        error: { code: 'image-download-failed', httpStatus: 502, upstreamStatus: 403 },
+      })
+      expect(line).not.toMatch(/SECRET|https:|arkme-profile-image-v1/)
+    } finally { warn.mockRestore() }
+  })
+
   it('rejects a direct upload before remote prepare when its captured account changed', async () => {
     const authenticatedPost = vi.fn()
     const media = new MediaService({

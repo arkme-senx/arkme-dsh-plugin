@@ -2,8 +2,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import {
   ManagedOpenApiMcpController,
-  ManagedOpenApiMcpExecutionSupersededError,
 } from './controller.js'
+import { ManagedOpenApiMcpExecutionSupersededError } from './types.js'
 
 /** Binds the controller's account fence to DSH's public around-dispatch seam. */
 export function registerManagedOpenApiMcpExecutionFence(

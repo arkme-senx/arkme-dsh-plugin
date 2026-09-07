@@ -106,6 +106,24 @@ describe('ChatService', () => {
     )
   })
 
+  it('does not open a departed member private chat under an account changed after event authorization', async () => {
+    const runtime = {
+      requireSession: vi.fn()
+        .mockResolvedValueOnce({ userId: 42 })
+        .mockResolvedValueOnce({ userId: 99 }),
+      authenticatedChatPost: vi.fn(async () => ({
+        event_id: 'leave-1', chat_session_uid: 'group-1', event_type: 'left',
+        occurred_at: 100, member_user_id: 88, display_name_snapshot: '李四',
+      })),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })) }
+    const profile = { publicProfileSummariesByUserIds: vi.fn(async () => new Map()) }
+    const chat = new ChatService(runtime as never, source as never, profile as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+    await expect(chat.memberEvents.openPrivateChat('group-ref', 'leave-1')).rejects.toMatchObject({ code: 'member-events-unavailable' })
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledTimes(1)
+    expect(profile.publicProfileSummariesByUserIds).not.toHaveBeenCalled()
+  })
+
   it('projects a private-chat extension child with the desktop parent preview contract', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const sourceItem = {
@@ -1203,6 +1221,45 @@ describe('ChatService', () => {
       .rejects.toMatchObject({ code: 'bot-chat-timeline-contract-invalid' })
   })
 
+  it('keeps a safe rich preview when timeline attachments have no delivery URL', async () => {
+    const runtime = {
+      stateStore: { async uniqueCode() { return 'device-secret' } },
+      config: { maxTextLength: 20_000 },
+    }
+    const media = {
+      recordContentPayload: vi.fn(() => ({
+        media_refs: [{ file_asset_uid: 'file-without-url' }],
+      })),
+      richContentBlocks: vi.fn(() => []),
+    }
+    const chat = new ChatService(
+      runtime as never, {} as never,
+      { sealProfileImageRef: vi.fn(async () => 'avatar-ref') } as never,
+      media as never, {} as never, {} as never,
+      { currentUserAgentSourceFallback: vi.fn(() => undefined) } as never,
+      { timelineAiPolish: vi.fn(() => undefined) } as never, {} as never,
+    )
+
+    const [item] = await chat.chatTimelineItems({ items: [{
+      media_display_items: [{ file_asset_uid: 'file-without-url', file_type: 6, file_name: '方案.pdf' }],
+      relation: {
+        record_uid: 'record-without-url', sender_user_id: 13,
+        display_name_snapshot: '发送者', attach_at: 1_710_000_000_000, seq: 8,
+      },
+      record: { status: 1, payload: {
+        record_uid: 'record-without-url', text_content: '说明[jm_emoji:heart_eyes]',
+        content_payload: {
+          media_refs: [{ file_asset_uid: 'file-without-url' }],
+        },
+      } },
+    }] }, { userId: 42, accessToken: 'access', refreshToken: 'refresh' }, 'chat-1')
+
+    expect(item).toMatchObject({
+      contentBlocks: [],
+      conversationPreview: '[文件]说明[jm_emoji:heart_eyes]',
+    })
+  })
+
   it('projects a realtime message action ref and resolves its related-note locator', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const runtime = {
@@ -2180,8 +2237,8 @@ describe('ChatService', () => {
       render_kind: 'forward_records', title: '会议快记', created_at: 1700000000,
       items: [{
         source_type: 'long_recording_segments', source_chat_session_uid: 'private-source', record_uid: 'private-record',
-        owner_name: '小林', send_at: 1700000000, text: '完整内容',
-        long_recording_segments: [{ speaker_number: 2, speaker_label: '同事', text: '讨论内容', start_millis: 1230, end_millis: 4560 }],
+        owner_name: '小林', send_at: 1700000000000, text: '完整内容',
+        long_recording_segments: [{ speaker_number: 0, speaker_label: '同事', text: '讨论内容', start_millis: 1230, end_millis: 4560 }],
         files: [{ type: 2, name: '会议.m4a', mime_type: 'audio/mp4', download_url: 'https://jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com/a.m4a?Signature=private-signature' }],
       }, {
         source_type: 'chat_record', owner_name: '小乙',
@@ -2190,10 +2247,20 @@ describe('ChatService', () => {
     } }, 42, 1)
     expect(result).toMatchObject({ title: '会议快记', createdAtMillis: 1700000000000, items: [{
       sourceType: 'long_recording_segments', sendAtMillis: 1700000000000,
-      segments: [{ speakerName: '同事', textContent: '讨论内容', startMillis: 1230, endMillis: 4560 }],
+      segments: [{ speakerNumber: 0, speakerName: '同事', textContent: '讨论内容', startMillis: 1230, endMillis: 4560 }],
       contentBlocks: [{ kind: 'audio', fileName: '会议.m4a', mediaRef: expect.any(String) }],
     }, { segments: [{ speakerName: '小乙', textContent: '通话内容', contentBlocks: [{ kind: 'audio', mediaRef: expect.any(String) }] }] }] })
     expect(JSON.stringify(result)).not.toMatch(/private-source|private-record|private-signature|https:/)
+    expect(result?.items[1]?.segments?.[0]).not.toHaveProperty('speakerNumber')
+    const callWithoutSpeakerLabel = await chat.chatForwardRecordsPreview({ content_payload: {
+      render_kind: 'forward_records', items: [{
+        source_type: 'chat_record', owner_name: '通话发送者',
+        call_record_snapshot: { transcript_segments: [{ speaker_number: 0, text: '原有通话内容', start_ms: 0, end_ms: 1500 }] },
+      }],
+    } }, 42, 1)
+    expect(callWithoutSpeakerLabel?.items[0]?.segments?.[0]).toEqual({
+      speakerName: '通话发送者', textContent: '原有通话内容', startMillis: 0, endMillis: 1500,
+    })
     const readSource = vi.fn(async () => ({ source: { sourceRef: 'received-source' }, items: [{ forwardRecords: result }], hasMore: false }))
     const owner = { readSource }
     const hostResult = await dispatchArkmeHostOperation(owner as never, 'source.timeline', { sourceRef: 'received-source' })

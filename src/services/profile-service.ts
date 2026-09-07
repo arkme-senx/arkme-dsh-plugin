@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeEnvironment,
@@ -20,6 +21,11 @@ export interface ArkmePublicProfile {
   avatarUrl?: string
   avatarFallback?: ArkmeGroupAvatarFallback
   arkmeId?: string
+}
+
+export interface ArkmePublicAvatarPresentation {
+  avatarRef?: string
+  avatarFallback?: ArkmeGroupAvatarFallback
 }
 
 export interface ArkmeProfileImageRefPayload {
@@ -441,6 +447,7 @@ export class ProfileService {
     }
     for (const batch of chunksOf(missing, 50)) {
       if (batch.length === 0) continue
+      const startedAtMillis = Date.now()
       const data = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
         '/api/v1/auth/get-public-users-by-ids',
         { user_ids: batch },
@@ -451,7 +458,13 @@ export class ProfileService {
           key: `public-profiles:${batch.join('|')}`,
           failureCooldownMs: 5_000,
         },
-      )
+      ).catch((error: unknown) => {
+        logArkmeAvatarDiagnostic('profile_fetch_failed', {
+          environment: this.runtime.config.environment, viewerUserId: session.userId,
+          targetUserIds: batch, durationMillis: Math.max(0, Date.now() - startedAtMillis),
+        }, error)
+        throw error
+      })
       for (const raw of listValue(data.items)) {
         const item = objectValue(raw)
         const userId = numberValue(item.user_id)
@@ -470,8 +483,12 @@ export class ProfileService {
           try {
             trustedSignedImageUrl(this.runtime.config.environment, avatarUrl)
             trustedAvatarUrl = avatarUrl
-          } catch {
+          } catch (error) {
             trustedAvatarUrl = undefined
+            // phone_avatar is a supported fallback, not an invalid remote image.
+            if (avatarFallback === undefined) logArkmeAvatarDiagnostic('profile_avatar_rejected', {
+              environment: this.runtime.config.environment, viewerUserId: session.userId, targetUserId: userId,
+            }, error)
           }
         }
         const avatarCacheKey = `${String(session.userId)}:${String(userId)}`
@@ -490,6 +507,10 @@ export class ProfileService {
           ...(arkmeId === '' ? {} : { arkmeId }),
         })
       }
+      const missingUserIds = batch.filter(userId => !profiles.has(userId))
+      if (missingUserIds.length > 0) logArkmeAvatarDiagnostic('profile_missing', {
+        environment: this.runtime.config.environment, viewerUserId: session.userId, targetUserIds: missingUserIds,
+      })
       for (const userId of batch) {
         const value = profiles.get(userId) ?? null
         this.publicProfileCache.set(`${String(session.userId)}:${String(userId)}`, {
@@ -520,6 +541,60 @@ export class ProfileService {
       profiles.set(userId, profile)
     }
     return profiles
+  }
+
+  async publicAvatarPresentationsByArkmeIds(
+    arkmeIds: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<Map<string, ArkmePublicAvatarPresentation>> {
+    const normalized = [...new Set(arkmeIds.map(value => value.trim()).filter(value => value !== ''))]
+    const presentations = new Map<string, ArkmePublicAvatarPresentation>()
+    if (normalized.length === 0) return presentations
+    const session = await this.runtime.requireSession()
+    for (const batch of chunksOf(normalized, 50)) {
+      const requested = new Set(batch)
+      const data = await this.runtime.accountScopedPublicAuthReadPost<Record<string, unknown>>(
+        '/api/public/v1/auth/get-public-user-by-jotmo-ids',
+        { jotmo_ids: batch },
+        session.userId,
+        signal,
+        {
+          key: `public-avatar-presentations:${batch.join('|')}`,
+          failureCooldownMs: 5_000,
+        },
+      )
+      for (const raw of listValue(data.items)) {
+        const item = objectValue(raw)
+        const arkmeId = stringValue(item.jotmo_id).trim()
+        const userId = Math.trunc(numberValue(item.user_id))
+        if (!requested.has(arkmeId) || userId <= 0 || presentations.has(arkmeId)) {
+          throw new ArkmePluginError('profile-contract-invalid', 'Arkme公开头像响应无效', true, 502)
+        }
+        const avatarUrl = stringValue(item.head_img).trim()
+        const avatarFallback = phoneDefaultAvatarFallback(avatarUrl)
+        if (avatarFallback !== undefined) {
+          presentations.set(arkmeId, { avatarFallback })
+          continue
+        }
+        if (avatarUrl === '') {
+          this.publicProfileAvatarCache.delete(`${String(session.userId)}:${String(userId)}`)
+          presentations.set(arkmeId, {})
+          continue
+        }
+        try {
+          const trustedAvatarUrl = trustedSignedImageUrl(this.runtime.config.environment, avatarUrl).toString()
+          const avatarRef = await this.sealProfileImageRef(session.userId, userId)
+          this.publicProfileAvatarCache.set(`${String(session.userId)}:${String(userId)}`, {
+            avatarUrl: trustedAvatarUrl,
+            expiresAtMillis: Date.now() + PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS,
+          })
+          presentations.set(arkmeId, { avatarRef })
+        } catch {
+          presentations.set(arkmeId, {})
+        }
+      }
+    }
+    return presentations
   }
 
   async interwovenProfilesByUserIds(

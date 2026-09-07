@@ -30,10 +30,13 @@ import {
   projectRecordingTranscripts,
   projectRecordingVersions,
   recordingPendingTranscriptionCount,
+  recordingDoubaoProgress,
   type ArkmeRecordingPrivateTranscriptItem,
 } from '../recording-presentation.js'
 import type {
   ArkmeRecordingCalendarMonth,
+  ArkmeRecordingComparison,
+  ArkmeRecordingTranscriptSource,
   ArkmeRecordingCursorPayload,
   ArkmeRecordingDay,
   ArkmeRecordingPlayback,
@@ -50,6 +53,7 @@ import type {
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import type { ArkmePublicProfile } from './profile-service.js'
+import { RECORDING_FORWARD_MAX_SEGMENTS, type RecordingForwardGateway, type RecordingForwardInput } from '../recording-forward-contract.js'
 
 export interface ArkmeRecordingProfileReader {
   publicProfileSummariesByUserIds(
@@ -85,6 +89,7 @@ export interface RecordingServiceDependencies {
   profile?: ArkmeRecordingProfileReader
   media?: ArkmeRecordingMediaIssuer
   userCandidates?: ArkmeRecordingUserCandidateReader
+  forwardGateway: RecordingForwardGateway
 }
 
 interface RecordingItemRefPayload {
@@ -203,6 +208,7 @@ export class RecordingService {
   private readonly userCandidates: ArkmeRecordingUserCandidateReader | undefined
   private readonly recordingImportSource: RecordingImportSource
   private readonly recordingImportOwnerGateway: RecordingImportOwnerGateway
+  private readonly forwardGateway: RecordingForwardGateway
 
   constructor(
     private readonly runtime: ServiceRuntime,
@@ -211,6 +217,7 @@ export class RecordingService {
     this.profile = dependencies.profile
     this.media = dependencies.media
     this.userCandidates = dependencies.userCandidates
+    this.forwardGateway = dependencies.forwardGateway
     this.recordingImportSource = dependencies.recordingImportSource
     this.recordingImportOwnerGateway = dependencies.recordingImportOwnerGateway
     this.recordingImports = new RecordingImportCoordinator(
@@ -223,6 +230,42 @@ export class RecordingService {
 
   dispose(): void {
     for (const run of this.importRuns.values()) run.controller.abort()
+  }
+
+  async recordingForwardCapabilities(signal?: AbortSignal): Promise<{ recordTargetsSupported: boolean }> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    return { recordTargetsSupported: await this.forwardGateway.supportsRecordTargets(session, signal) }
+  }
+
+  async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) {
+    this.assertWorkbenchEnabled()
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if ((input.commentText?.trim().length ?? 0) > this.runtime.config.maxTextLength
+      || (input.commentText?.trim() && (!uuid.test(input.commentRecordUid ?? '') || input.commentRecordUid === input.recordUid))) {
+      throw new ArkmePluginError('recording-forward-input-invalid', '录音附言过长或参数无效', false, 400)
+    }
+    if (!uuid.test(input.requestId) || !uuid.test(input.recordUid) || !Number.isSafeInteger(input.sendAtMillis) || input.sendAtMillis <= 0 || input.targetSourceRef.trim() === '') {
+      throw new ArkmePluginError('recording-forward-input-invalid', '录音转发参数无效', false, 400)
+    }
+    if (input.itemRefs.length === 0 || input.itemRefs.length > RECORDING_FORWARD_MAX_SEGMENTS) throw new ArkmePluginError('recording-forward-selection-invalid', '请选择 1 至 150 个录音片段', false, 400)
+    const session = await this.runtime.requireSession()
+    const selected = await Promise.all(input.itemRefs.map(async ref => await this.openRecordingItemRef(ref)))
+    const first = selected[0]!
+    if (selected.some(item => item.viewerUserId !== session.userId || item.sessionId !== first.sessionId || item.dateStamp !== first.dateStamp || item.transcriptSource !== first.transcriptSource)) {
+      throw new ArkmePluginError('recording-forward-selection-invalid', '请选择同一次录音、同一转写来源的片段', false, 400)
+    }
+    const seen = new Set<string>()
+    for (const item of selected) {
+      const identity = `${item.childId}:${String(item.asrItemIndex)}`
+      if (seen.has(identity)) throw new ArkmePluginError('recording-forward-selection-invalid', '请勿重复选择同一录音片段', false, 400)
+      seen.add(identity)
+    }
+    // The destination owner validates the current source after checking idempotent replay.
+    // Re-reading Audio here would prevent confirming an already accepted send after source deletion.
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-forward-account-changed', '账号已切换，请重新选择录音', false, 409)
+    selected.sort((left, right) => left.startAtMillis - right.startAtMillis || left.childId.localeCompare(right.childId) || left.asrItemIndex - right.asrItemIndex)
+    return await this.forwardGateway.forward({ sessionId: first.sessionId, segments: selected.map(item => ({ childId: item.childId, asrItemIndex: item.asrItemIndex, transcriptSource: item.transcriptSource })) }, input, session, signal)
   }
 
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> {
@@ -1003,6 +1046,10 @@ export class RecordingService {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<ArkmeRecordingPrivateTranscriptSection> {
+    return (await this.readRecordingTranscripts(dateStamp, session, signal)).section('system')
+  }
+
+  private async readRecordingTranscripts(dateStamp: number, session: ArkmeSessionCredentials, signal?: AbortSignal) {
     const dayStart = this.recordingDayStart(dateStamp)
     const date = dayStart.getTime()
     const [transcriptResult, speakerResult] = await Promise.allSettled([
@@ -1031,24 +1078,48 @@ export class RecordingService {
     const profilesByUserId = await this.recordingSpeakerProfiles(userIds, session, signal)
     const dayEnd = new Date(dayStart)
     dayEnd.setDate(dayEnd.getDate() + 1)
-    const items = projectRecordingTranscripts(transcriptResult.value, speakerData, profilesByUserId, {
-      viewerUserId: session.userId,
-      dayStartMillis: date,
-      dayEndMillis: dayEnd.getTime(),
-    })
-    const processingCount = recordingPendingTranscriptionCount(transcriptResult.value, {
-      dayStartMillis: date,
-      dayEndMillis: dayEnd.getTime(),
-    })
-    const state = items.length > 0 ? 'ready' : processingCount > 0 ? 'processing' : 'empty'
-    return {
-      state,
-      items,
-      message: items.length > 0 ? '' : processingCount > 0 ? '音频文字正在导入&转写中' : '当天无录音',
-      identityCoverage: speakerResult.status === 'fulfilled' ? 'complete' : 'partial',
-      totalDurationMillis,
-      processingCount,
+    const options = { viewerUserId: session.userId, dayStartMillis: date, dayEndMillis: dayEnd.getTime() }
+    const response = transcriptResult.value
+    const { processingCount: pendingDoubao, candidateCount, failedCount, silentCount } = recordingDoubaoProgress(response, options)
+    const section = (transcriptSource: ArkmeRecordingTranscriptSource): ArkmeRecordingPrivateTranscriptSection => {
+      const items = projectRecordingTranscripts(response, speakerData, profilesByUserId, { ...options, transcriptSource })
+      const processingCount = transcriptSource === 'system'
+        ? recordingPendingTranscriptionCount(response, options) : pendingDoubao
+      return {
+        state: items.length > 0 ? 'ready' : processingCount > 0 ? 'processing' : transcriptSource === 'doubao' && failedCount > 0 ? 'error' : 'empty',
+        items,
+        message: items.length > 0 ? '' : processingCount > 0 ? '音频文字正在导入&转写中' : transcriptSource === 'doubao' && failedCount > 0 ? '豆包转写失败，请稍后重试' : transcriptSource === 'system' ? '当天无录音' : '暂无豆包转写内容',
+        identityCoverage: speakerResult.status === 'fulfilled' ? 'complete' : 'partial',
+        totalDurationMillis, processingCount,
+      }
     }
+    return { section, candidateCount, failedCount, silentCount }
+  }
+
+  async recordingComparison(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingComparison> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const date = this.recordingDayStart(dateStamp).getTime()
+    const data = await this.readRecordingTranscripts(date, session, signal)
+    const key = await this.recordingRefKey('arkme-recording-item-v1')
+    const project = (source: ArkmeRecordingTranscriptSource) => {
+      const section = data.section(source)
+      const counts = new Map<string, number>()
+      for (const item of section.items) {
+        const speakerKey = this.recordingSpeakerMutationKey(item)
+        counts.set(speakerKey, (counts.get(speakerKey) ?? 0) + 1)
+      }
+      return { ...section, items: section.items.map(item => this.workbenchItem(date, item, counts.get(this.recordingSpeakerMutationKey(item))!, session.userId, key)) }
+    }
+    return { dateStamp: date, system: project('system'), doubao: project('doubao'), candidateCount: data.candidateCount, failedCount: data.failedCount, silentCount: data.silentCount }
+  }
+
+  async startRecordingComparison(dateStamp: number, signal?: AbortSignal): Promise<{ queuedCount: number; inFlightCount: number; missingAudioCount: number }> {
+    this.assertWorkbenchEnabled()
+    const date = this.recordingDayStart(dateStamp).getTime()
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/audio/doubao-asr/backfill-day', { start_at: date }, session, signal)
+    return { queuedCount: numberValue(data.queued_child_count), inFlightCount: numberValue(data.in_flight_child_count), missingAudioCount: numberValue(data.missing_audio_child_count) }
   }
 
   async recordingProjection(
@@ -1311,6 +1382,8 @@ export class RecordingService {
     return {
       itemId: item.itemId,
       itemRef: this.sealRecordingRefWithKey('arkme-recording-item-v1', payload, refKey),
+      transcriptSource: item.transcriptSource,
+      sessionKey: createHmac('sha256', refKey).update(`recording-session:${String(viewerUserId)}:${item.sessionId}`).digest('base64url'),
       startAtMillis: item.startAtMillis,
       endAtMillis: item.endAtMillis,
       speakerNumber: item.speakerNumber,

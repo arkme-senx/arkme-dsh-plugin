@@ -1,5 +1,7 @@
 import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges, arkmeMarkdownPlainText, arkmeMarkdownTextRanges } from '../markdown.js'
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import { MemberEventService } from './member-event-service.js'
+import { projectForwardRecordingSegment } from '../recording-forward-presentation.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeConversationMemberJoinEvent,
@@ -78,6 +80,7 @@ import { arkmeMentionMetadataMentionsViewer } from '../mention-metadata.js'
 import { arkmeRichBackgroundSound } from '../record-background-sound.js'
 import { arkmeHashTagContentPayload, arkmeHashTagPayload } from '../hashtag.js'
 import {
+  arkmeChatConversationPreview,
   SourceService,
   type ArkmePrivateChatViewerLabel,
   type ArkmeSourceRefPayload,
@@ -1329,6 +1332,7 @@ function decodeOpaqueJson(value: string): unknown {
 }
 
 export class ChatService {
+  readonly memberEvents: MemberEventService
   private favoriteStickerMutationTail: Promise<void> = Promise.resolve()
 
   constructor(
@@ -1343,7 +1347,9 @@ export class ChatService {
     private readonly realtime: ArkmeChatRealtimePort,
     private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
     private readonly messageActions?: MessageActionService,
-  ) {}
+  ) {
+    this.memberEvents = new MemberEventService(runtime, source, profile, (userId, options) => this.openPrivateChatFromUser(userId, options))
+  }
 
   private async hydrateExtensionMedia(
     projections: readonly ArkmeExtensionMediaProjection[],
@@ -1800,9 +1806,12 @@ export class ChatService {
 
   async openPrivateChatFromUser(
     peerUserId: number,
-    options: { presentationDisplayName?: string; signal?: AbortSignal } = {},
+    options: { presentationDisplayName?: string; expectedViewerUserId?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeOpenPrivateChatResult> {
     const session = await this.runtime.requireSession()
+    if (options.expectedViewerUserId !== undefined && options.expectedViewerUserId !== session.userId) {
+      throw new ArkmePluginError('member-events-unavailable', '账号已切换，请重新打开用户卡片', false, 403)
+    }
     if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
       throw new ArkmePluginError('private-chat-peer-invalid', '私聊用户参数无效', false)
     }
@@ -4365,6 +4374,66 @@ export class ChatService {
       }
     }
   
+  async reportMessagePreparing(
+    sourceRef: string, prepareAtMillis: number, options: { signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.writeMessagePreparing(sourceRef, prepareAtMillis, false, options.signal)
+  }
+
+  async cancelMessagePreparing(
+    sourceRef: string, cancelAtMillis: number, options: { signal?: AbortSignal } = {},
+  ): Promise<void> {
+    await this.writeMessagePreparing(sourceRef, cancelAtMillis, true, options.signal)
+  }
+
+  private async writeMessagePreparing(
+    sourceRef: string, stateAtMillis: number, cancel: boolean, signal?: AbortSignal,
+  ): Promise<void> {
+    if (!Number.isSafeInteger(stateAtMillis) || stateAtMillis <= 0
+      || !Number.isSafeInteger(stateAtMillis + 5_000)) {
+      throw new ArkmePluginError('message-preparing-time-invalid', '正在输入时间无效', false, 400)
+    }
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
+      throw new ArkmePluginError('message-preparing-unsupported', '当前会话不支持正在输入', false, 400)
+    }
+    const activeSession = await this.runtime.sessionStore.read()
+    if (activeSession?.userId !== session.userId) {
+      throw new ArkmePluginError('source-ref-invalid', 'Arkme 数据源引用无效', false, 400)
+    }
+    const now = Date.now()
+    // Browser and Host share the device clock. Reject forged future versions that
+    // would suppress legitimate hints or extend their lifetime on native clients.
+    if (stateAtMillis > now + 5_000) {
+      throw new ArkmePluginError('message-preparing-time-invalid', '正在输入时间无效', false, 400)
+    }
+    const remainingMillis = stateAtMillis + 5_000 - now
+    if (!cancel && remainingMillis <= 0) {
+      throw new ArkmePluginError('message-preparing-expired', '正在输入状态已过期', false, 400)
+    }
+    const controller = new AbortController()
+    const abort = () => { controller.abort(signal?.reason) }
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted === true) abort()
+    // The existing request coordinator may queue this mutation. Abort at its lease deadline, not after admission.
+    const timer = setTimeout(() => { controller.abort() }, cancel ? 5_000 : Math.min(5_000, remainingMillis))
+    try {
+      await this.runtime.authenticatedChatPost(
+        cancel ? '/api/v1/chats/messages/preparing/cancel' : '/api/v1/chats/messages/preparing',
+        { chat_session_uid: source.ownerRef, ...(cancel ? { cancel_at: stateAtMillis }
+          : { prepare_at: stateAtMillis, expire_at: stateAtMillis + 5_000 }) },
+        // Optional presence must neither extend its lease into credential refresh
+        // nor publish a cooldown that blocks ordinary Chat actions.
+        session, controller.signal, { publishServiceCooldown: false, refreshOnUnauthorized: false },
+      )
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+    }
+  }
+
   async markSourceRead(
     sourceRef: string,
     readSequence: number,
@@ -4485,6 +4554,7 @@ export class ChatService {
           : rawAgentSource
         const contentBlocks = this.media.richContentBlocks(item, session.userId)
         const extensionProjection = this.timelineExtensionProjection(item, session.userId)
+        const conversationPreview = arkmeChatConversationPreview(item)
         const senderName = stringValue(relation.display_name_snapshot).trim() || 'Arkme用户'
         const mentionsViewer = senderUserId !== session.userId
           && arkmeMentionMetadataMentionsViewer(record, payload, session.userId)
@@ -4530,6 +4600,7 @@ export class ChatService {
           title: stringValue(payload.title),
           textContent: stringValue(payload.text_content),
           textFormat: arkmeRecordTextFormat(payload),
+          ...(conversationPreview === '' ? {} : { conversationPreview }),
           status: numberValue(record.status),
           sequence: numberValue(relation.seq),
           ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),
@@ -4622,6 +4693,7 @@ export class ChatService {
           const segmentValues = rawSegments.slice(0, Math.min(500, remainingSegments))
           remainingSegments -= segmentValues.length
           const segments: ArkmeForwardTranscriptSegment[] = segmentValues.map(value => {
+            if (recordingSegments.length > 0) return projectForwardRecordingSegment(value, senderName)
             const segment = objectValue(value)
             const offset = (value: unknown) => Math.max(0, Math.trunc(numberValue(value)))
             const startMillis = offset(segment.start_millis ?? segment.startMillis ?? segment.start_ms ?? segment.startMs)
@@ -4653,7 +4725,7 @@ export class ChatService {
           projectedItems.push({
             senderName,
             ...(senderUserId > 0 ? { avatarRef: await this.profile.sealProfileImageRef(viewerUserId, senderUserId) } : {}),
-            sendAtMillis: epochMillis(item.send_at ?? item.sendAt),
+            sendAtMillis: recordingSegments.length > 0 ? numberValue(item.send_at ?? item.sendAt) : epochMillis(item.send_at ?? item.sendAt),
             title,
             textContent,
             textFormat,

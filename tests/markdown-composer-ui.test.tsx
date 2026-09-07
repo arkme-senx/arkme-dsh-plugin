@@ -14,6 +14,7 @@ const initial: ArkmeComposerDraftSnapshot = { text: '', mentions: [], emojis: []
 let snapshot = initial
 let update: (value: ArkmeComposerDraftSnapshot) => void
 let candidates = false
+let inputActivity: string[] = []
 let sent = 0
 const handle = createRef<ArkmeRichComposerHandle>()
 const draftKey = arkmeSourceComposerDraftKey(7, { kind: 'send_to_self', sourceRef: 'test' })!
@@ -29,6 +30,7 @@ function Harness() {
   return <ArkmeMarkdownComposerInput ref={handle} value={draft.text} mentions={draft.mentions} emojis={draft.emojis} markdown={draft.markdown}
     maxLength={20000} placeholder="快记" ariaLabel="快记" disabled={false} style={{}}
     onTextChange={text => store.setText(draftKey, text)}
+    onInputActivity={text => { inputActivity.push(text) }}
     onMarkdownChange={(markdown, text, mentions, emojis) => store.setMarkdown(draftKey, markdown, text, mentions, emojis)}
     onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (!candidates) sent++ } }} />
 }
@@ -53,7 +55,7 @@ function paste(text: string) {
 }
 beforeEach(async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-  candidates = false; sent = 0
+  candidates = false; sent = 0; inputActivity = []
   const memory = new Map<string, string>()
   storage = { getItem: key => memory.get(key) ?? null, setItem: (key, value) => { memory.set(key, value) } }
   host = document.createElement('div'); document.body.append(host)
@@ -63,6 +65,10 @@ beforeEach(async () => {
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals() })
 
 describe('Markdown composer DOM interaction', () => {
+  it('reports Markdown typing to the existing input activity owner', () => {
+    type('甲乙')
+    expect(inputActivity).toEqual(['甲', '甲乙'])
+  })
   it.each([[1, '乙甲丙'], [2, '甲乙丙'], [3, '甲丙乙']])('pastes text inline at position %s', (position, expected) => {
     type('甲丙')
     act(() => editor().commands.setTextSelection(Number(position)))

@@ -63,6 +63,59 @@ describe('ArkmeStateStore', () => {
     await expect(reloaded.getLongArticleDraft(10001, 'source-a')).resolves.toMatchObject({ title: '新建' })
   })
 
+  it('persists re-edit drafts by account, stable source identity, and record with revision CAS', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-reedit-draft-'))
+    const store = new ArkmeStateStore(root)
+    const first = await store.putRecordReeditDraft(10001, {
+      schemaVersion: 1,
+      sourceIdentityKey: 'stable-source-a',
+      lastSourceRef: 'source-ref-old',
+      itemUid: 'record-1',
+      title: '',
+      textContent: '候选正文',
+      baseVersion: 2,
+      baseContentFingerprint: 'a'.repeat(64),
+      editDurationMillis: 0,
+      updatedAtMillis: 100,
+    })
+    expect(first.draftRevision).toBe(1)
+
+    const resumed = await store.putRecordReeditDraft(10001, {
+      ...first,
+      lastSourceRef: 'source-ref-new',
+      baseVersion: 3,
+      baseContentFingerprint: 'b'.repeat(64),
+      updatedAtMillis: 200,
+    })
+    expect(resumed).toMatchObject({
+      draftRevision: 1,
+      lastSourceRef: 'source-ref-new',
+      baseVersion: 3,
+    })
+
+    const changed = await store.putRecordReeditDraft(10001, {
+      ...resumed,
+      textContent: '改口后的候选正文',
+      updatedAtMillis: 300,
+    })
+    expect(changed.draftRevision).toBe(2)
+
+    const reloaded = new ArkmeStateStore(root)
+    await expect(reloaded.getRecordReeditDraft(10001, 'stable-source-a', 'record-1')).resolves.toEqual(changed)
+    await expect(reloaded.getRecordReeditDraft(10002, 'stable-source-a', 'record-1')).resolves.toBeUndefined()
+    await expect(reloaded.getRecordReeditDraft(10001, 'stable-source-b', 'record-1')).resolves.toBeUndefined()
+    await expect(reloaded.getRecordReeditDraft(10001, 'stable-source-a', 'record-2')).resolves.toBeUndefined()
+
+    await expect(reloaded.removeRecordReeditDraft(10001, 'stable-source-a', 'record-1', 1)).resolves.toBe(false)
+    await expect(reloaded.getRecordReeditDraft(10001, 'stable-source-a', 'record-1')).resolves.toMatchObject({
+      draftRevision: 2,
+      updatedAtMillis: 300,
+    })
+
+    await expect(reloaded.removeRecordReeditDraft(10001, 'stable-source-a', 'record-1', 2)).resolves.toBe(true)
+    await expect(reloaded.getRecordReeditDraft(10001, 'stable-source-a', 'record-1')).resolves.toBeUndefined()
+  })
+
   it('persists recording import checkpoints and replaces them with revision CAS', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-import-'))
     const store = new ArkmeStateStore(root)

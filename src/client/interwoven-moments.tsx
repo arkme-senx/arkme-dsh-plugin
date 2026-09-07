@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
 import { X } from '@phosphor-icons/react/dist/icons/X'
-import type { ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmeRelatedQuickNoteItem, ArkmeSourceItem, ArkmeTimelineItem } from '../types.js'
+import type { ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmeMemberEvent, ArkmeRelatedQuickNoteItem, ArkmeSourceItem, ArkmeTimelineItem } from '../types.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import {
   ArkmeRelatedQuickNoteDetail,
@@ -20,14 +21,17 @@ export const ARKME_CONVERSATION_HEADER_HEIGHT = 68
 export type ArkmeConversationRow =
   | { kind: 'message'; id: string; occurredAtMillis: number; item: ArkmeTimelineItem }
   | { kind: 'moment'; id: string; occurredAtMillis: number; item: ArkmeInterwovenMention }
+  | { kind: 'member-event'; id: string; occurredAtMillis: number; item: ArkmeMemberEvent }
 
 /** Pure deterministic merge; each authority keeps its own identity and duplicate policy. */
 export function mergeConversationRows(
   messages: readonly ArkmeTimelineItem[],
   moments: readonly ArkmeInterwovenMention[],
+  memberEvents: readonly ArkmeMemberEvent[] = [],
 ): ArkmeConversationRow[] {
   const messageById = new Map(messages.map(item => [item.itemUid, item]))
   const momentById = new Map(moments.map(item => [item.momentId, item]))
+  const memberEventById = new Map(memberEvents.map(item => [item.eventId, item]))
   const rows: ArkmeConversationRow[] = [
     ...[...messageById.values()].map(item => ({
       kind: 'message' as const, id: `message:${item.itemUid}`,
@@ -35,6 +39,10 @@ export function mergeConversationRows(
     })),
     ...[...momentById.values()].map(item => ({
       kind: 'moment' as const, id: `moment:${item.momentId}`,
+      occurredAtMillis: item.occurredAtMillis, item,
+    })),
+    ...[...memberEventById.values()].map(item => ({
+      kind: 'member-event' as const, id: `member-event:${item.eventId}`,
       occurredAtMillis: item.occurredAtMillis, item,
     })),
   ]
@@ -227,6 +235,8 @@ export function ArkmeInterwovenDetailAside({
   shareWebsite?: string
 }) {
   const asideBodyRef = useRef<HTMLDivElement>(null)
+  const detailPanelRef = useRef<HTMLElement>(null)
+  const resize = useResizableNoteDetail(detailPanelRef)
   const scrollTopByViewRef = useRef<Record<ArkmeRelatedDrawerView, number>>({
     'source-detail': 0,
     'related-list': 0,
@@ -250,7 +260,8 @@ export function ArkmeInterwovenDetailAside({
   const title = relatedView === 'related-list'
     ? `${String(relatedTotal)} 条相关快记`
     : relatedView === 'related-detail' ? '相关快记详情' : '快记详情'
-  return <aside style={styles.aside} aria-label="快记详情" data-arkme-interwoven-detail>
+  return <aside ref={detailPanelRef} style={{ ...styles.aside, ...resize.style }} aria-label="快记详情" data-arkme-interwoven-detail>
+    {resize.handle}
     <header style={styles.asideHeader}>
       <span style={styles.asideTitleWrap}>
         {relatedView !== 'source-detail' && <button type="button" style={styles.back}

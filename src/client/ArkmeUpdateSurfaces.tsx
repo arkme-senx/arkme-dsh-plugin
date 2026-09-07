@@ -28,9 +28,10 @@ export interface ArkmeUpdateItem {
   ready: boolean
   restarting: boolean
   failed: boolean
+  installMode: 'in-app' | 'manual'
   blockedReason?: string
   error?: string
-  phase?: 'app-downloading' | 'app-downloaded' | 'app-failed'
+  phase?: 'app-downloading' | 'app-downloaded' | 'app-installing' | 'app-failed'
   phaseMessage?: string
   progress?: number
 }
@@ -70,30 +71,42 @@ function updateNotes(summary: string | undefined): ArkmeUpdateNote[] {
 
 function appItem(snapshot: ArkmeAppUpdateStoreSnapshot): ArkmeUpdateItem | undefined {
   const status = snapshot.status
-  if (status === undefined || !['available', 'downloading', 'downloaded', 'failed'].includes(status.status)) return undefined
+  if (status === undefined || !['available', 'downloading', 'downloaded', 'installing', 'failed'].includes(status.status)) return undefined
   const latestVersion = versionLabel(status.latestVersion)
   const progress = percentage(status.downloadedBytes, status.totalBytes)
   const packageSize = formatBytes(status.totalBytes)
   const failed = status.status === 'failed'
   const ready = status.status === 'downloaded'
+  const restarting = status.status === 'installing'
+  const installMode = status.installMode ?? 'manual'
+  const error = status.error?.trim() || snapshot.error.trim()
+  const failureStage = status.failureStage === 'download' ? '下载' : status.failureStage === 'install' ? '安装' : '检查'
   return {
     target: 'app',
     instanceKey: `app:${latestVersion}`,
     productLabel: 'Arkme APP',
-    title: failed ? '更新未完成' : ready ? '更新包已下载' : '发现新版本',
+    title: failed ? '更新未完成' : restarting ? '正在安装更新' : ready ? '更新包已下载' : '发现新版本',
     currentVersion: versionLabel(status.currentVersion),
     latestVersion,
     ...(packageSize === undefined ? {} : { packageSize }),
     notes: updateNotes(status.releaseNotes),
     available: status.status === 'available',
-    active: status.status === 'downloading',
+    active: status.status === 'downloading' || restarting,
     ready,
-    restarting: false,
+    restarting,
     failed,
+    installMode,
     ...(status.status === 'downloading' ? { phase: 'app-downloading' as const, phaseMessage: '可继续使用' } : {}),
-    ...(ready ? { phase: 'app-downloaded' as const, phaseMessage: `已下载 ${latestVersion}` } : {}),
-    ...(failed ? { phase: 'app-failed' as const, phaseMessage: '请重新尝试下载' } : {}),
-    ...(status.error?.trim() || snapshot.error.trim() ? { error: status.error?.trim() || snapshot.error.trim() } : {}),
+    ...(restarting ? { phase: 'app-installing' as const, phaseMessage: '即将打开新版本' } : {}),
+    ...(ready ? {
+      phase: 'app-downloaded' as const,
+      phaseMessage: installMode === 'in-app' ? `已下载 ${latestVersion}，可重启安装` : `已下载 ${latestVersion}`,
+    } : {}),
+    ...(failed ? {
+      phase: 'app-failed' as const,
+      phaseMessage: `${failureStage}失败：${error || '请重新尝试'}`,
+    } : {}),
+    ...(error ? { error } : {}),
     ...(progress === undefined ? {} : { progress }),
   }
 }
@@ -157,7 +170,8 @@ export function ArkmeUpdateTopCapsule({ item, onClose, onRetry, onOpenDownloaded
   onOpenDownloaded(): void
 }) {
   const active = item.active && !item.restarting
-  const title = item.restarting ? '正在自动重启…' : item.ready ? '更新包已就绪' : item.failed ? '更新未完成' : '正在更新'
+  const readyInApp = item.ready && item.installMode === 'in-app'
+  const title = item.restarting ? '正在安装更新…' : item.ready ? '更新包已就绪' : item.failed ? '更新未完成' : '正在更新'
   const detail = item.restarting
     ? '即将打开新版本'
     : item.ready
@@ -165,7 +179,7 @@ export function ArkmeUpdateTopCapsule({ item, onClose, onRetry, onOpenDownloaded
       : item.phaseMessage ?? '可继续使用'
   return <section
     className={`arkme-update-capsule${item.ready ? ' is-ready' : ''}${item.restarting ? ' is-restarting' : ''}${item.failed ? ' is-error' : ''}`}
-    data-layout={active ? 'progress' : item.ready || item.failed ? 'action' : undefined}
+    data-layout={item.restarting ? 'restarting' : active ? 'progress' : readyInApp ? 'ready-action' : item.ready || item.failed ? 'action' : undefined}
     role={item.failed ? 'alert' : 'status'}
     aria-live={item.failed ? 'assertive' : 'polite'}
     aria-label={item.restarting ? '正在自动重启客户端' : item.ready ? '更新包已就绪' : item.failed ? '更新未完成' : `正在更新，${item.progress ?? 0}%`}
@@ -177,9 +191,13 @@ export function ArkmeUpdateTopCapsule({ item, onClose, onRetry, onOpenDownloaded
       </div>
       <b>{item.progress === undefined ? '···' : `${item.progress}%`}</b>
     </>}
-    {item.ready && <button type="button" className="arkme-update-ready-action" onClick={onOpenDownloaded}>打开文件夹</button>}
+    {readyInApp && <div className="arkme-update-ready-actions">
+      <button type="button" className="arkme-update-later-action" onClick={onClose}>稍后重启</button>
+      <button type="button" className="arkme-update-ready-action" onClick={onOpenDownloaded}>重启并安装</button>
+    </div>}
+    {item.ready && item.installMode === 'manual' && <button type="button" className="arkme-update-ready-action" onClick={onOpenDownloaded}>打开文件夹</button>}
     {item.failed && <button type="button" className="arkme-update-ready-action" onClick={onRetry}>重新尝试</button>}
-    {!item.restarting && <button type="button" className="arkme-update-capsule-close" onClick={onClose} aria-label="关闭更新进度"><X size={14} /></button>}
+    {!item.restarting && !readyInApp && <button type="button" className="arkme-update-capsule-close" onClick={onClose} aria-label="关闭更新进度"><X size={14} /></button>}
   </section>
 }
 
@@ -291,7 +309,7 @@ export function ArkmeUpdateRailSlot() {
   }
   const retry = () => {
     setTopOpen(true)
-    void arkmeAppUpdateStore.download()
+    void arkmeAppUpdateStore.retry()
   }
 
   return <div className="arkme-update-rail-slot" ref={slotRef}>
@@ -316,7 +334,10 @@ export function ArkmeUpdateRailSlot() {
         item={selectedItem}
         onClose={() => { setTopOpen(false) }}
         onRetry={retry}
-        onOpenDownloaded={() => { void arkmeAppUpdateStore.showDownloadedFile() }}
+        onOpenDownloaded={() => {
+          if (selectedItem.installMode === 'in-app') void arkmeAppUpdateStore.install()
+          else void arkmeAppUpdateStore.showDownloadedFile()
+        }}
       />, document.body)}
   </div>
 }

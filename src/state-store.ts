@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { ArkmeLongArticleDraft, ArkmePendingWrite, ArkmeRecordCaptureContext } from './types.js'
+import type {
+  ArkmeLongArticleDraft,
+  ArkmePendingWrite,
+  ArkmeRecordCaptureContext,
+  ArkmeRecordReeditDraft,
+} from './types.js'
 import {
   sameRecordingImportIdentity,
   type RecordingImportAdmission,
@@ -12,19 +17,21 @@ import { recordingImportFileNameKey } from './recording-import-shared.js'
 import { securePrivateDirectory, securePrivateFile } from './private-filesystem.js'
 
 interface PersistedState {
-  version: 1
+  version: 2
   uniqueCode: string
   pendingByUser: Record<string, ArkmePendingWrite[]>
   longArticleDraftsByUser: Record<string, Record<string, ArkmeLongArticleDraft>>
+  recordReeditDraftsByUser: Record<string, Record<string, ArkmeRecordReeditDraft>>
   recordingImportJobsByUser: Record<string, Record<string, RecordingImportJob>>
 }
 
 function emptyState(): PersistedState {
   return {
-    version: 1,
+    version: 2,
     uniqueCode: randomUUID(),
     pendingByUser: {},
     longArticleDraftsByUser: {},
+    recordReeditDraftsByUser: {},
     recordingImportJobsByUser: {},
   }
 }
@@ -115,6 +122,43 @@ function longArticleDraftKey(sourceRef: string, itemUid?: string): string {
   return `${sourceRef}\u0000${itemUid ?? ''}`
 }
 
+function normalizedRecordReeditDraft(value: unknown): ArkmeRecordReeditDraft | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const source = value as Record<string, unknown>
+  const sourceIdentityKey = typeof source.sourceIdentityKey === 'string' ? source.sourceIdentityKey.trim() : ''
+  const lastSourceRef = typeof source.lastSourceRef === 'string' ? source.lastSourceRef.trim() : ''
+  const itemUid = typeof source.itemUid === 'string' ? source.itemUid.trim() : ''
+  const fingerprint = typeof source.baseContentFingerprint === 'string'
+    ? source.baseContentFingerprint.trim().toLowerCase()
+    : ''
+  if (source.schemaVersion !== 1 || sourceIdentityKey === '' || lastSourceRef === '' || itemUid === ''
+    || typeof source.title !== 'string' || typeof source.textContent !== 'string'
+    || !Number.isSafeInteger(source.draftRevision) || (source.draftRevision as number) <= 0
+    || !Number.isSafeInteger(source.baseVersion) || (source.baseVersion as number) <= 0
+    || !/^[a-f0-9]{64}$/.test(fingerprint)) return undefined
+  return {
+    schemaVersion: 1,
+    draftRevision: source.draftRevision as number,
+    sourceIdentityKey,
+    lastSourceRef,
+    itemUid,
+    title: source.title.slice(0, 100),
+    textContent: source.textContent.slice(0, 40000),
+    baseVersion: source.baseVersion as number,
+    baseContentFingerprint: fingerprint,
+    editDurationMillis: typeof source.editDurationMillis === 'number' && Number.isFinite(source.editDurationMillis)
+      ? Math.max(0, Math.trunc(source.editDurationMillis))
+      : 0,
+    updatedAtMillis: typeof source.updatedAtMillis === 'number' && Number.isFinite(source.updatedAtMillis)
+      ? Math.max(0, Math.trunc(source.updatedAtMillis))
+      : 0,
+  }
+}
+
+function recordReeditDraftKey(sourceIdentityKey: string, itemUid: string): string {
+  return `${sourceIdentityKey}\u0000${itemUid}`
+}
+
 function normalizedCaptureContext(value: unknown): ArkmeRecordCaptureContext | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const source = value as Record<string, unknown>
@@ -181,6 +225,20 @@ function parseState(raw: string): PersistedState {
       if (Object.keys(drafts).length > 0) longArticleDraftsByUser[userId] = drafts
     }
   }
+  const recordReeditDraftsByUser: Record<string, Record<string, ArkmeRecordReeditDraft>> = {}
+  if (source.recordReeditDraftsByUser !== null && typeof source.recordReeditDraftsByUser === 'object') {
+    for (const [userId, rawDrafts] of Object.entries(source.recordReeditDraftsByUser as Record<string, unknown>)) {
+      if (rawDrafts === null || typeof rawDrafts !== 'object' || Array.isArray(rawDrafts)) continue
+      const drafts: Record<string, ArkmeRecordReeditDraft> = {}
+      for (const [key, rawDraft] of Object.entries(rawDrafts as Record<string, unknown>)) {
+        const draft = normalizedRecordReeditDraft(rawDraft)
+        if (draft !== undefined && key === recordReeditDraftKey(draft.sourceIdentityKey, draft.itemUid)) {
+          drafts[key] = draft
+        }
+      }
+      if (Object.keys(drafts).length > 0) recordReeditDraftsByUser[userId] = drafts
+    }
+  }
   const recordingImportJobsByUser: Record<string, Record<string, RecordingImportJob>> = {}
   if (source.recordingImportJobsByUser !== null && typeof source.recordingImportJobsByUser === 'object') {
     for (const [userId, rawJobs] of Object.entries(source.recordingImportJobsByUser as Record<string, unknown>)) {
@@ -194,12 +252,13 @@ function parseState(raw: string): PersistedState {
     }
   }
   return {
-    version: 1,
+    version: 2,
     uniqueCode: typeof source.uniqueCode === 'string' && source.uniqueCode.trim() !== ''
       ? source.uniqueCode
       : randomUUID(),
     pendingByUser,
     longArticleDraftsByUser,
+    recordReeditDraftsByUser,
     recordingImportJobsByUser,
   }
 }
@@ -245,6 +304,62 @@ export class ArkmeStateStore {
       drafts[longArticleDraftKey(draft.sourceRef, draft.itemUid)] = { ...draft }
       state.longArticleDraftsByUser[userKey] = drafts
     })
+  }
+
+  async getRecordReeditDraft(
+    userId: number,
+    sourceIdentityKey: string,
+    itemUid: string,
+  ): Promise<ArkmeRecordReeditDraft | undefined> {
+    return await this.read(state => {
+      const draft = state.recordReeditDraftsByUser[String(userId)]?.[
+        recordReeditDraftKey(sourceIdentityKey, itemUid)
+      ]
+      return draft === undefined ? undefined : { ...draft }
+    })
+  }
+
+  async putRecordReeditDraft(
+    userId: number,
+    input: Omit<ArkmeRecordReeditDraft, 'draftRevision'>,
+  ): Promise<ArkmeRecordReeditDraft> {
+    const normalized = normalizedRecordReeditDraft({ ...input, draftRevision: 1 })
+    if (normalized === undefined) throw new Error('Record re-edit draft is invalid')
+    let stored!: ArkmeRecordReeditDraft
+    await this.update(state => {
+      const userKey = String(userId)
+      const drafts = state.recordReeditDraftsByUser[userKey] ?? {}
+      const key = recordReeditDraftKey(normalized.sourceIdentityKey, normalized.itemUid)
+      const current = drafts[key]
+      const sameCandidate = current?.title === normalized.title && current.textContent === normalized.textContent
+      stored = {
+        ...normalized,
+        draftRevision: sameCandidate ? current.draftRevision : (current?.draftRevision ?? 0) + 1,
+      }
+      drafts[key] = stored
+      state.recordReeditDraftsByUser[userKey] = drafts
+    })
+    return { ...stored }
+  }
+
+  async removeRecordReeditDraft(
+    userId: number,
+    sourceIdentityKey: string,
+    itemUid: string,
+    expectedRevision: number,
+  ): Promise<boolean> {
+    let removed = false
+    await this.update(state => {
+      const userKey = String(userId)
+      const drafts = state.recordReeditDraftsByUser[userKey]
+      if (drafts === undefined) return
+      const key = recordReeditDraftKey(sourceIdentityKey, itemUid)
+      if (drafts[key]?.draftRevision !== expectedRevision) return
+      delete drafts[key]
+      if (Object.keys(drafts).length === 0) delete state.recordReeditDraftsByUser[userKey]
+      removed = true
+    })
+    return removed
   }
 
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {

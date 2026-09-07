@@ -89,6 +89,46 @@ export interface OpenApiMcpReconcileLock {
   run<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T>
 }
 
+/** Narrow lease used by OpenAPI transports; callers never receive a storable credential string. */
+export interface ManagedOpenApiCredentialExecutor {
+  executeWithCredential<T>(
+    callerSignal: AbortSignal,
+    execute: (apiKey: SecretValue, signal: AbortSignal) => Promise<T>,
+  ): Promise<T>
+}
+
+/** Credential-free signal that the managed account lifecycle changed during a call. */
+export class ManagedOpenApiMcpExecutionSupersededError extends Error {
+  constructor() {
+    super('Arkme OpenAPI MCP tools changed while this call was running; retry the request')
+    this.name = 'ManagedOpenApiMcpExecutionSupersededError'
+  }
+}
+
+/** Credential-free signal that a managed credential lease crossed an account change. */
+export class ManagedOpenApiCredentialSupersededError extends Error {
+  constructor() {
+    super('Arkme OpenAPI credential changed while this call was running; retry the request')
+    this.name = 'ManagedOpenApiCredentialSupersededError'
+  }
+}
+
+/** Credential-free signal that no usable managed credential is currently available. */
+export class ManagedOpenApiCredentialUnavailableError extends Error {
+  constructor() {
+    super('Arkme OpenAPI is not ready for the current account')
+    this.name = 'ManagedOpenApiCredentialUnavailableError'
+  }
+}
+
+/** Infrastructure-only signal that the leased key was rejected by OpenAPI. */
+export class ManagedOpenApiCredentialRejectedError extends Error {
+  constructor() {
+    super('managed OpenAPI credential was rejected')
+    this.name = 'ManagedOpenApiCredentialRejectedError'
+  }
+}
+
 export function openApiMcpPrincipal(session: ArkmeSessionCredentials | undefined): OpenApiMcpPrincipal | undefined {
   if (session === undefined) return undefined
   const payload = session.accessToken.split('.')[1]

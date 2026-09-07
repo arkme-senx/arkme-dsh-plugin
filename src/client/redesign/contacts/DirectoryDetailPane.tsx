@@ -4,6 +4,7 @@ import arkmeNavigationLogoBase64 from '../../../../assets/branding/arkme-navigat
 import arkmeNavigationLogoDarkBase64 from '../../../../assets/branding/arkme-navigation-logo-dark.png'
 import type { ArkmeDirectorySelection } from './contact-directory-state.js'
 import { ContactProfileDetail } from './ContactProfileDetail.js'
+import { TeamDetailPane } from './TeamDetailPane.js'
 
 export interface DirectoryDetailPaneProps {
   accountKey: string
@@ -43,6 +44,9 @@ export function DirectoryDetailPane({
     return <div className="arkme-directory-unmarked-speaker-detail" data-candidate-ref={selection.candidateRef}>
       {renderUnmarkedSpeakerDetail?.(selection.candidateRef)}
     </div>
+  }
+  if (selection.kind === 'team') {
+    return <TeamDetailPane key={`${accountKey}:${selection.teamRef}`} accountKey={accountKey} teamRef={selection.teamRef} />
   }
   return <ContactProfileDetail
     key={`${accountKey}:${selection.contactRef}`}
