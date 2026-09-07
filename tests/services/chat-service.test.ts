@@ -1177,6 +1177,45 @@ describe('ChatService', () => {
       .rejects.toMatchObject({ code: 'bot-chat-timeline-contract-invalid' })
   })
 
+  it('keeps a safe rich preview when timeline attachments have no delivery URL', async () => {
+    const runtime = {
+      stateStore: { async uniqueCode() { return 'device-secret' } },
+      config: { maxTextLength: 20_000 },
+    }
+    const media = {
+      recordContentPayload: vi.fn(() => ({
+        media_refs: [{ file_asset_uid: 'file-without-url' }],
+      })),
+      richContentBlocks: vi.fn(() => []),
+    }
+    const chat = new ChatService(
+      runtime as never, {} as never,
+      { sealProfileImageRef: vi.fn(async () => 'avatar-ref') } as never,
+      media as never, {} as never, {} as never,
+      { currentUserAgentSourceFallback: vi.fn(() => undefined) } as never,
+      { timelineAiPolish: vi.fn(() => undefined) } as never, {} as never,
+    )
+
+    const [item] = await chat.chatTimelineItems({ items: [{
+      media_display_items: [{ file_asset_uid: 'file-without-url', file_type: 6, file_name: '方案.pdf' }],
+      relation: {
+        record_uid: 'record-without-url', sender_user_id: 13,
+        display_name_snapshot: '发送者', attach_at: 1_710_000_000_000, seq: 8,
+      },
+      record: { status: 1, payload: {
+        record_uid: 'record-without-url', text_content: '说明[jm_emoji:heart_eyes]',
+        content_payload: {
+          media_refs: [{ file_asset_uid: 'file-without-url' }],
+        },
+      } },
+    }] }, { userId: 42, accessToken: 'access', refreshToken: 'refresh' }, 'chat-1')
+
+    expect(item).toMatchObject({
+      contentBlocks: [],
+      conversationPreview: '[文件]说明[jm_emoji:heart_eyes]',
+    })
+  })
+
   it('projects a realtime message action ref and resolves its related-note locator', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const runtime = {

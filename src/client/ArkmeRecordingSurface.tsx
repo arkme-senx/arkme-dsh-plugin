@@ -20,6 +20,7 @@ import type {
 } from '../types.js'
 import { isRecordingLocalDateOnOrAfterMinimum } from '../recording-time.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeUi } from './ui-controller.js'
@@ -117,12 +118,12 @@ const styles: Record<string, CSSProperties> = {
   status: { padding: '42px 16px', textAlign: 'center', color: colors.secondary, fontSize: 13 },
   error: { padding: '12px 14px', borderRadius: 10, background: colors.dangerSoft, color: colors.danger, fontSize: 13 },
   transcriptList: { width: '100%', display: 'flex', flexDirection: 'column', gap: 2, margin: 0, padding: '10px 12px 0', boxSizing: 'border-box', listStyle: 'none' },
-  transcript: { position: 'relative', minWidth: 0, minHeight: 22, padding: 3, boxSizing: 'border-box', borderRadius: 6, contentVisibility: 'auto', containIntrinsicSize: '28px' },
-  transcriptContent: { minWidth: 0, minHeight: 22, marginLeft: 20, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 14, lineHeight: '22px', letterSpacing: '.28px', color: colors.secondary },
-  transcriptLeading: { display: 'inline-block', width: 88, height: 0 },
+  transcript: { position: 'relative', display: 'grid', gridTemplateColumns: 'minmax(0, min(128px, 45%)) minmax(0, 1fr)', columnGap: 6, alignItems: 'start', minWidth: 0, minHeight: 22, padding: 3, boxSizing: 'border-box', borderRadius: 6, contentVisibility: 'auto', containIntrinsicSize: '28px' },
+  transcriptContent: { minWidth: 0, minHeight: 22, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 14, lineHeight: '22px', letterSpacing: '.28px', color: colors.secondary },
   transcriptTime: { float: 'right', marginLeft: 4, marginRight: 1, whiteSpace: 'nowrap', fontSize: 12, lineHeight: '22px', letterSpacing: '.24px', color: colors.tertiary, fontVariantNumeric: 'tabular-nums' },
-  transcriptSpeaker: { position: 'absolute', top: -1, left: 0, width: 108, minHeight: 24, padding: '1px 4px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit' },
-  transcriptSpeakerName: { width: 66, flex: 'none', marginLeft: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '22px', fontWeight: 500, letterSpacing: '.02px' },
+  transcriptSpeaker: { maxWidth: '100%', justifySelf: 'start', minHeight: 24, padding: '1px 4px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit' },
+  transcriptSpeakerName: { minWidth: 0, marginLeft: 4, whiteSpace: 'normal', overflowWrap: 'anywhere', fontSize: 14, lineHeight: '22px', fontWeight: 500, letterSpacing: '.02px' },
+  transcriptNamedSpeaker: { maxWidth: 112, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   transcriptEditSlot: { width: 12, height: 12, flex: 'none', marginLeft: 2, display: 'grid', placeItems: 'center' },
   speakerDot: { flex: 'none', width: 16, height: 16, borderRadius: 999 },
   transcriptLoadingList: { margin: 0, padding: '0 12px', listStyle: 'none' },
@@ -344,6 +345,7 @@ export function ArkmeRecordingTranscriptRow({ item, selected, onEditSpeaker, onS
     style={{
       ...styles.transcript,
       ...(selected ? { background: colors.input } : {}),
+      ...(selectionControl ? { paddingLeft: 27 } : {}),
     }}
     onDoubleClick={onToggleSelection === undefined ? onSelect : undefined}
     onClick={onToggleSelection}
@@ -352,16 +354,18 @@ export function ArkmeRecordingTranscriptRow({ item, selected, onEditSpeaker, onS
     <button
       type="button"
       className="arkme-recording-transcript-speaker"
-      style={{ ...styles.transcriptSpeaker, ...(selectionControl ? { left: 24 } : {}) }}
+      style={styles.transcriptSpeaker}
+      title={item.speakerLabel}
       aria-label={`编辑说话人 ${item.speakerLabel}`}
       onClick={event => { event.stopPropagation(); onEditSpeaker(event) }}
     >
-      <span aria-hidden="true" style={{ ...styles.speakerDot, background: recordingSpeakerColor(item.speakerColorIndex) }} />
-      <span style={styles.transcriptSpeakerName}>{item.speakerLabel}</span>
+      {item.speakerAvatarRef === undefined
+        ? <span aria-hidden="true" style={{ ...styles.speakerDot, background: recordingSpeakerColor(item.speakerColorIndex) }} />
+        : <ArkmeUserAvatar avatarRef={item.speakerAvatarRef} size={16} label={`${item.speakerLabel}头像`} />}
+      <span style={{ ...styles.transcriptSpeakerName, ...(item.speakerAvatarRef === undefined ? {} : { color: recordingSpeakerColor(item.speakerColorIndex) }), ...(item.speakerLabel === `说话人 ${item.speakerNumber}` ? {} : styles.transcriptNamedSpeaker) }}>{item.speakerLabel}</span>
       <span aria-hidden="true" style={styles.transcriptEditSlot}><PencilSimple className="arkme-recording-transcript-edit" size={12} /></span>
     </button>
-    <div style={{ ...styles.transcriptContent, ...(selectionControl ? { marginLeft: 44 } : {}) }}>
-      <span aria-hidden="true" style={styles.transcriptLeading} />
+    <div style={styles.transcriptContent}>
       <span>{text ?? item.text}</span>
       <time style={styles.transcriptTime}>
         {recordingTranscriptTimeLabel(item.startAtMillis)} {recordingTranscriptDurationLabel(item.startAtMillis, item.endAtMillis)}

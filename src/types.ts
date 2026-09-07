@@ -1554,6 +1554,8 @@ export interface ArkmeTimelineItem {
   sendAtMillis: number
   title: string
   textContent: string
+  /** Safe rich preview retained from raw Chat metadata even when media delivery URLs are unavailable. */
+  conversationPreview?: string
   status: number
   sequence?: number
   recordVersion?: number
@@ -3107,6 +3109,29 @@ export type ArkmeChatClientEvent = {
   relationTerminal: boolean
   throughSequence: number
 } | {
+  type: 'message-preparing'
+  revision: number
+  sourceKey: string
+  actorKey: string
+  avatarRef?: string
+  prepareAtMillis: number
+  expireAtMillis: number
+  preparingState: 1 | 2
+  stateVersion: number
+  eventAtMillis: number
+  /** Chat SSE connection identity; distinct from the Browser delivery revision. */
+  chatConnectionGeneration: number
+  /** Ordered observation within the Chat SSE runtime; not a preparing state version. */
+  chatRevision: number
+} | {
+  type: 'message-arrived'
+  revision: number
+  sourceKey: string
+  actorKey: string
+  eventAtMillis: number
+  chatConnectionGeneration: number
+  chatRevision: number
+} | {
   type: 'attention-summary'
   revision: number
   summary: ArkmeChatAttentionSummary
@@ -3258,6 +3283,8 @@ export type ArkmePluginOperation =
   | 'source.member-event.private.open'
   | 'source.member-records'
   | 'source.mark-read'
+  | 'source.message-preparing.report'
+  | 'source.message-preparing.cancel'
   | 'source.read-receipts.summary-list'
   | 'source.read-receipts.detail'
   | 'source.message-report'

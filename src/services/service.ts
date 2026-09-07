@@ -127,6 +127,8 @@ export interface ArkmeRemoteRequestOptions {
   cacheMs?: number
   failureCooldownMs?: number
   bypassCache?: boolean
+  /** Optional writes may avoid publishing service-wide cooldowns; existing admission limits still apply. */
+  publishServiceCooldown?: boolean
   /** Mark only transport outcomes where a mutation may have reached its owner without a usable acknowledgement. */
   trackWriteOutcome?: boolean
 }
@@ -395,7 +397,7 @@ export class ServiceRuntime {
       ...(signal === undefined ? {} : { signal }),
       shouldCooldown: error => !(error instanceof ArkmePluginError)
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
-      serviceCooldownMs: error => this.remoteServiceCooldownMs(error),
+      serviceCooldownMs: error => options.publishServiceCooldown === false ? 0 : this.remoteServiceCooldownMs(error),
       operation: async coordinatedSignal => await this.postDirect<T>(
         baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
         preserveHttpError, preserveForbiddenError,
@@ -818,14 +820,16 @@ export class ServiceRuntime {
     body: Record<string, unknown>,
     initialSession?: ArkmeSessionCredentials,
     signal?: AbortSignal,
-    options: ArkmeRemoteRequestOptions = {},
+    options: ArkmeRemoteRequestOptions & { refreshOnUnauthorized?: boolean } = {},
   ): Promise<T> {
+    const { refreshOnUnauthorized = true, ...remoteOptions } = options
     let session = initialSession ?? await this.requireSession()
-    const requestOptions = () => this.authenticatedRequestOptions(session, 'chat', 'write', options)
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'chat', 'write', remoteOptions)
     try {
       return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     } catch (error) {
-      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+      if (!refreshOnUnauthorized || !(error instanceof ArkmePluginError)
+        || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)

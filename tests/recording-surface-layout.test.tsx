@@ -256,7 +256,11 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(surface.recordingTranscriptDurationLabel(startAtMillis, startAtMillis + 3_720_000)).toBe('1小时2分')
   })
 
-  it('renders each transcript as the desktop inline speaker, content, and trailing-time row', () => {
+  it.each([
+    { speakerLabel: '说话人 757', speakerNumber: 757, numbered: true },
+    { speakerLabel: '说话人 12345', speakerNumber: 12345, numbered: true },
+    { speakerLabel: '这是一个可以省略显示的很长的说话人名称', speakerNumber: 16, numbered: false },
+  ])('preserves numbers and truncates only names: $speakerLabel', ({ speakerLabel, speakerNumber, numbered }) => {
     type TranscriptRowProps = {
       item: ArkmeRecordingWorkbenchItem
       selected: boolean
@@ -277,10 +281,10 @@ describe('ArkmeRecordingSurface layout', () => {
         itemRef: 'sealed-item-1',
         startAtMillis,
         endAtMillis: startAtMillis + 62_000,
-        speakerNumber: 16,
+        speakerNumber,
         speakerKey: 'speaker:16',
         speakerColorIndex: 0,
-        speakerLabel: '说话人 16',
+        speakerLabel,
         sameSpeakerItemCount: 3,
         isSelf: false,
         isBackground: false,
@@ -293,18 +297,47 @@ describe('ArkmeRecordingSurface layout', () => {
     const row = matchStyle(markup, /<li[^>]*style="([^"]+)"/)
 
     expect(row.get('padding')).toBe('3px')
+    expect(row.get('display')).toBe('grid')
+    expect(row.get('grid-template-columns')).toBe('minmax(0, min(128px, 45%)) minmax(0, 1fr)')
     expect(row.get('border-radius')).toBe('6px')
     expect(row.get('background')).toContain('--dsw-specific-input-major')
-    expect(markup).toContain('aria-label="编辑说话人 说话人 16"')
+    expect(markup).toContain(`aria-label="编辑说话人 ${speakerLabel}"`)
     expect(markup).toContain('width:16px;height:16px')
     expect(markup).toContain('background:#ec7fa9')
-    expect(markup).toContain('width:66px;flex:none;margin-left:4px')
+    expect(markup).toContain(`title="${speakerLabel}"`)
+    expect(markup).toContain('overflow-wrap:anywhere')
+    if (numbered) {
+      expect(markup).not.toContain('text-overflow:ellipsis')
+      expect(markup).not.toContain('max-width:112px')
+    } else {
+      expect(markup).toContain('text-overflow:ellipsis')
+      expect(markup).toContain('max-width:112px')
+    }
     expect(markup).toContain('font-size:14px;line-height:22px;letter-spacing:.28px')
-    expect(markup).toContain('width:88px')
+    expect(markup).toContain('display:inline-flex')
+    expect(markup).not.toContain('width:88px')
     expect(markup).toContain('font-size:12px;line-height:22px;letter-spacing:.24px')
     expect(markup).toContain('float:right')
     expect(markup).toContain('>12:30:01 1分2秒</time>')
     expect(markup).not.toContain('>背景音<')
+  })
+
+  it('shows the supplied speaker avatar and the timeline speaker color in the transcript', () => {
+    const markup = renderToStaticMarkup(<recordingSurface.ArkmeRecordingTranscriptRow
+      item={{
+        itemId: 'self-item', itemRef: 'self-ref', startAtMillis: 1_000, endAtMillis: 2_000,
+        speakerNumber: 636, speakerKey: 'speaker:self', speakerColorIndex: 0,
+        speakerLabel: 'HooXi', speakerAvatarRef: 'arkme-profile-image-v1.self',
+        sameSpeakerItemCount: 88, isSelf: true, isBackground: false, text: '自己的发言',
+      }}
+      selected={false}
+      onEditSpeaker={() => undefined}
+      onSelect={() => undefined}
+    />)
+    expect(markup).toContain('aria-label="HooXi头像"')
+    const name = matchStyle(markup, /<span style="([^"]+)">HooXi<\/span>/)
+    expect(name.get('color')).toBe('#ec7fa9')
+    expect(markup).not.toContain('background:#ec7fa9')
   })
 
   it('keeps long recording days responsive without a ResizeObserver per transcript row', async () => {

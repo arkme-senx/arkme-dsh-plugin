@@ -209,25 +209,137 @@ describe('SourceService', () => {
     expect(service.cachedChatSource(42, 'group-1')).not.toHaveProperty('groupAvatar')
   })
 
-  it('keeps chat directory attachment previews aligned with the real media kind', () => {
-    expect(arkmeChatConversationPreview({
-      content_payload: { media_refs: [{ file_asset_uid: 'pdf-asset', file_name: '方案.pdf', file_kind: 4, mime_type: 'application/pdf' }] },
-    })).toBe('[文件]')
-    expect(arkmeChatConversationPreview({
-      content_payload: { media_refs: [{ file_asset_uid: 'video-asset', file_name: '演示.mp4', file_kind: 3, mime_type: 'video/mp4' }] },
-    })).toBe('[视频]')
-    expect(arkmeChatConversationPreview({
-      content_payload: { media_refs: [{ file_asset_uid: 'image-asset' }] },
-      media_display_items: [{ file_asset_uid: 'image-asset', file_name: '截图.jpg', file_kind: 1, mime_type: 'image/jpeg' }],
-    })).toBe('[图片]')
-    expect(arkmeChatConversationPreview({
-      content_payload: { media_refs: [{ file_asset_uid: 'legacy-file', file_name: '归档.zip' }] },
-    })).toBe('[文件]')
+  it('builds Jotmo-compatible conversation previews from text and safe media metadata', () => {
+    const cases: Array<{ name: string; raw: Record<string, unknown>; expected: string }> = [
+      {
+        name: 'image',
+        raw: { content_payload: { media_refs: [{ file_type: 1, file_name: 'photo.png' }] } },
+        expected: '[图片]',
+      },
+      {
+        name: 'file',
+        raw: { content_payload: { media_refs: [{ file_type: 6, file_name: 'contract.pdf' }] } },
+        expected: '[文件]',
+      },
+      {
+        name: 'video',
+        raw: { content_payload: { media_refs: [{ file_type: 3, file_name: 'clip.mp4' }] } },
+        expected: '[视频]',
+      },
+      {
+        name: 'voice',
+        raw: { content_payload: { voice: { source_file_asset_uid: 'voice-1' } } },
+        expected: '[语音]',
+      },
+      {
+        name: 'image and text',
+        raw: {
+          text_content: '  图文\n正文  ',
+          content_payload: { media_refs: [{ file_type: 1, file_name: 'photo.png' }] },
+        },
+        expected: '[图片]图文 正文',
+      },
+      {
+        name: 'media and rich emoji token',
+        raw: {
+          text_content: '说明[jm_emoji:red_angry_face]',
+          content_payload: { media_refs: [{ file_type: 1, file_name: 'photo.png' }] },
+        },
+        expected: '[图片]说明[jm_emoji:red_angry_face]',
+      },
+      {
+        name: 'media priority ignores payload order',
+        raw: {
+          text_content: '混合',
+          content_payload: { media_refs: [
+            { file_type: 2, file_name: 'voice.m4a' },
+            { file_type: 1, file_name: 'photo.png' },
+            { file_type: 3, file_name: 'clip.mp4' },
+            { file_type: 6, file_name: 'contract.pdf' },
+          ] },
+        },
+        expected: '[文件]混合',
+      },
+      {
+        name: 'business file type wins over misleading MIME',
+        raw: {
+          content_payload: { media_refs: [{ file_type: 6, file_name: 'photo.png', mime_type: 'image/png' }] },
+        },
+        expected: '[文件]',
+      },
+      {
+        name: 'MIME corrects a stale file kind',
+        raw: {
+          content_payload: { media_refs: [{ file_kind: 4, file_name: 'photo.png', mime_type: 'image/png' }] },
+        },
+        expected: '[图片]',
+      },
+      {
+        name: 'nested current text outranks an outer stale summary',
+        raw: {
+          record: { summary: '旧摘要', payload: { text_content: '真实正文' } },
+        },
+        expected: '真实正文',
+      },
+      {
+        name: 'background sound is not a visible attachment',
+        raw: {
+          text_content: '快记',
+          content_payload: { media_refs: [{ file_type: 2, content_file_role: 4, file_name: 'ambient.m4a' }] },
+        },
+        expected: '快记',
+      },
+      {
+        name: 'sticker render role',
+        raw: { content_payload: { media_refs: [{ render_role: 3, file_type: 1, file_name: 'sticker.webp' }] } },
+        expected: '[表情]',
+      },
+      {
+        name: 'legacy sticker render kind',
+        raw: { content_payload: { render_kind: 'sticker' } },
+        expected: '[表情]',
+      },
+      {
+        name: 'known inline emoji already represents the sticker',
+        raw: {
+          text_content: '[jm_emoji:heart_eyes]',
+          content_payload: { media_refs: [{ render_role: 3, file_type: 1, file_name: 'sticker.webp' }] },
+        },
+        expected: '[jm_emoji:heart_eyes]',
+      },
+      {
+        name: 'unknown inline emoji remains visible',
+        raw: {
+          text_content: '[jm_emoji:not_exists]',
+          content_payload: { media_refs: [{ render_role: 3, file_type: 1, file_name: 'sticker.webp' }] },
+        },
+        expected: '[表情][jm_emoji:not_exists]',
+      },
+    ]
+
+    for (const testCase of cases) {
+      expect(arkmeChatConversationPreview(testCase.raw), testCase.name).toBe(testCase.expected)
+    }
+  })
+
+  it('truncates previews by code point without splitting rich emoji tokens', () => {
+    const prefix = '字'.repeat(299)
+    expect(arkmeChatConversationPreview({ text_content: `${prefix}[jm_emoji:heart_eyes]尾` })).toBe(prefix)
+    expect(arkmeChatConversationPreview({ text_content: `${prefix}😠尾` })).toBe(`${prefix}😠`)
+  })
+
+  it('keeps hydrated and legacy timeline preview paths on the shared owner', () => {
     expect(arkmeTimelineConversationPreview({
-      itemUid: 'file-item', title: '', textContent: '', sendAtMillis: 1, senderName: '我', isMe: true,
+      itemUid: 'rich-item', title: '', textContent: '正文', sendAtMillis: 1, senderName: '我', isMe: true,
+      status: 1, displayKind: 0,
+      conversationPreview: '[图片]正文',
+      contentBlocks: [],
+    })).toBe('[图片]正文')
+    expect(arkmeTimelineConversationPreview({
+      itemUid: 'legacy-file-item', title: '', textContent: '正文', sendAtMillis: 1, senderName: '我', isMe: true,
       status: 1, displayKind: 0,
       contentBlocks: [{ kind: 'file', mediaRef: 'file-ref', fileName: '方案.pdf', mimeType: 'application/pdf', size: 1, sortOrder: 0 }],
-    })).toBe('[文件]')
+    })).toBe('[文件]正文')
   })
 
   it('updates a pin in the chat policy and the cloud topic pin policy', async () => {

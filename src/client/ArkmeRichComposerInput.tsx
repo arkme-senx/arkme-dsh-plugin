@@ -57,6 +57,8 @@ export interface ArkmeRichComposerInputProps {
   disabled: boolean
   style: CSSProperties
   onTextChange(text: string): void
+  /** Genuine editor activity, including provisional IME text; never a draft commit. */
+  onInputActivity?(text: string): void
   onSelectionChange?(text: string, selectionStart: number, selectionEnd: number): void
   onFocus?(event: FocusEvent<HTMLDivElement>): void
   onBlur?(event: FocusEvent<HTMLDivElement>): void
@@ -257,7 +259,7 @@ function renderEditorContents(
 export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(
   function ArkmeRichComposerInput({
     className, value, mentions, emojis, maxLength, placeholder, ariaLabel, disabled, style,
-    onTextChange, onSelectionChange, onFocus, onBlur, onPaste, onKeyDown,
+    onTextChange, onInputActivity, onSelectionChange, onFocus, onBlur, onPaste, onKeyDown,
   }, forwardedRef) {
     const editorRef = useRef<HTMLDivElement>(null)
     const valueRef = useRef(value)
@@ -331,6 +333,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       selectionRef.current = selection
       pendingSelectionRef.current = selection
       onTextChange(nextText)
+      onInputActivity?.(nextText)
       onSelectionChange?.(nextText, selection.start, selection.end)
     }
 
@@ -342,6 +345,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       selectionRef.current = { start: caret, end: caret }
       pendingSelectionRef.current = selectionRef.current
       onTextChange(nextText)
+      onInputActivity?.(nextText)
     }
 
     const insertPastedText = (root: HTMLDivElement, text: string) => {
@@ -352,6 +356,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       selectionRef.current = { start: caret, end: caret }
       pendingSelectionRef.current = selectionRef.current
       onTextChange(nextText)
+      onInputActivity?.(nextText)
       onSelectionChange?.(nextText, caret, caret)
     }
 
@@ -378,6 +383,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
           const text = editorSemanticText(event.currentTarget)
           setEditorHasContent(text !== '')
           if (!(event.nativeEvent as InputEvent).isComposing) commitDom(event.currentTarget, text)
+          else onInputActivity?.(text)
         }}
         onFocus={onFocus}
         onBlur={onBlur}
