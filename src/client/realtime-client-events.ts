@@ -102,8 +102,8 @@ export function useArkmeRealtimeClientEvents(
     const handleOpen = () => {
       if (stopped) return
       if (ownsMessagePreparing) arkmeMessagePreparing.reset()
-      invalidateDirectMessageAdmission()
       reconcileReceipts()
+      invalidateDirectMessageAdmission()
       void reconcileArkmeProviderInstance()
         .then(async changed => {
           if (!changed || stopped) return
@@ -147,10 +147,10 @@ export function useArkmeRealtimeClientEvents(
         }
         if (update.type === 'reconcile') {
           if (ownsMessagePreparing) arkmeMessagePreparing.reset()
-          invalidateDirectMessageAdmission()
           if (update.attentionSummary !== undefined) arkmeAttentionSummary.apply(update.attentionSummary)
           arkmeInterwovenInvalidation.invalidate()
           reconcileReceipts()
+          invalidateDirectMessageAdmission()
           if (update.refresh === 'none') return
           void refreshUnread(update.refresh === 'force')
             .then(() => {
