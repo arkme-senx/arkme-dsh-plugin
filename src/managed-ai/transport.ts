@@ -875,7 +875,7 @@ export class ManagedAiTransport {
       let entry!: InFlightInputAsset
       const promise = this.uploadInputAsset(model, contractVersion, attachment, capability, rules, bearer, controller.signal)
         .then((asset) => {
-          this.rememberInputAsset(key, asset)
+          if (!controller.signal.aborted) this.rememberInputAsset(key, asset)
           return asset
         })
         .finally(() => {
@@ -892,6 +892,12 @@ export class ManagedAiTransport {
     } finally {
       inFlight.waiters--
       if (inFlight.waiters === 0 && !inFlight.settled) {
+        // A cancelled generation may take time to unwind. A new caller must
+        // not join it or reuse the server upload that its cleanup will abort.
+        if (this.assetUploads.get(uploadKey) === inFlight) {
+          this.assetUploads.delete(uploadKey)
+          this.assetAttemptKeys.delete(key)
+        }
         inFlight.controller.abort(new DOMException('No managed image upload waiters remain', 'AbortError'))
       }
     }

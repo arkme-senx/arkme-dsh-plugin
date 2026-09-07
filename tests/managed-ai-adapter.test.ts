@@ -867,6 +867,97 @@ describe('Arkme managed model adapter', () => {
     await vi.waitFor(() => { expect(abortCalls).toBe(1) })
   })
 
+  it('starts a fresh upload when resending before the cancelled upload has settled', async () => {
+    const data = Uint8Array.of(4, 5, 6)
+    const attachment = {
+      attachmentId: AttachmentId('cancel-and-resend-image'),
+      mediaType: 'image/png' as const, bytes: data.byteLength, width: 16, height: 16,
+    }
+    const capability: ManagedModelCapability = {
+      contractVersion: 'cancel-and-resend-v1', inputModalities: ['text', 'image'], outputModalities: ['text'],
+      image: {
+        allowedMediaTypes: ['image/png'], maximumImages: 1, maximumBytesPerImage: data.byteLength,
+        maximumPixels: 40_000_000, countDimensionLimits: [], mediaTypeDimensionLimits: [],
+      },
+    }
+    let markUploadStarted!: () => void
+    const uploadStarted = new Promise<void>(resolve => { markUploadStarted = resolve })
+    let finishCancelledUpload!: () => void
+    const cancelledUploadGate = new Promise<void>(resolve => { finishCancelledUpload = resolve })
+    const prepareKeys: string[] = []
+    const abortUIDs: string[] = []
+    let uploadCalls = 0
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => ({ readImage: async () => ({ ref: attachment, data }) }),
+      fetchImpl: async (input, init) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/input-assets/uploads/prepare')) {
+          const body = JSON.parse(String(init?.body)) as { idempotency_key: string }
+          prepareKeys.push(body.idempotency_key)
+          return Response.json({ code: 200, data: {
+            upload_uid: `mai_upload_resend_${String(prepareKeys.length)}`,
+            asset_ref: `mai_asset_resend_${String(prepareKeys.length)}`, status: 'prepared',
+            upload: {
+              method: 'POST', url: 'https://managed-ai.oss.test/resend',
+              fields: { key: 'managed/resend.png', policy: 'signed-policy' }, file_field: 'file',
+            },
+            expires_at: Date.now() + 10 * 60_000, asset_expires_at: Date.now() + 60 * 60_000,
+          } })
+        }
+        if (url === 'https://managed-ai.oss.test/resend') {
+          if (++uploadCalls === 1) {
+            markUploadStarted()
+            await cancelledUploadGate
+            throw init?.signal?.reason
+          }
+          return new Response(null, { status: 204 })
+        }
+        if (url.endsWith('/input-assets/uploads/complete')) {
+          return Response.json({ code: 200, data: {
+            asset_ref: 'mai_asset_resend_2', status: 'ready', expires_at: Date.now() + 60 * 60_000,
+          } })
+        }
+        if (url.endsWith('/input-assets/uploads/abort')) {
+          abortUIDs.push((JSON.parse(String(init?.body)) as { upload_uid: string }).upload_uid)
+          return Response.json({ code: 200, data: { aborted: true } })
+        }
+        if (url.endsWith('/chat/completions')) {
+          return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
+        }
+        throw new Error(`unexpected request: ${url}`)
+      },
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+    })
+    const collect = async (signal?: AbortSignal) => {
+      const chunks: StreamChunk[] = []
+      for await (const chunk of transport.stream({
+        provider: ARKME_MANAGED_PROVIDER, model: 'cancel-and-resend', signal,
+        messages: [createUserMessage({ content: [{ type: 'image', attachment }], source: { kind: 'user' } })],
+      }, capability)) chunks.push(chunk)
+      return chunks
+    }
+    const controller = new AbortController()
+    const first = collect(controller.signal)
+    await uploadStarted
+    controller.abort()
+    await expect(first).rejects.toMatchObject({ code: 'ABORTED' })
+    const second = collect()
+    const secondResult = second.catch(() => [])
+    try {
+      await vi.waitFor(() => { expect(prepareKeys).toHaveLength(2) })
+      expect(prepareKeys[0]).not.toBe(prepareKeys[1])
+      await expect(second).resolves.toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+    } finally {
+      finishCancelledUpload()
+      await secondResult
+    }
+    await vi.waitFor(() => { expect(abortUIDs).toEqual(['mai_upload_resend_1']) })
+    await collect()
+    expect(prepareKeys).toHaveLength(2)
+  })
+
   it('keeps a shared image upload alive when only one concurrent caller aborts', async () => {
     const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
     const attachment = {
