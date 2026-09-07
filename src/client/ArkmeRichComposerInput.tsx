@@ -1,3 +1,5 @@
+import { ArkmeMarkdownComposerInput } from './ArkmeMarkdownComposerInput.js'
+import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import {
   forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState,
   type ClipboardEvent, type CSSProperties, type FocusEvent, type KeyboardEvent,
@@ -47,6 +49,9 @@ export interface ArkmeComposerCaretGeometry {
 }
 
 export interface ArkmeRichComposerInputProps {
+  markdownEnabled?: boolean
+  markdown?: ArkmeMarkdownDraft | undefined
+  onMarkdownChange?(value: ArkmeMarkdownDraft, text: string, mentions: readonly ArkmeComposerMention[], emojis: readonly ArkmeComposerEmoji[]): void
   className?: string
   value: string
   mentions: readonly ArkmeComposerMention[]
@@ -254,7 +259,7 @@ function renderEditorContents(
 }
 
 /** Native contenteditable surface whose rich emoji spans remain atomic, selectable inline objects. */
-export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(
+const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(
   function ArkmeRichComposerInput({
     className, value, mentions, emojis, maxLength, placeholder, ariaLabel, disabled, style,
     onTextChange, onSelectionChange, onFocus, onBlur, onPaste, onKeyDown,
@@ -416,3 +421,10 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
     </div>
   },
 )
+
+export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(function ArkmeRichComposerInput(props, ref) {
+  if ((props.markdownEnabled || props.markdown !== undefined) && props.onMarkdownChange !== undefined) {
+    return <ArkmeMarkdownComposerInput {...props} ref={ref} onMarkdownChange={props.onMarkdownChange} />
+  }
+  return <ArkmePlainComposerInput {...props} ref={ref} />
+})

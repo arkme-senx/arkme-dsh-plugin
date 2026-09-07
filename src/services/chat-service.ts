@@ -1,3 +1,4 @@
+import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges, arkmeMarkdownPlainText, arkmeMarkdownTextRanges } from '../markdown.js'
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -98,8 +99,10 @@ export function arkmeRichContentPayload(
   const assets = input.assets ?? []
   const backgroundSound = arkmeRichBackgroundSound(input.backgroundSound)
   const mentionMetadata = mentionPayload?.mention_metadata
-  const hashTags = arkmeHashTagPayload(normalizedTextContent)
-  if (assets.length === 0 && backgroundSound === undefined && mentionMetadata === undefined && hashTags.length === 0) return undefined
+  const hashTags = input.textFormat === 'markdown'
+    ? arkmeMarkdownHashTagRanges(normalizedTextContent).map(tag => ({ tag: tag.tag, start_index: tag.startIndex, length: tag.length }))
+    : arkmeHashTagPayload(normalizedTextContent)
+  if (input.textFormat === undefined && assets.length === 0 && backgroundSound === undefined && mentionMetadata === undefined && hashTags.length === 0) return undefined
   const mediaRefs = [
     ...assets.map((asset, index) => ({
       file_asset_uid: asset.fileAssetUid,
@@ -121,6 +124,7 @@ export function arkmeRichContentPayload(
     payload_kind: assets.length === 0 ? 1 : 2,
     schema_version: 1,
     text_state: normalizedTextContent === '' ? 3 : 1,
+    ...(input.textFormat === undefined ? {} : { text_format: input.textFormat }),
     ...(mediaRefs.length === 0 ? {} : { media_refs: mediaRefs }),
     ...(backgroundSound === undefined || backgroundSound.amplitudes.length === 0
       ? {}
@@ -158,6 +162,7 @@ interface ArkmeMessageActionRefPayload {
   senderName: string
   title: string
   textContent: string
+  textFormat?: 'plain' | 'markdown'
   sendAtMillis: number
   sourceSequence: number
   templateKind: number
@@ -175,6 +180,7 @@ interface ArkmeSentMessageActionInput {
   relationUid?: string
   title: string
   textContent: string
+  textFormat?: 'plain' | 'markdown'
   sendAtMillis: number
   templateKind: number
   displayKind: number
@@ -604,6 +610,7 @@ function snapshotDetailFromChatRaw(raw: Record<string, unknown>, fallback: { ite
     // Prefer complete record-core content; a chat relation can carry an older
     // render payload while the user has since revised the original record.
     textContent: firstSnapshotText(record.text_content, record.textContent, values.text_content, values.textContent) ?? fallback.textContent,
+    textFormat: arkmeRecordTextFormat(record.text_content !== undefined ? record : values),
     ...(recordDurationMillis === undefined ? {} : { recordDurationMillis }),
     ...(editDurationMillis === undefined ? {} : { editDurationMillis }),
     ...(numberValue(values.view_times ?? values.viewTimes) > 0 ? { viewTimes: Math.trunc(numberValue(values.view_times ?? values.viewTimes)) } : {}),
@@ -720,6 +727,7 @@ function messageCopyLinkSnapshotItemFromData(value: unknown): ArkmeMessageCopyLi
     senderAvatarUrl: stringValue(data.sender_avatar_url),
     title: stringValue(data.title),
     textContent: stringValue(data.text_content),
+    textFormat: arkmeRecordTextFormat(data),
     sendAtMillis: epochMillisValue(data.send_at),
     templateKind: integerLikeValue(data.template_kind),
     displayKind: integerLikeValue(data.display_kind),
@@ -874,6 +882,7 @@ function chatExtensionTreeItemFromData(
       || firstTextValue(payload, ['sender_avatar_url', 'senderAvatarUrl', 'avatar_ref', 'avatarRef']),
     title: stringValue(payload.title ?? record.title),
     textContent: stringValue(payload.text_content ?? payload.textContent ?? record.text_content ?? record.textContent),
+    textFormat: arkmeRecordTextFormat(payload),
     sendAtMillis: epochMillisValue(relation.attach_at ?? relation.attachAt ?? payload.send_at ?? payload.sendAt
       ?? edge.created_at ?? edge.createdAt),
     templateKind: integerLikeValue(payload.template_kind ?? payload.templateKind ?? record.template_kind ?? record.templateKind) || 1,
@@ -2834,10 +2843,11 @@ export class ChatService {
     textContent: string,
     recordUid: string,
     assets: readonly ArkmeUploadedAsset[] = [],
-    options: { relationUid?: string; parentRecordUid?: string; signal?: AbortSignal } = {},
+    options: { relationUid?: string; parentRecordUid?: string; signal?: AbortSignal } & Pick<ArkmeRichSendInput, 'textFormat' | 'humanMentions' | 'botMentions'> = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
+    if (options.textFormat === 'markdown' && this.runtime.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)
     const normalizedUid = recordUid.trim()
-    const normalizedText = textContent.trim()
+    const normalizedText = options.textFormat === 'markdown' ? textContent : textContent.trim()
     if (!RECORD_UID_PATTERN.test(normalizedUid)) {
       throw new ArkmePluginError('record-uid-invalid', '写入标识无效，请重试', false)
     }
@@ -2890,9 +2900,10 @@ export class ChatService {
       const profile = profileSnapshot.profile
       if (profile === null) throw new ArkmePluginError('profile-unavailable', '无法读取当前 Arkme 账号资料', true)
       const sendAtMillis = Date.now()
-      const hashTags = arkmeHashTagPayload(normalizedText)
-      const contentPayload = assets.length === 0 && hashTags.length === 0 ? undefined : {
+      const hashTags = options.textFormat === 'markdown' ? arkmeMarkdownHashTagRanges(normalizedText).map(tag => ({ tag: tag.tag, start_index: tag.startIndex, length: tag.length })) : arkmeHashTagPayload(normalizedText)
+      const contentPayload = options.textFormat === undefined && assets.length === 0 && hashTags.length === 0 && !(options.humanMentions?.length || options.botMentions?.length) ? undefined : {
         payload_kind: assets.length === 0 ? 1 : 2,
+        ...(options.textFormat === undefined ? {} : { text_format: options.textFormat }),
         schema_version: 1,
         text_state: normalizedText === '' ? 3 : 1,
         ...(hashTags.length === 0 ? {} : { hash_tags: hashTags }),
@@ -2908,6 +2919,10 @@ export class ChatService {
             size: asset.size,
           })),
         }),
+      }
+      if (contentPayload !== undefined && (options.humanMentions?.length || options.botMentions?.length)) {
+        const evidence = await this.mentionContentPayload(source, textContent, normalizedText, options.humanMentions ?? [], options.botMentions ?? [], session, options.signal, options.textFormat)
+        Object.assign(contentPayload, { mention_metadata: evidence.mention_metadata })
       }
       const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
         '/api/v1/chats/extensions/children/create',
@@ -2939,6 +2954,7 @@ export class ChatService {
         ...(profile.avatarRef.trim() === '' ? {} : { senderAvatarUrl: profile.avatarRef.trim() }),
         title: '',
         textContent: normalizedText,
+        textFormat: options.textFormat ?? 'plain',
         sendAtMillis,
         templateKind: assets.length === 0 ? 1 : 2,
         displayKind: 0,
@@ -2960,9 +2976,10 @@ export class ChatService {
       const profile = profileSnapshot.profile
       if (profile === null) throw new ArkmePluginError('profile-unavailable', '无法读取当前 Arkme 账号资料', true)
       const sendAtMillis = Date.now()
-      const hashTags = arkmeHashTagPayload(normalizedText)
-      const contentPayload = assets.length === 0 && hashTags.length === 0 ? undefined : {
+      const hashTags = options.textFormat === 'markdown' ? arkmeMarkdownHashTagRanges(normalizedText).map(tag => ({ tag: tag.tag, start_index: tag.startIndex, length: tag.length })) : arkmeHashTagPayload(normalizedText)
+      const contentPayload = options.textFormat === undefined && assets.length === 0 && hashTags.length === 0 && !(options.humanMentions?.length || options.botMentions?.length) ? undefined : {
         payload_kind: assets.length === 0 ? 1 : 2,
+        ...(options.textFormat === undefined ? {} : { text_format: options.textFormat }),
         schema_version: 1,
         text_state: normalizedText === '' ? 3 : 1,
         ...(hashTags.length === 0 ? {} : { hash_tags: hashTags }),
@@ -3002,7 +3019,7 @@ export class ChatService {
         || createdTopicUid !== source.ownerRef || edgeUid === '') {
         throw new ArkmePluginError('record-extension-response-invalid', '主题延展写入结果无效，请刷新后重试', true, 502)
       }
-      await this.record.syncCreatedRecordTags?.(createdRecordUid, normalizedText, session.userId)
+      await this.record.syncCreatedRecordTags?.(createdRecordUid, normalizedText, session.userId, options.signal, options.textFormat)
       const relationUid = stringValue(data.rel_uid).trim()
       this.source.invalidateSourceListCache(session.userId, 'send_to_self')
       this.realtime.emitChatClientEvent({
@@ -3020,6 +3037,7 @@ export class ChatService {
         ...(profile.avatarRef.trim() === '' ? {} : { senderAvatarUrl: profile.avatarRef.trim() }),
         title: '',
         textContent: normalizedText,
+        textFormat: options.textFormat ?? 'plain',
         sendAtMillis,
         templateKind: assets.length === 0 ? 1 : 2,
         displayKind: 0,
@@ -3045,6 +3063,7 @@ export class ChatService {
         normalizedUid,
         normalizedText,
         assets,
+        options.textFormat,
       )
       this.source.invalidateSourceListCache(session.userId, 'send_to_self')
       this.realtime.emitChatClientEvent({
@@ -3062,6 +3081,7 @@ export class ChatService {
         ...(profile.avatarRef.trim() === '' ? {} : { senderAvatarUrl: profile.avatarRef.trim() }),
         title: '',
         textContent: normalizedText,
+        textFormat: options.textFormat ?? 'plain',
         sendAtMillis,
         templateKind: assets.length === 0 ? 1 : 2,
         displayKind: 0,
@@ -3191,6 +3211,7 @@ export class ChatService {
       ...(senderAvatarUrl === '' ? {} : { senderAvatarUrl }),
       title: '',
       textContent: normalizedText,
+        textFormat: options.textFormat ?? 'plain',
       sendAtMillis,
       templateKind: assets.length === 0 ? 1 : 2,
       displayKind: 0,
@@ -3596,17 +3617,24 @@ export class ChatService {
     botInputs: readonly ArkmeBotMentionInput[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    textFormat: 'plain' | 'markdown' = 'plain',
   ): Promise<Record<string, unknown>> {
     if (humanInputs.length > 50) throw new ArkmePluginError('human-mention-invalid', '单条消息 mention 数量过多', false)
     if (botInputs.length > 50) throw new ArkmePluginError('bot-mention-invalid', '单条消息 Bot mention 数量过多', false)
     const [mentions, botMentions] = await Promise.all([
-      this.humanMentionMetadata(source, rawText, normalizedText, humanInputs, session, signal),
-      this.botMentionMetadata(source, rawText, normalizedText, botInputs, session, signal),
+      this.humanMentionMetadata(source, rawText, normalizedText, humanInputs, session, signal, textFormat),
+      this.botMentionMetadata(source, rawText, normalizedText, botInputs, session, signal, textFormat),
     ])
     const orderedRanges = [
       ...mentions.map(mention => ({ startIndex: mention.start_index, length: mention.length })),
       ...botMentions.map(mention => ({ startIndex: mention.start_index, length: mention.length })),
     ].sort((left, right) => left.startIndex - right.startIndex)
+    if (textFormat === 'markdown') {
+      const textRanges = arkmeMarkdownTextRanges(normalizedText)
+      if (orderedRanges.some(range => !textRanges.some(text => range.startIndex >= text.start && range.startIndex + range.length <= text.end))) {
+        throw new ArkmePluginError('mention-markdown-range-invalid', '代码或链接地址不能触发提醒', false)
+      }
+    }
     for (let index = 1; index < orderedRanges.length; index += 1) {
       const previous = orderedRanges[index - 1]!
       const current = orderedRanges[index]!
@@ -3650,8 +3678,9 @@ export class ChatService {
     inputs: readonly ArkmeHumanMentionInput[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    textFormat: 'plain' | 'markdown' = 'plain',
   ): Promise<Array<{ user_id: number; display_name_snapshot: string; start_index: number; length: number }>> {
-    const leadingTrim = rawText.length - rawText.trimStart().length
+    const leadingTrim = textFormat === 'markdown' ? 0 : rawText.length - rawText.trimStart().length
     const requiresMemberDirectory = inputs.some(input => input.all !== true)
     const rawMembers = requiresMemberDirectory
       ? await this.rawChatMembers(source.ownerRef, true, session, signal)
@@ -3668,7 +3697,8 @@ export class ChatService {
         || startIndex + length > normalizedText.length) {
         throw new ArkmePluginError('human-mention-invalid', '真人 mention 引用或文本区间无效', false)
       }
-      const visible = normalizedText.slice(startIndex, startIndex + length)
+      const sourceSpan = normalizedText.slice(startIndex, startIndex + length)
+      const visible = textFormat === 'markdown' ? arkmeMarkdownPlainText(sourceSpan) : sourceSpan
       const displayName = visible.startsWith('@') ? visible.slice(1) : ''
       let userId: number
       if (input.all === true) {
@@ -3716,12 +3746,13 @@ export class ChatService {
     inputs: readonly ArkmeBotMentionInput[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    textFormat: 'plain' | 'markdown' = 'plain',
   ): Promise<Array<{ bot_uid: string; display_name_snapshot: string; start_index: number; length: number }>> {
     if (inputs.length === 0) return []
     if (source.kind !== 'group_chat' && source.kind !== 'private_chat') {
       throw new ArkmePluginError('mention-chat-required', 'Bot mention 只能发送到聊天', false)
     }
-    const leadingTrim = rawText.length - rawText.trimStart().length
+    const leadingTrim = textFormat === 'markdown' ? 0 : rawText.length - rawText.trimStart().length
     const uniqueRefs = [...new Set(inputs.map(input => input.botRef.trim()))]
     if (uniqueRefs.some(ref => ref === '')) throw new ArkmePluginError('bot-mention-ref-invalid', 'Bot mention 引用为空', false)
     const references = await Promise.all(uniqueRefs.map(async ref => ({
@@ -3763,7 +3794,8 @@ export class ChatService {
       if (startIndex < 0 || length < 2 || startIndex + length > normalizedText.length) {
         throw new ArkmePluginError('bot-mention-invalid', 'Bot mention 引用或文本区间无效', false)
       }
-      const visible = normalizedText.slice(startIndex, startIndex + length)
+      const sourceSpan = normalizedText.slice(startIndex, startIndex + length)
+      const visible = textFormat === 'markdown' ? arkmeMarkdownPlainText(sourceSpan) : sourceSpan
       if (visible !== `@${bot.display_name_snapshot}`) {
         throw new ArkmePluginError('bot-mention-text-mismatch', 'Bot mention 文本已变化，请重新选择 Bot', false, 409)
       }
@@ -3936,12 +3968,13 @@ export class ChatService {
       if (this.runtime.config.richMediaSendEnabled === false) {
         throw new ArkmePluginError('rich-content-disabled', '富内容发送已被插件配置关闭', false, 403)
       }
+      if (input.textFormat === 'markdown' && this.runtime.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)
       const session = await this.runtime.requireSession()
       if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
       options.signal?.throwIfAborted()
       const source = await this.source.openSourceRef(sourceRef, session.userId)
       const title = input.title?.trim() ?? ''
-      const textContent = input.textContent?.trim() ?? ''
+      const textContent = input.textFormat === 'markdown' ? (input.textContent ?? '') : (input.textContent?.trim() ?? '')
       const assets = input.assets ?? []
       const backgroundSound = arkmeRichBackgroundSound(input.backgroundSound)
       const displayKind = input.displayKind === 1 ? 1 : 0
@@ -3978,7 +4011,7 @@ export class ChatService {
         if (longArticle) throw new ArkmePluginError('mention-rich-invalid', '长文暂不支持 mention', false)
         mentionPayload = await this.mentionContentPayload(
           source, input.textContent ?? '', textContent, input.humanMentions ?? [], input.botMentions ?? [], session,
-          options.signal,
+          options.signal, input.textFormat,
         )
       }
       const contentPayload = arkmeRichContentPayload(
@@ -4005,7 +4038,7 @@ export class ChatService {
         await this.record.syncCreatedRecordTags?.(
           stringValue(result.record_uid).trim() || recordUid,
           textContent,
-          session.userId,
+          session.userId, options.signal, input.textFormat,
         )
         await this.realtime.invalidateRecordProjection()
         return await this.withSentMessageActionRef({
@@ -4019,6 +4052,7 @@ export class ChatService {
           recordUid,
           title,
           textContent,
+          textFormat: input.textFormat ?? 'plain',
           sendAtMillis,
           templateKind,
           displayKind,
@@ -4033,7 +4067,7 @@ export class ChatService {
         await this.record.syncCreatedRecordTags?.(
           stringValue(result.record_uid).trim() || recordUid,
           textContent,
-          session.userId,
+          session.userId, options.signal, input.textFormat,
         )
         await this.realtime.invalidateRecordProjection()
         return await this.withSentMessageActionRef({
@@ -4047,6 +4081,7 @@ export class ChatService {
           recordUid,
           title,
           textContent,
+          textFormat: input.textFormat ?? 'plain',
           sendAtMillis,
           templateKind,
           displayKind,
@@ -4075,6 +4110,7 @@ export class ChatService {
         relationUid: stringValue(result.rel_uid ?? result.relUid).trim() || relationUid,
         title,
         textContent,
+        textFormat: input.textFormat ?? 'plain',
         sendAtMillis,
         templateKind,
         displayKind,
@@ -4476,6 +4512,7 @@ export class ChatService {
               senderName,
               title: stringValue(payload.title),
               textContent: stringValue(payload.text_content),
+              textFormat: arkmeRecordTextFormat(payload),
               sendAtMillis,
               sourceSequence: numberValue(relation.seq),
               templateKind: numberValue(payload.template_kind),
@@ -4492,6 +4529,7 @@ export class ChatService {
           sendAtMillis,
           title: stringValue(payload.title),
           textContent: stringValue(payload.text_content),
+          textFormat: arkmeRecordTextFormat(payload),
           status: numberValue(record.status),
           sequence: numberValue(relation.seq),
           ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),
@@ -4568,7 +4606,9 @@ export class ChatService {
           const senderName = stringValue(
             item.owner_name ?? item.ownerName ?? item.source_display_name ?? item.sourceDisplayName,
           ).trim() || 'Arkme用户'
-          const textContent = stringValue(item.text ?? item.text_preview ?? item.textPreview).trim()
+          const textFormat = arkmeRecordTextFormat(item)
+          const rawText = stringValue(item.text ?? item.text_preview ?? item.textPreview)
+          const textContent = textFormat === 'markdown' ? rawText : rawText.trim()
           const title = stringValue(item.title).trim()
           const rawType = stringValue(item.source_type ?? item.sourceType ?? payload.source_type ?? payload.sourceType)
           const sourceType: ArkmeForwardRecordPreviewItem['sourceType'] =
@@ -4616,6 +4656,7 @@ export class ChatService {
             sendAtMillis: epochMillis(item.send_at ?? item.sendAt),
             title,
             textContent,
+            textFormat,
             sourceType,
             ...(contentBlocks.length === 0 ? {} : { contentBlocks }),
             ...(files.length > contentBlocks.length ? { mediaUnavailable: true } : {}),
@@ -5332,6 +5373,7 @@ export class ChatService {
             senderName,
             title: stringValue(payload.title),
             textContent: stringValue(payload.text_content),
+            textFormat: arkmeRecordTextFormat(payload),
             sendAtMillis,
             sourceSequence: numberValue(relation.seq),
             templateKind: numberValue(payload.template_kind),
@@ -5346,6 +5388,7 @@ export class ChatService {
         sendAtMillis,
         title: stringValue(payload.title),
         textContent: stringValue(payload.text_content),
+        textFormat: arkmeRecordTextFormat(payload),
         status: recordStatus,
         sequence: numberValue(relation.seq),
         ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),
@@ -5433,6 +5476,7 @@ export class ChatService {
         senderName: parent.senderName,
         title: parent.title,
         textContent: parent.textContent,
+        textFormat: parent.textFormat ?? 'plain',
         ...(parent.contentBlocks === undefined ? {} : { contentBlocks: parent.contentBlocks }),
       }
     }
@@ -5554,6 +5598,7 @@ export class ChatService {
     senderName: string
     title: string
     textContent: string
+    textFormat?: 'plain' | 'markdown'
     sendAtMillis: number
     templateKind: number
     displayKind: number
@@ -5578,6 +5623,7 @@ export class ChatService {
       senderName: input.senderName.trim() || 'Arkme用户',
       title: input.title.slice(0, 500),
       textContent: input.textContent.slice(0, this.runtime.config.maxTextLength),
+      textFormat: input.textFormat ?? 'plain',
       sendAtMillis: Math.trunc(input.sendAtMillis),
       sourceSequence: Math.max(0, Math.trunc(numberValue(input.sourceSequence))),
       templateKind: Math.trunc(input.templateKind),
@@ -5629,6 +5675,7 @@ export class ChatService {
           senderName: '我',
           title: input.title,
           textContent: input.textContent,
+          textFormat: input.textFormat ?? 'plain',
           sendAtMillis: input.sendAtMillis,
           ...(sent.sequence === undefined ? {} : { sourceSequence: sent.sequence }),
           templateKind: input.templateKind,
@@ -5665,6 +5712,7 @@ export class ChatService {
         senderName: item.senderName,
         title: item.title,
         textContent: item.textContent,
+      textFormat: item.textFormat ?? 'plain',
         sendAtMillis: item.sendAtMillis,
         templateKind: item.templateKind ?? 1,
         displayKind: item.displayKind ?? 0,
@@ -5739,6 +5787,7 @@ export class ChatService {
       senderName: stringValue(parsed.senderName).trim() || 'Arkme用户',
       title: stringValue(parsed.title),
       textContent: stringValue(parsed.textContent),
+      textFormat: arkmeRecordTextFormat(parsed),
       sendAtMillis: Math.trunc(numberValue(parsed.sendAtMillis)),
       sourceSequence: Math.max(0, Math.trunc(numberValue(parsed.sourceSequence))),
       templateKind: Math.trunc(numberValue(parsed.templateKind)),
@@ -5783,6 +5832,7 @@ export class ChatService {
       send_at: reference.sendAtMillis,
       title: reference.title,
       text: reference.textContent,
+      text_format: reference.textFormat ?? 'plain',
       text_preview: reference.textContent.trim().slice(0, 500),
       template_kind: reference.templateKind,
       display_kind: reference.displayKind,

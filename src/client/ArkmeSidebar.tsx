@@ -1,3 +1,4 @@
+import { arkmeMarkdownPlainText } from '../markdown.js'
 import {
   Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties, type ReactNode, type SetStateAction,
@@ -988,7 +989,7 @@ export function arkmeClipboardImageFiles(clipboardData: Pick<DataTransfer, 'file
 
 export function arkmeMessageCopyText(item: ArkmeTimelineItem): string {
   const title = item.title.trim()
-  const text = item.textContent.trim()
+  const text = item.textFormat === 'markdown' ? item.textContent : item.textContent.trim()
   if (title !== '' && text !== '') return `${title}\n${text}`
   if (text !== '') return text
   if (title !== '') return title
@@ -1336,6 +1337,7 @@ function detailExtensionTimelineItem(
     sendAtMillis: extension.sendAtMillis,
     title: extension.title,
     textContent: extension.textContent,
+    textFormat: extension.textFormat ?? 'plain',
     status: result.status,
     ...(result.sequence === undefined ? {} : { sequence: result.sequence }),
     ...(avatarRef === '' ? {} : { avatarRef }),
@@ -1347,6 +1349,7 @@ function detailExtensionTimelineItem(
       senderName: parent.senderName,
       title: parent.title,
       textContent: parent.textContent,
+      textFormat: parent.textFormat ?? 'plain',
       ...(parent.contentBlocks === undefined ? {} : { contentBlocks: parent.contentBlocks }),
     },
     awaitingTimelineProjection: true,
@@ -1354,7 +1357,7 @@ function detailExtensionTimelineItem(
 }
 
 function extensionConversationPreview(extension: ArkmeMessageCopyLinkExtensionItem): string {
-  return extension.textContent.trim()
+  return (extension.textFormat === 'markdown' ? arkmeMarkdownPlainText(extension.textContent) : extension.textContent.trim())
     || extension.title.trim()
     || extension.mediaItems.map(item => item.fileName.trim()).find(Boolean)
     || '非文本内容'
@@ -1927,6 +1930,7 @@ function copyLinkSnapshotTimelineItem(item: ArkmeMessageCopyLinkSnapshotItem, in
     sendAtMillis: item.sendAtMillis,
     title: item.title,
     textContent: item.textContent,
+    textFormat: item.textFormat ?? 'plain',
     status: 1,
     templateKind: item.templateKind,
     displayKind: item.displayKind,
@@ -2243,6 +2247,7 @@ export function ArkmeSurface({
   const activeConversation = active && ui.calendarOpen !== true && source !== undefined
   const activeConversationRef = useRef(activeConversation)
   activeConversationRef.current = activeConversation
+  const [markdownQuickNotesEnabled, setMarkdownQuickNotesEnabled] = useState(false)
   const [backgroundSoundSupported, setBackgroundSoundSupported] = useState(false)
   const [backgroundSoundCapabilityKnown, setBackgroundSoundCapabilityKnown] = useState(false)
   const [backgroundSoundEligibilityReason, setBackgroundSoundEligibilityReason] = useState<ArkmeBackgroundSoundEligibilityReason>('membership-unavailable')
@@ -2286,6 +2291,7 @@ export function ArkmeSurface({
         if (!sameAccount()) return
         if (capabilities === undefined) return
         setBackgroundSoundCapabilityKnown(true)
+        setMarkdownQuickNotesEnabled(capabilities.features.markdownQuickNotes === true)
         const supported = capabilities.features.backgroundSound === true
         setBackgroundSoundSupported(supported)
         if (!supported) return
@@ -4330,11 +4336,13 @@ export function ArkmeSurface({
     itemUid: string,
     textContent: string,
     sendAtMillis: number,
+    textFormat?: 'plain' | 'markdown',
   ) => {
     if (arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) !== accountKey) return
     setHashTagItems(current => arkmeMergeHashTagSuggestions(current, [{
       itemUid,
       textContent,
+      textFormat: textFormat ?? 'plain',
       sendAtMillis,
     }]))
   }, [])
@@ -4360,7 +4368,8 @@ export function ArkmeSurface({
     const readyDraft = arkmeComposerDraftStore.get(targetDraftKey)
     const serializedDraft = serializeArkmeComposerDraft(readyDraft)
     const rawTextContent = serializedDraft.text
-    const textContent = rawTextContent.trim()
+    const textFormat = serializedDraft.textFormat
+    const textContent = textFormat === 'markdown' ? rawTextContent : rawTextContent.trim()
     if (textContent === '' && readyDraft.attachments.length === 0) return
     const capturePromise = recordInputCaptureOwner.finishForSubmit(targetDraftKey)
     const locationCaptureRequested = arkmeSourceSupportsLocationCapture(targetSource.kind)
@@ -4405,7 +4414,7 @@ export function ArkmeSurface({
     const optimistic: ArkmeTimelineItem = {
       itemUid: recordUid, senderName: optimisticSenderName, isMe: true, sendAtMillis: now,
       ...(optimisticAvatarRef === undefined || optimisticAvatarRef === '' ? {} : { avatarRef: optimisticAvatarRef }),
-      title: '', textContent, status: 0,
+      title: '', textContent, textFormat: textFormat ?? 'plain', status: 0,
       ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
       captureContext,
       ...(targetSource.kind === 'group_chat' && aiPolishSettings?.enabled === true
@@ -4418,6 +4427,7 @@ export function ArkmeSurface({
           senderName: extensionTarget.item.senderName,
           title: extensionTarget.item.title,
           textContent: extensionTarget.item.textContent,
+          textFormat: extensionTarget.item.textFormat ?? 'plain',
           ...(extensionTarget.item.contentBlocks === undefined ? {} : { contentBlocks: extensionTarget.item.contentBlocks }),
         },
         contentBlocks: pendingAttachments.flatMap((attachment, index) => attachment.localFile === undefined
@@ -4451,6 +4461,9 @@ export function ArkmeSurface({
           sourceRef: targetSource.sourceRef,
           messageActionRef: arkmeTimelineMessageActionRef(extensionTarget.item),
           textContent,
+          textFormat,
+          humanMentions: pendingHumanMentions,
+          botMentions: pendingBotMentions,
           recordUid,
           relationUid,
           fileRefs: pendingFileRefs,
@@ -4483,12 +4496,12 @@ export function ArkmeSurface({
         }
         if (result.sequence !== undefined) {
           arkmeChatDirectory.upsert({ ...targetSource,
-            latestPreview: textContent || '非文本内容',
+            latestPreview: (textFormat === 'markdown' ? arkmeMarkdownPlainText(textContent) : textContent) || '非文本内容',
             activeAtMillis: now,
             latestSequence: result.sequence,
           }, targetSource.sourceKey)
         }
-        rememberSentHashTags(targetAccountKey, result.recordUid, textContent, now)
+        rememberSentHashTags(targetAccountKey, result.recordUid, textContent, now, textFormat)
         await Promise.allSettled(pendingFileRefs.map(fileRef => callArkme('files.local.remove', { fileRef })))
         releaseArkmeComposerDraft(pendingDraft)
         if (sameTargetComposer()) {
@@ -4589,7 +4602,7 @@ export function ArkmeSurface({
         const locationCapture = await locationCapturePromise
         if (!sameTargetAccount()) throw new Error('账号已切换，本次位置采集结果已丢弃')
         const fileSendParams = {
-          sourceRef: targetSource.sourceRef, recordUid, relationUid, fileRefs: allFileRefs, title: '', textContent: rawTextContent, displayKind: 0,
+          sourceRef: targetSource.sourceRef, recordUid, relationUid, fileRefs: allFileRefs, title: '', textContent: rawTextContent, textFormat, displayKind: 0,
           expectedUserId: targetUserId,
           ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
           captureContext,
@@ -4628,7 +4641,7 @@ export function ArkmeSurface({
         backgroundDirectUploadCacheRef.current.delete(recordUid)
         releaseArkmeComposerDraft(pendingDraft)
         fileTasks.accept(acceptedTask)
-        rememberSentHashTags(targetAccountKey, acceptedTask.recordUid, rawTextContent, now)
+        rememberSentHashTags(targetAccountKey, acceptedTask.recordUid, rawTextContent, now, textFormat)
         const locationFeedback = locationCaptureFeedback(locationCapture)
         if (sameTargetComposer()) {
           if (locationFeedback !== undefined) setError(locationFeedback)
@@ -4637,9 +4650,9 @@ export function ArkmeSurface({
         return
       }
       if (!sameTargetAccount()) throw new Error('账号已切换，本次发送已取消')
-      const result = pendingAssets.length > 0 || backgroundSoundAssets.length > 0
+      const result = textFormat === 'markdown' || pendingAssets.length > 0 || backgroundSoundAssets.length > 0
         ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
-          sourceRef: targetSource.sourceRef, title: '', textContent: rawTextContent, displayKind: 0,
+          sourceRef: targetSource.sourceRef, title: '', textContent: rawTextContent, textFormat, displayKind: 0,
           assets: pendingAssets, recordUid, relationUid, expectedUserId: targetUserId,
           ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
           captureContext,
@@ -4650,7 +4663,7 @@ export function ArkmeSurface({
           ...(pendingBotMentions.length === 0 ? {} : { botMentions: pendingBotMentions }),
         })
         : await callArkme<ArkmeSourceSendResult>('source.send-text', {
-          sourceRef: targetSource.sourceRef, textContent: rawTextContent, recordUid, relationUid, expectedUserId: targetUserId,
+          sourceRef: targetSource.sourceRef, textContent: rawTextContent, textFormat, recordUid, relationUid, expectedUserId: targetUserId,
           ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
           captureContext,
           ...(pendingHumanMentions.length === 0 ? {} : { humanMentions: pendingHumanMentions }),
@@ -4659,7 +4672,7 @@ export function ArkmeSurface({
       if (!sameTargetAccount()) throw new Error('账号已切换，本次发送结果已丢弃')
       backgroundDirectUploadCacheRef.current.delete(recordUid)
       if (result.localState !== 'failed') {
-        rememberSentHashTags(targetAccountKey, result.itemUid, rawTextContent, now)
+        rememberSentHashTags(targetAccountKey, result.itemUid, rawTextContent, now, textFormat)
       }
       const confirmedItem = applySourceSendResult([optimistic], recordUid, result)[0]
       const targetSourceKey = arkmeSourceIdentityKey(targetSource)
@@ -6519,6 +6532,7 @@ export function ArkmeSurface({
                                     ...candidate,
                                     title: detail.title,
                                     textContent: detail.textContent,
+                                    textFormat: detail.textFormat ?? 'plain',
                                     sendAtMillis: detail.sendAtMillis,
                                     updateAtMillis: detail.updateAtMillis,
                                     templateKind: 1,
@@ -6800,7 +6814,9 @@ export function ArkmeSurface({
                   </button>
                 })}
             </div>}
-            <ArkmeRichComposerInput key={composerDraftKey} className="arkme-conversation-textarea" ref={textareaRef} style={styles.textarea!} value={draft} mentions={composerDraft.mentions} emojis={composerDraft.emojis} maxLength={20000} placeholder={effectiveComposerPlaceholder} ariaLabel={effectiveComposerPlaceholder} disabled={preparingFiles}
+            <ArkmeRichComposerInput markdownEnabled={markdownQuickNotesEnabled} key={composerDraftKey} className="arkme-conversation-textarea" ref={textareaRef} style={styles.textarea!} value={draft} mentions={composerDraft.mentions} emojis={composerDraft.emojis} maxLength={20000} placeholder={effectiveComposerPlaceholder} ariaLabel={effectiveComposerPlaceholder} disabled={preparingFiles}
+              markdown={composerDraft.markdown}
+              onMarkdownChange={(markdown, text, mentions, emojis) => arkmeComposerDraftStore.setMarkdown(composerDraftKey, markdown, text, mentions, emojis)}
               onTextChange={updateComposerText}
               onFocus={() => { setComposerInputFocused(true) }}
               onBlur={() => { setComposerInputFocused(false) }}

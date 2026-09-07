@@ -1,3 +1,4 @@
+import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges } from '../markdown.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeCachedQueryResult,
@@ -131,6 +132,7 @@ export class RecordService {
       itemUid: recordUid,
       title: stringValue(core.title),
       textContent: stringValue(core.text_content),
+      textFormat: arkmeRecordTextFormat(core),
       sendAtMillis: Math.trunc(numberValue(core.send_at)),
       updateAtMillis: Math.trunc(numberValue(core.update_at)),
       recordDurationMillis,
@@ -152,7 +154,7 @@ export class RecordService {
     const session = await this.runtime.requireSession()
     const detail = await this.longArticleDetail(sourceRef, itemUid)
     const title = input.title.trim()
-    const textContent = input.textContent.trim()
+    const textContent = detail.textFormat === 'markdown' ? input.textContent : input.textContent.trim()
     const editDurationMillis = Math.max(0, Math.trunc(input.editDurationMillis))
     if (!detail.editable) throw new ArkmePluginError('long-article-not-editable', '只能编辑自己发布的长文', false, 403)
     if (title === '' || title.length > 100 || textContent === '' || textContent.length > 40000
@@ -253,8 +255,9 @@ export class RecordService {
     textContent: string,
     expectedUserId?: number,
     signal?: AbortSignal,
+    textFormat?: 'plain' | 'markdown',
   ): Promise<void> {
-    const tags = arkmeHashTagPayload(textContent)
+    const tags = textFormat === 'markdown' ? arkmeMarkdownHashTagRanges(textContent).map(tag => ({ tag: tag.tag, start_index: tag.startIndex, length: tag.length })) : arkmeHashTagPayload(textContent)
     if (tags.length === 0) return
     try {
       const session = await this.runtime.requireSession()
@@ -537,11 +540,12 @@ export class RecordService {
     recordUid: string,
     textContent: string,
     assets: readonly ArkmeUploadedAsset[] = [],
+    textFormat?: 'plain' | 'markdown',
   ): Promise<ArkmeConversationWriteResult & { localState: 'synced' }> {
     const session = await this.runtime.requireSession()
     const normalizedParentUid = parentRecordUid.trim()
     const normalizedUid = recordUid.trim()
-    const normalizedText = textContent.trim()
+    const normalizedText = textFormat === 'markdown' ? textContent : textContent.trim()
     if (normalizedParentUid === '' || normalizedParentUid === normalizedUid
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedUid)) {
       throw new ArkmePluginError('record-extension-identity-invalid', '延展记录标识无效，请重试', false)
@@ -557,7 +561,7 @@ export class RecordService {
         throw new ArkmePluginError('record-file-asset-invalid', '附件资产参数无效', false)
       }
     }
-    const hashTags = arkmeHashTagPayload(normalizedText)
+    const hashTags = textFormat === 'markdown' ? arkmeMarkdownHashTagRanges(normalizedText).map(tag => ({ tag: tag.tag, start_index: tag.startIndex, length: tag.length })) : arkmeHashTagPayload(normalizedText)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/extensions/create',
       {
@@ -568,6 +572,7 @@ export class RecordService {
         text_content: normalizedText,
         content_payload: {
           payload_kind: assets.length === 0 ? 1 : 2,
+          ...(textFormat === undefined ? {} : { text_format: textFormat }),
           schema_version: 1,
           text_state: normalizedText === '' ? 3 : 1,
           ...(hashTags.length === 0 ? {} : { hash_tags: hashTags }),
@@ -594,7 +599,7 @@ export class RecordService {
     if (createdRecordUid !== normalizedUid || createdParentUid !== normalizedParentUid || edgeUid === '') {
       throw new ArkmePluginError('record-extension-response-invalid', '延展写入结果无效，请刷新后重试', true, 502)
     }
-    await this.syncCreatedRecordTags(createdRecordUid, normalizedText, session.userId)
+    await this.syncCreatedRecordTags(createdRecordUid, normalizedText, session.userId, undefined, textFormat)
     return {
       recordUid: createdRecordUid,
       status: numberValue(data.record_status ?? data.status),
@@ -672,6 +677,7 @@ export class RecordService {
       sendAtMillis: item.sendAtMillis,
       title: item.title,
       textContent: item.textContent,
+      textFormat: item.textFormat ?? 'plain',
       status: item.status,
       templateKind: item.templateKind,
       version: item.version,
@@ -743,6 +749,7 @@ export class RecordService {
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
       title: stringValue(item.title ?? core.title),
       textContent: stringValue(item.text_content ?? core.text_content),
+      textFormat: arkmeRecordTextFormat(item),
       status: numberValue(item.status ?? core.status),
       templateKind: numberValue(item.template_kind ?? core.template_kind),
       displayKind: numberValue(item.display_kind ?? core.display_kind),
@@ -772,6 +779,7 @@ export class RecordService {
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
       title: stringValue(core.title),
       textContent: stringValue(core.text_content),
+      textFormat: arkmeRecordTextFormat(core),
       templateKind: numberValue(core.template_kind),
       status: numberValue(core.status),
       version: numberValue(core.version),

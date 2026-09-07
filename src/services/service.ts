@@ -88,6 +88,7 @@ export interface ArkmeServiceConfig {
   chatMemberJoinEventsEnabled?: boolean
   shareWebsite?: string
   richMediaRenderEnabled?: boolean
+  markdownQuickNotesEnabled?: boolean
   richMediaSendEnabled?: boolean
   maxUploadBytes?: number
   fileStateDirectory?: string

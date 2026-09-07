@@ -1,3 +1,4 @@
+import { arkmeMarkdownHashTagRanges } from './markdown.js'
 import type { ArkmeRecordTagItem, ArkmeTimelineItem } from './types.js'
 
 /** Flutter-compatible tag terminators. Keep this list in sync with chat_input_rich_support.dart. */
@@ -116,7 +117,7 @@ export function arkmeHashTagMatches(tag: string, query: string): boolean {
  */
 export function arkmeMergeHashTagSuggestions(
   remoteItems: readonly ArkmeRecordTagItem[],
-  records: readonly Pick<ArkmeTimelineItem, 'itemUid' | 'textContent' | 'sendAtMillis'>[],
+  records: readonly (Pick<ArkmeTimelineItem, 'itemUid' | 'textContent' | 'sendAtMillis'> & Pick<ArkmeTimelineItem, 'textFormat'>)[],
 ): ArkmeRecordTagItem[] {
   const merged = new Map<string, ArkmeRecordTagItem>()
   const add = (item: ArkmeRecordTagItem) => {
@@ -147,7 +148,7 @@ export function arkmeMergeHashTagSuggestions(
 
   for (const item of remoteItems) add(item)
   for (const record of records) {
-    for (const tag of arkmeHashTagRanges(record.textContent)) {
+    for (const tag of record.textFormat === 'markdown' ? arkmeMarkdownHashTagRanges(record.textContent) : arkmeHashTagRanges(record.textContent)) {
       add({
         normalizedTag: tag.tag.toLocaleLowerCase(),
         tagText: tag.tag,

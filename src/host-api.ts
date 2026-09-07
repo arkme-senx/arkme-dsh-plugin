@@ -682,6 +682,7 @@ function botRefsParam(params: Record<string, unknown>): string[] {
 }
 
 function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
+  if (params.textFormat !== undefined && params.textFormat !== 'plain' && params.textFormat !== 'markdown') throw new ArkmePluginError('text-format-invalid', '正文格式无效', false, 400)
   const rawAssets = Array.isArray(params.assets) ? params.assets : []
   const thinkingDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'thinkingDurationMillis', 0)))
   const recordDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'recordDurationMillis', 0)))
@@ -705,6 +706,7 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   return {
     title: stringParam(params, 'title'),
     textContent: stringParam(params, 'textContent'),
+    ...(params.textFormat === undefined ? {} : { textFormat: params.textFormat as 'plain' | 'markdown' }),
     displayKind: numberParam(params, 'displayKind', 0) === 1 ? 1 : 0,
     ...(thinkingDurationMillis === 0 ? {} : { thinkingDurationMillis }),
     ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
@@ -1578,6 +1580,7 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'recordUid'),
       [...new Set(stringListParam(params, 'fileRefs').map(value => value.trim()).filter(value => value !== ''))],
       {
+        ...richSendParam(params),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(stringParam(params, 'parentRecordUid') === '' ? {} : { parentRecordUid: stringParam(params, 'parentRecordUid') }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),

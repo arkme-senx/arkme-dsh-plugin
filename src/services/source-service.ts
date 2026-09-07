@@ -1,3 +1,4 @@
+import { arkmeRecordTextFormat, arkmeMarkdownPlainText } from '../markdown.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -222,10 +223,10 @@ function attachmentPreviewKind(item: Record<string, unknown>): 'image' | 'video'
 
 export function arkmeChatConversationPreview(raw: Record<string, unknown>): string {
   const direct = stringValue(raw.text_content ?? raw.title ?? raw.summary).trim()
-  if (direct !== '') return direct.slice(0, 300)
+  if (direct !== '') return (arkmeRecordTextFormat(raw) === 'markdown' ? arkmeMarkdownPlainText(direct) : direct).slice(0, 300)
   const content = objectValue(raw.content_payload ?? raw.payload)
   const nested = stringValue(content.text_content ?? content.title ?? content.summary).trim()
-  if (nested !== '') return nested.slice(0, 300)
+  if (nested !== '') return (arkmeRecordTextFormat(content) === 'markdown' ? arkmeMarkdownPlainText(nested) : nested).slice(0, 300)
   if (objectValue(content.voice).duration !== undefined) return '[语音]'
   const displayItems = listValue(raw.media_display_items ?? raw.mediaDisplayItems).map(objectValue)
   const displayByAsset = new Map<string, Record<string, unknown>>()
@@ -252,7 +253,7 @@ export function arkmeChatConversationPreview(raw: Record<string, unknown>): stri
 }
 
 export function arkmeTimelineConversationPreview(item: ArkmeTimelineItem): string {
-  const text = item.textContent.trim() || item.title.trim()
+  const text = (item.textFormat === 'markdown' ? arkmeMarkdownPlainText(item.textContent) : item.textContent.trim()) || item.title.trim()
   if (text !== '') return text
   const kind = item.contentBlocks?.[0]?.kind
   return kind === 'image' ? '[图片]' : kind === 'video' ? '[视频]' : kind === 'audio' ? '[语音]' : kind === 'file' ? '[文件]' : '非文本内容'

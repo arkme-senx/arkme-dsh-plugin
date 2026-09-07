@@ -1,3 +1,4 @@
+import { ArkmeMarkdownBody } from './ArkmeMarkdownBody.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeLongArticleDetail, ArkmeLongArticleDraft, ArkmeSourceSendResult, ArkmeTimelineItem } from '../types.js'
 import { callArkme } from './api.js'
@@ -207,7 +208,7 @@ export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, on
 
   const publish = async () => {
     const normalizedTitle = title.trim()
-    const normalizedText = textContent.trim()
+    const normalizedText = detail?.textFormat === 'markdown' ? textContent : textContent.trim()
     if (normalizedTitle === '') { setError('请输入标题'); return }
     if (normalizedText === '') { setError('请输入正文'); return }
     if (normalizedTitle.length > MAX_TITLE_LENGTH) { setError('标题最多100字'); return }
@@ -304,7 +305,7 @@ export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, on
         : <div style={styles.body}>
           {editing
             ? <textarea autoFocus={creating} style={styles.bodyInput} value={textContent} maxLength={MAX_CONTENT_LENGTH} placeholder="请输入正文内容" aria-label="长文正文" disabled={submitting} onChange={event => { setTextContent(event.target.value) }} />
-            : <p style={styles.bodyRead}><ArkmeLinkText text={textValue} linkLabelMode="raw" /></p>}
+            : detail?.textFormat === 'markdown' ? <ArkmeMarkdownBody text={textValue} textStyle={{ fontSize: styles.bodyRead?.fontSize, lineHeight: styles.bodyRead?.lineHeight }} /> : <p style={styles.bodyRead}><ArkmeLinkText text={textValue} linkLabelMode="raw" /></p>}
         </div>}
     </article>
   </div>

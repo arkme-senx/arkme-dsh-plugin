@@ -11,7 +11,7 @@ export interface ArkmeVisibleTextRun {
   text: string
 }
 
-export function arkmeVisibleMentionRuns(text: string): ArkmeVisibleTextRun[] {
+export function arkmeVisibleMentionRuns(text: string, highlightTags = true): ArkmeVisibleTextRun[] {
   const runs: ArkmeVisibleTextRun[] = []
   const pattern = /(^|[\s([{（【])(@[^\s@,，.。;；:：!！?？、)\]}）】]+)/gmu
   let cursor = 0
@@ -26,7 +26,7 @@ export function arkmeVisibleMentionRuns(text: string): ArkmeVisibleTextRun[] {
   if (cursor < text.length) runs.push({ kind: 'text', text: text.slice(cursor) })
   const mentionRuns = runs.length === 0 && text !== '' ? [{ kind: 'text' as const, text }] : runs
   return mentionRuns.flatMap(run => {
-    if (run.kind !== 'text') return [run]
+    if (run.kind !== 'text' || !highlightTags) return [run]
     const tagRuns: ArkmeVisibleTextRun[] = []
     let tagCursor = 0
     for (const tag of arkmeHashTagRanges(run.text)) {
@@ -43,11 +43,12 @@ const mentionStyle: CSSProperties = { color: 'var(--dsw-alias-state-business-pri
 const tagStyle: CSSProperties = { ...mentionStyle, fontWeight: 500 }
 const clickableTagStyle: CSSProperties = { ...tagStyle, cursor: 'pointer' }
 
-export function ArkmeMentionText({ text, onTagClick = tagText => { arkmeUi.showTagSearch(tagText) } }: {
+export function ArkmeMentionText({ text, highlightTags = true, onTagClick = tagText => { arkmeUi.showTagSearch(tagText) } }: {
   text: string
+  highlightTags?: boolean
   onTagClick?: (tagText: string) => void
 }) {
-  return <>{arkmeVisibleMentionRuns(text).map((run, index) => run.kind === 'tag'
+  return <>{arkmeVisibleMentionRuns(text, highlightTags).map((run, index) => run.kind === 'tag'
     ? <span
       key={`${String(index)}:${run.kind}:${run.text}`}
       role="link"
@@ -65,15 +66,16 @@ export function ArkmeMentionText({ text, onTagClick = tagText => { arkmeUi.showT
     >{run.text}</span>)}</>
 }
 
-export function ArkmeRichText({ text, highlightMentions = false, renderLink, emojiSize, linkLabelMode = 'resolved', onTagClick }: {
+export function ArkmeRichText({ text, highlightMentions = false, highlightTags = true, renderLink, emojiSize, linkLabelMode = 'resolved', onTagClick }: {
   text: string
   highlightMentions?: boolean
+  highlightTags?: boolean
   renderLink?: ArkmeLinkRenderer
   emojiSize?: number
   linkLabelMode?: ArkmeLinkLabelMode
   onTagClick?: (tagText: string) => void
 }) {
-  const renderText = highlightMentions ? (value: string) => <ArkmeMentionText text={value} {...(onTagClick === undefined ? {} : { onTagClick })} /> : undefined
+  const renderText = highlightMentions ? (value: string) => <ArkmeMentionText text={value} highlightTags={highlightTags} {...(onTagClick === undefined ? {} : { onTagClick })} /> : undefined
   return <>{arkmeEmojiTextRuns(text).map((run, index) => run.kind === 'emoji' && run.emoji !== undefined
     ? <img
       key={`${String(index)}:emoji:${run.emoji.id}`}

@@ -1,3 +1,4 @@
+import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import type { ArkmeSourceItem, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
@@ -23,6 +24,7 @@ export interface ArkmeComposerEmoji {
 }
 
 export interface ArkmeComposerDraftSnapshot {
+  markdown?: ArkmeMarkdownDraft
   text: string
   attachments: readonly ArkmeComposerAttachment[]
   mentions: readonly ArkmeComposerMention[]
@@ -101,11 +103,13 @@ export function reconcileArkmeComposerEmojis(
 }
 
 export interface ArkmeSerializedComposerDraft {
+  textFormat?: 'plain' | 'markdown'
   text: string
   mentions: readonly ArkmeComposerMention[]
 }
 
 export function serializeArkmeComposerDraft(snapshot: ArkmeComposerDraftSnapshot): ArkmeSerializedComposerDraft {
+  if (snapshot.markdown !== undefined) return { text: snapshot.markdown.source, mentions: snapshot.markdown.mentions, textFormat: 'markdown' }
   if (snapshot.emojis.length === 0) return { text: snapshot.text, mentions: snapshot.mentions }
   const emojis = [...snapshot.emojis].sort((left, right) => left.startIndex - right.startIndex)
   const buffer: string[] = []
@@ -238,7 +242,7 @@ export class ArkmeComposerDraftStore {
         const attachments = draft.attachments.filter(item => item.localFile !== undefined && /^arkme-file-v1\.[0-9a-f-]{36}$/.test(item.localFile.fileRef)
           && typeof item.localFile.fileName === 'string' && typeof item.localFile.mimeType === 'string' && Number.isSafeInteger(item.localFile.size))
           .slice(0, 9).map(item => ({ localFile: item.localFile! }))
-        if (attachments.length > 0) { this.drafts.set(entry[0], { ...draft, attachments }); this.restoredKeys.add(entry[0]) }
+        if (attachments.length > 0 || draft.markdown?.document?.type === 'doc') { this.drafts.set(entry[0], { ...draft, attachments }); this.restoredKeys.add(entry[0]) }
       }
     } catch { /* An unavailable browser store must not prevent editing a local draft. */ }
   }
@@ -252,6 +256,11 @@ export class ArkmeComposerDraftStore {
 
   get(key: string | undefined): ArkmeComposerDraftSnapshot {
     return key === undefined ? EMPTY_DRAFT : this.drafts.get(key) ?? EMPTY_DRAFT
+  }
+
+  setMarkdown(key: string | undefined, markdown: ArkmeMarkdownDraft, text: string, mentions: readonly ArkmeComposerMention[], emojis: readonly ArkmeComposerEmoji[]): void {
+    if (key === undefined) return
+    this.storeOrDelete(key, { ...this.get(key), text, mentions, emojis, markdown })
   }
 
   setText(key: string | undefined, text: string): void {
@@ -438,7 +447,7 @@ export class ArkmeComposerDraftStore {
       retained.push(attachment)
     }
     if (retained.length === current.attachments.length) return
-    this.store(key, { text: current.text, attachments: retained, mentions: current.mentions, emojis: current.emojis })
+    this.store(key, { ...current, attachments: retained })
   }
 
   removeAttachment(key: string | undefined, fileAssetUid: string): void {
@@ -449,6 +458,7 @@ export class ArkmeComposerDraftStore {
     if (removed.length === 0) return
     for (const attachment of removed) releaseArkmeComposerAttachment(attachment)
     this.storeOrDelete(key, {
+      ...current,
       text: current.text,
       attachments: current.attachments.filter(item => arkmeAttachmentId(item) !== fileAssetUid),
       mentions: current.mentions,
@@ -502,6 +512,7 @@ export class ArkmeComposerDraftStore {
       : undefined
     this.storeOrDelete(key, {
       text, attachments: merged, mentions, emojis,
+      ...((current.text === '' ? snapshot.markdown : current.markdown) === undefined ? {} : { markdown: (current.text === '' ? snapshot.markdown : current.markdown)! }),
       ...(restoreIdentity === undefined ? {} : { fileSendIdentity: restoreIdentity }),
     })
   }
@@ -529,7 +540,10 @@ export class ArkmeComposerDraftStore {
   }
 
   private storeOrDelete(key: string, snapshot: ArkmeComposerDraftSnapshot): void {
-    if (snapshot.text === '' && snapshot.attachments.length === 0 && snapshot.mentions.length === 0 && snapshot.emojis.length === 0) {
+    // A newly typed heading/list/fence has no visible text yet, but is still an editable draft.
+    // Inspect the document: serializers may omit an empty heading or task item's Markdown source.
+    const hasMarkdownStructure = snapshot.markdown?.document.content?.some(node => node.type !== 'paragraph' || (node.content?.length ?? 0) > 0)
+    if (snapshot.text === '' && !hasMarkdownStructure && snapshot.attachments.length === 0 && snapshot.mentions.length === 0 && snapshot.emojis.length === 0) {
       if (!this.drafts.delete(key)) return
       this.publish()
       return
@@ -541,6 +555,7 @@ export class ArkmeComposerDraftStore {
     this.restoredKeys.delete(key)
     this.drafts.set(key, Object.freeze({
       text: snapshot.text,
+      ...(snapshot.markdown === undefined ? {} : { markdown: snapshot.markdown }),
       attachments: Object.freeze([...snapshot.attachments]),
       mentions: Object.freeze(snapshot.mentions.map(mention => Object.freeze({ ...mention }))),
       emojis: Object.freeze(snapshot.emojis.map(emoji => Object.freeze({ ...emoji }))),
@@ -551,8 +566,8 @@ export class ArkmeComposerDraftStore {
 
   private publish(): void {
     try {
-      // Only file drafts opt into persistence; existing Arko/text-only semantics stay unchanged.
-      const entries = [...this.drafts].filter(([, draft]) => draft.attachments.some(item => item.localFile !== undefined))
+      // Markdown documents and file drafts survive a window restart, scoped by account and source.
+      const entries = [...this.drafts].filter(([, draft]) => draft.markdown !== undefined || draft.attachments.some(item => item.localFile !== undefined))
         .map(([key, draft]) => [key, { ...draft, attachments: draft.attachments.flatMap(item => item.localFile === undefined ? [] : [{ localFile: item.localFile }]) }])
       this.storage?.setItem(ArkmeComposerDraftStore.storageKey, JSON.stringify(entries))
     } catch { /* The Host still owns staged bytes and accepted send tasks. */ }

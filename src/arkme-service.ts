@@ -474,7 +474,10 @@ export class ArkmeService {
   attachLocalFileOpener(openPath: (path: string, signal: AbortSignal) => Promise<void>) { this.localFileOpener = openPath }
   async fileOpenLocal(ref: string) { return await this.filesOwner().openLocal(ref) }
   async fileRemove(ref: string) { await this.filesOwner().remove(ref) }
-  async fileSend(input: ArkmeFileSendInput) { return await this.filesOwner().enqueue(input) }
+  async fileSend(input: ArkmeFileSendInput) {
+    if (input.content.textFormat === 'markdown' && this.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)
+    return await this.filesOwner().enqueue(input)
+  }
   async fileSendTasks(sourceRef?: string) { return await this.filesOwner().tasks(sourceRef) }
   async fileSendRetry(taskRef: string) { return await this.filesOwner().retry(taskRef) }
   async fileStageBytes(contentBase64: string, metadata: Pick<ArkmeLocalFile, 'fileName' | 'mimeType'>) { return await this.filesOwner().stageBytes(contentBase64, metadata) }
@@ -702,6 +705,7 @@ export class ArkmeService {
         messageReport: true,
         userBanManagement: true,
         groupOwnerGovernance: true,
+        ...(this.config.markdownQuickNotesEnabled === true ? { markdownQuickNotes: true as const } : {}),
         richContentRead: this.config.richMediaRenderEnabled !== false,
         richContentSend: this.config.richMediaSendEnabled !== false,
         ...(this.config.richMediaSendEnabled === false ? {} : { backgroundSound: true as const }),
@@ -1319,7 +1323,7 @@ export class ArkmeService {
   async resolveMessageCopyLink(sid: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkResolveResult> { return await this.chat.resolveMessageCopyLink(sid, options) }
   async extendMessageCopyLink(sid: string, itemIndex: number, textContent: string, recordUid: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkExtendResult> { return await this.chat.extendMessageCopyLink(sid, itemIndex, textContent, recordUid, options) }
   async sourceMessageExtensionContext(sourceRef: string, messageActionRef: string, options: { signal?: AbortSignal } = {}) { return await this.chat.sourceMessageExtensionContext(sourceRef, messageActionRef, options) }
-  async extendSourceMessage(sourceRef: string, messageActionRef: string, textContent: string, recordUid: string, fileRefs: readonly string[] = [], options: { relationUid?: string; parentRecordUid?: string; signal?: AbortSignal } = {}) { const context = await this.chat.sourceMessageExtensionContext(sourceRef, messageActionRef, options); const requestedParentRecordUid = options.parentRecordUid?.trim() ?? ''; if (requestedParentRecordUid !== '' && requestedParentRecordUid !== context.parentRecordUid && !context.extensions.some(extension => extension.recordUid === requestedParentRecordUid)) throw new ArkmePluginError('source-message-extension-target-invalid', '延展目标已变化，请刷新后重试', true, 409); const assets = fileRefs.length === 0 ? [] : await this.filesOwner().uploadRefs(fileRefs, options.signal); return await this.chat.extendSourceMessage(sourceRef, messageActionRef, textContent, recordUid, assets, options) }
+  async extendSourceMessage(sourceRef: string, messageActionRef: string, textContent: string, recordUid: string, fileRefs: readonly string[] = [], options: { relationUid?: string; parentRecordUid?: string; signal?: AbortSignal } & Pick<ArkmeRichSendInput, 'textFormat' | 'humanMentions' | 'botMentions'> = {}) { if (options.textFormat === 'markdown' && this.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403); const context = await this.chat.sourceMessageExtensionContext(sourceRef, messageActionRef, options); const requestedParentRecordUid = options.parentRecordUid?.trim() ?? ''; if (requestedParentRecordUid !== '' && requestedParentRecordUid !== context.parentRecordUid && !context.extensions.some(extension => extension.recordUid === requestedParentRecordUid)) throw new ArkmePluginError('source-message-extension-target-invalid', '延展目标已变化，请刷新后重试', true, 409); const assets = fileRefs.length === 0 ? [] : await this.filesOwner().uploadRefs(fileRefs, options.signal); return await this.chat.extendSourceMessage(sourceRef, messageActionRef, textContent, recordUid, assets, options) }
   async forwardSourceMessages(sourceRef: string, actionRefs: readonly string[], options: { targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.forwardSourceMessages(sourceRef, actionRefs, options) }
   async forwardMessageActions(conversationRef: string, actionRefs: readonly string[], options: MessageActionForwardOptions): Promise<ArkmeSourceSendResult> { return await this.messageActions.forward(conversationRef, actionRefs, options) }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createHmac } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { ArkoService } from '../../src/services/arko-service.js'
 import { BotService } from '../../src/services/bot-service.js'
@@ -81,6 +81,31 @@ async function chatTimelineItemKeyForTest(
 }
 
 describe('ChatService', () => {
+  it.each(['send_to_self', 'topic'] as const)('preserves Markdown when forwarding to %s', async targetKind => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      requireSession: vi.fn(async () => session),
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      authenticatedPost: vi.fn(async () => ({ record_uid: 'forwarded', status: 1 })),
+    }
+    const source = { openSourceRef: vi.fn(async (ref: string) => ({
+      version: 1, userId: 42, kind: ref === 'source' ? 'private_chat' : targetKind,
+      ownerRef: ref === 'source' ? 'chat-1' : 'target', displayName: '测试',
+    })) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+      { invalidateRecordProjection: vi.fn(async () => {}) } as never)
+    const actionRef = snapshotActionRef({ textContent: '    code\n', textFormat: 'markdown' })
+    await chat.forwardSourceMessages('source', [actionRef], { targetSourceRef: 'target' })
+    expect(runtime.authenticatedPost).toHaveBeenCalledWith(
+      targetKind === 'topic' ? '/api/v1/topics/records/create' : '/api/v1/records/create',
+      expect.objectContaining({ content_payload: expect.objectContaining({
+        forward_records: expect.objectContaining({ items: [expect.objectContaining({ text: '    code\n', text_format: 'markdown' })] }),
+      }) }), session, undefined,
+    )
+  })
+
   it('projects a private-chat extension child with the desktop parent preview contract', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const sourceItem = {
@@ -513,13 +538,13 @@ describe('ChatService', () => {
     expect(uniqueCode).not.toHaveBeenCalled()
   })
 
-  it('propagates rich-send cancellation into human mention resolution', async () => {
+  it.each(['plain', 'markdown'] as const)('propagates rich-send cancellation and source mention ranges (%s)', async textFormat => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/list'
       ? { items: [{ user_id: 7, status: 1 }] }
       : { record_uid: 'record-mention', rel_uid: 'relation-mention', seq: 9, audit_status: 1 })
     const runtime = {
-      config: { richMediaSendEnabled: true, maxTextLength: 20_000 },
+      config: { richMediaSendEnabled: true, markdownQuickNotesEnabled: true, maxTextLength: 20_000 },
       stateStore: { uniqueCode: vi.fn(async () => 'mention-signing-key') },
       requireSession: vi.fn(async () => session),
       authenticatedChatPost,
@@ -545,9 +570,11 @@ describe('ChatService', () => {
       .update(`arkme-chat-human-mention-v1.${payload}`).digest('base64url')}`
     const signal = new AbortController().signal
 
+    const textContent = textFormat === 'markdown' ? '## 😀 @小林 附件\n' : '@小林 附件'
+    const startIndex = textContent.indexOf('@')
     await expect(chat.sendSourceRich('source-ref', {
-      textContent: '@小林 附件',
-      humanMentions: [{ mentionRef, startIndex: 0, length: 3 }],
+      textContent, textFormat,
+      humanMentions: [{ mentionRef, startIndex, length: 3 }],
     }, { recordUid: 'record-mention', relationUid: 'relation-mention', signal }))
       .resolves.toMatchObject({ itemUid: 'record-mention', sequence: 9 })
 
@@ -558,6 +585,23 @@ describe('ChatService', () => {
       session,
       signal,
     )
+    expect(authenticatedChatPost).toHaveBeenLastCalledWith(
+      '/api/v1/chats/records/send',
+      expect.objectContaining({ text_content: textContent, content_payload: expect.objectContaining({
+        text_format: textFormat,
+        mention_metadata: expect.objectContaining({ human_mentions: [expect.objectContaining({ start_index: startIndex, length: 3 })],
+          source_checksum: createHash('sha256').update(JSON.stringify({ text_content: textContent, human_mentions: [{ user_id: 7, start_index: startIndex, length: 3 }], bot_mentions: [] })).digest('hex'),
+        }),
+      }) }), session, signal, { trackWriteOutcome: true },
+    )
+  })
+
+  it('blocks a Markdown writer before any service call until rollout is enabled', async () => {
+    const requireSession = vi.fn()
+    const chat = new ChatService({ config: { maxTextLength: 20_000 }, requireSession } as never,
+      {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+    await expect(chat.sendSourceRich('source-ref', { textContent: '# 标题', textFormat: 'markdown' })).rejects.toMatchObject({ code: 'markdown-send-disabled' })
+    expect(requireSession).not.toHaveBeenCalled()
   })
 
   it('delegates rich write outcome tracking to the transport and leaves preflight failures unmarked', async () => {
@@ -1596,7 +1640,7 @@ describe('ChatService', () => {
       extension: { textContent: '附件延展', templateKind: 2 },
     })
     expect(record.createExtensionForConversation).toHaveBeenCalledWith(
-      'record-snapshot-1', childRecordUid, '附件延展', assets,
+      'record-snapshot-1', childRecordUid, '附件延展', assets, undefined,
     )
     expect(record.createTextForConversation).not.toHaveBeenCalled()
     expect(record.createFileAssetsForConversation).not.toHaveBeenCalled()
