@@ -1,3 +1,4 @@
+import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeSourceItem, ArkmeTopicDissolveProgress, ArkmeTopicDissolveTask } from '../types.js'
 import { arkmeSelfDirectorySources } from './source-list.js'
@@ -576,8 +577,8 @@ export function ArkmeSourceBreadcrumb({
         const isSelected = selectedRef === row.source.sourceRef
         const isHovered = hoveredSourceRef === row.source.sourceRef
         const isDefaultCategory = row.source.kind === 'default_category'
-        const canCreateChild = !isDefaultCategory && onCreateChildTopic !== undefined && row.depth + 1 < ARKME_TOPIC_HIERARCHY_MAX_LEVEL
-        const canManageTopic = !isDefaultCategory && (canCreateChild || onRenameTopic !== undefined || onDissolveTopic !== undefined)
+        const canCreateChild = arkmeSourceAllowsUserWrite(row.source) && !isDefaultCategory && onCreateChildTopic !== undefined && row.depth + 1 < ARKME_TOPIC_HIERARCHY_MAX_LEVEL
+        const canManageTopic = arkmeSourceAllowsUserWrite(row.source) && !isDefaultCategory && (canCreateChild || onRenameTopic !== undefined || onDissolveTopic !== undefined)
         const showActions = isHovered && canManageTopic
         const manageMenuOpen = topicMenuSource?.sourceRef === row.source.sourceRef
         const displayedCount = (row.hasChildren || row.source.hasPendingChildren === true) && !countsComplete
@@ -624,7 +625,7 @@ export function ArkmeSourceBreadcrumb({
           ><svg aria-hidden viewBox="0 0 12 12" width="12" height="12" style={{ transform: row.expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .16s ease' }}>
             <path d="m4 2.5 3.5 3.5L4 9.5" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" />
           </svg></button> : <span aria-hidden style={styles.topicSpacer}>{isDefaultCategory ? '' : '·'}</span>}
-          <button type="button" draggable={customDragEnabled && !isDefaultCategory}
+          <button type="button" draggable={customDragEnabled && !isDefaultCategory && arkmeSourceAllowsUserWrite(row.source)}
             style={{ ...styles.topicSelect, ...(isSelected ? styles.topicSelectSelected : {}) }}
             onDragStart={event => {
               event.dataTransfer.effectAllowed = 'move'

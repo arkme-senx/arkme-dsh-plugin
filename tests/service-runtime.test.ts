@@ -44,6 +44,32 @@ function runtimeFixture(
 }
 
 describe('ServiceRuntime', () => {
+  it.each([200, 1004])('does not overwrite or clear a new login when an old refresh returns %s', async code => {
+    const original = { userId: 42, accessToken: 'old', refreshToken: 'old-refresh' }
+    let stored: typeof original | undefined = original
+    let complete!: (response: Response) => void
+    let started!: () => void
+    const entered = new Promise<void>(resolve => { started = resolve })
+    const runtime = runtimeFixture(vi.fn(async () => {
+      started()
+      return await new Promise<Response>(resolve => { complete = resolve })
+    }), {
+      async read() { return stored },
+      async write(session) { stored = session },
+      async delete() { stored = undefined },
+    })
+    const refreshing = runtime.refreshAccessToken(original)
+    const outcome = expect(refreshing).rejects.toMatchObject({
+      code: code === 200 ? 'account-scope-changed' : 'account-unavailable',
+    })
+    await entered
+    const replacement = { userId: 42, accessToken: 'new-login', refreshToken: 'new-refresh' }
+    await runtime.writeSession(replacement)
+    complete(new Response(JSON.stringify({ code, data: { access_token: 'late-token' } }), { status: 200 }))
+    await outcome
+    expect(stored).toEqual(replacement)
+  })
+
   it('preserves upstream status and retry-after on HTTP failures', async () => {
     const runtime = runtimeFixture(vi.fn(async () => new Response('', {
       status: 429,

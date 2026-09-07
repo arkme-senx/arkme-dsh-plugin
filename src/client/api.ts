@@ -144,6 +144,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'recordings.speaker.assign-item'
   | 'topic.create'
   | 'topic.rename'
+  | 'topic.home-visibility'
   | 'topic.dissolve'
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'

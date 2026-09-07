@@ -47,6 +47,17 @@ const topicRow: ArkmeSourceTreeRow = {
 }
 
 describe('topic create UI', () => {
+  it('keeps a system archive discoverable without exposing child creation on hover', () => {
+    const markup = renderToStaticMarkup(<ArkmeTopicTreeRow
+      row={{ ...topicRow, source: { ...topicRow.source, topicKind: 3 } }}
+      selected={false} hovered onHoverChange={() => {}} onToggle={() => {}}
+      onSelect={() => {}} onCreateChild={() => {}}
+    />)
+    expect(markup).toContain('工作')
+    expect(markup).toContain('role="treeitem"')
+    expect(markup).not.toContain('创建子主题')
+  })
+
   it('keeps the add action at the far left of the composer tool row', async () => {
     const source = await readFile(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
 

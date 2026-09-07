@@ -1,3 +1,4 @@
+import { arkmeSourceAllowsUserWrite } from '../../topic-policy.js'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { CaretLeft } from '@phosphor-icons/react/dist/icons/CaretLeft'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
@@ -105,7 +106,7 @@ export function RecordingTranscriptForward({ attempt, onClose, onComplete, maxCo
       })
       setTargets(previous => {
         const values = new Map((cursor === undefined ? [] : previous).map(item => [targetKey(item), item]))
-        for (const item of page.items) if (targetKey(item) !== '') values.set(targetKey(item), item)
+        for (const item of page.items) if (arkmeSourceAllowsUserWrite(item) && targetKey(item) !== '') values.set(targetKey(item), item)
         return [...values.values()]
       })
       if (page.hasMore && (page.nextCursor === undefined || page.nextCursor === cursor)) {

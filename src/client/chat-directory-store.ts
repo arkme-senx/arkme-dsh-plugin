@@ -215,6 +215,7 @@ type DirectorySourceScalarField = Exclude<keyof ArkmeSourceItem, 'avatarRefs' | 
 
 const DIRECTORY_SOURCE_SCALAR_FIELDS: Record<DirectorySourceScalarField, true> = {
   directMessageAdmissionApplicable: true,
+  topicKind: true,
   sourceRef: true,
   sourceKey: true,
   peerUserId: true,

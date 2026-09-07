@@ -768,8 +768,8 @@ describe('Arkme search surface', () => {
     delete legacyItem.creationSource
     const legacyMarkup = renderToStaticMarkup(<RecordRow item={legacyItem} onClick={() => {}} />)
 
-    expect(legacyMarkup).toContain('data-arkme-dsh-agent-input-marker="true"')
-    expect(legacyMarkup).toContain('DSH Agent 输入')
-    expect(legacyMarkup).not.toContain('DSH Agent Input')
+    expect(legacyMarkup).not.toContain('data-arkme-dsh-agent-input-marker="true"')
+    expect(legacyMarkup).not.toContain('DSH Agent 输入')
+    expect(legacyMarkup).toContain('DSH Agent Input')
   })
 })

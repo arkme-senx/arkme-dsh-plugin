@@ -2197,7 +2197,7 @@ export class ChatService {
         const nextSendAt = numberValue(data.next_cursor_send_at)
         const nextUid = stringValue(data.next_cursor_record_uid).trim()
         return {
-          source: await this.source.sourceItem(source),
+          source: { ...await this.source.sourceItem(source), topicKind: numberValue(objectValue(data.topic_core).kind) || 1 },
           items: records.map(item => this.withRecordMessageActionRef(source, item, session.userId, signingKey)),
           hasMore: data.has_more === true,
           ...(nextSendAt > 0 && nextUid !== '' ? { nextCursor: { sendAtMillis: nextSendAt, itemUid: nextUid } } : {}),

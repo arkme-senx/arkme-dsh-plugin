@@ -1053,16 +1053,20 @@ describe('RecordService', () => {
       'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
       '用户在 DSH 的输入',
       1713830400000,
+      42,
     )).resolves.toEqual({ recordUid: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b', status: 1 })
     expect(requestPath).toBe('https://record.test/api/v1/records/dsh-agent-input/create')
     expect(requestBody).toEqual({
       record_uid: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
-      template_kind: 1,
-      title: '',
       text_content: '用户在 DSH 的输入',
       send_at: 1713830400000,
     })
     expect(requestBody).not.toHaveProperty('creation_source')
+    vi.mocked(fetchImpl).mockClear()
+    await expect(service.createDSHAgentInputText(
+      'ccfe56ca-4d7a-4c95-b383-fce1c65a635b', '旧账号的输入', 1713830400000, 43,
+    )).rejects.toMatchObject({ code: 'account-scope-changed', retryable: false })
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('excludes DSH Agent input records from the default category page', async () => {

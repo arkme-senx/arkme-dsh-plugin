@@ -1170,6 +1170,8 @@ export interface ArkmeProviderCapabilities {
     imageLibrary?: true
     sourceDirectory: true
     localFirstDirectory?: true
+    /** Topic home preference uses the record-owned policy without changing topic contents. */
+    topicHomeVisibility?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
     forwardContent?: true
@@ -1374,6 +1376,8 @@ export interface ArkmeGroupAvatarPresentation {
 }
 
 export interface ArkmeSourceItem {
+  /** Record-owned topic container kind; never a chat kind or creation source. */
+  topicKind?: number
   sourceRef: string
   /** Established human Direct session, never PendingPrivate or Bot direct. */
   directMessageAdmissionApplicable?: boolean
@@ -3520,6 +3524,7 @@ export type ArkmePluginOperation =
   | 'extensions.classification.items'
   | 'topic.hierarchy.move'
   | 'topic.rename'
+  | 'topic.home-visibility'
   | 'topic.dissolve'
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'

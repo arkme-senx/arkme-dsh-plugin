@@ -324,6 +324,14 @@ export class ServiceRuntime {
   }
 
   async refreshAccessToken(session: ArkmeSessionCredentials): Promise<ArkmeSessionCredentials> {
+    const pendingBinding = this.isPendingBindingSession(session)
+    const commitRefresh = async (next: ArkmeSessionCredentials | undefined): Promise<boolean> => {
+      if (!pendingBinding) return await this.accountSessions.replaceIfCurrent(session, next)
+      if (!this.isPendingBindingSession(session)) return false
+      if (next === undefined) await this.clearPendingBindingSession()
+      else await this.writePendingBindingSession(next)
+      return true
+    }
     const existing = this.refreshInFlightByUserId.get(session.userId)
     if (existing?.refreshToken === session.refreshToken) return await existing.promise
     const pendingBinding = this.isPendingBindingSession(session)

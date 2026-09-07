@@ -20,6 +20,7 @@ const expectedPublicMethods = [
   'listCallHistory', 'callDetail', 'retryCallSummary',
   'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'publicAvatarPresentationsByArkmeIds', 'extensionAuthors', 'listExtensionReviews',
   'backgroundSoundPreference', 'updateBackgroundSoundPreference',
+  'topicHomeVisibility',
   'resolveLinkMetadata',
   'searchContact', 'addContact',
   'listDirectory', 'directoryContactProfile', 'updateDirectoryContactRemark', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
@@ -73,7 +74,7 @@ const expectedPublicMethods = [
   'createRecognizedPersonVoiceprintInvitation', 'bindVoiceprintEnrollment',
   'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldText', 'publishWorldFileAssets', 'publishWorldTextForConversation',
-  'createText', 'createTextForConversation', 'createDSHAgentInputText', 'pendingWrites',
+  'createText', 'createTextForConversation', 'captureDSHAgentInputWriter', 'pendingWrites',
   'retryPending', 'extensionPost',
 ].sort()
 

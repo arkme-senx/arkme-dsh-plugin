@@ -6,6 +6,7 @@ import { recordCalendarToolModules } from './calendar/index.js'
 import type { ArkmeToolModule } from '../contract/module.js'
 import { accountBusinessToolModules } from './account/index.js'
 import { listSourcesToolModule, pinBotDirectoryToolModule } from './conversation/list-sources.js'
+import { topicHomeVisibilityToolModule } from './conversation/topic-home-visibility.js'
 import { groupAiPolishToolModule } from './conversation/group-ai-polish.js'
 import { addFavoriteStickerToolModule, listFavoriteStickersToolModule, manageFavoriteStickerToolModule, sendFavoriteStickerToolModule } from './conversation/favorite-stickers.js'
 import { readSourceToolModule } from './conversation/read-source.js'
@@ -73,6 +74,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...wechatToolModules,
   listSourcesToolModule,
   pinBotDirectoryToolModule,
+  topicHomeVisibilityToolModule,
   unreadConversationsToolModule,
   ...groupMemberToolModules,
   readSourceToolModule,

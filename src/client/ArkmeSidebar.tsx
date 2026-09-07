@@ -2,6 +2,8 @@ import { ArkmeRecordTopicAssignmentDialog } from './ArkmeRecordTopicAssignmentDi
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import { arkmeMarkdownPlainText } from '../markdown.js'
 import { arkmeCallRecordBubbleStyle } from './ArkmeCallRecordContent.js'
+import { arkmeSourceAllowsUserWrite, isArkmeDSHInputTopic } from '../topic-policy.js'
+import { ArkmeTopicHomeVisibility } from './ArkmeTopicHomeVisibility.js'
 import {
   Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties, type ReactNode, type SetStateAction,
@@ -1125,8 +1127,8 @@ export function arkmeForwardTargetVisibleSources(
   keyword: string,
 ): ArkmeSourceItem[] {
   const normalizedKeyword = keyword.trim().toLowerCase()
-  if (normalizedKeyword === '') return [...targets]
-  return targets.filter(target => {
+  if (normalizedKeyword === '') return targets.filter(arkmeSourceAllowsUserWrite)
+  return targets.filter(arkmeSourceAllowsUserWrite).filter(target => {
     const haystack = `${target.displayName} ${arkmeForwardTargetMeta(target)}`.toLowerCase()
     return haystack.includes(normalizedKeyword)
   })
@@ -2888,8 +2890,9 @@ export function ArkmeSurface({
   })
   // Transport is per message.  It must never lock the next draft while a previous
   // message waits for the server, otherwise fast keyboard input is dropped.
+  const archiveReadOnly = isArkmeDSHInputTopic(source) || isArkmeDSHInputTopic(selectedSource)
   const canSend = activeRecordReeditComposer === undefined
-    ? !directAdmission.blocked && arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles)
+    ? !archiveReadOnly && !directAdmission.blocked && arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles)
     : activeRecordReeditComposer.snapshot !== undefined
       && !activeRecordReeditComposer.loading
       && !activeRecordReeditComposer.busy
@@ -7378,7 +7381,8 @@ export function ArkmeSurface({
             </button>
           </div>}
           {messageActionStatus !== '' && <div role="status" aria-live="polite" style={styles.messageActionToast}>{messageActionStatus}</div>}
-          {activeSelectMode === undefined && <footer className="arkme-conversation-composer" style={styles.composer}
+          {archiveReadOnly && source !== undefined && <ArkmeTopicHomeVisibility key={String(authenticatedUserId) + ':' + source.sourceRef} sourceRef={source.sourceRef} />}
+          {activeSelectMode === undefined && (!archiveReadOnly || activeRecordReeditComposer !== undefined) && <footer className="arkme-conversation-composer" style={styles.composer}
             onClick={event => { focusArkmeComposerFromClick(textareaRef.current, event) }}
             onDragOver={event => { if (!composerFileAddingDisabled && Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
             onDrop={event => { if (!composerFileAddingDisabled && event.dataTransfer.files.length > 0) { event.preventDefault(); void selectFiles(event.dataTransfer.files) } }}

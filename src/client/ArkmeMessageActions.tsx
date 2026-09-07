@@ -1,3 +1,4 @@
+import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import type {
   ArkmeMessageCopyLinkResult,
@@ -347,7 +348,7 @@ export function useArkmeMessageActions(input: {
         callArkme<ArkmeSourceList>('sources.list', { directory: 'send_to_self', limit: FORWARD_TARGET_LIMIT }, controller.signal).catch(() => ({ directory: 'send_to_self' as const, items: [], hasMore: false })),
       ])
       const byRef = new Map<string, ArkmeSourceItem>()
-      for (const target of [...root.items, ...self.items]) {
+      for (const target of [...root.items, ...self.items].filter(arkmeSourceAllowsUserWrite)) {
         if (['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic'].includes(target.kind)) byRef.set(target.sourceRef, target)
       }
       if (revision !== revisionRef.current) return

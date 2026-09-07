@@ -6,7 +6,6 @@ export {
   ARKME_DSH_AGENT_INPUT_LABEL,
   isDshAgentInputCreationSource,
   isDshAgentInputRecord,
-  isDshAgentInputSourceTitle,
 } from '../dsh-agent-input-source.js'
 
 const defaultMarkerStyle: CSSProperties = {
