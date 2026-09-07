@@ -9,6 +9,8 @@ import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { UserMinus } from '@phosphor-icons/react/dist/csr/UserMinus'
+import { Prohibit } from '@phosphor-icons/react/dist/csr/Prohibit'
+import { Check } from '@phosphor-icons/react/dist/csr/Check'
 import { UserPlus } from '@phosphor-icons/react/dist/csr/UserPlus'
 import qrcode from 'qrcode-generator'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -2572,7 +2574,7 @@ export function ArkmeSurface({
     useCallback(() => arkmeBackgroundSoundCaptureEnabled(authenticatedAccountKey), [authenticatedAccountKey]),
     () => false,
   )
-  const visibleComposerText = activeRecordReeditComposer?.textContent ?? draft
+  const visibleComposerText = activeRecordReeditComposer?.textContent ?? (directAdmission.blocked ? '' : draft)
   const composerTextLength = Array.from(visibleComposerText).length
   const composerHasUserContent = composerTextLength > 0
     || (activeRecordReeditComposer === undefined && attachments.length > 0)
@@ -3618,7 +3620,7 @@ export function ArkmeSurface({
       const hostRect = host.getBoundingClientRect()
       const buttonRect = button.getBoundingClientRect()
       const menuWidth = ARKME_CONVERSATION_SETTINGS_MENU_WIDTH
-      const menuHeight = canManageUserBan ? 88 : 44
+      const menuHeight = (canManageUserBan ? 88 : 44) + (directAdmission.applicable ? 88 : 0)
       setRelatedMenuPosition({
         left: Math.max(12, Math.min(hostRect.width - menuWidth - 12, buttonRect.right - hostRect.left - menuWidth)),
         top: Math.max(8, Math.min(hostRect.height - menuHeight - 12, buttonRect.bottom - hostRect.top + 8)),
@@ -3627,7 +3629,7 @@ export function ArkmeSurface({
     setRelatedMenuOpen(true)
     ensureRelatedEligibility()
     ensureUserBanStatus()
-  }, [canManageUserBan, ensureRelatedEligibility, ensureUserBanStatus, relatedMenuOpen, relatedPanelOpen])
+  }, [canManageUserBan, directAdmission.applicable, ensureRelatedEligibility, ensureUserBanStatus, relatedMenuOpen, relatedPanelOpen])
 
   const acknowledgeRead = useCallback(async (nextItems: ArkmeTimelineItem[]) => {
     if (source === undefined || nextItems.length === 0
@@ -6389,6 +6391,7 @@ export function ArkmeSurface({
   )
   const effectiveComposerPlaceholder = activeRecordReeditComposer !== undefined
     ? activeRecordReeditComposer.loading ? '正在读取快记和草稿…' : '重新编辑快记…'
+    : directAdmission.blocked ? directAdmission.message
     : activeComposerExtensionTarget === undefined
       ? composerPlaceholder
       : `发送到「${source?.displayName ?? ''}」…`
@@ -6684,11 +6687,27 @@ export function ArkmeSurface({
                       onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
                       onClick={ensureRelatedEligibility}
                     ><Waveform size={20} aria-hidden /><span>重新检查相关录音</span></button>
-                    : relatedEligibility === 'denied' && canManageUserBan
+                    : relatedEligibility === 'denied' && (canManageUserBan || directAdmission.applicable)
                       ? null
                       : <div role="status" style={ARKME_CONVERSATION_SETTINGS_MENU_STATUS_STYLE}>
                         {relatedEligibility === 'denied' ? '当前没有可用操作' : '正在检查相关录音…'}
                       </div>}
+                {directAdmission.applicable && <button type="button" role="menuitemcheckbox"
+                  aria-checked={directAdmission.admission === undefined ? 'mixed' : directAdmission.admission.ownRefused}
+                  aria-busy={directAdmission.busy}
+                  title={directAdmission.error || undefined}
+                  style={ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE}
+                  disabled={directAdmission.busy || (directAdmission.admission !== undefined &&
+                    !directAdmission.admission.ownRefused && !directAdmission.admission.refusalCreationEnabled)}
+                  onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
+                  onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+                  onClick={() => { void directAdmission.toggle(() => window.confirm('拒收对方消息？\n拒收后你们都无法发送新消息；聊天记录保留，你可以随时解除拒收。')) }}>
+                  <Prohibit size={20} aria-hidden />
+                  <span>拒收对方消息</span>
+                  {directAdmission.admission?.ownRefused === true && <Check size={16} style={{ marginLeft: 'auto' }} aria-hidden />}
+                </button>}
+                {directAdmission.applicable && directAdmission.error !== '' && <div role="status"
+                  style={ARKME_CONVERSATION_SETTINGS_MENU_STATUS_STYLE}>{directAdmission.error}</div>}
                 {canManageUserBan && userBanState === 'ready' && userBanSnapshot !== undefined
                   ? <button
                     type="button"
@@ -7131,17 +7150,6 @@ export function ArkmeSurface({
             onDragOver={event => { if (!preparingFiles && Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
             onDrop={event => { if (!preparingFiles && event.dataTransfer.files.length > 0) { event.preventDefault(); void selectFiles(event.dataTransfer.files) } }}
           ><div style={styles.composerStack}>
-            {directAdmission.applicable && <div role="status" aria-live="polite">
-              {directAdmission.error !== '' && !directAdmission.blocked && <span>{directAdmission.error} </span>}
-              {directAdmission.blocked && <span>{directAdmission.message} </span>}
-              <button type="button" disabled={directAdmission.busy || directAdmission.admission === undefined ||
-                  (!directAdmission.admission.ownRefused && directAdmission.admission.refusalCreationEnabled === false)}
-                onClick={() => { void directAdmission.toggle() }}>
-                {directAdmission.admission?.ownRefused === true ? '解除拒收'
-                  : directAdmission.admission?.refusalCreationEnabled === false ? '拒收暂未开放' : '拒收对方消息'}
-              </button>
-              {directAdmission.blocked && !directAdmission.busy && <button type="button" onClick={directAdmission.refresh}>刷新状态</button>}
-            </div>}
             {activeComposerExtensionTarget !== undefined && <div style={styles.composerDestinationHint} data-arkme-composer-destination-hint="true">
               <span style={styles.composerDestinationHintIcon} aria-hidden>💡</span><span>正在给 </span>
               <span style={styles.composerDestinationHintName}>{arkmeSourceDestinationLabel(source)}</span><span> 发消息</span>

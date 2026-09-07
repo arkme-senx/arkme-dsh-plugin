@@ -1126,6 +1126,48 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-message-report-title' })).toHaveLength(0)
   })
 
+  it('places refusal in the private menu and its status inside the disabled composer', async () => {
+    activeSource = { ...target, directMessageAdmissionApplicable: true }
+    arkmeChatDirectory.publish([other, activeSource])
+    arkmeUi.selectSource(activeSource)
+    const original = mocks.callArkme.getMockImplementation()!
+    let refused = true
+    mocks.callArkme.mockImplementation(async (operation: string, params: any, ...rest: any[]) => {
+      if (operation === 'sources.list') return { directory: 'root', items: [other, activeSource], hasMore: false }
+      if (operation === 'chat.direct-message-refusal.set') refused = false
+      if (operation.startsWith('chat.direct-message')) return {
+        state: refused ? 'refused_by_self' : 'allowed', canSend: !refused,
+        refusalCreationEnabled: true, ownRefused: refused, counterpartRefused: false,
+        ownRevision: refused ? 1 : 2, counterpartRevision: 0,
+      }
+      return await original(operation, params, ...rest)
+    })
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel' || element.props['aria-label'] === '更多私聊操作'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, right: 960, bottom: 40, width: 960, height: 720 }) }
+          : null,
+      })
+    })
+    const input = renderer!.root.findByType(ArkmeRichComposerInput)
+    expect(input.props.disabled).toBe(true)
+    expect(input.props.placeholder).toBe('你已拒收对方的消息')
+    expect(renderer!.root.findAll(node => node.type === 'button' && node.children.includes('解除拒收'))).toHaveLength(0)
+    await act(async () => {
+      renderer!.root.findAllByProps({ 'aria-label': '更多私聊操作' })[0]!.props.onClick()
+    })
+    const menu = renderer!.root.findByProps({ role: 'menu', 'aria-label': '更多私聊操作' })
+    const refusal = menu.findByProps({ role: 'menuitemcheckbox' })
+    expect(refusal).toBeDefined()
+    expect(refusal.props['aria-checked']).toBe(true)
+    expect(refusal.findByType('span').children).toEqual(['拒收对方消息'])
+    await act(async () => { refusal.props.onClick() })
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
+    expect(renderer!.root.findByProps({ role: 'menuitemcheckbox' }).props['aria-checked']).toBe(false)
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'chat.direct-message-refusal.set')).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.some(call => call[0] === 'source.send-text')).toBe(false)
+  })
+
   async function openForwardPicker(textContent = '待转发快记') {
     timeline = [{
       itemUid: 'forward-source', messageActionRef: 'opaque-forward-action',

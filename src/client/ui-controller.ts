@@ -11,6 +11,7 @@ function sameSelectedSource(left: ArkmeSourceItem | undefined, right: ArkmeSourc
     && left.unreadCount === right.unreadCount && left.hasUnreadMention === right.hasUnreadMention
     && left.badgeUnreadCount === right.badgeUnreadCount
     && left.notificationAllowed === right.notificationAllowed
+    && left.directMessageAdmissionApplicable === right.directMessageAdmissionApplicable
     && left.isMuted === right.isMuted && left.isPinned === right.isPinned
     && left.latestSequence === right.latestSequence
     && left.avatarRef === right.avatarRef && (left.avatarRefs ?? []).join('|') === (right.avatarRefs ?? []).join('|')

@@ -5,11 +5,35 @@ import type { ArkmeSourceItem } from '../types.js'
 
 export async function requireDirectMessageSendAllowed(source: ArkmeSourceItem, signal?: AbortSignal): Promise<void> {
   if (source.directMessageAdmissionApplicable !== true) return
-  const admission = await callArkme<ArkmeDirectMessageAdmission>('chat.direct-message-admission', { sourceRef: source.sourceRef }, signal)
+  let admission: ArkmeDirectMessageAdmission | undefined
+  try { admission = await callArkme<ArkmeDirectMessageAdmission>('chat.direct-message-admission', { sourceRef: source.sourceRef }, signal) }
+  catch { signal?.throwIfAborted(); return }
   if (!admission.canSend) throw new Error(`${source.displayName}：${directMessageAdmissionMessage(admission)}`)
 }
 
-// Invalidation only: no business facts survive a component/account lifecycle.
+function readCachedAdmission(scope: string): ArkmeDirectMessageAdmission | undefined {
+  if (scope === '') return undefined
+  try {
+    const raw = typeof window === 'undefined' ? null : window.localStorage?.getItem(`arkme.direct-message-admission.v1:${scope}`)
+    if (raw == null) return undefined
+    const value = JSON.parse(raw) as ArkmeDirectMessageAdmission
+    if (typeof value.ownRefused !== 'boolean' || typeof value.counterpartRefused !== 'boolean'
+      || typeof value.refusalCreationEnabled !== 'boolean' || typeof value.canSend !== 'boolean'
+      || !Number.isSafeInteger(value.ownRevision) || value.ownRevision < 0
+      || !Number.isSafeInteger(value.counterpartRevision) || value.counterpartRevision < 0
+      || (value.ownRefused && value.ownRevision === 0) || (value.counterpartRefused && value.counterpartRevision === 0)) return undefined
+    const state = value.ownRefused ? value.counterpartRefused ? 'mutually_refused' : 'refused_by_self'
+      : value.counterpartRefused ? 'refused_by_counterpart' : 'allowed'
+    return value.state === state && value.canSend === (state === 'allowed') ? value : undefined
+  } catch { return undefined }
+}
+
+function cacheAdmission(scope: string, admission: ArkmeDirectMessageAdmission): void {
+  try { if (scope !== '' && typeof window !== 'undefined') window.localStorage?.setItem(`arkme.direct-message-admission.v1:${scope}`, JSON.stringify(admission)) }
+  catch { /* Browser storage is optional; Chat remains the authority. */ }
+}
+
+// Hints invalidate the view; cached projections never authorize server writes.
 const listeners = new Set<() => void>()
 export function invalidateDirectMessageAdmission(): void { for (const listener of listeners) listener() }
 
@@ -37,46 +61,64 @@ export function useDirectMessageAdmission(account: string | undefined, sourceRef
     if (scope === '' || sourceRef === undefined || mutationAbort.current !== undefined) return
     const controller = new AbortController()
     queryAbort.current = controller
-    setView(current => ({ scope, ...(current.scope === scope && current.admission !== undefined ? { admission: current.admission } : {}), loading: true, mutating: false, error: '' }))
+    setView(current => {
+      const admission = current.scope === scope ? current.admission : readCachedAdmission(scope)
+      return { scope, ...(admission === undefined ? {} : { admission }), loading: true, mutating: false, error: '' }
+    })
     void callArkme<ArkmeDirectMessageAdmission>('chat.direct-message-admission', { sourceRef }, controller.signal)
-      .then(admission => { if (!controller.signal.aborted && scopeRef.current === scope) setView({ scope, admission, loading: false, mutating: false, error: '' }) })
-      .catch(error => { if (!controller.signal.aborted && scopeRef.current === scope) setView({ scope, loading: false, mutating: false, error: error instanceof Error ? error.message : '无法确认私聊发送状态' }) })
+      .then(admission => { if (!controller.signal.aborted && scopeRef.current === scope) { cacheAdmission(scope, admission); setView({ scope, admission, loading: false, mutating: false, error: '' }) } })
+      .catch(() => { if (!controller.signal.aborted && scopeRef.current === scope) setView(current => ({ ...current, scope, loading: false, mutating: false, error: '暂时无法读取拒收设置' })) })
     return () => { controller.abort() }
   }, [scope, sourceRef, revision])
   const current = view.scope === scope ? view : undefined
-  const toggle = async () => {
-    if (scope === '' || sourceRef === undefined || current?.admission === undefined || current.loading || current.mutating || mutationAbort.current !== undefined) return
-    if (!current.admission.ownRefused && current.admission.refusalCreationEnabled === false) return
+  const toggle = async (confirmRefusal?: () => boolean) => {
+    if (scope === '' || sourceRef === undefined || current?.loading || current?.mutating || mutationAbort.current !== undefined) return
+    if (current?.admission?.ownRefused === false && current.admission.refusalCreationEnabled === false) return
     const controller = new AbortController()
     queryAbort.current?.abort()
     mutationAbort.current = controller
-    const admission = current.admission
-    setView({ ...current, loading: false, mutating: true, error: '' })
+    let admission = current?.admission
+    setView({ scope, ...(admission === undefined ? {} : { admission }), loading: false, mutating: true, error: '' })
     let succeeded = false
+    let attemptedMutation = false
     try {
+      if (admission === undefined) {
+        admission = await callArkme<ArkmeDirectMessageAdmission>('chat.direct-message-admission', { sourceRef }, controller.signal)
+        if (controller.signal.aborted || scopeRef.current !== scope) return
+        cacheAdmission(scope, admission)
+      }
+      if (!admission.ownRefused && (!admission.refusalCreationEnabled || confirmRefusal?.() === false)) {
+        setView({ scope, admission, loading: false, mutating: false, error: '' })
+        return
+      }
+      attemptedMutation = true
       const next = await callArkme<ArkmeDirectMessageAdmission>('chat.direct-message-refusal.set',
         { sourceRef, refused: !admission.ownRefused, expectedRevision: admission.ownRevision }, controller.signal)
       if (!controller.signal.aborted && scopeRef.current === scope) {
+        cacheAdmission(scope, next)
         setView({ scope, admission: next, loading: false, mutating: false, error: '' })
         succeeded = true
       }
     } catch (error) {
       if (!controller.signal.aborted && scopeRef.current === scope) {
         const latest = error instanceof ArkmeClientError ? error.body.directMessageAdmission : undefined
-        setView({ scope, ...(latest === undefined ? {} : { admission: latest }), loading: false, mutating: false, error: error instanceof Error ? error.message : '拒收设置失败' })
+        if (latest !== undefined) cacheAdmission(scope, latest)
+        const retained = latest ?? admission
+        setView({ scope, ...(retained === undefined ? {} : { admission: retained }), loading: false, mutating: false,
+          error: !attemptedMutation ? '暂时无法读取拒收设置' : error instanceof Error ? error.message : '拒收设置失败' })
       }
     } finally {
       if (mutationAbort.current === controller) mutationAbort.current = undefined
       if (!controller.signal.aborted && scopeRef.current === scope) {
         if (succeeded) invalidateDirectMessageAdmission()
-        else refresh()
+        else if (attemptedMutation) refresh()
       }
     }
   }
-  const blocked = scope !== '' && (current?.admission?.canSend !== true || current.loading || current.mutating)
+  const blocked = scope !== '' && current?.admission?.canSend === false
   return { applicable: scope !== '', admission: current?.admission, blocked,
     error: current?.error ?? '',
     busy: current?.loading === true || current?.mutating === true,
-    message: current?.error || (current?.mutating ? '正在更新拒收设置…' : current?.loading || current?.admission === undefined ? '正在确认私聊发送状态…' : directMessageAdmissionMessage(current.admission)),
+    message: blocked && current?.admission !== undefined ? directMessageAdmissionMessage(current.admission) : '',
     refresh, toggle }
 }

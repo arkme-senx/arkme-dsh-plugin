@@ -18,8 +18,8 @@ export interface ArkmeDirectMessageAdmissionPort {
 export function directMessageAdmissionMessage(admission: ArkmeDirectMessageAdmission): string {
   switch (admission.state) {
     case 'allowed': return ''
-    case 'refused_by_self': return '你已拒收对方的消息，解除拒收后可继续发送'
-    case 'refused_by_counterpart': return '对方已拒收你的消息，暂时无法发送'
-    case 'mutually_refused': return '你和对方均已拒收消息，双方解除后可继续发送'
+    case 'refused_by_self': return '你已拒收对方的消息'
+    case 'refused_by_counterpart': return '对方已拒收你的消息'
+    case 'mutually_refused': return '你们已互相拒收消息'
   }
 }
