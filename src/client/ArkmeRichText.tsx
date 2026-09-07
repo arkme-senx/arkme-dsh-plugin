@@ -1,5 +1,6 @@
-import type { CSSProperties } from 'react'
-import { arkmeEmojiTextRuns } from './arkme-emoji.js'
+import { Fragment, useState, type ClipboardEvent, type CSSProperties } from 'react'
+import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
+import { arkmeEmojiTextRuns } from '../arkme-emoji-text.js'
 import { ArkmeLinkText, type ArkmeLinkLabelMode, type ArkmeLinkRenderer } from './ArkmeLinkText.js'
 import { arkmeHashTagRanges } from '../hashtag.js'
 import { arkmeUi } from './ui-controller.js'
@@ -43,12 +44,13 @@ const mentionStyle: CSSProperties = { color: 'var(--dsw-alias-state-business-pri
 const tagStyle: CSSProperties = { ...mentionStyle, fontWeight: 500 }
 const clickableTagStyle: CSSProperties = { ...tagStyle, cursor: 'pointer' }
 
-export function ArkmeMentionText({ text, highlightTags = true, onTagClick = tagText => { arkmeUi.showTagSearch(tagText) } }: {
+export function ArkmeMentionText({ text, interactive = true, highlightTags = true, onTagClick = tagText => { arkmeUi.showTagSearch(tagText) } }: {
   text: string
+  interactive?: boolean
   highlightTags?: boolean
   onTagClick?: (tagText: string) => void
 }) {
-  return <>{arkmeVisibleMentionRuns(text, highlightTags).map((run, index) => run.kind === 'tag'
+  return <>{arkmeVisibleMentionRuns(text, highlightTags).map((run, index) => run.kind === 'tag' && interactive
     ? <span
       key={`${String(index)}:${run.kind}:${run.text}`}
       role="link"
@@ -62,12 +64,50 @@ export function ArkmeMentionText({ text, highlightTags = true, onTagClick = tagT
     >{run.text}</span>
     : <span
       key={`${String(index)}:${run.kind}:${run.text}`}
-      style={run.kind === 'mention' ? mentionStyle : undefined}
+      style={run.kind === 'mention' ? mentionStyle : run.kind === 'tag' ? tagStyle : undefined}
     >{run.text}</span>)}</>
 }
 
-export function ArkmeRichText({ text, highlightMentions = false, highlightTags = true, renderLink, emojiSize, linkLabelMode = 'resolved', onTagClick }: {
+function ArkmeInlineEmoji({ emoji, size }: { emoji: ArkmeEmoji; size: number | string }) {
+  const [failed, setFailed] = useState(false)
+  return failed ? <span role="img" aria-label={emoji.label} title={emoji.label}>{emoji.unicode}</span> : <img
+    src={emoji.assetUrl}
+    alt={emoji.unicode}
+    aria-label={emoji.label}
+    title={emoji.label}
+    style={{ ...emojiInlineStyle, width: size, height: size,
+      verticalAlign: typeof size === 'number' ? `${Math.round(-size * 0.27)}px` : '-0.27em' }}
+    draggable={false}
+    onError={() => { setFailed(true) }}
+    data-arkme-rich-emoji={emoji.id}
+  />
+}
+
+function copyRichText(event: ClipboardEvent<HTMLSpanElement>) {
+  if (event.defaultPrevented) return
+  const selection = event.currentTarget.ownerDocument.getSelection()
+  if (selection === null || selection.rangeCount !== 1 || selection.isCollapsed
+    || !event.currentTarget.contains(selection.anchorNode) || !event.currentTarget.contains(selection.focusNode)) return
+  const fragment = selection.getRangeAt(0).cloneContents()
+  let converted = false
+  for (const img of fragment.querySelectorAll('img[data-arkme-rich-emoji]')) {
+    const emoji = arkmeEmojiById[img.getAttribute('data-arkme-rich-emoji') ?? '']
+    if (emoji !== undefined) {
+      img.replaceWith(emoji.unicode)
+      converted = true
+    }
+  }
+  if (!converted) return
+  event.clipboardData.setData('text/plain', fragment.textContent ?? '')
+  const html = event.currentTarget.ownerDocument.createElement('div')
+  html.append(fragment)
+  event.clipboardData.setData('text/html', html.innerHTML)
+  event.preventDefault()
+}
+
+export function ArkmeRichText({ text, presentation = 'body', highlightMentions = false, highlightTags = true, renderLink, emojiSize, linkLabelMode = 'resolved', onTagClick }: {
   text: string
+  presentation?: 'body' | 'preview'
   highlightMentions?: boolean
   highlightTags?: boolean
   renderLink?: ArkmeLinkRenderer
@@ -75,21 +115,19 @@ export function ArkmeRichText({ text, highlightMentions = false, highlightTags =
   linkLabelMode?: ArkmeLinkLabelMode
   onTagClick?: (tagText: string) => void
 }) {
-  const renderText = highlightMentions ? (value: string) => <ArkmeMentionText text={value} highlightTags={highlightTags} {...(onTagClick === undefined ? {} : { onTagClick })} /> : undefined
-  return <>{arkmeEmojiTextRuns(text).map((run, index) => run.kind === 'emoji' && run.emoji !== undefined
-    ? <img
+  const renderText = (value: string) => arkmeEmojiTextRuns(value).map((run, index) => run.kind === 'emoji'
+    ? <ArkmeInlineEmoji
       key={`${String(index)}:emoji:${run.emoji.id}`}
-      src={run.emoji.assetUrl}
-      alt={run.emoji.label}
-      title={run.emoji.label}
-      style={emojiSize === undefined ? emojiInlineStyle : { ...emojiInlineStyle, width: emojiSize, height: emojiSize, verticalAlign: `${Math.round(-emojiSize * 0.27)}px` }}
-      draggable={false}
-      data-arkme-rich-emoji={run.emoji.id}
+      emoji={arkmeEmojiById[run.emoji.id]!}
+      size={emojiSize ?? (presentation === 'preview' ? '1.25em' : 22)}
     />
-    : <span key={`${String(index)}:text`}><ArkmeLinkText
-      text={run.text}
-      linkLabelMode={linkLabelMode}
-      {...(renderText === undefined ? {} : { renderText })}
-      {...(renderLink === undefined ? {} : { renderLink })}
-    /></span>)}</>
+    : <Fragment key={`${String(index)}:text`}>{highlightMentions
+      ? <ArkmeMentionText text={run.text} highlightTags={highlightTags} interactive={presentation === 'body'} {...(onTagClick === undefined ? {} : { onTagClick })} />
+      : run.text}</Fragment>)
+  return <span onCopy={copyRichText}><ArkmeLinkText
+    text={text}
+    linkLabelMode={linkLabelMode}
+    renderText={renderText}
+    {...(presentation === 'preview' ? { renderLink: link => link.text } : renderLink === undefined ? {} : { renderLink })}
+  /></span>
 }

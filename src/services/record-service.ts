@@ -1,3 +1,4 @@
+import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges } from '../markdown.js'
 import { createHash, createHmac } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -327,9 +328,9 @@ export class RecordService {
       baseVersion: editing.baseVersion,
       baseContentFingerprint: editing.baseContentFingerprint,
       oldTitle: owner.title,
-      oldTextPreview: owner.textContent.slice(0, 160),
+      oldTextPreview: arkmeEmojiTokenSafePrefix(owner.textContent, 160, 'codeUnits'),
       newTitle: title,
-      newTextPreview: textContent.slice(0, 160),
+      newTextPreview: arkmeEmojiTokenSafePrefix(textContent, 160, 'codeUnits'),
       sendAtMillis: owner.sendAtMillis,
       preservesAttachments: recordReeditHasAttachments(owner.contentPayload),
     }
@@ -432,7 +433,7 @@ export class RecordService {
       sourceDisplayName: source.displayName,
       itemUid,
       draftRevision: draft.draftRevision,
-      textPreview: draft.textContent.slice(0, 160),
+      textPreview: arkmeEmojiTokenSafePrefix(draft.textContent, 160, 'codeUnits'),
     }
   }
 

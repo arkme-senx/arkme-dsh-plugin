@@ -2,7 +2,7 @@ import { ArkmeMarkdownBody } from './ArkmeMarkdownBody.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeLongArticleDetail, ArkmeLongArticleDraft, ArkmeSourceSendResult, ArkmeTimelineItem } from '../types.js'
 import { callArkme } from './api.js'
-import { ArkmeLinkText } from './ArkmeLinkText.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 
 const MAX_TITLE_LENGTH = 100
 const MAX_CONTENT_LENGTH = 40000
@@ -288,7 +288,7 @@ export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, on
       <header style={styles.header}>
         {editing
           ? <input autoFocus style={styles.titleInput} value={title} maxLength={MAX_TITLE_LENGTH} placeholder="请输入标题" aria-label="长文标题" disabled={submitting} onChange={event => { setTitle(event.target.value) }} />
-          : <h2 style={styles.titleRead}>{titleValue || '无标题长文'}</h2>}
+          : <h2 style={styles.titleRead}><ArkmeRichText text={titleValue || '无标题长文'} presentation="preview" /></h2>}
         <button type="button" style={styles.close} aria-label="关闭长文" disabled={submitting} onClick={requestClose}>×</button>
       </header>
       <div style={styles.metaRow}>
@@ -305,7 +305,7 @@ export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, on
         : <div style={styles.body}>
           {editing
             ? <textarea autoFocus={creating} style={styles.bodyInput} value={textContent} maxLength={MAX_CONTENT_LENGTH} placeholder="请输入正文内容" aria-label="长文正文" disabled={submitting} onChange={event => { setTextContent(event.target.value) }} />
-            : detail?.textFormat === 'markdown' ? <ArkmeMarkdownBody text={textValue} textStyle={{ fontSize: styles.bodyRead?.fontSize, lineHeight: styles.bodyRead?.lineHeight }} /> : <p style={styles.bodyRead}><ArkmeLinkText text={textValue} linkLabelMode="raw" /></p>}
+            : detail?.textFormat === 'markdown' ? <ArkmeMarkdownBody text={textValue} textStyle={{ fontSize: styles.bodyRead?.fontSize, lineHeight: styles.bodyRead?.lineHeight }} /> : <p style={styles.bodyRead}><ArkmeRichText text={textValue} linkLabelMode="raw" /></p>}
         </div>}
     </article>
   </div>

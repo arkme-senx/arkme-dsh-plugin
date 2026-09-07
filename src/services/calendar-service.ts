@@ -4,7 +4,8 @@ import type {
   ArkmeCalendarDayRecordPage,
   ArkmeCalendarRecordItem,
 } from '../types.js'
-import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue } from './service.js'
+import { arkmeEmojiClippedText } from '../arkme-emoji-text.js'
+import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord } from './privacy-visibility.js'
 
 const MAX_CALENDAR_RANGE_DAYS = 62
@@ -210,9 +211,9 @@ export class CalendarService {
     const accessState = contentAccessState(core.content_access_state)
     if (accessState === 'protected' || arkmePrivacyLockedRecord(item)) return undefined
     const available = accessState === 'available'
-    const title = available ? clippedText(core.title, 500) : ''
-    const textContent = available ? clippedText(core.text_content, 4_000) : ''
-    const preview = title || clippedText(textContent, 160) || '无文字内容'
+    const title = available ? arkmeEmojiClippedText(core.title, 500) : ''
+    const textContent = available ? arkmeEmojiClippedText(core.text_content, 4_000) : ''
+    const preview = title || arkmeEmojiClippedText(textContent, 160) || '无文字内容'
     const topic = objectValue(item.topic_core)
     const isUncategorized = booleanValue(item.is_uncategorized)
     const hasManualEdit = booleanValue(core.has_manual_edit)

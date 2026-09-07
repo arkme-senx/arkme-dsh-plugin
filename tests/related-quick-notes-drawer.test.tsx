@@ -1,3 +1,4 @@
+import { emojiSample } from './fixtures/emoji.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeRelatedQuickNoteList, ArkmeSourceMessageExtendResult, ArkmeTimelineItem } from '../src/types.js'
@@ -313,7 +314,7 @@ describe('normal timeline related quick note drawer', () => {
           extensionParentRecordUid: 'record-parent',
           extensionParent: {
             itemUid: 'record-parent', senderName: '狗才', title: '',
-            textContent: '感觉不能开子 Agent 来写代码，很耗token',
+            textContent: emojiSample,
           },
         }}
         sourceRef="opaque-source" showOriginal={false}
@@ -323,7 +324,10 @@ describe('normal timeline related quick note drawer', () => {
     })
 
     const parent = renderer.root.findByProps({ 'data-arkme-detail-extension-parent': 'record-parent' })
-    expect(parent.findAll(node => node.children.includes('感觉不能开子 Agent 来写代码，很耗token'))).toHaveLength(1)
+    expect(parent.findAllByProps({ 'data-arkme-rich-emoji': 'heart_eyes' })).toHaveLength(1)
+    expect(parent.findAllByProps({ 'data-arkme-rich-emoji': 'thumb_up' })).toHaveLength(1)
+    expect(parent.findAllByType('a')).toHaveLength(0)
+    expect(parent.findAll(node => node.props.role === 'link')).toHaveLength(0)
     expect(parent.props.style).toMatchObject({ borderLeftWidth: 1, borderLeftStyle: 'solid' })
   })
 

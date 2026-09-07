@@ -15,7 +15,8 @@ import { ArkmeVoiceContent, arkmeVoiceMediaUrl } from './ArkmeVoiceContent.js'
 import { ArkmeFileViewer, ArkmeFileActions, arkmeLocalFileUrl, arkmeFileSize, useArkmeOriginal } from './ArkmeFileViewer.js'
 import { arkmeCanInlineLocalFile, arkmeVisibleUploadFraction } from '../file-transfer-contract.js'
 import { createArkmeSdk } from '../sdk/index.js'
-import { ArkmeMentionText, ArkmeRichText } from './ArkmeRichText.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
+import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import type { ArkmeLinkLabelMode, ArkmeLinkRenderer } from './ArkmeLinkText.js'
 
 const mediaRoute = '/arkme-self/api/media'
@@ -380,11 +381,11 @@ function ArticleCard({ title, text, onOpen }: { title: string; text: string; onO
   const heading = title.trim() || text.trim() || '无标题长文'
   const hasTitle = title.trim() !== ''
   const count = normalizedTextLength(text)
-  return <button type="button" style={{ ...styles.article, ...styles.articleButton }} data-arkme-long-article="preview" data-arkme-long-article-inner="true" aria-label={`查看长文 ${heading}`} onClick={onOpen}>
+  return <button type="button" style={{ ...styles.article, ...styles.articleButton }} data-arkme-long-article="preview" data-arkme-long-article-inner="true" aria-label={`查看长文 ${arkmeEmojiPlainText(heading)}`} onClick={onOpen}>
     <div style={styles.articleHeading}>
-      <h3 style={styles.articleTitle}>{heading}</h3>
+      <h3 style={styles.articleTitle}><ArkmeRichText text={heading} presentation="preview" /></h3>
     </div>
-    {hasTitle && text.trim() !== '' && <p style={{ ...styles.articlePreview, WebkitLineClamp: 2 }}>{text}</p>}
+    {hasTitle && text.trim() !== '' && <p style={{ ...styles.articlePreview, WebkitLineClamp: 2 }}><ArkmeRichText text={text} presentation="preview" /></p>}
     <span style={styles.articleMeta}><LongArticleWordCountIcon />{String(count)}字</span>
   </button>
 }
@@ -729,12 +730,12 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
     })
     const previewLines = (itemLines.length > 0 ? itemLines : item.forwardRecords.summaryLines).slice(0, 3)
     return <div style={styles.forwardCard} data-arkme-forward-records-card="true">
-      <p style={styles.forwardTitle} title={item.forwardRecords.title}>{item.forwardRecords.title}</p>
+      <p style={styles.forwardTitle} title={arkmeEmojiPlainText(item.forwardRecords.title)}><ArkmeRichText text={item.forwardRecords.title} presentation="preview" /></p>
       <div style={styles.forwardLines}>
         {(previewLines.length > 0 ? previewLines : ['原快记暂不可查看']).map((line, index) => <p
           key={`${String(index)}:${line}`}
           style={styles.forwardLine}
-        >{highlightMentions ? <ArkmeMentionText text={line} /> : line}</p>)}
+        ><ArkmeRichText text={line} presentation="preview" highlightMentions={highlightMentions} /></p>)}
       </div>
     </div>
   }
@@ -743,10 +744,10 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
     const participantsText = arkmeSharedRecordingParticipantsText(item.sharedRecording)
     return <div style={styles.sharedRecordingCard} data-arkme-shared-recording-card="true">
       <div style={styles.sharedRecordingTop}>
-        <p style={styles.sharedRecordingTitle} title={item.sharedRecording.title}>{item.sharedRecording.title}</p>
+        <p style={styles.sharedRecordingTitle} title={arkmeEmojiPlainText(item.sharedRecording.title)}><ArkmeRichText text={item.sharedRecording.title} presentation="preview" /></p>
         {timeText !== '' && <span style={styles.sharedRecordingTime}>{timeText}</span>}
       </div>
-      <p style={styles.sharedRecordingSummary}>{highlightMentions ? <ArkmeMentionText text={item.sharedRecording.summary} /> : item.sharedRecording.summary}</p>
+      <p style={styles.sharedRecordingSummary}><ArkmeRichText text={item.sharedRecording.summary} presentation="preview" highlightMentions={highlightMentions} /></p>
       {participantsText !== '' && <p style={styles.sharedRecordingParticipants}>{participantsText}</p>}
     </div>
   }
@@ -817,7 +818,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
     <div style={{ ...styles.stack, ...(presentation === 'detail' ? { width: '100%' } : {}) }} data-arkme-message-content={isArticle ? 'article' : 'message'} data-arkme-content-presentation={presentation}>
       {inlineVoice !== undefined ? renderVoice(inlineVoice, true) : <>
         {isArticle && presentation === 'bubble' ? <ArticleCard title={item.title} text={item.textContent} onOpen={() => { setArticleOpen(true) }} /> : <>
-          {isArticle && item.title && <h3 style={{ margin: 0, fontSize: 14, lineHeight: 1.7 }}>{item.title}</h3>}
+          {isArticle && item.title && <h3 style={{ margin: 0, fontSize: 14, lineHeight: 1.7 }}><ArkmeRichText text={item.title} presentation="preview" /></h3>}
           {text !== '' && <LongText
             textFormat={item.textFormat ?? 'plain'}
             text={text}

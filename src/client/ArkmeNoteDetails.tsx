@@ -17,7 +17,7 @@ import type {
 } from '../types.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeMediaPreview, ArkmeMessageContent } from './ArkmeRichContent.js'
-import { ArkmeMentionText } from './ArkmeRichText.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 import {
   ArkmeRelatedQuickNoteDetail,
   ArkmeRelatedQuickNotesCard,
@@ -147,7 +147,7 @@ function NoteDetailShell({ title, label, subtitle, footer, onClose, onBack, back
     <header style={styles.header}>
       {onBack !== undefined && <button ref={backRef} type="button" style={styles.back}
         aria-label={backLabel ?? '返回'} onClick={onBack}><ArrowLeft size={18} /></button>}
-      <div style={styles.heading}><h3 id={titleId} style={styles.title}>{title}</h3>
+      <div style={styles.heading}><h3 id={titleId} style={styles.title}><ArkmeRichText text={title} presentation="preview" /></h3>
         {subtitle && <div style={styles.subtitle}>{subtitle}</div>}
       </div>
       <button ref={closeRef} type="button" style={styles.close} aria-label="关闭详情" onClick={onClose}><X size={18} /></button>
@@ -471,7 +471,7 @@ function DetailExtensionParent({ parent }: { parent: NonNullable<ArkmeTimelineIt
   const preview = text || attachmentText
   if (preview === '') return null
   return <div style={styles.extensionParent} data-arkme-detail-extension-parent={parent.itemUid}>
-    <span style={styles.extensionParentText}><ArkmeMentionText text={preview} /></span>
+    <span style={styles.extensionParentText}><ArkmeRichText text={preview} presentation="preview" highlightMentions /></span>
   </div>
 }
 
@@ -793,10 +793,10 @@ export function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineIte
   const dates = forward.items.map(value => epoch(value.sendAtMillis)).filter(value => value > 0)
   const firstDate = dateLabel(dates.length ? Math.min(...dates) : forward.createdAtMillis)
   const lastDate = dateLabel(dates.length ? Math.max(...dates) : forward.createdAtMillis)
-  const rows: ArkmeForwardRecordPreviewItem[] = forward.items.length ? forward.items : forward.summaryLines.map(line => {
-    const separator = line.search(/[：:]/u)
-    return { senderName: separator > 0 ? line.slice(0, separator) : item.senderName, sendAtMillis: 0, title: '', textContent: separator > 0 ? line.slice(separator + 1) : line }
-  })
+  // A summary is content, not structured sender metadata (colons also occur in tokens and URLs).
+  const rows: ArkmeForwardRecordPreviewItem[] = forward.items.length ? forward.items : forward.summaryLines.map(line => ({
+    senderName: '转发摘要', sendAtMillis: 0, title: '', textContent: line,
+  }))
   const renderRecord = (value: ArkmeForwardRecordPreviewItem, index: number) => {
     const segments = value.segments ?? []
     const joinedTranscript = segments.map(segment => segment.textContent).join('').replace(/\s/gu, '')

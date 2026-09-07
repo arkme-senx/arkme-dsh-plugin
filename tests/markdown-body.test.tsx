@@ -11,6 +11,17 @@ const fixtures = JSON.parse(readFileSync(new URL('./fixtures/quick-note-markdown
 }
 
 describe('shared quick-note Markdown corpus', () => {
+  it('renders emoji in prose while keeping code and URL tokens literal', () => {
+    const token = '[jm_emoji:angry_face]'
+    const href = `https://example.com/?value=${token}`
+    const html = renderToStaticMarkup(<ArkmeMarkdownBody text={`正文 ${token}\n\n\`${token}\`\n\n\`\`\`text\n${token}\n\`\`\`\n\n[链接](${href})`} />)
+    expect(html.match(/data-arkme-rich-emoji="angry_face"/g)).toHaveLength(1)
+    expect(html).toContain(`<code>${token}</code>`)
+    expect(html).toContain(`<code class="language-text">${token}\n</code>`)
+    const renderedHref = /<a href="([^"]+)"/.exec(html)![1]!
+    expect(new URL(renderedHref).searchParams.get('value')).toBe(token)
+  })
+
   for (const fixture of fixtures.cases) if (fixture.tags) it(`renders corpus tags: ${fixture.id}`, () => {
     const html = renderToStaticMarkup(<ArkmeMarkdownBody text={fixture.source} />)
     expect(html.match(/role="link"/gu) ?? []).toHaveLength(fixture.tags!.length)

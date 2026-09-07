@@ -189,15 +189,14 @@ describe('ArkmeRecordingSurface layout', () => {
     selecting.props.onClick()
     expect(onToggleSelection).toHaveBeenCalledOnce()
     expect(onSelect).toHaveBeenCalledOnce()
-    expect(source).toContain('onSelect={() => { setSelectedTimelineMillis(item.startAtMillis) }}')
   })
 
-  it('keeps the 146px desktop timeline container for the three timeline layers', async () => {
+  it('reserves a separate tooltip row and lets the outer timeline grow for feedback', async () => {
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
     const timelineSource = await readFile(new URL('../src/client/recordings/ArkmeRecordingTimeline.tsx', import.meta.url), 'utf8')
 
-    expect(source).toContain("gridTemplateRows: '146px minmax(0,1fr)'")
-    expect(timelineSource).toContain('height: 146')
+    expect(source).toContain("gridTemplateRows: 'auto minmax(0,1fr)'")
+    expect(timelineSource).toContain('height: 162')
     expect(timelineSource).toContain("gridTemplateRows: '25px minmax(0,1fr) 28px'")
   })
 

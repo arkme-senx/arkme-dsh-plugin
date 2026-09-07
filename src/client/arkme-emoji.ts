@@ -1,5 +1,5 @@
 import { arkmeEmojiAssetUrls } from './arkme-emoji-assets.js'
-import { arkmeDefaultEmojiSeeds, arkmeEmojiTokenPattern } from '../arkme-emoji-text.js'
+import { arkmeDefaultEmojiSeeds, type ArkmeEmojiSeed } from '../arkme-emoji-text.js'
 
 export {
   arkmeDefaultEmojiSeeds,
@@ -8,12 +8,9 @@ export {
   arkmeHasKnownEmojiToken,
 } from '../arkme-emoji-text.js'
 
-export interface ArkmeEmoji {
+export interface ArkmeEmoji extends ArkmeEmojiSeed {
   assetIndex: number
-  id: string
   token: string
-  unicode: string
-  label: string
   assetUrl: string
 }
 
@@ -24,29 +21,9 @@ export const arkmeDefaultEmojis: readonly ArkmeEmoji[] = Object.freeze(arkmeDefa
   assetUrl: arkmeEmojiAssetUrls[index]!,
 })))
 
-export const arkmeEmojiById: Readonly<Record<string, ArkmeEmoji>> = Object.freeze(Object.fromEntries(
+export const arkmeEmojiById: Readonly<Record<string, ArkmeEmoji>> = Object.freeze(Object.assign(Object.create(null), Object.fromEntries(
   arkmeDefaultEmojis.map(emoji => [emoji.id, emoji]),
-))
-
-export interface ArkmeEmojiTextRun {
-  kind: 'text' | 'emoji'
-  text: string
-  emoji?: ArkmeEmoji
-}
-
-export function arkmeEmojiTextRuns(value: string): ArkmeEmojiTextRun[] {
-  const runs: ArkmeEmojiTextRun[] = []
-  let cursor = 0
-  for (const match of value.matchAll(arkmeEmojiTokenPattern)) {
-    const emoji = arkmeEmojiById[match[1] ?? '']
-    if (emoji === undefined || match.index === undefined) continue
-    if (match.index > cursor) runs.push({ kind: 'text', text: value.slice(cursor, match.index) })
-    runs.push({ kind: 'emoji', text: match[0], emoji })
-    cursor = match.index + match[0].length
-  }
-  if (cursor < value.length) runs.push({ kind: 'text', text: value.slice(cursor) })
-  return runs.length === 0 && value !== '' ? [{ kind: 'text', text: value }] : runs
-}
+)))
 
 export interface ArkmeEmojiInsertion {
   text: string

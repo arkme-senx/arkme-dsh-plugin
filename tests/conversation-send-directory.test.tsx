@@ -1,3 +1,4 @@
+import { emojiSample } from './fixtures/emoji.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { arkmeMessagePreparing } from '../src/client/message-preparing-store.js'
@@ -151,7 +152,7 @@ describe('conversation send directory projection', () => {
     const baseCall = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
       if (operation === 'source.record-reedit.detail') return {
-        sourceRef: 'source-harness', itemUid: 'record-reedit-ui', title: '', textContent: '服务端原正文',
+        sourceRef: 'source-harness', itemUid: 'record-reedit-ui', title: '', textContent: '服务端原正文[jm_emoji:angry_face]',
         sendAtMillis: 1, templateKind: 1, displayKind: 0, version: 3,
         attachmentCount: 0, maxTextLength: 4000,
         draft: { title: '', textContent: '本机重新编辑草稿', updatedAtMillis: 2 },
@@ -189,6 +190,8 @@ describe('conversation send directory projection', () => {
     })
     expect(targetPreview.findAll(node => node.children.includes('重新编辑:'))).toHaveLength(1)
     expect(targetPreview.findAll(node => node.children.includes('服务端原正文'))).toHaveLength(1)
+    expect(targetPreview.findAllByProps({ 'data-arkme-rich-emoji': 'angry_face' })).toHaveLength(1)
+    expect(targetPreview.findAllByType('a')).toHaveLength(0)
     const composerSurface = renderer!.root.findByProps({ 'data-arkme-primary-composer': 'true' })
     expect(composerSurface.props.style).toMatchObject({ borderRadius: '0 0 15px 15px' })
     expect(composerSurface.findByType(ArkmeRichComposerInput).props.value).toBe('本机重新编辑草稿')
@@ -1123,10 +1126,10 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-message-report-title' })).toHaveLength(0)
   })
 
-  async function openForwardPicker() {
+  async function openForwardPicker(textContent = '待转发快记') {
     timeline = [{
       itemUid: 'forward-source', messageActionRef: 'opaque-forward-action',
-      senderName: '狗才', isMe: true, sendAtMillis: 1, title: '', textContent: '待转发快记', status: 1,
+      senderName: '狗才', isMe: true, sendAtMillis: 1, title: '', textContent, status: 1,
     }]
     await act(async () => {
       renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
@@ -1370,6 +1373,31 @@ describe('conversation send directory projection', () => {
       background: 'var(--dsw-alias-button-primary-fill, #17191c)',
       color: 'var(--dsw-alias-label-primary-inverted, #ffffff)',
     })
+  })
+
+  it('renders forward dialog previews without changing source references or comment tokens', async () => {
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      const value = await baseCall(operation, params, signal)
+      if (operation !== 'sources.list') return value
+      return { ...value, items: value.items.map((source: ArkmeSourceItem) => ({ ...source, latestPreview: emojiSample })) }
+    })
+    const dialog = await openForwardPicker(emojiSample)
+    const targetButton = dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean')[0]!
+    expect(targetButton.findAllByProps({ 'data-arkme-rich-emoji': 'heart_eyes' })).toHaveLength(1)
+    act(() => { targetButton.props.onClick() })
+    const footer = dialog.findByType('footer')
+    expect(footer.findAllByProps({ 'data-arkme-rich-emoji': 'heart_eyes' })).toHaveLength(1)
+    expect(footer.findAllByProps({ 'data-arkme-rich-emoji': 'thumb_up' })).toHaveLength(1)
+    expect(dialog.findAllByType('a')).toHaveLength(0)
+    expect(dialog.findAll(node => node.props.role === 'link')).toHaveLength(0)
+    expect(timeline[0]?.textContent).toBe(emojiSample)
+    act(() => { dialog.findByProps({ 'aria-label': '转发附言' }).props.onChange({ currentTarget: { value: emojiSample } }) })
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    const sends = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.forward-messages')
+    expect(sends).toHaveLength(1)
+    expect(sends[0]?.[1]).toMatchObject({ actionRefs: ['opaque-forward-action'], commentText: emojiSample })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
   })
 
   it('removes the forwarding status after a forward succeeds', async () => {
@@ -3239,7 +3267,7 @@ describe('conversation send directory projection', () => {
   it('switches the current conversation composer into source-message extension mode without opening the detail drawer', async () => {
     timeline = [{
       itemUid: 'extension-source', messageActionRef: 'opaque-extension-action',
-      senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '这个谁解答一下', status: 1,
+      senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '这个谁解答一下[jm_emoji:angry_face][im_emoji:thumb_up] https://example.com', status: 1,
       contentBlocks: [{
         kind: 'image', mediaRef: 'opaque-image', fileName: 'question.png', mimeType: 'image/png', size: 12, sortOrder: 0,
       }],
@@ -3265,6 +3293,9 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'data-arkme-note-detail': 'true' })).toHaveLength(0)
     const targetPreview = renderer!.root.findByProps({ 'data-arkme-composer-extension-target': 'true' })
     expect(targetPreview.findAll(node => node.children.includes('这个谁解答一下')).length).toBeGreaterThan(0)
+    expect(targetPreview.findAllByProps({ 'data-arkme-rich-emoji': 'angry_face' })).toHaveLength(1)
+    expect(targetPreview.findAllByProps({ 'data-arkme-rich-emoji': 'thumb_up' })).toHaveLength(1)
+    expect(targetPreview.findAllByType('a')).toHaveLength(0)
     expect(targetPreview.findAll(node => node.children.includes('question.png')).length).toBeGreaterThan(0)
     expect(targetPreview.props.style).toMatchObject({
       margin: 0,
@@ -3409,7 +3440,7 @@ describe('conversation send directory projection', () => {
       title: '', textContent: '补充内容', status: 1,
       extensionParentRecordUid: 'received-extension-parent',
       extensionParent: {
-        itemUid: 'received-extension-parent', senderName: '同事', title: '', textContent: '原快记',
+        itemUid: 'received-extension-parent', senderName: '同事', title: '', textContent: emojiSample,
         recordOwnerUserId: 7, sequence: 11, sendAtMillis: 11,
       },
     }]
@@ -3425,6 +3456,11 @@ describe('conversation send directory projection', () => {
     const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'received-extension-child' })
     const preview = row.findByProps({ 'data-arkme-extension-parent-preview': 'received-extension-parent' })
     expect(preview.props.style.marginLeft).toBe(44)
+    expect(preview.findAllByProps({ 'data-arkme-rich-emoji': 'heart_eyes' })).toHaveLength(1)
+    expect(preview.findAllByProps({ 'data-arkme-rich-emoji': 'thumb_up' })).toHaveLength(1)
+    expect(preview.findAllByType('a')).toHaveLength(0)
+    expect(preview.props.title).toContain('😍👍')
+    expect(preview.props.title).not.toContain('[jm_emoji:heart_eyes]')
     const childLine = row.findByProps({ 'data-arkme-extension-child-line': 'true' })
     expect(childLine.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(1)
   })

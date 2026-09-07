@@ -10,6 +10,8 @@ import { X } from '@phosphor-icons/react/dist/icons/X'
 import { UserMinus } from '@phosphor-icons/react/dist/csr/UserMinus'
 import { UserPlus } from '@phosphor-icons/react/dist/csr/UserPlus'
 import qrcode from 'qrcode-generator'
+import { ArkmeRichText } from './ArkmeRichText.js'
+import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import type {
   ArkmeAuthSnapshot, ArkmeGroupAiPolishNotice, ArkmeGroupAiPolishSnapshot, ArkmeSourceReadResult,
   ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPage,
@@ -1754,7 +1756,7 @@ function ArkmeExtensionParentPreview({ parent, isMe, onSelect }: {
       ...(isMe ? styles.extensionParentPreviewMe : styles.extensionParentPreviewOther),
       ...(onSelect === undefined ? {} : { cursor: 'pointer' }),
     }}
-    title={text || firstFile?.fileName}
+    title={arkmeEmojiPlainText(text) || firstFile?.fileName}
     role={onSelect === undefined ? undefined : 'button'}
     tabIndex={onSelect === undefined ? undefined : 0}
     onClick={onSelect}
@@ -1762,7 +1764,7 @@ function ArkmeExtensionParentPreview({ parent, isMe, onSelect }: {
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect() }
     }}
   >
-    {text !== '' && <span style={styles.extensionParentText}>{text}</span>}
+    {text !== '' && <span style={styles.extensionParentText}><ArkmeRichText text={text} presentation="preview" /></span>}
     {visuals.length > 0 && <span style={styles.extensionParentMedia} aria-label="原消息附件">
       {visuals.map(block => block.kind === 'image'
         ? <img
@@ -7130,7 +7132,7 @@ export function ArkmeSurface({
               <div style={styles.composerExtensionTargetBody}>
                 {activeRecordReeditComposer !== undefined && <div style={styles.composerReeditLabel}>重新编辑:</div>}
                 {(activeComposerTargetItem.textContent.trim() || activeComposerTargetItem.title.trim()) !== ''
-                  && <div style={styles.composerExtensionTargetText}>{activeComposerTargetItem.textContent.trim() || activeComposerTargetItem.title.trim()}</div>}
+                  && <div style={styles.composerExtensionTargetText}><ArkmeRichText text={activeComposerTargetItem.textContent.trim() || activeComposerTargetItem.title.trim()} presentation="preview" /></div>}
                 {(activeComposerTargetItem.contentBlocks?.length ?? 0) > 0 && <div style={styles.composerExtensionTargetFiles}>
                   {activeComposerTargetItem.contentBlocks?.slice(0, 3).map((block, index) => <span key={`${block.mediaRef}:${String(index)}`} style={styles.composerExtensionTargetFile} title={block.fileName || '附件'}>
                     {block.kind === 'image'
@@ -7451,8 +7453,8 @@ export function ArkmeSurface({
                           >✓</span>
                           <ArkmeDirectorySourceAvatar source={target} size={38} />
                           <span style={styles.forwardTargetText}>
-                            <span style={styles.forwardTargetName}>{target.displayName}</span>
-                            <span style={styles.forwardTargetMeta}>{target.latestPreview?.trim() || arkmeForwardTargetMeta(target)}</span>
+                            <span style={styles.forwardTargetName}><ArkmeRichText text={target.displayName} presentation="preview" /></span>
+                            <span style={styles.forwardTargetMeta}><ArkmeRichText text={target.latestPreview?.trim() || arkmeForwardTargetMeta(target)} presentation="preview" /></span>
                           </span>
                           <span style={styles.forwardTargetTime}>{arkmeForwardTargetTimeLabel(target.activeAtMillis)}</span>
                         </button>
@@ -7474,8 +7476,8 @@ export function ArkmeSurface({
               <div style={styles.forwardTargetPreview}>
                 <span style={styles.forwardTargetPreviewIcon}><ArkmeForwardLinearIcon size={18} /></span>
                 <span style={styles.forwardTargetPreviewText}>
-                  <span style={styles.forwardTargetPreviewTitle}>{arkmeForwardPreviewTitle(forwardPickerMessageItems, source)}</span>
-                  <span style={styles.forwardTargetPreviewSubtitle}>{arkmeForwardPreviewSubtitle(forwardPickerMessageItems)}</span>
+                  <span style={styles.forwardTargetPreviewTitle}><ArkmeRichText text={arkmeForwardPreviewTitle(forwardPickerMessageItems, source)} presentation="preview" /></span>
+                  <span style={styles.forwardTargetPreviewSubtitle}><ArkmeRichText text={arkmeForwardPreviewSubtitle(forwardPickerMessageItems)} presentation="preview" /></span>
                 </span>
                 <button
                   type="button"

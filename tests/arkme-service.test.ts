@@ -563,6 +563,28 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('keeps emoji intact at all calendar projection limits without changing the raw source', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const original = '文'.repeat(3995) + '[jm_emoji:heart_eyes]'
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      if (String(input).endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (String(input).endsWith('/api/v1/calendar/records/query')) return json({ code: 200, data: {
+        items: [original, '文'.repeat(155) + '[im_emoji:thumb_up]', '文'.repeat(159) + '👨‍👩‍👧‍👦'].map((text, i) => ({
+          record_uid: `record-${i}`, send_at: 1_787_310_000_000,
+          record_core: { content_access_state: 1, title: '', text_content: text },
+        })), has_more: false,
+      } })
+      throw new Error(`unexpected ${String(input)}`)
+    })
+    const page = await service.calendarRecords({ bucketDate: '2026-08-21' })
+    expect(page.items[0]?.textContent).toBe('文'.repeat(3995) + '…[已截断]')
+    expect(page.items[1]?.textContent).toBe('文'.repeat(155) + '[im_emoji:thumb_up]')
+    expect(page.items[1]?.preview).toBe('文'.repeat(155) + '…[已截断]')
+    expect(page.items[2]?.preview).toBe('文'.repeat(159) + '…[已截断]')
+    expect(original).toBe('文'.repeat(3995) + '[jm_emoji:heart_eyes]')
+  })
+
   it('reads record calendar buckets and day records from the Record origin', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

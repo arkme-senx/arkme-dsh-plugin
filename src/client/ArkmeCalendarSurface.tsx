@@ -11,6 +11,7 @@ import type {
   ArkmeUserProfileSnapshot,
 } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
 import {
@@ -251,7 +252,7 @@ function RecordRow({ item, avatarRef }: { item: ArkmeCalendarRecordItem; avatarR
         <time style={styles.recordTime}>{timeLabel(item.sendAtMillis)}</time>
       </div>
       <div style={styles.recordBubble}>
-        <p style={styles.recordText}>{item.textContent || item.preview || '无文字内容'}</p>
+        <p style={styles.recordText}><ArkmeRichText text={item.textContent || item.preview || '无文字内容'} presentation="preview" /></p>
         {sourceLabel === '' ? null : <ArkmeDshAgentInputMarker
           style={styles.recordSource}
           iconStyle={styles.recordSourceIcon}

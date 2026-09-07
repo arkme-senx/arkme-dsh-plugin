@@ -150,6 +150,21 @@ describe('MessageActionService', () => {
     expect(JSON.stringify(ownerRuntime.authenticatedChatPost.mock.calls)).not.toContain('秘密')
   })
 
+  it('preserves Agent snapshot text while safely clipping the Record forward preview', async () => {
+    const ownerRuntime = runtime()
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })), invalidateSourceListCache: vi.fn() }
+    const service = messageActionService(ownerRuntime, source)
+    const text = '文'.repeat(495) + '[jm_emoji:heart_eyes]'
+    const conversationRef = await service.agentConversationRef(userId, 88)
+    const projected = await service.agentHistoryItem(historyItem({ text }), userId)
+    await service.forward(conversationRef, [projected.messageActionRef!], {
+      targetSourceRef: 'opaque-target', requestId: 'request-stable', recordUid: forwardRecordUid, sendAtMillis: 1_786_000_123_000,
+    })
+    expect(ownerRuntime.authenticatedPost.mock.calls[0]?.[1]).toMatchObject({ content_payload: { forward_records: {
+      items: [{ source_kind: 'agent_message', text, text_preview: '文'.repeat(495) }],
+    } } })
+  })
+
   it('keeps an Agent entry Record owner distinct from Chat relation identity', async () => {
     const ownerRuntime = runtime()
     const source = {

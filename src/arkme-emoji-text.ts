@@ -66,24 +66,59 @@ export const arkmeDefaultEmojiSeeds: readonly ArkmeEmojiSeed[] = Object.freeze([
 
 export const arkmeEmojiTokenPattern = /\[(?:jm_emoji|im_emoji):([a-z0-9_]+)\]/gu
 
-const arkmeEmojiUnicodeById: Readonly<Record<string, string>> = Object.freeze(Object.fromEntries(
-  arkmeDefaultEmojiSeeds.map(emoji => [emoji.id, emoji.unicode]),
-))
+const arkmeEmojiSeedById = new Map(arkmeDefaultEmojiSeeds.map(emoji => [emoji.id, emoji]))
+
+export type ArkmeEmojiTextRun =
+  | { kind: 'text'; text: string }
+  | { kind: 'emoji'; text: string; emoji: ArkmeEmojiSeed }
+
+/** The asset-free parser is shared by rich and plain-text projections. */
+export function arkmeEmojiTextRuns(value: string): ArkmeEmojiTextRun[] {
+  const runs: ArkmeEmojiTextRun[] = []
+  let cursor = 0
+  for (const match of value.matchAll(arkmeEmojiTokenPattern)) {
+    const emoji = arkmeEmojiSeedById.get(match[1] ?? '')
+    if (emoji === undefined) continue
+    if (match.index > cursor) runs.push({ kind: 'text', text: value.slice(cursor, match.index) })
+    runs.push({ kind: 'emoji', text: match[0], emoji })
+    cursor = match.index + match[0].length
+  }
+  if (cursor < value.length) runs.push({ kind: 'text', text: value.slice(cursor) })
+  return runs
+}
 
 export function arkmeHasKnownEmojiToken(value: string): boolean {
   if (value === '' || !value.includes('_emoji:')) return false
   for (const match of value.matchAll(arkmeEmojiTokenPattern)) {
-    if (arkmeEmojiUnicodeById[match[1] ?? ''] !== undefined) return true
+    if (arkmeEmojiSeedById.has(match[1] ?? '')) return true
   }
   return false
 }
 
-export function arkmeEmojiTokenSafePrefix(value: string, maxCodePoints: number): string {
-  const codePoints = [...value]
-  if (maxCodePoints <= 0 || codePoints.length <= maxCodePoints) return maxCodePoints <= 0 ? '' : value
-  const prefix = codePoints.slice(0, maxCodePoints).join('')
-  let endOffset = prefix.length
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+
+/** Preserve the caller's budget; neither tokens nor graphemes can be split. */
+export function arkmeEmojiTokenSafePrefix(value: string, maxLength: number, unit: 'codePoints' | 'codeUnits' = 'codePoints'): string {
+  const limit = Math.floor(maxLength)
+  if (!(limit > 0)) return ''
+  let endOffset = Math.min(value.length, limit)
+  if (unit === 'codePoints') {
+    endOffset = 0
+    let count = 0
+    for (const point of value) {
+      if (count++ >= limit) break
+      endOffset += point.length
+    }
+  }
+  if (endOffset >= value.length) return value
+  for (const { index, segment } of graphemes.segment(value)) {
+    if (index + segment.length > endOffset) {
+      endOffset = index
+      break
+    }
+  }
   for (const match of value.matchAll(arkmeEmojiTokenPattern)) {
+    if (match.index >= endOffset) break
     if (match.index < endOffset && endOffset < match.index + match[0].length) {
       endOffset = match.index
       break
@@ -92,8 +127,14 @@ export function arkmeEmojiTokenSafePrefix(value: string, maxCodePoints: number):
   return value.slice(0, endOffset)
 }
 
+/** User-content equivalent of clippedText; keeps its UTF-16 limit and suffix. */
+export function arkmeEmojiClippedText(value: unknown, limit = 4_000): string {
+  const text = typeof value === 'string' ? value.trim() : ''
+  return text.length > limit ? `${arkmeEmojiTokenSafePrefix(text, limit, 'codeUnits')}…[已截断]` : text
+}
+
 /** Known chat emoji tokens become Unicode; unknown and malformed tokens stay intact. */
 export function arkmeEmojiPlainText(value: string): string {
   if (value === '' || !value.includes('_emoji:')) return value
-  return value.replace(arkmeEmojiTokenPattern, (token, emojiId: string) => arkmeEmojiUnicodeById[emojiId] ?? token)
+  return arkmeEmojiTextRuns(value).map(run => run.kind === 'emoji' ? run.emoji.unicode : run.text).join('')
 }
