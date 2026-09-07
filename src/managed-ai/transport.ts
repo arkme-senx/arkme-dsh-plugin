@@ -161,7 +161,7 @@ interface WireRequest {
   stream: true
   stream_options: { include_usage: true }
   thinking?: { type: 'enabled' | 'disabled' }
-  reasoning_effort?: 'high' | 'max'
+  reasoning_effort?: string
   tools?: Array<{
     type: 'function'
     function: { name: string; description: string; parameters: Record<string, unknown> }
@@ -481,7 +481,7 @@ function serializeAssistant(message: Message): WireMessage {
   return {
     role: 'assistant',
     content,
-    ...(toolCalls.length > 0 && reasoning.length > 0 ? { reasoning_content: reasoning } : {}),
+    ...(reasoning.length > 0 ? { reasoning_content: reasoning } : {}),
     ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
   }
 }
@@ -508,7 +508,7 @@ async function serializeMessages(
     const toolResults = message.content.filter(block => block.type === 'tool-result')
     const parts = (await Promise.all(message.content.map(async (block): Promise<WireContentPart | undefined> => {
       if (block.type === 'text') {
-        return block.text.trim() === '' ? undefined : { type: 'text', text: block.text }
+        return block.text.length === 0 ? undefined : { type: 'text', text: block.text }
       }
       if (block.type === 'image') {
         return { type: 'image_asset', asset_ref: await resolveImageLimited(block.attachment) }
@@ -544,10 +544,7 @@ async function serializeRequest(
   const messages: WireMessage[] = []
   if (options.system !== undefined) messages.push({ role: 'system', content: options.system })
   messages.push(...await serializeMessages(options.messages, resolveImage, signal))
-  const effort = options.reasoningEffort === undefined ? 'high' : String(options.reasoningEffort)
-  if (!['off', 'high', 'max'].includes(effort)) {
-    throw new LlmError(`Arkme AI 不支持推理强度“${effort}”`, 'UNSUPPORTED_REASONING_EFFORT')
-  }
+  const effort = options.reasoningEffort === undefined ? undefined : String(options.reasoningEffort)
   const titleRequest = options.purpose === 'session-title'
   return {
     model: options.model,
@@ -555,7 +552,7 @@ async function serializeRequest(
     stream: true,
     stream_options: { include_usage: true },
     thinking: { type: titleRequest || effort === 'off' ? 'disabled' : 'enabled' },
-    ...titleRequest || effort === 'off' ? {} : { reasoning_effort: effort as 'high' | 'max' },
+    ...titleRequest || effort === 'off' || effort === undefined ? {} : { reasoning_effort: effort },
     ...options.tools === undefined || options.tools.length === 0 ? {} : {
       tools: options.tools.map(tool => ({
         type: 'function' as const,
@@ -951,7 +948,7 @@ export class ManagedAiTransport {
           break
         } catch (error) {
           if (error instanceof ManagedAiProtocolError
-            && error.applicationCode === 'input_asset_upload_conflict'
+            && ['input_asset_upload_conflict', 'input_asset_upload_expired'].includes(error.applicationCode)
             && prepareAttempt === 0) {
             idempotencyKey = `dsh-${sha256.slice(0, 24)}-${randomUUID()}`
             this.rememberInputAssetAttempt(

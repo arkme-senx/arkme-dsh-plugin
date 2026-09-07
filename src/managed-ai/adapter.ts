@@ -1,10 +1,11 @@
 import { getOrCreateAnonymousUserId, type AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import type { Context } from '@deepseek-ai/cordis'
-import { LlmAdapter, LlmError, ProviderRequestId } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, LlmError, ProviderRequestId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {
   AdapterRegistrationHandle,
   GenerateOptions,
   LlmModelInfo,
+  LlmModelReasoningInfo,
   LlmProviderInfo,
   LlmResolvedModelInfo,
   ResolvedRetryPolicy,
@@ -514,6 +515,23 @@ function parseCapability(value: unknown): ManagedModelCapability {
 interface ManagedCatalogSnapshot {
   models: DeepSeekCatalogModel[]
   capabilities: Map<string, ManagedModelCapability>
+  reasoning: Map<string, LlmModelReasoningInfo>
+}
+
+function parseReasoning(value: unknown): LlmModelReasoningInfo {
+  const source = asRecord(value)
+  const efforts = source?.efforts
+  const defaultEffort = source?.default_effort
+  if (!Array.isArray(efforts) || efforts.length === 0 || efforts.length > 8
+    || efforts.some(effort => typeof effort !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/u.test(effort))
+    || new Set(efforts).size !== efforts.length || typeof defaultEffort !== 'string' || !efforts.includes(defaultEffort)) {
+    throw new LlmError('Arkme 模型目录中的推理选项无效', 'MALFORMED_RESPONSE')
+  }
+  const names: Record<string, string> = { off: '关闭', low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高' }
+  return {
+    efforts: efforts.map((effort: string) => ({ id: ReasoningEffortId(effort), name: names[effort] ?? effort })),
+    defaultEffort: ReasoningEffortId(defaultEffort),
+  }
 }
 
 function parseManagedCatalog(payload: unknown): ManagedCatalogSnapshot {
@@ -533,6 +551,7 @@ function parseManagedCatalog(payload: unknown): ManagedCatalogSnapshot {
 
   const seen = new Set<string>()
   const capabilities = new Map<string, ManagedModelCapability>()
+  const reasoning = new Map<string, LlmModelReasoningInfo>()
   const models = items.map((value) => {
     const item = asRecord(value)
     if (item?.provider !== ARKME_MANAGED_PROVIDER) {
@@ -550,6 +569,7 @@ function parseManagedCatalog(payload: unknown): ManagedCatalogSnapshot {
       throw new LlmError(`Arkme 模型“${id}”的 Token 上限无效`, 'MALFORMED_RESPONSE')
     }
     capabilities.set(id, parseCapability(item.capability))
+    reasoning.set(id, parseReasoning(item.reasoning))
     return {
       id,
       name: requiredCatalogText(item, 'display_name', '显示名称'),
@@ -557,7 +577,7 @@ function parseManagedCatalog(payload: unknown): ManagedCatalogSnapshot {
       maxTokens: defaultMaxTokens,
     }
   })
-  return { models, capabilities }
+  return { models, capabilities, reasoning }
 }
 
 function waitForSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -587,6 +607,7 @@ class ManagedModelCatalog {
   private connectionSnapshot: DeepSeekConnectionOptions
   private modelIds = new Set<string>()
   private capabilitySnapshot = new Map<string, ManagedModelCapability>()
+  private reasoningSnapshot = new Map<string, LlmModelReasoningInfo>()
   private hasRemoteSnapshot = false
   private refreshedAt = 0
   private refreshPromise: Promise<void> | undefined
@@ -611,6 +632,11 @@ class ManagedModelCatalog {
       throw new LlmError(`当前 Arkme 托管服务不支持模型“${model}”，请重新选择模型`, 'UNKNOWN_MODEL')
     }
     return capability
+  }
+
+  reasoning(model: string): LlmModelReasoningInfo {
+    this.assertModel(model)
+    return this.reasoningSnapshot.get(model)!
   }
 
   private isFresh(): boolean {
@@ -665,6 +691,7 @@ class ManagedModelCatalog {
       this.connectionSnapshot = managedConnection(this.baseUrl, snapshot.models)
       this.modelIds = new Set(snapshot.models.map(model => model.id))
       this.capabilitySnapshot = snapshot.capabilities
+      this.reasoningSnapshot = snapshot.reasoning
       this.hasRemoteSnapshot = true
       this.refreshedAt = Date.now()
     } catch (error) {
@@ -754,7 +781,7 @@ class ManagedAiLlmAdapter extends LlmAdapter {
     await this.catalog.ensureModel(model, signal)
     this.catalog.assertModel(model)
     const resolved = await this.delegate.resolveModel(provider, model, signal)
-    return { ...resolved, inputModalities: this.catalog.capability(model).inputModalities }
+    return { ...resolved, inputModalities: this.catalog.capability(model).inputModalities, reasoning: this.catalog.reasoning(model) }
   }
 
   async prepareCall(

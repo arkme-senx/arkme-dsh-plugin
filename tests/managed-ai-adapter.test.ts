@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { Context } from '@deepseek-ai/cordis'
 import { AttachmentError, AttachmentId } from '@deepseek-ai/dsh-attachment'
-import { createUserMessage, LlmRuntime } from '@deepseek-ai/dsh-llm'
+import { CallId, createAssistantMessage, createUserMessage, LlmRuntime, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -30,6 +30,7 @@ const MANAGED_CATALOG_ITEMS = [
     provider: 'arkme-managed',
     public_model_code: 'deepseek-v4-flash',
     display_name: 'DeepSeek V4 Flash',
+    reasoning: { efforts: ['off', 'low', 'high', 'max'], default_effort: 'high' },
     context_window_tokens: '1000000',
     default_max_output_tokens: '256000',
     maximum_max_output_tokens: '384000',
@@ -39,6 +40,7 @@ const MANAGED_CATALOG_ITEMS = [
     provider: 'arkme-managed',
     public_model_code: 'qwen3.8-max',
     display_name: 'Qwen3.8 Max',
+    reasoning: { efforts: ['off', 'low', 'medium', 'xhigh'], default_effort: 'xhigh' },
     context_window_tokens: '1000000',
     default_max_output_tokens: '65536',
     maximum_max_output_tokens: '131072',
@@ -48,6 +50,7 @@ const MANAGED_CATALOG_ITEMS = [
     provider: 'arkme-managed',
     public_model_code: 'glm-5.2',
     display_name: 'GLM-5.2',
+    reasoning: { efforts: ['off', 'high', 'max'], default_effort: 'high' },
     context_window_tokens: '1048576',
     default_max_output_tokens: '65536',
     maximum_max_output_tokens: '131072',
@@ -57,6 +60,7 @@ const MANAGED_CATALOG_ITEMS = [
     provider: 'arkme-managed',
     public_model_code: 'deepseek-v4-flash-bailian',
     display_name: 'DeepSeek V4 Flash（百炼）',
+    reasoning: { efforts: ['off', 'high', 'max'], default_effort: 'high' },
     context_window_tokens: '1000000',
     default_max_output_tokens: '131072',
     maximum_max_output_tokens: '393216',
@@ -76,6 +80,53 @@ function managedCatalogResponse(items: unknown = MANAGED_CATALOG_ITEMS): Respons
 }
 
 describe('Arkme managed model adapter', () => {
+  it.each(MANAGED_CATALOG_ITEMS)('exposes exact route reasoning for $public_model_code', async item => {
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: { resolveManagedAccessCredential: async () => new SecretValue('arkme-access') },
+      fetchImpl: async () => managedCatalogResponse(),
+    })
+    const model = await adapter.resolveModel(ARKME_MANAGED_PROVIDER, item.public_model_code)
+    expect(model.reasoning?.efforts.map(effort => String(effort.id))).toEqual(item.reasoning.efforts)
+    expect(model.reasoning?.defaultEffort).toBe(item.reasoning.default_effort)
+  })
+
+  it.each(['low', 'medium', 'xhigh', 'stale-selection'])('forwards %s without blocking or rewriting conversation content', async effort => {
+    let body: Record<string, unknown> | undefined
+    const transport = new ManagedAiTransport({
+      baseUrl: 'https://intelligent.test/api/v1/managed-ai',
+      resolveAttachmentReader: () => undefined,
+      resolveBearer: async () => 'arkme-access',
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      fetchImpl: async (_input, init) => {
+        body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return new Response('data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+          status: 200, headers: { 'Content-Type': 'text/event-stream' },
+        })
+      },
+    })
+    const chunks: StreamChunk[] = []
+    for await (const chunk of transport.stream({
+      provider: ARKME_MANAGED_PROVIDER, model: ARKME_MANAGED_MODEL,
+      reasoningEffort: ReasoningEffortId(effort),
+      messages: [
+        createUserMessage({ content: [{ type: 'text', text: 'first' }, { type: 'text', text: '\n\n' }, { type: 'text', text: 'second' }], source: { kind: 'user' } }),
+        createAssistantMessage({ content: [{ type: 'reasoning', text: 'prior reasoning' }, { type: 'text', text: 'prior answer' }], source: { kind: 'model', provider: ARKME_MANAGED_PROVIDER, model: ARKME_MANAGED_MODEL } }),
+        createUserMessage({ content: [{ type: 'text', text: 'next' }], source: { kind: 'user' } }),
+        createAssistantMessage({ content: [{ type: 'tool-call', id: CallId('call-1'), name: 'lookup', arguments: '{}' }], source: { kind: 'model', provider: ARKME_MANAGED_PROVIDER, model: ARKME_MANAGED_MODEL } }),
+        createUserMessage({ content: [{ type: 'text', text: '' }, { type: 'tool-result', toolCallId: CallId('call-1'), content: [{ type: 'text', text: 'found' }] }], source: { kind: 'user' } }),
+      ],
+    }, { contractVersion: 'text-chat-v1', inputModalities: ['text'], outputModalities: ['text'] })) chunks.push(chunk)
+    expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+    expect(body).toMatchObject({ reasoning_effort: effort, messages: [
+      { role: 'user', content: 'first\n\nsecond' },
+      { role: 'assistant', content: 'prior answer', reasoning_content: 'prior reasoning' },
+      { role: 'user', content: 'next' },
+      { role: 'assistant', tool_calls: [{ id: 'call-1', function: { name: 'lookup', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'call-1', content: 'found' },
+    ] })
+  })
+
   it('advertises every active backend catalog model without automatic retries', async () => {
     const catalogFetch = vi.fn(async () => managedCatalogResponse())
     const adapter = createManagedAiLlmAdapter({
@@ -1252,7 +1303,7 @@ describe('Arkme managed model adapter', () => {
             return new Response(JSON.stringify({
               code: 1001,
               message: '上传会话已过期',
-              data: { error_code: 'input_asset_upload_conflict' },
+              data: { error_code: 'input_asset_upload_expired' },
             }), { status: 200, headers: { 'Content-Type': 'application/json' } })
           }
           return new Response(JSON.stringify({
