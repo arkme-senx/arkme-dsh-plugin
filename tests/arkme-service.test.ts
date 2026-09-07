@@ -1,6 +1,9 @@
 import { createHmac } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
+import { parse } from 'yaml'
 import { ArkmePluginError, ArkmeService, type ArkmeServiceConfig } from '../src/arkme-service.js'
+import { Config as ConfigSchema, resolveArkmeConfig } from '../src/index.js'
 import type { ArkmeSessionCredentials } from '../src/keychain-store.js'
 import type { ArkmeLongArticleDraft, ArkmePendingWrite } from '../src/types.js'
 import type { ArkmeExtensionReviewOperation } from '../src/extensions/types.js'
@@ -190,6 +193,34 @@ function sourceRefFor(
 }
 
 describe('ArkmeService', () => {
+  for (const disabled of [false, true]) {
+    it(disabled
+      ? 'allows a deployment override to disable production Markdown writes'
+      : 'advertises Markdown editing from the shipped production configuration', async () => {
+      const patch = parse(readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')) as Array<{
+        insert?: Array<{ id: string; config: Record<string, unknown> }>
+      }>
+      const entry = patch.flatMap(layer => layer.insert ?? []).find(item => item.id === 'arkme-self')!
+      const production = resolveArkmeConfig({ webServer: { host: '127.0.0.1' } } as never, ConfigSchema({
+        ...entry.config,
+        ...(disabled ? { markdownQuickNotesEnabled: false } : {}),
+      }))
+      const service = new ArkmeService(production, new MemorySessionStore(), new MemoryStateStore(), async () => {
+        throw new Error('This configuration check must not contact production services')
+      })
+
+      expect(service.providerCapabilities().environment).toBe('prod')
+      if (disabled) {
+        expect(service.providerCapabilities().features).not.toHaveProperty('markdownQuickNotes')
+        await expect(service.extendSourceMessage('source', 'message', '# 标题', 'record', [], {
+          textFormat: 'markdown',
+        })).rejects.toMatchObject({ code: 'markdown-send-disabled', httpStatus: 403 })
+      } else {
+        expect(service.providerCapabilities().features.markdownQuickNotes).toBe(true)
+      }
+    })
+  }
+
   it('validates the signed source message before uploading extension attachments', async () => {
     const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore())
     const validationError = new ArkmePluginError('message-action-ref-invalid', '消息操作凭据无效', false)
