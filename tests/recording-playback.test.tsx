@@ -102,7 +102,7 @@ describe('recording playback controller', () => {
 
     expect(audio.pause).toHaveBeenCalled()
     expect(playback.activeItemRef).toBe('')
-    expect(playback.positionAtMillis).toBeUndefined()
+    expect(playback.positionAtMillis).toBe(100_000)
     expect(playback.isPlaying).toBe(false)
     expect([...audio.listeners.values()].every(listeners => listeners.size === 0)).toBe(true)
   })
@@ -189,4 +189,213 @@ describe('recording playback controller', () => {
     expect(playback.activeItemRef).toBe('')
     expect(playback.positionAtMillis).toBe(115_000)
   })
+  it('seeks within the active item using owner offsets without reopening media', async () => {
+    const items = [item('a', 100_000), item('b', 120_000)]
+    await act(async () => { await playback.playAt(items, 101_000) })
+    await act(async () => { await playback.selectAt(items, 107_000) })
+    expect(audios).toHaveLength(1)
+    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
+    expect(audios[0]!.currentTime).toBe(9)
+    await act(async () => { audios[0]!.emit('timeupdate') })
+    expect(playback.positionAtMillis).toBe(107_000)
+    expect(playback.isPlaying).toBe(true)
+    await act(async () => { audios[0]!.currentTime = 12; audios[0]!.emit('timeupdate'); await tick() })
+    expect(playback.activeItemRef).toBe('b')
+  })
+
+  it('switches to another item at the exact selected time and rejects old progress', async () => {
+    const items = [item('a', 100_000), item('b', 120_000)]
+    await act(async () => { await playback.playAt(items, 101_000) })
+    const old = audios[0]!
+    const lateProgress = [...old.listeners.get('timeupdate')!][0]!
+    await act(async () => { await playback.selectAt(items, 125_000) })
+    expect(audios[1]!.currentTime).toBe(7)
+    await act(async () => { old.currentTime = 6; lateProgress() })
+    expect(playback.positionAtMillis).toBe(125_000)
+    expect(playback.activeItemRef).toBe('b')
+  })
+
+  it('keeps paused selection silent and ignores the released media progress', async () => {
+    const items = [item('a', 100_000)]
+    await act(async () => { await playback.playAt(items, 101_000) })
+    const old = audios[0]!
+    await act(async () => { playback.pause(); await playback.selectAt(items, 107_000) })
+    await act(async () => { old.emit('timeupdate') })
+    expect(playback.isPlaying).toBe(false)
+    expect(playback.positionAtMillis).toBe(107_000)
+    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
+    await act(async () => { await playback.playAt(items, 107_000) })
+    expect(audios[1]!.currentTime).toBe(9)
+  })
+
+  it('selects an empty time while playing by stopping without snapping to a later item', async () => {
+    const items = [item('a', 100_000), item('b', 120_000)]
+    await act(async () => { await playback.playAt(items, 101_000) })
+    await act(async () => { await playback.selectAt(items, 110_000) })
+    expect(playback.positionAtMillis).toBe(110_000)
+    expect(playback.isPlaying).toBe(false)
+    expect(playback.activeItemRef).toBe('')
+    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
+  })
+
+  it('replaces a loading selection and keeps the latest autoplay intent', async () => {
+    const items = [item('a', 100_000), item('b', 120_000)]
+    let resolveOld!: (value: unknown) => void
+    mocks.callArkme.mockImplementationOnce(async () => new Promise(resolve => { resolveOld = resolve }))
+    let old!: Promise<void>
+    await act(async () => { old = playback.playAt(items, 101_000); await tick() })
+    expect(playback.isLoading).toBe(true)
+    expect(playback.positionAtMillis).toBe(101_000)
+    await act(async () => { await playback.selectAt(items, 125_000) })
+    await act(async () => { resolveOld({ playbackRef: 'stale', startOffsetMillis: 0, endOffsetMillis: 10_000 }); await old })
+    expect(audios).toHaveLength(1)
+    expect(playback.positionAtMillis).toBe(125_000)
+    expect(playback.isPlaying).toBe(true)
+    expect(playback.isLoading).toBe(false)
+  })
+
+  it.each(['pause', 'stop'] as const)('cancels a pending open with %s and never plays its late response', async action => {
+    let resolveOpen!: (value: unknown) => void
+    mocks.callArkme.mockImplementationOnce(async () => new Promise(resolve => { resolveOpen = resolve }))
+    let pending!: Promise<void>
+    await act(async () => { pending = playback.playAt([item('a', 100_000)], 103_000); await tick() })
+    const signal = mocks.callArkme.mock.calls[0]![2] as AbortSignal
+    await act(async () => { playback[action]() })
+    expect(signal.aborted).toBe(true)
+    expect(playback.isLoading).toBe(false)
+    await act(async () => { resolveOpen({ playbackRef: 'stale', startOffsetMillis: 0, endOffsetMillis: 10_000 }); await pending })
+    expect(audios).toHaveLength(0)
+    expect(playback.isPlaying).toBe(false)
+  })
+
+  it('preserves a failed selection for retry without resuming the old item', async () => {
+    const items = [item('a', 100_000), item('b', 120_000)]
+    await act(async () => { await playback.playAt(items, 101_000) })
+    mocks.callArkme.mockRejectedValueOnce(new Error('owner denied'))
+    await act(async () => { await playback.selectAt(items, 125_000) })
+    expect(playback.positionAtMillis).toBe(125_000)
+    expect(playback.error).toBe('owner denied')
+    expect(playback.isPlaying).toBe(false)
+    await act(async () => { await playback.playAt(items, 125_000) })
+    expect(playback.isPlaying).toBe(true)
+    expect(playback.error).toBe('')
+  })
+
+  it('ignores a superseded failure while a newer selection is still loading', async () => {
+    const items = [item('a', 100_000), item('b', 120_000)]
+    let rejectOld!: (reason: Error) => void
+    let resolveNew!: (value: unknown) => void
+    mocks.callArkme.mockImplementationOnce(async () => new Promise((_resolve, reject) => { rejectOld = reject }))
+    mocks.callArkme.mockImplementationOnce(async () => new Promise(resolve => { resolveNew = resolve }))
+    let old!: Promise<void>; let next!: Promise<void>
+    await act(async () => { old = playback.playAt(items, 101_000); await tick() })
+    await act(async () => { next = playback.selectAt(items, 125_000); await tick() })
+    await act(async () => { rejectOld(new Error('stale failure')); await old })
+    expect(playback.error).toBe('')
+    expect(playback.isLoading).toBe(true)
+    expect(playback.positionAtMillis).toBe(125_000)
+    await act(async () => { resolveNew({ playbackRef: 'new', startOffsetMillis: 2_000, endOffsetMillis: 12_000 }); await next })
+    expect(playback.isPlaying).toBe(true)
+  })
+
+  it('does not let an obsolete queue transition block or advance a new queue', async () => {
+    const items = [item('a', 100_000), item('b', 120_000), item('c', 140_000), item('d', 160_000)]
+    await act(async () => { await playback.playAt(items, 101_000) })
+    let resolveOld!: (value: unknown) => void
+    mocks.callArkme.mockImplementationOnce(async () => new Promise(resolve => { resolveOld = resolve }))
+    const first = audios[0]!
+    await act(async () => { first.currentTime = 12; first.emit('timeupdate'); first.emit('ended'); await tick() })
+    await act(async () => { await playback.selectAt(items, 145_000) })
+    await act(async () => { audios[1]!.currentTime = 12; audios[1]!.emit('timeupdate'); audios[1]!.emit('ended'); await tick() })
+    expect(playback.activeItemRef).toBe('d')
+    await act(async () => { resolveOld({ playbackRef: 'stale-b', startOffsetMillis: 0, endOffsetMillis: 10_000 }); await tick() })
+    expect(playback.activeItemRef).toBe('d')
+    expect(audios).toHaveLength(3)
+    expect(mocks.callArkme).toHaveBeenCalledTimes(4)
+  })
+
+  it('invalidates the media promise when paused before browser play resolves', async () => {
+    const items = [item('a', 100_000)]
+    let resolvePlay!: () => void
+    let pending!: Promise<void>
+    // Delay the owner so the next Audio can be intercepted before play is called.
+    mocks.callArkme.mockImplementationOnce(async () => ({ playbackRef: 'a', startOffsetMillis: 0, endOffsetMillis: 10_000 }))
+    vi.stubGlobal('Audio', class extends FakeAudio {
+      constructor(src: string) {
+        super(src); audios.push(this)
+        this.play.mockImplementationOnce(async () => new Promise<void>(resolve => { resolvePlay = resolve }))
+      }
+    })
+    await act(async () => { pending = playback.playAt(items, 101_000); await tick() })
+    expect(playback.isLoading).toBe(true)
+    await act(async () => { playback.pause() })
+    await act(async () => { resolvePlay(); await pending })
+    expect(playback.isLoading).toBe(false)
+    expect(playback.isPlaying).toBe(false)
+    expect(playback.positionAtMillis).toBe(101_000)
+    expect(audios[0]!.pause).toHaveBeenCalled()
+  })
+
+  it('handles rapid play then cancel without waiting for a React render', async () => {
+    let resolveOpen!: (value: unknown) => void
+    mocks.callArkme.mockImplementationOnce(async () => new Promise(resolve => { resolveOpen = resolve }))
+    const items = [item('a', 100_000)]
+    let pending!: Promise<void>
+    await act(async () => {
+      pending = playback.toggleAt(items, 103_000)
+      await playback.toggleAt(items, 103_000)
+    })
+    await act(async () => { resolveOpen({ playbackRef: 'cancelled', startOffsetMillis: 0, endOffsetMillis: 10_000 }); await pending })
+    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
+    expect(audios).toHaveLength(0)
+    expect(playback.isLoading).toBe(false)
+  })
+
+  it('clears loading intent on a browser media error before play settles', async () => {
+    let finishPlay!: () => void
+    vi.stubGlobal('Audio', class extends FakeAudio {
+      constructor(src: string) {
+        super(src); audios.push(this)
+        this.play.mockImplementationOnce(async () => new Promise<void>(resolve => { finishPlay = resolve }))
+      }
+    })
+    const items = [item('a', 100_000)]
+    let pending!: Promise<void>
+    await act(async () => { pending = playback.playAt(items, 101_000); await tick() })
+    await act(async () => { audios[0]!.emit('error'); await tick() })
+    expect(playback.isLoading).toBe(false)
+    expect(playback.error).toBe('录音播放失败')
+    await act(async () => { await playback.selectAt(items, 105_000) })
+    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
+    await act(async () => { finishPlay(); await pending })
+    expect(playback.positionAtMillis).toBe(105_000)
+    expect(playback.isPlaying).toBe(false)
+  })
+
+  it('does not advance the queue from a final timeupdate delivered after pause', async () => {
+    const items = [item('a', 100_000), item('b', 120_000)]
+    await act(async () => { await playback.playAt(items, 109_000) })
+    await act(async () => {
+      playback.pause()
+      audios[0]!.currentTime = 12
+      audios[0]!.emit('timeupdate')
+      await tick()
+    })
+    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
+    expect(playback.isPlaying).toBe(false)
+    expect(playback.isLoading).toBe(false)
+    expect(playback.positionAtMillis).toBe(110_000)
+  })
+
+  it('does not reuse media when an opaque item ref has a different time interval', async () => {
+    const first = item('same-ref', 100_000)
+    const replacement = item('same-ref', 120_000)
+    await act(async () => { await playback.playAt([first], 103_000) })
+    await act(async () => { await playback.selectAt([replacement], 124_000) })
+    expect(mocks.callArkme).toHaveBeenCalledTimes(2)
+    expect(audios).toHaveLength(2)
+    expect(audios[1]!.currentTime).toBe(6)
+    expect(playback.positionAtMillis).toBe(124_000)
+  })
+
 })

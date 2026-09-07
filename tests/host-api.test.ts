@@ -862,6 +862,10 @@ describe('message action Host API dispatch', () => {
     expect(service.sourceMessageExtensionContext).toHaveBeenCalledWith('source-ref', 'action-1', expect.any(Object))
     expect(service.extendSourceMessage).toHaveBeenCalledWith(
       'source-ref', 'action-1', ' 附件延展 ', 'record-2', ['file-1', 'file-2'], {
+        title: '',
+        textContent: ' 附件延展 ',
+        assets: [],
+        displayKind: 0,
         relationUid: 'relation-2', parentRecordUid: 'parent-extension-2',
       },
     )

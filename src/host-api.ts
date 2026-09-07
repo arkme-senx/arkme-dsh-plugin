@@ -709,6 +709,7 @@ function botRefsParam(params: Record<string, unknown>): string[] {
 }
 
 function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
+  if (params.textFormat !== undefined && params.textFormat !== 'plain' && params.textFormat !== 'markdown') throw new ArkmePluginError('text-format-invalid', '正文格式无效', false, 400)
   const rawAssets = Array.isArray(params.assets) ? params.assets : []
   const thinkingDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'thinkingDurationMillis', 0)))
   const recordDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'recordDurationMillis', 0)))
@@ -732,6 +733,7 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   return {
     title: stringParam(params, 'title'),
     textContent: stringParam(params, 'textContent'),
+    ...(params.textFormat === undefined ? {} : { textFormat: params.textFormat as 'plain' | 'markdown' }),
     displayKind: numberParam(params, 'displayKind', 0) === 1 ? 1 : 0,
     ...(thinkingDurationMillis === 0 ? {} : { thinkingDurationMillis }),
     ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
@@ -895,6 +897,9 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       if (['user-ban.ban', 'user-ban.unban'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '封禁操作必须从当前 DSH 页面发起', false, 403)
+      }
+      if (['source.message-preparing.report', 'source.message-preparing.cancel'].includes(request.operation) && origin === undefined) {
+        throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
       }
       if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
@@ -1596,6 +1601,14 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       { activeOnly: params.activeOnly !== false },
     )
+    case 'source.member-events': return await service.memberEvents(stringParam(params, 'sourceRef'), {
+      fromAtMillis: numberParam(params, 'fromAtMillis', 0),
+      toAtMillis: numberParam(params, 'toAtMillis', 0),
+      limit: numberParam(params, 'limit', 50),
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}),
+    }, requestSignal)
+    case 'source.member-event.profile': return await service.memberEventProfile(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
+    case 'source.member-event.private.open': return await service.memberEventPrivateChat(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
     case 'source.member-records': return await service.sourceMemberRecords(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'memberRef'),
@@ -1627,6 +1640,21 @@ export async function dispatchArkmeHostOperation(
       requiredRelatedQuickNoteParam(params, 'relatedRef'),
       requestSignal,
     )
+    case 'source.message-preparing.report':
+    case 'source.message-preparing.cancel': {
+      const sourceRef = typeof params.sourceRef === 'string' ? params.sourceRef.trim() : ''
+      const timestampKey = operation === 'source.message-preparing.report' ? 'prepareAtMillis' : 'cancelAtMillis'
+      const stateAtMillis = params[timestampKey]
+      if (Object.keys(params).some(key => key !== 'sourceRef' && key !== timestampKey)
+        || sourceRef === '' || typeof stateAtMillis !== 'number' || !Number.isSafeInteger(stateAtMillis)
+        || stateAtMillis <= 0 || !Number.isSafeInteger(stateAtMillis + 5_000)) {
+        throw new ArkmePluginError('message-preparing-invalid', '正在输入参数无效', false, 400)
+      }
+      const options = requestSignal === undefined ? {} : { signal: requestSignal }
+      if (operation === 'source.message-preparing.report') await service.reportMessagePreparing(sourceRef, stateAtMillis, options)
+      else await service.cancelMessagePreparing(sourceRef, stateAtMillis, options)
+      return null
+    }
     case 'source.mark-read': return await service.markSourceRead(
       stringParam(params, 'sourceRef'),
       numberParam(params, 'readSequence', 0),
@@ -1692,6 +1720,7 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'recordUid'),
       [...new Set(stringListParam(params, 'fileRefs').map(value => value.trim()).filter(value => value !== ''))],
       {
+        ...richSendParam(params),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(stringParam(params, 'parentRecordUid') === '' ? {} : { parentRecordUid: stringParam(params, 'parentRecordUid') }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),

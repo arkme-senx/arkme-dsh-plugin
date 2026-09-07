@@ -156,6 +156,58 @@ describe('recording presentation', () => {
     })])
   })
 
+  it.each([
+    { displayName: 'HooXi', expected: 'HooXi' },
+    { displayName: '  ', expected: '我的声纹' },
+    { displayName: undefined, expected: '我的声纹' },
+  ])('uses the viewer profile name with the existing speaker fallback: $displayName', ({ displayName, expected }) => {
+    const items = projectRecordingTranscripts({
+      session_ls: [{
+        id: 'session-1', start_at: 1_700_000_000_000,
+        spk_ls: [{ num: 1, spk_id: 'speaker-self' }],
+      }],
+      child_ls: [{
+        id: 'child-1', session_id: 'session-1', start_at: 0,
+        asr: [{ s: 0, e: 1_000, n: 1, t: '自己的发言' }],
+      }],
+    }, [{ id: 'speaker-self', ref_usr_id: 7, nick_name: '我的声纹' }],
+    displayName === undefined ? new Map() : new Map([
+      [7, { displayName, avatarRef: 'arkme-profile-image-v1.self' }],
+    ]), { viewerUserId: 7 })
+
+    expect(items[0]).toMatchObject({ speakerLabel: expected, isSelf: true, speakerColorIndex: 0 })
+    if (displayName !== undefined) expect(items[0]?.speakerAvatarRef).toBe('arkme-profile-image-v1.self')
+  })
+
+  it('does not conflate matching display names, speaker numbers, or recording ownership with self identity', () => {
+    const response = {
+      session_ls: [{
+        id: 'session-1', belong_usr: 7, start_at: 1_700_000_000_000,
+        spk_ls: [{ num: 7, spk_id: 'self' }, { num: 8, spk_id: 'other' }],
+      }],
+      child_ls: [{
+        id: 'child-1', session_id: 'session-1', start_at: 0,
+        asr: [{ s: 0, e: 1_000, n: 7, t: '本人' }, { s: 1_000, e: 2_000, n: 8, t: '同名他人' }],
+      }],
+    }
+    const speakers = [{ id: 'self', ref_usr_id: 7, nick_name: '我的声纹' },
+      { id: 'other', ref_usr_id: 8, nick_name: 'HooXi' }]
+    const original = JSON.stringify({ response, speakers })
+    const profiles = new Map([[7, { displayName: ' HooXi ' }], [8, { displayName: '其他账号' }]])
+    const items = projectRecordingTranscripts(response, speakers, profiles, { viewerUserId: 7 })
+    expect(items.map(value => value.speakerLabel)).toEqual(['HooXi', 'HooXi'])
+    expect(items.map(value => value.isSelf)).toEqual([true, false])
+    expect(items.map(value => value.speakerIdentity)).toEqual(['speaker:self', 'speaker:other'])
+    expect(items.map(value => value.speakerColorIndex)).toEqual([0, 1])
+    expect(JSON.stringify({ response, speakers })).toBe(original)
+    const generation = buildRecordingGenerationTranscript(items, 'summary', 1_700_000_000_000)
+    expect(generation.match(/这句话不是我本人说的/g)).toHaveLength(1)
+    expect(generation).toContain('其中，HooXi是我自己')
+    const switched = projectRecordingTranscripts(response, speakers, profiles, { viewerUserId: 8 })
+    expect(switched.map(value => value.speakerLabel)).toEqual(['我的声纹', '其他账号'])
+    expect(switched.map(value => value.isSelf)).toEqual([false, true])
+  })
+
   it('keeps the owner q assignment separate from the source audio speaker number', () => {
     const items = projectRecordingTranscripts({
       session_ls: [{

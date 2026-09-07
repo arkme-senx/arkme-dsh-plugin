@@ -109,6 +109,46 @@ describe('ArkmeAppUpdateStore', () => {
     stop()
   })
 
+  it.each(['check', 'install', undefined] as const)('rechecks after a %s failure instead of calling download without a release', async failureStage => {
+    const failure = { status: 'failed', currentVersion: '0.2.4', failureStage, error: '自动更新元数据版本与发布记录不一致' }
+    const check = vi.fn().mockResolvedValue({ status: 'available', currentVersion: '0.2.4', latestVersion: '0.2.6', installMode: 'in-app' })
+    const download = vi.fn()
+    vi.stubGlobal('arkmeDesktop', { update: {
+      status: vi.fn().mockResolvedValue(failure), check, download, install: vi.fn(), showInFolder: vi.fn(),
+    } })
+    const store = new ArkmeAppUpdateStore()
+    await store.refresh()
+    await expect(store.retry()).resolves.toMatchObject({ status: 'available', installMode: 'in-app' })
+    expect(check).toHaveBeenCalledOnce()
+    expect(download).not.toHaveBeenCalled()
+  })
+
+  it('preserves the check error when retry still fails validation', async () => {
+    const failure = { status: 'failed', currentVersion: '0.2.4', failureStage: 'check', error: '自动更新元数据缺少有效 SHA-512' }
+    const download = vi.fn()
+    const check = vi.fn().mockResolvedValue(failure)
+    vi.stubGlobal('arkmeDesktop', { update: { status: check, check, download, install: vi.fn(), showInFolder: vi.fn() } })
+    const store = new ArkmeAppUpdateStore()
+    await store.refresh()
+    await store.retry()
+    expect(store.getSnapshot().status).toEqual(failure)
+    expect(download).not.toHaveBeenCalled()
+  })
+
+  it('retries download only for a download-stage failure', async () => {
+    const check = vi.fn()
+    const download = vi.fn().mockResolvedValue({ status: 'downloaded', currentVersion: '0.2.4', latestVersion: '0.2.6' })
+    vi.stubGlobal('arkmeDesktop', { update: {
+      status: vi.fn().mockResolvedValue({ status: 'failed', currentVersion: '0.2.4', failureStage: 'download', error: 'network failure' }),
+      check, download, install: vi.fn(), showInFolder: vi.fn(),
+    } })
+    const store = new ArkmeAppUpdateStore()
+    await store.refresh()
+    await expect(store.retry()).resolves.toMatchObject({ status: 'downloaded' })
+    expect(download).toHaveBeenCalledOnce()
+    expect(check).not.toHaveBeenCalled()
+  })
+
   it('calls the protected desktop install bridge and immediately locks duplicate UI actions', async () => {
     let finishInstall: ((status: { status: 'installing', currentVersion: string }) => void) | undefined
     const install = vi.fn().mockImplementation(async () => await new Promise(resolve => { finishInstall = resolve }))

@@ -405,8 +405,9 @@ describe('Arkme native World surface', () => {
         textContent: '支持[im_emoji:thumb_up]，未知[jm_emoji:not_exists]',
       }],
     })
-    expect(feed).toContain('喜欢😍')
-    expect(feed).toContain('支持👍，未知[jm_emoji:not_exists]')
+    expect(feed).toContain('data-arkme-rich-emoji="heart_eyes"')
+    expect(feed).toContain('data-arkme-rich-emoji="thumb_up"')
+    expect(feed).toContain('，未知[jm_emoji:not_exists]')
     expect(feed).not.toContain('[jm_emoji:heart_eyes]')
 
     const comments = renderToStaticMarkup(<WorldInteractionThreadList
@@ -414,7 +415,7 @@ describe('Arkme native World surface', () => {
       items={[{ ...interactions[0]!, textContent: '笑哭[jm_emoji:joy_face]' }]}
       compact
     />)
-    expect(comments).toContain('笑哭😂')
+    expect(comments).toContain('data-arkme-rich-emoji="joy_face"')
     expect(comments).not.toContain('[jm_emoji:joy_face]')
   })
 
@@ -663,9 +664,9 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('data-world-comment-level="reply"')
     expect(markup).toContain('font-size:11px')
     expect(markup).toContain('小满</strong><span> 回复 </span><strong')
-    expect(markup).toContain('阿七</strong><span>：回复第一条</span>')
+    expect(markup).toContain('阿七</strong><span>：<span>回复第一条</span></span>')
     expect(markup).toContain('小周</strong><span> 回复 </span><strong')
-    expect(markup).toContain('小满</strong><span>：继续回复</span>')
+    expect(markup).toContain('小满</strong><span>：<span>继续回复</span></span>')
     expect(markup).not.toContain('aria-label="回复小满的评论"')
     expect(markup).not.toContain('>取消回复<')
     expect(markup).not.toContain('第二条评论')

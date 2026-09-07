@@ -111,6 +111,7 @@ export interface Config {
   recordingWorkbenchEnabled: boolean
   chatMemberJoinEventsEnabled: boolean
   richMediaRenderEnabled: boolean
+  markdownQuickNotesEnabled: boolean
   richMediaSendEnabled: boolean
   maxUploadBytes: number
   stateDirectory: string
@@ -173,6 +174,7 @@ export const Config: Schema<Config> = Schema.object({
   updateCheckIntervalHours: Schema.number().min(1).max(168).default(12),
   updateAllowLocalInstall: Schema.boolean().default(true),
   richMediaRenderEnabled: Schema.boolean().default(true),
+  markdownQuickNotesEnabled: Schema.boolean().default(false),
   richMediaSendEnabled: Schema.boolean().default(true),
   maxUploadBytes: Schema.number().min(1024).max(1024 * 1024 * 1024).default(100 * 1024 * 1024),
   openclawProfile: Schema.string().default('dev'),

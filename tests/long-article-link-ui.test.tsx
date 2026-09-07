@@ -91,7 +91,7 @@ describe('Arkme long-article link presentation', () => {
     ])
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'link.metadata')).toHaveLength(0)
     expect(renderer.root.findAllByType('textarea')).toHaveLength(0)
-    expect(renderer.root.findAllByProps({ 'data-arkme-rich-emoji': 'angry_face' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ 'data-arkme-rich-emoji': 'angry_face' })).toHaveLength(1)
     await act(async () => { renderer.unmount() })
   })
 })

@@ -14,6 +14,7 @@ import {
 import { arkmeVisibleMentionRuns } from '../src/client/ArkmeRichText.js'
 import {
   ArkmeMemberJoinNotice, arkmeConversationJoinEventsInLoadedWindow, arkmeMemberJoinDisplayName,
+  ArkmeMemberLeaveNotice,
   arkmeMemberJoinTimeLabel, arkmeVisibleMemberJoinInvitees, arkmeComposerMentionTrigger,
   arkmeGroupMentionCandidates, arkmeMentionCandidateMatches, arkmeMentionCandidatePrimaryText,
   arkmeSelectedTimelineItems, arkmeTimelineOccurrenceKey,
@@ -24,6 +25,16 @@ const member: ArkmeConversationMemberItem = {
   role: 'member', status: 'active',
   isSelf: false, isOwner: false, joinedAtMillis: 1, recordCount: 7, mentionCount: 2,
 }
+
+it('renders a departed member as a clickable name without needing a current roster entry', () => {
+  const markup=renderToStaticMarkup(createElement(ArkmeMemberLeaveNotice,{
+    rowId:'member-event:leave-1',event:{eventId:'leave-1',type:'left',occurredAtMillis:1700000000000,displayName:'李四'},onOpen:()=>{},
+  }))
+  expect(markup).toContain('data-arkme-conversation-row="member-event:leave-1"')
+  expect(markup).toContain('aria-label="查看 李四"')
+  expect(markup).toContain('退出了群聊')
+  expect(markup).toMatch(/<button[^>]*>李四<\/button>/)
+})
 
 describe('chat member action menu placement', () => {
   const host = { left: 100, top: 50, width: 800, height: 600 }

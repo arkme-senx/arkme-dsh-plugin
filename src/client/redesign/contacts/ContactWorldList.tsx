@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ArkmeWorldFeedItem, ArkmeWorldFeedPage } from '../../../types.js'
 import { loadWorldImageDataUrl } from '../../ArkmeWorldSurface.js'
-import { arkmeEmojiPlainText } from '../../arkme-emoji.js'
+import { ArkmeRichText } from '../../ArkmeRichText.js'
 import contactWorldEmptyBase64 from '../../../../assets/branding/contact-world-empty.svg'
 
 export interface ContactDetailIdentity {
@@ -139,8 +139,8 @@ function ContactWorldImage({ imageRef, alt }: { imageRef: string; alt: string })
 
 function ContactWorldCard({ item }: { item: ArkmeWorldFeedItem }) {
   return <article className="arkme-contact-world-card" data-world-record-ref={item.recordRef}>
-    {item.headline.trim() !== '' && <h3 className="arkme-contact-world-headline">{arkmeEmojiPlainText(item.headline)}</h3>}
-    {item.textContent.trim() !== '' && <p className="arkme-contact-world-text">{arkmeEmojiPlainText(item.textContent)}</p>}
+    {item.headline.trim() !== '' && <h3 className="arkme-contact-world-headline"><ArkmeRichText text={item.headline} presentation="preview" /></h3>}
+    {item.textContent.trim() !== '' && <p className="arkme-contact-world-text"><ArkmeRichText text={item.textContent} presentation="preview" /></p>}
     {item.imageRefs.length > 0 && <div className="arkme-contact-world-images">
       {item.imageRefs.map((imageRef, index) => <ContactWorldImage
         key={imageRef}

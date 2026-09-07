@@ -4,30 +4,34 @@ import { callArkme } from '../api.js'
 
 export interface RecordingPlaybackController {
   activeItemRef: string
+  /** Timeline cursor: user selection while idle, owner-offset-mapped media position during playback. */
   positionAtMillis: number | undefined
   isPlaying: boolean
+  isLoading: boolean
   error: string
   playItem(item: ArkmeRecordingWorkbenchItem, seekAtMillis?: number): Promise<void>
   playAt(items: readonly ArkmeRecordingWorkbenchItem[], selectedAtMillis: number): Promise<void>
+  selectAt(items: readonly ArkmeRecordingWorkbenchItem[], selectedAtMillis: number): Promise<void>
   pause(): void
+  toggleAt(items: readonly ArkmeRecordingWorkbenchItem[], selectedAtMillis: number): Promise<void>
   toggle(fallbackItem?: ArkmeRecordingWorkbenchItem): Promise<void>
   stop(): void
 }
 
 export function useRecordingPlayback(mediaPath: string): RecordingPlaybackController {
-  const audioRef = useRef<HTMLAudioElement>()
+  const audioRef = useRef<{ audio: HTMLAudioElement; item: ArkmeRecordingWorkbenchItem; playback: ArkmeRecordingPlayback }>()
   const cleanupRef = useRef<() => void>()
   const requestAbortRef = useRef<AbortController>()
   const requestRevisionRef = useRef(0)
   const queueRef = useRef<{ items: readonly ArkmeRecordingWorkbenchItem[]; index: number }>()
-  const advancingRef = useRef(false)
   const [activeItemRef, setActiveItemRef] = useState('')
   const [positionAtMillis, setPositionAtMillis] = useState<number>()
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const releaseMedia = useCallback((clearPosition = true) => {
-    const audio = audioRef.current
+  const releaseMedia = useCallback((clearPosition = false) => {
+    const audio = audioRef.current?.audio
     cleanupRef.current?.()
     cleanupRef.current = undefined
     audio?.pause()
@@ -37,14 +41,19 @@ export function useRecordingPlayback(mediaPath: string): RecordingPlaybackContro
     setIsPlaying(false)
   }, [])
 
-  const stop = useCallback(() => {
+  const cancelRequest = useCallback(() => {
     requestRevisionRef.current += 1
     requestAbortRef.current?.abort()
     requestAbortRef.current = undefined
+    setIsLoading(false)
+  }, [])
+
+  const stop = useCallback(() => {
+    cancelRequest()
     queueRef.current = undefined
-    advancingRef.current = false
-    releaseMedia()
-  }, [releaseMedia])
+    setError('')
+    releaseMedia(true)
+  }, [cancelRequest, releaseMedia])
 
   useEffect(() => stop, [stop])
 
@@ -54,6 +63,8 @@ export function useRecordingPlayback(mediaPath: string): RecordingPlaybackContro
     const requestController = new AbortController()
     requestAbortRef.current = requestController
     setError(''); releaseMedia(false)
+    setPositionAtMillis(seekAtMillis)
+    setIsLoading(true)
     try {
       const playback = await callArkme<ArkmeRecordingPlayback>(
         'recordings.playback.open',
@@ -61,9 +72,8 @@ export function useRecordingPlayback(mediaPath: string): RecordingPlaybackContro
         requestController.signal,
       )
       if (requestRevisionRef.current !== requestRevision) return
-      if (requestAbortRef.current === requestController) requestAbortRef.current = undefined
       const audio = new Audio(`${mediaPath}?ref=${encodeURIComponent(playback.playbackRef)}`)
-      audioRef.current = audio
+      audioRef.current = { audio, item, playback }
       const relativeSeekMillis = Math.min(
         playback.endOffsetMillis,
         Math.max(playback.startOffsetMillis, playback.startOffsetMillis + seekAtMillis - item.startAtMillis),
@@ -71,17 +81,18 @@ export function useRecordingPlayback(mediaPath: string): RecordingPlaybackContro
       audio.currentTime = relativeSeekMillis / 1000
       setPositionAtMillis(seekAtMillis)
       const onTimeUpdate = () => {
-        if (audioRef.current !== audio) return
+        if (audioRef.current?.audio !== audio) return
         const mediaPositionMillis = audio.currentTime * 1_000
         setPositionAtMillis(item.startAtMillis + mediaPositionMillis - playback.startOffsetMillis)
-        if (mediaPositionMillis >= playback.endOffsetMillis) void continueQueue()
+        if (!audio.paused && mediaPositionMillis >= playback.endOffsetMillis) void continueQueue()
       }
-      const onPlay = () => { if (audioRef.current === audio) setIsPlaying(true) }
-      const onPause = () => { if (audioRef.current === audio) setIsPlaying(false) }
-      const onEnded = () => { if (audioRef.current === audio) void continueQueue() }
+      const onPlay = () => { if (audioRef.current?.audio === audio) setIsPlaying(true) }
+      const onPause = () => { if (audioRef.current?.audio === audio) setIsPlaying(false) }
+      const onEnded = () => { if (audioRef.current?.audio === audio) void continueQueue() }
       const onError = () => {
-        if (audioRef.current !== audio) return
-        setError('录音播放失败'); queueRef.current = undefined; releaseMedia()
+        if (audioRef.current?.audio !== audio) return
+        cancelRequest()
+        setError('录音播放失败'); queueRef.current = undefined; releaseMedia(false)
       }
       audio.addEventListener('timeupdate', onTimeUpdate)
       audio.addEventListener('play', onPlay)
@@ -102,31 +113,32 @@ export function useRecordingPlayback(mediaPath: string): RecordingPlaybackContro
       if (requestAbortRef.current === requestController) requestAbortRef.current = undefined
       setError(reason instanceof Error ? reason.message : '录音播放失败')
       queueRef.current = undefined
-      releaseMedia()
+      releaseMedia(false)
+    } finally {
+      if (requestRevisionRef.current === requestRevision) {
+        if (requestAbortRef.current === requestController) requestAbortRef.current = undefined
+        setIsLoading(false)
+      }
     }
   }
 
   const continueQueue = async () => {
-    if (advancingRef.current) return
     const queue = queueRef.current
     if (queue === undefined || queue.index + 1 >= queue.items.length) {
+      cancelRequest()
       queueRef.current = undefined
       releaseMedia()
       return
     }
     const next = queue.items[queue.index + 1]
     if (next === undefined) {
+      cancelRequest()
       queueRef.current = undefined
       releaseMedia()
       return
     }
-    advancingRef.current = true
     queueRef.current = { items: queue.items, index: queue.index + 1 }
-    try {
-      await openItem(next, next.startAtMillis)
-    } finally {
-      advancingRef.current = false
-    }
+    await openItem(next, next.startAtMillis)
   }
 
   const playItem = async (item: ArkmeRecordingWorkbenchItem, seekAtMillis = item.startAtMillis) => {
@@ -144,13 +156,60 @@ export function useRecordingPlayback(mediaPath: string): RecordingPlaybackContro
       return
     }
     queueRef.current = { items: ordered, index }
-    await openItem(ordered[index]!, selectedAtMillis)
+    const selectedItem = ordered[index]!
+    const active = audioRef.current
+    if (active !== undefined && !active.audio.paused
+      && active.item.itemRef === selectedItem.itemRef
+      && active.item.startAtMillis === selectedItem.startAtMillis
+      && active.item.endAtMillis === selectedItem.endAtMillis) {
+      try {
+        // Absolute day time and owner-relative media offset are different coordinates.
+        active.audio.currentTime = Math.min(active.playback.endOffsetMillis, Math.max(
+          active.playback.startOffsetMillis,
+          active.playback.startOffsetMillis + selectedAtMillis - selectedItem.startAtMillis,
+        )) / 1_000
+        setPositionAtMillis(selectedAtMillis)
+      } catch (reason) {
+        stop()
+        setPositionAtMillis(selectedAtMillis)
+        setError(reason instanceof Error ? reason.message : '录音播放失败')
+      }
+      return
+    }
+    await openItem(selectedItem, selectedAtMillis)
   }
 
-  const pause = () => { audioRef.current?.pause() }
+  const selectAt = async (items: readonly ArkmeRecordingWorkbenchItem[], selectedAtMillis: number) => {
+    // Read the live media/request, not a render snapshot: rapid selections can share a render.
+    if (requestAbortRef.current !== undefined || (audioRef.current !== undefined && !audioRef.current.audio.paused)) {
+      await playAt(items, selectedAtMillis)
+    } else {
+      stop()
+      setPositionAtMillis(selectedAtMillis)
+    }
+  }
+
+  const pause = () => {
+    if (requestAbortRef.current !== undefined) {
+      cancelRequest()
+      queueRef.current = undefined
+      releaseMedia(false)
+    } else {
+      audioRef.current?.audio.pause()
+    }
+  }
+
+  const toggleAt = async (items: readonly ArkmeRecordingWorkbenchItem[], selectedAtMillis: number) => {
+    if (requestAbortRef.current !== undefined || (audioRef.current !== undefined && !audioRef.current.audio.paused)) {
+      pause()
+    } else {
+      await playAt(items, selectedAtMillis)
+    }
+  }
 
   const toggle = async (fallbackItem?: ArkmeRecordingWorkbenchItem) => {
-    const audio = audioRef.current
+    if (requestAbortRef.current !== undefined) { pause(); return }
+    const audio = audioRef.current?.audio
     if (audio === undefined) {
       if (fallbackItem !== undefined) await playItem(fallbackItem)
       return
@@ -163,12 +222,12 @@ export function useRecordingPlayback(mediaPath: string): RecordingPlaybackContro
       setError('')
       await audio.play()
     } catch (reason) {
-      if (audioRef.current !== audio) return
+      if (audioRef.current?.audio !== audio) return
       setError(reason instanceof Error ? reason.message : '录音播放失败')
       queueRef.current = undefined
       releaseMedia()
     }
   }
 
-  return { activeItemRef, positionAtMillis, isPlaying, error, playItem, playAt, pause, toggle, stop }
+  return { activeItemRef, positionAtMillis, isPlaying, isLoading, error, playItem, playAt, selectAt, pause, toggleAt, toggle, stop }
 }

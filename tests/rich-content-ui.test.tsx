@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { create } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
+import { emojiSample } from './fixtures/emoji.js'
 import {
   ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, ArkmeRecordDetailContent,
   arkmeContainedImageRect, arkmeImagePreviewAnchoredTop,
@@ -255,6 +256,27 @@ describe('Arkme rich content presentation', () => {
     expect(html.match(/正文作为标题/gu)).toHaveLength(2)
     expect(html).toContain('6字')
     expect(html).not.toContain('</p>')
+  })
+
+  it.each(['forward', 'recording', 'article'] as const)('renders the same emoji content in %s previews', kind => {
+    const item: ArkmeTimelineItem = {
+      itemUid: 'preview', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,
+      title: '', textContent: '',
+    }
+    if (kind === 'forward') item.forwardRecords = { title: '转发', createdAtMillis: 1, summaryLines: [emojiSample], items: [] }
+    if (kind === 'recording') item.sharedRecording = {
+      sourceDigest: 'digest', detailRef: 'detail', sharedByUserId: 1, sharedAtMillis: 1,
+      displayAtMillis: 1, endAtMillis: 2, timeRangeText: '', title: '录音',
+      summary: emojiSample, transcript: '', transcriptAvailable: false, participants: [],
+    }
+    if (kind === 'article') Object.assign(item, { templateKind: 8, title: '长文', textContent: emojiSample })
+    const html = renderToStaticMarkup(<ArkmeMessageContent item={item} highlightMentions />)
+    expect(html).toContain('data-arkme-rich-emoji="heart_eyes"')
+    expect(html).toContain('data-arkme-rich-emoji="thumb_up"')
+    expect(html).toContain('👨‍👩‍👧‍👦 👍🏽 🇨🇳 [jm_emoji:unknown]')
+    expect(html).not.toContain('[jm_emoji:heart_eyes]')
+    expect(html).not.toContain('<a ')
+    expect(html).not.toContain('role="link"')
   })
 
   it('keeps short text content-sized without a shared minimum width', () => {
@@ -735,5 +757,20 @@ describe('Arkme rich content presentation', () => {
     }} />)
     expect(html).toContain('data-arkme-message-content="article"')
     expect(html).toContain('data-arkme-long-article="preview"')
+  })
+})
+describe('forward detail summary content', () => {
+  it('does not interpret a colon inside a token or URL as sender metadata', () => {
+    const summaryLines = ['[jm_emoji:heart_eyes][im_emoji:thumb_up]', 'https://example.com/path', '09:30 开会', '小林：完整摘要']
+    const markup = renderToStaticMarkup(<ForwardRecordsDetail item={{
+      itemUid: 'legacy-forward', senderName: '转发者', isMe: false, sendAtMillis: 1, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '转发快记', createdAtMillis: 1, items: [], summaryLines },
+    }} onClose={() => {}} />)
+    expect(markup).toContain('data-arkme-rich-emoji="heart_eyes"')
+    expect(markup).toContain('data-arkme-rich-emoji="thumb_up"')
+    expect(markup).toContain('href="https://example.com/path"')
+    expect(markup).toContain('09:30 开会')
+    expect(markup).toContain('小林：完整摘要')
+    expect(summaryLines[0]).toBe('[jm_emoji:heart_eyes][im_emoji:thumb_up]')
   })
 })

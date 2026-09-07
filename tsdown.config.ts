@@ -35,6 +35,9 @@ export default defineConfig([
     outDir: 'lib',
     format: 'cjs',
     platform: 'browser',
+    // tsdown defaults CJS resolution to Node even for a browser factory.
+    // Keep conditional imports (such as vfile's #minproc) on browser entries.
+    inputOptions: { platform: 'browser' },
     target: 'es2022',
     fixedExtension: false,
     dts: false,

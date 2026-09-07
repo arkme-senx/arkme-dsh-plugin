@@ -1,4 +1,5 @@
 import type { ArkmeSourceKind } from './types.js'
+import type { ArkmeTextFormat } from './markdown.js'
 
 export interface ArkmeRecordReeditPrepareInput {
   sourceRef: string
@@ -40,6 +41,7 @@ export interface ArkmeRecordReeditEditorSnapshot {
   itemUid: string
   title: string
   textContent: string
+  textFormat?: ArkmeTextFormat
   sendAtMillis: number
   templateKind: number
   displayKind: number

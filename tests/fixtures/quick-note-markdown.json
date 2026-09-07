@@ -1,0 +1,179 @@
+{
+  "version": 1,
+  "offsetUnit": "utf16",
+  "cases": [
+    {
+      "id": "historical-plain",
+      "format": "plain",
+      "source": "# 旧笔记 **照原样**",
+      "visible": [
+        "# 旧笔记 **照原样**"
+      ]
+    },
+    {
+      "id": "basic",
+      "format": "markdown",
+      "source": "# 标题\n\n正文 **加粗**、*斜体*、~~删除~~。\n下一行\n\n> 引用",
+      "visible": [
+        "标题",
+        "正文",
+        "加粗",
+        "斜体",
+        "删除",
+        "下一行",
+        "引用"
+      ]
+    },
+    {
+      "id": "gfm",
+      "format": "markdown",
+      "source": "- [ ] 未完成\n- [x] 已完成\n\n| 名称 | 数量 |\n| --- | --- |\n| 苹果 | 2 |",
+      "visible": [
+        "未完成",
+        "已完成",
+        "名称",
+        "数量",
+        "苹果",
+        "2"
+      ]
+    },
+    {
+      "id": "literal-code",
+      "format": "markdown",
+      "source": "`#代码 @阿明`\n\n```text\n    indented #代码\n```",
+      "visible": [
+        "#代码 @阿明",
+        "    indented #代码"
+      ]
+    },
+    {
+      "id": "unsupported",
+      "format": "markdown",
+      "source": "<b>保留 HTML</b>\n\n![图片](https://example.com/a.png) 后面的文字\n\n$公式$",
+      "visible": [
+        "<b>保留 HTML</b>",
+        "![图片](https://example.com/a.png)",
+        "后面的文字",
+        "$公式$"
+      ]
+    },
+    {
+      "id": "unicode-mention",
+      "format": "markdown",
+      "source": "😀 **中文** @阿明 #工作",
+      "visible": [
+        "😀",
+        "中文",
+        "@阿明",
+        "#工作"
+      ],
+      "mentions": [
+        {
+          "start_index": 10,
+          "length": 3,
+          "display_name": "阿明"
+        }
+      ]
+    },
+    {
+      "id": "escaped-literal",
+      "format": "markdown",
+      "source": "\\# 旧标题 \\*\\*普通文字\\*\\*",
+      "visible": [
+        "# 旧标题 **普通文字**"
+      ]
+    },
+    {
+      "id": "malformed-image",
+      "format": "markdown",
+      "source": "还没写完 ![图片",
+      "visible": [
+        "还没写完 ![图片"
+      ]
+    },
+    {
+      "id": "escaped-tag-punctuation",
+      "format": "markdown",
+      "source": "#a\\*b #a\\_b #a\\\\b #a&amp;b #版本&#x1F680;",
+      "visible": [
+        "#a*b",
+        "#a_b",
+        "#a\\b",
+        "#a&b",
+        "#版本🚀"
+      ],
+      "tags": [
+        "a*b",
+        "a_b",
+        "a\\b",
+        "a&b",
+        "版本🚀"
+      ]
+    },
+    {
+      "id": "protected-business-contexts",
+      "format": "markdown",
+      "source": "\\#literal &#35;entity [**#链接**](https://example.com) https://example.com/#fragment `#code` ![#image](https://example.com/a.png)",
+      "visible": [
+        "#literal",
+        "#entity",
+        "#链接",
+        "#fragment",
+        "#code",
+        "![#image](https://example.com/a.png)"
+      ],
+      "tags": []
+    },
+    {
+      "id": "literal-html-blocks",
+      "format": "markdown",
+      "source": "<b>保留 HTML</b>\n\n<div>块级 #HTML **原文**</div>\n\n<script>alert(1)</script>",
+      "visible": [
+        "<b>保留 HTML</b>",
+        "<div>块级 #HTML **原文**</div>",
+        "<script>alert(1)</script>"
+      ],
+      "tags": []
+    },
+    {
+      "id": "formatted-tags",
+      "format": "markdown",
+      "source": "# 标题 **#工作**\n\n- __＃重点__\n\n| 标签 |\n| --- |\n| #版本🚀 |",
+      "visible": [
+        "#工作",
+        "＃重点",
+        "#版本🚀"
+      ],
+      "tags": [
+        "工作",
+        "重点",
+        "版本🚀"
+      ]
+    },
+    {
+      "id": "literal-inline-html",
+      "format": "markdown",
+      "source": "前 <span title=\"#属性\">正文</span> <!-- #注释 --> #标签",
+      "visible": [
+        "<span title=\"#属性\">正文</span>",
+        "<!-- #注释 -->",
+        "#标签"
+      ],
+      "tags": [
+        "标签"
+      ]
+    },
+    {
+      "id": "inline-spaces-before-tag",
+      "format": "markdown",
+      "source": "**甲**    #工作",
+      "visible": [
+        "甲",
+        "#工作"
+      ],
+      "tags": [
+        "工作"
+      ]
+    }
+  ]
+}

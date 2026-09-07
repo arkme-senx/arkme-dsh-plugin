@@ -563,6 +563,28 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('keeps emoji intact at all calendar projection limits without changing the raw source', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const original = '文'.repeat(3995) + '[jm_emoji:heart_eyes]'
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      if (String(input).endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (String(input).endsWith('/api/v1/calendar/records/query')) return json({ code: 200, data: {
+        items: [original, '文'.repeat(155) + '[im_emoji:thumb_up]', '文'.repeat(159) + '👨‍👩‍👧‍👦'].map((text, i) => ({
+          record_uid: `record-${i}`, send_at: 1_787_310_000_000,
+          record_core: { content_access_state: 1, title: '', text_content: text },
+        })), has_more: false,
+      } })
+      throw new Error(`unexpected ${String(input)}`)
+    })
+    const page = await service.calendarRecords({ bucketDate: '2026-08-21' })
+    expect(page.items[0]?.textContent).toBe('文'.repeat(3995) + '…[已截断]')
+    expect(page.items[1]?.textContent).toBe('文'.repeat(155) + '[im_emoji:thumb_up]')
+    expect(page.items[1]?.preview).toBe('文'.repeat(155) + '…[已截断]')
+    expect(page.items[2]?.preview).toBe('文'.repeat(159) + '…[已截断]')
+    expect(original).toBe('文'.repeat(3995) + '[jm_emoji:heart_eyes]')
+  })
+
   it('reads record calendar buckets and day records from the Record origin', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -3102,7 +3124,7 @@ describe('ArkmeService', () => {
     })
     expect(result).toMatchObject({ itemUid: 'record-human-mention', sequence: 18 })
     expect(requests.some(request => request.url.endsWith('/api/v1/chats/ai-polish/settings/query'))).toBe(false)
-    expect(requests.at(-1)?.body).toMatchObject({
+    expect(requests.filter(request => request.url.endsWith('/api/v1/chats/records/send')).at(-1)?.body).toMatchObject({
       chat_session_uid: 'group-mention',
       text_content: '@Tison 请看',
       content_payload: {
@@ -3116,7 +3138,7 @@ describe('ArkmeService', () => {
         },
       },
     })
-    expect(JSON.stringify(requests.at(-1)?.body)).not.toContain('我的私有备注')
+    expect(JSON.stringify(requests.filter(request => request.url.endsWith('/api/v1/chats/records/send')).at(-1)?.body)).not.toContain('我的私有备注')
 
     await expect(service.sendSourceText(sourceRef, '@Tison 请看', {
       recordUid: 'record-v1-member-mention', relationUid: 'relation-v1-member-mention',
@@ -3133,7 +3155,7 @@ describe('ArkmeService', () => {
     }, {
       recordUid: 'record-rich-human-mention', relationUid: 'relation-rich-human-mention',
     })).resolves.toMatchObject({ itemUid: 'record-rich-human-mention', sequence: 18 })
-    expect(requests.at(-1)?.body).toMatchObject({
+    expect(requests.filter(request => request.url.endsWith('/api/v1/chats/records/send')).at(-1)?.body).toMatchObject({
       template_kind: 2,
       text_content: '@Tison 图片',
       content_payload: {
@@ -3149,7 +3171,7 @@ describe('ArkmeService', () => {
       recordUid: 'record-utf16-human-mention', relationUid: 'relation-utf16-human-mention',
       humanMentions: [{ mentionRef, startIndex: 3, length: 6 }],
     })).resolves.toMatchObject({ itemUid: 'record-utf16-human-mention', sequence: 18 })
-    expect(requests.at(-1)?.body).toMatchObject({
+    expect(requests.filter(request => request.url.endsWith('/api/v1/chats/records/send')).at(-1)?.body).toMatchObject({
       text_content: '😀 @Tison',
       content_payload: {
         mention_metadata: {
@@ -3169,7 +3191,7 @@ describe('ArkmeService', () => {
         { mentionRef: secondMentionRef, startIndex: 7, length: 6 },
       ],
     })).resolves.toMatchObject({ itemUid: 'record-same-name-human-mentions', sequence: 18 })
-    expect(requests.at(-1)?.body).toMatchObject({
+    expect(requests.filter(request => request.url.endsWith('/api/v1/chats/records/send')).at(-1)?.body).toMatchObject({
       content_payload: {
         mention_metadata: {
           human_mentions: [
@@ -3260,7 +3282,7 @@ describe('ArkmeService', () => {
       humanMentions: [{ all: true, startIndex: 0, length: 4 }],
     })
     expect(allResult).toMatchObject({ itemUid: 'record-all-mention', sequence: 18 })
-    expect(requests.at(-1)?.body).toMatchObject({
+    expect(requests.filter(request => request.url.endsWith('/api/v1/chats/records/send')).at(-1)?.body).toMatchObject({
       chat_session_uid: 'group-mention',
       text_content: '@所有人 请看',
       content_payload: {
@@ -3284,7 +3306,7 @@ describe('ArkmeService', () => {
     }, {
       recordUid: 'record-rich-all-mention', relationUid: 'relation-rich-all-mention',
     })).resolves.toMatchObject({ itemUid: 'record-rich-all-mention', sequence: 18 })
-    expect(requests.at(-1)?.body).toMatchObject({
+    expect(requests.filter(request => request.url.endsWith('/api/v1/chats/records/send')).at(-1)?.body).toMatchObject({
       template_kind: 2,
       content_payload: {
         payload_kind: 2,

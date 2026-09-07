@@ -374,8 +374,8 @@ export function projectRecordingTranscripts(
       const listedSpeakerName = stringValue(
         formalSpeaker.nick_name ?? formalSpeaker.nickname ?? formalSpeaker.display_name ?? formalSpeaker.name,
       ).trim()
-      // A manually named speaker must not be overwritten by the person's public nickname.
-      const speakerLabel = listedSpeakerName || profile?.displayName.trim()
+      // Use the viewer's profile name for self; preserve manual names for other speakers.
+      const speakerLabel = (isSelf ? profile?.displayName.trim() : '') || listedSpeakerName || profile?.displayName.trim()
         || (speakerNumber >= 0 ? `说话人 ${speakerNumber}` : '未知说话人')
       const startOffset = numberValue(row.s ?? row.start_at)
       const endOffset = Math.max(startOffset, numberValue(row.e ?? row.end_at))

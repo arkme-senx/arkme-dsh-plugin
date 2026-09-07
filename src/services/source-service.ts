@@ -1,3 +1,4 @@
+import { arkmeRecordTextFormat, arkmeMarkdownPlainText } from '../markdown.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -29,6 +30,7 @@ import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './se
 import { arkmeMentionMetadataMentionsViewer } from '../mention-metadata.js'
 import { arkmeMediaKind } from '../file-transfer-contract.js'
 import { projectArkmeChatAttention, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
+import { arkmeEmojiTokenSafePrefix, arkmeHasKnownEmojiToken } from '../arkme-emoji-text.js'
 
 export interface ArkmeSourceRefPayload {
   version: 1
@@ -210,53 +212,121 @@ function isSourceKind(value: unknown): value is ArkmeSourceKind {
 }
 
 function attachmentPreviewKind(item: Record<string, unknown>): 'image' | 'video' | 'audio' | 'file' {
+  const fileType = integerLikeValue(item.file_type ?? item.fileType)
+  if (fileType === 6) return 'file'
+  if (fileType === 3) return 'video'
+  if (fileType === 1 || fileType === 4) return 'image'
+  if (fileType === 2) return 'audio'
   const fileName = stringValue(item.file_name ?? item.fileName).trim()
   const mimeType = stringValue(item.mime_type ?? item.mimeType).trim()
   const detectedKind = arkmeMediaKind(mimeType, fileName)
   if (detectedKind !== undefined) return detectedKind
   const fileKind = integerLikeValue(item.file_kind ?? item.fileKind)
+  if (fileKind === 4) return 'file'
+  if (fileKind === 3) return 'video'
   if (fileKind === 1) return 'image'
   if (fileKind === 2) return 'audio'
-  if (fileKind === 3) return 'video'
   return 'file'
 }
 
-export function arkmeChatConversationPreview(raw: Record<string, unknown>): string {
-  const direct = stringValue(raw.text_content ?? raw.title ?? raw.summary).trim()
-  if (direct !== '') return direct.slice(0, 300)
-  const content = objectValue(raw.content_payload ?? raw.payload)
-  const nested = stringValue(content.text_content ?? content.title ?? content.summary).trim()
-  if (nested !== '') return nested.slice(0, 300)
-  if (objectValue(content.voice).duration !== undefined) return '[语音]'
-  const displayItems = listValue(raw.media_display_items ?? raw.mediaDisplayItems).map(objectValue)
+function conversationPreviewObjects(raw: Record<string, unknown>): Record<string, unknown>[] {
+  const values: Record<string, unknown>[] = []
+  const seen = new Set<Record<string, unknown>>()
+  const queue: Array<{ value: Record<string, unknown>; depth: number }> = [{ value: raw, depth: 0 }]
+  while (queue.length > 0) {
+    const next = queue.shift()!
+    if (seen.has(next.value)) continue
+    seen.add(next.value)
+    values.push(next.value)
+    if (next.depth >= 4) continue
+    for (const key of ['record', 'payload', 'record_payload', 'recordPayload', 'content_payload', 'contentPayload']) {
+      const child = objectValue(next.value[key])
+      if (Object.keys(child).length > 0) queue.push({ value: child, depth: next.depth + 1 })
+    }
+  }
+  return values
+}
+
+function normalizedConversationText(values: readonly Record<string, unknown>[]): string {
+  for (const keys of [
+    ['text_content', 'textContent', 'text', 'content'],
+    ['previewText', 'summary', 'title', 'preview'],
+  ]) {
+    for (const value of values) {
+      for (const key of keys) {
+        const source = stringValue(value[key])
+        const text = (arkmeRecordTextFormat(value) === 'markdown' ? arkmeMarkdownPlainText(source) : source).replace(/\s+/gu, ' ').trim()
+        if (text !== '') return text
+      }
+    }
+  }
+  return ''
+}
+
+function conversationMediaMarker(values: readonly Record<string, unknown>[]): string {
+  const displayItems = values.flatMap(value => [
+    ...listValue(value.media_display_items), ...listValue(value.mediaDisplayItems),
+  ]).map(objectValue)
   const displayByAsset = new Map<string, Record<string, unknown>>()
   for (const item of displayItems) {
     const fileAssetUid = stringValue(item.file_asset_uid ?? item.fileAssetUid).trim()
     if (fileAssetUid !== '') displayByAsset.set(fileAssetUid, item)
   }
-  const mediaRefs = listValue(content.media_refs ?? content.mediaRefs).map(objectValue)
-  const attachments: Record<string, unknown>[] = (mediaRefs.length > 0
+  const mediaRefs = values.flatMap(value => [
+    ...listValue(value.media_refs), ...listValue(value.mediaRefs),
+  ]).map(objectValue)
+  const attachments = (mediaRefs.length > 0
     ? mediaRefs.map(ref => ({
         ...(displayByAsset.get(stringValue(ref.file_asset_uid ?? ref.fileAssetUid).trim()) ?? {}),
         ...ref,
       }))
-    : displayItems)
-    .filter(item => integerLikeValue(item.content_file_role ?? item.contentFileRole) !== 4)
-    .sort((left, right) => integerLikeValue(left.sort_order ?? left.sortOrder) - integerLikeValue(right.sort_order ?? right.sortOrder))
-  const firstAttachment = attachments[0]
-  if (firstAttachment !== undefined) {
-    const kind = attachmentPreviewKind(firstAttachment)
-    return kind === 'image' ? '[图片]' : kind === 'video' ? '[视频]' : kind === 'audio' ? '[语音]' : '[文件]'
+    : displayItems).filter(item => integerLikeValue(item.content_file_role ?? item.contentFileRole) !== 4)
+  const kinds = new Set<'image' | 'video' | 'audio' | 'file'>()
+  let sticker = values.some(value => stringValue(value.render_kind ?? value.renderKind).trim() === 'sticker'
+    || Object.keys(objectValue(value.sticker)).length > 0)
+  for (const attachment of attachments) {
+    if (integerLikeValue(attachment.render_role ?? attachment.renderRole) === 3
+      || stringValue(attachment.render_kind ?? attachment.renderKind).trim() === 'sticker') {
+      sticker = true
+      continue
+    }
+    kinds.add(attachmentPreviewKind(attachment))
   }
-  if (Object.keys(objectValue(content.structured_anchor)).length > 0) return '[卡片]'
-  return ''
+  const hasVoice = values.some(value => {
+    const voice = value.voice
+    return voice !== null && typeof voice === 'object'
+  })
+  if (kinds.has('file')) return '[文件]'
+  if (kinds.has('video')) return '[视频]'
+  if (kinds.has('image')) return '[图片]'
+  if (kinds.has('audio') || hasVoice) return '[语音]'
+  return sticker ? '[表情]' : ''
+}
+
+export function arkmeChatConversationPreview(raw: Record<string, unknown>): string {
+  const values = conversationPreviewObjects(raw)
+  const text = normalizedConversationText(values)
+  let marker = conversationMediaMarker(values)
+  if (marker === '[表情]' && arkmeHasKnownEmojiToken(text)) marker = ''
+  const preview = `${marker}${text}`
+  if (preview !== '') return arkmeEmojiTokenSafePrefix(preview, 300)
+  return values.some(value => Object.keys(objectValue(value.structured_anchor ?? value.structuredAnchor)).length > 0)
+    ? '[卡片]' : ''
 }
 
 export function arkmeTimelineConversationPreview(item: ArkmeTimelineItem): string {
-  const text = item.textContent.trim() || item.title.trim()
-  if (text !== '') return text
-  const kind = item.contentBlocks?.[0]?.kind
-  return kind === 'image' ? '[图片]' : kind === 'video' ? '[视频]' : kind === 'audio' ? '[语音]' : kind === 'file' ? '[文件]' : '非文本内容'
+  const projected = item.conversationPreview?.trim()
+  if (projected !== undefined && projected !== '') return projected
+  const text = ((item.textFormat === 'markdown' ? arkmeMarkdownPlainText(item.textContent) : item.textContent.trim()) || item.title.trim()).replace(/\s+/gu, ' ')
+  const blocks = item.contentBlocks ?? []
+  const kinds = new Set(blocks.filter(block => block.renderRole !== 3).map(block => block.kind))
+  let marker = kinds.has('file') ? '[文件]'
+    : kinds.has('video') ? '[视频]'
+      : kinds.has('image') ? '[图片]'
+        : kinds.has('audio') ? '[语音]'
+          : blocks.some(block => block.renderRole === 3) ? '[表情]' : ''
+  if (marker === '[表情]' && arkmeHasKnownEmojiToken(text)) marker = ''
+  return `${marker}${text}` || '非文本内容'
 }
 
 function chunksOf<T>(values: readonly T[], size: number): T[][] {
@@ -1757,6 +1827,23 @@ export class SourceService {
       .update(`chat-timeline-item-key-v1:${String(userId)}:${chatSessionUid.trim()}:${relationUid.trim()}`)
       .digest('base64url')
     return `arkme-chat-timeline-item-v1.${digest}`
+  }
+
+  async chatPreparingActorKey(viewerUserId: number, chatSessionUid: string, actorUserId: number): Promise<string> {
+    const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
+      .update(`chat-preparing-actor-v1:${String(viewerUserId)}:${chatSessionUid.trim()}:${String(actorUserId)}`)
+      .digest('base64url')
+    return `arkme-chat-preparing-actor-v1.${digest}`
+  }
+
+  async chatPreparingActorPresentation(
+    viewerUserId: number, chatSessionUid: string, actorUserId: number,
+  ): Promise<{ actorKey: string; avatarRef: string }> {
+    const [actorKey, avatarRef] = await Promise.all([
+      this.chatPreparingActorKey(viewerUserId, chatSessionUid, actorUserId),
+      this.profile.sealProfileImageRef(viewerUserId, actorUserId),
+    ])
+    return { actorKey, avatarRef }
   }
 
   async topicHierarchyKey(userId: number, topicUid: string): Promise<string> {

@@ -86,6 +86,17 @@ function fixture(options: {
 }
 
 describe('RelatedQuickNoteService', () => {
+  it('keeps preview and title limits without splitting emoji tokens', async () => {
+    const test = fixture({ relatedResponse: { items: [{
+      record_uid: 'record-b', record_owner_user_id: 13,
+      title: '文'.repeat(495) + '[jm_emoji:heart_eyes]',
+      text_preview: '文'.repeat(1995) + '[im_emoji:thumb_up]',
+    }] } })
+    const result = await test.service.list(locator)
+    expect(result.items[0]?.title).toBe('文'.repeat(495))
+    expect(result.items[0]?.textPreview).toBe('文'.repeat(1995))
+  })
+
   it('projects the new response in source order without leaking routing fields', async () => {
     const test = fixture({
       lockedRecordUids: ['record-locked'],

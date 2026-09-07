@@ -106,21 +106,28 @@ describe('Arkme Chat message notification projection', () => {
         return json({ items: [
           {
             relation: {
-              record_uid: 'record-9', sender_user_id: 20002,
+              record_uid: 'record-9', rel_uid: 'relation-9', sender_user_id: 20002,
               display_name_snapshot: '小林', attach_at: 1_700_000_000_009, seq: 9,
             },
             record: { status: 1, payload: { text_content: '第一条消息' } },
           },
           {
             relation: {
-              record_uid: 'record-10', sender_user_id: 20002,
+              record_uid: 'record-10', rel_uid: 'wrong-relation-10', sender_user_id: 30003,
+              display_name_snapshot: '错误发送者', attach_at: 1_700_000_000_009, seq: 9,
+            },
+            record: { status: 1, payload: { text_content: '不能借用的同记录消息' } },
+          },
+          {
+            relation: {
+              record_uid: 'record-10', rel_uid: 'relation-10', sender_user_id: 20002,
               display_name_snapshot: '小林', attach_at: 1_700_000_000_010, seq: 10,
             },
             record: { status: 1, payload: { text_content: '第二条消息' } },
           },
           {
             relation: {
-              record_uid: 'record-11', sender_user_id: 20002,
+              record_uid: 'record-11', rel_uid: 'relation-11', sender_user_id: 20002,
               display_name_snapshot: '小林', attach_at: 1_700_000_000_011, seq: 11,
             },
             record: { status: 1, payload: { title: '附件标题', file_uid: 'file-1' } },
@@ -140,10 +147,11 @@ describe('Arkme Chat message notification projection', () => {
     })
 
     const encoder = new TextEncoder()
+    const eventAtMillis = Date.now()
     for (const [eventUid, sequence, eventAt] of [
-      ['event-9', 9, 1_700_000_000_009],
-      ['event-10', 10, 1_700_000_000_010],
-      ['event-11', 11, 1_700_000_000_011],
+      ['event-9', 9, eventAtMillis + 9],
+      ['event-10', 10, eventAtMillis + 10],
+      ['event-11', 11, eventAtMillis + 11],
     ] as const) {
       sse.enqueue(encoder.encode(`data: ${JSON.stringify({
         t: 17,
@@ -171,10 +179,109 @@ describe('Arkme Chat message notification projection', () => {
           sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./),
         }),
         expect.objectContaining({ eventUid: 'event-10', title: '林溪', body: '第二条消息' }),
-        expect.objectContaining({ eventUid: 'event-11', title: '林溪', body: '非文本内容' }),
+        expect.objectContaining({ eventUid: 'event-11', title: '林溪', body: '附件标题' }),
       ])
     expect(requestBodies.find(request => request.url.endsWith('/api/v1/chat/timeline/tail'))?.body)
       .toMatchObject({ chat_session_uid: 'chat-private-1', after_seq: 8, limit: 50 })
+    unsubscribe()
+    stop()
+  })
+
+  it('notifies peer message extensions while keeping other timeline changes silent', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let sse!: ReadableStreamDefaultController<Uint8Array>
+    const eventAtMillis = Date.now()
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      if (url === 'https://im.test/api/v1/sse/chat/noty') {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            sse = controller
+            init?.signal?.addEventListener('abort', () => {
+              try { controller.error(new DOMException('aborted', 'AbortError')) } catch { /* already closed */ }
+            }, { once: true })
+          },
+        }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+      }
+      if (url.endsWith('/api/v1/chats/unread-snapshot')) return unreadSummary(3)
+      if (url.endsWith('/api/v1/chats/list')) return json({ items: [privateBundle(8, 0)], has_more: false })
+      if (url.endsWith('/api/v1/chats/display-snapshots')) return json({ items: [privateBundle(11, 3)] })
+      if (url.endsWith('/api/v1/chat/timeline/tail')) return json({ items: [
+        {
+          relation: {
+            record_uid: 'extension-9', rel_uid: 'extension-relation-9', sender_user_id: 20002,
+            display_name_snapshot: '小林', attach_at: eventAtMillis + 9, seq: 9,
+          },
+          record: { status: 1, payload: { text_content: '[jm_emoji:angry_face]' } },
+        },
+        {
+          relation: {
+            record_uid: 'extension-10', rel_uid: 'extension-relation-10', sender_user_id: 20002,
+            display_name_snapshot: '小林', attach_at: eventAtMillis + 10, seq: 10,
+          },
+          record: { status: 1, payload: { text_content: '[jm_emoji:cute_face]' } },
+        },
+        {
+          relation: {
+            record_uid: 'extension-11', rel_uid: 'extension-relation-11', sender_user_id: 20002,
+            display_name_snapshot: '小林', attach_at: eventAtMillis + 11, seq: 11,
+          },
+          record: { status: 1, payload: { text_content: 'cash' } },
+        },
+      ] })
+      throw new Error(`unexpected URL ${url}`)
+    })
+    const service = new ArkmeService(config, sessions, new MinimalStateStore(), fetchImpl)
+    const events: Array<Record<string, unknown>> = []
+    const unsubscribe = service.subscribeChatRealtime(event => { events.push(event as unknown as Record<string, unknown>) })
+    const stop = service.startChatRealtime()
+    await vi.waitFor(() => {
+      expect(fetchImpl.mock.calls.some(call => String(call[0]).endsWith('/api/v1/chats/list'))).toBe(true)
+    })
+
+    const encoder = new TextEncoder()
+    for (const [sequence, eventUid] of [[9, 'extension-event-9'], [10, 'extension-event-10'], [11, 'extension-event-11']] as const) {
+      sse.enqueue(encoder.encode(`data: ${JSON.stringify({
+        t: 20,
+        event_uid: eventUid,
+        chat_session_uid: 'chat-private-1',
+        rel_uid: `extension-relation-${String(sequence)}`,
+        latest_seq: sequence,
+        actor_user_id: 20002,
+        change_kind: 4,
+        change_version: eventAtMillis + sequence,
+        relation_terminal: false,
+        event_at: eventAtMillis + sequence,
+        source_client_id: 0,
+      })}\n\n`))
+    }
+
+    await vi.waitFor(() => {
+      expect(events.filter(event => event.type === 'message-notification')).toHaveLength(3)
+    }, { timeout: 2_000 })
+    expect(events.filter(event => event.type === 'message-notification').map(event => event.notification))
+      .toEqual([
+        expect.objectContaining({ eventUid: 'extension-event-9', body: '😡' }),
+        expect.objectContaining({ eventUid: 'extension-event-10', body: '🥹' }),
+        expect.objectContaining({ eventUid: 'extension-event-11', body: 'cash' }),
+      ])
+
+    sse.enqueue(encoder.encode(`data: ${JSON.stringify({
+      t: 20,
+      event_uid: 'reedit-event-11',
+      chat_session_uid: 'chat-private-1',
+      rel_uid: 'extension-relation-11',
+      latest_seq: 11,
+      actor_user_id: 20002,
+      change_kind: 3,
+      change_version: eventAtMillis + 12,
+      relation_terminal: false,
+      event_at: eventAtMillis + 12,
+      source_client_id: 0,
+    })}\n\n`))
+    await vi.waitFor(() => { expect(events.filter(event => event.type === 'timeline-changed')).toHaveLength(4) })
+    expect(events.filter(event => event.type === 'message-notification')).toHaveLength(3)
     unsubscribe()
     stop()
   })
@@ -250,6 +357,7 @@ describe('Arkme Chat message notification projection', () => {
     await vi.waitFor(() => { expect(fetchImpl.mock.calls.some(call => String(call[0]).endsWith('/api/v1/chats/list'))).toBe(true) })
 
     const encoder = new TextEncoder()
+    const eventAtMillis = Date.now()
     for (const [eventUid, uid, senderUserId] of [
       ['event-self', 'chat-self', 10001],
       ['event-muted', 'group-muted', 20002],
@@ -258,7 +366,7 @@ describe('Arkme Chat message notification projection', () => {
     ] as const) {
       sse.enqueue(encoder.encode(`data: ${JSON.stringify({
         t: 17, event_uid: eventUid, chat_session_uid: uid, rel_uid: `relation-${uid}`,
-        latest_seq: 5, sender_user_id: senderUserId, event_at: 105,
+        latest_seq: 5, sender_user_id: senderUserId, event_at: eventAtMillis,
       })}\n\n`))
     }
 
@@ -283,13 +391,94 @@ describe('Arkme Chat message notification projection', () => {
     stop()
   })
 
-  it('reconciles a reconnected generation without notifying replayed messages', async () => {
+  it('keeps a post-connect live hint while the reconnect baseline is still loading', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let sse!: ReadableStreamDefaultController<Uint8Array>
+    let baselineRequested = false
+    const connectionStartedAtMillis = Math.floor(Date.now() / 1_000) * 1_000
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      if (url === 'https://im.test/api/v1/sse/chat/noty') {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            sse = controller
+            init?.signal?.addEventListener('abort', () => {
+              try { controller.error(new DOMException('aborted', 'AbortError')) } catch { /* already closed */ }
+            }, { once: true })
+          },
+        }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream',
+            Date: new Date(connectionStartedAtMillis).toUTCString(),
+          },
+        })
+      }
+      if (url.endsWith('/api/v1/chats/unread-snapshot')) return unreadSummary()
+      if (url.endsWith('/api/v1/chats/list')) {
+        baselineRequested = true
+        await new Promise(resolve => { setTimeout(resolve, 600) })
+        return json({ items: [privateBundle(9, 1)], has_more: false })
+      }
+      if (url.endsWith('/api/v1/chats/display-snapshots')) return json({ items: [privateBundle(9, 1)] })
+      if (url.endsWith('/api/v1/chat/timeline/tail')) return json({ items: [
+        {
+          relation: {
+            record_uid: 'record-replayed-8', rel_uid: 'relation-replayed-8', sender_user_id: 20002,
+            display_name_snapshot: '小林', attach_at: connectionStartedAtMillis - 1_000, seq: 8,
+          },
+          record: { status: 1, payload: { text_content: '断连期间旧消息' } },
+        },
+        {
+          relation: {
+            record_uid: 'record-live-9', rel_uid: 'relation-live-9', sender_user_id: 20002,
+            display_name_snapshot: '小林', attach_at: connectionStartedAtMillis + 1_000, seq: 9,
+          },
+          record: { status: 1, payload: { text_content: '建连后的新消息' } },
+        },
+      ] })
+      throw new Error(`unexpected URL ${url}`)
+    })
+    const service = new ArkmeService(config, sessions, new MinimalStateStore(), fetchImpl)
+    const events: Array<Record<string, unknown>> = []
+    const unsubscribe = service.subscribeChatRealtime(event => { events.push(event as unknown as Record<string, unknown>) })
+    const stop = service.startChatRealtime()
+    await vi.waitFor(() => {
+      expect(sse).toBeDefined()
+      expect(baselineRequested).toBe(true)
+    })
+
+    const encoder = new TextEncoder()
+    sse.enqueue(encoder.encode(`data: ${JSON.stringify({
+      t: 17, event_uid: 'event-replayed-8', chat_session_uid: 'chat-private-1',
+      rel_uid: 'relation-replayed-8', latest_seq: 8, sender_user_id: 20002,
+      event_at: connectionStartedAtMillis - 1_000,
+    })}\n\ndata: ${JSON.stringify({
+      t: 17, event_uid: 'event-live-9', chat_session_uid: 'chat-private-1',
+      rel_uid: 'relation-live-9', latest_seq: 9, sender_user_id: 20002,
+      event_at: connectionStartedAtMillis + 1_000,
+    })}\n\n`))
+
+    await vi.waitFor(() => {
+      expect(events.filter(event => event.type === 'message-notification')).toHaveLength(1)
+    }, { timeout: 2_000 })
+    expect(events.find(event => event.type === 'message-notification')?.notification)
+      .toEqual(expect.objectContaining({ eventUid: 'event-live-9', body: '建连后的新消息' }))
+    await new Promise(resolve => { setTimeout(resolve, 700) })
+    expect(events.filter(event => event.type === 'message-notification')).toHaveLength(1)
+    unsubscribe()
+    stop()
+  })
+
+  it('keeps a baseline-proven live hint across reconnect without notifying a replay', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const sseControllers: Array<ReadableStreamDefaultController<Uint8Array>> = []
     let authoritativeSequence = 8
     let projectedSequence = 8
     let baselineRequestCount = 0
+    let timelineVisible = false
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
@@ -312,17 +501,22 @@ describe('Arkme Chat message notification projection', () => {
         return json({ items: [privateBundle(projectedSequence, 1)] })
       }
       if (url.endsWith('/api/v1/chat/timeline/tail')) {
-        return json({ items: [{
+        return json({ items: timelineVisible ? [{
           relation: {
-            record_uid: `record-${String(projectedSequence)}`, sender_user_id: 20002,
+            record_uid: `record-${String(projectedSequence)}`, rel_uid: `relation-${String(projectedSequence)}`,
+            sender_user_id: 20002,
             display_name_snapshot: '小林', attach_at: projectedSequence, seq: projectedSequence,
           },
           record: { status: 1, payload: { text_content: `消息 ${String(projectedSequence)}` } },
-        }] })
+        }] : [] })
       }
       throw new Error(`unexpected URL ${url}`)
     })
     const service = new ArkmeService(config, sessions, new MinimalStateStore(), fetchImpl)
+    const realtime = (service as unknown as { realtime: {
+      reconnect(): void
+      handleChatRealtimeNotice(notice: unknown): void
+    } }).realtime
     const events: Array<Record<string, unknown>> = []
     const unsubscribe = service.subscribeChatRealtime(event => { events.push(event as unknown as Record<string, unknown>) })
     const stop = service.startChatRealtime()
@@ -331,34 +525,52 @@ describe('Arkme Chat message notification projection', () => {
       expect(baselineRequestCount).toBe(1)
     })
 
-    authoritativeSequence = 10
-    projectedSequence = 10
-    sseControllers[0]?.close()
-    await vi.waitFor(() => {
-      expect(sseControllers).toHaveLength(2)
-      expect(baselineRequestCount).toBe(2)
-    }, { timeout: 3_000 })
-
     const encoder = new TextEncoder()
-    sseControllers[1]?.enqueue(encoder.encode(`data: ${JSON.stringify({
-      t: 17, event_uid: 'event-replayed-10', chat_session_uid: 'chat-private-1',
-      rel_uid: 'relation-10', latest_seq: 10, sender_user_id: 20002, event_at: 10,
+    const eventAtMillis = Date.now()
+    projectedSequence = 9
+    sseControllers[0]?.enqueue(encoder.encode(`data: ${JSON.stringify({
+      t: 17, event_uid: 'event-live-9', chat_session_uid: 'chat-private-1',
+      rel_uid: 'relation-9', latest_seq: 9, sender_user_id: 20002, event_at: eventAtMillis,
     })}\n\n`))
     await vi.waitFor(() => {
       expect(events.filter(event => event.type === 'sessions-delta')).toHaveLength(1)
     }, { timeout: 2_000 })
-    expect(events.filter(event => event.type === 'message-notification')).toHaveLength(0)
 
-    projectedSequence = 11
-    sseControllers[1]?.enqueue(encoder.encode(`data: ${JSON.stringify({
-      t: 17, event_uid: 'event-live-11', chat_session_uid: 'chat-private-1',
-      rel_uid: 'relation-11', latest_seq: 11, sender_user_id: 20002, event_at: 11,
-    })}\n\n`))
+    authoritativeSequence = 9
+    realtime.reconnect()
+    await vi.waitFor(() => {
+      expect(sseControllers).toHaveLength(2)
+      expect(baselineRequestCount).toBe(2)
+    }, { timeout: 2_000 })
+    timelineVisible = true
     await vi.waitFor(() => {
       expect(events.filter(event => event.type === 'message-notification')).toHaveLength(1)
     }, { timeout: 2_000 })
     expect(events.find(event => event.type === 'message-notification')?.notification)
-      .toEqual(expect.objectContaining({ eventUid: 'event-live-11', body: '消息 11' }))
+      .toEqual(expect.objectContaining({ eventUid: 'event-live-9', body: '消息 9' }))
+
+    sseControllers[1]?.enqueue(encoder.encode(`data: ${JSON.stringify({
+      t: 17, event_uid: 'event-replayed-9', chat_session_uid: 'chat-private-1',
+      rel_uid: 'relation-9', latest_seq: 9, sender_user_id: 20002, event_at: eventAtMillis,
+    })}\n\n`))
+    await vi.waitFor(() => {
+      expect(events.filter(event => event.type === 'sessions-delta')).toHaveLength(2)
+    }, { timeout: 2_000 })
+    expect(events.filter(event => event.type === 'message-notification')).toHaveLength(1)
+
+    projectedSequence = 10
+    realtime.handleChatRealtimeNotice({
+      cause: 'chat-hint',
+      state: service.chatRealtimeState(),
+      hint: {
+        eventUid: 'event-missing-connection-user', chatSessionUid: 'chat-private-1',
+        relationUid: 'relation-10', latestSequence: 10, senderUserId: 20002, eventAtMillis: eventAtMillis + 1,
+      },
+    })
+    await vi.waitFor(() => {
+      expect(events.filter(event => event.type === 'sessions-delta')).toHaveLength(3)
+    }, { timeout: 2_000 })
+    expect(events.filter(event => event.type === 'message-notification')).toHaveLength(1)
     unsubscribe()
     stop()
   })
@@ -368,6 +580,7 @@ describe('Arkme Chat message notification projection', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     let sse!: ReadableStreamDefaultController<Uint8Array>
     let tailRequests = 0
+    let displayRequests = 0
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input)
       if (url === 'https://im.test/api/v1/sse/chat/noty') {
@@ -382,10 +595,13 @@ describe('Arkme Chat message notification projection', () => {
       }
       if (url.endsWith('/api/v1/chats/unread-snapshot')) return unreadSummary(1)
       if (url.endsWith('/api/v1/chats/list')) return json({ items: [privateBundle(8, 0)], has_more: false })
-      if (url.endsWith('/api/v1/chats/display-snapshots')) return json({ items: [privateBundle(9, 1)] })
+      if (url.endsWith('/api/v1/chats/display-snapshots')) {
+        displayRequests += 1
+        return json({ items: [privateBundle(9, 1)] })
+      }
       if (url.endsWith('/api/v1/chat/timeline/tail')) {
         tailRequests += 1
-        return json({ items: tailRequests < 5 ? [] : [{
+        return json({ items: tailRequests < 6 ? [] : [{
           relation: {
             record_uid: 'record-delayed', sender_user_id: 20002,
             display_name_snapshot: '小林', attach_at: 109, seq: 9,
@@ -402,10 +618,12 @@ describe('Arkme Chat message notification projection', () => {
     await vi.waitFor(() => {
       expect(fetchImpl.mock.calls.some(call => String(call[0]).endsWith('/api/v1/chats/list'))).toBe(true)
     })
+    const interactiveStartsBefore = service.requestStats()['interactive-read:chat']?.started ?? 0
+    const eventAtMillis = Date.now()
 
     sse.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({
       t: 17, event_uid: 'event-delayed', chat_session_uid: 'chat-private-1',
-      rel_uid: 'relation-delayed', latest_seq: 9, sender_user_id: 20002, event_at: 109,
+      rel_uid: 'relation-delayed', latest_seq: 9, sender_user_id: 20002, event_at: eventAtMillis,
     })}\n\n`))
 
     await vi.waitFor(() => {
@@ -413,8 +631,10 @@ describe('Arkme Chat message notification projection', () => {
         events.filter(event => event.type === 'message-notification'),
         `tail requests: ${String(tailRequests)}; event types: ${events.map(event => String(event.type)).join(',')}`,
       ).toHaveLength(1)
-    }, { timeout: 8_000 })
-    expect(tailRequests).toBe(5)
+    }, { timeout: 3_000 })
+    expect(tailRequests).toBe(6)
+    expect(displayRequests).toBe(1)
+    expect((service.requestStats()['interactive-read:chat']?.started ?? 0) - interactiveStartsBefore).toBe(7)
     expect(events.find(event => event.type === 'message-notification')?.notification)
       .toEqual(expect.objectContaining({ eventUid: 'event-delayed', body: '延迟投影消息' }))
     unsubscribe()

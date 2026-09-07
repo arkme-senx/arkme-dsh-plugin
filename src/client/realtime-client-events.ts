@@ -1,4 +1,6 @@
 import { useEffect } from 'react'
+import { publishMemberEventHint } from './member-event-hints.js'
+import { arkmeMemberEvents } from './member-event-cache.js'
 import type { ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeChatClientEvent } from '../types.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeCalendarInvalidations } from './calendar-invalidation-store.js'
@@ -9,6 +11,7 @@ import {
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { forgetNavigationProviderInstance } from './navigation-cache.js'
 import { arkmeMessageReadReceipts } from './message-read-receipt-store.js'
+import { arkmeMessagePreparing } from './message-preparing-store.js'
 import {
   reconcileArkmeProviderInstance, recoverArkmeProviderInstanceDirectory,
 } from './provider-instance-runtime.js'
@@ -55,6 +58,7 @@ export function useArkmeRealtimeClientEvents(
   auth: ArkmeAuthSnapshot | undefined,
   authRevision: number,
   refreshDirectoryBaseline: boolean,
+  { ownsMessagePreparing = false }: { ownsMessagePreparing?: boolean } = {},
 ): void {
   useEffect(() => {
     void arkmeAuthStore.refresh().catch(() => undefined)
@@ -62,20 +66,25 @@ export function useArkmeRealtimeClientEvents(
 
   useEffect(() => {
     if (auth?.status !== 'authenticated' || auth.userId === undefined) {
+      arkmeMemberEvents.activateAccount(undefined)
       arkmeChatDirectory.activateAccount(undefined)
       arkmeChatTimelineDelta.activateAccount(undefined)
       arkmeInterwovenInvalidation.activateAccount(undefined)
       arkmeAttentionSummary.activateAccount(undefined)
       arkmeMessageReadReceipts.activateAccount(undefined)
+      if (ownsMessagePreparing) arkmeMessagePreparing.activateAccount(undefined)
       return
     }
     const authenticatedUserId = auth.userId
     const authenticatedAccountScope = `${auth.environment}:${String(authenticatedUserId)}`
+    arkmeMemberEvents.activateAccount(authenticatedAccountScope)
     arkmeChatDirectory.activateAccount(authenticatedAccountScope)
     arkmeChatTimelineDelta.activateAccount(authenticatedAccountScope)
     arkmeInterwovenInvalidation.activateAccount(authenticatedAccountScope)
     arkmeAttentionSummary.activateAccount(authenticatedUserId, authenticatedAccountScope)
     arkmeMessageReadReceipts.activateAccount(authenticatedUserId)
+    // Only the persistent runtime owns transient presence; optional surfaces must not clear it.
+    if (ownsMessagePreparing) arkmeMessagePreparing.activateAccount(authenticatedAccountScope)
     let stopped = false
     let observedRevision: number | undefined
     let events: EventSource | undefined
@@ -90,6 +99,8 @@ export function useArkmeRealtimeClientEvents(
     }
     if (refreshDirectoryBaseline) void refreshUnread().catch(() => undefined)
     const handleOpen = () => {
+      if (stopped) return
+      if (ownsMessagePreparing) arkmeMessagePreparing.reset()
       reconcileReceipts()
       void reconcileArkmeProviderInstance()
         .then(async changed => {
@@ -119,7 +130,21 @@ export function useArkmeRealtimeClientEvents(
         if (!Number.isSafeInteger(update.revision) || update.revision < 0
           || (observedRevision !== undefined && update.revision <= observedRevision)) return
         observedRevision = update.revision
+        if (update.type === 'member-events-invalidated') {
+          publishMemberEventHint({ account:authenticatedAccountScope, sourceKey:update.sourceKey,
+            eventId:update.eventId, occurredAtMillis:update.occurredAtMillis })
+          return
+        }
+        if (update.type === 'message-preparing') {
+          if (ownsMessagePreparing) arkmeMessagePreparing.apply(update)
+          return
+        }
+        if (update.type === 'message-arrived') {
+          if (ownsMessagePreparing) arkmeMessagePreparing.messageArrived(update)
+          return
+        }
         if (update.type === 'reconcile') {
+          if (ownsMessagePreparing) arkmeMessagePreparing.reset()
           if (update.attentionSummary !== undefined) arkmeAttentionSummary.apply(update.attentionSummary)
           arkmeInterwovenInvalidation.invalidate()
           reconcileReceipts()
@@ -210,6 +235,7 @@ export function useArkmeRealtimeClientEvents(
       const next = new EventSource('/arkme-self/api/events')
       next.onopen = handleOpen
       next.onmessage = handleMessage
+      next.onerror = () => { if (!stopped && ownsMessagePreparing) arkmeMessagePreparing.reset() }
       events = next
     }
     const handleVisibilityChange = () => {
@@ -232,9 +258,10 @@ export function useArkmeRealtimeClientEvents(
     browserWindow?.addEventListener('focus', handleWindowFocus)
     return () => {
       stopped = true
+      if (ownsMessagePreparing) arkmeMessagePreparing.reset()
       disconnectEvents()
       browserDocument?.removeEventListener('visibilitychange', handleVisibilityChange)
       browserWindow?.removeEventListener('focus', handleWindowFocus)
     }
-  }, [auth?.environment, auth?.status, auth?.userId, authRevision, refreshDirectoryBaseline])
+  }, [auth?.environment, auth?.status, auth?.userId, authRevision, refreshDirectoryBaseline, ownsMessagePreparing])
 }

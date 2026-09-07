@@ -24,6 +24,22 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => { renderer?.unmount() }); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('transcript comparison lifecycle', () => {
+  it('cancels a pending playback when the comparison closes and ignores late authorization', async () => {
+    let resolveOpen!: (value: unknown) => void
+    mocks.call.mockImplementation(async () => new Promise(resolve => { resolveOpen = resolve }))
+    const Audio = vi.fn()
+    vi.stubGlobal('Audio', Audio)
+    await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media"
+      prepared={{ data: comparison(), pending: false, notice: '' }} onClose={() => {}} />) })
+    await act(async () => { renderer.root.findByProps({ 'data-transcript-time': 1000 }).props.onDoubleClick() })
+    const signal = mocks.call.mock.calls[0]![2] as AbortSignal
+    expect(mocks.call.mock.calls[0]!.slice(0, 2)).toEqual(['recordings.playback.open', { itemRef: 'ref-system' }])
+    await act(async () => { renderer.unmount() })
+    expect(signal.aborted).toBe(true)
+    await act(async () => { resolveOpen({ playbackRef: 'late', startOffsetMillis: 0, endOffsetMillis: 4000 }) })
+    expect(Audio).not.toHaveBeenCalled()
+  })
+
   it('opens existing Doubao results without starting additional work', async () => {
     const existing = comparison(); existing.candidateCount = 1; existing.doubao = section([item('doubao')])
     mocks.call.mockResolvedValue(existing)

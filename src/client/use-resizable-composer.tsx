@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 
 export const COMPOSER_HEIGHT_KEY = 'arkme:composer-editor-height:v1'
+const EDITOR_BOX_SELECTOR = '[data-arkme-composer-editor-box]'
 export function clampComposerHeight(height: number, maximum: number): number {
   return Math.max(38, Math.min(Number.isFinite(height) ? height : 38, Math.max(38, maximum)))
 }
@@ -35,11 +36,15 @@ export function useResizableComposer(container: RefObject<HTMLDivElement>, scope
   useEffect(() => {
     if (typeof window === 'undefined') return
     const measure = () => {
-      const editor = container.current?.querySelector('[contenteditable]')
+      // Measure the element that owns editorStyle.height. Markdown's inner
+      // contenteditable can stay one line tall while its scroll box grows.
+      const editor = container.current?.querySelector(EDITOR_BOX_SELECTOR)
       const panel = container.current?.getBoundingClientRect()
       const overhead = panel && editor ? panel.height - editor.getBoundingClientRect().height : 80
       const available = panel && messageBody?.current
-        ? panel.height + messageBody.current.clientHeight
+        // Both measurements must retain fractional pixels so reallocating the
+        // same space between the list and composer cannot change the limit.
+        ? panel.height + messageBody.current.getBoundingClientRect().height
         : window.innerHeight - 100
       setMaximum(Math.max(38, Math.min(600, available * 0.8 - overhead)))
     }
@@ -79,7 +84,7 @@ export function useResizableComposer(container: RefObject<HTMLDivElement>, scope
         if (event.button !== 0 || drag.current) return
         event.preventDefault()
         event.currentTarget.setPointerCapture(event.pointerId)
-        drag.current = { id: event.pointerId, y: event.clientY, height: container.current?.querySelector('[contenteditable]')?.getBoundingClientRect().height ?? 38 }
+        drag.current = { id: event.pointerId, y: event.clientY, height: container.current?.querySelector(EDITOR_BOX_SELECTOR)?.getBoundingClientRect().height ?? 38 }
         setActive(true)
       }}
       onPointerMove={event => {
@@ -91,7 +96,7 @@ export function useResizableComposer(container: RefObject<HTMLDivElement>, scope
       onKeyDown={event => {
         if (!['ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter'].includes(event.key)) return
         event.preventDefault()
-        const measured = container.current?.querySelector('[contenteditable]')?.getBoundingClientRect().height ?? 38
+        const measured = container.current?.querySelector(EDITOR_BOX_SELECTOR)?.getBoundingClientRect().height ?? 38
         update(event.key === 'Enter' ? undefined : event.key === 'Home' ? 38 : event.key === 'End' ? maximum : measured + (event.key === 'ArrowUp' ? 20 : -20))
         persist()
       }} />,

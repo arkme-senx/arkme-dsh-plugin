@@ -162,9 +162,10 @@ describe('Arkme Chat realtime', () => {
 
   it('connects with Host credentials and advances one revision per unique hint', async () => {
     let stream!: ReadableStreamDefaultController<Uint8Array>
+    const connectionDate = 'Sun, 07 Sep 2026 04:00:00 GMT'
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({
       start(controller) { stream = controller },
-    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream', Date: connectionDate } }))
     const runtime = new ArkmeChatRealtimeRuntime({
       imBaseUrl: 'https://im.example.test',
       readSession: async () => ({ userId: 10001, accessToken: 'access-secret', refreshToken: 'refresh-secret' }),
@@ -176,14 +177,22 @@ describe('Arkme Chat realtime', () => {
     const observed: number[] = []
     const causes: string[] = []
     const cursorSequences: number[] = []
+    let reconcileConnection: { userId?: number; startedAtMillis?: number }
     const unsubscribe = runtime.subscribe(notice => {
       observed.push(notice.state.revision)
       causes.push(notice.cause)
+      if (notice.cause === 'reconcile') {
+        reconcileConnection = {
+          userId: notice.connectionUserId,
+          startedAtMillis: notice.connectionStartedAtMillis,
+        }
+      }
       if (notice.readCursorAdvanced !== undefined) cursorSequences.push(notice.readCursorAdvanced.readSequence)
     })
     await vi.waitFor(() => {
       expect(runtime.state()).toMatchObject({ connected: true, revision: 1, connectionGeneration: 1 })
     })
+    expect(reconcileConnection!).toEqual({ userId: 10001, startedAtMillis: Date.parse(connectionDate) })
 
     const encoder = new TextEncoder()
     stream.enqueue(encoder.encode(`data:\n\ndata: ${JSON.stringify(chatHint)}\n\n`))

@@ -317,7 +317,7 @@ describe('recording timeline math', () => {
     const segment = renderer.root.findAllByType('button').find(node => String(node.props['aria-label']).includes('说话人 1'))
     expect(segment).toBeDefined()
 
-    act(() => { segment?.props.onClick({ stopPropagation: vi.fn() }) })
+    act(() => { segment?.props.onClick({ stopPropagation: vi.fn(), detail: 0 }) })
 
     expect(select).toHaveBeenCalledWith(item.startAtMillis)
   })
@@ -443,4 +443,146 @@ describe('recording timeline math', () => {
     expect(markup).not.toContain('播放聚合')
     expect(markup).toContain('多个说话人 · 聚合')
   })
+  it('uses the rail coordinate when clicking inside a segment, and allows panning from the segment', () => {
+    const dayStart = new Date(2026, 7, 28).getTime()
+    const item = { itemId: 'a', itemRef: 'ref', speakerKey: 's', speakerLabel: 'speaker',
+      speakerColorIndex: 0, sameSpeakerItemCount: 1, startAtMillis: dayStart, endAtMillis: dayStart + 1_800_000, text: '', isBackground: false }
+    const select = vi.fn()
+    const renderer = create(<ArkmeRecordingTimeline items={[item]} dayStartMillis={dayStart}
+      isPlaying={false} onSelectAtMillis={select} onTogglePlayback={() => {}} />)
+    const segment = renderer.root.findAllByType('button').find(node => String(node.props['aria-label']).includes('选择该片段'))!
+    const stopPropagation = vi.fn()
+    // A pointer click on a child must reach the rail; keyboard activation still selects the segment start.
+    segment.props.onPointerDown?.({ stopPropagation })
+    expect(stopPropagation).not.toHaveBeenCalled()
+    const rail = () => renderer.root.findByProps({ role: 'slider' })
+    const currentTarget = { setPointerCapture: vi.fn(), getBoundingClientRect: () => ({ left: 100, width: 600 }) }
+    act(() => {
+      rail().props.onPointerDown({ button: 0, clientX: 400, pointerId: 1, currentTarget, target: { dataset: { recordingSegmentIndex: '0' } } })
+      rail().props.onPointerUp({ clientX: 400, currentTarget })
+      segment.props.onClick({ detail: 1, stopPropagation })
+    })
+    expect(select).toHaveBeenCalledTimes(1)
+    expect(select).toHaveBeenCalledWith(dayStart + 900_000)
+    select.mockClear()
+    act(() => { rail().props.onPointerDown({ button: 0, clientX: 400, pointerId: 2, currentTarget, target: { dataset: { recordingSegmentIndex: '0' } } }) })
+    act(() => { rail().props.onPointerMove({ clientX: 430, currentTarget }) })
+    act(() => { rail().props.onPointerUp({ clientX: 430, currentTarget }) })
+    expect(select).not.toHaveBeenCalled()
+  })
+
+  it('always displays the selected time and exposes cancellation during media loading', () => {
+    const dayStart = new Date(2026, 7, 28).getTime()
+    const item = { itemId: 'a', itemRef: 'ref', speakerKey: 's', speakerLabel: 'speaker',
+      speakerColorIndex: 0, sameSpeakerItemCount: 1, startAtMillis: dayStart, endAtMillis: dayStart + 60_000, text: '', isBackground: false }
+    const toggle = vi.fn()
+    const renderer = create(<ArkmeRecordingTimeline items={[item]} dayStartMillis={dayStart}
+      playheadMillis={dayStart + 30_000} isPlaying={false} playbackLoading
+      onSelectAtMillis={() => {}} onTogglePlayback={toggle} />)
+    expect(renderer.root.findByType('time').children.join('')).toBe('00:00:30')
+    const cancel = renderer.root.findByProps({ 'aria-label': '取消录音加载' })
+    expect(cancel.props.disabled).toBe(false)
+    act(() => { cancel.props.onClick() })
+    expect(toggle).toHaveBeenCalledOnce()
+  })
+
+  it('leaves Space activation on a segment to its native button instead of toggling playback', () => {
+    const dayStart = new Date(2026, 7, 28).getTime()
+    const item = {
+      itemId: 'a', itemRef: 'a', speakerKey: 'speaker-1', speakerLabel: '说话人 1', text: '片段',
+      startAtMillis: dayStart + 1_000, endAtMillis: dayStart + 2_000, isBackground: false,
+    } as never
+    const select = vi.fn()
+    const toggle = vi.fn()
+    const renderer = create(<ArkmeRecordingTimeline items={[item]} dayStartMillis={dayStart}
+      playheadMillis={dayStart + 1_500} isPlaying={false} onSelectAtMillis={select} onTogglePlayback={toggle} />)
+    const rail = renderer.root.findByProps({ role: 'slider' })
+    const preventDefault = vi.fn()
+    act(() => {
+      rail.props.onKeyDown({ key: ' ', target: {}, currentTarget: {}, preventDefault })
+    })
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(toggle).not.toHaveBeenCalled()
+    const segment = renderer.root.findByProps({ 'aria-label': '说话人 1，选择该片段' })
+    act(() => { segment.props.onClick({ detail: 0, stopPropagation: vi.fn() }) })
+    expect(select).toHaveBeenCalledWith(dayStart + 1_000)
+    const element = {}
+    act(() => { rail.props.onKeyDown({ key: ' ', target: element, currentTarget: element, preventDefault }) })
+    expect(toggle).toHaveBeenCalledTimes(1)
+    act(() => { renderer.unmount() })
+  })
+
+  it('selects a short segment when its minimum-width hit area extends beyond its real duration', () => {
+    const dayStart = new Date(2026, 7, 28).getTime()
+    const item = { itemId: 'short', itemRef: 'short-ref', speakerKey: 's', speakerLabel: 'short',
+      speakerColorIndex: 0, sameSpeakerItemCount: 1, startAtMillis: dayStart, endAtMillis: dayStart + 500, text: '', isBackground: false }
+    const select = vi.fn()
+    const renderer = create(<ArkmeRecordingTimeline items={[item]} dayStartMillis={dayStart}
+      isPlaying={false} onSelectAtMillis={select} onTogglePlayback={() => {}} />)
+    const rail = renderer.root.findByProps({ role: 'slider' })
+    const segment = renderer.root.findByProps({ 'aria-label': 'short，选择该片段' })
+    const currentTarget = { setPointerCapture: vi.fn(), getBoundingClientRect: () => ({ left: 0, width: 1000 }) }
+    const target = { dataset: { recordingSegmentIndex: '0' } }
+    act(() => {
+      rail.props.onPointerDown({ button: 0, clientX: 1, pointerId: 1, currentTarget, target })
+      rail.props.onPointerUp({ clientX: 1, currentTarget })
+    })
+    expect(select).toHaveBeenLastCalledWith(dayStart)
+    expect(segment.props['data-recording-segment-index']).toBe(0)
+    select.mockClear()
+    // An actual click on the empty rail must retain its exact empty time.
+    act(() => {
+      rail.props.onPointerDown({ button: 0, clientX: 10, pointerId: 2, currentTarget, target: { dataset: {} } })
+      rail.props.onPointerUp({ clientX: 10, currentTarget })
+    })
+    expect(select).toHaveBeenLastCalledWith(dayStart + 18_000)
+    act(() => { renderer.unmount() })
+  })
+
+  it('does not snap an aggregate gap to its first item', () => {
+    const dayStart = new Date(2026, 7, 28).getTime()
+    const items = Array.from({ length: 1000 }, (_, index) => ({
+      itemId: String(index), itemRef: String(index), speakerKey: String(index % 2), speakerLabel: 'speaker',
+      speakerColorIndex: 0, sameSpeakerItemCount: 1, startAtMillis: dayStart + index * 1000,
+      endAtMillis: dayStart + index * 1000 + 200, text: '', isBackground: false,
+    }))
+    const select = vi.fn()
+    const renderer = create(<ArkmeRecordingTimeline items={items} dayStartMillis={dayStart}
+      isPlaying={false} onSelectAtMillis={select} onTogglePlayback={() => {}} />)
+    const rail = renderer.root.findByProps({ role: 'slider' })
+    const currentTarget = { setPointerCapture: vi.fn(), getBoundingClientRect: () => ({ left: 0, width: 1800 }) }
+    act(() => {
+      rail.props.onPointerDown({ button: 0, clientX: .5, pointerId: 1, currentTarget, target: { dataset: { recordingSegmentIndex: '0' } } })
+      rail.props.onPointerUp({ clientX: .5, currentTarget })
+    })
+    expect(select).toHaveBeenCalledWith(dayStart + 500)
+    act(() => { renderer.unmount() })
+  })
+
+  it('keeps a clipped minimum-width segment selection inside the visible day', () => {
+    const dayStart = new Date(2026, 7, 28).getTime()
+    const item = { itemId: 'clipped', itemRef: 'clipped-ref', speakerKey: 's', speakerLabel: 'speaker',
+      speakerColorIndex: 0, sameSpeakerItemCount: 1, startAtMillis: dayStart - 10_000,
+      endAtMillis: dayStart + 500, text: '', isBackground: false }
+    const select = vi.fn()
+    const renderer = create(<ArkmeRecordingTimeline items={[item]} dayStartMillis={dayStart}
+      isPlaying={false} onSelectAtMillis={select} onTogglePlayback={() => {}} />)
+    const rail = renderer.root.findByProps({ role: 'slider' })
+    const currentTarget = { setPointerCapture: vi.fn(), getBoundingClientRect: () => ({ left: 0, width: 1000 }) }
+    act(() => {
+      rail.props.onPointerDown({ button: 0, clientX: 1, pointerId: 1, currentTarget, target: { dataset: { recordingSegmentIndex: '0' } } })
+      rail.props.onPointerUp({ clientX: 1, currentTarget })
+    })
+    expect(select).toHaveBeenCalledWith(dayStart)
+    act(() => { renderer.unmount() })
+  })
+
+  it('excludes segments that only touch the viewport boundary without a playable intersection', () => {
+    const items = [
+      { startAtMillis: 0, endAtMillis: 1000 },
+      { startAtMillis: 2000, endAtMillis: 3000 },
+    ] as never
+    expect(recordingVisibleTimelineItems(items, 1000, 2000)).toEqual([])
+  })
+
 })
