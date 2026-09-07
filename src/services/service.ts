@@ -155,6 +155,13 @@ export class ArkmePluginError extends Error {
   }
 }
 
+/** Opaque upstream body, for the owning business adapter only. Never serialize this error wholesale. */
+export class ArkmeUpstreamResponseError extends ArkmePluginError {
+  constructor(code: string, message: string, retryable: boolean, httpStatus: number, readonly responseData: unknown) {
+    super(code, message, retryable, httpStatus)
+  }
+}
+
 function remoteWriteOutcomeUnknown(error: ArkmePluginError): boolean {
   if (['arkme-network-error', 'arkme-timeout', 'arkme-response-invalid'].includes(error.code)) return true
   return error.upstreamStatus === 408
@@ -491,11 +498,12 @@ export class ServiceRuntime {
         const errorData = objectValue(envelope.data)
         const serviceErrorCode = preferDataError ? stringValue(errorData.error_code).trim() : ''
         const serviceMessage = preferDataError ? stringValue(errorData.message).trim() : ''
-        throw new ArkmePluginError(
+        throw new ArkmeUpstreamResponseError(
           serviceErrorCode || `arkme-code-${envelope.code}`,
           serviceMessage || envelope.message?.trim() || 'Arkme 服务请求失败',
-          serviceErrorCode === '' ? envelope.code >= 500 : serviceErrorCode === 'ai_comic_video_rate_limited',
+          serviceErrorCode === '' ? envelope.code !== 1004 && envelope.code >= 500 : serviceErrorCode === 'ai_comic_video_rate_limited',
           502,
+          envelope.data,
         )
       }
       return (envelope.data ?? {}) as T

@@ -49,6 +49,8 @@ export interface ArkmeFileSendTask extends ArkmeFileSendInput {
   result?: ArkmeSourceSendResult
   /** Sanitized owner error code. Definite rejection and unknown outcome remain distinct via state. */
   errorCode?: string
+  /** Definite terminal rejection remains terminal across restart and later permission changes. */
+  retryable?: boolean
   error?: string
 }
 

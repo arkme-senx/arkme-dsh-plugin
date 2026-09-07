@@ -316,6 +316,15 @@ describe('account-bound file lifecycle', () => {
     expect((await f.owner.tasks())[0]).toMatchObject({ state: 'sent' })
     expect((await f.owner.tasks())[0]).not.toHaveProperty('errorCode')
   })
+  it('persists terminal permission rejection and does not retry it after restart', async () => {
+    const f = await fixture(); const file = await f.stage('a.pdf')
+    f.send.mockResolvedValueOnce({ kind: 'owner_not_accepted', code: 'arkme-code-1004', message: '对方已拒收消息', retryable: false })
+    const task = await f.owner.enqueue(input([file.fileRef])); await f.owner.settled()
+    expect((await f.owner.tasks())[0]).toMatchObject({ state: 'failed', retryable: false })
+    const restored = new FileTransfers(f.directory, f.ports, 1000)
+    await expect(restored.retry(task.taskRef)).rejects.toMatchObject({ code: 'arkme-code-1004' })
+    expect(f.send).toHaveBeenCalledTimes(1)
+  })
   it('keeps a retryable send failure uncertain and preserves its safe code for reconciliation', async () => {
     const f = await fixture(); const file = await f.stage('a.pdf')
     f.send.mockResolvedValueOnce({

@@ -2,6 +2,7 @@ import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges, arkmeMarkdownPlainTe
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { MemberEventService } from './member-event-service.js'
+import { postChatMessageCreation } from './direct-message-admission-service.js'
 import { projectForwardRecordingSegment } from '../recording-forward-presentation.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -2934,7 +2935,7 @@ export class ChatService {
         const evidence = await this.mentionContentPayload(source, textContent, normalizedText, options.humanMentions ?? [], options.botMentions ?? [], session, options.signal, options.textFormat)
         Object.assign(contentPayload, { mention_metadata: evidence.mention_metadata })
       }
-      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      const data = await postChatMessageCreation<Record<string, unknown>>(this.runtime,
         '/api/v1/chats/extensions/children/create',
         {
           chat_session_uid: reference.chatSessionUid,
@@ -3391,7 +3392,7 @@ export class ChatService {
         const sourceRecordUids = hasChatRecordSources
           ? []
           : references.map(reference => reference.recordUid).filter(recordUid => recordUid.trim() !== '')
-        const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        const data = await postChatMessageCreation<Record<string, unknown>>(this.runtime,
           '/api/v1/chats/records/forward',
           {
             chat_session_uid: targetSource.ownerRef,
@@ -3950,7 +3951,7 @@ export class ChatService {
       contentPayload?: Record<string, unknown>
     } = {},
   ): Promise<Record<string, unknown>> {
-    return await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+    return await postChatMessageCreation<Record<string, unknown>>(this.runtime,
       '/api/v1/chats/records/send',
       {
         chat_session_uid: chatSessionUid,
@@ -4098,7 +4099,7 @@ export class ChatService {
           assets,
         })
       }
-      const result = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      const result = await postChatMessageCreation<Record<string, unknown>>(this.runtime,
         '/api/v1/chats/records/send',
         { chat_session_uid: source.ownerRef, rel_uid: relationUid, ...commonBody },
         session,
@@ -4243,7 +4244,7 @@ export class ChatService {
     }
     const recordUid = options.recordUid?.trim() || randomUUID()
     const relationUid = options.relationUid?.trim() || randomUUID()
-    const result = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+    const result = await postChatMessageCreation<Record<string, unknown>>(this.runtime,
       '/api/v1/chats/records/send', {
         chat_session_uid: source.ownerRef,
         record_uid: recordUid,

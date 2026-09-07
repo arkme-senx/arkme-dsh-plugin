@@ -85,6 +85,32 @@ describe('normal timeline related quick note drawer', () => {
 
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
+  it('refusal disables detail extension text, attachments and send without losing the draft', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      return { parentRecordUid: 'record-source', extensionCount: 0, extensions: [] }
+    })
+    let renderer!: ReactTestRenderer
+    const drawer = (blocked: boolean) => <ArkmeTimelineDetailDrawer
+      item={timelineItem} sourceRef="opaque-source" showOriginal={false}
+      onClose={vi.fn()} onToggleOriginal={vi.fn()}
+      messageCreationBlocked={blocked} messageCreationRestriction="对方已拒收你的消息"
+    />
+    await act(async () => { renderer = create(drawer(false)); await Promise.resolve() })
+    act(() => renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.onChange({ target: { value: '未发送草稿' } }))
+    act(() => renderer.update(drawer(true)))
+    const input = renderer.root.findByProps({ 'aria-label': '延展此快记' })
+    expect(input.props.disabled).toBe(true)
+    expect(input.props.value).toBe('未发送草稿')
+    expect(renderer.root.findByProps({ 'aria-label': '添加延展附件' }).props.disabled).toBe(true)
+    expect(renderer.root.findByProps({ 'aria-label': '发送延展' }).props.disabled).toBe(true)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.message-extension.extend')).toBe(false)
+    act(() => renderer.update(drawer(false)))
+    expect(renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.value).toBe('未发送草稿')
+    act(() => renderer.unmount())
+  })
+
   it('loads, navigates to detail, and returns through the retained list', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'source.related-quick-notes.from-message') return relatedList

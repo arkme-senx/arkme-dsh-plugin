@@ -1400,6 +1400,40 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
   })
 
+  it('forwards to an allowed target when another selected target becomes refused', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let refuse = false
+    mocks.callArkme.mockImplementation(async (operation: string, params: any, ...rest: any[]) => {
+      if (operation === 'chat.direct-message-admission') {
+        const blocked = refuse && params.sourceRef === other.sourceRef
+        return {
+          state: blocked ? 'refused_by_counterpart' : 'allowed', canSend: !blocked,
+          refusalCreationEnabled: true, ownRefused: false, counterpartRefused: blocked,
+          ownRevision: 0, counterpartRevision: blocked ? 1 : 0,
+        }
+      }
+      const result = await original(operation, params, ...rest)
+      return operation === 'sources.list'
+        ? { ...result, items: result.items.map((item: ArkmeSourceItem) => ({ ...item, directMessageAdmissionApplicable: true })) }
+        : result
+    })
+    const dialog = await openForwardPicker()
+    for (let index = 0; index < 2; index += 1) {
+      await act(async () => {
+        await dialog.findAll(node => node.type === 'button'
+          && typeof node.props['aria-pressed'] === 'boolean')[index]!.props.onClick()
+      })
+    }
+    refuse = true
+    await act(async () => {
+      await renderer!.root.findByProps({ 'aria-label': '发送转发' }).props.onClick()
+    })
+    const sends = mocks.callArkme.mock.calls.filter(call => call[0] === 'source.forward-messages')
+    expect(sends).toHaveLength(1)
+    expect(sends[0]?.[1]).toMatchObject({ targetSourceRef: target.sourceRef })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+  })
+
   it('removes the forwarding status after a forward succeeds', async () => {
     const dialog = await openForwardPicker()
     const targetButton = dialog.findAll(node => node.type === 'button'

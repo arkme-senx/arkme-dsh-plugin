@@ -271,6 +271,11 @@ export class ChatRealtimeService {
       return
     }
     if (notice.cause === 'projection-invalidation'
+      && notice.projectionInvalidation?.projection === 'chat.direct_message_admission') {
+      this.emitChatClientEvent({ type: 'projection-invalidated', projection: 'chat.direct_message_admission', revision: this.nextChatClientRevision() })
+      return
+    }
+    if (notice.cause === 'projection-invalidation'
       && notice.projectionInvalidation?.projection === 'record') {
       void this.invalidateRecordProjection()
       return

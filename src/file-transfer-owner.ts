@@ -52,7 +52,7 @@ export function createArkmeFileTransfers(options: {
         if (!(error instanceof ArkmePluginError)) return { kind: 'owner_outcome_unknown' }
         return error.writeOutcomeUnknown === true
           ? { kind: 'owner_outcome_unknown', message: error.message, code: error.code }
-          : { kind: 'owner_not_accepted', message: error.message, code: error.code }
+          : { kind: 'owner_not_accepted', message: error.message, code: error.code, retryable: error.retryable }
       }
     },
     fetchMedia: async (ref, signal) => await options.media.fetchMedia(ref, undefined, signal, true),

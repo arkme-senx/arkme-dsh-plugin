@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
+import { postChatMessageCreation } from './direct-message-admission-service.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   MessageActionCapabilityCodec,
@@ -87,7 +88,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
   }
 
   async forwardToChat(input: Parameters<MessageActionGateway['forwardToChat']>[0]): Promise<ArkmeSourceSendResult> {
-    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+    const data = await postChatMessageCreation<Record<string, unknown>>(this.runtime,
       '/api/v1/chats/records/forward', {
         chat_session_uid: input.target.ownerRef,
         client_request_id: input.requestId,

@@ -1178,6 +1178,7 @@ export interface ArkmeProviderCapabilities {
     messageReport?: true
     /** Employee-only, source-bound private-chat user ban inspection and mutation are available. */
     userBanManagement?: true
+    directMessageAdmission?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
     groupOwnerGovernance?: true
     markdownQuickNotes?: true
@@ -1370,6 +1371,8 @@ export interface ArkmeGroupAvatarPresentation {
 
 export interface ArkmeSourceItem {
   sourceRef: string
+  /** Established human Direct session, never PendingPrivate or Bot direct. */
+  directMessageAdmissionApplicable?: boolean
   /** Stable Host-projected directory identity. Consumers must treat it as opaque when present. */
   sourceKey?: string
   /** Private-chat peer identity when this source is a one-to-one chat. */
@@ -3158,7 +3161,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'record'
+  projection: 'record' | 'chat.direct_message_admission'
 } | {
   type: 'message-notification'
   revision: number
@@ -3211,6 +3214,8 @@ export type ArkmePluginOperation =
   | 'auth.phone.verify'
   | 'auth.logout'
   | 'user-ban.status'
+  | 'chat.direct-message-admission'
+  | 'chat.direct-message-refusal.set'
   | 'user-ban.ban'
   | 'user-ban.unban'
   | 'openapi.mcp.status'
@@ -3520,6 +3525,8 @@ export interface ArkmePluginErrorBody {
   code: string
   message: string
   retryable: boolean
+  /** Sanitized Chat Handler result, not a global error-code taxonomy. */
+  directMessageAdmission?: import('./direct-message-admission.js').ArkmeDirectMessageAdmission
 }
 
 export type ArkmePluginResponse<T = unknown> =

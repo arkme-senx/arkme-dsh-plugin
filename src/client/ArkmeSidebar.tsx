@@ -4,6 +4,7 @@ import {
   type CSSProperties, type ReactNode, type SetStateAction,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { invalidateDirectMessageAdmission, requireDirectMessageSendAllowed, useDirectMessageAdmission } from './direct-message-admission.js'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import { X } from '@phosphor-icons/react/dist/icons/X'
@@ -2411,6 +2412,8 @@ export function ArkmeSurface({
     () => 0,
   )
   const composerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
+  const directAdmission = useDirectMessageAdmission(authenticatedAccountKey, source?.sourceRef,
+    activeConversation && source?.directMessageAdmissionApplicable === true)
   const composerAsyncScopeRef = useRef<ArkmeComposerAsyncScope>({
     accountKey: undefined,
     sourceKey: '',
@@ -2578,21 +2581,21 @@ export function ArkmeSurface({
   useEffect(() => {
     recordInputCaptureOwner.sync({
       draftKey: composerDraftKey,
-      isActive: activeRecordReeditComposer === undefined && activeConversation
+      isActive: !directAdmission.blocked && activeRecordReeditComposer === undefined && activeConversation
         && backgroundSoundSupported && backgroundSoundEligibilityReason === 'eligible'
         && composerInputFocused && arkmeSourceSupportsRecordInputCapture(source?.kind),
       hasUserContent: composerHasUserContent,
     })
-  }, [activeConversation, activeRecordReeditComposer, backgroundSoundEligibilityReason, backgroundSoundSupported, composerDraftKey, composerHasUserContent, composerInputFocused, recordInputCaptureOwner, source?.kind])
+  }, [directAdmission.blocked, activeConversation, activeRecordReeditComposer, backgroundSoundEligibilityReason, backgroundSoundSupported, composerDraftKey, composerHasUserContent, composerInputFocused, recordInputCaptureOwner, source?.kind])
   const syncComposerUserInput = useCallback((hasUserContent: boolean) => {
     recordInputCaptureOwner.sync({
       draftKey: composerDraftKey,
-      isActive: activeConversation && backgroundSoundSupported && backgroundSoundEligibilityReason === 'eligible'
+      isActive: !directAdmission.blocked && activeConversation && backgroundSoundSupported && backgroundSoundEligibilityReason === 'eligible'
         && composerInputFocused && arkmeSourceSupportsRecordInputCapture(source?.kind),
       hasUserContent,
     })
     if (hasUserContent) recordInputCaptureOwner.beginUserInput(composerDraftKey)
-  }, [activeConversation, backgroundSoundEligibilityReason, backgroundSoundSupported, composerDraftKey, composerInputFocused, recordInputCaptureOwner, source?.kind])
+  }, [directAdmission.blocked, activeConversation, backgroundSoundEligibilityReason, backgroundSoundSupported, composerDraftKey, composerInputFocused, recordInputCaptureOwner, source?.kind])
   const surfaceRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -2758,7 +2761,7 @@ export function ArkmeSurface({
   // Transport is per message.  It must never lock the next draft while a previous
   // message waits for the server, otherwise fast keyboard input is dropped.
   const canSend = activeRecordReeditComposer === undefined
-    ? arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles)
+    ? !directAdmission.blocked && arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles)
     : activeRecordReeditComposer.snapshot !== undefined
       && !activeRecordReeditComposer.loading
       && !activeRecordReeditComposer.busy
@@ -4472,6 +4475,7 @@ export function ArkmeSurface({
   })
 
   const selectFiles = async (files: FileList | readonly File[] | null) => {
+    if (directAdmission.blocked) return
     if (files === null || files.length === 0) return
     const targetDraftKey = composerDraftKey
     const targetUserId = authenticatedUserId
@@ -4530,6 +4534,7 @@ export function ArkmeSurface({
   }, [])
 
   const send = async () => {
+    if (activeRecordReeditComposer === undefined && directAdmission.blocked) return
     if (activeRecordReeditComposer !== undefined) {
       await commitRecordReedit()
       return
@@ -4954,6 +4959,7 @@ export function ArkmeSurface({
       if (pendingAssets.length > 0) await loadTimeline()
     } catch (caught) {
       if (sameTargetComposer()) setItems(current => current.filter(item => item.itemUid !== recordUid))
+      if (caught instanceof ArkmeClientError && caught.body.directMessageAdmission !== undefined) invalidateDirectMessageAdmission()
       if (sameTargetAccount()) {
         // restore() preserves any newer text entered after this send started.
         if (!durableFileSendUncertain) {
@@ -4968,6 +4974,7 @@ export function ArkmeSurface({
   }
 
   const updateComposerText = (text: string) => {
+    if (activeRecordReeditComposer === undefined && directAdmission.blocked) return
     if (activeRecordReeditComposer !== undefined) {
       setRecordReeditComposer(current => sameArkmeRecordReeditSession(current, activeRecordReeditComposer)
         ? { ...current, textContent: text, error: '' }
@@ -6199,14 +6206,18 @@ export function ArkmeSurface({
       if (forwardTargetRequestRef.current === controller) forwardTargetRequestRef.current = undefined
     })
   }, [aggregateSource, closeMessageMenu, conversationKey, selectedMessageItems, selfSources, showMessageActionStatus, source])
-  const toggleForwardTarget = useCallback((target: ArkmeSourceItem) => {
+  const toggleForwardTarget = useCallback(async (target: ArkmeSourceItem) => {
     if (forwardTargetPicker === undefined || messageActionBusy === 'forward') return
     const selected = forwardTargetPicker.selectedSourceRefs.includes(target.sourceRef)
+    if (!selected && target.directMessageAdmissionApplicable === true) {
+      try { await requireDirectMessageSendAllowed(target) }
+      catch (error) { showMessageActionStatus(errorMessage(error)); return }
+    }
     if (!selected && forwardTargetPicker.selectedSourceRefs.length >= MAX_FORWARD_TARGET_SELECTION) {
       showMessageActionStatus(`最多选择 ${String(MAX_FORWARD_TARGET_SELECTION)} 个转发对象`)
       return
     }
-    setForwardTargetPicker({
+    setForwardTargetPicker(current => current !== forwardTargetPicker ? current : {
       ...forwardTargetPicker,
       selectedSourceRefs: selected
         ? forwardTargetPicker.selectedSourceRefs.filter(sourceRef => sourceRef !== target.sourceRef)
@@ -6233,17 +6244,20 @@ export function ArkmeSurface({
     setError('')
     setForwardTargetPicker(current => current === undefined ? current : { ...current, sendError: '' })
     try {
-      const results = await Promise.allSettled(targetSources.map(async targetSource => ({
-        targetSource,
-        result: await callArkme<ArkmeSourceSendResult>('source.forward-messages', {
-          sourceRef,
-          targetSourceRef: targetSource.sourceRef,
-          actionRefs,
-          recordUid: crypto.randomUUID(),
-          relationUid: crypto.randomUUID(),
-          ...(normalizedCommentText === '' ? {} : { commentText: normalizedCommentText }),
-        }, controller.signal),
-      })))
+      const results = await Promise.allSettled(targetSources.map(async targetSource => {
+        await requireDirectMessageSendAllowed(targetSource, controller.signal)
+        return {
+          targetSource,
+          result: await callArkme<ArkmeSourceSendResult>('source.forward-messages', {
+            sourceRef,
+            targetSourceRef: targetSource.sourceRef,
+            actionRefs,
+            recordUid: crypto.randomUUID(),
+            relationUid: crypto.randomUUID(),
+            ...(normalizedCommentText === '' ? {} : { commentText: normalizedCommentText }),
+          }, controller.signal),
+        }
+      }))
       if (activeSourceKeyRef.current !== sourceKey) return
       let successCount = 0
       let failureCount = 0
@@ -6955,7 +6969,7 @@ export function ArkmeSurface({
                             {!isSharedRecordingCard && <ArkmeTimelineAgentSourceBadge item={item} />}
                             {fileTasks.tasks.filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid && task.state !== 'sent' && fileTaskShowsInlineStatus(task)).map(task => <div key={task.taskRef} role="status" style={{ fontSize: 12, marginTop: 6 }}>
                               {task.error ?? (task.state === 'sending' ? '正在发送…' : task.state === 'queued' ? '等待上传' : '正在上传')}
-                              {task.state === 'failed' && <button type="button" onClick={event => { event.stopPropagation(); void callArkme('files.send.retry', { taskRef: task.taskRef }).then(fileTasks.refresh).catch(caught => setError(errorMessage(caught))) }}>重试</button>}
+                              {task.state === 'failed' && task.retryable !== false && !directAdmission.blocked && <button type="button" onClick={event => { event.stopPropagation(); void callArkme('files.send.retry', { taskRef: task.taskRef }).then(fileTasks.refresh).catch(caught => setError(errorMessage(caught))) }}>重试</button>}
                               {task.state === 'uncertain' && <button type="button" onClick={event => { event.stopPropagation(); void callArkme<ArkmeFileSendTask>('files.send.reconcile', { taskRef: task.taskRef }).then(value => { fileTasks.refresh(); if (value.state === 'uncertain') setError('最近的会话记录还无法确认发送结果，请先核对原会话，不要重复发送') }).catch(caught => setError(errorMessage(caught))) }}>核对发送结果</button>}
                               {(task.state === 'failed' || task.state === 'uncertain') && <>{' '}<button type="button" aria-label="清除发送记录" onClick={event => {
                                 event.stopPropagation()
@@ -7117,6 +7131,17 @@ export function ArkmeSurface({
             onDragOver={event => { if (!preparingFiles && Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
             onDrop={event => { if (!preparingFiles && event.dataTransfer.files.length > 0) { event.preventDefault(); void selectFiles(event.dataTransfer.files) } }}
           ><div style={styles.composerStack}>
+            {directAdmission.applicable && <div role="status" aria-live="polite">
+              {directAdmission.error !== '' && !directAdmission.blocked && <span>{directAdmission.error} </span>}
+              {directAdmission.blocked && <span>{directAdmission.message} </span>}
+              <button type="button" disabled={directAdmission.busy || directAdmission.admission === undefined ||
+                  (!directAdmission.admission.ownRefused && directAdmission.admission.refusalCreationEnabled === false)}
+                onClick={() => { void directAdmission.toggle() }}>
+                {directAdmission.admission?.ownRefused === true ? '解除拒收'
+                  : directAdmission.admission?.refusalCreationEnabled === false ? '拒收暂未开放' : '拒收对方消息'}
+              </button>
+              {directAdmission.blocked && !directAdmission.busy && <button type="button" onClick={directAdmission.refresh}>刷新状态</button>}
+            </div>}
             {activeComposerExtensionTarget !== undefined && <div style={styles.composerDestinationHint} data-arkme-composer-destination-hint="true">
               <span style={styles.composerDestinationHintIcon} aria-hidden>💡</span><span>正在给 </span>
               <span style={styles.composerDestinationHintName}>{arkmeSourceDestinationLabel(source)}</span><span> 发消息</span>
@@ -7251,10 +7276,10 @@ export function ArkmeSurface({
                   </button>
                 })}
             </div>}
-            <ArkmeRichComposerInput markdownEnabled={activeRecordReeditComposer === undefined && markdownQuickNotesEnabled} key={activeRecordReeditComposer === undefined ? composerDraftKey : `record-reedit:${activeRecordReeditComposer.generation}`} className="arkme-conversation-textarea" ref={textareaRef} style={{ ...styles.textarea!, ...composerResize.editorStyle }} value={visibleComposerText} mentions={activeRecordReeditComposer === undefined ? composerDraft.mentions : []} emojis={activeRecordReeditComposer === undefined ? composerDraft.emojis : []} maxLength={activeRecordReeditComposer?.snapshot?.maxTextLength ?? 20000} placeholder={effectiveComposerPlaceholder} ariaLabel={activeRecordReeditComposer === undefined ? effectiveComposerPlaceholder : '重新编辑快记'} disabled={activeRecordReeditComposer === undefined ? preparingFiles : activeRecordReeditComposer.loading || activeRecordReeditComposer.busy}
-              markdown={activeRecordReeditComposer === undefined ? composerDraft.markdown : undefined}
+            <ArkmeRichComposerInput markdownEnabled={activeRecordReeditComposer === undefined && markdownQuickNotesEnabled} key={activeRecordReeditComposer === undefined ? composerDraftKey : `record-reedit:${activeRecordReeditComposer.generation}`} className="arkme-conversation-textarea" ref={textareaRef} style={{ ...styles.textarea!, ...composerResize.editorStyle }} value={visibleComposerText} mentions={activeRecordReeditComposer === undefined ? composerDraft.mentions : []} emojis={activeRecordReeditComposer === undefined ? composerDraft.emojis : []} maxLength={activeRecordReeditComposer?.snapshot?.maxTextLength ?? 20000} placeholder={effectiveComposerPlaceholder} ariaLabel={activeRecordReeditComposer === undefined ? effectiveComposerPlaceholder : '重新编辑快记'} disabled={activeRecordReeditComposer === undefined ? preparingFiles || directAdmission.blocked : activeRecordReeditComposer.loading || activeRecordReeditComposer.busy}
+              markdown={activeRecordReeditComposer === undefined && !directAdmission.blocked ? composerDraft.markdown : undefined}
               onMarkdownChange={(markdown, text, mentions, emojis) => {
-                if (activeRecordReeditComposer === undefined) arkmeComposerDraftStore.setMarkdown(composerDraftKey, markdown, text, mentions, emojis)
+                if (activeRecordReeditComposer === undefined && !directAdmission.blocked) arkmeComposerDraftStore.setMarkdown(composerDraftKey, markdown, text, mentions, emojis)
               }}
               onTextChange={updateComposerText}
               onInputActivity={messagePreparing.input}
@@ -7335,9 +7360,9 @@ export function ArkmeSurface({
                 }
               }} />
             </div>
-            <div style={styles.tools}><div style={styles.toolGroup}><button ref={addMenuTriggerRef} type="button" style={styles.plus} aria-label="添加内容" aria-haspopup="menu" aria-expanded={addMenuOpen} disabled={preparingFiles || activeRecordReeditComposer !== undefined} onClick={() => { setAddMenuOpen(value => !value) }}>{preparingFiles ? <ArkmeFilePreparingIndicator /> : '+'}</button><ArkmeEmojiPicker
+            <div style={styles.tools}><div style={styles.toolGroup}><button ref={addMenuTriggerRef} type="button" style={styles.plus} aria-label="添加内容" aria-haspopup="menu" aria-expanded={addMenuOpen} disabled={preparingFiles || directAdmission.blocked || activeRecordReeditComposer !== undefined} onClick={() => { setAddMenuOpen(value => !value) }}>{preparingFiles ? <ArkmeFilePreparingIndicator /> : '+'}</button><ArkmeEmojiPicker
               key={`emoji-picker:${conversationOverlayKey}`}
-              disabled={preparingFiles || activeRecordReeditComposer !== undefined}
+              disabled={preparingFiles || directAdmission.blocked || activeRecordReeditComposer !== undefined}
               scopeKey={composerDraftKey}
               {...(source?.kind === 'private_chat' || source?.kind === 'group_chat' ? { sourceRef: source.sourceRef } : {})}
               getCaretGeometry={() => textareaRef.current?.getCaretGeometry()}
@@ -7714,6 +7739,8 @@ export function ArkmeSurface({
           shareWebsite={shareWebsite}
           onMessageCopyLinkOpen={openMessageCopyLinkDetail}
           onExtensionSent={acceptDetailExtension}
+          messageCreationBlocked={directAdmission.blocked}
+          messageCreationRestriction={directAdmission.blocked ? directAdmission.message : ''}
           onToast={showMessageActionStatus}
         />}
         {activeConversation && drawer === 'copyLink' && copyLinkDetail !== undefined && <>

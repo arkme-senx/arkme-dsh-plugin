@@ -13,6 +13,7 @@ import {
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_direct_message_refusal_set',
   'arkme_background_sound_disable',
   'arkme_file_prepare',
   'arkme_files_send',
@@ -70,6 +71,9 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_direct_message_refusal_set') return args.refused === true
+    ? '是否确认拒收这个私聊用户的消息？拒收期间双方都无法发送新消息，历史记录保留。'
+    : '是否确认解除你对这个私聊用户的拒收？如果对方仍拒收，双方依然无法发送新消息。'
   if (name === 'arkme_background_sound_disable') return '是否确认关闭当前 Arkme 账号的文字背景音？这不会删除已经发送的背景音。'
   if (name === 'arkme_user_ban') return '是否确认封禁这个私聊用户？确认后将无法重新登录；Backend、聊天和录音请求立即受限；其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效。'
   if (name === 'arkme_user_unban') return '是否确认解封这个私聊用户？确认后该用户可重新登录并恢复操作。'

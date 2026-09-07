@@ -1574,6 +1574,7 @@ export class SourceService {
         ),
         sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
         kind,
+        directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
         displayName,
         ...(kind === 'private_chat' && cached?.avatarRef !== undefined
           ? { avatarRef: cached.avatarRef }
@@ -2021,6 +2022,7 @@ export class SourceService {
       ),
       sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
       kind,
+      directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
       displayName,
       ...(cached?.avatarRef === undefined ? {} : { avatarRef: cached.avatarRef }),
       ...(cached?.avatarRefs === undefined ? {} : { avatarRefs: cached.avatarRefs }),

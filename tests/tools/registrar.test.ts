@@ -78,6 +78,33 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it('executes personal refusal through the official runtime and a later explicit confirmation', async () => {
+    const ctx = await setup()
+    const admission = { state: 'allowed', canSend: true, ownRefused: false, counterpartRefused: false, ownRevision: 0, counterpartRevision: 0 }
+    const directMessageAdmission = vi.fn(async () => admission)
+    const setDirectMessageRefusal = vi.fn(async () => ({ ...admission, state: 'refused_by_self', canSend: false, ownRefused: true, ownRevision: 1 }))
+    const registration = await mountArkmeTools(ctx, 'business', { ...ports, directMessageAdmission, setDirectMessageRefusal } as unknown as ArkmeToolPorts)
+    const events: Array<Record<string, unknown>> = [
+      { seq: 0, type: 'turn/start', data: { turn: 1 } },
+      { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '拒收这个私聊用户的消息' }], source: { kind: 'user' } } },
+    ]
+    const agent = { id: SessionId('session-personal-refusal'), session: { get events() { return events } } } as unknown as Agent
+    const signal = new AbortController().signal
+    const read = await ctx.tools.execute({ callId: CallId('refusal-read'), name: 'arkme_direct_message_admission', arguments: { source_ref: 'opaque' }, agent, signal })
+    expect(read.isError).toBe(false)
+    expect(read.isError ? '' : read.value).toContain('allowed')
+    const args = { source_ref: 'opaque', refused: true, expected_revision: 0 }
+    const prepared = await ctx.tools.execute({ callId: CallId('refusal-prepare'), name: 'arkme_direct_message_refusal_set', arguments: args, agent, signal })
+    expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
+    expect(setDirectMessageRefusal).not.toHaveBeenCalled()
+    events.push({ seq: 2, type: 'user/message', data: { content: [{ type: 'text', text: '确认拒收' }], source: { kind: 'user' } } })
+    const result = await ctx.tools.execute({ callId: CallId('refusal-confirm'), name: 'arkme_direct_message_refusal_set', arguments: args, agent, signal })
+    expect(result.isError).toBe(false)
+    expect(setDirectMessageRefusal).toHaveBeenCalledExactlyOnceWith('opaque', true, 0, signal)
+    expect(result.isError ? '' : result.value).toContain('refused_by_self')
+    await registration.dispose()
+    expect(ctx.tools.schemas().some(tool => tool.name === 'arkme_direct_message_refusal_set')).toBe(false)
+  })
   it('registers the core business surface and matching prompt', async () => {
     const ctx = await setup()
     await mountArkmeTools(ctx, 'business')
@@ -158,6 +185,8 @@ describe('registerArkmeTools', () => {
       'arkme_user_ban_status',
       'arkme_user_ban',
       'arkme_user_unban',
+      'arkme_direct_message_admission',
+      'arkme_direct_message_refusal_set',
       'arkme_group_ai_polish_manage',
       'arkme_favorite_stickers_list',
       'arkme_favorite_sticker_add',

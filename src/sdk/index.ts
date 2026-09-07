@@ -1,4 +1,6 @@
 import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
+import type { ArkmeDirectMessageAdmission } from '../direct-message-admission.js'
+export type { ArkmeDirectMessageAdmission, ArkmeDirectMessageAdmissionPort } from '../direct-message-admission.js'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type {
   ArkmeArrangementDetail,
@@ -699,6 +701,24 @@ export class ArkmeSdk {
   async userBanStatus(sourceRef: string, signal?: AbortSignal): Promise<ArkmeUserBanSnapshot> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme private-chat source reference must not be empty')
     return await this.call<ArkmeUserBanSnapshot>('user-ban.status', { sourceRef }, signal)
+  }
+
+  async directMessageAdmission(sourceRef: string, signal?: AbortSignal): Promise<ArkmeDirectMessageAdmission> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme private-chat source reference must not be empty')
+    if ((await this.capabilities(signal)).features.directMessageAdmission !== true) {
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持私聊拒收，请升级', retryable: false })
+    }
+    return await this.call('chat.direct-message-admission', { sourceRef }, signal)
+  }
+
+  async setDirectMessageRefusal(sourceRef: string, refused: boolean, expectedRevision: number, signal?: AbortSignal): Promise<ArkmeDirectMessageAdmission> {
+    if (sourceRef.trim() === '' || typeof refused !== 'boolean' || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      throw new TypeError('Arkme private-chat refusal input is invalid')
+    }
+    if ((await this.capabilities(signal)).features.directMessageAdmission !== true) {
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持私聊拒收，请升级', retryable: false })
+    }
+    return await this.call('chat.direct-message-refusal.set', { sourceRef, refused, expectedRevision }, signal)
   }
 
   /** Employee-only idempotent ban. Callers must obtain explicit human approval first. */

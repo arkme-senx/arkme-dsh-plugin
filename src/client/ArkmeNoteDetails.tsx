@@ -185,13 +185,15 @@ function removeDetailExtensionAttachmentsAfter(
   void pendingSend.catch(() => undefined).then(async () => { await removeDetailExtensionAttachments(attachments) })
 }
 
-function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid, targetKey, onSent, onError }: {
+function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid, targetKey, onSent, onError, messageCreationBlocked, messageCreationRestriction }: {
   sourceRef: string
   messageActionRef: string
   parentRecordUid?: string | undefined
   targetKey: string
   onSent: (result: ArkmeSourceMessageExtendResult) => void
   onError: (message: string) => void
+  messageCreationBlocked: boolean
+  messageCreationRestriction: string
 }) {
   const [text, setText] = useState('')
   const [markdown, setMarkdown] = useState<ArkmeMarkdownDraft>()
@@ -238,7 +240,7 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
     }
   }, [targetKey])
   const selectFiles = async (files: FileList | readonly File[] | null) => {
-    if (files === null || files.length === 0 || preparing || sending) return
+    if (messageCreationBlocked || files === null || files.length === 0 || preparing || sending) return
     const controller = new AbortController()
     stageAbortRef.current?.abort()
     stageAbortRef.current = controller
@@ -294,7 +296,7 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
   const send = async () => {
     const normalizedText = markdown?.source ?? text.trim()
     const fileRefs = attachments.flatMap(attachment => attachment.localFile === undefined ? [] : [attachment.localFile.fileRef])
-    if (sending || preparing || (normalizedText === '' && fileRefs.length === 0)) return
+    if (messageCreationBlocked || sending || preparing || (normalizedText === '' && fileRefs.length === 0)) return
     const fingerprint = JSON.stringify([parentRecordUid ?? '', normalizedText, fileRefs])
     const recordUid = submissionRef.current?.fingerprint === fingerprint
       ? submissionRef.current.recordUid
@@ -340,11 +342,12 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
       if (generationRef.current === generation) setSending(false)
     }
   }
-  const disabled = preparing || sending
+  const disabled = messageCreationBlocked || preparing || sending
   return <div style={styles.extensionComposer}
     onDragOver={event => { if (!disabled && Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
     onDrop={event => { if (!disabled && event.dataTransfer.files.length > 0) { event.preventDefault(); void selectFiles(event.dataTransfer.files) } }}>
-    <input ref={fileInputRef} type="file" multiple hidden data-arkme-detail-extension-file-input="true"
+    {messageCreationBlocked && <div role="status">{messageCreationRestriction}</div>}
+    <input ref={fileInputRef} type="file" multiple hidden disabled={disabled} data-arkme-detail-extension-file-input="true"
       onChange={event => selectFiles(event.currentTarget.files)} />
     {attachments.length > 0 && <div style={styles.extensionAttachmentPreview}><ArkmeAttachmentStrip
         attachments={attachments}
@@ -370,7 +373,7 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
           onClick={() => { fileInputRef.current?.click() }}>{preparing ? <ArkmeFilePreparingIndicator /> : <FileTextIcon size={18} />}</button>
         <ArkmeRichComposerInput style={styles.extensionInput!} ariaLabel="延展此快记" placeholder="延展此快记..." value={text} disabled={disabled}
           mentions={[]} emojis={[]} maxLength={20000} markdownEnabled={markdownEnabled} markdown={markdown}
-          onTextChange={setText} onMarkdownChange={setMarkdown}
+          onTextChange={value => { if (!disabled) setText(value) }} onMarkdownChange={value => { if (!disabled) setMarkdown(value) }}
           onPaste={event => { const files = clipboardFiles(event.clipboardData); if (files.length > 0) { event.preventDefault(); void selectFiles(files) } }}
           onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send() } }} />
         <button type="button" style={{ ...styles.extensionSend, opacity: normalizedSendOpacity(text, attachments.length, disabled) }}
@@ -542,6 +545,7 @@ function relatedQuickNoteReferenceExpired(error: unknown): boolean {
 
 export function ArkmeTimelineDetailDrawer({
   item, sourceRef, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
+  messageCreationBlocked = false, messageCreationRestriction = '',
 }: {
   item: ArkmeTimelineItem
   sourceRef?: string | undefined
@@ -552,6 +556,8 @@ export function ArkmeTimelineDetailDrawer({
   onMessageCopyLinkOpen?: (sid: string) => void
   onExtensionSent?: (result: ArkmeSourceMessageExtendResult) => void
   onToast?: (message: string) => void
+  messageCreationBlocked?: boolean
+  messageCreationRestriction?: string
 }) {
   const [relatedView, setRelatedView] = useState<ArkmeRelatedDrawerView>('source-detail')
   const [relatedState, setRelatedState] = useState<ArkmeRelatedQuickNotesLoadState>({ kind: 'idle' })
@@ -678,6 +684,8 @@ export function ArkmeTimelineDetailDrawer({
   const extensionFooter = normalizedSourceRef === '' || messageActionRef === '' ? undefined : <DetailExtensionComposer
     sourceRef={normalizedSourceRef}
     messageActionRef={messageActionRef}
+    messageCreationBlocked={messageCreationBlocked}
+    messageCreationRestriction={messageCreationRestriction}
     {...(selectedExtensionRecordUid === undefined ? {} : { parentRecordUid: selectedExtensionRecordUid })}
     targetKey={`${normalizedSourceRef}:${item.itemUid}:${selectedExtensionRecordUid ?? item.itemUid}`}
     onError={message => { onToast?.(message) }}

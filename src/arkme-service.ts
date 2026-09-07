@@ -1,5 +1,6 @@
 import type { ArkmeChatRealtimeNotice } from './chat-realtime.js'
 import type { ArkmeMemberEventQuery } from './types.js'
+import { DirectMessageAdmissionService } from './services/direct-message-admission-service.js'
 import { OwnerRecordingForwardGateway } from './services/recording-forward-gateway.js'
 import type { RecordingForwardInput } from './recording-forward-contract.js'
 import type {
@@ -319,6 +320,7 @@ export class ArkmeService {
   private readonly unmarkedSpeaker: UnmarkedSpeakerService
   private readonly voiceprint: VoiceprintService
   private readonly userBan: UserBanService
+  private readonly directMessageAdmissionOwner: DirectMessageAdmissionService
   private readonly backgroundSoundPreferenceOwner: BackgroundSoundPreferenceService
   private readonly fileTransfers: FileTransfers | undefined
   private localFileOpener?: (path: string, signal: AbortSignal) => Promise<void>
@@ -419,6 +421,7 @@ export class ArkmeService {
       this.messageActions,
     )
     this.userBan = new UserBanService(this.runtime, this.chat)
+    this.directMessageAdmissionOwner = new DirectMessageAdmissionService(this.runtime, this.source)
     this.botConversation = new BotConversationService(
       this.runtime,
       this.bot,
@@ -709,6 +712,7 @@ export class ArkmeService {
         messageReadReceipts: true,
         messageReport: true,
         userBanManagement: true,
+        directMessageAdmission: true,
         groupOwnerGovernance: true,
         ...(this.config.markdownQuickNotesEnabled === true ? { markdownQuickNotes: true as const } : {}),
         richContentRead: this.config.richMediaRenderEnabled !== false,
@@ -1250,6 +1254,14 @@ export class ArkmeService {
 
   async userBanStatus(sourceRef: string, signal?: AbortSignal): Promise<ArkmeUserBanOwnerSnapshot> {
     return await this.userBan.status(sourceRef, signal)
+  }
+
+  directMessageAdmission(sourceRef: string, signal?: AbortSignal) {
+    return this.directMessageAdmissionOwner.directMessageAdmission(sourceRef, signal)
+  }
+
+  setDirectMessageRefusal(sourceRef: string, refused: boolean, expectedRevision: number, signal?: AbortSignal) {
+    return this.directMessageAdmissionOwner.setDirectMessageRefusal(sourceRef, refused, expectedRevision, signal)
   }
 
   async banPrivateChatUser(sourceRef: string, remark = '', signal?: AbortSignal): Promise<ArkmeUserBanOwnerRecord> {

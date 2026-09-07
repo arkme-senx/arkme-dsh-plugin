@@ -113,6 +113,15 @@ describe('ServiceRuntime', () => {
     expect(deleteSession).toHaveBeenCalledOnce()
   })
 
+  it('keeps permission response data opaque and nonretryable without deleting authentication', async () => {
+    const stored = { accessToken: 'access', refreshToken: 'refresh', userId: 42 }
+    const deleteSession = vi.fn()
+    const runtime = runtimeFixture(vi.fn(async () => new Response(JSON.stringify({ code: 1004, message: 'No permission', data: { opaque: 'business-owner-only' } }))),
+      { async read() { return stored }, async write() {}, delete: deleteSession })
+    await expect(runtime.authenticatedChatPost('/api/v1/chats/records/send', {}, stored)).rejects.toMatchObject({ code: 'arkme-code-1004', retryable: false, responseData: { opaque: 'business-owner-only' } })
+    expect(deleteSession).not.toHaveBeenCalled()
+  })
+
   it('retries an authenticated request once with a refreshed token', async () => {
     let stored = {
       accessToken: 'expired-access',

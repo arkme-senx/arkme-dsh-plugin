@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { ArkmePluginError, ArkmeService } from './arkme-service.js'
+import { ArkmeDirectMessageAdmissionError } from './services/direct-message-admission-service.js'
 import { isArkmeBotAvatarRef } from './bot-avatar-ref.js'
 import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-update.js'
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
@@ -933,7 +934,8 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
           : new ArkmePluginError('internal-error', 'Arkme 插件处理失败', true, 500, { cause: error })
       writeJson(res, known.httpStatus, {
         ok: false,
-        error: { code: known.code, message: known.message, retryable: known.retryable },
+        error: { code: known.code, message: known.message, retryable: known.retryable,
+          ...(known instanceof ArkmeDirectMessageAdmissionError ? { directMessageAdmission: known.admission } : {}) },
       })
     } finally {
       res.off('close', abortDisconnectedRequest)
@@ -1011,6 +1013,10 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'code'),
     )
     case 'auth.logout': return await service.logout()
+    case 'chat.direct-message-admission':
+      return await service.directMessageAdmission(stringParam(params, 'sourceRef'), requestSignal)
+    case 'chat.direct-message-refusal.set':
+      return await service.setDirectMessageRefusal(stringParam(params, 'sourceRef'), requiredBooleanParam(params, 'refused'), numberParam(params, 'expectedRevision', -1), requestSignal)
     case 'user-ban.status': return browserUserBanSnapshot(await service.userBanStatus(
       stringParam(params, 'sourceRef'), requestSignal,
     ))

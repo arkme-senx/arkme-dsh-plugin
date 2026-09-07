@@ -13,7 +13,7 @@ interface StoredFile extends ArkmeLocalFile { sha256: string; createdAtMillis: n
 interface FileState { version: 1; files: Record<string, StoredFile>; tasks: ArkmeFileSendTask[]; originals: Record<string, string> }
 export type FileTransferSendOutcome =
   | { kind: 'owner_accepted'; result: ArkmeSourceSendResult }
-  | { kind: 'owner_not_accepted'; message: string; code?: string }
+  | { kind: 'owner_not_accepted'; message: string; code?: string; retryable?: boolean }
   | { kind: 'owner_outcome_unknown'; message?: string; code?: string }
 export interface FileTransferPorts {
   currentUser(): Promise<number>
@@ -391,6 +391,7 @@ export class FileTransfers {
       await this.assertUser(userId)
       if (task.state === 'uncertain') throw fail('file-send-uncertain', '发送结果待确认，请先核对原会话，不能自动重复发送')
       if (task.state !== 'failed') return clone(task)
+      if (task.retryable === false) throw fail(task.errorCode ?? 'file-send-rejected', task.error ?? '该发送已被拒绝，不能重试')
       task.state = 'queued'; delete task.error; delete task.errorCode
       for (const file of task.files) {
         if (!file.asset) file.progress = { phase: 'preparing', sentBytes: 0, totalBytes: file.size }
@@ -454,6 +455,8 @@ export class FileTransfers {
           task.state = 'sent'; delete task.error; delete task.errorCode
         } else if (ownerOutcome.kind === 'owner_not_accepted') {
           task.state = 'failed'; task.error = ownerOutcome.message
+          if (ownerOutcome.retryable === false) task.retryable = false
+          else delete task.retryable
           if (ownerOutcome.code === undefined) delete task.errorCode
           else task.errorCode = ownerOutcome.code
         } else {
