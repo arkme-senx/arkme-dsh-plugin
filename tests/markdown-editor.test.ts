@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
 import { arkmeEditorProjection, arkmePasteMarkdown, arkmeMarkdownExtensions, arkmePlainEditorDocument, arkmeSerializeMarkdownEditor } from '../src/client/markdown-editor.js'
-import { arkmeMarkdownEditorSource, arkmeMarkdownHashTagRanges, arkmeMarkdownPlainText } from '../src/markdown.js'
+import { arkmeMarkdownEditorSource, arkmeMarkdownHashTagRanges, arkmeMarkdownPlainText, arkmeMarkdownTree } from '../src/markdown.js'
 import { arkmeEmojiById } from '../src/client/arkme-emoji.js'
 
 const editors: Editor[] = []
@@ -25,6 +25,79 @@ function type(editor: Editor, text: string) {
 }
 
 describe('quick note live Markdown', () => {
+  it.each([
+    '``a`b **粗体** #标签``',
+    '```a``b `c` #标签```',
+    '`` `边界` ``',
+    '`` ` ``',
+    '`  前后空格  `',
+    '`   `',
+    '`**原样** #代码 & < > \\`',
+  ])('preserves inline code after paste and save: %s', source => {
+    const editor = create()
+    arkmePasteMarkdown(editor, source)
+    const expected = editor.getJSON()
+    const saved = arkmeSerializeMarkdownEditor(editor).source
+    expect(create(saved).getJSON()).toEqual(expected)
+    expect(arkmeMarkdownHashTagRanges(saved)).toEqual([])
+    expect(arkmeMarkdownTree(saved).children?.[0]?.children).toMatchObject([
+      { type: 'inlineCode', value: editor.getText() },
+    ])
+    expect(editor.getJSON()).toEqual(expected)
+  })
+
+  it('keeps mention ranges after inline code with backticks in the final UTF-16 source', () => {
+    const editor = create()
+    editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph', content: [
+      { type: 'text', text: '😀 a`b **粗体** #代码', marks: [{ type: 'code' }] },
+      { type: 'text', text: ' ' },
+      { type: 'arkmeMention', attrs: { mention: { mentionRef: 'opaque-user', displayName: '阿明', startIndex: 0, length: 0 } } },
+    ] }] })
+    const { source, mentions } = arkmeSerializeMarkdownEditor(editor)
+    expect(mentions).toHaveLength(1)
+    const mention = mentions[0]!
+    expect(source.slice(mention.startIndex, mention.startIndex + mention.length)).toBe('@阿明')
+    expect(arkmeMarkdownTree(source).children?.[0]?.children?.[0]).toMatchObject({
+      type: 'inlineCode', value: '😀 a`b **粗体** #代码',
+    })
+    expect(arkmeMarkdownHashTagRanges(source)).toEqual([])
+  })
+
+  it('keeps inline code pipes inside one table cell after save', () => {
+    const editor = create('| Code |\n| --- |\n| ``a`b \\| c #代码`` |')
+    const saved = arkmeSerializeMarkdownEditor(editor).source
+    expect(create(saved).getJSON()).toEqual(editor.getJSON())
+    expect(arkmeMarkdownTree(saved).children?.[0]).toMatchObject({
+      type: 'table', children: [
+        { type: 'tableRow', children: [{ type: 'tableCell' }] },
+        { type: 'tableRow', children: [{ type: 'tableCell', children: [{ type: 'inlineCode', value: 'a`b | c #代码' }] }] },
+      ],
+    })
+    expect(arkmeMarkdownHashTagRanges(saved)).toEqual([])
+  })
+
+  it.each([
+    { row: 0, backslashes: 1, expected: 'a|b' },
+    { row: 0, backslashes: 2, expected: 'a\\\\|b' },
+    { row: 1, backslashes: 1, expected: 'a|b' },
+    { row: 1, backslashes: 2, expected: 'a\\\\|b' },
+  ])('does not split table code with $backslashes backslashes in row $row', ({ row, backslashes, expected }) => {
+    const editor = create('| Header |\n| --- |\n| Cell |')
+    const document = editor.getJSON()
+    const paragraph = document.content![0]!.content![row]!.content![0]!.content![0]!
+    paragraph.content = [{ type: 'text', text: `a${'\\'.repeat(backslashes)}|b`, marks: [{ type: 'code' }] }]
+    editor.commands.setContent(document)
+    const saved = arkmeSerializeMarkdownEditor(editor).source
+    const cells = arkmeMarkdownTree(saved).children?.[0]?.children?.[row]?.children
+    expect(cells).toHaveLength(1)
+    // GFM consumes the final escape before a pipe. With an odd literal run, retain
+    // the existing normalization instead of introducing a column split and data loss.
+    expect(cells?.[0]?.children).toMatchObject([{ type: 'inlineCode', value: expected }])
+    const restoredRow = create(saved).state.doc.firstChild!.child(row)
+    expect(restoredRow.childCount).toBe(1)
+    expect(restoredRow.textContent).toBe(expected)
+  })
+
   it.each(['```', '````', '~~~'])('keeps an embedded %s fence literal after paste and save', inner => {
     const editor = create()
     const code = `${inner}\n**原样** #代码`

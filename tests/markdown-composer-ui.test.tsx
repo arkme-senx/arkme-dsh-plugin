@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Editor } from '@tiptap/core'
 import { ArkmeMarkdownComposerInput } from '../src/client/ArkmeMarkdownComposerInput.js'
+import { ArkmeMarkdownBody } from '../src/client/ArkmeMarkdownBody.js'
 import type { ArkmeRichComposerHandle } from '../src/client/ArkmeRichComposerInput.js'
 import { arkmeEditorProjection, arkmeSerializeMarkdownEditor } from '../src/client/markdown-editor.js'
 import { ArkmeComposerDraftStore, arkmeComposerCanSend, arkmeSourceComposerDraftKey, type ArkmeComposerDraftSnapshot } from '../src/client/composer-draft-store.js'
@@ -102,6 +103,16 @@ describe('Markdown composer DOM interaction', () => {
     expect(host.querySelector('code')?.textContent).toBe('甲**乙**丙')
     act(() => update(initial)); type('甲丙'); act(() => editor().commands.setTextSelection(2)); paste('  ')
     expect(editor().getText()).toBe('甲  丙')
+  })
+  it('renders saved inline code with embedded backticks without activating its formatting or tags', () => {
+    paste('``a`b **粗体** #标签``')
+    const text = 'a`b **粗体** #标签'
+    expect(host.querySelector('code')?.textContent).toBe(text)
+    const source = snapshot.markdown!.source
+    act(() => root.render(<ArkmeMarkdownBody text={source} />))
+    expect(host.querySelector('code')?.textContent).toBe(text)
+    expect(host.querySelector('strong')).toBeNull()
+    expect(host.querySelector('[role="link"]')).toBeNull()
   })
   it('retains explicit heading and task structures on document paste', () => {
     paste('# 标题\n\n- [ ] 待办')

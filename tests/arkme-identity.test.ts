@@ -189,7 +189,12 @@ describe('Arkme plugin identity', () => {
       join(root, 'cordis.patch.yml'),
       join(root, 'package.json'),
       join(root, 'tsdown.config.ts'),
-      ...textFiles(join(root, 'docs')).filter(file => !file.startsWith(join(root, 'docs/superpowers/'))),
+      // Plans and change reviews contain cross-repository names and local development paths;
+      // they are internal artifacts, not the product documentation shipped by docs/*.md.
+      ...textFiles(join(root, 'docs')).filter(file => ![
+        join(root, 'docs/superpowers/'),
+        join(root, 'docs/changes/'),
+      ].some(directory => file.startsWith(directory))),
       ...textFiles(join(root, 'src')),
     ]
     const residuals = files.flatMap(file => {

@@ -32,6 +32,7 @@ vi.mock('../src/sdk/index.js', () => ({
   }),
 }))
 
+import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { ArkmeTimelineDetailDrawer } from '../src/client/ArkmeNoteDetails.js'
 import { ArkmeClientError } from '../src/client/api.js'
 
@@ -129,7 +130,7 @@ describe('normal timeline related quick note drawer', () => {
     expect(renderer.root.findAllByProps({ 'aria-label': '打开相关快记：问题不大' })).toHaveLength(1)
     act(() => { renderer.root.findByProps({ 'aria-label': '返回快记详情' }).props.onClick() })
     expect(JSON.stringify(renderer.toJSON())).toContain('源快记正文')
-    expect(mocks.callArkme).toHaveBeenCalledTimes(3)
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation !== 'provider.capabilities')).toHaveLength(3)
   })
 
   it('restores source-detail and related-list scroll positions across nested navigation', async () => {
@@ -151,9 +152,13 @@ describe('normal timeline related quick note drawer', () => {
         onClose={vi.fn()}
         onToggleOriginal={vi.fn()}
       />, {
-        createNodeMock: element => element.props.style?.overflowY === 'auto'
-          ? scrollBody
-          : { focus: vi.fn(), contains: vi.fn(() => false), isConnected: true },
+        createNodeMock: element => {
+          // Only the scroll viewport needs a host node; editor DOM is covered in jsdom tests.
+          if (element.props.contentEditable !== undefined) return null
+          return element.props.style?.overflowY === 'auto'
+            ? scrollBody
+            : { focus: vi.fn(), contains: vi.fn(() => false), isConnected: true }
+        },
       })
       await Promise.resolve()
     })
@@ -365,7 +370,7 @@ describe('normal timeline related quick note drawer', () => {
     expect(target.props['aria-pressed']).toBe(true)
     expect(target.props.style).toMatchObject({ borderRadius: 12 })
     act(() => {
-      renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.onChange({ target: { value: '三级延展' } })
+      renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('三级延展')
     })
     await act(async () => {
       renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick()
@@ -417,7 +422,7 @@ describe('normal timeline related quick note drawer', () => {
       await Promise.resolve(); await Promise.resolve()
     })
     act(() => {
-      renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.onChange({ target: { value: '详情里新延展' } })
+      renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('详情里新延展')
     })
     await act(async () => {
       renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick()
@@ -472,7 +477,7 @@ describe('normal timeline related quick note drawer', () => {
       await Promise.resolve(); await Promise.resolve()
     })
     act(() => {
-      renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.onChange({ target: { value: '继续延展' } })
+      renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('继续延展')
     })
     await act(async () => {
       renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick()
@@ -501,8 +506,8 @@ describe('normal timeline related quick note drawer', () => {
       await Promise.resolve()
     })
 
-    const input = renderer.root.findByProps({ 'aria-label': '延展此快记' })
-    expect(input.props.rows).toBe(1)
+    const input = renderer.root.findByType(ArkmeRichComposerInput)
+    expect(input.findByProps({ role: 'textbox' }).props.contentEditable).toBe(true)
     expect(input.props.style).toMatchObject({
       fontSize: 14,
       minHeight: 28,
@@ -577,8 +582,8 @@ describe('normal timeline related quick note drawer', () => {
       />)
       await Promise.resolve()
     })
-    const detailInput = renderer.root.findByProps({ 'aria-label': '延展此快记' })
-    act(() => { detailInput.props.onChange({ target: { value: '独立抽屉草稿' } }) })
+    const detailInput = renderer.root.findByType(ArkmeRichComposerInput)
+    act(() => { detailInput.props.onTextChange('独立抽屉草稿') })
     const fileInput = renderer.root.findByProps({ 'data-arkme-detail-extension-file-input': 'true' })
     await act(async () => {
       await fileInput.props.onChange({ currentTarget: { files: [{ name: 'draft.png', type: 'image/png', size: 12 }], value: '' } })
@@ -586,10 +591,10 @@ describe('normal timeline related quick note drawer', () => {
     })
 
     act(() => { renderer.root.findByProps({ 'aria-label': '查看 2 条相关快记' }).props.onClick() })
-    expect(renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.value).toBe('独立抽屉草稿')
+    expect(renderer.root.findByType(ArkmeRichComposerInput).props.value).toBe('独立抽屉草稿')
     expect(renderer.root.findAllByProps({ 'aria-label': 'draft.png，第 1 个附件' })).toHaveLength(1)
     act(() => { renderer.root.findByProps({ 'aria-label': '返回快记详情' }).props.onClick() })
-    expect(renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.value).toBe('独立抽屉草稿')
+    expect(renderer.root.findByType(ArkmeRichComposerInput).props.value).toBe('独立抽屉草稿')
     expect(renderer.root.findAllByProps({ 'aria-label': 'draft.png，第 1 个附件' })).toHaveLength(1)
   })
 
@@ -617,7 +622,7 @@ describe('normal timeline related quick note drawer', () => {
       />)
       await Promise.resolve()
     })
-    act(() => { renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.onChange({ target: { value: '失败后重试' } }) })
+    act(() => { renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('失败后重试') })
     await act(async () => {
       renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick()
       await Promise.resolve(); await Promise.resolve()
@@ -710,19 +715,19 @@ describe('normal timeline related quick note drawer', () => {
       onClose={vi.fn()} onToggleOriginal={vi.fn()}
     />
     await act(async () => { renderer = create(renderDrawer(timelineItem)); await Promise.resolve() })
-    act(() => { renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.onChange({ target: { value: '旧目标内容' } }) })
+    act(() => { renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('旧目标内容') })
     await act(async () => {
       renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick()
       await Promise.resolve()
     })
     const nextItem = { ...timelineItem, itemUid: 'record-next', messageActionRef: 'opaque-next-action', textContent: '新目标' }
     await act(async () => { renderer.update(renderDrawer(nextItem)); await Promise.resolve() })
-    act(() => { renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.onChange({ target: { value: '新目标草稿' } }) })
+    act(() => { renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('新目标草稿') })
     await act(async () => {
       resolveOldSend({ recordUid: 'old-record', parentRecordUid: 'record-source', status: 1, localState: 'synced' })
       await Promise.resolve(); await Promise.resolve()
     })
-    expect(renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.value).toBe('新目标草稿')
+    expect(renderer.root.findByType(ArkmeRichComposerInput).props.value).toBe('新目标草稿')
   })
 
   it('keeps an independent detail-drawer extension draft and sends an attachment-only extension', async () => {
@@ -751,7 +756,7 @@ describe('normal timeline related quick note drawer', () => {
       await Promise.resolve()
     })
 
-    const detailInput = renderer.root.findByProps({ 'aria-label': '延展此快记' })
+    const detailInput = renderer.root.findByType(ArkmeRichComposerInput)
     expect(detailInput.props.value).toBe('')
     const fileInput = renderer.root.findByProps({ 'data-arkme-detail-extension-file-input': 'true' })
     const image = { name: 'detail.png', type: 'image/png', size: 12 }
@@ -776,6 +781,6 @@ describe('normal timeline related quick note drawer', () => {
       fileRefs: ['arkme-file-v1.11111111-1111-4111-8111-111111111111'],
     }, expect.any(AbortSignal))
     expect(renderer.root.findAllByProps({ 'aria-label': 'detail.png，第 1 个附件' })).toHaveLength(0)
-    expect(renderer.root.findByProps({ 'aria-label': '延展此快记' }).props.value).toBe('')
+    expect(renderer.root.findByType(ArkmeRichComposerInput).props.value).toBe('')
   })
 })

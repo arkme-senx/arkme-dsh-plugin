@@ -274,13 +274,29 @@ export function arkmeSerializeMarkdownEditor(editor: Editor, document = editor.g
     literals.set(token, value)
     return token
   }
-  const visit = (node: JSONContent, parent?: JSONContent, index = 0) => {
+  const visit = (node: JSONContent, parent?: JSONContent, index = 0, inTableCell = false) => {
+    inTableCell ||= node.type === 'tableCell' || node.type === 'tableHeader'
     if (node.type === 'arkmeMention' && node.attrs) {
       const token = `${prefix}${tokens.size}\uE001`
       tokens.set(token, node.attrs.mention as ArkmeComposerMention)
       node.attrs.markdownToken = token
     }
-    if (node.type === 'text' && node.text && parent?.type !== 'codeBlock' && !node.marks?.some(mark => mark.type === 'code')) {
+    if (node.type === 'text' && node.text && parent?.type !== 'codeBlock' && node.marks?.some(mark => mark.type === 'code')) {
+      // Tiptap derives mark delimiters from a placeholder, not the actual text.
+      // Protect the complete code span so backticks and edge spaces round-trip literally.
+      let fenceLength = 1
+      for (const run of node.text.matchAll(/`+/gu)) fenceLength = Math.max(fenceLength, run[0].length + 1)
+      const fence = '`'.repeat(fenceLength)
+      const padding = node.text.startsWith('`') || node.text.endsWith('`')
+        || (node.text.startsWith(' ') && node.text.endsWith(' ') && /[^ ]/u.test(node.text)) ? ' ' : ''
+      // GFM splits cells before reading code spans: an odd escape run keeps each pipe
+      // inside its cell. Preserve existing escapes rather than turning them into separators.
+      const text = inTableCell
+        ? node.text.replace(/\\*\|/gu, run => run.length % 2 === 1 ? '\\' + run : run)
+        : node.text
+      node.text = protect(`${fence}${padding}${text}${padding}${fence}`)
+      node.marks = node.marks.filter(mark => mark.type !== 'code')
+    } else if (node.type === 'text' && node.text && parent?.type !== 'codeBlock') {
       // Tiptap's Markdown encoder escapes inline delimiters, but not block prefixes or table pipes.
       node.text = node.text.replace(/\|/gu, () => protect('\\|'))
       if (index === 0 || parent?.content?.[index - 1]?.type === 'hardBreak') {
@@ -289,7 +305,7 @@ export function arkmeSerializeMarkdownEditor(editor: Editor, document = editor.g
           (_match, spaces: string, marker: string) => spaces + protect(marker.replace(/[#+.\-=)]/gu, '\\$&')))
       }
     }
-    node.content?.forEach((child, childIndex) => visit(child, node, childIndex))
+    node.content?.forEach((child, childIndex) => visit(child, node, childIndex, inTableCell))
   }
   visit(serializable)
   const encoded = editor.markdown!.serialize(serializable)
