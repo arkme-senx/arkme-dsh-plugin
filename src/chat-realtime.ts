@@ -11,6 +11,13 @@ export const ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE = 18
 export const ARKME_CHAT_TIMELINE_CHANGED_BIZ_TYPE = 20
 export const ARKME_PROJECTION_INVALIDATED_BIZ_TYPE = 25
 export const ARKME_CONVERSATION_LIST_PREFERENCE_UPDATED_BIZ_TYPE = 26
+export const ARKME_MEMBER_EVENT_CREATED_BIZ_TYPE = 27
+
+export interface ArkmeMemberEventHint {
+  eventUid: string
+  chatSessionUid: string
+  eventAtMillis: number
+}
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000
 const DEFAULT_INACTIVITY_TIMEOUT_MS = 75_000
@@ -75,6 +82,7 @@ export interface ArkmeChatRealtimeNotice {
   timelineChanged?: ArkmeChatTimelineChangedHint
   projectionInvalidation?: ArkmeProjectionInvalidatedHint
   conversationListPreferenceUpdated?: ArkmeConversationListPreferenceUpdatedHint
+  memberEvent?: ArkmeMemberEventHint
 }
 
 export interface ArkmeChatRealtimeRuntimeOptions {
@@ -139,6 +147,17 @@ function decodeDataLine(line: string): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined
+}
+
+export function decodeArkmeMemberEventDataLine(line: string): ArkmeMemberEventHint | undefined {
+  const source = decodeDataLine(line)
+  if (source === undefined || positiveInteger(source.t) !== ARKME_MEMBER_EVENT_CREATED_BIZ_TYPE) return undefined
+  if (Object.keys(source).some(key => !['t','event_uid','chat_session_uid','event_at'].includes(key))) return undefined
+  const eventUid = nonEmptyString(source.event_uid)
+  const chatSessionUid = nonEmptyString(source.chat_session_uid)
+  const eventAtMillis = positiveInteger(source.event_at)
+  if (eventUid === undefined || chatSessionUid === undefined || eventAtMillis === undefined) return undefined
+  return { eventUid,chatSessionUid,eventAtMillis }
 }
 
 /** Decode one server data line. Heartbeats, malformed frames, and non-Chat hints are ignored. */
@@ -584,6 +603,7 @@ export class ArkmeChatRealtimeRuntime {
   }
 
   private acceptLine(line: string): void {
+    const memberEvent = decodeArkmeMemberEventDataLine(line)
     const conversationListPreferenceUpdated = decodeArkmeConversationListPreferenceUpdatedDataLine(line)
     const projectionInvalidation = conversationListPreferenceUpdated === undefined
       ? decodeArkmeProjectionInvalidatedDataLine(line)
@@ -599,7 +619,7 @@ export class ArkmeChatRealtimeRuntime {
       && projectionInvalidation === undefined && readCursorAdvanced === undefined && timelineChanged === undefined
       ? decodeArkmeChatReceiveDataLine(line)
       : undefined
-    const eventUid = conversationListPreferenceUpdated?.eventUid
+    const eventUid = memberEvent?.eventUid ?? conversationListPreferenceUpdated?.eventUid
       ?? projectionInvalidation?.eventUid ?? readCursorAdvanced?.eventUid
       ?? timelineChanged?.eventUid ?? hint?.eventUid
     if (eventUid === undefined || this.seenEventUids.has(eventUid)) return
@@ -608,12 +628,14 @@ export class ArkmeChatRealtimeRuntime {
       const oldest = this.seenEventUids.values().next().value as string | undefined
       if (oldest !== undefined) this.seenEventUids.delete(oldest)
     }
-    this.lastEventAtMillis = conversationListPreferenceUpdated?.acceptedAtMillis
+    this.lastEventAtMillis = memberEvent?.eventAtMillis ?? conversationListPreferenceUpdated?.acceptedAtMillis
       ?? projectionInvalidation?.eventAtMillis
       ?? readCursorAdvanced?.eventAtMillis
       ?? timelineChanged?.eventAtMillis
       ?? hint?.eventAtMillis
-    if (conversationListPreferenceUpdated !== undefined) {
+    if (memberEvent !== undefined) {
+      this.advanceRevision('chat-hint', { memberEvent })
+    } else if (conversationListPreferenceUpdated !== undefined) {
       this.advanceRevision(
         'conversation-list-preference-invalidation',
         { conversationListPreferenceUpdated },
@@ -637,6 +659,7 @@ export class ArkmeChatRealtimeRuntime {
       projectionInvalidation?: ArkmeProjectionInvalidatedHint
       timelineChanged?: ArkmeChatTimelineChangedHint
       conversationListPreferenceUpdated?: ArkmeConversationListPreferenceUpdatedHint
+      memberEvent?: ArkmeMemberEventHint
     } = {},
   ): void {
     const {
@@ -645,12 +668,14 @@ export class ArkmeChatRealtimeRuntime {
       projectionInvalidation,
       timelineChanged,
       conversationListPreferenceUpdated,
+      memberEvent,
     } = evidence
     this.revision += 1
     const state = this.state()
     const notice: ArkmeChatRealtimeNotice = {
       state,
       cause,
+      ...(memberEvent === undefined ? {} : { memberEvent }),
       ...(timelineChanged === undefined ? {} : { timelineChanged }),
       ...(hint === undefined ? {} : { hint }),
       ...(readCursorAdvanced === undefined ? {} : { readCursorAdvanced }),

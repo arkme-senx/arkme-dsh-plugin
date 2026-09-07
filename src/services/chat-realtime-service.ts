@@ -167,6 +167,10 @@ export class ChatRealtimeService {
   }
 
   handleChatRealtimeNotice(notice: ArkmeChatRealtimeNotice): void {
+    if (notice.cause === 'chat-hint' && notice.memberEvent !== undefined) {
+      void this.handleMemberEvent(notice.memberEvent)
+      return
+    }
     if (notice.cause === 'reconcile') {
       const generation = notice.state.connectionGeneration
       this.notificationBaselineGeneration = 0
@@ -240,6 +244,17 @@ export class ChatRealtimeService {
     } catch (error) {
       console.warn('dsh-arkme: Chat timeline invalidation failed:', safeFailureMessage(error))
     }
+  }
+
+  private async handleMemberEvent(hint: NonNullable<ArkmeChatRealtimeNotice['memberEvent']>): Promise<void> {
+    try {
+      const session = await this.runtime.sessionStore.read()
+      if (session === undefined) return
+      const sourceKey = await this.source.chatDirectorySourceKey(session.userId, hint.chatSessionUid)
+      if ((await this.runtime.sessionStore.read())?.userId !== session.userId) return
+      this.emitChatClientEvent({ type:'member-events-invalidated', revision:this.nextChatClientRevision(),
+        sourceKey, eventId:hint.eventUid, occurredAtMillis:hint.eventAtMillis })
+    } catch (error) { console.warn('dsh-arkme: member event hint failed:', safeFailureMessage(error)) }
   }
 
   private async handleReadCursorAdvanced(hint: NonNullable<ArkmeChatRealtimeNotice['readCursorAdvanced']>): Promise<void> {

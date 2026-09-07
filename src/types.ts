@@ -2334,6 +2334,32 @@ export interface ArkmeConversationMemberList {
   joinEvents?: ArkmeConversationMemberJoinEvent[]
 }
 
+export interface ArkmeMemberEvent {
+  eventId: string
+  type: 'left'
+  occurredAtMillis: number
+  displayName: string
+}
+
+export interface ArkmeMemberEventQuery {
+  fromAtMillis: number
+  toAtMillis: number
+  cursor?: string
+  limit?: number
+}
+
+export interface ArkmeMemberEventPage {
+  items: ArkmeMemberEvent[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface ArkmeMemberEventProfile {
+  displayName: string
+  memberName?: string
+  avatarRef?: string
+}
+
 export type ArkmeConversationMemberRecordMode = 'owner' | 'mentioned'
 
 export interface ArkmeConversationMemberRecordPage {
@@ -3116,6 +3142,12 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'conversation-list-preference-invalidated'
   revision: number
+} | {
+  type: 'member-events-invalidated'
+  revision: number
+  sourceKey: string
+  eventId: string
+  occurredAtMillis: number
 }
 
 export type ArkmePluginOperation =
@@ -3221,6 +3253,9 @@ export type ArkmePluginOperation =
   | 'source.timeline'
   | 'source.timeline-around'
   | 'source.members'
+  | 'source.member-events'
+  | 'source.member-event.profile'
+  | 'source.member-event.private.open'
   | 'source.member-records'
   | 'source.mark-read'
   | 'source.read-receipts.summary-list'

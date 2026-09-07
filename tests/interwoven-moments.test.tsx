@@ -31,6 +31,12 @@ function source(sourceRef: string, kind: ArkmeSourceItem['kind'], displayName: s
 }
 
 describe('interwoven conversation projection', () => {
+  it('inserts unique member events between quick notes using occurrence time and stable ties', () => {
+    const left = {eventId:'leave-1',type:'left' as const,occurredAtMillis:15,displayName:'李四'}
+    const rows = mergeConversationRows([message('early',10),message('late',20)],[],[left,left,{...left,eventId:'leave-2',occurredAtMillis:20}])
+    expect(rows.map(row => row.id)).toEqual(['message:early','member-event:leave-1','member-event:leave-2','message:late'])
+    expect(rows.filter(row => row.kind==='message').map(row => row.item.itemUid)).toEqual(['early','late'])
+  })
   it('merges messages and moments chronologically with stable identity deduplication', () => {
     const rows = mergeConversationRows(
       [message('m2', 20), message('m1', 10), message('m1', 10)],

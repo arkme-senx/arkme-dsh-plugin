@@ -1,4 +1,5 @@
 import type { ArkmeChatRealtimeNotice } from './chat-realtime.js'
+import type { ArkmeMemberEventQuery } from './types.js'
 import { OwnerRecordingForwardGateway } from './services/recording-forward-gateway.js'
 import type { RecordingForwardInput } from './recording-forward-contract.js'
 import type {
@@ -1298,6 +1299,10 @@ export class ArkmeService {
   ): Promise<ArkmeOpenPrivateChatResult> {
     return await this.chat.openPrivateChatFromMember(sourceRef, memberRef, options)
   }
+
+  async memberEvents(sourceRef: string, query: ArkmeMemberEventQuery, signal?: AbortSignal) { return await this.chat.memberEvents.list(sourceRef, query, signal) }
+  async memberEventProfile(sourceRef: string, eventId: string, signal?: AbortSignal) { return await this.chat.memberEvents.memberProfile(sourceRef, eventId, signal) }
+  async memberEventPrivateChat(sourceRef: string, eventId: string, signal?: AbortSignal) { return await this.chat.memberEvents.openPrivateChat(sourceRef, eventId, signal) }
 
   async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {}): Promise<ArkmeTimelinePage> { return await this.chat.readSource(sourceRef, options) }
   async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: number, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {}): Promise<ArkmeTimelineAroundPage> { return await this.chat.readSourceAround(sourceRef, itemUid, recordOwnerUserId, options) }

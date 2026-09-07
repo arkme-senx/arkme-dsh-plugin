@@ -81,6 +81,24 @@ async function chatTimelineItemKeyForTest(
 }
 
 describe('ChatService', () => {
+  it('does not open a departed member private chat under an account changed after event authorization', async () => {
+    const runtime = {
+      requireSession: vi.fn()
+        .mockResolvedValueOnce({ userId: 42 })
+        .mockResolvedValueOnce({ userId: 99 }),
+      authenticatedChatPost: vi.fn(async () => ({
+        event_id: 'leave-1', chat_session_uid: 'group-1', event_type: 'left',
+        occurred_at: 100, member_user_id: 88, display_name_snapshot: '李四',
+      })),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'group-1' })) }
+    const profile = { publicProfileSummariesByUserIds: vi.fn(async () => new Map()) }
+    const chat = new ChatService(runtime as never, source as never, profile as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+    await expect(chat.memberEvents.openPrivateChat('group-ref', 'leave-1')).rejects.toMatchObject({ code: 'member-events-unavailable' })
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledTimes(1)
+    expect(profile.publicProfileSummariesByUserIds).not.toHaveBeenCalled()
+  })
+
   it('projects a private-chat extension child with the desktop parent preview contract', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const sourceItem = {

@@ -3,7 +3,7 @@ import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
 import { X } from '@phosphor-icons/react/dist/icons/X'
-import type { ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmeRelatedQuickNoteItem, ArkmeSourceItem, ArkmeTimelineItem } from '../types.js'
+import type { ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmeMemberEvent, ArkmeRelatedQuickNoteItem, ArkmeSourceItem, ArkmeTimelineItem } from '../types.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import {
   ArkmeRelatedQuickNoteDetail,
@@ -21,14 +21,17 @@ export const ARKME_CONVERSATION_HEADER_HEIGHT = 68
 export type ArkmeConversationRow =
   | { kind: 'message'; id: string; occurredAtMillis: number; item: ArkmeTimelineItem }
   | { kind: 'moment'; id: string; occurredAtMillis: number; item: ArkmeInterwovenMention }
+  | { kind: 'member-event'; id: string; occurredAtMillis: number; item: ArkmeMemberEvent }
 
 /** Pure deterministic merge; each authority keeps its own identity and duplicate policy. */
 export function mergeConversationRows(
   messages: readonly ArkmeTimelineItem[],
   moments: readonly ArkmeInterwovenMention[],
+  memberEvents: readonly ArkmeMemberEvent[] = [],
 ): ArkmeConversationRow[] {
   const messageById = new Map(messages.map(item => [item.itemUid, item]))
   const momentById = new Map(moments.map(item => [item.momentId, item]))
+  const memberEventById = new Map(memberEvents.map(item => [item.eventId, item]))
   const rows: ArkmeConversationRow[] = [
     ...[...messageById.values()].map(item => ({
       kind: 'message' as const, id: `message:${item.itemUid}`,
@@ -36,6 +39,10 @@ export function mergeConversationRows(
     })),
     ...[...momentById.values()].map(item => ({
       kind: 'moment' as const, id: `moment:${item.momentId}`,
+      occurredAtMillis: item.occurredAtMillis, item,
+    })),
+    ...[...memberEventById.values()].map(item => ({
+      kind: 'member-event' as const, id: `member-event:${item.eventId}`,
       occurredAtMillis: item.occurredAtMillis, item,
     })),
   ]

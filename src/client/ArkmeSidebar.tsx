@@ -33,6 +33,9 @@ import {
   arkmeReconcileHashTagSuggestionSnapshots, type ArkmeHashTagTrigger,
 } from '../hashtag.js'
 import { callArkme, ArkmeClientError } from './api.js'
+import type { ArkmeMemberEvent } from '../types.js'
+import { useMemberEventTimeline } from './use-member-event-timeline.js'
+import { ArkmeMemberEventProfileDialog } from './ArkmeMemberEventProfile.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import type { ArkmeContentBlock } from '../types.js'
 import type { ArkmeFileSendTask } from '../file-transfer-contract.js'
@@ -1699,6 +1702,18 @@ export function ArkmeMemberJoinNotice(props: {
   </li>
 }
 
+export function ArkmeMemberLeaveNotice(props: { rowId:string; event:ArkmeMemberEvent; onOpen:(event:ArkmeMemberEvent)=>void }) {
+  const label = arkmeMemberJoinDisplayName({displayName:props.event.displayName,isSelf:false},14)
+  return <li data-arkme-conversation-row={props.rowId} data-arkme-member-leave-event={props.event.eventId}
+    style={{...styles.memberJoinNotice,marginTop:26}}>
+    <div style={styles.memberJoinTime}>{arkmeMemberJoinTimeLabel(props.event.occurredAtMillis)}</div>
+    <div style={styles.memberJoinLine}>
+      <button type="button" style={styles.memberJoinLink} aria-label={`查看 ${label}`} onClick={() => { props.onOpen(props.event) }}>{label}</button>
+      <span> 退出了群聊</span>
+    </div>
+  </li>
+}
+
 export function ArkmeTimelineMessageHeader({
   item,
   profile,
@@ -2817,6 +2832,8 @@ export function ArkmeSurface({
     targets: ArkmeSourceItem[]
   }>()
   const [memberProfile, setMemberProfile] = useState<ArkmeConversationMemberItem>()
+  const [memberEventProfile, setMemberEventProfile] = useState<{ scope:string; event:ArkmeMemberEvent }>()
+  const [memberEventWindowRevision, setMemberEventWindowRevision] = useState(0)
   const [memberRemovalTarget, setMemberRemovalTarget] = useState<ArkmeConversationMemberItem>()
   const [memberRecords, setMemberRecords] = useState<{
     member: ArkmeConversationMemberItem
@@ -3157,6 +3174,7 @@ export function ArkmeSurface({
     setSnapshot(undefined)
     setMessageReportItem(undefined)
     setMemberProfile(undefined)
+    setMemberEventProfile(undefined)
     setMemberRecords(undefined)
     setPrivateChatBusy(false)
     setSelectMode(undefined)
@@ -3859,6 +3877,7 @@ export function ArkmeSurface({
         }
         conversationCacheRef.current.storeTimeline(conversationKey, snapshot)
         pendingViewportRestoreRef.current = undefined
+        setMemberEventWindowRevision(value => value+1)
         pendingConversationTargetLocateRef.current = {
           sourceKey: conversationKey,
           itemUid: target.itemUid,
@@ -5096,6 +5115,7 @@ export function ArkmeSurface({
     const host = panelRef.current
     if (host === null || source === undefined) return
     setMemberProfile(undefined)
+    setMemberEventProfile(undefined)
     setMemberRecords(undefined)
     setMemberMenu({
       member,
@@ -5113,11 +5133,13 @@ export function ArkmeSurface({
   const openMemberProfile = useCallback((member: ArkmeConversationMemberItem) => {
     if (source?.kind !== 'group_chat') return
     setMemberMenu(undefined)
+    setMemberEventProfile(undefined)
     setMemberRecords(undefined)
     setMemberProfile(member)
   }, [source?.kind])
   const openMemberRecords = useCallback((member: ArkmeConversationMemberItem, mode: ArkmeConversationMemberRecordMode) => {
     setMemberMenu(undefined)
+    setMemberEventProfile(undefined)
     setMemberProfile(undefined)
     activateContextPanel('records')
     setMemberRecords({ member, mode })
@@ -5450,13 +5472,43 @@ export function ArkmeSurface({
       : [],
     [conversationJoinEvents, displayItems, hasMore, source?.kind],
   )
+  const memberEventScope = `${authenticatedAccountKey ?? ''}:${conversationKey}:${timelineMode}:${memberEventWindowRevision}`
+  useEffect(() => { setMemberEventProfile(undefined) }, [activeConversation, authenticated, groupSelfRole, memberEventScope])
+  const memberEventTimeline = useMemberEventTimeline({
+    enabled: activeConversation && authenticated && source?.kind === 'group_chat' && groupSelfRole === 'owner',
+    restoreCached: activeConversation && authenticated && source?.kind === 'group_chat',
+    accessRevoked: source?.kind === 'group_chat' && groupSelfRole !== 'unknown' && groupSelfRole !== 'owner',
+    accountKey:authenticatedAccountKey, sourceKey:conversationKey, sourceRef:source?.sourceRef ?? '',
+    mode:timelineMode, windowRevision:memberEventWindowRevision,
+    ready:timelineStateKey === conversationKey && timelineLoadingKey !== conversationKey,
+    windowReady: timelineStateKey === conversationKey && (timelineLoadingKey !== conversationKey
+      || (cacheAccountKeyRef.current === authenticatedAccountKey && conversationCacheRef.current.getTimeline(conversationKey) !== undefined)),
+    items, hasMoreMessages:hasMore,
+    paginationKey:JSON.stringify([nextCursor,newerCursor,hasMore,newerHasMore]),
+    bodyRef,
+    beforeChange:() => {
+      const body=bodyRef.current
+      if (body !== null && pendingViewportRestoreRef.current === undefined) {
+        pendingViewportRestoreRef.current={sourceKey:conversationKey,viewport:arkmeConversationViewport(body)}
+      }
+    },
+  })
+  const openMemberEventProfile = (event:ArkmeMemberEvent) => {
+    setMemberProfile(undefined)
+    setMemberRecords(undefined)
+    setMemberMenu(undefined)
+    setMemberEventProfile({scope:memberEventScope,event})
+  }
   const displayRows = useMemo<Array<ArkmeConversationRow | {
     kind: 'notice'; id: string; occurredAtMillis: number; item: ArkmeGroupAiPolishNotice
   } | {
     kind: 'member-join'; id: string; occurredAtMillis: number; item: ArkmeConversationMemberJoinEvent
+  } | {
+    kind:'member-event-gap'; id:string; occurredAtMillis:number; gapId:string
   }>>(
     () => [
-      ...mergeConversationRows(displayItems, interwovenMoments),
+      ...mergeConversationRows(displayItems, interwovenMoments, memberEventTimeline.events),
+      ...memberEventTimeline.gaps.map(gap => ({kind:'member-event-gap' as const,id:`member-event-gap:${gap.id}`,occurredAtMillis:gap.at,gapId:gap.id})),
       ...aiPolishNotices.map(notice => ({
         kind: 'notice' as const,
         id: `notice:${notice.noticeUid}`,
@@ -5470,7 +5522,7 @@ export function ArkmeSurface({
         item: event,
       })),
     ].sort((left, right) => left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id)),
-    [aiPolishNotices, displayItems, interwovenMoments, visibleConversationJoinEvents],
+    [aiPolishNotices, displayItems, interwovenMoments, visibleConversationJoinEvents,memberEventTimeline.events,memberEventTimeline.gaps],
   )
   useLayoutEffect(() => {
     const pending = pendingConversationTargetLocateRef.current
@@ -6319,6 +6371,7 @@ export function ArkmeSurface({
     || snapshot !== undefined
     || messageReportItem !== undefined
     || memberProfile !== undefined
+    || memberEventProfile?.scope === memberEventScope
     || memberRecords !== undefined
     || forwardTargetPicker !== undefined
 
@@ -6721,6 +6774,8 @@ export function ArkmeSurface({
                 const previous = index === 0 ? undefined : displayRows[index - 1]
                 const startsDay = previous === undefined
                   || dayKey(previous.occurredAtMillis) !== dayKey(row.occurredAtMillis)
+                if (row.kind === 'member-event-gap') return <li key={row.id} data-arkme-member-event-gap={row.gapId} aria-hidden style={{height:1,width:'100%'}}/>
+                if (row.kind === 'member-event') return <ArkmeMemberLeaveNotice key={row.id} rowId={row.id} event={row.item} onOpen={openMemberEventProfile}/>
                 if (row.kind === 'member-join') return <ArkmeMemberJoinNotice
                   key={row.id}
                   rowId={row.id}
@@ -7568,6 +7623,15 @@ export function ArkmeSurface({
           onClose={closeMemberProfile}
           onSend={() => { openPrivateChatForMember(memberProfile) }}
         />}
+        {activeConversation && source?.kind === 'group_chat' && groupSelfRole === 'owner' && !memberEventTimeline.unavailable
+          && memberEventProfile?.scope === memberEventScope && <ArkmeMemberEventProfileDialog
+            key={`${memberEventScope}:${memberEventProfile.event.eventId}`}
+            sourceRef={source.sourceRef} event={memberEventProfile.event}
+            onClose={() => { setMemberEventProfile(undefined) }}
+            onUnavailable={() => { memberEventTimeline.revoke() }}
+            onError={setError}
+            onOpen={result => { setMemberEventProfile(undefined); activateSource(result.source) }}
+          />}
         {activeConversation && source !== undefined && memberRecords !== undefined && <ArkmeMemberRecordsPanel
           sourceRef={source.sourceRef}
           member={memberRecords.member}

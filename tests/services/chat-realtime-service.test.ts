@@ -20,6 +20,35 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ChatRealtimeService', () => {
+  it('projects a member event hint without reading messages or refreshing unread/attention state', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const runtime = new ServiceRuntime(config, sessions, { async uniqueCode() { return 'test-key' } } as StateStore)
+    const source = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
+    })
+    const timeline = vi.fn(async () => [])
+    const service = new ChatRealtimeService(runtime, source, { chatTimelineItems: timeline })
+    const schedule = vi.spyOn(service, 'scheduleChatSessionProjection')
+    const attention = vi.spyOn(service, 'refreshAttentionSummary')
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+    service.handleChatRealtimeNotice({
+      cause: 'chat-hint', state: { revision: 2, connected: true, connectionGeneration: 1 },
+      memberEvent: { eventUid: 'leave-1', chatSessionUid: 'raw-group', eventAtMillis: 1234 },
+    })
+    await vi.waitFor(() => { expect(events).toHaveLength(1) })
+    expect(events[0]).toMatchObject({ type: 'member-events-invalidated', eventId: 'leave-1', occurredAtMillis: 1234,
+      sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./) })
+    expect(JSON.stringify(events[0])).not.toContain('raw-group')
+    expect(timeline).not.toHaveBeenCalled()
+    expect(schedule).not.toHaveBeenCalled()
+    expect(attention).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
   it('starts in a disconnected state without opening a connection', () => {
     const sessions: ArkmeSessionStore = { async read() { return undefined }, async write() {}, async delete() {} }
     const runtime = new ServiceRuntime(config, sessions, {} as StateStore)

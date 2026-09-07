@@ -4,13 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
+import { arkmeMemberEvents } from '../src/client/member-event-cache.js'
 import {
   arkmeChatDeltaCalendarDateStamps,
   arkmeChatDeltaSourceKeys,
   arkmeSelectedBotAffectedByChatDelta,
   useArkmeRealtimeClientEvents,
 } from '../src/client/realtime-client-events.js'
-import type { ArkmeBotSummary, ArkmeChatClientEvent } from '../src/types.js'
+import type { ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeChatClientEvent } from '../src/types.js'
 
 const selectedBot: ArkmeBotSummary = {
   botRef: 'bot-ref', name: 'Chat Bot', provider: 'webhook', description: '', status: 'online',
@@ -27,6 +28,7 @@ const delta: Extract<ArkmeChatClientEvent, { type: 'sessions-delta' }> = {
 }
 
 afterEach(() => {
+  arkmeMemberEvents.activateAccount(undefined)
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -84,6 +86,61 @@ describe('Chat-owned Bot realtime invalidation', () => {
 })
 
 describe('realtime reconcile routing', () => {
+  it('clears member-event memory on logout even when no conversation is mounted',async()=>{
+    class FakeEventSource { onopen=null;onmessage=null;close(){} }
+    vi.stubGlobal('EventSource',FakeEventSource)
+    vi.spyOn(arkmeAuthStore,'refresh').mockResolvedValue()
+    vi.spyOn(arkmeMessageReadReceipts,'reconcile').mockImplementation(()=>undefined)
+    function Harness({auth}:{auth:ArkmeAuthSnapshot}) {useArkmeRealtimeClientEvents(auth,1,false);return null}
+    const auth:ArkmeAuthSnapshot={status:'authenticated',userId:42,environment:'test'}
+    let renderer!:ReactTestRenderer
+    await act(async()=>{renderer=create(createElement(Harness,{auth}))})
+    const initial=arkmeMemberEvents.attach('test:42','group',async()=>({items:[{eventId:'secret',occurredAtMillis:100,type:'left',displayName:'李四'}],hasMore:false}),()=>{})
+    await initial.timeline.enterWindow(0,1000,'latest');initial.release()
+    await act(async()=>{renderer.update(createElement(Harness,{auth:{status:'logged-out',environment:'test'}}))})
+    await act(async()=>{renderer.update(createElement(Harness,{auth}))})
+    const read=vi.fn(async()=>({items:[],hasMore:false}))
+    const next=arkmeMemberEvents.attach('test:42','group',read,()=>{})
+    await next.timeline.enterWindow(0,1000,'latest')
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(next.timeline.snapshot().events).toEqual([])
+    next.release()
+    await act(async()=>{renderer.unmount()})
+  })
+
+  it('records an SSE hint for an inactive cached group without a background query',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(1000)
+    let source!:FakeEventSource
+    class FakeEventSource {
+      onopen:(()=>void)|null=null
+      onmessage:((event:MessageEvent<string>)=>void)|null=null
+      constructor(){source=this}
+      close(){}
+    }
+    vi.stubGlobal('EventSource',FakeEventSource)
+    vi.spyOn(arkmeAuthStore,'refresh').mockResolvedValue()
+    vi.spyOn(arkmeMessageReadReceipts,'reconcile').mockImplementation(()=>undefined)
+    const refresh=vi.spyOn(arkmeChatDirectory,'refreshRoot').mockResolvedValue([])
+    function Harness(){useArkmeRealtimeClientEvents({status:'authenticated',userId:42,environment:'test'},1,false);return null}
+    let renderer!:ReactTestRenderer
+    await act(async()=>{renderer=create(createElement(Harness))})
+    let reads=0
+    const read=async()=>{reads++;return {items:[],hasMore:false}}
+    const initial=arkmeMemberEvents.attach('test:42','group',read,()=>{})
+    await initial.timeline.enterWindow(0,1000,'latest');initial.release()
+    await act(async()=>{
+      source.onmessage?.({data:JSON.stringify({type:'member-events-invalidated',revision:1,sourceKey:'group',eventId:'new',occurredAtMillis:1100})} as MessageEvent<string>)
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+    expect(reads).toBe(1)
+    expect(refresh).not.toHaveBeenCalled()
+    const next=arkmeMemberEvents.attach('test:42','group',read,()=>{})
+    await next.timeline.enterWindow(0,4000,'latest')
+    expect(reads).toBe(2)
+    next.release()
+    await act(async()=>{renderer.unmount()})
+    vi.useRealTimers()
+  })
   it('does not refresh the directory when 75-second or lease reconnects publish refresh none', async () => {
     let source!: FakeEventSource
     class FakeEventSource {

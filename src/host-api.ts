@@ -1596,6 +1596,14 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       { activeOnly: params.activeOnly !== false },
     )
+    case 'source.member-events': return await service.memberEvents(stringParam(params, 'sourceRef'), {
+      fromAtMillis: numberParam(params, 'fromAtMillis', 0),
+      toAtMillis: numberParam(params, 'toAtMillis', 0),
+      limit: numberParam(params, 'limit', 50),
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}),
+    }, requestSignal)
+    case 'source.member-event.profile': return await service.memberEventProfile(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
+    case 'source.member-event.private.open': return await service.memberEventPrivateChat(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
     case 'source.member-records': return await service.sourceMemberRecords(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'memberRef'),

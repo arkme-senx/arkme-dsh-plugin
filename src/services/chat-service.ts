@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import { MemberEventService } from './member-event-service.js'
 import { projectForwardRecordingSegment } from '../recording-forward-presentation.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -1321,6 +1322,7 @@ function decodeOpaqueJson(value: string): unknown {
 }
 
 export class ChatService {
+  readonly memberEvents: MemberEventService
   private favoriteStickerMutationTail: Promise<void> = Promise.resolve()
 
   constructor(
@@ -1335,7 +1337,9 @@ export class ChatService {
     private readonly realtime: ArkmeChatRealtimePort,
     private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
     private readonly messageActions?: MessageActionService,
-  ) {}
+  ) {
+    this.memberEvents = new MemberEventService(runtime, source, profile, (userId, options) => this.openPrivateChatFromUser(userId, options))
+  }
 
   private async hydrateExtensionMedia(
     projections: readonly ArkmeExtensionMediaProjection[],
@@ -1792,9 +1796,12 @@ export class ChatService {
 
   async openPrivateChatFromUser(
     peerUserId: number,
-    options: { presentationDisplayName?: string; signal?: AbortSignal } = {},
+    options: { presentationDisplayName?: string; expectedViewerUserId?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeOpenPrivateChatResult> {
     const session = await this.runtime.requireSession()
+    if (options.expectedViewerUserId !== undefined && options.expectedViewerUserId !== session.userId) {
+      throw new ArkmePluginError('member-events-unavailable', '账号已切换，请重新打开用户卡片', false, 403)
+    }
     if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
       throw new ArkmePluginError('private-chat-peer-invalid', '私聊用户参数无效', false)
     }
