@@ -379,6 +379,7 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
         spellCheck
         style={{ ...style, ...styles.editor, position: 'relative', zIndex: 1 }}
         data-arkme-rich-composer="true"
+        data-arkme-composer-editor-box="true"
         onCompositionEnd={event => {
           const text = editorSemanticText(event.currentTarget)
           setEditorHasContent(text !== '')

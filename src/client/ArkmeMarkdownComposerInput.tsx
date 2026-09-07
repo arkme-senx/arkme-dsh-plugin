@@ -127,7 +127,7 @@ export const ArkmeMarkdownComposerInput = forwardRef<ArkmeRichComposerHandle, Ar
     getEditorGeometry() { return editor?.view.dom.getBoundingClientRect() },
   }), [editor])
 
-  return <div ref={host} className={`arkme-markdown ${props.className ?? ''}`} style={{ ...props.style, position: 'relative' }}
+  return <div ref={host} data-arkme-composer-editor-box="true" className={`arkme-markdown ${props.className ?? ''}`} style={{ ...props.style, position: 'relative' }}
     onFocus={props.onFocus} onBlur={props.onBlur}
     onPasteCapture={props.onPaste}
     onKeyDownCapture={event => {
