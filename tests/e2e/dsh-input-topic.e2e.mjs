@@ -145,6 +145,18 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       await setting.click()
       await expect.poll(async () => (await sdk.topicHomeVisibility(archive.sourceRef)).showInHome).toBe(false)
       await expect.poll(() => setting.isChecked()).toBe(false)
+      const record = page.getByRole('button', { name: '打开快记详情', exact: true }).filter({ hasText: prompt })
+      await record.click({ button: 'right' })
+      const messageMenu = page.getByRole('menu', { name: '消息操作' })
+      expect(await messageMenu.getByRole('menuitem', { name: '延展', exact: true }).count()).toBe(0)
+      await messageMenu.getByRole('menuitem', { name: '重新编辑', exact: true }).click()
+      const editor = page.getByRole('textbox', { name: '重新编辑快记', exact: true })
+      await editor.fill('系统主题中的既有快记仍可重新编辑')
+      await page.getByRole('button', { name: '保存重新编辑', exact: true }).click()
+      await editor.waitFor({ state: 'hidden' })
+      await page.getByRole('button', { name: '打开快记详情', exact: true })
+        .filter({ hasText: '系统主题中的既有快记仍可重新编辑' }).waitFor({ state: 'visible' })
+      expect(await page.getByRole('button', { name: '发送消息', exact: true }).count()).toBe(0)
     } catch (error) {
       failures.push(error)
     } finally {

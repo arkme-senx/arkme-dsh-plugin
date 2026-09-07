@@ -7870,13 +7870,13 @@ export function ArkmeSurface({
             disabled={arkmeTimelineMessageActionRef(messageMenuItem) === ''}
             onClick={() => { void copyMessageLink([messageMenuItem]) }}
           ><span style={styles.messageActionMenuIcon} aria-hidden><ArkmeMessageActionIcon kind="link" /></span><span style={styles.messageActionMenuText}>{ARKME_MESSAGE_ACTION_MENU_LABELS[1]}</span></button>
-          <button
+          {!archiveReadOnly && <button
             type="button"
             role="menuitem"
             style={{ ...styles.messageActionMenuItem, opacity: arkmeTimelineMessageActionRef(messageMenuItem) === '' ? .45 : 1 }}
             disabled={arkmeTimelineMessageActionRef(messageMenuItem) === ''}
             onClick={() => { startMessageExtension(messageMenuItem) }}
-          ><span style={styles.messageActionMenuIcon} aria-hidden><ArkmeDesktopExtensionIcon /></span><span style={styles.messageActionMenuText}>{ARKME_MESSAGE_ACTION_MENU_LABELS[2]}</span></button>
+          ><span style={styles.messageActionMenuIcon} aria-hidden><ArkmeDesktopExtensionIcon /></span><span style={styles.messageActionMenuText}>{ARKME_MESSAGE_ACTION_MENU_LABELS[2]}</span></button>}
           {arkmeCanReeditTimelineMessage(messageMenuItem) && <button
             type="button"
             role="menuitem"
@@ -8034,6 +8034,7 @@ export function ArkmeSurface({
           key={detailItem.itemUid}
           item={detailItem}
           sourceRef={source?.sourceRef}
+          canExtend={!archiveReadOnly}
           showOriginal={showOriginal}
           onClose={() => { setDrawer(undefined) }}
           onToggleOriginal={() => { setShowOriginal(value => !value) }}

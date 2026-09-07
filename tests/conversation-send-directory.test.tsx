@@ -434,7 +434,13 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findByProps({ role: 'alert' }).children.join('')).toContain('草稿保存失败')
   })
 
-  it.each(['plain', 'markdown'] as const)('commits %s re-edit through the existing send button and highlights the updated row for three seconds', async textFormat => {
+  it.each([
+    ['plain', undefined], ['markdown', undefined], ['plain', 1], ['plain', 3],
+  ] as const)('commits %s re-edit with topic kind %s through the existing send button and highlights the updated row for three seconds', async (textFormat, topicKind) => {
+    if (topicKind !== undefined) {
+      activeSource = { ...target, kind: 'topic', sourceKey: 'topic:archive', topicKind, displayName: 'DSH Agent Input' }
+      arkmeUi.selectSource(activeSource)
+    }
     const nextText = textFormat === 'markdown' ? '    更新后的正文\n' : '更新后的正文'
     vi.useFakeTimers()
     Object.assign(window, {
@@ -448,15 +454,24 @@ describe('conversation send directory projection', () => {
       }]
       const baseCall = mocks.callArkme.getMockImplementation()!
       mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+        if (operation === 'topic.home-visibility') return { showInHome: false }
+        if (operation === 'sources.list' && topicKind !== undefined) return {
+          directory: params?.directory ?? 'root',
+          items: params?.directory === 'send_to_self' ? [sendToSelf, activeSource] : [other, target],
+          hasMore: false,
+        }
         if (operation === 'source.record-reedit.detail') return {
           sourceRef: 'source-harness', itemUid: 'record-reedit-commit', title: '', textContent: '原正文', textFormat,
           sendAtMillis: 1, templateKind: 1, displayKind: 0, version: 3,
           attachmentCount: 0, maxTextLength: 4000,
         }
-        const receipt = { submissionId: 'submission-commit', state: 'committed', itemUid: 'record-reedit-commit', title: '', textContent: '更新后的正文', attachments: [],
+        const receipt = { submissionId: 'submission-commit', state: 'committed', itemUid: 'record-reedit-commit', title: '', textContent: nextText, attachments: [],
           result: { status: 'committed', itemUid: 'record-reedit-commit', version: 4, revisionUid: 'revision-1', projectionState: 'pending' } }
         if (operation === 'source.record-reedit.submissions') return mocks.callArkme.mock.calls.some(([op]) => op === 'source.record-reedit.submit') ? [receipt] : []
-        if (operation === 'source.record-reedit.submit') return { ...receipt, state: 'pending', result: undefined }
+        if (operation === 'source.record-reedit.submit') {
+          timeline = timeline.map(item => ({ ...item, textContent: nextText, version: 4 }))
+          return { ...receipt, state: 'pending', result: undefined }
+        }
         return await baseCall(operation, params, signal)
       })
       await act(async () => {
@@ -467,8 +482,12 @@ describe('conversation send directory projection', () => {
         })
         await Promise.resolve()
       })
+      expect(renderer!.root.findAllByProps({ 'aria-label': '发送消息' })).toHaveLength(topicKind === 3 ? 0 : 1)
       const bubble = renderer!.root.findByProps({ 'aria-label': '打开快记详情' })
       act(() => bubble.props.onContextMenu({ preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180 }))
+      const extensionActions = renderer!.root.findByProps({ 'aria-label': '消息操作' }).findAllByProps({ role: 'menuitem' })
+        .filter(button => button.findAllByType('span').some(span => span.children.includes('延展')))
+      expect(extensionActions).toHaveLength(topicKind === 3 ? 0 : 1)
       const reedit = renderer!.root.findByProps({ 'aria-label': '消息操作' }).findAllByProps({ role: 'menuitem' })
         .find(button => button.findAllByType('span').some(span => span.children.includes('重新编辑')))!
       await act(async () => { reedit.props.onClick(); await Promise.resolve(); await Promise.resolve() })
@@ -483,6 +502,7 @@ describe('conversation send directory projection', () => {
         attachments: [], expectedDraftRevision: 1,
       })
       expect(renderer!.root.findAllByProps({ 'data-arkme-composer-reedit-target': 'true' })).toHaveLength(0)
+      expect(renderer!.root.findAllByProps({ 'aria-label': '发送消息' })).toHaveLength(topicKind === 3 ? 0 : 1)
       expect(renderer!.root.findAll(node => node.children.some(child => typeof child === 'string' && child.includes('更新后的正文'))).length).toBeGreaterThan(0)
       expect(renderer!.root.findAll(node => node.children.includes('快记已更新'))).toHaveLength(0)
       expect(renderer!.root.findAllByProps({ 'data-arkme-highlight-backdrop': 'true' })).toHaveLength(0)
@@ -500,6 +520,23 @@ describe('conversation send directory projection', () => {
       expect(renderer!.root.findByProps({
         'data-arkme-message-item-uid': 'record-reedit-commit',
       }).findAllByProps({ 'data-arkme-highlight-backdrop': 'true' })).toHaveLength(0)
+      vi.stubGlobal('HTMLElement', class {})
+      vi.stubGlobal('document', {
+        activeElement: null,
+        body: { style: { overflow: '' } },
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        querySelector: vi.fn(() => null),
+      })
+      const trigger = {}
+      await act(async () => {
+        renderer!.root.findByProps({ 'aria-label': '打开快记详情' }).props.onKeyDown({
+          key: 'Enter', target: trigger, currentTarget: trigger, preventDefault: vi.fn(),
+        })
+        await Promise.resolve(); await Promise.resolve()
+      })
+      expect(renderer!.root.findAllByProps({ 'data-arkme-note-detail': 'true' })).toHaveLength(1)
+      expect(renderer!.root.findAllByProps({ 'aria-label': '发送延展' })).toHaveLength(topicKind === 3 ? 0 : 1)
     } finally {
       vi.useRealTimers()
     }

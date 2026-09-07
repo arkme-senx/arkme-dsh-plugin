@@ -544,11 +544,12 @@ function relatedQuickNoteReferenceExpired(error: unknown): boolean {
 }
 
 export function ArkmeTimelineDetailDrawer({
-  item, sourceRef, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
+  item, sourceRef, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
   messageCreationBlocked = false, messageCreationRestriction = '',
 }: {
   item: ArkmeTimelineItem
   sourceRef?: string | undefined
+  canExtend?: boolean
   showOriginal: boolean
   onClose: () => void
   onToggleOriginal: () => void
@@ -681,7 +682,7 @@ export function ArkmeTimelineDetailDrawer({
   const textContent = showOriginal && item.aiPolish?.originalText !== undefined ? item.aiPolish.originalText
     : item.aiPolish?.state === 'polished' && item.aiPolish.polishedText !== undefined ? item.aiPolish.polishedText : item.textContent
   const canToggle = item.aiPolish?.state === 'polished' && item.aiPolish.originalText !== undefined && item.aiPolish.polishedText !== undefined
-  const extensionFooter = normalizedSourceRef === '' || messageActionRef === '' ? undefined : <DetailExtensionComposer
+  const extensionFooter = !canExtend || normalizedSourceRef === '' || messageActionRef === '' ? undefined : <DetailExtensionComposer
     sourceRef={normalizedSourceRef}
     messageActionRef={messageActionRef}
     messageCreationBlocked={messageCreationBlocked}
