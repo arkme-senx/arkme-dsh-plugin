@@ -5,6 +5,10 @@ on:
     types: [closed]
     branches: [master]
 
+env:
+  # 每个构建 job 显式构建一次，安装和打包时不重复构建。
+  ARKME_SKIP_PREPARE_BUILD: 'true'
+
 concurrency:
   group: plugin-npm-release
   cancel-in-progress: false
@@ -45,11 +49,6 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - name: 安装依赖
-        if: steps.source.outputs.release_sha == ''
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
       - name: 决定并写入发布版本
         if: steps.source.outputs.release_sha == ''
         id: release
@@ -70,6 +69,11 @@ jobs:
             echo "目标版本 ${package_name}@${version} 已存在，但不是当前可自动递增的 npm latest。" >&2
             exit 1
           fi
+      - name: 安装依赖
+        if: steps.source.outputs.release_sha == ''
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
       - name: 验证待发布内容
         if: steps.source.outputs.release_sha == ''
         run: |

@@ -2,11 +2,61 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const workflow = (name: string) => readFile(path.join(repositoryRoot, '.github', 'workflows', name), 'utf8')
 
 describe('Arkme runtime publish workflow boundaries', () => {
+  it.each([
+    ['publish-plugin-release.yml', 'prepare'],
+    ['publish-plugin-release.yml', 'publish'],
+    ['publish-production-runtime.yml', 'publish-runtime'],
+    ['publish-pre-release-runtime.yml', 'build-runtime'],
+    ['prepare-plugin-release.yml', 'prepare'],
+  ])('builds explicitly once and skips lifecycle builds in %s / %s', async (file, jobName) => {
+    const definition = parse(await workflow(file))
+    const job = definition.jobs[jobName]
+    const commands: string[] = []
+    for (const step of job.steps) {
+      if (!step.run) continue
+      const env = { ...definition.env, ...job.env, ...step.env }
+      if (/pnpm (install|test|run)/.test(step.run)) {
+        expect(env.ARKME_SKIP_PREPARE_BUILD).toBe('true')
+      }
+      commands.push(...step.run.split('\n').map((line: string) => line.trim()))
+    }
+    expect(commands.filter(line => line === 'pnpm run build')).toHaveLength(1)
+    expect(commands.filter(line => line.startsWith('pnpm install'))).toEqual(['pnpm install --frozen-lockfile'])
+    const build = commands.indexOf('pnpm run build')
+    const pack = commands.findIndex(line => /^(pnpm run pack:runtime|npm pack)/.test(line))
+    if (pack !== -1) expect(pack).toBeGreaterThan(build)
+  })
+
+  it.each(['publish-plugin-release.yml', 'prepare-plugin-release.yml'])(
+    'writes release metadata before dependency installation in %s', async (file) => {
+      const definition = parse(await workflow(file))
+      const steps = definition.jobs.prepare.steps
+      const version = steps.findIndex((step: { run?: string }) => step.run?.includes('node scripts/prepare-plugin-release.mjs'))
+      const install = steps.findIndex((step: { run?: string }) => step.run?.includes('pnpm install'))
+      const tests = steps.findIndex((step: { run?: string }) => step.run?.includes('pnpm test'))
+      expect(version).toBeGreaterThan(-1)
+      expect(install).toBeGreaterThan(version)
+      expect(tests).toBeGreaterThan(install)
+    },
+  )
+
+  it.each([
+    ['publish-production-runtime.yml', 'publish-runtime', 'false'],
+    ['publish-pre-release-runtime.yml', 'build-runtime', 'true'],
+  ])('keeps the independent Runtime test switch in %s', async (file, jobName, defaultValue) => {
+    const definition = parse(await workflow(file))
+    expect(definition.env.RUN_TESTS).toBe(defaultValue)
+    const tests = definition.jobs[jobName].steps.filter((step: { run?: string }) => step.run === 'pnpm test')
+    expect(tests).toHaveLength(1)
+    expect(tests[0].if).toBe("env.RUN_TESTS == 'true'")
+  })
+
   it('runs tests while preparing the release but not while publishing npm', async () => {
     const release = await workflow('publish-plugin-release.yml')
 

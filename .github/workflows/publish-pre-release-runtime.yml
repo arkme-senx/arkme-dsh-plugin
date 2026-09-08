@@ -5,6 +5,8 @@ on:
     branches: [pre-release]
 
 env:
+  # 安装和打包复用显式构建的产物。
+  ARKME_SKIP_PREPARE_BUILD: 'true'
   # pre-release 在构建 Runtime 前执行测试；需要跳过时改为 'false'。
   RUN_TESTS: 'true'
 

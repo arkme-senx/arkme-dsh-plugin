@@ -6,6 +6,8 @@ on:
     types: [arkme-plugin-release-published]
 
 env:
+  # 安装和打包复用显式构建的产物。
+  ARKME_SKIP_PREPARE_BUILD: 'true'
   # master 发版已在前置流程执行测试；需要 Runtime 再次测试时改为 'true'。
   RUN_TESTS: 'false'
 

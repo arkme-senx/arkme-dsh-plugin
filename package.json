@@ -85,7 +85,7 @@
     "pack:runtime": "node scripts/build-runtime-artifact.mjs",
     "verify:call-assets": "node scripts/verify-call-assets.mjs",
     "verify:windows-credential-helper": "node scripts/verify-windows-credential-helper.mjs",
-    "prepare": "pnpm run build"
+    "prepare": "node scripts/prepare-build.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",
