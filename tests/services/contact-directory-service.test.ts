@@ -18,6 +18,9 @@ function fixture(options: FixtureOptions = {}) {
   let currentSession = session
   const runtime = {
     config: { environment: 'test' },
+    requestScope: (userId: number) => `user:${userId}`,
+    invalidateScope: vi.fn(),
+    invalidateKey: vi.fn(),
     stateStore: { async uniqueCode() { return 'directory-test-secret' } },
     requireSession: vi.fn(async () => currentSession),
     authenticatedChatPost: vi.fn(async (path: string) => {
@@ -463,7 +466,7 @@ describe('ContactDirectoryService', () => {
 
     setSession(session)
     await expect(service.contactProfile(contactRef)).resolves.toEqual({
-      contactRef, displayName: '同事', nickname: '林林', remark: '同事', avatarRef: 'avatar-ref-88',
+      contactRef, displayName: '同事', nickname: '林林', remark: '同事', accountName: 'lin-lin', avatarRef: 'avatar-ref-88',
     })
     await service.contactWorld(contactRef, { limit: 10, offset: 5 })
     expect(world.listUserWorldFeed).toHaveBeenCalledWith(88, { limit: 10, offset: 5 })
@@ -476,4 +479,104 @@ describe('ContactDirectoryService', () => {
     const { service } = fixture()
     await expect(service.list('unmarked-speakers')).rejects.toMatchObject({ code: 'directory-section-not-owned' })
   })
+})
+
+
+describe('directory contact remark mutation', () => {
+  async function setup() {
+    const f = fixture({ contacts: { items: [{ user_id: 88, chat_session_uid: 'private-88', remark: '' }] }, profiles: new Map([[88, { nickname: '小满', accountName: 'xiaoman' }]]) })
+    const first = (await f.service.list('contacts')).items[0]!
+    const second = (await f.service.list('contacts')).items[0]!
+    if (first.kind !== 'contact' || second.kind !== 'contact') throw new Error('missing contact')
+    return { ...f, contactRef: first.contactRef, secondRef: second.contactRef }
+  }
+  it('writes an account-bound session remark, updates every issued ref, and supports clearing', async () => {
+    const { service, runtime, chat, contactRef, secondRef } = await setup()
+    runtime.authenticatedChatPost.mockResolvedValueOnce({ contact: { chat_session_uid: 'private-88', user_id: 88, remark: '同事' } })
+    const signal = new AbortController().signal
+    await expect(service.updateContactRemark(contactRef, '  同事  ', signal)).resolves.toMatchObject({ contactRef, remark: '同事', displayName: '同事', nickname: '小满' })
+    expect(runtime.authenticatedChatPost).toHaveBeenLastCalledWith('/api/v1/chats/contacts/update-remark', { chat_session_uid: 'private-88', remark: '同事', update_at: expect.any(Number) }, session, signal)
+    await expect(service.contactProfile(secondRef)).resolves.toMatchObject({ remark: '同事', displayName: '同事' })
+    runtime.authenticatedChatPost.mockResolvedValueOnce({ contact: { chat_session_uid: 'private-88', user_id: 88 } })
+    await expect(service.updateContactRemark(contactRef, '')).resolves.toMatchObject({ remark: '', displayName: '小满' })
+    expect(chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+    expect(runtime.invalidateKey).toHaveBeenCalledWith('user:7', 'directory:contacts:')
+    expect(runtime.invalidateScope).not.toHaveBeenCalled()
+  })
+  it('rejects wrong-account, malformed, overlong, and aborted writes without changing a remark', async () => {
+    const { service, runtime, setSession, contactRef } = await setup()
+    const before = runtime.authenticatedChatPost.mock.calls.length
+    setSession({ ...session, userId: 99 })
+    await expect(service.updateContactRemark(contactRef, '错误账号')).rejects.toMatchObject({ code: 'directory-contact-ref-account-mismatch' })
+    setSession(session)
+    await expect(service.updateContactRemark(contactRef, '字'.repeat(101))).rejects.toThrow()
+    const controller = new AbortController(); controller.abort()
+    await expect(service.updateContactRemark(contactRef, '已取消', controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    expect(runtime.authenticatedChatPost.mock.calls.length).toBe(before)
+    runtime.authenticatedChatPost.mockResolvedValueOnce({ contact: { chat_session_uid: 'other', user_id: 88, remark: '错误' } })
+    await expect(service.updateContactRemark(contactRef, '同事')).rejects.toThrow()
+    await expect(service.contactProfile(contactRef)).resolves.toMatchObject({ remark: '' })
+  })
+})
+
+
+it('preserves a saved remark when an older profile or partially projected directory finishes later', async () => {
+  const f = fixture({ contacts: { items: [{ user_id: 88, chat_session_uid: 'private-88', remark: '' }, { user_id: 89, chat_session_uid: 'private-89', remark: '' }] }, profiles: new Map([[88, { nickname: '小满', avatarUrl: 'image-88' }], [89, { nickname: '小林', avatarUrl: 'image-89' }]]) })
+  const first = (await f.service.list('contacts')).items[0]!
+  if (first.kind !== 'contact') throw new Error('missing contact')
+  let finishProfile!: () => void
+  let finishList!: () => void
+  const profileWait = new Promise<void>(resolve => { finishProfile = resolve })
+  const listWait = new Promise<void>(resolve => { finishList = resolve })
+  const originalProfiles = f.profile.publicProfileSummariesByUserIds.getMockImplementation()!
+  f.profile.publicProfileSummariesByUserIds.mockImplementationOnce(async ids => { await profileWait; return originalProfiles(ids) })
+  const oldProfile = f.service.contactProfile(first.contactRef)
+  await vi.waitFor(() => { expect(f.profile.publicProfileSummariesByUserIds).toHaveBeenCalledTimes(2) })
+  let paused = false
+  f.profile.sealProfileImageRef.mockImplementation(async (_viewer, target) => { if (target === 89) { paused = true; await listWait }; return `avatar-${target}` })
+  const oldList = f.service.list('contacts')
+  await vi.waitFor(() => { expect(paused).toBe(true) })
+  f.runtime.authenticatedChatPost.mockResolvedValueOnce({ contact: { chat_session_uid: 'private-88', user_id: 88, remark: '设计同事' } })
+  await f.service.updateContactRemark(first.contactRef, '设计同事')
+  finishProfile(); finishList()
+  await expect(oldProfile).resolves.toMatchObject({ remark: '设计同事' })
+  expect((await oldList).items[0]).toMatchObject({ remark: '设计同事', displayName: '设计同事', letter: 'S' })
+})
+
+
+it('keeps the selected contact reference across add refreshes and subsequent remark updates', async () => {
+  const contacts = { items: [{ user_id: 88, chat_session_uid: 'private-88', remark: '' }], total: 1, has_more: false }
+  const f = fixture({ contacts, profiles: new Map([[88, { nickname: '小满' }], [89, { nickname: '小林' }]]) })
+  const first = (await f.service.list('contacts')).items[0]!
+  if (first.kind !== 'contact') throw new Error('missing contact')
+  contacts.items.push({ user_id: 89, chat_session_uid: 'private-89', remark: '' })
+  contacts.total = 2
+  const refreshed = await f.service.list('contacts', { refresh: true })
+  expect(refreshed.items[0]).toMatchObject({ contactRef: first.contactRef })
+  expect(refreshed.total).toBe(2)
+  contacts.items[0]!.remark = '设计同事'
+  f.runtime.authenticatedChatPost.mockResolvedValueOnce({ contact: { chat_session_uid: 'private-88', user_id: 88, remark: '设计同事' } })
+  await f.service.updateContactRemark(first.contactRef, '设计同事')
+  const afterSave = await f.service.list('contacts', { refresh: true })
+  expect(afterSave.items[0]).toMatchObject({ contactRef: first.contactRef, displayName: '设计同事', remark: '设计同事', letter: 'S' })
+})
+
+it('does not reuse another account or expired contact reference', async () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-09-08T10:00:00Z'))
+  const f = fixture({ contacts: { items: [{ user_id: 88, chat_session_uid: 'private-88', remark: '' }] } })
+  const first = (await f.service.list('contacts')).items[0]!
+  if (first.kind !== 'contact') throw new Error('missing contact')
+  f.setSession({ ...session, userId: 8 })
+  const other = (await f.service.list('contacts')).items[0]!
+  if (other.kind !== 'contact') throw new Error('missing contact')
+  expect(other.contactRef).not.toBe(first.contactRef)
+  await expect(f.service.contactProfile(first.contactRef)).rejects.toMatchObject({ code: 'directory-contact-ref-account-mismatch' })
+  f.setSession(session)
+  expect((await f.service.list('contacts')).items[0]).toMatchObject({ contactRef: first.contactRef })
+  vi.advanceTimersByTime(31 * 60_000)
+  const expired = (await f.service.list('contacts')).items[0]!
+  if (expired.kind !== 'contact') throw new Error('missing contact')
+  expect(expired.contactRef).not.toBe(first.contactRef)
+  await expect(f.service.contactProfile(first.contactRef)).rejects.toMatchObject({ code: 'directory-contact-ref-expired' })
 })

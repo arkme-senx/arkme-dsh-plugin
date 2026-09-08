@@ -87,3 +87,14 @@ describe('contact directory UI-only Host operations', () => {
     expect(service.openDirectoryContactChat).toHaveBeenCalledWith('contact-ref')
   })
 })
+
+
+it('routes remark writes through the directory owner with a signal and explicit string, including empty clearing', async () => {
+  const updateDirectoryContactRemark = vi.fn(async (contactRef, remark) => ({ contactRef, remark }))
+  const signal = new AbortController().signal
+  const service = { updateDirectoryContactRemark } as never
+  await expect(dispatchArkmeHostOperation(service, 'directory.contact.remark.update', { contactRef: ' ref ', remark: '', userId: 999 }, undefined, undefined, undefined, undefined, signal)).resolves.toEqual({ contactRef: 'ref', remark: '' })
+  expect(updateDirectoryContactRemark).toHaveBeenCalledWith('ref', '', signal)
+  await expect(dispatchArkmeHostOperation(service, 'directory.contact.remark.update', { contactRef: 'ref' })).rejects.toThrow()
+  expect(updateDirectoryContactRemark).toHaveBeenCalledTimes(1)
+})

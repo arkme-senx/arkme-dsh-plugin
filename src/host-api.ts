@@ -1149,6 +1149,10 @@ export async function dispatchArkmeHostOperation(
     case 'directory.contact.profile': return await service.directoryContactProfile(
       stringParam(params, 'contactRef').trim(),
     )
+    case 'directory.contact.remark.update': {
+      if (typeof params.remark !== 'string') throw new ArkmePluginError('directory-contact-remark-invalid', '备注必须为文本', false, 400)
+      return await service.updateDirectoryContactRemark(stringParam(params, 'contactRef').trim(), params.remark, requestSignal)
+    }
     case 'directory.contact.world': return await service.directoryContactWorld(
       stringParam(params, 'contactRef').trim(),
       {

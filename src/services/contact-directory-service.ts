@@ -72,6 +72,8 @@ function cloneWorldOptions(options: { limit?: number; offset?: number; signal?: 
 
 export class ContactDirectoryService {
   private readonly contactRefs = new Map<string, ContactDirectoryRefEntry>()
+  private remarkRevision = 0
+  private readonly recentRemarks = new Map<string, { revision: number; remark: string }>()
 
   constructor(
     private readonly runtime: ServiceRuntime,
@@ -82,7 +84,7 @@ export class ContactDirectoryService {
     private readonly chat: ChatService,
   ) {}
 
-  dispose(): void { this.contactRefs.clear() }
+  dispose(): void { this.contactRefs.clear(); this.recentRemarks.clear() }
 
   async listRecordingSpeakerUsers(
     session: ArkmeSessionCredentials,
@@ -160,14 +162,59 @@ export class ContactDirectoryService {
     const identity = await this.contactIdentity(
       entry.targetUserId, entry.remark, publicProfile, session, entry.displayNameSnapshot,
     )
-    const updated = { ...entry, ...identity }
+    // A profile request started before a save must not put the old remark back.
+    const remark = this.contactRefs.get(contactRef.trim())?.remark ?? entry.remark
+    const updated = { ...entry, ...identity, remark,
+      displayName: remark || identity.nickname || identity.accountName || entry.displayNameSnapshot || '联系人' }
     this.contactRefs.set(contactRef.trim(), updated)
     return {
       contactRef: contactRef.trim(),
       displayName: updated.displayName,
       nickname: updated.nickname,
       remark: updated.remark,
+      ...(updated.accountName === undefined ? {} : { accountName: updated.accountName }),
       ...(updated.avatarRef === undefined ? {} : { avatarRef: updated.avatarRef }),
+    }
+  }
+
+  async updateContactRemark(contactRef: string, remarkValue: string, signal?: AbortSignal): Promise<ArkmeDirectoryContactProfile> {
+    if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
+    const { session, entry } = await this.resolveContactRef(contactRef)
+    const remark = remarkValue.trim()
+    if (Array.from(remark).length > 100) {
+      throw new ArkmePluginError('directory-contact-remark-too-long', '备注名最多 100 个字符', false, 400)
+    }
+    if (entry.chatSessionUid === undefined) {
+      throw new ArkmePluginError('directory-contact-session-unavailable', '暂时无法修改此联系人的备注，请刷新联系人后重试', true, 409)
+    }
+    if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/contacts/update-remark',
+      { chat_session_uid: entry.chatSessionUid, remark, update_at: Date.now() }, session, signal,
+    )
+    // Invalidate even if the reply is malformed: the write may have succeeded.
+    this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'directory:contacts:')
+    const contact = objectValue(data.contact)
+    if (stringValue(contact.chat_session_uid) !== entry.chatSessionUid
+      || numberValue(contact.user_id) !== entry.targetUserId
+      || (contact.remark !== undefined && typeof contact.remark !== 'string')) {
+      throw new ArkmePluginError('directory-contact-remark-response-invalid', '备注保存响应不完整，请重试', true, 502)
+    }
+    const savedRemark = stringValue(contact.remark).trim()
+    this.remarkRevision += 1
+    this.recentRemarks.set(`${session.userId}:${entry.targetUserId}`, { revision: this.remarkRevision, remark: savedRemark })
+    for (const [ref, current] of this.contactRefs) {
+      if (current.viewerUserId !== session.userId || current.targetUserId !== entry.targetUserId) continue
+      this.contactRefs.set(ref, { ...current, remark: savedRemark,
+        displayName: savedRemark || current.nickname || current.accountName || current.displayNameSnapshot || '联系人' })
+    }
+    const current = this.contactRefs.get(contactRef.trim()) ?? entry
+    return {
+      contactRef: contactRef.trim(), remark: savedRemark,
+      displayName: savedRemark || current.nickname || current.accountName || current.displayNameSnapshot || '联系人',
+      nickname: current.nickname,
+      ...(current.accountName === undefined ? {} : { accountName: current.accountName }),
+      ...(current.avatarRef === undefined ? {} : { avatarRef: current.avatarRef }),
     }
   }
 
@@ -236,6 +283,7 @@ export class ContactDirectoryService {
     const session = await this.runtime.requireSession()
     const limit = boundedLimit(options.limit)
     const offset = await this.openOffsetCursor('contacts', options.cursor, session.userId)
+    const revisionAtStart = this.remarkRevision
     const descriptors = await this.loadMergedContactDescriptors(session, options)
     const pageDescriptors = descriptors.slice(offset, offset + limit)
     const profiles = await this.profile.publicProfileSummariesByUserIds(
@@ -248,7 +296,18 @@ export class ContactDirectoryService {
         descriptor.targetUserId, descriptor.remark, profiles.get(descriptor.targetUserId), session,
         descriptor.displayNameSnapshot,
       )
-      const contactRef = `arkme-directory-contact-v1.${randomUUID()}`
+      const recent = this.recentRemarks.get(`${session.userId}:${descriptor.targetUserId}`)
+      if (recent !== undefined && recent.revision > revisionAtStart) {
+        identity.remark = recent.remark
+        identity.displayName = recent.remark || identity.nickname || identity.accountName || descriptor.displayNameSnapshot || '联系人'
+      }
+      // A directory refresh must keep the current detail and row bound to the same contact.
+      let contactRef: string | undefined
+      for (const [ref, current] of this.contactRefs) {
+        if (current.viewerUserId === session.userId && current.targetUserId === descriptor.targetUserId
+          && current.expiresAtMillis > Date.now()) { contactRef = ref; break }
+      }
+      contactRef ??= `arkme-directory-contact-v1.${randomUUID()}`
       const entry: ContactDirectoryRefEntry = {
         viewerUserId: session.userId,
         targetUserId: descriptor.targetUserId,
@@ -257,6 +316,7 @@ export class ContactDirectoryService {
         ...identity,
         expiresAtMillis: Date.now() + CONTACT_DIRECTORY_REF_TTL_MS,
       }
+      this.contactRefs.delete(contactRef)
       this.contactRefs.set(contactRef, entry)
       const item: Extract<ArkmeDirectoryItem, { kind: 'contact' }> = {
         kind: 'contact', contactRef, displayName: entry.displayName,
@@ -270,9 +330,20 @@ export class ContactDirectoryService {
     }
     this.pruneContactRefs()
     const hasMore = offset + pageDescriptors.length < descriptors.length
+    const nextCursor = hasMore ? await this.sealOffsetCursor('contacts', offset + pageDescriptors.length, session.userId) : undefined
+    // A save can finish while later rows await avatar projection. Refresh rows
+    // from the current entries after all asynchronous projection has completed.
+    for (const item of items) {
+      if (item.kind !== 'contact') continue
+      const current = this.contactRefs.get(item.contactRef)
+      if (current === undefined) continue
+      item.remark = current.remark
+      item.displayName = current.displayName
+      item.letter = contactDirectoryLetter(item)
+    }
     return {
       section: 'contacts', items, total: descriptors.length, hasMore,
-      ...(hasMore ? { nextCursor: await this.sealOffsetCursor('contacts', offset + pageDescriptors.length, session.userId) } : {}),
+      ...(nextCursor === undefined ? {} : { nextCursor }),
     }
   }
 

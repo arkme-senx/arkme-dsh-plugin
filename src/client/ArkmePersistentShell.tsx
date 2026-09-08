@@ -9,9 +9,13 @@ import type {} from './slots-contract.js'
 import type { ArkmeAuthSnapshot, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
+import { ArkmeQuickAddButton } from './ArkmeQuickAdd.js'
+import { arkmePrependSourceByIdentity } from './source-identity.js'
 import { ArkmeSurface } from './ArkmeSidebar.js'
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
 import type { ArkmeDshMessageSearchResult } from './ArkmeSearchSurface.js'
+import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
+import { ContactDirectoryAddDialog } from './redesign/contacts/ContactDirectoryAddDialog.js'
 import { ContactDirectorySurface } from './redesign/contacts/ContactDirectorySurface.js'
 import { DirectoryDetailPane } from './redesign/contacts/DirectoryDetailPane.js'
 import { UnmarkedSpeakerDetail } from './redesign/contacts/UnmarkedSpeakerDetail.js'
@@ -170,6 +174,13 @@ export function ArkmePersistentSidebar({
   const handoffControllerRef = useRef<AbortController>()
   const contactsContextRef = useRef({ accountKey: contactsAccountKey, contactsMode })
   contactsContextRef.current = { accountKey: contactsAccountKey, contactsMode }
+  const [contactAddSession, setContactAddSession] = useState<{ accountKey: string | undefined }>()
+  const [contactsAddedRevision, setContactsAddedRevision] = useState(0)
+  useEffect(() => {
+    if (!contactsMode || loginMode || ui.calendarOpen === true || contactAddSession?.accountKey !== contactsAccountKey) {
+      setContactAddSession(undefined)
+    }
+  }, [contactsMode, loginMode, ui.calendarOpen, contactsAccountKey, contactAddSession])
   const [sendToSelfState, setSendToSelfState] = useState<{
     userId: number
     source: ArkmeSourceItem
@@ -237,7 +248,10 @@ export function ArkmePersistentSidebar({
   useEffect(() => {
     if (!contactsMode) handoffControllerRef.current?.abort()
   }, [contactsMode, contactsAccountKey, contacts.generation])
-  useEffect(() => () => { handoffControllerRef.current?.abort() }, [])
+  useEffect(() => () => {
+    handoffControllerRef.current?.abort()
+    contactsContextRef.current = { ...contactsContextRef.current, contactsMode: false }
+  }, [])
 
   const beginSidebarResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
@@ -378,12 +392,31 @@ export function ArkmePersistentSidebar({
     {directoryVisible && <div style={styles.taskDirectory} data-arkme-directory-mode={contactsMode ? 'contacts' : 'conversations'}>
       {contactsMode ? <ContactDirectorySurface
         accountKey={contactsAccountKey ?? ''} selection={scopedContacts.selection} refreshRevision={scopedContacts.refreshRevision}
+        contactsAddedRevision={contactsAddedRevision}
         expandedSections={scopedContacts.expandedSections}
+        contactProfiles={scopedContacts.contactProfiles}
+        toolbarActions={<ArkmeQuickAddButton
+          notificationActivationRevision={ui.notificationActivationRevision ?? 0}
+          onContactAdd={() => { setContactAddSession({ accountKey: contactsAccountKey }) }}
+          onSourceCreated={source => {
+            const context = contactsContextRef.current
+            if (context.accountKey !== contactsAccountKey || !context.contactsMode) return
+            arkmeContactsTab.invalidateDirectoryCache()
+            arkmeChatDirectory.publish(arkmePrependSourceByIdentity(source, arkmeChatDirectory.getSnapshot().sources))
+            arkmeUi.selectSource(source)
+          }}
+          onBotCreated={bot => {
+            const context = contactsContextRef.current
+            if (context.accountKey !== contactsAccountKey || !context.contactsMode) return
+            arkmeContactsTab.invalidateDirectoryCache()
+            arkmeUi.openBotConversation(bot)
+          }}
+        />}
         {...(contactsDirectoryCache === undefined ? {} : {
           initialState: contactsDirectoryCache.state,
           cacheFresh: contactsDirectoryCache.fresh,
         })}
-        onStateChange={(state, refreshed) => { arkmeContactsTab.cacheDirectoryState(state, refreshed) }}
+        onStateChange={(state, refreshed, acknowledgedProfiles) => { arkmeContactsTab.cacheDirectoryState(state, refreshed, acknowledgedProfiles) }}
         onSelectionChange={selection => { arkmeContactsTab.activateAccount(contactsAccountKey); arkmeContactsTab.select(selection) }}
         onExpandedChange={(section, expanded) => { arkmeContactsTab.setSectionExpanded(section, expanded) }}
         onOpenGroup={sourceRef => {
@@ -426,6 +459,22 @@ export function ArkmePersistentSidebar({
         {...(sendToSelfSource === undefined ? {} : { sendToSelfSource })}
       />}
     </div>}
+    {directoryVisible && contactsMode && contactAddSession !== undefined && contactAddSession.accountKey === contactsAccountKey && <ContactDirectoryAddDialog
+      shareWebsite={authState.config?.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE}
+      onClose={() => { setContactAddSession(undefined) }}
+      onAdded={source => {
+        const auth = arkmeAuthStore.getSnapshot().auth
+        const currentAccountKey = auth?.status === 'authenticated' ? `${auth.environment}:${String(auth.userId)}` : undefined
+        if (currentAccountKey !== contactAddSession.accountKey) return
+        arkmeContactsTab.invalidateDirectoryCache()
+        arkmeChatDirectory.publish(arkmePrependSourceByIdentity(source, arkmeChatDirectory.getSnapshot().sources))
+        const context = contactsContextRef.current
+        if (context.accountKey !== currentAccountKey || !context.contactsMode) return
+        setContactsAddedRevision(value => value + 1)
+        // A late result from a closed dialog must not dismiss a newer dialog.
+        setContactAddSession(current => current === contactAddSession ? undefined : current)
+      }}
+    />}
     {directoryVisible && !contactsMode && sidebarResizeHandle}
   </aside>
 }
@@ -495,6 +544,7 @@ export function ArkmePersistentWorkspace({
       {scopedContacts.selection.kind !== 'none' && <button type="button" className="arkme-directory-mobile-back" onClick={() => { arkmeContactsTab.clear() }}>返回联系人目录</button>}
       <DirectoryDetailPane
         accountKey={contactsAccountKey ?? ''} selection={scopedContacts.selection}
+        onProfileUpdated={profile => { if (contactsAccountKey !== undefined) arkmeContactsTab.updateContactProfile(contactsAccountKey, profile) }}
         onSelectionChange={selection => { arkmeContactsTab.activateAccount(contactsAccountKey); arkmeContactsTab.select(selection) }}
         onSourceActivated={source => {
           const current = arkmeContactsTab.getSnapshot()

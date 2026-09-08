@@ -92,6 +92,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'link.metadata'
   | 'directory.list'
   | 'directory.contact.profile'
+  | 'directory.contact.remark.update'
   | 'directory.contact.world'
   | 'directory.contact.open-chat'
   | 'directory.group.open-chat'

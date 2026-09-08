@@ -1,4 +1,4 @@
-import { Children, isValidElement, type ReactElement, type ReactNode } from 'react'
+import { createElement, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
@@ -60,17 +60,6 @@ function readyState(): ContactDirectoryState {
   return contactDirectoryReducer(state, {
     type: 'select', selection: { kind: 'contact', contactRef: 'zhang' },
   })
-}
-
-function buttonByText(node: ReactNode, text: string): ReactElement<{ onClick?(): void }> {
-  if (isValidElement(node)) {
-    const element = node as ReactElement<{ children?: ReactNode; onClick?(): void }>
-    if (element.type === 'button' && renderToStaticMarkup(element).includes(text)) return element
-    for (const child of Children.toArray(element.props.children)) {
-      try { return buttonByText(child, text) } catch {}
-    }
-  }
-  throw new Error(`button not found: ${text}`)
 }
 
 describe('ContactDirectorySurface content', () => {
@@ -248,7 +237,7 @@ describe('ContactDirectorySurface content', () => {
   })
 
   it('keeps the disclosure caret and section name in one leading title group', () => {
-    const section = CollapsibleDirectorySection({
+    const section = createElement(CollapsibleDirectorySection, {
       section: readyState().sections.contacts,
       label: '联系人',
       emptyLabel: '暂无联系人',
@@ -273,7 +262,7 @@ describe('ContactDirectorySurface content', () => {
     }
     const onRetry = vi.fn()
     const onLoadMore = vi.fn()
-    const content = CollapsibleDirectorySection({
+    const content = createElement(CollapsibleDirectorySection, {
       section,
       label: '联系人',
       emptyLabel: '暂无联系人',
@@ -287,10 +276,19 @@ describe('ContactDirectorySurface content', () => {
     expect(markup).toContain('保留的联系人')
     expect(markup).toContain('role="alert"')
     expect(markup).toContain('联系人加载失败')
-    buttonByText(content, '重试').props.onClick?.()
-    buttonByText(content, '加载更多').props.onClick?.()
-    expect(onRetry).toHaveBeenCalledOnce()
-    expect(onLoadMore).toHaveBeenCalledOnce()
+    let renderer!: ReactTestRenderer
+    act(() => { renderer = create(content) })
+    try {
+      const buttons = renderer.root.findAllByType('button')
+      act(() => {
+        buttons.find(button => button.children.join('') === '重试')!.props.onClick()
+        buttons.find(button => button.children.join('') === '加载更多')!.props.onClick()
+      })
+      expect(onRetry).toHaveBeenCalledOnce()
+      expect(onLoadMore).toHaveBeenCalledOnce()
+    } finally {
+      act(() => { renderer.unmount() })
+    }
   })
 
   it('routes group, Bot, contact, Team and unmarked-speaker rows to their distinct callbacks', () => {

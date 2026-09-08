@@ -217,6 +217,7 @@ export interface ArkmeDirectoryContactProfile {
   displayName: string
   nickname: string
   remark: string
+  accountName?: string
   avatarRef?: string
 }
 
@@ -3445,6 +3446,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'link.metadata'
   | 'directory.list'
   | 'directory.contact.profile'
+  | 'directory.contact.remark.update'
   | 'directory.contact.world'
   | 'directory.contact.open-chat'
   | 'directory.group.open-chat'

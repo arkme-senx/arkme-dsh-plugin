@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { ArkmeSourceItem } from '../../../types.js'
+import type { ArkmeDirectoryContactProfile, ArkmeSourceItem } from '../../../types.js'
 import arkmeNavigationLogoBase64 from '../../../../assets/branding/arkme-navigation-logo.png'
 import arkmeNavigationLogoDarkBase64 from '../../../../assets/branding/arkme-navigation-logo-dark.png'
 import type { ArkmeDirectorySelection } from './contact-directory-state.js'
@@ -11,6 +11,7 @@ export interface DirectoryDetailPaneProps {
   selection: ArkmeDirectorySelection
   onSelectionChange(selection: ArkmeDirectorySelection): void
   onSourceActivated(source: ArkmeSourceItem): void
+  onProfileUpdated?(profile: ArkmeDirectoryContactProfile): void
   renderUnmarkedSpeakerDetail?(candidateRef: string): ReactNode
 }
 
@@ -21,6 +22,7 @@ export function DirectoryDetailPane({
   onSelectionChange,
   onSourceActivated,
   renderUnmarkedSpeakerDetail,
+  onProfileUpdated,
 }: DirectoryDetailPaneProps) {
   if (selection.kind === 'none') {
     return <div className="arkme-directory-detail-empty">
@@ -54,5 +56,6 @@ export function DirectoryDetailPane({
     contactRef={selection.contactRef}
     onSelectionCleared={() => { onSelectionChange({ kind: 'none' }) }}
     onSourceActivated={onSourceActivated}
+    {...(onProfileUpdated === undefined ? {} : { onProfileUpdated })}
   />
 }

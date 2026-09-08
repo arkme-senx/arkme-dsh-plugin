@@ -46,7 +46,7 @@ const worldItem = (recordRef: string, textContent = '今天开始做一件长期
   headline: '新的记录',
   textContent,
   tags: [],
-  templateKind: 0,
+  templateKind: 1,
   createdAtMillis: 1_700_000_000_000,
   publishedAtMillis: 1_700_000_000_000,
   imageRefs: recordRef === 'world-1' ? ['world-image-ref'] : [],
@@ -111,7 +111,7 @@ function mountedWorldItem(recordRef: string, authorName: string): ArkmeWorldFeed
     headline: `${authorName}标题`,
     textContent: `${authorName}正文`,
     tags: [],
-    templateKind: 0,
+    templateKind: 1,
     createdAtMillis: 1_700_000_000_000,
     publishedAtMillis: 1_700_000_000_000,
     imageRefs: [],
@@ -164,10 +164,10 @@ describe('contact detail presentation', () => {
     />)
 
     expect(loading).toContain('正在加载联系人资料')
-    expect(ready).toContain('周小满')
+    expect(ready).toContain('项目伙伴')
     expect(ready).toContain('昵称：小满')
     expect(ready).toContain('备注：项目伙伴')
-    expect(ready).toContain('>发消息</button>')
+    expect(ready).toContain('>发消息</span>')
     expect(ready).toContain('class="arkme-contact-profile-main"')
     expect(ready).toContain('class="arkme-contact-profile-identity"')
     expect(ready.match(/昵称：小满/g)).toHaveLength(1)
@@ -177,7 +177,7 @@ describe('contact detail presentation', () => {
     expect(failed).toContain('会话打开失败')
   })
 
-  it('omits the remark row when the contact has no remark', () => {
+  it('shows an unset remark when the contact has no remark', () => {
     const withoutRemark = renderToStaticMarkup(<ContactProfileContent
       state={{
         ...createContactProfileState(identityA),
@@ -189,7 +189,7 @@ describe('contact detail presentation', () => {
     />)
 
     expect(withoutRemark).toContain('昵称：小满')
-    expect(withoutRemark).not.toContain('备注：')
+    expect(withoutRemark).toContain('备注：未设置')
   })
 
   it('keeps profile and World state independent when one request fails', () => {
@@ -203,7 +203,7 @@ describe('contact detail presentation', () => {
     expect(profileState).toMatchObject({ status: 'ready', profile })
     expect(worldState).toMatchObject({ status: 'error', message: '世界加载失败', items: [] })
     expect(renderToStaticMarkup(<ContactProfileContent state={profileState} messageBusy={false} onOpenMessage={() => undefined} />))
-      .toContain('周小满')
+      .toContain('项目伙伴')
     expect(renderToStaticMarkup(<ContactWorldList state={worldState} onRetry={() => undefined} onLoadMore={() => undefined} />))
       .toContain('世界加载失败')
   })
@@ -226,27 +226,27 @@ describe('contact detail presentation', () => {
     expect(partial.status).toBe('ready')
     expect(error.status).toBe('error')
     const emptyMarkup = renderToStaticMarkup(<ContactWorldList state={empty} onRetry={() => undefined} onLoadMore={() => undefined} />)
-    expect(emptyMarkup).toContain('他还没有公开任何内容')
-    expect(emptyMarkup).toContain('alt="暂无公开内容"')
+    expect(emptyMarkup).toContain('暂无公开快记')
   })
 
-  it('presents public records as a year and diary timeline inside the World container', () => {
+  it('shows only the newest public record even when the response is unordered', () => {
     const publishedAtMillis = new Date(2026, 7, 18, 20, 29).getTime()
     const olderAtMillis = new Date(2025, 2, 5, 9, 8).getTime()
     const state = contactWorldReducer(createContactWorldState(identityA), {
       type: 'world-success', identity: identityA, mode: 'replace',
       page: page([
         { ...worldItem('world-older'), createdAtMillis: olderAtMillis, publishedAtMillis: olderAtMillis },
+        { ...worldItem('newer-article', '不应显示文章'), templateKind: 8, publishedAtMillis: publishedAtMillis + 100 },
         { ...worldItem('world-timeline'), createdAtMillis: publishedAtMillis, publishedAtMillis },
       ]),
     })
     const markup = renderToStaticMarkup(<ContactWorldList state={state} onRetry={() => undefined} onLoadMore={() => undefined} />)
 
-    expect(markup).toContain('class="arkme-contact-world-container"')
-    expect(markup).toContain('2026年')
-    expect(markup).toContain('8月18日记')
-    expect(markup).toContain('20:29')
-    expect(markup.indexOf('2026年')).toBeLessThan(markup.indexOf('2025年'))
+    expect(markup).toContain('world-timeline')
+    expect(markup).toContain('2026-08-18')
+    expect(markup).not.toContain('world-older')
+    expect(markup).not.toContain('不应显示文章')
+    expect(markup).not.toContain('加载更多')
   })
 
   it('preserves old items during load-more, deduplicates by recordRef, and keeps append errors retryable', () => {
@@ -307,6 +307,42 @@ describe('ContactDetailCoordinator', () => {
     expect(actions.map(action => action.type)).toEqual([
       'profile-start', 'world-start', 'profile-success', 'world-success',
     ])
+  })
+
+  it('continues filtered empty pages to find a displayable preview without a load-more action', async () => {
+    const loadWorld = vi.fn()
+      .mockResolvedValueOnce(page([{ ...worldItem('article'), templateKind: 8 }], { total: 81, hasMore: true, nextOffset: 80 }))
+      .mockResolvedValueOnce(page([worldItem('after-filtered-comments')], { total: 81 }))
+    const actions: ContactDetailAction[] = []
+    const coordinator = new ContactDetailCoordinator({
+      identity: identityA, loadProfile: async () => profile, loadWorld,
+      openChat: async () => ({ source }), isCurrent: () => true,
+      onAction: action => { actions.push(action) },
+      onSelectionCleared() {}, onSourceActivated() {},
+    })
+    coordinator.start()
+    await vi.waitFor(() => {
+      expect(actions).toContainEqual(expect.objectContaining({
+        type: 'world-success', page: expect.objectContaining({ items: [worldItem('after-filtered-comments')] }),
+      }))
+    })
+    expect(loadWorld).toHaveBeenNthCalledWith(2, 'contact-a', { limit: 20, offset: 80 }, expect.any(AbortSignal))
+    coordinator.dispose()
+  })
+
+  it('rejects non-advancing empty World pages instead of looping forever', async () => {
+    const actions: ContactDetailAction[] = []
+    const loadWorld = vi.fn(async () => page([], { total: 10, hasMore: true, nextOffset: 0 }))
+    const coordinator = new ContactDetailCoordinator({
+      identity: identityA, loadProfile: async () => profile, loadWorld,
+      openChat: async () => ({ source }), isCurrent: () => true,
+      onAction: action => { actions.push(action) },
+      onSelectionCleared() {}, onSourceActivated() {},
+    })
+    coordinator.start()
+    await vi.waitFor(() => { expect(actions.some(action => action.type === 'world-error')).toBe(true) })
+    expect(loadWorld).toHaveBeenCalledOnce()
+    coordinator.dispose()
   })
 
   it('ignores late A results after B becomes current and aborts prior selection, unmount, and account sessions', async () => {
@@ -464,9 +500,9 @@ describe('mounted ContactProfileDetail wiring', () => {
     expect(renderer.root.findByProps({ 'aria-label': '联系人资料' })).toBeDefined()
     expect(renderer.root.findByProps({ 'aria-label': '联系人世界' })).toBeDefined()
     expect(instanceText(renderer.root.findByProps({ className: 'arkme-contact-world-title' }))).toBe('世界')
-    expect(rendererText(renderer)).toContain('周小满')
+    expect(rendererText(renderer)).toContain('项目伙伴')
     expect(rendererText(renderer)).toContain('发消息')
-    expect(rendererText(renderer)).toContain('他还没有公开任何内容')
+    expect(rendererText(renderer)).toContain('暂无公开快记')
     expect(rendererText(renderer)).not.toContain('进入TA的世界')
     expect(renderer.root.findAllByProps({ 'aria-label': '返回联系人资料' })).toHaveLength(0)
     expect(renderer.root.findAllByProps({ 'data-arkme-contact-world-shell': true })).toHaveLength(0)
@@ -552,7 +588,7 @@ describe('mounted ContactProfileDetail wiring', () => {
     })
     expect(rendererText(renderer)).toContain('新账户联系人')
     expect(rendererText(renderer)).not.toContain('进入TA的世界')
-    expect(rendererText(renderer)).toContain('他还没有公开任何内容')
+    expect(rendererText(renderer)).toContain('暂无公开快记')
     await act(async () => { renderer.unmount() })
   })
 

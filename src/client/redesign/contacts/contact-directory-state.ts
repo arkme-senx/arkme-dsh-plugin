@@ -1,8 +1,11 @@
 import type {
   ArkmeDirectoryItem,
+  ArkmeDirectoryContactProfile,
   ArkmeDirectoryPage,
   ArkmeDirectorySectionKind,
 } from '../../../types.js'
+
+import { contactDirectoryLetter } from '../../../contact-directory-presentation.js'
 
 export const CONTACT_DIRECTORY_SECTION_ORDER = [
   'groups',
@@ -41,6 +44,21 @@ export interface ContactDirectoryState {
   sections: Record<ArkmeDirectorySectionKind, ContactDirectorySectionState>
 }
 
+export type ContactProfileUpdates = Readonly<Record<string, ArkmeDirectoryContactProfile>>
+
+export function applyContactProfileUpdates(state: ContactDirectoryState, profiles: ContactProfileUpdates = {}): ContactDirectoryState {
+  const contacts = state.sections.contacts
+  let changed = false
+  const items = contacts.items.map(item => {
+    const profile = item.kind === 'contact' ? profiles[item.contactRef] : undefined
+    if (item.kind !== 'contact' || profile === undefined) return item
+    changed = true
+    const next = { ...item, ...profile }
+    return { ...next, letter: contactDirectoryLetter(next) }
+  })
+  return changed ? { ...state, sections: { ...state.sections, contacts: { ...contacts, items } } } : state
+}
+
 export type ContactDirectoryAction =
   | { type: 'set-expanded'; section: ArkmeDirectorySectionKind; expanded: boolean }
   | { type: 'select'; selection: ArkmeDirectorySelection }
@@ -59,6 +77,7 @@ export type ContactDirectoryAction =
     generation: number
     mode: ContactDirectoryLoadMode
     page: ArkmeDirectoryPage
+    preserveSelection?: boolean
   }
   | {
     type: 'load-error'
@@ -251,14 +270,16 @@ export function contactDirectoryReducer(
           : Math.max(action.page.total, items.length),
         hasMore: action.page.hasMore,
         nextCursor: action.page.nextCursor,
-        warning: action.page.projectionState === 'stale' || action.page.projectionState === 'failed'
-          ? '目录数据可能不是最新状态'
-          : undefined,
+        warning: action.page.projectionState === 'building'
+          ? '目录正在生成，请稍后重试'
+          : action.page.projectionState === 'stale' || action.page.projectionState === 'failed'
+            ? '目录数据可能不是最新状态'
+            : undefined,
         loadingMode: undefined,
       } satisfies ContactDirectorySectionState
       return {
         ...updateSection(state, action.section, next),
-        selection: action.mode === 'replace'
+        selection: action.mode === 'replace' && action.preserveSelection !== true
           ? selectionAfterReplacement(state.selection, action.section, items)
           : state.selection,
       }

@@ -1,10 +1,11 @@
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import type { ContactDirectorySectionState } from './contact-directory-state.js'
 
 export interface CollapsibleDirectorySectionProps {
   section: ContactDirectorySectionState
   label: string
   emptyLabel: string
+  countLabel?: string
   children: ReactNode
   onToggle(): void
   onRetry(): void
@@ -15,6 +16,7 @@ export function CollapsibleDirectorySection({
   section,
   label,
   emptyLabel,
+  countLabel,
   children,
   onToggle,
   onRetry,
@@ -22,19 +24,31 @@ export function CollapsibleDirectorySection({
 }: CollapsibleDirectorySectionProps) {
   const contentId = `arkme-directory-section-${section.section}`
   const hasItems = section.items.length > 0
-  return <section className="arkme-contact-directory-section" data-directory-section={section.section}>
+  const sectionRef = useRef<HTMLElement>(null)
+  const handleToggle = () => {
+    const element = sectionRef.current
+    const directory = element?.closest<HTMLElement>('.arkme-contact-directory')
+    if (section.expanded && element && directory) {
+      const offset = element.getBoundingClientRect().top
+        - directory.getBoundingClientRect().top - directory.clientTop
+      // Keep the clicked header visible when its scrolled-away body disappears.
+      if (offset < 0) directory.scrollTop = Math.max(0, directory.scrollTop + offset)
+    }
+    onToggle()
+  }
+  return <section ref={sectionRef} className="arkme-contact-directory-section" data-directory-section={section.section}>
     <button
       type="button"
       className="arkme-contact-directory-section-header"
       aria-expanded={section.expanded}
       aria-controls={contentId}
-      onClick={onToggle}
+      onClick={handleToggle}
     >
       <span className="arkme-contact-directory-section-title">
         <span className="arkme-contact-directory-caret" aria-hidden>›</span>
         <strong>{label}</strong>
       </span>
-      <span className="arkme-contact-directory-count">{section.total}</span>
+      <span className="arkme-contact-directory-count">{countLabel ?? section.total}</span>
     </button>
     <div id={contentId} className="arkme-contact-directory-section-body" hidden={!section.expanded}>
       {section.expanded && hasItems && children}
