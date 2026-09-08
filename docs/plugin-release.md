@@ -6,6 +6,8 @@
 
 合并该发版 PR 后，发布工作流会再次验证代码，发布 npm 包、创建 `v<版本号>` Git Tag，并生成 GitHub Release。随后由独立的 production workflow 校验 npm、Tag、GitHub Release 与发布 SHA，检出该精确 SHA，构建 `tar.zst`，通过 Backend 获取单对象 STS 上传 OSS，并在 Runtime 校验通过后自动激活。
 
+npm 接受发布请求后仍可能异步处理版本。工作流以 15 分钟为等待窗口，每次未通过后间隔 5 秒回读精确版本，并在等待窗口结束时再检查一次；单次请求（含最后一次检查）最多 30 秒。日志会输出 HTTP 状态、网络或 JSON 错误，以及版本、integrity、provenance 的具体缺失或不一致字段。只有全部校验通过后才会继续创建 Tag、GitHub Release 和派发生产 Runtime 发布。
+
 `pre-release` 分支的每次 push 会走同一套 Runtime 发布链路，但不会发布 npm。测试版本由稳定基准版本的下一补丁与 GitHub run number 组成，例如 `0.1.34` 在 run `128` 中生成 `0.1.35-pre.128`；版本修改只存在于 Action 临时工作区。
 
 ## 一次性配置

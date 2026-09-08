@@ -206,30 +206,12 @@ jobs:
           echo "package_name=${package_name}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
       - name: 回读 Registry 与 provenance
+        timeout-minutes: 17
         env:
           PACKAGE_NAME: ${{ steps.npm.outputs.package_name }}
           RELEASE_INTEGRITY: ${{ steps.pack.outputs.integrity }}
           VERSION: ${{ steps.npm.outputs.version }}
-        run: |
-          package_key=$(node -p "encodeURIComponent(process.argv[1])" "$PACKAGE_NAME")
-          registry_url="https://registry.npmjs.org/${package_key}/${VERSION}"
-          for attempt in $(seq 1 60); do
-            metadata=$(curl --fail --silent --show-error \
-              --header 'Cache-Control: no-cache' \
-              "${registry_url}?cache_bust=$(date +%s)-${attempt}" 2>/dev/null || true)
-            if printf '%s' "$metadata" | \
-              EXPECTED_INTEGRITY="$RELEASE_INTEGRITY" EXPECTED_VERSION="$VERSION" node -e \
-                "const fs = require('node:fs'); const value = JSON.parse(fs.readFileSync(0, 'utf8')); if (value?.version !== process.env.EXPECTED_VERSION || value?.dist?.integrity !== process.env.EXPECTED_INTEGRITY || typeof value?.dist?.attestations?.url !== 'string' || typeof value?.dist?.attestations?.provenance?.predicateType !== 'string') process.exit(1)" \
-                >/dev/null 2>&1; then
-              exit 0
-            fi
-            if [ $((attempt % 12)) -eq 0 ]; then
-              echo "等待 Registry integrity 与 provenance 生效：${attempt}/60"
-            fi
-            sleep 5
-          done
-          echo "Registry integrity 或 provenance 回读未通过。" >&2
-          exit 1
+        run: node .github/scripts/wait-for-npm-release.mjs
       - name: 创建 Git Tag 与 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
