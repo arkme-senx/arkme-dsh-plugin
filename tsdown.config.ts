@@ -29,6 +29,7 @@ export default defineConfig([
     clean: false,
     deps: {
       alwaysBundle: [
+        '@sentry/node',
         'mediabunny',
         'pinyin-pro',
         'unified',
