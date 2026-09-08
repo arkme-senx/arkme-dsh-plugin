@@ -5,6 +5,10 @@ on:
   repository_dispatch:
     types: [arkme-plugin-release-published]
 
+env:
+  # master 发版已在前置流程执行测试；需要 Runtime 再次测试时改为 'true'。
+  RUN_TESTS: 'false'
+
 concurrency:
   group: plugin-production-runtime-publish
   queue: max
@@ -86,9 +90,11 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
           zstd --version
-      - name: 测试、构建并打包 Runtime
+      - name: 执行 Runtime 测试
+        if: env.RUN_TESTS == 'true'
+        run: pnpm test
+      - name: 校验、构建并打包 Runtime
         run: |
-          pnpm test
           pnpm run typecheck
           pnpm run verify:call-assets
           pnpm run build

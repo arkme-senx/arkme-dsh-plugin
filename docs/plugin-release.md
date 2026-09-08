@@ -10,6 +10,19 @@ npm 接受发布请求后仍可能异步处理版本。工作流以 15 分钟为
 
 `pre-release` 分支的每次 push 会走同一套 Runtime 发布链路，但不会发布 npm。测试版本由稳定基准版本的下一补丁与 GitHub run number 组成，例如 `0.1.34` 在 run `128` 中生成 `0.1.35-pre.128`；版本修改只存在于 Action 临时工作区。
 
+## Runtime 测试开关
+
+两个 Runtime workflow 分别通过文件顶部的 `env.RUN_TESTS` 控制批量测试：
+
+| 发布路径 | Workflow | 默认值 |
+| --- | --- | --- |
+| `master` 发版成功后派发生产 Runtime | `.github/workflows/publish-production-runtime.yml` | `'false'`：跳过 Runtime 批量测试 |
+| `pre-release` push 后构建测试 Runtime | `.github/workflows/publish-pre-release-runtime.yml` | `'true'`：执行 Runtime 批量测试 |
+
+需要调整时，在对应 workflow 中把 `RUN_TESTS` 改为字符串 `'true'` 或 `'false'`。`执行 Runtime 测试` 是独立步骤，仅在值为 `'true'` 时运行 `pnpm test`，测试失败会阻止后续构建和发布；关闭时该步骤显示为跳过。开关只控制批量测试，类型检查、资源校验、构建、打包和发布校验仍然执行。
+
+生产 Runtime 默认跳过测试，依赖正式发版的前置测试：普通 PR 在 npm 发布 workflow 的 `prepare` job 中执行测试；`release/v*` PR 会跳过该测试步骤，应由“准备插件发版”workflow 创建并完成测试。手工创建或修改发版 PR 时，需要另行确认最终发布内容已通过测试；无法确认时，应先把生产 Runtime 的 `RUN_TESTS` 设为 `'true'`。该开关本身不验证前置测试记录。
+
 ## 一次性配置
 
 在 npm 包 `@senguoyun/dsh-arkme` 的发布设置中创建 GitHub Trusted Publisher，绑定：
