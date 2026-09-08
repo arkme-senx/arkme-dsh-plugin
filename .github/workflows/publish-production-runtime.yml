@@ -3,7 +3,8 @@ run-name: 发布 Arkme 生产 Runtime v${{ github.event.client_payload.version }
 
 on:
   repository_dispatch:
-    types: [arkme-plugin-release-published]
+    # 兼容旧工作流重跑时发送的 release-published 事件。
+    types: [arkme-plugin-release-prepared, arkme-plugin-release-published]
 
 env:
   # 安装和打包复用显式构建的产物。
@@ -34,10 +35,8 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - name: 验证已发布版本与提交
+      - name: 验证生产版本与提交
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           RELEASE_SHA: ${{ github.event.client_payload.release_sha }}
           VERSION: ${{ github.event.client_payload.version }}
         run: |
@@ -50,7 +49,7 @@ jobs:
             exit 1
           fi
 
-          git fetch origin master --tags
+          git fetch origin master
           if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/master; then
             echo '发布提交不属于当前 master 历史。' >&2
             exit 1
@@ -63,26 +62,6 @@ jobs:
             exit 1
           fi
 
-          tag="v${VERSION}"
-          tag_sha=$(git rev-parse "${tag}^{commit}")
-          if [ "$tag_sha" != "$RELEASE_SHA" ]; then
-            echo '发布 Tag 与提交不一致。' >&2
-            exit 1
-          fi
-
-          release_target=$(gh release view "$tag" --repo "$GH_REPO" --json targetCommitish --jq '.targetCommitish')
-          if [ "$release_target" != "$RELEASE_SHA" ]; then
-            echo 'GitHub Release 与发布提交不一致。' >&2
-            exit 1
-          fi
-
-          package_name=$(git show "${RELEASE_SHA}:package.json" | node -e \
-            "const fs = require('node:fs'); process.stdout.write(JSON.parse(fs.readFileSync(0, 'utf8')).name)")
-          registry_version=$(npm view "${package_name}@${VERSION}" version)
-          if [ "$registry_version" != "$VERSION" ]; then
-            echo 'npm Registry 尚未确认发布版本。' >&2
-            exit 1
-          fi
       - name: 检出精确发布提交
         env:
           RELEASE_SHA: ${{ github.event.client_payload.release_sha }}

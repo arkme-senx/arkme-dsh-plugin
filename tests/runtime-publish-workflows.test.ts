@@ -64,31 +64,34 @@ describe('Arkme runtime publish workflow boundaries', () => {
     expect(release.indexOf('pnpm test')).toBeLessThan(release.indexOf('  publish:'))
   })
 
-  it('dispatches production runtime publishing only after npm release succeeds', async () => {
+  it('starts npm publishing and production runtime dispatch independently after prepare', async () => {
     const release = await workflow('publish-plugin-release.yml')
-    const dispatchJob = release.slice(
-      release.indexOf('  dispatch-runtime-publish:'),
-      release.indexOf('  sync-dev:'),
-    )
+    const definition = parse(release)
+    const dispatchJob = definition.jobs['dispatch-runtime-publish']
+    const dispatch = dispatchJob.steps[0]
 
     expect(release).toContain('  pull_request:\n')
     expect(release).not.toContain('pull_request_target:')
-    expect(dispatchJob).toContain('needs: [prepare, publish]')
-    expect(dispatchJob).toContain("if: needs.publish.result == 'success'")
-    expect(dispatchJob).toContain('arkme-plugin-release-published')
-    expect(dispatchJob).toContain('RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}')
-    expect(dispatchJob).toContain('VERSION: ${{ needs.publish.outputs.version }}')
-    expect(dispatchJob).not.toContain('secrets.')
+    expect(definition.jobs.publish.needs).toBe('prepare')
+    expect(dispatchJob.needs).toBe('prepare')
+    expect(dispatchJob.if).toBe("needs.prepare.result == 'success'")
+    expect(definition.jobs.prepare.outputs.version).toBe('${{ steps.result.outputs.version }}')
+    expect(dispatch.env.RELEASE_SHA).toBe('${{ needs.prepare.outputs.release_sha }}')
+    expect(dispatch.env.VERSION).toBe('${{ needs.prepare.outputs.version }}')
+    expect(JSON.stringify(dispatchJob)).not.toMatch(/needs\.publish|secrets\./)
+    const production = parse(await workflow('publish-production-runtime.yml'))
+    expect(production.on.repository_dispatch.types).toContain('arkme-plugin-release-prepared')
+    expect(dispatch.run).toContain('arkme-plugin-release-prepared')
   })
 
   it('validates the trusted production release before building its exact SHA', async () => {
     const production = await workflow('publish-production-runtime.yml')
-    const validation = production.indexOf('name: 验证已发布版本与提交')
+    const validation = production.indexOf('name: 验证生产版本与提交')
     const exactCheckout = production.indexOf('git checkout --detach "$RELEASE_SHA"')
     const publish = production.indexOf('node scripts/publish-runtime-artifact.mjs')
 
     expect(production).toContain('repository_dispatch:')
-    expect(production).toContain('types: [arkme-plugin-release-published]')
+    expect(parse(production).on.repository_dispatch.types).toContain('arkme-plugin-release-published')
     expect(production).toContain('group: plugin-production-runtime-publish')
     expect(production).toContain('queue: max')
     expect(production).toContain('cancel-in-progress: false')
@@ -97,9 +100,6 @@ describe('Arkme runtime publish workflow boundaries', () => {
     expect(production).toContain('ref: master')
     expect(production).toContain('persist-credentials: false')
     expect(production).toContain('git merge-base --is-ancestor "$RELEASE_SHA" origin/master')
-    expect(production).toContain('git rev-parse "${tag}^{commit}"')
-    expect(production).toContain('gh release view "$tag"')
-    expect(production).toContain('npm view "${package_name}@${VERSION}" version')
     expect(validation).toBeGreaterThan(0)
     expect(exactCheckout).toBeGreaterThan(validation)
     expect(publish).toBeGreaterThan(exactCheckout)

@@ -22,6 +22,7 @@ jobs:
       pull-requests: write
     outputs:
       release_sha: ${{ steps.result.outputs.release_sha }}
+      version: ${{ steps.result.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,15 +54,23 @@ jobs:
         if: steps.source.outputs.release_sha == ''
         id: release
         env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           MERGED_PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           package_name=$(node -p "require('./package.json').name")
+          master_version=$(node -p "require('./package.json').version")
           published_version=$(npm view "${package_name}@latest" version)
           summary=$(node -e "const title = process.env.MERGED_PR_TITLE.trim(); process.stdout.write((title || '合并 master 后自动发布').slice(0, 120))")
+          # Runtime 可能已发布而 npm 仍落后；已合并的发版 PR 表示该版本已分配。
+          prepared_pr=$(gh pr list --repo "$GH_REPO" --base master --head "release/v${master_version}" \
+            --state merged --limit 1 --json number --jq '.[0].number // empty')
+          release_args=(--published-version "$published_version" --summary "$summary")
+          if [ -n "$prepared_pr" ]; then
+            release_args+=(--master-version-reserved)
+          fi
           output_file=$(mktemp)
-          node scripts/prepare-plugin-release.mjs \
-            --published-version "$published_version" \
-            --summary "$summary" > "$output_file"
+          node scripts/prepare-plugin-release.mjs "${release_args[@]}" > "$output_file"
           cat "$output_file" >> "$GITHUB_OUTPUT"
           version=$(sed -n 's/^next_version=//p' "$output_file")
           test -n "$version"
@@ -146,8 +155,13 @@ jobs:
           EXISTING_RELEASE_SHA: ${{ steps.source.outputs.release_sha }}
         run: |
           release_sha="${AUTOMATIC_RELEASE_SHA:-$EXISTING_RELEASE_SHA}"
-          test -n "$release_sha"
+          [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
+          git fetch origin master
+          version=$(git show "${release_sha}:package.json" | node -e \
+            "const fs = require('node:fs'); process.stdout.write(JSON.parse(fs.readFileSync(0, 'utf8')).version)")
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   publish:
     needs: prepare
@@ -240,8 +254,8 @@ jobs:
 
   dispatch-runtime-publish:
     name: 派发 Arkme 生产 Runtime 发布
-    needs: [prepare, publish]
-    if: needs.publish.result == 'success'
+    needs: prepare
+    if: needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
@@ -252,12 +266,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
-          VERSION: ${{ needs.publish.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           payload=$(jq -n \
             --arg release_sha "$RELEASE_SHA" \
             --arg version "$VERSION" \
-            '{event_type: "arkme-plugin-release-published", client_payload: {release_sha: $release_sha, version: $version}}')
+            '{event_type: "arkme-plugin-release-prepared", client_payload: {release_sha: $release_sha, version: $version}}')
           printf '%s' "$payload" | gh api --method POST "repos/${GH_REPO}/dispatches" --input -
 
   sync-dev:

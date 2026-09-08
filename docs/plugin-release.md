@@ -4,9 +4,15 @@
 
 需要手动指定发版级别时，由发版负责人在 GitHub 的 **Actions → 准备插件发版 → Run workflow** 中选择级别并填写一句更新说明。该工作流先更新版本元数据，再安装依赖，执行完整测试、类型检查和构建，验证成功后创建发版 PR，等待合并。
 
-发布工作流在 `publish` job 检出合并后的精确发布 SHA，完成类型检查、资源校验和构建，发布 npm 包、创建 `v<版本号>` Git Tag，并生成 GitHub Release。随后由独立的 production workflow 校验 npm、Tag、GitHub Release 与发布 SHA，检出该精确 SHA，构建 `tar.zst`，通过 Backend 获取单对象 STS 上传 OSS，并在 Runtime 校验通过后自动激活。
+`prepare` 成功后输出精确发布 SHA 和该提交中的版本，随后并行启动两条发布链路：`publish` job 检出该 SHA，完成类型检查、资源校验、构建和 npm 发布，再创建 Git Tag / GitHub Release；Runtime 派发 job 同时向默认分支发送 `arkme-plugin-release-prepared` 事件，由独立的 production workflow 校验 SHA 属于 master 历史、版本与提交一致，检出同一 SHA，构建 `tar.zst`，通过 Backend 获取单对象 STS 上传 OSS，并在 Runtime 校验通过后自动激活。
 
-npm 接受发布请求后仍可能异步处理版本。工作流以 15 分钟为等待窗口，每次未通过后间隔 5 秒回读精确版本，并在等待窗口结束时再检查一次；单次请求（含最后一次检查）最多 30 秒。日志会输出 HTTP 状态、网络或 JSON 错误，以及版本、integrity、provenance 的具体缺失或不一致字段。只有全部校验通过后才会继续创建 Tag、GitHub Release 和派发生产 Runtime 发布。
+生产 Runtime 的构建、上传和激活均不等待 npm 发布、Registry 回读、Tag 或 GitHub Release。npm 发布失败不会阻断 Runtime；Runtime 发布失败也不会阻断 npm。`prepare`（包括版本准备与前置测试）仍是共同前提，失败时两条链路都不会启动；版本准备仍会读取 npm latest。生产 workflow 继续兼容旧的 `arkme-plugin-release-published` 事件，供历史工作流重跑使用。
+
+npm 接受发布请求后仍可能异步处理版本。工作流以 15 分钟为等待窗口，每次未通过后间隔 5 秒回读精确版本，并在等待窗口结束时再检查一次；单次请求（含最后一次检查）最多 30 秒。日志会输出 HTTP 状态、网络或 JSON 错误，以及版本、integrity、provenance 的具体缺失或不一致字段。只有全部校验通过后才会继续创建 Tag、GitHub Release 和同步 master 到 dev；这段等待与生产 Runtime 独立。
+
+每次普通 PR 发版时，会查询当前 master 版本对应的 `release/v<版本号>` PR 是否已合并。已经合并表示该版本已分配，即使 npm latest 仍落后，新一轮发版也会递增 patch，避免复用可能已经上线的 Runtime 版本。未分配的显式版本递增仍保持原版本；重跑同一次发版时，先复用已有 `release_sha`，并从该提交读取原版本，不重复分配。
+
+npm 失败时，Runtime 可以先完成上线，对应的 Git Tag 和 GitHub Release 可能暂未创建。可重跑 npm 所在工作流的失败 job，继续发布同一提交的 npm 包。两条链路的结果分别查看 npm Action 与生产 Runtime Action；派发成功仅表示事件已发出。
 
 `pre-release` 分支的每次 push 会走同一套 Runtime 发布链路，但不会发布 npm。测试版本由稳定基准版本的下一补丁与 GitHub run number 组成，例如 `0.1.34` 在 run `128` 中生成 `0.1.35-pre.128`；版本修改只存在于 Action 临时工作区。
 
@@ -16,7 +22,7 @@ npm 接受发布请求后仍可能异步处理版本。工作流以 15 分钟为
 
 | 发布路径 | Workflow | 默认值 |
 | --- | --- | --- |
-| `master` 发版成功后派发生产 Runtime | `.github/workflows/publish-production-runtime.yml` | `'false'`：跳过 Runtime 批量测试 |
+| `master` 发版准备成功后，与 npm 并行发布生产 Runtime | `.github/workflows/publish-production-runtime.yml` | `'false'`：跳过 Runtime 批量测试 |
 | `pre-release` push 后构建测试 Runtime | `.github/workflows/publish-pre-release-runtime.yml` | `'true'`：执行 Runtime 批量测试 |
 
 需要调整时，在对应 workflow 中把 `RUN_TESTS` 改为字符串 `'true'` 或 `'false'`。`执行 Runtime 测试` 是独立步骤，仅在值为 `'true'` 时运行 `pnpm test`，测试失败会阻止后续构建和发布；关闭时该步骤显示为跳过。开关只控制批量测试，类型检查、资源校验、构建、打包和发布校验仍然执行。

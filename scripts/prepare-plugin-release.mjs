@@ -19,7 +19,7 @@ export function bumpPluginVersion(version, bump) {
   throw new Error(`不支持的发版级别：${bump}`)
 }
 
-export function determineAutomaticReleaseVersion(masterVersion, publishedVersion) {
+export function determineAutomaticReleaseVersion(masterVersion, publishedVersion, { masterVersionReserved = false } = {}) {
   const masterParts = parsePluginVersion(masterVersion)
   const publishedParts = parsePluginVersion(publishedVersion)
   const comparison = masterParts.findIndex((part, index) => part !== publishedParts[index])
@@ -27,10 +27,13 @@ export function determineAutomaticReleaseVersion(masterVersion, publishedVersion
   if (order < 0) {
     throw new Error(`master 版本 ${masterVersion} 低于 npm latest ${publishedVersion}，拒绝自动发布`)
   }
-  if (order > 0) {
+  if (order > 0 && !masterVersionReserved) {
     return { version: masterVersion, versionChanged: false, reason: 'master-ahead' }
   }
-  return { version: bumpPluginVersion(masterVersion, 'patch'), versionChanged: true, reason: 'auto-patch' }
+  return {
+    version: bumpPluginVersion(masterVersion, 'patch'), versionChanged: true,
+    reason: order > 0 ? 'reserved-version' : 'auto-patch',
+  }
 }
 
 async function writePluginRelease({ cwd, version, summary, now }) {
@@ -58,10 +61,10 @@ export async function preparePluginRelease({ cwd = process.cwd(), bump, summary,
 }
 
 export async function prepareAutomaticPluginRelease({
-  cwd = process.cwd(), publishedVersion, summary, now = new Date(),
+  cwd = process.cwd(), publishedVersion, summary, now = new Date(), masterVersionReserved = false,
 }) {
   const manifest = JSON.parse(await readFile(resolve(cwd, 'package.json'), 'utf8'))
-  const decision = determineAutomaticReleaseVersion(manifest.version, publishedVersion)
+  const decision = determineAutomaticReleaseVersion(manifest.version, publishedVersion, { masterVersionReserved })
   await writePluginRelease({ cwd, version: decision.version, summary, now })
   return decision
 }
@@ -76,10 +79,12 @@ async function main() {
   const publishedVersion = readOption('published-version')
   const summary = readOption('summary')
   if (summary === undefined || (bump === undefined) === (publishedVersion === undefined)) {
-    throw new Error('用法：node scripts/prepare-plugin-release.mjs (--bump <patch|minor|major> | --published-version <npm latest>) --summary <更新说明>')
+    throw new Error('用法：node scripts/prepare-plugin-release.mjs (--bump <patch|minor|major> | --published-version <npm latest> [--master-version-reserved]) --summary <更新说明>')
   }
   if (publishedVersion !== undefined) {
-    const decision = await prepareAutomaticPluginRelease({ publishedVersion, summary })
+    const decision = await prepareAutomaticPluginRelease({
+      publishedVersion, summary, masterVersionReserved: process.argv.includes('--master-version-reserved'),
+    })
     process.stdout.write(`next_version=${decision.version}\n`)
     process.stdout.write(`version_changed=${String(decision.versionChanged)}\n`)
     process.stdout.write(`version_reason=${decision.reason}\n`)
