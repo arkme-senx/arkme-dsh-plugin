@@ -621,3 +621,26 @@ describe('ContactDirectorySurface content', () => {
     expect(count()).toEqual(['0'])
   })
 })
+
+it('pauses automatic contact pagination while hidden and resumes without replacing the loaded page', async () => {
+  let resolveFirst!: (page: ArkmeDirectoryPage) => void
+  const loadPage = vi.fn(async (section: ArkmeDirectorySectionKind, options: { cursor?: string }) => {
+    if (section !== 'contacts') return { section, items: [], total: 0, hasMore: false }
+    if (!options.cursor) return await new Promise<ArkmeDirectoryPage>(resolve => { resolveFirst = resolve })
+    return { section, items: [items.contacts[1]!], total: 2, hasMore: false }
+  })
+  const props = { accountKey: 'pause-account', onSelectionChange: vi.fn(), onOpenGroup: vi.fn(), onOpenBot: vi.fn(), loadPage }
+  let view!: ReactTestRenderer
+  await act(async () => { view = create(<ContactDirectorySurface {...props} />) })
+  await act(async () => {
+    view.update(<ContactDirectorySurface {...props} active={false} />)
+    resolveFirst({ section: 'contacts', items: [items.contacts[0]!], total: 2, hasMore: true, nextCursor: 'next' })
+  })
+  expect(loadPage.mock.calls.filter(([section]) => section === 'contacts')).toHaveLength(1)
+  expect(JSON.stringify(view.toJSON())).toContain('Alice')
+  await act(async () => { view.update(<ContactDirectorySurface {...props} active />) })
+  expect(loadPage.mock.calls.filter(([section]) => section === 'contacts')).toHaveLength(2)
+  expect(JSON.stringify(view.toJSON())).toContain('Alice')
+  expect(JSON.stringify(view.toJSON())).toContain('张三')
+  await act(async () => { view.unmount() })
+})

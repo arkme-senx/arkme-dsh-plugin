@@ -83,7 +83,7 @@ describe('ChatRealtimeService', () => {
     },
   )
 
-  it('projects a member event hint without reading messages or refreshing unread/attention state', async () => {
+  it.each(['memberEvent', 'memberJoined'] as const)('projects %s without confusing roster and history or refreshing messages', async kind => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
@@ -100,10 +100,10 @@ describe('ChatRealtimeService', () => {
     service.subscribeChatRealtime(event => { events.push(event) })
     service.handleChatRealtimeNotice({
       cause: 'chat-hint', state: { revision: 2, connected: true, connectionGeneration: 1 },
-      memberEvent: { eventUid: 'leave-1', chatSessionUid: 'raw-group', eventAtMillis: 1234 },
+      [kind]: { eventUid: 'event-1', chatSessionUid: 'raw-group', eventAtMillis: 1234 },
     })
     await vi.waitFor(() => { expect(events).toHaveLength(1) })
-    expect(events[0]).toMatchObject({ type: 'member-events-invalidated', eventId: 'leave-1', occurredAtMillis: 1234,
+    expect(events[0]).toMatchObject({ ...(kind === 'memberEvent' ? { type: 'member-events-invalidated', eventId: 'event-1', occurredAtMillis: 1234 } : { type: 'members-invalidated' }),
       sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./) })
     expect(JSON.stringify(events[0])).not.toContain('raw-group')
     expect(timeline).not.toHaveBeenCalled()

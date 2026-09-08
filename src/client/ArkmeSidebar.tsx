@@ -24,7 +24,7 @@ import type {
   ArkmeRelatedQuickNoteDetail, ArkmeRelatedQuickNoteItem, ArkmeRelatedQuickNoteList,
   ArkmeMessageCopyLinkExtendResult, ArkmeMessageCopyLinkExtensionItem, ArkmeMessageCopyLinkResolveResult, ArkmeMessageCopyLinkResult, ArkmeMessageCopyLinkSnapshotItem,
   ArkmeUploadedAsset, ArkmeSourceList, ArkmeSourceMessageExtendResult, ArkmeTimelineExtensionParent, ArkmeUserProfile, ArkmeUserProfileSnapshot,
-  ArkmeConversationMemberItem, ArkmeConversationMemberList, ArkmeConversationMemberRecordMode,
+  ArkmeConversationMemberItem, ArkmeConversationMemberRecordMode,
   ArkmeConversationMemberJoinEvent, ArkmeConversationMemberJoinPerson, ArkmeOpenPrivateChatResult,
   ArkmeHumanMentionInput,
   ArkmeTopicHierarchyMoveResult,
@@ -89,7 +89,7 @@ import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { shouldShowUserBanAction } from './user-ban.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
-import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle } from './recordings/ArkmeRecordingImportDialog.js'
+import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle, type RecordingImportButtonStatus } from './recordings/ArkmeRecordingImportDialog.js'
 import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 import {
@@ -119,6 +119,8 @@ import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 import { ArkmeVoiceprintSurface } from './ArkmeVoiceprintSurface.js'
 import { ArkmeNavigation, type ArkmeNavigationProps } from './ArkmeVirtualWorkspace.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { arkmeConversationMembers } from './conversation-members-store.js'
+import { useConversationMembers } from './use-conversation-members.js'
 import { arkmeMessageReadReceipts } from './message-read-receipt-store.js'
 import {
   arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation,
@@ -310,12 +312,7 @@ export interface ArkmeSurfaceProps {
 export type ArkmeAuthView = 'login' | 'content'
 
 const EMPTY_SELF_SOURCES: readonly ArkmeSourceItem[] = []
-const EMPTY_CONVERSATION_MEMBERS: readonly ArkmeConversationMemberItem[] = []
 
-interface ArkmeConversationMemberSnapshot {
-  sourceRef: string
-  items: readonly ArkmeConversationMemberItem[]
-}
 const EMPTY_CHAT_DIRECTORY_SNAPSHOT: ArkmeChatDirectorySnapshot = {
   revision: 0,
   sources: [],
@@ -2314,6 +2311,13 @@ export function ArkmeSurface({
   const authenticatedUserId = auth?.status === 'authenticated' ? auth.userId : undefined
   const authenticatedAccountKey = arkmeAuthenticatedAccountKey(auth)
   const recordingImportDialogRef = useRef<ArkmeRecordingImportDialogHandle>(null)
+  const [recordingImportFeedback, setRecordingImportFeedback] = useState<{ accountKey: string | undefined; status: RecordingImportButtonStatus }>()
+  const updateRecordingImportStatus = useCallback((status: RecordingImportButtonStatus) => {
+    setRecordingImportFeedback(current => current?.accountKey === authenticatedAccountKey && current?.status === status
+      ? current : { accountKey: authenticatedAccountKey, status })
+  }, [authenticatedAccountKey])
+  const recordingImportStatus = recordingImportFeedback?.accountKey === authenticatedAccountKey
+    ? recordingImportFeedback?.status ?? 'idle' : 'idle'
   const [recordingImportDefaultStartAtMillis, setRecordingImportDefaultStartAtMillis] = useState(() => {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -2875,15 +2879,13 @@ export function ArkmeSurface({
   const [jiwoScanLoginEnabled, setJiwoScanLoginEnabled] = useState(false)
   const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
-  const [conversationMemberSnapshot, setConversationMemberSnapshot] = useState<ArkmeConversationMemberSnapshot>({
-    sourceRef: '', items: EMPTY_CONVERSATION_MEMBERS,
-  })
-  const conversationMembers = conversationMemberSnapshot.sourceRef === source?.sourceRef
-    ? conversationMemberSnapshot.items
-    : EMPTY_CONVERSATION_MEMBERS
-  const groupSelfRole = conversationMembers.find(member => member.isSelf)?.role ?? 'unknown'
-  const [conversationJoinEvents, setConversationJoinEvents] = useState<ArkmeConversationMemberJoinEvent[]>([])
-  const [conversationMembersRefreshRevision, setConversationMembersRefreshRevision] = useState(0)
+  const conversationMemberSnapshot = useConversationMembers(authenticatedAccountKey, source, activeConversation)
+  const conversationMembers = conversationMemberSnapshot.items
+  const conversationJoinEvents = conversationMemberSnapshot.joinEvents
+  const groupSelfRole = conversationMemberSnapshot.selfRole
+  useEffect(() => {
+    if (conversationMemberSnapshot.error !== undefined) setError(conversationMemberSnapshot.error)
+  }, [conversationMemberSnapshot.error])
   const [groupMentionBots, setGroupMentionBots] = useState<ArkmeGroupBotCandidateList>()
   const [privateMentionBots, setPrivateMentionBots] = useState<ArkmeBotList>()
   const [mentionTrigger, setMentionTrigger] = useState<ArkmeComposerMentionTrigger>()
@@ -2972,11 +2974,6 @@ export function ArkmeSurface({
 
   useEffect(() => {
     if (!activeConversation) return
-    setConversationMemberSnapshot({
-      sourceRef: source?.sourceRef ?? '',
-      items: EMPTY_CONVERSATION_MEMBERS,
-    })
-    setConversationJoinEvents([])
     setMemberMenu(undefined)
     setMemberProfile(undefined)
     setMemberRemovalTarget(undefined)
@@ -2984,25 +2981,7 @@ export function ArkmeSurface({
     setSnapshot(undefined)
     setMessageReportItem(undefined)
     setMessageWithdrawalItem(undefined)
-    if (authenticatedUserId === undefined || source === undefined || (source.kind !== 'group_chat' && source.kind !== 'private_chat')) return
-    const controller = new AbortController()
-    void callArkme<ArkmeConversationMemberList>('source.members', {
-      sourceRef: source.sourceRef,
-      activeOnly: true,
-    }, controller.signal)
-      .then(snapshot => {
-        if (controller.signal.aborted) return
-        setConversationMemberSnapshot({
-          sourceRef: source.sourceRef,
-          items: snapshot.items,
-        })
-        setConversationJoinEvents(source.kind === 'group_chat' ? snapshot.joinEvents ?? [] : [])
-      })
-      .catch(caught => {
-        if (!controller.signal.aborted) setError(errorMessage(caught))
-      })
-    return () => { controller.abort() }
-  }, [activeConversation, authenticatedUserId, conversationKey, conversationMembersRefreshRevision, source?.kind, source?.sourceRef])
+  }, [activeConversation, authenticatedUserId, conversationKey, source?.kind, source?.sourceRef])
 
   useEffect(() => {
     if (!activeConversation) return
@@ -3052,12 +3031,6 @@ export function ArkmeSurface({
     return () => { controller.abort() }
   }, [activeConversation, authenticatedAccountKey, authenticatedUserId, conversationKey, hashTagActive, hashTagRefreshRevision, source?.sourceRef])
 
-  useEffect(() => {
-    if (!activeConversation || auth?.status !== 'authenticated' || typeof window === 'undefined') return
-    const refreshOnFocus = () => { setConversationMembersRefreshRevision(value => value + 1) }
-    window.addEventListener('focus', refreshOnFocus)
-    return () => { window.removeEventListener('focus', refreshOnFocus) }
-  }, [activeConversation, auth?.status])
   useEffect(() => () => {
     if (messageActionStatusTimerRef.current !== undefined) window.clearTimeout(messageActionStatusTimerRef.current)
     if (forwardSuccessTimerRef.current !== undefined) window.clearTimeout(forwardSuccessTimerRef.current)
@@ -5294,13 +5267,14 @@ export function ArkmeSurface({
     arkmeUi.updateSelectedSourceProjection(nextSource)
   }, [])
   const applyGroupMembershipChange = useCallback((targetSource: ArkmeSourceIdentityFacts) => {
+    arkmeConversationMembers.clear(authenticatedAccountKey, targetSource)
     const selectedSource = arkmeUi.getSnapshot().selectedSource
     if (selectedSource !== undefined
       && arkmeSourceIdentityKey(selectedSource) === arkmeSourceIdentityKey(targetSource)) {
       arkmeUi.chatChanged()
     }
     void arkmeChatDirectory.refreshRoot({ force: true }).catch(() => undefined)
-  }, [])
+  }, [authenticatedAccountKey])
   const updateSourceMessageDndProjection = useCallback((targetSource: ArkmeSourceIdentityFacts, messageDnd: boolean) => {
     const sourceIdentity = arkmeSourceIdentityKey(targetSource)
     const selectedSource = arkmeUi.getSnapshot().selectedSource
@@ -6702,7 +6676,7 @@ export function ArkmeSurface({
       || ui.mode === 'voiceprint' || ui.mode === 'calls')
   const conversationOverlayHost = panelRef.current
   const composerPlaceholder = arkmeComposerPlaceholderText(
-    arkmeComposerPlaceholderTargetForSource(selectedSource, conversationMembers.length),
+    arkmeComposerPlaceholderTargetForSource(selectedSource, conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined ? conversationMembers.length : 0),
   )
   const effectiveComposerPlaceholder = activeRecordReeditComposer !== undefined
     ? activeRecordReeditComposer.loading ? '正在读取快记和草稿…' : '重新编辑快记…'
@@ -6788,6 +6762,7 @@ export function ArkmeSurface({
       defaultStartAtMillis={recordingImportDefaultStartAtMillis}
       currentUserId={authenticatedUserId}
       foreground={recordingImportForeground}
+      onStatusChange={updateRecordingImportStatus}
       onAccepted={() => { setRecordingRefreshRevision(value => value + 1) }}
     />
     : null
@@ -6943,6 +6918,7 @@ export function ArkmeSurface({
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <ArkmeGroupChatControls
             key={`group-controls:${conversationOverlayKey}`}
             source={source}
+            accountScope={authenticatedAccountKey}
             overlayHostRef={panelRef}
             aiPolishSettings={aiPolishSettings}
             onAiPolishSettingsChanged={setAiPolishSettings}
@@ -6953,7 +6929,6 @@ export function ArkmeSurface({
             onMembersOpenChange={open => { if (open) activateContextPanel('members'); else setGroupMembersOpen(false) }}
             onMemberOpen={openMemberProfile}
             onMemberContextMenu={openMemberMenu}
-            onMembersChanged={() => { setConversationMembersRefreshRevision(value => value + 1) }}
             onStatus={showMessageActionStatus}
             onError={setError}
           />}
@@ -7084,6 +7059,7 @@ export function ArkmeSurface({
             key={`recordings:${auth?.status ?? 'unknown'}:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}
             onOpenRecordingImport={openRecordingImport}
             recordingRefreshRevision={recordingRefreshRevision}
+            recordingImportStatus={recordingImportStatus}
           />
           : ui.mode === 'world' ? <ArkmeWorldSurface
             {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}
@@ -8070,8 +8046,7 @@ export function ArkmeSurface({
           onClose={() => { setMemberRemovalTarget(undefined) }}
           onRemoved={result => {
             setMemberRemovalTarget(undefined)
-            setGroupMembersOpen(false)
-            setConversationMembersRefreshRevision(value => value + 1)
+            arkmeConversationMembers.remove(authenticatedAccountKey, source, result.memberRef)
             showMessageActionStatus(result.joinRestricted ? '已移出群聊，并禁止再次加入' : '已移出群聊')
           }}
         />}

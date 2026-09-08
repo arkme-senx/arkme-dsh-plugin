@@ -334,3 +334,75 @@ describe('conversation pin interaction', () => {
     expect(statuses).not.toContain('已置顶对话')
   })
 })
+
+
+it('hydrates visibility for a newly opened Bot that is not yet in the Host snapshot', async () => {
+  mocks.callArkme.mockImplementation(async (operation: string, params: { botRefs?: string[] }) => {
+    if (operation === 'conversation.directory.visibility.query') return { items: (params.botRefs ?? []).map(entryRef => ({ entryKind: 'bot', entryRef, hidden: false })) }
+    return {}
+  })
+  await act(async () => {
+    arkmeChatDirectory.applyHostPage({ directory: 'root', items: [source], hasMore: false, projection: { revision: 1, phase: 'complete', cachedAtMillis: 1, bots: [], visibility: [{ entryKind: 'source', entryRef: source.sourceRef, hidden: false }] } })
+    arkmeUi.openBotConversation({ botRef: 'new-bot', name: 'New Bot', provider: 'openclaw', description: '', status: 'offline', directChatAvailable: true })
+  })
+  expect(renderer!.root.findAllByProps({ role: 'treeitem' }).some(node => node.props['aria-label'] === 'New Bot')).toBe(true)
+  expect(mocks.callArkme.mock.calls.some(([operation, params]) => operation === 'conversation.directory.visibility.query' && params.botRefs?.includes('new-bot'))).toBe(true)
+})
+
+it('keeps a hidden conversation directory updated without taking over Contacts or reloading on return', async () => {
+  const readsBefore = mocks.callArkme.mock.calls.filter(([op]) => op === 'sources.list').length
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000)
+  await act(async () => {
+    arkmeUi.showContacts()
+    renderer!.update(<ArkmeNavigation active={false} />)
+  })
+  await act(async () => { arkmeChatDirectory.upsert({ ...source, latestSequence: 2, latestPreview: 'background message' }) })
+  expect(arkmeUi.getSnapshot().productMode).toBe('contacts')
+  await act(async () => {
+    arkmeUi.showConversations()
+    renderer!.update(<ArkmeNavigation active />)
+  })
+  expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'sources.list')).toHaveLength(readsBefore)
+  expect(arkmeChatDirectory.getSnapshot().sources[0]?.latestPreview).toBe('background message')
+})
+
+it('restores cached Bots on the first mount instead of clearing them in the account initialization effect', async () => {
+  const bot = { botRef: 'cached-bot', directoryKey: 'cached-key', name: 'Cached Bot', provider: 'openclaw' as const, description: '', status: 'offline' as const, directChatAvailable: true }
+  await act(async () => {
+    arkmeChatDirectory.applyHostPage({ directory: 'root', items: [source], hasMore: false, projection: {
+      revision: 100, phase: 'complete', cachedAtMillis: 1, bots: [bot], botPinnedKeys: ['cached-key'],
+      visibility: [{ entryKind: 'source', entryRef: source.sourceRef, hidden: false }, { entryKind: 'bot', entryRef: bot.botRef, hidden: false }],
+    } })
+    renderer?.unmount()
+  })
+  await act(async () => { renderer = create(<ArkmeNavigation />) })
+  expect(renderer!.root.findAllByProps({ role: 'treeitem' }).some(node => node.props['aria-label'] === 'Cached Bot')).toBe(true)
+})
+
+it('shows a blocking directory error only when there is no usable cached or remote content', async () => {
+  const failed = { revision: 101, phase: 'failed' as const, cachedAtMillis: 1, bots: [], visibility: [], error: 'offline' }
+  await act(async () => { arkmeChatDirectory.applyHostPage({ directory: 'root', items: [source], hasMore: true, projection: failed }) })
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('会话加载失败，请重试')
+  await act(async () => {
+    arkmeChatDirectory.clear()
+    arkmeChatDirectory.applyHostPage({ directory: 'root', items: [], hasMore: true, projection: failed })
+  })
+  expect(JSON.stringify(renderer!.toJSON())).toContain('会话加载失败，请重试')
+  await act(async () => { renderer!.update(<ArkmeNavigation sendToSelfSource={{ ...source, kind: 'send_to_self', latestPreview: 'cached personal record' }} />) })
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('会话加载失败，请重试')
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('重新加载')
+})
+
+it('restores the scroll position before showing a retained conversation list', async () => {
+  const scrollElement = { scrollTop: 0, getClientRects: () => [{}] }
+  await act(async () => { renderer?.unmount() })
+  await act(async () => { renderer = create(<ArkmeNavigation />, { createNodeMock: node => node.props['aria-label'] === 'Arkme 会话' ? scrollElement : null }) })
+  const tree = renderer!.root.findByProps({ role: 'tree', 'aria-label': 'Arkme 会话' })
+  scrollElement.scrollTop = 630
+  act(() => { tree.props.onScroll({ currentTarget: scrollElement }) })
+  await act(async () => { renderer!.update(<ArkmeNavigation active={false} />) })
+  scrollElement.scrollTop = 0
+  act(() => { tree.props.onScroll({ currentTarget: scrollElement }) })
+  await act(async () => { renderer!.update(<ArkmeNavigation active />) })
+  expect(scrollElement.scrollTop).toBe(630)
+})

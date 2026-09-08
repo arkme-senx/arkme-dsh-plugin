@@ -73,3 +73,20 @@ export function updateBotDirectoryPreferences(
   if (update.pinned !== undefined) (update.pinned ? pinned.add(key) : pinned.delete(key))
   return { pinnedKeys: [...pinned] }
 }
+
+
+/** Consume legacy Browser-only pins after each durable Host confirmation. */
+export async function migrateBotDirectoryPreferences(
+  userId: number, bots: readonly ArkmeBotSummary[], pin: (botRef: string) => Promise<void>,
+  signal?: AbortSignal, storage?: Storage,
+): Promise<void> {
+  for (const bot of bots) {
+    signal?.throwIfAborted()
+    const key = botDirectoryPreferenceKey(bot)
+    if (!readBotDirectoryPreferences(userId, storage).pinnedKeys.includes(key)) continue
+    await pin(bot.botRef)
+    signal?.throwIfAborted()
+    const current = readBotDirectoryPreferences(userId, storage)
+    writeBotDirectoryPreferences(userId, { pinnedKeys: current.pinnedKeys.filter(item => item !== key) }, storage)
+  }
+}

@@ -24,7 +24,7 @@ import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeUi } from './ui-controller.js'
-import { ArkmeRecordingImportTrigger } from './recordings/ArkmeRecordingImportDialog.js'
+import { ArkmeRecordingImportTrigger, type RecordingImportButtonStatus } from './recordings/ArkmeRecordingImportDialog.js'
 import { ArkmeRecordingSpeakerEditor, type RecordingSpeakerPopoverAnchor } from './recordings/ArkmeRecordingSpeakerEditor.js'
 import { ArkmeRecordingTimeline } from './recordings/ArkmeRecordingTimeline.js'
 import { recordingEmptyIllustration } from './recordings/recording-empty-illustration.js'
@@ -558,9 +558,10 @@ function RecordingModelDialog({ kind, config, onClose, onConfirm }: {
 export interface ArkmeRecordingSurfaceProps {
   onOpenRecordingImport(defaultStartAtMillis: number): void
   recordingRefreshRevision: number
+  recordingImportStatus?: RecordingImportButtonStatus
 }
 
-export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshRevision }: ArkmeRecordingSurfaceProps) {
+export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshRevision, recordingImportStatus = 'idle' }: ArkmeRecordingSurfaceProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const workbenchEnabled = auth.config?.recordingWorkbenchEnabled !== false
@@ -950,7 +951,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
           return <button key={value.getTime()} type="button" style={{ ...styles.monthDay, ...styles.cellHeight, ...(selected ? styles.daySelected : {}), ...(future ? styles.monthDayDisabled : {}) }} aria-label={new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(value)} aria-pressed={selected} disabled={future} onClick={() => { chooseDate(value) }}><strong style={styles.monthDayNumber}>{value.getDate()}</strong><span style={styles.lunar}>{dateKey(value) === dateKey(today) ? '今天' : lunarDayLabel(value)}</span>{meta !== undefined && meta.durationMillis > 0 && <span style={{ ...styles.monthDuration, ...(meta.durationMillis <= 60 * 60 * 1_000 ? styles.monthDurationBrief : {}), ...(selected ? styles.selectedMonthDuration : {}) }}>{recordingCalendarDuration(meta.durationMillis)}</span>}{meta !== undefined && meta.unreviewedCount > 0 && <span aria-label="新录音" style={{ position: 'absolute', bottom: 5, width: 4, height: 4, borderRadius: 4, background: colors.accent }} />}</button>
         })}</div></div>
       </section>
-      <div style={styles.toolbar}>{workbenchEnabled && <ArkmeRecordingImportTrigger onClick={() => { onOpenRecordingImport(selectedDate.getTime()) }} />}</div>
+      <div style={styles.toolbar}>{workbenchEnabled && <ArkmeRecordingImportTrigger status={recordingImportStatus} onClick={() => { onOpenRecordingImport(selectedDate.getTime()) }} />}</div>
       {calendarError !== '' && <div style={styles.error} role="alert">{calendarError}</div>}{calendarLoading && calendar === undefined && <div style={styles.status}>正在读取录音…</div>}
     </aside>}
     <section style={{ ...styles.content, ...(selectionMode ? { gridTemplateRows: 'minmax(0,1fr)' } : {}) }} aria-label="录音详情">

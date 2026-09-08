@@ -131,6 +131,7 @@ function safeFailureMessage(error: unknown): string {
 }
 
 export class ChatRealtimeService {
+  directoryBaseline?: () => Promise<import('../types.js').ArkmeSourceList>
   private disposed = false
   private readonly chatRealtime: ArkmeChatRealtimeRuntime
   private readonly chatClientListeners = new Set<(event: ArkmeChatClientEvent) => void>()
@@ -251,8 +252,8 @@ export class ChatRealtimeService {
       void this.invalidateChatPolicyForCurrentSession(notice)
       return
     }
-    if (notice.cause === 'chat-hint' && notice.memberEvent !== undefined) {
-      void this.handleMemberEvent(notice.memberEvent)
+    if (notice.cause === 'chat-hint' && (notice.memberEvent !== undefined || notice.memberJoined !== undefined)) {
+      void this.handleMemberEvent(notice)
       return
     }
     if (notice.cause === 'reconcile') {
@@ -435,13 +436,17 @@ export class ChatRealtimeService {
     }
   }
 
-  private async handleMemberEvent(hint: NonNullable<ArkmeChatRealtimeNotice['memberEvent']>): Promise<void> {
+  private async handleMemberEvent(notice: ArkmeChatRealtimeNotice): Promise<void> {
+    const hint = notice.memberJoined ?? notice.memberEvent
+    if (hint === undefined || notice.connectionSignal?.aborted) return
     try {
       const session = await this.runtime.sessionStore.read()
-      if (session === undefined) return
+      if (session === undefined || (notice.connectionUserId !== undefined && notice.connectionUserId !== session.userId)) return
+      this.runtime.invalidateMemberCache?.()
       const sourceKey = await this.source.chatDirectorySourceKey(session.userId, hint.chatSessionUid)
-      if ((await this.runtime.sessionStore.read())?.userId !== session.userId) return
-      this.emitChatClientEvent({ type:'member-events-invalidated', revision:this.nextChatClientRevision(),
+      if (notice.connectionSignal?.aborted || (await this.runtime.sessionStore.read())?.userId !== session.userId) return
+      if (notice.memberJoined !== undefined) this.emitChatClientEvent({ type: 'members-invalidated', revision: this.nextChatClientRevision(), sourceKey })
+      else this.emitChatClientEvent({ type:'member-events-invalidated', revision:this.nextChatClientRevision(),
         sourceKey, eventId:hint.eventUid, occurredAtMillis:hint.eventAtMillis })
     } catch (error) { console.warn('dsh-arkme: member event hint failed:', safeFailureMessage(error)) }
   }
@@ -681,13 +686,12 @@ export class ChatRealtimeService {
       this.notificationBaselineSequences.clear()
       const sequences = new Map<string, number>()
       const pins: ArkmeChatPinProjection[] = []
-      this.source.invalidateSourceListCache(session.userId, 'root')
+      const shared = this.directoryBaseline === undefined ? undefined : await this.directoryBaseline()
       let cursor: string | undefined
-      for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
-        const page = await this.source.listSources('root', {
-          limit: 50,
-          refresh: true,
-          ...(cursor === undefined ? {} : { cursor }),
+      const visited = new Set<string>()
+      while (true) {
+        const page = shared ?? await this.source.listSources('root', {
+          limit: 20, refresh: true, ...(cursor === undefined ? {} : { cursor }),
         })
         const activeSession = await this.runtime.sessionStore.read()
         const state = this.chatRealtime.state()
@@ -702,8 +706,10 @@ export class ChatRealtimeService {
             pins.push({ sourceKey: item.sourceKey, pinned: item.isPinned, policyUpdatedAtMillis: item.chatPolicyUpdatedAtMillis })
           }
         }
-        if (!page.hasMore || page.nextCursor === undefined) break
+        if (shared !== undefined || !page.hasMore) break
+        if (page.nextCursor === undefined || visited.has(page.nextCursor)) throw new Error('Notification directory cursor is invalid')
         cursor = page.nextCursor
+        visited.add(cursor)
       }
       const activeSession = await this.runtime.sessionStore.read()
       const state = this.chatRealtime.state()

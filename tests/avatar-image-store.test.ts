@@ -293,3 +293,15 @@ describe('avatar image ownership boundary', () => {
     expect(directReaders).toEqual(['avatar-image-runtime.ts'])
   })
 })
+
+it('bounds inactive avatar retention while protecting a mounted row', async () => {
+  const store = new InMemoryArkmeAvatarImageStore({ reader: async () => ({ mediaType: 'image/png', dataBase64: 'AA==' }) })
+  store.activateScope('test:1')
+  const stop = store.subscribe('mounted', () => undefined)
+  await store.load('mounted')
+  for (let index = 0; index < 300; index++) await store.load(`past-${index}`)
+  expect(store.current('past-0')).toBeUndefined()
+  expect(store.current('mounted')).toBeDefined()
+  expect(store.current('past-299')).toBeDefined()
+  stop()
+})

@@ -25,6 +25,7 @@ interface ArkmeChatDirectoryStoreOptions {
 }
 
 export interface ArkmeChatDirectorySnapshot {
+  projection?: ArkmeSourceList["projection"]
   revision: number
   sources: ArkmeSourceItem[]
   baselineReady: boolean
@@ -235,6 +236,7 @@ const DIRECTORY_SOURCE_SCALAR_FIELDS: Record<DirectorySourceScalarField, true> =
   isPinned: true,
   chatPolicyUpdatedAtMillis: true,
   latestSequence: true,
+  readSequence: true,
   recordCount: true,
 }
 
@@ -348,6 +350,7 @@ export class ArkmeChatDirectoryStore {
   private refreshedAtMillis = 0
   private accountScopeKey: string | undefined
   private generation = 0
+  private projection: ArkmeSourceList["projection"]
   private baselineReady = false
   private isRefreshing = false
   private pendingMutations: ArkmeChatDirectoryMutation[] = []
@@ -358,7 +361,7 @@ export class ArkmeChatDirectoryStore {
 
   constructor(options: ArkmeChatDirectoryStoreOptions = {}) {
     this.loadPage = options.loadPage ?? (async (cursor, force) => await callArkme<ArkmeSourceList>('sources.list', {
-      directory: 'root', limit: ROOT_DIRECTORY_PAGE_LIMIT,
+      directory: 'root', limit: ROOT_DIRECTORY_PAGE_LIMIT, localFirst: true,
       ...(cursor === undefined ? {} : { cursor }), ...(force === true ? { refresh: true } : {}),
     }))
     this.maxAgeMs = Math.max(0, Math.trunc(options.maxAgeMs ?? DEFAULT_ROOT_CACHE_MAX_AGE_MS))
@@ -375,6 +378,7 @@ export class ArkmeChatDirectoryStore {
   activateAccount(scope: ArkmeClientAccountScope): void {
     const normalized = clientAccountScopeKey(scope)
     if (normalized === this.accountScopeKey) return
+    this.projection = undefined
     this.accountScopeKey = normalized
     this.generation += 1
     this.refreshInFlight = undefined
@@ -408,6 +412,11 @@ export class ArkmeChatDirectoryStore {
         const page = await this.loadRootPage(cursor, options.force === true, generation)
         if (generation !== this.generation) return [...this.snapshot.sources]
         if (page === undefined) return [...this.snapshot.sources]
+        if (page.projection !== undefined) {
+          this.applyHostPage(page)
+          this.refreshedAtMillis = this.now()
+          return [...this.snapshot.sources]
+        }
         for (const source of page.items) {
           const identity = arkmeSourceIdentityKey(source)
           if (seen.has(identity)) continue
@@ -430,6 +439,53 @@ export class ArkmeChatDirectoryStore {
         this.setRefreshing(false)
       }
     }
+  }
+
+  /** Host pages are upserts; neither cached snapshots nor later pages replace local live rows. */
+  applyHostPage(page: ArkmeSourceList): void {
+    const projection = page.projection
+    if (projection === undefined) return
+    if (this.projection !== undefined && projection.revision < this.projection.revision) {
+      const known = new Set(this.snapshot.sources.map(arkmeSourceIdentityKey))
+      const removed = new Set(this.projection.removedSourceKeys ?? [])
+      const missing = page.items.filter(item => !known.has(arkmeSourceIdentityKey(item)) && !removed.has(arkmeSourceIdentityKey(item)))
+      const visibility = new Map(this.projection.visibility.map(item => [`${item.entryKind}:${item.entryRef}`, item]))
+      const count = visibility.size
+      for (const item of projection.visibility) {
+        const key = `${item.entryKind}:${item.entryRef}`
+        if (!visibility.has(key)) visibility.set(key, item)
+      }
+      this.projection = { ...this.projection, visibility: [...visibility.values()] }
+      if (missing.length > 0) this.upsertMany(missing)
+      else if (visibility.size !== count) this.commit(this.snapshot.sources)
+      return
+    }
+    const visibility = new Map((this.projection?.visibility ?? []).map(item => [`${item.entryKind}:${item.entryRef}`, item]))
+    for (const incoming of page.items) {
+      const previous = this.snapshot.sources.find(item => arkmeSourceIdentityKey(item) === arkmeSourceIdentityKey(incoming))
+      if (previous !== undefined && previous.sourceRef !== incoming.sourceRef) visibility.delete(`source:${previous.sourceRef}`)
+    }
+    for (const item of projection.visibility) visibility.set(`${item.entryKind}:${item.entryRef}`, item)
+    const previousProjection = this.projection
+    this.projection = { ...projection, visibility: [...visibility.values()] }
+    for (const field of ['bots', 'botPinnedKeys', 'arkoProfile', 'arkoPreview', 'sendToSelf'] as const) {
+      if (previousProjection?.[field] !== undefined && JSON.stringify(previousProjection[field]) === JSON.stringify(projection[field])) Object.assign(this.projection, { [field]: previousProjection[field] })
+    }
+    const mutations = page.items.map(source => ({ type: 'upsert' as const, source, ...(source.sourceKey === undefined ? {} : { sourceKey: source.sourceKey }) }))
+    const removed = new Set(projection.removedSourceKeys ?? [])
+    const sources = applyDirectoryMutations(this.snapshot.sources.filter(source => !removed.has(arkmeSourceIdentityKey(source))), [...mutations, ...this.pendingMutations.filter(mutation => mutation.type !== 'upsert' || !removed.has(arkmeSourceIdentityKey(mutation.source)))], this.combinedReadWatermarks(), { sourceKeysByRef: this.sourceKeysByRef })
+    for (const incoming of page.items) {
+      const index = sources.findIndex(source => arkmeSourceIdentityKey(source) === arkmeSourceIdentityKey(incoming))
+      if (index < 0) continue
+      if (incoming.avatarRef === '') sources[index] = { ...sources[index]!, avatarRef: '' }
+      if (incoming.avatarRefs?.length === 0) {
+        sources[index] = { ...sources[index]!, avatarRefs: [] }
+        if (incoming.groupAvatar === undefined) delete sources[index]!.groupAvatar
+      }
+    }
+    this.pendingMutations = []
+    this.baselineReady = true
+    this.commit([...reconcileDirectorySources(this.snapshot.sources, sources)])
   }
 
   private async loadRootPage(cursor: string | undefined, force: boolean, generation: number): Promise<ArkmeSourceList | undefined> {
@@ -506,6 +562,7 @@ export class ArkmeChatDirectoryStore {
 
   private commit(sources: ArkmeSourceItem[]): void {
     this.snapshot = {
+      ...(this.projection === undefined ? {} : { projection: this.projection }),
       revision: this.snapshot.revision + 1,
       sources: [...sources],
       baselineReady: this.baselineReady,
@@ -519,7 +576,8 @@ export class ArkmeChatDirectoryStore {
   }
 
   upsertMany(updates: Array<ArkmeSourceItem | ArkmeChatDirectorySourceUpdate>): void {
-    const mutations = updates.map(update => {
+    const removed = new Set(this.projection?.removedSourceKeys ?? [])
+    const mutations = updates.filter(update => !removed.has(arkmeSourceIdentityKey(sourceUpdate(update).source))).map(update => {
       const normalized = sourceUpdate(update)
       return {
         type: 'upsert' as const,
@@ -670,6 +728,7 @@ export class ArkmeChatDirectoryStore {
   }
 
   clear(): void {
+    this.projection = undefined
     this.generation += 1
     this.refreshInFlight = undefined
     this.refreshedAtMillis = 0

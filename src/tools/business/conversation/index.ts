@@ -1,3 +1,4 @@
+import { memberPageToolModules } from './member-pages.js'
 import type { ArkmeToolModule } from '../../contract/module.js'
 import { listSourcesToolModule } from './list-sources.js'
 import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './member-records.js'
@@ -19,6 +20,7 @@ export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
   unreadConversationsToolModule,
   readSourceToolModule,
   sourceMembersToolModule,
+  ...memberPageToolModules,
   sourceMemberRecordsToolModule,
   ...messageReadReceiptToolModules,
   conversationMarkReadToolModule,

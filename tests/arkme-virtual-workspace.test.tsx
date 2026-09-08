@@ -28,14 +28,13 @@ describe('Arkme conversation directory load state', () => {
     })).toBe('idle')
   })
 
-  it('keeps embedded directory refresh failures out of the visible sidebar', () => {
-    const embeddedStatuses = workspaceSource.slice(
-      workspaceSource.indexOf("rootDirectoryState === 'loading'"),
-      workspaceSource.indexOf('{lockedDirectory ? <>'),
-    )
-    expect(embeddedStatuses).not.toContain("rootDirectoryState === 'error'")
-    expect(embeddedStatuses).not.toContain('加载失败')
-    expect(embeddedStatuses).not.toContain('重试')
+  it('never renders directory loading indicators, including an uncached first load', () => {
+    expect(workspaceSource).not.toContain('正在同步更多会话')
+    expect(workspaceSource).not.toContain('rootDirectoryStatus')
+    expect(workspaceSource).not.toContain('ArkmeDirectoryRefreshIcon')
+    expect(workspaceSource).not.toContain("rootDirectorySkeleton")
+    expect(workspaceSource).not.toContain("正在加载会话")
+    expect(workspaceSource).toContain("(rootDirectoryState === 'error' || chatDirectory.projection?.phase === 'failed')")
   })
 
   it('opens the existing global-search dialog for controller tag targets', () => {

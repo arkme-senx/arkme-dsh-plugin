@@ -293,3 +293,40 @@ describe('MediaService', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 })
+
+
+describe('durable avatar availability', () => {
+  it.each(['read', 'write'])('keeps the downloaded profile avatar usable when cache %s fails', async failure => {
+    const state = { uniqueCode: async () => 'device', readAvatarCache: vi.fn(async () => { if (failure === 'read') throw new Error('disk unavailable'); return undefined }),
+      writeAvatarCache: vi.fn(async () => { if (failure === 'write') throw new Error('disk full') }) }
+    const runtime = new ServiceRuntime(config, { read: async () => ({ userId: 42, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }, state as unknown as StateStore,
+      vi.fn(async () => new Response(new Uint8Array([137,80,78,71,13,10,26,10]), { headers: { 'Content-Type': 'image/png' } })))
+    const profile = new ProfileService(runtime)
+    vi.spyOn(profile, 'publicProfilesByUserIds').mockResolvedValue(new Map([[88, { userId: 88, displayName: 'User', nickname: 'User', avatarUrl: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/a.png?x-oss-signature=fixture' }]]))
+    const media = new MediaService(runtime, profile, {} as never, { recordUid: () => '' })
+    await expect(media.readImage(await profile.sealProfileImageRef(42, 88))).resolves.toMatchObject({ mediaType: 'image/png', bytes: 8 })
+  })
+})
+
+
+it('restores expired Bot image bytes offline only from the current account cache', async () => {
+  const bytes = { mediaType: 'image/png' as const, bytes: 8, data: new Uint8Array([137,80,78,71,13,10,26,10]) }
+  const state = { readAvatarCache: vi.fn(async (viewer: number) => viewer === 42 ? bytes : undefined) }
+  let userId = 42
+  const sessionStore = { read: async () => ({ userId, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }
+  const fetchImpl = vi.fn(async () => { throw new Error('offline') })
+  const runtime = new ServiceRuntime(config, sessionStore, state as unknown as StateStore, fetchImpl)
+  const openBotImageRef = vi.fn(async (_ref: string, viewer: number) => {
+    if (viewer !== 42) throw new Error('foreign account reference')
+    return { sourceUrl: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/bot.png?x-oss-signature=fixture' }
+  })
+  const media = new MediaService(runtime, {} as never, {} as never, { recordUid: () => '' }, { openBotImageRef } as never)
+  await expect(media.readImage('arkme-bot-image-v1.fixture')).resolves.toMatchObject({ bytes: 8 })
+  expect(openBotImageRef).not.toHaveBeenCalled()
+  expect(fetchImpl).not.toHaveBeenCalled()
+  userId = 43
+  const secondRuntime = new ServiceRuntime(config, sessionStore, state as unknown as StateStore, fetchImpl)
+  const secondMedia = new MediaService(secondRuntime, {} as never, {} as never, { recordUid: () => '' }, { openBotImageRef } as never)
+  await expect(secondMedia.readImage('arkme-bot-image-v1.fixture')).rejects.toThrow('foreign account')
+  expect(state.readAvatarCache).toHaveBeenCalledTimes(2)
+})

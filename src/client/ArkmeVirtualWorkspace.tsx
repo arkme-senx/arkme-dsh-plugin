@@ -1,3 +1,4 @@
+import { ArkmeDirectoryWindow } from './ArkmeDirectoryWindow.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
@@ -47,12 +48,11 @@ import {
 import { ArkmeArkoConversationPreviewSync } from './arko-conversation-preview-sync.js'
 import {
   botDirectoryIsPinned,
-  readBotDirectoryPreferences,
+  readBotDirectoryPreferences, migrateBotDirectoryPreferences,
   updateBotDirectoryPreferences,
-  writeBotDirectoryPreferences,
   type ArkmeBotDirectoryPreferences,
 } from './bot-directory-preferences.js'
-import { mergeBotDirectoryActivity, projectBotChatDirectory } from './bot-chat-directory-projection.js'
+import { mergeBotDirectoryActivity, mergeBotDirectorySnapshots, projectBotChatDirectory } from './bot-chat-directory-projection.js'
 import {
   applyConversationVisibilityQueryFailure,
   applyConversationVisibilityQuerySuccess,
@@ -76,6 +76,7 @@ import {
 import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
 
 export interface ArkmeNavigationProps {
+  active?: boolean
   wide?: boolean
   avatarOnly?: boolean
   currentSessionId?: string | undefined
@@ -121,14 +122,6 @@ export function arkmeRootDirectoryLoadState({
   if (error.trim() !== '') return 'error'
   if (!isRefreshing && baselineReady) return 'idle'
   return hasSources ? 'updating' : 'loading'
-}
-
-function ArkmeDirectoryRefreshIcon() {
-  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
-    <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-      <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur=".8s" repeatCount="indefinite" />
-    </path>
-  </svg>
 }
 
 const colors = {
@@ -187,10 +180,6 @@ const styles: Record<string, CSSProperties> = {
     boxSizing: 'border-box', border: '1px solid #e2e3e6', borderRadius: 11, color: '#92959e', background: '#fff',
   },
   conversationToolbar: { flex: 'none', margin: '24px 16px 16px', display: 'flex', alignItems: 'center', gap: 8 },
-  rootDirectoryStatus: {
-    height: 14, flex: 'none', margin: '-10px 16px 6px', display: 'flex', alignItems: 'center', gap: 4,
-    color: colors.caption, fontSize: 10, lineHeight: '14px',
-  },
   embeddedSearchField: { flex: 1, minWidth: 0, margin: 0 },
   createTaskButton: {
     width: 40, height: 40, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
@@ -361,11 +350,6 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 32, margin: '0 auto 16px', padding: '0 12px', display: 'flex', alignItems: 'center',
     border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.panel, color: colors.secondary,
     cursor: 'pointer', font: 'inherit', fontSize: 12,
-  },
-  rootDirectorySkeleton: { display: 'flex', flexDirection: 'column', gap: 12, padding: '12px 16px' },
-  rootDirectorySkeletonRow: {
-    height: 44, borderRadius: 8,
-    background: '#f1f2f5',
   },
   loginButton: {
     margin: '16px', minHeight: 40, border: 0, borderRadius: 10, background: colors.active,
@@ -875,9 +859,11 @@ export function ArkmeSourceSortControl({
 }
 
 export function ArkmeNavigation({
-  wide = true, avatarOnly = false, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
+  active = true, wide = true, avatarOnly = false, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
   lockedDirectory = false, sendToSelfSource, directoryLead, onCreateTask, searchDshMessages, onOpenDshSession, renderSlot,
 }: ArkmeNavigationProps) {
+  const activeRef = useRef(active)
+  activeRef.current = active
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const recordRevision = useSyncExternalStore(
     arkmeUi.subscribe, arkmeUi.getRecordRevision, arkmeUi.getRecordRevision,
@@ -902,6 +888,9 @@ export function ArkmeNavigation({
   const directoryRequestAbortRef = useRef<AbortController>()
   const topicCreateRequestRef = useRef(false)
   const rootRowElementsRef = useRef(new Map<string, HTMLButtonElement>())
+  const revealedSourceIdentityRef = useRef<string>()
+  const directoryScrollRef = useRef<HTMLDivElement>(null)
+  const directoryScrollTopRef = useRef(0)
   const directoryContextMenuRef = useRef<HTMLDivElement>(null)
   const directoryContextRequestRef = useRef(0)
   const topicRowElementsRef = useRef(new Map<string, HTMLDivElement>())
@@ -910,8 +899,9 @@ export function ArkmeNavigation({
   const auth = authState.auth
   const [directory, setDirectory] = useState<ArkmeSourceDirectory>('root')
   const [sources, setSources] = useState<ArkmeSourceItem[]>(
-    initialCache?.sources.root ?? [],
+    [],
   )
+  const botPinMigration = useRef<Promise<void> | undefined>(undefined)
   const [bots, setBots] = useState<ArkmeBotSummary[]>([])
   const [botDirectoryPreferences, setBotDirectoryPreferences] = useState<ArkmeBotDirectoryPreferences>(() => readBotDirectoryPreferences(auth?.userId))
   const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
@@ -984,6 +974,11 @@ export function ArkmeNavigation({
   const arkoLatestAtMillis = arkoPreviewSnapshot.userId === auth?.userId
     ? arkoPreviewSnapshot.latestAtMillis
     : undefined
+  const hasDirectoryData = sources.length > 0 || chatDirectory.sources.length > 0
+    || bots.length > 0 || (chatDirectory.projection?.bots.length ?? 0) > 0
+    || Boolean(sendToSelfSource ?? chatDirectory.projection?.sendToSelf
+      ?? arkoProfile ?? chatDirectory.projection?.arkoProfile
+      ?? arkoLatestPreview ?? chatDirectory.projection?.arkoPreview)
   const directorySources = useMemo(
     () => arkmeSelfDirectorySources(sources),
     [sources],
@@ -1020,21 +1015,51 @@ export function ArkmeNavigation({
     () => arkmeOfficialAuthorSource(rootSources, officialAuthorProfile?.userId ?? OFFICIAL_AUTHOR_USER_ID),
     [officialAuthorProfile?.userId, rootSources],
   )
+  useEffect(() => {
+    const userId = authenticated ? auth?.userId : undefined
+    if (userId === undefined || chatDirectory.projection === undefined) return
+    arkmeArkoProfileStore.activateUser(userId)
+    arkmeArkoConversationPreviewStore.activateUser(userId)
+    const { arkoProfile, arkoPreview } = chatDirectory.projection
+    if (arkoProfile !== undefined) arkmeArkoProfileStore.setProfile(userId, arkoProfile)
+    if (arkoPreview !== undefined && (arkmeArkoConversationPreviewStore.getSnapshot().latestAtMillis ?? 0) <= arkoPreview.createdAtMillis) {
+      arkmeArkoConversationPreviewStore.setLatestFromSurface(userId, [{ key: 'cached-directory', text: arkoPreview.text, createdAtMillis: arkoPreview.createdAtMillis }])
+    }
+  }, [authenticated, auth?.userId, chatDirectory.projection?.arkoProfile, chatDirectory.projection?.arkoPreview])
+  const hostVisibility = useMemo(() => new Map((chatDirectory.projection?.visibility ?? []).map(item => [`${item.entryKind}:${item.entryRef}`, item.hidden])), [chatDirectory.projection?.visibility])
+  useEffect(() => {
+    if (chatDirectory.projection !== undefined) {
+      setBots(current => sortArkmeBotsByCreatedAt(mergeBotDirectorySnapshots(current, chatDirectory.projection!.bots, chatDirectory.projection!.removedBotRefs)))
+      if (chatDirectory.projection.botPinnedKeys !== undefined) {
+        const userId = authenticated ? auth?.userId : undefined
+        const legacy = readBotDirectoryPreferences(userId)
+        setBotDirectoryPreferences({ pinnedKeys: [...new Set([...chatDirectory.projection.botPinnedKeys, ...legacy.pinnedKeys])] })
+        if (userId !== undefined && legacy.pinnedKeys.length > 0 && botPinMigration.current === undefined) {
+          const signal = directoryMutationAbortRef.current?.signal
+          const migration = migrateBotDirectoryPreferences(userId, chatDirectory.projection.bots, async botRef => {
+            if (authenticatedUserIdRef.current !== userId) throw new Error('Account changed')
+            await callArkme('conversation.directory.bot-pin', { botRef, pinned: true }, signal)
+          }, signal).catch(() => undefined).finally(() => { if (botPinMigration.current === migration) botPinMigration.current = undefined })
+          botPinMigration.current = migration
+        }
+      }
+    }
+  }, [chatDirectory.projection?.bots, chatDirectory.projection?.botPinnedKeys, chatDirectory.projection?.removedBotRefs])
   const rootConversationRows = useMemo(() => [
     ...botChatDirectory.sources
       .filter(source => {
         const sourceKey = conversationVisibilityKey('source', conversationSourceVisibilityKey(source))
-        return conversationVisibilityHydrated.has(sourceKey) && !conversationVisibility.has(sourceKey)
+        return (hostVisibility.has(`source:${source.sourceRef}`) ? !hostVisibility.get(`source:${source.sourceRef}`) : conversationVisibilityHydrated.has(sourceKey) && !conversationVisibility.has(sourceKey))
       })
       .map(source => ({ kind: 'source' as const, source, activeAtMillis: source.activeAtMillis, pinned: source.isPinned === true })),
     ...botChatDirectory.bots
       .filter(bot => {
         const botKey = conversationVisibilityKey('bot', conversationBotVisibilityKey(bot))
-        return conversationVisibilityHydrated.has(botKey) && !conversationVisibility.has(botKey)
+        return (hostVisibility.has(`bot:${bot.botRef}`) ? !hostVisibility.get(`bot:${bot.botRef}`) : conversationVisibilityHydrated.has(botKey) && !conversationVisibility.has(botKey))
       })
       .map(bot => ({ kind: 'bot' as const, bot, activeAtMillis: botActivityAtMillis(bot), pinned: botDirectoryIsPinned(botDirectoryPreferences, bot) })),
   ].sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.activeAtMillis - left.activeAtMillis), [
-    botChatDirectory, botDirectoryPreferences, conversationVisibility, conversationVisibilityHydrated,
+    botChatDirectory, botDirectoryPreferences, conversationVisibility, conversationVisibilityHydrated, hostVisibility,
   ])
   const directoryContextMenu = useMemo(() => {
     if (directoryContextTarget === undefined) return undefined
@@ -1059,8 +1084,25 @@ export function ArkmeNavigation({
     createdHighlightFramesRef.current = []
   }, [])
 
+  useLayoutEffect(() => {
+    if (active) {
+      if (directoryScrollRef.current !== null) directoryScrollRef.current.scrollTop = directoryScrollTopRef.current
+      if (directoryMutationAbortRef.current?.signal.aborted) directoryMutationAbortRef.current = new AbortController()
+      return
+    }
+    directoryRequestAbortRef.current?.abort()
+    directoryMutationAbortRef.current?.abort()
+    setDirectoryMutation(undefined)
+    setDirectoryContextMenu(undefined)
+    setGlobalSearchOpen(false)
+    setTopicCreateParent(undefined)
+    setQuickAddBlockingOpen(false)
+    setDirectoryActionFeedback(undefined)
+    stopCreatedHighlightAnimation()
+  }, [active, stopCreatedHighlightAnimation])
+
   useEffect(() => {
-    if (directoryContextMenu === undefined || typeof document === 'undefined') return
+    if (!active || directoryContextMenu === undefined || typeof document === 'undefined') return
     const close = () => {
       directoryContextRequestRef.current += 1
       setDirectoryContextMenu(undefined)
@@ -1083,7 +1125,7 @@ export function ArkmeNavigation({
       document.removeEventListener('visibilitychange', closeWhenHidden)
       window.removeEventListener('blur', close)
     }
-  }, [directoryContextMenu])
+  }, [active, directoryContextMenu])
   useEffect(() => {
     if (directoryActionFeedback === undefined || typeof window === 'undefined') return
     const timeout = window.setTimeout(() => { setDirectoryActionFeedback(undefined) }, 2_200)
@@ -1113,7 +1155,7 @@ export function ArkmeNavigation({
       ? (({ selectedSourceRef: _selectedSourceRef, ...cache }) => cache)(nextWithSelection)
       : nextWithSelection
     cacheRef.current = next
-    writeNavigationCache(next)
+    if (next.directory !== "root") writeNavigationCache(next)
   }, [])
 
   const reconcileAuth = useCallback((status: ArkmeAuthSnapshot['status'] | undefined, environment: ArkmeAuthSnapshot['environment'] | undefined, userId: number | undefined) => {
@@ -1133,7 +1175,7 @@ export function ArkmeNavigation({
     cacheRef.current = cached
     writeNavigationCache(cached)
     setDirectory('root')
-    setSources(cached.sources.root ?? [])
+    setSources(arkmeChatDirectory.getSnapshot().sources)
   }, [])
 
   const loadDirectory = useCallback(async (
@@ -1174,7 +1216,7 @@ export function ArkmeNavigation({
       const uiSnapshot = arkmeUi.getSnapshot()
       const selected = uiSnapshot.mode === 'source' ? uiSnapshot.selectedSource : undefined
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-      const restored = uiSnapshot.mode === 'source'
+      const restored = activeRef.current && uiSnapshot.mode === 'source'
         ? reconcileSelectedSource(selected ?? cachedSelected, loaded)
           ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
         : undefined
@@ -1208,14 +1250,19 @@ export function ArkmeNavigation({
     return () => { controller.abort() }
   }, [authenticated, auth?.environment, auth?.userId])
   useEffect(() => {
-    setBotDirectoryPreferences(readBotDirectoryPreferences(authenticated ? auth?.userId : undefined))
-    if (!authenticated) { setBots([]); return }
+    const cached = arkmeChatDirectory.getSnapshot().projection
+    const legacy = readBotDirectoryPreferences(authenticated ? auth?.userId : undefined)
+    setBotDirectoryPreferences({ pinnedKeys: [...new Set([...(cached?.botPinnedKeys ?? []), ...legacy.pinnedKeys])] })
+    setBots(sortArkmeBotsByCreatedAt(cached?.bots ?? []))
+  }, [authenticated, auth?.userId])
+  useEffect(() => {
+    if (!authenticated || !chatDirectory.baselineReady || chatDirectory.projection !== undefined) return
     const controller = new AbortController()
     void callArkme<{ items: ArkmeBotSummary[] }>('bots.private-chat.directory', undefined, controller.signal)
-      .then(value => { if (!controller.signal.aborted) setBots(sortArkmeBotsByCreatedAt(value.items)) })
+      .then(value => { if (!controller.signal.aborted) setBots(current => sortArkmeBotsByCreatedAt(mergeBotDirectorySnapshots(current, value.items, arkmeChatDirectory.getSnapshot().projection?.removedBotRefs))) })
       .catch(() => undefined)
     return () => { controller.abort() }
-  }, [authenticated, auth?.userId])
+  }, [authenticated, auth?.userId, chatDirectory.baselineReady, chatDirectory.projection !== undefined])
   useEffect(() => {
     if (!authenticated || recordRevision === 0) return
     const activityUserId = auth?.userId
@@ -1238,8 +1285,8 @@ export function ArkmeNavigation({
     }
     if (directory !== 'root') return
     const scope = conversationVisibilityScope(
-      rootSources.filter(source => source.kind === 'private_chat' || source.kind === 'group_chat'),
-      bots,
+      rootSources.filter(source => (source.kind === 'private_chat' || source.kind === 'group_chat') && !hostVisibility.has(`source:${source.sourceRef}`)),
+      bots.filter(bot => !hostVisibility.has(`bot:${bot.botRef}`)),
     )
     if (scope.sourceRefs.length === 0 && scope.botRefs.length === 0) return
     const protectedKeysAtRequest = conversationVisibilityFeedbackRef.current
@@ -1278,7 +1325,7 @@ export function ArkmeNavigation({
       ))
     })
     return () => { controller.abort() }
-  }, [authenticated, auth?.environment, auth?.userId, bots, chatRevision, directory, rootSources])
+  }, [authenticated, auth?.environment, auth?.userId, bots, chatRevision, directory, rootSources, chatDirectory.projection])
   useEffect(() => {
     if (!authenticated) {
       setOfficialAuthorProfile(undefined)
@@ -1291,9 +1338,10 @@ export function ArkmeNavigation({
     return () => { controller.abort() }
   }, [authenticated, auth?.userId])
   useEffect(() => {
+    if (!active) return
     if (ui.searchTarget === undefined) return
     setGlobalSearchOpen(true)
-  }, [ui.searchTarget?.revision])
+  }, [active, ui.searchTarget?.revision])
   useEffect(() => {
     const removeDeletedBot = (event: Event) => {
       const botRef = (event as CustomEvent<{ botRef?: unknown }>).detail?.botRef
@@ -1338,17 +1386,17 @@ export function ArkmeNavigation({
   }, [authenticated, auth?.userId])
   useEffect(() => {
     const userId = authenticated ? auth?.userId : undefined
-    if (userId === undefined) return
+    if (!active || userId === undefined) return
     const sync = new ArkmeArkoConversationPreviewSync()
     return sync.start(userId)
-  }, [authenticated, auth?.userId])
+  }, [active, authenticated, auth?.userId])
   useEffect(() => {
     if (!authenticated || directory !== 'root' || chatDirectory.revision === 0) return
     const loaded = chatDirectory.sources
     setSources(loaded)
     const selected = ui.mode === 'source' ? arkmeUi.getSnapshot().selectedSource : undefined
     const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-    const restored = ui.mode === 'source'
+    const restored = activeRef.current && ui.mode === 'source'
       ? reconcileSelectedSource(selected ?? cachedSelected, loaded)
       : undefined
     if (restored !== undefined) arkmeUi.selectSource(restored)
@@ -1414,7 +1462,7 @@ export function ArkmeNavigation({
     officialAuthorOpening, onActivateSurface, persistCache, quickAddBlockingOpen, sources, topicCreateParent, ui.mode, ui.selectedSource,
   ])
   useEffect(() => {
-    if (!authenticated || directory !== 'send_to_self' || ui.mode !== 'source') return
+    if (!active || !authenticated || directory !== 'send_to_self' || ui.mode !== 'source') return
     const aggregateSource = sources.find(source => source.kind === 'send_to_self')
     if (aggregateSource !== undefined && !isArkmeSelfWorkspaceSource(ui.selectedSource)) {
       arkmeUi.selectSource(aggregateSource)
@@ -1440,11 +1488,14 @@ export function ArkmeNavigation({
     })
   }, [sources, ui.selectedSource])
   useEffect(() => {
-    if (directory !== 'root' || activeDirectoryEntryId !== undefined || ui.mode !== 'source' || ui.selectedSource === undefined
+    if (!active || directory !== 'root' || activeDirectoryEntryId !== undefined || ui.mode !== 'source' || ui.selectedSource === undefined
       || typeof window === 'undefined') return
+    const identity = arkmeSourceIdentityKey(ui.selectedSource)
+    if (revealedSourceIdentityRef.current === identity) return
     const element = rootRowElementsRef.current.get(ui.selectedSource.sourceRef)
     if (element === undefined) return
-    const listElement = element.parentElement
+    revealedSourceIdentityRef.current = identity
+    const listElement = element.closest('[role="tree"]')
     const alreadyVisible = listElement !== null && isTopicRowFullyVisible(
       element.getBoundingClientRect(),
       listElement.getBoundingClientRect(),
@@ -1455,14 +1506,14 @@ export function ArkmeNavigation({
     }
   }, [activeDirectoryEntryId, directory, rootSources, ui.mode, ui.selectedSource])
   useEffect(() => {
-    if (directory !== 'send_to_self' || pendingRevealSourceRef === undefined || typeof window === 'undefined') return
+    if (!active || directory !== 'send_to_self' || pendingRevealSourceRef === undefined || typeof window === 'undefined') return
     const element = topicRowElementsRef.current.get(pendingRevealSourceRef)
     if (element === undefined) return
     const sourceRef = pendingRevealSourceRef
     setPendingRevealSourceRef(undefined)
     stopCreatedHighlightAnimation()
     const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
-    const listElement = element.parentElement
+    const listElement = element.closest('[role="tree"]')
     const alreadyVisible = listElement !== null && isTopicRowFullyVisible(
       element.getBoundingClientRect(),
       listElement.getBoundingClientRect(),
@@ -1551,8 +1602,9 @@ export function ArkmeNavigation({
         if (controller.signal.aborted) return
         arkmeChatDirectory.confirmPin(target.source, result.pinned, result.policyUpdatedAtMillis)
       } else {
+        await callArkme("conversation.directory.bot-pin", { botRef: target.bot.botRef, pinned }, controller.signal)
+        if (controller.signal.aborted) return
         setBotDirectoryPreferences(nextBotPreferences)
-        writeBotDirectoryPreferences(auth?.userId, nextBotPreferences)
       }
       if (controller.signal.aborted) return
       setDirectoryActionFeedback(pinned ? '已置顶对话' : '已取消置顶')
@@ -1560,7 +1612,6 @@ export function ArkmeNavigation({
       if (controller.signal.aborted) return
       if (target.kind === 'bot') {
         setBotDirectoryPreferences(previousBotPreferences)
-        writeBotDirectoryPreferences(auth?.userId, previousBotPreferences)
       }
       setDirectoryActionFeedback(caught instanceof Error ? caught.message : '操作失败，请重试')
     } finally {
@@ -1818,7 +1869,7 @@ export function ArkmeNavigation({
           }}
         />
       </label>
-      {authenticated && <ArkmeQuickAddButton
+      {active && authenticated && <ArkmeQuickAddButton
         notificationActivationRevision={ui.notificationActivationRevision ?? 0}
         onBlockingOverlayChange={setQuickAddBlockingOpen}
         onContactAdd={showContactAdd}
@@ -1828,13 +1879,6 @@ export function ArkmeNavigation({
       {lockedDirectory && <button type="button" style={styles.createTaskButton} aria-label="添加联系人、群聊或 Bot" onClick={showLogin}><Plus size={19} /></button>}
       {onCreateTask !== undefined && <button type="button" style={styles.createTaskButton} aria-label="新任务" onClick={onCreateTask}><Plus size={19} /></button>}
     </div>}
-    {directory === 'root' && embeddedProductShell && authenticated && rootDirectoryState === 'loading' && <div style={styles.rootDirectoryStatus} role="status">
-      <ArkmeDirectoryRefreshIcon /><span>加载中</span>
-    </div>}
-    {directory === 'root' && embeddedProductShell && authenticated && rootDirectoryState === 'updating' && <div style={styles.rootDirectoryStatus} role="status">
-      <ArkmeDirectoryRefreshIcon /><span>更新中</span>
-    </div>}
-
     {lockedDirectory ? <>
       <div style={styles.list} role="tree" aria-label="Arkme 会话">
         {showHarnessEntry && <DeepSeekHarnessRow
@@ -1854,8 +1898,11 @@ export function ArkmeNavigation({
     </button> : <>
     {directory === 'root' && embeddedProductShell && directoryLead}
     <div
+      ref={directoryScrollRef}
+      onScroll={event => { if (activeRef.current && event.currentTarget.getClientRects().length > 0) directoryScrollTopRef.current = event.currentTarget.scrollTop }}
       style={{
         ...styles.list,
+        overflowAnchor: 'none',
         ...(directory === 'send_to_self' ? styles.topicList : {}),
         ...(directory === 'send_to_self' && cardMode ? styles.topicCardList : {}),
       }}
@@ -1917,14 +1964,11 @@ export function ArkmeNavigation({
           activateEntry: activateDirectoryEntry,
           renderRow: renderArkmeDirectoryRow,
         })}
-        {rootDirectoryState === 'loading' && <div style={styles.rootDirectorySkeleton} aria-label="正在加载会话">
-          {Array.from({ length: 3 }, (_, index) => <div key={index} style={styles.rootDirectorySkeletonRow} aria-hidden="true" />)}
-        </div>}
-        {rootDirectoryState === 'error' && !embeddedProductShell && <>
+        {!hasDirectoryData && (rootDirectoryState === 'error' || chatDirectory.projection?.phase === 'failed') && <>
           <div style={{ ...styles.status, color: '#c2413b' }}>会话加载失败，请重试</div>
           <button type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>重新加载</button>
         </>}
-        {rootConversationRows.map(row => {
+        <ArkmeDirectoryWindow activeKey={ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" ? ui.selectedBot?.botRef : undefined}>{rootConversationRows.map(row => {
           if (row.kind === 'bot') {
             const { bot } = row
             const selected = activeDirectoryEntryId === undefined && ui.mode === 'bot' && ui.selectedBot?.botRef === bot.botRef
@@ -1975,7 +2019,7 @@ export function ArkmeNavigation({
             && directoryMutation.key === arkmeSourceIdentityKey(source)
           const interactionsDisabled = mutationPending && directoryMutation.action === 'dismiss'
           return <button
-            key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
+            key={arkmeSourceIdentityKey(source)} data-arkme-directory-row="source" type="button" role="treeitem" aria-selected={selected}
             aria-label={unreadPlacement === 'avatar'
               ? `${source.displayName}，${String(badgeUnreadCount)} 条未读`
               : unreadPlacement === 'dot' ? `${source.displayName}，有未读消息，已免打扰` : source.displayName}
@@ -2010,7 +2054,7 @@ export function ArkmeNavigation({
               </span>
             </span>
           </button>
-        })}
+        })}</ArkmeDirectoryWindow>
       </>}
 
       {directory === 'send_to_self' && !cardMode && visibleSourceRows.map(row => {
@@ -2052,14 +2096,14 @@ export function ArkmeNavigation({
     </div>
     {directory === 'send_to_self' && authenticated && <ArkmeTopicCreateFooter onCreate={() => { openTopicCreate(null) }} />}
     </>}
-    {topicCreateParent !== undefined && <ArkmeTopicCreateDialog
+    {active && topicCreateParent !== undefined && <ArkmeTopicCreateDialog
       key={topicCreateParent?.sourceRef ?? 'root'}
       mode={topicCreateParent === null ? 'topic' : 'child'}
       {...(topicCreateParent === null ? {} : { parentTopicPath: arkmeTopicPathNames(topicCreateParent, sources) })}
       submitting={topicCreateSubmitting} error={topicCreateError}
       onCancel={cancelTopicCreate} onConfirm={title => { void submitTopicCreate(title) }}
     />}
-    {globalSearchOpen && typeof document !== 'undefined' && createPortal(<ArkmeGlobalSearchDialog
+    {active && globalSearchOpen && typeof document !== 'undefined' && createPortal(<ArkmeGlobalSearchDialog
       {...(ui.searchTarget === undefined ? {} : {
         initialQuery: ui.searchTarget.query,
         initialQueryRevision: ui.searchTarget.revision,
@@ -2076,7 +2120,7 @@ export function ArkmeNavigation({
       }}
       onClose={closeGlobalSearch}
     />, document.body)}
-    {directoryContextMenu !== undefined && typeof document !== 'undefined' && createPortal(<div
+    {active && directoryContextMenu !== undefined && typeof document !== 'undefined' && createPortal(<div
       ref={directoryContextMenuRef}
       role="menu"
       aria-label={`${directoryContextMenuName ?? '会话'}的会话操作`}
@@ -2111,7 +2155,7 @@ export function ArkmeNavigation({
         onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
       >移除</button>
     </div>, document.body)}
-    {directoryActionFeedback !== undefined && typeof document !== 'undefined' && createPortal(
+    {active && directoryActionFeedback !== undefined && typeof document !== 'undefined' && createPortal(
       <div role="status" style={styles.directoryActionFeedback}>{directoryActionFeedback}</div>,
       document.body,
     )}

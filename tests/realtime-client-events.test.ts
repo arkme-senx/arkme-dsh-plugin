@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
+import { arkmeConversationMembers } from '../src/client/conversation-members-store.js'
 import { arkmeMemberEvents } from '../src/client/member-event-cache.js'
 import {
   arkmeChatDeltaCalendarDateStamps,
@@ -220,6 +221,28 @@ describe('realtime reconcile routing', () => {
     expect(next.timeline.snapshot().events).toEqual([])
     next.release()
     await act(async()=>{renderer.unmount()})
+  })
+
+  it('refreshes members for a join without invalidating historical leave rows', async () => {
+    let socket!: FakeEventSource
+    class FakeEventSource {
+      onopen: (() => void) | null = null
+      onmessage: ((event: MessageEvent<string>) => void) | null = null
+      constructor() { socket = this }
+      close() {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+    const members = vi.spyOn(arkmeConversationMembers, 'invalidate').mockImplementation(() => {})
+    const history = vi.spyOn(arkmeMemberEvents, 'invalidate')
+    function Harness() { useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 42, environment: 'test' }, 1, false); return null }
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(createElement(Harness)) })
+      await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'members-invalidated', revision: 1, sourceKey: 'group' }) } as MessageEvent<string>) })
+      expect(members).toHaveBeenCalledWith('test:42', { sourceKey: 'group', sourceRef: '' })
+      expect(history).not.toHaveBeenCalled()
+    } finally { await act(async () => { renderer.unmount() }); arkmeConversationMembers.activateAccount(undefined) }
   })
 
   it('records an SSE hint for an inactive cached group without a background query',async()=>{

@@ -1113,7 +1113,7 @@ export class SourceService {
 
   async listSources(
     directory: ArkmeSourceDirectory,
-    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean } = {},
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean } = {},
   ): Promise<ArkmeSourceList> {
     const session = await this.runtime.requireSession()
     // Topic hierarchies require their parent and child to arrive in the same response.
@@ -1121,7 +1121,7 @@ export class SourceService {
     const maxLimit = directory === 'send_to_self' ? 100 : 50
     const limit = Math.min(maxLimit, Math.max(1, Math.trunc(options.limit ?? 30)))
     const cursor = options.cursor?.trim() ?? ''
-    const cacheKey = `${String(session.userId)}:${directory}:${String(limit)}:${cursor}`
+    const cacheKey = `${String(session.userId)}:${directory}:${String(limit)}:${cursor}:${options.firstPaint === true ? "first" : "full"}`
     this.pruneSourceListCache()
     const cached = this.sourceListCache.get(cacheKey)
     if (options.refresh !== true && cached !== undefined && cached.expiresAtMillis > Date.now()) return cloneSourceList(cached.value)
@@ -1244,7 +1244,7 @@ export class SourceService {
   }
 
   async listGroupSources(
-    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean } = {},
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean } = {},
   ): Promise<ArkmeSourceList> {
     const session = await this.runtime.requireSession()
     const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 30)))
@@ -1264,7 +1264,7 @@ export class SourceService {
   private async listSourcesUncached(
     session: ArkmeSessionCredentials,
     directory: ArkmeSourceDirectory,
-    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; isCurrent?: () => boolean },
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean; isCurrent?: () => boolean },
     limit: number,
     sessionKind?: number,
   ): Promise<ArkmeSourceList> {
@@ -1569,6 +1569,7 @@ export class SourceService {
         activeAtMillis: arkmeChatSortActiveAt(bundle, chatSession),
         ...attention,
         ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
+        readSequence: numberValue(unread.read_seq),
         isPinned,
         chatPolicyUpdatedAtMillis: numberValue(currentPolicy.update_at),
         ...((numberValue(unread.session_last_seq ?? chatSession.last_seq)) > 0
@@ -1588,7 +1589,7 @@ export class SourceService {
       }
     }
     try {
-      await this.hydrateSourceAvatars(
+      if (options.firstPaint !== true) await this.hydrateSourceAvatars(
         items, privateUserIdByIndex, groupSessionUidByIndex, session, options.signal,
       )
     } catch (error) {
@@ -1645,6 +1646,20 @@ export class SourceService {
       if (oldestKey === undefined) break
       this.sourceListCache.delete(oldestKey)
     }
+  }
+
+  async hydrateDirectoryPage(items: ArkmeSourceItem[], signal: AbortSignal): Promise<ArkmeSourceItem[]> {
+    const session = await this.runtime.requireSession()
+    const hydrated = items.map(cloneSourceItem)
+    const privateUsers = new Map<number, number>()
+    const groups = new Map<number, string>()
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index]!
+      if (item.kind === 'private_chat' && item.peerUserId !== undefined) privateUsers.set(index, item.peerUserId)
+      if (item.kind === 'group_chat') groups.set(index, (await this.openSourceRef(item.sourceRef, session.userId)).ownerRef)
+    }
+    await this.hydrateSourceAvatars(hydrated, privateUsers, groups, session, signal)
+    return hydrated
   }
 
   async hydrateSourceAvatars(

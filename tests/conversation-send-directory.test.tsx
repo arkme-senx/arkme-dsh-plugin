@@ -1,3 +1,4 @@
+import { arkmeConversationMembers } from '../src/client/conversation-members-store.js'
 import { emojiSample } from './fixtures/emoji.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -12,14 +13,14 @@ import type {
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 
-vi.mock('../src/client/api.js', () => ({
-  callArkme: mocks.callArkme,
+vi.mock('../src/client/api.js', async () => { const { memberPageFixture } = await import('./helpers/member-page-fixture.js'); return ({
+  callArkme: memberPageFixture(mocks.callArkme),
   ArkmeClientError: class ArkmeClientError extends Error {
     constructor(readonly body: { code: string; message: string; retryable: boolean }) {
       super(body.message)
     }
   },
-}))
+}) })
 
 vi.mock('react-dom', () => ({
   createPortal: (children: unknown) => children,
@@ -37,6 +38,7 @@ import {
   arkmeCanReeditTimelineMessage, arkmeGroupMentionCandidates, arkmeRealtimeDeltaCoversTimelineGap,
 } from '../src/client/ArkmeSidebar.js'
 import { ArkmeClientError } from '../src/client/api.js'
+import * as memberApi from '../src/client/api.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
 import { ArkmeMarkdownComposerInput } from '../src/client/ArkmeMarkdownComposerInput.js'
@@ -684,6 +686,7 @@ describe('conversation send directory projection', () => {
     arkmeChatTimelineDelta.publish([])
     arkmeChatDirectory.activateAccount(42)
     arkmeChatDirectory.publish([other, target])
+    arkmeConversationMembers.activateAccount('test:42')
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
     arkmeMessageReadReceipts.activateAccount(42)
     arkmeUi.selectSource(target)
@@ -847,6 +850,7 @@ describe('conversation send directory projection', () => {
   afterEach(async () => {
     await act(async () => { renderer?.unmount() })
     renderer = undefined
+    arkmeConversationMembers.activateAccount(undefined)
     arkmeComposerDraftStore.clearAccount(42)
     arkmeChatDirectory.clear()
     arkmeChatTimelineDelta.publish([])
@@ -1048,6 +1052,7 @@ describe('conversation send directory projection', () => {
       renderer!.unmount()
     })
     renderer = undefined
+    arkmeConversationMembers.activateAccount(undefined)
     tasks = [{
       ...failedTask,
       taskRef: 'task-uncertain-file',
@@ -1666,6 +1671,7 @@ describe('conversation send directory projection', () => {
     } finally {
       await act(async () => { pending.resolve(null); await vi.advanceTimersByTimeAsync(0); renderer?.unmount() })
       renderer = undefined
+    arkmeConversationMembers.activateAccount(undefined)
       vi.useRealTimers()
     }
   })
@@ -2115,6 +2121,30 @@ describe('conversation send directory projection', () => {
     })
 
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.placeholder).toBe('发消息到 群聊 B(22人)')
+  })
+
+  it('does not turn a partial member page into the group total or block composing', async () => {
+    const pagedGroup: ArkmeSourceItem = { ...group, displayName: '分页群',
+      groupAvatar: { memberCount: 500, strategy: 'owner_recent_speakers', computedAtMillis: 1, slots: [] } }
+    arkmeChatDirectory.publish([pagedGroup]); arkmeUi.selectSource(pagedGroup)
+    const original = memberApi.callArkme
+    let resume!: () => void
+    const later = new Promise<void>(resolve => { resume = resolve })
+    const request = vi.spyOn(memberApi, 'callArkme').mockImplementation(async (operation, params, signal) => {
+      if (operation === 'source.members.page' && (params as { cursor?: string })?.cursor !== undefined) await later
+      return await original(operation, params, signal)
+    })
+    const existing = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: unknown, signal?: AbortSignal) => {
+      if (operation === 'source.members') return { source: pagedGroup, items: activeMembers(100), total: 100, activeCount: 100 }
+      return await existing(operation, params, signal)
+    })
+    try {
+      await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+      expect(renderer!.root.findByType(ArkmeRichComposerInput).props).toMatchObject({ placeholder: '发消息到 分页群(500人)', disabled: false })
+      await act(async () => { resume() })
+      expect(renderer!.root.findByType(ArkmeRichComposerInput).props).toMatchObject({ placeholder: '发消息到 分页群(100人)', disabled: false })
+    } finally { resume(); request.mockRestore() }
   })
 
   it('keeps the composer usable with the projected group count when member refresh fails', async () => {
@@ -3156,6 +3186,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
     await act(async () => {
+      arkmeConversationMembers.activateAccount('test:43')
       arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 43 })
       await Promise.resolve()
       await Promise.resolve()

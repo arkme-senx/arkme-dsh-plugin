@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from 'node:crypto'
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { createOpenClawProvisioner, OpenClawProvisionResult } from '../openclaw/index.js'
@@ -756,8 +756,38 @@ export class BotService {
     return `arkme-bot-directory-v1.${digest}`
   }
 
+  /** A cached directory entry is a lookup, never a persisted live target/capability. */
+  async restoreDirectoryBots(items: ArkmeBotSummary[], userId: number): Promise<ArkmeBotSummary[]> {
+    const secret = await this.runtime.stateStore.uniqueCode()
+    return items.flatMap(bot => {
+      if (bot.directoryKey === undefined) return []
+      const payload = Buffer.from(JSON.stringify({ directoryKey: bot.directoryKey })).toString('base64url')
+      const signature = createHmac('sha256', secret).update(`bot-directory-entry-v1:${userId}:${payload}`).digest('base64url')
+      return [{ ...bot, botRef: `arkme-bot-directory-entry-v1.${payload}.${signature}` }]
+    })
+  }
+
+  private async openDirectoryBotRef(reference: string, userId: number): Promise<ArkmeBotRefPayload> {
+    const parts = reference.split('.')
+    if (parts.length !== 3 || reference.length > 1_024) throw new ArkmePluginError('bot-ref-invalid', 'Bot 目录引用无效', false, 400)
+    const payload = parts[1]!
+    const supplied = Buffer.from(parts[2]!, 'base64url')
+    const expected = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(`bot-directory-entry-v1:${userId}:${payload}`).digest()
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new ArkmePluginError('bot-ref-invalid', 'Bot 目录引用无效', false, 400)
+    let parsed: { directoryKey?: unknown }
+    try { parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) }
+    catch { throw new ArkmePluginError('bot-ref-invalid', 'Bot 目录引用无效', false, 400) }
+    if ((await this.runtime.requireSession()).userId !== userId) throw new ArkmePluginError('bot-ref-account-mismatch', 'Bot 目录引用与当前账号不匹配', false, 403)
+    if (typeof parsed?.directoryKey !== 'string') throw new ArkmePluginError('bot-ref-invalid', 'Bot 目录引用无效', false, 400)
+    const current = (await this.listBots()).items.find(bot => bot.directoryKey === parsed.directoryKey)
+    if ((await this.runtime.requireSession()).userId !== userId) throw new ArkmePluginError('bot-ref-account-mismatch', '账号已切换', false, 403)
+    if (current === undefined) throw new ArkmePluginError('bot-ref-expired', 'Bot 已不可用，请刷新列表', false, 410)
+    return await this.openBotRef(current.botRef, userId)
+  }
+
   async openBotRef(botRef: string, expectedUserId: number): Promise<ArkmeBotRefPayload> {
     const normalized = botRef.trim()
+    if (normalized.startsWith('arkme-bot-directory-entry-v1.')) return await this.openDirectoryBotRef(normalized, expectedUserId)
     if (!BOT_REF_PATTERN.test(normalized)) {
       throw new ArkmePluginError('bot-ref-invalid', 'Bot 引用无效', false)
     }

@@ -66,3 +66,19 @@ export function projectBotChatDirectory(
     bots: projectedBots,
   }
 }
+
+
+/** Directory deltas can omit an existing Bot; only explicit deletion removes it. */
+export function mergeBotDirectorySnapshots(current: readonly ArkmeBotSummary[], incoming: readonly ArkmeBotSummary[], removedRefs: readonly string[] = []): ArkmeBotSummary[] {
+  const byKey = new Map(current.map(bot => [bot.directoryKey ?? bot.botRef, bot]))
+  for (const bot of incoming) {
+    const key = bot.directoryKey ?? bot.botRef
+    const previous = byKey.get(key)
+    byKey.set(key, previous !== undefined && (previous.latestMessageAtMillis ?? 0) > (bot.latestMessageAtMillis ?? 0)
+      ? { ...bot, latestMessageAtMillis: previous.latestMessageAtMillis!, latestMessagePreview: previous.latestMessagePreview ?? '',
+        conversationListActivityAtMillis: Math.max(previous.conversationListActivityAtMillis ?? 0, bot.conversationListActivityAtMillis ?? 0) }
+      : bot)
+  }
+  const removed = new Set(removedRefs)
+  return [...byKey.values()].filter(bot => !removed.has(bot.botRef))
+}

@@ -13,6 +13,7 @@ import {
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_bot_conversation_pin',
   'arkme_direct_message_refusal_set',
   'arkme_background_sound_disable',
   'arkme_file_prepare',

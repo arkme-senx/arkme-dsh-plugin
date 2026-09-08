@@ -13,9 +13,10 @@ export const ARKME_CHAT_TIMELINE_CHANGED_BIZ_TYPE = 20
 export const ARKME_CHAT_MESSAGE_PREPARING_BIZ_TYPE = 21
 export const ARKME_PROJECTION_INVALIDATED_BIZ_TYPE = 25
 export const ARKME_CONVERSATION_LIST_PREFERENCE_UPDATED_BIZ_TYPE = 26
+export const ARKME_MEMBER_JOINED_BIZ_TYPE = 24
 export const ARKME_MEMBER_EVENT_CREATED_BIZ_TYPE = 27
 
-export interface ArkmeMemberEventHint {
+export interface ArkmeMemberInvalidationHint {
   eventUid: string
   chatSessionUid: string
   eventAtMillis: number
@@ -111,7 +112,8 @@ export interface ArkmeChatRealtimeNotice {
   connectionStartedAtMillis?: number
   projectionInvalidation?: ArkmeProjectionInvalidatedHint
   conversationListPreferenceUpdated?: ArkmeConversationListPreferenceUpdatedHint
-  memberEvent?: ArkmeMemberEventHint
+  memberJoined?: ArkmeMemberInvalidationHint
+  memberEvent?: ArkmeMemberInvalidationHint
 }
 
 export interface ArkmeChatRealtimeRuntimeOptions {
@@ -178,7 +180,20 @@ function decodeDataLine(line: string): Record<string, unknown> | undefined {
     : undefined
 }
 
-export function decodeArkmeMemberEventDataLine(line: string): ArkmeMemberEventHint | undefined {
+export function decodeArkmeMemberJoinedDataLine(line: string): ArkmeMemberInvalidationHint | undefined {
+  const source = decodeDataLine(line)
+  if (source === undefined || positiveInteger(source.t) !== ARKME_MEMBER_JOINED_BIZ_TYPE) return undefined
+  if (Object.keys(source).some(key => !['t', 'event_uid', 'chat_session_uid', 'actor_user_id', 'member_user_id', 'join_at', 'event_at', 'source_client_id'].includes(key))) return undefined
+  const eventUid = nonEmptyString(source.event_uid)
+  const chatSessionUid = nonEmptyString(source.chat_session_uid)
+  const eventAtMillis = positiveInteger(source.event_at)
+  if (eventUid === undefined || chatSessionUid === undefined || eventAtMillis === undefined
+    || positiveInteger(source.actor_user_id) === undefined || positiveInteger(source.member_user_id) === undefined
+    || positiveInteger(source.join_at) === undefined || nonNegativeInteger(source.source_client_id) === undefined) return undefined
+  return { eventUid, chatSessionUid, eventAtMillis }
+}
+
+export function decodeArkmeMemberEventDataLine(line: string): ArkmeMemberInvalidationHint | undefined {
   const source = decodeDataLine(line)
   if (source === undefined || positiveInteger(source.t) !== ARKME_MEMBER_EVENT_CREATED_BIZ_TYPE) return undefined
   if (Object.keys(source).some(key => !['t','event_uid','chat_session_uid','event_at'].includes(key))) return undefined
@@ -699,6 +714,7 @@ export class ArkmeChatRealtimeRuntime {
     if (connectionSignal.aborted) return
     const policyUpdated = decodeArkmeChatPolicyUpdatedDataLine(line)
     if (policyUpdated !== undefined && policyUpdated.userId !== connectionUserId) return
+    const memberJoined = decodeArkmeMemberJoinedDataLine(line)
     const memberEvent = decodeArkmeMemberEventDataLine(line)
     const conversationListPreferenceUpdated = decodeArkmeConversationListPreferenceUpdatedDataLine(line)
     const projectionInvalidation = conversationListPreferenceUpdated === undefined
@@ -716,7 +732,7 @@ export class ArkmeChatRealtimeRuntime {
       && projectionInvalidation === undefined && readCursorAdvanced === undefined && timelineChanged === undefined
       ? decodeArkmeChatReceiveDataLine(line)
       : undefined
-    const eventUid = policyUpdated?.eventUid ?? memberEvent?.eventUid ?? conversationListPreferenceUpdated?.eventUid
+    const eventUid = policyUpdated?.eventUid ?? memberJoined?.eventUid ?? memberEvent?.eventUid ?? conversationListPreferenceUpdated?.eventUid
       ?? projectionInvalidation?.eventUid ?? readCursorAdvanced?.eventUid
       ?? timelineChanged?.eventUid ?? messagePreparing?.eventUid ?? hint?.eventUid
     if (eventUid === undefined || this.seenEventUids.has(eventUid)) return
@@ -725,7 +741,7 @@ export class ArkmeChatRealtimeRuntime {
       const oldest = this.seenEventUids.values().next().value as string | undefined
       if (oldest !== undefined) this.seenEventUids.delete(oldest)
     }
-    this.lastEventAtMillis = policyUpdated?.eventAtMillis ?? memberEvent?.eventAtMillis ?? conversationListPreferenceUpdated?.acceptedAtMillis
+    this.lastEventAtMillis = policyUpdated?.eventAtMillis ?? memberJoined?.eventAtMillis ?? memberEvent?.eventAtMillis ?? conversationListPreferenceUpdated?.acceptedAtMillis
       ?? projectionInvalidation?.eventAtMillis
       ?? readCursorAdvanced?.eventAtMillis
       ?? timelineChanged?.eventAtMillis
@@ -733,8 +749,10 @@ export class ArkmeChatRealtimeRuntime {
       ?? hint?.eventAtMillis
     if (policyUpdated !== undefined) {
       this.advanceRevision('chat-policy-invalidation', { policyUpdated, connectionUserId, connectionSignal })
+    } else if (memberJoined !== undefined) {
+      this.advanceRevision('chat-hint', { memberJoined, connectionUserId, connectionSignal })
     } else if (memberEvent !== undefined) {
-      this.advanceRevision('chat-hint', { memberEvent })
+      this.advanceRevision('chat-hint', { memberEvent, connectionUserId, connectionSignal })
     } else if (conversationListPreferenceUpdated !== undefined) {
       this.advanceRevision(
         'conversation-list-preference-invalidation',
@@ -775,7 +793,8 @@ export class ArkmeChatRealtimeRuntime {
       connectionSignal?: AbortSignal
       connectionStartedAtMillis?: number
       conversationListPreferenceUpdated?: ArkmeConversationListPreferenceUpdatedHint
-      memberEvent?: ArkmeMemberEventHint
+      memberJoined?: ArkmeMemberInvalidationHint
+      memberEvent?: ArkmeMemberInvalidationHint
     } = {},
   ): void {
     const {
@@ -790,12 +809,14 @@ export class ArkmeChatRealtimeRuntime {
       connectionStartedAtMillis,
       conversationListPreferenceUpdated,
       memberEvent,
+      memberJoined,
     } = evidence
     this.revision += 1
     const state = this.state()
     const notice: ArkmeChatRealtimeNotice = {
       state,
       cause,
+      ...(memberJoined === undefined ? {} : { memberJoined }),
       ...(memberEvent === undefined ? {} : { memberEvent }),
       ...(timelineChanged === undefined ? {} : { timelineChanged }),
       ...(messagePreparing === undefined ? {} : { messagePreparing }),

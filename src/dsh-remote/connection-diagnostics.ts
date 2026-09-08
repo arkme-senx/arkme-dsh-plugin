@@ -42,7 +42,7 @@ export class DshConnectionDiagnostics {
       this.client = new NodeClient({
         dsn: options.dsn, environment: options.environment, release: options.release,
         integrations: [], stackParser: defaultStackParser, sendClientReports: false,
-        transport: transportOptions => {
+        transport: (transportOptions: Parameters<typeof makeNodeTransport>[0]): ReturnType<typeof makeNodeTransport> => {
           const transport = makeNodeTransport({ ...transportOptions, bufferSize: 1 })
           return {
             flush: timeout => transport.flush(timeout),

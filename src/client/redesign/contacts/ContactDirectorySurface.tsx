@@ -41,6 +41,7 @@ export type ContactDirectoryPageLoader = (
 ) => Promise<ArkmeDirectoryPage>
 
 export interface ContactDirectorySurfaceProps {
+  active?: boolean
   accountKey: string
   toolbarActions?: ReactNode
   contactProfiles?: ContactProfileUpdates
@@ -162,11 +163,12 @@ export function directoryStateForAccount(
 }
 
 export function ContactDirectorySurface({
+  active = true,
   accountKey,
   initialState,
   toolbarActions,
   contactProfiles,
-  cacheFresh = false,
+  cacheFresh,
   selection,
   refreshRevision = 0,
   contactsAddedRevision = 0,
@@ -203,6 +205,7 @@ export function ContactDirectorySurface({
   const generationsRef = useRef<Partial<Record<ArkmeDirectorySectionKind, number>>>({})
   const refreshRevisionRef = useRef(refreshRevision)
   const contactsAddedRevisionRef = useRef(contactsAddedRevision)
+  const wasActiveRef = useRef(active)
   const preserveContactsSelectionRef = useRef(false)
   const contactProfilesRef = useRef(contactProfiles)
   contactProfilesRef.current = contactProfiles
@@ -247,7 +250,7 @@ export function ContactDirectorySurface({
   ) => {
     const snapshot = stateRef.current.sections[section]
     const profilesAtStart = contactProfilesRef.current
-    if (snapshot.accountKey !== accountKey || (!force && snapshot.status === 'loading')) return
+    if (!active || snapshot.accountKey !== accountKey || (!force && snapshot.status === 'loading')) return
     if (mode === 'append' && (!snapshot.hasMore || snapshot.nextCursor === undefined)) return
     controllersRef.current[section]?.abort()
     const controller = new AbortController()
@@ -298,7 +301,7 @@ export function ContactDirectorySurface({
       if (mode === 'count') return
       commit({ type: 'load-error', section, accountKey, generation, message: errorMessage(error) })
     })
-  }, [accountKey, commit])
+  }, [active, accountKey, commit])
 
   useEffect(() => {
     if (refreshCachedOnMountRef.current) return
@@ -312,18 +315,23 @@ export function ContactDirectorySurface({
   }, [accountKey, state, query, load])
 
   useEffect(() => {
-    if (refreshRevisionRef.current === refreshRevision) return
+    if (!active || refreshRevisionRef.current === refreshRevision) return
     refreshRevisionRef.current = refreshRevision
     load('unmarked-speakers', 'replace', true)
-  }, [load, refreshRevision])
+  }, [active, load, refreshRevision])
 
   useEffect(() => {
-    if (contactsAddedRevisionRef.current === contactsAddedRevision) return
+    const resumingStaleDirectory = active && !wasActiveRef.current && cacheFresh === false
+    wasActiveRef.current = active
+    if (!active) return
+    const contactsAdded = contactsAddedRevisionRef.current !== contactsAddedRevision
+    if (!contactsAdded && !resumingStaleDirectory) return
     contactsAddedRevisionRef.current = contactsAddedRevision
     // Adding a contact does not remove the current detail, even when it lives on a later page.
-    preserveContactsSelectionRef.current = true
-    load('contacts', 'replace', true)
-  }, [load, contactsAddedRevision])
+    if (contactsAdded) preserveContactsSelectionRef.current = true
+    const sections = resumingStaleDirectory ? CONTACT_DIRECTORY_SECTION_ORDER : ['contacts'] as const
+    for (const section of sections) load(section, 'replace', true)
+  }, [active, cacheFresh, load, contactsAddedRevision])
 
   const controlledSelectionKey = selection?.kind === 'contact'
     ? `contact:${selection.contactRef}`
@@ -363,13 +371,13 @@ export function ContactDirectorySurface({
   }, [load, state])
 
   useEffect(() => {
-    if (!refreshCachedOnMountRef.current) return
+    if (!active || !refreshCachedOnMountRef.current) return
     refreshCachedOnMountRef.current = false
     for (const section of CONTACT_DIRECTORY_SECTION_ORDER) {
       const cached = stateRef.current.sections[section]
       if (cached.expanded || cached.status === 'ready' || cached.status === 'empty') load(section, 'replace', true)
     }
-  }, [load])
+  }, [active, load])
 
   const handleToggle = (section: ArkmeDirectorySectionKind) => {
     if (query !== '') {

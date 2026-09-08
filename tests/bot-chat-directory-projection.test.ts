@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  mergeBotDirectoryActivity,
+  mergeBotDirectoryActivity, mergeBotDirectorySnapshots,
   projectBotChatDirectory,
 } from '../src/client/bot-chat-directory-projection.js'
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../src/types.js'
@@ -84,4 +84,13 @@ describe('Bot Chat directory projection', () => {
     expect(mergeBotDirectoryActivity(unchanged, [{ ...refreshed, conversationListActivityAtMillis: 10 }]))
       .toBe(unchanged)
   })
+})
+
+
+it('keeps a newly opened Bot through sparse Host snapshots and honors explicit deletion', () => {
+  const current = [chatBot, { ...subjectBot, latestMessageAtMillis: 100, latestMessagePreview: 'new' }]
+  const merged = mergeBotDirectorySnapshots(current, [{ ...subjectBot, latestMessageAtMillis: 50, latestMessagePreview: 'old' }])
+  expect(merged).toHaveLength(2)
+  expect(merged[1]?.latestMessagePreview).toBe('new')
+  expect(mergeBotDirectorySnapshots(merged, [], [chatBot.botRef])).toEqual([merged[1]])
 })

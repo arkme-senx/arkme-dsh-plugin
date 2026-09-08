@@ -1,6 +1,6 @@
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
-  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent,
+  type ReactNode, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent,
 } from 'react'
 import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionSearchResultItem } from '@deepseek-ai/dsh-client-runtime/client'
@@ -150,12 +150,25 @@ export type ArkmePersistentSidebarProps = PropsRuntime<'sidebar'>
     openDshSession?(sessionId: string): void
   }
 
-/** Arkme permanently owns the DSH sidebar seat so navigation stays stable across Arkme and Harness conversations. */
+/** Only the two directory panels are retained; account keys delimit their lifetime. */
+function PersistentDirectoryPanel({ active, mode, children }: { active: boolean; mode: 'contacts' | 'conversations'; children: ReactNode }) {
+  const [visited, setVisited] = useState(active)
+  useEffect(() => { if (active) setVisited(true) }, [active])
+  if (!active && !visited) return null
+  return <div hidden={!active} aria-hidden={!active || undefined}
+    style={{ ...styles.taskDirectory, ...(active ? {} : { display: 'none' }) }}
+    data-arkme-directory-mode={active ? mode : undefined} data-arkme-retained-directory={mode}>
+    {children}
+  </div>
+}
+
+/** Arkme permanently owns the DSH sidebar seat. */
 export function ArkmePersistentSidebar({
   collapsed, width, useSessions, renderSlot, closeDetails,
   searchDshMessages = async () => ({ items: [], hasMore: false }), openDshSession = () => undefined,
 }: ArkmePersistentSidebarProps) {
   const sessionState = useSessions(state => state)
+  const directorySnapshot = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot, arkmeChatDirectory.getSnapshot)
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const recordRevision = useSyncExternalStore(
     arkmeUi.subscribe, arkmeUi.getRecordRevision, arkmeUi.getRecordRevision,
@@ -221,7 +234,7 @@ export function ArkmePersistentSidebar({
   }, [authenticatedUserId, recordRevision])
   const sendToSelfSource = sendToSelfState !== undefined && sendToSelfState.userId === authenticatedUserId
     ? sendToSelfState.source
-    : undefined
+    : directorySnapshot.projection?.sendToSelf
   const searchDsh = useCallback(async (query: string, signal: AbortSignal): Promise<ArkmeDshMessageSearchResult> => {
     const result = await searchDshMessages(query, signal)
     return {
@@ -389,10 +402,11 @@ export function ArkmePersistentSidebar({
       taskExpanded
       currentSessionId={sessionState.current}
     />
-    {directoryVisible && <div style={styles.taskDirectory} data-arkme-directory-mode={contactsMode ? 'contacts' : 'conversations'}>
-      {contactsMode ? <ContactDirectorySurface
+    <PersistentDirectoryPanel key={`${contactsAccountKey}:contacts`} active={directoryVisible && contactsMode} mode="contacts">
+      <ContactDirectorySurface active={directoryVisible && contactsMode}
         accountKey={contactsAccountKey ?? ''} selection={scopedContacts.selection} refreshRevision={scopedContacts.refreshRevision}
         contactsAddedRevision={contactsAddedRevision}
+        cacheFresh={contactsDirectoryCache?.fresh ?? false}
         expandedSections={scopedContacts.expandedSections}
         contactProfiles={scopedContacts.contactProfiles}
         toolbarActions={<ArkmeQuickAddButton
@@ -414,7 +428,6 @@ export function ArkmePersistentSidebar({
         />}
         {...(contactsDirectoryCache === undefined ? {} : {
           initialState: contactsDirectoryCache.state,
-          cacheFresh: contactsDirectoryCache.fresh,
         })}
         onStateChange={(state, refreshed, acknowledgedProfiles) => { arkmeContactsTab.cacheDirectoryState(state, refreshed, acknowledgedProfiles) }}
         onSelectionChange={selection => { arkmeContactsTab.activateAccount(contactsAccountKey); arkmeContactsTab.select(selection) }}
@@ -447,7 +460,11 @@ export function ArkmePersistentSidebar({
           }).catch(() => undefined)
           arkmeUi.openBotConversation(bot)
         }}
-      /> : <ArkmeNavigation
+      />
+    </PersistentDirectoryPanel>
+    <PersistentDirectoryPanel key={`${contactsAccountKey}:conversations`} active={directoryVisible && !contactsMode} mode="conversations">
+      <ArkmeNavigation
+        active={directoryVisible && !contactsMode}
         wide
         avatarOnly={avatarOnly}
         embeddedProductShell
@@ -457,8 +474,8 @@ export function ArkmePersistentSidebar({
         searchDshMessages={searchDsh}
         onOpenDshSession={sessionId => { openDshSession(sessionId); arkmeUi.showHarness() }}
         {...(sendToSelfSource === undefined ? {} : { sendToSelfSource })}
-      />}
-    </div>}
+      />
+    </PersistentDirectoryPanel>
     {directoryVisible && contactsMode && contactAddSession !== undefined && contactAddSession.accountKey === contactsAccountKey && <ContactDirectoryAddDialog
       shareWebsite={authState.config?.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE}
       onClose={() => { setContactAddSession(undefined) }}
@@ -469,8 +486,10 @@ export function ArkmePersistentSidebar({
         arkmeContactsTab.invalidateDirectoryCache()
         arkmeChatDirectory.publish(arkmePrependSourceByIdentity(source, arkmeChatDirectory.getSnapshot().sources))
         const context = contactsContextRef.current
-        if (context.accountKey !== currentAccountKey || !context.contactsMode) return
+        if (context.accountKey !== currentAccountKey) return
+        // Retained hidden directories consume this refresh when they become active again.
         setContactsAddedRevision(value => value + 1)
+        if (!context.contactsMode) return
         // A late result from a closed dialog must not dismiss a newer dialog.
         setContactAddSession(current => current === contactAddSession ? undefined : current)
       }}

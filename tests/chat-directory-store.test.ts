@@ -372,10 +372,10 @@ describe('ArkmeChatDirectoryStore', () => {
 
     await expect(store.refreshRoot({ force: true })).resolves.toHaveLength(2)
     expect(callArkmeMock).toHaveBeenNthCalledWith(1, 'sources.list', {
-      directory: 'root', limit: 20, refresh: true,
+      directory: 'root', limit: 20, localFirst: true, refresh: true,
     })
     expect(callArkmeMock).toHaveBeenNthCalledWith(2, 'sources.list', {
-      directory: 'root', limit: 20, cursor: 'next-page', refresh: true,
+      directory: 'root', limit: 20, localFirst: true, cursor: 'next-page', refresh: true,
     })
   })
 
@@ -1161,4 +1161,47 @@ describe('ArkmeChatDirectoryStore', () => {
 
     expect(store.getSnapshotForSource('chat:selected').revision).toBeGreaterThan(firstRevision)
   })
+})
+
+describe('Host incremental directory projection', () => {
+  const projection = { revision: 1, phase: 'syncing' as const, cachedAtMillis: 1, visibility: [], bots: [] }
+  const source = (id: number) => ({ sourceRef: `host-${id}`, sourceKey: `stable-${id}`, kind: 'private_chat' as const, displayName: `Row ${id}`, activeAtMillis: id, unreadCount: 0 })
+  it('adds later pages and retains a live row when an older cache response arrives', () => {
+    const store = new ArkmeChatDirectoryStore()
+    store.activateAccount('test:1')
+    store.applyHostPage({ directory: 'root', items: [source(2)], hasMore: true, projection: { ...projection, revision: 2 } })
+    store.applyHostPage({ directory: 'root', items: [source(1)], hasMore: true, projection: { ...projection, visibility: [{ entryKind: 'source', entryRef: 'host-1', hidden: false }] } })
+    store.applyHostPage({ directory: 'root', items: [source(3)], hasMore: false, projection: { ...projection, phase: 'complete', revision: 3 } })
+    expect(store.getSnapshot().sources.map(item => item.sourceKey).sort()).toEqual(['stable-1', 'stable-2', 'stable-3'])
+    expect(store.getSnapshot().projection?.phase).toBe('complete')
+    expect(store.getSnapshot().projection?.visibility).toContainEqual({ entryKind: 'source', entryRef: 'host-1', hidden: false })
+  })
+})
+
+
+it('clears an authoritative group-avatar deletion carried by a Host delta', () => {
+  const store = new ArkmeChatDirectoryStore()
+  const source: ArkmeSourceItem = { sourceRef: 'group', sourceKey: 'group-key', kind: 'group_chat', displayName: 'Group', activeAtMillis: 1, unreadCount: 0,
+    avatarRefs: ['old'], groupAvatar: { memberCount: 1, strategy: 'members', computedAtMillis: 1, slots: [{ avatarRef: 'old' }] } }
+  const projection = { revision: 1, phase: 'complete' as const, cachedAtMillis: 1, bots: [], visibility: [] }
+  store.applyHostPage({ directory: 'root', items: [source], hasMore: false, projection })
+  const { groupAvatar, ...removed } = source
+  store.applyHostPage({ directory: 'root', items: [{ ...removed, avatarRefs: [] }], hasMore: false, projection: { ...projection, revision: 2 } })
+  expect(store.getSnapshot().sources[0]?.groupAvatar).toBeUndefined()
+  store.clear()
+  expect(store.getSnapshot().projection).toBeUndefined()
+})
+
+
+it('does not resurrect a left group through a late snapshot or realtime delta', () => {
+  const store = new ArkmeChatDirectoryStore()
+  const source: ArkmeSourceItem = { sourceRef: 'left-group', sourceKey: 'group-key', kind: 'group_chat', displayName: 'Left', activeAtMillis: 1, unreadCount: 0 }
+  const initial = { directory: 'root' as const, items: [source], hasMore: false, projection: { revision: 1, phase: 'complete' as const, cachedAtMillis: 1, bots: [], visibility: [] } }
+  store.applyHostPage(initial)
+  store.applyHostPage({ ...initial, items: [], projection: { ...initial.projection, revision: 2, removedSourceKeys: ['group-key'] } })
+  store.applyHostPage(initial)
+  store.upsert(source)
+  expect(store.getSnapshot().sources).toEqual([])
+  store.applyHostPage({ ...initial, projection: { ...initial.projection, revision: 3, removedSourceKeys: [] } })
+  expect(store.getSnapshot().sources).toMatchObject([source])
 })
