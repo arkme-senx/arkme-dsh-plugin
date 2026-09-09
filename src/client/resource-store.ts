@@ -96,8 +96,8 @@ export class ResourceStore<T, B> {
   refresh(key: string, binding: B, force = true, recheck = false): Promise<T> {
     const entry = this.entry(key, binding)
     if (entry.writer !== undefined) { entry.dirty = true; return Promise.reject(resourceCancelled()) }
-    if (entry.pending !== undefined) return entry.pending
     if (!force && !entry.snapshot.stale && entry.snapshot.value !== undefined) return Promise.resolve(entry.snapshot.value)
+    if (entry.pending !== undefined) return entry.pending
     const controller = new AbortController()
     const version = ++entry.version
     const current = () => !controller.signal.aborted && this.entries.get(key) === entry && entry.version === version
@@ -122,7 +122,8 @@ export class ResourceStore<T, B> {
       this.prune()
     })
     entry.pending = pending
-    this.publish(entry, { refreshing: true, error: undefined })
+    // Starting a retry is not evidence that a prior failure (including denial) is resolved.
+    this.publish(entry, { refreshing: true })
     return pending
   }
 

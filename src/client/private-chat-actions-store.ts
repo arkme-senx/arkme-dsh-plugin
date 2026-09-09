@@ -49,7 +49,7 @@ export class UnconfirmedBanError extends Error {
 export function banAuthorizationRejected(error: unknown): boolean {
   // Backend intentionally uses InvalidParam for non-staff/abnormal accounts as well as bad targets.
   return error instanceof ArkmeClientError && ['arkme-code-1000', 'arkme-code-1001',
-    'auth-http-401', 'auth-http-403', 'login-expired', 'account-unavailable'].includes(error.body.code)
+    'auth-http-401', 'auth-http-403', 'login-required', 'login-context-changed', 'login-expired', 'account-unavailable'].includes(error.body.code)
 }
 
 function definitelyRejectedBan(error: unknown): boolean {

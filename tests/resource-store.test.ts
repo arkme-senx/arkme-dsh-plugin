@@ -5,6 +5,19 @@ const deferred = <T>() => { let resolve!: (value: T) => void; let reject!: (erro
 afterEach(() => { vi.useRealTimers() })
 
 describe('shared resource snapshots', () => {
+  it('can use a still-fresh fact without waiting for an unrelated background refresh', async () => {
+    const pending = deferred<number>()
+    const load = vi.fn().mockResolvedValueOnce(1).mockReturnValueOnce(pending.promise)
+    const store = new ResourceStore<number, string>({ load })
+    await store.refresh('key', 'source')
+    const background = store.refresh('key', 'source')
+    let immediate: number | undefined
+    const current = store.refresh('key', 'source', false).then(value => { immediate = value })
+    await Promise.resolve()
+    const beforeRefreshCompletes = immediate
+    pending.resolve(2); await Promise.all([background, current])
+    expect(beforeRefreshCompletes).toBe(1)
+  })
   it('invalidates each active entry once even though refresh updates LRU order', async () => {
     const load = vi.fn(async () => 1)
     const store = new ResourceStore<number, string>({ load })

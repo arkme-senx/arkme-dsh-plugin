@@ -94,6 +94,33 @@ it('keeps cached visible values enabled while background requests stall', async 
   expect(rows().every(button => !button.disabled)).toBe(true)
 })
 
+it('retries an unavailable identity when the user reopens the menu, without a background retry loop', async () => {
+  const original = mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation(async operation => {
+    if (operation === 'user.profile.refresh') throw new Error('offline')
+    return await original(operation)
+  })
+  await render()
+  expect(host.textContent).not.toContain('封禁用户')
+  expect(mocks.call.mock.calls.filter(call => call[0] === 'user.profile.refresh')).toHaveLength(1)
+  mocks.call.mockImplementation(original)
+  await render(false); await render()
+  expect(host.textContent).toContain('封禁用户')
+  expect(mocks.call.mock.calls.filter(call => call[0] === 'user.profile.refresh')).toHaveLength(2)
+})
+
+it('keeps a known authorization rejection hidden throughout a pending retry', async () => {
+  const original = mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation(async operation => {
+    if (operation === 'user-ban.status') throw new ArkmeClientError({ code: 'arkme-code-1001', message: '参数错误', retryable: false })
+    return await original(operation)
+  })
+  await render(); expect(host.textContent).not.toContain('封禁用户')
+  mocks.call.mockImplementation(operation => operation === 'user-ban.status' ? new Promise(() => {}) : original(operation))
+  await render(false); await render()
+  expect(host.textContent).not.toContain('封禁用户')
+})
+
 it('shows local failure feedback while leaving independent actions usable', async () => {
   const original = mocks.call.getMockImplementation()!
   mocks.call.mockImplementation(async operation => {

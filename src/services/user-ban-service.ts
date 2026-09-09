@@ -53,10 +53,21 @@ export class UserBanService {
     private readonly peers: PrivateChatPeerResolver,
   ) {}
 
-  async status(sourceRef: string, signal?: AbortSignal): Promise<ArkmeUserBanOwnerSnapshot> {
+  private async context(sourceRef: string, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession()
     const peer = await this.peers.resolvePrivateChatPeer(sourceRef, signal)
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+      throw new ArkmePluginError('login-context-changed', '登录账号或凭据已变化，请重试当前操作', false, 409)
+    }
+    // Both hops belong to the initiating login; never borrow credentials from a later account.
+    return { peer, session: current }
+  }
+
+  async status(sourceRef: string, signal?: AbortSignal): Promise<ArkmeUserBanOwnerSnapshot> {
+    const { peer, session } = await this.context(sourceRef, signal)
     const data = await this.runtime.authenticatedAuthReadPost<Record<string, unknown>>(
-      '/api/v1/user-ban/status', { user_id: peer.userId }, undefined, signal,
+      '/api/v1/user-ban/status', { user_id: peer.userId }, session, signal,
       { bypassCache: true },
     )
     const exists = data.exists === true
@@ -92,11 +103,11 @@ export class UserBanService {
     if (Array.from(remark).length > 255) {
       throw new ArkmePluginError('user-ban-remark-invalid', '封禁备注最多 255 个字符', false)
     }
-    const peer = await this.peers.resolvePrivateChatPeer(sourceRef, signal)
+    const { peer, session } = await this.context(sourceRef, signal)
     const data = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
       banned ? '/api/v1/user-ban/ban' : '/api/v1/user-ban/unban',
       { user_id: peer.userId, remark },
-      undefined,
+      session,
       signal,
       { bypassCache: true, trackWriteOutcome: true },
     )

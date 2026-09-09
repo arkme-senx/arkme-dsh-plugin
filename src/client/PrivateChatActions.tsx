@@ -31,6 +31,10 @@ export function usePrivateChatActions(account: string | undefined, userId: numbe
   activeRef.current = key
   useEffect(() => () => { activeRef.current = undefined }, [])
   useEffect(() => {
+    // An explicit reopen retries a failed identity read; a fresh identity still needs no network.
+    if (open && key !== undefined) void privateChatActions.identity.refresh(identityBinding.account, identityBinding, false).catch(() => undefined)
+  }, [open, key, identityBinding])
+  useEffect(() => {
     if (open && identity.snapshot.stale && !identity.snapshot.refreshing && identity.snapshot.error === undefined) identity.refresh()
   }, [open, identity.snapshot, identity.refresh])
   const changeBan = async (banned: boolean): Promise<void> => {
