@@ -673,6 +673,14 @@ describe('group AI polish Host API dispatch', () => {
 })
 
 describe('conversation member Host API dispatch', () => {
+  it('propagates timeline cancellation without changing its query', async () => {
+    const service = { readSource: vi.fn().mockResolvedValue({ items: [] }) }
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'source.timeline', {
+      sourceRef: 'source-ref', limit: 40,
+    }, undefined, undefined, undefined, undefined, signal)
+    expect(service.readSource).toHaveBeenCalledWith('source-ref', { limit: 40, signal })
+  })
   it('forwards the exact record identity and bounded around window', async () => {
     const service = fakeService()
     await dispatchArkmeHostOperation(service as never, 'source.timeline-around', {

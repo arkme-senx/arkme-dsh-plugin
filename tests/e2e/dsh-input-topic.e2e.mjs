@@ -16,7 +16,7 @@ if (!dshRoot || !profile || !recordOrigin || new URL(recordOrigin).hostname !== 
 }
 const importFile = path => import(/* @vite-ignore */ pathToFileURL(path).href)
 const { launchWebScaffold } = await importFile(join(dshRoot, 'apps/web/tests/scaffold.ts'))
-const { connectFreshWorkspace, newEnglishPage } = await importFile(join(dshRoot, 'apps/web/tests/support.ts'))
+const { connectFreshWorkspace } = await importFile(join(dshRoot, 'apps/web/tests/support.ts'))
 const { chromium } = createRequire(join(dshRoot, 'apps/web/package.json'))('playwright')
 const profileManifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
 if (!/^file:.*\.tgz$/.test(profileManifest.dependencies?.['@senguoyun/dsh-arkme'] ?? '')) {
@@ -92,7 +92,17 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       const service = scaffold.ctx.get('arkmeData')
       expect(await service.testLogin(10001)).toMatchObject({ status: 'authenticated', userId: 10001 })
       browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
-      const page = await newEnglishPage(browser)
+      const browserContext = await browser.newContext({ viewport: { width: 1680, height: 1000 }, locale: 'en-US' })
+      const realtimePages = new Set()
+      browserContext.on('page', clientPage => {
+        clientPage.on('websocket', socket => {
+          if (!socket.url().endsWith('/arkme-self/api/events')) return
+          socket.on('framereceived', frame => {
+            if (JSON.parse(String(frame.payload)).type === 'reconcile') realtimePages.add(clientPage)
+          })
+        })
+      })
+      const page = await browserContext.newPage()
       await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
       const frameElement = await page.waitForSelector('iframe[title="DeepSeek Harness"]')
       const harnessPage = await frameElement.contentFrame()
@@ -124,6 +134,15 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       expect(JSON.stringify(result)).toContain('showInHome')
       expect(JSON.stringify(result)).toContain('true')
       await sdk.topicHomeVisibility(archive.sourceRef, false)
+      // Same browser context/origin: before the transport fix, three pages
+      // held six SSE connections and starved normal topic reads.
+      for (let index = 0; index < 2; index++) {
+        const background = await page.context().newPage()
+        await background.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+        await background.getByRole('treeitem', { name: /发给自己/ }).waitFor()
+      }
+      await expect.poll(() => realtimePages.size).toBe(3)
+      await page.bringToFront()
       await page.getByRole('button', { name: '对话', exact: true }).click()
       await page.getByRole('treeitem', { name: /发给自己/ }).click()
       // Wait for the aggregate selection to resolve before opening its menu;
@@ -131,12 +150,40 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       await page.getByText('Enter发送 / Shift+Enter换行', { exact: true }).waitFor({ state: 'visible' })
       await page.getByRole('button', { name: '选择主题', exact: true }).click()
       const topicTree = page.getByRole('tree', { name: '主题', exact: true })
+      let releaseTimeline
+      let failTimelineReads = true
+      const timelineGate = new Promise(resolve => { releaseTimeline = resolve })
+      await page.route('**/arkme-self/api', async route => {
+        const body = route.request().postDataJSON()
+        if (body?.operation === 'source.timeline' && body.params?.sourceRef === archive.sourceRef) {
+          await timelineGate
+          if (failTimelineReads) { await route.abort('failed'); return }
+        }
+        await route.continue()
+      })
       await topicTree.getByRole('button', { name: /DSH Agent Input/ }).click()
       const setting = page.getByRole('checkbox', { name: '在首页展示' })
       await setting.waitFor({ state: 'visible' })
       await expect.poll(() => setting.isEnabled()).toBe(true)
       expect(await setting.isChecked()).toBe(false)
       expect(await page.getByRole('button', { name: '发送消息', exact: true }).count()).toBe(0)
+      await page.getByRole('status', { name: '正在加载会话内容' }).waitFor()
+      const footer = page.locator('footer[aria-label="DSH 输入主题设置"]')
+      const footerBox = await footer.boundingBox()
+      const settingBox = await setting.boundingBox()
+      expect(footerBox.height).toBeGreaterThanOrEqual(72)
+      expect(footerBox.width).toBeGreaterThan(400)
+      expect(settingBox.y).toBeGreaterThan(footerBox.y)
+      expect(settingBox.y + settingBox.height).toBeLessThan(footerBox.y + footerBox.height)
+      if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
+      releaseTimeline()
+      const reload = page.getByRole('button', { name: '重新加载', exact: true })
+      await reload.waitFor()
+      failTimelineReads = false
+      await reload.click()
+      await page.getByRole('button', { name: '打开快记详情', exact: true }).filter({ hasText: prompt }).waitFor()
+      await page.unroute('**/arkme-self/api')
+      await page.getByRole('status', { name: '正在加载会话内容' }).waitFor({ state: 'hidden' })
       // The controlled checkbox deliberately waits for the persisted value;
       // Playwright.check() requires an immediate optimistic DOM update.
       await setting.click()

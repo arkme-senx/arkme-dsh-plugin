@@ -1,3 +1,4 @@
+import { withArkmeReadDeadline } from './read-deadline.js'
 import {
   useCallback, useEffect, useMemo, useRef, useState, type CSSProperties,
 } from 'react'
@@ -227,10 +228,10 @@ export function ArkmeTopicDirectoryPopover({
       let hasNextPage = false
       const visitedCursors = new Set<string>()
       for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
-        const page = await callArkme<ArkmeSourceList>('sources.list', {
+        const page = await withArkmeReadDeadline(signal => callArkme<ArkmeSourceList>('sources.list', {
           directory: 'send_to_self', limit: 100,
           ...(cursor === undefined ? {} : { cursor }),
-        }, controller.signal)
+        }, signal), controller.signal)
         if (controller.signal.aborted) return
         loaded = mergeArkmeTopicSourcePages(loaded, page.items)
         sourcesRef.current = loaded

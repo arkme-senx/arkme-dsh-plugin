@@ -1622,7 +1622,8 @@ export async function dispatchArkmeHostOperation(
       const cursor = timelineCursorParam(params)
       return await service.readSource(
         stringParam(params, 'sourceRef'),
-        { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }) },
+        { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }),
+          ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
       )
     }
     case 'source.timeline-around': return await service.readSourceAround(

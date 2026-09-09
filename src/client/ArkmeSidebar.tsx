@@ -4,6 +4,7 @@ import { arkmeMarkdownPlainText } from '../markdown.js'
 import { arkmeCallRecordBubbleStyle } from './ArkmeCallRecordContent.js'
 import { arkmeSourceAllowsUserWrite, isArkmeDSHInputTopic } from '../topic-policy.js'
 import { ArkmeTopicHomeVisibility } from './ArkmeTopicHomeVisibility.js'
+import { withArkmeReadDeadline } from './read-deadline.js'
 import {
   Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties, type ReactNode, type SetStateAction,
@@ -3712,16 +3713,16 @@ export function ArkmeSurface({
     const readStartDeltas = new Map<string, ArkmeTimelineItem | undefined>()
     let page: ArkmeTimelinePage
     try {
-      const readPage = (pageCursor?: ArkmeTimelineCursor) => retryArkmeRead(async () => {
+      const readPage = (pageCursor?: ArkmeTimelineCursor) => withArkmeReadDeadline(signal => retryArkmeRead(async () => {
         const start = new Map((sourceIsChat ? arkmeChatTimelineDelta.getSnapshotForSource(sourceKey).items : [])
           .map(item => [item.itemUid, item]))
         const result = await callArkme<ArkmeTimelinePage>('source.timeline', {
           sourceRef, limit: refreshWindow === undefined ? limit : 100,
           ...(pageCursor === undefined ? {} : { cursor: pageCursor }),
-        }, controller.signal)
+        }, signal)
         for (const item of result.items) readStartDeltas.set(item.itemUid, start.get(item.itemUid))
         return result
-      }, { signal: controller.signal })
+      }, { signal }), controller.signal)
       page = refreshWindow === undefined ? await readPage(cursor)
         : await readConversationTimelineWindow(refreshWindow, readPage, controller.signal)
     } catch (caught) {
@@ -7006,6 +7007,12 @@ export function ArkmeSurface({
             ...(activeSelectMode === undefined ? {} : styles.bodySelectMode),
           }} onScroll={handleConversationScroll}>
             {error !== '' && <div style={styles.error}>{error}</div>}
+            {error !== '' && displayRows.length === 0 && timelineLoadingKey !== conversationKey && <button
+              type="button" style={styles.retry} onClick={() => {
+                setError('')
+                setTimelineLoadingKey(conversationKey)
+                setForegroundReadRevision(value => value + 1)
+              }}>重新加载</button>}
             {interwovenWindow.prelude.length > 0 && <ArkmeInterwovenPrelude
               key={conversationKey} moments={interwovenWindow.prelude} onOpen={openMomentDetail} />}
             <div ref={sentinelRef} style={styles.sentinel} />

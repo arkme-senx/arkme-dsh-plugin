@@ -15,15 +15,15 @@ afterEach(() => {
 
 describe('preparing production wiring', () => {
   it.each(['open', 'error', 'reconcile', 'unmount'] as const)('preserves active preparing when the non-owner surface receives %s', async action => {
-    const connections: FakeEventSource[] = []
-    class FakeEventSource {
+    const connections: FakeWebSocket[] = []
+    class FakeWebSocket {
       onopen: (() => void) | null = null
       onerror: (() => void) | null = null
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor() { connections.push(this) }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     function Consumer({ owner = false }: { owner?: boolean }) {
       useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 1, environment: 'prod' }, 1, false, { ownsMessagePreparing: owner })
@@ -50,13 +50,13 @@ describe('preparing production wiring', () => {
     expect(arkmeMessagePreparing.get('chat', 'prod:1')).toHaveLength(1)
   })
   it('does not let a lagging duplicate arrival from another consumer clear a newer Host projection', async () => {
-    const connections: FakeEventSource[] = []
-    class FakeEventSource {
+    const connections: FakeWebSocket[] = []
+    class FakeWebSocket {
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor() { connections.push(this) }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     function Consumer() {
       useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 1, environment: 'prod' }, 1, false, { ownsMessagePreparing: true })
@@ -84,13 +84,13 @@ describe('preparing production wiring', () => {
     expect(arkmeMessagePreparing.get('chat', 'prod:1').map(item => item.stateVersion)).toEqual([now + 1])
   })
   it('does not grant preparing ownership to a directory-refreshing consumer by default', async () => {
-    const connections: FakeEventSource[] = []
-    class FakeEventSource {
+    const connections: FakeWebSocket[] = []
+    class FakeWebSocket {
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor() { connections.push(this) }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     vi.spyOn(arkmeChatDirectory, 'refreshRoot').mockResolvedValue([])
     function Consumer() {
@@ -112,15 +112,15 @@ describe('preparing production wiring', () => {
     expect(arkmeMessagePreparing.get('chat', 'prod:1')).toHaveLength(1)
   })
   it('routes transient events without refreshing chat facts and fences disconnected accounts', async () => {
-    const connections: FakeEventSource[] = []
-    class FakeEventSource {
+    const connections: FakeWebSocket[] = []
+    class FakeWebSocket {
       onopen: (() => void) | null = null
       onerror: (() => void) | null = null
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor() { connections.push(this) }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     const refresh = vi.spyOn(arkmeChatDirectory, 'refreshRoot').mockResolvedValue([])
     const invalidate = vi.spyOn(arkmeInterwovenInvalidation, 'invalidate')

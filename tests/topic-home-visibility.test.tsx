@@ -30,14 +30,29 @@ describe('DSH topic home setting', () => {
       .mockResolvedValueOnce({ showInHome: true })
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<ArkmeTopicHomeVisibility sourceRef="topic-a" />) })
-    expect(renderer.root.findByType('input').props.disabled).toBe(true)
+    expect(renderer.root.findAllByType('input')).toHaveLength(0)
+    expect(renderer.root.findByProps({ role: 'status' }).children).toContain('正在读取设置…')
     const oldSignal = mocks.policy.mock.calls[0][2] as AbortSignal
     await act(async () => { renderer.update(<ArkmeTopicHomeVisibility sourceRef="topic-b" />) })
     expect(oldSignal.aborted).toBe(true)
     await act(async () => { resolveOld({ showInHome: false }) })
     expect(renderer.root.findByType('input').props.checked).toBe(true)
-    const currentSignal = mocks.policy.mock.calls[1][2] as AbortSignal
+    // A completed read releases its cancellation listener. Only pending work
+    // belongs to the mounted surface and must be aborted when it leaves.
+    mocks.policy.mockImplementationOnce(() => new Promise(() => undefined))
+    await act(async () => { renderer.update(<ArkmeTopicHomeVisibility sourceRef="topic-c" />) })
+    const currentSignal = mocks.policy.mock.calls[2][2] as AbortSignal
     act(() => { renderer.unmount() })
     expect(currentSignal.aborted).toBe(true)
+  })
+
+  it('reserves a themed footer while settings are unknown', async () => {
+    mocks.policy.mockReset().mockImplementation(() => new Promise(() => undefined))
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeTopicHomeVisibility sourceRef="topic-a" />) })
+    const footer = renderer.root.findByType('footer')
+    expect(footer.props.style).toMatchObject({ flexShrink: 0, minHeight: 72, boxSizing: 'border-box' })
+    expect(renderer.root.findAllByType('input')).toHaveLength(0)
+    act(() => { renderer.unmount() })
   })
 })
