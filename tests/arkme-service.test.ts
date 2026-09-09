@@ -915,34 +915,10 @@ describe('ArkmeService', () => {
     expect(transcript.items[0]).not.toHaveProperty('assignmentSpeakerNumber')
   })
 
-  it('seals recording pagination cursors to the signed-in account and rejects tampering', async () => {
-    const sessions = new MemorySessionStore()
-    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
-    const state = new MemoryStateStore()
-    const service = new ArkmeService(config, sessions, state, async () => {
-      throw new Error('not used')
-    })
-    const payload = {
-      version: 1 as const,
-      dateStamp: new Date(2026, 7, 17).getTime(),
-      content: 'transcript' as const,
-      itemOffset: 50,
-      textOffset: 0,
-      fingerprint: 'transcript-fingerprint',
-    }
-
-    const cursor = await service.sealRecordingCursor(payload)
-    expect(cursor).toMatch(/^arkme-recording-cursor-v1\./)
-    await expect(service.openRecordingCursor(cursor)).resolves.toEqual(payload)
-
-    const [prefix, encoded, signature] = cursor.split('.') as [string, string, string]
-    const tamperedSignature = `${signature.startsWith('A') ? 'B' : 'A'}${signature.slice(1)}`
-    await expect(service.openRecordingCursor(`${prefix}.${encoded}.${tamperedSignature}`))
-      .rejects.toMatchObject({ code: 'recording-cursor-invalid' })
-
-    sessions.session = { userId: 10002, accessToken: 'other', refreshToken: 'other-refresh' }
-    await expect(service.openRecordingCursor(cursor))
-      .rejects.toMatchObject({ code: 'recording-cursor-invalid' })
+  it('does not retain retired model pagination cursor helpers', () => {
+    expect(ArkmeService.prototype).not.toHaveProperty('sealRecordingCursor')
+    expect(ArkmeService.prototype).not.toHaveProperty('openRecordingCursor')
+    expect(ArkmeService.prototype).toHaveProperty('recordingTranscript')
   })
 
   it('completes QR login without exposing tokens in the auth snapshot', async () => {

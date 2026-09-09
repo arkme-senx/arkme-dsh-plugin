@@ -1,4 +1,5 @@
 import type {
+  ArkmeRecordingMaterialUtterance,
   ArkmeAiVideoJob,
   ArkmeAiVideoJobStatus,
   ArkmeAiVideoListItem,
@@ -28,6 +29,24 @@ function listValue(value: unknown): unknown[] {
 
 export class AiVideoService {
   constructor(private readonly runtime: ServiceRuntime) {}
+
+  async aiVideoResolveSelection(recordingUid: string, utterances: readonly ArkmeRecordingMaterialUtterance[], signal?: AbortSignal): Promise<ArkmeAiVideoSegmentSelector[]> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/recording-material/selection/resolve',
+      { recording_uid: recordingUid, utterances: utterances.map(item => ({ start_offset_ms: item.startOffsetMillis, end_offset_ms: item.endOffsetMillis, text: item.text })) },
+      session, signal, { bypassCache: true },
+    )
+    const segments = listValue(data.segments)
+    if (segments.length !== utterances.length) throw new ArkmePluginError('recording-selection-invalid', '所选原句已变化或无法精确对应素材，请重新读取转写后选择', false)
+    return segments.map(value => {
+      const item = objectValue(value)
+      if (!/^[0-9a-f]{24}$/.test(stringValue(item.child_id)) || !/^[0-9a-f]{64}$/.test(stringValue(item.expected_fact_hash)) || !Number.isSafeInteger(item.asr_item_index) || Number(item.asr_item_index) < 0 || (item.transcript_source !== 'system' && item.transcript_source !== 'doubao')) {
+        throw new ArkmePluginError('recording-selection-invalid', '录音素材解析结果无效', false)
+      }
+      return { childId: stringValue(item.child_id), asrItemIndex: Number(item.asr_item_index), transcriptSource: item.transcript_source, expectedFactHash: stringValue(item.expected_fact_hash) }
+    })
+  }
 
   async aiVideoPreflight(
     sessionId: string,
@@ -174,6 +193,7 @@ export class AiVideoService {
           child_id: segment.childId.trim(),
           asr_item_index: segment.asrItemIndex,
           transcript_source: segment.transcriptSource,
+          ...(segment.expectedFactHash === undefined ? {} : { expected_fact_hash: segment.expectedFactHash }),
         })),
       },
     }

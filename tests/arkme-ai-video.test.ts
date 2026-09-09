@@ -8,6 +8,7 @@ import {
 
 function fakeService(overrides: Partial<ArkmeAiVideoService> = {}): ArkmeAiVideoService {
   return {
+    aiVideoResolveSelection: vi.fn(async () => [{ childId: '64b64c2f9b8c1a2d3e4f5680', asrItemIndex: 2, transcriptSource: 'system' }]),
     aiVideoList: vi.fn(async () => ({
       items: [{
         jobId: 'job-list-1', sessionId: 'session-1', status: 'succeeded', stage: 'succeeded', progress: 100,
@@ -40,8 +41,8 @@ function fakeService(overrides: Partial<ArkmeAiVideoService> = {}): ArkmeAiVideo
 
 const createArgs = {
   action: 'create' as const,
-  session_id: 'session-1',
-  segments: [{ child_id: 'child-1', asr_item_index: 2, transcript_source: 'system' as const }],
+  recording_uid: '64b64c2f9b8c1a2d3e4f5678',
+  utterances: [{ start_offset_ms: 1000, end_offset_ms: 9000, text: '原句' }],
 }
 
 describe('Jiwo AI video tool', () => {
@@ -55,14 +56,14 @@ describe('Jiwo AI video tool', () => {
     ) as string
 
     expect(service.aiVideoPreflight).toHaveBeenCalledWith(
-      'session-1',
-      [{ childId: 'child-1', asrItemIndex: 2, transcriptSource: 'system' }],
+      createArgs.recording_uid,
+      [{ childId: '64b64c2f9b8c1a2d3e4f5680', asrItemIndex: 2, transcriptSource: 'system' }],
       expect.any(AbortSignal),
     )
     expect(service.aiVideoCreate).toHaveBeenCalledWith(
       aiVideoRequestIdForToolCall(callId),
-      'session-1',
-      [{ childId: 'child-1', asrItemIndex: 2, transcriptSource: 'system' }],
+      createArgs.recording_uid,
+      [{ childId: '64b64c2f9b8c1a2d3e4f5680', asrItemIndex: 2, transcriptSource: 'system' }],
       'secret-proof',
       expect.any(AbortSignal),
     )
@@ -135,17 +136,27 @@ describe('Jiwo AI video tool', () => {
     const tool = createArkmeAiVideoToolDefinition(service)
     const exec = { callId: 'invalid-call', signal: new AbortController().signal } as never
 
-    await expect(tool.execute({ action: 'create', segments: createArgs.segments }, exec))
-      .rejects.toThrow(/session_id 不能为空/)
+    await expect(tool.execute({ action: 'create', utterances: createArgs.utterances }, exec))
+      .rejects.toThrow(/recording_uid/)
     await expect(tool.execute({
       ...createArgs,
-      segments: [createArgs.segments[0], createArgs.segments[0]],
+      utterances: [createArgs.utterances[0], createArgs.utterances[0]],
     }, exec)).rejects.toThrow(/片段重复/)
     await expect(tool.execute({
       ...createArgs,
-      segments: [{ ...createArgs.segments[0], asr_item_index: -1 }],
+      utterances: [{ ...createArgs.utterances[0], start_offset_ms: -1 }],
     }, exec)).rejects.toThrow(/非负整数/)
     expect(service.aiVideoPreflight).not.toHaveBeenCalled()
+    expect(service.aiVideoResolveSelection).not.toHaveBeenCalled()
+  })
+
+  it('does not create or preflight when exact material resolution fails', async () => {
+    const service = fakeService({ aiVideoResolveSelection: vi.fn(async () => { throw new Error('selection changed') }) })
+    const tool = createArkmeAiVideoToolDefinition(service)
+    await expect(tool.execute(createArgs, { callId: 'changed', signal: new AbortController().signal } as never)).rejects.toThrow('selection changed')
+    expect(service.aiVideoPreflight).not.toHaveBeenCalled()
+    expect(service.aiVideoCreate).not.toHaveBeenCalled()
+    expect(JSON.stringify(tool.parameters)).not.toMatch(/child_id|asr_item_index|transcript_source|session_id/)
   })
 
   it('requires current human authorization and treats transcript content as data', () => {

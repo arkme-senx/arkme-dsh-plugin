@@ -338,22 +338,6 @@ describe('RecordingService', () => {
     await expect(store.listRecordingImportJobs(77)).resolves.toEqual([])
   })
 
-  it('round-trips an account-bound recording cursor', async () => {
-    const sessions: ArkmeSessionStore = {
-      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async write() {}, async delete() {},
-    }
-    const stateStore = { async uniqueCode() { return 'device-secret' } } as StateStore
-    const service = new RecordingService(new ServiceRuntime(config, sessions, stateStore), dependencies())
-    const payload = {
-      version: 1 as const, dateStamp: new Date(1970, 0, 1).getTime(), content: 'transcript' as const,
-      itemOffset: 3, textOffset: 120, fingerprint: 'fingerprint-1',
-    }
-
-    const cursor = await service.sealRecordingCursor(payload)
-    await expect(service.openRecordingCursor(cursor)).resolves.toEqual(payload)
-  })
-
   it('reports unresolved local jobs and Audio owner matches as separate duplicate sources during preflight', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-preflight-'))
     const sessions: ArkmeSessionStore = {

@@ -2606,7 +2606,6 @@ export interface ArkmeRecordingCalendarMonth {
 }
 
 export type ArkmeRecordingProjectionKind = 'summary' | 'timeline'
-export type ArkmeRecordingToolContent = 'transcript' | ArkmeRecordingProjectionKind
 export type ArkmeRecordingTranscriptSource = 'system' | 'doubao'
 
 export interface ArkmeRecordingSummaryModelRouteOption {
@@ -2626,16 +2625,6 @@ export interface ArkmeRecordingSummaryModelConfig {
 
 export interface ArkmeRecordingSummaryModelRouteUpdate {
   effectiveRouteKey: string
-}
-
-export interface ArkmeRecordingCursorPayload {
-  version: 1
-  dateStamp: number
-  content: ArkmeRecordingToolContent
-  versionId?: string
-  itemOffset: number
-  textOffset: number
-  fingerprint: string
 }
 
 export interface ArkmeRecordingTranscriptItem {
@@ -2927,10 +2916,18 @@ export interface ArkmeWechatLocationPage {
 
 export type ArkmeAiVideoTranscriptSource = 'system' | 'doubao'
 
+export interface ArkmeRecordingMaterialUtterance {
+  startOffsetMillis: number
+  endOffsetMillis: number
+  text: string
+}
+
 export interface ArkmeAiVideoSegmentSelector {
   childId: string
   asrItemIndex: number
   transcriptSource: ArkmeAiVideoTranscriptSource
+  /** Host-only condition pinning the selected original text and time. */
+  expectedFactHash?: string
 }
 
 export interface ArkmeAiVideoPreflightResult {

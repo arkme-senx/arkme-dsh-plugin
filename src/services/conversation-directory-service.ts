@@ -1,6 +1,6 @@
 import type { ArkmeBotSummary, ArkmeChatClientEvent, ArkmeConversationDirectoryVisibilityItem, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
-import { retainNewerArkmeChatPin } from '../chat-pin-projection.js'
+import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import type { SourceService } from './source-service.js'
 import type { ConversationDirectoryVisibilityService } from './conversation-directory-visibility-service.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
@@ -37,7 +37,7 @@ export function mergeDirectorySource(previous: ArkmeSourceItem | undefined, inco
   if (!incoming.avatarRef && previous.avatarRef !== undefined) merged.avatarRef = previous.avatarRef
   if (!incoming.avatarRefs?.length && previous.avatarRefs !== undefined) merged.avatarRefs = previous.avatarRefs
   if (!incoming.groupAvatar?.slots.length && previous.groupAvatar !== undefined) merged.groupAvatar = previous.groupAvatar
-  return retainNewerArkmeChatPin(previous, merged)
+  return retainNewerArkmeChatPolicy(previous, merged)
 }
 
 /** One account lifecycle owns cache restoration, a twenty-row scan, and directory deltas. */

@@ -25,7 +25,6 @@ import { aiVideoToolModule } from './media/ai-video.js'
 import { textAiVideoToolModule } from './media/text-ai-video.js'
 import { readImageToolModule } from './media/read-image.js'
 import { fileToolModules } from './media/files.js'
-import { recordingToolModules } from './recordings/index.js'
 import { createRecordToolModule } from './records/create.js'
 import { reeditRecordToolModule } from './records/reedit.js'
 import { listImagesToolModule } from './records/images.js'
@@ -69,7 +68,6 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...voiceprintToolModules,
   worldPublishTextToolModule,
   ...extensionReviewToolModules,
-  ...recordingToolModules,
   ...wechatToolModules,
   listSourcesToolModule,
   pinBotDirectoryToolModule,

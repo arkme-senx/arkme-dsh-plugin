@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import {
   recordingImportCanonicalMimeType,
@@ -37,7 +37,6 @@ import type {
   ArkmeRecordingCalendarMonth,
   ArkmeRecordingComparison,
   ArkmeRecordingTranscriptSource,
-  ArkmeRecordingCursorPayload,
   ArkmeRecordingDay,
   ArkmeRecordingPlayback,
   ArkmeRecordingProjectionKind,
@@ -138,14 +137,6 @@ function speakerUserIds(speakerData: readonly unknown[]): number[] {
     const userId = positiveUserId(speaker.ref_usr_id ?? speaker.ref_user_id ?? speaker.user_id)
     return userId === undefined ? [] : [userId]
   }))]
-}
-
-function encodeOpaqueJson(value: unknown): string {
-  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
-}
-
-function decodeOpaqueJson(value: string): unknown {
-  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
 }
 
 function safeFailureMessage(error: unknown): string {
@@ -1245,61 +1236,6 @@ export class RecordingService {
     return this.recordingVersionSection(projectRecordingVersions(data, kind))
   }
 
-  async sealRecordingCursor(payload: ArkmeRecordingCursorPayload): Promise<string> {
-    const session = await this.runtime.requireSession()
-    const encoded = encodeOpaqueJson(payload)
-    const signature = createHmac('sha256', await this.recordingCursorKey(session.userId))
-      .update(encoded)
-      .digest('base64url')
-    return `arkme-recording-cursor-v1.${encoded}.${signature}`
-  }
-
-  async openRecordingCursor(cursor: string): Promise<ArkmeRecordingCursorPayload> {
-    const session = await this.runtime.requireSession()
-    const [prefix, encoded, suppliedText, ...extra] = cursor.trim().split('.')
-    if (prefix !== 'arkme-recording-cursor-v1' || encoded === undefined
-      || suppliedText === undefined || extra.length > 0) {
-      throw new ArkmePluginError('recording-cursor-invalid', '录音分页游标无效', false)
-    }
-    const supplied = Buffer.from(suppliedText, 'base64url')
-    const expected = createHmac('sha256', await this.recordingCursorKey(session.userId))
-      .update(encoded)
-      .digest()
-    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
-      throw new ArkmePluginError('recording-cursor-invalid', '录音分页游标无效', false)
-    }
-    let raw: Record<string, unknown>
-    try {
-      raw = objectValue(decodeOpaqueJson(encoded))
-    } catch (error) {
-      throw new ArkmePluginError(
-        'recording-cursor-invalid',
-        '录音分页游标无效',
-        false,
-        400,
-        { cause: error },
-      )
-    }
-    const content = raw.content
-    const payload: ArkmeRecordingCursorPayload = {
-      version: 1,
-      dateStamp: numberValue(raw.dateStamp),
-      content: content === 'summary' || content === 'timeline' ? content : 'transcript',
-      itemOffset: numberValue(raw.itemOffset),
-      textOffset: numberValue(raw.textOffset),
-      fingerprint: stringValue(raw.fingerprint),
-      ...(stringValue(raw.versionId) === '' ? {} : { versionId: stringValue(raw.versionId) }),
-    }
-    if (raw.version !== 1 || !['transcript', 'summary', 'timeline'].includes(String(content))
-      || !isRecordingLocalDateOnOrAfterMinimum(payload.dateStamp)
-      || !Number.isSafeInteger(payload.itemOffset) || payload.itemOffset < 0
-      || !Number.isSafeInteger(payload.textOffset) || payload.textOffset < 0
-      || payload.fingerprint === '') {
-      throw new ArkmePluginError('recording-cursor-invalid', '录音分页游标无效', false)
-    }
-    return payload
-  }
-
   async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> {
     return await this.recordingDayWithSession(dateStamp, await this.runtime.requireSession(), signal)
   }
@@ -1583,12 +1519,6 @@ export class RecordingService {
     return createHash('sha256')
       .update(await this.runtime.stateStore.uniqueCode())
       .update(`\0${prefix}`)
-      .digest()
-  }
-
-  private async recordingCursorKey(userId: number): Promise<Buffer> {
-    return createHmac('sha256', await this.runtime.stateStore.uniqueCode())
-      .update(`arkme-recording-cursor:${String(userId)}`)
       .digest()
   }
 
