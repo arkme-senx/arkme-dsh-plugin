@@ -418,7 +418,8 @@ export class ArkmeRequestCoordinator {
     if (signal.aborted) throw abortError(signal.reason)
     await new Promise<void>((resolve, reject) => {
       const abort = () => { clearTimeout(timer); reject(abortError(signal.reason)) }
-      const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, delay)
+      // Node 将超出 int32 的 timer 缩成 1ms；长提示由请求总 deadline 结束，不能形成忙循环。
+      const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, Math.min(2_147_483_647, delay))
       signal.addEventListener('abort', abort, { once: true })
     })
   }
@@ -563,7 +564,7 @@ export class ArkmeRequestCoordinator {
     this.timer = setTimeout(() => {
       this.timer = undefined
       this.drain()
-    }, Math.max(1, Math.ceil(delay)))
+    }, Math.min(2_147_483_647, Math.max(1, Math.ceil(delay))))
   }
 
   private tokenDelay(limit: ResolvedLimit): number {

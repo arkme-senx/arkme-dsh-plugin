@@ -209,6 +209,7 @@ function readFailureCoolsRoute(error: unknown): boolean {
 
 export interface ArkmeOwnerReadPort {
   runOwnerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T>
+  withOwnerReadInvalidation<T>(route: string, operation: () => Promise<T>): Promise<T>
 }
 
 function exhaustedRead(error: unknown, attempts: number): ArkmePluginError {
@@ -300,12 +301,37 @@ export class ServiceRuntime {
   private readonly readRevisions = new Map<string, number>()
   readRevision(scope: string): number { return this.readRevisions.get(scope) ?? 0 }
 
+  async withOwnerReadInvalidation<T>(route: string, operation: () => Promise<T>): Promise<T> {
+    const session = await this.requireSession()
+    try {
+      // 只执行一次写入；未知写结果也需让后续查询回到 owner，不加入写前的 flight。
+      return await operation()
+    } finally {
+      this.requestCoordinator.invalidateKey(this.requestScope(session.userId), `owner-read:${route}:`)
+    }
+  }
+
   async runOwnerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
     const session = await this.requireSession()
+    const assertCurrentAccount = async (operationSignal: AbortSignal): Promise<void> => {
+      operationSignal.throwIfAborted()
+      const current = await this.accountScopedSession()
+      operationSignal.throwIfAborted()
+      // 独立凭据 owner 也必须绑定本次读取的登录身份；短 token 刷新不改变该身份。
+      if (current?.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+        throw new ArkmePluginError('read-account-changed', '登录账号或凭据已变化，请重新读取', false, 409)
+      }
+    }
     return await this.requestCoordinator.run({
       scope: this.requestScope(session.userId), lane: 'interactive-read', service: 'extension',
       route, key: `owner-read:${route}:${stableReadParameters(parameters)}`, cancelWhenUnobserved: true,
-      ...(signal === undefined ? {} : { signal }), operation,
+      ...(signal === undefined ? {} : { signal }),
+      operation: async operationSignal => {
+        await assertCurrentAccount(operationSignal)
+        const result = await operation(operationSignal)
+        await assertCurrentAccount(operationSignal)
+        return result
+      },
       recovery: { maxAttempts: 3, deadlineMs: this.config.requestTimeoutMs, delay: readRecoveryDelay, coolsRoute: readFailureCoolsRoute, exhausted: exhaustedRead,
         timeout: () => new ArkmePluginError('arkme-timeout', '读取超时，请稍后重试', true, 504) },
     })

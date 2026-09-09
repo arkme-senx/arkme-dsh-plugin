@@ -150,7 +150,8 @@ export class TeamService implements TeamServicePort {
       seenIdempotencyKeys.add(item.idempotencyKey)
       return { item_id: itemId, idempotency_key: item.idempotencyKey, name, jotmo_id: jotmoId }
     })
-    const data = await this.execute(signal, active => this.client.create({ items: requestItems }, active))
+    const data = await this.reads.withOwnerReadInvalidation('openapi:teams:list',
+      () => this.execute(signal, active => this.client.create({ items: requestItems }, active)))
     return createResults(data, requestItems.map(item => item.item_id))
   }
 
@@ -164,7 +165,8 @@ export class TeamService implements TeamServicePort {
       seen.add(itemId)
       return { item_id: itemId, jotmo_id: jotmoId }
     })
-    const data = await this.execute(signal, active => this.client.joinByJotmoID({ items: requestItems }, active))
+    const data = await this.reads.withOwnerReadInvalidation('openapi:teams:list',
+      () => this.execute(signal, active => this.client.joinByJotmoID({ items: requestItems }, active)))
     return joinResults(data, requestItems.map(item => item.item_id))
   }
 

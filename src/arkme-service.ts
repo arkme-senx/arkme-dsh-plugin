@@ -872,7 +872,10 @@ export class ArkmeService {
   requestStats(): Record<string, ArkmeRequestStats> { return this.runtime.requestStats() }
   /** @internal Shared admission/recovery for independent capability owners; no Chat business projection. */
   get ownerReads(): import('./services/service.js').ArkmeOwnerReadPort {
-    return { runOwnerRead: this.runtime.runOwnerRead.bind(this.runtime) }
+    return {
+      runOwnerRead: this.runtime.runOwnerRead.bind(this.runtime),
+      withOwnerReadInvalidation: this.runtime.withOwnerReadInvalidation.bind(this.runtime),
+    }
   }
   async resolveLinkMetadata(
     url: string,

@@ -62,6 +62,21 @@ function fixture(options: FixtureOptions = {}) {
 afterEach(() => { vi.useRealTimers() })
 
 describe('ContactDirectoryService', () => {
+  it('rejects malformed direct-chat payloads instead of publishing an authoritative contact set', async () => {
+    const { service } = fixture({ contacts: { items: [{ user_id: 88 }], has_more: false }, groups: { items: 'invalid', has_more: false } })
+    await expect(service.list('contacts')).rejects.toMatchObject({ code: 'directory-contact-contract-invalid', retryable: false })
+    await expect(service.listRecordingSpeakerUsers(session)).rejects.toMatchObject({ code: 'directory-contact-contract-invalid' })
+  })
+
+  it('honors explicit count refresh and labels presentation-only degradation independently of identity coverage', async () => {
+    const { service, runtime, profile } = fixture({ contacts: { items: [{ user_id: 88 }], has_more: false } })
+    await service.list('contacts', { countOnly: true })
+    await service.list('contacts', { countOnly: true, refresh: true })
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledTimes(4)
+    profile.publicProfileSummariesByUserIds.mockRejectedValueOnce(new ArkmePluginError('arkme-code-1002', '繁忙', true))
+    await expect(service.list('contacts')).resolves.toMatchObject({ total: 1, coverage: 'complete', projectionState: 'stale' })
+  })
+
   it('scans the contact union once across count, pages and recording consumers, decorating only visible users', async () => {
     const { service, runtime, profile } = fixture({ contacts: { items: [{ user_id: 88 }, { user_id: 89 }], has_more: false } })
     await service.list('contacts', { countOnly: true })

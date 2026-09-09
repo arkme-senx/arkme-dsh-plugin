@@ -2,6 +2,8 @@
 
 内部跨仓实施记录，不属于随插件发布的产品文档。
 
+本文件保留实施阶段历史；后续提交、最新基线、review/fix loop 与验收结论以 [合并前审核记录](read-recovery-premerge-review.md) 为准。
+
 本次从 dev 952d83e 开始，收口时在同一任务工作区快进到 dev 3acb791（新增背景音修复，与任务文件不重叠）。不修改插件版本、根 README 或 DSH 源码；不增加部署开关。Chat 与插件为一次完整交付，服务端先上线，插件后发布。Chat 基线 master 193f8dd，Flutter 基线 pre-release 1de25ef0c。
 
 ## 栏目 owner
@@ -49,6 +51,6 @@
 
 最终产物为任务工作区根目录 `dsh-arkme-read-recovery-3acb791.tgz`，版本保留 0.1.49，仅用于本地验收，不可当作已发布升级包。本次测试 Web 与 loopback Redis 在验收后停止，不改用户常驻实例。
 
-## 交付边界
+## 实施阶段交付边界（历史）
 
 本次为未提交的实现与测试改动，不包含 commit/push/MR 或生产发布。没有全量门禁“绝对无回归”的结论：登录后五栏真实运行态、上述跨服务环境及存量失败仍需完成/接受对应验收。发布顺序与无迁移回滚合同见 meta change `c20260909-dsh-read-recovery`。

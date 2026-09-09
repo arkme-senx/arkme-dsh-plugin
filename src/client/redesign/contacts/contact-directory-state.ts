@@ -29,7 +29,7 @@ export interface ContactDirectorySectionState {
   status: ContactDirectoryLoadStatus
   items: ArkmeDirectoryItem[]
   total: number
-  coverage?: 'complete' | 'partial'
+  coverage?: 'complete' | 'partial' | undefined
   hasMore: boolean
   nextCursor: string | undefined
   expanded: boolean
@@ -246,6 +246,7 @@ export function contactDirectoryReducer(
         return updateSection(state, action.section, {
           ...current,
           total: action.page.total,
+          coverage: action.page.coverage,
           loadingMode: undefined,
         })
       }
@@ -259,7 +260,10 @@ export function contactDirectoryReducer(
           loadingMode: undefined,
         })
       }
-      const items = action.mode === 'append'
+      // Partial contact identity scans cannot prove removal. Group page coverage is
+      // pagination progress, not this failure semantic, and must still replace page one.
+      const partialContactRefresh = action.mode === 'replace' && action.section === 'contacts' && action.page.coverage === 'partial'
+      const items = action.mode === 'append' || partialContactRefresh
         ? mergeDirectoryItems(current.items, action.page.items)
         : [...action.page.items]
       const next = {
@@ -269,7 +273,7 @@ export function contactDirectoryReducer(
         total: action.mode === 'append' || (action.section === 'groups' && action.page.coverage === undefined)
           ? Math.max(current.total, action.page.total, items.length)
           : Math.max(action.page.total, items.length),
-        ...(action.page.coverage === undefined ? {} : { coverage: action.page.coverage }),
+        coverage: action.page.coverage,
         hasMore: action.page.hasMore,
         nextCursor: action.page.nextCursor,
         warning: action.page.coverage === 'partial' && action.section === 'contacts'
@@ -283,7 +287,7 @@ export function contactDirectoryReducer(
       } satisfies ContactDirectorySectionState
       return {
         ...updateSection(state, action.section, next),
-        selection: action.mode === 'replace' && action.preserveSelection !== true
+        selection: action.mode === 'replace' && !partialContactRefresh && action.preserveSelection !== true
           ? selectionAfterReplacement(state.selection, action.section, items)
           : state.selection,
       }

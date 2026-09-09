@@ -46,6 +46,49 @@ function runtimeFixture(
 afterEach(() => { vi.useRealTimers() })
 
 describe('registered owner read recovery', () => {
+  it.each([false, true])('detaches pre-write flights even when a write outcome is unknown: %s', async fail => {
+    const runtime = runtimeFixture(vi.fn(), { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} })
+    let release!: () => void
+    let entered!: () => void
+    const started = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const first = runtime.runOwnerRead('openapi:teams:list', {}, async () => { entered(); await gate; return 'before-write' })
+    await started
+    const mutation = vi.fn(async () => { if (fail) throw new Error('unknown outcome'); return 'written' })
+    const write = runtime.withOwnerReadInvalidation('openapi:teams:list', mutation)
+    if (fail) await expect(write).rejects.toThrow('unknown outcome')
+    else await expect(write).resolves.toBe('written')
+    const next = runtime.runOwnerRead('openapi:teams:list', {}, async () => 'after-write')
+    await new Promise<void>(resolve => setImmediate(resolve))
+    release()
+    await expect(first).resolves.toBe('before-write')
+    await expect(next).resolves.toBe('after-write')
+    expect(mutation).toHaveBeenCalledOnce()
+    runtime.dispose()
+  })
+
+  it('allows short-token refresh without treating it as an account transition', async () => {
+    let current = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = runtimeFixture(vi.fn(), { async read() { return current }, async write(value) { current = value }, async delete() {} })
+    await expect(runtime.runOwnerRead('openapi:teams:list', {}, async () => {
+      current = { ...current, accessToken: 'renewed-access' }
+      return { teams: [] }
+    })).resolves.toEqual({ teams: [] })
+    runtime.dispose()
+  })
+
+  it('rejects a result when an independently credentialed owner crosses an account transition', async () => {
+    let current = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = runtimeFixture(vi.fn(), { async read() { return current }, async write(value) { current = value }, async delete() {} })
+    const operation = vi.fn(async () => {
+      current = { ...current, userId: 43, refreshToken: 'next-login' }
+      return { privateTeam: 'must-not-return' }
+    })
+    await expect(runtime.runOwnerRead('openapi:teams:list', {}, operation)).rejects.toMatchObject({ code: 'read-account-changed' })
+    expect(operation).toHaveBeenCalledOnce()
+    runtime.dispose()
+  })
+
   const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
   const busy = (error?: object) => new Response(JSON.stringify({ code: 1002, message: '服务器繁忙', data: {}, ...(error ? { error } : {}) }))
   const ok = () => new Response(JSON.stringify({ code: 200, data: { items: [] } }))
@@ -59,16 +102,20 @@ describe('registered owner read recovery', () => {
     expect(fetcher).toHaveBeenCalledTimes(3)
     runtime.dispose()
   })
-  it('owns exhausted recovery, preserves classification, and honors Retry-After beyond the deadline', async () => {
+  it.each([60_000, 2_147_483_647, 3_000_000_000])('owns exhausted recovery without timer overflow for retry hint %s', async retryAfter => {
     vi.useFakeTimers()
-    const fetcher = vi.fn(() => busy({ code: 'rate_limited', retry_after_ms: 60_000, retry_scope: 'route' }))
+    const timers = vi.spyOn(globalThis, 'setTimeout')
+    const fetcher = vi.fn(() => busy({ code: 'rate_limited', retry_after_ms: retryAfter, retry_scope: 'route' }))
     const runtime = runtimeFixture(fetcher)
     const result = runtime.authenticatedChatPost('/api/v1/chats/list', {}, session)
-    const check = expect(result).rejects.toMatchObject({ code: 'arkme-code-1002', failureKind: 'rate_limited', retryAfterMillis: 60_000,
+    const check = expect(result).rejects.toMatchObject({ code: 'arkme-code-1002', failureKind: 'rate_limited', retryAfterMillis: retryAfter,
       recovery: { owner: 'host', attempts: 1, exhausted: true } })
     await vi.advanceTimersByTimeAsync(5000)
     await check
     expect(fetcher).toHaveBeenCalledOnce()
+    const delays = timers.mock.calls.map(call => Number(call[1]))
+    timers.mockRestore()
+    expect(delays.every(delay => delay <= 2_147_483_647)).toBe(true)
     runtime.dispose()
   })
   it('joins only identical full parameters and retains parameter array order', async () => {

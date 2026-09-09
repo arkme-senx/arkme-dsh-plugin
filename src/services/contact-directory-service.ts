@@ -130,7 +130,7 @@ export class ContactDirectoryService {
     if (section === 'unmarked-speakers' || section === 'teams') {
       throw new ArkmePluginError('directory-section-not-owned', '该目录由独立业务服务提供', false, 501)
     }
-    if (options.countOnly === true) return await this.count(section, options.signal)
+    if (options.countOnly === true) return await this.count(section, options)
     switch (section) {
       case 'groups': return await this.listGroups(options)
       case 'bots': return await this.listBots(options)
@@ -138,19 +138,19 @@ export class ContactDirectoryService {
     }
   }
 
-  private async count(section: Exclude<ArkmeDirectorySectionKind, 'unmarked-speakers' | 'teams'>, signal?: AbortSignal): Promise<ArkmeDirectoryPage> {
+  private async count(section: Exclude<ArkmeDirectorySectionKind, 'unmarked-speakers' | 'teams'>, options: { refresh?: boolean; signal?: AbortSignal }): Promise<ArkmeDirectoryPage> {
     const session = await this.runtime.requireSession()
     let total = 0
     switch (section) {
       case 'groups':
-        total = await this.source.countGroupSources(signal)
+        total = await this.source.countGroupSources(options.signal)
         break
       case 'bots':
-        total = (await this.botSnapshot(session, signal === undefined ? {} : { signal })).value.length
+        total = (await this.botSnapshot(session, options)).value.length
         break
       case 'contacts': {
         const snapshot = await this.contactSnapshot(
-          session, signal === undefined ? {} : { signal },
+          session, options,
         )
         return { section, items: [], total: snapshot.value.descriptors.length, hasMore: false, coverage: snapshot.value.coverage }
       }
@@ -297,11 +297,13 @@ export class ContactDirectoryService {
     const revisionAtStart = this.remarkRevision
     const descriptors = snapshot.value.descriptors
     const pageDescriptors = descriptors.slice(offset, offset + limit)
+    let presentationDegraded = false
     const profiles = await this.profile.publicProfileSummariesByUserIds(
       pageDescriptors.map(item => item.targetUserId), session, options.signal,
     ).catch(error => {
       if (!(error instanceof ArkmePluginError) || !error.retryable || options.signal?.aborted
         || !['arkme-code-1002', 'arkme-timeout', 'arkme-network-error', 'arkme-http-error'].includes(error.code)) throw error
+      presentationDegraded = true
       return new Map<number, ArkmePublicProfile>()
     })
     const items: ArkmeDirectoryItem[] = []
@@ -359,7 +361,7 @@ export class ContactDirectoryService {
     return {
       section: 'contacts', items, total: descriptors.length, hasMore,
       coverage: snapshot.value.coverage,
-      ...(snapshot.value.coverage === 'partial' ? { projectionState: 'stale' as const } : {}),
+      ...(snapshot.value.coverage === 'partial' || presentationDegraded ? { projectionState: 'stale' as const } : {}),
       ...(nextCursor === undefined ? {} : { nextCursor }),
     }
   }
@@ -439,7 +441,8 @@ export class ContactDirectoryService {
           failureCooldownMs: 2_000, bypassCache: options.refresh === true,
         },
       )
-      for (const value of listValue(data.items)) {
+      if (!Array.isArray(data.items)) throw new ArkmePluginError('directory-contact-contract-invalid', '私聊联系人列表响应不完整', false, 502)
+      for (const value of data.items) {
         const bundle = objectValue(value)
         const chatSession = objectValue(bundle.session)
         if (numberValue(chatSession.session_kind) !== 1 || listValue(bundle.bot_participants).length > 0) continue
