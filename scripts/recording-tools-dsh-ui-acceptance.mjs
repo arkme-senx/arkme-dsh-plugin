@@ -40,6 +40,7 @@ export function apply(ctx) {
       assert(blocks.some(block => block.type === 'text' && block.text.includes('录音链路验收')), 'start this test from the browser composer')
       const names = new Set(options.tools.map(tool => tool.name))
       for (const retired of ['arkme_recording_days_list', 'arkme_recording_read']) assert(!names.has(retired))
+      for (const retained of ['arkme_recording_import', 'arkme_recording_import_folder']) assert(names.has(retained), `lost independent import tool: ${retained}`)
       const calls = new Map(blocks.filter(block => block.type === 'tool-call').map(block => [block.id, block]))
       const results = blocks.filter(block => block.type === 'tool-result').map(block => ({ call: calls.get(block.toolCallId), data: payload(block) }))
       const pages = name => results.filter(result => result.call?.name === prefix + name).map(result => result.data)
