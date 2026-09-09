@@ -1101,8 +1101,8 @@ export class ArkmeService {
     return await this.source.renameTopic(sourceRef, title)
   }
 
-  async topicHomeVisibility(sourceRef: string, showInHome?: boolean): Promise<{ showInHome: boolean }> {
-    const result = await this.source.topicHomeVisibility(sourceRef, showInHome)
+  async topicHomeVisibility(sourceRef: string, showInHome?: boolean, signal?: AbortSignal): Promise<{ showInHome: boolean }> {
+    const result = await this.source.topicHomeVisibility(sourceRef, showInHome, signal)
     if (showInHome !== undefined) await this.realtime.invalidateRecordProjection()
     return result
   }

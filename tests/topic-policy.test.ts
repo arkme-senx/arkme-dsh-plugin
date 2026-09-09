@@ -28,7 +28,7 @@ describe('DSH topic policy', () => {
     vi.spyOn(service, 'openSourceRef').mockResolvedValue({ version: 1, userId: 42, kind: 'topic', ownerRef: 'owned-topic', displayName: 'Archive' })
     expect(await service.topicHomeVisibility('opaque')).toEqual({ showInHome: false })
     expect(await service.topicHomeVisibility('opaque', true)).toEqual({ showInHome: true })
-    expect(post.mock.calls[1]).toEqual(['/api/v1/topics/display/policy/set', { topic_uid: 'owned-topic', show_in_home: true }, session])
+    expect(post.mock.calls[1]).toEqual(['/api/v1/topics/display/policy/set', { topic_uid: 'owned-topic', show_in_home: true }, session, undefined])
     post.mockResolvedValueOnce({})
     await expect(service.topicHomeVisibility('opaque')).rejects.toMatchObject({ code: 'topic-policy-contract-invalid' })
     vi.mocked(service.openSourceRef).mockRejectedValueOnce(new Error('wrong account'))

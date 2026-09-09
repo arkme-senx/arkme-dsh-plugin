@@ -841,7 +841,7 @@ export class SourceService {
   }
 
   /** Reuse the record owner's topic policy, without replaying title/privacy defaults. */
-  async topicHomeVisibility(sourceRef: string, showInHome?: boolean): Promise<{ showInHome: boolean }> {
+  async topicHomeVisibility(sourceRef: string, showInHome?: boolean, signal?: AbortSignal): Promise<{ showInHome: boolean }> {
     const session = await this.runtime.requireSession()
     const topic = await this.openSourceRef(sourceRef, session.userId)
     if (topic.kind !== 'topic') throw new ArkmePluginError('topic-policy-invalid', '请选择主题', false)
@@ -849,6 +849,9 @@ export class SourceService {
       showInHome === undefined ? '/api/v1/topics/display/detail' : '/api/v1/topics/display/policy/set',
       { topic_uid: topic.ownerRef, ...(showInHome === undefined ? { limit: 1 } : { show_in_home: showInHome }) },
       session,
+      // Detach obsolete reads, but let a submitted preference write complete
+      // and invalidate projections even if its settings surface has closed.
+      showInHome === undefined ? signal : undefined,
     )
     const value = showInHome === undefined ? objectValue(data.topic_core).show_in_home : data.show_in_home
     if (typeof value !== 'boolean') throw new ArkmePluginError('topic-policy-contract-invalid', '主题设置响应不完整，请重试', true, 502)

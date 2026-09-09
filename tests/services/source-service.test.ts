@@ -15,6 +15,22 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('cancels home preference reads without cancelling durable writes', async () => {
+    const session = { userId: 42 }
+    const post = vi.fn().mockResolvedValue({ topic_core: { show_in_home: false }, show_in_home: true })
+    const runtime = { config, requireSession: async () => session, authenticatedPost: post } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    vi.spyOn(service, 'openSourceRef').mockResolvedValue({ version: 1, userId: 42, kind: 'topic', ownerRef: 'archive', displayName: 'Archive' })
+    const invalidate = vi.spyOn(service, 'invalidateSourceListCache').mockImplementation(() => {})
+    const controller = new AbortController()
+    await expect(service.topicHomeVisibility('topic-ref', undefined, controller.signal)).resolves.toEqual({ showInHome: false })
+    expect(post).toHaveBeenLastCalledWith('/api/v1/topics/display/detail', { topic_uid: 'archive', limit: 1 }, session, controller.signal)
+    expect(invalidate).not.toHaveBeenCalled()
+    await expect(service.topicHomeVisibility('topic-ref', true, controller.signal)).resolves.toEqual({ showInHome: true })
+    expect(post).toHaveBeenLastCalledWith('/api/v1/topics/display/policy/set', { topic_uid: 'archive', show_in_home: true }, session, undefined)
+    expect(invalidate).toHaveBeenCalledWith(42, 'send_to_self')
+  })
+
   it('excludes system topics from write candidates without losing pagination or same-name ordinary topics', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

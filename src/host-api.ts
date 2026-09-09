@@ -1568,7 +1568,7 @@ export async function dispatchArkmeHostOperation(
       if (params.showInHome !== undefined && typeof params.showInHome !== 'boolean') {
         throw new ArkmePluginError('topic-policy-invalid', '首页展示开关必须为布尔值', false)
       }
-      return await service.topicHomeVisibility(stringParam(params, 'sourceRef'), params.showInHome as boolean | undefined)
+      return await service.topicHomeVisibility(stringParam(params, 'sourceRef'), params.showInHome as boolean | undefined, requestSignal)
     }
     case 'topic.dissolve': return await service.dissolveTopic(
       stringParam(params, 'sourceRef'),

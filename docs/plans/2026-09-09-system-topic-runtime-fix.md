@@ -34,3 +34,27 @@
 - DSH tracked 源码无改动；未替换或重启用户常驻实例，未使用真实账号做业务写入。
 
 复验入口为 `scripts/run-dsh-input-e2e.sh`，见 `tests/e2e/README.md`。可选 `ARKME_E2E_SCREENSHOT` 指定本地验收截图输出路径。不把本地依赖路径、端口、凭据或调试状态写入产品配置。
+
+## 最新开发基线复核
+
+以普通 merge 合入 `dev@1fdae5e`，它已经包含 `master@537a8b0` 的发布内容。原有开发 PR 目标仍为 dev，本次不调整 PR 目标、不发布。包版本 0.1.50 来自合入的上游发布提交；任务相对 dev 不改版本、根 README 或 lockfile。
+
+六个冲突文件逐项收口：`arkme-service.ts` 与 `types.ts` 保留双方能力声明；`ArkmeSidebar.tsx` 同时保留通话详情和系统主题能力；事件 Host 保留上游 `providerInstanceId` 并通过 WebSocket 传输，客户端保留实例代次、旧事件拒绝、重连补读和聚焦恢复；事件测试保留这些断言，不恢复旧 SSE 实现。
+
+| 边界场景 | 代码 owner | 复核 / 验证 |
+| --- | --- | --- |
+| 同名普通主题不能被误判 | `topic-policy.ts`、`dsh-agent-input-source.ts` | 容器 kind 与记录 creationSource 分离；policy/search 单测 |
+| 新增、转发、拖拽、子主题与重编 | `ArkmeSidebar`、source-tree、SourceService → Record mutation guards | policy、drag、conversation、真实 Chrome 无输入与重编验收 |
+| 首页开关只更新偏好 | UI / SDK / Tool → ArkmeService → SourceService → 原 Record policy API | 原字段不重放；真实 SDK/Tool/UI 共用持久化验收 |
+| 读取超时、换主题、关闭界面 | read-deadline → Host request signal → SourceService / ChatService | timeline 与 preference 信号转交测试、过期读取取消、UI 重试 |
+| 已提交偏好写入时关闭设置 | SourceService 写入仍完成并刷新投影，不附加 UI 读取取消信号 | 新增读/写取消语义测试，旧 policy payload 测试仍验证无 title/privacy 字段 |
+| 多标签、Host 重启、重连、旧事件晚到 | `ArkmeRealtimeEvents`、`connectArkmeRealtime`、原 realtime client owner | 三同源页面真实 reconcile；新实例低 revision、旧实例拒绝、同实例有序、慢 provider lookup、重连补读测试 |
+| 跨域与资源释放 | 原回环/Origin 校验、receive-only WS、Cordis disposer | 跨域 403、客户端业务帧拒绝、unsubscribe/close、账号卸载测试 |
+
+本轮发现的偏好读取取消断点由两条失败测试先复现，再补通 Host → facade → source owner；写入保持原来的持久完成语义，不自动重试。最终不可变包通过官方 CLI 安装到带空格的全新 Profile，压缩包内 Host/Client bundle 与实际安装内容一致。真实 Chrome + 官方未修改 DSH + Record/Mongo/Redis 验收通过，身份与无关 Chat 是隔离 fixture，不是生产账号验收。
+
+最终包 SHA-256：`38e0002555c3ea2d6cc879ac152a36486de43372085177d66a4cebca480981f4`。不将开发构建目录作为产物校验锚点：部分全量测试会重新 bundle，验收以压缩包和实际安装内容为准。
+
+最终复跑结果：487 个测试文件通过、6 个按现有规则跳过；5635 个测试通过、8 个跳过。TypeScript typecheck、构建/打包、正式包跨仓 E2E 均通过。审查中新增的取消测试曾失败，修复及既有断言的可选 signal 参数对齐后，全量再次通过；没有通过删除业务断言或新增 skip 消除失败。
+
+发布边界：未修改 DSH 本体、未替换常驻 Profile、未操作生产数据。Windows/Linux 和原安卓现场未在本轮运行，不能把 macOS 隔离 Chrome 的结果当作这些环境已验收。严格人工提交来源识别和历史误收录清理仍不在本次范围。

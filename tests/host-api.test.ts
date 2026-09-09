@@ -5,6 +5,13 @@ import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.
 import { ARKME_RUNTIME_INSTANCE_ID } from '../src/runtime-instance.js'
 import { ArkmePluginError } from '../src/services/service.js'
 
+it('passes home preference read cancellation through the Host owner', async () => {
+  const controller = new AbortController()
+  const service = { topicHomeVisibility: vi.fn() }
+  await dispatchArkmeHostOperation(service as never, 'topic.home-visibility', { sourceRef: 'topic-ref' }, undefined, undefined, undefined, undefined, controller.signal)
+  expect(service.topicHomeVisibility).toHaveBeenCalledWith('topic-ref', undefined, controller.signal)
+})
+
 it('passes contact detail request cancellation to each existing business owner', async () => {
   const controller = new AbortController()
   const service = {
