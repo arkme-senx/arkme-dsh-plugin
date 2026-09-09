@@ -372,6 +372,7 @@ export function ArkmeSourceBreadcrumb({
   }
   const canMoveTo = (nextParent: ArkmeSourceItem | undefined, insertBefore: ArkmeSourceItem | undefined): boolean => {
     if (draggingSource === undefined || !canMoveArkmeTopicToParent(draggingSource, nextParent, sources)) return false
+    if (insertBefore !== undefined && !arkmeSourceAllowsUserWrite(insertBefore)) return false
     if (nextParent?.sourceRef === draggingSource.sourceRef || insertBefore?.sourceRef === draggingSource.sourceRef) return false
     const currentParent = currentParentOf(draggingSource)
     return currentParent?.sourceRef !== nextParent?.sourceRef || nextSiblingOf(draggingSource, currentParent)?.sourceRef !== insertBefore?.sourceRef
@@ -379,7 +380,7 @@ export function ArkmeSourceBreadcrumb({
   const planMoveAtRow = (
     row: (typeof rows)[number], clientX: number, clientY: number, rect: DOMRect,
   ): ArkmeTopicMovePlan | undefined => {
-    if (row.source.kind === 'default_category') return undefined
+    if (row.source.kind === 'default_category' || !arkmeSourceAllowsUserWrite(row.source)) return undefined
     if (draggingSource === undefined) return undefined
     const horizontalDelta = clientX - dragStartXRef.current
     if (horizontalDelta >= 24) {
