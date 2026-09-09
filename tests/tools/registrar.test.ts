@@ -121,10 +121,10 @@ describe('registerArkmeTools', () => {
     const ctx = await setup()
     const topicHomeVisibility = vi.fn(async (_ref: string, value?: boolean) => ({ showInHome: value ?? false }))
     await mountArkmeTools(ctx, 'business', { ...ports, topicHomeVisibility } as unknown as ArkmeToolPorts)
-    const events: Array<Record<string, unknown>> = [
+    const events = sessionEvents([
       { seq: 0, type: 'turn/start', data: { turn: 1 } },
       { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '展示这个主题' }] } },
-    ]
+    ])
     const agent = { id: SessionId('home-setting'), session: { get events() { return events } } } as unknown as Agent
     const signal = new AbortController().signal
     const base = { name: 'arkme_topic_home_visibility', agent, signal }

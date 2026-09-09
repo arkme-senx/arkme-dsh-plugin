@@ -33,6 +33,7 @@ import { arkmeMediaKind } from '../file-transfer-contract.js'
 import { projectArkmeChatAttention, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import { arkmeEmojiTokenSafePrefix, arkmeHasKnownEmojiToken } from '../arkme-emoji-text.js'
+import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 
 export interface ArkmeSourceRefPayload {
   version: 1
@@ -1164,12 +1165,14 @@ export class SourceService {
       const entry = objectValue(raw)
       const core = objectValue(entry.topic_core)
       if (arkmePrivacyLockedTopic(entry) || core.status !== 1) continue
+      const topicKind = numberValue(core.kind) || 1
+      if (!arkmeSourceAllowsUserWrite({ kind: 'topic', topicKind })) continue
       const topicUid = stringValue(core.topic_uid).trim()
       const title = stringValue(core.title).trim()
       if (!topicUid || !title || seen.has(topicUid)) continue
       seen.add(topicUid)
       const recordCount = objectValue(entry.summary).record_count
-      items.push({ kind: 'topic', displayName: title, activeAtMillis: numberValue(core.update_at), unreadCount: 0,
+      items.push({ kind: 'topic', topicKind, displayName: title, activeAtMillis: numberValue(core.update_at), unreadCount: 0,
         ...(typeof recordCount === 'number' && Number.isSafeInteger(recordCount) && recordCount >= 0 ? { recordCount } : {}),
         sourceRef: await this.sealSourceRef(session.userId, 'topic', topicUid, title),
         topicHierarchyKey: await this.topicHierarchyKey(session.userId, topicUid),

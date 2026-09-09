@@ -15,6 +15,44 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('excludes system topics from write candidates without losing pagination or same-name ordinary topics', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async (_input, init) => {
+      const body = JSON.parse(String(init?.body))
+      expect(body.keyword).toBe('DSH Agent Input')
+      const secondPage = body.offset === 1
+      return new Response(JSON.stringify({ code: 0, data: {
+        items: [{ topic_core: {
+          topic_uid: secondPage ? 'ordinary-topic' : 'system-topic',
+          title: 'DSH Agent Input', kind: secondPage ? 1 : 3, status: 1,
+        } }],
+        has_more: !secondPage,
+        ...(!secondPage ? { next_offset: 1 } : {}),
+      } }), { status: 200 })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+
+    const first = await service.listTopicCandidates(' DSH Agent Input ')
+    expect(first.items).toEqual([])
+    expect(first.hasMore).toBe(true)
+    expect(first.nextCursor).toBeTruthy()
+    const second = await service.listTopicCandidates('DSH Agent Input', first.nextCursor)
+    expect(second.items).toHaveLength(1)
+    expect(second.items[0]).toMatchObject({ kind: 'topic', topicKind: 1, displayName: 'DSH Agent Input' })
+    expect(second.hasMore).toBe(false)
+    expect(second.nextCursor).toBeUndefined()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('logs private avatar sealing failure without dropping the last good presentation', async () => {
     const runtime = { config } as ServiceRuntime
     const profile = {
