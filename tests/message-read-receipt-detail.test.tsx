@@ -2,6 +2,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
 import type { ArkmeMessageReadReceiptDetail, ArkmeSourceItem, ArkmeTimelineItem } from '../src/types.js'
+import { ArkmeUserAvatar } from '../src/client/ArkmeAvatar.js'
 import { ArkmeMessageReadReceipt } from '../src/client/ArkmeMessageReadReceipt.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
 import { arkmeConversationMembers } from '../src/client/conversation-members-store.js'
@@ -70,27 +71,63 @@ it('refreshes an open detail without clearing its rows, and uses shared member p
 })
 
 
-it('keeps the current receipt name ahead of stale directory presentation and clears rows on logout', async () => {
+it('uses the shared member presentation and keeps receipt membership and read state authoritative', async () => {
+  let name = '当前私聊备注'
+  let avatarRef: string | undefined = 'directory-avatar'
   read.mockImplementation(async (operation: string) => {
-    if (operation === 'source.members') return { source, total: 1, activeCount: 1, items: [{
-      memberRef: 'member', displayName: '过期目录名字', role: 'member', status: 'active',
-      isSelf: false, isOwner: false, joinedAtMillis: 1, recordCount: 0, mentionCount: 0,
-    }] }
-    if (operation === 'source.read-receipts.detail') return { ...detail, items: [{
-      ...detail.items[0]!, displayName: '当前服务端名字', displayNameIsCurrent: true,
+    if (operation === 'source.members') return { source, total: 2, activeCount: 2, items: [
+      { memberRef: 'member', displayName: name, avatarRef, role: 'member', status: 'active',
+        isSelf: false, isOwner: false, joinedAtMillis: 1, recordCount: 0, mentionCount: 0 },
+      { memberRef: 'other', displayName: '不属于当前回执', role: 'member', status: 'active',
+        isSelf: false, isOwner: false, joinedAtMillis: 1, recordCount: 0, mentionCount: 0 },
+    ] }
+    if (operation === 'source.read-receipts.detail') return { ...detail, presentationComplete: true, items: [{
+      ...detail.items[0]!, displayName: '回执公开昵称', displayNameIsCurrent: true, avatarRef: 'receipt-avatar',
     }] }
     throw new Error(`unexpected ${operation}`)
   })
   await arkmeMessageReadReceipts.detail(target)
   await act(async () => { renderer = create(<ArkmeMessageReadReceipt source={source} item={item} />) })
   await act(async () => { renderer!.root.findAllByType('button')[0]!.props.onClick() })
-  expect(JSON.stringify(renderer!.toJSON())).toContain('当前服务端名字')
-  expect(JSON.stringify(renderer!.toJSON())).not.toContain('过期目录名字')
+  expect(JSON.stringify(renderer!.toJSON())).toContain('当前私聊备注')
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('回执公开昵称')
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('不属于当前回执')
+  expect(renderer!.root.findByType(ArkmeUserAvatar).props.avatarRef).toBe('directory-avatar')
+  const receiptRequests = read.mock.calls.filter(([operation]) => operation === 'source.read-receipts.detail').length
+
+  name = '修改后的备注'
+  await act(async () => { await arkmeConversationMembers.ensure('test:42', source, true) })
+  expect(JSON.stringify(renderer!.toJSON())).toContain(name)
+  name = '清空备注后的公开昵称'
+  avatarRef = undefined
+  await act(async () => { await arkmeConversationMembers.ensure('test:42', source, true) })
+  expect(JSON.stringify(renderer!.toJSON())).toContain(name)
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('修改后的备注')
+  expect(renderer!.root.findByType(ArkmeUserAvatar).props.avatarRef).toBeUndefined()
+  expect(renderer!.root.findAllByProps({ 'aria-label': '未读' })).toHaveLength(1)
+  expect(arkmeMessageReadReceipts.get(target)?.summary?.totalMemberCount).toBe(1)
+  expect(read.mock.calls.filter(([operation]) => operation === 'source.read-receipts.detail')).toHaveLength(receiptRequests)
+
   await act(async () => {
     arkmeAuthStore.setAuth({ status: 'unauthenticated', environment: 'test' })
     arkmeMessageReadReceipts.activateAccount(undefined)
     arkmeConversationMembers.activateAccount(undefined)
   })
-  expect(JSON.stringify(renderer!.toJSON())).not.toContain('当前服务端名字')
   expect(renderer!.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)
+})
+
+it('uses receipt presentation only when the shared directory has no matching member', async () => {
+  read.mockImplementation(async (operation: string) => {
+    if (operation === 'source.members') return { source, total: 0, activeCount: 0, items: [] }
+    if (operation === 'source.read-receipts.detail') return { ...detail, items: [{
+      ...detail.items[0]!, displayName: '回执兜底名字', avatarRef: 'receipt-avatar',
+    }] }
+    throw new Error(`unexpected ${operation}`)
+  })
+  await arkmeMessageReadReceipts.detail(target)
+  await act(async () => { renderer = create(<ArkmeMessageReadReceipt source={source} item={item} />) })
+  await act(async () => { renderer!.root.findAllByType('button')[0]!.props.onClick() })
+  expect(JSON.stringify(renderer!.toJSON())).toContain('回执兜底名字')
+  expect(renderer!.root.findByType(ArkmeUserAvatar).props.avatarRef).toBe('receipt-avatar')
+  expect(renderer!.root.findAllByProps({ 'aria-label': '未读' })).toHaveLength(1)
 })

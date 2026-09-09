@@ -1152,7 +1152,9 @@ export class SourceService {
       const title = stringValue(core.title).trim()
       if (!topicUid || !title || seen.has(topicUid)) continue
       seen.add(topicUid)
+      const recordCount = objectValue(entry.summary).record_count
       items.push({ kind: 'topic', displayName: title, activeAtMillis: numberValue(core.update_at), unreadCount: 0,
+        ...(typeof recordCount === 'number' && Number.isSafeInteger(recordCount) && recordCount >= 0 ? { recordCount } : {}),
         sourceRef: await this.sealSourceRef(session.userId, 'topic', topicUid, title),
         topicHierarchyKey: await this.topicHierarchyKey(session.userId, topicUid),
       })

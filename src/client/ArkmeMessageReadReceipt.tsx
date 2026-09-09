@@ -340,7 +340,11 @@ function MemberReceiptPanelContent(props: MemberReceiptPanelProps & { account: s
         {state.detail !== undefined && state.detail.items.length === 0 && <div style={styles.panelState}>暂无更多人员信息</div>}
         {state.detail?.items.map(receipt => {
           const knownMember = membersByRef.get(receipt.memberRef)
-          const member = { ...receipt, displayName: receipt.displayNameIsCurrent === false ? knownMember?.displayName ?? receipt.displayName : receipt.displayName, avatarRef: state.detail?.presentationComplete === false ? knownMember?.avatarRef ?? receipt.avatarRef : receipt.avatarRef }
+          const member = {
+            ...receipt,
+            displayName: knownMember?.displayName ?? receipt.displayName,
+            avatarRef: knownMember === undefined ? receipt.avatarRef : knownMember.avatarRef,
+          }
           const isRead = member.readStatus === 'read'
           return <div key={member.memberRef} style={styles.member}>
             <span style={{ ...styles.memberIdentity, opacity: isRead ? 1 : 0.5 }}>

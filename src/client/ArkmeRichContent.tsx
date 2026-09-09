@@ -11,6 +11,7 @@ import type {
   ArkmeSharedRecordingPreview, ArkmeTimelineItem, ArkmeUploadedAsset,
 } from '../types.js'
 import { callArkme } from './api.js'
+import { ArkmeCallRecordContent } from './ArkmeCallRecordContent.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeVoiceContent, arkmeVoiceMediaUrl } from './ArkmeVoiceContent.js'
 import {
@@ -866,6 +867,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
     setFailures(new Map())
     setRetryVersions(new Map())
   }, [mediaRevision])
+  if (item.callRecord !== undefined) return <ArkmeCallRecordContent call={item.callRecord} />
   if (item.forwardRecords !== undefined) {
     const itemLines = item.forwardRecords.items.flatMap(value => {
       if (value.segments?.length) return value.segments.map(segment => `${segment.speakerName}：${segment.textContent || '语音片段'}`)
@@ -1007,6 +1009,7 @@ export function ArkmeRecordDetailContent({ item, sourceRef, showOriginal = false
   sourceRef?: string | undefined
   showOriginal?: boolean
 }) {
+  if (item.callRecord !== undefined) return <ArkmeCallRecordContent call={item.callRecord} />
   const text = showOriginal && item.aiPolish?.originalText !== undefined
     ? item.aiPolish.originalText
     : item.aiPolish?.state === 'polished' && item.aiPolish.polishedText !== undefined

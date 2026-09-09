@@ -30,6 +30,8 @@ it('shares authorized pages, presentation and cache across Host, SDK and officia
   let stats: Record<string, unknown> | undefined = { record_count: 17, mention_count: 3 }
   let memberFailureCode: number | undefined
   let receiptName: string | undefined
+  let remark = '私人备注'
+  let groupName = '群内昵称'
   let pageHasMember = true
   let deferredPage: Promise<void> | undefined
   let unblockPage: (() => void) | undefined
@@ -44,7 +46,7 @@ it('shares authorized pages, presentation and cache across Host, SDK and officia
       const after = body.after_user_id ?? 0
       data = { chat_session_uid: body.chat_session_uid, self_role: 1, items: after === 0 && pageHasMember ? [{ user_id: 2, status: 1, role: 3, display_name_snapshot: '群内昵称', join_at: 1 }] : [], has_more: after === 0 && pageHasMember, ...(after === 0 && pageHasMember ? { next_user_id: 2 } : {}) }
       if (deferredPage !== undefined) await deferredPage
-    } else if (endpoint.endsWith('/members/by-user-ids')) data = malformed ? { chat_session_uid: body.chat_session_uid } : { chat_session_uid: body.chat_session_uid, items: active ? [{ user_id: 2, status: 1, role: 3, extra: body.include_stats ? stats : undefined, remark: '私人备注', display_name_snapshot: '群内昵称', display_name: '公开昵称', join_at: 1 }] : [] }
+    } else if (endpoint.endsWith('/members/by-user-ids')) data = malformed ? { chat_session_uid: body.chat_session_uid } : { chat_session_uid: body.chat_session_uid, items: active ? [{ user_id: 2, status: 1, role: 3, extra: body.include_stats ? stats : undefined, remark, display_name_snapshot: groupName, display_name: '公开昵称', join_at: 1 }] : [] }
     else if (endpoint.endsWith('/get-public-users-by-ids')) data = { items: [{ user_id: 2, nick_name: '公开昵称' }] }
     else if (endpoint.endsWith('/read-receipts/detail')) data = { chat_session_uid: body.chat_session_uid, record_uid: body.record_uid, seq: body.seq,
       items: [{ user_id: 2, read_status: 'unread', read_at: 0, remark: receiptName }] }
@@ -80,6 +82,19 @@ it('shares authorized pages, presentation and cache across Host, SDK and officia
     const hydrated = await sdk.sourceMembersPresentation(group.sourceRef, first.items.map(item => item.memberRef))
     expect(hydrated.items[0]).toMatchObject({ displayName: '私人备注', mentionDisplayName: '群内昵称' })
     expect(hydrated.items[0]).toMatchObject({ recordCount: 17, mentionCount: 3, statsKnown: true })
+    for (const [nextRemark, nextGroupName, expectedName] of [
+      ['', '群内昵称', '群内昵称'],
+      ['', '', '公开昵称'],
+      ['公开昵称', '群内昵称', '公开昵称'],
+      ['私人备注', '群内昵称', '私人备注'],
+    ] as const) {
+      remark = nextRemark
+      groupName = nextGroupName
+      runtime.invalidateMemberCache()
+      const result = await sdk.sourceMembersPresentation(group.sourceRef, [first.items[0]!.memberRef])
+      expect(result.items[0]).toMatchObject({ displayName: expectedName, mentionDisplayName: groupName || '公开昵称' })
+      expect((await sdk.cachedSourceMembers(group.sourceRef))?.items[0]?.displayName).toBe(expectedName)
+    }
     for (const value of [undefined, { record_count: -1, mention_count: 0 }, { record_count: 1.5, mention_count: 0 }, { record_count: Number.MAX_SAFE_INTEGER + 1, mention_count: 0 }, { record_count: 1, mention_count: Number.MAX_SAFE_INTEGER + 1 }, { record_count: 0, mention_count: 0 }]) {
       stats = value
       runtime.invalidateMemberCache()

@@ -81,6 +81,31 @@ async function chatTimelineItemKeyForTest(
 }
 
 describe('ChatService', () => {
+  it.each([
+    ['', '', '群内昵称'],
+    ['', '成员接口备注', '成员接口备注'],
+    ['私人备注', '', '私人备注'],
+    ['用户昵称', '', '用户昵称'],
+  ])('projects only exact remarks ahead of group names (%j, %j)', async (privateRemark, memberRemark, displayName) => {
+    const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+    const runtime = { config, stateStore: { uniqueCode: async () => 'member-signing-key' },
+      requireSession: async () => session,
+      authenticatedChatPost: async () => ({ items: [{ user_id: 7, status: 1, role: 3,
+        remark: memberRemark, display_name_snapshot: '群内昵称', display_name: '用户昵称' }] }),
+    }
+    const source = {
+      openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'group' }),
+      sourceItem: async () => ({ kind: 'group_chat' }),
+      privateChatViewerLabelsByUserIds: async () => new Map([[7, { displayName: privateRemark || '私聊旧快照', remark: privateRemark }]]),
+    }
+    const profile = { publicProfileSummariesByUserIds: async () => new Map([[7, { displayName: '用户昵称' }]]) }
+    const chat = new ChatService(runtime as never, source as never, profile as never,
+      {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+    const result = await chat.listSourceMembers('source')
+    expect(result.items[0]).toMatchObject({ displayName, memberName: '群内昵称', mentionDisplayName: '群内昵称' })
+    expect(result.items[0]?.mentionSecondaryName).toBe(privateRemark || memberRemark || undefined)
+  })
+
   it.each(['private_chat', 'group_chat'] as const)('carries partial media evidence through %s page and realtime projections', async kind => {
     const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
     const raw = { relation: { record_uid: 'r', sender_user_id: 42 }, record: { version: 8, status: 1,
@@ -99,6 +124,23 @@ describe('ChatService', () => {
     const expected = { templateKind: 2, recordVersion: 8, mediaUnavailable: true, contentBlocks: [{ fileAssetUid: 'a' }] }
     expect((await chat.readSource('source', { cursor: { beforeSequence: 1 } })).items[0]).toMatchObject(expected)
     expect((await chat.chatTimelineItems({ items: [raw] }, session, 'chat', kind))[0]).toMatchObject(expected)
+  })
+
+  it.each(['Audio', 'Video'])('projects cancelled %s records on both page and realtime paths', async mediaType => {
+    const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+    const raw = { relation: { record_uid: 'r', sender_user_id: 42 }, record: { status: 1,
+      payload: { template_kind: 5, content_payload: { call_record: { media_type: mediaType, call_result: 'Cancel', caller_id: 42 } } } } }
+    const runtime = { config, stateStore: { uniqueCode: async () => 'fixture-signing-key' },
+      requireSession: async () => session, authenticatedChatPost: async () => ({ items: [raw] }) }
+    const media = new MediaService(runtime as never, {} as never, {} as never, { recordUid() { return 'r' } })
+    const chat = new ChatService(runtime as never,
+      { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
+      { sealProfileImageRef: async () => 'avatar', publicProfilesByUserIds: async () => new Map() } as never,
+      media, {} as never, {} as never, { currentUserAgentSourceFallback: () => undefined } as never,
+      { timelineAiPolish: () => undefined } as never, {} as never)
+    const expected = { callRecord: { mediaType: mediaType.toLowerCase(), text: '已取消' } }
+    expect((await chat.readSource('source', { cursor: { beforeSequence: 1 } })).items[0]).toMatchObject(expected)
+    expect((await chat.chatTimelineItems({ items: [raw] }, session, 'chat', 'private_chat'))[0]).toMatchObject(expected)
   })
 
   it.each(['send_to_self', 'topic'] as const)('preserves Markdown when forwarding to %s', async targetKind => {

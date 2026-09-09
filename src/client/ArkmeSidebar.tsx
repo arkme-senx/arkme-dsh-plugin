@@ -1,6 +1,7 @@
 import { ArkmeRecordTopicAssignmentDialog } from './ArkmeRecordTopicAssignmentDialog.js'
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import { arkmeMarkdownPlainText } from '../markdown.js'
+import { arkmeCallRecordBubbleStyle } from './ArkmeCallRecordContent.js'
 import {
   Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties, type ReactNode, type SetStateAction,
@@ -1791,11 +1792,14 @@ export function ArkmeMemberLeaveNotice(props: { rowId:string; event:ArkmeMemberE
 export function ArkmeTimelineMessageHeader({
   item,
   profile,
+  member,
 }: {
   item: ArkmeTimelineItem
   profile?: ArkmeUserProfile
+  member?: Pick<ArkmeConversationMemberItem, 'displayName'>
 }) {
-  const senderName = arkmeTimelineSenderName(item, profile)
+  const memberDisplayName = member?.displayName.trim()
+  const senderName = memberDisplayName && memberDisplayName !== '群成员' ? memberDisplayName : arkmeTimelineSenderName(item, profile)
   return <span style={styles.messageHeader}>
     {item.isMe && <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>}
     <span style={styles.sender}>{senderName}</span>
@@ -2959,7 +2963,7 @@ export function ArkmeSurface({
   const [messageActionBusy, setMessageActionBusy] = useState<'copy-link' | 'forward'>()
   const [selectMode, setSelectMode] = useState<{ sourceKey: string; selectedIds: Set<string> }>()
   const [topicAssignment, setTopicAssignment] = useState<{
-    scopeKey: string; source: ArkmeSourceItem; assignmentRefs: string[]; firstRecordText: string
+    scopeKey: string; source: ArkmeSourceItem; assignmentRefs: string[]; firstRecordText: string; currentTopicKey?: string
   }>()
   const topicAssignmentScopeKey = `${authenticatedAccountKey ?? ''}:${conversationOverlayKey}`
   useEffect(() => { setTopicAssignment(undefined) }, [topicAssignmentScopeKey])
@@ -6738,6 +6742,7 @@ export function ArkmeSurface({
     {activeConversation && topicAssignment?.scopeKey === topicAssignmentScopeKey && <ArkmeRecordTopicAssignmentDialog
       key={topicAssignmentScopeKey}
       source={topicAssignment.source} assignmentRefs={topicAssignment.assignmentRefs} firstRecordText={topicAssignment.firstRecordText}
+      {...(topicAssignment.currentTopicKey === undefined ? {} : { currentTopicKey: topicAssignment.currentTopicKey })}
       onCancel={() => { setTopicAssignment(undefined) }}
       onRefresh={() => {
         if (topicAssignment.source.kind !== 'send_to_self') confirmedSendRetention.forget(conversationKey, selectedMessageItems.map(item => item.itemUid))
@@ -7057,6 +7062,11 @@ export function ArkmeSurface({
                 const messageMember = item.memberRef === undefined
                   ? (item.isMe ? selfConversationMember : undefined)
                   : conversationMemberByRef.get(item.memberRef)
+                const messageHeader = item.isMe ? null : <ArkmeTimelineMessageHeader
+                  item={item}
+                  {...(selfProfile === undefined ? {} : { profile: selfProfile })}
+                  {...(source.kind === 'group_chat' && messageMember !== undefined ? { member: messageMember } : {})}
+                />
                 const polishStatus = aiPolishStatus(item)
                 const selectedForAction = activeSelectMode?.selectedIds.has(arkmeTimelineOccurrenceKey(item)) === true
                 const canSelect = canSelectTimelineItem(item)
@@ -7124,7 +7134,7 @@ export function ArkmeSurface({
                         ...(isForwardMessageCard ? styles.forwardMessageBody : {}),
                         ...(isSharedRecordingCard ? styles.sharedRecordingMessageBody : {}),
                       }}>
-                        {!isSharedRecordingCard && !isExtensionMessage && !item.isMe && <ArkmeTimelineMessageHeader item={item} {...(selfProfile === undefined ? {} : { profile: selfProfile })} />}
+                        {!isSharedRecordingCard && !isExtensionMessage && messageHeader}
                         {(() => {
                           const messageBubble = <div
                             role="button"
@@ -7133,6 +7143,7 @@ export function ArkmeSurface({
                               ...styles.bubble,
                               ...(isSharedRecordingCard ? styles.sharedRecordingBubble : item.isMe ? styles.bubbleMe : styles.bubbleOther),
                               ...(isForwardMessageCard ? styles.forwardBubble : {}),
+                              ...(item.callRecord ? arkmeCallRecordBubbleStyle(item.isMe) : {}),
                             }}
                             onClick={event => {
                               if (event.target instanceof Element && event.target.closest('button,a,audio,video,input,select,textarea,[role=link],[role=slider]')) return
@@ -7248,7 +7259,7 @@ export function ArkmeSurface({
                                 ...styles.extensionChildBody,
                                 ...(item.isMe ? styles.extensionChildBodyMe : {}),
                               }}>
-                                {!item.isMe && <ArkmeTimelineMessageHeader item={item} {...(selfProfile === undefined ? {} : { profile: selfProfile })} />}
+                                {messageHeader}
                                 {messageContentLine}
                                 {topicBadge}
                               </div>
@@ -7282,7 +7293,12 @@ export function ArkmeSurface({
                 if (messageActionBusy !== undefined || selectedMessageItems.length === 0
                   || selectedMessageItems.length !== selectedMessageCount
                   || selectedMessageItems.some(item => !item.recordTopicAssignmentRef)) return
+                const currentTopicKey = source.kind === 'topic' ? source.topicHierarchyKey
+                  : selectedMessageItems[0]?.recordTopicAssignmentTopicKey
+                const allInCurrentTopic = currentTopicKey !== undefined && (source.kind === 'topic'
+                  || selectedMessageItems.every(item => item.recordTopicAssignmentTopicKey === currentTopicKey))
                 setTopicAssignment({ scopeKey: topicAssignmentScopeKey, source,
+                  ...(allInCurrentTopic ? { currentTopicKey } : {}),
                   assignmentRefs: selectedMessageItems.map(item => item.recordTopicAssignmentRef!),
                   firstRecordText: items.find(item => item.itemUid === selectedMessageItems[0]?.itemUid)?.textContent ?? '',
                 })

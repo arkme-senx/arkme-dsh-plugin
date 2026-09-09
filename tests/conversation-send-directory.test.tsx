@@ -1311,7 +1311,7 @@ describe('conversation send directory projection', () => {
       .some(span => span.children.includes('多选')))!.props.onClick() })
   }
 
-  it('assigns selected self Records through the real toolbar and refreshes without forwarding', async () => {
+  it.each([false, true])('assigns selected self Records without confusing display and membership: %s', async staleDisplay => {
     activeSource = sendToSelf
     arkmeUi.selectSource(sendToSelf)
     const topic = { ...sendToSelf, sourceRef: 'topic-work', sourceKey: 'topic:work', topicHierarchyKey: 'topic-work-key', kind: 'topic' as const, displayName: '工作' }
@@ -1323,6 +1323,7 @@ describe('conversation send directory projection', () => {
       return await previous(operation, params, signal)
     })
     await enterMessageSelectMode({ itemUid: 'selected-self', messageActionRef: 'forward-ref', recordTopicAssignmentRef: 'assignment-ref',
+      ...(staleDisplay ? { selfTopic: { topicHierarchyKey: topic.topicHierarchyKey }, recordTopicAssignmentTopicKey: 'actual-other-topic' } : {}),
       senderName: '我', isMe: true, sendAtMillis: 8, title: '', textContent: '内容', status: 1 })
     const readsBefore = mocks.callArkme.mock.calls.filter(([op]) => op === 'source.timeline').length
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '指定主题' }).props.onClick() })
@@ -1335,6 +1336,31 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-record-topic-assignment-title' })).toHaveLength(0)
     expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.timeline').length).toBeGreaterThan(readsBefore)
+  })
+
+  it.each(['same', 'different', 'missing', 'unclassified'])('only treats a complete common membership as current: %s', async scenario => {
+    activeSource = sendToSelf
+    arkmeUi.selectSource(sendToSelf)
+    const topic = { ...sendToSelf, kind: 'topic' as const, sourceRef: 'target-topic', topicHierarchyKey: 'target-key', displayName: '工作' }
+    const previous = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'sources.list') return { items: [sendToSelf, topic], hasMore: false }
+      if (operation === 'topic.candidates') return { items: [topic], hasMore: false }
+      if (operation === 'source.record-topic.assign') return { movedRecordUids: ['second'], projectionRefreshPending: false }
+      return await previous(operation, params, signal)
+    })
+    const item = { itemUid: 'first', recordTopicAssignmentRef: 'first-ref', recordTopicAssignmentTopicKey: 'target-key',
+      senderName: '我', isMe: true, sendAtMillis: 8, title: '', textContent: '正文', status: 1 }
+    const { recordTopicAssignmentTopicKey: _key, ...second } = { ...item, itemUid: 'second', recordTopicAssignmentRef: 'second-ref' }
+    await enterMessageSelectMode(item, [{ ...second,
+      ...(scenario === 'same' ? { recordTopicAssignmentTopicKey: 'target-key' } : scenario === 'different' ? { recordTopicAssignmentTopicKey: 'other-key' } : {}),
+      ...(scenario === 'missing' ? { selfTopic: { topicHierarchyKey: 'target-key' } } : {}),
+    }])
+    await act(async () => renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'second' }).findByProps({ role: 'checkbox' }).props.onClick({ stopPropagation: vi.fn() }))
+    await act(async () => renderer!.root.findByProps({ 'aria-label': '指定主题' }).props.onClick())
+    await act(async () => renderer!.root.findByProps({ 'aria-label': '指定到工作' }).props.onClick())
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(scenario === 'same' ? 0 : 1)
+    if (scenario === 'same') expect(JSON.stringify(renderer!.toJSON())).toContain('已在当前主题中！')
   })
 
   it.each(['moved', 'same', 'unknown'])('reconciles a just-sent topic record after assignment: %s', async outcome => {
@@ -1381,7 +1407,7 @@ describe('conversation send directory projection', () => {
       expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
     }
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(outcome === 'same' ? 1 : 0)
-    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(outcome === 'same' ? 0 : 1)
   })
 
   it.each([false, true])('keeps membership and forwarding capabilities separate for mixed selections: %s', async mixed => {
@@ -3141,6 +3167,57 @@ describe('conversation send directory projection', () => {
     const rendered = JSON.stringify(renderer!.toJSON())
     expect(rendered).toContain('B 成员')
     expect(rendered).not.toContain('A 成员')
+  })
+
+  it('projects current group member names into history and live message headers without rewriting snapshots', async () => {
+    const currentGroup = { ...group, latestSequence: 4 }
+    activeSource = currentGroup
+    arkmeChatDirectory.publish([currentGroup])
+    arkmeUi.selectSource(currentGroup)
+    let displayName = '私人备注'
+    const member = { ...activeMembers(1)[0]!, memberRef: 'sender-member', memberName: '群内昵称' }
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'source.members') return { source: currentGroup, items: [{ ...member, displayName }], total: 1, activeCount: 1 }
+      if (operation === 'group.bots') return { source: currentGroup, items: [], total: 0 }
+      return await baseCall(operation, params, signal)
+    })
+    const historical = { itemUid: 'named-history', memberRef: member.memberRef, senderName: '用户昵称', isMe: false,
+      sendAtMillis: 1, sequence: 1, title: '', textContent: '历史消息', status: 1 }
+    timeline = [historical,
+      { ...historical, itemUid: 'named-extension', sequence: 2, sendAtMillis: 2, extensionParentRecordUid: 'parent',
+        extensionParent: { itemUid: 'parent', senderName: '引用原作者', recordOwnerUserId: 7, sequence: 1, sendAtMillis: 1, title: '', textContent: '引用原文' } },
+      { ...historical, itemUid: 'departed-sender', sequence: 3, sendAtMillis: 3, memberRef: 'absent-member', senderName: '离群成员快照' },
+      { itemUid: 'bot-sender', sequence: 4, sendAtMillis: 4, senderName: 'Bot 名称', isMe: false, title: '', textContent: 'Bot 消息', status: 1 },
+    ]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    const header = (id: string) => renderedText(renderer!.root.findByProps({ 'data-arkme-message-item-uid': id }).findByType(ArkmeTimelineMessageHeader))
+    expect(header('named-history')).toContain('私人备注')
+    expect(header('named-extension')).toContain('私人备注')
+    expect(header('departed-sender')).toContain('离群成员快照')
+    expect(header('bot-sender')).toContain('Bot 名称')
+    const reads = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline').length
+    for (const next of ['群内昵称', '用户昵称']) {
+      displayName = next
+      await act(async () => { await arkmeConversationMembers.ensure('test:42', currentGroup, true) })
+      expect(header('named-history')).toContain(next)
+      expect(header('named-extension')).toContain(next)
+    }
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(reads)
+    displayName = '新备注'
+    await act(async () => { await arkmeConversationMembers.ensure('test:42', currentGroup, true) })
+    const live = { ...historical, itemUid: 'named-live', sequence: 5, sendAtMillis: 5 }
+    await act(async () => {
+      arkmeChatTimelineDelta.publish([{ source: { ...currentGroup, latestSequence: 5 }, items: [live] }])
+      await Promise.resolve(); await Promise.resolve()
+    })
+    expect(header('named-live')).toContain('新备注')
+    expect(historical.senderName).toBe('用户昵称')
+    expect(live.senderName).toBe('用户昵称')
+    expect(timeline[1]!.extensionParent?.senderName).toBe('引用原作者')
   })
 
   it('opens the group member profile card from a visible message mention', async () => {
