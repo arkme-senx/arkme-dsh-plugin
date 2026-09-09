@@ -17,7 +17,7 @@ import { ArkmeRecordReeditDraftConflict } from '../record-reedit-contract.js'
 import { RecordReeditSubmissions, recordReeditSubmissionView, type RecordReeditExecutionOutcome } from './record-reedit-submissions.js'
 import {
   recordReeditAttachmentChanges, recordReeditAttachmentSelection, recordReeditMediaGroups,
-  recordReeditWithAttachments, type ArkmeRecordReeditFiles,
+  recordReeditIsBackgroundSound, recordReeditWithAttachments, type ArkmeRecordReeditFiles,
 } from './record-reedit-attachments.js'
 import { arkmeNormalizedFileMimeType, arkmePickedFileKind } from '../file-transfer-contract.js'
 import type {
@@ -127,14 +127,6 @@ function recordReeditReadContentPayload(raw: unknown): Record<string, unknown> |
     .some(key => Object.keys(objectValue(source[key])).length > 0)) {
     throw new ArkmePluginError('record-reedit-shape-unsupported', '卡片类内容暂不支持普通重新编辑，原内容和草稿均保留', false, 409)
   }
-  // Background audio is outside this editor's supported update contract.
-  // Never strip its role and accidentally submit it as ordinary editable media.
-  if (source.background_sound_amplitudes !== undefined || listValue(source.media_refs).some(rawRef => {
-    const ref = objectValue(rawRef)
-    return numberValue(ref.content_file_role) === 4 || numberValue(ref.binding_type) === 4
-  })) {
-    throw new ArkmePluginError('record-reedit-shape-unsupported', '该快记包含背景音，当前接口无法安全保留，暂不支持重新编辑；已有草稿不会删除', false, 409)
-  }
   if (listValue(source.legacy_file_refs).length > 0) {
     throw new ArkmePluginError(
       'record-reedit-legacy-files-unsupported',
@@ -144,6 +136,10 @@ function recordReeditReadContentPayload(raw: unknown): Record<string, unknown> |
     )
   }
   const output = cloneKnownFields(source, ['payload_kind', 'schema_version', 'text_state', 'text_format'])
+  // Background waveform belongs to the original Record, independently of editable attachments.
+  if (listValue(source.background_sound_amplitudes).length > 0) {
+    output.background_sound_amplitudes = structuredClone(source.background_sound_amplitudes)
+  }
   const mediaRefs = listValue(source.media_refs).map(rawRef => {
     const ref = objectValue(rawRef)
     if (ref.legacy_file_ref === true) {
@@ -157,6 +153,9 @@ function recordReeditReadContentPayload(raw: unknown): Record<string, unknown> |
     const writable = cloneKnownFields(ref, [
       'file_asset_uid', 'render_role', 'sort_order', 'duration_sec', 'file_name',
     ])
+    if (recordReeditIsBackgroundSound(ref)) {
+      writable.content_file_role = 4
+    }
     const dynamicPhoto = recordReeditDynamicPhoto(ref.dynamic_photo)
     if (dynamicPhoto !== undefined) writable.dynamic_photo = dynamicPhoto
     return writable
@@ -234,7 +233,7 @@ function recordReeditContentPayloadForWrite(
 
 function recordReeditHasAttachments(contentPayload: Record<string, unknown> | undefined): boolean {
   if (contentPayload === undefined) return false
-  return listValue(contentPayload.media_refs).length > 0
+  return listValue(contentPayload.media_refs).some(ref => !recordReeditIsBackgroundSound(objectValue(ref)))
     || Object.keys(objectValue(contentPayload.voice)).length > 0
 }
 

@@ -175,6 +175,47 @@ describe('user-ban Host API dispatch', () => {
     expect(unbanned).not.toHaveProperty('targetUserId')
   })
 
+  it('passes the creating conversation capability and cancellation signal to the existing topic owner', async () => {
+    const service = { createTopic: vi.fn(async () => ({ source: {} })) }
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'topic.create', { title: '新主题', contextSourceRef: 'signed-self' },
+      undefined, undefined, undefined, undefined, signal)
+    expect(service.createTopic).toHaveBeenCalledWith('新主题', undefined, { contextSourceRef: 'signed-self', signal })
+  })
+
+  it('routes topic candidates separately from conversation directory reads with cancellation', async () => {
+    const service = { listTopicCandidates: vi.fn(async () => ({ items: [], hasMore: false })) }
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'topic.candidates', { keyword: '工作', cursor: 'opaque-cursor' },
+      undefined, undefined, undefined, undefined, signal)
+    expect(service.listTopicCandidates).toHaveBeenCalledWith('工作', 'opaque-cursor', signal)
+  })
+
+  it('dispatches topic assignment with exact references and the request cancellation signal', async () => {
+    const service = { assignRecordTopic: vi.fn(async () => ({ movedRecordUids: ['r1'], projectionRefreshPending: false })) }
+    const signal = new AbortController().signal
+    const params = { sourceRef: 'self', assignmentRefs: ['signed-r1'], targetSourceRef: 'topic' }
+    await dispatchArkmeHostOperation(service as never, 'source.record-topic.assign', params,
+      undefined, undefined, undefined, undefined, signal)
+    expect(service.assignRecordTopic).toHaveBeenCalledWith(params, signal)
+  })
+
+  it.each([null, 1, {}, []])('never coerces a malformed assignment target into release: %j', async targetSourceRef => {
+    const service = { assignRecordTopic: vi.fn() }
+    await expect(dispatchArkmeHostOperation(service as never, 'source.record-topic.assign', {
+      sourceRef: 'topic', assignmentRefs: ['signed-r1'], targetSourceRef,
+    })).rejects.toMatchObject({ code: 'record-topic-target-invalid' })
+    expect(service.assignRecordTopic).not.toHaveBeenCalled()
+  })
+
+  it.each([undefined, 'ref', ['ref', null]])('rejects malformed assignment arrays: %j', async assignmentRefs => {
+    const service = { assignRecordTopic: vi.fn() }
+    await expect(dispatchArkmeHostOperation(service as never, 'source.record-topic.assign', {
+      sourceRef: 'topic', assignmentRefs,
+    })).rejects.toMatchObject({ code: 'record-topic-selection-invalid' })
+    expect(service.assignRecordTopic).not.toHaveBeenCalled()
+  })
+
   it('requires the active same-origin Browser before a ban mutation', async () => {
     const service = fakeService()
     const server = createServer(createArkmeHostApi(service as never, {

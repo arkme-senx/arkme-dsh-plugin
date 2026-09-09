@@ -613,6 +613,17 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'data-arkme-highlight-backdrop': 'true' })).toHaveLength(0)
   })
 
+  it('retires only moved records from confirmed-send retention in the original source', () => {
+    const owner = new ArkmeConfirmedSendRetentionOwner()
+    const item: ArkmeTimelineItem = { itemUid: 'moved', messageActionRef: 'action', isMe: true,
+      senderName: '我', sendAtMillis: 1, title: '', textContent: '', status: 1 }
+    owner.retain('topic-old', item, 0)
+    owner.retain('self', item, 0)
+    owner.forget('topic-old', ['moved'])
+    expect(owner.merge('topic-old', [], 1)).toEqual([])
+    expect(owner.merge('self', [], 1)).toHaveLength(1)
+  })
+
   it('bounds confirmed-send retention and preserves its action ref through a sparse authoritative row', () => {
     const owner = new ArkmeConfirmedSendRetentionOwner(2)
     const retained = (itemUid: string): ArkmeTimelineItem => ({
@@ -1271,8 +1282,8 @@ describe('conversation send directory projection', () => {
     return renderer!.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })
   }
 
-  async function enterMessageSelectMode(item: ArkmeTimelineItem) {
-    timeline = [item]
+  async function enterMessageSelectMode(item: ArkmeTimelineItem, additionalItems: ArkmeTimelineItem[] = []) {
+    timeline = [item, ...additionalItems]
     await act(async () => {
       renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
         createNodeMock: element => element.props.className === 'arkme-conversation-panel'
@@ -1295,6 +1306,151 @@ describe('conversation send directory projection', () => {
     act(() => { menu.findAllByProps({ role: 'menuitem' }).find(button => button.findAllByType('span')
       .some(span => span.children.includes('多选')))!.props.onClick() })
   }
+
+  it('assigns selected self Records through the real toolbar and refreshes without forwarding', async () => {
+    activeSource = sendToSelf
+    arkmeUi.selectSource(sendToSelf)
+    const topic = { ...sendToSelf, sourceRef: 'topic-work', sourceKey: 'topic:work', topicHierarchyKey: 'topic-work-key', kind: 'topic' as const, displayName: '工作' }
+    const previous = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'sources.list' && params?.directory === 'send_to_self') return { items: [sendToSelf, topic], hasMore: false }
+      if (operation === 'topic.candidates') return { items: [topic], hasMore: false }
+      if (operation === 'source.record-topic.assign') return { movedRecordUids: ['selected-self'], projectionRefreshPending: true }
+      return await previous(operation, params, signal)
+    })
+    await enterMessageSelectMode({ itemUid: 'selected-self', messageActionRef: 'forward-ref', recordTopicAssignmentRef: 'assignment-ref',
+      senderName: '我', isMe: true, sendAtMillis: 8, title: '', textContent: '内容', status: 1 })
+    const readsBefore = mocks.callArkme.mock.calls.filter(([op]) => op === 'source.timeline').length
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '指定主题' }).props.onClick() })
+    expect(renderer!.root.findByProps({ 'aria-labelledby': 'arkme-record-topic-assignment-title' })).toBeDefined()
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '指定到工作' }).props.onClick() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.record-topic.assign', {
+      sourceRef: 'source-self', assignmentRefs: ['assignment-ref'], targetSourceRef: 'topic-work',
+    }, expect.any(AbortSignal))
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.forward-messages')).toBe(false)
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-record-topic-assignment-title' })).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.timeline').length).toBeGreaterThan(readsBefore)
+  })
+
+  it.each(['moved', 'same', 'unknown'])('reconciles a just-sent topic record after assignment: %s', async outcome => {
+    const currentTopic = { ...sendToSelf, sourceRef: 'current-topic', sourceKey: 'topic:current',
+      topicHierarchyKey: 'current-key', kind: 'topic' as const, displayName: '当前主题' }
+    const destination = { ...currentTopic, sourceRef: 'destination', sourceKey: 'topic:destination',
+      topicHierarchyKey: 'destination-key', displayName: '目标主题' }
+    activeSource = currentTopic
+    arkmeUi.selectSource(currentTopic)
+    const previous = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'sources.list' && params?.directory === 'send_to_self') return { items: [sendToSelf, currentTopic, destination], hasMore: false }
+      if (operation === 'source.timeline') return { source: currentTopic, items: [], hasMore: false }
+      if (operation === 'source.send-text') return { sourceRef: currentTopic.sourceRef, itemUid: 'record-new', status: 1,
+        localState: 'synced', messageActionRef: 'forward-reference', recordTopicAssignmentRef: 'membership-reference' }
+      if (operation === 'topic.candidates') return { items: [currentTopic, destination], hasMore: false }
+      if (operation === 'source.record-topic.assign') {
+        if (outcome === 'unknown') throw new Error('请求结果暂时无法确认')
+        return { movedRecordUids: outcome === 'moved' ? ['record-new'] : [], projectionRefreshPending: outcome === 'moved' }
+      }
+      return await previous(operation, params, signal)
+    })
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) } : null,
+      })
+    })
+    await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('刚发出的记录') })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'record-new' })
+    await act(async () => { row.findByProps({ 'data-arkme-message-direction': 'self' }).props.onContextMenu({
+      preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180,
+    }) })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '消息操作' }).findAllByProps({ role: 'menuitem' })
+        .find(button => button.findAllByType('span').some(span => span.children.includes('多选')))!.props.onClick()
+    })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '指定主题' }).props.onClick() })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': `指定到${outcome === 'same' ? '当前主题' : '目标主题'}` }).props.onClick() })
+    if (outcome === 'unknown') {
+      const refresh = renderer!.root.findAllByType('button').find(button => button.children.includes('刷新并重新选择'))!
+      await act(async () => { refresh.props.onClick() })
+      expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
+    }
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(outcome === 'same' ? 1 : 0)
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(1)
+  })
+
+  it.each([false, true])('keeps membership and forwarding capabilities separate for mixed selections: %s', async mixed => {
+    activeSource = sendToSelf
+    arkmeUi.selectSource(sendToSelf)
+    const previous = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'sources.list' && params?.directory === 'send_to_self') return { items: [sendToSelf], hasMore: false }
+      return await previous(operation, params, signal)
+    })
+    await enterMessageSelectMode({ itemUid: 'owned', recordTopicAssignmentRef: 'assignment-only',
+      senderName: '原作者', isMe: false, sendAtMillis: 8, title: '', textContent: '内容', status: 1 },
+    mixed ? [{ itemUid: 'forwardable', messageActionRef: 'forward-ref', recordTopicAssignmentRef: 'assignment-ref',
+      senderName: '我', isMe: true, sendAtMillis: 9, title: '', textContent: '可转发内容', status: 1 }] : [])
+    if (mixed) await act(async () => {
+      renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'forwardable' }).findByProps({ role: 'checkbox' }).props.onClick({ stopPropagation: vi.fn() })
+    })
+    expect(renderer!.root.findByProps({ 'aria-label': '指定主题' }).props.disabled).toBe(false)
+    const toolbar = renderer!.root.findByProps({ role: 'toolbar' })
+    for (const label of ['复制链接', '转发']) {
+      const button = toolbar.findAllByType('button').find(node => node.findAllByType('span').some(span => span.children.includes(label)))!
+      expect(button.props.disabled).toBe(true)
+      await act(async () => { button.props.onClick() })
+    }
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.message-copy-link' || op === 'source.forward-messages')).toBe(false)
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+  })
+
+  it.each(['source', 'account'])('cancels an in-flight assignment dialog on %s switch and ignores its acknowledgement', async change => {
+    activeSource = sendToSelf
+    arkmeUi.selectSource(sendToSelf)
+    const topic = { ...sendToSelf, sourceRef: 'topic-work', sourceKey: 'topic:work', topicHierarchyKey: 'topic-work-key', kind: 'topic' as const, displayName: '工作' }
+    const pending = deferred<{ movedRecordUids: string[]; projectionRefreshPending: boolean }>()
+    let writeSignal: AbortSignal | undefined
+    const previous = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'sources.list' && params?.directory === 'send_to_self') return { items: [sendToSelf, topic], hasMore: false }
+      if (operation === 'topic.candidates') return { items: [topic], hasMore: false }
+      if (operation === 'source.record-topic.assign') { writeSignal = signal; return await pending.promise }
+      return await previous(operation, params, signal)
+    })
+    await enterMessageSelectMode({ itemUid: 'selected-self', messageActionRef: 'forward-ref', recordTopicAssignmentRef: 'assignment-ref',
+      senderName: '我', isMe: true, sendAtMillis: 8, title: '', textContent: '内容', status: 1 })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '指定主题' }).props.onClick() })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '指定到工作' }).props.onClick() })
+    await act(async () => {
+      if (change === 'account') arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 99 })
+      else { activeSource = target; arkmeUi.selectSource(target) }
+    })
+    expect(writeSignal?.aborted).toBe(true)
+    await act(async () => { pending.resolve({ movedRecordUids: ['selected-self'], projectionRefreshPending: false }) })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-record-topic-assignment-title' })).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('已指定主题')
+  })
+
+  it.each([false, true])('disables self assignment for unowned or missing membership evidence: %s', async isMe => {
+    activeSource = sendToSelf
+    arkmeUi.selectSource(sendToSelf)
+    const previous = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'sources.list' && params?.directory === 'send_to_self') return { items: [sendToSelf], hasMore: false }
+      return await previous(operation, params, signal)
+    })
+    await enterMessageSelectMode({ itemUid: 'selected-self', messageActionRef: 'forward-ref',
+      senderName: '用户', isMe, sendAtMillis: 8, title: '', textContent: '内容', status: 1 })
+    expect(renderer!.root.findByProps({ 'aria-label': '指定主题' }).props.disabled).toBe(true)
+  })
+
+  it('keeps personal topic assignment out of chat multi-select', async () => {
+    await enterMessageSelectMode({ itemUid: 'chat-record', messageActionRef: 'forward-ref',
+      senderName: '我', isMe: true, sendAtMillis: 8, title: '', textContent: '内容', status: 1 })
+    expect(renderer!.root.findAllByProps({ 'aria-label': '指定主题' })).toHaveLength(0)
+  })
 
   it('anchors the themed multi-select control to the avatar top and renders exit as a standard toolbar action', async () => {
     await enterMessageSelectMode({

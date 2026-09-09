@@ -51,6 +51,7 @@ export function ArkmeConfirmDialog(props: {
   confirmLabel: string
   busyLabel: string
   confirmTone?: 'primary' | 'danger'
+  confirmDisabled?: boolean
   onClose: () => void
   onConfirm: () => void
 }) {
@@ -119,8 +120,8 @@ export function ArkmeConfirmDialog(props: {
         <button ref={cancelRef} type="button" style={{ ...styles.button, ...(props.busy ? styles.disabled : {}) }} disabled={props.busy} onClick={props.onClose}>取消</button>
         <button
           type="button"
-          style={{ ...styles.button, ...styles[props.confirmTone ?? 'primary'], ...(props.busy ? styles.disabled : {}) }}
-          disabled={props.busy}
+          style={{ ...styles.button, ...styles[props.confirmTone ?? 'primary'], ...(props.busy || props.confirmDisabled ? styles.disabled : {}) }}
+          disabled={props.busy || props.confirmDisabled}
           onClick={props.onConfirm}
         >{props.busy ? props.busyLabel : props.confirmLabel}</button>
       </footer>

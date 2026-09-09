@@ -1,3 +1,5 @@
+import { RecordTopicAssignmentService } from './services/record-topic-assignment-service.js'
+import type { ArkmeRecordTopicAssignmentInput, ArkmeRecordTopicAssignmentResult } from './record-topic-assignment-contract.js'
 import { ConversationDirectoryService } from './services/conversation-directory-service.js'
 import type { ArkmeChatRealtimeNotice } from './chat-realtime.js'
 import type { ArkmeMemberEventQuery } from './types.js'
@@ -301,6 +303,7 @@ export class ArkmeService {
   private readonly directory: ConversationDirectoryService
   private readonly source: SourceService
   private readonly conversationDirectoryVisibility: ConversationDirectoryVisibilityService
+  private readonly recordTopicAssignment: RecordTopicAssignmentService
   private readonly record: RecordService
   private readonly search: SearchService
   private readonly bot: BotService
@@ -365,6 +368,7 @@ export class ArkmeService {
       isDSHAgentInput: raw => this.record.isDSHAgentInput(raw),
       isPrivacyLocked: raw => this.record.isPrivacyLocked(raw),
     }, this.privacy)
+    this.recordTopicAssignment = new RecordTopicAssignmentService(this.runtime, this.source)
     this.record = new RecordService(this.runtime, this.media, this.source, this.privacy, {
       files: async () => await this.filesOwner().files(),
       readLocal: async ref => ({ file: (await this.filesOwner().readLocal(ref)).file }),
@@ -1058,8 +1062,8 @@ export class ArkmeService {
     return await this.profile.setArkmeIdOnce(name)
   }
 
-  async createTopic(titleInput: string, parentSourceRef?: string): Promise<ArkmeTopicCreateResult> {
-    return await this.source.createTopic(titleInput, parentSourceRef)
+  async createTopic(titleInput: string, parentSourceRef?: string, options: { contextSourceRef?: string; signal?: AbortSignal } = {}): Promise<ArkmeTopicCreateResult> {
+    return await this.source.createTopic(titleInput, parentSourceRef, options)
   }
 
   async renameTopic(sourceRef: string, title: string): Promise<ArkmeTopicRenameResult> {
@@ -1091,6 +1095,10 @@ export class ArkmeService {
     insertBeforeSourceRef?: string,
   ): Promise<ArkmeTopicHierarchyMoveResult> {
     return await this.source.moveTopicHierarchy(sourceRef, currentParentSourceRef, nextParentSourceRef, insertBeforeSourceRef)
+  }
+
+  async listTopicCandidates(keyword: string, cursor?: string, signal?: AbortSignal): Promise<Pick<ArkmeSourceList, 'items' | 'hasMore' | 'nextCursor'>> {
+    return await this.source.listTopicCandidates(keyword, cursor, signal)
   }
 
   async listSources(
@@ -1390,6 +1398,12 @@ export class ArkmeService {
   async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: number, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {}): Promise<ArkmeTimelineAroundPage> { return await this.chat.readSourceAround(sourceRef, itemUid, recordOwnerUserId, options) }
   async sharedRecordingDetail(detailRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeSharedRecordingPreview> {
     return await this.chat.sharedRecordingDetail(detailRef, options)
+  }
+
+  async assignRecordTopic(input: ArkmeRecordTopicAssignmentInput, signal?: AbortSignal): Promise<ArkmeRecordTopicAssignmentResult> {
+    const result = await this.recordTopicAssignment.assign(input, signal)
+    await this.realtime.invalidateRecordProjection()
+    return result
   }
 
   async messageSnapshotDetail(sourceRef: string, actionRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageSnapshotDetail> { return await this.chat.messageSnapshotDetail(sourceRef, actionRef, options) }

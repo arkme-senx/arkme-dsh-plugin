@@ -87,3 +87,27 @@ it('projects only member fields out of persistent cache data', () => {
   expect(cachedMemberItem({ ...member('a'), recordCount: Number.NaN })).toBeUndefined()
   expect(cachedMemberItem({ ...member('a'), isSelf: 'true' })).toBeUndefined()
 })
+
+it('keeps member identities usable and retries incomplete statistics without treating them as fresh', async () => {
+  let statsKnown = false
+  const presentation = vi.fn(async () => ({ kind: 'presentation' as const, source,
+    items: [{ ...member('a'), statsKnown, recordCount: statsKnown ? 7 : 0, mentionCount: statsKnown ? 2 : 0 }],
+    removedMemberRefs: [], unavailableProfileMemberRefs: [] }))
+  const store = new ConversationMembersStore({ cached: async () => null,
+    page: async () => ({ kind: 'membership', selfRole: 'member', source, items: [member('a')], removedMemberRefs: [], hasMore: false }),
+    presentation,
+  })
+  store.activateAccount('test:1')
+  const unsubscribe = store.subscribe('test:1', source, () => {})
+  try {
+    await store.ensure('test:1', source)
+    expect(store.get('test:1', source)).toMatchObject({ ready: true, complete: true, refreshing: false })
+    expect(store.get('test:1', source).items[0]).toMatchObject({ displayName: 'a', statsKnown: false })
+    statsKnown = true
+    await store.ensure('test:1', source)
+    expect(presentation).toHaveBeenCalledTimes(2)
+    expect(store.get('test:1', source).items[0]).toMatchObject({ statsKnown: true, recordCount: 7 })
+    await store.ensure('test:1', source)
+    expect(presentation).toHaveBeenCalledTimes(2)
+  } finally { unsubscribe(); store.activateAccount(undefined) }
+})

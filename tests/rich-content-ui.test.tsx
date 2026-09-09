@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { emojiSample } from './fixtures/emoji.js'
 import {
   ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, ArkmeRecordDetailContent,
-  arkmeContainedImageRect, arkmeImagePreviewAnchoredTop,
+  arkmeContainedImageRect, arkmeImagePreviewAnchoredTop, arkmeImagePreviewSpringFrames,
   arkmeImagePreviewDragTop, arkmeMessageCopyLinkSidFromUrl, arkmeNextImagePreviewMode,
   arkmeRelatedRecordingItemFromSharedRecording, arkmeSharedRecordingTimeText,
 } from '../src/client/ArkmeRichContent.js'
@@ -13,6 +13,168 @@ import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from '../src/client/A
 import { arkmeClipboardImageFiles, arkmeShouldDismissAnchoredMenu, arkmeShouldToggleMessageSelectFromRowClick } from '../src/client/ArkmeSidebar.js'
 
 describe('Arkme rich content presentation', () => {
+  it('matches the desktop spring with a smooth start and a settled end', () => {
+    const { duration, frames } = arkmeImagePreviewSpringFrames()
+    expect(duration).toBeGreaterThan(250)
+    expect(duration).toBeLessThan(400)
+    expect(frames[0]).toEqual({ offset: 0, progress: 0 })
+    expect(frames.at(-1)).toEqual({ offset: 1, progress: 1 })
+    expect(frames.every((frame, index) => frame.progress >= (frames[index - 1]?.progress ?? 0) && frame.progress <= 1)).toBe(true)
+    const at100ms = frames.find(frame => Math.abs(frame.offset * duration - 100) < 0.01)!
+    expect(at100ms.progress).toBeCloseTo(0.6649509, 5)
+  })
+  it('animates from the visible image size and cancels an interrupted zoom on the next double-click', async () => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), matchMedia: () => ({ matches: false }) })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const cancel = vi.fn()
+    const animate = vi.fn(() => ({ cancel }))
+    const image = { kind: 'image' as const, mediaRef: 'spring', fileName: 'photo.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
+    let view: ReturnType<typeof create> | undefined
+    let displayedScale = 1
+    try {
+      await act(async () => {
+        view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, {
+          createNodeMock: element => element.type === 'img'
+            ? {
+              naturalWidth: 1600, naturalHeight: 800, animate,
+              getBoundingClientRect: () => {
+                const style = view!.root.findByType('img').props.style
+                const width = (typeof style.width === 'number' ? style.width : 1000) * displayedScale
+                const height = (typeof style.height === 'number' ? style.height : 800) * displayedScale
+                return { left: (1000 - width) / 2, top: (800 - height) / 2, width, height }
+              },
+            }
+            : { clientWidth: 1000, clientHeight: 800, scrollWidth: 1600, scrollHeight: 800, scrollLeft: 0, scrollTop: 0 },
+        })
+      })
+      const viewport = () => view!.root.findByProps({ 'data-arkme-image-preview-viewport': 'true' })
+      await act(async () => viewport().props.onDoubleClick())
+      expect(animate).toHaveBeenCalledWith(expect.arrayContaining([
+        expect.objectContaining({ offset: 0, transform: 'translate(0px, 0px) scale(0.625)' }),
+        expect.objectContaining({ offset: 1, transform: 'translate(0px, 0px) scale(1)' }),
+      ]), expect.objectContaining({ easing: 'linear' }))
+      displayedScale = .8
+      cancel.mockImplementation(() => { displayedScale = 1 })
+      await act(async () => viewport().props.onDoubleClick())
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(animate).toHaveBeenLastCalledWith(expect.arrayContaining([
+        expect.objectContaining({ offset: 0, transform: 'translate(0px, 0px) scale(1.28)' }),
+      ]), expect.anything())
+    } finally {
+      if (view !== undefined) await act(async () => view!.unmount())
+      vi.unstubAllGlobals()
+    }
+    expect(cancel).toHaveBeenCalledTimes(2)
+  })
+  it.each([[1600, 800, 1600, 800], [400, 1600, 1000, 4000]])('cycles desktop double-click sizes for %sx%s images', async (width, height, coveredWidth, coveredHeight) => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const image = { kind: 'image' as const, mediaRef: 'zoom-cycle', fileName: 'photo.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
+    let view: ReturnType<typeof create> | undefined
+    try {
+      await act(async () => {
+        view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, {
+          createNodeMock: element => element.type === 'img'
+            ? { naturalWidth: width, naturalHeight: height }
+            : { clientWidth: 1000, clientHeight: 800, scrollWidth: coveredWidth, scrollHeight: coveredHeight, scrollLeft: 0, scrollTop: 0 },
+        })
+      })
+      const viewport = () => view!.root.findByProps({ 'data-arkme-image-preview-viewport': 'true' })
+      await act(async () => viewport().props.onDoubleClick())
+      expect(viewport().props['data-arkme-image-preview-mode']).toBe('covered')
+      expect(view!.root.findByType('img').props.style).toMatchObject({ width: coveredWidth, height: coveredHeight })
+      await act(async () => viewport().props.onDoubleClick())
+      if (coveredWidth !== width || coveredHeight !== height) {
+        expect(viewport().props['data-arkme-image-preview-mode']).toBe('original')
+        expect(view!.root.findByType('img').props.style).toMatchObject({ width, height })
+        await act(async () => viewport().props.onDoubleClick())
+      }
+      expect(viewport().props['data-arkme-image-preview-mode']).toBe('contained')
+    } finally {
+      if (view !== undefined) await act(async () => view!.unmount())
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('dismisses image-stage blank space but preserves image and control clicks', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const onClose = vi.fn()
+    const image = { kind: 'image' as const, mediaRef: 'blank-click', fileName: 'portrait.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
+    let view: ReturnType<typeof create> | undefined
+    try {
+      await act(async () => {
+        view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={onClose} />, {
+          createNodeMock: element => element.type === 'img'
+            ? { naturalWidth: 400, naturalHeight: 800, getBoundingClientRect: () => ({ left: 10, top: 50, width: 1000, height: 800 }) }
+            : null,
+        })
+      })
+      const body = view!.root.findByProps({ role: 'dialog' }).findAllByType('div')[1]!
+      const click = (clientX: number, clientY: number, control = false) => {
+        body.props.onClick({ clientX, clientY, detail: 1, target: { closest: () => control ? {} : null }, stopPropagation: vi.fn() })
+        vi.advanceTimersByTime(500)
+      }
+      click(510, 450)
+      click(510, 900, true)
+      expect(onClose).not.toHaveBeenCalled()
+      click(110, 450)
+      click(910, 450)
+      click(510, 20)
+      click(510, 900)
+      expect(onClose).toHaveBeenCalledTimes(4)
+    } finally {
+      if (view !== undefined) await act(async () => view!.unmount())
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not dismiss on the clicks preceding a third double-click after the image shrinks', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const onClose = vi.fn()
+    const image = { kind: 'image' as const, mediaRef: 'repeat-zoom', fileName: 'small.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
+    let view: ReturnType<typeof create> | undefined
+    try {
+      await act(async () => {
+        view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={onClose} />, {
+          createNodeMock: element => element.type === 'img'
+            ? { naturalWidth: 400, naturalHeight: 200, getBoundingClientRect: () => ({ left: 300, top: 300, width: 400, height: 200 }) }
+            : { clientWidth: 1000, clientHeight: 800, scrollWidth: 1600, scrollHeight: 800, scrollLeft: 0, scrollTop: 0 },
+        })
+      })
+      const viewport = () => view!.root.findByProps({ 'data-arkme-image-preview-viewport': 'true' })
+      await act(async () => viewport().props.onDoubleClick())
+      await act(async () => viewport().props.onDoubleClick())
+      expect(viewport().props['data-arkme-image-preview-mode']).toBe('original')
+      const body = () => view!.root.findByProps({ role: 'dialog' }).findAllByType('div')[1]!
+      const click = (detail: number) => body().props.onClick({ clientX: 100, clientY: 400, detail, target: { closest: () => null }, stopPropagation: vi.fn() })
+      click(1)
+      vi.advanceTimersByTime(150)
+      expect(onClose).not.toHaveBeenCalled()
+      click(2)
+      await act(async () => viewport().props.onDoubleClick())
+      vi.advanceTimersByTime(600)
+      expect(viewport().props['data-arkme-image-preview-mode']).toBe('contained')
+      expect(onClose).not.toHaveBeenCalled()
+      click(1)
+      vi.advanceTimersByTime(500)
+      expect(onClose).toHaveBeenCalledOnce()
+      click(1)
+      await act(async () => view!.unmount())
+      view = undefined
+      vi.advanceTimersByTime(500)
+      expect(onClose).toHaveBeenCalledOnce()
+    } finally {
+      if (view !== undefined) await act(async () => view!.unmount())
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
   it('gives every forwarded transcript segment its own avatar, including consecutive turns by the same speaker', () => {
     const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
       itemUid: 'forward-speakers', senderName: '转发者', isMe: true, sendAtMillis: 0, status: 1, title: '', textContent: '',
@@ -185,15 +347,39 @@ describe('Arkme rich content presentation', () => {
     const image = { kind: 'image' as const, mediaRef: 'long-image-ref', fileName: 'long.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
     const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => undefined} onClose={() => undefined} />)
     expect(html).toContain('data-arkme-image-preview-viewport="true"')
+    expect(html).toContain('data-arkme-media-preview-actions="bottom"')
+    expect(html).toContain('aria-label="上一个媒体" disabled=""')
+    expect(html).toContain('aria-label="下一个媒体" disabled=""')
     expect(html).toContain('data-arkme-image-preview-mode="contained"')
+    expect(html).toContain('bottom:52px')
     expect(html).toContain('overflow-x:hidden')
-    expect(html).toContain('overflow-y:hidden')
+    expect(html).toContain('overflow:hidden')
     expect(html).toContain('overscroll-behavior:contain')
     expect(html).toContain('width:100%;height:100%;overflow:hidden')
     expect(html).toContain('width:100%;height:100%;object-fit:contain')
-    expect(html).toContain('title="双击铺满宽度"')
-    expect(arkmeNextImagePreviewMode('contained')).toBe('width')
-    expect(arkmeNextImagePreviewMode('width')).toBe('contained')
+    expect(html).toContain('cursor:default')
+    expect(html).not.toContain('zoom-in')
+    expect(arkmeNextImagePreviewMode('contained')).toBe('covered')
+    expect(arkmeNextImagePreviewMode('covered')).toBe('original')
+    expect(arkmeNextImagePreviewMode('original')).toBe('contained')
+  })
+
+  it('keeps media preview navigation in the bottom action row with copy and download', () => {
+    const images = [
+      { kind: 'image' as const, mediaRef: 'first-ref', fileName: 'first.png', mimeType: 'image/png', size: 1, sortOrder: 0 },
+      { kind: 'image' as const, mediaRef: 'second-ref', fileName: 'second.png', mimeType: 'image/png', size: 1, sortOrder: 1 },
+    ]
+    const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={images} selected={images[0]!} onSelect={() => undefined} onClose={() => undefined} />)
+    const actionIndex = html.indexOf('data-arkme-media-preview-actions="bottom"')
+    expect(actionIndex).toBeGreaterThan(-1)
+    expect(html.indexOf('aria-label="上一个媒体"')).toBeGreaterThan(actionIndex)
+    expect(html.indexOf('aria-label="下一个媒体"')).toBeGreaterThan(actionIndex)
+    expect(html.indexOf('aria-label="复制图片"')).toBeGreaterThan(actionIndex)
+    expect(html.indexOf('aria-label="下载图片"')).toBeGreaterThan(actionIndex)
+    expect(html).not.toContain('left:-54')
+    expect(html).not.toContain('right:-54')
+    expect(html).toContain('M9.35714 1.14258L1.5 8.99972L9.35714 16.8569')
+    expect(html).toContain('M1.64286 1.14258L9.5 8.99972L1.64286 16.8569')
   })
 
   it('uses the pasted-file blob when a draft image opens in the in-app preview', () => {

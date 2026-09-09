@@ -1,6 +1,6 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ArkmeFileActions, ArkmeFileViewer, useArkmeOriginal } from '../src/client/ArkmeFileViewer.js'
+import { ArkmeFileActions, ArkmeFileViewer, arkmeClipboardImageBlob, useArkmeOriginal } from '../src/client/ArkmeFileViewer.js'
 import type { ReactNode } from 'react'
 import { ArkmeSdk } from '../src/sdk/index.js'
 import { ArkmeFileQuickView } from '../src/client/ArkmeFileQuickView.js'
@@ -69,6 +69,60 @@ describe('file save UI', () => {
     expect(JSON.stringify(view.toJSON())).toContain('已交给浏览器下载')
     expect(JSON.stringify(view.toJSON())).not.toContain('保存成功')
     await act(async () => view.unmount())
+  })
+  it('offers the desktop image copy action and reports copy feedback without inline status text', async () => {
+    const payloads: Array<Record<string, Blob>> = []
+    const notices: unknown[] = []
+    class TestClipboardItem {
+      constructor(readonly items: Record<string, Blob>) {
+        payloads.push(items)
+      }
+    }
+    const write = vi.fn(async () => {})
+    const fetcher = vi.fn(async () => new Response('image-bytes', { headers: { 'Content-Type': 'image/png' } }))
+    vi.stubGlobal('ClipboardItem', TestClipboardItem)
+    vi.stubGlobal('navigator', { clipboard: { write } })
+    vi.stubGlobal('fetch', fetcher)
+    const receive = vi.fn()
+    const image = {
+      kind: 'image' as const,
+      mediaRef: 'image-ref',
+      originalRef: 'arkme-media-v1.original',
+      fileName: 'photo.png',
+      mimeType: 'image/png',
+      size: 11,
+      sortOrder: 0,
+    }
+    let view!: ReactTestRenderer
+    await act(async () => {
+      view = create(<ArkmeFileActions
+        block={image}
+        original={{ reception: { state: 'missing', receivedBytes: 0, totalBytes: 11 }, localRef: undefined, receive }}
+        copySourceUrl="/arkme-self/api/media?ref=image-ref"
+        onImageCopyNotice={notice => { notices.push(notice) }}
+      />)
+    })
+
+    const copy = view.root.findByProps({ 'aria-label': '复制图片' })
+    expect(view.root.findByProps({ 'aria-label': '下载图片' })).toBeDefined()
+    expect(JSON.stringify(view.toJSON())).toContain('M17.001 7.73273')
+    await act(async () => { copy.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
+
+    expect(fetcher).toHaveBeenCalledWith('/arkme-self/api/media?ref=image-ref', { signal: expect.any(AbortSignal) })
+    expect(write).toHaveBeenCalledWith([expect.any(TestClipboardItem)])
+    expect(payloads[0]).toHaveProperty('image/png')
+    expect(receive).not.toHaveBeenCalled()
+    expect(notices).toEqual([
+      { message: '复制中...', kind: 'progress' },
+      { message: '已复制', kind: 'success' },
+    ])
+    expect(JSON.stringify(view.toJSON())).not.toContain('已复制')
+    expect(JSON.stringify(view.toJSON())).not.toContain('复制中')
+    await act(async () => view.unmount())
+  })
+  it('normalizes clipboard image blobs to a safe image MIME type', () => {
+    expect(arkmeClipboardImageBlob(new Blob(['x']), 'image/jpeg').type).toBe('image/jpeg')
+    expect(arkmeClipboardImageBlob(new Blob(['x'], { type: 'application/octet-stream' }), '').type).toBe('image/png')
   })
   it('aborts an incomplete disk write and never reports success', async () => {
     const writable = { write: vi.fn(async () => { throw new Error('disk full') }), close: vi.fn(), abort: vi.fn(async () => {}) }

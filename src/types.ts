@@ -1582,6 +1582,8 @@ export interface ArkmeMessageSnapshotDetail {
 }
 
 export interface ArkmeTimelineItem {
+  /** Signed observed personal-topic membership; distinct from forwarding snapshots. */
+  recordTopicAssignmentRef?: string
   itemUid: string
   /** Account- and conversation-bound stable key used only for realtime timeline invalidation. */
   timelineItemKey?: string
@@ -2203,6 +2205,8 @@ export interface ArkmeSourceSendResult {
   itemUid: string
   /** Host-signed reference for immediate actions before timeline convergence. */
   messageActionRef?: string
+  /** Observed membership for a confirmed personal Record creation. */
+  recordTopicAssignmentRef?: string
   status: number
   sequence?: number
   localState: 'synced' | 'failed'
@@ -3514,6 +3518,8 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.active'
 
 export type ArkmeHostOperation = ArkmePluginOperation
+  | 'topic.candidates'
+  | 'source.record-topic.assign'
   | 'provider.instance'
   | 'link.metadata'
   | 'directory.list'

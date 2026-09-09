@@ -27,6 +27,7 @@ it('shares authorized pages, presentation and cache across Host, SDK and officia
   let active = true
   let unsupported = false
   let malformed = false
+  let stats: Record<string, unknown> | undefined = { record_count: 17, mention_count: 3 }
   let memberFailureCode: number | undefined
   let receiptName: string | undefined
   let pageHasMember = true
@@ -43,7 +44,7 @@ it('shares authorized pages, presentation and cache across Host, SDK and officia
       const after = body.after_user_id ?? 0
       data = { chat_session_uid: body.chat_session_uid, self_role: 1, items: after === 0 && pageHasMember ? [{ user_id: 2, status: 1, role: 3, display_name_snapshot: '群内昵称', join_at: 1 }] : [], has_more: after === 0 && pageHasMember, ...(after === 0 && pageHasMember ? { next_user_id: 2 } : {}) }
       if (deferredPage !== undefined) await deferredPage
-    } else if (endpoint.endsWith('/members/by-user-ids')) data = malformed ? { chat_session_uid: body.chat_session_uid } : { chat_session_uid: body.chat_session_uid, items: active ? [{ user_id: 2, status: 1, role: 3, remark: '私人备注', display_name_snapshot: '群内昵称', display_name: '公开昵称', join_at: 1 }] : [] }
+    } else if (endpoint.endsWith('/members/by-user-ids')) data = malformed ? { chat_session_uid: body.chat_session_uid } : { chat_session_uid: body.chat_session_uid, items: active ? [{ user_id: 2, status: 1, role: 3, extra: body.include_stats ? stats : undefined, remark: '私人备注', display_name_snapshot: '群内昵称', display_name: '公开昵称', join_at: 1 }] : [] }
     else if (endpoint.endsWith('/get-public-users-by-ids')) data = { items: [{ user_id: 2, nick_name: '公开昵称' }] }
     else if (endpoint.endsWith('/read-receipts/detail')) data = { chat_session_uid: body.chat_session_uid, record_uid: body.record_uid, seq: body.seq,
       items: [{ user_id: 2, read_status: 'unread', read_at: 0, remark: receiptName }] }
@@ -78,6 +79,16 @@ it('shares authorized pages, presentation and cache across Host, SDK and officia
     expect(next.hasMore).toBe(false)
     const hydrated = await sdk.sourceMembersPresentation(group.sourceRef, first.items.map(item => item.memberRef))
     expect(hydrated.items[0]).toMatchObject({ displayName: '私人备注', mentionDisplayName: '群内昵称' })
+    expect(hydrated.items[0]).toMatchObject({ recordCount: 17, mentionCount: 3, statsKnown: true })
+    for (const value of [undefined, { record_count: -1, mention_count: 0 }, { record_count: 1.5, mention_count: 0 }, { record_count: Number.MAX_SAFE_INTEGER + 1, mention_count: 0 }, { record_count: 1, mention_count: Number.MAX_SAFE_INTEGER + 1 }, { record_count: 0, mention_count: 0 }]) {
+      stats = value
+      runtime.invalidateMemberCache()
+      const result = await sdk.sourceMembersPresentation(group.sourceRef, [first.items[0]!.memberRef])
+      expect(result.items[0]?.statsKnown).toBe(value?.record_count === 0)
+      if (result.items[0]?.statsKnown === false) expect(result.items[0]).toMatchObject({ recordCount: 0, mentionCount: 0 })
+      expect((await sdk.cachedSourceMembers(group.sourceRef))?.items[0]?.statsKnown).toBe(value?.record_count === 0)
+    }
+    expect(calls.some(path => path.endsWith('/members/list'))).toBe(false)
     expect(calls.some(path => path.endsWith('/chats/list') || path.endsWith('/contacts/list'))).toBe(false)
     expect((await sdk.cachedSourceMembers(group.sourceRef))?.items[0]?.displayName).toBe('私人备注')
     malformed = true
@@ -168,4 +179,4 @@ it('shares authorized pages, presentation and cache across Host, SDK and officia
 
 
   } finally { for (const handle of registrations.reverse()) await handle.dispose(); runtime.dispose(); source.dispose(); db.close(); await rm(path, { recursive: true }); vi.restoreAllMocks() }
-})
+}, 10_000)

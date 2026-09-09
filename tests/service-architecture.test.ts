@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
-  'directMessageAdmission', 'setDirectMessageRefusal',
+  'directMessageAdmission', 'setDirectMessageRefusal', 'assignRecordTopic', 'listTopicCandidates',
   'fileCapabilities', 'fileSearch', 'fileSessionUser', 'fileStage', 'fileList', 'fileReadLocal', 'attachLocalFileOpener', 'fileOpenLocal', 'fileRemove', 'fileSend',
   'fileSendTasks', 'fileSendRetry', 'fileStageBytes', 'fileSendDiscard', 'fileSendReconcile', 'fileReceive',
   'startChatRealtime', 'chatRealtimeState', 'subscribeChatRealtime', 'chatRealtimeInitialEvent',
@@ -80,6 +80,7 @@ const expectedPublicMethods = [
 const expectedServiceFiles = [
   'chat-policy.ts',
   'direct-message-admission-service.ts',
+  'record-topic-assignment-service.ts',
   'background-sound-preference-service.ts',
   'background-sound-membership-service.ts',
   'file-transfers.ts',
@@ -120,6 +121,15 @@ describe('Arkme service architecture', () => {
     expect(dialog).not.toMatch(/RecordingForwardInput|RecordingForwardReceipt|randomUUID|setTimeout|['"]recordings\.forward['"]/)
     expect(attempt).not.toMatch(/from ['"]react['"]|callArkme|setTimeout|AbortController|services\/|node:/)
     expect(projection).not.toMatch(/services\/|ServiceRuntime|node:/)
+  })
+
+  it('keeps personal membership UI independent from transport and forwarding identities', () => {
+    const dialog = readFileSync(join(root, 'src/client/ArkmeRecordTopicAssignmentDialog.tsx'), 'utf8')
+    const service = readFileSync(join(root, 'src/services/record-topic-assignment-service.ts'), 'utf8')
+    const contract = readFileSync(join(root, 'src/record-topic-assignment-contract.ts'), 'utf8')
+    expect(dialog).not.toMatch(/callArkme|\/api\/|node:|source_topic_uid|record_uid/)
+    expect(service).not.toMatch(/forwardSourceMessages|messageActionRef|chat_session_uid|records\/create/)
+    expect(contract).not.toMatch(/from ['"]react|services\/|node:/)
   })
 
   it('preserves the public facade method contract', () => {

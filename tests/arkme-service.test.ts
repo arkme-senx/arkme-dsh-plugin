@@ -1,3 +1,4 @@
+import { openRecordTopicAssignmentRef } from '../src/record-topic-assignment-ref.js'
 import { createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
@@ -2008,6 +2009,140 @@ describe('ArkmeService', () => {
     })
     await service.listSources('send_to_self')
     expect(calls.filter(call => call.url.endsWith('/api/v1/topics/display/list'))).toHaveLength(2)
+  })
+
+  it.each([0, 2])('does not grant membership capability to a synced Record with non-active status %s', async status => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}'))
+      if (url.endsWith('/api/v1/topics/create')) return json({ code: 0, data: { topic_uid: 'topic', status: 1 } })
+      if (url.endsWith('/api/v1/topics/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status } })
+      throw new Error(`unexpected ${url}`)
+    })
+    const topic = await service.createTopic('主题')
+    const sent = await service.sendSourceText(topic.source.sourceRef, '正文', { recordUid: 'record' })
+    expect(sent.localState).toBe('synced')
+    expect(sent.messageActionRef).toEqual(expect.any(String))
+    expect(sent.recordTopicAssignmentRef).toBeUndefined()
+  })
+
+  it('pages eligible topic candidates using owner cursors and fails explicitly when pagination evidence is missing', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const bodies: Record<string, unknown>[] = []
+    const topic = (uid: string, status = 1, privacy = 1) => ({ topic_core: {
+      topic_uid: uid, title: uid, status, privacy_state: privacy,
+    } })
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      expect(String(input)).toBe('https://record.test/api/v1/topics/display/list')
+      bodies.push(JSON.parse(String(init?.body)))
+      return json({ code: 0, data: bodies.length === 1 ? {
+        items: [topic('active'), topic('active'), topic('deleted', 2), topic('private', 1, 2), topic('pending', 0)],
+        has_more: true, next_page_cursor: { active_at: 123, topic_uid: 'active' }, next_offset: 100,
+      } : bodies.length === 2 ? { items: [], has_more: true, next_offset: 200 }
+        : { items: [], has_more: true } })
+    })
+    const first = await service.listTopicCandidates(' 工作 ')
+    expect(first.items.map(item => item.displayName)).toEqual(['active'])
+    expect(first.items[0]?.topicHierarchyKey).toEqual(expect.any(String))
+    const second = await service.listTopicCandidates('工作', first.nextCursor)
+    expect(bodies[0]).toEqual({ keyword: '工作', privacy_state: 1, limit: 100 })
+    expect(bodies[1]).toEqual({ keyword: '工作', privacy_state: 1, limit: 100,
+      page_cursor: { active_at: 123, topic_uid: 'active' } })
+    await expect(service.listTopicCandidates('工作', second.nextCursor)).rejects.toMatchObject({ code: 'topic-candidates-incomplete' })
+    expect(bodies[2]).toEqual({ keyword: '工作', privacy_state: 1, limit: 100, offset: 200 })
+    const controller = new AbortController()
+    controller.abort()
+    await expect(service.listTopicCandidates('', undefined, controller.signal)).rejects.toThrow()
+    expect(bodies).toHaveLength(3)
+  })
+
+  it('projects and consumes personal membership references with isolated server-side topic searches', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    const state = new MemoryStateStore()
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}'))
+      calls.push({ url, body })
+      if (url.endsWith('/api/v1/chats/attention/summary')) return json({ code: 0, data: {} })
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
+        topic_core: { topic_uid: body.keyword === '搜索' ? 'search-topic' : 'work-topic', title: body.keyword || '工作', status: 1, privacy_state: 1 }, summary: { record_count: 1 },
+      }], has_more: false } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [] } })
+      if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 1 } })
+      if (url.endsWith('/api/v1/records/uncategorized/query')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (url.endsWith('/api/v1/home/feed/query')) return json({ code: 0, data: { items: [
+        { record_uid: 'unclassified', source_kind: 1, record_core: { record_uid: 'unclassified', text_content: '正文', owner_user_id: 10001, status: 1 } },
+        { record_uid: 'in-topic', source_kind: 2, source_uid: 'old-topic',
+          record_core: { record_uid: 'in-topic', text_content: '正文2', owner_user_id: 10001, status: 1 } },
+        { record_uid: 'foreign', source_kind: 1, record_core: { record_uid: 'foreign', text_content: '他人记录', owner_user_id: 999, status: 1 } },
+        { record_uid: 'unknown', source_kind: 99, topic_core: { topic_uid: 'unrelated-topic' }, record_core: { record_uid: 'unknown', text_content: '未知来源', owner_user_id: 10001, status: 1 } },
+      ], has_more: false } })
+      if (url.endsWith('/api/v1/topics/records/move-batch')) return json({ code: 0, data: {
+        moved_count: body.items.length, projection_refresh_pending: true,
+        items: body.items.map((item: { record_uid: string; source_topic_uid?: string }) => ({
+          record_uid: item.record_uid, target_status: 1, target_is_primary: true, ...(item.source_topic_uid ? { source_status: 2 } : {}),
+        })),
+      } })
+      if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: { records: [
+        { record_uid: 'owned-other-creator', owner_user_id: 10001, creator_user_id: 999, status: 1 },
+        { record_uid: 'foreign-self-creator', owner_user_id: 999, creator_user_id: 10001, status: 1 },
+        { record_uid: 'pending-record', owner_user_id: 10001, creator_user_id: 10001, status: 0 },
+      ], has_more: false } })
+      if (url.endsWith('/api/v1/topics/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      throw new Error(`unexpected ${url}`)
+    })
+    const directory = await service.listSources('send_to_self', { limit: 100 })
+    const self = directory.items.find(item => item.kind === 'send_to_self')!
+    const topic = directory.items.find(item => item.kind === 'topic')!
+    const callsBeforeSearch = calls.length
+    const search = await service.listTopicCandidates('搜索')
+    expect(calls.slice(callsBeforeSearch).map(call => new URL(call.url).pathname)).toEqual(['/api/v1/topics/display/list'])
+    expect(search.items.find(item => item.kind === 'topic')?.displayName).toBe('搜索')
+    expect((await service.listSources('send_to_self', { limit: 100 })).items).toEqual(directory.items)
+    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/display/list')).map(call => call.body.keyword)).toEqual(['', '搜索'])
+    const page = await service.readSource(self.sourceRef)
+    expect(page.items.find(item => item.itemUid === 'unknown')?.recordTopicAssignmentRef).toBeUndefined()
+    expect(page.items.find(item => item.itemUid === 'foreign')?.recordTopicAssignmentRef).toBeUndefined()
+    const assignable = page.items.filter(item => item.recordTopicAssignmentRef !== undefined)
+    expect(assignable.map(item => openRecordTopicAssignmentRef(item.recordTopicAssignmentRef!, 'dsh-device-1'))).toMatchObject([
+      { recordUid: 'unclassified', sourceTopicUid: '', sourceKind: 'send_to_self' },
+      { recordUid: 'in-topic', sourceTopicUid: 'old-topic', sourceKind: 'send_to_self' },
+    ])
+    await expect(service.assignRecordTopic({ sourceRef: self.sourceRef, assignmentRefs: assignable.map(item => item.recordTopicAssignmentRef!), targetSourceRef: topic.sourceRef }))
+      .resolves.toEqual({ movedRecordUids: ['unclassified', 'in-topic'], projectionRefreshPending: true })
+    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/records/move-batch')).map(call => call.body)).toEqual([{
+      target_topic_uid: 'work-topic', items: [{ record_uid: 'unclassified' }, { record_uid: 'in-topic', source_topic_uid: 'old-topic' }],
+    }])
+    await service.listSources('send_to_self', { limit: 100 })
+    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/display/list'))).toHaveLength(3)
+    const topicPage = await service.readSource(topic.sourceRef)
+    expect(topicPage.items.find(item => item.itemUid === 'owned-other-creator')?.recordTopicAssignmentRef).toEqual(expect.any(String))
+    expect(topicPage.items.find(item => item.itemUid === 'foreign-self-creator')?.recordTopicAssignmentRef).toBeUndefined()
+    expect(topicPage.items.find(item => item.itemUid === 'pending-record')?.recordTopicAssignmentRef).toBeUndefined()
+    const abort = new AbortController()
+    abort.abort()
+    await expect(service.createTopic('已取消', undefined, { contextSourceRef: self.sourceRef, signal: abort.signal })).rejects.toThrow()
+    expect(calls.some(call => call.url.endsWith('/api/v1/topics/create'))).toBe(false)
+    sessions.session = { userId: 999, accessToken: 'other', refreshToken: 'other' }
+    await expect(service.createTopic('旧账号操作', undefined, { contextSourceRef: self.sourceRef })).rejects.toThrow()
+    expect(calls.some(call => call.url.endsWith('/api/v1/topics/create'))).toBe(false)
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const sent = await service.sendSourceText(topic.sourceRef, '新消息', { recordUid: 'new-record' })
+    expect(openRecordTopicAssignmentRef(sent.recordTopicAssignmentRef!, 'dsh-device-1')).toMatchObject({
+      recordUid: 'new-record', sourceKind: 'topic', sourceTopicUid: 'work-topic',
+    })
+    vi.spyOn(state, 'uniqueCode').mockResolvedValueOnce('dsh-device-1').mockResolvedValueOnce('dsh-device-1')
+      .mockRejectedValueOnce(new Error('key read failed')).mockResolvedValue('dsh-device-1')
+    const accepted = await service.sendSourceText(topic.sourceRef, '保留已有操作', { recordUid: 'send-key-failure' })
+    expect(accepted.localState).toBe('synced')
+    expect(accepted.messageActionRef).toEqual(expect.any(String))
+    expect(accepted.recordTopicAssignmentRef).toBeUndefined()
   })
 
   it('creates root topics and binds child topics without exposing server topic UIDs', async () => {

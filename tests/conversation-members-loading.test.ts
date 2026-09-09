@@ -28,7 +28,7 @@ it('loads 500 members through the real Host projection and coordinator under slo
       const rows = members.filter(member => member.user_id > body.after_user_id).slice(0, body.limit)
       const last = rows.at(-1)?.user_id ?? 0
       data = { chat_session_uid: 'group', items: rows, self_role: 1, has_more: last > 0 && last < 500, ...(last > 0 && last < 500 ? { next_user_id: last } : {}) }
-    } else if (path.endsWith('/members/by-user-ids')) data = { chat_session_uid: 'group', items: members.filter(member => body.user_ids.includes(member.user_id)).map(member => ({ ...member, remark: `备注 ${member.user_id}` })) }
+    } else if (path.endsWith('/members/by-user-ids')) data = { chat_session_uid: 'group', items: members.filter(member => body.user_ids.includes(member.user_id)).map(member => ({ ...member, remark: `备注 ${member.user_id}`, ...(body.include_stats ? { extra: { record_count: member.user_id, mention_count: 0 } } : {}) })) }
     else if (path.endsWith('/members/list')) data = { items: members }
     else if (path.endsWith('/get-public-users-by-ids')) data = { items: body.user_ids.map((userId: number) => ({ user_id: userId, nick_name: `用户 ${userId}` })) }
     else if (path.endsWith('/chats/list')) data = { items: Array.from({ length: 50 }, () => ({ session: { session_kind: 2 } })), has_more: true, next_page_cursor: { page: (body.page_cursor?.page ?? 0) + 1 } }
@@ -80,6 +80,8 @@ it('loads 500 members through the real Host projection and coordinator under slo
     await progressive
     expect(store.get('test:1', group).items).toHaveLength(500)
     expect(store.get('test:1', group).complete).toBe(true)
+    expect(store.get('test:1', group).items.every(member => member.statsKnown === true)).toBe(true)
+    expect(store.get('test:1', group).items.map(member => member.recordCount).sort((a, b) => a - b)).toEqual(Array.from({ length: 500 }, (_, index) => index + 1))
     expect(calls.some(call => call.path.endsWith('/chats/list') || call.path.endsWith('/contacts/list'))).toBe(false)
     console.info('member-loading progressive', JSON.stringify({ simulatedFirstPageMillis: firstPageMillis,
       simulatedCompleteMillis: Date.now() - started, requests: calls.length,

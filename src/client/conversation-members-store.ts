@@ -186,7 +186,7 @@ export class ConversationMembersStore {
         const work = loadPresentation(sourceRef, refs, enrichmentSignal).then(update => {
           if (!current() || enrichmentSignal.aborted) return
           this.applyUpdate(entry, update)
-          if (update.unavailableProfileMemberRefs.length > 0) presentationFailed = true
+          if (update.unavailableProfileMemberRefs.length > 0 || update.items.some(item => item.statsKnown === false)) presentationFailed = true
         }).catch(error => {
           if (!current() || enrichmentSignal.aborted) return
           if (invalidatesMemberSnapshot(error)) {

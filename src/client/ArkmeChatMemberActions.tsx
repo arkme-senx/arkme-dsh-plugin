@@ -300,14 +300,14 @@ export function ArkmeMemberActionMenu(props: {
       <button type="button" role="menuitem" style={styles.menuRow} onClick={() => { props.onRecords('mentioned') }}
         onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
         onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
-        <span style={styles.menuLabel}>{mentionedLabel}</span><span style={styles.menuCount}>{props.member.mentionCount}</span>
+        <span style={styles.menuLabel}>{mentionedLabel}</span><span style={styles.menuCount}>{props.member.statsKnown === false ? '' : props.member.mentionCount}</span>
       </button>
       <div style={styles.divider} />
     </>}
     <button type="button" role="menuitem" style={styles.menuRow} onClick={() => { props.onRecords('owner') }}
       onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
       onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
-      <span style={styles.menuLabel}>{ownerLabel}</span><span style={styles.menuCount}>{props.member.recordCount}</span>
+      <span style={styles.menuLabel}>{ownerLabel}</span><span style={styles.menuCount}>{props.member.statsKnown === false ? '' : props.member.recordCount}</span>
     </button>
     {props.canRemove === true && props.onRemove !== undefined && <>
       <div style={styles.divider} />
@@ -659,7 +659,7 @@ export function ArkmeMemberRecordsPanel(props: {
   const title = props.mode === 'mentioned'
     ? (props.member.isSelf ? '@我的快记' : `@${props.member.displayName}的快记`)
     : (props.member.isSelf ? '我的快记' : `${props.member.displayName}的快记`)
-  const total = arkmeMemberRecordTotal(props.member, props.mode)
+  const total = props.member.statsKnown === false ? undefined : arkmeMemberRecordTotal(props.member, props.mode)
   const timeline = useMemo(() => arkmeMemberRecordTimeline(items), [items])
   const effectiveWidth = availableWidth === undefined
     ? preferredWidth
@@ -736,7 +736,7 @@ export function ArkmeMemberRecordsPanel(props: {
     <header style={styles.drawerHeader}>
       <div style={styles.drawerHeading}>
         <h3 style={styles.drawerTitle}>{title}</h3>
-        <div style={styles.drawerCount}>{total}条</div>
+        <div style={styles.drawerCount}>{total === undefined ? '' : `${total}条`}</div>
       </div>
       <button type="button" style={styles.drawerClose} aria-label="关闭成员快记" onClick={props.onClose}>
         <XIcon size={18} weight="regular" aria-hidden />

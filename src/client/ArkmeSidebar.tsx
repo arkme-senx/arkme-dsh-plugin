@@ -1,3 +1,4 @@
+import { ArkmeRecordTopicAssignmentDialog } from './ArkmeRecordTopicAssignmentDialog.js'
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import { arkmeMarkdownPlainText } from '../markdown.js'
 import {
@@ -1026,6 +1027,10 @@ export function arkmeTimelineMessageActionRef(item: ArkmeTimelineItem): string {
   return item.messageActionRef?.trim() ?? ''
 }
 
+function canSelectTimelineItem(item: ArkmeTimelineItem): boolean {
+  return arkmeTimelineMessageActionRef(item) !== '' || Boolean(item.recordTopicAssignmentRef)
+}
+
 export function arkmeTimelineOccurrenceKey(item: ArkmeTimelineItem): string {
   const opaqueKey = item.timelineItemKey?.trim() ?? ''
   return opaqueKey === '' ? `item:${item.itemUid}` : opaqueKey
@@ -1072,7 +1077,7 @@ export function arkmeSelectedTimelineItems(
   items: readonly ArkmeTimelineItem[],
   selectedIds: ReadonlySet<string>,
 ): ArkmeTimelineItem[] {
-  return items.filter(item => selectedIds.has(arkmeTimelineOccurrenceKey(item)) && arkmeTimelineMessageActionRef(item) !== '')
+  return items.filter(item => selectedIds.has(arkmeTimelineOccurrenceKey(item)) && canSelectTimelineItem(item))
 }
 
 export async function arkmeCopyTextToClipboard(value: string): Promise<void> {
@@ -1475,6 +1480,10 @@ export class ArkmeConfirmedSendRetentionOwner {
     }
   }
 
+  forget(sourceKey: string, itemUids: readonly string[]): void {
+    for (const itemUid of itemUids) this.entries.delete(`${sourceKey}\0${itemUid}`)
+  }
+
   merge(sourceKey: string, authoritative: ArkmeTimelineItem[], nowMillis = Date.now()): ArkmeTimelineItem[] {
     const retained: ArkmeTimelineItem[] = []
     const authoritativeById = new Map(authoritative.map(item => [item.itemUid, item]))
@@ -1515,6 +1524,7 @@ function applySourceSendResult(
     itemUid: result.itemUid,
     status: result.status,
     ...(result.messageActionRef === undefined ? {} : { messageActionRef: result.messageActionRef }),
+    ...(result.recordTopicAssignmentRef === undefined ? {} : { recordTopicAssignmentRef: result.recordTopicAssignmentRef }),
     ...(result.sequence === undefined ? {} : { sequence: result.sequence }),
     ...(result.aiPolish === undefined ? {} : {
       aiPolish: result.aiPolish,
@@ -1955,7 +1965,12 @@ export function arkmeForwardPreviewSubtitle(items: readonly ArkmeTimelineItem[])
   return summaryLines[0] ?? ''
 }
 
-function ArkmeSelectActionIcon({ kind, size = 22 }: { kind: 'copy' | 'link' | 'select' | 'forward' | 'close'; size?: number }) {
+function ArkmeSelectActionIcon({ kind, size = 22 }: { kind: 'assign' | 'copy' | 'link' | 'select' | 'forward' | 'close'; size?: number }) {
+  // Flutter assets/images/record_func_assign_topic.svg.
+  if (kind === 'assign') return <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden>
+    <path fillRule="evenodd" clipRule="evenodd" d="M12.6 2.5H7.4C6.25514 2.5 5.48671 2.50117 4.89496 2.54952C4.32071 2.59643 4.04615 2.6802 3.86502 2.77248C3.39462 3.01217 3.01217 3.39462 2.77248 3.86502C2.6802 4.04615 2.59643 4.32071 2.54952 4.89496C2.50117 5.48671 2.5 6.25514 2.5 7.4V15.8754C2.5 16.283 2.50033 16.5407 2.50855 16.7322C2.5139 16.8568 2.52154 16.9115 2.52348 16.9248C2.59801 17.1596 2.83292 17.3052 3.07637 17.2675C3.08914 17.2633 3.14151 17.2459 3.25551 17.1952C3.43068 17.1174 3.66164 17.003 4.02666 16.8217L4.05608 16.8071C4.20179 16.7347 4.33028 16.6708 4.46463 16.6145C4.92599 16.4211 5.41636 16.306 5.91557 16.274C6.06095 16.2646 6.20444 16.2647 6.36718 16.2647L6.4 16.2647H9.04451C9.10561 16.7861 9.22841 17.2886 9.40541 17.7647H6.4C6.2052 17.7647 6.1078 17.7647 6.01173 17.7709C5.67893 17.7923 5.35201 17.869 5.04444 17.9979C4.95566 18.0351 4.86843 18.0784 4.69396 18.1651C3.98787 18.5158 3.63482 18.6912 3.35471 18.7417C2.34708 18.9233 1.36504 18.3145 1.07941 17.3313C1 17.058 1 16.6638 1 15.8754V7.4C1 5.15979 1 4.03969 1.43597 3.18404C1.81947 2.43139 2.43139 1.81947 3.18404 1.43597C4.03969 1 5.15979 1 7.4 1H12.6C14.8402 1 15.9603 1 16.816 1.43597C17.5686 1.81947 18.1805 2.43139 18.564 3.18404C19 4.03969 19 5.15979 19 7.4V10.0218C18.5368 9.72526 18.0335 9.48584 17.5 9.3135V7.4C17.5 6.25514 17.4988 5.48671 17.4505 4.89496C17.4036 4.32071 17.3198 4.04615 17.2275 3.86502C16.9878 3.39462 16.6054 3.01217 16.135 2.77248C15.9539 2.6802 15.6793 2.59643 15.105 2.54952C14.5133 2.50117 13.7449 2.5 12.6 2.5ZM10.75 11.0629V7.75H12C12.4142 7.75 12.75 7.41421 12.75 7C12.75 6.58579 12.4142 6.25 12 6.25H10H8C7.58579 6.25 7.25 6.58579 7.25 7C7.25 7.41421 7.58579 7.75 8 7.75H9.25V12.5C9.25 12.7128 9.33865 12.905 9.48104 13.0415C9.78235 12.3046 10.215 11.6353 10.75 11.0629Z" fill="currentColor"/>
+    <path d="M15 18.5V12.5M15 12.5L13 14M15 12.5L17 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
   if (kind === 'copy') return <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden>
     <path d="M12.4998 0.916504C13.3618 0.916504 14.1884 1.25891 14.7979 1.86841C15.4074 2.4779 15.7498 3.30455 15.7498 4.1665V4.24984H15.8332C16.6772 4.24984 17.4882 4.57822 18.0944 5.1655C18.7007 5.75278 19.0547 6.55287 19.0815 7.3965L19.0832 7.49984V15.8332C19.0832 16.6772 18.7548 17.4882 18.1675 18.0944C17.5802 18.7007 16.7801 19.0547 15.9365 19.0815L15.8332 19.0832H7.49984C6.65578 19.0832 5.84483 18.7548 5.23858 18.1675C4.63233 17.5802 4.27834 16.7801 4.2515 15.9365L4.24984 15.8332V15.7498H4.1665C3.32245 15.7498 2.5115 15.4214 1.90525 14.8342C1.299 14.2469 0.945007 13.4468 0.918171 12.6032L0.916504 12.4998V4.1665C0.916504 3.30455 1.25891 2.4779 1.86841 1.86841C2.4779 1.25891 3.30455 0.916504 4.1665 0.916504H12.4998ZM15.7498 12.4998C15.7498 13.3618 15.4074 14.1884 14.7979 14.7979C14.1884 15.4074 13.3618 15.7498 12.4998 15.7498H5.74984V15.8332C5.74981 16.2822 5.92236 16.714 6.23181 17.0393C6.54125 17.3647 6.9639 17.5586 7.41234 17.5811L7.49984 17.5832H15.8332C16.2822 17.5832 16.714 17.4106 17.0393 17.1012C17.3647 16.7918 17.5586 16.3691 17.5811 15.9207L17.5832 15.8332V7.49984C17.5832 7.05084 17.4106 6.61901 17.1012 6.29367C16.7918 5.96833 16.3691 5.77437 15.9207 5.75192L15.8332 5.74984H15.7498V12.4998ZM12.4998 2.4165H4.1665C3.70237 2.4165 3.25726 2.60088 2.92907 2.92907C2.60088 3.25726 2.4165 3.70237 2.4165 4.1665V12.4998C2.4165 12.7297 2.46177 12.9572 2.54971 13.1695C2.63766 13.3819 2.76656 13.5748 2.92907 13.7373C3.09157 13.8998 3.28449 14.0287 3.49681 14.1166C3.70913 14.2046 3.93669 14.2498 4.1665 14.2498H12.4998C12.7297 14.2498 12.9572 14.2046 13.1695 14.1166C13.3819 14.0287 13.5748 13.8998 13.7373 13.7373C13.8998 13.5748 14.0287 13.3819 14.1166 13.1695C14.2046 12.9572 14.2498 12.7297 14.2498 12.4998V4.1665C14.2498 3.93669 14.2046 3.70913 14.1166 3.49681C14.0287 3.28449 13.8998 3.09157 13.7373 2.92907C13.5748 2.76656 13.3819 2.63766 13.1695 2.54971C12.9572 2.46177 12.7297 2.4165 12.4998 2.4165Z" fill="currentColor" />
   </svg>
@@ -2954,6 +2969,12 @@ export function ArkmeSurface({
   const forwardSuccessTimerRef = useRef<number>()
   const [messageActionBusy, setMessageActionBusy] = useState<'copy-link' | 'forward'>()
   const [selectMode, setSelectMode] = useState<{ sourceKey: string; selectedIds: Set<string> }>()
+  const [topicAssignment, setTopicAssignment] = useState<{
+    scopeKey: string; source: ArkmeSourceItem; assignmentRefs: string[]; firstRecordText: string
+  }>()
+  const topicAssignmentScopeKey = `${authenticatedAccountKey ?? ''}:${conversationOverlayKey}`
+  useEffect(() => { setTopicAssignment(undefined) }, [topicAssignmentScopeKey])
+
   const pendingSelectRevealItemUidRef = useRef('')
   const [forwardTargetPicker, setForwardTargetPicker] = useState<{
     sourceKey: string
@@ -5896,6 +5917,8 @@ export function ArkmeSurface({
     [activeSelectMode, displayItems],
   )
   const selectedMessageCount = activeSelectMode?.selectedIds.size ?? 0
+  const selectedMessagesHaveSnapshots = selectedMessageCount > 0 && selectedMessageItems.length === selectedMessageCount
+    && selectedMessageItems.every(item => arkmeTimelineMessageActionRef(item) !== '')
   useLayoutEffect(() => {
     if (activeSelectMode === undefined) return
     const itemUid = pendingSelectRevealItemUidRef.current
@@ -6346,7 +6369,7 @@ export function ArkmeSurface({
     const sourceRef = source.sourceRef
     const sourceKey = conversationKey
     const actionRefs = itemsToCopy.map(arkmeTimelineMessageActionRef).filter(value => value !== '')
-    if (actionRefs.length === 0) {
+    if (actionRefs.length === 0 || actionRefs.length !== itemsToCopy.length) {
       showMessageActionStatus('当前消息暂不支持复制链接')
       return
     }
@@ -6489,7 +6512,7 @@ export function ArkmeSurface({
   ])
   const enterMessageSelectMode = useCallback((item: ArkmeTimelineItem) => {
     closeMessageMenu()
-    if (source === undefined || arkmeTimelineMessageActionRef(item) === '') {
+    if (source === undefined || !canSelectTimelineItem(item)) {
       showMessageActionStatus('当前消息暂不支持多选')
       return
     }
@@ -6497,7 +6520,7 @@ export function ArkmeSurface({
     setSelectMode({ sourceKey: conversationKey, selectedIds: new Set([arkmeTimelineOccurrenceKey(item)]) })
   }, [closeMessageMenu, conversationKey, showMessageActionStatus, source])
   const toggleSelectedMessage = useCallback((item: ArkmeTimelineItem) => {
-    if (source === undefined || arkmeTimelineMessageActionRef(item) === '') return
+    if (source === undefined || !canSelectTimelineItem(item)) return
     setSelectMode(current => {
       const occurrenceKey = arkmeTimelineOccurrenceKey(item)
       if (current === undefined || current.sourceKey !== conversationKey) return { sourceKey: conversationKey, selectedIds: new Set([occurrenceKey]) }
@@ -6516,7 +6539,7 @@ export function ArkmeSurface({
       return saved && projectRecordReedit(saved, reeditSubmissions.jobs) !== saved ? saved : item
     })
     const forwardableItems = savedItems.filter(item => arkmeTimelineMessageActionRef(item) !== '')
-    if (source === undefined || forwardableItems.length === 0) {
+    if (source === undefined || forwardableItems.length === 0 || forwardableItems.length !== savedItems.length) {
       showMessageActionStatus('请选择要转发的快记')
       return
     }
@@ -6867,6 +6890,26 @@ export function ArkmeSurface({
 
   return (
     <>
+    {activeConversation && topicAssignment?.scopeKey === topicAssignmentScopeKey && <ArkmeRecordTopicAssignmentDialog
+      key={topicAssignmentScopeKey}
+      source={topicAssignment.source} assignmentRefs={topicAssignment.assignmentRefs} firstRecordText={topicAssignment.firstRecordText}
+      onCancel={() => { setTopicAssignment(undefined) }}
+      onRefresh={() => {
+        if (topicAssignment.source.kind !== 'send_to_self') confirmedSendRetention.forget(conversationKey, selectedMessageItems.map(item => item.itemUid))
+        setSelectMode(undefined)
+        setTopicAssignment(undefined)
+        setSelfSourcesRetryRevision(value => value + 1)
+        arkmeUi.recordChanged()
+      }}
+      onAssigned={(result, target) => {
+        if (topicAssignment.source.kind !== 'send_to_self') confirmedSendRetention.forget(conversationKey, result.movedRecordUids)
+        setTopicAssignment(undefined)
+        setSelectMode(undefined)
+        setSelfSourcesRetryRevision(value => value + 1)
+        arkmeUi.recordChanged()
+        showMessageActionStatus(`${target ? '已指定主题' : '已移出主题'}${result.projectionRefreshPending ? '，列表正在刷新' : ''}`)
+      }}
+    />}
     <div
       className="arkme-conversation-surface"
       ref={surfaceRef}
@@ -7249,7 +7292,7 @@ export function ArkmeSurface({
                   : conversationMemberByRef.get(item.memberRef)
                 const polishStatus = aiPolishStatus(item)
                 const selectedForAction = activeSelectMode?.selectedIds.has(arkmeTimelineOccurrenceKey(item)) === true
-                const canUseMessageAction = arkmeTimelineMessageActionRef(item) !== ''
+                const canSelect = canSelectTimelineItem(item)
                 const isForwardMessageCard = item.forwardRecords !== undefined
                 const isSharedRecordingCard = item.sharedRecording !== undefined
                 const isStructuredMessageCard = isForwardMessageCard || isSharedRecordingCard
@@ -7281,7 +7324,7 @@ export function ArkmeSurface({
                   }}
                     onClickCapture={event => {
                       if (activeSelectMode === undefined) return
-                      if (!canUseMessageAction) return
+                      if (!canSelect) return
                       if (!arkmeShouldToggleMessageSelectFromRowClick(event.target)) return
                       event.preventDefault()
                       event.stopPropagation()
@@ -7296,7 +7339,7 @@ export function ArkmeSurface({
                     {activeSelectMode !== undefined && <ArkmeMessageSelectionControl
                       anchor={selectionAnchor}
                       checked={selectedForAction}
-                      disabled={!canUseMessageAction}
+                      disabled={!canSelect}
                       onToggle={() => { toggleSelectedMessage(item) }}
                     />}
                     <div style={{
@@ -7463,6 +7506,21 @@ export function ArkmeSurface({
             </button>}
           </div>
           {activeSelectMode !== undefined && <div style={styles.selectBar} role="toolbar" aria-label={`已选择 ${selectedMessageCount} 条消息`}>
+            {source !== undefined && isArkmeSelfWorkspaceSource(source) && <button
+              type="button" aria-label="指定主题" style={styles.selectBarButton}
+              disabled={messageActionBusy !== undefined || selectedMessageCount === 0
+                || selectedMessageItems.length !== selectedMessageCount
+                || selectedMessageItems.some(item => !item.recordTopicAssignmentRef)}
+              onClick={() => {
+                if (messageActionBusy !== undefined || selectedMessageItems.length === 0
+                  || selectedMessageItems.length !== selectedMessageCount
+                  || selectedMessageItems.some(item => !item.recordTopicAssignmentRef)) return
+                setTopicAssignment({ scopeKey: topicAssignmentScopeKey, source,
+                  assignmentRefs: selectedMessageItems.map(item => item.recordTopicAssignmentRef!),
+                  firstRecordText: items.find(item => item.itemUid === selectedMessageItems[0]?.itemUid)?.textContent ?? '',
+                })
+              }}
+            ><span style={styles.selectBarIconTile}><ArkmeSelectActionIcon kind="assign" size={20} /></span><span style={styles.selectBarLabel}>指定主题</span></button>}
             {(() => {
               const copyTextEnabled = arkmeCanCopySelectedMessageText(selectedMessageItems.length, messageActionBusy !== undefined)
               return <button
@@ -7479,18 +7537,18 @@ export function ArkmeSurface({
               type="button"
               style={{
                 ...styles.selectBarButton,
-                ...(selectedMessageItems.length === 0 || messageActionBusy !== undefined ? styles.selectBarButtonDisabled : {}),
+                ...(!selectedMessagesHaveSnapshots || messageActionBusy !== undefined ? styles.selectBarButtonDisabled : {}),
               }}
-              disabled={selectedMessageItems.length === 0 || messageActionBusy !== undefined}
+              disabled={!selectedMessagesHaveSnapshots || messageActionBusy !== undefined}
               onClick={() => { void copyMessageLink(selectedMessageItems) }}
             ><span style={styles.selectBarIconTile}><ArkmeSelectActionIcon kind="link" /></span><span style={styles.selectBarLabel}>{ARKME_MESSAGE_SELECT_ACTION_LABELS[1]}</span></button>
             <button
               type="button"
               style={{
                 ...styles.selectBarButton,
-                ...(selectedMessageItems.length === 0 || messageActionBusy !== undefined ? styles.selectBarButtonDisabled : {}),
+                ...(!selectedMessagesHaveSnapshots || messageActionBusy !== undefined ? styles.selectBarButtonDisabled : {}),
               }}
-              disabled={selectedMessageItems.length === 0 || messageActionBusy !== undefined}
+              disabled={!selectedMessagesHaveSnapshots || messageActionBusy !== undefined}
               onClick={() => { openForwardTargetPicker() }}
             ><span style={styles.selectBarIconTile}><ArkmeSelectActionIcon kind="forward" /></span><span style={styles.selectBarLabel}>{messageActionBusy === 'forward' ? '转发中' : ARKME_MESSAGE_SELECT_ACTION_LABELS[2]}</span></button>
             <button
@@ -8041,8 +8099,8 @@ export function ArkmeSurface({
           <button
             type="button"
             role="menuitem"
-            style={{ ...styles.messageActionMenuItem, opacity: arkmeTimelineMessageActionRef(messageMenuItem) === '' ? .45 : 1 }}
-            disabled={arkmeTimelineMessageActionRef(messageMenuItem) === ''}
+            style={{ ...styles.messageActionMenuItem, opacity: !canSelectTimelineItem(messageMenuItem) ? .45 : 1 }}
+            disabled={!canSelectTimelineItem(messageMenuItem)}
             onClick={() => { enterMessageSelectMode(messageMenuItem) }}
           ><span style={styles.messageActionMenuIcon} aria-hidden><ArkmeMessageActionIcon kind="select" /></span><span style={styles.messageActionMenuText}>{ARKME_MESSAGE_ACTION_MENU_LABELS[3]}</span></button>
           <button

@@ -695,8 +695,9 @@ export class SourceService {
     this.topicDissolveProgress.clear()
   }
 
-  async createTopic(titleInput: string, parentSourceRef?: string): Promise<ArkmeTopicCreateResult> {
+  async createTopic(titleInput: string, parentSourceRef?: string, options: { contextSourceRef?: string; signal?: AbortSignal } = {}): Promise<ArkmeTopicCreateResult> {
     const session = await this.runtime.requireSession()
+    if (options.contextSourceRef !== undefined) await this.openSourceRef(options.contextSourceRef, session.userId)
     const title = titleInput.trim()
     if (title === '' || Array.from(title).length > 100) {
       throw new ArkmePluginError('topic-title-invalid', '主题名称不能为空或超过 100 个字符', false)
@@ -711,6 +712,10 @@ export class SourceService {
       parentTopicUid = parent.ownerRef
     }
 
+    if ((await this.runtime.requireSession()).userId !== session.userId) {
+      throw new ArkmePluginError('account-changed', '账号已切换，请重新创建主题', false, 409)
+    }
+    options.signal?.throwIfAborted()
     const createdAtMillis = Date.now()
     const created = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/topics/create',
@@ -721,7 +726,9 @@ export class SourceService {
         extra: { source: 'dsh-arkme' },
       },
       session,
-    )
+      options.signal,
+      { trackWriteOutcome: true },
+    ).finally(() => { this.invalidateSourceListCache(session.userId, 'send_to_self') })
     const topicUid = stringValue(created.topic_uid).trim()
     if (topicUid === '' || numberValue(created.status) !== 1) {
       throw new ArkmePluginError('topic-create-contract-invalid', '主题创建响应不完整', true, 502)
@@ -1122,6 +1129,42 @@ export class SourceService {
       sourceRef,
       ...(nextParentSourceRef === undefined ? {} : { parentSourceRef: nextParentSourceRef }),
       siblingOrder,
+    }
+  }
+
+  /** Lightweight personal-topic choices; independent of conversation cards and their summaries. */
+  async listTopicCandidates(keyword: string, cursor?: string, signal?: AbortSignal): Promise<Pick<ArkmeSourceList, 'items' | 'hasMore' | 'nextCursor'>> {
+    const session = await this.runtime.requireSession()
+    const page = cursor === undefined ? undefined : this.decodeTopicDirectoryCursor(cursor)
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/topics/display/list', {
+      keyword: keyword.trim(), privacy_state: 1, limit: 100,
+      ...(page?.pageCursor === undefined ? {} : { page_cursor: page.pageCursor }),
+      ...(page?.pageCursor !== undefined || page?.offset === undefined ? {} : { offset: page.offset }),
+    }, session, signal, { lane: 'interactive-read' })
+    signal?.throwIfAborted()
+    const items: ArkmeSourceItem[] = []
+    const seen = new Set<string>()
+    for (const raw of listValue(data.items)) {
+      const entry = objectValue(raw)
+      const core = objectValue(entry.topic_core)
+      if (arkmePrivacyLockedTopic(entry) || core.status !== 1) continue
+      const topicUid = stringValue(core.topic_uid).trim()
+      const title = stringValue(core.title).trim()
+      if (!topicUid || !title || seen.has(topicUid)) continue
+      seen.add(topicUid)
+      items.push({ kind: 'topic', displayName: title, activeAtMillis: numberValue(core.update_at), unreadCount: 0,
+        sourceRef: await this.sealSourceRef(session.userId, 'topic', topicUid, title),
+        topicHierarchyKey: await this.topicHierarchyKey(session.userId, topicUid),
+      })
+    }
+    const pageCursor = objectValue(data.next_page_cursor ?? data.next_cursor)
+    const offset = numberValue(data.next_offset)
+    const hasCursor = Object.keys(pageCursor).length > 0
+    if (data.has_more === true && !hasCursor && offset <= 0) {
+      throw new ArkmePluginError('topic-candidates-incomplete', '主题列表加载不完整，请重试', true, 502)
+    }
+    return { items, hasMore: data.has_more === true,
+      ...(data.has_more !== true ? {} : { nextCursor: this.encodeTopicDirectoryCursor(hasCursor ? { pageCursor } : { offset }) }),
     }
   }
 

@@ -18,8 +18,8 @@ export function mergeMemberFacts(previous: ArkmeConversationMemberItem | undefin
 }
 
 export function mergeMemberPresentation(previous: ArkmeConversationMemberItem | undefined, incoming: ArkmeConversationMemberItem, profileUnavailable: boolean): ArkmeConversationMemberItem {
-  if (!profileUnavailable) return { ...incoming, statsKnown: true }
-  return { ...incoming, statsKnown: true,
+  if (!profileUnavailable) return { ...incoming, statsKnown: incoming.statsKnown !== false }
+  return { ...incoming, statsKnown: incoming.statsKnown !== false,
     ...(['', '群成员', '成员'].includes(incoming.displayName) && previous !== undefined ? { displayName: previous.displayName } : {}),
     ...(previous?.avatarRef === undefined ? {} : { avatarRef: previous.avatarRef }),
   }

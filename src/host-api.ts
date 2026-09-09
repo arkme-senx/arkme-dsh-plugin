@@ -1548,6 +1548,10 @@ export async function dispatchArkmeHostOperation(
     case 'topic.create': return await service.createTopic(
       stringParam(params, 'title'),
       stringParam(params, 'parentSourceRef') || undefined,
+      {
+        ...(params.contextSourceRef === undefined ? {} : { contextSourceRef: stringParam(params, 'contextSourceRef') }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      },
     )
     case 'topic.rename': return await service.renameTopic(
       stringParam(params, 'sourceRef'),
@@ -1567,6 +1571,9 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'currentParentSourceRef') || undefined,
       stringParam(params, 'nextParentSourceRef') || undefined,
       stringParam(params, 'insertBeforeSourceRef') || undefined,
+    )
+    case 'topic.candidates': return await service.listTopicCandidates(
+      stringParam(params, 'keyword'), stringParam(params, 'cursor') || undefined, requestSignal,
     )
     case 'sources.list': return await service.listSources(
       stringParam(params, 'directory') as ArkmeSourceDirectory,
@@ -1780,6 +1787,19 @@ export async function dispatchArkmeHostOperation(
         requestSignal === undefined ? {} : { signal: requestSignal },
       )
       return { ok: true }
+    }
+    case 'source.record-topic.assign': {
+      if (!Array.isArray(params.assignmentRefs) || params.assignmentRefs.some(ref => typeof ref !== 'string')) {
+        throw new ArkmePluginError('record-topic-selection-invalid', '快记归属引用无效', false, 400)
+      }
+      if (params.targetSourceRef !== undefined && typeof params.targetSourceRef !== 'string') {
+        throw new ArkmePluginError('record-topic-target-invalid', '主题引用无效', false, 400)
+      }
+      return await service.assignRecordTopic({
+        sourceRef: stringParam(params, 'sourceRef'),
+        assignmentRefs: params.assignmentRefs as string[],
+        ...(typeof params.targetSourceRef === 'string' ? { targetSourceRef: params.targetSourceRef } : {}),
+      }, requestSignal)
     }
     case 'source.forward-messages': return await service.forwardSourceMessages(
       stringParam(params, 'sourceRef'),

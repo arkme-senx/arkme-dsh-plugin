@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeFileIcon } from './ArkmeFileIcon.js'
@@ -55,6 +55,81 @@ export function useArkmeOriginal(block: ArkmeContentBlock, autoReceive = false, 
 type SavePickerWindow = Window & { showSaveFilePicker?: (options: { suggestedName: string }) => Promise<{ createWritable(): Promise<{ write(data: Blob): Promise<void>; close(): Promise<void>; abort(): Promise<void> }> }> }
 
 const primaryActionStyle: CSSProperties = { padding: '10px 24px', border: 0, borderRadius: 8, background: 'var(--dsw-alias-state-business-primary, #3964fe)', color: 'white', fontSize: 14, cursor: 'pointer' }
+const fileActionEnabledBackground = 'rgba(20,22,24,.38)'
+const fileActionDisabledBackground = 'rgba(20,22,24,.20)'
+const fileActionEnabledColor = 'rgba(255,255,255,.90)'
+const fileActionDisabledColor = 'rgba(255,255,255,.28)'
+const fileActionGroupStyle: CSSProperties = { display: 'flex', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12, fontSize: 12 }
+const fileActionButtonStyle: CSSProperties = { width: 30, height: 30, flex: 'none', display: 'grid', placeItems: 'center', border: 0, padding: 0, borderRadius: '50%', background: fileActionEnabledBackground, color: fileActionEnabledColor, cursor: 'pointer' }
+const fileActionNavButtonStyle: CSSProperties = { ...fileActionButtonStyle }
+const fileActionWideGapStyle: CSSProperties = { width: 24, flex: 'none' }
+const fileActionToastBubbleStyle: CSSProperties = { maxWidth: 'calc(100% - 40px)', boxSizing: 'border-box', padding: '15px 20px', borderRadius: 5, background: '#fff', color: '#000', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 15, lineHeight: '21px', fontWeight: 400, pointerEvents: 'none' }
+
+export type ArkmeFileActionNoticeKind = 'progress' | 'success' | 'error'
+export interface ArkmeFileActionNotice {
+  message: string
+  kind: ArkmeFileActionNoticeKind
+}
+export type ArkmeFileActionNoticeHandler = (notice: ArkmeFileActionNotice) => void
+
+function fileActionStateStyle(disabled: boolean, busy = false): CSSProperties {
+  return {
+    ...fileActionButtonStyle,
+    background: disabled ? fileActionDisabledBackground : fileActionEnabledBackground,
+    color: disabled ? fileActionDisabledColor : fileActionEnabledColor,
+    cursor: busy ? 'progress' : disabled ? 'default' : 'pointer',
+  }
+}
+
+export function useArkmeFileActionNotice() {
+  const [notice, setNotice] = useState<ArkmeFileActionNotice>()
+  const timer = useRef<ReturnType<typeof setTimeout>>()
+  const clearNotice = useCallback(() => {
+    if (timer.current !== undefined) {
+      clearTimeout(timer.current)
+      timer.current = undefined
+    }
+    setNotice(undefined)
+  }, [])
+  const showNotice = useCallback((next: ArkmeFileActionNotice) => {
+    if (timer.current !== undefined) {
+      clearTimeout(timer.current)
+      timer.current = undefined
+    }
+    setNotice(next)
+    if (next.kind !== 'progress') {
+      timer.current = setTimeout(() => {
+        timer.current = undefined
+        setNotice(undefined)
+      }, 800)
+    }
+  }, [])
+  useEffect(() => () => {
+    if (timer.current !== undefined) clearTimeout(timer.current)
+  }, [])
+  return { notice, showNotice, clearNotice }
+}
+
+export function ArkmeFileActionToast({ notice, style }: { notice: ArkmeFileActionNotice | undefined; style?: CSSProperties | undefined }) {
+  if (notice === undefined) return null
+  return <div style={{ display: 'flex', justifyContent: 'center', pointerEvents: 'none', ...style }}>
+    <span role="status" aria-live="polite" data-arkme-file-action-toast={notice.kind} style={{
+      ...fileActionToastBubbleStyle,
+    }}>{notice.message}</span>
+  </div>
+}
+
+function fileActionNoun(block: Pick<ArkmeContentBlock, 'kind'>): string {
+  if (block.kind === 'image') return '图片'
+  if (block.kind === 'video') return '视频'
+  return '文件'
+}
+
+export function arkmeClipboardImageBlob(blob: Blob, fallbackMimeType: string): Blob {
+  const mediaType = (blob.type || fallbackMimeType).trim().toLowerCase()
+  const safeMediaType = mediaType.startsWith('image/') ? mediaType : 'image/png'
+  return blob.type.trim().toLowerCase() === safeMediaType ? blob : new Blob([blob], { type: safeMediaType })
+}
 
 function FileReceptionProgress({ reception, fileName, noun = '文件' }: { reception: ArkmeFileReception; fileName: string; noun?: string }) {
   const percent = reception.totalBytes > 0 ? Math.max(0, Math.min(100, Math.round(reception.receivedBytes / reception.totalBytes * 100))) : undefined
@@ -128,6 +203,39 @@ function useArkmeFileDownload(block: ArkmeContentBlock, original: ReturnType<typ
   return { notice, saving, saved, save }
 }
 
+function useArkmeImageCopy(block: ArkmeContentBlock, sourceUrl: string | undefined, onNotice?: ArkmeFileActionNoticeHandler) {
+  const [copying, setCopying] = useState(false)
+  const copyController = useRef<AbortController>()
+  useEffect(() => () => { copyController.current?.abort() }, [block.mediaRef, block.localFileRef, sourceUrl])
+  const copy = async () => {
+    if (block.kind !== 'image' || copying) return
+    const clipboardWrite = typeof navigator === 'undefined' ? undefined : navigator.clipboard?.write?.bind(navigator.clipboard)
+    const ClipboardItemConstructor = typeof ClipboardItem === 'undefined' ? undefined : ClipboardItem
+    if (clipboardWrite === undefined || ClipboardItemConstructor === undefined || typeof fetch === 'undefined' || sourceUrl === undefined) {
+      onNotice?.({ message: '复制失败', kind: 'error' })
+      return
+    }
+    const controller = new AbortController()
+    copyController.current = controller
+    setCopying(true)
+    onNotice?.({ message: '复制中...', kind: 'progress' })
+    try {
+      const response = await fetch(sourceUrl, { signal: controller.signal })
+      if (!response.ok) throw new Error('图片已不可用，请重新打开')
+      const image = arkmeClipboardImageBlob(await response.blob(), block.mimeType)
+      controller.signal.throwIfAborted()
+      await clipboardWrite([new ClipboardItemConstructor({ [image.type]: image })])
+      controller.signal.throwIfAborted()
+      onNotice?.({ message: '已复制', kind: 'success' })
+    } catch (error) {
+      if (!controller.signal.aborted && !(error instanceof DOMException && error.name === 'AbortError')) onNotice?.({ message: '复制失败', kind: 'error' })
+    } finally {
+      if (!controller.signal.aborted) setCopying(false)
+    }
+  }
+  return { copying, copy }
+}
+
 function useArkmeNativeFileOpen(
   block: ArkmeContentBlock,
   original: ReturnType<typeof useArkmeOriginal>,
@@ -175,28 +283,73 @@ function useArkmeNativeFileOpen(
   return { opening, error, open }
 }
 
-function FileDownloadAction({ block, original, download }: {
-  block: ArkmeContentBlock; original: ReturnType<typeof useArkmeOriginal>; download: ReturnType<typeof useArkmeFileDownload>
+function FileDownloadAction({ block, original, download, showStatus = true, hideAfterSave = true }: {
+  block: ArkmeContentBlock; original: ReturnType<typeof useArkmeOriginal>; download: ReturnType<typeof useArkmeFileDownload>; showStatus?: boolean; hideAfterSave?: boolean
 }) {
   const { reception, localRef } = original
   const { notice, saving, saved, save } = download
-  return <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 10, fontSize: 12 }}>
-    {!saved && <button type="button" aria-label="下载文件" title="下载文件" disabled={saving || (localRef === undefined && block.originalRef === undefined)} onClick={() => { void save() }}
-      style={{ width: 30, height: 30, border: 0, padding: 0, borderRadius: '50%', background: 'rgba(255,255,255,.16)', color: 'inherit', cursor: saving ? 'progress' : 'pointer' }}>
-      <svg width="31" height="30" viewBox="0 0 31 30" fill="none" aria-hidden>
-        <path d="M8.90625 17V19C8.90625 20.1046 9.80168 21 10.9063 21H20.9063C22.0108 21 22.9062 20.1046 22.9062 19V17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M15.9102 8V17.5M15.9102 17.5L12.9102 14.5M15.9102 17.5L18.9102 14.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+  const noun = fileActionNoun(block)
+  const unavailable = localRef === undefined && block.originalRef === undefined
+  const disabled = saving || unavailable
+  return <>
+    {(!saved || !hideAfterSave) && <button type="button" aria-label={`下载${noun}`} title={`下载${noun}`} disabled={disabled} onClick={() => { void save() }}
+      style={fileActionStateStyle(unavailable, saving)}>
+      <ImageDownloadIcon />
     </button>}
-    {saving && <span role="status">{reception.state === 'receiving' ? '正在接收文件' : '正在下载…'}</span>}
-    {reception.error && <span role="alert">{reception.error}</span>}
-    {notice && <span role="status">{notice}</span>}
-  </div>
+    {showStatus && saving && <span role="status">{reception.state === 'receiving' ? `正在接收${noun}` : '正在下载...'}</span>}
+    {showStatus && reception.error && <span role="alert">{reception.error}</span>}
+    {showStatus && notice && <span role="status">{notice}</span>}
+  </>
 }
 
-export function ArkmeFileActions({ block, original }: { block: ArkmeContentBlock; original: ReturnType<typeof useArkmeOriginal> }) {
+function ImageCopyIcon() {
+  return <svg width="30" height="30" viewBox="0 0 30 30" fill="none" aria-hidden>
+    <path d="M17.001 7.73273C17.6906 7.73273 18.3519 8.00665 18.8395 8.49425C19.3271 8.98184 19.601 9.64316 19.601 10.3327V10.3994H19.6677C20.343 10.3994 20.9917 10.6621 21.4767 11.1319C21.9617 11.6017 22.2449 12.2418 22.2664 12.9167L22.2677 12.9994V19.6661C22.2677 20.3413 22.005 20.9901 21.5352 21.4751C21.0654 21.9601 20.4253 22.2433 19.7504 22.2647L19.6677 22.2661H13.001C12.3258 22.2661 11.677 22.0033 11.192 21.5335C10.707 21.0637 10.4238 20.4236 10.4024 19.7487L10.401 19.6661V19.5994H10.3344C9.65913 19.5994 9.01037 19.3367 8.52537 18.8669C8.04037 18.397 7.75718 17.757 7.73571 17.0821L7.73438 16.9994V10.3327C7.73438 9.64316 8.0083 8.98184 8.4959 8.49425C8.98349 8.00665 9.64481 7.73273 10.3344 7.73273H17.001ZM19.601 16.9994C19.601 17.689 19.3271 18.3503 18.8395 18.8379C18.3519 19.3255 17.6906 19.5994 17.001 19.5994H11.601V19.6661C11.601 20.0253 11.7391 20.3707 11.9866 20.631C12.2342 20.8913 12.5723 21.0464 12.931 21.0644L13.001 21.0661H19.6677C20.0269 21.0661 20.3724 20.928 20.6326 20.6805C20.8929 20.4329 21.0481 20.0948 21.066 19.7361L21.0677 19.6661V12.9994C21.0677 12.6402 20.9297 12.2947 20.6821 12.0345C20.4346 11.7742 20.0965 11.619 19.7377 11.6011L19.6677 11.5994H19.601V16.9994ZM17.001 8.93273H10.3344C9.96307 8.93273 9.60698 9.08023 9.34443 9.34278C9.08187 9.60533 8.93437 9.96142 8.93437 10.3327V16.9994C8.93437 17.1832 8.97059 17.3653 9.04094 17.5352C9.1113 17.705 9.21442 17.8593 9.34443 17.9893C9.47443 18.1193 9.62876 18.2225 9.79862 18.2928C9.96847 18.3632 10.1505 18.3994 10.3344 18.3994H17.001C17.1849 18.3994 17.3669 18.3632 17.5368 18.2928C17.7067 18.2225 17.861 18.1193 17.991 17.9893C18.121 17.8593 18.2241 17.705 18.2945 17.5352C18.3648 17.3653 18.401 17.1832 18.401 16.9994V10.3327C18.401 10.1489 18.3648 9.96683 18.2945 9.79697C18.2241 9.62711 18.121 9.47278 17.991 9.34278C17.861 9.21277 17.7067 9.10965 17.5368 9.0393C17.3669 8.96894 17.1849 8.93273 17.001 8.93273Z" fill="currentColor" />
+    <rect width="30" height="30" rx="15" fill="currentColor" fillOpacity=".04" />
+  </svg>
+}
+
+function ImageDownloadIcon() {
+  return <svg width="30" height="30" viewBox="0 0 31 30" fill="none" aria-hidden>
+    <path d="M8.90625 17V19C8.90625 20.1046 9.80168 21 10.9063 21H20.9063C22.0108 21 22.9062 20.1046 22.9062 19V17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M15.9102 8V17.5M15.9102 17.5L12.9102 14.5M15.9102 17.5L18.9102 14.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+}
+
+function ImageNavigationIcon({ direction }: { direction: 'left' | 'right' }) {
+  return <svg width="10" height="10" viewBox="0 0 11 18" fill="none" aria-hidden>
+    {direction === 'left'
+      ? <path d="M9.35714 1.14258L1.5 8.99972L9.35714 16.8569" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      : <path d="M1.64286 1.14258L9.5 8.99972L1.64286 16.8569" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
+  </svg>
+}
+
+function ImageCopyAction({ block, sourceUrl, onNotice }: { block: ArkmeContentBlock; sourceUrl: string | undefined; onNotice?: ArkmeFileActionNoticeHandler | undefined }) {
+  const { copying, copy } = useArkmeImageCopy(block, sourceUrl, onNotice)
+  if (block.kind !== 'image') return null
+  const unavailable = sourceUrl === undefined
+  return (
+    <button type="button" aria-label="复制图片" title="复制图片" disabled={copying || unavailable} onClick={() => { void copy() }}
+      style={fileActionStateStyle(unavailable, copying)}>
+      <ImageCopyIcon />
+    </button>
+  )
+}
+
+export function ArkmeFileActionNavButton({ label, direction, disabled, onClick }: { label: string; direction: 'left' | 'right'; disabled: boolean; onClick: () => void }) {
+  return <button type="button" aria-label={label} disabled={disabled} onClick={onClick}
+    style={fileActionStateStyle(disabled)}>
+    <ImageNavigationIcon direction={direction} />
+  </button>
+}
+
+export function ArkmeFileActions({ block, original, copySourceUrl, onImageCopyNotice, showDownloadStatus = true, hideDownloadAfterSave = true, style }: { block: ArkmeContentBlock; original: ReturnType<typeof useArkmeOriginal>; copySourceUrl?: string | undefined; onImageCopyNotice?: ArkmeFileActionNoticeHandler | undefined; showDownloadStatus?: boolean; hideDownloadAfterSave?: boolean; style?: CSSProperties | undefined }) {
   const download = useArkmeFileDownload(block, original)
-  return <FileDownloadAction block={block} original={original} download={download} />
+  const resolvedCopySourceUrl = copySourceUrl ?? (original.localRef === undefined ? undefined : arkmeLocalFileUrl(original.localRef))
+  return <div style={{ ...fileActionGroupStyle, ...style }}>
+    <ImageCopyAction block={block} sourceUrl={resolvedCopySourceUrl} onNotice={onImageCopyNotice} />
+    <FileDownloadAction block={block} original={original} download={download} showStatus={showDownloadStatus} hideAfterSave={hideDownloadAfterSave} />
+  </div>
 }
 
 export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, openLocalFile = false, forceDownload = false }: {
@@ -205,6 +358,7 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
   const original = useArkmeOriginal(block, block.kind === 'image')
   const download = useArkmeFileDownload(block, original)
   const nativeOpen = useArkmeNativeFileOpen(block, original, onClose)
+  const { notice: actionNotice, showNotice: showActionNotice, clearNotice: clearActionNotice } = useArkmeFileActionNotice()
   const panel = useRef<HTMLDivElement>(null)
   const [text, setText] = useState('')
   const [error, setError] = useState('')
@@ -219,7 +373,10 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
   const showContent = url !== undefined && browserPreview && (openRequested || block.kind === 'image' || block.kind === 'video')
   const systemFile = !browserPreview
   const index = Math.max(0, blocks.findIndex(value => value.mediaRef === block.mediaRef))
+  const previousDisabled = onSelect === undefined || index <= 0
+  const nextDisabled = onSelect === undefined || index >= blocks.length - 1
   useEffect(() => { setOpenRequested(openLocalFile); setError('') }, [block.mediaRef, openLocalFile])
+  useEffect(() => { clearActionNotice() }, [block.mediaRef, clearActionNotice])
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null
     panel.current?.focus()
@@ -272,8 +429,14 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
               : textFile ? <div style={{ maxHeight: '65vh', overflow: 'auto', overflowWrap: 'anywhere' }}>{/\.(md|markdown)$/i.test(block.fileName) ? <MarkdownText text={text} /> : <pre style={{ whiteSpace: 'pre-wrap' }}>{text}</pre>}</div>
                 : null}
       {error && <p role="alert">{error}</p>}
-      <div style={{ position: 'absolute', left: 0, right: 0, bottom: -56, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 24 }}>
-        {onSelect !== undefined && blocks.length > 1 && <><button type="button" aria-label="上一个文件" disabled={index === 0} onClick={() => onSelect(blocks[index - 1]!)} style={{ border: 0, background: 'transparent', color: 'inherit', fontSize: 24 }}>‹</button><button type="button" aria-label="下一个文件" disabled={index === blocks.length - 1} onClick={() => onSelect(blocks[index + 1]!)} style={{ border: 0, background: 'transparent', color: 'inherit', fontSize: 24 }}>›</button></>}
+      <ArkmeFileActionToast notice={actionNotice} style={{ position: 'absolute', left: 74, right: 74, bottom: -8 }} />
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: -56, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <ArkmeFileActionNavButton label="上一个文件" direction="left" disabled={previousDisabled} onClick={() => { if (!previousDisabled) onSelect?.(blocks[index - 1]!) }} />
+        <span aria-hidden style={fileActionWideGapStyle} />
+        <ArkmeFileActionNavButton label="下一个文件" direction="right" disabled={nextDisabled} onClick={() => { if (!nextDisabled) onSelect?.(blocks[index + 1]!) }} />
+        <span aria-hidden style={fileActionWideGapStyle} />
+        <ImageCopyAction block={block} sourceUrl={url} onNotice={showActionNotice} />
+        <span aria-hidden style={{ width: 12, flex: 'none' }} />
         <FileDownloadAction block={block} original={original} download={download} />
       </div>
     </div>

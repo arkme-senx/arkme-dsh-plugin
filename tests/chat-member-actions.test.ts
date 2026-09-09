@@ -206,6 +206,21 @@ describe('chat member action menu placement', () => {
     expect(arkmeMemberActionMenuRowCount(self, 'private_chat')).toBe(1)
   })
 
+  it('does not show unknown member statistics as zero in the menu', () => {
+    const menu = renderToStaticMarkup(createElement(ArkmeMemberActionMenu, {
+      member: { ...member, recordCount: 0, mentionCount: 0, statsKnown: false },
+      sourceKind: 'group_chat', position: { x: 16, y: 24 },
+      onClose: () => undefined, onMention: () => undefined,
+      onViewRecords: () => undefined, onProfile: () => undefined,
+    }))
+    expect(menu).not.toContain('>0<')
+    const panel = renderToStaticMarkup(createElement(ArkmeMemberRecordsPanel, {
+      sourceRef: 'source-ref', member: { ...member, statsKnown: false }, mode: 'owner', onClose: () => undefined,
+    }))
+    expect(panel).not.toContain('data-total=')
+    expect(panel).not.toContain('7条')
+  })
+
   it('routes self and other profile cards to their existing conversation owners', () => {
     expect(arkmeMemberConversationAction(member)).toBe('private_chat')
     const self = { ...member, isSelf: true, displayName: '颜格蕾' }

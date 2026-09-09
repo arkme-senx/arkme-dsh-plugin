@@ -44,7 +44,8 @@ globalThis.fetch = async (input, init) => {
     user_id: viewer + i, role: i === 0 ? 1 : 3, status: state.removed?.includes(i) ? 3 : 1,
     display_name_snapshot: `群内成员 ${i}`, display_name: `成员 ${i}`,
     remark: state.changed && i === 7 ? '成员七的新备注' : '', join_at: 1_700_000_000_000 + i,
-    extra: { record_count: i, mention_count: 0 },
+    extra: path.endsWith('/members/list') || (path.endsWith('/members/by-user-ids') && body.include_stats)
+      ? { record_count: i, mention_count: 0 } : {},
   }))
   if (path.endsWith('the-best-api-for-testing')) return json({ access_token: 'synthetic-member-test', refresh_token: 'synthetic-member-test' })
   if (path.endsWith('get-user-info')) return json({ user_id: viewer, nick_name: '缓存验收账号', phone: '13800000000', jotmo_id: 'member-fixture' })

@@ -282,3 +282,15 @@ it('rebinds cached Bot visibility to its directory lookup and keeps local action
   expect((await test.owner.read()).projection?.botPinnedKeys).toEqual(['stable-bot'])
   remote.resolve(page([row(1)])); await test.owner.settled()
 })
+
+ it('keeps notification freshness independent from pin freshness when merging directory rows', () => {
+  const current = row(1, { isPinned: true, chatPolicyUpdatedAtMillis: 10,
+    isMuted: true, chatNotificationPolicyUpdatedAtMillis: 30 })
+  const incoming = row(1, { isPinned: false, chatPolicyUpdatedAtMillis: 20,
+    isMuted: false, chatNotificationPolicyUpdatedAtMillis: 20, unreadCount: 3 })
+  const merged = mergeDirectorySource(current, incoming)
+  expect(merged.isPinned).toBe(false)
+  expect(merged.chatPolicyUpdatedAtMillis).toBe(20)
+  expect(merged.isMuted).toBe(true)
+  expect(merged.chatNotificationPolicyUpdatedAtMillis).toBe(30)
+})

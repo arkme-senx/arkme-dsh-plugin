@@ -88,6 +88,7 @@ export async function uploadArkmeRecording(
 }
 
 type ArkmeUiOperation = ArkmePluginOperation
+  | 'topic.candidates'
   | 'provider.instance'
   | 'link.metadata'
   | 'directory.list'
@@ -170,6 +171,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'source.message-copy-link.extend'
   | 'source.message-extension.context'
   | 'source.message-extension.extend'
+  | 'source.record-topic.assign'
   | 'source.forward-messages'
   | 'message-actions.copy-link'
   | 'message-actions.forward'
