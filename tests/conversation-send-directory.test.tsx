@@ -1311,7 +1311,7 @@ describe('conversation send directory projection', () => {
       .some(span => span.children.includes('多选')))!.props.onClick() })
   }
 
-  it('assigns selected self Records through the real toolbar and refreshes without forwarding', async () => {
+  it.each([false, true])('assigns selected self Records without confusing display and membership: %s', async staleDisplay => {
     activeSource = sendToSelf
     arkmeUi.selectSource(sendToSelf)
     const topic = { ...sendToSelf, sourceRef: 'topic-work', sourceKey: 'topic:work', topicHierarchyKey: 'topic-work-key', kind: 'topic' as const, displayName: '工作' }
@@ -1323,6 +1323,7 @@ describe('conversation send directory projection', () => {
       return await previous(operation, params, signal)
     })
     await enterMessageSelectMode({ itemUid: 'selected-self', messageActionRef: 'forward-ref', recordTopicAssignmentRef: 'assignment-ref',
+      ...(staleDisplay ? { selfTopic: { topicHierarchyKey: topic.topicHierarchyKey }, recordTopicAssignmentTopicKey: 'actual-other-topic' } : {}),
       senderName: '我', isMe: true, sendAtMillis: 8, title: '', textContent: '内容', status: 1 })
     const readsBefore = mocks.callArkme.mock.calls.filter(([op]) => op === 'source.timeline').length
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '指定主题' }).props.onClick() })
@@ -1335,6 +1336,31 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-record-topic-assignment-title' })).toHaveLength(0)
     expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.timeline').length).toBeGreaterThan(readsBefore)
+  })
+
+  it.each(['same', 'different', 'missing', 'unclassified'])('only treats a complete common membership as current: %s', async scenario => {
+    activeSource = sendToSelf
+    arkmeUi.selectSource(sendToSelf)
+    const topic = { ...sendToSelf, kind: 'topic' as const, sourceRef: 'target-topic', topicHierarchyKey: 'target-key', displayName: '工作' }
+    const previous = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'sources.list') return { items: [sendToSelf, topic], hasMore: false }
+      if (operation === 'topic.candidates') return { items: [topic], hasMore: false }
+      if (operation === 'source.record-topic.assign') return { movedRecordUids: ['second'], projectionRefreshPending: false }
+      return await previous(operation, params, signal)
+    })
+    const item = { itemUid: 'first', recordTopicAssignmentRef: 'first-ref', recordTopicAssignmentTopicKey: 'target-key',
+      senderName: '我', isMe: true, sendAtMillis: 8, title: '', textContent: '正文', status: 1 }
+    const { recordTopicAssignmentTopicKey: _key, ...second } = { ...item, itemUid: 'second', recordTopicAssignmentRef: 'second-ref' }
+    await enterMessageSelectMode(item, [{ ...second,
+      ...(scenario === 'same' ? { recordTopicAssignmentTopicKey: 'target-key' } : scenario === 'different' ? { recordTopicAssignmentTopicKey: 'other-key' } : {}),
+      ...(scenario === 'missing' ? { selfTopic: { topicHierarchyKey: 'target-key' } } : {}),
+    }])
+    await act(async () => renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'second' }).findByProps({ role: 'checkbox' }).props.onClick({ stopPropagation: vi.fn() }))
+    await act(async () => renderer!.root.findByProps({ 'aria-label': '指定主题' }).props.onClick())
+    await act(async () => renderer!.root.findByProps({ 'aria-label': '指定到工作' }).props.onClick())
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(scenario === 'same' ? 0 : 1)
+    if (scenario === 'same') expect(JSON.stringify(renderer!.toJSON())).toContain('已在当前主题中！')
   })
 
   it.each(['moved', 'same', 'unknown'])('reconciles a just-sent topic record after assignment: %s', async outcome => {
@@ -1381,7 +1407,7 @@ describe('conversation send directory projection', () => {
       expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
     }
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(outcome === 'same' ? 1 : 0)
-    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(outcome === 'same' ? 0 : 1)
   })
 
   it.each([false, true])('keeps membership and forwarding capabilities separate for mixed selections: %s', async mixed => {

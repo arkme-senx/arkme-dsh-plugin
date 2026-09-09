@@ -2127,8 +2127,10 @@ export class ChatService {
           const core = objectValue(entry.record_core)
           const sourceTopicUid = entry.source_kind === 1 ? ''
             : entry.source_kind === 2 ? stringValue(entry.source_uid).trim() || undefined : undefined
-          return this.withRecordTopicAssignmentRef(source, item, session.userId, signingKey,
+          const assignable = this.withRecordTopicAssignmentRef(source, item, session.userId, signingKey,
             numberValue(core.owner_user_id), sourceTopicUid)
+          if (!assignable.recordTopicAssignmentRef || !sourceTopicUid) return assignable
+          return { ...assignable, recordTopicAssignmentTopicKey: await this.source.topicHierarchyKey(session.userId, sourceTopicUid) }
         }))).filter(item => item.itemUid !== '')
         this.hydrateTimelineExtensionParents(items)
         const projectedItems = items.map(item => this.withRecordMessageActionRef(source, item, session.userId, signingKey))

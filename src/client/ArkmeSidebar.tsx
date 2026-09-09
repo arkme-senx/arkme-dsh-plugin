@@ -2963,7 +2963,7 @@ export function ArkmeSurface({
   const [messageActionBusy, setMessageActionBusy] = useState<'copy-link' | 'forward'>()
   const [selectMode, setSelectMode] = useState<{ sourceKey: string; selectedIds: Set<string> }>()
   const [topicAssignment, setTopicAssignment] = useState<{
-    scopeKey: string; source: ArkmeSourceItem; assignmentRefs: string[]; firstRecordText: string
+    scopeKey: string; source: ArkmeSourceItem; assignmentRefs: string[]; firstRecordText: string; currentTopicKey?: string
   }>()
   const topicAssignmentScopeKey = `${authenticatedAccountKey ?? ''}:${conversationOverlayKey}`
   useEffect(() => { setTopicAssignment(undefined) }, [topicAssignmentScopeKey])
@@ -6742,6 +6742,7 @@ export function ArkmeSurface({
     {activeConversation && topicAssignment?.scopeKey === topicAssignmentScopeKey && <ArkmeRecordTopicAssignmentDialog
       key={topicAssignmentScopeKey}
       source={topicAssignment.source} assignmentRefs={topicAssignment.assignmentRefs} firstRecordText={topicAssignment.firstRecordText}
+      {...(topicAssignment.currentTopicKey === undefined ? {} : { currentTopicKey: topicAssignment.currentTopicKey })}
       onCancel={() => { setTopicAssignment(undefined) }}
       onRefresh={() => {
         if (topicAssignment.source.kind !== 'send_to_self') confirmedSendRetention.forget(conversationKey, selectedMessageItems.map(item => item.itemUid))
@@ -7292,7 +7293,12 @@ export function ArkmeSurface({
                 if (messageActionBusy !== undefined || selectedMessageItems.length === 0
                   || selectedMessageItems.length !== selectedMessageCount
                   || selectedMessageItems.some(item => !item.recordTopicAssignmentRef)) return
+                const currentTopicKey = source.kind === 'topic' ? source.topicHierarchyKey
+                  : selectedMessageItems[0]?.recordTopicAssignmentTopicKey
+                const allInCurrentTopic = currentTopicKey !== undefined && (source.kind === 'topic'
+                  || selectedMessageItems.every(item => item.recordTopicAssignmentTopicKey === currentTopicKey))
                 setTopicAssignment({ scopeKey: topicAssignmentScopeKey, source,
+                  ...(allInCurrentTopic ? { currentTopicKey } : {}),
                   assignmentRefs: selectedMessageItems.map(item => item.recordTopicAssignmentRef!),
                   firstRecordText: items.find(item => item.itemUid === selectedMessageItems[0]?.itemUid)?.textContent ?? '',
                 })

@@ -2028,6 +2028,16 @@ describe('ArkmeService', () => {
     expect(sent.recordTopicAssignmentRef).toBeUndefined()
   })
 
+  it.each([0, 12, undefined, -1])('projects topic picker counts only from valid owner summary: %s', async count => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async () => json({ code: 0, data: {
+      items: [{ topic_core: { topic_uid: 't', title: '工作', status: 1 }, summary: { record_count: count } }], has_more: false,
+    } }))
+    const page = await service.listTopicCandidates('')
+    expect(page.items[0]?.recordCount).toBe(typeof count === 'number' && count >= 0 ? count : undefined)
+  })
+
   it('pages eligible topic candidates using owner cursors and fails explicitly when pagination evidence is missing', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -2078,7 +2088,7 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/records/uncategorized/query')) return json({ code: 0, data: { items: [], has_more: false } })
       if (url.endsWith('/api/v1/home/feed/query')) return json({ code: 0, data: { items: [
         { record_uid: 'unclassified', source_kind: 1, record_core: { record_uid: 'unclassified', text_content: '正文', owner_user_id: 10001, status: 1 } },
-        { record_uid: 'in-topic', source_kind: 2, source_uid: 'old-topic',
+        { record_uid: 'in-topic', source_kind: 2, source_uid: 'old-topic', topic_core: { topic_uid: 'work-topic', title: '展示主题' },
           record_core: { record_uid: 'in-topic', text_content: '正文2', owner_user_id: 10001, status: 1 } },
         { record_uid: 'foreign', source_kind: 1, record_core: { record_uid: 'foreign', text_content: '他人记录', owner_user_id: 999, status: 1 } },
         { record_uid: 'unknown', source_kind: 99, topic_core: { topic_uid: 'unrelated-topic' }, record_core: { record_uid: 'unknown', text_content: '未知来源', owner_user_id: 10001, status: 1 } },
@@ -2107,6 +2117,10 @@ describe('ArkmeService', () => {
     expect((await service.listSources('send_to_self', { limit: 100 })).items).toEqual(directory.items)
     expect(calls.filter(call => call.url.endsWith('/api/v1/topics/display/list')).map(call => call.body.keyword)).toEqual(['', '搜索'])
     const page = await service.readSource(self.sourceRef)
+    const inTopic = page.items.find(item => item.itemUid === 'in-topic')!
+    expect(inTopic.recordTopicAssignmentTopicKey).toEqual(expect.any(String))
+    expect(inTopic.recordTopicAssignmentTopicKey).not.toBe(inTopic.selfTopic?.topicHierarchyKey)
+    expect(page.items.find(item => item.itemUid === 'unclassified')?.recordTopicAssignmentTopicKey).toBeUndefined()
     expect(page.items.find(item => item.itemUid === 'unknown')?.recordTopicAssignmentRef).toBeUndefined()
     expect(page.items.find(item => item.itemUid === 'foreign')?.recordTopicAssignmentRef).toBeUndefined()
     const assignable = page.items.filter(item => item.recordTopicAssignmentRef !== undefined)

@@ -1,5 +1,6 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ArkmeConfirmDialog } from '../src/client/ArkmeConfirmDialog.js'
 import { ArkmeRecordTopicAssignmentDialog } from '../src/client/ArkmeRecordTopicAssignmentDialog.js'
 
 const source = { sourceRef: 'self', kind: 'send_to_self' as const, displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 }
@@ -21,12 +22,12 @@ describe('personal record topic assignment dialog', () => {
     expect(props.port.createTopic).not.toHaveBeenCalled()
     expect(props.port.assign).not.toHaveBeenCalled()
     expect(renderer!.root.findByProps({ role: 'alert' }).children.join('')).toContain('1 至 100')
-    expect(button('取消').props.disabled).toBe(false)
+    expect(renderer!.root.findByType(ArkmeConfirmDialog).props.busy).toBe(false)
   })
   it('loads topics and cancels without a mutation', async () => {
     const props = setup()
     await act(async () => { renderer = create(<ArkmeRecordTopicAssignmentDialog {...props} />) })
-    await act(async () => button('取消').props.onClick())
+    await act(async () => renderer!.root.findByType(ArkmeConfirmDialog).props.onClose())
     expect(props.onCancel).toHaveBeenCalledOnce()
     expect(props.port.assign).not.toHaveBeenCalled()
   })
@@ -45,7 +46,7 @@ describe('personal record topic assignment dialog', () => {
     const click = button('指定到工作').props.onClick
     await act(async () => { click(); click() })
     expect(props.port.assign).toHaveBeenCalledOnce()
-    expect(button('取消').props.disabled).toBe(true)
+    expect(renderer!.root.findByType(ArkmeConfirmDialog).props.busy).toBe(true)
     await act(async () => { finish(result) })
   })
   it('does not apply a late write acknowledgement after unmount', async () => {
@@ -171,4 +172,25 @@ describe('personal record topic assignment dialog', () => {
     await act(async () => button('移出主题').props.onClick())
     expect(props.port.assign).toHaveBeenCalledWith({ sourceRef: 'topic-a', assignmentRefs: ['assignment-a'] }, expect.any(AbortSignal))
   })
+})
+
+it('uses the desktop picker layout and shows count/current metadata without confirmation footer', async () => {
+ const props = setup()
+ props.port.listTopics.mockResolvedValue({ items: [{ ...topic, recordCount: 12 }], hasMore: false })
+ await act(async () => { renderer = create(<ArkmeRecordTopicAssignmentDialog {...props} currentTopicKey={topic.topicHierarchyKey} />) })
+ expect(renderer!.root.findByType(ArkmeConfirmDialog).props.layout).toBe('picker')
+ expect(renderer!.root.findAllByType('footer')).toHaveLength(0)
+ expect(renderer!.root.findByType('input').props.placeholder).toBe('搜索主题名')
+ expect(JSON.stringify(button('指定到工作').children.map(child => typeof child === 'string' ? child : child.props.children))).toContain('当前主题')
+ await act(async () => { renderer!.update(<ArkmeRecordTopicAssignmentDialog {...props} />) })
+ expect(button('指定到工作').findAllByType('span').at(-1)!.children).toEqual(['12'])
+})
+
+it('keeps an already-current topic open and does not submit a redundant assignment', async () => {
+ const props = setup()
+ await act(async () => { renderer = create(<ArkmeRecordTopicAssignmentDialog {...props} currentTopicKey={topic.topicHierarchyKey} />) })
+ await act(async () => button('指定到工作').props.onClick())
+ expect(props.port.assign).not.toHaveBeenCalled()
+ expect(props.onAssigned).not.toHaveBeenCalled()
+ expect(renderer!.root.findByProps({ role: 'status' }).children).toEqual(['已在当前主题中！'])
 })
