@@ -53,7 +53,7 @@
 - Chat `go test ./gin/... ./internal/... ./pkg/...` 通过；其中无配置的 Mongo 用例按原约定跳过，另有下一项真实 Mongo 证据。
 - Chat Mongo 定向：30 项通过、无跳过，包含 unread 全量摘要/分页/页装饰、list/filter/cursor、display-snapshots 一致性。
 - Chat Redis + `-race ./pkg/datastore ./gin/response -count=1` 通过；`TestReadRecoveryPublicRouteClassifiesContentionAndRate` 在真实 Gin 路由通过。
-- Chat list/unread E2E：5 项通过、1 项 slow 场景默认跳过；Record 依赖为现有仓库 `95712aa`，不是本次改动仓库。后续慢场景结果以追加验收记录为准。
+- Chat list/unread E2E：常规5项通过；另显式启用 slow 单独执行 `TestChatListDoesNotDependOnRecordService` 通过，真实停止 Record 后 list/detail 仍可读、正文装饰降级为 unavailable，再恢复 Record。Record 依赖为现有仓库 `95712aa`，不是本次改动仓库。
 - 后端分支 guard：failures=0、warnings=0。Flutter 三个合同/未读文件181项通过。
 
 ## 尚未关闭的全项目门禁
@@ -72,3 +72,5 @@
 - 本机证据前缀 `dsh-read-recovery-review-`：plugin-final、typecheck-final、build-final、live、browser、public-guard、e2e-green、mongo-final、mongo-sweep、mongo-baseline、race、flutter、flutter-landing、backend-guard。日志为本地诊断证据，CI 应独立归档复跑结果。
 
 生产发布与合并主干未执行。回滚无需撤销数据迁移：插件回退旧包、Chat 回退上一构建即可；保留原锁协议和响应外壳使服务端先上、旧客户端继续工作。
+
+最终本地验收包 `dsh-arkme-read-recovery-verified.tgz`，SHA-256 为 `965ba90af356a71f2b82313ea96ad815ad3b6860d78c4688a9f6ef24387b00cd`。该包已重新通过官方 plugin add 安装；包外 Consumer 使用公开 SDK 导出完成类型检查和五栏目合成调用。无产品版本号变更，不将同版本测试包称为已发布更新。
