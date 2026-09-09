@@ -41,6 +41,7 @@ import {
 } from './world/index.js'
 import { wechatToolModules } from './wechat/index.js'
 import { extensionReviewToolModules } from './extensions/reviews.js'
+import { recordingToolModules } from './recordings/index.js'
 import { groupMemberToolModules } from './groups/index.js'
 import { contactToolModules } from './contacts/index.js'
 import { groupToolModules } from './groups/index.js'
@@ -68,6 +69,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...voiceprintToolModules,
   worldPublishTextToolModule,
   ...extensionReviewToolModules,
+  ...recordingToolModules,
   ...wechatToolModules,
   listSourcesToolModule,
   pinBotDirectoryToolModule,

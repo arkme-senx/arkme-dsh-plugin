@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { ToolArgsError, validateJsonSchemaValue, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { isArkmeContextToolModule, isArkmeCoreToolModule } from '../contract/module.js'
 import type { ArkmeToolModule, ArkmeToolProfile } from '../contract/module.js'
 import type { ArkmeCoreToolPorts, ArkmeToolPorts } from '../ports/index.js'
@@ -20,6 +20,8 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_file_prepare',
   'arkme_files_send',
   'arkme_file_task',
+  'arkme_recording_import',
+  'arkme_recording_import_folder',
   'arkme_id_set',
   'arkme_record_reedit',
   'arkme_bot_openclaw_connect',
@@ -76,6 +78,9 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_direct_message_refusal_set') return args.refused === true
     ? '是否确认拒收这个私聊用户的消息？拒收期间双方都无法发送新消息，历史记录保留。'
     : '是否确认解除你对这个私聊用户的拒收？如果对方仍拒收，双方依然无法发送新消息。'
+  if (name === 'arkme_recording_import') return args.action === 'retry'
+    ? '是否确认重试这条失败的录音上传任务？'
+    : `是否确认按指定的开始时间导入所选录音，并将归属设为“${args.ownership === 'other' ? '其他' : '自己'}”？`
   if (name === 'arkme_background_sound_disable') return '是否确认关闭当前 Arkme 账号的文字背景音？这不会删除已经发送的背景音。'
   if (name === 'arkme_user_ban') return '是否确认封禁这个私聊用户？确认后将无法重新登录；Backend、聊天和录音请求立即受限；其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效。'
   if (name === 'arkme_user_unban') return '是否确认解封这个私聊用户？确认后该用户可重新登录并恢复操作。'
@@ -165,19 +170,25 @@ function withCoreConversationalConfirmation(
   return {
     ...definition,
     async execute(args, exec) {
+      const violations = validateJsonSchemaValue(definition.parameters, args, '')
+      if (violations.length > 0) throw new ToolArgsError(violations)
+      if (definition.name === 'arkme_recording_import'
+        && typeof args === 'object' && args !== null && 'action' in args && args.action === 'status') {
+        return await definition.execute(args, exec)
+      }
       if (exec.agent === undefined) throw new Error('该 Arkme 操作必须在一个真实 DSH Agent 会话中执行')
-      const question = coreConfirmationQuestion(
-        definition.name,
-        typeof args === 'object' && args !== null ? args as Record<string, unknown> : {},
-      )
       const hooks = arkmeConfirmationContextHooks(definition)
+      const request = hooks?.confirmationRequest?.(args)
       const result = await conversation.prepareOrExecute({
         agent: exec.agent as Agent,
+        callId: exec.callId, rootCallId: exec.rootCallId,
         operationKey: definition.name,
-        arguments: args,
-        question: hooks?.question === undefined
-          ? question
-          : preparedContext => hooks.question!(args, preparedContext),
+        arguments: request === undefined ? args : request.arguments,
+        ...(request === undefined ? {} : { forcePrepare: request.forcePrepare }),
+        question: hooks?.question === undefined ? coreConfirmationQuestion(
+          definition.name,
+          typeof args === 'object' && args !== null ? args as Record<string, unknown> : {},
+        ) : prepared => hooks.question!(args, prepared),
         ...(hooks === undefined ? {} : { prepare: async () => await hooks.prepare(args, exec) }),
         execute: async preparedContext => hooks === undefined
           ? await definition.execute(args, exec)

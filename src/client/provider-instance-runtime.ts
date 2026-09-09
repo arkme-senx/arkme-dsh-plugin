@@ -3,6 +3,7 @@ import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import type { ArkmeAvatarImagePort } from './avatar-image-store.js'
 import type { ArkmeClientAccountScope } from './chat-directory-store.js'
 import { reconcileNavigationProviderInstance } from './navigation-cache.js'
+import { privateChatActions } from './private-chat-actions-store.js'
 
 interface ArkmeProviderInstanceGuardOptions {
   loadInstance(): Promise<string>
@@ -56,6 +57,7 @@ export const reconcileArkmeProviderInstance = createArkmeProviderInstanceGuard({
     return instance.instanceId
   },
   onInvalidate: () => {
+    privateChatActions.reset()
     revalidateArkmeProviderAvatarImages(arkmeAvatarImages)
   },
 })

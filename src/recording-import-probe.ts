@@ -1,12 +1,16 @@
-import { open, stat, unlink } from 'node:fs/promises'
-import { FilePathSource, Input, MP3, MP4, WAVE } from 'mediabunny'
+import { open, unlink } from 'node:fs/promises'
+import { CustomSource, Input, MP3, MP4, WAVE } from 'mediabunny'
 import {
   RecordingImportContractError,
   recordingImportFileKind,
   type RecordingImportFileKind,
   type RecordingImportSource,
 } from './recording-import-contract.js'
-import { probeImaAdpcmWave } from './recording-wave-probe.js'
+import { probeImaAdpcmWave, type RecordingByteSource } from './recording-wave-probe.js'
+
+// Ten-hour AAC sample-size and per-packet 64-bit offset tables at 192 kHz use about 78 MiB.
+// Leave headroom while bounding each allocation requested by an untrusted container header.
+const MAX_RECORDING_PROBE_READ_BYTES = 128 * 1024 * 1024
 
 export interface RecordingImportProbe {
   kind: RecordingImportFileKind
@@ -17,27 +21,41 @@ export async function probeRecordingImportFile(
   filePath: string,
   metadata: { fileName: string; mimeType: string; fileSize: number },
 ): Promise<RecordingImportProbe> {
-  const actualSize = (await stat(filePath)).size
-  if (actualSize !== metadata.fileSize) {
+  const handle = await open(filePath, 'r')
+  try {
+    return await probeRecordingImportSource({
+      size: (await handle.stat()).size,
+      read: async (offset, length) => {
+        const bytes = new Uint8Array(length)
+        const { bytesRead } = await handle.read(bytes, 0, length, offset)
+        return bytes.subarray(0, bytesRead)
+      },
+    }, metadata)
+  } finally {
+    await handle.close()
+  }
+}
+
+export async function probeRecordingImportSource(
+  source: RecordingByteSource,
+  metadata: { fileName: string; mimeType: string; fileSize: number },
+): Promise<RecordingImportProbe> {
+  if (source.size !== metadata.fileSize) {
     throw new RecordingImportContractError('recording-import-size-mismatch', '录音文件大小与声明不一致')
+  }
+  const boundedSource: RecordingByteSource = {
+    size: source.size,
+    read: (offset, length) => {
+      if (length > MAX_RECORDING_PROBE_READ_BYTES) {
+        throw new RecordingImportContractError('recording-import-probe-failed', '录音元数据过大，无法安全校验')
+      }
+      return source.read(offset, length)
+    },
   }
 
   let input: Input | undefined
   try {
-    const handle = await open(filePath, 'r')
-    let imaAdpcm
-    try {
-      imaAdpcm = await probeImaAdpcmWave({
-        size: actualSize,
-        read: async (offset, length) => {
-          const bytes = new Uint8Array(length)
-          const { bytesRead } = await handle.read(bytes, 0, length, offset)
-          return bytes.subarray(0, bytesRead)
-        },
-      })
-    } finally {
-      await handle.close()
-    }
+    const imaAdpcm = await probeImaAdpcmWave(boundedSource)
     if (imaAdpcm !== undefined) {
       const declaredKind = recordingImportFileKind({ ...metadata, durationMillis: imaAdpcm.durationMillis })
       if (declaredKind !== 'wav') {
@@ -46,7 +64,11 @@ export async function probeRecordingImportFile(
       return { kind: 'wav', durationMillis: imaAdpcm.durationMillis }
     }
 
-    input = new Input({ source: new FilePathSource(filePath), formats: [WAVE, MP3, MP4] })
+    input = new Input({ source: new CustomSource({
+      getSize: () => boundedSource.size,
+      read: (start, end) => boundedSource.read(start, end - start),
+      prefetchProfile: 'fileSystem',
+    }), formats: [WAVE, MP3, MP4] })
     if (!await input.canRead()) {
       throw new RecordingImportContractError('recording-import-format-invalid', '无法识别录音文件内容')
     }

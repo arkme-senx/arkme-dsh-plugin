@@ -23,6 +23,12 @@ describe('retired recording model entry points', () => {
     const read = vi.fn(() => { throw new Error('retired owner must not run') })
     const ports = { recordingCalendar: read, recordingTranscript: read, recordingProjection: read } as unknown as ArkmeToolPorts
     const fiber = await ctx.plugin(Object.assign((plugin: Context) => registerArkmeTools(plugin, ports, profile), { inject: ['tools', 'systemPrompt'] }))
+    const schemas = ctx.tools.schemas()
+    // Importing local files is a separate write capability, not a retired read.
+    for (const name of ['arkme_recording_import', 'arkme_recording_import_folder']) {
+      expect(schemas.some(tool => tool.name === name)).toBe(profile === 'business' || profile === 'hybrid')
+    }
+    expect(schemas.map(tool => tool.description).join('\n')).not.toMatch(/arkme_recording_days_list|arkme_recording_read/)
     for (const name of ['arkme_recording_days_list', 'arkme_recording_read']) {
       expect(arkmeToolCatalog.toolNamesFor(profile)).not.toContain(name)
       expect(ctx.tools.schemas().map(tool => tool.name)).not.toContain(name)

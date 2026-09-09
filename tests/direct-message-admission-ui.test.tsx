@@ -4,21 +4,22 @@ import type { ArkmeDirectMessageAdmission } from '../src/direct-message-admissio
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call, ArkmeClientError: class extends Error {} }))
 import { invalidateDirectMessageAdmission, requireDirectMessageSendAllowed, useDirectMessageAdmission } from '../src/client/direct-message-admission.js'
+import { privateChatActions } from '../src/client/private-chat-actions-store.js'
 
 const allowed: ArkmeDirectMessageAdmission = { state: 'allowed', canSend: true, refusalCreationEnabled: true, ownRefused: false, counterpartRefused: false, ownRevision: 0, counterpartRevision: 0 }
 const denied: ArkmeDirectMessageAdmission = { ...allowed, state: 'refused_by_self', canSend: false, ownRefused: true, ownRevision: 1 }
 let latest: ReturnType<typeof useDirectMessageAdmission>
 function Probe({ account = 'test:42', source = 'source', applicable = true }) {
-  latest = useDirectMessageAdmission(account, source, applicable)
+  latest = useDirectMessageAdmission(account, { sourceRef: source, kind: 'private_chat', displayName: 'Peer', activeAtMillis: 0, unreadCount: 0 }, applicable)
   return <textarea disabled={latest.blocked} defaultValue="保留草稿" />
 }
 let renderer: ReactTestRenderer | undefined
-afterEach(async () => { await act(async () => { renderer?.unmount() }); renderer = undefined; mocks.call.mockReset(); vi.unstubAllGlobals() })
+afterEach(async () => { await act(async () => { renderer?.unmount() }); renderer = undefined; privateChatActions.activateAccount(undefined); privateChatActions.reset(); mocks.call.mockReset(); vi.unstubAllGlobals() })
 describe('private message admission UI lifecycle', () => {
   it('one click recovers unknown state, confirms and uses the queried revision', async () => {
     mocks.call.mockRejectedValueOnce(new Error('offline'))
     await act(async () => { renderer = create(<Probe />) })
-    mocks.call.mockResolvedValueOnce({ ...allowed, ownRevision: 7 }).mockResolvedValue(denied)
+    mocks.call.mockResolvedValueOnce({ ...allowed, ownRevision: 7 }).mockResolvedValue({ ...denied, ownRevision: 8 })
     const confirm = vi.fn(() => true)
     await act(async () => { await latest.toggle(confirm) })
     expect(confirm).toHaveBeenCalledOnce()
@@ -134,15 +135,15 @@ describe('private message admission UI lifecycle', () => {
     expect(mocks.call.mock.calls.filter(call => call[0] === 'chat.direct-message-admission')).toHaveLength(2)
   })
   it('rollout closure blocks only new refusal, keeping messages and unrefuse available', async () => {
-    mocks.call.mockResolvedValue({ ...allowed, refusalCreationEnabled: false })
+    mocks.call.mockResolvedValue({ ...allowed, refusalCreationEnabled: false, ownRevision: 2 })
     await act(async () => { renderer = create(<Probe />) })
     expect(latest.blocked).toBe(false)
     await act(async () => { await latest.toggle() })
     expect(mocks.call.mock.calls.some(call => call[0] === 'chat.direct-message-refusal.set')).toBe(false)
-    mocks.call.mockResolvedValue({ ...denied, refusalCreationEnabled: false })
+    mocks.call.mockResolvedValue({ ...denied, refusalCreationEnabled: false, ownRevision: 3 })
     await act(async () => { invalidateDirectMessageAdmission() })
     expect(latest.blocked).toBe(true)
-    mocks.call.mockResolvedValue({ ...allowed, refusalCreationEnabled: false })
+    mocks.call.mockResolvedValue({ ...allowed, refusalCreationEnabled: false, ownRevision: 4 })
     await act(async () => { await latest.toggle() })
     expect(latest.blocked).toBe(false)
     expect(mocks.call.mock.calls.filter(call => call[0] === 'chat.direct-message-refusal.set')).toHaveLength(1)
@@ -155,7 +156,7 @@ describe('private message admission UI lifecycle', () => {
     await act(async () => { resolve(denied) })
     expect(latest.blocked).toBe(true)
     expect(renderer!.root.findByType('textarea').props.defaultValue).toBe('保留草稿')
-    mocks.call.mockResolvedValue(allowed)
+    mocks.call.mockResolvedValue({ ...allowed, ownRevision: 2 })
     await act(async () => { await latest.toggle() })
     expect(latest.blocked).toBe(false)
     expect(mocks.call.mock.calls.every(call => String(call[0]).startsWith('chat.direct-message'))).toBe(true)
@@ -176,7 +177,7 @@ describe('private message admission UI lifecycle', () => {
     expect(latest.blocked).toBe(true)
     expect(latest.message).not.toContain('offline')
   })
-  it('ignores old-account responses and refreshes on invalidation without a shared fact cache', async () => {
+  it('isolates old-account responses and refreshes shared projections on invalidation', async () => {
     let resolveOld!: (value: ArkmeDirectMessageAdmission) => void
     mocks.call.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve })).mockResolvedValue(allowed)
     await act(async () => { renderer = create(<Probe />) })

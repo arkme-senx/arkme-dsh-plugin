@@ -90,8 +90,9 @@ export interface StateStore {
     userId: number,
     job: RecordingImportJob,
     unresolvedLimit: number,
+    signal?: AbortSignal,
   ): Promise<RecordingImportAdmission>
-  replaceRecordingImportJob(userId: number, job: RecordingImportJob, expectedRevision: number): Promise<boolean>
+  replaceRecordingImportJob(userId: number, job: RecordingImportJob, expectedRevision: number, signal?: AbortSignal): Promise<boolean>
   removeRecordingImportJob(userId: number, jobId: string): Promise<void>
 }
 
@@ -123,6 +124,7 @@ export interface ArkmeServiceConfig {
   markdownQuickNotesEnabled?: boolean
   richMediaSendEnabled?: boolean
   maxUploadBytes?: number
+  recordingImportDirectory?: string
   fileStateDirectory?: string
 }
 

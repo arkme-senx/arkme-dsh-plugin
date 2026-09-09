@@ -153,6 +153,16 @@ describe('account settings Host API dispatch', () => {
 })
 
 describe('user-ban Host API dispatch', () => {
+  it('preserves cancellation through both related-recording routes', async () => {
+    const controller = new AbortController()
+    const service = { relatedRecordingEligibility: vi.fn(), relatedRecordings: vi.fn() }
+    await dispatchArkmeHostOperation(service as never, 'related-recordings.eligibility', { sourceRef: 'source' },
+      undefined, undefined, undefined, undefined, controller.signal)
+    await dispatchArkmeHostOperation(service as never, 'related-recordings.page', { sourceRef: 'source' },
+      undefined, undefined, undefined, undefined, controller.signal)
+    expect(service.relatedRecordingEligibility).toHaveBeenCalledWith('source', controller.signal)
+    expect(service.relatedRecordings).toHaveBeenCalledWith('source', expect.objectContaining({ signal: controller.signal }))
+  })
   it('forwards only the account-bound private-chat source and bounded remark', async () => {
     const service = fakeService()
 

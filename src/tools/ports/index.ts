@@ -10,6 +10,7 @@ import type { ArkmeOutgoingCallToolPort } from './outgoing-call.js'
 import type { ArkmeOpenClawToolPort } from './openclaw.js'
 import type { ArkmeProfileToolPort } from './profile.js'
 import type { ArkmeRecordToolPort } from './records.js'
+import type { ArkmeRecordingToolPort } from './recordings.js'
 import type { ArkmeWorldToolPort } from './world.js'
 import type { ArkmeWechatToolPort } from './wechat.js'
 import type { ArkmeVoiceprintToolPort } from './voiceprint.js'
@@ -28,6 +29,7 @@ export interface ArkmeCoreToolPorts extends
   ArkmeCalendarToolPort,
   ArkmeCallHistoryToolPort,
   ArkmeRecordToolPort,
+  ArkmeRecordingToolPort,
   ArkmeProfileToolPort,
   ArkmeConversationToolPort,
   ArkmeContactToolPort,
@@ -46,6 +48,7 @@ export type {
   ArkmeAiVideoToolPort, ArkmeArkoToolPort, ArkmeBotToolPort, ArkmeCalendarToolPort, ArkmeConversationToolPort, ArkmeMediaToolPort, ArkmeProfileToolPort,
   ArkmeContactToolPort,
   ArkmeOpenClawToolPort, ArkmeOutgoingCallToolPort, ArkmeCallHistoryToolPort, ArkmeRecordToolPort,
+  ArkmeRecordingToolPort,
   ArkmeWorldToolPort, ArkmeWechatToolPort,
   ArkmeVoiceprintToolPort,
   ArkmeExtensionReviewToolPort,

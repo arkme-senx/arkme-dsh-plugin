@@ -4,6 +4,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { arkmeMessagePreparing } from '../src/client/message-preparing-store.js'
 import { invalidateDirectMessageAdmission } from '../src/client/direct-message-admission.js'
+import { privateChatActions } from '../src/client/private-chat-actions-store.js'
 import type {
   ArkmeConversationMemberItem,
   ArkmeMessageCopyLinkSnapshotItem,
@@ -861,6 +862,8 @@ describe('conversation send directory projection', () => {
   afterEach(async () => {
     await act(async () => { renderer?.unmount() })
     renderer = undefined
+    privateChatActions.activateAccount(undefined)
+    privateChatActions.reset()
     arkmeConversationMembers.activateAccount(undefined)
     arkmeComposerDraftStore.clearAccount(42)
     arkmeChatDirectory.clear()
@@ -1162,7 +1165,7 @@ describe('conversation send directory projection', () => {
     await act(async () => {
       renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
         createNodeMock: element => element.props.className === 'arkme-conversation-panel' || element.props['aria-label'] === '更多私聊操作'
-          ? { getBoundingClientRect: () => ({ left: 0, top: 0, right: 960, bottom: 40, width: 960, height: 720 }) }
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, right: 960, bottom: 40, width: 960, height: 720 }), querySelector: () => null, contains: () => false }
           : null,
       })
     })
@@ -1178,7 +1181,7 @@ describe('conversation send directory projection', () => {
     expect(refusal).toBeDefined()
     expect(refusal.props['aria-checked']).toBe(true)
     expect(refusal.findByType('span').children).toEqual(['拒收对方消息'])
-    await act(async () => { refusal.props.onClick() })
+    await act(async () => { refusal.props.onClick({ detail: 0 }) })
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
     expect(renderer!.root.findByProps({ role: 'menuitemcheckbox' }).props['aria-checked']).toBe(false)
     expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'chat.direct-message-refusal.set')).toHaveLength(1)
@@ -1191,13 +1194,14 @@ describe('conversation send directory projection', () => {
     arkmeUi.selectSource(activeSource)
     const original = mocks.callArkme.getMockImplementation()!
     let refused = false
+    let counterpartRevision = 0
     mocks.callArkme.mockImplementation(async (operation: string, params: any, ...rest: any[]) => {
       if (operation === 'sources.list') return { directory: 'root', items: [other, activeSource], hasMore: false }
       if (operation.startsWith('source.message-preparing.')) return null
       if (operation === 'chat.direct-message-admission') return {
         state: refused ? 'refused_by_counterpart' : 'allowed', canSend: !refused,
         refusalCreationEnabled: true, ownRefused: false, counterpartRefused: refused,
-        ownRevision: 0, counterpartRevision: refused ? 1 : 2,
+        ownRevision: 0, counterpartRevision,
       }
       return await original(operation, params, ...rest)
     })
@@ -1217,7 +1221,7 @@ describe('conversation send directory projection', () => {
         await vi.advanceTimersByTimeAsync(600)
       })
       expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-preparing.report')).toHaveLength(1)
-      await act(async () => { refused = true; invalidateDirectMessageAdmission() })
+      await act(async () => { refused = true; counterpartRevision += 1; invalidateDirectMessageAdmission() })
       expect(input().props.disabled).toBe(true)
       expect(input().props.value).toBe('')
       expect(input().props.markdown).toBeUndefined()
@@ -1231,7 +1235,7 @@ describe('conversation send directory projection', () => {
       expect(arkmeComposerDraftStore.get(key).text).toBe('未发送草稿')
       expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-preparing.report')).toHaveLength(1)
       expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.message-preparing.cancel')).toBe(true)
-      await act(async () => { refused = false; invalidateDirectMessageAdmission() })
+      await act(async () => { refused = false; counterpartRevision += 1; invalidateDirectMessageAdmission() })
       expect(input().props.disabled).toBe(false)
       expect(input().props.value).toBe('未发送草稿')
       expect(input().props.markdown).toEqual(markdown)

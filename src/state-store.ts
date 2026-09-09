@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type {
   ArkmeLongArticleDraft,
@@ -9,6 +9,7 @@ import type {
 } from './types.js'
 import {
   sameRecordingImportIdentity,
+  isUnresolvedRecordingImportJob,
   type RecordingImportAdmission,
   type RecordingImportJob,
   type RecordingImportPhase,
@@ -54,7 +55,7 @@ function cloneRecordingImportJob(job: RecordingImportJob): RecordingImportJob {
 
 function pruneRecordingImportTerminalJobs(jobs: Record<string, RecordingImportJob>): void {
   const expiredTerminalJobs = Object.values(jobs)
-    .filter(candidate => ['accepted', 'cancelled'].includes(candidate.phase))
+    .filter(candidate => !isUnresolvedRecordingImportJob(candidate))
     .sort((left, right) => right.createdAtMillis - left.createdAtMillis)
     .slice(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT)
   for (const expired of expiredTerminalJobs) delete jobs[expired.jobId]
@@ -460,7 +461,7 @@ export class ArkmeStateStore {
       drafts[key] = stored
       const collection = state.recordReeditDraftsByUser as Record<string, unknown>
       collection[userKey] = drafts
-    }, true)
+    })
     return structuredClone(stored)
   }
 
@@ -481,7 +482,7 @@ export class ArkmeStateStore {
         if (job.context.sourceIdentityKey === identity && job.submissionId === submissionId
           && job.state === 'committed' && job.result && version >= job.result.version) delete entries[key]
       }
-    }, true)
+    })
   }
 
   async putRecordReeditSubmission(userId: number, job: ArkmeRecordReeditSubmission, expectedId?: string): Promise<void> {
@@ -502,7 +503,7 @@ export class ArkmeStateStore {
           else draftCollection[String(userId)] = drafts
         }
       }
-    }, true)
+    })
   }
 
   async discardRecordReeditCandidate(userId: number, sourceIdentityKey: string, itemUid: string, expectedRevision: number): Promise<boolean> {
@@ -519,7 +520,7 @@ export class ArkmeStateStore {
       const collection = state.recordReeditDraftsByUser as Record<string, unknown>
       collection[String(userId)] = drafts
       removed = true
-    }, true)
+    })
     return removed
   }
 
@@ -543,7 +544,7 @@ export class ArkmeStateStore {
       if (Object.keys(drafts).length === 0) delete collection[userKey]
       else collection[userKey] = drafts
       removed = true
-    }, true)
+    })
     return removed
   }
 
@@ -578,6 +579,7 @@ export class ArkmeStateStore {
     userId: number,
     job: RecordingImportJob,
     unresolvedLimit: number,
+    signal?: AbortSignal,
   ): Promise<RecordingImportAdmission> {
     if (job.userId !== userId) throw new Error('Recording import job account mismatch')
     if (!Number.isSafeInteger(unresolvedLimit) || unresolvedLimit < 1) {
@@ -587,7 +589,7 @@ export class ArkmeStateStore {
     await this.update(state => {
       const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
       const unresolved = Object.values(jobs)
-        .filter(candidate => !['accepted', 'cancelled'].includes(candidate.phase))
+        .filter(isUnresolvedRecordingImportJob)
       const existing = unresolved.find(candidate => sameRecordingImportIdentity(candidate, job))
       if (existing !== undefined) {
         admission = { kind: 'existing', job: cloneRecordingImportJob(existing) }
@@ -606,7 +608,7 @@ export class ArkmeStateStore {
       pruneRecordingImportTerminalJobs(jobs)
       state.recordingImportJobsByUser[String(userId)] = jobs
       admission = { kind: 'inserted', job: cloneRecordingImportJob(job) }
-    })
+    }, signal)
     if (admission === undefined) throw new Error('Recording import admission was not decided')
     return admission
   }
@@ -615,6 +617,7 @@ export class ArkmeStateStore {
     userId: number,
     job: RecordingImportJob,
     expectedRevision: number,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     if (job.userId !== userId) throw new Error('Recording import job account mismatch')
     let replaced = false
@@ -625,7 +628,7 @@ export class ArkmeStateStore {
       jobs[job.jobId] = cloneRecordingImportJob(job)
       pruneRecordingImportTerminalJobs(jobs)
       replaced = true
-    })
+    }, signal)
     return replaced
   }
 
@@ -680,12 +683,13 @@ export class ArkmeStateStore {
     return result
   }
 
-  private async update(mutator: (state: PersistedState) => void, isolated = false): Promise<void> {
+  private async update(mutator: (state: PersistedState) => void, signal?: AbortSignal): Promise<void> {
     await this.serial(async () => {
-      const current = await this.load()
-      const state = isolated ? structuredClone(current) : current
+      signal?.throwIfAborted()
+      const state = structuredClone(await this.load())
+      signal?.throwIfAborted()
       mutator(state)
-      await this.write(state)
+      await this.write(state, signal)
     })
   }
 
@@ -701,21 +705,26 @@ export class ArkmeStateStore {
       this.state = parseState(await readFile(this.path, 'utf8'))
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      this.state = emptyState()
-      await this.write(this.state)
+      await this.write(emptyState())
     }
-    return this.state
+    return this.state!
   }
 
-  private async write(state: PersistedState): Promise<void> {
+  private async write(state: PersistedState, signal?: AbortSignal): Promise<void> {
     const directory = dirname(this.path)
     await mkdir(directory, { recursive: true, mode: 0o700 })
     await securePrivateDirectory(directory)
     const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`
-    await writeFile(temporary, `${JSON.stringify(state, undefined, 2)}\n`, { mode: 0o600 })
-    await securePrivateFile(temporary)
-    await rename(temporary, this.path)
-    await securePrivateFile(this.path)
-    this.state = state
+    try {
+      await writeFile(temporary, `${JSON.stringify(state, undefined, 2)}\n`, { mode: 0o600 })
+      await securePrivateFile(temporary)
+      signal?.throwIfAborted()
+      // Rename commits the private file; publish memory only after that succeeds.
+      await rename(temporary, this.path)
+      this.state = state
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined)
+      throw error
+    }
   }
 }
