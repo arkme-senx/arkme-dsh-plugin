@@ -2,6 +2,8 @@
 
 2026-09-09。本轮结论覆盖任务开发分支 `codex/c20260909-dsh-read-recovery`，不代表已合并或已发布。
 
+后续用户体验复审发现跨页选择、资料降级状态及分页有效期衔接缺口，已按用户补充继续修复；当前体验合同以 [用户体验收口记录](directory-user-experience.md) 为准，下文保留此前一轮的验收事实与限制。
+
 ## 基线、范围与结论
 
 - 插件已合入最新核对的 `origin/dev`：`92605ab`；Chat 已合入 `origin/master`：`d5786e6`，无文本冲突。Flutter 基线为 `pre-release 1de25ef0c`，meta 为 `master f28fa725`。

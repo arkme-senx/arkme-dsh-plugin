@@ -50,6 +50,7 @@ describe.skipIf(chatOrigin === undefined)('directory UI / SDK → Host → real 
     let directFailure = false
     let botFailures = 1
     let teamFailures = 1
+    let browserBotCount = 1
     // Only Chat is a real service here; Auth presentation, Bot, Audio and OpenAPI are explicit boundary fixtures.
     const upstreamFetch: typeof fetch = async (input, init) => {
       const url = new URL(String(input))
@@ -62,7 +63,7 @@ describe.skipIf(chatOrigin === undefined)('directory UI / SDK → Host → real 
       }
       if (url.origin !== 'https://directory-fixture.invalid') throw new Error('Fixture blocked an external origin')
       if (url.pathname === '/api/v1/auth/get-public-users-by-ids') return json({ items: (body.user_ids as number[]).map(id => ({ user_id: id, nick_name: `验收用户${id - userId}`, jotmo_id: `test_${id}`, head_img: '' })) })
-      if (url.pathname === '/api/v1/bot/list') return botFailures-- > 0 ? json(null, 1002) : json({ bots: [{ bot_id: 'fixture-bot', name: '验收 Bot', provider: 'webhook' }] })
+      if (url.pathname === '/api/v1/bot/list') return botFailures-- > 0 ? json(null, 1002) : json({ bots: Array.from({ length: browserBotCount }, (_, index) => ({ bot_id: `fixture-bot-${index + 1}`, name: `验收 Bot ${index + 1}`, provider: 'webhook' })) })
       if (url.pathname === '/api/v1/audio/unmarked-speakers/list') return json({ items: body.limit === 0 ? [] : [{ candidate_id: 'fixture-candidate', status: 'single_day', label: '1', speaker_display_number: 1, day_count: 1, segment_count: 2 }], cross_day_count: 0, single_day_count: 1, has_more: false, projection_state: 'fresh' })
       if (url.pathname === '/api/v1/teams/list') {
         if (teamFailures-- > 0) return new Response('', { status: 429, headers: { 'retry-after': '1' } })
@@ -171,6 +172,10 @@ describe.skipIf(chatOrigin === undefined)('directory UI / SDK → Host → real 
       await expect(sdk.listDirectory('contacts', { cursor: first.nextCursor })).rejects.toMatchObject({ body: { code: 'directory-cursor-invalid' } })
       session = { userId, accessToken: token(userId), refreshToken: 'synthetic-fixture-login' }
       if (dsh) {
+        // More than one visible page exercises the actual installed browser's
+        // scroll sentinel, including a pause beyond fresh-cache TTL.
+        browserBotCount = 61
+        await service.listDirectory('bots', { refresh: true })
         console.log(`Directory browser acceptance: ${origin}`)
         await browserDone
       }

@@ -62,6 +62,21 @@ function fixture(options: FixtureOptions = {}) {
 afterEach(() => { vi.useRealTimers() })
 
 describe('ContactDirectoryService', () => {
+  it.each(['contacts', 'bots'] as const)('continues %s pagination after fresh-cache expiry without rescanning', async section => {
+    vi.useFakeTimers()
+    const { service, runtime } = fixture({
+      contacts: { items: [{ user_id: 88 }, { user_id: 89 }], has_more: false },
+      bots: { bots: [{ bot_id: 'bot-one', name: 'One', provider: 'webhook' }, { bot_id: 'bot-two', name: 'Two', provider: 'webhook' }] },
+    })
+    const first = await service.list(section, { limit: 1 })
+    const reads = runtime.authenticatedChatPost.mock.calls.length + runtime.authenticatedBotPost.mock.calls.length
+    await vi.advanceTimersByTimeAsync(31_000)
+    const second = await service.list(section, { limit: 1, cursor: first.nextCursor })
+    expect(second.cursorStale).not.toBe(true)
+    expect(second.items).toHaveLength(1)
+    expect(second.items).not.toEqual(first.items)
+    expect(runtime.authenticatedChatPost.mock.calls.length + runtime.authenticatedBotPost.mock.calls.length).toBe(reads)
+  })
   it('rejects malformed direct-chat payloads instead of publishing an authoritative contact set', async () => {
     const { service } = fixture({ contacts: { items: [{ user_id: 88 }], has_more: false }, groups: { items: 'invalid', has_more: false } })
     await expect(service.list('contacts')).rejects.toMatchObject({ code: 'directory-contact-contract-invalid', retryable: false })
@@ -73,7 +88,7 @@ describe('ContactDirectoryService', () => {
     await service.list('contacts', { countOnly: true })
     await service.list('contacts', { countOnly: true, refresh: true })
     expect(runtime.authenticatedChatPost).toHaveBeenCalledTimes(4)
-    profile.publicProfileSummariesByUserIds.mockRejectedValueOnce(new ArkmePluginError('arkme-code-1002', '繁忙', true))
+    profile.publicProfileSummariesByUserIds.mockRejectedValueOnce(new ArkmePluginError('arkme-code-1002', '繁忙', true, 502, { recovery: { owner: 'host', attempts: 3, exhausted: true } }))
     await expect(service.list('contacts')).resolves.toMatchObject({ total: 1, coverage: 'complete', projectionState: 'stale' })
   })
 

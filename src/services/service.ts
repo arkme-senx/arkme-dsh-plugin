@@ -481,6 +481,7 @@ export class ServiceRuntime {
   }
 
   private registeredRead(baseUrl: string, path: string): boolean {
+    if (baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids') return true
     if (baseUrl === this.config.chatBaseUrl && new Set([
       '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list',
     ]).has(path)) return true

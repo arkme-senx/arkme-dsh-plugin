@@ -1386,6 +1386,7 @@ describe('ArkmeService', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
     const fetchImpl = vi.fn<typeof fetch>(async input => {
+      if (String(input).endsWith('/get-public-users-by-ids')) return json({ code: 200, data: { items: [userInfo(10001)] } })
       expect(String(input)).toBe('https://auth.test/api/v1/auth/get-user-info')
       return json({ code: 200, data: userInfo(10001) })
     })
@@ -1438,6 +1439,7 @@ describe('ArkmeService', () => {
           body: JSON.parse(String(init.body)) as Record<string, unknown>,
         }),
       })
+      if (url.endsWith('/get-public-users-by-ids')) return json({ code: 200, data: { items: [userInfo(10001)] } })
       if (url.endsWith('/get-user-info')) {
         profileReads += 1
         return json({
@@ -1555,6 +1557,7 @@ describe('ArkmeService', () => {
     const state = new MemoryStateStore()
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
+      if (url.endsWith('/get-public-users-by-ids')) return json({ code: 200, data: { items: [userInfo(10001)] } })
       if (url.endsWith('/get-user-info')) return json({
         code: 200,
         data: { user_id: 10001, jotmo_id: 'legacy-id', can_update_jotmo_id: true, type: 1 },
