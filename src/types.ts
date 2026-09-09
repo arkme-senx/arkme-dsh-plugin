@@ -2932,8 +2932,6 @@ export interface ArkmeAiVideoSegmentSelector {
   childId: string
   asrItemIndex: number
   transcriptSource: ArkmeAiVideoTranscriptSource
-  /** Host-only condition pinning the selected original text and time. */
-  expectedFactHash?: string
 }
 
 export interface ArkmeAiVideoPreflightResult {
