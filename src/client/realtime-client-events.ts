@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { publishMemberEventHint } from './member-event-hints.js'
 import { arkmeMemberEvents } from './member-event-cache.js'
 import { invalidateDirectMessageAdmission } from './direct-message-admission.js'
+import { privateChatActions } from './private-chat-actions-store.js'
 import type { ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeChatClientEvent } from '../types.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeCalendarInvalidations } from './calendar-invalidation-store.js'
@@ -69,6 +70,7 @@ export function useArkmeRealtimeClientEvents(
 
   useEffect(() => {
     if (auth?.status !== 'authenticated' || auth.userId === undefined) {
+      privateChatActions.activateAccount(undefined)
       arkmeConversationMembers.activateAccount(undefined)
       arkmeMemberEvents.activateAccount(undefined)
       arkmeChatDirectory.activateAccount(undefined)
@@ -81,6 +83,7 @@ export function useArkmeRealtimeClientEvents(
     }
     const authenticatedUserId = auth.userId
     const authenticatedAccountScope = `${auth.environment}:${String(authenticatedUserId)}`
+    privateChatActions.activateAccount(authenticatedAccountScope)
     arkmeConversationMembers.activateAccount(authenticatedAccountScope)
     arkmeMemberEvents.activateAccount(authenticatedAccountScope)
     arkmeChatDirectory.activateAccount(authenticatedAccountScope)

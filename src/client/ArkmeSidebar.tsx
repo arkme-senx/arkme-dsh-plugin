@@ -7,13 +7,9 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { invalidateDirectMessageAdmission, requireDirectMessageSendAllowed, useDirectMessageAdmission } from './direct-message-admission.js'
+import { ConversationActionsMenu, privateChatActionItems, usePrivateChatActions } from './PrivateChatActions.js'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
-import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import { X } from '@phosphor-icons/react/dist/icons/X'
-import { UserMinus } from '@phosphor-icons/react/dist/csr/UserMinus'
-import { Prohibit } from '@phosphor-icons/react/dist/csr/Prohibit'
-import { Check } from '@phosphor-icons/react/dist/csr/Check'
-import { UserPlus } from '@phosphor-icons/react/dist/csr/UserPlus'
 import qrcode from 'qrcode-generator'
 import { retainPartialTimelineMedia } from './timeline-media.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -34,7 +30,6 @@ import type {
   ArkmeBotList, ArkmeGroupBotCandidate, ArkmeGroupBotCandidateList,
   ArkmeSharedRecordingPreview,
   ArkmeBackgroundSoundPreference, ArkmeBackgroundSoundEligibilityReason, ArkmeProviderCapabilities,
-  ArkmeUserBanRecord, ArkmeUserBanSnapshot,
   ArkmeRecordTagItem, ArkmeRecordTagList,
 } from '../types.js'
 import {
@@ -64,11 +59,6 @@ import { verifyPhoneCaptcha } from './geetest.js'
 import { ArkmeDirectorySourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import {
   ARKME_CONVERSATION_HEADER_ACTIONS_STYLE,
-  ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE,
-  ARKME_CONVERSATION_SETTINGS_MENU_SCRIM_STYLE,
-  ARKME_CONVERSATION_SETTINGS_MENU_STATUS_STYLE,
-  ARKME_CONVERSATION_SETTINGS_MENU_WIDTH,
-  ARKME_CONVERSATION_SETTINGS_POPOVER_STYLE,
   ArkmeConversationHeaderIconButton,
   ArkmeConversationMoreIcon,
   ArkmeGroupChatControls,
@@ -88,7 +78,6 @@ import {
 } from './ArkmeMessageWithdrawalDialog.js'
 import { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
-import { shouldShowUserBanAction } from './user-ban.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle, type RecordingImportButtonStatus } from './recordings/ArkmeRecordingImportDialog.js'
@@ -180,7 +169,7 @@ import { arkmeUi } from './ui-controller.js'
 import { arkmeWechatRequestStartedAfterAuthStatus } from './arkme-auth-flow.js'
 import {
   isCurrentRelatedRecordingRequest, mergeRelatedRecordingItems, RelatedRecordingDetail,
-  RelatedRecordingsPanel, shouldShowPrivateChatActions, shouldShowRelatedRecordingsEntry,
+  RelatedRecordingsPanel, shouldShowPrivateChatActions,
 } from './related-recordings.js'
 import { isArkmeChatDirectorySource, isArkmeSelfWorkspaceSource } from './source-list.js'
 import { arkmeLoginErrorMessage, arkmeStoredLoginErrorMessage } from './arkme-login-errors.js'
@@ -2511,7 +2500,7 @@ export function ArkmeSurface({
     () => 0,
   )
   const composerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
-  const directAdmission = useDirectMessageAdmission(authenticatedAccountKey, source?.sourceRef,
+  const directAdmission = useDirectMessageAdmission(authenticatedAccountKey, source,
     activeConversation && source?.directMessageAdmissionApplicable === true)
   const composerAsyncScopeRef = useRef<ArkmeComposerAsyncScope>({
     accountKey: undefined,
@@ -3263,8 +3252,6 @@ export function ArkmeSurface({
     momentRelatedDetailRequestRef.current?.abort()
     momentRelatedDetailRequestRef.current = undefined
     relatedGenerationRef.current += 1
-    relatedEligibilityAbortRef.current?.abort()
-    relatedEligibilityAbortRef.current = undefined
     relatedPageAbortRef.current?.abort()
     relatedPageAbortRef.current = undefined
     for (const controller of stageControllers.current) controller.abort()
@@ -3325,13 +3312,6 @@ export function ArkmeSurface({
     setMessageActionBusy(undefined)
   }, [activeConversation, persistRecordReeditBeforeContextExit])
   const authenticated = auth?.status === 'authenticated'
-  const canManageUserBan = shouldShowUserBanAction({
-    authenticated,
-    sourceKind: source?.kind,
-    accountType: selfProfile?.accountType,
-    peerUserId: source?.peerUserId,
-    currentUserId: authenticatedUserId,
-  })
   const authView = arkmeAuthView(auth)
   const phoneBindingRequired = arkmeLoginNeedsPhoneBinding(auth)
   const localeId = t('locale.id')
@@ -3342,12 +3322,9 @@ export function ArkmeSurface({
     localeIdRef.current = localeId
     if (authView === 'login') setError('')
   }, [authView, localeId])
-  const [relatedEligibility, setRelatedEligibility] = useState<'idle' | 'loading' | 'allowed' | 'denied' | 'error'>('idle')
   const [relatedMenuOpen, setRelatedMenuOpen] = useState(false)
-  const [userBanState, setUserBanState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
-  const [userBanSnapshot, setUserBanSnapshot] = useState<ArkmeUserBanSnapshot>()
-  const [userBanBusy, setUserBanBusy] = useState(false)
-  const [relatedMenuPosition, setRelatedMenuPosition] = useState({ left: 12, top: 54 })
+  const privateActions = usePrivateChatActions(authenticatedAccountKey, authenticatedUserId, source, activeConversation, relatedMenuOpen)
+  useEffect(() => { if (relatedMenuOpen) directAdmission.refresh() }, [relatedMenuOpen, directAdmission.refresh])
   const [relatedPanelOpen, setRelatedPanelOpen] = useState(false)
   const [relatedState, setRelatedState] = useState<'loading' | ArkmeRelatedRecordingPageState>('loading')
   const [relatedStateMessage, setRelatedStateMessage] = useState('')
@@ -3359,14 +3336,11 @@ export function ArkmeSurface({
   const [relatedNextCursor, setRelatedNextCursor] = useState<string>()
   const [relatedLoadingMore, setRelatedLoadingMore] = useState(false)
   const [relatedDetail, setRelatedDetail] = useState<ArkmeRelatedRecordingItem>()
-  const relatedEligibilityAbortRef = useRef<AbortController>()
   const relatedPageAbortRef = useRef<AbortController>()
   const relatedGenerationRef = useRef(0)
   const relatedLoadingMoreRef = useRef(false)
   const activeRelatedSourceKeyRef = useRef('')
   const relatedMenuButtonRef = useRef<HTMLButtonElement>(null)
-  const userBanAbortRef = useRef<AbortController>()
-  const activeUserBanSourceKeyRef = useRef('')
 
   useEffect(() => {
     if (!relatedMenuOpen || typeof document === 'undefined') return
@@ -3615,12 +3589,12 @@ export function ArkmeSurface({
   }
 
   const openRelatedPanel = useCallback(() => {
-    if (relatedEligibility !== 'allowed') return
+    if (!privateActions.relatedAllowed) return
     setRelatedMenuOpen(false)
     activateContextPanel('related')
     setRelatedPanelOpen(true)
     reloadRelated('')
-  }, [relatedEligibility, reloadRelated])
+  }, [privateActions.relatedAllowed, reloadRelated])
 
   const closeRelatedPanel = useCallback(() => {
     relatedGenerationRef.current += 1
@@ -3638,13 +3612,10 @@ export function ArkmeSurface({
   }, [loadRelatedPage, relatedHasMore, relatedNextCursor])
 
   useEffect(() => {
-    relatedEligibilityAbortRef.current?.abort()
-    relatedEligibilityAbortRef.current = undefined
     relatedPageAbortRef.current?.abort()
     relatedGenerationRef.current += 1
     activeRelatedSourceKeyRef.current = conversationKey
     relatedLoadingMoreRef.current = false
-    setRelatedEligibility('idle')
     setRelatedMenuOpen(false)
     setRelatedPanelOpen(false)
     setRelatedDetail(undefined)
@@ -3657,94 +3628,9 @@ export function ArkmeSurface({
     setRelatedError('')
   }, [authenticated, conversationKey, source?.kind, ui.authRevision])
 
-  useEffect(() => {
-    userBanAbortRef.current?.abort()
-    userBanAbortRef.current = undefined
-    activeUserBanSourceKeyRef.current = conversationKey
-    setUserBanState('idle')
-    setUserBanSnapshot(undefined)
-    setUserBanBusy(false)
-    return () => {
-      userBanAbortRef.current?.abort()
-      userBanAbortRef.current = undefined
-    }
-  }, [authenticated, canManageUserBan, conversationKey, source?.kind, ui.authRevision])
-
-  const ensureRelatedEligibility = useCallback(() => {
-    if (!authenticated || source?.kind !== 'private_chat'
-      || relatedEligibility === 'loading' || relatedEligibility === 'allowed' || relatedEligibility === 'denied') return
-    const controller = new AbortController()
-    relatedEligibilityAbortRef.current?.abort()
-    relatedEligibilityAbortRef.current = controller
-    const sourceRef = source.sourceRef
-    const sourceKey = conversationKey
-    setRelatedEligibility('loading')
-    void callArkme<{ allowed: boolean }>(
-      'related-recordings.eligibility', { sourceRef }, controller.signal,
-    ).then(result => {
-      if (!controller.signal.aborted && activeRelatedSourceKeyRef.current === sourceKey) {
-        setRelatedEligibility(result.allowed ? 'allowed' : 'denied')
-      }
-    }).catch(() => {
-      if (!controller.signal.aborted && activeRelatedSourceKeyRef.current === sourceKey) setRelatedEligibility('error')
-    }).finally(() => {
-      if (relatedEligibilityAbortRef.current === controller) relatedEligibilityAbortRef.current = undefined
-    })
-  }, [authenticated, conversationKey, relatedEligibility, source])
-
-  const ensureUserBanStatus = useCallback(() => {
-    if (!canManageUserBan || source?.kind !== 'private_chat'
-      || userBanState === 'loading' || userBanState === 'ready') return
-    const controller = new AbortController()
-    userBanAbortRef.current?.abort()
-    userBanAbortRef.current = controller
-    const sourceRef = source.sourceRef
-    const sourceKey = conversationKey
-    setUserBanState('loading')
-    void callArkme<ArkmeUserBanSnapshot>('user-ban.status', { sourceRef }, controller.signal)
-      .then(snapshot => {
-        if (!controller.signal.aborted && activeUserBanSourceKeyRef.current === sourceKey) {
-          setUserBanSnapshot(snapshot)
-          setUserBanState('ready')
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted && activeUserBanSourceKeyRef.current === sourceKey) {
-          setUserBanSnapshot(undefined)
-          setUserBanState('error')
-        }
-      })
-      .finally(() => {
-        if (userBanAbortRef.current === controller) userBanAbortRef.current = undefined
-      })
-  }, [canManageUserBan, conversationKey, source, userBanState])
-
-  useEffect(() => {
-    if (relatedMenuOpen && canManageUserBan && userBanState === 'idle') ensureUserBanStatus()
-  }, [canManageUserBan, ensureUserBanStatus, relatedMenuOpen, userBanState])
-
   const toggleRelatedMenu = useCallback(() => {
-    if (relatedPanelOpen) return
-    if (relatedMenuOpen) {
-      setRelatedMenuOpen(false)
-      return
-    }
-    const host = panelRef.current
-    const button = relatedMenuButtonRef.current
-    if (host !== null && button !== null) {
-      const hostRect = host.getBoundingClientRect()
-      const buttonRect = button.getBoundingClientRect()
-      const menuWidth = ARKME_CONVERSATION_SETTINGS_MENU_WIDTH
-      const menuHeight = (canManageUserBan ? 88 : 44) + (directAdmission.applicable ? 88 : 0)
-      setRelatedMenuPosition({
-        left: Math.max(12, Math.min(hostRect.width - menuWidth - 12, buttonRect.right - hostRect.left - menuWidth)),
-        top: Math.max(8, Math.min(hostRect.height - menuHeight - 12, buttonRect.bottom - hostRect.top + 8)),
-      })
-    }
-    setRelatedMenuOpen(true)
-    ensureRelatedEligibility()
-    ensureUserBanStatus()
-  }, [canManageUserBan, directAdmission.applicable, ensureRelatedEligibility, ensureUserBanStatus, relatedMenuOpen, relatedPanelOpen])
+    if (!relatedPanelOpen) setRelatedMenuOpen(current => !current)
+  }, [relatedPanelOpen])
 
   const acknowledgeRead = useCallback(async (nextItems: ArkmeTimelineItem[]) => {
     if (source === undefined || nextItems.length === 0
@@ -4213,8 +4099,6 @@ export function ArkmeSurface({
     momentRelatedDetailRequestRef.current?.abort()
     momentRelatedDetailRequestRef.current = undefined
     relatedGenerationRef.current += 1
-    relatedEligibilityAbortRef.current?.abort()
-    relatedEligibilityAbortRef.current = undefined
     relatedPageAbortRef.current?.abort()
     relatedPageAbortRef.current = undefined
     snapshotRequestRef.current?.abort()
@@ -5981,45 +5865,6 @@ export function ArkmeSurface({
       messageActionStatusTimerRef.current = undefined
     }, MESSAGE_ACTION_NOTICE_MS)
   }, [])
-  const changeUserBanState = useCallback(async () => {
-    if (!canManageUserBan || source?.kind !== 'private_chat' || userBanSnapshot === undefined || userBanBusy) return
-    const nextBanned = !userBanSnapshot.banned
-    const actionLabel = nextBanned ? '封禁' : '解封'
-    const consequence = nextBanned
-      ? '封禁后该用户将无法重新登录；Backend、聊天和录音请求会立即受限；其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效。'
-      : '解封后该用户可以重新登录并恢复操作。'
-    if (!window.confirm(`确认${actionLabel}“${userBanSnapshot.displayName}”吗？\n${consequence}`)) return
-    const controller = new AbortController()
-    userBanAbortRef.current?.abort()
-    userBanAbortRef.current = controller
-    const sourceKey = conversationKey
-    setUserBanBusy(true)
-    setRelatedMenuOpen(false)
-    try {
-      const record = await callArkme<ArkmeUserBanRecord>(nextBanned ? 'user-ban.ban' : 'user-ban.unban', {
-        sourceRef: source.sourceRef,
-        // 每次操作的备注属于本次命令，不能复用上一次封禁或解封的历史备注。
-        remark: '',
-      }, controller.signal)
-      if (controller.signal.aborted || activeUserBanSourceKeyRef.current !== sourceKey) return
-      setUserBanSnapshot({
-        sourceRef: record.sourceRef,
-        displayName: record.displayName,
-        exists: true,
-        banned: record.status === 'banned',
-        record,
-      })
-      setUserBanState('ready')
-      showMessageActionStatus(`${actionLabel}成功`)
-    } catch (caught) {
-      if (!controller.signal.aborted && activeUserBanSourceKeyRef.current === sourceKey) {
-        showMessageActionStatus(errorMessage(caught) || `${actionLabel}失败，请稍后重试`)
-      }
-    } finally {
-      if (userBanAbortRef.current === controller) userBanAbortRef.current = undefined
-      if (activeUserBanSourceKeyRef.current === sourceKey) setUserBanBusy(false)
-    }
-  }, [canManageUserBan, conversationKey, showMessageActionStatus, source, userBanBusy, userBanSnapshot])
   const showForwardSuccessFeedback = useCallback((targets: readonly ArkmeSourceItem[], successCount: number, failureCount: number) => {
     if (forwardSuccessTimerRef.current !== undefined) {
       window.clearTimeout(forwardSuccessTimerRef.current)
@@ -7070,86 +6915,8 @@ export function ArkmeSurface({
             ><ArkmeConversationMoreIcon /></ArkmeConversationHeaderIconButton>
           </div>}
           {activeConversation && shouldShowPrivateChatActions(authenticated, source?.kind) && relatedMenuOpen && conversationOverlayHost !== null && createPortal(
-            <div style={ARKME_CONVERSATION_SETTINGS_MENU_SCRIM_STYLE} role="presentation" onMouseDown={event => {
-              if (event.target === event.currentTarget) setRelatedMenuOpen(false)
-            }}>
-              <div
-                style={{
-                  ...ARKME_CONVERSATION_SETTINGS_POPOVER_STYLE,
-                  left: relatedMenuPosition.left,
-                  top: relatedMenuPosition.top,
-                }}
-                role="menu"
-                aria-label="更多私聊操作"
-                aria-busy={relatedEligibility === 'loading' || userBanState === 'loading' || userBanBusy}
-                onMouseDown={event => { event.stopPropagation() }}
-              >
-                {shouldShowRelatedRecordingsEntry(authenticated, source?.kind, relatedEligibility, relatedPanelOpen)
-                  ? <button
-                    type="button"
-                    role="menuitem"
-                    style={ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE}
-                    onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
-                    onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-                    onClick={openRelatedPanel}
-                  ><Waveform size={20} aria-hidden /><span>相关录音</span></button>
-                  : relatedEligibility === 'error'
-                    ? <button
-                      type="button"
-                      role="menuitem"
-                      style={ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE}
-                      onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
-                      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-                      onClick={ensureRelatedEligibility}
-                    ><Waveform size={20} aria-hidden /><span>重新检查相关录音</span></button>
-                    : relatedEligibility === 'denied' && (canManageUserBan || directAdmission.applicable)
-                      ? null
-                      : <div role="status" style={ARKME_CONVERSATION_SETTINGS_MENU_STATUS_STYLE}>
-                        {relatedEligibility === 'denied' ? '当前没有可用操作' : '正在检查相关录音…'}
-                      </div>}
-                {directAdmission.applicable && <button type="button" role="menuitemcheckbox"
-                  aria-checked={directAdmission.admission === undefined ? 'mixed' : directAdmission.admission.ownRefused}
-                  aria-busy={directAdmission.busy}
-                  title={directAdmission.error || undefined}
-                  style={ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE}
-                  disabled={directAdmission.busy || (directAdmission.admission !== undefined &&
-                    !directAdmission.admission.ownRefused && !directAdmission.admission.refusalCreationEnabled)}
-                  onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
-                  onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-                  onClick={() => { void directAdmission.toggle(() => window.confirm('拒收对方消息？\n拒收后你们都无法发送新消息；聊天记录保留，你可以随时解除拒收。')) }}>
-                  <Prohibit size={20} aria-hidden />
-                  <span>拒收对方消息</span>
-                  {directAdmission.admission?.ownRefused === true && <Check size={16} style={{ marginLeft: 'auto' }} aria-hidden />}
-                </button>}
-                {directAdmission.applicable && directAdmission.error !== '' && <div role="status"
-                  style={ARKME_CONVERSATION_SETTINGS_MENU_STATUS_STYLE}>{directAdmission.error}</div>}
-                {canManageUserBan && userBanState === 'ready' && userBanSnapshot !== undefined
-                  ? <button
-                    type="button"
-                    role="menuitem"
-                    style={ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE}
-                    disabled={userBanBusy}
-                    onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
-                    onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-                    onClick={() => { void changeUserBanState() }}
-                  >
-                    {userBanSnapshot.banned ? <UserPlus size={20} aria-hidden /> : <UserMinus size={20} aria-hidden />}
-                    <span>{userBanSnapshot.banned ? '解封用户' : '封禁用户'}</span>
-                  </button>
-                  : canManageUserBan && userBanState === 'error'
-                    ? <button
-                      type="button"
-                      role="menuitem"
-                      style={ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE}
-                      onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
-                      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-                      onClick={ensureUserBanStatus}
-                    ><UserMinus size={20} aria-hidden /><span>重新检查封禁状态</span></button>
-                    : canManageUserBan
-                      ? <div role="status" style={ARKME_CONVERSATION_SETTINGS_MENU_STATUS_STYLE}>正在检查封禁状态…</div>
-                      : null}
-              </div>
-            </div>,
+            <ConversationActionsMenu items={privateChatActionItems(privateActions, directAdmission, openRelatedPanel)}
+              anchor={relatedMenuButtonRef} host={conversationOverlayHost} onClose={() => { setRelatedMenuOpen(false) }} />,
             conversationOverlayHost,
           )}
         </header>}

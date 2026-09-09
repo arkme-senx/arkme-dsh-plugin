@@ -79,17 +79,10 @@ describe('related recordings UI', () => {
     expect(shouldShowPrivateChatActions(false, 'private_chat')).toBe(false)
   })
 
-  it('requests related-recording eligibility only after the private-chat menu opens', () => {
-    const source = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
-    const resetStart = source.indexOf('relatedEligibilityAbortRef.current?.abort()')
-    const ensureStart = source.indexOf('const ensureRelatedEligibility')
-    const toggleStart = source.indexOf('const toggleRelatedMenu')
-
-    expect(resetStart).toBeGreaterThan(-1)
-    expect(ensureStart).toBeGreaterThan(resetStart)
-    expect(source.slice(resetStart, ensureStart)).not.toContain("'related-recordings.eligibility'")
-    expect(source.slice(ensureStart, toggleStart)).toContain("'related-recordings.eligibility'")
-    expect(source.slice(toggleStart, source.indexOf('const acknowledgeRead'))).toContain('ensureRelatedEligibility()')
+  it('keeps menu eligibility separate from recording list loading', () => {
+    const source = readFileSync(new URL('../src/client/PrivateChatActions.tsx', import.meta.url), 'utf8')
+    expect(source).not.toContain('related-recordings.page')
+    expect(source).not.toContain('正在检查')
   })
 
   it('renders a lowered overlay panel with partial and shared states', () => {
@@ -234,9 +227,11 @@ describe('related recordings UI', () => {
     expect(privateBlock).toContain('ArkmeConversationMoreIcon')
     expect(privateBlock).toContain('buttonRef={relatedMenuButtonRef}')
     expect(privateBlock).toContain('createPortal(')
-    expect(privateBlock).toContain('ARKME_CONVERSATION_SETTINGS_MENU_SCRIM_STYLE')
-    expect(privateBlock).toContain('ARKME_CONVERSATION_SETTINGS_POPOVER_STYLE')
-    expect(privateBlock).toContain('ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE')
+    expect(privateBlock).toContain('ConversationActionsMenu')
+    const menu = readFileSync(new URL('../src/client/PrivateChatActions.tsx', import.meta.url), 'utf8')
+    expect(menu).toContain('ARKME_CONVERSATION_SETTINGS_MENU_SCRIM_STYLE')
+    expect(menu).toContain('ARKME_CONVERSATION_SETTINGS_POPOVER_STYLE')
+    expect(menu).toContain('ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE')
     expect(privateBlock).not.toContain('•••')
     expect(source).not.toContain('moreButton:')
     expect(source).not.toContain('menuItem:')
