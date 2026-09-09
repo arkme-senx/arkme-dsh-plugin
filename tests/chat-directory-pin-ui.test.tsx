@@ -13,7 +13,7 @@ vi.mock('../src/client/arko-conversation-preview-sync.js', () => ({
   ArkmeArkoConversationPreviewSync: class { start() { return () => undefined } },
 }))
 
-import { ArkmeNavigation } from '../src/client/ArkmeVirtualWorkspace.js'
+import { ArkmeArkoRow, ArkmeNavigation, DeepSeekHarnessRow } from '../src/client/ArkmeVirtualWorkspace.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
@@ -75,6 +75,39 @@ afterEach(async () => {
 })
 
 describe('conversation pin interaction', () => {
+  it.each([false, true])('keeps special entry destinations distinct in compact=%s', async compactDirectory => {
+    await act(async () => { renderer!.update(<ArkmeNavigation compactDirectory={compactDirectory} showHarnessEntry embeddedProductShell />) })
+    await act(async () => { renderer!.root.findByType(DeepSeekHarnessRow).props.onClick() })
+    expect(arkmeUi.getSnapshot().mode).toBe('harness')
+    await act(async () => { renderer!.root.findByType(ArkmeArkoRow).props.onClick() })
+    expect(arkmeUi.getSnapshot().mode).toBe('arko')
+    await act(async () => { row().props.onClick() })
+    expect(arkmeUi.getSnapshot().mode).toBe('source')
+    expect(arkmeUi.getSnapshot().selectedSource?.sourceKey).toBe(source.sourceKey)
+    const self = renderer!.root.findAllByProps({ role: 'treeitem' }).find(node => node.type === 'button'
+      && node.findAllByType('span').some(span => span.children.length === 1 && span.children[0] === '发给自己'))!
+    await act(async () => { self.props.onClick() })
+    expect(arkmeUi.getSnapshot().mode).toBe('source')
+    expect(arkmeUi.getSnapshot().selectedSource).toBeUndefined()
+    expect(pinCalls()).toHaveLength(0)
+  })
+
+  it('preserves a pending pin and its reentry guard while the directory narrows and expands', async () => {
+    await startPin()
+    for (const compactDirectory of [true, false]) {
+      await act(async () => { renderer!.update(<ArkmeNavigation compactDirectory={compactDirectory} />) })
+      expect(row().props['aria-busy']).toBe(true)
+      expect(row().props.disabled).toBe(false)
+      await openMenu()
+      expect(renderer!.root.findAllByProps({ role: 'menuitem' })).toHaveLength(0)
+      expect(pinCalls()).toHaveLength(1)
+    }
+    await act(async () => { resolvePin({ sourceRef: source.sourceRef, pinned: true, policyUpdatedAtMillis: 2000 }) })
+    expect(arkmeChatDirectory.getSnapshot().sources[0]?.isPinned).toBe(true)
+    await openMenu()
+    expect(menu().children).toEqual(['取消置顶'])
+  })
+
   it('pins a group through the same Chat operation and current directory projection', async () => {
     await act(async () => { arkmeChatDirectory.publish([{ ...source, kind: 'group_chat' }]) })
     await startPin()

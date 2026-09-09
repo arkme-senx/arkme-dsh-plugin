@@ -678,6 +678,31 @@ describe('SourceService', () => {
     expect(latestRecordSignal?.aborted).toBe(true)
   })
 
+  it.each(['empty-title', 'long-title', 'aggregate-parent', 'uncategorized-parent'] as const)(
+    'rejects %s before creating any owner data', async invalid => {
+      const sessions: ArkmeSessionStore = {
+        async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+        async write() {}, async delete() {},
+      }
+      const fetchImpl = vi.fn(async () => { throw new Error('unexpected owner write') })
+      const runtime = new ServiceRuntime(config, sessions, {
+        async uniqueCode() { return 'device-secret' },
+      } as StateStore, fetchImpl)
+      const service = new SourceService(runtime, new ProfileService(runtime), {
+        async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+        recordItem() { return undefined },
+      })
+      const parent = invalid === 'aggregate-parent' || invalid === 'uncategorized-parent'
+        ? await service.sealSourceRef(42, invalid === 'aggregate-parent' ? 'send_to_self' : 'default_category', 'root', '入口')
+        : undefined
+      const title = invalid === 'empty-title' ? '  ' : invalid === 'long-title' ? '字'.repeat(101) : '子主题'
+      await expect(service.createTopic(title, parent)).rejects.toMatchObject({
+        code: parent === undefined ? 'topic-title-invalid' : 'topic-parent-invalid',
+      })
+      expect(fetchImpl).not.toHaveBeenCalled()
+    },
+  )
+
   it('creates a topic with an account-bound source reference', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

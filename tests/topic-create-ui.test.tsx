@@ -62,8 +62,8 @@ describe('topic create UI', () => {
     const source = await readFile(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
 
     expect(arkmeConversationComposerLayout.tools.justifyContent).toBe('space-between')
-    expect(source).toContain('...arkmeConversationComposerLayout.tools')
-    expect(source.indexOf('aria-label="添加内容"')).toBeLessThan(source.indexOf('style={{ ...styles.send'))
+    expect(source).toContain('tools: { ...arkmeConversationComposerLayout.tools }')
+    expect(source.indexOf('aria-label="添加内容"')).toBeLessThan(source.indexOf('<ArkmeComposerSendButton'))
   })
 
   it('uses a compact trigger and a rounded floating sort menu', () => {
@@ -240,6 +240,7 @@ describe('topic create UI', () => {
 
   it('renders the original directory trigger as the leading header action', () => {
     const markup = renderToStaticMarkup(<ArkmeTopicDirectoryPopover
+      onCreateWarning={() => undefined}
       userId={10001} selectedSource={undefined} onSelect={() => {}}
       onSelectionInvalidated={() => {}} onSelfSourcesResolution={() => {}} retryRevision={0}
     />)

@@ -71,6 +71,7 @@ import type {
   ArkmeTimelineCursor,
   ArkmeTimelineAroundPage,
   ArkmeTimelineItem,
+  ArkmeTimelineMentionTarget,
   ArkmeTimelinePage,
   ArkmeUploadedAsset,
 } from '../types.js'
@@ -85,7 +86,7 @@ import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLo
 import { arkmeRecordCaptureContextPayload, RecordService } from './record-service.js'
 import type { ArkmeRelatedQuickNoteSourceLocator } from './related-quick-note-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
-import { arkmeMentionMetadataMentionsViewer } from '../mention-metadata.js'
+import { arkmeMentionMetadataFromRecord, arkmeMentionMetadataMentionsViewer } from '../mention-metadata.js'
 import { arkmeRichBackgroundSound } from '../record-background-sound.js'
 import { arkmeHashTagContentPayload, arkmeHashTagPayload } from '../hashtag.js'
 import {
@@ -232,6 +233,8 @@ interface OfficialAuthorPrivateChatCreateResult {
 // Mirrors the mobile contact-author backend contract used by /api/v1/private/create-chat-ref-asen.
 const OFFICIAL_AUTHOR_USER_ID = 11
 const OFFICIAL_AUTHOR_FALLBACK_DISPLAY_NAME = '即' + '我作者'
+const RESERVED_ASEN_BOT_UID = 'asen'
+const RESERVED_ASEN_DISPLAY_NAME = '阿森'
 const MAX_MESSAGE_COPY_LINK_ITEMS = 100
 const RECORD_UID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const CHAT_MEMBER_REF_PREFIX = 'arkme-chat-member-v1'
@@ -2963,13 +2966,19 @@ export class ChatService {
       session,
       signal,
     )
-    const projections = listValue(data.children).flatMap((child): ArkmeExtensionMediaProjection[] => {
+    const projections: ArkmeExtensionMediaProjection[] = []
+    for (const child of listValue(data.children)) {
       const extension = chatExtensionTreeItemFromData(child, parentRecordUid)
-      return extension === undefined ? [] : [{
-        extension,
+      if (extension === undefined) continue
+      const childItem = objectValue(objectValue(child).item)
+      const record = objectValue(childItem.record)
+      const payload = objectValue(record.payload)
+      const mentions = await this.timelineMentionTargets(record, payload, session.userId, chatSessionUid)
+      projections.push({
+        extension: mentions === undefined ? extension : { ...extension, mentions },
         mediaRecord: chatExtensionMediaRecord(child, extension.recordUid),
-      }]
-    })
+      })
+    }
     const extensions = (await this.hydrateExtensionMedia(projections, session, signal))
       .sort((left, right) => right.sendAtMillis - left.sendAtMillis)
     const extensionCount = Math.max(integerLikeValue(data.total), extensions.length)
@@ -3914,39 +3923,49 @@ export class ChatService {
     const leadingTrim = textFormat === 'markdown' ? 0 : rawText.length - rawText.trimStart().length
     const uniqueRefs = [...new Set(inputs.map(input => input.botRef.trim()))]
     if (uniqueRefs.some(ref => ref === '')) throw new ArkmePluginError('bot-mention-ref-invalid', 'Bot mention 引用为空', false)
-    const references = await Promise.all(uniqueRefs.map(async ref => ({
+    const requestedReservedAsen = uniqueRefs.some(ref => ref.toLowerCase() === RESERVED_ASEN_BOT_UID)
+    const regularRefs = uniqueRefs.filter(ref => ref.toLowerCase() !== RESERVED_ASEN_BOT_UID)
+    const references = await Promise.all(regularRefs.map(async ref => ({
       ref,
       value: await this.bot.openBotRef(ref, session.userId),
     })))
     const allowedByBotId = new Map<string, { bot_uid: string; display_name_snapshot: string }>()
+    const reservedAsen = requestedReservedAsen
+      ? { bot_uid: RESERVED_ASEN_BOT_UID, display_name_snapshot: RESERVED_ASEN_DISPLAY_NAME }
+      : undefined
     if (source.kind === 'group_chat') {
-      const groupBots = await this.bot.listMentionableGroupBots(source, session, signal)
-      const requested = new Set(references.map(item => item.value.botId))
-      for (const { botId, name } of groupBots) {
-        if (!requested.has(botId)) continue
-        allowedByBotId.set(botId, { bot_uid: botId, display_name_snapshot: name })
+      if (references.length > 0) {
+        const groupBots = await this.bot.listMentionableGroupBots(source, session, signal)
+        const requested = new Set(references.map(item => item.value.botId))
+        for (const { botId, name } of groupBots) {
+          if (!requested.has(botId)) continue
+          allowedByBotId.set(botId, { bot_uid: botId, display_name_snapshot: name })
+        }
       }
     } else {
-      const bots = (await this.bot.listBots(signal === undefined ? {} : { signal })).items
-      const botNameByRef = new Map(bots
-        .filter(bot => bot.provider === 'openclaw')
-        .map(bot => [bot.botRef, bot.name]))
-      for (const reference of references) {
-        if (reference.value.provider !== 'openclaw') {
-          throw new ArkmePluginError('bot-provider-mismatch', '只有 OpenClaw Bot 可以被 mention', false, 400)
+      if (references.length > 0) {
+        const bots = (await this.bot.listBots(signal === undefined ? {} : { signal })).items
+        const botNameByRef = new Map(bots
+          .filter(bot => bot.provider === 'openclaw')
+          .map(bot => [bot.botRef, bot.name]))
+        for (const reference of references) {
+          if (reference.value.provider !== 'openclaw') {
+            throw new ArkmePluginError('bot-provider-mismatch', '只有 OpenClaw Bot 可以被 mention', false, 400)
+          }
+          const name = botNameByRef.get(reference.ref)
+          if (name === undefined || name.trim() === '') {
+            throw new ArkmePluginError('bot-mention-not-available', '所选 Bot 当前不可 mention', false, 409)
+          }
+          allowedByBotId.set(reference.value.botId, { bot_uid: reference.value.botId, display_name_snapshot: name.trim() })
         }
-        const name = botNameByRef.get(reference.ref)
-        if (name === undefined || name.trim() === '') {
-          throw new ArkmePluginError('bot-mention-not-available', '所选 Bot 当前不可 mention', false, 409)
-        }
-        allowedByBotId.set(reference.value.botId, { bot_uid: reference.value.botId, display_name_snapshot: name.trim() })
       }
     }
     const refToBotId = new Map(references.map(item => [item.ref, item.value.botId]))
     return [...inputs].sort((left, right) => left.startIndex - right.startIndex).map(input => {
       const botRef = input.botRef.trim()
-      const botId = refToBotId.get(botRef)
-      const bot = botId === undefined ? undefined : allowedByBotId.get(botId)
+      const isReservedAsen = botRef.toLowerCase() === RESERVED_ASEN_BOT_UID
+      const botId = isReservedAsen ? undefined : refToBotId.get(botRef)
+      const bot = isReservedAsen ? reservedAsen : botId === undefined ? undefined : allowedByBotId.get(botId)
       if (bot === undefined) throw new ArkmePluginError('bot-mention-not-available', '所选 Bot 当前不可 mention', false, 409)
       const startIndex = Math.trunc(input.startIndex) - leadingTrim
       const length = Math.trunc(input.length)
@@ -3973,11 +3992,17 @@ export class ChatService {
       signal?: AbortSignal,
       options: { agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
     ): Promise<ArkmeSourceSendResult> {
-      const uniqueRefs = new Set(botRefs.map(ref => ref.trim()))
+      const normalizedRefs = botRefs.map(ref => {
+        const normalized = ref.trim()
+        return normalized.toLowerCase() === RESERVED_ASEN_BOT_UID ? RESERVED_ASEN_BOT_UID : normalized
+      })
+      const uniqueRefs = new Set(normalizedRefs)
       if (uniqueRefs.has('') || uniqueRefs.size !== botRefs.length) {
         throw new ArkmePluginError('bot-mention-ref-invalid', 'Bot mention 引用为空或重复', false)
       }
-      const references = await Promise.all([...uniqueRefs].map(async ref => ({
+      const requestedReservedAsen = [...uniqueRefs].some(ref => ref.toLowerCase() === RESERVED_ASEN_BOT_UID)
+      const regularRefs = [...uniqueRefs].filter(ref => ref.toLowerCase() !== RESERVED_ASEN_BOT_UID)
+      const references = await Promise.all(regularRefs.map(async ref => ({
         ref,
         value: await this.bot.openBotRef(ref, session.userId),
       })))
@@ -3985,21 +4010,34 @@ export class ChatService {
       if (requestedById.size !== references.length) {
         throw new ArkmePluginError('bot-mention-ref-invalid', 'Bot mention 引用重复', false)
       }
-      const groupBots = await this.bot.listMentionableGroupBots(source, session, signal)
       const mentions: Array<{ bot_uid: string; display_name_snapshot: string; start_index: number; length: number }> = []
       let visibleText = ''
-      for (const { botId, name } of groupBots) {
-        if (!requestedById.has(botId)) continue
-        const display = `@${name}`
+      if (requestedById.size > 0) {
+        const groupBots = await this.bot.listMentionableGroupBots(source, session, signal)
+        for (const { botId, name } of groupBots) {
+          if (!requestedById.has(botId)) continue
+          const display = `@${name}`
+          const startIndex = visibleText.length
+          visibleText += `${display} `
+          mentions.push({
+            bot_uid: botId,
+            display_name_snapshot: name,
+            start_index: startIndex,
+            length: display.length,
+          })
+          requestedById.delete(botId)
+        }
+      }
+      if (requestedReservedAsen) {
+        const display = `@${RESERVED_ASEN_DISPLAY_NAME}`
         const startIndex = visibleText.length
         visibleText += `${display} `
         mentions.push({
-          bot_uid: botId,
-          display_name_snapshot: name,
+          bot_uid: RESERVED_ASEN_BOT_UID,
+          display_name_snapshot: RESERVED_ASEN_DISPLAY_NAME,
           start_index: startIndex,
           length: display.length,
         })
-        requestedById.delete(botId)
       }
       if (requestedById.size > 0) {
         throw new ArkmePluginError('bot-mention-not-installed', '所选 Bot 未安装到该群聊', false, 409)
@@ -4665,7 +4703,49 @@ export class ChatService {
     ): Promise<ArkmeSourceItem> {
       return await this.source.chatSourceFromBundle(bundle, session, cached, timelineItems)
     }
-  
+
+  private async timelineMentionTargets(
+    record: Record<string, unknown>,
+    payload: Record<string, unknown>,
+    viewerUserId: number,
+    chatSessionUid: string,
+  ): Promise<ArkmeTimelineMentionTarget[] | undefined> {
+    const metadata = arkmeMentionMetadataFromRecord(record, payload)
+    const targets: ArkmeTimelineMentionTarget[] = []
+    for (const rawMention of listValue(metadata.human_mentions ?? metadata.humanMentions)) {
+      const mention = objectValue(rawMention)
+      const startIndex = integerLikeValue(mention.start_index ?? mention.startIndex)
+      const length = integerLikeValue(mention.length)
+      const displayName = stringValue(mention.display_name_snapshot ?? mention.displayNameSnapshot).trim()
+      const userId = integerLikeValue(mention.user_id ?? mention.userId)
+      if (startIndex < 0 || length < 2 || displayName === '') continue
+      if (userId === 0) {
+        targets.push({ kind: 'all', startIndex, length, displayName })
+        continue
+      }
+      if (userId > 0) {
+        targets.push({
+          kind: 'member',
+          startIndex,
+          length,
+          displayName,
+          memberRef: await this.sealChatMemberRef(viewerUserId, chatSessionUid, userId),
+        })
+      }
+    }
+    for (const rawMention of listValue(metadata.bot_mentions ?? metadata.botMentions)) {
+      const mention = objectValue(rawMention)
+      const startIndex = integerLikeValue(mention.start_index ?? mention.startIndex)
+      const length = integerLikeValue(mention.length)
+      const displayName = stringValue(mention.display_name_snapshot ?? mention.displayNameSnapshot).trim()
+      const botRef = stringValue(mention.bot_uid ?? mention.botUid).trim()
+      if (startIndex < 0 || length < 2 || displayName === '' || botRef === '') continue
+      targets.push({ kind: 'bot', startIndex, length, displayName, botRef })
+    }
+    targets.sort((left, right) => left.startIndex - right.startIndex)
+    return targets.length === 0 ? undefined : targets
+  }
+
   async chatTimelineItems(
       data: Record<string, unknown>,
       session: ArkmeSessionCredentials,
@@ -4707,6 +4787,7 @@ export class ChatService {
         const conversationPreview = arkmeChatConversationPreview(item)
         const callRecord = await this.callHistory.timelineCallRecord(item, session.userId)
         const senderName = stringValue(relation.display_name_snapshot).trim() || 'Arkme用户'
+        const mentions = await this.timelineMentionTargets(record, payload, session.userId, chatSessionUid)
         const mentionsViewer = senderUserId !== session.userId
           && arkmeMentionMetadataMentionsViewer(record, payload, session.userId)
         items.push({
@@ -4748,6 +4829,7 @@ export class ChatService {
           isMe: senderUserId === session.userId,
           ...(callRecord === undefined ? {} : { callRecord }),
           ...(mentionsViewer ? { mentionsViewer: true } : {}),
+          ...(mentions === undefined ? {} : { mentions }),
           sendAtMillis,
           title: stringValue(payload.title),
           textContent: stringValue(payload.text_content),
@@ -5568,6 +5650,7 @@ export class ChatService {
       const contentBlocks = this.media.richContentBlocks(item, session.userId)
       const extensionProjection = this.timelineExtensionProjection(item, session.userId)
       const senderName = stringValue(relation.display_name_snapshot).trim() || 'Arkme用户'
+      const mentions = await this.timelineMentionTargets(record, payload, session.userId, source.ownerRef)
       const captureContext = timelineCaptureContext({ ...record, ...payload })
       const recordDurationMillis = positiveNumberValue(
         payload.record_duration_millis, record.record_duration_millis,
@@ -5617,6 +5700,7 @@ export class ChatService {
         ...(agentSource === undefined ? {} : { agentSource }),
         isMe: senderUserId === session.userId,
         ...(callRecord === undefined ? {} : { callRecord }),
+        ...(mentions === undefined ? {} : { mentions }),
         sendAtMillis,
         title: stringValue(payload.title),
         textContent: stringValue(payload.text_content),

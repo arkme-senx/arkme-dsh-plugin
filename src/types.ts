@@ -1593,6 +1593,16 @@ export interface ArkmeMessageSnapshotDetail {
   syncState?: 'synced' | 'syncing' | 'failed' | 'not-synced'
 }
 
+export interface ArkmeTimelineMentionTarget {
+  kind: 'member' | 'all' | 'bot'
+  startIndex: number
+  length: number
+  displayName: string
+  /** Browser-safe account-and-session scoped member identity for opening the profile card. */
+  memberRef?: string
+  botRef?: string
+}
+
 export interface ArkmeTimelineItem {
   /** Display-only call status; room, participant and call identifiers stay host-side. */
   callRecord?: {
@@ -1626,6 +1636,8 @@ export interface ArkmeTimelineItem {
   isMe: boolean
   /** Browser-safe projection of whether this incoming message mentions the current viewer. */
   mentionsViewer?: boolean
+  /** Browser-safe mention ranges projected from provider metadata; used for exact highlight and member cards. */
+  mentions?: ArkmeTimelineMentionTarget[]
   sendAtMillis: number
   title: string
   textContent: string
@@ -2009,6 +2021,7 @@ export interface ArkmeLongArticleDetail {
   title: string
   textContent: string
   textFormat?: 'plain' | 'markdown'
+  mentions?: ArkmeTimelineMentionTarget[]
   sendAtMillis: number
   updateAtMillis: number
   recordDurationMillis: number
@@ -2109,6 +2122,7 @@ export interface ArkmeMessageCopyLinkSnapshotItem {
   title: string
   textContent: string
   textFormat?: 'plain' | 'markdown'
+  mentions?: ArkmeTimelineMentionTarget[]
   sendAtMillis: number
   templateKind: number
   displayKind: number

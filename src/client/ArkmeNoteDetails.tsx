@@ -1,19 +1,26 @@
-import { ArkmeRichComposerInput } from './ArkmeRichComposerInput.js'
+import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import type { ArkmeProviderCapabilities } from '../types.js'
-import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X'
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
 import type {
+  ArkmeBotList,
+  ArkmeBotMentionInput,
+  ArkmeConversationMemberItem,
   ArkmeForwardRecordPreviewItem,
+  ArkmeGroupBotCandidateList,
+  ArkmeHumanMentionInput,
   ArkmeMessageCopyLinkExtensionItem,
   ArkmeRelatedQuickNoteDetail as ArkmeRelatedQuickNoteDetailDto,
   ArkmeRelatedQuickNoteItem,
   ArkmeRelatedQuickNoteList,
   ArkmeSourceMessageExtendResult,
   ArkmeSourceMessageExtensionContext,
+  ArkmeSourceKind,
   ArkmeTimelineItem,
+  ArkmeTimelineMentionTarget,
 } from '../types.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeMediaPreview, ArkmeMessageContent } from './ArkmeRichContent.js'
@@ -32,10 +39,31 @@ import { arkmeTheme } from './arkme-theme.js'
 import { ARKME_CONVERSATION_HEADER_HEIGHT } from './interwoven-moments.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { ArkmeAttachmentStrip, ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
-import { releaseArkmeComposerAttachment, type ArkmeComposerAttachment } from './composer-draft-store.js'
+import {
+  arkmeComposerAtomicDeletion,
+  insertArkmeComposerMentionToken,
+  reconcileArkmeComposerEmojis,
+  reconcileArkmeComposerMentions,
+  releaseArkmeComposerAttachment,
+  serializeArkmeComposerDraft,
+  type ArkmeComposerAttachment,
+  type ArkmeComposerEmoji,
+  type ArkmeComposerMention,
+} from './composer-draft-store.js'
 import { localFileBlock } from './file-send-tasks.js'
 import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 import { recordingSpeakerColor } from './recordings/recording-speaker-presentation.js'
+import {
+  arkmeComposerMentionTrigger,
+  arkmeGroupMentionCandidates,
+  arkmeMemberForMention,
+  arkmeMentionCandidateKey,
+  arkmePrivateMentionCandidates,
+  type ArkmeMentionCandidate,
+} from './mention-candidates.js'
+import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
+import { ArkmeMentionSuggestionRow, ArkmeMentionSuggestionThemeStyles } from './ArkmeMentionSuggestionRow.js'
+import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'
 
 const styles: Record<string, CSSProperties> = {
   drawer: { position: 'absolute', top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, zIndex: 10,
@@ -61,11 +89,32 @@ const styles: Record<string, CSSProperties> = {
   extensionFooter: { flex: 'none', padding: 0, color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px' },
   extensionComposer: { display: 'flex', flexDirection: 'column' },
   extensionAttachmentPreview: { padding: '8px 16px' },
-  extensionInputBar: { padding: '12px 16px', borderTop: '0.5px solid #e6e6e6' },
+  extensionInputBar: { position: 'relative', padding: '12px 16px', borderTop: '0.5px solid #e6e6e6' },
   extensionInputWrap: { minHeight: 44, maxHeight: 100, display: 'flex', alignItems: 'flex-end', gap: 8, padding: '8px 8px 8px 12px', boxSizing: 'border-box', border: 0, borderRadius: 12, background: '#f6f6f6' },
   extensionInput: { flex: 1, minWidth: 0, minHeight: 28, maxHeight: 84, boxSizing: 'border-box', fieldSizing: 'content', overflowY: 'auto', resize: 'none', border: 0, outline: 0, padding: '4px 0', background: 'transparent', color: arkmeTheme.text, font: 'inherit', fontSize: 14, lineHeight: '20px' },
   extensionTool: { width: 18, height: 28, flex: 'none', alignSelf: 'flex-start', display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 6, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer' },
-  extensionSend: { width: 28, height: 28, flex: 'none', display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 999, background: arkmeTheme.text, color: arkmeTheme.base, cursor: 'pointer', fontSize: 16 },
+  mentionSuggestions: {
+    position: 'absolute', left: 16, right: 16, bottom: 'calc(100% + 8px)', zIndex: 23,
+    maxHeight: 252, overflowY: 'auto', padding: 6, boxSizing: 'border-box',
+    border: `1px solid ${arkmeTheme.border}`, borderRadius: 12, background: arkmeTheme.menu,
+    boxShadow: arkmeTheme.shadow,
+  },
+  mentionSuggestionRow: {
+    width: '100%', minWidth: 0, height: 40, padding: '6px 8px', boxSizing: 'border-box',
+    display: 'flex', alignItems: 'center', gap: 8, border: 0, borderRadius: 8,
+    background: 'transparent', color: arkmeTheme.text, cursor: 'pointer', textAlign: 'left',
+  },
+  mentionSuggestionRowActive: { background: arkmeTheme.hover },
+  mentionSuggestionAvatar: { width: 28, height: 28, flex: 'none', overflow: 'hidden', borderRadius: 999, display: 'grid', placeItems: 'center' },
+  mentionSuggestionBotAvatar: {
+    width: 28, height: 28, display: 'grid', placeItems: 'center', borderRadius: 999,
+    background: arkmeTheme.subtle, color: arkmeTheme.text,
+    border: `1px solid ${arkmeTheme.border}`, boxSizing: 'border-box',
+  },
+  mentionSuggestionText: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column' },
+  mentionSuggestionName: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, lineHeight: '17px', fontWeight: 500 },
+  mentionSuggestionSecondary: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.secondary, fontSize: 11, lineHeight: '15px' },
+  mentionSuggestionsEmpty: { padding: '8px 10px', color: arkmeTheme.secondary, fontSize: 12, lineHeight: '18px' },
   extensionParent: { margin: '12px 0 16px', paddingLeft: 10, borderLeftWidth: 1, borderLeftStyle: 'solid', borderLeftColor: arkmeTheme.border,
     color: arkmeTheme.tertiary, fontSize: 13, lineHeight: '20px', overflow: 'hidden' },
   extensionParentText: { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden', overflowWrap: 'anywhere' },
@@ -91,6 +140,8 @@ const styles: Record<string, CSSProperties> = {
 const extensionComposerStyles = `
 .arkme-detail-extension-input-shell .ProseMirror > :last-child { margin-bottom:0; }
 `
+
+const EMPTY_DETAIL_CONVERSATION_MEMBERS: readonly ArkmeConversationMemberItem[] = Object.freeze([])
 
 function epoch(value: number): number {
   return Number.isFinite(value) && value > 0 && value < 8.64e15 ? value < 1e12 ? value * 1000 : value : 0
@@ -185,8 +236,58 @@ function removeDetailExtensionAttachmentsAfter(
   void pendingSend.catch(() => undefined).then(async () => { await removeDetailExtensionAttachments(attachments) })
 }
 
-function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid, targetKey, onSent, onError, messageCreationBlocked, messageCreationRestriction }: {
+function detailExtensionMentionsEnabled(sourceKind: ArkmeSourceKind | undefined): boolean {
+  return sourceKind === 'group_chat' || sourceKind === 'private_chat'
+}
+
+function detailHumanMentionInputs(mentions: readonly ArkmeComposerMention[]): ArkmeHumanMentionInput[] {
+  return mentions.flatMap<ArkmeHumanMentionInput>(mention => {
+    const base = { startIndex: mention.startIndex, length: mention.length }
+    if (mention.all === true) return [{ ...base, all: true }]
+    return mention.mentionRef === undefined ? [] : [{ ...base, mentionRef: mention.mentionRef }]
+  })
+}
+
+function detailBotMentionInputs(mentions: readonly ArkmeComposerMention[]): ArkmeBotMentionInput[] {
+  return mentions.flatMap<ArkmeBotMentionInput>(mention => {
+    if (mention.botRef === undefined) return []
+    return [{ botRef: mention.botRef, startIndex: mention.startIndex, length: mention.length }]
+  })
+}
+
+function DetailMentionSuggestions({ candidates, activeIndex, onActiveIndexChange, onSelect }: {
+  candidates: readonly ArkmeMentionCandidate[]
+  activeIndex: number
+  onActiveIndexChange: (index: number) => void
+  onSelect: (candidate: ArkmeMentionCandidate) => void
+}) {
+  return <div style={styles.mentionSuggestions} role="listbox" aria-label="选择要 @ 的对象">
+    <ArkmeMentionSuggestionThemeStyles />
+    {candidates.length === 0
+      ? <div style={styles.mentionSuggestionsEmpty}>暂无可 @ 的对象</div>
+      : candidates.map((candidate, index) => <ArkmeMentionSuggestionRow
+        key={arkmeMentionCandidateKey(candidate)}
+        candidate={candidate}
+        active={index === activeIndex}
+        styles={{
+          row: styles.mentionSuggestionRow!,
+          rowActive: styles.mentionSuggestionRowActive!,
+          avatar: styles.mentionSuggestionAvatar!,
+          botAvatar: styles.mentionSuggestionBotAvatar!,
+          text: styles.mentionSuggestionText!,
+          name: styles.mentionSuggestionName!,
+          secondary: styles.mentionSuggestionSecondary!,
+        }}
+        onActive={() => { onActiveIndexChange(index) }}
+        onSelect={() => { onSelect(candidate) }}
+      />)}
+  </div>
+}
+
+function DetailExtensionComposer({ sourceRef, sourceKind, conversationMembers, messageActionRef, parentRecordUid, targetKey, onSent, onError, messageCreationBlocked, messageCreationRestriction }: {
   sourceRef: string
+  sourceKind?: ArkmeSourceKind | undefined
+  conversationMembers?: readonly ArkmeConversationMemberItem[] | undefined
   messageActionRef: string
   parentRecordUid?: string | undefined
   targetKey: string
@@ -196,6 +297,8 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
   messageCreationRestriction: string
 }) {
   const [text, setText] = useState('')
+  const [mentions, setMentions] = useState<ArkmeComposerMention[]>([])
+  const [emojis, setEmojis] = useState<ArkmeComposerEmoji[]>([])
   const [markdown, setMarkdown] = useState<ArkmeMarkdownDraft>()
   const [markdownEnabled, setMarkdownEnabled] = useState(false)
   useEffect(() => {
@@ -214,7 +317,20 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
   const generationRef = useRef(0)
   const attachmentsRef = useRef<ArkmeComposerAttachment[]>([])
   const submissionRef = useRef<{ fingerprint: string; recordUid: string; relationUid: string }>()
+  const inputRef = useRef<ArkmeRichComposerHandle>(null)
+  const textRef = useRef(text)
+  const mentionsRef = useRef<readonly ArkmeComposerMention[]>(mentions)
+  const emojisRef = useRef<readonly ArkmeComposerEmoji[]>(emojis)
+  const [mentionTrigger, setMentionTrigger] = useState<ReturnType<typeof arkmeComposerMentionTrigger>>()
+  const [mentionCandidateIndex, setMentionCandidateIndex] = useState(0)
+  const [groupMentionBots, setGroupMentionBots] = useState<ArkmeGroupBotCandidateList>()
+  const [privateMentionBots, setPrivateMentionBots] = useState<ArkmeBotList>()
+  const mentionsEnabled = detailExtensionMentionsEnabled(sourceKind)
+  const activeConversationMembers = conversationMembers ?? EMPTY_DETAIL_CONVERSATION_MEMBERS
   attachmentsRef.current = attachments
+  textRef.current = text
+  mentionsRef.current = mentions
+  emojisRef.current = emojis
   useEffect(() => {
     generationRef.current += 1
     stageAbortRef.current?.abort()
@@ -222,7 +338,9 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
     sendAbortRef.current = undefined
     sendPromiseRef.current = undefined
     submissionRef.current = undefined
-    setText(''); setMarkdown(undefined)
+    setText(''); setMentions([]); setEmojis([]); setMarkdown(undefined)
+    setMentionTrigger(undefined)
+    setMentionCandidateIndex(0)
     setAttachments([])
     setPreparing(false)
     setSending(false)
@@ -239,6 +357,111 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
       removeDetailExtensionAttachmentsAfter(pending, pendingSend)
     }
   }, [targetKey])
+  useEffect(() => {
+    setGroupMentionBots(undefined)
+    setPrivateMentionBots(undefined)
+    setMentionTrigger(undefined)
+    setMentionCandidateIndex(0)
+  }, [sourceKind, sourceRef])
+  useEffect(() => {
+    if (!mentionsEnabled || mentionTrigger === undefined) return
+    if (sourceKind === 'group_chat' && groupMentionBots !== undefined) return
+    if (sourceKind === 'private_chat' && privateMentionBots !== undefined) return
+    const controller = new AbortController()
+    if (sourceKind === 'group_chat') {
+      void callArkme<ArkmeGroupBotCandidateList>('group.bots', { sourceRef }, controller.signal)
+        .then(snapshot => {
+          if (!controller.signal.aborted) setGroupMentionBots(snapshot)
+        })
+        .catch(caught => {
+          if (!controller.signal.aborted) console.warn('dsh-arkme: detail mention bot refresh failed', caught)
+        })
+    } else if (sourceKind === 'private_chat') {
+      void callArkme<ArkmeBotList>('bots.list', undefined, controller.signal)
+        .then(snapshot => {
+          if (!controller.signal.aborted) setPrivateMentionBots(snapshot)
+        })
+        .catch(() => undefined)
+    }
+    return () => { controller.abort() }
+  }, [groupMentionBots, mentionTrigger?.startIndex, mentionsEnabled, privateMentionBots, sourceKind, sourceRef])
+  const mentionCandidates = useMemo((): ArkmeMentionCandidate[] => {
+    if (!mentionsEnabled || mentionTrigger === undefined) return []
+    if (sourceKind === 'group_chat') {
+      return arkmeGroupMentionCandidates(mentionTrigger.query, groupMentionBots?.items ?? [], activeConversationMembers)
+    }
+    if (sourceKind === 'private_chat') {
+      return arkmePrivateMentionCandidates(mentionTrigger.query, privateMentionBots?.items ?? [])
+    }
+    return []
+  }, [activeConversationMembers, groupMentionBots?.items, mentionTrigger, mentionsEnabled, privateMentionBots?.items, sourceKind])
+  useEffect(() => { setMentionCandidateIndex(0) }, [mentionTrigger?.startIndex, mentionTrigger?.endIndex, mentionTrigger?.query])
+  const focusComposerAt = useCallback((caret: number) => {
+    const schedule = typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function'
+      ? (callback: FrameRequestCallback) => { callback(0); return 0 }
+      : window.requestAnimationFrame.bind(window)
+    schedule(() => {
+      const editor = inputRef.current
+      if (editor === null || editor.disabled) return
+      editor.focus()
+      editor.setSelectionRange(caret, caret)
+    })
+  }, [])
+  const updateText = (value: string) => {
+    if (messageCreationBlocked || preparing || sending) return
+    const previousText = textRef.current
+    setText(value)
+    setMentions(reconcileArkmeComposerMentions(previousText, value, mentionsRef.current))
+    setEmojis(reconcileArkmeComposerEmojis(previousText, value, emojisRef.current))
+  }
+  const updateMentionTrigger = useCallback((value: string, selectionStart: number, selectionEnd: number) => {
+    if (!mentionsEnabled) {
+      setMentionTrigger(undefined)
+      return
+    }
+    setMentionTrigger(arkmeComposerMentionTrigger(value, selectionStart, selectionEnd))
+  }, [mentionsEnabled])
+  const insertMentionCandidate = useCallback((candidate: ArkmeMentionCandidate) => {
+    if (!mentionsEnabled || mentionTrigger === undefined) return
+    const mention = candidate.kind === 'all'
+      ? { all: true as const }
+      : candidate.kind === 'bot'
+        ? { botRef: candidate.botRef }
+        : { mentionRef: candidate.mentionRef }
+    const displayName = candidate.kind === 'member' ? candidate.mentionDisplayName ?? candidate.displayName : candidate.displayName
+    const inserted = insertArkmeComposerMentionToken(
+      { text: textRef.current, mentions: mentionsRef.current, emojis: emojisRef.current },
+      mention,
+      displayName,
+      mentionTrigger.startIndex,
+      mentionTrigger.endIndex,
+    )
+    if (inserted === undefined) return
+    setText(inserted.text)
+    setMentions(inserted.mentions)
+    setEmojis(inserted.emojis)
+    setMarkdown(undefined)
+    setMentionTrigger(undefined)
+    focusComposerAt(inserted.caretIndex)
+  }, [focusComposerAt, mentionTrigger, mentionsEnabled])
+  const deleteMentionAtSelection = useCallback((direction: 'backward' | 'forward'): number | undefined => {
+    const editor = inputRef.current
+    const value = textRef.current
+    const deletion = arkmeComposerAtomicDeletion(
+      value,
+      mentionsRef.current,
+      editor?.selectionStart ?? value.length,
+      editor?.selectionEnd ?? value.length,
+      direction,
+    )
+    if (deletion === undefined) return undefined
+    setText(deletion.text)
+    setMentions(reconcileArkmeComposerMentions(value, deletion.text, mentionsRef.current))
+    setEmojis(reconcileArkmeComposerEmojis(value, deletion.text, emojisRef.current))
+    setMarkdown(undefined)
+    setMentionTrigger(undefined)
+    return deletion.caretIndex
+  }, [])
   const selectFiles = async (files: FileList | readonly File[] | null) => {
     if (messageCreationBlocked || files === null || files.length === 0 || preparing || sending) return
     const controller = new AbortController()
@@ -294,10 +517,19 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
     }
   }
   const send = async () => {
-    const normalizedText = markdown?.source ?? text.trim()
+    const serializedDraft = serializeArkmeComposerDraft({
+      text,
+      mentions,
+      emojis,
+      attachments,
+      ...(markdown === undefined ? {} : { markdown }),
+    })
+    const normalizedText = serializedDraft.textFormat === 'markdown' ? serializedDraft.text : serializedDraft.text.trim()
+    const humanMentions = detailHumanMentionInputs(serializedDraft.mentions)
+    const botMentions = detailBotMentionInputs(serializedDraft.mentions)
     const fileRefs = attachments.flatMap(attachment => attachment.localFile === undefined ? [] : [attachment.localFile.fileRef])
     if (messageCreationBlocked || sending || preparing || (normalizedText === '' && fileRefs.length === 0)) return
-    const fingerprint = JSON.stringify([parentRecordUid ?? '', normalizedText, fileRefs])
+    const fingerprint = JSON.stringify([parentRecordUid ?? '', normalizedText, fileRefs, serializedDraft.textFormat ?? 'plain', humanMentions, botMentions])
     const recordUid = submissionRef.current?.fingerprint === fingerprint
       ? submissionRef.current.recordUid
       : crypto.randomUUID()
@@ -312,8 +544,10 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
     const request = callArkme('source.message-extension.extend', {
       sourceRef,
       messageActionRef,
-      textContent: normalizedText,
-      ...(markdown === undefined ? {} : { textFormat: 'markdown' }),
+      textContent: serializedDraft.text,
+      ...(serializedDraft.textFormat === undefined ? {} : { textFormat: serializedDraft.textFormat }),
+      ...(humanMentions.length === 0 ? {} : { humanMentions }),
+      ...(botMentions.length === 0 ? {} : { botMentions }),
       recordUid,
       relationUid,
       ...(parentRecordUid === undefined ? {} : { parentRecordUid }),
@@ -326,7 +560,8 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
       submissionRef.current = undefined
       attachmentsRef.current = []
       for (const attachment of attachments) releaseArkmeComposerAttachment(attachment)
-      setText(''); setMarkdown(undefined)
+      setText(''); setMentions([]); setEmojis([]); setMarkdown(undefined)
+      setMentionTrigger(undefined)
       setAttachments([])
       setDraftPreview(undefined)
       onSent(result)
@@ -343,6 +578,7 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
     }
   }
   const disabled = messageCreationBlocked || preparing || sending
+  const canSend = (markdown?.source ?? text).trim() !== '' || attachments.length > 0
   return <div style={styles.extensionComposer}
     onDragOver={event => { if (!disabled && Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
     onDrop={event => { if (!disabled && event.dataTransfer.files.length > 0) { event.preventDefault(); void selectFiles(event.dataTransfer.files) } }}>
@@ -368,16 +604,68 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
       /></div>}
     <div className="arkme-detail-extension-input-bar" style={styles.extensionInputBar}>
       <style>{extensionComposerStyles}</style>
+      {mentionTrigger !== undefined && <DetailMentionSuggestions
+        candidates={mentionCandidates}
+        activeIndex={mentionCandidateIndex}
+        onActiveIndexChange={setMentionCandidateIndex}
+        onSelect={insertMentionCandidate}
+      />}
       <div className="arkme-detail-extension-input-shell" style={styles.extensionInputWrap}>
         <button type="button" style={{ ...styles.extensionTool, opacity: disabled ? .4 : 1 }} aria-label="添加延展附件" disabled={disabled}
           onClick={() => { fileInputRef.current?.click() }}>{preparing ? <ArkmeFilePreparingIndicator /> : <FileTextIcon size={18} />}</button>
-        <ArkmeRichComposerInput style={styles.extensionInput!} ariaLabel="延展此快记" placeholder="延展此快记..." value={text} disabled={disabled}
-          mentions={[]} emojis={[]} maxLength={20000} markdownEnabled={markdownEnabled} markdown={markdown}
-          onTextChange={value => { if (!disabled) setText(value) }} onMarkdownChange={value => { if (!disabled) setMarkdown(value) }}
+        <ArkmeRichComposerInput ref={inputRef} style={styles.extensionInput!} ariaLabel="延展此快记" placeholder="延展此快记..." value={text} disabled={disabled}
+          mentions={mentions} emojis={emojis} maxLength={20000} markdownEnabled={markdownEnabled} markdown={markdown}
+          onTextChange={updateText} onMarkdownChange={(value, nextText, nextMentions, nextEmojis) => {
+            if (disabled) return
+            if (nextText !== undefined) setText(nextText)
+            setMentions([...(nextMentions ?? value.mentions)])
+            setEmojis([...(nextEmojis ?? [])])
+            setMarkdown(value)
+          }}
+          onSelectionChange={updateMentionTrigger}
           onPaste={event => { const files = clipboardFiles(event.clipboardData); if (files.length > 0) { event.preventDefault(); void selectFiles(files) } }}
-          onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send() } }} />
-        <button type="button" style={{ ...styles.extensionSend, opacity: normalizedSendOpacity(text, attachments.length, disabled) }}
-          aria-label="发送延展" disabled={disabled || (text.trim() === '' && attachments.length === 0)} onClick={() => { void send() }}>↑</button>
+          onKeyDown={event => {
+            if (mentionTrigger !== undefined) {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setMentionTrigger(undefined)
+                return
+              }
+              if (event.key === 'ArrowDown' && mentionCandidates.length > 0) {
+                event.preventDefault()
+                setMentionCandidateIndex(index => (index + 1) % mentionCandidates.length)
+                return
+              }
+              if (event.key === 'ArrowUp' && mentionCandidates.length > 0) {
+                event.preventDefault()
+                setMentionCandidateIndex(index => (index + mentionCandidates.length - 1) % mentionCandidates.length)
+                return
+              }
+              if ((event.key === 'Enter' || event.key === 'Tab') && mentionCandidates.length > 0) {
+                event.preventDefault()
+                const selectedCandidate = mentionCandidates[Math.min(mentionCandidateIndex, mentionCandidates.length - 1)]
+                if (selectedCandidate !== undefined) insertMentionCandidate(selectedCandidate)
+                return
+              }
+            }
+            if (!event.nativeEvent.isComposing && (event.key === 'Backspace' || event.key === 'Delete')) {
+              const caret = deleteMentionAtSelection(event.key === 'Backspace' ? 'backward' : 'forward')
+              if (caret !== undefined) {
+                event.preventDefault()
+                focusComposerAt(caret)
+                return
+              }
+            }
+            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault()
+              if (canSend) void send()
+            }
+          }} />
+        <ArkmeComposerSendButton
+          ariaLabel="发送延展"
+          disabled={disabled || !canSend}
+          onClick={() => { void send() }}
+        />
       </div>
     </div>
     {draftPreview?.localFile !== undefined && <ArkmeMediaPreview
@@ -392,10 +680,6 @@ function DetailExtensionComposer({ sourceRef, messageActionRef, parentRecordUid,
       openLocalFile={false}
     />}
   </div>
-}
-
-function normalizedSendOpacity(text: string, attachmentCount: number, disabled: boolean): number {
-  return disabled || text.trim() === '' && attachmentCount === 0 ? .35 : 1
 }
 
 export function arkmeTimelineDetailSenderText(item: ArkmeTimelineItem): string {
@@ -422,6 +706,7 @@ function detailExtensionTimelineItem(item: ArkmeMessageCopyLinkExtensionItem): A
     title: item.title,
     textContent: item.textContent,
     textFormat: item.textFormat ?? 'plain',
+    ...(item.mentions === undefined ? {} : { mentions: item.mentions }),
     status: 1,
     templateKind: item.templateKind,
     displayKind: item.displayKind,
@@ -478,13 +763,17 @@ function DetailExtensionParent({ parent }: { parent: NonNullable<ArkmeTimelineIt
   </div>
 }
 
-function DetailExtensionContext({ state, optimistic, selectedRecordUid, sourceRef, shareWebsite, onMessageCopyLinkOpen, onRetry, onSelect }: {
+function DetailExtensionContext({
+  state, optimistic, selectedRecordUid, sourceRef, shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, onRetry, onSelect,
+}: {
   state: ArkmeDetailExtensionLoadState
   optimistic: readonly ArkmeMessageCopyLinkExtensionItem[]
   selectedRecordUid?: string | undefined
   sourceRef?: string | undefined
   shareWebsite?: string | undefined
   onMessageCopyLinkOpen?: ((sid: string) => void) | undefined
+  onMentionClick?: (mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget) => void
+  isMentionClickable?: (mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget) => boolean
   onRetry: () => void
   onSelect: (item: ArkmeMessageCopyLinkExtensionItem) => void
 }) {
@@ -528,6 +817,8 @@ function DetailExtensionContext({ state, optimistic, selectedRecordUid, sourceRe
             {...(sourceRef === undefined ? {} : { sourceRef })}
             {...(shareWebsite === undefined ? {} : { shareWebsite })}
             {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
+            {...(onMentionClick === undefined ? {} : { onMentionClick })}
+            {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
           />
         </div>
       </div>
@@ -544,12 +835,14 @@ function relatedQuickNoteReferenceExpired(error: unknown): boolean {
 }
 
 export function ArkmeTimelineDetailDrawer({
-  item, sourceRef, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
-  messageCreationBlocked = false, messageCreationRestriction = '',
+  item, sourceRef, sourceKind, conversationMembers, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
+  onOpenPrivateChatMember, messageCreationBlocked = false, messageCreationRestriction = '',
 }: {
   item: ArkmeTimelineItem
   sourceRef?: string | undefined
   canExtend?: boolean
+  sourceKind?: ArkmeSourceKind | undefined
+  conversationMembers?: readonly ArkmeConversationMemberItem[] | undefined
   showOriginal: boolean
   onClose: () => void
   onToggleOriginal: () => void
@@ -557,6 +850,7 @@ export function ArkmeTimelineDetailDrawer({
   onMessageCopyLinkOpen?: (sid: string) => void
   onExtensionSent?: (result: ArkmeSourceMessageExtendResult) => void
   onToast?: (message: string) => void
+  onOpenPrivateChatMember?: (member: ArkmeConversationMemberItem) => void
   messageCreationBlocked?: boolean
   messageCreationRestriction?: string
 }) {
@@ -569,6 +863,7 @@ export function ArkmeTimelineDetailDrawer({
   const [extensionState, setExtensionState] = useState<ArkmeDetailExtensionLoadState>({ kind: 'idle' })
   const [optimisticExtensions, setOptimisticExtensions] = useState<ArkmeMessageCopyLinkExtensionItem[]>([])
   const [selectedExtensionRecordUid, setSelectedExtensionRecordUid] = useState<string>()
+  const [memberProfile, setMemberProfile] = useState<ArkmeConversationMemberItem>()
   const bodyRef = useRef<HTMLDivElement>(null)
   const scrollTopByViewRef = useRef<Record<ArkmeRelatedDrawerView, number>>({
     'source-detail': 0,
@@ -653,6 +948,7 @@ export function ArkmeTimelineDetailDrawer({
     setExtensionState({ kind: 'idle' })
     setOptimisticExtensions([])
     setSelectedExtensionRecordUid(undefined)
+    setMemberProfile(undefined)
     scrollTopByViewRef.current = { 'source-detail': 0, 'related-list': 0, 'related-detail': 0 }
     loadRelated()
     loadExtensionContext()
@@ -675,6 +971,21 @@ export function ArkmeTimelineDetailDrawer({
     extensionAbortRef.current?.abort()
     onClose()
   }
+  const mentionOpensMemberProfile = useCallback((mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget): boolean => (
+    sourceKind === 'group_chat'
+    && arkmeMemberForMention(mentionText, conversationMembers ?? [], mentionTarget) !== undefined
+  ), [conversationMembers, sourceKind])
+  const openMentionMemberProfile = useCallback((mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget) => {
+    if (sourceKind !== 'group_chat') return
+    const member = arkmeMemberForMention(mentionText, conversationMembers ?? [], mentionTarget)
+    if (member === undefined) return
+    setMemberProfile(member)
+  }, [conversationMembers, sourceKind])
+  const openPrivateFromProfile = useCallback(() => {
+    if (memberProfile === undefined) return
+    onOpenPrivateChatMember?.(memberProfile)
+    setMemberProfile(undefined)
+  }, [memberProfile, onOpenPrivateChatMember])
   const backRelated = () => {
     if (relatedView === 'related-detail') detailAbortRef.current?.abort()
     navigateRelated(relatedDrawerBackTarget(relatedView))
@@ -684,6 +995,8 @@ export function ArkmeTimelineDetailDrawer({
   const canToggle = item.aiPolish?.state === 'polished' && item.aiPolish.originalText !== undefined && item.aiPolish.polishedText !== undefined
   const extensionFooter = !canExtend || normalizedSourceRef === '' || messageActionRef === '' ? undefined : <DetailExtensionComposer
     sourceRef={normalizedSourceRef}
+    sourceKind={sourceKind}
+    conversationMembers={conversationMembers}
     messageActionRef={messageActionRef}
     messageCreationBlocked={messageCreationBlocked}
     messageCreationRestriction={messageCreationRestriction}
@@ -738,6 +1051,8 @@ export function ArkmeTimelineDetailDrawer({
         {...(sourceRef === undefined ? {} : { sourceRef })}
         {...(shareWebsite === undefined ? {} : { shareWebsite })}
         {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
+        onMentionClick={openMentionMemberProfile}
+        isMentionClickable={mentionOpensMemberProfile}
       />
     </div>
     {item.extensionParent !== undefined && <DetailExtensionParent parent={item.extensionParent} />}
@@ -753,9 +1068,18 @@ export function ArkmeTimelineDetailDrawer({
       {...(sourceRef === undefined ? {} : { sourceRef })}
       {...(shareWebsite === undefined ? {} : { shareWebsite })}
       {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
+      onMentionClick={openMentionMemberProfile}
+      isMentionClickable={mentionOpensMemberProfile}
       onRetry={loadExtensionContext}
       onSelect={extension => { setSelectedExtensionRecordUid(extension.recordUid) }}
     />
+    {memberProfile !== undefined && <ArkmeMemberProfileCard
+      member={memberProfile}
+      showTopicNickname={sourceKind === 'group_chat'}
+      busy={false}
+      onClose={() => { setMemberProfile(undefined) }}
+      onSend={openPrivateFromProfile}
+    />}
   </NoteDetailShell>
 }
 

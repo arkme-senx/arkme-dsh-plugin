@@ -16,7 +16,8 @@ import {
   ArkmeMemberJoinNotice, arkmeConversationJoinEventsInLoadedWindow, arkmeMemberJoinDisplayName,
   ArkmeMemberLeaveNotice,
   arkmeMemberJoinTimeLabel, arkmeVisibleMemberJoinInvitees, arkmeComposerMentionTrigger,
-  arkmeGroupMentionCandidates, arkmeMemberForVisibleMention, arkmeMentionCandidateMatches, arkmeMentionCandidatePrimaryText,
+  arkmeGroupMentionCandidates, arkmeMemberForMention, arkmeMemberForVisibleMention, arkmeMentionCandidateMatches, arkmeMentionCandidatePrimaryText,
+  arkmePrivateMentionCandidates,
   arkmeSelectedTimelineItems, arkmeTimelineOccurrenceKey,
 } from '../src/client/ArkmeSidebar.js'
 
@@ -63,7 +64,9 @@ describe('chat member action menu placement', () => {
     expect(arkmeComposerMentionTrigger('@', 1)).toEqual({ startIndex: 0, endIndex: 1, query: '' })
     expect(arkmeComposerMentionTrigger('@小', 2)).toEqual({ startIndex: 0, endIndex: 2, query: '小' })
     expect(arkmeComposerMentionTrigger('请 @小', 4)).toEqual({ startIndex: 2, endIndex: 4, query: '小' })
-    expect(arkmeComposerMentionTrigger('email@example.com', 17)).toBeUndefined()
+    expect(arkmeComposerMentionTrigger('你好@', 3)).toEqual({ startIndex: 2, endIndex: 3, query: '' })
+    expect(arkmeComposerMentionTrigger('你好@阿', 4)).toEqual({ startIndex: 2, endIndex: 4, query: '阿' })
+    expect(arkmeComposerMentionTrigger('email@example.com 已输入完成', 25)).toBeUndefined()
     expect(arkmeComposerMentionTrigger('@小 林', 3)).toBeUndefined()
     expect(arkmeComposerMentionTrigger('@小林', 0, 2)).toBeUndefined()
   })
@@ -97,7 +100,7 @@ describe('chat member action menu placement', () => {
       .toBe('Purge')
   })
 
-  it('keeps every matching group member after all and installed bot candidates', () => {
+  it('keeps every matching group member after all, installed bot, and reserved Asen candidates', () => {
     const members = [
       ...Array.from({ length: 12 }, (_, index) => ({
         ...member,
@@ -112,12 +115,23 @@ describe('chat member action menu placement', () => {
       { botRef: 'bot-3', name: 'Bot 3', description: '', installed: false },
     ], members)
 
-    expect(candidates).toHaveLength(15)
+    expect(candidates).toHaveLength(16)
     expect(candidates.map(candidate => candidate.displayName)).toEqual([
-      '所有人', 'Bot 1', 'Bot 2', ...Array.from({ length: 12 }, (_, index) => `成员${index}`),
+      '所有人', 'Bot 1', 'Bot 2', '阿森', ...Array.from({ length: 12 }, (_, index) => `成员${index}`),
     ])
     expect(candidates[0]).toEqual({ kind: 'all', displayName: '所有人' })
     expect(candidates[1]).toMatchObject({ kind: 'bot', avatarRef: 'arkme-bot-image-v1.avatar-1' })
+    expect(candidates[3]).toMatchObject({ kind: 'bot', botRef: 'asen', displayName: '阿森', reservedAgent: 'asen' })
+  })
+
+  it('adds the reserved Asen mention candidate to private chats', () => {
+    expect(arkmePrivateMentionCandidates('asen', [])).toEqual([{
+      kind: 'bot',
+      botRef: 'asen',
+      displayName: '阿森',
+      searchText: '阿森 asen',
+      reservedAgent: 'asen',
+    }])
   })
 
   it('flips above near the lower edge and clamps horizontally', () => {
@@ -336,6 +350,28 @@ describe('chat member action menu placement', () => {
       { kind: 'mention', text: '@Ye' },
       { kind: 'text', text: ' 首席UI设计师分配下，联系a@b.com' },
     ])
+    expect(arkmeVisibleMentionRuns('请@小林 处理，联系a@b.com')).toEqual([
+      { kind: 'text', text: '请' },
+      { kind: 'mention', text: '@小林' },
+      { kind: 'text', text: ' 处理，联系a@b.com' },
+    ])
+    expect(arkmeVisibleMentionRuns('请@♪(▽*) 看看')).toEqual([
+      { kind: 'text', text: '请' },
+      { kind: 'mention', text: '@♪(▽*)' },
+      { kind: 'text', text: ' 看看' },
+    ])
+    const mentionTarget = {
+      kind: 'member' as const,
+      memberRef: 'member-mentioned',
+      displayName: '历史昵称',
+      startIndex: 1,
+      length: 5,
+    }
+    expect(arkmeVisibleMentionRuns('请@历史昵称处理', true, [mentionTarget])).toEqual([
+      { kind: 'text', text: '请' },
+      { kind: 'mention', text: '@历史昵称', mentionTarget },
+      { kind: 'text', text: '处理' },
+    ])
   })
 
   it('resolves a visible member mention only when it names one active group member', () => {
@@ -343,11 +379,20 @@ describe('chat member action menu placement', () => {
     expect(arkmeMemberForVisibleMention('@cruisin', [active])).toBe(active)
     expect(arkmeMemberForVisibleMention('@-', [active])).toBe(active)
     expect(arkmeMemberForVisibleMention('@所有人', [active])).toBeUndefined()
+    expect(arkmeMemberForVisibleMention('@♪(▽*)', [{
+      ...active,
+      memberRef: 'kaomoji-ref',
+      mentionDisplayName: '♪(▽*)',
+      displayName: '♪(▽*)',
+    }])).toMatchObject({ memberRef: 'kaomoji-ref' })
     expect(arkmeMemberForVisibleMention('@cruisin', [{ ...active, status: 'removed' }])).toBeUndefined()
     expect(arkmeMemberForVisibleMention('@重复', [
       { ...active, memberRef: 'one', mentionDisplayName: '重复', displayName: '一' },
       { ...active, memberRef: 'two', mentionDisplayName: '重复', displayName: '二' },
     ])).toBeUndefined()
+    expect(arkmeMemberForMention('@历史昵称', [active], {
+      kind: 'member', memberRef: 'active-ref', displayName: '历史昵称', startIndex: 0, length: 5,
+    })).toBe(active)
   })
 
   it('reveals member join events only after they enter the loaded timeline window', () => {

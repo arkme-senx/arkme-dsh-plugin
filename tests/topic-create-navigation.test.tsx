@@ -35,7 +35,7 @@ async function openCreate(child = false, trigger: 'none' | 'button' = 'none') {
   let opener: ArkmeTopicCreateOpener | undefined
   const onSelect = vi.fn()
   await act(async () => {
-    renderer = create(<ArkmeTopicDirectoryPopover userId={10001} selectedSource={parent} trigger={trigger}
+    renderer = create(<ArkmeTopicDirectoryPopover onCreateWarning={vi.fn()} userId={10001} selectedSource={parent} trigger={trigger}
       onSelect={onSelect} onSelectionInvalidated={vi.fn()} onSelfSourcesResolution={vi.fn()}
       onCreateTopicReady={open => { opener = open }} retryRevision={0} />)
   })
@@ -101,7 +101,11 @@ describe('navigate to a newly created self topic', () => {
     if (order === 'before') await act(async () => { finish() })
     onSelect.mockClear()
     await act(async () => { resolveCreate({ source: created }) })
-    if (order === 'after') await act(async () => { finish() })
+    if (order === 'after') {
+      // Selecting the new destination unmounts the old directory in the production shell.
+      await act(async () => { renderer!.unmount(); renderer = undefined })
+      await act(async () => { finish() })
+    }
     expect(onSelect).toHaveBeenCalledExactlyOnceWith(created)
     const cache = readNavigationCache(10001)!
     expect(cache.selectedSourceRef).toBe(created.sourceRef)
@@ -123,7 +127,7 @@ describe('navigate to a newly created self topic', () => {
     expect(readNavigationCache(10001)?.selectedSourceRef).toBe(refreshed.sourceRef)
   })
 
-  it('keeps the last complete navigation cache until a later topic page arrives', async () => {
+  it('keeps the selected destination while the original per-page cache loads later topics', async () => {
     const onSelect = await openCreate()
     await act(async () => { submit(); resolveCreate({ source: created }) })
     const props = renderer!.root.findByType(ArkmeTopicDirectoryPopover).props
@@ -134,7 +138,9 @@ describe('navigate to a newly created self topic', () => {
     onSelect.mockClear()
     await act(async () => { renderer = create(<ArkmeTopicDirectoryPopover {...props} selectedSource={created} />) })
     expect(props.onSelectionInvalidated).not.toHaveBeenCalled()
-    expect(readNavigationCache(10001)?.sources.send_to_self?.some(source => source.sourceRef === created.sourceRef)).toBe(true)
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(readNavigationCache(10001)?.selectedSourceRef).toBe(created.sourceRef)
+    expect(readNavigationCache(10001)?.sources.send_to_self?.map(source => source.sourceRef)).toEqual(['self', 'default', 'parent'])
     await act(async () => { finishPage({ items: [created], hasMore: false }) })
     expect(onSelect).toHaveBeenCalledExactlyOnceWith(created)
     expect(readNavigationCache(10001)?.selectedSourceRef).toBe(created.sourceRef)
@@ -155,7 +161,7 @@ describe('navigate to a newly created self topic', () => {
     let finishRead!: (value: unknown) => void
     const onSelect = vi.fn()
     vi.mocked(callArkme).mockImplementationOnce(async () => await new Promise(resolve => { finishRead = resolve }))
-    await act(async () => { renderer = create(<ArkmeTopicDirectoryPopover userId={10001} selectedSource={undefined}
+    await act(async () => { renderer = create(<ArkmeTopicDirectoryPopover onCreateWarning={vi.fn()} userId={10001} selectedSource={undefined}
       onSelect={onSelect} onSelectionInvalidated={vi.fn()} onSelfSourcesResolution={vi.fn()}
       onCreateTopicReady={open => { if (open) opener = open }} retryRevision={0} />) })
     await act(async () => opener())
@@ -168,7 +174,7 @@ describe('navigate to a newly created self topic', () => {
     expect(onSelect).toHaveBeenCalledExactlyOnceWith(created)
   })
 
-  it.each(['success', 'failure'] as const)('ignores a late %s after switching to another account surface', async outcome => {
+  it.each(['success', 'failure', 'partial'] as const)('ignores a late %s after switching to another account surface', async outcome => {
     const oldSelect = await openCreate()
     await act(async () => { submit() })
     const props = renderer!.root.findByType(ArkmeTopicDirectoryPopover).props
@@ -177,8 +183,12 @@ describe('navigate to a newly created self topic', () => {
     await act(async () => { renderer = create(<ArkmeTopicDirectoryPopover {...props} userId={20002} onSelect={nextSelect} />) })
     nextSelect.mockClear()
     const before = readNavigationCache(20002)
-    await act(async () => { if (outcome === 'success') resolveCreate({ source: created }); else rejectCreate(new Error('旧请求失败')) })
+    await act(async () => {
+      if (outcome === 'failure') rejectCreate(new Error('旧请求失败'))
+      else resolveCreate({ source: created, ...(outcome === 'partial' ? { warning: '旧账号部分创建完成' } : {}) })
+    })
     expect(oldSelect).not.toHaveBeenCalled()
+    expect(props.onCreateWarning).not.toHaveBeenCalled()
     expect(nextSelect).not.toHaveBeenCalled()
     expect(readNavigationCache(20002)).toEqual(before)
     expect(renderer!.root.findAllByType(ArkmeTopicCreateDialog)).toHaveLength(0)
@@ -201,7 +211,9 @@ describe('navigate to a newly created self topic', () => {
     expect(readNavigationCache(10001)?.selectedSourceRef).toBe(parent.sourceRef)
     expect(readNavigationCache(10001)?.sources.send_to_self?.some(source => source.sourceRef === created.sourceRef)).toBe(true)
     const props = renderer!.root.findByType(ArkmeTopicDirectoryPopover).props
-    expect(props.onSelfSourcesResolution).toHaveBeenLastCalledWith(10001, expect.objectContaining({ status: 'ready', error: '层级同步提示' }))
+    expect(props.onCreateWarning).toHaveBeenCalledExactlyOnceWith('层级同步提示')
+    expect(props.onSelfSourcesResolution).toHaveBeenLastCalledWith(10001, expect.objectContaining({ status: 'ready', loading: false }))
+    expect(props.onSelfSourcesResolution.mock.lastCall[1].error).toBeUndefined()
   })
   it('binds root creation from the aggregate view to its existing account capability', async () => {
     await openCreate()
@@ -235,26 +247,33 @@ describe('navigate to a newly created self topic', () => {
     expect(onSelect).not.toHaveBeenCalled()
   })
 
-  it('opens the created topic through the real form and keyed destination remount', async () => {
+  it.each([false, true])('opens the created topic through the real form and keyed remount (old read pending=%s)', async oldReadPending => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     let accepted = false
+    let delayOldRead = false
+    let finishOldRead: ((value: unknown) => void) | undefined
     const onResolution = vi.fn()
     const onInvalidated = vi.fn()
     vi.mocked(callArkme).mockImplementation(async method => {
-      if (method === 'sources.list') return { items: [self, uncategorized, parent, ...(accepted ? [created] : [])], hasMore: false }
+      if (method === 'sources.list') {
+        if (delayOldRead && !accepted) return await new Promise(resolve => { finishOldRead = resolve })
+        return { items: [self, uncategorized, parent, ...(accepted ? [created] : [])], hasMore: false }
+      }
       if (method === 'topic.create') { accepted = true; return { source: created } }
       throw new Error(`Unexpected API: ${method}`)
     })
     function Surface() {
       const [selected, setSelected] = useState(parent)
+      const [retryRevision, setRetryRevision] = useState(0)
       const opener = useRef<ArkmeTopicCreateOpener>()
       const onSelect = useCallback((source: ArkmeSourceItem) => { setSelected(source) }, [])
       return <>
         <h1>{selected.displayName}</h1>
         <button onClick={() => opener.current?.()}>新建主题</button>
-        <ArkmeTopicDirectoryPopover key={selected.sourceRef} userId={10001} selectedSource={selected} trigger="none"
+        <button aria-label="刷新目录" onClick={() => setRetryRevision(value => value + 1)}>刷新目录</button>
+        <ArkmeTopicDirectoryPopover onCreateWarning={vi.fn()} key={selected.sourceRef} userId={10001} selectedSource={selected} trigger="none"
           onSelect={onSelect} onSelectionInvalidated={onInvalidated} onSelfSourcesResolution={onResolution}
-          onCreateTopicReady={open => { opener.current = open }} retryRevision={0} />
+          onCreateTopicReady={open => { opener.current = open }} retryRevision={retryRevision} />
       </>
     }
     const host = document.createElement('div')
@@ -262,6 +281,11 @@ describe('navigate to a newly created self topic', () => {
     const root = createRoot(host)
     try {
       await act(async () => { root.render(<Surface />) })
+      if (oldReadPending) {
+        delayOldRead = true
+        await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="刷新目录"]')!.click() })
+        expect(finishOldRead).toBeDefined()
+      }
       await act(async () => host.querySelector('button')!.click())
       const input = host.querySelector('input')!
       await act(async () => {
@@ -269,6 +293,9 @@ describe('navigate to a newly created self topic', () => {
         input.dispatchEvent(new Event('input', { bubbles: true }))
       })
       await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+      if (finishOldRead !== undefined) {
+        await act(async () => { finishOldRead!({ items: [self, uncategorized, parent], hasMore: false }) })
+      }
       expect(host.querySelector('h1')?.textContent).toBe('新主题')
       expect(host.querySelector('form')).toBeNull()
       expect(onInvalidated).not.toHaveBeenCalled()

@@ -77,7 +77,7 @@ import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
 export interface ArkmeNavigationProps {
   active?: boolean
   wide?: boolean
-  avatarOnly?: boolean
+  compactDirectory?: boolean
   currentSessionId?: string | undefined
   embeddedProductShell?: boolean
   onClose?: () => void
@@ -190,7 +190,7 @@ const styles: Record<string, CSSProperties> = {
   topicCardList: { paddingTop: 0 },
   chatRow: {
     position: 'relative', width: '100%', minHeight: 52, margin: '1px 0', display: 'flex', alignItems: 'center', gap: 10,
-    padding: '7px 10px', boxSizing: 'border-box', border: 0, borderRadius: 13,
+    padding: '7px 10px', boxSizing: 'border-box', overflow: 'hidden', border: 0, borderRadius: 13,
     background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: 0,
   },
   chatRowActive: { background: colors.active },
@@ -858,7 +858,7 @@ export function ArkmeSourceSortControl({
 }
 
 export function ArkmeNavigation({
-  active = true, wide = true, avatarOnly = false, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
+  active = true, wide = true, compactDirectory = false, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
   lockedDirectory = false, sendToSelfSource, directoryLead, onCreateTask, searchDshMessages, onOpenDshSession, renderSlot,
 }: ArkmeNavigationProps) {
   const activeRef = useRef(active)
@@ -1875,7 +1875,7 @@ export function ArkmeNavigation({
     style={styles.shell}
     aria-label="Arkme 会话列表"
     data-arkme-layout={embeddedProductShell ? 'product-directory' : undefined}
-    data-arkme-avatar-only={avatarOnly ? 'true' : undefined}
+    data-arkme-directory-compact={compactDirectory ? 'true' : undefined}
   >
     {directory === 'send_to_self' && <header style={styles.header}>
       <button

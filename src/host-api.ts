@@ -1219,6 +1219,7 @@ export async function dispatchArkmeHostOperation(
       return await service.createBotSummary({
         name: stringParam(params, 'name'),
         provider: botProviderParam(params),
+        ...(stringParam(params, 'requestUid').trim() === '' ? {} : { requestUid: stringParam(params, 'requestUid').trim() }),
         ...(stringParam(params, 'description').trim() === ''
           ? {}
           : { description: stringParam(params, 'description') }),

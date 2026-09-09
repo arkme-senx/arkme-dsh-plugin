@@ -38,9 +38,11 @@ export function observeConversationResize(body: HTMLElement, endAccessory?: HTML
   return () => { observer.disconnect(); body.removeEventListener('scroll', onScroll) }
 }
 
-export function useConversationResizeAnchor(body: RefObject<HTMLDivElement>, scope: string | undefined, endAccessory?: RefObject<HTMLDivElement>) {
+export function useConversationResizeAnchor(body: RefObject<HTMLDivElement>, scope: string | undefined, endAccessory?: RefObject<HTMLDivElement>, selecting = false) {
   useLayoutEffect(() => {
     if (scope === undefined || body.current === null || typeof ResizeObserver === 'undefined') return
+    // A selection transition restores its own message anchor in a layout effect.
+    // Start with those metrics so the old composer size cannot override it.
     return observeConversationResize(body.current, endAccessory?.current ?? undefined)
-  }, [body, scope, endAccessory])
+  }, [body, scope, endAccessory, selecting])
 }

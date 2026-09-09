@@ -7,6 +7,7 @@ export interface ArkmeBotCreateInput {
   provider: ArkmeBotProvider
   description?: string
   avatar?: string
+  requestUid?: string
 }
 
 export interface ArkmeBotCreateResult {

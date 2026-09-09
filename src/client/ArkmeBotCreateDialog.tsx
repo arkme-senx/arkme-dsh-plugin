@@ -171,6 +171,8 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
   const [error, setError] = useState('')
   const nameInput = useRef<HTMLInputElement>(null)
   const avatarInput = useRef<HTMLInputElement>(null)
+  const createRequest = useRef<{ uid: string; name: string; description: string; provider: ArkmeBotProvider; avatarFile: File | undefined; avatar: string }>()
+  const submitting = useRef(false)
   const busy = busyLabel !== ''
   const canSubmit = !busy && !created && name.trim() !== ''
 
@@ -198,19 +200,27 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
 
   const submit = async () => {
     const normalizedName = name.trim()
-    if (busy || created) return
+    if (submitting.current || busy || created) return
     if (normalizedName === '') { setError('请输入 Bot 名称'); nameInput.current?.focus(); return }
+    const previous = createRequest.current
+    if (previous !== undefined && (previous.name !== normalizedName || previous.description !== description.trim() || previous.provider !== provider || previous.avatarFile !== avatarFile)) {
+      setError('上次创建已提交，请先刷新 Bot 列表确认结果，再修改信息或新建 Bot')
+      return
+    }
+    submitting.current = true
     setError('')
     try {
-      let avatar = ''
-      if (avatarFile !== undefined) {
+      let avatar = previous?.avatar ?? ''
+      if (previous === undefined && avatarFile !== undefined) {
         setBusyLabel('头像处理中...')
         avatar = await uploadBotAvatar(avatarFile)
       }
       setBusyLabel('创建中...')
+      createRequest.current ??= { uid: crypto.randomUUID(), name: normalizedName, description: description.trim(), provider, avatarFile, avatar }
       const bot = await callArkme<ArkmeBotSummary>('bots.create', {
         name: normalizedName,
         provider,
+        requestUid: createRequest.current.uid,
         ...(description.trim() === '' ? {} : { description: description.trim() }),
         ...(avatar === '' ? {} : { avatar }),
       })
@@ -223,8 +233,13 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
       }
       onClose()
     } catch (caught) {
+      // 只解除本次尚未发送的创建；更早一次的未知结果仍须保留原请求身份。
+      if (previous === undefined && caught instanceof ArkmeClientError && ['login-required', 'bot-name-invalid', 'bot-provider-unsupported', 'bot-avatar-invalid'].includes(caught.body.code)) {
+        createRequest.current = undefined
+      }
       setError(botErrorMessage(caught))
     } finally {
+      submitting.current = false
       setBusyLabel('')
     }
   }

@@ -60,7 +60,7 @@ const ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH = 76
 const ARKME_PERSISTENT_NAVIGATION_WIDTH = 72
 const ARKME_PERSISTENT_DIVIDER_BUDGET = ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH - ARKME_PERSISTENT_NAVIGATION_WIDTH
 const ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH = 64
-const ARKME_PERSISTENT_DIRECTORY_AVATAR_ONLY_WIDTH = 200
+const ARKME_PERSISTENT_DIRECTORY_COMPACT_WIDTH = 200
 const ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH = ARKME_PERSISTENT_NAVIGATION_WIDTH
   + ARKME_PERSISTENT_DIVIDER_BUDGET
   + ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH
@@ -215,7 +215,7 @@ export function ArkmePersistentSidebar({
     collapsed, hostSidebarWidth, preferredSidebarWidth, compactSidebarWidthOverride,
   )
   const renderedDirectoryWidth = renderedSidebarWidth - ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
-  const avatarOnly = !contactsMode && renderedDirectoryWidth <= ARKME_PERSISTENT_DIRECTORY_AVATAR_ONLY_WIDTH
+  const compactDirectory = !contactsMode && renderedDirectoryWidth <= ARKME_PERSISTENT_DIRECTORY_COMPACT_WIDTH
   useEffect(() => {
     if (authenticatedUserId === undefined) {
       setSendToSelfState(undefined)
@@ -370,7 +370,7 @@ export function ArkmePersistentSidebar({
     {sidebarSizingStyle}
     <ArkmeProductNavigation compact={false} hosted taskExpanded locked />
     <div style={styles.taskDirectory} data-arkme-directory-mode="web-locked">
-      <ArkmeNavigation wide avatarOnly={avatarOnly} embeddedProductShell showHarnessEntry lockedDirectory />
+      <ArkmeNavigation wide compactDirectory={compactDirectory} embeddedProductShell showHarnessEntry lockedDirectory />
     </div>
     {sidebarResizeHandle}
   </aside> : <aside
@@ -466,7 +466,7 @@ export function ArkmePersistentSidebar({
       <ArkmeNavigation
         active={directoryVisible && !contactsMode}
         wide
-        avatarOnly={avatarOnly}
+        compactDirectory={compactDirectory}
         embeddedProductShell
         showHarnessEntry
         currentSessionId={sessionState.current}
