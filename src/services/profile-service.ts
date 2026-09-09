@@ -465,7 +465,8 @@ export class ProfileService {
         }, error)
         throw error
       })
-      for (const raw of listValue(data.items)) {
+      if (!Array.isArray(data.items)) throw new ArkmePluginError('public-profile-contract-invalid', '联系人资料响应不完整', false, 502)
+      for (const raw of data.items) {
         const item = objectValue(raw)
         const userId = numberValue(item.user_id)
         if (!batch.includes(userId)) continue

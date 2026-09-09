@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react'
 import type { ArkmeBotSummary, ArkmeDirectoryItem, ArkmeDirectoryPage, ArkmeDirectorySectionKind } from '../../../types.js'
 import { callArkme } from '../../api.js'
+import { retryArkmeRead } from '../../read-retry.js'
 import { AlphabeticalContactList, DirectoryItemRow } from './AlphabeticalContactList.js'
 import { CollapsibleDirectorySection } from './CollapsibleDirectorySection.js'
 import { ContactDirectoryToolbar } from './ContactDirectoryToolbar.js'
@@ -32,6 +33,7 @@ export interface ContactDirectoryLoadOptions {
   limit: number
   cursor?: string
   countOnly?: true
+  refresh?: true
 }
 
 export type ContactDirectoryPageLoader = (
@@ -76,6 +78,7 @@ function itemIsSelected(item: ArkmeDirectoryItem, selection: ArkmeDirectorySelec
 
 export function ContactDirectoryContent({
   state,
+  active = true,
   directoryRef,
   countLabels = {},
   searchStatus,
@@ -88,6 +91,7 @@ export function ContactDirectoryContent({
   onOpenBot,
 }: {
   state: ContactDirectoryState
+  active?: boolean
   directoryRef?: Ref<HTMLElement>
   countLabels?: Partial<Record<ArkmeDirectorySectionKind, string>>
   searchStatus?: string | undefined
@@ -105,6 +109,7 @@ export function ContactDirectoryContent({
       const labels = SECTION_LABELS[sectionKind]
       return <CollapsibleDirectorySection
         key={sectionKind}
+        active={active}
         section={section}
         label={labels.label}
         emptyLabel={searching ? '未找到匹配的项目' : labels.empty}
@@ -147,12 +152,15 @@ const defaultLoadPage: ContactDirectoryPageLoader = async (section, options, sig
     limit: options.limit,
     ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
     ...(options.countOnly === true ? { countOnly: true } : {}),
+    ...(options.refresh === true ? { refresh: true } : {}),
   },
   signal,
 )
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message.trim() !== '' ? error.message : '目录加载失败'
+function errorMessage(error: unknown, section: ArkmeDirectorySectionKind): string {
+  const code = (error as { body?: { code?: string } } | undefined)?.body?.code ?? ''
+  if (['login-required', 'login-expired', 'auth-http-401', 'auth-http-403'].includes(code) && error instanceof Error) return error.message
+  return `${SECTION_LABELS[section].label}暂时无法加载`
 }
 
 export function directoryStateForAccount(
@@ -221,7 +229,9 @@ export function ContactDirectorySurface({
     const next = contactDirectoryReducer(stateRef.current, action)
     stateRef.current = next
     dispatch(action)
-    onStateChangeRef.current?.(next, action.type === 'load-success' && action.mode !== 'count', acknowledgedProfiles)
+    const refreshed = action.type === 'load-success' && action.mode !== 'count'
+      && Object.values(next.sections).every(section => (section.status === 'ready' || section.status === 'empty') && section.warning === undefined)
+    onStateChangeRef.current?.(next, refreshed, acknowledgedProfiles)
     return next
   }, [])
 
@@ -265,9 +275,10 @@ export function ContactDirectorySurface({
     const options: ContactDirectoryLoadOptions = {
       limit: mode === 'count' ? 0 : 50,
       ...(mode === 'count' ? { countOnly: true } : {}),
+      ...(force && mode === 'replace' ? { refresh: true } : {}),
       ...(mode === 'append' && snapshot.nextCursor !== undefined ? { cursor: snapshot.nextCursor } : {}),
     }
-    void loadPageRef.current(section, options, controller.signal).then(page => {
+    void retryArkmeRead(() => loadPageRef.current(section, options, controller.signal), { signal: controller.signal, retryDelays: [250, 750] }).then(page => {
       if (controller.signal.aborted) return
       if (mode === 'append' && page.cursorStale === true) {
         if ((staleRestartsRef.current[section] ?? 0) >= 1) throw new Error('目录持续更新，请稍后重试')
@@ -299,7 +310,7 @@ export function ContactDirectorySurface({
     }).catch(error => {
       if (controller.signal.aborted) return
       if (mode === 'count') return
-      commit({ type: 'load-error', section, accountKey, generation, message: errorMessage(error) })
+      commit({ type: 'load-error', section, accountKey, generation, message: errorMessage(error, section) })
     })
   }, [active, accountKey, commit])
 
@@ -307,12 +318,38 @@ export function ContactDirectorySurface({
     if (refreshCachedOnMountRef.current) return
     for (const kind of CONTACT_DIRECTORY_SECTION_ORDER) {
       const section = state.sections[kind]
-      if ((kind !== 'contacts' && query === '') || section.accountKey !== accountKey
+      const selected = state.selection
+      const resolvingSelection = (kind === 'contacts' && selected.kind === 'contact'
+        && !section.items.some(item => item.kind === 'contact' && item.contactRef === selected.contactRef))
+        || (kind === 'teams' && selected.kind === 'team'
+          && !section.items.some(item => item.kind === 'team' && item.teamRef === selected.teamRef))
+        || (kind === 'unmarked-speakers' && selected.kind === 'unmarked-speaker'
+          && !section.items.some(item => item.kind === 'unmarked-speaker' && item.candidateRef === selected.candidateRef))
+      if ((query === '' && !resolvingSelection) || section.accountKey !== accountKey
         || (section.status !== 'ready' && section.status !== 'empty')
         || !section.hasMore || section.nextCursor === undefined) continue
       load(kind, 'append')
     }
   }, [accountKey, state, query, load])
+
+  useEffect(() => {
+    if (!active) return
+    // Transport retries belong to Host. A new foreground/network event is a new
+    // read intent, not an unbounded UI retry loop after Host exhausted its budget.
+    const recover = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      for (const section of CONTACT_DIRECTORY_SECTION_ORDER) {
+        const current = stateRef.current.sections[section]
+        if (current.status === 'error' || (current.status === 'ready' && current.warning !== undefined)) load(section, 'replace', true)
+      }
+    }
+    if (typeof window !== 'undefined') window.addEventListener('online', recover)
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', recover)
+    return () => {
+      if (typeof window !== 'undefined') window.removeEventListener('online', recover)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', recover)
+    }
+  }, [active, load])
 
   useEffect(() => {
     if (!active || refreshRevisionRef.current === refreshRevision) return
@@ -403,13 +440,14 @@ export function ContactDirectorySurface({
       if (directoryRef.current !== null) directoryRef.current.scrollTop = 0
     }}>{toolbarActions}</ContactDirectoryToolbar>
     <ContactDirectoryContent
+      active={active}
       directoryRef={directoryRef}
       state={projection.state}
       countLabels={projection.countLabels}
       searchStatus={projection.status}
       searching={query !== ''}
       onToggle={handleToggle}
-      onRetry={section => { delete staleRestartsRef.current[section]; load(section, 'replace') }}
+      onRetry={section => { delete staleRestartsRef.current[section]; load(section, 'replace', true) }}
       onLoadMore={section => { load(section, 'append') }}
       onSelect={handleSelect}
       onOpenGroup={onOpenGroup}

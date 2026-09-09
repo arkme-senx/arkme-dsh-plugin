@@ -497,7 +497,7 @@ export class ArkmeChatDirectoryStore {
       } catch (error) {
         if (generation !== this.generation) return undefined
         const delay = ROOT_READ_RETRY_DELAYS_MS[attempt]
-        if (!(error instanceof ArkmeClientError) || !error.body.retryable || delay === undefined) throw error
+        if (!(error instanceof ArkmeClientError) || !error.body.retryable || error.body.recovery?.owner === 'host' || delay === undefined) throw error
         await new Promise<void>(resolve => { setTimeout(resolve, delay) })
       }
     }

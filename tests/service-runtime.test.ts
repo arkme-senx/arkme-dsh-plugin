@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from '../src/keychain-store.js'
 import { patchChatPolicy } from '../src/services/chat-policy.js'
 import { ArkmeRequestQueueOverflowError } from '../src/request-coordinator.js'
+import { ContactDirectoryService } from '../src/services/contact-directory-service.js'
+import { ProfileService } from '../src/services/profile-service.js'
 import {
   ArkmePluginError,
   ServiceRuntime,
@@ -42,6 +44,159 @@ function runtimeFixture(
 ): ServiceRuntime {
   return new ServiceRuntime(config, sessionStore, {} as StateStore, fetchImpl, pendingSessionStore)
 }
+
+afterEach(() => { vi.useRealTimers() })
+
+describe('registered owner read recovery', () => {
+  it.each([false, true])('finishes profile recovery before contact degradation and preserves known names: exhausted=%s', async exhausted => {
+    vi.useFakeTimers()
+    let profileAttempts = 0
+    let outage = false
+    const viewer = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const fetcher = vi.fn(async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname
+      const data = path === '/api/v1/chats/contacts/list' ? { items: [{ user_id: 7 }], has_more: false }
+        : path === '/api/v1/chats/list' ? { items: [], has_more: false }
+          : { items: [{ user_id: 7, nick_name: '真实姓名', head_img: '' }] }
+      if (path === '/api/v1/auth/get-public-users-by-ids' && outage && (++profileAttempts < 3 || exhausted)) return busy()
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const runtime = new ServiceRuntime(config, { async read() { return viewer }, async write() {}, async delete() {} }, { async uniqueCode() { return 'synthetic-key' } } as StateStore, fetcher)
+    const profile = new ProfileService(runtime)
+    const directory = new ContactDirectoryService(runtime, {} as never, {} as never, profile, {} as never, {} as never)
+    const initial = directory.list('contacts')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect((await initial).items[0]).toMatchObject({ displayName: '真实姓名' })
+    await vi.advanceTimersByTimeAsync(61_000)
+    outage = true
+    const pending = directory.list('contacts', { refresh: true })
+    await vi.advanceTimersByTimeAsync(3000)
+    const page = await pending
+    expect(profileAttempts).toBe(3)
+    expect(page.items[0]).toMatchObject({ displayName: '真实姓名' })
+    expect(page.projectionState).toBe(exhausted ? 'stale' : undefined)
+    directory.dispose(); runtime.dispose()
+  })
+
+  it.each([1001, 1004, 2001])('does not retry unrelated profile business errors: %s', async code => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ code, message: '业务拒绝', data: {} })))
+    const runtime = runtimeFixture(fetcher)
+    await expect(runtime.authenticatedAuthPost('/api/v1/auth/get-public-users-by-ids', { user_ids: [7] }, { userId: 42, accessToken: 'access', refreshToken: 'refresh' })).rejects.toMatchObject({ code: `arkme-code-${code}` })
+    expect(fetcher).toHaveBeenCalledOnce()
+    runtime.dispose()
+  })
+  it.each([false, true])('detaches pre-write flights even when a write outcome is unknown: %s', async fail => {
+    const runtime = runtimeFixture(vi.fn(), { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} })
+    let release!: () => void
+    let entered!: () => void
+    const started = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const first = runtime.runOwnerRead('openapi:teams:list', {}, async () => { entered(); await gate; return 'before-write' })
+    await started
+    const mutation = vi.fn(async () => { if (fail) throw new Error('unknown outcome'); return 'written' })
+    const write = runtime.withOwnerReadInvalidation('openapi:teams:list', mutation)
+    if (fail) await expect(write).rejects.toThrow('unknown outcome')
+    else await expect(write).resolves.toBe('written')
+    const next = runtime.runOwnerRead('openapi:teams:list', {}, async () => 'after-write')
+    await new Promise<void>(resolve => setImmediate(resolve))
+    release()
+    await expect(first).resolves.toBe('before-write')
+    await expect(next).resolves.toBe('after-write')
+    expect(mutation).toHaveBeenCalledOnce()
+    runtime.dispose()
+  })
+
+  it('allows short-token refresh without treating it as an account transition', async () => {
+    let current = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = runtimeFixture(vi.fn(), { async read() { return current }, async write(value) { current = value }, async delete() {} })
+    await expect(runtime.runOwnerRead('openapi:teams:list', {}, async () => {
+      current = { ...current, accessToken: 'renewed-access' }
+      return { teams: [] }
+    })).resolves.toEqual({ teams: [] })
+    runtime.dispose()
+  })
+
+  it('rejects a result when an independently credentialed owner crosses an account transition', async () => {
+    let current = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = runtimeFixture(vi.fn(), { async read() { return current }, async write(value) { current = value }, async delete() {} })
+    const operation = vi.fn(async () => {
+      current = { ...current, userId: 43, refreshToken: 'next-login' }
+      return { privateTeam: 'must-not-return' }
+    })
+    await expect(runtime.runOwnerRead('openapi:teams:list', {}, operation)).rejects.toMatchObject({ code: 'read-account-changed' })
+    expect(operation).toHaveBeenCalledOnce()
+    runtime.dispose()
+  })
+
+  const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  const busy = (error?: object) => new Response(JSON.stringify({ code: 1002, message: '服务器繁忙', data: {}, ...(error ? { error } : {}) }))
+  const ok = () => new Response(JSON.stringify({ code: 200, data: { items: [] } }))
+  it('silently recovers public profile reads without retrying profile mutations', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn().mockImplementationOnce(() => busy()).mockImplementationOnce(() => busy()).mockImplementation(ok)
+    const runtime = runtimeFixture(fetcher)
+    const result = runtime.authenticatedAuthPost('/api/v1/auth/get-public-users-by-ids', { user_ids: [7] }, session)
+    const check = expect(result).resolves.toEqual({ items: [] })
+    await vi.advanceTimersByTimeAsync(2000)
+    await check
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    runtime.dispose()
+  })
+  it.each([undefined, { code: 'rate_limited', retry_after_ms: 600, retry_scope: 'route', retryable: true }])('recovers legacy and classified busy without a fourth attempt: %j', async metadata => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn().mockImplementationOnce(() => busy(metadata)).mockImplementationOnce(() => busy(metadata)).mockImplementation(ok)
+    const runtime = runtimeFixture(fetcher)
+    const result = runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 50 }, session)
+    await vi.advanceTimersByTimeAsync(2000)
+    await expect(result).resolves.toEqual({ items: [] })
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    runtime.dispose()
+  })
+  it.each([60_000, 2_147_483_647, 3_000_000_000])('owns exhausted recovery without timer overflow for retry hint %s', async retryAfter => {
+    vi.useFakeTimers()
+    const timers = vi.spyOn(globalThis, 'setTimeout')
+    const fetcher = vi.fn(() => busy({ code: 'rate_limited', retry_after_ms: retryAfter, retry_scope: 'route' }))
+    const runtime = runtimeFixture(fetcher)
+    const result = runtime.authenticatedChatPost('/api/v1/chats/list', {}, session)
+    const check = expect(result).rejects.toMatchObject({ code: 'arkme-code-1002', failureKind: 'rate_limited', retryAfterMillis: retryAfter,
+      recovery: { owner: 'host', attempts: 1, exhausted: true } })
+    await vi.advanceTimersByTimeAsync(5000)
+    await check
+    expect(fetcher).toHaveBeenCalledOnce()
+    const delays = timers.mock.calls.map(call => Number(call[1]))
+    timers.mockRestore()
+    expect(delays.every(delay => delay <= 2_147_483_647)).toBe(true)
+    runtime.dispose()
+  })
+  it('joins only identical full parameters and retains parameter array order', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn(ok)
+    const runtime = runtimeFixture(fetcher)
+    const calls = [
+      runtime.authenticatedChatPost('/api/v1/chats/display-snapshots', { ids: ['a', 'b'], limit: 2 }, session),
+      runtime.authenticatedChatPost('/api/v1/chats/display-snapshots', { limit: 2, ids: ['a', 'b'] }, session),
+      runtime.authenticatedChatPost('/api/v1/chats/display-snapshots', { ids: ['b', 'a'], limit: 2 }, session),
+    ]
+    await vi.advanceTimersByTimeAsync(1000)
+    await Promise.all(calls)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    runtime.dispose()
+  })
+  it.each([1001, 1004, 1100, 2001])('does not replay Chat business error %s', async code => {
+    const fetcher = vi.fn(() => new Response(JSON.stringify({ code, message: '业务拒绝', data: { marker: true } })))
+    const runtime = runtimeFixture(fetcher)
+    await expect(runtime.authenticatedChatPost('/api/v1/chats/list', {}, session)).rejects.toMatchObject({ code: `arkme-code-${code}`, responseData: { marker: true } })
+    expect(fetcher).toHaveBeenCalledOnce()
+    runtime.dispose()
+  })
+  it('never replays writes even when their response has the same busy code', async () => {
+    const fetcher = vi.fn(() => busy())
+    const runtime = runtimeFixture(fetcher)
+    await expect(runtime.authenticatedChatPost('/api/v1/chats/join', {}, session)).rejects.toMatchObject({ code: 'arkme-code-1002' })
+    expect(fetcher).toHaveBeenCalledOnce()
+    runtime.dispose()
+  })
+})
 
 describe('ServiceRuntime', () => {
   it('preserves upstream status and retry-after on HTTP failures', async () => {

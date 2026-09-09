@@ -738,6 +738,7 @@ export class ArkmeService {
         imageLibrary: true,
         sourceDirectory: true,
         localFirstDirectory: true,
+        contactDirectoryReads: true,
         sourceTimeline: true,
         forwardContent: true,
         sourceTextSend: true,
@@ -870,6 +871,13 @@ export class ArkmeService {
   }
 
   requestStats(): Record<string, ArkmeRequestStats> { return this.runtime.requestStats() }
+  /** @internal Shared admission/recovery for independent capability owners; no Chat business projection. */
+  get ownerReads(): import('./services/service.js').ArkmeOwnerReadPort {
+    return {
+      runOwnerRead: this.runtime.runOwnerRead.bind(this.runtime),
+      withOwnerReadInvalidation: this.runtime.withOwnerReadInvalidation.bind(this.runtime),
+    }
+  }
   async resolveLinkMetadata(
     url: string,
     options: { signal?: AbortSignal } = {},
@@ -886,7 +894,7 @@ export class ArkmeService {
   }
   async searchContact(identifier: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeContactSearchResult> { return await this.contact.search(identifier, options) }
 
-  async listDirectory(section: ArkmeDirectorySectionKind, options: { limit?: number; cursor?: string; countOnly?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeDirectoryPage> {
+  async listDirectory(section: ArkmeDirectorySectionKind, options: { limit?: number; cursor?: string; countOnly?: boolean; refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeDirectoryPage> {
     return section === 'unmarked-speakers' ? await this.unmarkedSpeaker.list(options) : await this.contactDirectory.list(section, options)
   }
   async directoryContactProfile(contactRef: string, signal?: AbortSignal): Promise<ArkmeDirectoryContactProfile> { return await this.contactDirectory.contactProfile(contactRef, signal) }

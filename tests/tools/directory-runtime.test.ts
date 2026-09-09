@@ -6,6 +6,25 @@ import { CallId } from '@deepseek-ai/dsh-llm'
 import { expect, it, vi } from 'vitest'
 import { registerArkmeTools } from '../../src/tools/registry/registrar.js'
 
+it('discovers and invokes all directory owners in a real DSH session without an attachment dependency', async () => {
+  const ctx = new Context()
+  await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
+  const list = vi.fn(async section => ({ section, items: [], total: 0, hasMore: false, coverage: 'complete' }))
+  ctx.provide('arkmeDirectory', { list })
+  const session = ctx.sessions.create()
+  const agent = { id: session.id, session }
+  registerArkmeTools(ctx, {} as never, 'business')
+  expect(ctx.tools.schemas(agent as never).map(t => t.name)).toContain('arkme_directory_list')
+  for (const section of ['groups', 'bots', 'unmarked-speakers', 'teams', 'contacts']) {
+    const result = await ctx.tools.execute({ callId: CallId(`directory-${section}`), agent: agent as never,
+      signal: new AbortController().signal, name: 'arkme_directory_list', arguments: { section, refresh: true, limit: 1 } })
+    expect(result.isError).toBe(false)
+    expect(String(result.value)).toContain(`"section": "${section}"`)
+    expect(list).toHaveBeenLastCalledWith(section, expect.objectContaining({ refresh: true, limit: 1, signal: expect.any(AbortSignal) }))
+  }
+  await ctx.fiber.dispose()
+})
+
 it('exposes local-first discovery and dispatches it through the official session ToolRuntime', async () => {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
