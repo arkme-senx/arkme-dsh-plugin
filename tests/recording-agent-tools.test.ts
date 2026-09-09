@@ -47,4 +47,9 @@ describe('retired recording model entry points', () => {
     expect(ARKME_TOOL_PROMPT).toContain('not your current analysis')
     expect(ARKME_TOOL_PROMPT).toContain('list filters are not inherited')
   })
+
+  it('keeps the shared prompt aligned with public recording material inputs', () => {
+    expect(ARKME_TOOL_PROMPT).toContain('recording_uid and exact complete utterances')
+    expect(ARKME_TOOL_PROMPT).not.toMatch(/Pass exact session_id and segment selectors/)
+  })
 })

@@ -38,6 +38,9 @@ export function apply(ctx) {
       const data = await fixture
       const blocks = options.messages.flatMap(message => message.content)
       assert(blocks.some(block => block.type === 'text' && block.text.includes('录音链路验收')), 'start this test from the browser composer')
+      const promptText = blocks.filter(block => block.type === 'text').map(block => block.text).join('\n')
+      assert(promptText.includes('recording_uid and exact complete utterances'), 'installed shared prompt must match the public tool inputs')
+      assert(!promptText.includes('Pass exact session_id and segment selectors'), 'retired selector guidance reached the Agent')
       const names = new Set(options.tools.map(tool => tool.name))
       for (const retired of ['arkme_recording_days_list', 'arkme_recording_read']) assert(!names.has(retired))
       for (const retained of ['arkme_recording_import', 'arkme_recording_import_folder']) assert(names.has(retained), `lost independent import tool: ${retained}`)
@@ -73,9 +76,33 @@ export function apply(ctx) {
         yield { type: 'finish', reason: { kind: 'tool-calls' } }
         return
       }
-      const transcript = pages('query_recording_transcript').flatMap(page => page.utterances).filter(item => item.utterance_index === 0).map(item => item.text).join('')
+      const transcriptPages = pages('query_recording_transcript')
+      const offsets = new Map()
+      for (const [index, page] of transcriptPages.entries()) {
+        assert.equal(page.found, true)
+        assert.equal(page.has_more, index < transcriptPages.length - 1)
+        assert.equal(Boolean(page.next_page_cursor), page.has_more)
+        for (const item of page.utterances) {
+          assert.equal(item.text_start_offset, offsets.get(item.utterance_index) ?? 0)
+          assert.equal(item.text_end_offset - item.text_start_offset, [...item.text].length)
+          assert(item.text_end_offset <= item.text_total_length)
+          assert(page.speakers[item.speaker_index], 'speaker indices are page-local')
+          offsets.set(item.utterance_index, item.text_end_offset)
+        }
+      }
+      const transcript = transcriptPages.flatMap(page => page.utterances).filter(item => item.utterance_index === 0).map(item => item.text).join('')
       const summaries = pages('read_recording_summary')
       assert(summaries.every(page => page.summary.content_origin === 'business_recording_summary'))
+      let summaryOffset = 0
+      for (const [index, page] of summaries.entries()) {
+        assert.equal(page.content_state, 'ready')
+        assert.equal(page.text_start_offset, summaryOffset)
+        summaryOffset += [...page.text].length
+        assert.equal(page.text_end_offset, summaryOffset)
+        assert.equal(page.text_total_length, 27000)
+        assert.equal(page.has_more, index < summaries.length - 1)
+        assert.equal(Boolean(page.next_page_cursor), page.has_more)
+      }
       const reference = summaries.map(page => page.text).join('')
       assert.equal(transcript, '原句🙂'.repeat(2000) + '尾句')
       assert.equal(reference, '参考🙂'.repeat(9000))
