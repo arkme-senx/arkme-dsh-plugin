@@ -42,7 +42,7 @@ function fixture(overrides: Partial<OpenApiTeamCapabilityClient> = {}) {
       arkmeIds.map(arkmeId => [arkmeId, { avatarRef: `avatar:${arkmeId}` }]),
     )),
   }
-  return { avatars, client, service: new TeamService(client, avatars) }
+  return { avatars, client, service: new TeamService(client, avatars, { runOwnerRead: async (_route, _parameters, operation, signal) => operation(signal ?? new AbortController().signal) }) }
 }
 
 describe('TeamService', () => {

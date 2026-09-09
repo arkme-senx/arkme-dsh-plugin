@@ -132,6 +132,7 @@ export interface ArkmeDirectoryPage {
   hasMore: boolean
   nextCursor?: string
   projectionState?: 'fresh' | 'stale' | 'building' | 'failed'
+  coverage?: 'complete' | 'partial'
   retryAfterMillis?: number
   cursorStale?: boolean
 }
@@ -1170,6 +1171,8 @@ export interface ArkmeProviderCapabilities {
     imageLibrary?: true
     sourceDirectory: true
     localFirstDirectory?: true
+    /** Paged five-section directory, including coverage and Host-owned recovery. */
+    contactDirectoryReads?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
     forwardContent?: true
@@ -3328,6 +3331,7 @@ export type ArkmePluginOperation =
   | 'billing.order.create'
   | 'billing.order.status'
   | 'contacts.search'
+  | 'directory.list'
   | 'contacts.add'
   | 'chat.private.open-from-contact'
   | 'group.create'
@@ -3525,7 +3529,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'source.record-topic.assign'
   | 'provider.instance'
   | 'link.metadata'
-  | 'directory.list'
   | 'directory.contact.profile'
   | 'directory.contact.remark.update'
   | 'directory.contact.world'
@@ -3632,6 +3635,10 @@ export interface ArkmePluginErrorBody {
   code: string
   message: string
   retryable: boolean
+  failureKind?: 'rate_limited' | 'concurrency_limited' | 'service_unavailable'
+  retryAfterMillis?: number
+  retryScope?: 'request' | 'route'
+  recovery?: { owner: 'host'; attempts: number; exhausted: true }
   /** Sanitized Chat Handler result, not a global error-code taxonomy. */
   directMessageAdmission?: import('./direct-message-admission.js').ArkmeDirectMessageAdmission
 }

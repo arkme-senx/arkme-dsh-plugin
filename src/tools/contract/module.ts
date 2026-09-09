@@ -3,7 +3,7 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { ArkmeCoreToolPorts, ArkmeToolPorts } from '../ports/index.js'
 
 export type ArkmeToolKind = 'system' | 'business' | 'atomic'
-export type ArkmeToolPhase = 'core' | 'attachments'
+export type ArkmeToolPhase = 'core' | 'host' | 'attachments'
 export type ArkmeToolEffect = 'read' | 'write'
 export type ArkmeToolGrant = 'explicit-user-write'
 export type ArkmeToolProfile = 'business' | 'atomic' | 'hybrid' | 'disabled'
@@ -25,7 +25,7 @@ export interface ArkmeCoreToolModule {
 }
 
 export interface ArkmeContextToolModule {
-  readonly meta: ArkmeToolModuleMetaBase & { readonly phase: 'attachments' }
+  readonly meta: ArkmeToolModuleMetaBase & { readonly phase: 'host' | 'attachments' }
   create(ctx: Context, ports: ArkmeToolPorts): ToolDefinition
 }
 
@@ -44,5 +44,5 @@ export function isArkmeCoreToolModule(module: ArkmeToolModule): module is ArkmeC
 }
 
 export function isArkmeContextToolModule(module: ArkmeToolModule): module is ArkmeContextToolModule {
-  return module.meta.phase === 'attachments'
+  return module.meta.phase === 'attachments' || module.meta.phase === 'host'
 }

@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { readDirectoryPage } from './directory-reader.js'
 import { ArkmePluginError, ArkmeService } from './arkme-service.js'
 import { ArkmeDirectMessageAdmissionError } from './services/direct-message-admission-service.js'
 import { isArkmeBotAvatarRef } from './bot-avatar-ref.js'
@@ -936,6 +937,10 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       writeJson(res, known.httpStatus, {
         ok: false,
         error: { code: known.code, message: known.message, retryable: known.retryable,
+          ...(known.failureKind === undefined ? {} : { failureKind: known.failureKind }),
+          ...(known.retryAfterMillis === undefined ? {} : { retryAfterMillis: known.retryAfterMillis }),
+          ...(known.retryScope === undefined ? {} : { retryScope: known.retryScope }),
+          ...(known.recovery === undefined ? {} : { recovery: known.recovery }),
           ...(known instanceof ArkmeDirectMessageAdmissionError ? { directMessageAdmission: known.admission } : {}) },
       })
     } finally {
@@ -1140,11 +1145,10 @@ export async function dispatchArkmeHostOperation(
         limit: countOnly ? 0 : directoryLimitParam(params),
         ...(countOnly ? { countOnly: true } : {}),
         ...(!countOnly && cursor !== '' ? { cursor } : {}),
+        ...(booleanParam(params, 'refresh') ? { refresh: true } : {}),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       }
-      return section === 'teams'
-        ? await requireTeamService(teamService).listDirectory(options)
-        : await service.listDirectory(section, options)
+      return await readDirectoryPage(service, teamService, section, options)
     }
     case 'directory.contact.profile': return await service.directoryContactProfile(
       stringParam(params, 'contactRef').trim(),

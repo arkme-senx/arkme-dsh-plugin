@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { retryAfterMillis } from '../http-retry-after.js'
 import {
   ArkmeRequestQueueOverflowError,
   ArkmeRequestCoordinator,
@@ -20,6 +21,7 @@ import type {
   ArkmeSelfSummary,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
+  ArkmePluginErrorBody,
 } from '../types.js'
 import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
@@ -132,6 +134,7 @@ interface ArkmeEnvelope<T> {
   code: number
   message?: string
   data?: T
+  error?: unknown
 }
 
 type ArkmePostBody = Record<string, unknown> | FormData
@@ -153,6 +156,9 @@ export interface ArkmeRemoteRequestOptions {
 export class ArkmePluginError extends Error {
   readonly upstreamStatus?: number
   readonly retryAfterMillis?: number
+  readonly failureKind?: ArkmePluginErrorBody['failureKind']
+  readonly retryScope?: ArkmePluginErrorBody['retryScope']
+  readonly recovery?: ArkmePluginErrorBody['recovery']
   /** The owner mutation may have completed, but the caller did not receive a usable acknowledgement. */
   readonly writeOutcomeUnknown?: true
 
@@ -161,21 +167,53 @@ export class ArkmePluginError extends Error {
     message: string,
     readonly retryable: boolean,
     readonly httpStatus = 400,
-    options?: ErrorOptions & { upstreamStatus?: number; retryAfterMillis?: number; writeOutcomeUnknown?: boolean },
+    options?: ErrorOptions & { upstreamStatus?: number; retryAfterMillis?: number; writeOutcomeUnknown?: boolean;
+      failureKind?: ArkmePluginErrorBody['failureKind']; retryScope?: ArkmePluginErrorBody['retryScope']; recovery?: ArkmePluginErrorBody['recovery'] },
   ) {
     super(message, options)
     this.name = 'ArkmePluginError'
     if (options?.upstreamStatus !== undefined) this.upstreamStatus = options.upstreamStatus
     if (options?.retryAfterMillis !== undefined) this.retryAfterMillis = options.retryAfterMillis
+    if (options?.failureKind !== undefined) this.failureKind = options.failureKind
+    if (options?.retryScope !== undefined) this.retryScope = options.retryScope
+    if (options?.recovery !== undefined) this.recovery = options.recovery
     if (options?.writeOutcomeUnknown === true) this.writeOutcomeUnknown = true
   }
 }
 
 /** Opaque upstream body, for the owning business adapter only. Never serialize this error wholesale. */
 export class ArkmeUpstreamResponseError extends ArkmePluginError {
-  constructor(code: string, message: string, retryable: boolean, httpStatus: number, readonly responseData: unknown) {
-    super(code, message, retryable, httpStatus)
+  constructor(code: string, message: string, retryable: boolean, httpStatus: number, readonly responseData: unknown, options?: ConstructorParameters<typeof ArkmePluginError>[4]) {
+    super(code, message, retryable, httpStatus, options)
   }
+}
+
+function stableReadParameters(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableReadParameters).join(',')}]`
+  if (value !== null && typeof value === 'object') return `{${Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${stableReadParameters(v)}`).join(',')}}`
+  return JSON.stringify(value) ?? 'null'
+}
+
+function readRecoveryDelay(error: unknown, attempt: number): number | undefined {
+  if (!(error instanceof ArkmePluginError) || !error.retryable) return undefined
+  // 明确的技术失败才重放；未知业务码不能按数值大小猜测。
+  if (!['arkme-code-1002', 'arkme-timeout', 'arkme-network-error', 'arkme-http-error', 'team-openapi-unavailable'].includes(error.code)) return undefined
+  return (error.retryAfterMillis ?? Math.min(2_000, 250 * 2 ** Math.max(0, attempt - 1))) + Math.floor(Math.random() * 75)
+}
+
+function readFailureCoolsRoute(error: unknown): boolean {
+  return error instanceof ArkmePluginError && (error.retryScope === 'route' || error.upstreamStatus === 429)
+}
+
+export interface ArkmeOwnerReadPort {
+  runOwnerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T>
+}
+
+function exhaustedRead(error: unknown, attempts: number): ArkmePluginError {
+  const known = error instanceof ArkmePluginError ? error : new ArkmePluginError('arkme-timeout', '读取超时，请稍后重试', true, 504)
+  return new ArkmePluginError(known.code, known.message, known.retryable, known.httpStatus, {
+    cause: known, ...known, recovery: { owner: 'host', attempts, exhausted: true },
+  })
 }
 
 function remoteWriteOutcomeUnknown(error: ArkmePluginError): boolean {
@@ -192,15 +230,6 @@ function withUnknownWriteOutcome(error: ArkmePluginError): ArkmePluginError {
     ...(error.upstreamStatus === undefined ? {} : { upstreamStatus: error.upstreamStatus }),
     ...(error.retryAfterMillis === undefined ? {} : { retryAfterMillis: error.retryAfterMillis }),
   })
-}
-
-function retryAfterMillis(value: string | null): number | undefined {
-  if (value === null || value.trim() === '') return undefined
-  const seconds = Number(value.trim())
-  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(60_000, Math.round(seconds * 1000))
-  const date = Date.parse(value)
-  if (!Number.isFinite(date)) return undefined
-  return Math.min(60_000, Math.max(0, date - Date.now()))
 }
 
 export function stringValue(value: unknown): string {
@@ -266,12 +295,30 @@ export class ServiceRuntime {
     return userId !== undefined && Number.isSafeInteger(userId) && userId > 0 ? `user:${String(userId)}` : 'public'
   }
 
+  private readonly readRevisions = new Map<string, number>()
+  readRevision(scope: string): number { return this.readRevisions.get(scope) ?? 0 }
+
+  async runOwnerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const session = await this.requireSession()
+    return await this.requestCoordinator.run({
+      scope: this.requestScope(session.userId), lane: 'interactive-read', service: 'extension',
+      route, key: `owner-read:${route}:${stableReadParameters(parameters)}`, cancelWhenUnobserved: true,
+      ...(signal === undefined ? {} : { signal }), operation,
+      recovery: { maxAttempts: 3, deadlineMs: this.config.requestTimeoutMs, delay: readRecoveryDelay, coolsRoute: readFailureCoolsRoute, exhausted: exhaustedRead,
+        timeout: () => new ArkmePluginError('arkme-timeout', '读取超时，请稍后重试', true, 504) },
+    })
+  }
+
   invalidateScope(scope: string): void {
+    this.readRevisions.set(scope, this.readRevision(scope) + 1)
     this.requestCoordinator.invalidateScope(scope)
   }
 
   invalidateKey(scope: string, key: string): void {
+    this.readRevisions.set(scope, this.readRevision(scope) + 1)
     this.requestCoordinator.invalidateKey(scope, key)
+    // 既有业务 owner 的写后失效同样作用于统一原始读取；旧调用者仍可结束，新读不加入旧 flight。
+    this.requestCoordinator.invalidateKey(scope, 'owner-read:')
   }
 
   dispose(): void {
@@ -405,6 +452,15 @@ export class ServiceRuntime {
     return 0
   }
 
+  private registeredRead(baseUrl: string, path: string): boolean {
+    if (baseUrl === this.config.chatBaseUrl && new Set([
+      '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list',
+    ]).has(path)) return true
+    if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
+    if (baseUrl === this.config.audioBaseUrl && path === '/api/v1/audio/unmarked-speakers/list') return true
+    return false
+  }
+
   async post<T>(
     baseUrl: string,
     path: string,
@@ -417,6 +473,8 @@ export class ServiceRuntime {
     preserveHttpError = false,
     preserveForbiddenError = false,
   ): Promise<T> {
+    const read = this.registeredRead(baseUrl, path) && !(body instanceof FormData)
+    const route = `${baseUrl.replace(/\/+$/, '')}${path}`
     return await this.requestCoordinator.run<T>({
       scope: options.scope ?? 'public',
       lane: options.lane ?? 'write',
@@ -426,9 +484,19 @@ export class ServiceRuntime {
       ...(options.failureCooldownMs === undefined ? {} : { failureCooldownMs: options.failureCooldownMs }),
       ...(options.bypassCache === undefined ? {} : { bypassCache: options.bypassCache }),
       ...(signal === undefined ? {} : { signal }),
+      ...(read ? {
+        lane: options.lane === 'background-read' ? 'background-read' as const : 'interactive-read' as const,
+        route,
+        key: `owner-read:${route}:${stableReadParameters(body)}`,
+        cacheMs: 0,
+        failureCooldownMs: 0,
+        cancelWhenUnobserved: true,
+        recovery: { maxAttempts: 3, deadlineMs: this.config.requestTimeoutMs, delay: readRecoveryDelay, coolsRoute: readFailureCoolsRoute, exhausted: exhaustedRead,
+          timeout: () => new ArkmePluginError('arkme-timeout', '读取超时，请稍后重试', true, 504) },
+      } : {}),
       shouldCooldown: error => !(error instanceof ArkmePluginError)
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
-      serviceCooldownMs: error => options.publishServiceCooldown === false ? 0 : this.remoteServiceCooldownMs(error),
+      serviceCooldownMs: error => read || options.publishServiceCooldown === false ? 0 : this.remoteServiceCooldownMs(error),
       operation: async coordinatedSignal => await this.postDirect<T>(
         baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
         preserveHttpError, preserveForbiddenError,
@@ -504,7 +572,7 @@ export class ServiceRuntime {
         throw new ArkmePluginError(
           'arkme-http-error',
           `Arkme 服务返回 HTTP ${response.status}`,
-          true,
+          response.status === 408 || response.status === 429 || response.status >= 500,
           502,
           {
             upstreamStatus: response.status,
@@ -521,16 +589,22 @@ export class ServiceRuntime {
         const errorData = objectValue(envelope.data)
         const serviceErrorCode = preferDataError ? stringValue(errorData.error_code).trim() : ''
         const serviceMessage = preferDataError ? stringValue(errorData.message).trim() : ''
+        const metadata = baseUrl === this.config.chatBaseUrl && envelope.code === 1002 ? objectValue(envelope.error) : {}
+        const failureKind = knownStringValue(metadata.code, new Set(['rate_limited', 'concurrency_limited', 'service_unavailable'] as const))
+        const delay = typeof metadata.retry_after_ms === 'number' && Number.isFinite(metadata.retry_after_ms) && metadata.retry_after_ms >= 0 ? metadata.retry_after_ms : undefined
         throw new ArkmeUpstreamResponseError(
           serviceErrorCode || `arkme-code-${envelope.code}`,
-          serviceMessage || envelope.message?.trim() || 'Arkme 服务请求失败',
-          serviceErrorCode === '' ? envelope.code !== 1004 && envelope.code >= 500 : serviceErrorCode === 'ai_comic_video_rate_limited',
+          failureKind === 'rate_limited' ? '请求较频繁，请稍后重试' : failureKind === 'concurrency_limited' ? '请求处理中，请稍后重试' : serviceMessage || envelope.message?.trim() || 'Arkme 服务请求失败',
+          serviceErrorCode === '' ? (baseUrl === this.config.chatBaseUrl ? envelope.code === 1002 : envelope.code !== 1004 && envelope.code >= 500) : serviceErrorCode === 'ai_comic_video_rate_limited',
           502,
           envelope.data,
+          { ...(failureKind === undefined ? {} : { failureKind }), ...(delay === undefined ? {} : { retryAfterMillis: delay }),
+            ...(metadata.retry_scope === 'route' || metadata.retry_scope === 'request' ? { retryScope: metadata.retry_scope } : {}) },
         )
       }
       return (envelope.data ?? {}) as T
     } catch (error) {
+      if (signal.aborted) throw signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
       if (error instanceof ArkmePluginError) throw error
       if ((error as Error).name === 'AbortError') {
         throw new ArkmePluginError('arkme-timeout', 'Arkme 服务请求超时', true, 504, { cause: error })

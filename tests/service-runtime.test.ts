@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from '../src/keychain-store.js'
 import { patchChatPolicy } from '../src/services/chat-policy.js'
 import { ArkmeRequestQueueOverflowError } from '../src/request-coordinator.js'
@@ -42,6 +42,64 @@ function runtimeFixture(
 ): ServiceRuntime {
   return new ServiceRuntime(config, sessionStore, {} as StateStore, fetchImpl, pendingSessionStore)
 }
+
+afterEach(() => { vi.useRealTimers() })
+
+describe('registered owner read recovery', () => {
+  const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  const busy = (error?: object) => new Response(JSON.stringify({ code: 1002, message: '服务器繁忙', data: {}, ...(error ? { error } : {}) }))
+  const ok = () => new Response(JSON.stringify({ code: 200, data: { items: [] } }))
+  it.each([undefined, { code: 'rate_limited', retry_after_ms: 600, retry_scope: 'route', retryable: true }])('recovers legacy and classified busy without a fourth attempt: %j', async metadata => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn().mockImplementationOnce(() => busy(metadata)).mockImplementationOnce(() => busy(metadata)).mockImplementation(ok)
+    const runtime = runtimeFixture(fetcher)
+    const result = runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 50 }, session)
+    await vi.advanceTimersByTimeAsync(2000)
+    await expect(result).resolves.toEqual({ items: [] })
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    runtime.dispose()
+  })
+  it('owns exhausted recovery, preserves classification, and honors Retry-After beyond the deadline', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn(() => busy({ code: 'rate_limited', retry_after_ms: 60_000, retry_scope: 'route' }))
+    const runtime = runtimeFixture(fetcher)
+    const result = runtime.authenticatedChatPost('/api/v1/chats/list', {}, session)
+    const check = expect(result).rejects.toMatchObject({ code: 'arkme-code-1002', failureKind: 'rate_limited', retryAfterMillis: 60_000,
+      recovery: { owner: 'host', attempts: 1, exhausted: true } })
+    await vi.advanceTimersByTimeAsync(5000)
+    await check
+    expect(fetcher).toHaveBeenCalledOnce()
+    runtime.dispose()
+  })
+  it('joins only identical full parameters and retains parameter array order', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn(ok)
+    const runtime = runtimeFixture(fetcher)
+    const calls = [
+      runtime.authenticatedChatPost('/api/v1/chats/display-snapshots', { ids: ['a', 'b'], limit: 2 }, session),
+      runtime.authenticatedChatPost('/api/v1/chats/display-snapshots', { limit: 2, ids: ['a', 'b'] }, session),
+      runtime.authenticatedChatPost('/api/v1/chats/display-snapshots', { ids: ['b', 'a'], limit: 2 }, session),
+    ]
+    await vi.advanceTimersByTimeAsync(1000)
+    await Promise.all(calls)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    runtime.dispose()
+  })
+  it.each([1001, 1004, 1100, 2001])('does not replay Chat business error %s', async code => {
+    const fetcher = vi.fn(() => new Response(JSON.stringify({ code, message: '业务拒绝', data: { marker: true } })))
+    const runtime = runtimeFixture(fetcher)
+    await expect(runtime.authenticatedChatPost('/api/v1/chats/list', {}, session)).rejects.toMatchObject({ code: `arkme-code-${code}`, responseData: { marker: true } })
+    expect(fetcher).toHaveBeenCalledOnce()
+    runtime.dispose()
+  })
+  it('never replays writes even when their response has the same busy code', async () => {
+    const fetcher = vi.fn(() => busy())
+    const runtime = runtimeFixture(fetcher)
+    await expect(runtime.authenticatedChatPost('/api/v1/chats/join', {}, session)).rejects.toMatchObject({ code: 'arkme-code-1002' })
+    expect(fetcher).toHaveBeenCalledOnce()
+    runtime.dispose()
+  })
+})
 
 describe('ServiceRuntime', () => {
   it('preserves upstream status and retry-after on HTTP failures', async () => {

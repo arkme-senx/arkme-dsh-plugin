@@ -3,6 +3,37 @@ import { once } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from '../src/runtime-instance.js'
+import { ArkmePluginError } from '../src/services/service.js'
+
+it('serializes only safe Host recovery metadata across the real HTTP boundary', async () => {
+  const service = { listDirectory: async () => {
+    throw new ArkmePluginError('arkme-code-1002', '服务器繁忙', true, 502, {
+      failureKind: 'rate_limited', retryAfterMillis: 1200, retryScope: 'route',
+      recovery: { owner: 'host', attempts: 3, exhausted: true },
+      responseData: { accessToken: 'must-not-leak' }, cause: new Error('private-upstream-details'),
+    })
+  } }
+  const server = createServer(createArkmeHostApi(service as never, { expectedPort: 0, allowNonLoopback: false }))
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const address = server.address()
+  if (address === null || typeof address === 'string') throw new Error('test server address missing')
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/arkme-self/api`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operation: 'directory.list', params: { section: 'contacts', limit: 1 } }),
+    })
+    expect(response.status).toBe(502)
+    expect(await response.json()).toEqual({ ok: false, error: {
+      code: 'arkme-code-1002', message: '服务器繁忙', retryable: true,
+      failureKind: 'rate_limited', retryAfterMillis: 1200, retryScope: 'route',
+      recovery: { owner: 'host', attempts: 3, exhausted: true },
+    } })
+  } finally {
+    server.close()
+    await once(server, 'close')
+  }
+})
 
 function fakeService() {
   return {

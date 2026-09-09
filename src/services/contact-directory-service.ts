@@ -17,6 +17,7 @@ import type { ArkmePublicProfile, ProfileService } from './profile-service.js'
 import { ArkmePluginError, type ServiceRuntime, objectValue, stringValue } from './service.js'
 import type { SourceService } from './source-service.js'
 import type { WorldService } from './world-service.js'
+import { DirectorySnapshotStore } from './directory-snapshot.js'
 
 interface ContactDirectoryRefEntry {
   viewerUserId: number
@@ -43,7 +44,6 @@ const CONTACT_DIRECTORY_REF_CAP = 2_000
 const CONTACT_DIRECTORY_PAGE_LIMIT = 50
 const CONTACT_DIRECTORY_MAX_SOURCE_PAGES = 20
 const CONTACT_DIRECTORY_REF_PATTERN = /^arkme-directory-contact-v1\.[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const OFFSET_CURSOR_PATTERN = /^arkme-directory-offset-v1\.(bots|contacts)\.([0-9]+)\.([A-Za-z0-9_-]+)$/
 
 function numberValue(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value)
@@ -71,6 +71,8 @@ function cloneWorldOptions(options: { limit?: number; offset?: number; signal?: 
 }
 
 export class ContactDirectoryService {
+  private readonly snapshots = new DirectorySnapshotStore<{ descriptors: ContactDirectoryDescriptor[]; coverage: 'complete' | 'partial' }>()
+  private readonly botSnapshots = new DirectorySnapshotStore<Awaited<ReturnType<BotService['listBots']>>['items']>()
   private readonly contactRefs = new Map<string, ContactDirectoryRefEntry>()
   private remarkRevision = 0
   private readonly recentRemarks = new Map<string, { revision: number; remark: string }>()
@@ -84,13 +86,15 @@ export class ContactDirectoryService {
     private readonly chat: ChatService,
   ) {}
 
-  dispose(): void { this.contactRefs.clear(); this.recentRemarks.clear() }
+  dispose(): void { this.snapshots.clear(); this.botSnapshots.clear(); this.contactRefs.clear(); this.recentRemarks.clear() }
 
   async listRecordingSpeakerUsers(
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<Array<{ userId: number; label: string; avatarRef?: string }>> {
-    const descriptors = await this.loadMergedContactDescriptors(session, signal === undefined ? {} : { signal })
+    const snapshot = await this.contactSnapshot(session, signal === undefined ? {} : { signal })
+    if (snapshot.value.coverage !== 'complete') throw new ArkmePluginError('directory-contact-incomplete', '联系人尚未加载完整，请稍后重试', true, 503)
+    const descriptors = snapshot.value.descriptors
     const userIds = [session.userId, ...descriptors.map(descriptor => descriptor.targetUserId)]
     const profiles = await this.profile.publicProfileSummariesByUserIds(userIds, session, signal)
     const candidates: Array<{ userId: number; label: string; avatarRef?: string }> = []
@@ -142,13 +146,13 @@ export class ContactDirectoryService {
         total = await this.source.countGroupSources(signal)
         break
       case 'bots':
-        total = await this.bot.countBots(signal === undefined ? {} : { signal })
+        total = (await this.botSnapshot(session, signal === undefined ? {} : { signal })).value.length
         break
       case 'contacts': {
-        total = (await this.loadMergedContactDescriptors(
+        const snapshot = await this.contactSnapshot(
           session, signal === undefined ? {} : { signal },
-        )).length
-        break
+        )
+        return { section, items: [], total: snapshot.value.descriptors.length, hasMore: false, coverage: snapshot.value.coverage }
       }
     }
     return { section, items: [], total, hasMore: false }
@@ -194,6 +198,7 @@ export class ContactDirectoryService {
     )
     // Invalidate even if the reply is malformed: the write may have succeeded.
     this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'directory:contacts:')
+    this.snapshots.clear()
     const contact = objectValue(data.contact)
     if (stringValue(contact.chat_session_uid) !== entry.chatSessionUid
       || numberValue(contact.user_id) !== entry.targetUserId
@@ -257,23 +262,26 @@ export class ContactDirectoryService {
     }))
     return {
       section: 'groups', items, total: page.total ?? items.length, hasMore: page.hasMore,
+      coverage: page.hasMore ? 'partial' : 'complete',
       ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
     }
   }
 
   private async listBots(
-    options: { limit?: number; cursor?: string; signal?: AbortSignal },
+    options: { limit?: number; cursor?: string; refresh?: boolean; signal?: AbortSignal },
   ): Promise<ArkmeDirectoryPage> {
     const session = await this.runtime.requireSession()
     const limit = boundedLimit(options.limit)
-    const offset = await this.openOffsetCursor('bots', options.cursor, session.userId)
-    const bots = (await this.bot.listBots(options.signal === undefined ? {} : { signal: options.signal })).items
+    const snapshot = await this.botSnapshot(session, options)
+    const offset = await this.openSnapshotCursor('bots', options.cursor, session.userId, snapshot.id)
+    if (offset === undefined) return { section: 'bots', items: [], total: 0, hasMore: false, cursorStale: true }
+    const bots = snapshot.value
     const slice = bots.slice(offset, offset + limit)
     const items: ArkmeDirectoryItem[] = slice.map(bot => ({ kind: 'bot', bot }))
     const hasMore = offset + slice.length < bots.length
     return {
       section: 'bots', items, total: bots.length, hasMore,
-      ...(hasMore ? { nextCursor: await this.sealOffsetCursor('bots', offset + slice.length, session.userId) } : {}),
+      ...(hasMore ? { nextCursor: await this.sealSnapshotCursor('bots', offset + slice.length, session.userId, snapshot.id) } : {}),
     }
   }
 
@@ -282,13 +290,20 @@ export class ContactDirectoryService {
   ): Promise<ArkmeDirectoryPage> {
     const session = await this.runtime.requireSession()
     const limit = boundedLimit(options.limit)
-    const offset = await this.openOffsetCursor('contacts', options.cursor, session.userId)
+    const snapshot = await this.contactSnapshot(session, options)
+    const cursor = await this.openSnapshotCursor('contacts', options.cursor, session.userId, snapshot.id)
+    if (cursor === undefined) return { section: 'contacts', items: [], total: 0, hasMore: false, cursorStale: true }
+    const offset = cursor
     const revisionAtStart = this.remarkRevision
-    const descriptors = await this.loadMergedContactDescriptors(session, options)
+    const descriptors = snapshot.value.descriptors
     const pageDescriptors = descriptors.slice(offset, offset + limit)
     const profiles = await this.profile.publicProfileSummariesByUserIds(
       pageDescriptors.map(item => item.targetUserId), session, options.signal,
-    )
+    ).catch(error => {
+      if (!(error instanceof ArkmePluginError) || !error.retryable || options.signal?.aborted
+        || !['arkme-code-1002', 'arkme-timeout', 'arkme-network-error', 'arkme-http-error'].includes(error.code)) throw error
+      return new Map<number, ArkmePublicProfile>()
+    })
     const items: ArkmeDirectoryItem[] = []
     this.pruneContactRefs()
     for (const descriptor of pageDescriptors) {
@@ -330,7 +345,7 @@ export class ContactDirectoryService {
     }
     this.pruneContactRefs()
     const hasMore = offset + pageDescriptors.length < descriptors.length
-    const nextCursor = hasMore ? await this.sealOffsetCursor('contacts', offset + pageDescriptors.length, session.userId) : undefined
+    const nextCursor = hasMore ? await this.sealSnapshotCursor('contacts', offset + pageDescriptors.length, session.userId, snapshot.id) : undefined
     // A save can finish while later rows await avatar projection. Refresh rows
     // from the current entries after all asynchronous projection has completed.
     for (const item of items) {
@@ -343,14 +358,27 @@ export class ContactDirectoryService {
     }
     return {
       section: 'contacts', items, total: descriptors.length, hasMore,
+      coverage: snapshot.value.coverage,
+      ...(snapshot.value.coverage === 'partial' ? { projectionState: 'stale' as const } : {}),
       ...(nextCursor === undefined ? {} : { nextCursor }),
     }
+  }
+
+  private contactSnapshot(session: ArkmeSessionCredentials, options: { refresh?: boolean; signal?: AbortSignal }) {
+    const scope = this.runtime.requestScope(session.userId)
+    return this.snapshots.read(`${this.runtime.config.environment}:${scope}:${this.runtime.readRevision(scope)}`, signal => this.loadMergedContactDescriptors(session, { signal }), options)
+  }
+
+  private botSnapshot(session: ArkmeSessionCredentials, options: { refresh?: boolean; signal?: AbortSignal }) {
+    const scope = this.runtime.requestScope(session.userId)
+    return this.botSnapshots.read(`${this.runtime.config.environment}:${scope}:${this.runtime.readRevision(scope)}`,
+      async signal => (await this.bot.listBots({ signal })).items, options)
   }
 
   private async loadMergedContactDescriptors(
     session: ArkmeSessionCredentials,
     options: { refresh?: boolean; signal?: AbortSignal },
-  ): Promise<ContactDirectoryDescriptor[]> {
+  ): Promise<{ descriptors: ContactDirectoryDescriptor[]; coverage: 'complete' | 'partial' }> {
     const descriptorsByUserId = new Map<number, ContactDirectoryDescriptor>()
     let offset = 0
     let baseComplete = false
@@ -362,7 +390,8 @@ export class ContactDirectoryService {
           failureCooldownMs: 2_000, bypassCache: options.refresh === true,
         },
       )
-      const rawItems = listValue(data.items)
+      if (!Array.isArray(data.items)) throw new ArkmePluginError('directory-contact-contract-invalid', '联系人列表响应不完整', false, 502)
+      const rawItems = data.items
       for (const value of rawItems) {
         const raw = objectValue(value)
         const targetUserId = numberValue(raw.user_id)
@@ -395,7 +424,7 @@ export class ContactDirectoryService {
     let pageCursor: Record<string, unknown> | undefined
     let directComplete = false
     const visitedCursorKeys = new Set<string>()
-    for (let pageIndex = 0; pageIndex < CONTACT_DIRECTORY_MAX_SOURCE_PAGES; pageIndex += 1) {
+    try { for (let pageIndex = 0; pageIndex < CONTACT_DIRECTORY_MAX_SOURCE_PAGES; pageIndex += 1) {
       const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
         '/api/v1/chats/list',
         {
@@ -406,7 +435,7 @@ export class ContactDirectoryService {
         session,
         options.signal,
         {
-          lane: 'interactive-read', key: `directory:contacts:direct:${String(pageIndex)}`,
+          lane: 'interactive-read', key: `directory:contacts:direct:${JSON.stringify(pageCursor ?? null)}`,
           failureCooldownMs: 2_000, bypassCache: options.refresh === true,
         },
       )
@@ -455,7 +484,29 @@ export class ContactDirectoryService {
         'directory-contact-pagination-limit', '私聊联系人超过安全分页上限', true, 502,
       )
     }
-    return [...descriptorsByUserId.values()]
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !error.retryable || error.recovery?.owner !== 'host' || options.signal?.aborted) throw error
+      return { descriptors: [...descriptorsByUserId.values()], coverage: 'partial' }
+    }
+    return { descriptors: [...descriptorsByUserId.values()], coverage: 'complete' }
+  }
+
+  private async sealSnapshotCursor(section: 'contacts' | 'bots', offset: number, userID: number, snapshotID: string): Promise<string> {
+    const payload = `${section}:${userID}:${snapshotID}:${offset}`
+    const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest('base64url')
+    return `arkme-directory-snapshot-v1.${section}.${snapshotID}.${offset}.${signature}`
+  }
+
+  private async openSnapshotCursor(section: 'contacts' | 'bots', cursor: string | undefined, userID: number, snapshotID: string): Promise<number | undefined> {
+    if (!cursor) return 0
+    const match = /^arkme-directory-snapshot-v1\.(contacts|bots)\.([0-9a-f-]{36})\.([0-9]+)\.([A-Za-z0-9_-]+)$/.exec(cursor)
+    if (match === null || match[1] !== section) throw new ArkmePluginError('directory-cursor-invalid', '联系人目录分页游标无效', false)
+    const offset = Number(match[3])
+    const expected = await this.sealSnapshotCursor(section, offset, userID, match[2]!)
+    const supplied = Buffer.from(cursor)
+    const expectedBytes = Buffer.from(expected)
+    if (!Number.isSafeInteger(offset) || supplied.length !== expectedBytes.length || !timingSafeEqual(supplied, expectedBytes)) throw new ArkmePluginError('directory-cursor-invalid', '联系人目录分页游标无效或与当前账号不匹配', false, 403)
+    return match[2] === snapshotID ? offset : undefined
   }
 
   private async contactIdentity(
@@ -509,34 +560,4 @@ export class ContactDirectoryService {
     }
   }
 
-  private async sealOffsetCursor(
-    section: 'bots' | 'contacts', offset: number, viewerUserId: number,
-  ): Promise<string> {
-    const normalizedOffset = Math.max(0, Math.trunc(offset))
-    const payload = `${section}:${String(viewerUserId)}:${String(normalizedOffset)}`
-    const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest('base64url')
-    return `arkme-directory-offset-v1.${section}.${String(normalizedOffset)}.${signature}`
-  }
-
-  private async openOffsetCursor(
-    section: 'bots' | 'contacts', cursor: string | undefined, viewerUserId: number,
-  ): Promise<number> {
-    const normalized = cursor?.trim() ?? ''
-    if (normalized === '') return 0
-    const match = OFFSET_CURSOR_PATTERN.exec(normalized)
-    if (match === null || match[1] !== section) {
-      throw new ArkmePluginError('directory-cursor-invalid', '联系人目录分页游标无效', false)
-    }
-    const offset = numberValue(match[2])
-    if (offset < 0 || !Number.isSafeInteger(offset)) {
-      throw new ArkmePluginError('directory-cursor-invalid', '联系人目录分页游标无效', false)
-    }
-    const payload = `${section}:${String(viewerUserId)}:${String(offset)}`
-    const supplied = Buffer.from(match[3] ?? '', 'base64url')
-    const expected = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest()
-    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
-      throw new ArkmePluginError('directory-cursor-invalid', '联系人目录分页游标无效或与当前账号不匹配', false, 403)
-    }
-    return offset
-  }
 }

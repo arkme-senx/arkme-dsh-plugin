@@ -29,6 +29,7 @@ export interface ContactDirectorySectionState {
   status: ContactDirectoryLoadStatus
   items: ArkmeDirectoryItem[]
   total: number
+  coverage?: 'complete' | 'partial'
   hasMore: boolean
   nextCursor: string | undefined
   expanded: boolean
@@ -265,12 +266,15 @@ export function contactDirectoryReducer(
         ...current,
         status: items.length === 0 ? 'empty' : 'ready',
         items,
-        total: action.section === 'groups' || action.mode === 'append'
+        total: action.mode === 'append' || (action.section === 'groups' && action.page.coverage === undefined)
           ? Math.max(current.total, action.page.total, items.length)
           : Math.max(action.page.total, items.length),
+        ...(action.page.coverage === undefined ? {} : { coverage: action.page.coverage }),
         hasMore: action.page.hasMore,
         nextCursor: action.page.nextCursor,
-        warning: action.page.projectionState === 'building'
+        warning: action.page.coverage === 'partial' && action.section === 'contacts'
+          ? '已显示部分联系人，稍后重试可补全'
+          : action.page.projectionState === 'building'
           ? '目录正在生成，请稍后重试'
           : action.page.projectionState === 'stale' || action.page.projectionState === 'failed'
             ? '目录数据可能不是最新状态'

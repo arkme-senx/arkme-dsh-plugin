@@ -60,8 +60,9 @@ function createArkmeContextToolDefinitions(
   ctx: Context,
   ports: ArkmeToolPorts,
   profile: ArkmeToolProfile,
+  phase: 'host' | 'attachments',
 ): ToolDefinition[] {
-  return arkmeToolCatalog.modulesFor(profile).filter(isArkmeContextToolModule)
+  return arkmeToolCatalog.modulesFor(profile, phase).filter(isArkmeContextToolModule)
     .map(module => validateMaterializedTool(module, module.create(ctx, ports)))
 }
 
@@ -209,9 +210,10 @@ export function registerArkmeTools(
   for (const definition of createArkmeCoreToolDefinitions(ports, profile)) {
     ctx.tools.register(withCoreConversationalConfirmation(definition, coreConversation))
   }
+  for (const definition of createArkmeContextToolDefinitions(ctx, ports, profile, 'host')) ctx.tools.register(definition)
   if (arkmeToolCatalog.modulesFor(profile, 'attachments').length === 0) return
   ctx.inject(['attachments'], imageCtx => {
-    for (const definition of createArkmeContextToolDefinitions(imageCtx, ports, profile)) {
+    for (const definition of createArkmeContextToolDefinitions(imageCtx, ports, profile, 'attachments')) {
       imageCtx.tools.register(definition)
     }
   })

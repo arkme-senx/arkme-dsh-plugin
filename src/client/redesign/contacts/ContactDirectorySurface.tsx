@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react'
 import type { ArkmeBotSummary, ArkmeDirectoryItem, ArkmeDirectoryPage, ArkmeDirectorySectionKind } from '../../../types.js'
 import { callArkme } from '../../api.js'
+import { retryArkmeRead } from '../../read-retry.js'
 import { AlphabeticalContactList, DirectoryItemRow } from './AlphabeticalContactList.js'
 import { CollapsibleDirectorySection } from './CollapsibleDirectorySection.js'
 import { ContactDirectoryToolbar } from './ContactDirectoryToolbar.js'
@@ -32,6 +33,7 @@ export interface ContactDirectoryLoadOptions {
   limit: number
   cursor?: string
   countOnly?: true
+  refresh?: true
 }
 
 export type ContactDirectoryPageLoader = (
@@ -147,6 +149,7 @@ const defaultLoadPage: ContactDirectoryPageLoader = async (section, options, sig
     limit: options.limit,
     ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
     ...(options.countOnly === true ? { countOnly: true } : {}),
+    ...(options.refresh === true ? { refresh: true } : {}),
   },
   signal,
 )
@@ -265,9 +268,10 @@ export function ContactDirectorySurface({
     const options: ContactDirectoryLoadOptions = {
       limit: mode === 'count' ? 0 : 50,
       ...(mode === 'count' ? { countOnly: true } : {}),
+      ...(force && mode === 'replace' ? { refresh: true } : {}),
       ...(mode === 'append' && snapshot.nextCursor !== undefined ? { cursor: snapshot.nextCursor } : {}),
     }
-    void loadPageRef.current(section, options, controller.signal).then(page => {
+    void retryArkmeRead(() => loadPageRef.current(section, options, controller.signal), { signal: controller.signal, retryDelays: [250, 750] }).then(page => {
       if (controller.signal.aborted) return
       if (mode === 'append' && page.cursorStale === true) {
         if ((staleRestartsRef.current[section] ?? 0) >= 1) throw new Error('目录持续更新，请稍后重试')
@@ -409,7 +413,7 @@ export function ContactDirectorySurface({
       searchStatus={projection.status}
       searching={query !== ''}
       onToggle={handleToggle}
-      onRetry={section => { delete staleRestartsRef.current[section]; load(section, 'replace') }}
+      onRetry={section => { delete staleRestartsRef.current[section]; load(section, 'replace', true) }}
       onLoadMore={section => { load(section, 'append') }}
       onSelect={handleSelect}
       onOpenGroup={onOpenGroup}

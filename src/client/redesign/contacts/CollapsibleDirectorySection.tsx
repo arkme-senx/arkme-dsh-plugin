@@ -48,7 +48,7 @@ export function CollapsibleDirectorySection({
         <span className="arkme-contact-directory-caret" aria-hidden>›</span>
         <strong>{label}</strong>
       </span>
-      <span className="arkme-contact-directory-count">{countLabel ?? section.total}</span>
+      <span className="arkme-contact-directory-count">{countLabel ?? `${section.total}${section.coverage === 'partial' ? '+' : ''}`}</span>
     </button>
     <div id={contentId} className="arkme-contact-directory-section-body" hidden={!section.expanded}>
       {section.expanded && hasItems && children}
@@ -61,7 +61,9 @@ export function CollapsibleDirectorySection({
         <button type="button" onClick={onRetry}>重试</button>
       </div>}
       {section.expanded && section.status !== 'error' && section.warning !== undefined
-        && <div className="arkme-contact-directory-warning" role="status">{section.warning}</div>}
+        && <div className="arkme-contact-directory-warning" role="status">
+          <span>{section.warning}</span><button type="button" onClick={onRetry}>重试</button>
+        </div>}
       {section.expanded && section.hasMore && section.status !== 'loading'
         && <button type="button" className="arkme-contact-directory-more" onClick={onLoadMore}>加载更多</button>}
     </div>

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BotService } from '../../src/services/bot-service.js'
 import { ContactDirectoryService } from '../../src/services/contact-directory-service.js'
 import { SourceService } from '../../src/services/source-service.js'
+import { ArkmePluginError } from '../../src/services/service.js'
 
 const session = { userId: 7, accessToken: 'access', refreshToken: 'refresh' }
 
@@ -19,6 +20,7 @@ function fixture(options: FixtureOptions = {}) {
   const runtime = {
     config: { environment: 'test' },
     requestScope: (userId: number) => `user:${userId}`,
+    readRevision: () => 0,
     invalidateScope: vi.fn(),
     invalidateKey: vi.fn(),
     stateStore: { async uniqueCode() { return 'directory-test-secret' } },
@@ -60,6 +62,49 @@ function fixture(options: FixtureOptions = {}) {
 afterEach(() => { vi.useRealTimers() })
 
 describe('ContactDirectoryService', () => {
+  it('scans the contact union once across count, pages and recording consumers, decorating only visible users', async () => {
+    const { service, runtime, profile } = fixture({ contacts: { items: [{ user_id: 88 }, { user_id: 89 }], has_more: false } })
+    await service.list('contacts', { countOnly: true })
+    const first = await service.list('contacts', { limit: 1 })
+    await service.list('contacts', { limit: 1, cursor: first.nextCursor })
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledTimes(2)
+    expect(profile.publicProfileSummariesByUserIds.mock.calls.map(call => call[0])).toEqual([[88], [89]])
+    await service.listRecordingSpeakerUsers(session)
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['contacts', 'bots'] as const)('binds %s pagination to its snapshot, expires cleanly, and rejects another account', async section => {
+    const { service, setSession } = fixture({
+      contacts: { items: [{ user_id: 88 }, { user_id: 89 }], has_more: false },
+      bots: { bots: [{ bot_id: 'bot-one', name: 'One', provider: 'webhook' }, { bot_id: 'bot-two', name: 'Two', provider: 'webhook' }] },
+    })
+    const first = await service.list(section, { limit: 1 })
+    expect(first.nextCursor).toBeTypeOf('string')
+    await service.list(section, { limit: 1, refresh: true })
+    await expect(service.list(section, { limit: 1, cursor: first.nextCursor })).resolves.toMatchObject({ cursorStale: true, items: [] })
+    setSession({ ...session, userId: 8 })
+    await expect(service.list(section, { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'directory-cursor-invalid', httpStatus: 403 })
+  })
+
+  it('exposes partial contact coverage only after bounded technical recovery, never as a complete recording candidate list', async () => {
+    const { service, runtime } = fixture()
+    runtime.authenticatedChatPost.mockImplementation(async path => {
+      if (path === '/api/v1/chats/contacts/list') return { items: [{ user_id: 88, remark: '已知联系人' }], has_more: false }
+      throw new ArkmePluginError('arkme-code-1002', '繁忙', true, 502, { recovery: { owner: 'host', attempts: 3, exhausted: true } })
+    })
+    await expect(service.list('contacts')).resolves.toMatchObject({ coverage: 'partial', total: 1, projectionState: 'stale' })
+    await expect(service.listRecordingSpeakerUsers(session)).rejects.toMatchObject({ code: 'directory-contact-incomplete' })
+    runtime.authenticatedChatPost.mockImplementation(async path => ({ items: path.endsWith('/contacts/list') ? [{ user_id: 88 }] : [], has_more: false }))
+    await expect(service.list('contacts', { refresh: true })).resolves.toMatchObject({ coverage: 'complete', total: 1 })
+  })
+
+  it('does not turn auth failures or a malformed contact source into an empty successful snapshot', async () => {
+    const { service, runtime, profile } = fixture({ contacts: { items: [{ user_id: 88 }], has_more: false } })
+    profile.publicProfileSummariesByUserIds.mockRejectedValueOnce(new ArkmePluginError('arkme-code-1001', '登录失效', true))
+    await expect(service.list('contacts')).rejects.toMatchObject({ code: 'arkme-code-1001' })
+    runtime.authenticatedChatPost.mockResolvedValue({ items: 'invalid' } as never)
+    await expect(service.list('contacts', { refresh: true })).rejects.toMatchObject({ code: 'directory-contact-contract-invalid' })
+  })
   it('opens only a signed current-account group and checks abort before and after source projection', async () => {
     const { service, source, setSession } = fixture({
       groups: { items: [{ session: { chat_session_uid: 'group-owner-1', session_kind: 2, title: '项目群' } }] },
@@ -95,23 +140,23 @@ describe('ContactDirectoryService', () => {
     await expect(Promise.all((['groups', 'bots', 'contacts'] as const).map(
       async section => await service.list(section, { countOnly: true }),
     ))).resolves.toEqual([
-      { section: 'groups', items: [], total: 11, hasMore: false },
-      { section: 'bots', items: [], total: 12, hasMore: false },
-      { section: 'contacts', items: [], total: 1, hasMore: false },
+      { section: 'groups', items: [], total: 1, hasMore: false },
+      { section: 'bots', items: [], total: 1, hasMore: false },
+      { section: 'contacts', items: [], total: 1, hasMore: false, coverage: 'complete' },
     ])
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
-      '/api/v1/chats/list', { limit: 0, session_kind: 2 }, session, undefined,
-      expect.objectContaining({ lane: 'interactive-read' }),
+      '/api/v1/chats/list', { limit: 100, session_kind: 2 }, session, undefined,
+      expect.objectContaining({ lane: 'background-read' }),
     )
     expect(runtime.authenticatedBotPost).toHaveBeenCalledWith(
-      '/api/v1/bot/list', { limit: 0 }, session, undefined,
+      '/api/v1/bot/list', {}, session, expect.any(AbortSignal),
     )
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
-      '/api/v1/chats/contacts/list', { limit: 50, offset: 0 }, session, undefined,
+      '/api/v1/chats/contacts/list', { limit: 50, offset: 0 }, session, expect.any(AbortSignal),
       expect.objectContaining({ lane: 'interactive-read' }),
     )
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
-      '/api/v1/chats/list', { limit: 50, session_kind: 1 }, session, undefined,
+      '/api/v1/chats/list', { limit: 50, session_kind: 1 }, session, expect.any(AbortSignal),
       expect.objectContaining({ lane: 'interactive-read' }),
     )
     expect(profile.publicProfileSummariesByUserIds).not.toHaveBeenCalled()
@@ -133,7 +178,7 @@ describe('ContactDirectoryService', () => {
     const page = await service.list('groups', { limit: 99 })
 
     expect(page).toEqual({
-      section: 'groups', total: 137, hasMore: false,
+      section: 'groups', total: 137, hasMore: false, coverage: 'complete',
       items: [{ kind: 'group', sourceRef: expect.stringMatching(/^arkme-source-v1\./), displayName: '项目群' }],
     })
     expect(JSON.stringify(page)).not.toContain('group-secret-1')
@@ -245,7 +290,7 @@ describe('ContactDirectoryService', () => {
     expect(serialized).not.toContain('private-url')
     expect(serialized).not.toContain('private raw name')
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
-      '/api/v1/chats/contacts/list', { limit: 50, offset: 0 }, session, undefined,
+      '/api/v1/chats/contacts/list', { limit: 50, offset: 0 }, session, expect.any(AbortSignal),
       expect.objectContaining({ lane: 'interactive-read' }),
     )
   })
@@ -370,7 +415,7 @@ describe('ContactDirectoryService', () => {
       '/api/v1/chats/list',
       { limit: 50, session_kind: 1 },
       session,
-      undefined,
+      expect.any(AbortSignal),
       expect.objectContaining({ lane: 'interactive-read' }),
     )
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
@@ -381,7 +426,7 @@ describe('ContactDirectoryService', () => {
         page_cursor: { session_kind: 1, pin_state: 1, sort_active_at: 20, chat_session_uid: 'direct-103' },
       },
       session,
-      undefined,
+      expect.any(AbortSignal),
       expect.objectContaining({ lane: 'interactive-read' }),
     )
   })
@@ -389,7 +434,7 @@ describe('ContactDirectoryService', () => {
   it('returns empty pages, advances contact offset cursors, and rejects a source failure without cache', async () => {
     const { service, runtime } = fixture()
     await expect(service.list('contacts')).resolves.toEqual({
-      section: 'contacts', items: [], total: 0, hasMore: false,
+      section: 'contacts', items: [], total: 0, hasMore: false, coverage: 'complete',
     })
 
     runtime.authenticatedChatPost.mockImplementation(async (path: string) => {
@@ -403,7 +448,7 @@ describe('ContactDirectoryService', () => {
       if (path === '/api/v1/chats/list') return { items: [], has_more: false }
       throw new Error(`unexpected chat path: ${path}`)
     })
-    const first = await service.list('contacts', { limit: 1 })
+    const first = await service.list('contacts', { limit: 1, refresh: true })
     const second = await service.list('contacts', { limit: 1, cursor: first.nextCursor })
     expect(first).toMatchObject({ total: 2, hasMore: true, items: [expect.objectContaining({ displayName: '八' })] })
     expect(second).toMatchObject({ total: 2, hasMore: false, items: [expect.objectContaining({ displayName: '九' })] })
@@ -443,8 +488,8 @@ describe('ContactDirectoryService', () => {
         total: 50, has_more: false,
       }
     })
-    const oldest = await service.list('contacts', { limit: 50 })
-    for (let page = 1; page < 42; page += 1) await service.list('contacts', { limit: 50 })
+    const oldest = await service.list('contacts', { limit: 50, refresh: true })
+    for (let page = 1; page < 42; page += 1) await service.list('contacts', { limit: 50, refresh: true })
     const oldestRef = oldest.items[0]!.kind === 'contact' ? oldest.items[0]!.contactRef : ''
     await expect(service.contactProfile(oldestRef)).rejects.toMatchObject({ code: 'directory-contact-ref-expired' })
   })
