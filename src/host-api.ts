@@ -1853,6 +1853,7 @@ export async function dispatchArkmeHostOperation(
     }
     case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(
       stringParam(params, 'sourceRef'),
+      requestSignal,
     )
     case 'related-recordings.page': return await service.relatedRecordings(
       stringParam(params, 'sourceRef'),
@@ -1862,6 +1863,7 @@ export async function dispatchArkmeHostOperation(
         ...(stringParam(params, 'monthKey') === '' ? {} : { monthKey: stringParam(params, 'monthKey') }),
         timezoneOffsetMillis: numberParam(params, 'timezoneOffsetMillis', 0),
         includeTimeIndex: booleanParam(params, 'includeTimeIndex'),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
     case 'source.ai-polish.settings': return await service.inspectGroupAiPolish(

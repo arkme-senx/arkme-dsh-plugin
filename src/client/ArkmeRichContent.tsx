@@ -1,4 +1,5 @@
 import { arkmeMarkdownPlainText } from '../markdown.js'
+import { preserveTextTogglePosition } from './preserve-text-toggle-position.js'
 import { ArkmeMarkdownBody } from './ArkmeMarkdownBody.js'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
@@ -168,7 +169,6 @@ function ArkmeMessageRichText({
   text,
   textFormat,
   textStyle,
-  collapse = false,
   highlightMentions,
   linkLabelMode,
   shareWebsite,
@@ -179,7 +179,6 @@ function ArkmeMessageRichText({
   text: string
   textFormat?: 'plain' | 'markdown'
   textStyle?: Pick<CSSProperties, 'fontSize' | 'lineHeight'> | undefined
-  collapse?: boolean
   highlightMentions: boolean
   linkLabelMode: ArkmeLinkLabelMode
   shareWebsite?: string
@@ -202,7 +201,6 @@ function ArkmeMessageRichText({
     text={text}
     textStyle={textStyle}
     highlightMentions={highlightMentions}
-    collapse={collapse}
     renderLink={renderLink}
     {...(onMentionClick === undefined ? {} : { onMentionClick })}
     {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
@@ -279,13 +277,26 @@ function LongText({
   onMentionClick?: ArkmeMentionClickHandler
   isMentionClickable?: ArkmeMentionClickPredicate
 }) {
-  const collapsible = collapseText && !expanded && shouldCollapseText(text)
-  const [collapsed, setCollapsed] = useState(collapsible)
+  const markdown = textFormat === 'markdown'
+  const markdownBody = useRef<HTMLDivElement>(null)
+  const [markdownOverflow, setMarkdownOverflow] = useState(false)
+  const markdownHeight = 160
+  useLayoutEffect(() => {
+    const element = markdownBody.current
+    if (element === null || !collapseText || expanded) return
+    const measure = () => setMarkdownOverflow(element.scrollHeight > markdownHeight + 1)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [text, markdown, collapseText, expanded])
+  const collapsible = collapseText && !expanded && (markdown ? markdownOverflow : shouldCollapseText(text))
+  const [collapsed, setCollapsed] = useState(markdown || collapsible)
   const content = <ArkmeMessageRichText
     text={text}
     textStyle={{ fontSize: styles.text?.fontSize, lineHeight: expanded ? 1.7 : styles.text?.lineHeight }}
     {...(textFormat === undefined ? {} : { textFormat })}
-    collapse={collapseText && !expanded}
     highlightMentions={highlightMentions}
     linkLabelMode={linkLabelMode}
     {...(shareWebsite === undefined ? {} : { shareWebsite })}
@@ -293,14 +304,19 @@ function LongText({
     {...(onMentionClick === undefined ? {} : { onMentionClick })}
     {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
   />
-  if (textFormat === 'markdown') return content
-  if (!collapsible) return <p style={{ ...styles.text, ...(expanded ? { width: '100%', lineHeight: 1.7 } : {}) }}>{content}</p>
-  return <div style={styles.textFrame} data-arkme-text-collapsible="true">
-    <p style={{ ...styles.text, ...(collapsed ? styles.collapsedText : {}) }}>{content}</p>
-    {collapsed && <span aria-hidden style={styles.textFade} />}
-    <button type="button" style={styles.collapseToggle} aria-expanded={!collapsed} onClick={() => { setCollapsed(value => !value) }}>
+  if (!markdown && !collapsible) return <p style={{ ...styles.text, ...(expanded ? { width: '100%', lineHeight: 1.7 } : {}) }}>{content}</p>
+  return <div style={styles.textFrame} {...(collapsible ? { 'data-arkme-text-collapsible': 'true' } : {})}>
+    {markdown
+      ? <div style={{ maxHeight: collapsible && collapsed ? markdownHeight : undefined, overflow: 'hidden' }}>
+        <div ref={markdownBody}>{content}</div>
+      </div>
+      : <p style={{ ...styles.text, ...(expanded ? { width: '100%', lineHeight: 1.7 } : {}), ...(collapsible && collapsed ? styles.collapsedText : {}) }}>{content}</p>}
+    {collapsible && collapsed && <span aria-hidden style={styles.textFade} />}
+    {collapsible && <button type="button" style={styles.collapseToggle} aria-expanded={!collapsed} onClick={event => {
+      preserveTextTogglePosition(event.currentTarget, () => { setCollapsed(value => !value) })
+    }}>
       {collapsed ? '展开' : '收起'}
-    </button>
+    </button>}
   </div>
 }
 

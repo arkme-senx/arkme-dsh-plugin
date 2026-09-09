@@ -1,3 +1,5 @@
+import { recordingImportToolModule } from './import.js'
+import { recordingImportFolderToolModule } from './import-folder.js'
 import { createHash } from 'node:crypto'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type {
@@ -776,4 +778,4 @@ export const recordingReadToolModule = defineArkmeCoreToolModule({
   },
 })
 
-export const recordingToolModules = [recordingDaysListToolModule, recordingReadToolModule] as const
+export const recordingToolModules = [recordingDaysListToolModule, recordingReadToolModule, recordingImportToolModule, recordingImportFolderToolModule] as const

@@ -1,3 +1,5 @@
+import type { PublicRecordingImportJob, RecordingFileImportInput } from '../../recording-import-contract.js'
+import type { PreparedRecordingDirectory, RecordingDirectoryInput, RecordingDirectoryResult } from '../../recording-directory-import.js'
 import type {
   ArkmeRecordingCalendarMonth,
   ArkmeRecordingCursorPayload,
@@ -8,6 +10,11 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeRecordingToolPort {
+  prepareRecordingDirectory(input: RecordingDirectoryInput, signal?: AbortSignal): Promise<PreparedRecordingDirectory>
+  importRecordingDirectory(input: RecordingDirectoryInput, prepared: PreparedRecordingDirectory, signal?: AbortSignal): Promise<RecordingDirectoryResult>
+  importRecordingFile(input: RecordingFileImportInput, signal?: AbortSignal): Promise<PublicRecordingImportJob>
+  recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob>
+  retryRecordingImport(importRef: string, expectedRevision: number, signal?: AbortSignal): Promise<PublicRecordingImportJob>
   recordingCalendar(
     fromStamp: number,
     toStamp: number,

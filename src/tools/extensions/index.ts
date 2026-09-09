@@ -295,7 +295,7 @@ export function registerArkmeExtensionTools(
       const agent = requireAgent(exec) as Agent
       const extensionId = clean(args.extension_id).slice(0, 100)
       const result = await actionConversation.prepareOrExecute({
-        agent,
+        agent, callId: exec.callId, rootCallId: exec.rootCallId,
         operationKey: 'arkme_extension_delete',
         arguments: args,
         question: `是否确认删除扩展 ${extensionId}？删除后它会从市集、当前 DSH 运行态、Profile 和本地引用中消失；服务端仅保留用于恢复的数据。`,
@@ -399,7 +399,7 @@ export function registerArkmeExtensionTools(
         ? `该扩展是${preview.artifact_contract_version === 3 ? 'V3 原生 DSH Package' : '原生 DSH Bundle'}，将以 DSH 插件进程权限运行。${(preview.native_capabilities?.length ?? 0) === 0 ? '' : ` 原生能力：${preview.native_capabilities!.join('、')}。`}${auditWarning}`
         : '该扩展使用 Arkme 沙箱 Bundle Runtime。'
       const result = await actionConversation.prepareOrExecute({
-        agent,
+        agent, callId: exec.callId, rootCallId: exec.rootCallId,
         operationKey: 'arkme_extension_apply',
         arguments: args,
         question: `是否确认下载、验签并在当前 DSH 会话应用扩展 ${extensionId}@${version || '最新兼容版本'}？${authority}`,
@@ -451,7 +451,7 @@ export function registerArkmeExtensionTools(
       const agent = requireAgent(exec) as Agent
       const extensionId = clean(args.extension_id).slice(0, 100)
       const result = await actionConversation.prepareOrExecute({
-        agent,
+        agent, callId: exec.callId, rootCallId: exec.rootCallId,
         operationKey: 'arkme_extension_set_enabled',
         arguments: args,
         question: args.enabled
@@ -516,7 +516,7 @@ export function registerArkmeExtensionTools(
       const name = clean(args.name).slice(0, 120)
       const visibility = args.visibility === 'public' ? '公开' : '仅自己'
       const result = await actionConversation.prepareOrExecute({
-        agent,
+        agent, callId: exec.callId, rootCallId: exec.rootCallId,
         operationKey: 'arkme_extension_edit',
         arguments: args,
         question: `是否确认把扩展 ${extensionId} 的资料更新为“${name}”，可见范围：${visibility}？`,
@@ -554,7 +554,7 @@ export function registerArkmeExtensionTools(
       const agent = requireAgent(exec) as Agent
       const extensionId = clean(args.extension_id).slice(0, 100)
       const result = await actionConversation.prepareOrExecute({
-        agent,
+        agent, callId: exec.callId, rootCallId: exec.rootCallId,
         operationKey: 'arkme_extension_share',
         arguments: args,
         question: `是否确认轮换扩展 ${extensionId} 的分享链接？旧链接会立即失效，新链接仍然只允许查看网页。`,
@@ -657,7 +657,7 @@ export function registerArkmeExtensionTools(
       const extensionId = clean(args.extension_id).slice(0, 100)
       const previewRef = clean(args.preview_ref).slice(0, 96)
       const result = await actionConversation.prepareOrExecute({
-        agent,
+        agent, callId: exec.callId, rootCallId: exec.rootCallId,
         operationKey: 'arkme_extension_preview_delete',
         arguments: args,
         question: `是否确认从扩展 ${extensionId} 删除预览图 ${previewRef}？`,
@@ -688,7 +688,7 @@ export function registerArkmeExtensionTools(
       const agent = requireAgent(exec) as Agent
       const extensionId = clean(args.extension_id).slice(0, 100)
       const result = await actionConversation.prepareOrExecute({
-        agent,
+        agent, callId: exec.callId, rootCallId: exec.rootCallId,
         operationKey: 'arkme_extension_preview_reorder',
         arguments: args,
         question: `是否确认把扩展 ${extensionId} 的 ${String(args.ordered_preview_refs.length)} 张预览图按新顺序保存？第一张会作为封面。`,

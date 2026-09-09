@@ -19,15 +19,16 @@ describe('private-chat user-ban UI', () => {
   })
 
   it('places the employee action in the existing private-chat menu below related recordings', () => {
-    const source = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
-    const related = source.indexOf('<span>相关录音</span>')
-    const ban = source.indexOf("userBanSnapshot.banned ? '解封用户' : '封禁用户'")
+    const source = readFileSync(new URL('../src/client/PrivateChatActions.tsx', import.meta.url), 'utf8')
+    const related = source.indexOf("id: 'related'")
+    const ban = source.indexOf("id: 'ban'")
 
     expect(related).toBeGreaterThan(-1)
     expect(ban).toBeGreaterThan(related)
     expect(source).not.toContain('用户管理')
     expect(source).toContain('其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效')
-    expect(source).toContain("remark: ''")
-    expect(source).not.toContain('remark: userBanSnapshot.record')
+    const adapter = readFileSync(new URL('../src/client/private-chat-actions-store.ts', import.meta.url), 'utf8')
+    expect(adapter).toContain("remark: ''")
+    expect(adapter).not.toContain('remark: userBanSnapshot.record')
   })
 })
