@@ -204,6 +204,21 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       await page.getByRole('button', { name: '打开快记详情', exact: true })
         .filter({ hasText: '系统主题中的既有快记仍可重新编辑' }).waitFor({ state: 'visible' })
       expect(await page.getByRole('button', { name: '发送消息', exact: true }).count()).toBe(0)
+      // A system archive has no editor to keep mounted. Its settings footer
+      // supplies the same stable slot for the baseline's selection overlay.
+      const editedRecord = page.getByRole('button', { name: '打开快记详情', exact: true })
+        .filter({ hasText: '系统主题中的既有快记仍可重新编辑' })
+      const slot = page.locator('.arkme-conversation-input-slot')
+      const beforeSelection = await slot.boundingBox()
+      await editedRecord.click({ button: 'right' })
+      await page.getByRole('menu', { name: '消息操作' }).getByRole('menuitem', { name: '多选', exact: true }).click()
+      await page.getByRole('button', { name: '退出多选', exact: true }).waitFor()
+      expect(await page.getByRole('checkbox', { name: '在首页展示' }).count()).toBe(0)
+      expect(await page.locator('.arkme-conversation-composer').count()).toBe(0)
+      expect((await slot.boundingBox()).height).toBe(beforeSelection.height)
+      await page.getByRole('button', { name: '退出多选', exact: true }).click()
+      await setting.waitFor({ state: 'visible' })
+      expect(await page.locator('.arkme-conversation-composer').count()).toBe(0)
     } catch (error) {
       failures.push(error)
     } finally {
