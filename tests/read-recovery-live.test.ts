@@ -3,6 +3,11 @@ import { createServer, request as proxyRequest } from 'node:http'
 import { once } from 'node:events'
 import { connect } from 'node:net'
 import { describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import SessionStore from '@deepseek-ai/dsh-session'
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { CallId } from '@deepseek-ai/dsh-llm'
 import { ArkmeService, type ArkmeServiceConfig } from '../src/arkme-service.js'
 import { type StateStore } from '../src/services/service.js'
 import { createArkmeHostApi } from '../src/host-api.js'
@@ -11,6 +16,8 @@ import { TeamService } from '../src/services/team-service.js'
 import { HttpOpenApiCapabilityGateway } from '../src/openapi-capability-gateway.js'
 import { SecretValue } from '../src/secret-value.js'
 import { createContactDirectoryState, contactDirectoryReducer } from '../src/client/redesign/contacts/contact-directory-state.js'
+import { readDirectoryPage } from '../src/directory-reader.js'
+import { registerArkmeTools } from '../src/tools/registry/registrar.js'
 
 // Explicit opt-in against the repository's isolated Chat compose stack. Never a remote account.
 const chatOrigin = process.env.ARKME_DIRECTORY_E2E_CHAT_ORIGIN
@@ -94,7 +101,7 @@ describe.skipIf(chatOrigin === undefined)('directory UI / SDK → Host → real 
         const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk))
         const bytes = Buffer.concat(chunks)
         const operation = (JSON.parse(bytes.toString()) as { operation: string }).operation
-        if (operation === 'directory.list' || operation === 'provider.capabilities') {
+        if (operation === 'directory.list' || operation === 'directory.contact.profile' || operation === 'provider.capabilities') {
           req[Symbol.asyncIterator] = async function* () { yield bytes }
           await host(req, res); return
         }
@@ -135,6 +142,7 @@ describe.skipIf(chatOrigin === undefined)('directory UI / SDK → Host → real 
     hostOptions.expectedPort = address.port
     const origin = `http://127.0.0.1:${address.port}`
     const sdk = createArkmeSdk({ fetchImpl: (input, init) => fetch(new URL(String(input), origin), init) })
+    const toolContext = new Context()
     try {
       const sections = ['groups', 'bots', 'unmarked-speakers', 'teams', 'contacts'] as const
       const counts = await Promise.all(sections.map(section => sdk.call('directory.list', { section, countOnly: true })))
@@ -153,6 +161,28 @@ describe.skipIf(chatOrigin === undefined)('directory UI / SDK → Host → real 
       for (const section of ['bots', 'unmarked-speakers', 'teams'] as const) expect((await sdk.listDirectory(section)).items).toHaveLength(1)
       expect(calls.filter(call => call.path === '/api/v1/bot/list')).toHaveLength(2)
       expect(calls.filter(call => call.path === '/api/v1/teams/list').length).toBeGreaterThanOrEqual(2)
+
+      // The real session/tool runtime uses the same business owner, not a stubbed
+      // directory result. Chat remains real; the other upstreams stay explicit fixtures.
+      await toolContext.plugin(SessionStore)
+      await toolContext.plugin(SystemPrompt)
+      await toolContext.plugin(ToolRuntime)
+      toolContext.provide('arkmeDirectory', { list: (section, options) => readDirectoryPage(service, teams, section, options) })
+      registerArkmeTools(toolContext, {} as never, 'business')
+      const toolSession = toolContext.sessions.create()
+      const agent = { id: toolSession.id, session: toolSession }
+      expect(toolContext.tools.schemas(agent as never).map(schema => schema.name)).toContain('arkme_directory_list')
+      for (const section of sections) {
+        const result = await toolContext.tools.execute({ callId: CallId(`live-${section}`), agent: agent as never,
+          signal: new AbortController().signal, name: 'arkme_directory_list', arguments: { section, limit: 1 } })
+        expect(result.isError).toBe(false)
+        expect(String(result.value)).toContain(`"section": "${section}"`)
+      }
+      const contact = first.items[0]!
+      if (contact.kind !== 'contact') throw new Error('Expected contact row')
+      await expect(sdk.call('directory.contact.profile', { contactRef: contact.contactRef })).resolves.toMatchObject({
+        contactRef: contact.contactRef, displayName: contact.displayName,
+      })
 
       let state = createContactDirectoryState('fixture')
       state.sections.contacts = { ...state.sections.contacts, items: [...first.items, ...second.items], total: 2, generation: 1 }
@@ -180,6 +210,7 @@ describe.skipIf(chatOrigin === undefined)('directory UI / SDK → Host → real 
         await browserDone
       }
     } finally {
+      await toolContext.fiber.dispose()
       service.dispose(); server.closeAllConnections(); server.close()
     }
   }, 15 * 60_000)

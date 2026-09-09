@@ -25,6 +25,9 @@ export function readDirectoryPage(
   section: ArkmeDirectorySectionKind,
   options: ArkmeDirectoryReadOptions = {},
 ): Promise<ArkmeDirectoryPage> {
+  if (options.refresh === true && options.cursor !== undefined) {
+    throw new ArkmePluginError('directory-cursor-invalid', '刷新目录需要从首页开始', false, 400)
+  }
   if (section !== 'teams') return service.listDirectory(section, options)
   if (teams === undefined) throw new ArkmePluginError('team-unavailable', '团队服务尚未就绪', true, 503)
   return teams.listDirectory(options)

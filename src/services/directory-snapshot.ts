@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 export interface DirectorySnapshot<T> { id: string; value: T; expiresAt: number }
-interface Scan<T> { controller: AbortController; promise: Promise<DirectorySnapshot<T>>; observers: number }
+interface Scan<T> { controller: AbortController; promise: Promise<DirectorySnapshot<T>>; observers: number; refresh: boolean }
 interface RetainedSnapshot<T> { key: string; snapshot: DirectorySnapshot<T>; retainedUntil: number }
 
 /** One bounded owner snapshot; pagination never silently switches to another array. */
@@ -40,16 +40,18 @@ export class DirectorySnapshotStore<T> {
         if (this.scans.get(key) === entry) {
           // An explicit refresh or owner revision starts a new traversal. Ordinary
           // cache expiry must not evict another consumer's ongoing pagination.
-          if (options.refresh) for (const [id, value] of this.snapshots) if (value.key === key) this.snapshots.delete(id)
+          if (entry.refresh) for (const [id, value] of this.snapshots) if (value.key === key) this.snapshots.delete(id)
           this.snapshots.set(snapshot.id, { key, snapshot, retainedUntil: Date.now() + 30 * 60_000 })
           while (this.snapshots.size > 4) this.snapshots.delete(this.snapshots.keys().next().value!)
         }
         return snapshot
       }).finally(() => { if (this.scans.get(key) === entry) this.scans.delete(key) })
-      const entry: Scan<T> = { controller, observers: 0, promise }
+      const entry: Scan<T> = { controller, observers: 0, promise, refresh: options.refresh === true }
       this.scans.set(key, entry)
       scan = entry
     }
+    // A joining explicit refresh shares the work but must retain its invalidation intent.
+    if (options.refresh) scan.refresh = true
     const current = scan
     current.observers += 1
     try {

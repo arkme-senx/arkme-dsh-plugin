@@ -2,6 +2,25 @@ import { describe, expect, it, vi } from 'vitest'
 import { DirectorySnapshotStore } from '../src/services/directory-snapshot.js'
 
 describe('directory owner snapshot', () => {
+  it('honors a refresh joining an ordinary in-flight scan without duplicating the scan', async () => {
+    vi.useFakeTimers()
+    try {
+      const store = new DirectorySnapshotStore<number>()
+      const old = await store.read('u:1', async () => 1)
+      await vi.advanceTimersByTimeAsync(31_000)
+      let resolve!: (value: number) => void
+      const load = vi.fn(() => new Promise<number>(done => { resolve = done }))
+      const ordinary = store.read('u:1', load)
+      await Promise.resolve()
+      const refresh = store.read('u:1', load, { refresh: true })
+      resolve(2)
+      const [a, b] = await Promise.all([ordinary, refresh])
+      expect(a.id).toBe(b.id)
+      expect(load).toHaveBeenCalledOnce()
+      expect(store.get('u:1', old.id)).toBeUndefined()
+      expect(store.get('u:1', b.id)?.value).toBe(2)
+    } finally { vi.useRealTimers() }
+  })
   it('bounds retained snapshots and does not resurrect cleared account data', async () => {
     const store = new DirectorySnapshotStore<number>()
     const first = await store.read('u:1', async () => 1)

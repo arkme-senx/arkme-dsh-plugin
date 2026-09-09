@@ -1152,6 +1152,7 @@ export async function dispatchArkmeHostOperation(
     }
     case 'directory.contact.profile': return await service.directoryContactProfile(
       stringParam(params, 'contactRef').trim(),
+      requestSignal,
     )
     case 'directory.contact.remark.update': {
       if (typeof params.remark !== 'string') throw new ArkmePluginError('directory-contact-remark-invalid', '备注必须为文本', false, 400)
@@ -1162,10 +1163,12 @@ export async function dispatchArkmeHostOperation(
       {
         limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
         offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
     case 'directory.contact.open-chat': return await service.openDirectoryContactChat(
       stringParam(params, 'contactRef').trim(),
+      requestSignal,
     )
     case 'directory.group.open-chat': return await service.openDirectoryGroupChat(
       stringParam(params, 'sourceRef').trim(),

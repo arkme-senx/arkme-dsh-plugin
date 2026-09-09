@@ -5,6 +5,19 @@ import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.
 import { ARKME_RUNTIME_INSTANCE_ID } from '../src/runtime-instance.js'
 import { ArkmePluginError } from '../src/services/service.js'
 
+it('passes contact detail request cancellation to each existing business owner', async () => {
+  const controller = new AbortController()
+  const service = {
+    directoryContactProfile: vi.fn(), directoryContactWorld: vi.fn(), openDirectoryContactChat: vi.fn(),
+  }
+  for (const operation of ['directory.contact.profile', 'directory.contact.world', 'directory.contact.open-chat'] as const) {
+    await dispatchArkmeHostOperation(service as never, operation, { contactRef: 'contact-ref' }, undefined, undefined, undefined, undefined, controller.signal)
+  }
+  expect(service.directoryContactProfile).toHaveBeenCalledWith('contact-ref', controller.signal)
+  expect(service.directoryContactWorld).toHaveBeenCalledWith('contact-ref', expect.objectContaining({ signal: controller.signal }))
+  expect(service.openDirectoryContactChat).toHaveBeenCalledWith('contact-ref', controller.signal)
+})
+
 it('serializes only safe Host recovery metadata across the real HTTP boundary', async () => {
   const service = { listDirectory: async () => {
     throw new ArkmePluginError('arkme-code-1002', '服务器繁忙', true, 502, {
