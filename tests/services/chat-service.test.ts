@@ -129,7 +129,7 @@ describe('ChatService', () => {
   it.each(['Audio', 'Video'])('projects cancelled %s records on both page and realtime paths', async mediaType => {
     const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
     const raw = { relation: { record_uid: 'r', sender_user_id: 42 }, record: { status: 1,
-      payload: { template_kind: 5, content_payload: { call_record: { media_type: mediaType, call_result: 'Cancel', caller_id: 42 } } } } }
+      payload: { template_kind: 5, content_payload: { call_record: { room_id: 'private-call-room', media_type: mediaType, call_result: 'Cancel', caller_id: 42 } } } } }
     const runtime = { config, stateStore: { uniqueCode: async () => 'fixture-signing-key' },
       requireSession: async () => session, authenticatedChatPost: async () => ({ items: [raw] }) }
     const media = new MediaService(runtime as never, {} as never, {} as never, { recordUid() { return 'r' } })
@@ -138,7 +138,7 @@ describe('ChatService', () => {
       { sealProfileImageRef: async () => 'avatar', publicProfilesByUserIds: async () => new Map() } as never,
       media, {} as never, {} as never, { currentUserAgentSourceFallback: () => undefined } as never,
       { timelineAiPolish: () => undefined } as never, {} as never)
-    const expected = { callRecord: { mediaType: mediaType.toLowerCase(), text: '已取消' } }
+    const expected = { callRecord: { mediaType: mediaType.toLowerCase(), text: '已取消', callRef: expect.stringMatching(/^arkme-call-v1\./), direction: 'outgoing' } }
     expect((await chat.readSource('source', { cursor: { beforeSequence: 1 } })).items[0]).toMatchObject(expected)
     expect((await chat.chatTimelineItems({ items: [raw] }, session, 'chat', 'private_chat'))[0]).toMatchObject(expected)
   })

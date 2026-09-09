@@ -1,5 +1,5 @@
 import { sealRecordTopicAssignmentRef } from '../record-topic-assignment-ref.js'
-import { projectCallRecord } from '../call-record-presentation.js'
+import { CallHistoryService } from './call-history-service.js'
 import { patchChatPolicy } from './chat-policy.js'
 import { invalidatesMemberSnapshot } from '../member-directory.js'
 import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges, arkmeMarkdownPlainText, arkmeMarkdownTextRanges } from '../markdown.js'
@@ -1358,6 +1358,7 @@ export class ChatService {
     private readonly realtime: ArkmeChatRealtimePort,
     private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
     private readonly messageActions?: MessageActionService,
+    private readonly callHistory = new CallHistoryService(runtime, profile),
   ) {
     this.memberEvents = new MemberEventService(runtime, source, profile, (userId, options) => this.openPrivateChatFromUser(userId, options))
   }
@@ -4704,7 +4705,7 @@ export class ChatService {
         const contentBlocks = this.media.richContentBlocks(item, session.userId)
         const extensionProjection = this.timelineExtensionProjection(item, session.userId)
         const conversationPreview = arkmeChatConversationPreview(item)
-        const callRecord = projectCallRecord(item, session.userId)
+        const callRecord = await this.callHistory.timelineCallRecord(item, session.userId)
         const senderName = stringValue(relation.display_name_snapshot).trim() || 'Arkme用户'
         const mentionsViewer = senderUserId !== session.userId
           && arkmeMentionMetadataMentionsViewer(record, payload, session.userId)
@@ -5578,7 +5579,7 @@ export class ChatService {
         payload.editDurationMillis, record.editDurationMillis,
         payload.incr_cost_mill_sec, record.incr_cost_mill_sec, payload.incrCostMillSec, record.incrCostMillSec,
       )
-      const callRecord = projectCallRecord(item, session.userId)
+      const callRecord = await this.callHistory.timelineCallRecord(item, session.userId)
       const itemIndex = items.push({
         itemUid: uid,
         ...(relationUid === '' ? {} : {

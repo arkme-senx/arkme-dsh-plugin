@@ -5,6 +5,7 @@ import { arkmeCallRecordBubbleStyle } from './ArkmeCallRecordContent.js'
 import { arkmeSourceAllowsUserWrite, isArkmeDSHInputTopic } from '../topic-policy.js'
 import { ArkmeTopicHomeVisibility } from './ArkmeTopicHomeVisibility.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
+import { ArkmeCallDetailDrawer } from './ArkmeCallDetailDrawer.js'
 import {
   Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties, type ReactNode, type SetStateAction,
@@ -7168,7 +7169,7 @@ export function ArkmeSurface({
                             }}
                             onContextMenu={event => { openMessageMenu(item, event) }}
                             data-arkme-message-direction={item.isMe ? 'self' : 'other'}
-                            aria-label={isSharedRecordingCard ? '打开录音详情' : '打开快记详情'}
+                            aria-label={item.callRecord ? '打开通话详情' : isSharedRecordingCard ? '打开录音详情' : '打开快记详情'}
                           >{polishStatus !== '' && <span style={styles.polishMeta}>
                             {item.aiPolish?.state === 'failed' ? <button
                               type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void retryAiPolish(item) }}
@@ -8037,7 +8038,12 @@ export function ArkmeSurface({
             onClose={() => { setDrawer(undefined) }}
           />}
         </>}
-        {activeConversation && drawer === 'detail' && detailItem !== undefined && detailItem.forwardRecords === undefined && detailSharedRecording === undefined && <ArkmeTimelineDetailDrawer
+        {activeConversation && drawer === 'detail' && detailItem?.callRecord !== undefined && <ArkmeCallDetailDrawer
+          key={`${authenticatedAccountKey}:${conversationOverlayKey}:${detailItem.itemUid}`}
+          item={detailItem}
+          onClose={() => { setDrawer(undefined) }}
+        />}
+        {activeConversation && drawer === 'detail' && detailItem !== undefined && detailItem.callRecord === undefined && detailItem.forwardRecords === undefined && detailSharedRecording === undefined && <ArkmeTimelineDetailDrawer
           key={detailItem.itemUid}
           item={detailItem}
           sourceRef={source?.sourceRef}

@@ -1,3 +1,4 @@
+import { projectArkmeConversationAttention } from '../conversation-attention.js'
 import type { ArkmeBotSummary, ArkmeChatClientEvent, ArkmeConversationDirectoryVisibilityItem, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
@@ -166,6 +167,28 @@ export class ConversationDirectoryService {
     return structuredClone(await this.rawBaseline!)
   }
 
+  /** Join the directory owner; never combine its rows with a separately refreshed global count. */
+  async attentionSummary(retry = false): Promise<import('../types.js').ArkmeChatAttentionSummary> {
+    // Bootstrap is owned by the directory/connection baseline, not by each attention trigger.
+    if (retry && this.userId !== undefined && this.phase === 'failed' && this.scan === undefined) void this.read(true).catch(() => undefined)
+    const generation = this.generation
+    const session = await this.runtime.accountScopedSession()
+    if (generation !== this.generation || this.userId !== undefined && session?.userId !== this.userId) throw new DOMException('Account changed', 'AbortError')
+    const sources = [...this.sources.values()]
+    const visibility = [...this.visibility.values()]
+    const visible = projectArkmeConversationAttention(sources, this.bots, visibility)
+    const rows = [...visible.sources, ...visible.bots]
+    const version = this.revision + 1
+    return {
+      ...(this.phase !== 'complete' ? { stale: true } : {}),
+      badgeCount: visible.badgeCount,
+      mutedUnreadCount: rows.reduce((sum, row) => sum + (row.isMuted ? Math.max(0, row.unreadCount ?? 0) : 0), 0),
+      sessionCountWithUnread: rows.filter(row => (row.unreadCount ?? 0) > 0).length,
+      hasAttention: visible.sources.some(row => row.hasUnreadMention === true),
+      summaryVersion: version, updatedAtMillis: Math.max(1, this.cachedAtMillis),
+    }
+  }
+
   async settled(): Promise<void> { while (this.scan !== undefined) await this.scan; while (this.avatarWork !== undefined) await this.avatarWork; while (this.diskWriting) await this.persistence }
 
   private startScan(): void {
@@ -270,8 +293,12 @@ export class ConversationDirectoryService {
       if (JSON.stringify(previous) === JSON.stringify(merged)) continue
       if (previous === undefined && this.sources.size >= MAX_ROWS) throw new Error('Conversation directory capacity exceeded; scan incomplete')
       if (previous !== undefined && previous.sourceRef !== merged.sourceRef) {
+        const inherited = this.visibility.get(`source:${previous.sourceRef}`)
         this.visibility.delete(`source:${previous.sourceRef}`)
         this.visibilityMutations.delete(`source:${previous.sourceRef}`)
+        if (inherited !== undefined && !this.visibility.has(`source:${merged.sourceRef}`)) {
+          this.visibility.set(`source:${merged.sourceRef}`, { ...inherited, entryRef: merged.sourceRef })
+        }
       }
       this.sources.set(key, merged); this.mutations.set(key, this.revision + 1); changed.push(merged)
     }
@@ -365,7 +392,7 @@ export class ConversationDirectoryService {
   }
 
   async rememberBots(items: ArkmeBotSummary[], expectedUserId: number): Promise<void> {
-    if (this.userId !== expectedUserId) return
+    if (this.userId !== undefined && this.userId !== expectedUserId) return
     await this.activate()
     if (this.userId !== expectedUserId) return
     const generation = this.generation
@@ -495,9 +522,17 @@ export class ConversationDirectoryService {
         else this.rescanRequested = true
       }
       const sources = event.updates.filter(item => !this.sourceRemovals.has(keyOf(item.source))).map(item => mergeDirectorySource(this.sources.get(keyOf(item.source)), item.source))
-      const visibility = await this.preferences.query(sources.map(item => item.sourceRef), [], this.controller.signal)
-      if (generation !== this.generation) return
-      this.apply(sources, visibility.items, atRevision)
+      try {
+        const visibility = await this.preferences.query(sources.map(item => item.sourceRef), [], this.controller.signal)
+        if (generation !== this.generation) return
+        this.apply(sources, visibility.items, atRevision)
+      } catch (error) {
+        if (generation !== this.generation || this.controller.signal.aborted) return
+        // Keep confirmed row facts and visibility; the existing attention retry resumes the failed directory scan.
+        this.phase = 'failed'
+        this.error = error instanceof Error ? error.message : '会话可见性刷新失败'
+        this.apply(sources, [], atRevision)
+      }
     } else if (event.type === 'read-ack') {
       const source = [...this.sources.values()].find(item => item.sourceKey === event.sourceKey || item.sourceRef === event.sourceRef)
       if (source !== undefined) this.apply([{ ...source, readSequence: Math.max(source.readSequence ?? 0, event.effectiveReadSequence),

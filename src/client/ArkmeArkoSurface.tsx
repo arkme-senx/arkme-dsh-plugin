@@ -193,7 +193,12 @@ const styles: Record<string, CSSProperties> = {
     background: arkmeTheme.elevated, color: colors.text, font: 'inherit', cursor: 'pointer',
   },
   dialogPrimary: { border: 0, background: arkmeTheme.info, color: arkmeTheme.foreground },
-  composer: { ...arkmeConversationComposerLayout.composer },
+  composer: { ...arkmeConversationComposerLayout.composer, flexDirection: 'column', gap: 8 },
+  capabilityShortcut: {
+    alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 4,
+    padding: '6px 8px', borderRadius: 8, border: `1px solid ${colors.border}`,
+    background: arkmeTheme.layer1, color: colors.text, fontFamily: 'inherit', fontSize: 14, lineHeight: '20px',
+  },
   composerInner: {
     ...arkmeConversationComposerLayout.composerInner,
     border: '1px solid var(--dsw-alias-border-l2-darkmode-thin, rgba(0,0,0,.1))',
@@ -408,9 +413,10 @@ export function ArkmeArkoSurface() {
   const bodyRef = useRef<HTMLDivElement>(null)
   const historySentinelRef = useRef<HTMLDivElement>(null)
   const historyLoadInFlightRef = useRef(false)
-  const composerRef = useRef<HTMLDivElement>(null)
+  const composerRef = useRef<HTMLElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pendingComposerFocusRef = useRef(false)
+  const sendInFlightRef = useRef(false)
   const authSnapshot = useSyncExternalStore(
     arkmeAuthStore.subscribe,
     arkmeAuthStore.getSnapshot,
@@ -798,51 +804,60 @@ export function ArkmeArkoSurface() {
     }
   }, [activeRun, profileUserId, sending])
 
-  const send = useCallback(async () => {
-    const text = draft.trim()
-    if (text === '' || sending || activeRun !== undefined || pendingTurn !== undefined
+  const interactionLocked = sending || pendingTurn !== undefined || activeRun !== undefined
+  const sendDisabled = loading || interactionLocked || clearing || selectingModel
+    || session === undefined || profileUserId === undefined
+
+  const send = useCallback(async (presetText?: string) => {
+    const text = (presetText ?? draft).trim()
+    if (text === '' || sendInFlightRef.current || sendDisabled
       || session === undefined || profileUserId === undefined || composerDraftKey === undefined) return
-    const continuation = latestContinuation(messages, session.sessionId)
-    const createdAtMillis = Date.now()
-    const turn: ArkmeArkoPendingTurn = {
-      userId: profileUserId,
-      sessionId: session.sessionId,
-      clientTurnUid: crypto.randomUUID(),
-      text,
-      createdAtMillis,
-      localUserMessageId: crypto.randomUUID(),
-      localAssistantMessageId: crypto.randomUUID(),
-      ...(continuation === undefined ? {
-        ...(catalog === undefined ? {} : { modelRouteKey: catalog.effectiveRouteKey }),
-      } : {
-        replyToRunUid: continuation.runUid,
-        replyToAssistantMsgId: continuation.assistantMsgId,
-      }),
+    sendInFlightRef.current = true
+    try {
+      const continuation = latestContinuation(messages, session.sessionId)
+      const createdAtMillis = Date.now()
+      const turn: ArkmeArkoPendingTurn = {
+        userId: profileUserId,
+        sessionId: session.sessionId,
+        clientTurnUid: crypto.randomUUID(),
+        text,
+        createdAtMillis,
+        localUserMessageId: crypto.randomUUID(),
+        localAssistantMessageId: crypto.randomUUID(),
+        ...(continuation === undefined ? {
+          ...(catalog === undefined ? {} : { modelRouteKey: catalog.effectiveRouteKey }),
+        } : {
+          replyToRunUid: continuation.runUid,
+          replyToAssistantMsgId: continuation.assistantMsgId,
+        }),
+      }
+      writeArkoPendingTurn(turn)
+      pendingComposerFocusRef.current = true
+      setPendingTurn(turn)
+      if (presetText === undefined) arkmeComposerDraftStore.clear(composerDraftKey)
+      setMessages(current => [...current, {
+        id: turn.localUserMessageId,
+        sessionId: turn.sessionId,
+        role: 'user',
+        text,
+        status: 'done',
+        createdAtMillis,
+      }, {
+        id: turn.localAssistantMessageId,
+        sessionId: turn.sessionId,
+        role: 'assistant',
+        text: '',
+        status: 'sending',
+        meta: '正在思考',
+        runStatus: 'accepted',
+        createdAtMillis: createdAtMillis + 1,
+      }])
+      scrollToBottom()
+      await submitTurn(turn)
+    } finally {
+      sendInFlightRef.current = false
     }
-    writeArkoPendingTurn(turn)
-    pendingComposerFocusRef.current = true
-    setPendingTurn(turn)
-    arkmeComposerDraftStore.clear(composerDraftKey)
-    setMessages(current => [...current, {
-      id: turn.localUserMessageId,
-      sessionId: turn.sessionId,
-      role: 'user',
-      text,
-      status: 'done',
-      createdAtMillis,
-    }, {
-      id: turn.localAssistantMessageId,
-      sessionId: turn.sessionId,
-      role: 'assistant',
-      text: '',
-      status: 'sending',
-      meta: '正在思考',
-      runStatus: 'accepted',
-      createdAtMillis: createdAtMillis + 1,
-    }])
-    scrollToBottom()
-    await submitTurn(turn)
-  }, [activeRun, catalog, composerDraftKey, draft, messages, pendingTurn, profileUserId, scrollToBottom, sending, session, submitTurn])
+  }, [catalog, composerDraftKey, draft, messages, profileUserId, scrollToBottom, sendDisabled, session, submitTurn])
 
   const selectModel = useCallback(async (routeKey: string) => {
     if (selectingModel) return
@@ -906,7 +921,6 @@ export function ArkmeArkoSurface() {
   const selectedModel = selectedModelName(catalog)
   const canChooseModel = (catalog?.options.length ?? 0) > 1
   const continuation = useMemo(() => latestContinuation(messages, session?.sessionId), [messages, session?.sessionId])
-  const interactionLocked = sending || pendingTurn !== undefined || activeRun !== undefined
   useEffect(() => {
     if (!pendingComposerFocusRef.current || loading || interactionLocked
       || session === undefined || profileUserId === undefined) return
@@ -924,6 +938,8 @@ export function ArkmeArkoSurface() {
   }, [interactionLocked, loading, profileUserId, session])
   const hint = loading
     ? '正在恢复会话'
+    : clearing ? '正在清除上下文'
+      : selectingModel ? '正在切换模型'
     : pendingTurn !== undefined && !sending
       ? '请先确认上一次发送结果'
       : sending
@@ -1077,7 +1093,15 @@ export function ArkmeArkoSurface() {
       </section>
     </div>}
 
-    {messageActions.selecting ? messageActions.selectionBar : <footer style={styles.composer}><div ref={composerRef} style={styles.composerInner}>
+    {messageActions.selecting ? messageActions.selectionBar : <footer ref={composerRef} style={styles.composer}>
+      <button
+        type="button"
+        aria-label="Arko 能干什么"
+        style={{ ...styles.capabilityShortcut, opacity: sendDisabled ? .45 : 1, cursor: sendDisabled ? 'default' : 'pointer' }}
+        disabled={sendDisabled}
+        onClick={() => { void send('你能帮我干什么') }}
+      ><RobotIcon size={17} aria-hidden /><span>Arko 能干什么</span></button>
+      <div style={styles.composerInner}>
       <textarea
         ref={textareaRef}
         rows={1}
@@ -1091,7 +1115,7 @@ export function ArkmeArkoSurface() {
         onKeyDown={event => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault()
-            if (!loading && !interactionLocked && draft.trim() !== ''
+            if (!sendDisabled && draft.trim() !== ''
               && session !== undefined && profileUserId !== undefined) void send()
           }
         }}
@@ -1101,10 +1125,8 @@ export function ArkmeArkoSurface() {
         {activeRun === undefined ? <button
           type="button"
           title="发送"
-          style={{ ...styles.send, opacity: loading || interactionLocked || draft.trim() === ''
-            || session === undefined || profileUserId === undefined ? .45 : 1 }}
-          disabled={loading || interactionLocked || draft.trim() === ''
-            || session === undefined || profileUserId === undefined}
+          style={{ ...styles.send, opacity: sendDisabled || draft.trim() === '' ? .45 : 1 }}
+          disabled={sendDisabled || draft.trim() === ''}
           onClick={() => { void send() }}
         ><span aria-hidden>↑</span></button> : <button
           type="button"

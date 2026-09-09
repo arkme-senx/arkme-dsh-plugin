@@ -916,34 +916,10 @@ describe('ArkmeService', () => {
     expect(transcript.items[0]).not.toHaveProperty('assignmentSpeakerNumber')
   })
 
-  it('seals recording pagination cursors to the signed-in account and rejects tampering', async () => {
-    const sessions = new MemorySessionStore()
-    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
-    const state = new MemoryStateStore()
-    const service = new ArkmeService(config, sessions, state, async () => {
-      throw new Error('not used')
-    })
-    const payload = {
-      version: 1 as const,
-      dateStamp: new Date(2026, 7, 17).getTime(),
-      content: 'transcript' as const,
-      itemOffset: 50,
-      textOffset: 0,
-      fingerprint: 'transcript-fingerprint',
-    }
-
-    const cursor = await service.sealRecordingCursor(payload)
-    expect(cursor).toMatch(/^arkme-recording-cursor-v1\./)
-    await expect(service.openRecordingCursor(cursor)).resolves.toEqual(payload)
-
-    const [prefix, encoded, signature] = cursor.split('.') as [string, string, string]
-    const tamperedSignature = `${signature.startsWith('A') ? 'B' : 'A'}${signature.slice(1)}`
-    await expect(service.openRecordingCursor(`${prefix}.${encoded}.${tamperedSignature}`))
-      .rejects.toMatchObject({ code: 'recording-cursor-invalid' })
-
-    sessions.session = { userId: 10002, accessToken: 'other', refreshToken: 'other-refresh' }
-    await expect(service.openRecordingCursor(cursor))
-      .rejects.toMatchObject({ code: 'recording-cursor-invalid' })
+  it('does not retain retired model pagination cursor helpers', () => {
+    expect(ArkmeService.prototype).not.toHaveProperty('sealRecordingCursor')
+    expect(ArkmeService.prototype).not.toHaveProperty('openRecordingCursor')
+    expect(ArkmeService.prototype).toHaveProperty('recordingTranscript')
   })
 
   it('completes QR login without exposing tokens in the auth snapshot', async () => {
@@ -1386,6 +1362,7 @@ describe('ArkmeService', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
     const fetchImpl = vi.fn<typeof fetch>(async input => {
+      if (String(input).endsWith('/get-public-users-by-ids')) return json({ code: 200, data: { items: [userInfo(10001)] } })
       expect(String(input)).toBe('https://auth.test/api/v1/auth/get-user-info')
       return json({ code: 200, data: userInfo(10001) })
     })
@@ -1438,6 +1415,7 @@ describe('ArkmeService', () => {
           body: JSON.parse(String(init.body)) as Record<string, unknown>,
         }),
       })
+      if (url.endsWith('/get-public-users-by-ids')) return json({ code: 200, data: { items: [userInfo(10001)] } })
       if (url.endsWith('/get-user-info')) {
         profileReads += 1
         return json({
@@ -1555,6 +1533,7 @@ describe('ArkmeService', () => {
     const state = new MemoryStateStore()
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
+      if (url.endsWith('/get-public-users-by-ids')) return json({ code: 200, data: { items: [userInfo(10001)] } })
       if (url.endsWith('/get-user-info')) return json({
         code: 200,
         data: { user_id: 10001, jotmo_id: 'legacy-id', can_update_jotmo_id: true, type: 1 },
@@ -2189,6 +2168,7 @@ describe('ArkmeService', () => {
     const state = new MemoryStateStore()
     const calls: Array<{ url: string; body: Record<string, unknown> }> = []
     let createCount = 0
+    const createdTopics: Array<{ topic_core: { topic_uid: string; title: string } }> = []
     const service = new ArkmeService(config, sessions, state, async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
@@ -2199,13 +2179,16 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-parent', title: '工作', update_at: 100 },
         summary: { record_count: 2 },
-      }] } })
-      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [] } })
+      }, ...createdTopics] } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: {
+        relations: createCount < 2 ? [] : [{ rel_kind: 1, status: 1, parent_topic_uid: 'topic-parent', child_topic_uid: 'topic-created-2' }],
+      } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) {
         return json({ code: 0, data: { record_count: 7, words_count: 20, total_sec: 0 } })
       }
       if (url.endsWith('/api/v1/topics/create')) {
         createCount += 1
+        createdTopics.push({ topic_core: { topic_uid: `topic-created-${createCount}`, title: String(body.title) } })
         return json({ code: 0, data: { topic_uid: `topic-created-${createCount}`, status: 1 } })
       }
       if (url.endsWith('/api/v1/topics/hierarchy/bind')) return json({ code: 0, data: { relation: { status: 1 } } })
@@ -2215,6 +2198,17 @@ describe('ArkmeService', () => {
     const parent = (await service.listSources('send_to_self')).items.find(item => item.displayName === '工作')!
     const root = await service.createTopic('  旅行 ')
     const child = await service.createTopic('路线', parent.sourceRef)
+
+    const refreshed = (await service.listSources('send_to_self', { refresh: true })).items
+    for (const result of [root, child]) {
+      const listed = refreshed.find(source => source.sourceRef === result.source.sourceRef)!
+      expect(listed).toBeDefined()
+      expect(result.source.topicHierarchyKey).toBe(listed.topicHierarchyKey)
+      expect(result.source.topicHierarchyKey).toMatch(/^arkme-topic-hierarchy-v1\./)
+      expect(result.source.topicHierarchyKey).not.toBe(result.source.sourceRef)
+    }
+    expect(child.source.parentTopicHierarchyKey).toBe(parent.topicHierarchyKey)
+    expect(root.source).not.toHaveProperty('parentTopicHierarchyKey')
 
     expect(root).toMatchObject({ source: { kind: 'topic', displayName: '旅行', recordCount: 0 } })
     expect(root.source).not.toHaveProperty('parentSourceRef')
@@ -2230,6 +2224,69 @@ describe('ArkmeService', () => {
     expect(calls.find(call => call.url.endsWith('/api/v1/topics/hierarchy/bind'))?.body).toEqual({
       parent_topic_uid: 'topic-parent', child_topic_uid: 'topic-created-2',
     })
+  })
+
+  it.each(['bound', 'rolled-back', 'partial'] as const)('retires directory snapshots taken during child creation when it finishes %s', async outcome => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let created = false
+    let bound = false
+    let listReads = 0
+    let finishBind!: () => void
+    let enteredBind!: () => void
+    const bindGate = new Promise<void>(resolve => { finishBind = resolve })
+    const binding = new Promise<void>(resolve => { enteredBind = resolve })
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (url.endsWith('/api/v1/topics/display/list')) {
+        listReads += 1
+        return json({ code: 0, data: { items: [
+          { topic_core: { topic_uid: 'parent', title: '父主题' } },
+          ...(created ? [{ topic_core: { topic_uid: 'child', title: '子主题' } }] : []),
+        ] } })
+      }
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: {
+        relations: bound ? [{ rel_kind: 1, status: 1, parent_topic_uid: 'parent', child_topic_uid: 'child' }] : [],
+      } })
+      if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 0 } })
+      if (url.endsWith('/api/v1/records/uncategorized/query')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (url.endsWith('/api/v1/topics/create')) { created = true; return json({ code: 0, data: { topic_uid: 'child', status: 1 } }) }
+      if (url.endsWith('/api/v1/topics/hierarchy/bind')) {
+        enteredBind()
+        await bindGate
+        if (outcome !== 'bound') throw new Error('bind failed')
+        bound = true
+        return json({ code: 0, data: { relation: { status: 1 } } })
+      }
+      if (url.endsWith('/api/v1/topics/update')) {
+        if (outcome === 'partial') throw new Error('cleanup failed')
+        created = false
+        return json({ code: 0, data: { topic_uid: 'child', updated: true } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const parent = (await service.listSources('send_to_self')).items.find(source => source.kind === 'topic')!
+    const createResult = service.createTopic('子主题', parent.sourceRef).then(value => ({ value }), error => ({ error }))
+    await binding
+    const interim = (await service.listSources('send_to_self')).items.find(source => source.displayName === '子主题')!
+    expect(interim).toBeDefined()
+    expect(interim.parentTopicHierarchyKey).toBeUndefined()
+    finishBind()
+    const result = await createResult
+    const final = (await service.listSources('send_to_self')).items.find(source => source.displayName === '子主题')
+    expect(listReads).toBe(3)
+    if (outcome === 'bound') {
+      expect('value' in result).toBe(true)
+      expect(final?.parentTopicHierarchyKey).toBe(parent.topicHierarchyKey)
+    } else if (outcome === 'rolled-back') {
+      expect('error' in result).toBe(true)
+      expect(final).toBeUndefined()
+    } else {
+      expect('value' in result && result.value.warning).toContain('自动清理均未完成')
+      expect(final).toBeDefined()
+      expect(final?.parentTopicHierarchyKey).toBeUndefined()
+    }
   })
 
   it('renames and safely dissolves a topic while promoting its direct children', async () => {
@@ -2355,7 +2412,10 @@ describe('ArkmeService', () => {
     const result = await service.createTopic('未绑定子主题', parent.sourceRef)
 
     expect(result.warning).toContain('自动清理均未完成')
-    expect(result.source).toMatchObject({ kind: 'topic', displayName: '未绑定子主题' })
+    expect(result.source).toMatchObject({ kind: 'topic', displayName: '未绑定子主题',
+      topicHierarchyKey: expect.stringMatching(/^arkme-topic-hierarchy-v1\./),
+    })
+    expect(result.source).not.toHaveProperty('parentTopicHierarchyKey')
     expect(result.source).not.toHaveProperty('parentSourceRef')
   })
 

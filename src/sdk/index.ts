@@ -464,6 +464,21 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Safe directory projection shared with the built-in UI; never an implicit full candidate baseline. */
+  async listDirectory(
+    section: import('../types.js').ArkmeDirectorySectionKind,
+    options: { limit?: number; cursor?: string; refresh?: boolean; signal?: AbortSignal } = {},
+  ): Promise<import('../types.js').ArkmeDirectoryPage> {
+    if (!['groups', 'bots', 'unmarked-speakers', 'teams', 'contacts'].includes(section)) throw new TypeError('Unknown directory section')
+    if (options.refresh === true && options.cursor !== undefined) throw new TypeError('Refresh must start a new directory page')
+    if ((await this.capabilities(options.signal)).features.contactDirectoryReads !== true) throw new Error('当前 Provider 不支持联系人目录读取')
+    return await this.call('directory.list', {
+      section, ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
+    }, options.signal)
+  }
+
   /** Resolve exact Team Jotmo IDs or names only within the current account's Teams. */
   async resolveTeams(items: readonly ArkmeTeamResolveItem[], signal?: AbortSignal): Promise<ArkmeTeamResolution[]> {
     return await this.call<ArkmeTeamResolution[]>('team.resolve', { items }, signal)
@@ -2141,3 +2156,4 @@ export async function callArkme<T>(
 ): Promise<T> {
   return await defaultSdk.call<T>(operation, params, signal)
 }
+export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem } from '../types.js'

@@ -1150,6 +1150,11 @@ describe('Chat directory pin owner boundary', () => {
     const callsBeforeRefresh = fetchImpl.mock.calls.length
     const freshRead = service.listSources('root', { refresh: true })
     try {
+      // A detached read cannot be joined after a write, but the route retains its
+      // single-execution budget until the old transport has actually settled.
+      await new Promise(resolve => setTimeout(resolve, 250))
+      expect(fetchImpl).toHaveBeenCalledTimes(callsBeforeRefresh)
+      releaseOld(oldResponse)
       await vi.waitFor(() => { expect(fetchImpl).toHaveBeenCalledTimes(callsBeforeRefresh + 1) })
       await expect(freshRead).resolves.toMatchObject({ items: [{ isPinned: true }] })
     } finally {

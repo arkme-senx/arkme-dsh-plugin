@@ -1,3 +1,4 @@
+import { ARKME_RUNTIME_INSTANCE_ID } from '../src/runtime-instance.js'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { WebSocket } from 'ws'
@@ -42,6 +43,7 @@ describe('Arkme local realtime events', () => {
     f.publish({ type: 'timeline-changed', revision: 5, sourceKey: 'opaque-key', timelineItemKey: 'opaque-item', changeKind: 'deleted', changeVersion: 123, relationTerminal: true })
     await vi.waitFor(() => expect(messages).toHaveLength(5))
     expect(messages.map(m => JSON.parse(m).revision)).toEqual([1, 2, 3, 4, 5])
+    for (const message of messages) expect(JSON.parse(message).providerInstanceId).toBe(ARKME_RUNTIME_INSTANCE_ID)
     for (const forbidden of ['chat_session_uid', 'reader_user_id', 'rel_uid']) expect(messages.join('')).not.toContain(forbidden)
     const closed = once(client, 'close')
     f.events.close()

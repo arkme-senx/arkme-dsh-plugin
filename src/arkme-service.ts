@@ -122,6 +122,7 @@ import type {
   ArkmeAiVideoListResult,
   ArkmeAiVideoPreflightResult,
   ArkmeAiVideoSegmentSelector,
+  ArkmeRecordingMaterialUtterance,
   ArkmeArkoAskResult,
   ArkmeArkoCancelResult,
   ArkmeArkoHistoryPage,
@@ -214,7 +215,7 @@ import type {
   ArkmeRecordCursor,
   ArkmeRecordTagList,
   ArkmeRecordSearchResult,
-  ArkmeRecordingCalendarMonth, ArkmeRecordingCursorPayload, ArkmeRecordingDay, ArkmeRecordingPlayback,
+  ArkmeRecordingCalendarMonth, ArkmeRecordingDay, ArkmeRecordingPlayback,
   ArkmeRecordingProjectionKind, ArkmeRecordingSearchResult, ArkmeRecordingSection, ArkmeRecordingSpeakerMutationResult,
   ArkmeRecordingSpeakerOption, ArkmeRecordingSummaryModelConfig, ArkmeRecordingSummaryModelRouteUpdate,
   ArkmeRecordingTranscriptSection, ArkmeRecordingVersion,
@@ -424,8 +425,12 @@ export class ArkmeService {
     this.directory = new ConversationDirectoryService(this.runtime, this.source, this.conversationDirectoryVisibility,
       async signal => await this.botConversation.directory({ signal }),
       async (ref, signal) => await this.media.readImage(ref, { signal, refresh: true }),
-      page => { this.realtime.emitChatClientEvent({ type: 'directory-update', revision: this.realtime.nextChatClientRevision(), page }) },
+      page => {
+        this.realtime.emitChatClientEvent({ type: 'directory-update', revision: this.realtime.nextChatClientRevision(), page })
+        void this.realtime.refreshAttentionSummary()
+      },
       async (bots, userId) => await this.bot.restoreDirectoryBots(bots, userId))
+    this.realtime.directoryAttention = async retry => await this.directory.attentionSummary(retry)
     this.realtime.directoryBaseline = async () => await this.directory.complete()
     this.realtime.subscribeChatRealtime(event => { if (event.type !== 'directory-update') void this.directory.accept(event).catch(() => undefined) })
     this.chat = new ChatService(
@@ -440,6 +445,7 @@ export class ArkmeService {
       this.realtime,
       this.privacy,
       this.messageActions,
+      this.callHistory,
     )
     this.userBan = new UserBanService(this.runtime, this.chat)
     this.directMessageAdmissionOwner = new DirectMessageAdmissionService(this.runtime, this.source)
@@ -738,6 +744,7 @@ export class ArkmeService {
         sourceDirectory: true,
         localFirstDirectory: true,
         topicHomeVisibility: true,
+        contactDirectoryReads: true,
         sourceTimeline: true,
         forwardContent: true,
         sourceTextSend: true,
@@ -870,6 +877,13 @@ export class ArkmeService {
   }
 
   requestStats(): Record<string, ArkmeRequestStats> { return this.runtime.requestStats() }
+  /** @internal Shared admission/recovery for independent capability owners; no Chat business projection. */
+  get ownerReads(): import('./services/service.js').ArkmeOwnerReadPort {
+    return {
+      runOwnerRead: this.runtime.runOwnerRead.bind(this.runtime),
+      withOwnerReadInvalidation: this.runtime.withOwnerReadInvalidation.bind(this.runtime),
+    }
+  }
   async resolveLinkMetadata(
     url: string,
     options: { signal?: AbortSignal } = {},
@@ -886,7 +900,7 @@ export class ArkmeService {
   }
   async searchContact(identifier: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeContactSearchResult> { return await this.contact.search(identifier, options) }
 
-  async listDirectory(section: ArkmeDirectorySectionKind, options: { limit?: number; cursor?: string; countOnly?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeDirectoryPage> {
+  async listDirectory(section: ArkmeDirectorySectionKind, options: { limit?: number; cursor?: string; countOnly?: boolean; refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeDirectoryPage> {
     return section === 'unmarked-speakers' ? await this.unmarkedSpeaker.list(options) : await this.contactDirectory.list(section, options)
   }
   async directoryContactProfile(contactRef: string, signal?: AbortSignal): Promise<ArkmeDirectoryContactProfile> { return await this.contactDirectory.contactProfile(contactRef, signal) }
@@ -910,8 +924,6 @@ export class ArkmeService {
   /** @internal Built-in loopback UI only. */ async recordingSummaryModelConfig(signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelConfig> { return await this.recording.recordingSummaryModelConfig(signal) }
   /** @internal Built-in loopback UI only. */ async setRecordingSummaryModelRoute(routeKey: string, signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelRouteUpdate> { return await this.recording.setRecordingSummaryModelRoute(routeKey, signal) }
   /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal) }
-  async sealRecordingCursor(payload: ArkmeRecordingCursorPayload): Promise<string> { return await this.recording.sealRecordingCursor(payload) }
-  async openRecordingCursor(cursor: string): Promise<ArkmeRecordingCursorPayload> { return await this.recording.openRecordingCursor(cursor) }
   async recordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingComparison(dateStamp, signal) }
   async recordingForwardCapabilities(signal?: AbortSignal) { return await this.recording.recordingForwardCapabilities(signal) }
   async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
@@ -1014,6 +1026,10 @@ export class ArkmeService {
     signal?: AbortSignal,
   ): Promise<ArkmeArkoCancelResult> {
     return await this.arko.arkoCancel(sessionId, assistantMsgId, runUid, signal)
+  }
+
+  async aiVideoResolveSelection(recordingUid: string, utterances: readonly ArkmeRecordingMaterialUtterance[], signal?: AbortSignal): Promise<ArkmeAiVideoSegmentSelector[]> {
+    return await this.aiVideo.aiVideoResolveSelection(recordingUid, utterances, signal)
   }
 
   async aiVideoPreflight(

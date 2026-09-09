@@ -16,6 +16,7 @@ interface ArkmeProviderInstanceDirectoryRecoveryOptions {
   activateAccount(scope: ArkmeClientAccountScope): void
   refreshRoot(force: boolean): Promise<void>
   onRefreshed(): void
+  signal?: AbortSignal
   retryDelaysMillis?: readonly number[]
   wait?(delayMillis: number): Promise<void>
 }
@@ -66,31 +67,42 @@ export const reconcileArkmeProviderInstance = createArkmeProviderInstanceGuard({
 export async function recoverArkmeProviderInstanceDirectory(
   options: ArkmeProviderInstanceDirectoryRecoveryOptions,
 ): Promise<void> {
+  options.signal?.throwIfAborted()
   options.activateAccount(undefined)
   options.activateAccount(options.accountScope)
   const wait = options.wait ?? (async (delayMillis: number) => {
-    await new Promise<void>(resolve => { window.setTimeout(resolve, delayMillis) })
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); reject(options.signal?.reason) }
+      const timer = setTimeout(() => { options.signal?.removeEventListener('abort', abort); resolve() }, delayMillis)
+      options.signal?.addEventListener('abort', abort, { once: true })
+      if (options.signal?.aborted) abort()
+    })
   })
   const retryDelaysMillis = options.retryDelaysMillis ?? [250, 750, 1_500]
   try {
     await options.refreshRoot(true)
   } catch {
+    options.signal?.throwIfAborted()
     try {
       await options.refreshRoot(false)
     } catch (initialError) {
+      options.signal?.throwIfAborted()
       let lastError: unknown = initialError
       for (const delayMillis of retryDelaysMillis) {
         if (delayMillis > 0) await wait(delayMillis)
+        options.signal?.throwIfAborted()
         try {
           await options.refreshRoot(true)
           lastError = undefined
           break
         } catch (error) {
+          options.signal?.throwIfAborted()
           lastError = error
         }
       }
       if (lastError !== undefined) throw lastError
     }
   }
+  options.signal?.throwIfAborted()
   options.onRefreshed()
 }

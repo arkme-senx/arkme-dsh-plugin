@@ -5,6 +5,7 @@ import {
   type ManagedOpenApiCredentialExecutor,
 } from './openapi-mcp/types.js'
 import { readBoundedResponse } from './openapi-mcp/bounded-response.js'
+import { retryAfterMillis } from './http-retry-after.js'
 
 const REQUEST_TIMEOUT_MILLIS = 20_000
 
@@ -13,6 +14,8 @@ export class OpenApiCapabilityError extends Error {
     readonly code: 'invalid-input' | 'unavailable' | 'invalid-response' | 'login-required' | 'account-changed',
     message: string,
     readonly retryable: boolean,
+    readonly retryAfterMillis?: number,
+    readonly upstreamStatus?: number,
   ) {
     super(message)
     this.name = 'OpenApiCapabilityError'
@@ -90,6 +93,13 @@ export class HttpOpenApiCapabilityGateway implements OpenApiTeamCapabilityClient
           try { await response.body?.cancel() } catch { /* credential rejection remains authoritative */ }
           throw new ManagedOpenApiCredentialRejectedError()
         }
+        if (!response.ok) {
+          try { await response.body?.cancel() } catch { /* HTTP failure remains authoritative */ }
+          if (response.status === 400) throw new OpenApiCapabilityError('invalid-input', '团队请求参数无效', false)
+          const retryable = response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500
+          throw new OpenApiCapabilityError('unavailable', 'Arkme 开放平台暂时不可用', retryable,
+            retryAfterMillis(response.headers.get('retry-after')), response.status)
+        }
         let raw: string
         try {
           raw = await readBoundedResponse(response)
@@ -101,11 +111,6 @@ export class HttpOpenApiCapabilityGateway implements OpenApiTeamCapabilityClient
           envelope = JSON.parse(raw)
         } catch {
           throw new OpenApiCapabilityError('invalid-response', 'Arkme 开放平台响应无效', true)
-        }
-        if (!response.ok) {
-          if (response.status === 400) throw new OpenApiCapabilityError('invalid-input', '团队请求参数无效', false)
-          const retryable = response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500
-          throw new OpenApiCapabilityError('unavailable', 'Arkme 开放平台暂时不可用', retryable)
         }
         if (!isObject(envelope) || envelope.code !== 200 || !Object.hasOwn(envelope, 'data')) {
           throw new OpenApiCapabilityError('invalid-response', 'Arkme 开放平台响应无效', true)

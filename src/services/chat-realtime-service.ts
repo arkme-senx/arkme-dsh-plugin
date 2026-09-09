@@ -37,7 +37,7 @@ export interface ArkmeNativeAttentionDispatcher {
 }
 
 const MAX_PROJECTION_RETRIES = 5
-const MAX_ATTENTION_SUMMARY_RETRIES = 5
+const MAX_ATTENTION_SUMMARY_RETRY_DELAY_MS = 30_000
 const MAX_NATIVE_NOTIFICATION_DELIVERY_CONCURRENCY = 3
 const MAX_NOTIFICATION_HINTS_PER_TIMELINE_READ = 50
 const NOTIFICATION_EXPIRY_MILLIS = 5 * 60_000
@@ -131,6 +131,7 @@ function safeFailureMessage(error: unknown): string {
 }
 
 export class ChatRealtimeService {
+  directoryAttention?: (retry: boolean) => Promise<ArkmeChatAttentionSummary>
   directoryBaseline?: () => Promise<import('../types.js').ArkmeSourceList>
   private disposed = false
   private readonly chatRealtime: ArkmeChatRealtimeRuntime
@@ -158,6 +159,10 @@ export class ChatRealtimeService {
   private attentionRefreshDirty = false
   private attentionRetryTimer: ReturnType<typeof setTimeout> | undefined
   private attentionRetryCount = 0
+  private attentionStale = true
+  private attentionStopped = false
+  private realtimeStarted = false
+  private attentionController = new AbortController()
 
   constructor(
     private readonly runtime: ServiceRuntime,
@@ -189,6 +194,7 @@ export class ChatRealtimeService {
 
   dispose(): void {
     this.disposed = true
+    this.attentionController.abort()
     if (this.projectionTimer !== undefined) clearTimeout(this.projectionTimer)
     if (this.connectionBaselineRetryTimer !== undefined) clearTimeout(this.connectionBaselineRetryTimer)
     if (this.attentionRetryTimer !== undefined) clearTimeout(this.attentionRetryTimer)
@@ -206,10 +212,16 @@ export class ChatRealtimeService {
   }
 
   startChatRealtime(): () => void {
+    this.attentionStopped = false
+    this.realtimeStarted = true
+    if (this.attentionController.signal.aborted) this.attentionController = new AbortController()
     void this.refreshAttentionSummary()
     const unsubscribe = this.chatRealtime.subscribe(notice => { this.handleChatRealtimeNotice(notice) })
     const stop = this.chatRealtime.start()
     return () => {
+      this.attentionStopped = true
+      this.attentionOwnerGeneration += 1
+      this.attentionController.abort()
       unsubscribe()
       stop()
       if (this.projectionTimer !== undefined) clearTimeout(this.projectionTimer)
@@ -486,14 +498,26 @@ export class ChatRealtimeService {
     }
   }
 
-  async refreshAttentionSummary(): Promise<void> {
-    const session = await this.runtime.sessionStore.read()
+  async refreshAttentionSummary(retry = false): Promise<void> {
+    if (this.disposed || this.attentionStopped) return
+    const readGeneration = this.attentionOwnerGeneration
+    let session: ArkmeSessionCredentials | undefined
+    try { session = await this.runtime.sessionStore.read() }
+    catch (error) {
+      if (this.disposed || this.attentionStopped || readGeneration !== this.attentionOwnerGeneration) return
+      this.attentionStale = true
+      if (this.attentionRetryCount < 2) console.warn('dsh-arkme: attention session read failed:', safeFailureMessage(error))
+      this.scheduleAttentionSummaryRetry()
+      return
+    }
+    if (this.disposed || this.attentionStopped || readGeneration !== this.attentionOwnerGeneration) return
     if (session === undefined) {
       this.clearAttentionOwner()
       this.clearAttentionSummaryRetry()
       return
     }
     this.activateAttentionOwner(session.userId)
+    this.attentionStale = true
     const existing = this.attentionRefreshInFlight
     if (existing !== undefined) {
       if (this.attentionRefreshStarted) this.attentionRefreshDirty = true
@@ -507,10 +531,11 @@ export class ChatRealtimeService {
     const pending = Promise.resolve().then(async () => {
       do {
         this.attentionRefreshDirty = false
+        this.attentionStale = true
         this.attentionRefreshStarted = true
-        await this.refreshAttentionSummarySerial(this.attentionOwnerGeneration)
+        await this.refreshAttentionSummarySerial(this.attentionOwnerGeneration, retry)
         this.attentionRefreshStarted = false
-      } while (this.attentionRefreshDirty)
+      } while (this.attentionRefreshDirty && !this.disposed && !this.attentionStopped)
     })
     this.attentionRefreshInFlight = pending
     try { await pending }
@@ -523,14 +548,22 @@ export class ChatRealtimeService {
     }
   }
 
-  private async refreshAttentionSummarySerial(ownerGeneration: number): Promise<void> {
+  private async refreshAttentionSummarySerial(ownerGeneration: number, retry: boolean): Promise<void> {
+    const isCurrent = () => !this.disposed && !this.attentionStopped && ownerGeneration === this.attentionOwnerGeneration
     try {
-      if (await this.runtime.sessionStore.read() === undefined) {
+      const session = await this.runtime.sessionStore.read()
+      if (!isCurrent()) return
+      if (session === undefined) {
         this.clearAttentionSummaryRetry()
         return
       }
-      const summary: ArkmeChatAttentionSummary = await this.source.chatUnreadBadgeSummary()
-      if (ownerGeneration !== this.attentionOwnerGeneration) return
+      const summary = this.directoryAttention === undefined
+        ? await this.source.chatUnreadBadgeSummary(this.attentionController.signal)
+        : await this.directoryAttention(retry)
+      if (!isCurrent()) return
+      const currentSession = await this.runtime.sessionStore.read()
+      if (!isCurrent() || currentSession?.userId !== this.attentionOwnerUserId) return
+      notificationDiagnostic('attention_summary_received', { ownerGeneration, summaryVersion: summary.summaryVersion, badgeCount: summary.badgeCount })
       const fingerprint = JSON.stringify(summary)
       if (summary.summaryVersion < this.attentionSummaryVersion) {
         const latest = this.latestAttentionSummary
@@ -539,8 +572,9 @@ export class ChatRealtimeService {
             count: latest.badgeCount,
             revision: latest.summaryVersion,
           })
-          if (applied) this.clearAttentionSummaryRetry()
-          else this.scheduleAttentionSummaryRetry()
+          if (this.disposed || ownerGeneration !== this.attentionOwnerGeneration) return
+          // A stale read cannot acknowledge the latest invalidation, even if native accepted its last good count.
+          this.scheduleAttentionSummaryRetry()
         }
         return
       }
@@ -550,8 +584,9 @@ export class ChatRealtimeService {
         // native-failed. Reusing the exact generation/revision/count is the
         // idempotent retry contract for the client bridge.
         const applied = await this.nativeAttention.applyBadgeSummary({ count: summary.badgeCount, revision: summary.summaryVersion })
-        if (applied) this.clearAttentionSummaryRetry()
-        else this.scheduleAttentionSummaryRetry()
+        if (this.disposed || ownerGeneration !== this.attentionOwnerGeneration) return
+        if (applied && summary.stale !== true) this.clearAttentionSummaryRetry()
+        else this.scheduleAttentionSummaryRetry(summary.stale ? MAX_ATTENTION_SUMMARY_RETRY_DELAY_MS : 0)
         return
       }
       this.attentionSummaryVersion = summary.summaryVersion
@@ -563,17 +598,23 @@ export class ChatRealtimeService {
         summary,
       })
       const applied = await this.nativeAttention.applyBadgeSummary({ count: summary.badgeCount, revision: summary.summaryVersion })
-      if (applied) this.clearAttentionSummaryRetry()
-      else this.scheduleAttentionSummaryRetry()
+      if (this.disposed || ownerGeneration !== this.attentionOwnerGeneration) return
+      if (applied && summary.stale !== true) this.clearAttentionSummaryRetry()
+      else this.scheduleAttentionSummaryRetry(summary.stale ? MAX_ATTENTION_SUMMARY_RETRY_DELAY_MS : 0)
     } catch (error) {
-      if (await this.runtime.sessionStore.read().catch(() => undefined) === undefined) {
+      if (!isCurrent()) return
+      const currentSession = await this.runtime.sessionStore.read().catch(() => null)
+      if (!isCurrent()) return
+      if (currentSession === undefined) {
         this.clearAttentionOwner()
         this.clearAttentionSummaryRetry()
         return
       }
       // Attention projection is best-effort and must never make Chat reads,
       // writes, or SSE reconciliation fail.
-      console.warn('dsh-arkme: Chat attention summary refresh failed:', safeFailureMessage(error))
+      if (this.attentionRetryCount < 2 || this.attentionRetryCount % 10 === 0) {
+        console.warn('dsh-arkme: Chat attention summary refresh failed:', safeFailureMessage(error))
+      }
       this.scheduleAttentionSummaryRetry()
     }
   }
@@ -582,16 +623,20 @@ export class ChatRealtimeService {
     if (this.attentionRetryTimer !== undefined) clearTimeout(this.attentionRetryTimer)
     this.attentionRetryTimer = undefined
     this.attentionRetryCount = 0
+    this.attentionStale = false
   }
 
-  private scheduleAttentionSummaryRetry(): void {
-    if (this.attentionRetryTimer !== undefined || this.attentionRetryCount >= MAX_ATTENTION_SUMMARY_RETRIES) return
-    this.attentionRetryCount += 1
-    const delay = Math.min(15_000, 1_000 * 2 ** (this.attentionRetryCount - 1))
+  private scheduleAttentionSummaryRetry(minimumDelayMs = 0): void {
+    if (this.disposed || this.attentionStopped || this.attentionRetryTimer !== undefined || !this.attentionStale) return
+    this.attentionRetryCount = Math.min(1000, this.attentionRetryCount + 1)
+    const delay = Math.max(minimumDelayMs, Math.min(MAX_ATTENTION_SUMMARY_RETRY_DELAY_MS, 1_000 * 2 ** Math.min(5, this.attentionRetryCount - 1)))
     this.attentionRetryTimer = setTimeout(() => {
       this.attentionRetryTimer = undefined
-      void this.refreshAttentionSummary()
+      // The existing IM reconnect and Browser online/foreground hooks resume stale work.
+      if (this.realtimeStarted && !this.chatRealtime.state().connected) return
+      void this.refreshAttentionSummary(true)
     }, delay)
+    this.attentionRetryTimer.unref?.()
   }
 
   private activateAttentionOwner(userId: number): void {
@@ -606,6 +651,8 @@ export class ChatRealtimeService {
   }
 
   resetAttentionSummary(): void {
+    this.attentionController.abort()
+    this.attentionController = new AbortController()
     this.clearAttentionSummaryRetry()
     void this.nativeAttention.resetBadgeCount?.()
     this.attentionOwnerGeneration += 1

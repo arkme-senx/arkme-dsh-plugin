@@ -562,7 +562,7 @@ describe('ArkmeService Bot owner adapter', () => {
       code: 'bot-provider-mismatch',
       retryable: false,
     })
-    expect(requests).toEqual([
+    expect(requests.filter(url => !url.endsWith('/conversation-list/preferences/query'))).toEqual([
       'https://bot.test/api/v1/bot/list',
       'https://bot.test/api/v1/bot/list',
     ])
@@ -625,7 +625,7 @@ describe('ArkmeService Bot owner adapter', () => {
 
     await expect(service.openBotChat(botRef)).rejects.toMatchObject({ code: 'bot-chat-source-unavailable' })
 
-    expect(calls.map(call => call.url)).toEqual([
+    expect(calls.map(call => call.url).filter(url => !url.endsWith('/conversation-list/preferences/query'))).toEqual([
       'https://bot.test/api/v1/bot/list',
       'https://bot.test/api/v1/bot/list',
       'https://bot.test/api/v1/bot/private-chat/open',
@@ -715,7 +715,7 @@ describe('ArkmeService Bot owner adapter', () => {
       url: 'https://bot.test/api/v1/bot/private-chat/message/send',
       body: { bot_id: 'bot-owner-id-direct', content: '测试' },
     })
-    expect(requests.map(request => request.url)).toEqual([
+    expect(requests.map(request => request.url).filter(url => !url.endsWith('/conversation-list/preferences/query'))).toEqual([
       'https://bot.test/api/v1/bot/list',
       'https://bot.test/api/v1/bot/private-chat/open',
       'https://bot.test/api/v1/bot/private-chat/message/send',
@@ -981,7 +981,7 @@ describe('ArkmeService Bot owner adapter', () => {
     })
     expect(added).toEqual({ botRef, groupSourceRef: sourceRef, installed: true })
     expect(removed).toEqual({ botRef, groupSourceRef: sourceRef, installed: false })
-    expect(calls.slice(1)).toEqual([
+    expect(calls.slice(1).filter(call => !call.url.endsWith('/conversation-list/preferences/query'))).toEqual([
       { url: 'https://bot.test/api/v1/bot/group/list', body: { rm_subject_id: 88001 } },
       { url: 'https://bot.test/api/v1/bot/group/add', body: {
         bot_id: 'bot-owner-id-5', rm_subject_id: 88001, subject_title: '研发群',
@@ -1122,7 +1122,7 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(result).toMatchObject({ itemUid: 'record-mention-1', sequence: 12, localState: 'synced' })
     expect(requests.find(request => request.url.endsWith('/bot/group/list'))?.body)
       .toEqual({ rm_subject_id: 88002 })
-    const sent = requests.at(-1)!.body
+    const sent = requests.findLast(request => request.url.endsWith('/api/v1/chats/records/send'))!.body
     expect(sent).toEqual({
       chat_session_uid: 'group-session-2', record_uid: 'record-mention-1', rel_uid: 'relation-mention-1',
       template_kind: 1,
@@ -1182,7 +1182,7 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(result).toMatchObject({ itemUid: 'record-structured-bot-mention', sequence: 13, localState: 'synced' })
     expect(requests.find(request => request.url.endsWith('/bot/group/list'))?.body)
       .toEqual({ rm_subject_id: 88002 })
-    expect(requests.at(-1)?.body).toMatchObject({
+    expect(requests.findLast(request => request.url.endsWith('/api/v1/chats/records/send'))?.body).toMatchObject({
       chat_session_uid: 'group-session-2',
       text_content: '@总结 和 @🚀助手 看看',
       content_payload: {
@@ -1205,7 +1205,7 @@ describe('ArkmeService Bot owner adapter', () => {
     }, {
       recordUid: 'record-rich-bot-mention', relationUid: 'relation-rich-bot-mention',
     })).resolves.toMatchObject({ itemUid: 'record-rich-bot-mention', sequence: 13 })
-    expect(requests.at(-1)?.body).toMatchObject({
+    expect(requests.findLast(request => request.url.endsWith('/api/v1/chats/records/send'))?.body).toMatchObject({
       template_kind: 2,
       content_payload: {
         payload_kind: 2,

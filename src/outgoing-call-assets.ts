@@ -9,6 +9,10 @@ export interface OutgoingCallAssetHandlerOptions {
 }
 
 const ASSETS = {
+  'call-outgoing-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'call-incoming-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'video-outgoing-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'video-incoming-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'index.html': { contentType: 'text/html; charset=utf-8', cacheControl: 'no-store' },
   'bundle.js': { contentType: 'text/javascript; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'call-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },

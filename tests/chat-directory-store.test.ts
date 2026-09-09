@@ -283,6 +283,7 @@ describe('ArkmeChatDirectoryStore', () => {
 
     expect(store.totalUnreadCount()).toBe(124)
     expect(store.totalUnreadCount({ excludeMuted: true })).toBe(4)
+    store.hydrateVisibility(store.getSnapshot().sources.map(source => ({ entryKind: 'source', entryRef: source.sourceRef, hidden: false })))
     expect(store.totalBadgeUnreadCount()).toBe(4)
   })
 
@@ -1205,3 +1206,18 @@ it('does not resurrect a left group through a late snapshot or realtime delta', 
   store.applyHostPage({ ...initial, projection: { ...initial.projection, revision: 3, removedSourceKeys: [] } })
   expect(store.getSnapshot().sources).toMatchObject([source])
 })
+
+it('bounds rotating source-ref aliases without losing stable-key read acknowledgements', () => {
+  const store = new ArkmeChatDirectoryStore()
+  const initial = { sourceRef: 'initial', sourceKey: 'stable', kind: 'private_chat' as const, displayName: 'Chat', activeAtMillis: 1, unreadCount: 1, latestSequence: 1 }
+  store.activateAccount('test:alias-capacity')
+  store.publish([initial])
+  store.hydrateVisibility([{ entryKind: 'source', entryRef: 'initial', hidden: false }])
+  store.upsertMany(Array.from({ length: 40010 }, (_, i) => ({ ...initial, sourceRef: `ref-${i}`, activeAtMillis: i + 2, latestSequence: i + 2 })))
+  expect((store as unknown as { sourceKeysByRef: Map<string, string> }).sourceKeysByRef.size).toBeLessThanOrEqual(40000)
+  expect(store.totalBadgeUnreadCount()).toBe(1)
+  store.updateReadAck('initial', 'stable', 40011, 0)
+  expect(store.totalBadgeUnreadCount()).toBe(0)
+  store.activateAccount('test:next')
+  expect((store as unknown as { sourceKeysByRef: Map<string, string> }).sourceKeysByRef.size).toBe(0)
+}, 10000)

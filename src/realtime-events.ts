@@ -1,12 +1,18 @@
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
+import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
 import type { ArkmeService } from './arkme-service.js'
+import type { ArkmeChatClientEvent } from './types.js'
 
 const HEARTBEAT_MS = 20_000
 
 function isLoopback(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
+}
+
+function eventFrame(event: ArkmeChatClientEvent): string {
+  return JSON.stringify({ ...event, providerInstanceId: ARKME_RUNTIME_INSTANCE_ID })
 }
 
 /** Host-owned, receive-only event transport; no business commands or credentials. */
@@ -22,7 +28,7 @@ export class ArkmeRealtimeEvents {
     private readonly options: { expectedPort: number; allowNonLoopback: boolean },
   ) {
     this.unsubscribe = service.subscribeChatRealtime(event => {
-      const frame = JSON.stringify(event)
+      const frame = eventFrame(event)
       for (const client of this.server.clients) {
         if (client.readyState === WebSocket.OPEN) client.send(frame)
       }
@@ -47,7 +53,7 @@ export class ArkmeRealtimeEvents {
       client.on('pong', () => { this.awaitingPong.delete(client) })
       client.on('close', () => { this.awaitingPong.delete(client) })
       client.on('message', () => { client.close(1008, 'Receive-only channel') })
-      client.send(JSON.stringify(this.service.chatRealtimeInitialEvent()))
+      client.send(eventFrame(this.service.chatRealtimeInitialEvent()))
     })
   }
 

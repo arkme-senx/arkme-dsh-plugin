@@ -29,11 +29,11 @@ function DirectoryChunk({ children, count, initial, selected }: { children: Reac
   </div>
 }
 
-export function ArkmeDirectoryWindow({ children, activeKey }: { children: ReactNode[]; activeKey?: string | undefined }) {
+export function ArkmeDirectoryWindow({ children, activeKey, revealKey }: { children: ReactNode[]; activeKey?: string | undefined; revealKey?: string | undefined }) {
   const chunks: ReactNode[] = []
   for (let offset = 0; offset < children.length; offset += 20) {
     const items = children.slice(offset, offset + 20)
-    chunks.push(<DirectoryChunk key={offset} count={items.length} initial={offset === 0} selected={items.some(item => isValidElement(item) && item.key === activeKey)}>{items}</DirectoryChunk>)
+    chunks.push(<DirectoryChunk key={offset} count={items.length} initial={offset === 0} selected={items.some(item => isValidElement(item) && (item.key === activeKey || item.key === revealKey))}>{items}</DirectoryChunk>)
   }
   return <>{chunks}</>
 }

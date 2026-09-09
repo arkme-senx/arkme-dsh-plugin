@@ -230,11 +230,7 @@ export class BotService {
   }
 
   async countBots(options: { signal?: AbortSignal } = {}): Promise<number> {
-    const session = await this.runtime.requireSession()
-    const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
-      '/api/v1/bot/list', { limit: 0 }, session, options.signal,
-    )
-    return Math.max(0, numberValue(data.total ?? data.total_count))
+    return (await this.listBots(options)).items.length
   }
 
   async createBot(
