@@ -38,7 +38,7 @@ export function apply(ctx) {
       const data = await fixture
       const blocks = options.messages.flatMap(message => message.content)
       assert(blocks.some(block => block.type === 'text' && block.text.includes('录音链路验收')), 'start this test from the browser composer')
-      const promptText = blocks.filter(block => block.type === 'text').map(block => block.text).join('\n')
+      const promptText = options.system ?? ''
       assert(promptText.includes('recording_uid and exact complete utterances'), 'installed shared prompt must match the public tool inputs')
       assert(!promptText.includes('Pass exact session_id and segment selectors'), 'retired selector guidance reached the Agent')
       const names = new Set(options.tools.map(tool => tool.name))
