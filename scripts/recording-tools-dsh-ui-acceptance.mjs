@@ -41,6 +41,12 @@ export function apply(ctx) {
       const promptText = options.system ?? ''
       assert(promptText.includes('recording_uid and exact complete utterances'), 'installed shared prompt must match the public tool inputs')
       assert(!promptText.includes('Pass exact session_id and segment selectors'), 'retired selector guidance reached the Agent')
+      assert(!/Recording capability discovery|text_mode=full|\b(query_recordings|query_recording_transcript|query_recording_summaries|read_recording_summary)\b/.test(promptText), 'plugin must not duplicate platform recording guidance')
+      const transcriptSchema = options.tools.find(tool => tool.name === prefix + 'query_recording_transcript')
+      assert(transcriptSchema, 'platform transcript schema must reach the Agent through generic discovery')
+      assert(transcriptSchema.parameters.properties.text_mode.enum.includes('full'))
+      assert(transcriptSchema.parameters.properties.start_at && transcriptSchema.parameters.properties.end_at)
+      assert(transcriptSchema.description.length > 0, 'platform tool description must reach the Agent')
       const names = new Set(options.tools.map(tool => tool.name))
       for (const retired of ['arkme_recording_days_list', 'arkme_recording_read']) assert(!names.has(retired))
       for (const retained of ['arkme_recording_import', 'arkme_recording_import_folder']) assert(names.has(retained), `lost independent import tool: ${retained}`)

@@ -11,7 +11,6 @@ import {
   arkmeConfirmationContextHooks,
 } from '../shared/conversational-confirmation.js'
 import { arkmeToolCatalog } from './catalog.js'
-import { recordingCapabilityGuidance } from '../../openapi-mcp/recording-capabilities.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_bot_conversation_pin',
@@ -211,11 +210,6 @@ export function registerArkmeTools(
       name: 'tool:arkme',
       order: 116,
       text: () => promptForArkmeToolProfile(profile, { attachments: ctx.get('attachments') !== undefined }),
-    })
-    ctx.systemPrompt.section({
-      name: 'tool:arkme-recording-capabilities',
-      order: 117,
-      text: context => recordingCapabilityGuidance(ctx.tools.schemas(context.scope)),
     })
     ctx.systemPrompt.section({
       name: 'tool:arkme-conversational-confirmation',

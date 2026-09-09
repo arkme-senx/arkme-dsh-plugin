@@ -24,7 +24,7 @@ export const recordingImportToolModule = defineArkmeCoreToolModule({
   },
   create: ports => defineTool({
     name: 'arkme_recording_import',
-    description: 'Upload a staged WAV, MP3 or M4A recording, query its upload status, or retry a failed upload. Upload and retry require a human request and confirmation. Use file_ref from arkme_files_list, arkme_file_prepare or arkme_file_receive and the actual recording start time; ask for the time if unknown. Use arkme_recording_import_folder for recordings in a local directory. Query with import_ref; retry with that reference and its latest revision. phase=accepted means the upload was received, not that transcription is ready. If the human separately asks to read recording content, use the discovered OpenAPI recording tools; import_ref is not a recording_uid. If no task reference was received, check the recording import page before submitting again.',
+    description: 'Upload a staged WAV, MP3 or M4A recording, query its upload status, or retry a failed upload. Upload and retry require a human request and confirmation. Use file_ref from arkme_files_list, arkme_file_prepare or arkme_file_receive and the actual recording start time; ask for the time if unknown. Use arkme_recording_import_folder for recordings in a local directory. Query with import_ref; retry with that reference and its latest revision. phase=accepted means the upload was received, not that transcription is ready. If no task reference was received, check the recording import page before submitting again.',
     parameters: {
       action: { type: 'string', enum: ['upload', 'status', 'retry'], required: true },
       file_ref: { type: 'string', description: 'Upload only: unchanged authorized local file reference.' },
