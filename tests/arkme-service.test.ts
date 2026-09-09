@@ -2794,7 +2794,7 @@ describe('ArkmeService', () => {
       sourceRef: groupRef,
       items: [{
         memberRef: peerMemberRef,
-        displayName: '小林',
+        displayName: '群昵称小林',
         memberName: '群昵称小林',
         restrictedAtMillis: 1_700_000_000_456,
       }],
@@ -3214,7 +3214,7 @@ describe('ArkmeService', () => {
     privateCounterpartSnapshot = '私聊旧快照'
     const noRemarkMembers = await service.listSourceMembers(sourceRef)
     expect(noRemarkMembers.items[0]).toMatchObject({
-      displayName: '私聊旧快照',
+      displayName: 'Tison',
       mentionDisplayName: 'Tison',
     })
     expect(noRemarkMembers.items[0]).not.toHaveProperty('mentionSecondaryName')

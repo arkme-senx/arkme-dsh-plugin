@@ -1,4 +1,5 @@
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
+import { projectCallRecord } from '../call-record-presentation.js'
 import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges } from '../markdown.js'
 import { createHash, createHmac } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -1712,10 +1713,12 @@ export class RecordService {
     const extensionProjection = this.recordExtensionProjection(raw, userId)
     const forwardRecords = projectRecordRecordingForward(item.content_payload ?? core.content_payload)
     const contentBlocks = this.media.richContentBlocks(raw, userId, options.displayItems)
+    const callRecord = projectCallRecord(raw, userId)
     return {
       itemUid: stringValue(item.record_uid ?? core.record_uid).trim(),
       senderName: stringValue(item.nickname).trim() || '我',
       isMe: options.isMe ?? numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId,
+      ...(callRecord === undefined ? {} : { callRecord }),
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
       title: stringValue(item.title ?? core.title),
       textContent: stringValue(item.text_content ?? core.text_content),

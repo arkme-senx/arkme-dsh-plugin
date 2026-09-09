@@ -1,4 +1,5 @@
 import { sealRecordTopicAssignmentRef } from '../record-topic-assignment-ref.js'
+import { projectCallRecord } from '../call-record-presentation.js'
 import { patchChatPolicy } from './chat-policy.js'
 import { invalidatesMemberSnapshot } from '../member-directory.js'
 import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges, arkmeMarkdownPlainText, arkmeMarkdownTextRanges } from '../markdown.js'
@@ -1116,12 +1117,12 @@ function resolveChatMemberDisplayNames(input: {
 function projectChatMemberDisplayNames(
   item: Record<string, unknown>,
   userId: number,
-  viewerLabel?: string,
+  viewerRemark?: string,
   publicDisplayName?: string,
 ): ChatMemberDisplayNames {
   return resolveChatMemberDisplayNames({
     userId,
-    remarkCandidates: [viewerLabel, item.remark],
+    remarkCandidates: [viewerRemark, item.remark],
     memberNameCandidates: [item.display_name_snapshot],
     userNameCandidates: [item.display_name, publicDisplayName],
   })
@@ -4701,6 +4702,7 @@ export class ChatService {
         const contentBlocks = this.media.richContentBlocks(item, session.userId)
         const extensionProjection = this.timelineExtensionProjection(item, session.userId)
         const conversationPreview = arkmeChatConversationPreview(item)
+        const callRecord = projectCallRecord(item, session.userId)
         const senderName = stringValue(relation.display_name_snapshot).trim() || 'Arkme用户'
         const mentionsViewer = senderUserId !== session.userId
           && arkmeMentionMetadataMentionsViewer(record, payload, session.userId)
@@ -4741,6 +4743,7 @@ export class ChatService {
           ...(agentSource === undefined ? {} : { agentSource }),
           ...(senderUserId > 0 ? { avatarRef: await this.profile.sealProfileImageRef(session.userId, senderUserId) } : {}),
           isMe: senderUserId === session.userId,
+          ...(callRecord === undefined ? {} : { callRecord }),
           ...(mentionsViewer ? { mentionsViewer: true } : {}),
           sendAtMillis,
           title: stringValue(payload.title),
@@ -5481,7 +5484,7 @@ export class ChatService {
       const profile = profiles.get(userId)
       const viewerLabel = viewerLabels.get(userId)
       const names = projectChatMemberDisplayNames(
-        item, userId, viewerLabel?.displayName, profile?.displayName,
+        item, userId, viewerLabel?.remark, profile?.displayName,
       )
       const { displayName, memberName, secondaryName } = names
       const { mentionDisplayName, mentionSecondaryName } = projectChatMemberMentionDisplayNames(
@@ -5573,6 +5576,7 @@ export class ChatService {
         payload.editDurationMillis, record.editDurationMillis,
         payload.incr_cost_mill_sec, record.incr_cost_mill_sec, payload.incrCostMillSec, record.incrCostMillSec,
       )
+      const callRecord = projectCallRecord(item, session.userId)
       const itemIndex = items.push({
         itemUid: uid,
         ...(relationUid === '' ? {} : {
@@ -5609,6 +5613,7 @@ export class ChatService {
         senderName,
         ...(agentSource === undefined ? {} : { agentSource }),
         isMe: senderUserId === session.userId,
+        ...(callRecord === undefined ? {} : { callRecord }),
         sendAtMillis,
         title: stringValue(payload.title),
         textContent: stringValue(payload.text_content),

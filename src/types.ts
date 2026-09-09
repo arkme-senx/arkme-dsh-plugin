@@ -1582,6 +1582,8 @@ export interface ArkmeMessageSnapshotDetail {
 }
 
 export interface ArkmeTimelineItem {
+  /** Display-only call status; room, participant and call identifiers stay host-side. */
+  callRecord?: { mediaType: 'audio' | 'video'; text: string }
   /** Signed observed personal-topic membership; distinct from forwarding snapshots. */
   recordTopicAssignmentRef?: string
   itemUid: string

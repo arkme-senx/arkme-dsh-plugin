@@ -3143,6 +3143,57 @@ describe('conversation send directory projection', () => {
     expect(rendered).not.toContain('A 成员')
   })
 
+  it('projects current group member names into history and live message headers without rewriting snapshots', async () => {
+    const currentGroup = { ...group, latestSequence: 4 }
+    activeSource = currentGroup
+    arkmeChatDirectory.publish([currentGroup])
+    arkmeUi.selectSource(currentGroup)
+    let displayName = '私人备注'
+    const member = { ...activeMembers(1)[0]!, memberRef: 'sender-member', memberName: '群内昵称' }
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'source.members') return { source: currentGroup, items: [{ ...member, displayName }], total: 1, activeCount: 1 }
+      if (operation === 'group.bots') return { source: currentGroup, items: [], total: 0 }
+      return await baseCall(operation, params, signal)
+    })
+    const historical = { itemUid: 'named-history', memberRef: member.memberRef, senderName: '用户昵称', isMe: false,
+      sendAtMillis: 1, sequence: 1, title: '', textContent: '历史消息', status: 1 }
+    timeline = [historical,
+      { ...historical, itemUid: 'named-extension', sequence: 2, sendAtMillis: 2, extensionParentRecordUid: 'parent',
+        extensionParent: { itemUid: 'parent', senderName: '引用原作者', recordOwnerUserId: 7, sequence: 1, sendAtMillis: 1, title: '', textContent: '引用原文' } },
+      { ...historical, itemUid: 'departed-sender', sequence: 3, sendAtMillis: 3, memberRef: 'absent-member', senderName: '离群成员快照' },
+      { itemUid: 'bot-sender', sequence: 4, sendAtMillis: 4, senderName: 'Bot 名称', isMe: false, title: '', textContent: 'Bot 消息', status: 1 },
+    ]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    const header = (id: string) => renderedText(renderer!.root.findByProps({ 'data-arkme-message-item-uid': id }).findByType(ArkmeTimelineMessageHeader))
+    expect(header('named-history')).toContain('私人备注')
+    expect(header('named-extension')).toContain('私人备注')
+    expect(header('departed-sender')).toContain('离群成员快照')
+    expect(header('bot-sender')).toContain('Bot 名称')
+    const reads = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline').length
+    for (const next of ['群内昵称', '用户昵称']) {
+      displayName = next
+      await act(async () => { await arkmeConversationMembers.ensure('test:42', currentGroup, true) })
+      expect(header('named-history')).toContain(next)
+      expect(header('named-extension')).toContain(next)
+    }
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(reads)
+    displayName = '新备注'
+    await act(async () => { await arkmeConversationMembers.ensure('test:42', currentGroup, true) })
+    const live = { ...historical, itemUid: 'named-live', sequence: 5, sendAtMillis: 5 }
+    await act(async () => {
+      arkmeChatTimelineDelta.publish([{ source: { ...currentGroup, latestSequence: 5 }, items: [live] }])
+      await Promise.resolve(); await Promise.resolve()
+    })
+    expect(header('named-live')).toContain('新备注')
+    expect(historical.senderName).toBe('用户昵称')
+    expect(live.senderName).toBe('用户昵称')
+    expect(timeline[1]!.extensionParent?.senderName).toBe('引用原作者')
+  })
+
   it('opens the group member profile card from a visible message mention', async () => {
     const mentionedMember: ArkmeConversationMemberItem = {
       memberRef: 'member-mentioned-cruisin',
