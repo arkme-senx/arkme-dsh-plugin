@@ -201,7 +201,6 @@ import {
 } from './related-recordings.js'
 import { isArkmeChatDirectorySource, isArkmeSelfWorkspaceSource } from './source-list.js'
 import { ArkmeOfficialAuthorGuide, isArkmeOfficialAuthor } from './ArkmeOfficialAuthorGuide.js'
-import { arkmeOfficialAuthorContactState } from './official-author-contact-state.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { arkmeLoginErrorMessage, arkmeStoredLoginErrorMessage } from './arkme-login-errors.js'
 import {
@@ -3774,7 +3773,6 @@ export function ArkmeSurface({
     let warningText = ''
     for (const task of fileTasks.tasks) {
       if (task.state !== 'sent' || notifiedFileTasks.current.has(task.taskRef)) continue
-      arkmeOfficialAuthorContactState.confirmSent(authenticatedAccountKey, source)
       notifiedFileTasks.current.add(task.taskRef); changed = true
       confirmedSendRetention.retain(arkmeSourceIdentityKey(source), fileTaskTimelineItem(task))
       if ((task.result?.warningText ?? '') !== '') warningText = task.result?.warningText ?? ''
@@ -3797,7 +3795,7 @@ export function ArkmeSurface({
       task.content.textContent === serializeArkmeComposerDraft(current).text.trim() && JSON.stringify(task.fileRefs) === JSON.stringify(refs))) {
       arkmeComposerDraftStore.clear(composerDraftKey)
     }
-  }, [activeConversation, confirmedSendRetention, fileTasks.tasks, source, authenticatedUserId, authenticatedAccountKey, loadTimeline, composerDraftKey])
+  }, [activeConversation, confirmedSendRetention, fileTasks.tasks, source, authenticatedUserId, loadTimeline, composerDraftKey])
 
   useEffect(() => {
     const target = ui.conversationTarget
@@ -4753,7 +4751,6 @@ export function ArkmeSurface({
           fileRefs: pendingFileRefs,
         })
         if (!sameTargetAccount()) throw new Error('账号已切换，本次延展结果已丢弃')
-        if (result.localState === 'synced') arkmeOfficialAuthorContactState.confirmSent(targetAccountKey, targetSource)
         const applyExtensionResult = (current: ArkmeTimelineItem[]) => applySourceSendResult(
           current,
           recordUid,
@@ -4958,7 +4955,6 @@ export function ArkmeSurface({
       const confirmedItem = applySourceSendResult([optimistic], recordUid, result)[0]
       const targetSourceKey = arkmeSourceIdentityKey(targetSource)
       if (result.localState === 'synced' && confirmedItem !== undefined) {
-        arkmeOfficialAuthorContactState.confirmSent(targetAccountKey, targetSource)
         confirmedSendRetention.retain(targetSourceKey, confirmedItem)
       }
       if (sameTargetComposer()) setItems(current => applySourceSendResult(current, recordUid, result))
@@ -6478,10 +6474,6 @@ export function ArkmeSurface({
         }
         successCount += 1
         const { targetSource, result } = outcome.value
-        if (result.localState === 'synced'
-          && arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) === authenticatedAccountKey) {
-          arkmeOfficialAuthorContactState.confirmSent(authenticatedAccountKey, targetSource)
-        }
         if ((result.warningText ?? '') !== '') warningText = result.warningText ?? ''
         if (arkmeSourceIdentityKey(targetSource) === sourceKey) needsTimelineRefresh = true
       }
@@ -6513,7 +6505,7 @@ export function ArkmeSurface({
       window.clearTimeout(timeout)
       setMessageActionBusy(undefined)
     }
-  }, [authenticatedAccountKey, closeMessageMenu, conversationKey, exitMessageSelectMode, loadTimeline, messageActionBusy, showForwardSuccessFeedback, showMessageActionStatus, source])
+  }, [closeMessageMenu, conversationKey, exitMessageSelectMode, loadTimeline, messageActionBusy, showForwardSuccessFeedback, showMessageActionStatus, source])
   const confirmForwardTargets = useCallback(async () => {
     if (forwardTargetPicker === undefined) return
     if (forwardTargetPicker.items.length === 0) {
@@ -8112,7 +8104,6 @@ export function ArkmeSurface({
           onClose={() => { setLongArticleCreating(false) }}
           onCreated={item => {
             pendingViewportRestoreRef.current = { sourceKey: conversationKey, viewport: undefined }
-            if (item.isMe && item.status > 0) arkmeOfficialAuthorContactState.confirmSent(authenticatedAccountKey, source)
             confirmedSendRetention.retain(conversationKey, item)
             setItems(current => mergeItems(current, [item]))
             if (isArkmeSelfWorkspaceSource(source)) arkmeUi.recordChanged()

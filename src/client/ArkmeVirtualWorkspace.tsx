@@ -24,7 +24,6 @@ import { ArkmeDSHBetaCommunityEntry, ArkmeDSHBetaCommunityEntryContent } from '.
 import { ARKME_EXTENSION_BRAND_GREEN } from './ArkmeMarketplace.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { isArkmeOfficialAuthor, OFFICIAL_AUTHOR_PREVIEW, OFFICIAL_AUTHOR_USER_ID } from './ArkmeOfficialAuthorGuide.js'
-import { useArkmeOfficialAuthorHasSent } from './official-author-contact-state.js'
 import { ArkmeGlobalSearchDialog, type ArkmeDshMessageSearchResult } from './ArkmeSearchSurface.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
@@ -589,13 +588,12 @@ function timeLabel(value: number): string {
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(date)
 }
 
-export function arkmeRootChatPreview(source: ArkmeSourceItem, authorHasSent = true): string {
-  const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source, authorHasSent)
+export function arkmeRootChatPreview(source: ArkmeSourceItem): string {
+  const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
   return arkmeEmojiPlainText(`${mentionPrefix}${preview}`).trim()
 }
 
-export function arkmeRootChatPreviewParts(source: ArkmeSourceItem, authorHasSent = true): { mentionPrefix: string; preview: string } {
-  if (isArkmeOfficialAuthor(source) && !authorHasSent) return { mentionPrefix: '', preview: OFFICIAL_AUTHOR_PREVIEW }
+export function arkmeRootChatPreviewParts(source: ArkmeSourceItem): { mentionPrefix: string; preview: string } {
   const preview = (source.latestPreview ?? (source.kind === 'group_chat' ? '群聊' : ''))
     .replace(/\s+/g, ' ').trim()
     || (isArkmeOfficialAuthor(source) ? OFFICIAL_AUTHOR_PREVIEW : '')
@@ -619,16 +617,7 @@ export function arkmeRootChatUnreadPlacement(source: {
 }
 
 export function ArkmeRootChatPreview({ source }: { source: ArkmeSourceItem }) {
-  return isArkmeOfficialAuthor(source) ? <ArkmeOfficialAuthorChatPreview source={source} /> : <ArkmeChatPreviewContent source={source} />
-}
-
-function ArkmeOfficialAuthorChatPreview({ source }: { source: ArkmeSourceItem }) {
-  const authorHasSent = useArkmeOfficialAuthorHasSent(source)
-  return <ArkmeChatPreviewContent source={source} authorHasSent={authorHasSent} />
-}
-
-function ArkmeChatPreviewContent({ source, authorHasSent = true }: { source: ArkmeSourceItem; authorHasSent?: boolean }) {
-  const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source, authorHasSent)
+  const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
   return <span style={styles.preview}>
     {mentionPrefix !== '' && <span style={styles.mentionPreviewPrefix}>{mentionPrefix}</span>}
     <ArkmeRichText text={preview} presentation="preview" emojiSize={20} />
