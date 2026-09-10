@@ -89,6 +89,7 @@ describe('Bundle v2 profile restart plan', () => {
 const directories: string[] = []
 afterEach(async () => {
   for (const path of directories.splice(0)) await rm(path, { recursive: true, force: true })
+  vi.unstubAllGlobals()
 })
 
 function installed(extensionId: string, bundlePath: string, artifactPath: string): ArkmeInstalledExtension {
@@ -140,6 +141,28 @@ async function fixture(input: { previousInstalled?: ArkmeInstalledExtension; exp
 }
 
 describe('desktop-managed extension profile restart', () => {
+  it('waits for the Web root after the extension API becomes ready', async () => {
+    const { planPath } = await fixture()
+    const ready = () => new Response(JSON.stringify({
+      ok: true, value: [{ extensionId: 'ext-test', enabled: true, active: true }],
+    }), { status: 200 })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(ready())
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(ready())
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await finalizeManagedExtensionProfileRestart(planPath, 'http://127.0.0.1:51234/')
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      'http://127.0.0.1:51234/arkme-self/api',
+      'http://127.0.0.1:51234/',
+      'http://127.0.0.1:51234/arkme-self/api',
+      'http://127.0.0.1:51234/',
+    ])
+  })
+
   it('validates the replacement before removing superseded update artifacts', async () => {
     const { plan, planPath, root } = await fixture()
     const oldBundle = join(root, 'profiles', 'old-bundle')
