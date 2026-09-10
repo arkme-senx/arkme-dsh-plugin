@@ -134,8 +134,7 @@ function botConversationCapabilities(target: BotConversationTarget, provider: 'o
     : target.kind === 'chat' ? BOT_CONVERSATION_OWNER.chat : undefined
   return {
     directChatAvailable: owner !== undefined,
-    privateChatOutboundEnabled: owner === BOT_CONVERSATION_OWNER.chat
-      || (owner === BOT_CONVERSATION_OWNER.subject && provider === 'openclaw'),
+    privateChatOutboundEnabled: owner !== undefined && provider === 'openclaw',
     refreshOnRecordChanges: owner === BOT_CONVERSATION_OWNER.subject,
     conversationProjection: owner === BOT_CONVERSATION_OWNER.subject
       ? 'record' as const
@@ -768,7 +767,11 @@ export class BotService {
       if (bot.directoryKey === undefined) return []
       const payload = Buffer.from(JSON.stringify({ directoryKey: bot.directoryKey })).toString('base64url')
       const signature = createHmac('sha256', secret).update(`bot-directory-entry-v1:${userId}:${payload}`).digest('base64url')
-      return [{ ...bot, botRef: `arkme-bot-directory-entry-v1.${payload}.${signature}` }]
+      return [{
+        ...bot,
+        privateChatOutboundEnabled: bot.directChatAvailable && bot.provider === 'openclaw',
+        botRef: `arkme-bot-directory-entry-v1.${payload}.${signature}`,
+      }]
     })
   }
 

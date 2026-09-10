@@ -275,7 +275,7 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
         <input
           ref={nameInput} style={{ ...styles.input, marginTop: 16 }} value={name} disabled={busy} maxLength={64}
           placeholder="给 Bot 起个名字" onChange={event => { setName(event.currentTarget.value); setError('') }}
-          onKeyDown={event => { if (event.key === 'Enter') void submit() }}
+          onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) void submit() }}
         />
 
         <fieldset style={{ ...styles.field, marginInline: 0, padding: 0, border: 0 }}>
