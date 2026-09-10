@@ -1321,6 +1321,26 @@ export class ArkmeService {
     return await this.group.groupSettings(sourceRef, signal)
   }
 
+  /** MCP owns the mutation; the plugin only invalidates its local presentation. */
+  async withGroupMemberInvalidation<T>(groups: string[], execute: () => Promise<T>): Promise<T> {
+    const { userId } = await this.runtime.requireSession()
+    try { return await execute() }
+    finally {
+      // A failed batch can still contain committed items. Never infer member facts
+      // from transport success, or let a cache refresh replace the write outcome.
+      this.runtime.invalidateMemberCache()
+      for (const group of new Set(groups)) {
+        try {
+          await this.runtime.stateStore.clearConversationMembers?.(userId, group)
+          const sourceKey = await this.source.chatDirectorySourceKey(userId, group)
+          if ((await this.sessionStore.read())?.userId === userId) {
+            this.realtime.emitChatClientEvent({ type: 'members-invalidated', revision: this.realtime.nextChatClientRevision(), sourceKey })
+          }
+        } catch { /* The normal authoritative member read remains available. */ }
+      }
+    }
+  }
+
   async setGroupMessageDnd(
     sourceRef: string,
     enabled: boolean,
