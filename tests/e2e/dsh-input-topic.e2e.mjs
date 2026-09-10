@@ -31,7 +31,7 @@ const tokenParts = [
 const token = `${tokenParts}.${createHmac('sha256', 'record-e2e-access-token-secret').update(tokenParts).digest('base64url')}`
 
 describe('packed Arkme on the target Harness with the real record owner', () => {
-  it('exposes a read-only system topic and shares home visibility across UI, SDK and Tool', async () => {
+  it('exposes a settings-free read-only topic while preserving SDK and Tool home policies', async () => {
     const tls = {
       key: await readFile(process.env.ARKME_E2E_TLS_KEY),
       cert: await readFile(process.env.NODE_EXTRA_CA_CERTS),
@@ -103,6 +103,11 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         })
       })
       const page = await browserContext.newPage()
+      const uiPolicyRequests = []
+      page.on('request', request => {
+        if (request.url().endsWith('/arkme-self/api') && request.method() === 'POST'
+          && request.postDataJSON()?.operation === 'topic.home-visibility') uiPolicyRequests.push(request.url())
+      })
       await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
       const frameElement = await page.waitForSelector('iframe[title="DeepSeek Harness"]')
       const harnessPage = await frameElement.contentFrame()
@@ -133,7 +138,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       expect(result.isError).toBe(false)
       expect(JSON.stringify(result)).toContain('showInHome')
       expect(JSON.stringify(result)).toContain('true')
-      await sdk.topicHomeVisibility(archive.sourceRef, false)
+      // Keep an existing non-default preference while exercising the UI.
       // Same browser context/origin: before the transport fix, three pages
       // held six SSE connections and starved normal topic reads.
       for (let index = 0; index < 2; index++) {
@@ -162,19 +167,16 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         await route.continue()
       })
       await topicTree.getByRole('button', { name: /发给 DSH 的消息/ }).click()
-      const setting = page.getByRole('checkbox', { name: '在首页展示' })
-      await setting.waitFor({ state: 'visible' })
-      await expect.poll(() => setting.isEnabled()).toBe(true)
-      expect(await setting.isChecked()).toBe(false)
+      expect(await page.getByRole('checkbox', { name: '在首页展示' }).count()).toBe(0)
       expect(await page.getByRole('button', { name: '发送消息', exact: true }).count()).toBe(0)
       await page.getByRole('status', { name: '正在加载会话内容' }).waitFor()
-      const footer = page.locator('footer[aria-label="DSH 输入主题设置"]')
+      const footer = page.locator('footer[aria-label="系统主题说明"]')
+      await footer.waitFor({ state: 'visible' })
       const footerBox = await footer.boundingBox()
-      const settingBox = await setting.boundingBox()
       expect(footerBox.height).toBeGreaterThanOrEqual(72)
       expect(footerBox.width).toBeGreaterThan(400)
-      expect(settingBox.y).toBeGreaterThan(footerBox.y)
-      expect(settingBox.y + settingBox.height).toBeLessThan(footerBox.y + footerBox.height)
+      expect(await footer.textContent()).toContain('不支持在此新增快记')
+      expect(await footer.locator('input, button').count()).toBe(0)
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
       releaseTimeline()
       const reload = page.getByRole('button', { name: '重新加载', exact: true })
@@ -184,14 +186,9 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       await page.getByRole('button', { name: '打开快记详情', exact: true }).filter({ hasText: prompt }).waitFor()
       await page.unroute('**/arkme-self/api')
       await page.getByRole('status', { name: '正在加载会话内容' }).waitFor({ state: 'hidden' })
-      // The controlled checkbox deliberately waits for the persisted value;
-      // Playwright.check() requires an immediate optimistic DOM update.
-      await setting.click()
-      await expect.poll(async () => (await sdk.topicHomeVisibility(archive.sourceRef)).showInHome).toBe(true)
-      await expect.poll(() => setting.isChecked()).toBe(true)
-      await setting.click()
-      await expect.poll(async () => (await sdk.topicHomeVisibility(archive.sourceRef)).showInHome).toBe(false)
-      await expect.poll(() => setting.isChecked()).toBe(false)
+      // Browsing never rewrites an existing preference, including after a retry.
+      expect(await sdk.topicHomeVisibility(archive.sourceRef)).toEqual({ showInHome: true })
+      expect(uiPolicyRequests).toEqual([])
       const record = page.getByRole('button', { name: '打开快记详情', exact: true }).filter({ hasText: prompt })
       await record.click({ button: 'right' })
       const messageMenu = page.getByRole('menu', { name: '消息操作' })
@@ -204,7 +201,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       await page.getByRole('button', { name: '打开快记详情', exact: true })
         .filter({ hasText: '系统主题中的既有快记仍可重新编辑' }).waitFor({ state: 'visible' })
       expect(await page.getByRole('button', { name: '发送消息', exact: true }).count()).toBe(0)
-      // A system archive has no editor to keep mounted. Its settings footer
+      // A system archive has no editor to keep mounted. Its read-only notice
       // supplies the same stable slot for the baseline's selection overlay.
       const editedRecord = page.getByRole('button', { name: '打开快记详情', exact: true })
         .filter({ hasText: '系统主题中的既有快记仍可重新编辑' })
@@ -217,8 +214,11 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       expect(await page.locator('.arkme-conversation-composer').count()).toBe(0)
       expect((await slot.boundingBox()).height).toBe(beforeSelection.height)
       await page.getByRole('button', { name: '退出多选', exact: true }).click()
-      await setting.waitFor({ state: 'visible' })
+      await footer.waitFor({ state: 'visible' })
       expect(await page.locator('.arkme-conversation-composer').count()).toBe(0)
+      expect(uiPolicyRequests).toEqual([])
+      expect(await sdk.topicHomeVisibility(archive.sourceRef)).toEqual({ showInHome: true })
+      expect(await sdk.topicHomeVisibility(archive.sourceRef, false)).toEqual({ showInHome: false })
     } catch (error) {
       failures.push(error)
     } finally {

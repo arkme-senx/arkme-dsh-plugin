@@ -3,7 +3,7 @@ import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import { arkmeMarkdownPlainText } from '../markdown.js'
 import { arkmeCallRecordBubbleStyle } from './ArkmeCallRecordContent.js'
 import { arkmeSourceAllowsUserWrite, isArkmeDSHInputTopic, arkmeTopicDisplayName } from '../topic-policy.js'
-import { ArkmeTopicHomeVisibility } from './ArkmeTopicHomeVisibility.js'
+import { ArkmeTopicReadOnlyNotice } from './ArkmeTopicReadOnlyNotice.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { ArkmeCallDetailDrawer } from './ArkmeCallDetailDrawer.js'
 import {
@@ -7276,7 +7276,7 @@ export function ArkmeSurface({
             aria-hidden={activeSelectMode !== undefined || undefined}
             {...(activeSelectMode === undefined ? {} : { inert: '' })}
             style={{ visibility: activeSelectMode === undefined ? 'visible' : 'hidden' }}>
-            <ArkmeTopicHomeVisibility key={String(authenticatedUserId) + ':' + source.sourceRef} sourceRef={source.sourceRef} />
+            <ArkmeTopicReadOnlyNotice />
           </div>}
           {(!archiveReadOnly || activeRecordReeditComposer !== undefined) && <footer className="arkme-conversation-composer"
             aria-hidden={activeSelectMode !== undefined || undefined}
