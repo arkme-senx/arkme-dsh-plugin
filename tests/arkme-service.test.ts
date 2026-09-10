@@ -1944,9 +1944,13 @@ describe('ArkmeService', () => {
           size: 31, duration_sec: 31, download_url: 'https://media.test/aggregate-voice.m4a',
         }],
       }] } })
-      if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
+      if (url.endsWith('/api/v1/topics/display/records/page')) return json({ code: 0, data: {
+        topic_uid: body.topic_uid, privacy_state: 1,
         records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
         has_more: true, next_cursor_send_at: 79, next_cursor_record_uid: 'record-next',
+      } })
+      if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
+        topic_core: { topic_uid: body.topic_uid, kind: 1, privacy_state: 1, show_in_home: true },
       } })
       if (url.endsWith('/api/v1/topics/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
       throw new Error(`unexpected ${url}`)
@@ -2102,11 +2106,14 @@ describe('ArkmeService', () => {
           record_uid: item.record_uid, target_status: 1, target_is_primary: true, ...(item.source_topic_uid ? { source_status: 2 } : {}),
         })),
       } })
-      if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: { records: [
+      if (url.endsWith('/api/v1/topics/display/records/page')) return json({ code: 0, data: { topic_uid: body.topic_uid, privacy_state: 1, records: [
         { record_uid: 'owned-other-creator', owner_user_id: 10001, creator_user_id: 999, status: 1 },
         { record_uid: 'foreign-self-creator', owner_user_id: 999, creator_user_id: 10001, status: 1 },
         { record_uid: 'pending-record', owner_user_id: 10001, creator_user_id: 10001, status: 0 },
       ], has_more: false } })
+      if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
+        topic_core: { topic_uid: body.topic_uid, kind: 1, privacy_state: 1, show_in_home: true },
+      } })
       if (url.endsWith('/api/v1/topics/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
       throw new Error(`unexpected ${url}`)
     })
@@ -2309,8 +2316,9 @@ describe('ArkmeService', () => {
         relations: [{ rel_kind: 1, status: 1, parent_topic_uid: 'topic-parent', child_topic_uid: 'topic-child', sibling_order: 1 }],
       } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 0 } })
-      if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
-        records: [{ record_core: { record_uid: 'record-1' } }, { record_core: { record_uid: 'record-2' } }], has_more: false,
+      if (url.endsWith('/api/v1/topics/display/records/page')) return json({ code: 0, data: {
+        topic_uid: body.topic_uid, privacy_state: 1,
+        records: [{ record_uid: 'record-1' }, { record_uid: 'record-2' }], has_more: false,
       } })
       if (url.endsWith('/api/v1/topics/records/bind') || url.endsWith('/api/v1/topics/records/unbind')) {
         return json({ code: 0, data: { rel_uid: `${String(body.topic_uid)}:${String(body.record_uid)}` } })
@@ -6052,7 +6060,8 @@ describe('ArkmeService', () => {
         if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
           return json({ code: 0, data: { items: [], has_more: false } })
         }
-        if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
+        if (url.endsWith('/api/v1/topics/display/records/page')) return json({ code: 0, data: {
+          topic_uid: 'topic-media', privacy_state: 1,
           records: [{
             record_uid: 'record-media-only', creator_user_id: 10001, send_at: 100, status: 1,
             record_core: { content_payload: { media_refs: [{ file_asset_uid: 'asset-missing', content_file_role: 1 }] } },
@@ -6061,6 +6070,9 @@ describe('ArkmeService', () => {
             text_content: '同页文字仍然可读',
           }],
           has_more: false,
+        } })
+        if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
+          topic_core: { topic_uid: 'topic-media', kind: 1, privacy_state: 1, show_in_home: true },
         } })
         if (url.endsWith('/api/v1/records/media/batch-list')) {
           mediaCalls += 1

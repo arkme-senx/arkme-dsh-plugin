@@ -1,3 +1,4 @@
+import { ArkmeScanGuide } from './ArkmeScanGuide.js'
 import type { ChangeEvent } from 'react'
 import { ARKME_WORDMARK_DATA_URL } from './arkme-wordmark.js'
 import {
@@ -162,7 +163,7 @@ const loginStyles = `
     font-weight: 600;
     box-shadow: 0 8px 20px rgba(45,52,75,.14);
   }
-  .dsh-arkme-login-method { margin-top: 28px; }
+  .dsh-arkme-login-method { margin-top: 28px; min-height: 272px; }
   .dsh-arkme-login-qr-panel { display: flex; flex-direction: column; align-items: flex-start; text-align: left; }
   .dsh-arkme-login-qr-title { color: var(--arkme-login-text); font-size: 18px; font-weight: 600; line-height: 26px; }
   .dsh-arkme-login-qr-frame {
@@ -446,11 +447,11 @@ const loginStyles = `
   .dsh-arkme-login-tab { height: 34px; padding: 0 9px; border-radius: 9px; color: var(--arkme-login-secondary); font-size: 12px; font-weight: 400; }
   .dsh-arkme-login-tab:hover { color: var(--arkme-login-text); }
   .dsh-arkme-login-tab[aria-selected='true'] { color: var(--arkme-login-text); font-weight: 500; box-shadow: var(--dsw-shadow-lv1, 0 1px 4px rgba(30,32,38,.1)); }
-  .dsh-arkme-login-method { margin-top: 28px; }
+  .dsh-arkme-login-method { margin-top: 28px; min-height: 272px; }
   .dsh-arkme-login-qr-panel { min-height: 152px; justify-content: flex-start; }
   .dsh-arkme-login-qr-title { order: 1; margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; }
-  .dsh-arkme-login-qr-frame { order: 2; width: 116px; height: 116px; margin-top: 16px; border: 0; border-radius: 0; background: transparent; }
-  .dsh-arkme-login-qr-image { width: 108px; height: 108px; }
+  .dsh-arkme-login-qr-frame { order: 2; width: 184px; height: 184px; margin-top: 16px; border: 0; border-radius: 0; background: transparent; }
+  .dsh-arkme-login-qr-image { width: 176px; height: 176px; }
   .dsh-arkme-login-qr-refresh-overlay { border-radius: 7px; font-size: 11px; }
   .dsh-arkme-login-qr-loading { color: var(--arkme-login-caption); font-size: 11px; }
   .dsh-arkme-login-qr-relogin { border: 0; padding: 7px 10px; background: transparent; color: var(--arkme-login-secondary); font-size: 11px; font-weight: 500; }
@@ -480,6 +481,7 @@ const loginStyles = `
   .dsh-arkme-login-phone-panel > .dsh-arkme-login-submit { margin-top: 28px; }
   .dsh-arkme-login-cancel { height: 46px; border-color: var(--arkme-login-border); border-radius: 12px; font-size: 14px; font-weight: 500; }
   .dsh-arkme-login-actions { margin-top: 18px; }
+  .dsh-arkme-login-feedback { position: absolute; top: 100%; left: 0; right: 0; }
   .dsh-arkme-login-error { margin-top: 12px; border-radius: 10px; padding: 8px 10px; font-size: 11px; line-height: 17px; }
   .dsh-arkme-login-agreement { margin-top: 32px; column-gap: 3px; justify-content: flex-start; color: var(--arkme-login-secondary); font-size: 10px; line-height: 16px; }
   .dsh-arkme-login-check-label { gap: 7px; }
@@ -701,6 +703,7 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
                     </span>
                   </button>}
             </div>
+            {effectiveMode === 'jiwo' && <ArkmeScanGuide t={t} />}
           </div> : effectiveMode === 'phone' ? <div className="dsh-arkme-login-phone-panel" role="tabpanel">
             <div className="dsh-arkme-login-field">
               <label className="dsh-arkme-login-label" htmlFor="dsh-arkme-login-phone">{t('phone.label')}</label>
@@ -778,7 +781,9 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
           </div>}
         </div>
 
-        {props.error !== '' && <div className="dsh-arkme-login-error" role="alert">{props.error}</div>}
+        <div className="dsh-arkme-login-feedback">
+          {props.error !== '' && <div className="dsh-arkme-login-error" role="alert">{props.error}</div>}
+        </div>
 
         <div className="dsh-arkme-login-agreement">
           <label className="dsh-arkme-login-check-label">

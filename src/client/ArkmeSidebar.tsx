@@ -2770,6 +2770,7 @@ export function ArkmeSurface({
   const [drawer, setDrawer] = useState<'detail' | 'copyLink'>()
   const [groupMembersOpen, setGroupMembersOpen] = useState(false)
   const [detailItemUid, setDetailItemUid] = useState('')
+  const [detailCallVideoUrl, setDetailCallVideoUrl] = useState<string>()
   const [copyLinkDetail, setCopyLinkDetail] = useState<ArkmeCopyLinkDetailState>()
   const [copyLinkDetailDraft, setCopyLinkDetailDraft] = useState('')
   const [copyLinkDetailSending, setCopyLinkDetailSending] = useState(false)
@@ -3514,9 +3515,10 @@ export function ArkmeSurface({
     if (kind !== 'related') closeRelatedPanel()
   }
 
-  function openNoteDetail(item: ArkmeTimelineItem) {
+  function openNoteDetail(item: ArkmeTimelineItem, videoUrl?: string) {
     activateContextPanel('note')
     setDetailItemUid(item.itemUid)
+    setDetailCallVideoUrl(videoUrl)
     setShowOriginal(false)
     setDrawer('detail')
   }
@@ -7149,6 +7151,7 @@ export function ArkmeSurface({
                               key={`message-content:${conversationOverlayKey}`}
                               item={item}
                               mediaSelectionIsExplicit={reeditItems.has(item)}
+                              onCallDetailOpen={videoUrl => { openNoteDetail(item, videoUrl) }}
                               sourceRef={source.sourceRef}
                               highlightMentions
                               shareWebsite={shareWebsite}
@@ -7985,6 +7988,7 @@ export function ArkmeSurface({
         {activeConversation && drawer === 'detail' && detailItem?.callRecord !== undefined && <ArkmeCallDetailDrawer
           key={`${authenticatedAccountKey}:${conversationOverlayKey}:${detailItem.itemUid}`}
           item={detailItem}
+          initialVideoUrl={detailCallVideoUrl}
           onClose={() => { setDrawer(undefined) }}
         />}
         {activeConversation && drawer === 'detail' && detailItem !== undefined && detailItem.callRecord === undefined && detailItem.forwardRecords === undefined && detailSharedRecording === undefined && <ArkmeTimelineDetailDrawer

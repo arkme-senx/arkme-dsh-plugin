@@ -841,7 +841,7 @@ export function arkmeRelatedRecordingItemFromSharedRecording(item: ArkmeTimeline
     : arkmeRelatedRecordingItemFromSharedRecordingPreview(item.sharedRecording, item)
 }
 
-export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false }: {
+export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen }: {
   item: ArkmeTimelineItem
   presentation?: 'bubble' | 'detail'
   sourceRef?: string
@@ -853,6 +853,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
   onMentionClick?: ArkmeMentionClickHandler
   isMentionClickable?: ArkmeMentionClickPredicate
   mediaSelectionIsExplicit?: boolean
+  onCallDetailOpen?: (videoUrl?: string) => void
 }) {
   const lastMedia = useRef<{ sourceRef: string | undefined; item: ArkmeTimelineItem }>()
   const snapshot = lastMedia.current
@@ -873,7 +874,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
     setFailures(new Map())
     setRetryVersions(new Map())
   }, [mediaRevision])
-  if (item.callRecord !== undefined) return <ArkmeCallRecordContent call={item.callRecord} />
+  if (item.callRecord !== undefined) return <ArkmeCallRecordContent call={item.callRecord} revision={version} onOpenDetail={onCallDetailOpen} />
   if (item.forwardRecords !== undefined) {
     const itemLines = item.forwardRecords.items.flatMap(value => {
       if (value.segments?.length) return value.segments.map(segment => `${segment.speakerName}：${segment.textContent || '语音片段'}`)

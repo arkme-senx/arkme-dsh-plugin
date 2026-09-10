@@ -415,7 +415,7 @@ describe('ArkmeCallSurface interactions', () => {
           videoUrl: 'https://media.example/self-view.mp4',
           posterUrl: 'https://media.example/self-view.jpg',
           perspectives: [
-            { perspective: 'self', label: '你的视角', videoUrl: 'https://media.example/self-view.mp4', posterUrl: 'https://media.example/self-view.jpg' },
+            { perspective: 'self', label: '我的视角', videoUrl: 'https://media.example/self-view.mp4', posterUrl: 'https://media.example/self-view.jpg' },
             { perspective: 'peer', label: '真实用户', videoUrl: 'https://media.example/peer-view.mp4', posterUrl: 'https://media.example/peer-view.jpg' },
           ],
         },
@@ -447,7 +447,7 @@ describe('ArkmeCallSurface interactions', () => {
     })
 
     expect(renderer.root.findAllByType('video')).toHaveLength(0)
-    expect(renderer.root.findByProps({ alt: '你的视角视频通话记录画面' }).props.src).toBe('https://media.example/self-view.jpg')
+    expect(renderer.root.findByProps({ alt: '我的视角视频通话记录画面' }).props.src).toBe('https://media.example/self-view.jpg')
     expect(renderer.root.findByProps({ alt: '真实用户的视角视频通话记录小窗' }).props.src).toBe('https://media.example/peer-view.jpg')
     const titleRow = renderer.root.findByProps({ 'data-arkme-call-video-title-row': 'aligned' })
     expect(titleRow.props.style.width).toBe('100%')
@@ -469,11 +469,11 @@ describe('ArkmeCallSurface interactions', () => {
     expect(transcriptCount?.props.style.fontSize).toBe(11)
 
     await act(async () => {
-      renderer.root.findByProps({ alt: '你的视角视频通话记录画面' }).props.onError()
+      renderer.root.findByProps({ alt: '我的视角视频通话记录画面' }).props.onError()
       await tick()
     })
     expect(renderer.root.findAllByType('video').map(video => video.props.src)).toEqual(['https://media.example/self-view.mp4'])
-    expect(renderer.root.findByProps({ 'aria-label': '你的视角视频通话记录画面' }).props.controls).toBeUndefined()
+    expect(renderer.root.findByProps({ 'aria-label': '我的视角视频通话记录画面' }).props.controls).toBeUndefined()
 
     const playButton = buttonByLabel(renderer, '播放视频记录')
     expect(playButton.props.style.background).toBe('rgba(255,255,255,.88)')
@@ -509,7 +509,7 @@ describe('ArkmeCallSurface interactions', () => {
     videos = renderer.root.findAllByType('video')
     expect(videos.map(video => video.props.src)).toEqual(['https://media.example/self-view.mp4'])
     expect(renderer.root.findByProps({ alt: '真实用户的视角视频通话记录画面' }).props.src).toBe('https://media.example/peer-view.jpg')
-    expect(renderer.root.findByProps({ 'aria-label': '你的视角视频通话记录小窗' }).props.controls).toBeUndefined()
+    expect(renderer.root.findByProps({ 'aria-label': '我的视角视频通话记录小窗' }).props.controls).toBeUndefined()
   })
 
   it('uses the same visual style for real-call audio and video buttons', async () => {

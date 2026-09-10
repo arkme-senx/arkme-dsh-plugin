@@ -1,9 +1,8 @@
+import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
+import { CallAvatar, cleanAvatarRef, formatDuration, sampleAvatarUrl } from './call-detail-presentation.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
-import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
-import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
-import { Play } from '@phosphor-icons/react/dist/icons/Play'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
@@ -12,7 +11,6 @@ import type {
   ArkmeCallHistoryPage,
   ArkmeCallMediaType,
   ArkmeCallRecentContact,
-  ArkmeCallVideoPerspective,
   ArkmeContactSearchResult,
   ArkmeOfficialAuthorProfile,
   ArkmeOpenPrivateChatResult,
@@ -20,7 +18,6 @@ import type {
   ArkmeSourceList,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
-import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
@@ -48,13 +45,10 @@ type TypePickerPlacement =
 
 const CALL_SURFACE_AVATAR_PRELOAD_LIMIT = 40
 const CALL_HISTORY_SETTLED_REFRESH_DELAY_MS = 2_400
-const CALL_ASSET_ROOT = '/arkme-self/api/call'
 const OFFICIAL_AUTHOR_DISPLAY_NAME = '即' + '我作者'
 const OFFICIAL_AUTHOR_RECOMMENDATION_LABEL = OFFICIAL_AUTHOR_DISPLAY_NAME + ' · 推荐'
 const CONTACT_SEARCH_PLACEHOLDER = '输入' + '即' + '我号或昵称'
 const CONTACT_SEARCH_DEBOUNCE_MS = 280
-const SAMPLE_VIDEO_PEER_URL = `${CALL_ASSET_ROOT}/call-demo-peer.png`
-const SAMPLE_VIDEO_SELF_URL = `${CALL_ASSET_ROOT}/call-demo-self.png`
 
 function sampleCallMillis(daysAgo: number, hour: number, minute: number): number {
   const date = new Date()
@@ -108,15 +102,6 @@ const SAMPLE_CONTACTS: readonly ArkmeCallRecentContact[] = [
   { userId: 4, displayName: '妈妈' },
   { userId: 5, displayName: '颜格蕾' },
 ]
-
-type SamplePerspective = 'primary' | 'secondary'
-
-function sampleAvatarUrl(name: string): string | undefined {
-  if (name === '林小满') return `${CALL_ASSET_ROOT}/avatar-lin-xiaoman.jpeg`
-  if (name === '妈妈') return `${CALL_ASSET_ROOT}/avatar-mother.jpg`
-  if (name === '你') return `${CALL_ASSET_ROOT}/avatar-self.png`
-  return undefined
-}
 
 function sampleDetailForCall(callRef: string): ArkmeCallDetail | undefined {
   if (callRef === 'sample-video') return {
@@ -276,59 +261,6 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 10, background: arkmeTheme.elevated, color: arkmeTheme.text, cursor: 'pointer',
   },
   iconButtonPrimary: { borderColor: arkmeTheme.primaryAction, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction },
-  detailBody: { minHeight: 0, flex: 1, overflowY: 'auto', padding: '24px 28px 36px', boxSizing: 'border-box' },
-  card: { maxWidth: 720, margin: '0 auto 18px', padding: 16, borderRadius: 14, background: arkmeTheme.layer1, boxSizing: 'border-box' },
-  cardTitle: { margin: '0 0 9px', color: arkmeTheme.text, fontSize: 13, lineHeight: '18px', fontWeight: 650 },
-  cardText: { margin: 0, color: arkmeTheme.secondary, fontSize: 13, lineHeight: '22px', whiteSpace: 'pre-wrap' },
-  sampleMedia: { maxWidth: 720, margin: '0 auto 18px', display: 'grid', gap: 4 },
-  sampleImageFrame: { position: 'relative', overflow: 'hidden', borderRadius: 14, border: `1px solid ${arkmeTheme.border}`, background: '#11141a', aspectRatio: '16 / 9', boxShadow: 'none' },
-  sampleImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
-  videoInset: { position: 'absolute', top: 12, right: 12, width: 95, height: 126, overflow: 'hidden', borderRadius: 12, border: '1px solid rgba(255,255,255,.78)', background: '#151923', boxShadow: '0 10px 22px rgba(0,0,0,.22)' },
-  videoInsetImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
-  videoPreviewFallback: { width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: '#11161f' },
-  videoPreviewFigure: { width: '40%', maxWidth: 156, aspectRatio: '1 / 1', borderRadius: 999, background: '#77869a', opacity: .72 },
-  videoPill: { position: 'absolute', zIndex: 2, padding: '5px 8px', borderRadius: 7, background: 'rgba(22,24,30,.66)', color: '#fff', fontSize: 10, lineHeight: '14px', fontWeight: 650 },
-  videoPillTop: { top: 12, left: 12 },
-  videoPillBottomLeft: { left: 12, bottom: 12 },
-  videoPillBottomRight: { right: 12, bottom: 12 },
-  videoPlay: { position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: 54, height: 54, display: 'grid', placeItems: 'center', borderRadius: 999, background: 'rgba(255,255,255,.88)', color: '#171923', boxShadow: '0 8px 22px rgba(0,0,0,.18)' },
-  videoPlayButton: { border: 0, padding: 0, cursor: 'pointer' },
-  realVideo: { width: '100%', height: '100%', display: 'block', objectFit: 'cover', background: '#11141a' },
-  videoControls: {
-    position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 3, minHeight: 48, padding: '12px 14px 13px',
-    display: 'grid', gridTemplateColumns: '28px minmax(0, 1fr) auto', alignItems: 'center', gap: 10,
-    color: '#fff', background: 'linear-gradient(to top, rgba(0,0,0,.68), rgba(0,0,0,.08), rgba(0,0,0,0))',
-    boxSizing: 'border-box',
-  },
-  videoControlButton: { width: 28, height: 28, display: 'grid', placeItems: 'center', border: 0, borderRadius: 999, background: 'rgba(255,255,255,.88)', color: '#171923', cursor: 'pointer' },
-  videoProgressTrack: { position: 'relative', height: 4, overflow: 'hidden', borderRadius: 999, background: 'rgba(255,255,255,.38)' },
-  videoProgressFill: { position: 'absolute', inset: '0 auto 0 0', borderRadius: 999, background: '#fff' },
-  videoTimeText: { color: 'rgba(255,255,255,.92)', fontSize: 11, fontVariantNumeric: 'tabular-nums' },
-  videoUnavailable: { minHeight: 220, display: 'grid', placeItems: 'center', color: arkmeTheme.tertiary, fontSize: 13, lineHeight: '20px', background: arkmeTheme.layer1 },
-  videoTitleRow: { width: '100%', maxWidth: 720, justifySelf: 'stretch', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, boxSizing: 'border-box' },
-  videoTitleText: { minWidth: 0, flex: '1 1 auto', display: 'flex', alignItems: 'baseline', gap: 8 },
-  videoTitle: { margin: 0, color: arkmeTheme.text, fontSize: 14, lineHeight: '20px', fontWeight: 650 },
-  videoCaption: { color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '16px' },
-  sampleSwitch: {
-    height: 32, padding: '0 11px', display: 'inline-flex', alignItems: 'center', gap: 6, border: 0, borderRadius: 9,
-    background: arkmeTheme.elevated, color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 12, fontWeight: 600,
-  },
-  transcript: { maxWidth: 720, margin: '0 auto', display: 'grid', gap: 12 },
-  transcriptHeader: { display: 'flex', alignItems: 'baseline', justifyContent: 'flex-start', gap: 8, paddingBottom: 10, borderBottom: `1px solid ${arkmeTheme.borderSoft}` },
-  transcriptTitle: { margin: 0, color: arkmeTheme.text, fontSize: 14, lineHeight: '20px', fontWeight: 650 },
-  transcriptCount: { color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '16px' },
-  transcriptEmpty: { margin: '10px 0 0', color: arkmeTheme.tertiary, fontSize: 13, lineHeight: '21px' },
-  segment: { display: 'flex', gap: 9, alignItems: 'flex-start' },
-  segmentMine: { justifyContent: 'flex-end' },
-  segmentStack: { maxWidth: '76%', minWidth: 0, display: 'grid', gap: 5, justifyItems: 'start' },
-  segmentStackMine: { justifyItems: 'end' },
-  segmentBubble: { maxWidth: '76%', padding: '9px 11px', borderRadius: '5px 14px 14px 14px', background: arkmeTheme.messageOther, color: arkmeTheme.text },
-  segmentBubbleMine: { borderRadius: '14px 5px 14px 14px', background: arkmeTheme.messageOwn },
-  segmentBubbleInStack: { maxWidth: '100%' },
-  segmentMeta: { display: 'block', color: arkmeTheme.tertiary, fontSize: 10, lineHeight: '14px' },
-  segmentText: { margin: 0, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' },
-  endEvent: { maxWidth: 360, margin: '6px auto 0', display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 8, color: arkmeTheme.tertiary, fontSize: 10 },
-  endLine: { height: 1, background: arkmeTheme.borderSoft },
   notice: { position: 'absolute', left: 24, right: 24, bottom: 18, color: arkmeTheme.tertiary, fontSize: 12, textAlign: 'center' },
   layer: {
     position: 'absolute', inset: 0, zIndex: 9, display: 'grid', placeItems: 'center', padding: 24,
@@ -397,13 +329,6 @@ const styles: Record<string, CSSProperties> = {
   unavailable: { margin: '8px 3px 2px', color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '18px' },
 }
 
-function formatDuration(seconds: number): string {
-  const value = Math.max(0, Math.trunc(seconds))
-  const minutes = Math.floor(value / 60)
-  const rest = value % 60
-  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`
-}
-
 function shortTime(millis: number): string {
   if (!Number.isFinite(millis) || millis <= 0) return ''
   const date = new Date(millis)
@@ -413,11 +338,6 @@ function shortTime(millis: number): string {
     return `今天 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`
   }
   return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
-}
-
-function clockTime(millis: number): string {
-  if (!Number.isFinite(millis) || millis <= 0) return ''
-  return new Date(millis).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 function mediaLabel(type: ArkmeCallMediaType): string {
@@ -439,11 +359,6 @@ function sourceMatchesCall(source: ArkmeSourceItem, call: Pick<ArkmeCallHistoryI
 
 function callKey(item: ArkmeCallHistoryItem): string {
   return `${item.stableId}:${item.callRef}`
-}
-
-function cleanAvatarRef(value: string | undefined): string | undefined {
-  const normalized = value?.trim() ?? ''
-  return normalized === '' ? undefined : normalized
 }
 
 function CallVideoIcon({ size = 16, style }: { size?: number; style?: CSSProperties }) {
@@ -506,22 +421,6 @@ async function preloadHistoryAvatars(page: ArkmeCallHistoryPage): Promise<void> 
 
 async function preloadSourceAvatars(sources: readonly ArkmeSourceItem[]): Promise<void> {
   await preloadCallSurfaceAvatars(sources.map(source => source.avatarRef))
-}
-
-function CallAvatar({ name, avatarRef, assetUrl, size = 40 }: { name: string; avatarRef?: string | undefined; assetUrl?: string | undefined; size?: number }) {
-  if (assetUrl !== undefined) return <span style={{
-    width: size, height: size, flex: 'none', display: 'grid', placeItems: 'center', overflow: 'hidden',
-    borderRadius: 999, background: arkmeTheme.layer2,
-  }} aria-label={`${name}头像`}>
-    <img src={assetUrl} alt="" draggable={false} style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }} />
-  </span>
-  const normalizedRef = cleanAvatarRef(avatarRef)
-  return <ArkmeUserAvatar
-    {...(normalizedRef === undefined ? {} : { avatarRef: normalizedRef })}
-    size={size}
-    fallback={{ kind: 'phone_default', colorIndex: name.length, label: name.slice(0, 1) || '即' }}
-    label={`${name}头像`}
-  />
 }
 
 function targetForSource(source: ArkmeSourceItem): CallTarget {
@@ -659,14 +558,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
   const [unavailableTarget, setUnavailableTarget] = useState<CallTarget>()
   const [callingKey, setCallingKey] = useState('')
   const [officialAuthorProfile, setOfficialAuthorProfile] = useState<ArkmeOfficialAuthorProfile>()
-  const [samplePerspective, setSamplePerspective] = useState<SamplePerspective>('primary')
-  const [playingVideoKey, setPlayingVideoKey] = useState('')
-  const [videoPlaying, setVideoPlaying] = useState(false)
-  const [videoCurrentTime, setVideoCurrentTime] = useState(0)
-  const [videoDuration, setVideoDuration] = useState(0)
-  const [failedVideoPreviewKeys, setFailedVideoPreviewKeys] = useState<readonly string[]>([])
   const searchRef = useRef<HTMLInputElement>(null)
-  const videoRefs = useRef(new Map<string, HTMLVideoElement>())
   const historyGenerationRef = useRef(0)
   const historyAbortRef = useRef<AbortController>()
   const historyRefreshTimerRef = useRef<ReturnType<typeof setTimeout>>()
@@ -873,11 +765,6 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
     const generation = detailGenerationRef.current + 1
     detailGenerationRef.current = generation
     setSelectedRef(item.callRef)
-    setSamplePerspective('primary')
-    setPlayingVideoKey('')
-    setVideoPlaying(false)
-    setVideoCurrentTime(0)
-    setVideoDuration(0)
     setNotice('')
     setDetail(undefined)
     const sampleDetail = sampleDetailForCall(item.callRef)
@@ -1041,227 +928,6 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
 
   const selectedIsSample = selectedItem?.callRef.startsWith('sample-') === true
   const selectedSampleAvatarUrl = selectedItem === undefined || !selectedIsSample ? undefined : sampleAvatarUrl(selectedItem.peerDisplayName)
-  const setVideoRef = useCallback((key: string, element: HTMLVideoElement | null) => {
-    if (element === null) {
-      videoRefs.current.delete(key)
-      return
-    }
-    videoRefs.current.set(key, element)
-  }, [])
-  const syncVideoElements = useCallback((time?: number) => {
-    const videos = [...videoRefs.current.values()]
-    if (videos.length === 0) return
-    const targetTime = time ?? videos[0]?.currentTime ?? 0
-    for (const video of videos) {
-      if (Number.isFinite(targetTime) && Math.abs(video.currentTime - targetTime) > 0.35) {
-        try { video.currentTime = targetTime } catch {}
-      }
-      if (videoPlaying) {
-        void video.play().catch(() => undefined)
-      } else {
-        video.pause()
-      }
-    }
-  }, [videoPlaying])
-  useEffect(() => {
-    syncVideoElements(videoCurrentTime)
-  }, [playingVideoKey, samplePerspective, syncVideoElements, videoCurrentTime])
-  const videoPerspectiveLabel = (perspective: ArkmeCallVideoPerspective | undefined, fallback: string): string => {
-    const explicit = perspective?.label?.trim() ?? ''
-    if (explicit !== '') {
-      if (explicit.endsWith('视角')) return explicit
-      if (perspective?.perspective === 'peer') return `${explicit}的视角`
-      return explicit
-    }
-    if (perspective?.perspective === 'self') return '你的视角'
-    if (perspective?.perspective === 'peer') return selectedItem?.peerDisplayName === undefined ? '对方视角' : `${selectedItem.peerDisplayName}的视角`
-    if (perspective?.perspective === 'main') return '主视角'
-    return fallback
-  }
-  const videoPerspectiveKey = (perspective: ArkmeCallVideoPerspective): string => {
-    return `${perspective.perspective}:${perspective.videoUrl ?? ''}:${perspective.posterUrl ?? ''}`
-  }
-  const markVideoPreviewFailed = useCallback((key: string) => {
-    setFailedVideoPreviewKeys(current => current.includes(key) ? current : [...current, key])
-  }, [])
-  const startVideoPlayback = (perspective: ArkmeCallVideoPerspective) => {
-    setPlayingVideoKey(videoPerspectiveKey(perspective))
-    setVideoPlaying(true)
-  }
-  const toggleVideoPlayback = () => {
-    setVideoPlaying(value => !value)
-  }
-  const renderVideoPreviewFallback = (label: string, inset = false) => {
-    return <span
-      aria-label={`${label}缩略图暂不可用`}
-      style={styles.videoPreviewFallback}
-    >
-      <span style={{ ...styles.videoPreviewFigure, width: inset ? '48%' : '32%' }} />
-    </span>
-  }
-  const renderPerspectiveMedia = (
-    perspective: ArkmeCallVideoPerspective,
-    options: { inset?: boolean; alt: string; active?: boolean },
-  ) => {
-    const style = options.inset === true ? styles.videoInsetImage : styles.realVideo
-    const key = videoPerspectiveKey(perspective)
-    const previewFailed = failedVideoPreviewKeys.includes(key)
-    const shouldRenderVideo = options.active === true && perspective.videoUrl !== undefined
-    const shouldShowPoster = perspective.posterUrl !== undefined
-      && !previewFailed
-      && !shouldRenderVideo
-    if (shouldShowPoster) return <img
-      src={perspective.posterUrl}
-      alt={options.alt}
-      draggable={false}
-      onError={() => { markVideoPreviewFailed(key) }}
-      style={options.inset === true ? styles.videoInsetImage : styles.sampleImage}
-    />
-    if (!shouldRenderVideo && perspective.videoUrl !== undefined) return <video
-      key={`${perspective.videoUrl}:${options.inset === true ? 'preview-inset' : 'preview-main'}`}
-      src={perspective.videoUrl}
-      muted
-      preload="auto"
-      playsInline
-      aria-label={options.alt}
-      style={style}
-    />
-    if (perspective.videoUrl !== undefined) return <video
-      key={`${perspective.videoUrl}:${options.inset === true ? 'inset' : 'main'}`}
-      ref={element => { setVideoRef(key, element) }}
-      src={perspective.videoUrl}
-      {...(perspective.posterUrl === undefined ? {} : { poster: perspective.posterUrl })}
-      controls={false}
-      muted={options.inset === true}
-      autoPlay={options.active === true && videoPlaying}
-      preload="metadata"
-      playsInline
-      onLoadedMetadata={event => {
-        if (options.inset === true) return
-        const duration = event.currentTarget.duration
-        if (Number.isFinite(duration) && duration > 0) setVideoDuration(duration)
-      }}
-      onTimeUpdate={event => {
-        if (options.inset === true) return
-        const current = event.currentTarget.currentTime
-        const duration = event.currentTarget.duration
-        setVideoCurrentTime(Number.isFinite(current) ? current : 0)
-        if (Number.isFinite(duration) && duration > 0) setVideoDuration(duration)
-        syncVideoElements(current)
-      }}
-      onEnded={() => { setVideoPlaying(false) }}
-      style={style}
-    />
-    if (perspective.posterUrl !== undefined) return <img
-      src={perspective.posterUrl}
-      alt={options.alt}
-      draggable={false}
-      onError={() => { markVideoPreviewFailed(key) }}
-      style={options.inset === true ? styles.videoInsetImage : styles.sampleImage}
-    />
-    return renderVideoPreviewFallback(videoPerspectiveLabel(perspective, '视频'), options.inset === true)
-  }
-  const renderVideoRecord = () => {
-    if (selectedItem === undefined || selectedItem.mediaType !== 'video') return null
-    const titleCaption = selectedIsSample ? '功能示例 · 完整保留双方画面' : '完整保留双方画面'
-    const videoRecord = detail?.videoRecord
-    const realPerspectives = videoRecord?.perspectives?.filter(item => item.videoUrl !== undefined || item.posterUrl !== undefined) ?? []
-    const realMain = samplePerspective === 'primary'
-      ? realPerspectives[0]
-      : realPerspectives[1] ?? realPerspectives[0]
-    const realInset = samplePerspective === 'primary'
-      ? realPerspectives[1]
-      : realPerspectives[0]
-    const canSwitchRealPerspective = realPerspectives.length > 1
-    const sampleMain = samplePerspective === 'primary' ? SAMPLE_VIDEO_PEER_URL : SAMPLE_VIDEO_SELF_URL
-    const sampleInset = samplePerspective === 'primary' ? SAMPLE_VIDEO_SELF_URL : SAMPLE_VIDEO_PEER_URL
-    const sampleMainLabel = samplePerspective === 'primary' ? '你的视角' : selectedItem.peerDisplayName
-    const sampleInsetLabel = samplePerspective === 'primary' ? selectedItem.peerDisplayName : '你的视角'
-    const realPlaybackActive = realMain !== undefined && playingVideoKey === videoPerspectiveKey(realMain)
-    const progress = videoDuration > 0 ? Math.min(1, Math.max(0, videoCurrentTime / videoDuration)) : 0
-    const realMainPillBottom = realPlaybackActive ? 50 : 12
-    const hasRenderableVideo = selectedIsSample || realPerspectives.length > 0 || videoRecord?.videoUrl !== undefined || videoRecord?.posterUrl !== undefined
-    const accepted = detail?.acceptedAtMillis ?? selectedItem.acceptedAtMillis
-    if (!selectedIsSample && detailState !== 'ready') return null
-    if (!hasRenderableVideo && accepted <= 0) return null
-    return <section style={styles.sampleMedia} aria-label="视频记录">
-      <header style={styles.videoTitleRow} data-arkme-call-video-title-row="aligned">
-        <span style={styles.videoTitleText}>
-          <h3 style={styles.videoTitle}>视频记录</h3>
-          <span style={styles.videoCaption}>{titleCaption}</span>
-        </span>
-        {(selectedIsSample || canSwitchRealPerspective) && <button
-          type="button"
-          style={styles.sampleSwitch}
-          data-arkme-call-video-title-action="switch-perspective"
-          onClick={() => {
-            setPlayingVideoKey('')
-            setVideoPlaying(false)
-            setVideoCurrentTime(0)
-            setSamplePerspective(value => value === 'primary' ? 'secondary' : 'primary')
-          }}
-        ><ArrowClockwise size={13} />切换视角</button>}
-      </header>
-      <div style={styles.sampleImageFrame}>
-        {selectedIsSample ? <>
-          <img
-            src={sampleMain}
-            alt={`${selectedItem.peerDisplayName}示例主画面`}
-            draggable={false}
-            style={styles.sampleImage}
-          />
-          <span style={{ ...styles.videoPill, ...styles.videoPillTop }}>示例画面</span>
-          <span style={{ ...styles.videoPill, ...styles.videoPillBottomLeft }}>{sampleMainLabel}</span>
-          <span style={{ ...styles.videoPill, ...styles.videoPillBottomRight }}>{formatDuration(selectedItem.durationSeconds)}</span>
-          <span style={styles.videoInset}>
-            <img
-              src={sampleInset}
-              alt={`${sampleInsetLabel}示例小窗`}
-              draggable={false}
-              style={styles.videoInsetImage}
-            />
-            <span style={{ ...styles.videoPill, right: 7, bottom: 7, padding: '4px 6px', fontSize: 9 }}>{sampleInsetLabel}</span>
-          </span>
-          <span style={styles.videoPlay} aria-hidden="true"><Play size={25} weight="fill" /></span>
-        </> : realMain !== undefined ? <>
-          {renderPerspectiveMedia(realMain, { alt: `${videoPerspectiveLabel(realMain, '主视角')}视频通话记录画面`, active: realPlaybackActive })}
-          {realMain.videoUrl !== undefined && !realPlaybackActive && <button
-            type="button"
-            style={{ ...styles.videoPlay, ...styles.videoPlayButton }}
-            aria-label="播放视频记录"
-            onClick={() => { startVideoPlayback(realMain) }}
-          ><Play size={25} weight="fill" /></button>}
-          <span style={{ ...styles.videoPill, ...styles.videoPillBottomLeft, bottom: realMainPillBottom }}>{videoPerspectiveLabel(realMain, '主视角')}</span>
-          {!realPlaybackActive && <span style={{ ...styles.videoPill, ...styles.videoPillBottomRight }}>{formatDuration(selectedItem.durationSeconds)}</span>}
-          {realInset !== undefined && <span style={styles.videoInset}>
-            {renderPerspectiveMedia(realInset, { inset: true, alt: `${videoPerspectiveLabel(realInset, '对方视角')}视频通话记录小窗`, active: realPlaybackActive })}
-            <span style={{ ...styles.videoPill, right: 7, bottom: 7, padding: '4px 6px', fontSize: 9 }}>{videoPerspectiveLabel(realInset, '对方视角')}</span>
-          </span>}
-          {realPlaybackActive && <div style={styles.videoControls} aria-label="视频播放控制" data-arkme-call-video-controls="overlay">
-            <button type="button" style={styles.videoControlButton} aria-label={videoPlaying ? '暂停视频记录' : '继续播放视频记录'} onClick={toggleVideoPlayback}>
-              {videoPlaying ? <Pause size={15} weight="fill" /> : <Play size={15} weight="fill" />}
-            </button>
-            <div style={styles.videoProgressTrack} aria-hidden="true">
-              <span style={{ ...styles.videoProgressFill, width: `${String(progress * 100)}%` }} />
-            </div>
-            <span style={styles.videoTimeText}>{formatDuration(videoCurrentTime)} / {formatDuration(videoDuration || selectedItem.durationSeconds)}</span>
-          </div>}
-        </> : videoRecord?.videoUrl !== undefined ? <video
-          src={videoRecord.videoUrl}
-          {...(videoRecord.posterUrl === undefined ? {} : { poster: videoRecord.posterUrl })}
-          controls
-          preload="metadata"
-          playsInline
-          style={styles.realVideo}
-        /> : videoRecord?.posterUrl !== undefined ? <img
-          src={videoRecord.posterUrl}
-          alt={`${selectedItem.peerDisplayName}视频通话记录画面`}
-          draggable={false}
-          style={styles.sampleImage}
-        /> : <div style={styles.videoUnavailable}>视频记录暂不可用</div>}
-      </div>
-    </section>
-  }
 
   return <section style={styles.root} aria-label="通话" data-arkme-call-surface="true">
     <aside style={styles.browser}>
@@ -1326,62 +992,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
             <button type="button" style={styles.iconButton} aria-label={`和${selectedItem.peerDisplayName}视频通话`} onClick={() => { startSelectedCall('video') }}><CallVideoIcon size={19} /></button>
           </div>}
         </header>
-        <div style={styles.detailBody}>
-          <section style={styles.card}>
-            <h3 style={styles.cardTitle}>AI 摘要</h3>
-            <p style={styles.cardText}>
-              {detailState === 'loading' ? '正在读取通话详情...'
-                : detailState === 'error' ? detailError || '通话详情暂时不可用'
-                  : detail?.summaryText ?? selectedItem.summaryPreview ?? '这次通话还没有摘要。'}
-            </p>
-          </section>
-          {renderVideoRecord()}
-          {detail?.transcriptSegments !== undefined && detail.transcriptSegments.length > 0 && <section style={styles.transcript}>
-            <header style={styles.transcriptHeader} data-arkme-call-transcript-header="aligned">
-              <h3 style={styles.transcriptTitle}>通话转写</h3>
-              <span style={styles.transcriptCount}>{detail.transcriptSegments.length} 段对话</span>
-            </header>
-            {detail.transcriptSegments.map(segment => {
-              const mine = segment.speakerUserId !== undefined && detail.participants.some(participant => participant.isCurrentUser && participant.userId === segment.speakerUserId)
-              const speaker = detail.participants.find(participant => segment.speakerUserId !== undefined && participant.userId === segment.speakerUserId)
-                ?? detail.participants.find(participant => participant.displayName.trim() === segment.speakerDisplayName.trim())
-              const speakerAvatarRef = cleanAvatarRef(speaker?.avatarRef) ?? avatarRefForName(segment.speakerDisplayName)
-              const segmentTime = clockTime(detail.startedAtMillis + segment.startMillis)
-              return <article key={segment.segmentId} style={{ ...styles.segment, ...(mine ? styles.segmentMine : {}) }}>
-                {!mine && <CallAvatar
-                  name={segment.speakerDisplayName}
-                  avatarRef={selectedIsSample ? undefined : speakerAvatarRef}
-                  assetUrl={selectedIsSample ? sampleAvatarUrl(segment.speakerDisplayName) : undefined}
-                  size={30}
-                />}
-                <span style={{ ...styles.segmentStack, ...(mine ? styles.segmentStackMine : {}) }}>
-                  <small style={styles.segmentMeta}>{segment.speakerDisplayName}{segmentTime === '' ? '' : ` · ${segmentTime}`}</small>
-                  <span style={{ ...styles.segmentBubble, ...styles.segmentBubbleInStack, ...(mine ? styles.segmentBubbleMine : {}) }}>
-                    <p style={styles.segmentText}>{segment.text}</p>
-                  </span>
-                </span>
-                {mine && <CallAvatar
-                  name={segment.speakerDisplayName}
-                  avatarRef={selectedIsSample ? undefined : speakerAvatarRef}
-                  assetUrl={selectedIsSample ? sampleAvatarUrl(segment.speakerDisplayName) : undefined}
-                  size={30}
-                />}
-              </article>
-            })}
-            <div style={styles.endEvent}>
-              <i style={styles.endLine} />
-              <span>{selectedItem.peerDisplayName}已挂断通话</span>
-              <i style={styles.endLine} />
-            </div>
-          </section>}
-          {detailState === 'ready' && detail !== undefined && detail.transcriptSegments.length === 0 && <section style={styles.transcript} aria-label="通话转写">
-            <header style={styles.transcriptHeader} data-arkme-call-transcript-header="aligned">
-              <h3 style={styles.transcriptTitle}>通话转写</h3>
-              <span style={styles.transcriptCount}>0 段对话</span>
-            </header>
-            <p style={styles.transcriptEmpty}>暂无转写内容</p>
-          </section>}
-        </div>
+        <ArkmeCallDetailContent key={selectedItem.callRef} selectedItem={selectedItem} detail={detail} detailState={detailState} detailError={detailError} avatarRefForName={avatarRefForName} />
       </>}
       {pickerOpen && <div
         style={styles.layer}

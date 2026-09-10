@@ -240,7 +240,7 @@ describe('ArkmeLogin', () => {
 
     expect(html).toContain('.dsh-arkme-login-qr-panel { display: flex; flex-direction: column; align-items: flex-start; text-align: left; }')
     expect(html).toContain('.dsh-arkme-login-qr-title { order: 1; margin: 0; font-size: 14px;')
-    expect(html).toContain('.dsh-arkme-login-qr-frame { order: 2; width: 116px; height: 116px; margin-top: 16px;')
+    expect(html).toContain('.dsh-arkme-login-qr-frame { order: 2; width: 184px; height: 184px; margin-top: 16px;')
     expect(html).not.toContain('.dsh-arkme-login-qr-panel { display: flex; flex-direction: column; align-items: center; text-align: center; }')
   })
 

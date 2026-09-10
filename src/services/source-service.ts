@@ -1,4 +1,6 @@
 import { patchChatPolicy, type ChatPolicySnapshot } from './chat-policy.js'
+import { readTopicRecordPage } from './topic-record-page.js'
+import { readTopicMetadata } from './topic-metadata.js'
 import { arkmeRecordTextFormat, arkmeMarkdownPlainText } from '../markdown.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
@@ -845,17 +847,21 @@ export class SourceService {
     const session = await this.runtime.requireSession()
     const topic = await this.openSourceRef(sourceRef, session.userId)
     if (topic.kind !== 'topic') throw new ArkmePluginError('topic-policy-invalid', '请选择主题', false)
+    if (showInHome === undefined) {
+      const metadata = await readTopicMetadata(this.runtime, session, topic.ownerRef, signal)
+      return { showInHome: metadata.showInHome }
+    }
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-      showInHome === undefined ? '/api/v1/topics/display/detail' : '/api/v1/topics/display/policy/set',
-      { topic_uid: topic.ownerRef, ...(showInHome === undefined ? { limit: 1 } : { show_in_home: showInHome }) },
+      '/api/v1/topics/display/policy/set',
+      { topic_uid: topic.ownerRef, show_in_home: showInHome },
       session,
       // Detach obsolete reads, but let a submitted preference write complete
       // and invalidate projections even if its settings surface has closed.
-      showInHome === undefined ? signal : undefined,
+      undefined,
     )
-    const value = showInHome === undefined ? objectValue(data.topic_core).show_in_home : data.show_in_home
+    const value = data.show_in_home
     if (typeof value !== 'boolean') throw new ArkmePluginError('topic-policy-contract-invalid', '主题设置响应不完整，请重试', true, 502)
-    if (showInHome !== undefined) this.invalidateSourceListCache(session.userId, 'send_to_self')
+    this.invalidateSourceListCache(session.userId, 'send_to_self')
     return { showInHome: value }
   }
 
@@ -974,25 +980,17 @@ export class SourceService {
     let cursorSendAt: number | undefined
     let cursorRecordUid: string | undefined
     for (let pageIndex = 0; pageIndex < 1_000; pageIndex += 1) {
-      const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-        '/api/v1/topics/display/detail',
-        {
-          topic_uid: topicUid,
-          limit: 100,
-          ...(cursorSendAt === undefined ? {} : { cursor_send_at: cursorSendAt }),
-          ...(cursorRecordUid === undefined ? {} : { cursor_record_uid: cursorRecordUid }),
-        },
-        session,
-      )
-      for (const raw of listValue(data.records)) {
-        const item = objectValue(raw)
-        const uid = stringValue(item.record_uid ?? objectValue(item.record_core).record_uid).trim()
-        if (uid !== '') recordUids.add(uid)
+      const page = await readTopicRecordPage(this.runtime, session, topicUid, {
+        limit: 100,
+        ...(cursorSendAt === undefined || cursorRecordUid === undefined ? {} : { cursor: { sendAtMillis: cursorSendAt, itemUid: cursorRecordUid } }),
+      })
+      for (const raw of page.records) {
+        recordUids.add(stringValue(objectValue(raw).record_uid).trim())
       }
       onProgress?.(recordUids.size)
-      if (data.has_more !== true) return [...recordUids]
-      const nextSendAt = numberValue(data.next_cursor_send_at)
-      const nextRecordUid = stringValue(data.next_cursor_record_uid).trim()
+      if (!page.hasMore) return [...recordUids]
+      const nextSendAt = page.nextCursor?.sendAtMillis ?? 0
+      const nextRecordUid = page.nextCursor?.itemUid ?? ''
       const cursorKey = `${String(nextSendAt)}:${nextRecordUid}`
       if (nextSendAt <= 0 || nextRecordUid === '' || seenCursors.has(cursorKey)) {
         throw new ArkmePluginError('topic-dissolve-record-page-invalid', '主题快记加载不完整，未解散主题，请刷新后重试', true, 502)
