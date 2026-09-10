@@ -18,7 +18,7 @@ DSH 主题沿既有主题目录、详情和记录读取链路展示，带系统�
 
 | 消费面 | 入口 | 权限与失败边界 |
 | --- | --- | --- |
-| UI | N/A：普通主题没有对应设置入口，系统主题同样不提供 | 纯只读说明，无设置请求；已有策略不重置，仍可在即我移动端设置 |
+| UI | N/A：普通主题没有对应设置入口，系统主题同样不提供 | 纯只读说明，无设置请求；已有策略不重置，仍可在移动端设置 |
 | SDK | topicHomeVisibility(sourceRef, showInHome?, signal?) | features.topicHomeVisibility 探测；账号作用域的不透明引用 |
 | Tools | arkme_topic_home_visibility | 读取不确认；设置沿现有 explicit-user-write 确认机制 |
 | Host | topic.home-visibility → SourceService | 仅提交 show_in_home，不附带名称、隐私等字段；Record owner 最终校验 |
