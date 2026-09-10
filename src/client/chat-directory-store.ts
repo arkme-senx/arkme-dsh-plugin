@@ -140,7 +140,7 @@ function mergeUnreadMention(existing: ArkmeSourceItem | undefined, source: Arkme
   return source.hasUnreadMention
 }
 
-function retainRealtimeAvatarPresentation(
+function retainRealtimeSourceMetadata(
   existing: ArkmeSourceItem | undefined,
   source: ArkmeSourceItem,
 ): ArkmeSourceItem {
@@ -148,6 +148,10 @@ function retainRealtimeAvatarPresentation(
   const avatarRef = source.avatarRef?.trim()
   return {
     ...source,
+    ...(source.kind === 'private_chat' && existing.kind === 'private_chat'
+      && source.peerUserId === undefined && existing.peerUserId !== undefined
+      ? { peerUserId: existing.peerUserId }
+      : {}),
     ...(avatarRef === undefined || avatarRef === ''
       ? existing.avatarRef === undefined ? {} : { avatarRef: existing.avatarRef }
       : { avatarRef }),
@@ -170,14 +174,14 @@ function mergeSourceProjection(
 ): ArkmeSourceItem {
   const existingSequence = normalizedSequence(existing?.latestSequence)
   const sourceSequence = normalizedSequence(source.latestSequence)
-  // sessions-delta is an additive projection. Avatar removal is authoritative
-  // only in a complete directory baseline, which bypasses this merge path.
-  const sourceWithAvatarPresentation = retainRealtimeAvatarPresentation(existing, source)
+  // sessions-delta is additive: omitted peer identity and avatar metadata are
+  // removed only by a complete directory baseline, which bypasses this merge.
+  const sourceWithMetadata = retainRealtimeSourceMetadata(existing, source)
   const merged = existing !== undefined && sourceSequence < existingSequence
     ? (() => {
-        const latestPreview = existing.latestPreview ?? sourceWithAvatarPresentation.latestPreview
+        const latestPreview = existing.latestPreview ?? sourceWithMetadata.latestPreview
         return {
-          ...sourceWithAvatarPresentation,
+          ...sourceWithMetadata,
           ...(latestPreview === undefined ? {} : { latestPreview }),
           activeAtMillis: existing.activeAtMillis,
           unreadCount: existing.unreadCount,
@@ -189,7 +193,7 @@ function mergeSourceProjection(
         ...(() => {
           const hasUnreadMention = mergeUnreadMention(existing, source)
           return {
-            ...sourceWithAvatarPresentation,
+            ...sourceWithMetadata,
             activeAtMillis: Math.max(existing?.activeAtMillis ?? 0, source.activeAtMillis),
             ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
           }

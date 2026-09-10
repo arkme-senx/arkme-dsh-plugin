@@ -108,6 +108,54 @@ describe('conversation send directory projection', () => {
   let copiedQuickLinkItems: ArkmeMessageCopyLinkSnapshotItem[]
   let activeSource = target
 
+  it('shows the author guide only for a loaded empty author chat, preserving drafts and hiding after send', async () => {
+    activeSource = { ...target, peerUserId: 11, latestSequence: 0, latestPreview: '', displayName: '作者新昵称' }
+    arkmeChatDirectory.publish([activeSource, other])
+    arkmeUi.selectSource(activeSource)
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+    const guides = () => renderer!.root.findAllByProps({ 'data-arkme-official-author-guide': 'true' })
+    expect(guides()).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-topic-tag': '官方' })).toHaveLength(1)
+    act(() => renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('反馈测试'))
+    expect(guides()).toHaveLength(1)
+    await act(async () => { arkmeUi.selectSource(other) })
+    expect(guides()).toHaveLength(0)
+    await act(async () => { arkmeUi.selectSource(activeSource) })
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('反馈测试')
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+    expect(guides()).toHaveLength(0)
+  })
+
+  it.each([12, undefined])('does not mark or guide a matching nickname with peer ID %s', async peerUserId => {
+    activeSource = { ...target, ...(peerUserId === undefined ? {} : { peerUserId }), latestSequence: 0, displayName: 'Tison@即我' }
+    arkmeChatDirectory.publish([activeSource])
+    arkmeUi.selectSource(activeSource)
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-official-author-guide': 'true' })).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-topic-tag': '官方' })).toHaveLength(0)
+  })
+
+  it('does not flash the guide while author history is loading or when history exists', async () => {
+    activeSource = { ...target, peerUserId: 11, latestSequence: 0 }
+    arkmeChatDirectory.publish([activeSource])
+    arkmeUi.selectSource(activeSource)
+    let resolveHistory!: (value: unknown) => void
+    const pendingHistory = new Promise(resolve => { resolveHistory = resolve })
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, ...args) => operation === 'source.timeline'
+      ? pendingHistory : baseCall(operation, ...args))
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-official-author-guide': 'true' })).toHaveLength(0)
+    await act(async () => { resolveHistory({ source: activeSource, items: [{
+      itemUid: 'old-feedback', senderName: '我', isMe: true, sendAtMillis: 1,
+      title: '', textContent: '已有反馈', status: 1, templateKind: 1,
+    }], hasMore: false }) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-official-author-guide': 'true' })).toHaveLength(0)
+  })
+
   it.each([
     ['permission-denied', '未获得麦克风权限'],
     ['start-failed', '录音启动失败'],

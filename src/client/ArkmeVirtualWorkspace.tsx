@@ -20,6 +20,7 @@ import { ArkmeSendToSelfIcon } from './ArkmeSendToSelfIcon.js'
 import { ArkmeDSHBetaCommunityEntry, ArkmeDSHBetaCommunityEntryContent } from './ArkmeDSHBetaCommunityEntry.js'
 import { ARKME_EXTENSION_BRAND_GREEN } from './ArkmeMarketplace.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
+import { isArkmeOfficialAuthor, OFFICIAL_AUTHOR_USER_ID } from './ArkmeOfficialAuthorGuide.js'
 import { ArkmeGlobalSearchDialog, type ArkmeDshMessageSearchResult } from './ArkmeSearchSurface.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
@@ -384,8 +385,8 @@ function SelfAvatar() {
 
 /** Arkme-owned visual shell for every consumer contributed directory entry. */
 export function ArkmeDirectoryRow({
-  avatar, title, preview, selected, disabled = false, ariaLabel, onClick,
-}: ArkmeDirectoryRowProps) {
+  avatar, title, preview, selected, disabled = false, ariaLabel, onClick, titleBadge,
+}: ArkmeDirectoryRowProps & { titleBadge?: ReactNode }) {
   return <button
     type="button"
     role="treeitem"
@@ -398,7 +399,7 @@ export function ArkmeDirectoryRow({
   >
     <span style={styles.avatar} aria-hidden>{avatar}</span>
     <span style={styles.chatContent}>
-      <span style={styles.chatTop}><span style={styles.entryName}>{title}</span></span>
+      <span style={styles.chatTop}><span style={styles.entryName}>{title}</span>{titleBadge}</span>
       <span style={styles.chatBottom}><span style={styles.preview}>{preview}</span></span>
     </span>
   </button>
@@ -554,7 +555,6 @@ export function DeepSeekHarnessRow({ selected, onClick }: { selected: boolean; o
 }
 
 /** The Host owns the official author identity; this fallback only avoids a transient duplicate entry while it loads. */
-const OFFICIAL_AUTHOR_USER_ID = 11
 
 export function arkmeOfficialAuthorSource(
   sources: readonly ArkmeSourceItem[],
@@ -582,6 +582,7 @@ export function ArkmeOfficialAuthorRow({
           {...(profile.avatarRef === undefined ? {} : { avatarRef: profile.avatarRef })}
         />}
     title="联系作者"
+    titleBadge={<ArkmeTopicTagBadge label="官方" />}
     preview={busy ? '正在打开私聊…' : '问题反馈与使用建议'}
     selected={false}
     disabled={busy}
@@ -1996,7 +1997,11 @@ export function ArkmeNavigation({
             </span>
             <span style={styles.chatContent}>
               <span style={styles.chatTop}>
-                <span style={styles.chatName}>{source.displayName}</span>
+                <span style={isArkmeOfficialAuthor(source) ? styles.entryName : styles.chatName}>{source.displayName}</span>
+                {isArkmeOfficialAuthor(source) && <>
+                  <ArkmeTopicTagBadge label="官方" selected={selected} />
+                  <span aria-hidden style={{ flex: 1 }} />
+                </>}
                 <span style={styles.chatTime}>{timeLabel(source.activeAtMillis)}</span>
               </span>
               <span style={styles.chatBottom}>
