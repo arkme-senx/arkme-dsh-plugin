@@ -2,6 +2,7 @@ import type { ArkmeSourceItem } from '../types.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 export const OFFICIAL_AUTHOR_USER_ID = 11
+export const OFFICIAL_AUTHOR_PREVIEW = '问题反馈与使用建议'
 
 export function isArkmeOfficialAuthor(source: ArkmeSourceItem | undefined): boolean {
   return source?.kind === 'private_chat' && source.peerUserId === OFFICIAL_AUTHOR_USER_ID

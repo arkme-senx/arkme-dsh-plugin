@@ -23,7 +23,7 @@ import { ArkmeSendToSelfIcon } from './ArkmeSendToSelfIcon.js'
 import { ArkmeDSHBetaCommunityEntry, ArkmeDSHBetaCommunityEntryContent } from './ArkmeDSHBetaCommunityEntry.js'
 import { ARKME_EXTENSION_BRAND_GREEN } from './ArkmeMarketplace.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
-import { isArkmeOfficialAuthor, OFFICIAL_AUTHOR_USER_ID } from './ArkmeOfficialAuthorGuide.js'
+import { isArkmeOfficialAuthor, OFFICIAL_AUTHOR_PREVIEW, OFFICIAL_AUTHOR_USER_ID } from './ArkmeOfficialAuthorGuide.js'
 import { ArkmeGlobalSearchDialog, type ArkmeDshMessageSearchResult } from './ArkmeSearchSurface.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
@@ -566,7 +566,7 @@ export function ArkmeOfficialAuthorRow({
         />}
     title="联系作者"
     titleBadge={<ArkmeTopicTagBadge label="官方" />}
-    preview={busy ? '正在打开私聊…' : '问题反馈与使用建议'}
+    preview={busy ? '正在打开私聊…' : OFFICIAL_AUTHOR_PREVIEW}
     selected={false}
     disabled={busy}
     ariaLabel="联系作者"
@@ -596,6 +596,7 @@ export function arkmeRootChatPreview(source: ArkmeSourceItem): string {
 export function arkmeRootChatPreviewParts(source: ArkmeSourceItem): { mentionPrefix: string; preview: string } {
   const preview = (source.latestPreview ?? (source.kind === 'group_chat' ? '群聊' : ''))
     .replace(/\s+/g, ' ').trim()
+    || (isArkmeOfficialAuthor(source) ? OFFICIAL_AUTHOR_PREVIEW : '')
   const mentionPrefix = source.kind === 'group_chat' && source.hasUnreadMention === true && preview !== ''
     ? '[有人@我] '
     : ''
