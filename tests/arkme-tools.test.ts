@@ -952,29 +952,11 @@ describe('Arkme conversation tools', () => {
     })
   })
 
-  it('keeps message withdrawal and member join restriction as separate explicit tools', async () => {
-    const service = fakeService()
-    const tools = createArkmeCoreToolDefinitions(service)
-    const signal = new AbortController().signal
-    const withdraw = tools.find(definition => definition.name === 'arkme_message_withdraw')!
-    const remove = tools.find(definition => definition.name === 'arkme_group_member_remove')!
-    const setRestriction = tools.find(definition => definition.name === 'arkme_group_join_restriction_set')!
-
-    await withdraw.execute({ message_withdrawal_ref: 'withdrawal-ref-1' }, { signal } as never)
-    await remove.execute({
-      group_source_ref: 'group-ref-1', member_ref: 'member-ref-1', prevent_rejoin: false,
-    }, { signal } as never)
-    await setRestriction.execute({
-      group_source_ref: 'group-ref-1', member_ref: 'member-ref-1', restricted: true,
-    }, { signal } as never)
-
-    expect(service.withdrawGroupMessage).toHaveBeenCalledWith('withdrawal-ref-1', { signal })
-    expect(service.removeGroupMember).toHaveBeenCalledWith('group-ref-1', 'member-ref-1', {
-      preventRejoin: false, signal,
-    })
-    expect(service.setGroupJoinRestriction).toHaveBeenCalledWith(
-      'group-ref-1', 'member-ref-1', true, { signal },
-    )
+  it('retires local group governance tools so the platform MCP owns their model contract', () => {
+    const tools = createArkmeCoreToolDefinitions(fakeService())
+    for (const name of ['arkme_message_withdraw', 'arkme_group_member_remove', 'arkme_group_join_restriction_set', 'arkme_group_join_restrictions']) {
+      expect(tools.some(tool => tool.name === name)).toBe(false)
+    }
   })
 
   it('generates a group polish rule without writing and enables only with its confirmation reference', async () => {

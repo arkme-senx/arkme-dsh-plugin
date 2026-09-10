@@ -14,7 +14,6 @@ import { copyLinkExtendToolModule } from './conversation/copy-link-extend.js'
 import { messageReadReceiptToolModules } from './conversation/read-receipts.js'
 import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
 import { reportMessageToolModule } from './conversation/report-message.js'
-import { withdrawMessageToolModule } from './conversation/withdraw-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
 import { userBanToolModules } from './conversation/user-ban.js'
 import { directMessageAdmissionToolModule, directMessageRefusalToolModule } from './conversation/direct-message-refusal.js'
@@ -87,7 +86,6 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...messageReadReceiptToolModules,
   conversationMarkReadToolModule,
   reportMessageToolModule,
-  withdrawMessageToolModule,
   relatedRecordingsToolModule,
   ...userBanToolModules,
   directMessageAdmissionToolModule,
