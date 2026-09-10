@@ -37,7 +37,7 @@ export function registerGroupGovernanceConfirmation(ctx: Context, conversation: 
     const text = JSON.stringify(result)
     // This is a local non-execution, not an owner result. MCP success values
     // must keep the server's output schema; never forge a successful empty batch.
-    return { isError: true, content: [{ type: 'text', text }], error: { message: result.question, info: { name: 'ArkmeConfirmationRequired', code: 'ARKME_CONFIRMATION_REQUIRED' } } }
+    return { isError: true, content: [{ type: 'text', text }], error: { message: text, info: { name: 'ArkmeConfirmationRequired', code: 'ARKME_CONFIRMATION_REQUIRED' } } }
   })
 }
 
