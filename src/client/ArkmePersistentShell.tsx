@@ -39,7 +39,9 @@ const styles: Record<string, CSSProperties> = {
   },
   taskDirectory: { minWidth: 0, flex: 1, overflow: 'hidden', borderLeft: '1px solid #ececef', background: '#fff' },
   sidebarResizeHandle: {
-    position: 'absolute', zIndex: 3, top: 0, right: 0, bottom: 0, width: 10,
+    // Share the 4px divider budget with taskDirectory's 1px border. Keeping
+    // this in the flex layout leaves the native scrollbar fully hit-testable.
+    position: 'relative', zIndex: 3, alignSelf: 'stretch', flex: '0 0 3px', width: 3,
     cursor: 'ew-resize', touchAction: 'none',
   },
   workspace: {
