@@ -47,6 +47,7 @@ import { ArkmeTopicCreateDialog } from '../src/client/ArkmeTopicCreateDialog.js'
 import { ArkmeMarkdownComposerInput } from '../src/client/ArkmeMarkdownComposerInput.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { arkmeOfficialAuthorContactState } from '../src/client/official-author-contact-state.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta } from '../src/client/chat-directory-store.js'
 import { arkmeComposerDraftStore, arkmeSourceComposerDraftKey } from '../src/client/composer-draft-store.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
@@ -142,8 +143,10 @@ describe('conversation send directory projection', () => {
     expect(guides()).toHaveLength(0)
     await act(async () => { arkmeUi.selectSource(activeSource) })
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('反馈测试')
+    expect(arkmeOfficialAuthorContactState.hasSent('test:42')).toBe(false)
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
     expect(guides()).toHaveLength(0)
+    expect(arkmeOfficialAuthorContactState.hasSent('test:42')).toBe(true)
   })
 
   it.each([12, undefined])('does not mark or guide a matching nickname with peer ID %s', async peerUserId => {
@@ -153,6 +156,23 @@ describe('conversation send directory projection', () => {
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
     expect(renderer!.root.findAllByProps({ 'data-arkme-official-author-guide': 'true' })).toHaveLength(0)
     expect(renderer!.root.findAllByProps({ 'data-arkme-topic-tag': '官方' })).toHaveLength(0)
+  })
+
+  it('does not confirm author contact after a failed send', async () => {
+    activeSource = { ...target, peerUserId: 11, latestSequence: 0, latestPreview: '' }
+    arkmeChatDirectory.publish([activeSource])
+    arkmeUi.selectSource(activeSource)
+    const confirmed = vi.spyOn(arkmeOfficialAuthorContactState, 'confirmSent')
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, ...args) => operation === 'source.send-text'
+      ? Promise.resolve({ sourceRef: activeSource.sourceRef, itemUid: 'failed', status: -1, localState: 'failed', error: '发送失败' })
+      : baseCall(operation, ...args))
+    try {
+      await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+      act(() => renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('尚未发出的反馈'))
+      await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+      expect(confirmed).not.toHaveBeenCalled()
+    } finally { confirmed.mockRestore() }
   })
 
   it('does not flash the guide while author history is loading or when history exists', async () => {
