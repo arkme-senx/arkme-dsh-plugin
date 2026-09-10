@@ -219,22 +219,26 @@ function confirmationResult(agent: Agent, pending: PendingConfirmation): { seq: 
     if (event.seq <= pending.preparedAfterSeq) continue
     if (event.type === 'tool/code-dispatch' && event.data.rootCallId === pending.preparedRootCallId
       && event.data.subCallId === pending.preparedCallId) {
-      if (event.data.isError) return { seq: event.seq, isError: true }
+      if (event.data.isError && !isPreparedConfirmation(event.data.content, pending)) return { seq: event.seq, isError: true }
       preparedSucceeded = true
     }
     if (event.type !== 'tool/result' || (event.surfaceOp !== undefined && event.surfaceOp !== 'append')) continue
     const [result] = event.data.message.content
     if (event.data.message.source.callId === pending.preparedRootCallId && result.toolCallId === pending.preparedRootCallId) {
       // MCP output schemas describe owner results, so its local confirmation is
-      // a non-execution error. Only this exact, already prepared direct result
+      // a non-execution error. Only this exact, already prepared result
       // establishes publication; arbitrary failures still require preparation.
       const publishedConfirmation = pending.preparedCallId === pending.preparedRootCallId
-        && result.content.length === 1 && result.content[0]?.type === 'text'
-        && result.content[0].text === JSON.stringify({ status: 'confirmation_required', question: pending.question, expiresAtMillis: pending.expiresAtMillis })
+        && isPreparedConfirmation(result.content, pending)
       return { seq: event.seq, isError: (result.isError === true && !publishedConfirmation) || !preparedSucceeded }
     }
   }
   return undefined
+}
+
+function isPreparedConfirmation(content: readonly { type: string; text?: string }[], pending: PendingConfirmation): boolean {
+  return content.length === 1 && content[0]?.type === 'text'
+    && content[0].text === JSON.stringify({ status: 'confirmation_required', question: pending.question, expiresAtMillis: pending.expiresAtMillis })
 }
 
 export function lastSessionSeq(agent: Agent): number {

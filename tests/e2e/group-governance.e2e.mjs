@@ -58,7 +58,7 @@ describe('packed Arkme group governance through official DSH session and MCP', (
       for (const key of ['auth', 'subject', 'record', 'data', 'chat', 'bot', 'im', 'webrtc', 'world', 'relation', 'intelligent', 'audio', 'openApi', 'extensionPublish', 'updateService']) config[`${key}BaseUrl`] = origin
       config.shareWebsite = origin
       const overlay = join(root, 'overlay.json'); await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'arkme-group-e2e', name: '@senguoyun/dsh-arkme', config }] }]))
-      scaffold = await launchWebScaffold({ extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'package.json')], compareReplaySession: false })
+      scaffold = await launchWebScaffold({ extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'package.json')], compareReplaySession: false, toolsMode: 'both' })
       const service = scaffold.ctx.get('arkmeData')
       const memberInvalidations = []
       service.subscribeChatRealtime(event => { if (event.type === 'members-invalidated') memberInvalidations.push(event) })
@@ -67,7 +67,8 @@ describe('packed Arkme group governance through official DSH session and MCP', (
       await expect.poll(() => scaffold.ctx.tools.schemas().map(tool => tool.name), { timeout: 30_000 }).toEqual(expect.arrayContaining(names.map(name => `mcp__arkme__${name}`)))
       for (const name of ['arkme_message_withdraw', 'arkme_group_member_remove', 'arkme_group_join_restriction_set', 'arkme_group_join_restrictions']) expect(scaffold.ctx.tools.schemas().some(tool => tool.name === name)).toBe(false)
       const events = []
-      scaffold.ctx.on('session/event', (_session, event) => { if (event.type === 'tool/result') events.push(event) })
+      const codeDispatches = []
+      scaffold.ctx.on('session/event', (_session, event) => { if (event.type === 'tool/result') events.push(event); if (event.type === 'tool/code-dispatch') codeDispatches.push(event) })
       let group, userRef
       const locator = () => ({ item_id: 'dsh-member', chat_session_uid: group, target_user_ref: userRef })
       const succeeded = value => expect(value.items[0].status).toBe('succeeded')
@@ -110,7 +111,8 @@ describe('packed Arkme group governance through official DSH session and MCP', (
           if (this.cancelNext) { this.cancelNext = false; reply = '已取消，本次没有执行写入。' }
           else if (events.length > this.processed) {
             const result = events.at(-1).data.message.content[0]
-            const value = JSON.parse(result.content.filter(item => item.type === 'text').map(item => item.text).join('\n'))
+            let value = JSON.parse(result.content.filter(item => item.type === 'text').map(item => item.text).join('\n'))
+            if (value.structuredContent !== undefined) value = value.structuredContent
             this.processed = events.length
             if (value.status === 'confirmation_required') {
               this.question = value.question
@@ -131,8 +133,12 @@ describe('packed Arkme group governance through official DSH session and MCP', (
           }
           const step = steps[this.index]
           const id = `group-browser-${++this.calls}`
-          const name = `mcp__arkme__${step[0]}`
-          const args = JSON.stringify(step[1]())
+          const tool = `mcp__arkme__${step[0]}`
+          // Exercise the shipped worker runtime as well as direct MCP calls.
+          const code = ['withdraw_group_messages', 'set_group_join_restrictions'].includes(step[0])
+          const name = code ? 'run_code' : tool
+          const input = step[1]()
+          const args = JSON.stringify(code ? { code: `try { console.log(JSON.stringify(await tools.${tool}(${JSON.stringify(input)}))) } catch (error) { console.log(error.message) }`, description: '执行已选定的群治理操作' } : input)
           yield { type: 'block-start', index: 0, blockType: 'tool-call' }
           yield { type: 'tool-call-delta', index: 0, id, name, argumentsDelta: args }
           yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name, arguments: args } }
@@ -173,6 +179,8 @@ describe('packed Arkme group governance through official DSH session and MCP', (
       expect(adapter.index, await frame.locator('body').innerText()).toBe(steps.length)
       expect(confirmations).toBe(6)
       expect(dispatchedWrites).toHaveLength(6)
+      expect(codeDispatches).toHaveLength(8)
+      expect(codeDispatches.filter(event => event.data.isError)).toHaveLength(4)
       expect(memberInvalidations).toHaveLength(2)
       expect(events).toHaveLength(steps.length + confirmations)
       await frame.getByText('GROUP_GOVERNANCE_E2E_OK', { exact: true }).last().waitFor()
