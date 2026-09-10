@@ -20,6 +20,21 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordService', () => {
+  it.each(['timeline', 'record-list'] as const)('carries partial media evidence through the %s projection', path => {
+    const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
+    const service = new RecordService({} as ServiceRuntime, media, {} as never)
+    const raw = { record_uid: 'r', record_core: { record_uid: 'r', version: 8, status: 1,
+      content_payload: { media_refs: [{ file_asset_uid: 'a' }, { file_asset_uid: 'b' }] } } }
+    const displays = ['a', 'b'].map(file_asset_uid => ({ file_asset_uid, file_kind: 1,
+      file_name: `${file_asset_uid}.png`, preview_url: `https://example.test/${file_asset_uid}` }))
+    const project = (displayItems: unknown[]) => path === 'timeline'
+      ? service.recordTimelineItemFromRaw(raw, 42, { displayItems })
+      : service.recordTimelineItem(service.recordItem(raw, 42, { displayItems })!)
+    expect(project(displays.slice(0, 1))).toMatchObject({ version: 8, mediaUnavailable: true, contentBlocks: [{ fileAssetUid: 'a' }] })
+    expect(project(displays).contentBlocks).toHaveLength(2)
+    expect(project(displays).mediaUnavailable).not.toBe(true)
+  })
+
   it('preserves the Flutter battery contract including an explicit zero percent', () => {
     expect(arkmeRecordCaptureContextPayload({ electric: 0, charge: 2 })).toEqual({ electric: 0, charge: 2 })
     expect(arkmeRecordCaptureContextPayload({ electric: 100, charge: 1 })).toEqual({ electric: 100, charge: 1 })
@@ -109,7 +124,10 @@ describe('RecordService', () => {
         throw new Error(`unexpected path: ${path}`)
       },
     }
-    const service = new RecordService(runtime as never, {} as MediaService, {
+    const service = new RecordService(runtime as never, {
+      async hydrateRecordMediaPage() { return { displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() } },
+      richContentBlocks() { return [] },
+    } as unknown as MediaService, {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'group_chat' as const, ownerRef: 'group-1', displayName: '研发群' }
       },
@@ -142,6 +160,51 @@ describe('RecordService', () => {
       record_duration_millis: 3_200, edit_duration_millis: 800, version: 7,
     })
     await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toBeUndefined()
+  })
+
+  it.each([undefined, 'plain', 'markdown'] as const)('preserves %s format semantics through re-edit drafts and commits', async textFormat => {
+    const stateStore = new ArkmeStateStore(await mkdtemp(join(tmpdir(), 'dsh-arkme-reedit-format-')))
+    const originalCore = {
+      record_uid: 'record-1', owner_user_id: 42, creator_user_id: 42,
+      origin_kind: 1, origin_container_ref: '', template_kind: 1, display_kind: 0,
+      title: '', text_content: '原正文', status: 1, version: 1, content_access_state: 1,
+      content_payload: {
+        payload_kind: 1, schema_version: 1, text_state: 1,
+        ...(textFormat === undefined ? {} : { text_format: textFormat }),
+      },
+    }
+    let updateBody: Record<string, unknown> | undefined
+    const runtime = {
+      config: { maxTextLength: 20_000 }, stateStore,
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedPost(path: string, body: Record<string, unknown>) {
+        if (path === '/api/v1/records/detail') return { record_core: structuredClone(originalCore) }
+        if (path === '/api/v1/records/update') {
+          updateBody = structuredClone(body)
+          return { record_core: { ...originalCore, ...body, version: 2 }, revision_uid: 'revision-1' }
+        }
+        throw new Error(`unexpected path: ${path}`)
+      },
+    }
+    const service = new RecordService(runtime as never, {} as MediaService, {
+      async openSourceRef() {
+        return { version: 1 as const, userId: 42, kind: 'send_to_self' as const, ownerRef: 'self', displayName: '我' }
+      },
+    })
+    const target = { sourceRef: 'source-ref', itemUid: 'record-1' }
+    const newText = '    **代码块**\n'
+    const expectedText = textFormat === 'markdown' ? newText : newText.trim()
+    await service.prepareRecordReedit({ ...target, newText })
+    await expect(service.recordReeditEditor(target.sourceRef, target.itemUid)).resolves.toMatchObject({
+      textFormat: textFormat ?? 'plain', draft: { textContent: expectedText },
+    })
+    const restored = await service.prepareRecordReedit(target)
+    await service.commitRecordReedit(restored)
+    expect(updateBody).toMatchObject({ text_content: expectedText })
+    expect(updateBody?.content_payload).toEqual(originalCore.content_payload)
+    await expect(service.prepareRecordReedit({ ...target, newText: '    \n' })).rejects.toMatchObject({
+      code: 'record-reedit-content-invalid',
+    })
   })
 
   it('does not confuse a plain content payload with attachments', async () => {
@@ -593,7 +656,7 @@ describe('RecordService', () => {
 
     const restored = await reloadedService.prepareRecordReedit({ sourceRef: 'source-ref-new', itemUid: 'record-1' })
     expect(restored).toMatchObject({
-      draftRevision: first.draftRevision, baseVersion: 8,
+      draftRevision: first.draftRevision + 1, baseVersion: 8,
       oldTextPreview: '其他端已更新正文', newTextPreview: '未提交草稿', sourceRef: 'source-ref-new',
     })
     await expect(stateStore.getRecordReeditDraft(42, restored.sourceIdentityKey, 'record-1')).resolves.toMatchObject({
@@ -660,7 +723,7 @@ describe('RecordService', () => {
 
   it('restores a record extension parent preview from the durable home-feed contract', () => {
     const media = {
-      richContentBlocks: vi.fn((raw: unknown) => {
+      recordMediaUnavailable: () => false, richContentBlocks: vi.fn((raw: unknown) => {
         const core = (raw as { record_core?: { record_uid?: string } }).record_core
         return core?.record_uid === 'record-parent' ? [{
           kind: 'image', mediaRef: 'parent-image-ref', fileName: 'parent.png', mimeType: 'image/png', size: 12, sortOrder: 0,

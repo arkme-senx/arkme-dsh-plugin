@@ -28,14 +28,13 @@ describe('Arkme conversation directory load state', () => {
     })).toBe('idle')
   })
 
-  it('keeps embedded directory refresh failures out of the visible sidebar', () => {
-    const embeddedStatuses = workspaceSource.slice(
-      workspaceSource.indexOf("rootDirectoryState === 'loading'"),
-      workspaceSource.indexOf('{lockedDirectory ? <>'),
-    )
-    expect(embeddedStatuses).not.toContain("rootDirectoryState === 'error'")
-    expect(embeddedStatuses).not.toContain('加载失败')
-    expect(embeddedStatuses).not.toContain('重试')
+  it('never renders directory loading indicators, including an uncached first load', () => {
+    expect(workspaceSource).not.toContain('正在同步更多会话')
+    expect(workspaceSource).not.toContain('rootDirectoryStatus')
+    expect(workspaceSource).not.toContain('ArkmeDirectoryRefreshIcon')
+    expect(workspaceSource).not.toContain("rootDirectorySkeleton")
+    expect(workspaceSource).not.toContain("正在加载会话")
+    expect(workspaceSource).toContain("(rootDirectoryState === 'error' || chatDirectory.projection?.phase === 'failed')")
   })
 
   it('opens the existing global-search dialog for controller tag targets', () => {
@@ -138,8 +137,8 @@ describe('Arkme conversation directory load state', () => {
     expect(workspaceSource).toContain("'bots.list'")
     expect(workspaceSource).toContain('mergeBotDirectoryActivity')
     expect(workspaceSource).toContain('directoryContextRequestRef.current += 1')
-    expect(workspaceSource).toContain("setDirectoryContextMenu({ kind: 'source', source, x: event.clientX, y: event.clientY })")
-    expect(workspaceSource).toContain("setDirectoryContextMenu({ kind: 'bot', bot, x: event.clientX, y: event.clientY })")
+    expect(workspaceSource).toContain("setDirectoryContextMenu({ kind: 'source', key: arkmeSourceIdentityKey(source), x: event.clientX, y: event.clientY })")
+    expect(workspaceSource).toContain("setDirectoryContextMenu({ kind: 'bot', key: conversationBotVisibilityKey(bot), x: event.clientX, y: event.clientY })")
     expect(workspaceSource).toContain('const updateConversationDirectoryPin = async')
     expect(workspaceSource).toContain('const dismissConversationDirectoryEntry = async')
     expect(workspaceSource).toContain('const current = botChatDirectory.sources.find(')
@@ -172,11 +171,11 @@ describe('Arkme conversation directory load state', () => {
     )
   })
 
-  it('does not render a newly loaded owner row before visibility hydration settles', () => {
-    expect(workspaceSource).toContain('const [conversationVisibilityHydrated, setConversationVisibilityHydrated]')
-    expect(workspaceSource).toContain('conversationVisibilityHydrated.has(sourceKey)')
-    expect(workspaceSource).toContain('conversationVisibilityHydrated.has(botKey)')
-    expect(workspaceSource).toContain('setConversationVisibilityHydrated(current => markConversationVisibilityScopeHydrated(')
+  it('uses the shared visible-row projection instead of component-local visibility hydration', () => {
+    expect(workspaceSource).toContain('arkmeChatDirectory.getConversationSnapshot')
+    expect(workspaceSource).toContain('arkmeChatDirectory.hydrateVisibility(result.items)')
+    expect(workspaceSource).not.toContain('setLegacyBots')
+    expect(workspaceSource).not.toContain('conversationVisibilityHydrated')
   })
 
   it('retains the confirmed owner overlay while the conversation directory is unmounted', () => {

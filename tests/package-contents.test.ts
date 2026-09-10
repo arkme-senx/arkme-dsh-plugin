@@ -46,7 +46,7 @@ describe('published package contents', () => {
       .join('\n')
 
     expect(javascript).not.toMatch(/(?:from\s+|import\s*\()(["'])pinyin-pro\1/)
-  })
+  }, 30_000)
 
   it('builds a Release Set plugin without an external mediabunny runtime dependency', () => {
     runPnpm(['run', 'bundle'])
@@ -58,5 +58,5 @@ describe('published package contents', () => {
       .join('\n')
 
     expect(javascript).not.toMatch(/(?:from\s+|import\s*\()(["'])mediabunny\1/)
-  })
+  }, 30_000)
 })

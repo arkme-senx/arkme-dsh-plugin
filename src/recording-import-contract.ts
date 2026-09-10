@@ -25,6 +25,45 @@ export type {
   RecordingImportPhase,
 }
 
+export interface RecordingFileImportInput {
+  fileRef: string
+  startAtMillis: number
+  ownership: 'self' | 'other'
+}
+
+export interface RecordingDirectoryCandidate { fileName: string; startAtMillis: number }
+export interface RecordingDirectoryUploadedSession {
+  sessionId: string
+  fileName: string
+  fileSize: number
+  startAtMillis: number
+  durationMillis: number
+  belongUserId: number
+  hasFinishedUpload: boolean
+}
+export type RecordingImportIdentity = Pick<RecordingImportJob, 'userId' | 'fileName' | 'fileSize' | 'sha256' | 'startAtMillis' | 'belongUserId'>
+export interface RecordingDirectorySnapshot {
+  local: Array<{ identity: RecordingImportIdentity; task: PublicRecordingImportJob }>
+  existingFileNames: string[]
+  owner: RecordingDirectoryUploadedSession[]
+}
+
+export interface RecordingDirectoryEntry {
+  relativePath: string
+  fileName: string
+  fileSize: number
+  sourceSnapshot: string
+}
+export interface RecordingDirectorySelection {
+  files: RecordingDirectoryEntry[]
+  skipped: number
+}
+export interface RecordingDirectorySource extends RecordingImportSource {
+  scan(directoryPath: string, recursive: boolean, signal?: AbortSignal): Promise<RecordingDirectorySelection>
+  probe(file: RecordingDirectoryEntry, signal?: AbortSignal): Promise<{ durationMillis: number }>
+  stage(file: RecordingDirectoryEntry, signal?: AbortSignal): Promise<{ sourceHandle: string; sha256: string; mimeType: string }>
+}
+
 export interface RecordingImportOwnerSession {
   sessionId: string
   ownership: 'self' | 'other'
@@ -52,6 +91,14 @@ export interface RecordingImportOwnerTaskSnapshot {
 }
 
 export interface RecordingImportOwnerGateway {
+  findDirectoryImportSessions(input: {
+    viewerUserId: number
+    fileNames: readonly string[]
+    fromMillis: number
+    toMillis: number
+    signal?: AbortSignal
+  }): Promise<RecordingDirectoryUploadedSession[]>
+
   findExistingFileNames(input: {
     viewerUserId: number
     fileNames: readonly string[]
@@ -127,6 +174,17 @@ export type RecordingImportAdmission =
   | { kind: 'duplicate-file-name' }
   | { kind: 'limit' }
 
+export function isRecordingImportDuplicateRejection(job: RecordingImportJob): boolean {
+  return job.phase === 'failed' && job.failedFromPhase === 'prepared'
+    && job.errorCode === 'recording-import-duplicate' && job.retryable === false
+    && job.sessionId === undefined && job.childId === undefined && job.childFinished !== true
+    && job.uploadedBytes === 0 && job.uploadCheckpoint === undefined
+}
+
+export function isUnresolvedRecordingImportJob(job: RecordingImportJob): boolean {
+  return job.phase !== 'accepted' && job.phase !== 'cancelled' && !isRecordingImportDuplicateRejection(job)
+}
+
 export interface RecordingImportSource {
   inspect(
     sourceHandle: string,
@@ -136,8 +194,8 @@ export interface RecordingImportSource {
 }
 
 export function sameRecordingImportIdentity(
-  left: Pick<RecordingImportJob, 'userId' | 'fileName' | 'fileSize' | 'sha256' | 'startAtMillis' | 'belongUserId'>,
-  right: Pick<RecordingImportJob, 'userId' | 'fileName' | 'fileSize' | 'sha256' | 'startAtMillis' | 'belongUserId'>,
+  left: RecordingImportIdentity,
+  right: RecordingImportIdentity,
 ): boolean {
   return left.userId === right.userId
     && left.fileName === right.fileName

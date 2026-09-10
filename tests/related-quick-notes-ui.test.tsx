@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import { emojiSample } from './fixtures/emoji.js'
 import {
   ArkmeRelatedQuickNoteDetail,
   ArkmeRelatedQuickNotesCard,
@@ -20,6 +21,19 @@ function item(itemUid: string, textPreview: string): ArkmeRelatedQuickNoteItem {
 }
 
 describe('related quick note shared UI', () => {
+  it.each([ArkmeRelatedQuickNotesCard, ArkmeRelatedQuickNotesList])('renders emoji previews without nested interactions', Component => {
+    const markup = renderToStaticMarkup(createElement(Component, {
+      state: { kind: 'success', list: { total: 1, items: [item('a', emojiSample)] } },
+      onOpen: vi.fn(), onSelect: vi.fn(), onRetry: vi.fn(),
+    }))
+    expect(markup).toContain('data-arkme-rich-emoji="heart_eyes"')
+    expect(markup).toContain('data-arkme-rich-emoji="thumb_up"')
+    expect(markup).toContain('👨‍👩‍👧‍👦 👍🏽 🇨🇳 [jm_emoji:unknown]')
+    expect(markup).not.toContain('[jm_emoji:heart_eyes]')
+    expect(markup).not.toContain('<a ')
+    expect(markup).not.toContain('role="link"')
+  })
+
   it('renders at most two previews in the Arkme summary card', () => {
     const list = {
       total: 4,

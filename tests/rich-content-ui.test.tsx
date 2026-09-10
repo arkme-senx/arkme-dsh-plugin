@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { create } from 'react-test-renderer'
+import { act, create } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
+import { emojiSample } from './fixtures/emoji.js'
 import {
   ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, ArkmeRecordDetailContent,
-  arkmeContainedImageRect, arkmeImagePreviewAnchoredTop,
+  arkmeContainedImageRect, arkmeImagePreviewAnchoredTop, arkmeImagePreviewSpringFrames,
   arkmeImagePreviewDragTop, arkmeMessageCopyLinkSidFromUrl, arkmeNextImagePreviewMode,
   arkmeRelatedRecordingItemFromSharedRecording, arkmeSharedRecordingTimeText,
 } from '../src/client/ArkmeRichContent.js'
@@ -12,6 +13,168 @@ import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from '../src/client/A
 import { arkmeClipboardImageFiles, arkmeShouldDismissAnchoredMenu, arkmeShouldToggleMessageSelectFromRowClick } from '../src/client/ArkmeSidebar.js'
 
 describe('Arkme rich content presentation', () => {
+  it('matches the desktop spring with a smooth start and a settled end', () => {
+    const { duration, frames } = arkmeImagePreviewSpringFrames()
+    expect(duration).toBeGreaterThan(250)
+    expect(duration).toBeLessThan(400)
+    expect(frames[0]).toEqual({ offset: 0, progress: 0 })
+    expect(frames.at(-1)).toEqual({ offset: 1, progress: 1 })
+    expect(frames.every((frame, index) => frame.progress >= (frames[index - 1]?.progress ?? 0) && frame.progress <= 1)).toBe(true)
+    const at100ms = frames.find(frame => Math.abs(frame.offset * duration - 100) < 0.01)!
+    expect(at100ms.progress).toBeCloseTo(0.6649509, 5)
+  })
+  it('animates from the visible image size and cancels an interrupted zoom on the next double-click', async () => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), matchMedia: () => ({ matches: false }) })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const cancel = vi.fn()
+    const animate = vi.fn(() => ({ cancel }))
+    const image = { kind: 'image' as const, mediaRef: 'spring', fileName: 'photo.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
+    let view: ReturnType<typeof create> | undefined
+    let displayedScale = 1
+    try {
+      await act(async () => {
+        view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, {
+          createNodeMock: element => element.type === 'img'
+            ? {
+              naturalWidth: 1600, naturalHeight: 800, animate,
+              getBoundingClientRect: () => {
+                const style = view!.root.findByType('img').props.style
+                const width = (typeof style.width === 'number' ? style.width : 1000) * displayedScale
+                const height = (typeof style.height === 'number' ? style.height : 800) * displayedScale
+                return { left: (1000 - width) / 2, top: (800 - height) / 2, width, height }
+              },
+            }
+            : { clientWidth: 1000, clientHeight: 800, scrollWidth: 1600, scrollHeight: 800, scrollLeft: 0, scrollTop: 0 },
+        })
+      })
+      const viewport = () => view!.root.findByProps({ 'data-arkme-image-preview-viewport': 'true' })
+      await act(async () => viewport().props.onDoubleClick())
+      expect(animate).toHaveBeenCalledWith(expect.arrayContaining([
+        expect.objectContaining({ offset: 0, transform: 'translate(0px, 0px) scale(0.625)' }),
+        expect.objectContaining({ offset: 1, transform: 'translate(0px, 0px) scale(1)' }),
+      ]), expect.objectContaining({ easing: 'linear' }))
+      displayedScale = .8
+      cancel.mockImplementation(() => { displayedScale = 1 })
+      await act(async () => viewport().props.onDoubleClick())
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(animate).toHaveBeenLastCalledWith(expect.arrayContaining([
+        expect.objectContaining({ offset: 0, transform: 'translate(0px, 0px) scale(1.28)' }),
+      ]), expect.anything())
+    } finally {
+      if (view !== undefined) await act(async () => view!.unmount())
+      vi.unstubAllGlobals()
+    }
+    expect(cancel).toHaveBeenCalledTimes(2)
+  })
+  it.each([[1600, 800, 1600, 800], [400, 1600, 1000, 4000]])('cycles desktop double-click sizes for %sx%s images', async (width, height, coveredWidth, coveredHeight) => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const image = { kind: 'image' as const, mediaRef: 'zoom-cycle', fileName: 'photo.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
+    let view: ReturnType<typeof create> | undefined
+    try {
+      await act(async () => {
+        view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, {
+          createNodeMock: element => element.type === 'img'
+            ? { naturalWidth: width, naturalHeight: height }
+            : { clientWidth: 1000, clientHeight: 800, scrollWidth: coveredWidth, scrollHeight: coveredHeight, scrollLeft: 0, scrollTop: 0 },
+        })
+      })
+      const viewport = () => view!.root.findByProps({ 'data-arkme-image-preview-viewport': 'true' })
+      await act(async () => viewport().props.onDoubleClick())
+      expect(viewport().props['data-arkme-image-preview-mode']).toBe('covered')
+      expect(view!.root.findByType('img').props.style).toMatchObject({ width: coveredWidth, height: coveredHeight })
+      await act(async () => viewport().props.onDoubleClick())
+      if (coveredWidth !== width || coveredHeight !== height) {
+        expect(viewport().props['data-arkme-image-preview-mode']).toBe('original')
+        expect(view!.root.findByType('img').props.style).toMatchObject({ width, height })
+        await act(async () => viewport().props.onDoubleClick())
+      }
+      expect(viewport().props['data-arkme-image-preview-mode']).toBe('contained')
+    } finally {
+      if (view !== undefined) await act(async () => view!.unmount())
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('dismisses image-stage blank space but preserves image and control clicks', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const onClose = vi.fn()
+    const image = { kind: 'image' as const, mediaRef: 'blank-click', fileName: 'portrait.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
+    let view: ReturnType<typeof create> | undefined
+    try {
+      await act(async () => {
+        view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={onClose} />, {
+          createNodeMock: element => element.type === 'img'
+            ? { naturalWidth: 400, naturalHeight: 800, getBoundingClientRect: () => ({ left: 10, top: 50, width: 1000, height: 800 }) }
+            : null,
+        })
+      })
+      const body = view!.root.findByProps({ role: 'dialog' }).findAllByType('div')[1]!
+      const click = (clientX: number, clientY: number, control = false) => {
+        body.props.onClick({ clientX, clientY, detail: 1, target: { closest: () => control ? {} : null }, stopPropagation: vi.fn() })
+        vi.advanceTimersByTime(500)
+      }
+      click(510, 450)
+      click(510, 900, true)
+      expect(onClose).not.toHaveBeenCalled()
+      click(110, 450)
+      click(910, 450)
+      click(510, 20)
+      click(510, 900)
+      expect(onClose).toHaveBeenCalledTimes(4)
+    } finally {
+      if (view !== undefined) await act(async () => view!.unmount())
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not dismiss on the clicks preceding a third double-click after the image shrinks', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const onClose = vi.fn()
+    const image = { kind: 'image' as const, mediaRef: 'repeat-zoom', fileName: 'small.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
+    let view: ReturnType<typeof create> | undefined
+    try {
+      await act(async () => {
+        view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={onClose} />, {
+          createNodeMock: element => element.type === 'img'
+            ? { naturalWidth: 400, naturalHeight: 200, getBoundingClientRect: () => ({ left: 300, top: 300, width: 400, height: 200 }) }
+            : { clientWidth: 1000, clientHeight: 800, scrollWidth: 1600, scrollHeight: 800, scrollLeft: 0, scrollTop: 0 },
+        })
+      })
+      const viewport = () => view!.root.findByProps({ 'data-arkme-image-preview-viewport': 'true' })
+      await act(async () => viewport().props.onDoubleClick())
+      await act(async () => viewport().props.onDoubleClick())
+      expect(viewport().props['data-arkme-image-preview-mode']).toBe('original')
+      const body = () => view!.root.findByProps({ role: 'dialog' }).findAllByType('div')[1]!
+      const click = (detail: number) => body().props.onClick({ clientX: 100, clientY: 400, detail, target: { closest: () => null }, stopPropagation: vi.fn() })
+      click(1)
+      vi.advanceTimersByTime(150)
+      expect(onClose).not.toHaveBeenCalled()
+      click(2)
+      await act(async () => viewport().props.onDoubleClick())
+      vi.advanceTimersByTime(600)
+      expect(viewport().props['data-arkme-image-preview-mode']).toBe('contained')
+      expect(onClose).not.toHaveBeenCalled()
+      click(1)
+      vi.advanceTimersByTime(500)
+      expect(onClose).toHaveBeenCalledOnce()
+      click(1)
+      await act(async () => view!.unmount())
+      view = undefined
+      vi.advanceTimersByTime(500)
+      expect(onClose).toHaveBeenCalledOnce()
+    } finally {
+      if (view !== undefined) await act(async () => view!.unmount())
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
   it('gives every forwarded transcript segment its own avatar, including consecutive turns by the same speaker', () => {
     const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
       itemUid: 'forward-speakers', senderName: '转发者', isMe: true, sendAtMillis: 0, status: 1, title: '', textContent: '',
@@ -28,23 +191,60 @@ describe('Arkme rich content presentation', () => {
     expect(html).not.toContain('<audio')
   })
 
-  it('keeps recording detail text, speaker offsets and only authorized audio, including partial states', () => {
+  it('opens a single recording as desktop read-only segments without duplicating its summary or account avatars', () => {
     const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
       itemUid: 'forward', senderName: '转发者', isMe: true, sendAtMillis: 0, status: 1, title: '', textContent: '',
       forwardRecords: { title: '录音转写', createdAtMillis: 0, summaryLines: [], truncated: true, items: [{
         senderName: '原作者', sendAtMillis: 0, title: '', textContent: '单独的摘要', sourceType: 'long_recording_segments',
-        segments: [{ speakerName: '说话人甲', textContent: '完整片段'.repeat(100), startMillis: 60000, endMillis: 90000 }],
+        segments: [{ speakerNumber: 0, speakerName: '说话人甲', textContent: '完整片段'.repeat(100), startMillis: 60000, endMillis: 90000 }],
       }] },
     }} />)
-    expect(html).toContain('单独的摘要')
+    expect(html).not.toContain('单独的摘要')
     expect(html).toContain('完整片段'.repeat(100))
     expect(html).toContain('说话人甲')
-    expect(html).toContain('01:00–01:30')
+    expect(html).toContain('01:00')
+    expect(html).not.toContain('01:30')
+    expect(html).toContain('data-arkme-forward-recording-detail')
+    expect(html).toContain('background:#ec7fa9')
+    expect(html).not.toContain('头像')
+    expect(html).not.toContain('转发于')
     expect(html).toContain('当前展示部分转发记录')
     expect(html).not.toContain('1970')
     expect(html).not.toContain('<audio')
     expect(html).not.toContain('data-arkme-text-collapsible')
-    expect(html).toContain('width:min(372px, 100%)')
+    expect(html).toContain('width:405px')
+    expect(html).toContain('max-width:100%')
+    expect(html).toContain('aria-label="调整快记详情宽度"')
+    expect(html).toContain('aria-valuenow="405"')
+  })
+
+  it('preserves speaker zero, repeated-speaker colors, hour offsets and the first selected wall-clock time', () => {
+    const start = new Date(2026, 8, 3, 11, 38).getTime()
+    const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
+      itemUid: 'single', senderName: '转发者', isMe: false, sendAtMillis: start + 86400000, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '录音.wav', createdAtMillis: start + 86400000, summaryLines: [], items: [{
+        senderName: '作者', sendAtMillis: start, title: '', textContent: '重复摘要', sourceType: 'long_recording_segments',
+        segments: [0, 0, 2].map((speakerNumber, index) => ({ speakerNumber, speakerName: `说话人${speakerNumber}`, textContent: `片段${index}`, startMillis: 3600000 + index * 1000, endMillis: 3601000 + index * 1000 })),
+      }] },
+    }} />)
+    expect(html.match(/background:#ec7fa9/gu)).toHaveLength(2)
+    expect(html).toContain('background:#80a1ba')
+    expect(html).toContain('01:00:00')
+    expect(html).toContain('12:38')
+    expect(html).not.toContain('重复摘要')
+    expect(html.match(/data-arkme-forward-recording-segment/gu)).toHaveLength(3)
+  })
+
+  it.each(['call', 'mixed', 'empty'] as const)('does not mistake %s forwarding for a single recording snapshot', kind => {
+    const sourceType = kind === 'call' ? 'chat_record' as const : 'long_recording_segments' as const
+    const segment = { speakerName: '甲', textContent: '片段', startMillis: 0, endMillis: 1000 }
+    const value = { sourceType, senderName: '甲', sendAtMillis: 0, title: '', textContent: '消息正文', segments: kind === 'empty' ? [] : [segment] }
+    const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
+      itemUid: 'forward', senderName: '转发者', isMe: true, sendAtMillis: 0, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '转发', createdAtMillis: 0, summaryLines: [], items: kind === 'mixed' ? [value, { ...value, sourceType: 'record' }] : [value] },
+    }} />)
+    expect(html).not.toContain('data-arkme-forward-recording-detail')
+    expect(html).toContain('消息正文')
   })
   it('shows a single-line forward heading and at most three summary lines without a nested card shell', () => {
     const html = renderToStaticMarkup(<ArkmeMessageContent item={{
@@ -147,15 +347,39 @@ describe('Arkme rich content presentation', () => {
     const image = { kind: 'image' as const, mediaRef: 'long-image-ref', fileName: 'long.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
     const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => undefined} onClose={() => undefined} />)
     expect(html).toContain('data-arkme-image-preview-viewport="true"')
+    expect(html).toContain('data-arkme-media-preview-actions="bottom"')
+    expect(html).toContain('aria-label="上一个媒体" disabled=""')
+    expect(html).toContain('aria-label="下一个媒体" disabled=""')
     expect(html).toContain('data-arkme-image-preview-mode="contained"')
+    expect(html).toContain('bottom:52px')
     expect(html).toContain('overflow-x:hidden')
-    expect(html).toContain('overflow-y:hidden')
+    expect(html).toContain('overflow:hidden')
     expect(html).toContain('overscroll-behavior:contain')
     expect(html).toContain('width:100%;height:100%;overflow:hidden')
     expect(html).toContain('width:100%;height:100%;object-fit:contain')
-    expect(html).toContain('title="双击铺满宽度"')
-    expect(arkmeNextImagePreviewMode('contained')).toBe('width')
-    expect(arkmeNextImagePreviewMode('width')).toBe('contained')
+    expect(html).toContain('cursor:default')
+    expect(html).not.toContain('zoom-in')
+    expect(arkmeNextImagePreviewMode('contained')).toBe('covered')
+    expect(arkmeNextImagePreviewMode('covered')).toBe('original')
+    expect(arkmeNextImagePreviewMode('original')).toBe('contained')
+  })
+
+  it('keeps media preview navigation in the bottom action row with copy and download', () => {
+    const images = [
+      { kind: 'image' as const, mediaRef: 'first-ref', fileName: 'first.png', mimeType: 'image/png', size: 1, sortOrder: 0 },
+      { kind: 'image' as const, mediaRef: 'second-ref', fileName: 'second.png', mimeType: 'image/png', size: 1, sortOrder: 1 },
+    ]
+    const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={images} selected={images[0]!} onSelect={() => undefined} onClose={() => undefined} />)
+    const actionIndex = html.indexOf('data-arkme-media-preview-actions="bottom"')
+    expect(actionIndex).toBeGreaterThan(-1)
+    expect(html.indexOf('aria-label="上一个媒体"')).toBeGreaterThan(actionIndex)
+    expect(html.indexOf('aria-label="下一个媒体"')).toBeGreaterThan(actionIndex)
+    expect(html.indexOf('aria-label="复制图片"')).toBeGreaterThan(actionIndex)
+    expect(html.indexOf('aria-label="下载图片"')).toBeGreaterThan(actionIndex)
+    expect(html).not.toContain('left:-54')
+    expect(html).not.toContain('right:-54')
+    expect(html).toContain('M9.35714 1.14258L1.5 8.99972L9.35714 16.8569')
+    expect(html).toContain('M1.64286 1.14258L9.5 8.99972L1.64286 16.8569')
   })
 
   it('uses the pasted-file blob when a draft image opens in the in-app preview', () => {
@@ -220,6 +444,27 @@ describe('Arkme rich content presentation', () => {
     expect(html).not.toContain('</p>')
   })
 
+  it.each(['forward', 'recording', 'article'] as const)('renders the same emoji content in %s previews', kind => {
+    const item: ArkmeTimelineItem = {
+      itemUid: 'preview', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,
+      title: '', textContent: '',
+    }
+    if (kind === 'forward') item.forwardRecords = { title: '转发', createdAtMillis: 1, summaryLines: [emojiSample], items: [] }
+    if (kind === 'recording') item.sharedRecording = {
+      sourceDigest: 'digest', detailRef: 'detail', sharedByUserId: 1, sharedAtMillis: 1,
+      displayAtMillis: 1, endAtMillis: 2, timeRangeText: '', title: '录音',
+      summary: emojiSample, transcript: '', transcriptAvailable: false, participants: [],
+    }
+    if (kind === 'article') Object.assign(item, { templateKind: 8, title: '长文', textContent: emojiSample })
+    const html = renderToStaticMarkup(<ArkmeMessageContent item={item} highlightMentions />)
+    expect(html).toContain('data-arkme-rich-emoji="heart_eyes"')
+    expect(html).toContain('data-arkme-rich-emoji="thumb_up"')
+    expect(html).toContain('👨‍👩‍👧‍👦 👍🏽 🇨🇳 [jm_emoji:unknown]')
+    expect(html).not.toContain('[jm_emoji:heart_eyes]')
+    expect(html).not.toContain('<a ')
+    expect(html).not.toContain('role="link"')
+  })
+
   it('keeps short text content-sized without a shared minimum width', () => {
     const html = renderToStaticMarkup(<ArkmeMessageContent item={{
       itemUid: 'short', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,
@@ -246,6 +491,29 @@ describe('Arkme rich content presentation', () => {
     expect(highlightedHtml).toContain('<span style="color:var(--dsw-alias-state-business-primary, #3964fe)">@小林</span>')
     expect(highlightedHtml).toContain('<span style="color:var(--dsw-alias-state-business-primary, #3964fe)">@🚀助手</span>')
     expect(highlightedHtml).toContain(' 处理一下')
+  })
+
+  it('turns resolvable visible mentions into isolated profile links', () => {
+    const onMentionClick = vi.fn()
+    const renderer = create(<ArkmeMessageContent
+      item={{
+        itemUid: 'mention-link', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,
+        title: '', textContent: '@小林 看一下 @所有人',
+      }}
+      highlightMentions
+      onMentionClick={onMentionClick}
+      isMentionClickable={text => text === '@小林'}
+    />)
+    const memberMention = renderer.root.findByProps({ 'aria-label': '查看 @小林' })
+    expect(memberMention.props.role).toBe('link')
+    expect(renderer.root.findAllByProps({ 'aria-label': '查看 @所有人' })).toHaveLength(0)
+    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn() }
+
+    act(() => { memberMention.props.onClick(event) })
+
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(event.stopPropagation).toHaveBeenCalled()
+    expect(onMentionClick).toHaveBeenCalledWith('@小林', undefined)
   })
 
   it.each([
@@ -698,5 +966,20 @@ describe('Arkme rich content presentation', () => {
     }} />)
     expect(html).toContain('data-arkme-message-content="article"')
     expect(html).toContain('data-arkme-long-article="preview"')
+  })
+})
+describe('forward detail summary content', () => {
+  it('does not interpret a colon inside a token or URL as sender metadata', () => {
+    const summaryLines = ['[jm_emoji:heart_eyes][im_emoji:thumb_up]', 'https://example.com/path', '09:30 开会', '小林：完整摘要']
+    const markup = renderToStaticMarkup(<ForwardRecordsDetail item={{
+      itemUid: 'legacy-forward', senderName: '转发者', isMe: false, sendAtMillis: 1, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '转发快记', createdAtMillis: 1, items: [], summaryLines },
+    }} onClose={() => {}} />)
+    expect(markup).toContain('data-arkme-rich-emoji="heart_eyes"')
+    expect(markup).toContain('data-arkme-rich-emoji="thumb_up"')
+    expect(markup).toContain('href="https://example.com/path"')
+    expect(markup).toContain('09:30 开会')
+    expect(markup).toContain('小林：完整摘要')
+    expect(summaryLines[0]).toBe('[jm_emoji:heart_eyes][im_emoji:thumb_up]')
   })
 })

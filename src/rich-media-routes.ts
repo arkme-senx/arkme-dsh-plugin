@@ -69,6 +69,10 @@ export function createArkmeUploadHandler(service: ArkmeService, options: ArkmeRi
       if (req.method !== 'POST') throw new ArkmePluginError('method-not-allowed', '只允许 POST 请求', false, 405)
       assertLocalRequest(req, options)
       const requestedUserId = clientExpectedUserId(req)
+      const retention = mode === 'stage' ? headerText(req, 'x-arkme-file-retention') : ''
+      if (retention !== '' && retention !== 'references') {
+        throw new ArkmePluginError('file-retention-invalid', '文件保留方式无效', false, 400)
+      }
       const expectedUserId = await service.fileSessionUser()
       if (requestedUserId !== undefined && requestedUserId !== expectedUserId) {
         throw new ArkmePluginError('file-account-changed', '账号已切换，本次文件操作已取消', false, 409)
@@ -101,7 +105,7 @@ export function createArkmeUploadHandler(service: ArkmeService, options: ArkmeRi
       await assertRouteUser(service, expectedUserId)
       const uploadedFileKind = normalizedMimeType.startsWith('audio/') ? 2 : arkmePickedFileKind(normalizedMimeType, fileName)
       const value = mode === 'stage'
-        ? await service.fileStage(temporaryPath, { size: received, mimeType: normalizedMimeType, fileName }, expectedUserId)
+        ? await service.fileStage(temporaryPath, { size: received, mimeType: normalizedMimeType, fileName }, expectedUserId, retention || undefined)
         : await service.uploadLocalFile(
           temporaryPath,
           { size: received, sha256: hash.digest('hex'), mimeType: normalizedMimeType, fileName, fileKind: uploadedFileKind },

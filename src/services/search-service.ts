@@ -17,7 +17,6 @@ import { RecordService } from './record-service.js'
 import { SourceService } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue } from './service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
-import { ARKME_DSH_AGENT_INPUT_CREATION_SOURCE, isDshAgentInputSourceTitle } from '../dsh-agent-input-source.js'
 import { arkmeNormalizedHashTag } from '../hashtag.js'
 
 function numberValue(value: unknown): number {
@@ -450,11 +449,6 @@ export class SearchService {
     const linkMatch = textContent.match(/https:\/\/[^\s<>()]+/u)
     const sourceTitle = stringValue(topic.title ?? chat.title).trim()
     const creationSource = Math.trunc(numberValue(core.creation_source ?? item.creation_source))
-    const normalizedCreationSource = creationSource > 0
-      ? creationSource
-      : isDshAgentInputSourceTitle(sourceTitle)
-        ? ARKME_DSH_AGENT_INPUT_CREATION_SOURCE
-        : 0
     return {
       recordUid,
       sourceKind: Math.trunc(numberValue(item.source_kind)),
@@ -468,7 +462,7 @@ export class SearchService {
       ...(stringValue(core.nickname).trim() === '' ? {} : { nickname: stringValue(core.nickname).trim() }),
       ...(numberValue(core.template_kind) <= 0 ? {} : { templateKind: Math.trunc(numberValue(core.template_kind)) }),
       ...(numberValue(core.display_kind) <= 0 ? {} : { displayKind: Math.trunc(numberValue(core.display_kind)) }),
-      ...(normalizedCreationSource <= 0 ? {} : { creationSource: normalizedCreationSource }),
+      ...(creationSource <= 0 ? {} : { creationSource: creationSource }),
       ...(sourceTitle === '' ? {} : { sourceTitle }),
       media,
       files,

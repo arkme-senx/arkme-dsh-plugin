@@ -77,7 +77,7 @@ describe('SearchService', () => {
     expect(requestedBody).toEqual({ normalized_tag: '项目', limit: 50 })
   })
 
-  it('normalizes DSH Agent input records so the client can hide the internal topic', async () => {
+  it('preserves explicit DSH record source without guessing from the topic title', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {},
@@ -137,7 +137,6 @@ describe('SearchService', () => {
       }, {
         recordUid: 'record-dsh-input-legacy-search',
         textContent: '兼容搜索',
-        creationSource: 3,
         sourceTitle: 'DSH Agent Input',
       }],
     })

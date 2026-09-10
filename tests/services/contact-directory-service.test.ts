@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BotService } from '../../src/services/bot-service.js'
 import { ContactDirectoryService } from '../../src/services/contact-directory-service.js'
 import { SourceService } from '../../src/services/source-service.js'
+import { ArkmePluginError } from '../../src/services/service.js'
 
 const session = { userId: 7, accessToken: 'access', refreshToken: 'refresh' }
 
@@ -18,6 +19,10 @@ function fixture(options: FixtureOptions = {}) {
   let currentSession = session
   const runtime = {
     config: { environment: 'test' },
+    requestScope: (userId: number) => `user:${userId}`,
+    readRevision: () => 0,
+    invalidateScope: vi.fn(),
+    invalidateKey: vi.fn(),
     stateStore: { async uniqueCode() { return 'directory-test-secret' } },
     requireSession: vi.fn(async () => currentSession),
     authenticatedChatPost: vi.fn(async (path: string) => {
@@ -57,6 +62,79 @@ function fixture(options: FixtureOptions = {}) {
 afterEach(() => { vi.useRealTimers() })
 
 describe('ContactDirectoryService', () => {
+  it.each(['contacts', 'bots'] as const)('continues %s pagination after fresh-cache expiry without rescanning', async section => {
+    vi.useFakeTimers()
+    const { service, runtime } = fixture({
+      contacts: { items: [{ user_id: 88 }, { user_id: 89 }], has_more: false },
+      bots: { bots: [{ bot_id: 'bot-one', name: 'One', provider: 'webhook' }, { bot_id: 'bot-two', name: 'Two', provider: 'webhook' }] },
+    })
+    const first = await service.list(section, { limit: 1 })
+    const reads = runtime.authenticatedChatPost.mock.calls.length + runtime.authenticatedBotPost.mock.calls.length
+    await vi.advanceTimersByTimeAsync(31_000)
+    const second = await service.list(section, { limit: 1, cursor: first.nextCursor })
+    expect(second.cursorStale).not.toBe(true)
+    expect(second.items).toHaveLength(1)
+    expect(second.items).not.toEqual(first.items)
+    expect(runtime.authenticatedChatPost.mock.calls.length + runtime.authenticatedBotPost.mock.calls.length).toBe(reads)
+  })
+  it('rejects malformed direct-chat payloads instead of publishing an authoritative contact set', async () => {
+    const { service } = fixture({ contacts: { items: [{ user_id: 88 }], has_more: false }, groups: { items: 'invalid', has_more: false } })
+    await expect(service.list('contacts')).rejects.toMatchObject({ code: 'directory-contact-contract-invalid', retryable: false })
+    await expect(service.listRecordingSpeakerUsers(session)).rejects.toMatchObject({ code: 'directory-contact-contract-invalid' })
+  })
+
+  it('honors explicit count refresh and labels presentation-only degradation independently of identity coverage', async () => {
+    const { service, runtime, profile } = fixture({ contacts: { items: [{ user_id: 88 }], has_more: false } })
+    await service.list('contacts', { countOnly: true })
+    await service.list('contacts', { countOnly: true, refresh: true })
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledTimes(4)
+    profile.publicProfileSummariesByUserIds.mockRejectedValueOnce(new ArkmePluginError('arkme-code-1002', '繁忙', true, 502, { recovery: { owner: 'host', attempts: 3, exhausted: true } }))
+    await expect(service.list('contacts')).resolves.toMatchObject({ total: 1, coverage: 'complete', projectionState: 'stale' })
+  })
+
+  it('scans the contact union once across count, pages and recording consumers, decorating only visible users', async () => {
+    const { service, runtime, profile } = fixture({ contacts: { items: [{ user_id: 88 }, { user_id: 89 }], has_more: false } })
+    await service.list('contacts', { countOnly: true })
+    const first = await service.list('contacts', { limit: 1 })
+    await service.list('contacts', { limit: 1, cursor: first.nextCursor })
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledTimes(2)
+    expect(profile.publicProfileSummariesByUserIds.mock.calls.map(call => call[0])).toEqual([[88], [89]])
+    await service.listRecordingSpeakerUsers(session)
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['contacts', 'bots'] as const)('binds %s pagination to its snapshot, expires cleanly, and rejects another account', async section => {
+    const { service, setSession } = fixture({
+      contacts: { items: [{ user_id: 88 }, { user_id: 89 }], has_more: false },
+      bots: { bots: [{ bot_id: 'bot-one', name: 'One', provider: 'webhook' }, { bot_id: 'bot-two', name: 'Two', provider: 'webhook' }] },
+    })
+    const first = await service.list(section, { limit: 1 })
+    expect(first.nextCursor).toBeTypeOf('string')
+    await service.list(section, { limit: 1, refresh: true })
+    await expect(service.list(section, { limit: 1, cursor: first.nextCursor })).resolves.toMatchObject({ cursorStale: true, items: [] })
+    setSession({ ...session, userId: 8 })
+    await expect(service.list(section, { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'directory-cursor-invalid', httpStatus: 403 })
+  })
+
+  it('exposes partial contact coverage only after bounded technical recovery, never as a complete recording candidate list', async () => {
+    const { service, runtime } = fixture()
+    runtime.authenticatedChatPost.mockImplementation(async path => {
+      if (path === '/api/v1/chats/contacts/list') return { items: [{ user_id: 88, remark: '已知联系人' }], has_more: false }
+      throw new ArkmePluginError('arkme-code-1002', '繁忙', true, 502, { recovery: { owner: 'host', attempts: 3, exhausted: true } })
+    })
+    await expect(service.list('contacts')).resolves.toMatchObject({ coverage: 'partial', total: 1, projectionState: 'stale' })
+    await expect(service.listRecordingSpeakerUsers(session)).rejects.toMatchObject({ code: 'directory-contact-incomplete' })
+    runtime.authenticatedChatPost.mockImplementation(async path => ({ items: path.endsWith('/contacts/list') ? [{ user_id: 88 }] : [], has_more: false }))
+    await expect(service.list('contacts', { refresh: true })).resolves.toMatchObject({ coverage: 'complete', total: 1 })
+  })
+
+  it('does not turn auth failures or a malformed contact source into an empty successful snapshot', async () => {
+    const { service, runtime, profile } = fixture({ contacts: { items: [{ user_id: 88 }], has_more: false } })
+    profile.publicProfileSummariesByUserIds.mockRejectedValueOnce(new ArkmePluginError('arkme-code-1001', '登录失效', true))
+    await expect(service.list('contacts')).rejects.toMatchObject({ code: 'arkme-code-1001' })
+    runtime.authenticatedChatPost.mockResolvedValue({ items: 'invalid' } as never)
+    await expect(service.list('contacts', { refresh: true })).rejects.toMatchObject({ code: 'directory-contact-contract-invalid' })
+  })
   it('opens only a signed current-account group and checks abort before and after source projection', async () => {
     const { service, source, setSession } = fixture({
       groups: { items: [{ session: { chat_session_uid: 'group-owner-1', session_kind: 2, title: '项目群' } }] },
@@ -92,23 +170,23 @@ describe('ContactDirectoryService', () => {
     await expect(Promise.all((['groups', 'bots', 'contacts'] as const).map(
       async section => await service.list(section, { countOnly: true }),
     ))).resolves.toEqual([
-      { section: 'groups', items: [], total: 11, hasMore: false },
-      { section: 'bots', items: [], total: 12, hasMore: false },
-      { section: 'contacts', items: [], total: 1, hasMore: false },
+      { section: 'groups', items: [], total: 1, hasMore: false },
+      { section: 'bots', items: [], total: 1, hasMore: false },
+      { section: 'contacts', items: [], total: 1, hasMore: false, coverage: 'complete' },
     ])
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
-      '/api/v1/chats/list', { limit: 0, session_kind: 2 }, session, undefined,
-      expect.objectContaining({ lane: 'interactive-read' }),
+      '/api/v1/chats/list', { limit: 100, session_kind: 2 }, session, undefined,
+      expect.objectContaining({ lane: 'background-read' }),
     )
     expect(runtime.authenticatedBotPost).toHaveBeenCalledWith(
-      '/api/v1/bot/list', { limit: 0 }, session, undefined,
+      '/api/v1/bot/list', {}, session, expect.any(AbortSignal),
     )
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
-      '/api/v1/chats/contacts/list', { limit: 50, offset: 0 }, session, undefined,
+      '/api/v1/chats/contacts/list', { limit: 50, offset: 0 }, session, expect.any(AbortSignal),
       expect.objectContaining({ lane: 'interactive-read' }),
     )
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
-      '/api/v1/chats/list', { limit: 50, session_kind: 1 }, session, undefined,
+      '/api/v1/chats/list', { limit: 50, session_kind: 1 }, session, expect.any(AbortSignal),
       expect.objectContaining({ lane: 'interactive-read' }),
     )
     expect(profile.publicProfileSummariesByUserIds).not.toHaveBeenCalled()
@@ -130,7 +208,7 @@ describe('ContactDirectoryService', () => {
     const page = await service.list('groups', { limit: 99 })
 
     expect(page).toEqual({
-      section: 'groups', total: 137, hasMore: false,
+      section: 'groups', total: 137, hasMore: false, coverage: 'complete',
       items: [{ kind: 'group', sourceRef: expect.stringMatching(/^arkme-source-v1\./), displayName: '项目群' }],
     })
     expect(JSON.stringify(page)).not.toContain('group-secret-1')
@@ -242,7 +320,7 @@ describe('ContactDirectoryService', () => {
     expect(serialized).not.toContain('private-url')
     expect(serialized).not.toContain('private raw name')
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
-      '/api/v1/chats/contacts/list', { limit: 50, offset: 0 }, session, undefined,
+      '/api/v1/chats/contacts/list', { limit: 50, offset: 0 }, session, expect.any(AbortSignal),
       expect.objectContaining({ lane: 'interactive-read' }),
     )
   })
@@ -367,7 +445,7 @@ describe('ContactDirectoryService', () => {
       '/api/v1/chats/list',
       { limit: 50, session_kind: 1 },
       session,
-      undefined,
+      expect.any(AbortSignal),
       expect.objectContaining({ lane: 'interactive-read' }),
     )
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
@@ -378,7 +456,7 @@ describe('ContactDirectoryService', () => {
         page_cursor: { session_kind: 1, pin_state: 1, sort_active_at: 20, chat_session_uid: 'direct-103' },
       },
       session,
-      undefined,
+      expect.any(AbortSignal),
       expect.objectContaining({ lane: 'interactive-read' }),
     )
   })
@@ -386,7 +464,7 @@ describe('ContactDirectoryService', () => {
   it('returns empty pages, advances contact offset cursors, and rejects a source failure without cache', async () => {
     const { service, runtime } = fixture()
     await expect(service.list('contacts')).resolves.toEqual({
-      section: 'contacts', items: [], total: 0, hasMore: false,
+      section: 'contacts', items: [], total: 0, hasMore: false, coverage: 'complete',
     })
 
     runtime.authenticatedChatPost.mockImplementation(async (path: string) => {
@@ -400,7 +478,7 @@ describe('ContactDirectoryService', () => {
       if (path === '/api/v1/chats/list') return { items: [], has_more: false }
       throw new Error(`unexpected chat path: ${path}`)
     })
-    const first = await service.list('contacts', { limit: 1 })
+    const first = await service.list('contacts', { limit: 1, refresh: true })
     const second = await service.list('contacts', { limit: 1, cursor: first.nextCursor })
     expect(first).toMatchObject({ total: 2, hasMore: true, items: [expect.objectContaining({ displayName: '八' })] })
     expect(second).toMatchObject({ total: 2, hasMore: false, items: [expect.objectContaining({ displayName: '九' })] })
@@ -440,8 +518,8 @@ describe('ContactDirectoryService', () => {
         total: 50, has_more: false,
       }
     })
-    const oldest = await service.list('contacts', { limit: 50 })
-    for (let page = 1; page < 42; page += 1) await service.list('contacts', { limit: 50 })
+    const oldest = await service.list('contacts', { limit: 50, refresh: true })
+    for (let page = 1; page < 42; page += 1) await service.list('contacts', { limit: 50, refresh: true })
     const oldestRef = oldest.items[0]!.kind === 'contact' ? oldest.items[0]!.contactRef : ''
     await expect(service.contactProfile(oldestRef)).rejects.toMatchObject({ code: 'directory-contact-ref-expired' })
   })
@@ -463,7 +541,7 @@ describe('ContactDirectoryService', () => {
 
     setSession(session)
     await expect(service.contactProfile(contactRef)).resolves.toEqual({
-      contactRef, displayName: '同事', nickname: '林林', remark: '同事', avatarRef: 'avatar-ref-88',
+      contactRef, displayName: '同事', nickname: '林林', remark: '同事', accountName: 'lin-lin', avatarRef: 'avatar-ref-88',
     })
     await service.contactWorld(contactRef, { limit: 10, offset: 5 })
     expect(world.listUserWorldFeed).toHaveBeenCalledWith(88, { limit: 10, offset: 5 })
@@ -476,4 +554,104 @@ describe('ContactDirectoryService', () => {
     const { service } = fixture()
     await expect(service.list('unmarked-speakers')).rejects.toMatchObject({ code: 'directory-section-not-owned' })
   })
+})
+
+
+describe('directory contact remark mutation', () => {
+  async function setup() {
+    const f = fixture({ contacts: { items: [{ user_id: 88, chat_session_uid: 'private-88', remark: '' }] }, profiles: new Map([[88, { nickname: '小满', accountName: 'xiaoman' }]]) })
+    const first = (await f.service.list('contacts')).items[0]!
+    const second = (await f.service.list('contacts')).items[0]!
+    if (first.kind !== 'contact' || second.kind !== 'contact') throw new Error('missing contact')
+    return { ...f, contactRef: first.contactRef, secondRef: second.contactRef }
+  }
+  it('writes an account-bound session remark, updates every issued ref, and supports clearing', async () => {
+    const { service, runtime, chat, contactRef, secondRef } = await setup()
+    runtime.authenticatedChatPost.mockResolvedValueOnce({ contact: { chat_session_uid: 'private-88', user_id: 88, remark: '同事' } })
+    const signal = new AbortController().signal
+    await expect(service.updateContactRemark(contactRef, '  同事  ', signal)).resolves.toMatchObject({ contactRef, remark: '同事', displayName: '同事', nickname: '小满' })
+    expect(runtime.authenticatedChatPost).toHaveBeenLastCalledWith('/api/v1/chats/contacts/update-remark', { chat_session_uid: 'private-88', remark: '同事', update_at: expect.any(Number) }, session, signal)
+    await expect(service.contactProfile(secondRef)).resolves.toMatchObject({ remark: '同事', displayName: '同事' })
+    runtime.authenticatedChatPost.mockResolvedValueOnce({ contact: { chat_session_uid: 'private-88', user_id: 88 } })
+    await expect(service.updateContactRemark(contactRef, '')).resolves.toMatchObject({ remark: '', displayName: '小满' })
+    expect(chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+    expect(runtime.invalidateKey).toHaveBeenCalledWith('user:7', 'directory:contacts:')
+    expect(runtime.invalidateScope).not.toHaveBeenCalled()
+  })
+  it('rejects wrong-account, malformed, overlong, and aborted writes without changing a remark', async () => {
+    const { service, runtime, setSession, contactRef } = await setup()
+    const before = runtime.authenticatedChatPost.mock.calls.length
+    setSession({ ...session, userId: 99 })
+    await expect(service.updateContactRemark(contactRef, '错误账号')).rejects.toMatchObject({ code: 'directory-contact-ref-account-mismatch' })
+    setSession(session)
+    await expect(service.updateContactRemark(contactRef, '字'.repeat(101))).rejects.toThrow()
+    const controller = new AbortController(); controller.abort()
+    await expect(service.updateContactRemark(contactRef, '已取消', controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    expect(runtime.authenticatedChatPost.mock.calls.length).toBe(before)
+    runtime.authenticatedChatPost.mockResolvedValueOnce({ contact: { chat_session_uid: 'other', user_id: 88, remark: '错误' } })
+    await expect(service.updateContactRemark(contactRef, '同事')).rejects.toThrow()
+    await expect(service.contactProfile(contactRef)).resolves.toMatchObject({ remark: '' })
+  })
+})
+
+
+it('preserves a saved remark when an older profile or partially projected directory finishes later', async () => {
+  const f = fixture({ contacts: { items: [{ user_id: 88, chat_session_uid: 'private-88', remark: '' }, { user_id: 89, chat_session_uid: 'private-89', remark: '' }] }, profiles: new Map([[88, { nickname: '小满', avatarUrl: 'image-88' }], [89, { nickname: '小林', avatarUrl: 'image-89' }]]) })
+  const first = (await f.service.list('contacts')).items[0]!
+  if (first.kind !== 'contact') throw new Error('missing contact')
+  let finishProfile!: () => void
+  let finishList!: () => void
+  const profileWait = new Promise<void>(resolve => { finishProfile = resolve })
+  const listWait = new Promise<void>(resolve => { finishList = resolve })
+  const originalProfiles = f.profile.publicProfileSummariesByUserIds.getMockImplementation()!
+  f.profile.publicProfileSummariesByUserIds.mockImplementationOnce(async ids => { await profileWait; return originalProfiles(ids) })
+  const oldProfile = f.service.contactProfile(first.contactRef)
+  await vi.waitFor(() => { expect(f.profile.publicProfileSummariesByUserIds).toHaveBeenCalledTimes(2) })
+  let paused = false
+  f.profile.sealProfileImageRef.mockImplementation(async (_viewer, target) => { if (target === 89) { paused = true; await listWait }; return `avatar-${target}` })
+  const oldList = f.service.list('contacts')
+  await vi.waitFor(() => { expect(paused).toBe(true) })
+  f.runtime.authenticatedChatPost.mockResolvedValueOnce({ contact: { chat_session_uid: 'private-88', user_id: 88, remark: '设计同事' } })
+  await f.service.updateContactRemark(first.contactRef, '设计同事')
+  finishProfile(); finishList()
+  await expect(oldProfile).resolves.toMatchObject({ remark: '设计同事' })
+  expect((await oldList).items[0]).toMatchObject({ remark: '设计同事', displayName: '设计同事', letter: 'S' })
+})
+
+
+it('keeps the selected contact reference across add refreshes and subsequent remark updates', async () => {
+  const contacts = { items: [{ user_id: 88, chat_session_uid: 'private-88', remark: '' }], total: 1, has_more: false }
+  const f = fixture({ contacts, profiles: new Map([[88, { nickname: '小满' }], [89, { nickname: '小林' }]]) })
+  const first = (await f.service.list('contacts')).items[0]!
+  if (first.kind !== 'contact') throw new Error('missing contact')
+  contacts.items.push({ user_id: 89, chat_session_uid: 'private-89', remark: '' })
+  contacts.total = 2
+  const refreshed = await f.service.list('contacts', { refresh: true })
+  expect(refreshed.items[0]).toMatchObject({ contactRef: first.contactRef })
+  expect(refreshed.total).toBe(2)
+  contacts.items[0]!.remark = '设计同事'
+  f.runtime.authenticatedChatPost.mockResolvedValueOnce({ contact: { chat_session_uid: 'private-88', user_id: 88, remark: '设计同事' } })
+  await f.service.updateContactRemark(first.contactRef, '设计同事')
+  const afterSave = await f.service.list('contacts', { refresh: true })
+  expect(afterSave.items[0]).toMatchObject({ contactRef: first.contactRef, displayName: '设计同事', remark: '设计同事', letter: 'S' })
+})
+
+it('does not reuse another account or expired contact reference', async () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-09-08T10:00:00Z'))
+  const f = fixture({ contacts: { items: [{ user_id: 88, chat_session_uid: 'private-88', remark: '' }] } })
+  const first = (await f.service.list('contacts')).items[0]!
+  if (first.kind !== 'contact') throw new Error('missing contact')
+  f.setSession({ ...session, userId: 8 })
+  const other = (await f.service.list('contacts')).items[0]!
+  if (other.kind !== 'contact') throw new Error('missing contact')
+  expect(other.contactRef).not.toBe(first.contactRef)
+  await expect(f.service.contactProfile(first.contactRef)).rejects.toMatchObject({ code: 'directory-contact-ref-account-mismatch' })
+  f.setSession(session)
+  expect((await f.service.list('contacts')).items[0]).toMatchObject({ contactRef: first.contactRef })
+  vi.advanceTimersByTime(31 * 60_000)
+  const expired = (await f.service.list('contacts')).items[0]!
+  if (expired.kind !== 'contact') throw new Error('missing contact')
+  expect(expired.contactRef).not.toBe(first.contactRef)
+  await expect(f.service.contactProfile(first.contactRef)).rejects.toMatchObject({ code: 'directory-contact-ref-expired' })
 })

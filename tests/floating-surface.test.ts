@@ -187,6 +187,16 @@ describe('Arkme persistent conversation frame', () => {
     expect(receivedMarkup.indexOf('小林')).toBeLessThan(receivedMarkup.indexOf('16:38'))
   })
 
+  it.each(['', '群成员'])('keeps the timeline name while member presentation is %j', displayName => {
+    const item: ArkmeTimelineItem = {
+      itemUid: 'record-fallback', senderName: '消息中的用户昵称', isMe: false, sendAtMillis: 1,
+      title: '', textContent: '正文', status: 1,
+    }
+    const markup = renderToStaticMarkup(createElement(ArkmeTimelineMessageHeader, { item, member: { displayName } }))
+    expect(markup).toContain('消息中的用户昵称')
+    expect(item.senderName).toBe('消息中的用户昵称')
+  })
+
   it('renders agent-sent messages with a client-compatible source badge', () => {
     const selfItem = {
       itemUid: 'record-1', senderName: '我', isMe: true, sendAtMillis: 1,

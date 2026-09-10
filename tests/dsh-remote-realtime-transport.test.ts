@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ArkmeRemoteRealtimeTransport,
   dshRemoteFrameByteLengths,
@@ -19,6 +19,10 @@ class FakeSocket implements DshRemoteSocketLike {
   readyState = 0
   readonly sent: string[] = []
   sendFailure: Error | undefined
+  terminated = false
+  heartbeat: (() => void) | undefined
+  subscribeHeartbeat(listener: () => void): () => void { this.heartbeat = listener; return () => { this.heartbeat = undefined } }
+  terminate(): void { this.terminated = true; this.readyState = 3 }
   private readonly listeners = new Map<string, Set<(event: { data?: unknown }) => void>>()
 
   open(): void { this.readyState = 1; this.emit('open', {}) }
@@ -191,7 +195,7 @@ describe('Realtime login-only remote transport wire', () => {
     })
     socket.serverFrame({ type: 'connection.replaced', connection_generation: 12 })
     expect(socket.readyState).toBe(3)
-    expect(disconnected).toEqual([{ code: 'CONNECTION_REPLACED', retryable: true }])
+    expect(disconnected).toEqual([{ code: 'CONNECTION_REPLACED', retryable: false }])
   })
 
   it('fails the physical connection when a logical subscription reports an unsolicited error', async () => {
@@ -209,4 +213,87 @@ describe('Realtime login-only remote transport wire', () => {
     expect(socket.readyState).toBe(3)
     expect(disconnected).toEqual([{ code: 'REPLAY_GAP', retryable: true }])
   })
+})
+
+
+afterEach(() => { vi.useRealTimers() })
+
+describe('remote transport liveness', () => {
+  it('expires an OPEN socket without a close callback and releases its timers', async () => {
+    vi.useFakeTimers()
+    const pending = connectedTransport()
+    await vi.advanceTimersByTimeAsync(0)
+    const { transport, socket } = await pending
+    const disconnected = vi.fn()
+    transport.subscribeDisconnect(disconnected)
+    await vi.advanceTimersByTimeAsync(45_000)
+    expect(socket.terminated).toBe(true)
+    expect(disconnected).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ code: 'REMOTE_TRANSPORT_FAILED', details: expect.objectContaining({ reason: 'liveness_expired' }) }))
+    await transport.disconnect()
+    expect(vi.getTimerCount()).toBe(0)
+    expect(socket.heartbeat).toBeUndefined()
+  })
+
+  it('uses received server heartbeats rather than outgoing traffic as liveness', async () => {
+    vi.useFakeTimers()
+    const pending = connectedTransport()
+    await vi.advanceTimersByTimeAsync(0)
+    const { transport, socket } = await pending
+    await vi.advanceTimersByTimeAsync(40_000)
+    socket.heartbeat?.()
+    await vi.advanceTimersByTimeAsync(40_000)
+    expect(socket.terminated).toBe(false)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(socket.terminated).toBe(true)
+    await transport.disconnect()
+  })
+})
+
+
+it('does not let an old subscription cleanup remove a replacement connection subscription', async () => {
+  const first = new FakeSocket()
+  const second = new FakeSocket()
+  let socket = first
+  const transport = new ArkmeRemoteRealtimeTransport(() => socket)
+  const input = { profileRef: target.hostProfileRef, clientRef: target.hostClientRef, signal: new AbortController().signal }
+  let connecting = transport.connect(input)
+  setTimeout(() => first.open(), 0)
+  await connecting
+  const oldUnsubscribe = await transport.subscribe({ target, onEvent: () => undefined, signal: input.signal })
+  socket = second
+  connecting = transport.connect(input)
+  setTimeout(() => second.open(), 0)
+  await connecting
+  const received = vi.fn()
+  await transport.subscribe({ target, onEvent: received, signal: input.signal })
+  oldUnsubscribe()
+  second.remoteEvent({ kind: 'test' })
+  expect(received).toHaveBeenCalledOnce()
+  expect(second.sent.some(x => JSON.parse(x).type === 'channel.unsubscribe')).toBe(false)
+  await transport.disconnect()
+})
+
+it('keeps one liveness timer across 24 simulated hours of idle server heartbeats', async () => {
+  vi.useFakeTimers()
+  const pending = connectedTransport()
+  await vi.advanceTimersByTimeAsync(0)
+  const { transport, socket } = await pending
+  for (let tick = 0; tick < 24 * 60 * 3; tick++) {
+    await vi.advanceTimersByTimeAsync(20_000)
+    socket.heartbeat?.()
+  }
+  expect(socket.terminated).toBe(false)
+  expect(vi.getTimerCount()).toBe(1)
+  await transport.disconnect()
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+
+it('an already-aborted request never writes a frame or creates a response waiter', async () => {
+  const { transport, socket, controller, signal } = await connectedTransport()
+  const before = socket.sent.length
+  controller.abort(new Error('scope ended'))
+  await expect(transport.registerHost({ runtimeRef: target.runtimeRef, capabilities: ['session.list'], signal })).rejects.toThrow('scope ended')
+  expect(socket.sent).toHaveLength(before)
+  await transport.disconnect()
 })

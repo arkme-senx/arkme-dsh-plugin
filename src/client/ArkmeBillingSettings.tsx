@@ -1,7 +1,9 @@
 import {
   useCallback, useEffect, useRef, useState,
 } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import billingCss from './arkme-billing.css?inline'
+import { createPortal } from 'react-dom'
 import type {
   ArkmeBillingOrderSnapshot,
   ArkmeBillingPaymentMethod,
@@ -323,7 +325,10 @@ export function ArkmePaymentDialog(props: ArkmePaymentDialogProps) {
   </div>
 }
 
-export function ArkmeBillingSettings() {
+export function ArkmeBillingSettings({ active = true, renderTrigger }: {
+  active?: boolean
+  renderTrigger?: (props: ArkmeBalanceSettingsRowViewProps & { onRefresh(): void }) => ReactNode
+} = {}) {
   const [open, setOpen] = useState(false)
   const [quotaState, setQuotaState] = useState<ArkmeQuotaViewState>({ kind: 'loading' })
   const [productsState, setProductsState] = useState<ArkmeProductsViewState>({ kind: 'loading' })
@@ -338,14 +343,19 @@ export function ArkmeBillingSettings() {
   const pollerRef = useRef<ArkmeBillingOrderPoller>()
   const checkoutAttemptRef = useRef<ReturnType<typeof checkoutAttempt>>()
   const selectedProductIdRef = useRef<string>()
+  const dialogRoot = useRef<HTMLDivElement>(null)
   const quotaLoadGenerationRef = useRef(0)
+  const quotaRequestRef = useRef<AbortController>()
 
   const openPaymentUrl = useCallback((url: string) => { window.open(url, '_blank', 'noopener,noreferrer') }, [])
   const loadQuota = useCallback(async () => {
     const generation = ++quotaLoadGenerationRef.current
+    quotaRequestRef.current?.abort()
+    const request = new AbortController()
+    quotaRequestRef.current = request
     setQuotaState({ kind: 'loading' })
     try {
-      const quota = await callArkme<ArkmeQuotaSnapshot>('billing.quota')
+      const quota = await callArkme<ArkmeQuotaSnapshot>('billing.quota', undefined, request.signal)
       if (generation === quotaLoadGenerationRef.current) setQuotaState({ kind: 'ready', quota })
     } catch (error) {
       if (generation === quotaLoadGenerationRef.current) setQuotaState({ kind: 'error', message: errorMessage(error) })
@@ -365,12 +375,13 @@ export function ArkmeBillingSettings() {
   }, [])
 
   useEffect(() => {
-    void loadQuota()
-    return () => {
-      quotaLoadGenerationRef.current += 1
-      pollerRef.current?.stop()
-    }
-  }, [loadQuota])
+    if (active) void loadQuota()
+  }, [active, loadQuota])
+  useEffect(() => () => {
+    quotaLoadGenerationRef.current += 1
+    quotaRequestRef.current?.abort()
+    pollerRef.current?.stop()
+  }, [])
   useEffect(() => { if (open) void loadProducts() }, [loadProducts, open])
   useEffect(() => {
     if (order === undefined) return
@@ -478,11 +489,31 @@ export function ArkmeBillingSettings() {
     void createPayment(paymentMethod, true)
   }
 
-  return <>
-    <ArkmeBalanceSettingsRowView quotaState={quotaState} onOpen={() => {
-      setOpen(true)
-      void loadQuota()
-    }} />
+  const triggerProps = {
+    quotaState,
+    onOpen: () => { setOpen(true); void loadQuota() },
+    onRefresh: () => { void loadQuota() },
+  }
+  useEffect(() => {
+    const dialog = dialogRoot.current
+    if (!dialog) return
+    const previous = document.activeElement as HTMLElement | null
+    const controls = () => [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), [tabindex="0"]')]
+    controls()[0]?.focus()
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault(); event.stopPropagation()
+        if (order) closePayment(); else closeRecharge()
+      } else if (event.key === 'Tab') {
+        const items = controls(), first = items[0], last = items.at(-1)
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+      }
+    }
+    dialog.addEventListener('keydown', keydown)
+    return () => { dialog.removeEventListener('keydown', keydown); if (previous?.isConnected) previous.focus() }
+  }, [open, order?.orderId])
+  const dialogs = <div ref={dialogRoot}>
     {open && order === undefined && <ArkmeRechargeDialogView
       quotaState={quotaState}
       productsState={productsState}
@@ -508,5 +539,11 @@ export function ArkmeBillingSettings() {
       onRefreshQuota={() => { void loadQuota() }}
       onOpenPaymentUrl={openPaymentUrl}
     />}
+  </div>
+  return <>
+    <style>{billingCss}</style>
+    {renderTrigger ? renderTrigger(triggerProps) : <ArkmeBalanceSettingsRowView {...triggerProps} />}
+    {(open || order !== undefined) && (renderTrigger && typeof document !== 'undefined'
+      ? createPortal(dialogs, document.body) : dialogs)}
   </>
 }

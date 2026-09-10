@@ -1,3 +1,4 @@
+import { currentDesktopSessionTool } from '../src/dsh-remote/current-session-tool.js'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -16,6 +17,8 @@ function remoteHost(): DshRemoteHostFacade {
     start: vi.fn(async () => undefined), stop: vi.fn(async () => undefined),
     getStatus: vi.fn(() => status), renameDesktop: vi.fn(async () => status),
     subscribe: vi.fn(() => () => undefined),
+    reportCurrentSession: vi.fn(),
+    currentSession: vi.fn(async () => ({ session: { sessionRef: 'session-01', workspaceRef: 'workspace-01' } })),
   }
 }
 
@@ -40,15 +43,15 @@ describe('login-only DSH remote Host API and SDK', () => {
       .rejects.toMatchObject({ code: 'operation-unknown', httpStatus: 404 })
   })
 
-  it('requires same-page Origin only for the remaining rename mutation', async () => {
+  it('requires same-page Origin for rename and Browser selection reports', async () => {
     const host = remoteHost()
-    const server = createServer(createArkmeHostApi(service, {
-      expectedPort: 0, allowNonLoopback: false, remoteHost: () => host,
-    }))
+    const options = { expectedPort: 0, allowNonLoopback: false, remoteHost: () => host }
+    const server = createServer(createArkmeHostApi(service, options))
     servers.push(server)
     await new Promise<void>(resolve => { server.listen(0, '127.0.0.1', resolve) })
     const address = server.address()
     if (address === null || typeof address === 'string') throw new Error('missing test address')
+    options.expectedPort = address.port
     const endpoint = `http://127.0.0.1:${address.port}`
     const read = await fetch(endpoint, { method: 'POST', body: JSON.stringify({ operation: 'remote.getStatus' }) })
     expect(read.status).toBe(200)
@@ -57,6 +60,32 @@ describe('login-only DSH remote Host API and SDK', () => {
     })
     expect(mutation.status).toBe(403)
     expect(await mutation.json()).toMatchObject({ ok: false, error: { code: 'origin-required' } })
+    const report = await fetch(endpoint, { method: 'POST', body: JSON.stringify({ operation: 'remote.reportCurrentSession', params: {
+      accountId: '42', windowRef: 'browser', revision: 1, sessionRef: 'session-01',
+    } }) })
+    expect(report.status).toBe(403)
+    expect(host.reportCurrentSession).not.toHaveBeenCalled()
+    const accepted = await fetch(endpoint, { method: 'POST', headers: { origin: endpoint }, body: JSON.stringify({ operation: 'remote.reportCurrentSession', params: {
+      accountId: '42', windowRef: 'browser', revision: 1, sessionRef: 'session-01',
+    } }) })
+    expect(accepted.status).toBe(200)
+    expect(host.reportCurrentSession).toHaveBeenCalledWith({ accountId: '42', windowRef: 'browser', revision: 1, sessionRef: 'session-01' })
+  })
+
+  it('Browser, SDK and Tool reads share the same current-session owner', async () => {
+    const host = remoteHost()
+    const expected = { session: { sessionRef: 'session-01', workspaceRef: 'workspace-01' } }
+    await expect(dispatchArkmeHostOperation(service, 'remote.currentSession', {}, undefined, undefined, undefined, undefined, undefined, host)).resolves.toEqual(expected)
+    const sdk = new ArkmeSdk({ fetchImpl: async (_url, init) => {
+      const request = JSON.parse(String(init?.body))
+      const value = await dispatchArkmeHostOperation(service, request.operation, request.params ?? {}, undefined, undefined, undefined, undefined, undefined, host)
+      return new Response(JSON.stringify({ ok: true, value }))
+    } })
+    await expect(sdk.currentDesktopSession()).resolves.toEqual(expected)
+    const tool = currentDesktopSessionTool(host)
+    await expect(tool.execute({}, {} as never)).resolves.toBe(JSON.stringify(expected))
+    expect(host.currentSession).toHaveBeenCalledTimes(3)
+    expect(host.reportCurrentSession).not.toHaveBeenCalled()
   })
 
   it('maps the typed SDK to only the remaining remote operations', async () => {

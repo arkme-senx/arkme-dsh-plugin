@@ -12,6 +12,7 @@ import {
   arkmeShouldRefreshRecordTimeline,
   type ArkmeConversationTimelineSnapshot,
 } from '../src/client/conversation-memory-cache.js'
+import { ArkmeChatTimelineDeltaStore } from '../src/client/chat-directory-store.js'
 
 function timeline(itemUid: string): ArkmeConversationTimelineSnapshot {
   const item: ArkmeTimelineItem = {
@@ -40,6 +41,63 @@ function moment(momentId: string): ArkmeInterwovenMention {
 }
 
 describe('ArkmeConversationMemoryCache', () => {
+  it('consumes delta objects only for their source and leaves unconsumed window items available', () => {
+    const cache = new ArkmeConversationMemoryCache()
+    const a = { ...timeline('a').items[0]!, sequence: 10 }
+    const b = { ...timeline('b').items[0]!, sequence: 20 }
+    const items = [a, b]
+    const applicable = arkmeConversationTimelineDeltaItems('around', { minimumSequence: 10, maximumSequence: 12 }, [], items)
+    expect(applicable).toEqual([a])
+    expect(cache.unappliedTimelineDeltaItems('source-a', items)).toEqual(items)
+    expect(cache.unappliedTimelineDeltaItems('source-a', items)).toEqual(items)
+    cache.consumeTimelineDeltaItems('source-a', applicable)
+    expect(cache.unappliedTimelineDeltaItems('source-a', items)).toEqual([b])
+    expect(cache.unappliedTimelineDeltaItems('source-b', items)).toEqual(items)
+    const expanded = arkmeConversationTimelineDeltaItems('around', { minimumSequence: 10, maximumSequence: 20 }, [a], items)
+    expect(cache.unappliedTimelineDeltaItems('source-a', expanded)).toEqual([b])
+  })
+
+  it('tracks actual delta objects rather than a source invalidation revision or the record UID', () => {
+    const cache = new ArkmeConversationMemoryCache()
+    const deltas = new ArkmeChatTimelineDeltaStore()
+    const source = { sourceRef: 'source', sourceKey: 'chat:source', latestSequence: 1 }
+    const item = { ...timeline('a').items[0]!, recordVersion: 8, mediaUnavailable: true }
+    deltas.publish([{ source, items: [item] }])
+    const initial = deltas.getSnapshotForSource(source.sourceKey)
+    cache.consumeTimelineDeltaItems(source.sourceKey, initial.items)
+    deltas.applyTimelineChange({ sourceKey: source.sourceKey, timelineItemKey: 'neighbor', changeKind: 'reedited',
+      changeVersion: 9, relationTerminal: false, throughSequence: 1 })
+    const invalidated = deltas.getSnapshotForSource(source.sourceKey)
+    expect(invalidated.revision).toBeGreaterThan(initial.revision)
+    expect(invalidated.items[0]).toBe(item)
+    expect(cache.unappliedTimelineDeltaItems(source.sourceKey, invalidated.items)).toEqual([])
+    const renewed = { ...item, contentBlocks: [] }
+    deltas.publish([{ source, items: [renewed] }])
+    expect(cache.unappliedTimelineDeltaItems(source.sourceKey, deltas.getSnapshotForSource(source.sourceKey).items)).toEqual([renewed])
+  })
+
+  it('keeps consumed delta evidence through same-source page replacement and source revisits', () => {
+    const cache = new ArkmeConversationMemoryCache()
+    const item = timeline('a').items[0]!
+    cache.storeTimeline('source-a', timeline('a'))
+    cache.consumeTimelineDeltaItems('source-a', [item])
+    cache.storeTimeline('source-b', timeline('b'))
+    cache.storeTimeline('source-a', timeline('a-complete'))
+    expect(cache.unappliedTimelineDeltaItems('source-a', [item])).toEqual([])
+  })
+
+  it.each(['eviction', 'clear'] as const)('releases delta consumption with the cache %s lifecycle', reason => {
+    const cache = new ArkmeConversationMemoryCache(1)
+    const item = timeline('a').items[0]!
+    cache.storeTimeline('source-a', timeline('a'))
+    cache.consumeTimelineDeltaItems('source-a', [item])
+    expect(cache.unappliedTimelineDeltaItems('source-a', [item])).toEqual([])
+    if (reason === 'eviction') cache.storeTimeline('source-b', timeline('b'))
+    else cache.clear()
+    expect(cache.getTimeline('source-a')).toBeUndefined()
+    expect(cache.unappliedTimelineDeltaItems('source-a', [item])).toEqual([item])
+  })
+
   it('stages interwoven moments until the ordinary timeline is ready', () => {
     const cache = new ArkmeConversationMemoryCache()
     const moments = [moment('one')]

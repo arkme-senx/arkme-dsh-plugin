@@ -1,8 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ArkmeClientError } from '../src/sdk/index.js'
 
 const { callArkmeMock } = vi.hoisted(() => ({ callArkmeMock: vi.fn() }))
 
-vi.mock('../src/client/api.js', () => ({ callArkme: callArkmeMock }))
+vi.mock('../src/client/api.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/api.js')>(), callArkme: callArkmeMock,
+}))
 
 import {
   ArkmeChatDirectoryStore, ArkmeChatTimelineDeltaStore, ArkmeInterwovenInvalidationStore,
@@ -40,6 +43,99 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(store.getSnapshot().sources[0]).not.toHaveProperty('peerUserId')
   })
 
+  afterEach(() => { vi.useRealTimers() })
+
+  it('recovers a transient policy read in the shared silent refresh without losing visible rows', async () => {
+    vi.useFakeTimers()
+    const row = { sourceRef: 'group', kind: 'group_chat' as const, displayName: '群聊', activeAtMillis: 1, unreadCount: 3, isPinned: false }
+    const busy = new ArkmeClientError({ code: 'arkme-code-1002', message: '服务器繁忙', retryable: true })
+    const loadPage = vi.fn().mockRejectedValueOnce(busy)
+      .mockResolvedValue({ directory: 'root', items: [{ ...row, isPinned: true }], hasMore: false })
+    const store = new ArkmeChatDirectoryStore({ loadPage })
+    store.publish([row])
+    store.invalidateRoot()
+    const first = store.refreshRoot({ force: true, silent: true })
+    const joined = store.refreshRoot({ force: true, silent: true })
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(loadPage).toHaveBeenCalledTimes(1)
+    expect(store.getSnapshot()).toMatchObject({ sources: [row], isRefreshing: false })
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(first).resolves.toEqual([{ ...row, isPinned: true }])
+    await expect(joined).resolves.toEqual([{ ...row, isPinned: true }])
+    expect(loadPage).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['account', 'invalidation'] as const)('stops pending recovery after a new %s generation', async change => {
+    vi.useFakeTimers()
+    const loadPage = vi.fn().mockRejectedValue(new ArkmeClientError({ code: 'busy', message: 'busy', retryable: true }))
+    const store = new ArkmeChatDirectoryStore({ loadPage })
+    store.activateAccount('test:1')
+    const pending = store.refreshRoot({ force: true })
+    await vi.advanceTimersByTimeAsync(0)
+    if (change === 'account') store.activateAccount('test:2')
+    else store.invalidateRoot()
+    await vi.runAllTimersAsync()
+    await expect(pending).resolves.toEqual([])
+    expect(loadPage).toHaveBeenCalledTimes(1)
+    expect(store.getSnapshot().isRefreshing).toBe(false)
+  })
+
+  it('bounds failed recovery and permits a later refresh without publishing partial pages', async () => {
+    vi.useFakeTimers()
+    const row = { sourceRef: 'old', kind: 'group_chat' as const, displayName: '原会话', activeAtMillis: 1, unreadCount: 3 }
+    const busy = new ArkmeClientError({ code: 'busy', message: 'busy', retryable: true })
+    const loadPage = vi.fn().mockResolvedValueOnce({ directory: 'root', items: [], hasMore: true, nextCursor: 'page-2' })
+      .mockRejectedValue(busy)
+    const store = new ArkmeChatDirectoryStore({ loadPage })
+    store.publish([row])
+    const pending = store.refreshRoot({ force: true })
+    const rejection = expect(pending).rejects.toBe(busy)
+    await vi.runAllTimersAsync()
+    await rejection
+    expect(loadPage.mock.calls).toEqual([[undefined, true], ['page-2', true], ['page-2', true], ['page-2', true]])
+    expect(store.getSnapshot()).toMatchObject({ sources: [row], isRefreshing: false })
+    loadPage.mockResolvedValue({ directory: 'root', items: [row], hasMore: false })
+    await expect(store.refreshRoot({ force: true })).resolves.toEqual([row])
+  })
+
+  it.each([new Error('unknown'), new ArkmeClientError({ code: 'denied', message: 'denied', retryable: false })])(
+    'does not retry a failure without a retryable contract: %s', async error => {
+      vi.useFakeTimers()
+      const loadPage = vi.fn().mockRejectedValue(error)
+      const store = new ArkmeChatDirectoryStore({ loadPage })
+      await expect(store.refreshRoot({ force: true })).rejects.toBe(error)
+      expect(loadPage).toHaveBeenCalledTimes(1)
+      expect(vi.getTimerCount()).toBe(0)
+    },
+  )
+
+  it('reconciles only existing chat pins in one publication without touching messages or refreshing', () => {
+    const loadPage = vi.fn()
+    const store = new ArkmeChatDirectoryStore({ loadPage })
+    const group = { sourceKey: 'group-key', sourceRef: 'rotated-ref', kind: 'group_chat' as const,
+      displayName: '群聊', activeAtMillis: 9, unreadCount: 3, latestSequence: 10,
+      latestPreview: '最新消息', isPinned: false, chatPolicyUpdatedAtMillis: 1000 }
+    const topic = { ...group, kind: 'topic' as const, sourceKey: 'topic-key' }
+    store.publish([group, topic])
+    const listener = vi.fn()
+    store.subscribe(listener)
+    const pins = [
+      { sourceKey: 'group-key', pinned: true, policyUpdatedAtMillis: 3000 },
+      { sourceKey: 'group-key', pinned: false, policyUpdatedAtMillis: 2000 },
+      { sourceKey: 'removed-key', pinned: true, policyUpdatedAtMillis: 3000 },
+      { sourceKey: 'topic-key', pinned: true, policyUpdatedAtMillis: 3000 },
+    ]
+    store.reconcilePins(pins)
+    expect(store.getSnapshot().sources).toEqual([
+      { ...group, isPinned: true, chatPolicyUpdatedAtMillis: 3000 }, topic,
+    ])
+    expect(listener).toHaveBeenCalledOnce()
+    store.reconcilePins(pins)
+    store.reconcilePins([{ sourceKey: 'group-key', pinned: false, policyUpdatedAtMillis: 2000 }])
+    expect(listener).toHaveBeenCalledOnce()
+    expect(loadPage).not.toHaveBeenCalled()
+  })
+
   it('publishes one authoritative source snapshot to every Chat surface', () => {
     const store = new ArkmeChatDirectoryStore()
     const listener = vi.fn()
@@ -60,6 +156,152 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(store.getSnapshot()).toEqual({ revision: 3, sources: [], baselineReady: false, isRefreshing: false })
   })
 
+  it('accepts a newer owner snapshot after a confirmed pin and a directory invalidation', async () => {
+    const source = { sourceRef: 'old-ref', sourceKey: 'chat-key', kind: 'private_chat' as const, displayName: '会话', activeAtMillis: 1, unreadCount: 2, isPinned: false }
+    let releaseStale!: (value: { items: typeof source[]; directory: 'root'; hasMore: boolean }) => void
+    const loadPage = vi.fn()
+      .mockImplementationOnce(async () => await new Promise(resolve => { releaseStale = resolve }))
+      .mockResolvedValue({ directory: 'root', items: [{ ...source, sourceRef: 'new-ref', isPinned: false, chatPolicyUpdatedAtMillis: 2000, unreadCount: 5 }], hasMore: false })
+    const store = new ArkmeChatDirectoryStore({ loadPage })
+    store.publish([source])
+    const stale = store.refreshRoot({ force: true })
+    store.confirmPin(source, true, 1000)
+    expect(store.getSnapshot()).toMatchObject({ isRefreshing: true, sources: [expect.objectContaining({ isPinned: true })] })
+    store.invalidateRoot()
+    await store.refreshRoot({ force: true })
+    expect(loadPage).toHaveBeenCalledTimes(2)
+    releaseStale({ directory: 'root', items: [source], hasMore: false })
+    await stale
+    expect(store.getSnapshot().sources).toEqual([expect.objectContaining({ sourceRef: 'new-ref', isPinned: false, unreadCount: 5 })])
+  })
+
+  it('does not treat a personal topic pin as a chat pin acknowledgement', () => {
+    const source = { sourceRef: 'topic-ref', kind: 'topic' as const, displayName: '主题', activeAtMillis: 1, unreadCount: 0, isPinned: false }
+    const store = new ArkmeChatDirectoryStore()
+    store.publish([source])
+    const before = store.getSnapshot()
+    store.confirmPin(source, true, 1000)
+    expect(store.getSnapshot()).toBe(before)
+  })
+
+  it('keeps a newer remote policy when an earlier local pin acknowledgement arrives late', () => {
+    const source = { sourceRef: 'chat-ref', sourceKey: 'chat-key', kind: 'group_chat' as const, displayName: '群聊', activeAtMillis: 1, unreadCount: 0, isPinned: false, chatPolicyUpdatedAtMillis: 3000 }
+    const store = new ArkmeChatDirectoryStore()
+    store.publish([source])
+    store.confirmPin(source, true, 2000)
+    expect(store.getSnapshot().sources[0]).toMatchObject({ isPinned: false, chatPolicyUpdatedAtMillis: 3000 })
+  })
+
+  it.each(['delta', 'baseline'] as const)('keeps Chat policy freshness separate from message sequence in a late %s', kind => {
+    const source = { sourceRef: 'chat-ref', sourceKey: 'chat-key', kind: 'group_chat' as const, displayName: '群聊', activeAtMillis: 1, unreadCount: 0, isPinned: true, chatPolicyUpdatedAtMillis: 3000, latestSequence: 10 }
+    const store = new ArkmeChatDirectoryStore()
+    store.publish([source])
+    const incoming = { ...source, isPinned: false, chatPolicyUpdatedAtMillis: 2000, latestSequence: 11, latestPreview: '新消息', unreadCount: 1 }
+    if (kind === 'delta') store.upsert(incoming)
+    else store.publish([incoming])
+    expect(store.getSnapshot().sources[0]).toMatchObject({ isPinned: true, chatPolicyUpdatedAtMillis: 3000, latestSequence: 11, latestPreview: '新消息', unreadCount: 1 })
+  })
+
+  it('accepts a newer policy even when its message sequence is older', () => {
+    const source = { sourceRef: 'chat-ref', sourceKey: 'chat-key', kind: 'private_chat' as const, displayName: '私聊', activeAtMillis: 1, unreadCount: 2, isPinned: true, chatPolicyUpdatedAtMillis: 2000, latestSequence: 10 }
+    const store = new ArkmeChatDirectoryStore()
+    store.publish([source])
+    store.upsert({ ...source, isPinned: false, chatPolicyUpdatedAtMillis: 3000, latestSequence: 9, unreadCount: 1 })
+    expect(store.getSnapshot().sources[0]).toMatchObject({ isPinned: false, chatPolicyUpdatedAtMillis: 3000, latestSequence: 10, unreadCount: 2 })
+  })
+
+  it('does not cancel a newer directory read when ignoring a stale pin acknowledgement', async () => {
+    const source = { sourceRef: 'chat-ref', sourceKey: 'chat-key', kind: 'group_chat' as const, displayName: '群聊', activeAtMillis: 1, unreadCount: 0, isPinned: false, chatPolicyUpdatedAtMillis: 3000 }
+    let release!: (value: unknown) => void
+    const store = new ArkmeChatDirectoryStore({ loadPage: async () => await new Promise(resolve => { release = resolve }) })
+    store.publish([source])
+    const pending = store.refreshRoot({ force: true })
+    store.confirmPin(source, true, 2000)
+    expect(store.getSnapshot().isRefreshing).toBe(true)
+    release({ directory: 'root', items: [{ ...source, isPinned: true, chatPolicyUpdatedAtMillis: 4000 }], hasMore: false })
+    await pending
+    expect(store.getSnapshot().sources[0]).toMatchObject({ isPinned: true, chatPolicyUpdatedAtMillis: 4000 })
+  })
+
+  it('allows a pending remote policy read to finish after a local acknowledgement is applied', async () => {
+    const source = { sourceRef: 'chat-ref', sourceKey: 'chat-key', kind: 'group_chat' as const, displayName: '群聊', activeAtMillis: 1, unreadCount: 0, isPinned: false, chatPolicyUpdatedAtMillis: 1000 }
+    let release!: (value: unknown) => void
+    const store = new ArkmeChatDirectoryStore({ loadPage: async () => await new Promise(resolve => { release = resolve }) })
+    store.publish([source])
+    const pending = store.refreshRoot({ force: true })
+    store.confirmPin(source, true, 2000)
+    expect(store.getSnapshot()).toMatchObject({ isRefreshing: true, sources: [{ isPinned: true }] })
+    release({ directory: 'root', items: [{ ...source, isPinned: false, chatPolicyUpdatedAtMillis: 3000 }], hasMore: false })
+    await pending
+    expect(store.getSnapshot().sources[0]).toMatchObject({ isPinned: false, chatPolicyUpdatedAtMillis: 3000 })
+  })
+
+  it.each([true, false])('reads owner pin=%s after an invalidation while ignoring an older directory response', async pinned => {
+    const source = { sourceRef: 'chat-ref', sourceKey: 'chat-key', kind: 'group_chat' as const, displayName: '群聊', activeAtMillis: 1, unreadCount: 3, isPinned: !pinned }
+    let releaseOld!: (value: unknown) => void
+    const loadPage = vi.fn()
+      .mockImplementationOnce(async () => await new Promise(resolve => { releaseOld = resolve }))
+      .mockResolvedValue({ directory: 'root', items: [{ ...source, isPinned: pinned }], hasMore: false })
+    const store = new ArkmeChatDirectoryStore({ loadPage })
+    store.publish([source])
+    const oldRead = store.refreshRoot({ force: true })
+    store.invalidateRoot()
+    expect(store.getSnapshot().sources[0]?.isPinned).toBe(!pinned)
+    await store.refreshRoot({ force: true })
+    releaseOld({ directory: 'root', items: [source], hasMore: false })
+    await oldRead
+    expect(store.getSnapshot().sources).toEqual([{ ...source, isPinned: pinned }])
+    expect(loadPage).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps visible rows when the owner read after invalidation fails, and permits retry', async () => {
+    const source = { sourceRef: 'chat-ref', kind: 'group_chat' as const, displayName: '群聊', activeAtMillis: 1, unreadCount: 3, isPinned: false }
+    const loadPage = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ directory: 'root', items: [{ ...source, isPinned: true }], hasMore: false })
+    const store = new ArkmeChatDirectoryStore({ loadPage })
+    store.publish([source])
+    store.invalidateRoot()
+    await expect(store.refreshRoot({ force: true })).rejects.toThrow('offline')
+    expect(store.getSnapshot()).toMatchObject({ sources: [source], isRefreshing: false })
+    await store.refreshRoot({ force: true })
+    expect(store.getSnapshot().sources[0]?.isPinned).toBe(true)
+  })
+
+  it('keeps the current loading state when callers joined an invalidated read', async () => {
+    const page = { directory: 'root' as const, items: [], hasMore: false }
+    let releaseOld!: (value: typeof page) => void
+    let releaseCurrent!: (value: typeof page) => void
+    const loadPage = vi.fn()
+      .mockImplementationOnce(async () => await new Promise(resolve => { releaseOld = resolve }))
+      .mockImplementationOnce(async () => await new Promise(resolve => { releaseCurrent = resolve }))
+    const store = new ArkmeChatDirectoryStore({ loadPage })
+    const oldRead = store.refreshRoot()
+    const joinedRead = store.refreshRoot()
+    store.invalidateRoot()
+    const currentRead = store.refreshRoot({ force: true })
+    releaseOld(page)
+    await Promise.all([oldRead, joinedRead])
+    expect(store.getSnapshot().isRefreshing).toBe(true)
+    releaseCurrent(page)
+    await currentRead
+    expect(store.getSnapshot().isRefreshing).toBe(false)
+  })
+
+  it.each(['policy-notice', 'account-change'] as const)('stops obsolete pagination after %s', async trigger => {
+    let releaseOld!: (value: unknown) => void
+    const loadPage = vi.fn()
+      .mockImplementationOnce(async () => await new Promise(resolve => { releaseOld = resolve }))
+      .mockResolvedValue({ directory: 'root', items: [], hasMore: false })
+    const store = new ArkmeChatDirectoryStore({ loadPage })
+    store.activateAccount('test:42')
+    const oldRead = store.refreshRoot()
+    if (trigger === 'policy-notice') store.invalidateRoot()
+    else store.activateAccount('test:43')
+    await store.refreshRoot({ force: true })
+    releaseOld({ directory: 'root', items: [], hasMore: true, nextCursor: 'old-account-cursor' })
+    await oldRead
+    expect(loadPage).toHaveBeenCalledTimes(2)
+  })
+
   it('can exclude muted conversations from an unread total', () => {
     const store = new ArkmeChatDirectoryStore()
     store.publish([{
@@ -72,6 +314,7 @@ describe('ArkmeChatDirectoryStore', () => {
 
     expect(store.totalUnreadCount()).toBe(124)
     expect(store.totalUnreadCount({ excludeMuted: true })).toBe(4)
+    store.hydrateVisibility(store.getSnapshot().sources.map(source => ({ entryKind: 'source', entryRef: source.sourceRef, hidden: false })))
     expect(store.totalBadgeUnreadCount()).toBe(4)
   })
 
@@ -161,10 +404,10 @@ describe('ArkmeChatDirectoryStore', () => {
 
     await expect(store.refreshRoot({ force: true })).resolves.toHaveLength(2)
     expect(callArkmeMock).toHaveBeenNthCalledWith(1, 'sources.list', {
-      directory: 'root', limit: 20, refresh: true,
+      directory: 'root', limit: 20, localFirst: true, refresh: true,
     })
     expect(callArkmeMock).toHaveBeenNthCalledWith(2, 'sources.list', {
-      directory: 'root', limit: 20, cursor: 'next-page', refresh: true,
+      directory: 'root', limit: 20, localFirst: true, cursor: 'next-page', refresh: true,
     })
   })
 
@@ -951,3 +1194,61 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(store.getSnapshotForSource('chat:selected').revision).toBeGreaterThan(firstRevision)
   })
 })
+
+describe('Host incremental directory projection', () => {
+  const projection = { revision: 1, phase: 'syncing' as const, cachedAtMillis: 1, visibility: [], bots: [] }
+  const source = (id: number) => ({ sourceRef: `host-${id}`, sourceKey: `stable-${id}`, kind: 'private_chat' as const, displayName: `Row ${id}`, activeAtMillis: id, unreadCount: 0 })
+  it('adds later pages and retains a live row when an older cache response arrives', () => {
+    const store = new ArkmeChatDirectoryStore()
+    store.activateAccount('test:1')
+    store.applyHostPage({ directory: 'root', items: [source(2)], hasMore: true, projection: { ...projection, revision: 2 } })
+    store.applyHostPage({ directory: 'root', items: [source(1)], hasMore: true, projection: { ...projection, visibility: [{ entryKind: 'source', entryRef: 'host-1', hidden: false }] } })
+    store.applyHostPage({ directory: 'root', items: [source(3)], hasMore: false, projection: { ...projection, phase: 'complete', revision: 3 } })
+    expect(store.getSnapshot().sources.map(item => item.sourceKey).sort()).toEqual(['stable-1', 'stable-2', 'stable-3'])
+    expect(store.getSnapshot().projection?.phase).toBe('complete')
+    expect(store.getSnapshot().projection?.visibility).toContainEqual({ entryKind: 'source', entryRef: 'host-1', hidden: false })
+  })
+})
+
+
+it('clears an authoritative group-avatar deletion carried by a Host delta', () => {
+  const store = new ArkmeChatDirectoryStore()
+  const source: ArkmeSourceItem = { sourceRef: 'group', sourceKey: 'group-key', kind: 'group_chat', displayName: 'Group', activeAtMillis: 1, unreadCount: 0,
+    avatarRefs: ['old'], groupAvatar: { memberCount: 1, strategy: 'members', computedAtMillis: 1, slots: [{ avatarRef: 'old' }] } }
+  const projection = { revision: 1, phase: 'complete' as const, cachedAtMillis: 1, bots: [], visibility: [] }
+  store.applyHostPage({ directory: 'root', items: [source], hasMore: false, projection })
+  const { groupAvatar, ...removed } = source
+  store.applyHostPage({ directory: 'root', items: [{ ...removed, avatarRefs: [] }], hasMore: false, projection: { ...projection, revision: 2 } })
+  expect(store.getSnapshot().sources[0]?.groupAvatar).toBeUndefined()
+  store.clear()
+  expect(store.getSnapshot().projection).toBeUndefined()
+})
+
+
+it('does not resurrect a left group through a late snapshot or realtime delta', () => {
+  const store = new ArkmeChatDirectoryStore()
+  const source: ArkmeSourceItem = { sourceRef: 'left-group', sourceKey: 'group-key', kind: 'group_chat', displayName: 'Left', activeAtMillis: 1, unreadCount: 0 }
+  const initial = { directory: 'root' as const, items: [source], hasMore: false, projection: { revision: 1, phase: 'complete' as const, cachedAtMillis: 1, bots: [], visibility: [] } }
+  store.applyHostPage(initial)
+  store.applyHostPage({ ...initial, items: [], projection: { ...initial.projection, revision: 2, removedSourceKeys: ['group-key'] } })
+  store.applyHostPage(initial)
+  store.upsert(source)
+  expect(store.getSnapshot().sources).toEqual([])
+  store.applyHostPage({ ...initial, projection: { ...initial.projection, revision: 3, removedSourceKeys: [] } })
+  expect(store.getSnapshot().sources).toMatchObject([source])
+})
+
+it('bounds rotating source-ref aliases without losing stable-key read acknowledgements', () => {
+  const store = new ArkmeChatDirectoryStore()
+  const initial = { sourceRef: 'initial', sourceKey: 'stable', kind: 'private_chat' as const, displayName: 'Chat', activeAtMillis: 1, unreadCount: 1, latestSequence: 1 }
+  store.activateAccount('test:alias-capacity')
+  store.publish([initial])
+  store.hydrateVisibility([{ entryKind: 'source', entryRef: 'initial', hidden: false }])
+  store.upsertMany(Array.from({ length: 40010 }, (_, i) => ({ ...initial, sourceRef: `ref-${i}`, activeAtMillis: i + 2, latestSequence: i + 2 })))
+  expect((store as unknown as { sourceKeysByRef: Map<string, string> }).sourceKeysByRef.size).toBeLessThanOrEqual(40000)
+  expect(store.totalBadgeUnreadCount()).toBe(1)
+  store.updateReadAck('initial', 'stable', 40011, 0)
+  expect(store.totalBadgeUnreadCount()).toBe(0)
+  store.activateAccount('test:next')
+  expect((store as unknown as { sourceKeysByRef: Map<string, string> }).sourceKeysByRef.size).toBe(0)
+}, 10000)

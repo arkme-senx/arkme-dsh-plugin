@@ -70,6 +70,19 @@ describe('core-only DeepSeek Harness iframe route', () => {
     expect(projected.rev).toMatch(/^[a-f0-9]{12}$/)
   })
 
+  it('adds only the lightweight model UI to compatible embedded graphs and preserves batch coverage', () => {
+    const value = graph()
+    value.entries.push({ id: '@deepseek-ai/dsh-client-ui-model-selection', url: '/models.js', rev: 'models' })
+    value.batches = [{ phase: 'application', url: '/batch.js', rev: 'batch', entries: value.entries.map(entry => entry.id) }]
+    const modelClient = { id: '@senguoyun/dsh-arkme/harness-model', url: '/model-client.js', rev: 'model-client' }
+    const projected = projectHarnessBootGraph(value, ['@arkme-local/weather'], modelClient)
+    expect(projected.entries.at(-1)).toEqual(modelClient)
+    expect(projected.entries.some(entry => entry.id === '@senguoyun/dsh-arkme')).toBe(false)
+    expect(projected.batches?.at(-1)).toEqual({ phase: 'application', url: modelClient.url, rev: modelClient.rev, entries: [modelClient.id] })
+    expect(projected.batches?.flatMap(batch => batch.entries)).toEqual(projected.entries.map(entry => entry.id))
+    expect(projectHarnessBootGraph(graph(), [], modelClient).entries).not.toContainEqual(modelClient)
+  })
+
   it('accepts the current DSH client-connection runtime capability without a legacy runtime entry', () => {
     const value = graph()
     value.entries = value.entries.map(entry => entry.id === '@deepseek-ai/dsh-client-runtime'
@@ -255,6 +268,42 @@ describe('core-only DeepSeek Harness iframe route', () => {
     expect(failedResponse.status()).toBe(503)
     expect(failedResponse.body()).not.toContain('full-graph')
     expect(errors).toHaveLength(1)
+  })
+
+  it('adds only the small public-session observer to the isolated iframe boot graph', async () => {
+    const full = graph()
+    const response = responseDouble()
+    await createHarnessEmbedRouteHandler({
+      getGraph: () => full, installedPackageNames: () => ['@arkme-local/weather'],
+      readRootHtml: async () => htmlWithGraph(full), sessionClient: { revision: 'observer-v1', apiPath: '/custom/api' },
+    })({ method: 'GET' } as IncomingMessage, response.value)
+    expect(response.status()).toBe(200)
+    expect(response.body()).toContain('/arkme-self/harness-session-client.js')
+    expect(response.body()).toContain('<meta name="arkme-session-api" content="/custom/api">')
+    expect(response.body()).toContain('@senguoyun/dsh-arkme/harness-session')
+    expect(response.body()).not.toContain('/arkme.js')
+    expect(response.body()).not.toContain('/weather.js')
+  })
+
+  it('boots model selection and mobile session following together without coupling their modules', async () => {
+    const full = graph()
+    full.entries.push({ id: '@deepseek-ai/dsh-client-ui-model-selection', url: '/models.js', rev: 'models' })
+    full.batches = [{ phase: 'application', url: '/core-batch.js', rev: 'core', entries: full.entries.map(e => e.id) }]
+    const modelClient = { id: '@senguoyun/dsh-arkme/harness-model', url: '/model-client.js', rev: 'model-v1', inject: ['@deepseek-ai/dsh-client-ui-model-selection'] }
+    const response = responseDouble()
+    await createHarnessEmbedRouteHandler({ getGraph: () => full, installedPackageNames: () => ['@arkme-local/weather'],
+      modelClient, sessionClient: { revision: 'session-v1', apiPath: '/custom/api' }, readRootHtml: async () => htmlWithGraph(full),
+    })({ method: 'GET' } as IncomingMessage, response.value)
+    expect(response.status()).toBe(200)
+    const boot = JSON.parse(response.body().match(/globalThis\["__DSH_BOOT__"\] = ([^<]+)/)![1]!) as DshWebBootGraph
+    expect(boot.entries.filter(e => e.id === modelClient.id)).toEqual([modelClient])
+    const observer = boot.entries.filter(e => e.id === '@senguoyun/dsh-arkme/harness-session')
+    expect(observer).toHaveLength(1)
+    expect(observer[0]!.inject).not.toContain(modelClient.id)
+    expect(boot.batches!.flatMap(batch => batch.entries)).toEqual(boot.entries.map(e => e.id))
+    expect(response.body()).toContain('name="arkme-session-api" content="/custom/api"')
+    expect(response.body()).not.toContain('/arkme.js')
+    expect(response.body()).not.toContain('/weather.js')
   })
 
   it('rejects mutating methods', async () => {

@@ -1,4 +1,11 @@
-import { useEffect, useReducer, useRef } from 'react'
+import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
+import { PencilSimple } from '@phosphor-icons/react/PencilSimple'
+import { ChatCircle } from '@phosphor-icons/react/ChatCircle'
+import { Phone } from '@phosphor-icons/react/Phone'
+import { VideoCamera } from '@phosphor-icons/react/VideoCamera'
+import type { ArkmeOutgoingCallMediaType } from '../../../outgoing-call-contract.js'
+import { outgoingCallUi } from '../../outgoing-call-ui-controller.js'
+import { ContactRemarkDialog, type ContactRemarkSaver } from './ContactRemarkDialog.js'
 import type {
   ArkmeDirectoryContactProfile,
   ArkmeOpenPrivateChatResult,
@@ -12,6 +19,7 @@ import {
   contactDetailIdentityMatches,
   contactWorldReducer,
   createContactWorldState,
+  isContactQuickNote,
   type ContactDetailIdentity,
   type ContactWorldAction,
   type ContactWorldLoadMode,
@@ -134,8 +142,12 @@ export class ContactDetailCoordinator {
     this.loadWorld('append', Math.max(0, Math.trunc(offset)))
   }
 
-  openMessage(): void {
-    if (!this.active || this.messageBusy) return
+  openMessage(): void { this.openConversation() }
+
+  openCall(mediaType: ArkmeOutgoingCallMediaType): void { this.openConversation(mediaType) }
+
+  private openConversation(mediaType?: ArkmeOutgoingCallMediaType): void {
+    if (!this.active || this.messageBusy || !this.options.isCurrent(this.options.identity)) return
     this.messageBusy = true
     this.messageController?.abort()
     const controller = new AbortController()
@@ -144,15 +156,20 @@ export class ContactDetailCoordinator {
     void this.options.openChat(this.options.identity.contactRef, controller.signal)
       .then(result => {
         if (!this.accepts(controller)) return
+        if (mediaType === undefined) {
+          this.options.onSelectionCleared()
+          this.options.onSourceActivated(result.source)
+        } else {
+          if (result.source.kind !== 'private_chat') throw new Error('仅支持向私聊联系人发起通话')
+          outgoingCallUi.request({ sourceRef: result.source.sourceRef, displayName: result.source.displayName, mediaType })
+        }
         this.messageBusy = false
         this.commit({ type: 'message-success' })
-        this.options.onSelectionCleared()
-        this.options.onSourceActivated(result.source)
       })
       .catch(error => {
         if (!this.accepts(controller)) return
         this.messageBusy = false
-        this.commit({ type: 'message-error', message: detailErrorMessage(error, '打开会话失败') })
+        this.commit({ type: 'message-error', message: detailErrorMessage(error, mediaType === undefined ? '打开会话失败' : '发起通话失败') })
       })
   }
 
@@ -196,7 +213,20 @@ export class ContactDetailCoordinator {
     this.worldController = controller
     this.commit({ type: 'world-start', identity: this.options.identity, mode })
     void this.options.loadWorld(this.options.identity.contactRef, { limit: 20, offset }, controller.signal)
-      .then(page => {
+      .then(async page => {
+        // Keep looking past comments and articles for the latest quick note.
+        let currentOffset = offset
+        page = { ...page, items: page.items.filter(isContactQuickNote) }
+        while (page.items.length === 0 && page.hasMore) {
+          if (!this.accepts(controller)) return
+          const nextOffset = page.nextOffset
+          if (nextOffset === undefined || !Number.isSafeInteger(nextOffset) || nextOffset <= currentOffset) {
+            throw new Error('世界分页响应不完整，请重试')
+          }
+          currentOffset = nextOffset
+          page = await this.options.loadWorld(this.options.identity.contactRef, { limit: 20, offset: currentOffset }, controller.signal)
+          page = { ...page, items: page.items.filter(isContactQuickNote) }
+        }
         if (!this.accepts(controller)) return
         this.worldBusy = false
         this.commit({ type: 'world-success', identity: this.options.identity, mode, page })
@@ -235,55 +265,79 @@ const defaultOpenChat: ContactOpenChat = async (contactRef, signal) => await cal
   'directory.contact.open-chat', { contactRef }, signal,
 )
 
+const defaultSaveRemark: ContactRemarkSaver = async (contactRef, remark, signal) => await callArkme(
+  'directory.contact.remark.update', { contactRef, remark }, signal,
+)
+
 export function ContactProfileContent({
   state,
   messageBusy,
   messageError,
   onRetry,
   onOpenMessage,
+  onOpenCall,
+  onEditRemark,
+  children,
 }: {
   state: ContactProfileState
   messageBusy: boolean
   messageError?: string
   onRetry?(): void
   onOpenMessage(): void
+  onOpenCall?(mediaType: ArkmeOutgoingCallMediaType): void
+  onEditRemark?(): void
+  children?: ReactNode
 }) {
+  const profile = state.status === 'ready' ? state.profile : undefined
+  const remark = profile?.remark.trim() || ''
+  const displayName = remark || profile?.nickname.trim() || profile?.accountName?.trim() || profile?.displayName || '联系人'
   return <section className="arkme-contact-profile" aria-label="联系人资料">
     {state.status === 'loading' && <div role="status" className="arkme-contact-profile-status">正在加载联系人资料…</div>}
-    {state.status === 'ready' && state.profile !== undefined && <>
-      <div className="arkme-contact-profile-main">
+    {profile !== undefined && <>
+      <header className="arkme-contact-profile-main">
         <span className="arkme-contact-profile-avatar">
           <ArkmeUserAvatar
-            {...(state.profile.avatarRef === undefined ? {} : { avatarRef: state.profile.avatarRef })}
+            {...(profile.avatarRef === undefined ? {} : { avatarRef: profile.avatarRef })}
             size={72}
-            label={`${state.profile.displayName}的头像`}
+            label={`${displayName}的头像`}
           />
         </span>
         <div className="arkme-contact-profile-identity">
-          <h1 className="arkme-contact-profile-name">{state.profile.displayName}</h1>
+          <h1 className="arkme-contact-profile-name">{displayName}</h1>
           <dl className="arkme-contact-profile-fields">
-            <div aria-label={`昵称：${state.profile.nickname}`}><dt>昵称：</dt><dd>{state.profile.nickname}</dd></div>
-            {state.profile.remark.trim() !== '' && <div aria-label={`备注：${state.profile.remark}`}><dt>备注：</dt><dd>{state.profile.remark}</dd></div>}
+            <div aria-label={`昵称：${profile.nickname.trim() || '未设置'}`}><dt>昵称</dt><dd>{profile.nickname.trim() || '未设置'}</dd></div>
+            <div aria-label={`即我号：${profile.accountName?.trim() || '未设置'}`}><dt>即我号</dt><dd>{profile.accountName?.trim() || '未设置'}</dd></div>
           </dl>
         </div>
-        <button
-          type="button"
-          className="arkme-contact-profile-message"
-          disabled={messageBusy}
-          onClick={onOpenMessage}
-        >{messageBusy ? '正在打开…' : '发消息'}</button>
-      </div>
+      </header>
+      <section className="arkme-contact-profile-section">
+        <h2 className="arkme-contact-profile-section-title">联系人资料</h2>
+        <dl className="arkme-contact-profile-row" aria-label={`备注：${remark || '未设置'}`}>
+          <dt>备注</dt><dd className="arkme-contact-profile-remark">
+            <span>{remark || '未设置'}</span>
+            <button type="button" className="arkme-contact-remark-edit" onClick={onEditRemark} disabled={onEditRemark === undefined} aria-label="编辑备注">
+              <PencilSimple size={15} aria-hidden /><span>编辑</span>
+            </button>
+          </dd>
+        </dl>
+      </section>
     </>}
-    {state.status !== 'ready' && <button
-      type="button"
-      className="arkme-contact-profile-message"
-      disabled={messageBusy}
-      onClick={onOpenMessage}
-    >{messageBusy ? '正在打开…' : '发消息'}</button>}
     {state.status === 'error' && <div role="alert" className="arkme-contact-profile-error">
       <span>{state.message ?? '联系人资料加载失败'}</span>
       {onRetry !== undefined && <button type="button" onClick={onRetry}>重试</button>}
     </div>}
+    {children}
+    <footer className="arkme-contact-profile-actions" aria-label="联系操作" aria-busy={messageBusy}>
+      <button type="button" className="arkme-contact-profile-action" disabled={messageBusy} onClick={onOpenMessage}>
+        <ChatCircle size={28} weight="regular" aria-hidden /><span>{messageBusy ? '正在打开…' : '发消息'}</span>
+      </button>
+      <button type="button" className="arkme-contact-profile-action" disabled={messageBusy || onOpenCall === undefined} onClick={() => { onOpenCall?.('audio') }}>
+        <Phone size={28} weight="regular" aria-hidden /><span>语音聊天</span>
+      </button>
+      <button type="button" className="arkme-contact-profile-action" disabled={messageBusy || onOpenCall === undefined} onClick={() => { onOpenCall?.('video') }}>
+        <VideoCamera size={28} weight="regular" aria-hidden /><span>视频聊天</span>
+      </button>
+    </footer>
     {messageError !== undefined && <div role="alert" className="arkme-contact-profile-message-error">{messageError}</div>}
   </section>
 }
@@ -295,6 +349,8 @@ export interface ContactProfileDetailProps {
   onSourceActivated(source: ArkmeSourceItem): void
   loadProfile?: ContactProfileLoader
   loadWorld?: ContactWorldLoader
+  saveRemark?: ContactRemarkSaver
+  onProfileUpdated?(profile: ArkmeDirectoryContactProfile): void
   openChat?: ContactOpenChat
 }
 
@@ -306,6 +362,8 @@ export function ContactProfileDetail({
   loadProfile = defaultLoadProfile,
   loadWorld = defaultLoadWorld,
   openChat = defaultOpenChat,
+  saveRemark = defaultSaveRemark,
+  onProfileUpdated,
 }: ContactProfileDetailProps) {
   const generationRef = useRef(0)
   const identityKeyRef = useRef('')
@@ -320,11 +378,13 @@ export function ContactProfileDetail({
   const [profileState, dispatchProfile] = useReducer(contactProfileReducer, identity, createContactProfileState)
   const [worldState, dispatchWorld] = useReducer(contactWorldReducer, identity, createContactWorldState)
   const [messageState, dispatchMessage] = useReducer(contactMessageReducer, { busy: false, error: undefined })
+  const [editingIdentity, setEditingIdentity] = useState<ContactDetailIdentity>()
   const coordinatorRef = useRef<ContactDetailCoordinator>()
   const callbacksRef = useRef({ onSelectionCleared, onSourceActivated })
   callbacksRef.current = { onSelectionCleared, onSourceActivated }
 
   useEffect(() => {
+    dispatchMessage({ type: 'message-success' })
     dispatchProfile({ type: 'profile-reset', identity })
     dispatchWorld({ type: 'world-reset', identity })
     const coordinator = new ContactDetailCoordinator({
@@ -363,13 +423,28 @@ export function ContactProfileDetail({
       {...(messageState.error === undefined ? {} : { messageError: messageState.error })}
       onRetry={() => { coordinatorRef.current?.retryProfile() }}
       onOpenMessage={() => { coordinatorRef.current?.openMessage() }}
-    />
-    <ContactWorldList
-      state={visibleWorld}
-      onRetry={() => { coordinatorRef.current?.retryWorld() }}
-      onLoadMore={() => {
-        coordinatorRef.current?.loadMore(visibleWorld.nextOffset ?? visibleWorld.items.length)
+      onOpenCall={mediaType => { coordinatorRef.current?.openCall(mediaType) }}
+      onEditRemark={() => { setEditingIdentity(identity) }}
+    >
+      <ContactWorldList
+        state={visibleWorld}
+        onRetry={() => { coordinatorRef.current?.retryWorld() }}
+        onLoadMore={() => {
+          coordinatorRef.current?.loadMore(visibleWorld.nextOffset ?? visibleWorld.items.length)
+        }}
+      />
+    </ContactProfileContent>
+    {editingIdentity !== undefined && contactDetailIdentityMatches(editingIdentity, identity) && visibleProfile.profile !== undefined && <ContactRemarkDialog
+      key={identityKey}
+      profile={visibleProfile.profile}
+      saveRemark={saveRemark}
+      onClose={() => { setEditingIdentity(undefined) }}
+      onSaved={profile => {
+        if (!contactDetailIdentityMatches(identityRef.current, identity)) return
+        dispatchProfile({ type: 'profile-success', identity, profile })
+        setEditingIdentity(undefined)
+        onProfileUpdated?.(profile)
       }}
-    />
+    />}
   </div>
 }

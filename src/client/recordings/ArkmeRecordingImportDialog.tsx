@@ -3,6 +3,8 @@ import { ArrowCounterClockwise } from '@phosphor-icons/react/dist/icons/ArrowCou
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
 import { UploadSimple } from '@phosphor-icons/react/dist/icons/UploadSimple'
+import { CircleNotch } from '@phosphor-icons/react/dist/icons/CircleNotch'
+import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import {
   isRecordingInstantOnOrAfterUnixEpoch,
@@ -113,7 +115,8 @@ const processingPopoverMetrics = {
 } as const
 
 const styles: Record<string, CSSProperties> = {
-  trigger: { minHeight: 36, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${desktop.border}`, borderRadius: 8, background: desktop.background, color: desktop.text, cursor: 'pointer', fontSize: 14, fontWeight: 500 },
+  trigger: { width: 156, flexShrink: 0, boxSizing: 'border-box', minHeight: 36, padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, whiteSpace: 'nowrap', border: `1px solid ${desktop.border}`, borderRadius: 8, background: desktop.background, color: desktop.text, cursor: 'pointer', fontSize: 14, fontWeight: 500 },
+  backgroundNotice: { position: 'fixed', left: '50%', bottom: 32, zIndex: 95, transform: 'translateX(-50%)', width: 'max-content', maxWidth: 'calc(100vw - 48px)', boxSizing: 'border-box', padding: '10px 16px', borderRadius: 8, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, boxShadow: arkmeTheme.shadow, fontSize: 13, lineHeight: '20px', textAlign: 'center', pointerEvents: 'none' },
   dialog: { width: 'min(780px,calc(100vw - 32px))', maxWidth: 780, maxHeight: 'calc(100vh - 48px)', padding: 0, border: 0, outline: 'none', borderRadius: 12, background: desktop.background, color: desktop.text, boxShadow: '0 16px 48px rgba(0,0,0,.18)', overflow: 'hidden' },
   header: { height: 60, padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   title: { margin: 0, fontSize: 18, lineHeight: '28px', fontWeight: 500 },
@@ -632,8 +635,15 @@ export interface ArkmeRecordingImportDialogHandle {
   close(): void
 }
 
-export function ArkmeRecordingImportTrigger({ onClick }: { onClick(): void }) {
-  return <button type="button" style={styles.trigger} onClick={onClick}><UploadSimple size={16} aria-hidden />导入历史音频</button>
+export type RecordingImportButtonStatus = 'idle' | 'uploading' | 'finalizing' | 'failed'
+
+export function ArkmeRecordingImportTrigger({ onClick, status = 'idle' }: { onClick(): void; status?: RecordingImportButtonStatus }) {
+  const busy = status === 'uploading' || status === 'finalizing'
+  const label = status === 'uploading' ? '音频上传中' : status === 'finalizing' ? '正在完成导入' : status === 'failed' ? '导入失败，查看' : '导入历史音频'
+  return <button type="button" data-arkme-recording-import-status={status} aria-live="polite"
+    title={status === 'idle' ? '导入历史音频' : `${label}，点击查看导入任务`}
+    style={{ ...styles.trigger, outlineColor: desktop.secondary, ...(status === 'failed' ? { color: arkmeTheme.danger } : {}) }}
+    onClick={onClick}>{busy ? <CircleNotch size={16} style={{ flexShrink: 0 }} className="arkme-icon-spin" aria-hidden /> : status === 'failed' ? <WarningCircle size={16} style={{ flexShrink: 0 }} aria-hidden /> : <UploadSimple size={16} style={{ flexShrink: 0 }} aria-hidden />}{label}</button>
 }
 
 export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogHandle, {
@@ -642,7 +652,8 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   currentUserId: number
   foreground?: boolean
   onAccepted(): void
-}>(function ArkmeRecordingImportDialog({ importPath, defaultStartAtMillis, currentUserId, foreground = true, onAccepted }, ref) {
+  onStatusChange?(status: RecordingImportButtonStatus): void
+}>(function ArkmeRecordingImportDialog({ importPath, defaultStartAtMillis, currentUserId, foreground = true, onAccepted, onStatusChange }, ref) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const rowsRef = useRef<StagedRecording[]>([])
@@ -656,6 +667,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   const browserUploadTimingsRef = useRef(new Map<string, BrowserUploadPresentationTiming>())
   const uploadAbortRef = useRef<AbortController>()
   const submissionActiveRef = useRef(false)
+  const backgroundNoticeShownRef = useRef(false)
   const inspectionQueueRef = useRef<Promise<void>>(Promise.resolve())
   const inspectionActiveRef = useRef(false)
   const [rows, setRows] = useState<StagedRecording[]>([])
@@ -663,6 +675,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   const [dialogEpoch, setDialogEpoch] = useState(0)
   const [dragging, setDragging] = useState(false)
   const [pending, setPending] = useState(false)
+  const [backgroundNoticeVisible, setBackgroundNoticeVisible] = useState(false)
   const [error, setError] = useState('')
   const [jobsError, setJobsError] = useState('')
   const [duplicateNames, setDuplicateNames] = useState<string[]>([])
@@ -677,6 +690,25 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   const selectedRows = useMemo(() => selectableRows.filter(row => row.selected), [selectableRows])
   const submittingRows = useMemo(() => rows.filter(row => row.submitting), [rows])
   const hasActiveTasks = hasActiveRecordingImportTasks(jobs)
+  const buttonStatus: RecordingImportButtonStatus = submittingRows.length > 0
+    || jobs.some(task => isLocalRecordingImport(task) ? task.phase === 'prepared' || task.phase === 'uploading' : task.status === 'uploading')
+    ? 'uploading'
+    : jobs.some(task => isLocalRecordingImport(task) && task.phase === 'finalizing') ? 'finalizing'
+      : rows.some(row => row.error !== '') || jobs.some(task => isLocalRecordingImport(task) && task.phase === 'failed') ? 'failed' : 'idle'
+  const importInProgress = buttonStatus === 'uploading' || buttonStatus === 'finalizing'
+  useEffect(() => { onStatusChange?.(buttonStatus) }, [buttonStatus, onStatusChange])
+  useEffect(() => {
+    if (!importInProgress) {
+      backgroundNoticeShownRef.current = false
+      setBackgroundNoticeVisible(false)
+    }
+    if (!foreground) setBackgroundNoticeVisible(false)
+  }, [importInProgress, foreground])
+  useEffect(() => {
+    if (!backgroundNoticeVisible) return
+    const timer = setTimeout(() => { setBackgroundNoticeVisible(false) }, 5_000)
+    return () => { clearTimeout(timer) }
+  }, [backgroundNoticeVisible])
   const activeDuplicateNames = useMemo(() => {
     const stagedNameKeys = new Set(rows.map(row => recordingImportFileNameKey(row.file.name)))
     return duplicateNames.filter(name => stagedNameKeys.has(recordingImportFileNameKey(name)))
@@ -739,16 +771,21 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
 
   const open = () => {
     setError('')
+    setBackgroundNoticeVisible(false)
     dialogRef.current?.showModal()
     dialogRef.current?.focus()
     setDialogEpoch(value => value + 1)
   }
-  const close = () => {
+  const close = (showFeedback = false) => {
+    if (showFeedback && dialogRef.current?.open && foreground && importInProgress && !backgroundNoticeShownRef.current) {
+      backgroundNoticeShownRef.current = true
+      setBackgroundNoticeVisible(true)
+    }
     setProcessingDetails(undefined)
     setStatusDetails(undefined)
     dialogRef.current?.close()
   }
-  useImperativeHandle(ref, () => ({ open, close }))
+  useImperativeHandle(ref, () => ({ open, close: () => { close() } }))
 
   useEffect(() => {
     const controller = new AbortController()
@@ -801,7 +838,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       if (calendarChanged) onAccepted()
       return snapshot.owner.state === 'available'
     } catch (reason) {
-      if (signal?.aborted === true) return true
+      if (signal?.aborted === true || loadRevision !== jobsLoadRevisionRef.current) return true
       setJobsError(reason instanceof Error ? reason.message : '导入任务读取失败')
       return false
     }
@@ -966,6 +1003,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
           startedAtMillis: uploadStartedAtMillis,
           acceptedAtMillis: Date.now(),
         })
+        jobsLoadRevisionRef.current += 1
         jobsInitializedRef.current = true
         publishJobs([
           accepted,
@@ -1239,6 +1277,9 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   }
 
   return <>
+    {backgroundNoticeVisible && foreground && importInProgress && <div role="status" aria-live="polite" data-arkme-recording-import-notice style={styles.backgroundNotice}>{buttonStatus === 'uploading'
+      ? '音频会继续上传，点击「音频上传中」查看进度'
+      : '音频会继续导入，点击「正在完成导入」查看进度'}</div>}
     <style>{'@keyframes arkme-recording-history-spin{to{transform:rotate(360deg)}}'}</style>
     <dialog ref={dialogRef} style={styles.dialog} aria-label="上传文件" tabIndex={-1} onCancel={event => {
       event.preventDefault()
@@ -1247,9 +1288,9 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       if (ownershipChange !== undefined) { setOwnershipChange(undefined); return }
       if (activeDuplicateNames.length > 0) { clearDuplicateNames(); return }
       if (history !== undefined) { setHistory(undefined); return }
-      close()
-    }} onClick={event => { if (event.target === event.currentTarget) close() }}>
-      {history === undefined ? <><header style={styles.header}><h2 style={styles.title}>上传文件</h2><span style={styles.footerActions}><button type="button" style={styles.historyButton} onClick={openHistory}>已完成<CaretRight size={8} aria-hidden /></button><button type="button" aria-label="关闭上传文件" style={styles.iconButton} onClick={close}><X size={16} aria-hidden /></button></span></header>
+      close(true)
+    }} onClick={event => { if (event.target === event.currentTarget) close(true) }}>
+      {history === undefined ? <><header style={styles.header}><h2 style={styles.title}>上传文件</h2><span style={styles.footerActions}><button type="button" style={styles.historyButton} onClick={openHistory}>已完成<CaretRight size={8} aria-hidden /></button><button type="button" aria-label="关闭上传文件" style={styles.iconButton} onClick={() => { close(true) }}><X size={16} aria-hidden /></button></span></header>
       <div style={styles.body}>
         <>
           <input ref={fileInputRef} hidden multiple disabled={pending} aria-label="选择录音文件" type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4" onChange={event => { if (!pending && event.target.files !== null) addFiles(event.target.files); event.target.value = '' }} />

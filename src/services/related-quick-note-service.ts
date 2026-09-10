@@ -1,3 +1,4 @@
+import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -158,8 +159,8 @@ function descriptorFromRaw(raw: unknown): RelatedQuickNoteDescriptor | undefined
     authorUserId,
     senderName: senderName.slice(0, 200),
     sendAtMillis,
-    title: title.slice(0, 500),
-    textPreview: textPreview.slice(0, 2000),
+    title: arkmeEmojiTokenSafePrefix(title, 500, 'codeUnits'),
+    textPreview: arkmeEmojiTokenSafePrefix(textPreview, 2000, 'codeUnits'),
     ...(sourceLabel === '' ? {} : { sourceLabel: sourceLabel.slice(0, 200) }),
   }
 }

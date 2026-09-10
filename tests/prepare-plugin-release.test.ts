@@ -52,6 +52,17 @@ describe('prepare plugin release', () => {
     })
   })
 
+  it('allocates a new version when a previous release was prepared but npm is still behind', () => {
+    expect(determineAutomaticReleaseVersion('0.1.46', '0.1.45', { masterVersionReserved: true })).toEqual({
+      version: '0.1.47', versionChanged: true, reason: 'reserved-version',
+    })
+  })
+
+  it('still rejects a reserved master version behind npm latest', () => {
+    expect(() => determineAutomaticReleaseVersion('0.1.44', '0.1.45', { masterVersionReserved: true }))
+      .toThrow('master 版本 0.1.44 低于 npm latest 0.1.45')
+  })
+
   it('rejects a master version behind npm latest', () => {
     expect(() => determineAutomaticReleaseVersion('0.1.21', '0.1.22'))
       .toThrow('master 版本 0.1.21 低于 npm latest 0.1.22')

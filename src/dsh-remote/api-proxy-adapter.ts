@@ -365,7 +365,7 @@ export class DshApiProxyAdapter {
       || (typeof this.api.sessions?.list === 'function'
         && typeof this.api.sessions?.modelCatalog === 'function')) result.push('session.model.get')
     if (typeof this.api.sessions?.selectModel === 'function') result.push('session.model.select')
-    if (typeof this.api.sessions?.history === 'function') result.push('session.history')
+    if (typeof this.api.sessions?.history === 'function') result.push('session.history', 'session.history.compact')
     if (typeof this.api.sessions?.prompt === 'function') {
       result.push('session.prompt', 'session.prompt.queue', 'session.prompt.steer')
     }
@@ -426,6 +426,7 @@ export class DshApiProxyAdapter {
   }
 
   async sessions(input: {
+    sessionId?: string
     workspaceId?: string
     limit?: number
     cursor?: string
@@ -445,6 +446,7 @@ export class DshApiProxyAdapter {
     }
     const value = unwrap(await list.call(this.api.sessions, { rpcId: rpcId('remote-sessions'), payload: {} }))
     const all = value.items.flatMap<DshRemoteSessionSummary>(item => {
+      if (input.sessionId !== undefined && item.sessionId !== input.sessionId) return []
       const workspaceId = workspaceBySession.get(item.sessionId)
       if (workspaceId === undefined || (input.workspaceId !== undefined && workspaceId !== input.workspaceId)) return []
       const titleValue = item.projections?.values.title

@@ -1,6 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { act, create } from 'react-test-renderer'
+const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
+vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
 import {
+  ArkmeDSHBetaCommunityEntry,
   ArkmeDSHBetaCommunityEntryContent,
   ArkmeDSHBetaCommunityJoinConfirmation,
 } from '../src/client/ArkmeDSHBetaCommunityEntry.js'
@@ -58,4 +62,26 @@ describe('DSH beta community entry UI', () => {
     expect(markup).toContain('加入中…')
     expect(markup).not.toContain('去加入')
   })
+})
+
+
+it.each(['already_member', 'failed', 'ready'])('does not reserve blank space while checking membership, then handles %s', async outcome => {
+  let resolve!: (value: unknown) => void
+  let reject!: (error: Error) => void
+  mocks.callArkme.mockReset().mockImplementation(() => new Promise((yes, no) => { resolve = yes; reject = no }))
+  let view!: ReturnType<typeof create>
+  const onJoined = () => undefined
+  await act(async () => { view = create(<ArkmeDSHBetaCommunityEntry onJoined={onJoined} />) })
+  expect(view.toJSON()).toBeNull()
+  await act(async () => { view.update(<ArkmeDSHBetaCommunityEntry onJoined={onJoined} />) })
+  expect(mocks.callArkme).toHaveBeenCalledOnce()
+  const signal = mocks.callArkme.mock.calls[0]![2] as AbortSignal
+  await act(async () => {
+    if (outcome === 'failed') reject(new Error('offline'))
+    else resolve({ status: outcome, visible: outcome === 'ready', memberCount: 2, avatarRefs: [] })
+  })
+  if (outcome === 'ready') expect(view.root.findByProps({ 'aria-label': '加入 DSH 内测群' })).toBeDefined()
+  else expect(view.toJSON()).toBeNull()
+  await act(async () => { view.unmount() })
+  expect(signal.aborted).toBe(true)
 })

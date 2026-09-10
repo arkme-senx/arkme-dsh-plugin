@@ -5,6 +5,14 @@ import type { ArkmeService } from '../src/arkme-service.js'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
 
 describe('recording UI-only host operations', () => {
+  it('does not silently drop malformed selectors from a recording forward command', async () => {
+    const forwardRecording = vi.fn()
+    await expect(dispatchArkmeHostOperation({ forwardRecording } as unknown as ArkmeService, 'recordings.forward', {
+      itemRefs: ['valid-ref', 42], targetSourceRef: 'target', requestId: 'request', recordUid: 'record', sendAtMillis: 10,
+    })).rejects.toMatchObject({ code: 'recording-forward-selection-invalid' })
+    expect(forwardRecording).not.toHaveBeenCalled()
+  })
+
   it('dispatches calendar, day, and owner-backed generation operations without adding public SDK methods', async () => {
     const recordingCalendar = vi.fn(async () => ({ fromStamp: 10, toStamp: 20, days: [] }))
     const recordingDay = vi.fn(async () => ({ dateStamp: 10, totalDurationMillis: 0 }))
@@ -83,6 +91,8 @@ describe('recording UI-only host operations', () => {
     try {
       for (const body of [
         { operation: 'recordings.generate', params: { dateStamp: 10, kind: 'summary' } },
+        { operation: 'recordings.compare.start', params: { dateStamp: 10 } },
+        { operation: 'recordings.forward', params: { itemRefs: ['opaque'] } },
         { operation: 'recordings.summary-model-config.set', params: { routeKey: 'dashscope/qwen3-max' } },
       ]) {
         const response = await fetch(`http://127.0.0.1:${String(address.port)}/arkme-self/api`, {

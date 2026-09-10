@@ -208,3 +208,19 @@ function createBotPreferenceFixture(rawBots: Array<Record<string, unknown>>) {
   })
   return { service: new BotService(runtime, source), source }
 }
+
+
+it('restores a cached directory lookup after restart without resurrecting a live Bot handle or its old target', async () => {
+  const oldOwner = createBotPreferenceFixture([{ bot_id: 'private-owner-id', name: 'Bot', provider: 'openclaw', status: 'online', subject_uid: 'old-subject' }]).service
+  const original = (await oldOwner.listBots()).items[0]!
+  const currentOwner = createBotPreferenceFixture([{ bot_id: 'private-owner-id', name: 'Bot', provider: 'openclaw', status: 'online', chat_session_uid: 'current-chat' }]).service
+  const restored = (await currentOwner.restoreDirectoryBots([original], 42))[0]!
+  await expect(currentOwner.openBotRef(original.botRef, 42)).rejects.toMatchObject({ code: 'bot-ref-expired' })
+  expect(restored.botRef).toMatch(/^arkme-bot-directory-entry-v1\./)
+  for (const part of restored.botRef.split('.')) expect(Buffer.from(part, 'base64url').toString()).not.toContain('private-owner-id')
+  await expect(currentOwner.openBotRef(restored.botRef, 42)).resolves.toMatchObject({ botId: 'private-owner-id', target: { kind: 'chat', chatSessionUid: 'current-chat' } })
+  await expect(currentOwner.openBotRef(restored.botRef + 'x', 42)).rejects.toMatchObject({ code: 'bot-ref-invalid' })
+  await expect(currentOwner.openBotRef(restored.botRef, 43)).rejects.toMatchObject({ code: 'bot-ref-invalid' })
+  const removedOwner = createBotPreferenceFixture([]).service
+  await expect(removedOwner.openBotRef(restored.botRef, 42)).rejects.toMatchObject({ code: 'bot-ref-expired' })
+})

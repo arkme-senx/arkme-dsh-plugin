@@ -136,8 +136,22 @@ export class ArkmeConversationMemoryCache {
   private readonly pendingInterwovenRefreshRevisions = new Map<string, number>()
   private readonly viewports = new Map<string, ArkmeConversationViewportSnapshot>()
   private readonly recency = new Map<string, true>()
+  private readonly appliedTimelineDeltas = new Map<string, WeakSet<ArkmeTimelineItem>>()
 
   constructor(private readonly maxSources = 20) {}
+
+  unappliedTimelineDeltaItems(conversationKey: string, items: readonly ArkmeTimelineItem[]): ArkmeTimelineItem[] {
+    const applied = this.appliedTimelineDeltas.get(conversationKey)
+    return items.filter(item => !applied?.has(item))
+  }
+
+  consumeTimelineDeltaItems(conversationKey: string, items: readonly ArkmeTimelineItem[]): void {
+    if (items.length === 0) return
+    const applied = this.appliedTimelineDeltas.get(conversationKey) ?? new WeakSet<ArkmeTimelineItem>()
+    for (const item of items) applied.add(item)
+    this.appliedTimelineDeltas.set(conversationKey, applied)
+    this.touch(conversationKey)
+  }
 
   getTimeline(conversationKey: string): ArkmeConversationTimelineSnapshot | undefined {
     const snapshot = this.timelines.get(conversationKey)
@@ -230,6 +244,7 @@ export class ArkmeConversationMemoryCache {
     this.pendingInterwovenRefreshRevisions.clear()
     this.viewports.clear()
     this.recency.clear()
+    this.appliedTimelineDeltas.clear()
   }
 
   private touch(conversationKey: string): void {
@@ -240,6 +255,7 @@ export class ArkmeConversationMemoryCache {
       if (oldest === undefined) return
       this.recency.delete(oldest)
       this.timelines.delete(oldest)
+      this.appliedTimelineDeltas.delete(oldest)
       this.interwovenMoments.delete(oldest)
       this.interwovenRefreshRevisions.delete(oldest)
       this.pendingInterwovenMoments.delete(oldest)

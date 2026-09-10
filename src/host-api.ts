@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { readDirectoryPage } from './directory-reader.js'
 import { ArkmePluginError, ArkmeService } from './arkme-service.js'
+import { ArkmeDirectMessageAdmissionError } from './services/direct-message-admission-service.js'
 import { isArkmeBotAvatarRef } from './bot-avatar-ref.js'
 import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-update.js'
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
@@ -35,6 +37,7 @@ import {
 } from './link-metadata.js'
 import type { ArkmeFileBackgroundSoundInput } from './file-transfer-contract.js'
 import { arkmeFileBackgroundSound, arkmeRichBackgroundSound } from './record-background-sound.js'
+import { parseArkmeRecordReeditAttachments } from './record-reedit-contract.js'
 import type { ManagedOpenApiMcpController } from './openapi-mcp/controller.js'
 import type { TeamServicePort } from './services/team-service.js'
 
@@ -709,6 +712,7 @@ function botRefsParam(params: Record<string, unknown>): string[] {
 }
 
 function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
+  if (params.textFormat !== undefined && params.textFormat !== 'plain' && params.textFormat !== 'markdown') throw new ArkmePluginError('text-format-invalid', '正文格式无效', false, 400)
   const rawAssets = Array.isArray(params.assets) ? params.assets : []
   const thinkingDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'thinkingDurationMillis', 0)))
   const recordDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'recordDurationMillis', 0)))
@@ -732,6 +736,7 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   return {
     title: stringParam(params, 'title'),
     textContent: stringParam(params, 'textContent'),
+    ...(params.textFormat === undefined ? {} : { textFormat: params.textFormat as 'plain' | 'markdown' }),
     displayKind: numberParam(params, 'displayKind', 0) === 1 ? 1 : 0,
     ...(thinkingDurationMillis === 0 ? {} : { thinkingDurationMillis }),
     ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
@@ -896,7 +901,10 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['user-ban.ban', 'user-ban.unban'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '封禁操作必须从当前 DSH 页面发起', false, 403)
       }
-      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['remote.reportCurrentSession', 'source.message-preparing.report', 'source.message-preparing.cancel'].includes(request.operation) && origin === undefined) {
+        throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
+      }
+      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -928,7 +936,12 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
           : new ArkmePluginError('internal-error', 'Arkme 插件处理失败', true, 500, { cause: error })
       writeJson(res, known.httpStatus, {
         ok: false,
-        error: { code: known.code, message: known.message, retryable: known.retryable },
+        error: { code: known.code, message: known.message, retryable: known.retryable,
+          ...(known.failureKind === undefined ? {} : { failureKind: known.failureKind }),
+          ...(known.retryAfterMillis === undefined ? {} : { retryAfterMillis: known.retryAfterMillis }),
+          ...(known.retryScope === undefined ? {} : { retryScope: known.retryScope }),
+          ...(known.recovery === undefined ? {} : { recovery: known.recovery }),
+          ...(known instanceof ArkmeDirectMessageAdmissionError ? { directMessageAdmission: known.admission } : {}) },
       })
     } finally {
       res.off('close', abortDisconnectedRequest)
@@ -1006,6 +1019,10 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'code'),
     )
     case 'auth.logout': return await service.logout()
+    case 'chat.direct-message-admission':
+      return await service.directMessageAdmission(stringParam(params, 'sourceRef'), requestSignal)
+    case 'chat.direct-message-refusal.set':
+      return await service.setDirectMessageRefusal(stringParam(params, 'sourceRef'), requiredBooleanParam(params, 'refused'), numberParam(params, 'expectedRevision', -1), requestSignal)
     case 'user-ban.status': return browserUserBanSnapshot(await service.userBanStatus(
       stringParam(params, 'sourceRef'), requestSignal,
     ))
@@ -1067,6 +1084,17 @@ export async function dispatchArkmeHostOperation(
       })),
       requestSignal,
     )
+    case 'remote.currentSession': return await requireRemoteHost(remoteHost).currentSession()
+    case 'remote.reportCurrentSession': {
+      const host = requireRemoteHost(remoteHost)
+      host.reportCurrentSession({
+        accountId: stringParam(params, 'accountId'),
+        windowRef: stringParam(params, 'windowRef'),
+        revision: numberParam(params, 'revision', Number.NaN),
+        sessionRef: params.sessionRef === null ? null : stringParam(params, 'sessionRef'),
+      })
+      return { accepted: true }
+    }
     case 'remote.getStatus': return requireRemoteHost(remoteHost).getStatus()
     case 'remote.renameDesktop': return await requireRemoteHost(remoteHost).renameDesktop(stringParam(params, 'displayName'))
     case 'billing.quota': return await service.billingQuota()
@@ -1117,24 +1145,30 @@ export async function dispatchArkmeHostOperation(
         limit: countOnly ? 0 : directoryLimitParam(params),
         ...(countOnly ? { countOnly: true } : {}),
         ...(!countOnly && cursor !== '' ? { cursor } : {}),
+        ...(booleanParam(params, 'refresh') ? { refresh: true } : {}),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       }
-      return section === 'teams'
-        ? await requireTeamService(teamService).listDirectory(options)
-        : await service.listDirectory(section, options)
+      return await readDirectoryPage(service, teamService, section, options)
     }
     case 'directory.contact.profile': return await service.directoryContactProfile(
       stringParam(params, 'contactRef').trim(),
+      requestSignal,
     )
+    case 'directory.contact.remark.update': {
+      if (typeof params.remark !== 'string') throw new ArkmePluginError('directory-contact-remark-invalid', '备注必须为文本', false, 400)
+      return await service.updateDirectoryContactRemark(stringParam(params, 'contactRef').trim(), params.remark, requestSignal)
+    }
     case 'directory.contact.world': return await service.directoryContactWorld(
       stringParam(params, 'contactRef').trim(),
       {
         limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
         offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
     case 'directory.contact.open-chat': return await service.openDirectoryContactChat(
       stringParam(params, 'contactRef').trim(),
+      requestSignal,
     )
     case 'directory.group.open-chat': return await service.openDirectoryGroupChat(
       stringParam(params, 'sourceRef').trim(),
@@ -1185,6 +1219,7 @@ export async function dispatchArkmeHostOperation(
       return await service.createBotSummary({
         name: stringParam(params, 'name'),
         provider: botProviderParam(params),
+        ...(stringParam(params, 'requestUid').trim() === '' ? {} : { requestUid: stringParam(params, 'requestUid').trim() }),
         ...(stringParam(params, 'description').trim() === ''
           ? {}
           : { description: stringParam(params, 'description') }),
@@ -1219,6 +1254,24 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'dateStamp', Number.NaN),
       requestSignal,
     )
+    case 'recordings.compare': return await service.recordingComparison(numberParam(params, 'dateStamp', Number.NaN), requestSignal)
+    case 'recordings.compare.start': return await service.startRecordingComparison(numberParam(params, 'dateStamp', Number.NaN), requestSignal)
+    case 'recordings.forward.capabilities': return await service.recordingForwardCapabilities(requestSignal)
+    case 'recordings.forward': {
+      const itemRefs = params.itemRefs
+      if (!Array.isArray(itemRefs) || !itemRefs.every((item): item is string => typeof item === 'string')) {
+        throw new ArkmePluginError('recording-forward-selection-invalid', '录音片段选择无效', false, 400)
+      }
+      if ((params.commentText !== undefined && typeof params.commentText !== 'string') || (params.commentRecordUid !== undefined && typeof params.commentRecordUid !== 'string')) {
+        throw new ArkmePluginError('recording-forward-input-invalid', '录音附言参数无效', false, 400)
+      }
+      return await service.forwardRecording({
+        itemRefs, targetSourceRef: stringParam(params, 'targetSourceRef'),
+        requestId: stringParam(params, 'requestId'), recordUid: stringParam(params, 'recordUid'), sendAtMillis: numberParam(params, 'sendAtMillis', Number.NaN),
+        ...(params.commentText === undefined ? {} : { commentText: stringParam(params, 'commentText') }),
+        ...(params.commentRecordUid === undefined ? {} : { commentRecordUid: stringParam(params, 'commentRecordUid') }),
+      }, requestSignal)
+    }
     case 'recordings.summary-model-config': return await service.recordingSummaryModelConfig(requestSignal)
     case 'recordings.summary-model-config.set': return await service.setRecordingSummaryModelRoute(
       recordingSummaryModelRouteParam(params, true),
@@ -1503,11 +1556,21 @@ export async function dispatchArkmeHostOperation(
     case 'topic.create': return await service.createTopic(
       stringParam(params, 'title'),
       stringParam(params, 'parentSourceRef') || undefined,
+      {
+        ...(params.contextSourceRef === undefined ? {} : { contextSourceRef: stringParam(params, 'contextSourceRef') }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      },
     )
     case 'topic.rename': return await service.renameTopic(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'title'),
     )
+    case 'topic.home-visibility': {
+      if (params.showInHome !== undefined && typeof params.showInHome !== 'boolean') {
+        throw new ArkmePluginError('topic-policy-invalid', '首页展示开关必须为布尔值', false)
+      }
+      return await service.topicHomeVisibility(stringParam(params, 'sourceRef'), params.showInHome as boolean | undefined, requestSignal)
+    }
     case 'topic.dissolve': return await service.dissolveTopic(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'parentSourceRef') || undefined,
@@ -1523,14 +1586,20 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'nextParentSourceRef') || undefined,
       stringParam(params, 'insertBeforeSourceRef') || undefined,
     )
+    case 'topic.candidates': return await service.listTopicCandidates(
+      stringParam(params, 'keyword'), stringParam(params, 'cursor') || undefined, requestSignal,
+    )
     case 'sources.list': return await service.listSources(
       stringParam(params, 'directory') as ArkmeSourceDirectory,
       {
         limit: numberParam(params, 'limit', 30),
         ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
         refresh: booleanParam(params, 'refresh'),
+        localFirst: booleanParam(params, 'localFirst'),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
+    case 'conversation.directory.bot-pin': return await service.setBotDirectoryPin(stringParam(params, 'botRef'), booleanParam(params, 'pinned'))
     case 'conversation.directory.visibility.query': return await service.conversationDirectoryVisibilitySnapshot(
       stringListParam(params, 'sourceRefs').map(value => value.trim()).filter(value => value !== ''),
       stringListParam(params, 'botRefs').map(value => value.trim()).filter(value => value !== ''),
@@ -1561,7 +1630,8 @@ export async function dispatchArkmeHostOperation(
       const cursor = timelineCursorParam(params)
       return await service.readSource(
         stringParam(params, 'sourceRef'),
-        { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }) },
+        { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }),
+          ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
       )
     }
     case 'source.timeline-around': return await service.readSourceAround(
@@ -1574,10 +1644,29 @@ export async function dispatchArkmeHostOperation(
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
+    case 'source.members.cached': return await service.cachedSourceMembers(stringParam(params, 'sourceRef'), requestSignal) ?? null
+    case 'source.members.page': return await service.pageSourceMembers(stringParam(params, 'sourceRef'), {
+      limit: numberParam(params, 'limit', 50),
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+    })
+    case 'source.members.presentation': {
+      if (!Array.isArray(params.memberRefs) || params.memberRefs.some(value => typeof value !== 'string')) throw new ArkmePluginError('member-presentation-invalid', '成员引用必须为字符串列表', false, 400)
+      return await service.sourceMembersPresentation(stringParam(params, 'sourceRef'), params.memberRefs as string[],
+        requestSignal === undefined ? {} : { signal: requestSignal })
+    }
     case 'source.members': return await service.listSourceMembers(
       stringParam(params, 'sourceRef'),
-      { activeOnly: params.activeOnly !== false },
+      { activeOnly: params.activeOnly !== false, ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
     )
+    case 'source.member-events': return await service.memberEvents(stringParam(params, 'sourceRef'), {
+      fromAtMillis: numberParam(params, 'fromAtMillis', 0),
+      toAtMillis: numberParam(params, 'toAtMillis', 0),
+      limit: numberParam(params, 'limit', 50),
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}),
+    }, requestSignal)
+    case 'source.member-event.profile': return await service.memberEventProfile(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
+    case 'source.member-event.private.open': return await service.memberEventPrivateChat(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
     case 'source.member-records': return await service.sourceMemberRecords(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'memberRef'),
@@ -1609,6 +1698,21 @@ export async function dispatchArkmeHostOperation(
       requiredRelatedQuickNoteParam(params, 'relatedRef'),
       requestSignal,
     )
+    case 'source.message-preparing.report':
+    case 'source.message-preparing.cancel': {
+      const sourceRef = typeof params.sourceRef === 'string' ? params.sourceRef.trim() : ''
+      const timestampKey = operation === 'source.message-preparing.report' ? 'prepareAtMillis' : 'cancelAtMillis'
+      const stateAtMillis = params[timestampKey]
+      if (Object.keys(params).some(key => key !== 'sourceRef' && key !== timestampKey)
+        || sourceRef === '' || typeof stateAtMillis !== 'number' || !Number.isSafeInteger(stateAtMillis)
+        || stateAtMillis <= 0 || !Number.isSafeInteger(stateAtMillis + 5_000)) {
+        throw new ArkmePluginError('message-preparing-invalid', '正在输入参数无效', false, 400)
+      }
+      const options = requestSignal === undefined ? {} : { signal: requestSignal }
+      if (operation === 'source.message-preparing.report') await service.reportMessagePreparing(sourceRef, stateAtMillis, options)
+      else await service.cancelMessagePreparing(sourceRef, stateAtMillis, options)
+      return null
+    }
     case 'source.mark-read': return await service.markSourceRead(
       stringParam(params, 'sourceRef'),
       numberParam(params, 'readSequence', 0),
@@ -1622,7 +1726,7 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'itemUid'),
       numberParam(params, 'sequence', 0),
-      requestSignal === undefined ? {} : { signal: requestSignal },
+      { ...(params.basicOnly === undefined ? {} : { basicOnly: params.basicOnly === true }), ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
     )
     case 'source.message-report': {
       const report = messageReportParam(params)
@@ -1674,6 +1778,7 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'recordUid'),
       [...new Set(stringListParam(params, 'fileRefs').map(value => value.trim()).filter(value => value !== ''))],
       {
+        ...richSendParam(params),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(stringParam(params, 'parentRecordUid') === '' ? {} : { parentRecordUid: stringParam(params, 'parentRecordUid') }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
@@ -1697,6 +1802,19 @@ export async function dispatchArkmeHostOperation(
         requestSignal === undefined ? {} : { signal: requestSignal },
       )
       return { ok: true }
+    }
+    case 'source.record-topic.assign': {
+      if (!Array.isArray(params.assignmentRefs) || params.assignmentRefs.some(ref => typeof ref !== 'string')) {
+        throw new ArkmePluginError('record-topic-selection-invalid', '快记归属引用无效', false, 400)
+      }
+      if (params.targetSourceRef !== undefined && typeof params.targetSourceRef !== 'string') {
+        throw new ArkmePluginError('record-topic-target-invalid', '主题引用无效', false, 400)
+      }
+      return await service.assignRecordTopic({
+        sourceRef: stringParam(params, 'sourceRef'),
+        assignmentRefs: params.assignmentRefs as string[],
+        ...(typeof params.targetSourceRef === 'string' ? { targetSourceRef: params.targetSourceRef } : {}),
+      }, requestSignal)
     }
     case 'source.forward-messages': return await service.forwardSourceMessages(
       stringParam(params, 'sourceRef'),
@@ -1746,6 +1864,7 @@ export async function dispatchArkmeHostOperation(
     }
     case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(
       stringParam(params, 'sourceRef'),
+      requestSignal,
     )
     case 'related-recordings.page': return await service.relatedRecordings(
       stringParam(params, 'sourceRef'),
@@ -1755,6 +1874,7 @@ export async function dispatchArkmeHostOperation(
         ...(stringParam(params, 'monthKey') === '' ? {} : { monthKey: stringParam(params, 'monthKey') }),
         timezoneOffsetMillis: numberParam(params, 'timezoneOffsetMillis', 0),
         includeTimeIndex: booleanParam(params, 'includeTimeIndex'),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
     case 'source.ai-polish.settings': return await service.inspectGroupAiPolish(
@@ -1970,22 +2090,37 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'itemUid'),
     )
     case 'source.record-reedit.draft.put': {
-      const prepared = await service.prepareRecordReedit({
+      const prepared = await service.saveRecordReeditDraft({
         sourceRef: stringParam(params, 'sourceRef'),
         itemUid: stringParam(params, 'itemUid'),
-        newText: stringParam(params, 'newText'),
+        ...(params.newText === undefined ? {} : { newText: stringParam(params, 'newText') }),
         ...(params.newTitle === undefined ? {} : { newTitle: stringParam(params, 'newTitle') }),
-      }, { expectedBaseVersion: Math.trunc(numberParam(params, 'expectedVersion', 0)) })
+        ...(params.attachments === undefined ? {} : { attachments: parseArkmeRecordReeditAttachments(params.attachments) }),
+        ...(params.expectedDraftRevision === undefined ? {} : { expectedDraftRevision: numberParam(params, 'expectedDraftRevision', -1) }),
+        expectedVersion: Math.trunc(numberParam(params, 'expectedVersion', 0)),
+      })
       return { saved: true, draftRevision: prepared.draftRevision }
     }
+    case 'source.record-reedit.submissions': return await service.recordReeditSubmissions(stringParam(params, 'sourceRef'))
+    case 'source.record-reedit.resume':
+      await service.resumeRecordReeditSubmissions(stringParam(params, 'sourceRef'), params.reconcile === true)
+      return { resumed: true }
+    case 'source.record-reedit.acknowledge': {
+      await service.acknowledgeRecordReeditSubmission(stringParam(params, 'sourceRef'), stringParam(params, 'submissionId'), numberParam(params, 'version', 0))
+      return { acknowledged: true }
+    }
+    case 'source.record-reedit.submit':
     case 'source.record-reedit.update': {
       const input = {
         sourceRef: stringParam(params, 'sourceRef'),
         itemUid: stringParam(params, 'itemUid'),
-        newText: stringParam(params, 'newText'),
+        ...(params.newText === undefined ? {} : { newText: stringParam(params, 'newText') }),
         ...(params.newTitle === undefined ? {} : { newTitle: stringParam(params, 'newTitle') }),
+        ...(params.attachments === undefined ? {} : { attachments: parseArkmeRecordReeditAttachments(params.attachments) }),
+        ...(params.expectedDraftRevision === undefined ? {} : { expectedDraftRevision: numberParam(params, 'expectedDraftRevision', -1) }),
       }
       const expectedBaseVersion = Math.trunc(numberParam(params, 'expectedVersion', 0))
+      if (operation === 'source.record-reedit.submit') return await service.submitRecordReedit({ ...input, expectedVersion: expectedBaseVersion })
       const prepared = await service.prepareRecordReedit(input, { expectedBaseVersion })
       return await service.commitRecordReedit(prepared)
     }
@@ -1993,6 +2128,10 @@ export async function dispatchArkmeHostOperation(
       const prepared = await service.prepareDiscardRecordReeditDraft(
         stringParam(params, 'sourceRef'), stringParam(params, 'itemUid'),
       )
+      if (params.expectedDraftRevision !== undefined
+        && params.expectedDraftRevision !== prepared.draftRevision) {
+        throw new ArkmePluginError('record-reedit-draft-changed', '草稿已变化，请重新读取后再确认放弃', false, 409)
+      }
       return await service.discardRecordReeditDraft(prepared)
     }
     case 'calls.outgoing.intent.claim': return await service.claimOutgoingCallIntent()

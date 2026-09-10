@@ -73,6 +73,14 @@ describe('ArkmeUiController', () => {
     expect(controller.getChatRevision()).toBe(0)
   })
 
+  it('retains newer policy evidence when presentation is unchanged', () => {
+    const controller = new ArkmeUiController()
+    const source = { sourceRef: 'group-1', kind: 'group_chat' as const, displayName: '群', isMuted: false, isPinned: true }
+    controller.selectSource({ ...source, chatPolicyUpdatedAtMillis: 1000, chatNotificationPolicyUpdatedAtMillis: 1000 })
+    controller.updateSelectedSourceProjection({ ...source, chatPolicyUpdatedAtMillis: 3000, chatNotificationPolicyUpdatedAtMillis: 2000 })
+    expect(controller.getSnapshot().selectedSource).toMatchObject({ chatPolicyUpdatedAtMillis: 3000, chatNotificationPolicyUpdatedAtMillis: 2000 })
+  })
+
   it('clears Contacts mode on every non-Contacts route and authenticated account reset', () => {
     const controller = new ArkmeUiController()
 
@@ -481,4 +489,25 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).not.toHaveProperty('calendarOpen')
     expect(controller.getSnapshot()).not.toHaveProperty('productMode')
   })
+})
+
+
+it('publishes each unread-directory jump without changing the selected conversation or chat revision', () => {
+  const controller = new ArkmeUiController()
+  const source = { sourceRef: 'a', kind: 'private_chat' as const, displayName: 'A', activeAtMillis: 1, unreadCount: 3 }
+  controller.selectSource(source)
+  const before = controller.getSnapshot()
+  controller.locateNextUnreadConversation()
+  controller.locateNextUnreadConversation()
+  expect(controller.getViewSnapshot().conversationUnreadJumpRevision).toBe(2)
+  expect(controller.getSnapshot().selectedSource).toEqual(source)
+  expect(controller.getSnapshot().chatRevision).toBe(before.chatRevision)
+})
+
+it('clears the previous account Bot selection before publishing an authenticated account replacement', () => {
+  const controller = new ArkmeUiController()
+  controller.openBotConversation({ botRef: 'old-account', directoryKey: 'old-account-bot', name: 'Old', provider: 'openclaw', description: '', status: 'offline', directChatAvailable: true })
+  controller.authChanged(true, true)
+  expect(controller.getSnapshot().mode).toBe('source')
+  expect(controller.getSnapshot().selectedBot).toBeUndefined()
 })

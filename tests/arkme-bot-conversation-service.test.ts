@@ -144,9 +144,7 @@ describe('BotConversationService', () => {
         } })
         if (url.endsWith('/api/v1/chats/policy/update')) return json({ code: 200, data: {
           chat_session_uid: 'chat-session-1', user_id: 42,
-          show_in_home_state: body.show_in_home_state, privacy_state: body.privacy_state,
-          mute_state: body.mute_state, pin_state: body.pin_state, notify_state: body.notify_state,
-          status: body.status, update_at: body.update_at,
+          show_in_home_state: 1, privacy_state: 2, mute_state: 2, pin_state: 1, notify_state: 2, status: 1, update_at: 200,
         } })
         if (url.endsWith('/api/v1/chats/cursor/update')) return json({ code: 200, data: {
           chat_session_uid: 'chat-session-1', user_id: 42, effective_read_seq: 7, read_at: 200,
@@ -178,8 +176,7 @@ describe('BotConversationService', () => {
     expect(calls.filter(call => call.url.endsWith('/api/v1/bot/private-chat/open'))).toHaveLength(1)
     expect(calls.filter(call => call.url.endsWith('/api/v1/chats/records/send'))).toHaveLength(1)
     expect(calls.find(call => call.url.endsWith('/api/v1/chats/policy/update'))?.body).toMatchObject({
-      chat_session_uid: 'chat-session-1', show_in_home_state: 1, privacy_state: 1,
-      mute_state: 2, pin_state: 2, notify_state: 2, status: 1,
+      chat_session_uid: 'chat-session-1', patch: { mute_state: 2, notify_state: 2 },
     })
     expect(calls.some(call => call.url.includes('subject.test'))).toBe(false)
     expect(calls.some(call => call.url.includes('record.test'))).toBe(false)

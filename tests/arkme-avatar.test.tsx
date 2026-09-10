@@ -84,6 +84,45 @@ describe('ArkmeAvatar', () => {
     act(() => { second.unmount() })
   })
 
+  it.each(['single', 'group'] as const)('shows a %s source avatar cached before its lazy subscription starts', async kind => {
+    vi.useFakeTimers()
+    let reportVisible!: () => void
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: (entries: Array<{ isIntersecting: boolean }>) => void) {
+        reportVisible = () => { callback([{ isIntersecting: true }]) }
+      }
+      observe() {}
+      disconnect() {}
+    })
+    const avatarRef = 'avatar-loaded-by-another-component'
+    let renderer: ReactTestRenderer | undefined
+    try {
+      await act(async () => {
+        renderer = create(kind === 'single'
+          ? <ArkmeSourceAvatar kind="single" avatarRef={avatarRef} />
+          : <ArkmeSourceAvatar kind="group" avatarRefs={[avatarRef]} />,
+        { createNodeMock: () => ({}) })
+      })
+      expect(renderer!.root.findAllByType('img')).toHaveLength(0)
+
+      // Another group/member avatar finishes loading while this row is not subscribed.
+      await act(async () => { await arkmeAvatarImages.load(avatarRef) })
+      expect(arkmeAvatarImages.current(avatarRef)).toBe(imageDataUrl(avatarRef))
+      expect(renderer!.root.findAllByType('img')).toHaveLength(0)
+
+      await act(async () => { reportVisible() })
+
+      expect(renderer!.root.findByType('img').props.src).toBe(imageDataUrl(avatarRef))
+      expect(mocks.callArkme).toHaveBeenCalledTimes(1)
+      await act(async () => { await arkmeAvatarImages.revalidateActive() })
+      expect(renderer!.root.findByType('img').props.src).toBe(imageDataUrl(avatarRef))
+    } finally {
+      act(() => { renderer?.unmount() })
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
   it('does not reload unchanged group slots when only computedAtMillis changes', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(0)
     const first = {

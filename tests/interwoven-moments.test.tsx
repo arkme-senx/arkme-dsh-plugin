@@ -9,6 +9,8 @@ import {
   interwovenDetailTimeLabel,
   interwovenTimeLabel,
   mergeConversationRows,
+  projectInterwovenWindow,
+  ArkmeInterwovenPrelude,
   resolveInterwovenGroupTarget,
 } from '../src/client/interwoven-moments.js'
 
@@ -31,6 +33,42 @@ function source(sourceRef: string, kind: ArkmeSourceItem['kind'], displayName: s
 }
 
 describe('interwoven conversation projection', () => {
+  it('collapses all early cards without dropping them from the prelude', async () => {
+    const cards = Array.from({ length: 21 }, (_, i) => moment(String(i), i + 1))
+    const projection = projectInterwovenWindow([message('latest', 100)], cards, true)
+    expect(projection.inline).toEqual([])
+    expect(projection.prelude).toEqual(cards)
+    let tree!: ReturnType<typeof create>
+    await act(async () => { tree = create(<ArkmeInterwovenPrelude moments={projection.prelude} onOpen={() => {}} />) })
+    expect(tree.root.findAllByType(ArkmeInterwovenMentionCard).map(node => node.props.moment.momentId)).toEqual(['19', '20'])
+    await act(async () => { tree.root.findByProps({ 'data-arkme-interwoven-expand': true }).props.onClick() })
+    expect(tree.root.findAllByType(ArkmeInterwovenMentionCard)).toHaveLength(21)
+    await act(async () => { tree.update(<ArkmeInterwovenPrelude key="another-conversation" moments={cards} onOpen={() => {}} />) })
+    expect(tree.root.findAllByType(ArkmeInterwovenMentionCard)).toHaveLength(2)
+    await act(async () => { tree.unmount() })
+  })
+
+  it('reclassifies cards as the message window grows and reveals the prelude when history ends', () => {
+    const cards = [moment('early', 10), moment('boundary', 20), moment('inside', 30), moment('newer', 70)]
+    const messages = [message('new', 60), message('old', 20)]
+    expect(projectInterwovenWindow(messages, cards, true)).toEqual({ prelude: [], inline: cards.slice(2) })
+    expect(projectInterwovenWindow(messages, cards, false)).toEqual({ prelude: cards.slice(0, 2), inline: cards.slice(2) })
+    expect(projectInterwovenWindow([message('older', 5), ...messages], cards, true)).toEqual({ prelude: [], inline: cards })
+    expect(projectInterwovenWindow([], cards, false)).toEqual({ prelude: cards, inline: [] })
+  })
+
+  it('deduplicates by card identity and keeps input arrays untouched', () => {
+    const a = moment('a', 10), b = moment('b', 10)
+    const input = [b, a, a]
+    expect(projectInterwovenWindow([message('m', 20)], input, true).prelude).toEqual([a, b])
+    expect(input).toEqual([b, a, a])
+  })
+  it('inserts unique member events between quick notes using occurrence time and stable ties', () => {
+    const left = {eventId:'leave-1',type:'left' as const,occurredAtMillis:15,displayName:'李四'}
+    const rows = mergeConversationRows([message('early',10),message('late',20)],[],[left,left,{...left,eventId:'leave-2',occurredAtMillis:20}])
+    expect(rows.map(row => row.id)).toEqual(['message:early','member-event:leave-1','member-event:leave-2','message:late'])
+    expect(rows.filter(row => row.kind==='message').map(row => row.item.itemUid)).toEqual(['early','late'])
+  })
   it('merges messages and moments chronologically with stable identity deduplication', () => {
     const rows = mergeConversationRows(
       [message('m2', 20), message('m1', 10), message('m1', 10)],
@@ -233,7 +271,10 @@ describe('interwoven UI', () => {
     for (const markup of [loading, error, success, relatedListMarkup, relatedDetailMarkup, degraded, degradedSummary]) {
       expect(markup).toContain('aria-label="关闭快记详情"')
       expect(markup).toContain('position:absolute')
-      expect(markup).toContain('width:min(372px, 100%)')
+      expect(markup).toContain('width:405px')
+      expect(markup).toContain('max-width:100%')
+      expect(markup).toContain('aria-label="调整快记详情宽度"')
+      expect(markup).toContain('aria-valuenow="405"')
       expect(markup).toContain('top:68px')
       expect(markup).not.toContain('top:0;right:0;bottom:0')
       expect(markup).toContain('bottom:0')

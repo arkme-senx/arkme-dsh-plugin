@@ -1,6 +1,7 @@
 import type { ArkmeDirectorySelection } from './contact-directory-state.js'
 import type { ContactDirectoryState } from './contact-directory-state.js'
-import type { ArkmeDirectorySectionKind } from '../../../types.js'
+import { applyContactProfileUpdates, type ContactProfileUpdates } from './contact-directory-state.js'
+import type { ArkmeDirectoryContactProfile, ArkmeDirectorySectionKind } from '../../../types.js'
 
 const DEFAULT_DIRECTORY_CACHE_MAX_AGE_MS = 30_000
 
@@ -34,12 +35,13 @@ export interface ContactsTabSnapshot {
   generation: number
   refreshRevision: number
   selection: ArkmeDirectorySelection
+  contactProfiles: ContactProfileUpdates
   expandedSections: ContactsTabExpandedSections
 }
 
 /** Cross-seat state for the Contacts tab only; conversation state remains in arkmeUi. */
 export class ContactsTabStore {
-  private snapshot: ContactsTabSnapshot = { generation: 0, refreshRevision: 0, selection: { kind: 'none' }, expandedSections: defaultExpandedSections() }
+  private snapshot: ContactsTabSnapshot = { generation: 0, refreshRevision: 0, selection: { kind: 'none' }, contactProfiles: {}, expandedSections: defaultExpandedSections() }
   private directoryCache: { state: ContactDirectoryState; refreshedAtMillis: number } | undefined
   private readonly listeners = new Set<() => void>()
   private readonly aborters = new Set<() => void>()
@@ -53,7 +55,7 @@ export class ContactsTabStore {
   getSnapshotForAccount(accountKey: string | undefined): ContactsTabSnapshot {
     return this.snapshot.accountKey === accountKey ? this.snapshot : {
       ...(accountKey === undefined ? {} : { accountKey }), generation: this.snapshot.generation + 1,
-      refreshRevision: 0, selection: { kind: 'none' }, expandedSections: defaultExpandedSections(),
+      refreshRevision: 0, selection: { kind: 'none' }, contactProfiles: {}, expandedSections: defaultExpandedSections(),
     }
   }
   readonly subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
@@ -70,15 +72,31 @@ export class ContactsTabStore {
       fresh: cached.refreshedAtMillis > 0 && this.now() - cached.refreshedAtMillis <= this.directoryCacheMaxAgeMs,
     }
   }
-  cacheDirectoryState(state: ContactDirectoryState, refreshed: boolean): void {
+  invalidateDirectoryCache(): void { this.directoryCache = undefined }
+  cacheDirectoryState(state: ContactDirectoryState, refreshed: boolean, acknowledgedProfiles: ContactProfileUpdates = {}): void {
     if (this.snapshot.accountKey === undefined || state.accountKey !== this.snapshot.accountKey) return
+    const contactProfiles = { ...this.snapshot.contactProfiles }
+    let cleared = false
+    for (const [ref, profile] of Object.entries(acknowledgedProfiles)) {
+      // A response may retire only saves that already existed when its request started.
+      if (contactProfiles[ref] === profile) { delete contactProfiles[ref]; cleared = true }
+    }
     const previousRefresh = this.directoryCache?.state.accountKey === state.accountKey
       ? this.directoryCache.refreshedAtMillis
       : 0
     this.directoryCache = {
-      state,
+      state: applyContactProfileUpdates(state, contactProfiles),
       refreshedAtMillis: refreshed ? this.now() : previousRefresh,
     }
+    if (cleared) this.publish({ ...this.snapshot, contactProfiles })
+  }
+  updateContactProfile(accountKey: string, profile: ArkmeDirectoryContactProfile): void {
+    if (this.snapshot.accountKey !== accountKey) return
+    const contactProfiles = { ...this.snapshot.contactProfiles, [profile.contactRef]: profile }
+    if (this.directoryCache?.state.accountKey === accountKey) {
+      this.directoryCache = { ...this.directoryCache, state: applyContactProfileUpdates(this.directoryCache.state, contactProfiles) }
+    }
+    this.publish({ ...this.snapshot, contactProfiles })
   }
   activateAccount(accountKey: string | undefined): void {
     if (this.snapshot.accountKey !== accountKey) {
@@ -86,7 +104,7 @@ export class ContactsTabStore {
       this.directoryCache = undefined
       this.publish({
         ...(accountKey === undefined ? {} : { accountKey }), generation: this.snapshot.generation + 1,
-        refreshRevision: 0, selection: { kind: 'none' }, expandedSections: defaultExpandedSections(),
+        refreshRevision: 0, selection: { kind: 'none' }, contactProfiles: {}, expandedSections: defaultExpandedSections(),
       })
     }
   }

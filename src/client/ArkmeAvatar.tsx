@@ -28,9 +28,9 @@ function reconcileAvatarSlots(
   return sourceSlots.map((slot, index) => {
     if (slot.avatarRef === undefined) return slot
     const currentSlot = current[index]
-    const imageUrl = currentSlot?.avatarRef === slot.avatarRef
-      ? currentSlot.imageUrl
-      : arkmeAvatarImages.current(slot.avatarRef)
+    // Another avatar may populate the shared cache before this lazy row subscribes.
+    const imageUrl = arkmeAvatarImages.current(slot.avatarRef)
+      ?? (currentSlot?.avatarRef === slot.avatarRef ? currentSlot.imageUrl : undefined)
     return imageUrl === undefined ? slot : { ...slot, imageUrl }
   })
 }
@@ -91,20 +91,23 @@ function PhoneDefaultAvatar({ fallback, size }: { fallback: Extract<ArkmeGroupAv
 
 export function ArkmeUserAvatar({
   avatarRef,
+  lazy = false,
   fallback,
   size = 44,
   label = '用户头像',
 }: {
+  lazy?: boolean
   avatarRef?: string
   fallback?: ArkmeGroupAvatarFallback
   size?: number
   label?: string
 }) {
   const normalizedRef = avatarRef?.trim() ?? ''
-  const imageUrl = useArkmeAvatarImage(normalizedRef)
+  const container = useRef<HTMLSpanElement>(null)
+  const imageUrl = useArkmeAvatarImage(normalizedRef, lazy ? container : undefined)
 
   const styles = avatarStyles(size)
-  return <span style={styles.avatar} aria-label={label}>
+  return <span ref={container} style={styles.avatar} aria-label={label}>
     {imageUrl !== undefined
       ? <img src={imageUrl} alt="" draggable={false} style={styles.image} />
       : fallback?.kind === 'phone_default'

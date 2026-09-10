@@ -36,7 +36,7 @@ describe('GroupService', () => {
     }
     const state = { async uniqueCode() { return 'device-secret' } } as StateStore
     const runtime = new ServiceRuntime(config, sessions, state, async () => new Response(JSON.stringify({
-      code: 200, data: { session: { chat_session_uid: 'group-1', title: '研发群' }, current_policy: { mute_state: 2 } },
+      code: 200, data: { session: { chat_session_uid: 'group-1', title: '研发群' }, current_policy: { mute_state: 2, update_at: 2000 } },
     }), { status: 200 }))
     const profile = new ProfileService(runtime)
     const source = new SourceService(runtime, profile, {
@@ -49,7 +49,7 @@ describe('GroupService', () => {
         sourceRef: expect.any(String), sourceKey: expect.any(String), kind: 'group_chat', displayName: '研发群',
       },
       selfRole: 'unknown', selfStatus: 'unknown', canRename: false, canDissolve: false, canLeave: false,
-      messageDnd: true,
+      messageDnd: true, chatNotificationPolicyUpdatedAtMillis: 2000,
     })
   })
 
@@ -91,7 +91,7 @@ describe('GroupService', () => {
   it('invalidates a cached root page after enabling do-not-disturb', async () => {
     let muted = false
     let listReads = 0
-    const { source, service } = fixture(async (input) => {
+    const { source, service } = fixture(async (input, init) => {
       const path = new URL(String(input)).pathname
       if (path.endsWith('/chats/list')) {
         listReads += 1
@@ -114,8 +114,9 @@ describe('GroupService', () => {
         } }), { status: 200 })
       }
       if (path.endsWith('/chats/policy/update')) {
+        expect(JSON.parse(String(init?.body))).toEqual({chat_session_uid:'group-dnd',patch:{mute_state:2,notify_state:2}})
         muted = true
-        return new Response(JSON.stringify({ code: 200, data: {} }), { status: 200 })
+        return new Response(JSON.stringify({ code: 200, data: {chat_session_uid:'group-dnd',user_id:42,show_in_home_state:1,privacy_state:1,mute_state:2,notify_state:2,pin_state:1,status:1,update_at:1000} }), { status: 200 })
       }
       throw new Error(`unexpected ${path}`)
     })
@@ -126,6 +127,33 @@ describe('GroupService', () => {
     const after = await source.listSources('root')
     expect(after.items[0]).toMatchObject({ unreadCount: 3, badgeUnreadCount: 0, isMuted: true })
     expect(listReads).toBe(2)
+  })
+
+  it('keeps independent notification evidence when a newer pin hint precedes a delayed DND acknowledgement', async () => {
+    let respond!: (value: Response) => void
+    let started!: () => void
+    const pending = new Promise<Response>(resolve => { respond = resolve })
+    const requestStarted = new Promise<void>(resolve => { started = resolve })
+    const { source, service } = fixture(async (input, init) => {
+      expect(new URL(String(input)).pathname).toBe('/api/v1/chats/policy/update')
+      expect(JSON.parse(String(init?.body))).toEqual({ chat_session_uid: 'group-1', patch: { mute_state: 2, notify_state: 2 } })
+      started()
+      return pending
+    })
+    const item = await source.sourceItem({ version: 1, userId: 42, kind: 'group_chat', ownerRef: 'group-1', displayName: '群' })
+    source.setChatSource(42, 'group-1', { ...item, isMuted: false, chatPolicyUpdatedAtMillis: 1000, chatNotificationPolicyUpdatedAtMillis: 1000 })
+    const write = service.setGroupMessageDnd(item.sourceRef, true)
+    await requestStarted
+    source.setChatSource(42, 'group-1', { ...item, isPinned: true, isMuted: false, chatPolicyUpdatedAtMillis: 3000, chatNotificationPolicyUpdatedAtMillis: 1000 })
+    respond(new Response(JSON.stringify({ code: 200, data: {
+      chat_session_uid: 'group-1', user_id: 42, show_in_home_state: 1, privacy_state: 1,
+      mute_state: 2, notify_state: 2, pin_state: 1, status: 1, update_at: 2000,
+    } }), { status: 200 }))
+    await expect(write).resolves.toEqual({ messageDnd: true, chatNotificationPolicyUpdatedAtMillis: 2000 })
+    expect(source.cachedChatSource(42, 'group-1')).toMatchObject({
+      isPinned: true, chatPolicyUpdatedAtMillis: 3000, isMuted: true,
+      chatNotificationPolicyUpdatedAtMillis: 2000, badgeUnreadCount: 0, notificationAllowed: false,
+    })
   })
 
   it('invalidates the root directory cache after a group rename', async () => {

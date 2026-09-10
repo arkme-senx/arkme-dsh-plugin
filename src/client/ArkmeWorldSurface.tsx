@@ -29,10 +29,11 @@ import { createArkmeSdk } from '../sdk/index.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
-import { ARKME_LINK_FALLBACK_LABEL, ArkmeLinkText, ArkmeTextLink, type ArkmeLinkRenderer } from './ArkmeLinkText.js'
+import { ARKME_LINK_FALLBACK_LABEL, ArkmeTextLink, type ArkmeLinkRenderer } from './ArkmeLinkText.js'
 import { ArkmeWorldEmptyNotice } from './ArkmeWorldEmptyNotice.js'
 import { ArkmeMemberProfileCard, type ArkmeMemberProfileIdentity } from './ArkmeChatMemberActions.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeUi, type ArkmeWorldTarget } from './ui-controller.js'
 import { resolveWorldVoiceprintExpectationCopy } from './world-voiceprint-expectation-copy.js'
@@ -790,7 +791,7 @@ function WorldLinkText({ text, extensionShareLink }: { text: string; extensionSh
       fallbackLabel={worldLinkFallbackLabel(link, extensionShareLink)}
     />
   }
-  return <ArkmeLinkText text={text} renderLink={renderLink} />
+  return <ArkmeRichText text={text} renderLink={renderLink} />
 }
 
 export function WorldCollapsibleText({ recordRef, authorName, textContent, hasMedia, extensionShareLink }: {
@@ -836,7 +837,7 @@ export function WorldCollapsibleText({ recordRef, authorName, textContent, hasMe
       id={textId}
       style={{ ...styles.text, ...(!expanded ? styles.textCollapsed : {}), ...(!expanded ? { WebkitLineClamp: maxLines } : {}) }}
       data-world-text-expanded={expanded ? 'true' : 'false'}
-    ><WorldLinkText text={content} {...(extensionShareLink === undefined ? {} : { extensionShareLink })} /></p>
+    ><WorldLinkText text={textContent} {...(extensionShareLink === undefined ? {} : { extensionShareLink })} /></p>
     {collapsible && <button
       type="button"
       style={styles.textToggle}
@@ -926,7 +927,7 @@ function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }:
     return <span data-world-comment-level={reply ? 'reply' : 'root'} style={{ ...styles.compactCommentRow, ...(reply ? styles.compactCommentReply : {}) }}>
       <strong style={styles.compactCommentAuthor}>{item.authorName}</strong>
       {replyToName !== undefined && <><span> 回复 </span><strong style={styles.compactCommentAuthor}>{replyToName}</strong></>}
-      <span>：<WorldLinkText text={arkmeEmojiPlainText(item.textContent)} /></span>
+      <span>：<WorldLinkText text={item.textContent} /></span>
     </span>
   }
   return <div data-world-comment-level={reply ? 'reply' : 'root'} style={{
@@ -942,7 +943,7 @@ function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }:
         <time>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
       </header>
       <div style={styles.interactionContentRow}>
-        <p style={{ ...styles.interactionText, ...(reply ? styles.interactionReplyText : {}) }}><WorldLinkText text={arkmeEmojiPlainText(item.textContent)} /></p>
+        <p style={{ ...styles.interactionText, ...(reply ? styles.interactionReplyText : {}) }}><WorldLinkText text={item.textContent} /></p>
         {onReply !== undefined && <button type="button" style={styles.interactionAction} aria-label={`回复${item.authorName}的评论`} onClick={() => { onReply(item) }}>{active ? '取消回复' : '回复'}</button>}
       </div>
     </div>
@@ -1130,7 +1131,7 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
       </span>
       <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
     </header>
-    {item.headline !== '' && <h2 style={styles.headline}>{arkmeEmojiPlainText(item.headline)}</h2>}
+    {item.headline !== '' && <h2 style={styles.headline}><ArkmeRichText text={item.headline} presentation="preview" /></h2>}
     {textContent.trim() !== '' && <WorldCollapsibleText
       recordRef={item.recordRef}
       authorName={item.authorName}

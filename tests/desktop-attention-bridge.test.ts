@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   ArkmeDesktopAttentionBridge,
+  createDesktopLifecycleReader,
   arkmeDesktopBridgeConfigFromEnv,
 } from '../src/services/desktop-attention-bridge.js'
 
@@ -198,4 +199,21 @@ describe('Arkme desktop attention bridge', () => {
       { generation: 51, revision: 1, count: 0 },
     ])
   })
+})
+
+
+it('lifecycle sampling never blocks the session poll on native bridge IO', async () => {
+  vi.stubEnv('ARKME_DESKTOP_BRIDGE_URL', config.endpoint)
+  vi.stubEnv('ARKME_DESKTOP_BRIDGE_TOKEN', config.token)
+  vi.stubEnv('ARKME_DESKTOP_BRIDGE_SESSION_ID', config.sessionId)
+  const pending = Promise.withResolvers<Response>()
+  const fetchImpl = vi.fn(() => pending.promise)
+  try {
+    const read = createDesktopLifecycleReader(fetchImpl)
+    await expect(read()).resolves.toBeUndefined()
+    await expect(read()).resolves.toBeUndefined()
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    pending.resolve(capabilities())
+    await Promise.resolve()
+  } finally { vi.unstubAllEnvs() }
 })

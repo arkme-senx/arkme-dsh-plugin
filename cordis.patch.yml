@@ -42,5 +42,6 @@
         updateCheckIntervalHours: 12
         updateAllowLocalInstall: true
         richMediaRenderEnabled: true
+        markdownQuickNotesEnabled: true
         richMediaSendEnabled: true
         maxUploadBytes: 104857600

@@ -12,12 +12,13 @@ export function ArkmeFilePreparingIndicator() {
   </svg>
 }
 
-export function ArkmeAttachmentStrip({ attachments, disabled, onMove, onRemove, onPreview }: {
+export function ArkmeAttachmentStrip({ attachments, disabled, onMove, onRemove, onPreview, canPreview }: {
   attachments: readonly ArkmeComposerAttachment[]
   disabled: boolean
   onMove(from: number, to: number): void
   onRemove(attachment: ArkmeComposerAttachment): void
   onPreview(attachment: ArkmeComposerAttachment): void
+  canPreview?(attachment: ArkmeComposerAttachment): boolean
 }) {
   const dragging = useRef<string>()
   return <div role="list" aria-label="待发送附件" style={{ display: 'flex', gap: 4, overflowX: 'auto', flex: 'none' }}>
@@ -55,7 +56,7 @@ export function ArkmeAttachmentStrip({ attachments, disabled, onMove, onRemove, 
         }}>
         <ArkmeAttachmentDraftTile asset={metadata} disabled={disabled}
           {...(previewUrl === undefined ? {} : { previewUrl })}
-          {...(attachment.localFile === undefined ? {} : { onOpen: () => onPreview(attachment) })}
+          {...((canPreview?.(attachment) ?? attachment.localFile !== undefined) ? { onOpen: () => onPreview(attachment) } : {})}
           onRemove={() => { if (!disabled) onRemove(attachment) }} />
       </span>
     })}

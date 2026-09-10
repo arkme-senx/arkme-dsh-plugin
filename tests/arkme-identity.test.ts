@@ -106,6 +106,7 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
     join(root, 'src/tools/business/contacts/index.ts'),
     join(root, 'src/tools/prompts/business.ts'),
     join(root, 'src/client/ArkmeContactAddSurface.tsx'),
+    join(root, 'src/client/redesign/contacts/ContactProfileDetail.tsx'),
     join(root, 'src/client/ArkmeCallSurface.tsx'),
     join(root, 'src/client/ArkmeCallHistorySurface.tsx'),
     join(root, 'src/client/ArkmeVirtualWorkspace.tsx'),
@@ -183,13 +184,27 @@ function withoutApprovedLinkMetadataCompatibilityAliases(file: string, content: 
 }
 
 describe('Arkme plugin identity', () => {
+  it('allows contact account terminology while retaining legacy branding checks', () => {
+    const contactDetail = join(root, 'src/client/redesign/contacts/ContactProfileDetail.tsx')
+    expect(withoutArkmeIdCompatibilityAliases(contactDetail, '即我号')).toBe('')
+    const legacyBranding = 'Jotmo jiwo 即我产品'
+    expect(withoutArkmeIdCompatibilityAliases(contactDetail, legacyBranding)).toBe(legacyBranding)
+    const unrelatedFile = join(root, 'src/client/redesign/contacts/ContactDirectorySurface.tsx')
+    expect(withoutArkmeIdCompatibilityAliases(unrelatedFile, '即我号')).toBe('即我号')
+  })
+
   it('removes legacy product identity outside unchanged service infrastructure', () => {
     const files = [
       join(root, 'README.md'),
       join(root, 'cordis.patch.yml'),
       join(root, 'package.json'),
       join(root, 'tsdown.config.ts'),
-      ...textFiles(join(root, 'docs')).filter(file => !file.startsWith(join(root, 'docs/superpowers/'))),
+      // Plans and change reviews contain cross-repository names and local development paths;
+      // they are internal artifacts, not the product documentation shipped by docs/*.md.
+      ...textFiles(join(root, 'docs')).filter(file => ![
+        join(root, 'docs/superpowers/'),
+        join(root, 'docs/changes/'),
+      ].some(directory => file.startsWith(directory))),
       ...textFiles(join(root, 'src')),
     ]
     const residuals = files.flatMap(file => {
@@ -213,7 +228,10 @@ describe('Arkme plugin identity', () => {
         file,
         withoutOpenClawProtocolNames(file, withoutBotOwnerProtocolNames(file, source)),
       ))
-      return /jotmo|jiwo|即我/i.test(content) ? [file.slice(root.length)] : []
+      // Engineering plans identify real repository owners, not product branding.
+      const productCopy = file.includes('/docs/plans/recording-')
+        ? content.replace(/jotmo-(audio|openapi|meta|intelligent)\b/g, '') : content
+      return /jotmo|jiwo|即我/i.test(productCopy) ? [file.slice(root.length)] : []
     })
 
     expect(residuals).toEqual([])

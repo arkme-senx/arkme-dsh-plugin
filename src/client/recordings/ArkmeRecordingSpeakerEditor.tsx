@@ -18,7 +18,7 @@ const styles: Record<string, CSSProperties> = {
   popover: { position: 'fixed', zIndex: 1_020, width: 278, padding: 8, boxSizing: 'border-box', border: `1px solid ${desktop.border}`, borderRadius: 8, background: desktop.base, boxShadow: '0 4px 16px rgba(0,0,0,.1)', color: desktop.text },
   field: { width: '100%', height: 30, boxSizing: 'border-box', padding: '6px 10px', border: `1px solid ${desktop.tertiary}`, borderRadius: 4, background: desktop.base, color: desktop.text, outline: 0, font: 'inherit', fontSize: 12, lineHeight: '16px' },
   list: { maxHeight: 288, marginTop: 6, overflowY: 'auto' },
-  title: { height: 23, padding: '4px 8px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, background: desktop.base, color: desktop.tertiary, fontSize: 10, lineHeight: '15px' },
+  title: { height: 23, padding: '4px 8px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 1, background: desktop.base, color: desktop.tertiary, fontSize: 10, lineHeight: '15px' },
   option: { width: '100%', minHeight: 32, marginBottom: 4, padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 8, border: 0, borderRadius: 4, background: 'transparent', color: desktop.text, cursor: 'pointer', textAlign: 'left', font: 'inherit', fontSize: 14, lineHeight: '16px' },
   avatar: { width: 24, height: 24, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: '50%', background: desktop.avatar, color: desktop.secondary, fontSize: 12, fontWeight: 600 },
   optionLabel: { minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },

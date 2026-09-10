@@ -154,7 +154,7 @@ describe('Arkme conversation composer presentation', () => {
   it('preserves the original add button while aligning the static emoji tool to it', () => {
     expect(sidebarSource).toContain("plus: { width: 34, height: 34, border: 0, borderRadius: 9, background: 'transparent', color: colors.secondary, cursor: 'pointer', fontSize: 22, lineHeight: '30px' }")
     expect(sidebarSource).toContain('<button ref={addMenuTriggerRef} type="button" style={styles.plus}')
-    expect(sidebarSource).toContain("preparingFiles ? <ArkmeFilePreparingIndicator /> : '+'")
+    expect(sidebarSource).toContain("(activeRecordReeditComposer === undefined ? preparingFiles : preparingReeditFiles) ? <ArkmeFilePreparingIndicator /> : '+'")
     expect(sidebarSource).not.toContain('aria-label={`前移')
     expect(sidebarSource).not.toContain('aria-label={`后移')
     expect(sidebarSource).not.toContain('正在保存 ${file.name}')

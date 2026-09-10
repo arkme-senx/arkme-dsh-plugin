@@ -7,7 +7,8 @@ import type {
 } from '../types.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
-import { ArkmeMentionText } from './ArkmeRichText.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
+import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 export type ArkmeRelatedQuickNotesLoadState =
@@ -134,7 +135,7 @@ export function ArkmeRelatedQuickNotesCard({
     <span style={styles.previewList}>
       {state.list.items.slice(0, 2).map(item => {
         const preview = notePreview(item)
-        return <span key={item.relatedRef} style={styles.preview}><ArkmeMentionText text={preview} /></span>
+        return <span key={item.relatedRef} style={styles.preview}><ArkmeRichText text={preview} presentation="preview" highlightMentions /></span>
       })}
     </span>
   </button>
@@ -168,7 +169,7 @@ export function ArkmeRelatedQuickNotesList({
         key={item.relatedRef}
         type="button"
         style={styles.listRow}
-        aria-label={`打开相关快记：${preview}`}
+        aria-label={`打开相关快记：${arkmeEmojiPlainText(preview)}`}
         onClick={() => { onSelect(item) }}
       >
         <ArkmeUserAvatar
@@ -181,7 +182,7 @@ export function ArkmeRelatedQuickNotesList({
             <span style={styles.sender}>{item.senderName}</span>
             {time !== undefined && <time style={styles.time} dateTime={time.iso}>{time.label}</time>}
           </span>
-          <span style={styles.rowText}><ArkmeMentionText text={preview} /></span>
+          <span style={styles.rowText}><ArkmeRichText text={preview} presentation="preview" highlightMentions /></span>
           {item.sourceLabel !== undefined && item.sourceLabel.trim() !== ''
             && <span style={styles.sourceLabel}>{item.sourceLabel}</span>}
         </span>

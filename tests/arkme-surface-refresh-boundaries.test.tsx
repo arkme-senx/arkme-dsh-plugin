@@ -66,6 +66,96 @@ describe('Arkme surface refresh boundaries', () => {
     expect(renderer.root.findByProps({ 'data-arkme-surface-suspended': 'true' })).toBeDefined()
   })
 
+  it.each(['private_chat', 'group_chat'] as const)('retries a background %s read on focus and visibility restoration', async kind => {
+    arkmeChatDirectory.activateAccount(undefined)
+    arkmeChatDirectory.activateAccount(42)
+    let focused = true
+    const doc = Object.assign(new EventTarget(), {
+      visibilityState: 'visible', hasFocus: () => focused, activeElement: null, body: {},
+    })
+    const win = Object.assign(new EventTarget(), {
+      setTimeout, clearTimeout, setInterval, clearInterval,
+      requestAnimationFrame: () => 1, cancelAnimationFrame: () => {},
+    })
+    vi.stubGlobal('document', doc)
+    vi.stubGlobal('window', win)
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1 })
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    let source = {
+      sourceRef: 'source-a', sourceKey: 'chat:a', kind,
+      displayName: '对话 A', activeAtMillis: 1, unreadCount: 0, latestSequence: 1,
+    }
+    const other = { ...source, sourceRef: 'source-b', sourceKey: 'chat:b', unreadCount: 3 }
+    const baseCall = state.callArkme.getMockImplementation()!
+    state.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'source.timeline') return { source, items: [{
+        itemUid: `message-${source.latestSequence}`, sequence: source.latestSequence,
+        senderName: '对方', isMe: false, sendAtMillis: 1, title: '', textContent: '后台消息', status: 1,
+      }], hasMore: false }
+      if (operation === 'source.mark-read') return { effectiveReadSequence: params!.readSequence, unreadCount: 0 }
+      if (operation === 'source.members') return { source, items: [], total: 0, activeCount: 0 }
+      if (operation === 'files.send.tasks') return []
+      if (operation === 'source.interwoven-moments') return { state: 'disabled', moments: [], preparedAtMillis: 1 }
+      return baseCall(operation, params)
+    })
+    arkmeChatDirectory.publish([source, other])
+    arkmeUi.selectSource(source)
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} active />) })
+    const readCalls = () => state.callArkme.mock.calls.filter(call => call[0] === 'source.mark-read')
+
+    for (const event of ['focus', 'visibilitychange']) {
+      const previousReads = readCalls().length
+      focused = false
+      doc.visibilityState = event === 'focus' ? 'visible' : 'hidden'
+      await act(async () => {
+        win.dispatchEvent(new Event('blur'))
+        doc.dispatchEvent(new Event('visibilitychange'))
+        source = { ...source, unreadCount: 1, latestSequence: source.latestSequence + 1 }
+        arkmeChatDirectory.upsert(source)
+        arkmeUi.updateSelectedSourceProjection(source)
+      })
+      expect(readCalls()).toHaveLength(previousReads)
+      const timelineReads = state.callArkme.mock.calls.filter(call => call[0] === 'source.timeline').length
+      expect(arkmeChatDirectory.getSnapshot().sources.find(item => item.sourceRef === source.sourceRef)?.unreadCount).toBe(1)
+      focused = true
+      doc.visibilityState = 'visible'
+      await act(async () => {
+        if (event === 'focus') win.dispatchEvent(new Event(event))
+        else doc.dispatchEvent(new Event(event))
+      })
+      expect(readCalls()).toHaveLength(previousReads + 1)
+      expect(readCalls().at(-1)?.[1]).toEqual({ sourceRef: 'source-a', readSequence: source.latestSequence })
+      expect(arkmeChatDirectory.getSnapshot().sources.find(item => item.sourceRef === source.sourceRef)?.unreadCount).toBe(0)
+      expect(arkmeChatDirectory.getSnapshot().sources.find(item => item.sourceRef === other.sourceRef)?.unreadCount).toBe(3)
+      await act(async () => {
+        win.dispatchEvent(new Event('focus'))
+        doc.dispatchEvent(new Event('visibilitychange'))
+      })
+      expect(readCalls()).toHaveLength(previousReads + 1)
+      expect(state.callArkme.mock.calls.filter(call => call[0] === 'source.timeline')).toHaveLength(timelineReads)
+    }
+    focused = false
+    await act(async () => {
+      source = { ...source, unreadCount: 1, latestSequence: source.latestSequence + 1 }
+      arkmeChatDirectory.upsert(source)
+      arkmeUi.updateSelectedSourceProjection(source)
+    })
+    const pendingFrames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => pendingFrames.push(callback))
+    focused = true
+    const previousReads = readCalls().length
+    await act(async () => { win.dispatchEvent(new Event('focus')) })
+    expect(pendingFrames.length).toBeGreaterThan(0)
+    await act(async () => { renderer!.update(<ArkmeSurface productChrome={false} active={false} />) })
+    await act(async () => { for (const callback of pendingFrames) callback(0) })
+    expect(readCalls()).toHaveLength(previousReads)
+    await act(async () => { renderer!.unmount(); renderer = undefined })
+    state.callArkme.mockClear()
+    win.dispatchEvent(new Event('focus'))
+    doc.dispatchEvent(new Event('visibilitychange'))
+    expect(state.callArkme).not.toHaveBeenCalled()
+  })
+
   it('aborts an in-flight timeline read when the retained layer becomes inactive', async () => {
     let timelineSignal: AbortSignal | undefined
     state.callArkme.mockImplementation(async (operation: string, _params?: unknown, signal?: AbortSignal) => {

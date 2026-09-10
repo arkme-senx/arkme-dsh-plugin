@@ -1,5 +1,6 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { emojiSample } from './fixtures/emoji.js'
 
 const mocks = vi.hoisted(() => ({
   callArkme: vi.fn(),
@@ -96,6 +97,18 @@ describe('ArkmeCalendarSurface scoped refresh', () => {
   afterEach(async () => {
     await act(async () => { renderer?.unmount() })
     renderer = undefined
+  })
+
+  it('renders day-record emoji through the shared preview without additional requests', async () => {
+    mocks.pendingRecords = Promise.resolve(recordPage(emojiSample))
+    await act(async () => { renderer = create(<ArkmeCalendarSurface onClose={() => {}} />) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-rich-emoji': 'heart_eyes' })).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-rich-emoji': 'thumb_up' })).toHaveLength(1)
+    expect(textContent(renderer!.toJSON())).toContain('👨‍👩‍👧‍👦 👍🏽 🇨🇳 [jm_emoji:unknown]')
+    expect(textContent(renderer!.toJSON())).not.toContain('[jm_emoji:heart_eyes]')
+    expect(renderer!.root.findAllByType('a')).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.map(([operation]) => operation).sort())
+      .toEqual(['calendar.buckets', 'calendar.records', 'user.profile'])
   })
 
   it('requests only resources whose visible date scope was invalidated', async () => {

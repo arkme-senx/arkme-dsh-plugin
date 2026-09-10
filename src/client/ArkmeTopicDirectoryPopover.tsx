@@ -1,3 +1,4 @@
+import { withArkmeReadDeadline } from './read-deadline.js'
 import {
   useCallback, useEffect, useMemo, useRef, useState, type CSSProperties,
 } from 'react'
@@ -29,6 +30,7 @@ export interface ArkmeTopicDirectoryPopoverProps {
   trigger?: 'button' | 'none'
   onSelect(source: ArkmeSourceItem): void
   onSelectionInvalidated(): void
+  onCreateWarning(message: string): void
   onSelfSourcesResolution(userId: number, resolution: ArkmeSelfSourcesResolution): void
   onCreateTopicReady?(open: ArkmeTopicCreateOpener | undefined): void
   retryRevision: number
@@ -183,13 +185,13 @@ function cacheWithTopics(
 }
 
 export function ArkmeTopicDirectoryPopover({
-  userId, selectedSource, trigger = 'button', onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateTopicReady, retryRevision,
+  userId, selectedSource, trigger = 'button', onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateWarning, onCreateTopicReady, retryRevision,
 }: ArkmeTopicDirectoryPopoverProps) {
   const initialCache = useMemo(() => readNavigationCache(userId), [userId])
   const requestRef = useRef<AbortController>()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
-  const createRequestRef = useRef(false)
+  const createRequestRef = useRef<symbol>()
   const selectedSourceRef = useRef(selectedSource)
   selectedSourceRef.current = selectedSource
   const [open, setOpen] = useState(false)
@@ -206,6 +208,8 @@ export function ArkmeTopicDirectoryPopover({
   const [topicCreateSubmitting, setTopicCreateSubmitting] = useState(false)
   const sourcesRef = useRef(sources)
   sourcesRef.current = sources
+
+  useEffect(() => () => { createRequestRef.current = undefined }, [])
 
   const persist = useCallback((nextSources: ArkmeSourceItem[], selectedRef?: string | null) => {
     writeNavigationCache(cacheWithTopics(userId, nextSources, selectedRef))
@@ -227,10 +231,10 @@ export function ArkmeTopicDirectoryPopover({
       let hasNextPage = false
       const visitedCursors = new Set<string>()
       for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
-        const page = await callArkme<ArkmeSourceList>('sources.list', {
+        const page = await withArkmeReadDeadline(signal => callArkme<ArkmeSourceList>('sources.list', {
           directory: 'send_to_self', limit: 100,
           ...(cursor === undefined ? {} : { cursor }),
-        }, controller.signal)
+        }, signal), controller.signal)
         if (controller.signal.aborted) return
         loaded = mergeArkmeTopicSourcePages(loaded, page.items)
         sourcesRef.current = loaded
@@ -345,12 +349,12 @@ export function ArkmeTopicDirectoryPopover({
     [collapsedSourceRefs, filteredSources],
   )
 
-  const selectSource = (nextSource: ArkmeSourceItem) => {
+  const selectSource = (nextSource: ArkmeSourceItem, nextSources = sources) => {
     selectedSourceRef.current = nextSource
-    onSelect(nextSource)
-    persist(sources, nextSource.sourceRef)
+    persist(nextSources, nextSource.sourceRef)
     setOpen(false)
     setQuery('')
+    onSelect(nextSource)
   }
   const selectRow = (row: (typeof rows)[number]) => {
     setCollapsedSourceRefs(current => expandTopicFromRowClick(row, current))
@@ -379,27 +383,45 @@ export function ArkmeTopicDirectoryPopover({
       setTopicCreateError('主题最多支持五级层级，无法继续创建子主题')
       return
     }
-    createRequestRef.current = true
+    const contextSource = parent ?? selectedSourceRef.current
+      ?? sourcesRef.current.find(source => source.kind === 'send_to_self')
+    if (contextSource === undefined) {
+      setTopicCreateError('主题列表尚未加载完成，请稍后重试')
+      return
+    }
+    const request = Symbol()
+    createRequestRef.current = request
     setTopicCreateSubmitting(true)
     setTopicCreateError('')
     try {
       const result = await callArkme<ArkmeTopicCreateResult>('topic.create', {
         title,
+        contextSourceRef: contextSource.sourceRef,
         ...(parent === null ? {} : { parentSourceRef: parent.sourceRef }),
       })
-      const nextSources = mergeCreatedTopicSource(sources, result.source)
+      if (createRequestRef.current !== request) return
+      const nextSources = mergeCreatedTopicSource(sourcesRef.current, result.source)
+      sourcesRef.current = nextSources
       setSources(nextSources)
       setCollapsedSourceRefs(current => expandAncestorsForReveal(nextSources, result.source.sourceRef, current))
-      persist(nextSources)
       setTopicCreateParent(undefined)
       setTopicCreateParentLevel(undefined)
       setQuery('')
-      if (result.warning !== undefined) setError(result.warning)
+      if (result.warning !== undefined) {
+        persist(nextSources)
+        onCreateWarning(result.warning)
+      } else {
+        selectSource(result.source, nextSources)
+      }
     } catch (caught) {
-      setTopicCreateError(caught instanceof Error ? caught.message : String(caught))
+      if (createRequestRef.current === request) {
+        setTopicCreateError(caught instanceof Error ? caught.message : String(caught))
+      }
     } finally {
-      createRequestRef.current = false
-      setTopicCreateSubmitting(false)
+      if (createRequestRef.current === request) {
+        createRequestRef.current = undefined
+        setTopicCreateSubmitting(false)
+      }
     }
   }
 

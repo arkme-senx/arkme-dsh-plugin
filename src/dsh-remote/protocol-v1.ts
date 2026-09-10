@@ -8,7 +8,7 @@ import {
 } from './types.js'
 
 const OPERATIONS = new Set<DshRemoteOperation>([
-  'workspace.list', 'model.list', 'session.model.get', 'session.model.select',
+  'session.current', 'workspace.list', 'model.list', 'session.model.get', 'session.model.select',
   'session.create', 'session.list', 'session.history', 'session.prompt', 'session.cancel',
   'interaction.question.respond', 'interaction.approval.respond', 'snapshot.get', 'capabilities.get',
 ])
@@ -69,6 +69,7 @@ function pageFields(source: Record<string, unknown>): void {
 
 function validateOperationBody(operation: DshRemoteOperation, source: Record<string, unknown>): void {
   switch (operation) {
+    case 'session.current':
     case 'capabilities.get': assertOnly(source, []); return
     case 'snapshot.get':
     case 'workspace.list': assertOnly(source, ['cursor', 'limit']); pageFields(source); return
@@ -105,7 +106,10 @@ function validateOperationBody(operation: DshRemoteOperation, source: Record<str
       return
     }
     case 'session.history':
-      assertOnly(source, ['session_ref', 'before_seq', 'limit']); bodyRef(source, 'session_ref');
+      if (source.omit_superseded_chunks !== undefined && typeof source.omit_superseded_chunks !== 'boolean') {
+        throw new DshRemoteError('REMOTE_REQUEST_INVALID', 'omit_superseded_chunks 无效')
+      }
+      assertOnly(source, ['session_ref', 'before_seq', 'limit', 'omit_superseded_chunks']); bodyRef(source, 'session_ref');
       if (source.before_seq !== undefined && (!Number.isSafeInteger(source.before_seq) || Number(source.before_seq) < 1)) {
         throw new DshRemoteError('REMOTE_REQUEST_INVALID', 'before_seq 无效')
       }

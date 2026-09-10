@@ -2,6 +2,7 @@ import type { FetchLike } from './service.js'
 
 export type ArkmeDesktopBridgeAction =
   | 'capabilities.get'
+  | 'lifecycle.get'
   | 'notification.show'
   | 'badge.applySnapshot'
   | 'account.scope.attest'
@@ -245,5 +246,32 @@ export class ArkmeDesktopAttentionBridge {
     const config = this.config
     if (config === undefined) throw new Error('desktop bridge unavailable')
     return await requestArkmeDesktopBridge(config, this.fetchImpl, action, payload)
+  }
+}
+
+
+/** Samples optional native lifecycle facts without delaying the Host session poll. */
+export function createDesktopLifecycleReader(fetchImpl: FetchLike): (() => Promise<{ resumeGeneration: number; suspended: boolean } | undefined>) {
+  const config = arkmeDesktopBridgeConfigFromEnv(process.env)
+  let available: boolean | undefined
+  let latest: { resumeGeneration: number; suspended: boolean } | undefined
+  let flight: Promise<void> | undefined
+  let nextRead = 0
+  return async () => {
+    if (config === undefined || available === false || flight !== undefined || performance.now() < nextRead) return latest
+    nextRead = performance.now() + 2_000
+    flight = (async () => {
+      if (available === undefined) {
+        const capabilities = await requestArkmeDesktopBridge(config, fetchImpl, 'capabilities.get', {})
+        const lifecycle = responseObject(responseObject(capabilities.capabilities)?.lifecycle)
+        available = lifecycle?.version === 1
+        if (!available) return
+      }
+      const value = await requestArkmeDesktopBridge(config, fetchImpl, 'lifecycle.get', {})
+      if (Number.isSafeInteger(value.resumeGeneration) && Number(value.resumeGeneration) >= 0 && typeof value.suspended === 'boolean') {
+        latest = { resumeGeneration: Number(value.resumeGeneration), suspended: value.suspended }
+      }
+    })().catch(() => undefined).finally(() => { flight = undefined })
+    return latest
   }
 }

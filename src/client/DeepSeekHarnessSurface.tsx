@@ -34,10 +34,12 @@ export function deepSeekHarnessEmbedUrl(nativeSettings = false): string {
  * It stays mounted while another Arkme conversation is visible so the native client can
  * finish its own core boot independently of the Arkme directory request lifecycle.
  */
-export function DeepSeekHarnessSurface({ visible = true, nativeSettings = false }: { visible?: boolean; nativeSettings?: boolean }) {
+export function DeepSeekHarnessSurface({ visible = true, nativeSettings = false, accountId, followSession = true }: { visible?: boolean; nativeSettings?: boolean; accountId?: number | undefined; followSession?: boolean }) {
   return <section
     data-arkme-owned="deepseek-harness-surface"
     data-arkme-preload="true"
+    data-arkme-account-id={accountId}
+    data-arkme-follow-session={visible && followSession && accountId !== undefined ? 'true' : 'false'}
     data-arkme-visible={visible ? 'true' : 'false'}
     style={{
       ...styles.root,

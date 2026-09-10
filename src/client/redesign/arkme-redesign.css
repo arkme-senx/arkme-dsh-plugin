@@ -352,11 +352,14 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
   background: #fff !important;
   box-shadow: 0 8px 30px rgba(28, 31, 39, .045) !important;
 }
-.arkme-redesign-route-chats .arkme-conversation-composer-inner[data-arkme-primary-composer="true"] {
+.arkme-conversation-composer-inner[data-arkme-primary-composer="true"] {
+  --arkme-primary-composer-idle: #f6f6f6;
+  --arkme-primary-composer-focused: #ffffff;
+  background: var(--arkme-primary-composer-idle, #f6f6f6) !important;
   box-shadow: none !important;
 }
-.arkme-redesign-route-chats .arkme-conversation-composer-inner[data-arkme-primary-composer="true"][data-arkme-composer-focused="true"] {
-  background: color-mix(in srgb, var(--dsw-alias-bg-base, #ffffff) 97%, #000000) !important;
+.arkme-conversation-composer-inner[data-arkme-primary-composer="true"][data-arkme-composer-focused="true"] {
+  background: var(--arkme-primary-composer-focused, #ffffff) !important;
 }
 .arkme-redesign-route-chats .arkme-conversation-composer textarea { min-height: 38px !important; padding: 0 !important; font-size: 14px !important; line-height: 22px !important; }
 .arkme-redesign-task-conversation { font-size: 15px; }
@@ -398,30 +401,8 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
   flex: 0 0 72px !important;
 }
 [data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 64px !important; }
-[data-arkme-avatar-only="true"] > :not([role="tree"]) { display: none !important; }
-[data-arkme-avatar-only="true"] [role="tree"] { padding: 8px 6px 18px !important; }
-[data-arkme-avatar-only="true"] [role="tree"] > button {
-  justify-content: center !important;
-  gap: 0 !important;
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-}
-[data-arkme-avatar-only="true"] [role="tree"] > button > :not(:first-child) { display: none !important; }
-[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child:has(> span:nth-child(2)) {
-  width: auto !important;
-  min-width: 38px !important;
-  justify-content: center !important;
-  gap: 0 !important;
-}
-[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) { display: contents !important; }
-[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) > span:first-child { display: none !important; }
-[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) > span:last-child { display: contents !important; }
-[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) > span:last-child > :not([style*="min-width: 17px"]) { display: none !important; }
-[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) > span:last-child > [style*="min-width: 17px"] {
-  position: absolute !important;
-  top: 3px;
-  right: 3px;
-}
+[data-arkme-directory-compact="true"] > :not([role="tree"]) { display: none !important; }
+[data-arkme-directory-compact="true"] [role="tree"] { padding: 8px 6px 18px !important; }
 
 .arkme-redesign-feature-page {
   width: 100%;
@@ -841,153 +822,6 @@ button.arkme-redesign-update-button:disabled { opacity: .55; cursor: default; }
 }
 .arkme-redesign-reserved-help:hover ~ [role="tooltip"],
 .arkme-redesign-reserved-help:focus ~ [role="tooltip"] { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
-.arkme-billing-backdrop {
-  position: fixed;
-  z-index: 120;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 28px;
-  background: rgba(24, 27, 34, .24);
-  backdrop-filter: blur(3px);
-}
-.arkme-billing-recharge-dialog,
-.arkme-billing-payment-dialog {
-  width: min(620px, 100%);
-  max-height: min(720px, calc(100vh - 56px));
-  overflow-y: auto;
-  border: 1px solid #dedfe3;
-  border-radius: 20px;
-  background: #fff;
-  color: #20232c;
-  box-shadow: 0 24px 72px rgba(25, 28, 35, .18);
-}
-.arkme-billing-payment-dialog { width: min(420px, 100%); }
-.arkme-billing-dialog-header {
-  min-height: 78px;
-  padding: 20px 22px 16px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
-  border-bottom: 1px solid #ececef;
-}
-.arkme-billing-dialog-header h2 { margin: 0; font-size: 18px; line-height: 25px; font-weight: 600; }
-.arkme-billing-dialog-header p { margin: 4px 0 0; overflow-wrap: anywhere; color: #8a8e96; font-size: 12px; line-height: 18px; }
-.arkme-billing-dialog-header > button {
-  width: 32px;
-  height: 32px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: #777c85;
-  font: inherit;
-  font-size: 22px;
-  cursor: pointer;
-}
-.arkme-billing-dialog-header > button:hover { background: #f3f3f5; color: #20232c; }
-.arkme-billing-dialog-body { padding: 18px 22px 22px; }
-.arkme-billing-dialog-balance {
-  min-height: 48px;
-  padding: 0 2px 16px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 12px;
-  border-bottom: 1px solid #ececef;
-}
-.arkme-billing-dialog-balance > span { grid-column: 1; color: #8a8e96; font-size: 11px; line-height: 16px; }
-.arkme-billing-dialog-balance > strong { grid-column: 1; font-size: 22px; line-height: 28px; font-weight: 600; }
-.arkme-billing-dialog-balance > button,
-.arkme-billing-error > button {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid #dfe1e5;
-  border-radius: 9px;
-  background: #fff;
-  color: #626772;
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-.arkme-billing-products-section,
-.arkme-billing-payment-section { padding-top: 17px; }
-.arkme-billing-products-section h3,
-.arkme-billing-payment-section h3 { margin: 0 0 11px; font-size: 12px; line-height: 18px; font-weight: 500; color: #747984; }
-.arkme-billing-product-grid { width: 100%; }
-.arkme-billing-product-grid > button {
-  min-width: 0;
-  min-height: 62px;
-  padding: 9px 11px;
-  display: grid;
-  align-content: center;
-  gap: 4px;
-  border: 1px solid #dfe1e5;
-  border-radius: 11px;
-  background: #fff;
-  color: #20232c;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.arkme-billing-product-grid > button:hover { background: #f8f8f9; border-color: #cfd2d8; }
-.arkme-billing-product-grid > button.is-selected { border-color: #75839e; box-shadow: 0 0 0 1px #75839e; }
-.arkme-billing-product-grid > button > span { overflow: hidden; font-size: 12px; line-height: 17px; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
-.arkme-billing-product-grid > button > strong { font-size: 14px; line-height: 19px; font-weight: 600; }
-.arkme-billing-payment-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-.arkme-billing-payment-actions > button {
-  min-width: 154px;
-  height: 38px;
-  padding: 0 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border: 1px solid #dfe1e5;
-  border-radius: 10px;
-  background: #fff;
-  color: #333842;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.arkme-billing-payment-actions > button:hover { background: #f7f7f8; border-color: #cfd3da; }
-.arkme-billing-payment-actions > button:disabled,
-.arkme-billing-product-grid > button:disabled { opacity: .48; cursor: default; }
-.arkme-billing-platform-icon { width: 18px; height: 18px; flex: none; }
-.arkme-billing-platform-icon.is-alipay { color: #1677ff; }
-.arkme-billing-platform-icon.is-wechat { color: #07c160; }
-.arkme-billing-state { margin: 12px 0 2px; color: #858992; font-size: 12px; line-height: 18px; }
-.arkme-billing-error { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #b54841; font-size: 12px; line-height: 18px; }
-.arkme-billing-error.is-purchase { justify-content: flex-start; }
-.arkme-billing-payment-content { padding: 28px 24px 18px; display: grid; justify-items: center; gap: 10px; text-align: center; }
-.arkme-billing-payment-content > .arkme-billing-platform-icon { width: 38px; height: 38px; margin-bottom: 4px; }
-.arkme-billing-payment-content > img { width: 210px; height: 210px; border-radius: 10px; }
-.arkme-billing-payment-content > strong { font-size: 14px; line-height: 21px; font-weight: 600; }
-.arkme-billing-payment-content > p { margin: 0; color: #858992; font-size: 12px; line-height: 18px; }
-.arkme-billing-payment-content.is-paid > strong { color: #16794f; font-size: 18px; line-height: 25px; }
-.arkme-billing-payment-content.is-paid > .arkme-billing-error { justify-content: center; }
-.arkme-billing-payment-content.is-crediting > strong { color: #335f9e; }
-.arkme-billing-dialog-actions { padding: 0 22px 20px; display: flex; justify-content: center; flex-wrap: wrap; gap: 9px; }
-.arkme-billing-dialog-actions > button,
-.arkme-billing-primary-action {
-  height: 34px;
-  padding: 0 14px;
-  border: 1px solid #dfe1e5;
-  border-radius: 9px;
-  background: #fff;
-  color: #3c424d;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.arkme-billing-dialog-actions > .arkme-billing-primary-action,
-.arkme-billing-payment-content > .arkme-billing-primary-action { border-color: #20232d; background: #20232d; color: #fff; }
 .arkme-redesign-settings-error { margin: -8px 0 28px; padding: 10px 13px; border-radius: 10px; background: #fff3f0; color: #b54841; font-size: 12px; line-height: 18px; }
 
 /* DSH remote settings follows the compact connection-management pattern:
@@ -1531,11 +1365,14 @@ body[data-ds-dark-theme] .arkme-redesign-search-page .arkme-search-box {
   color: var(--dsw-alias-label-primary) !important;
   box-shadow: var(--dsw-shadow-lv2) !important;
 }
-body[data-ds-dark-theme] .arkme-redesign-route-chats .arkme-conversation-composer-inner[data-arkme-primary-composer="true"] {
+body[data-ds-dark-theme] .arkme-conversation-composer-inner[data-arkme-primary-composer="true"] {
+  --arkme-primary-composer-idle: #151515;
+  --arkme-primary-composer-focused: #000000;
+  background: var(--arkme-primary-composer-idle, #f6f6f6) !important;
   box-shadow: none !important;
 }
-body[data-ds-dark-theme] .arkme-redesign-route-chats .arkme-conversation-composer-inner[data-arkme-primary-composer="true"][data-arkme-composer-focused="true"] {
-  background: color-mix(in srgb, var(--dsw-alias-bg-base, #ffffff) 97%, #000000) !important;
+body[data-ds-dark-theme] .arkme-conversation-composer-inner[data-arkme-primary-composer="true"][data-arkme-composer-focused="true"] {
+  background: var(--arkme-primary-composer-focused, #ffffff) !important;
 }
 body[data-ds-dark-theme] .arkme-redesign-task-greeting img {
   filter: invert(1) hue-rotate(180deg);
@@ -1692,16 +1529,62 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
   background: var(--dsw-specific-sidebar-fill, #fff) !important;
   border-left-color: var(--dsw-alias-border-l1, #ececef) !important;
 }
-.arkme-contact-directory { padding: 8px 6px 18px; overflow-y: auto; overflow-wrap: anywhere; }
+.arkme-contact-directory { --arkme-contact-directory-header-fill: var(--dsw-specific-sidebar-fill, #fff); padding: 0 6px 18px; overflow-y: auto; overflow-wrap: anywhere; }
+.arkme-contact-directory-surface {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%;
+  color: var(--dsw-alias-label-primary, #202124); background: var(--dsw-specific-sidebar-fill, #fff);
+}
+.arkme-contact-directory-surface > .arkme-contact-directory { flex: 1; height: auto; }
+.arkme-contact-directory-toolbar {
+  position: relative; flex: none; min-width: 0; display: flex; align-items: center;
+  gap: 8px; margin: 24px 16px 16px; -webkit-app-region: no-drag;
+}
+.arkme-contact-directory-search-field {
+  display: flex; align-items: center; flex: 1; min-width: 0; height: 40px; gap: 8px; padding: 0 11px;
+  box-sizing: border-box; border: 1px solid var(--dsw-alias-border-l2, #e2e3e6); border-radius: 11px;
+  background: var(--dsw-specific-input-major, #fff); color: var(--dsw-alias-label-tertiary, #92959e);
+}
+.arkme-contact-directory-search-field > svg { flex: none; }
+.arkme-contact-directory-search-field input {
+  width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent;
+  color: var(--dsw-alias-label-primary, #202124); font: inherit; font-size: 12px;
+}
+.arkme-contact-directory-search-field input::placeholder { color: var(--dsw-alias-label-tertiary, #92959e); }
+.arkme-contact-directory-search-field:focus-within { outline: 2px solid var(--arkme-focus); outline-offset: 2px; }
+.arkme-contact-directory-search-field button {
+  flex: none; display: grid; place-items: center; width: 20px; height: 28px; padding: 0; border: 0;
+  border-radius: 6px; background: transparent; color: inherit; cursor: pointer;
+}
+.arkme-contact-directory-search-field button:hover { background: var(--dsw-alias-interactive-bg-hover, #f6f6f7); }
+.arkme-contact-directory-toolbar [aria-label="添加联系人、群聊或 Bot"] {
+  background: var(--dsw-specific-input-major, #fff) !important;
+  border-color: var(--dsw-alias-border-l2, #e2e3e6) !important;
+  color: var(--dsw-alias-label-secondary, #555a64) !important;
+}
+.arkme-contact-directory-toolbar button:focus-visible { outline: 2px solid var(--arkme-focus); outline-offset: 2px; }
+body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--dsw-alias-bg-base); }
 .arkme-directory-detail-pane { overflow: hidden; }
 .arkme-contact-directory button, .arkme-directory-detail-pane button {
   appearance: none; box-sizing: border-box; margin: 0; border: 0; font: inherit; color: inherit;
 }
 .arkme-contact-directory-section { min-width: 0; padding: 2px 0 5px; border-bottom: 1px solid var(--dsw-alias-border-l1, var(--arkme-line)); }
+/* Keep the initial inset on the first section so sticky headers reach the scrollport top. */
+.arkme-contact-directory-section:first-child { padding-top: 10px; }
 .arkme-contact-directory-section-header {
   width: 100%; min-width: 0; min-height: 42px; display: flex; align-items: center; justify-content: space-between;
   gap: 8px; padding: 0 10px; border-radius: 10px; background: transparent; text-align: left; cursor: pointer;
 }
+/* The section bounds release its header before the next section takes over. */
+.arkme-contact-directory-section-header[aria-expanded="true"] {
+  position: sticky; top: 0; z-index: 1;
+}
+/* A square opaque base covers scrolling rows; the separate hover layer stays rounded. */
+.arkme-contact-directory-section-header[aria-expanded="true"]::before,
+.arkme-contact-directory-section-header[aria-expanded="true"]::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: -1;
+}
+.arkme-contact-directory-section-header[aria-expanded="true"]::before { background: var(--arkme-contact-directory-header-fill); }
+.arkme-contact-directory-section-header[aria-expanded="true"]::after { border-radius: inherit; }
 .arkme-contact-directory-section-title { min-width: 0; display: flex; align-items: center; gap: 6px; }
 .arkme-contact-directory-section-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 650; }
 .arkme-contact-directory-caret {
@@ -1710,6 +1593,7 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
 }
 .arkme-contact-directory-section-header[aria-expanded="true"] .arkme-contact-directory-caret { transform: rotate(90deg); }
 .arkme-contact-directory-section-header:hover { background: var(--dsw-alias-interactive-bg-hover, #f6f6f7); }
+.arkme-contact-directory-section-header[aria-expanded="true"]:hover::after { background: var(--dsw-alias-interactive-bg-hover-solid, var(--arkme-contact-directory-header-fill)); }
 .arkme-contact-directory-section-body { min-width: 0; padding: 0 0 5px; }
 .arkme-contact-directory-list { display: grid; gap: 1px; min-width: 0; }
 .arkme-contact-directory-count { flex: none; color: var(--dsw-alias-label-tertiary, var(--arkme-muted)); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -1735,25 +1619,51 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
 .arkme-contact-directory-empty { padding: 14px 12px; color: var(--dsw-alias-label-tertiary, var(--arkme-muted)); font-size: 12px; line-height: 18px; text-align: center; }
 .arkme-directory-detail-empty { min-width: 0; min-height: 0; height: 100%; display: grid; place-items: center; background: var(--dsw-alias-bg-base, #fff); }
 .arkme-directory-detail-logo { width: 96px; height: 96px; object-fit: contain; opacity: .9; }
-.arkme-contact-detail, .arkme-contact-profile, .arkme-contact-world-card, .arkme-unmarked-speaker-summary, .arkme-unmarked-speaker-audio, .arkme-unmarked-speaker-choice { min-width: 0; overflow-wrap: anywhere; }
-.arkme-contact-detail { min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: var(--dsw-alias-bg-base, #fff); }
-.arkme-contact-profile { padding: 32px clamp(24px, 5vw, 56px); border-bottom: 1px solid var(--dsw-alias-border-l1, var(--arkme-line)); }
-.arkme-contact-profile-main { width: min(100%, 760px); display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; align-items: center; gap: 18px; margin: 0 auto; }
-.arkme-contact-profile-avatar { width: 72px; height: 72px; display: grid; place-items: center; overflow: hidden; border-radius: 50%; }
-.arkme-contact-profile-identity { min-width: 0; display: grid; gap: 8px; }
-.arkme-contact-profile-name { display: block; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; line-height: 28px; font-weight: 650; }
-.arkme-contact-profile-fields { display: grid; gap: 4px; margin: 0; }
-.arkme-contact-profile-fields > div { min-width: 0; display: flex; gap: 4px; color: var(--dsw-alias-label-secondary, #68707c); font-size: 12px; line-height: 18px; }
-.arkme-contact-profile-fields dt, .arkme-contact-profile-fields dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.arkme-contact-profile-fields dt { flex: none; }
-[data-arkme-workspace] .arkme-contact-profile-message {
-  min-height: 36px; padding: 0 16px; border-radius: 10px; background: var(--dsw-alias-button-primary-fill, #5667cc);
-  color: var(--dsw-alias-label-primary-inverted, #fff) !important; cursor: pointer; font-weight: 600;
-}
-.arkme-contact-profile-message:disabled { opacity: .55; cursor: default; }
-.arkme-contact-profile-error, .arkme-contact-profile-message-error { max-width: 760px; margin: 0 auto; color: var(--dsw-alias-state-error-primary, #b42318); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
-.arkme-contact-profile-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 10px; background: var(--dsw-alias-state-error-tertiary, #fff1f0); }
-.arkme-contact-profile-status { max-width: 760px; margin: 0 auto; padding: 24px 0; color: var(--dsw-alias-label-secondary, var(--arkme-muted)); font-size: 12px; }
+.arkme-contact-detail, .arkme-contact-profile, .arkme-unmarked-speaker-summary, .arkme-unmarked-speaker-audio, .arkme-unmarked-speaker-choice { min-width: 0; overflow-wrap: anywhere; }
+.arkme-contact-detail { min-width: 0; min-height: 0; height: 100%; box-sizing: border-box; overflow-y: auto; background: var(--dsw-alias-bg-base, #fff); padding: clamp(32px, 6vh, 72px) clamp(20px, 5vw, 60px); }
+.arkme-contact-profile { width: min(100%, 600px); min-width: 0; margin: 0 auto; }
+.arkme-contact-profile-main { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: start; gap: 24px; padding-bottom: 30px; }
+.arkme-contact-profile-avatar { width: 72px; height: 72px; display: grid; place-items: center; overflow: hidden; border-radius: 8px; }
+.arkme-contact-profile-avatar > span, .arkme-contact-profile-avatar > span > span { border-radius: 8px !important; }
+.arkme-contact-profile-identity { min-width: 0; display: grid; gap: 10px; }
+.arkme-contact-profile-name { margin: 0; color: var(--dsw-alias-label-primary, #17191c); overflow-wrap: anywhere; font-size: 22px; line-height: 30px; font-weight: 600; }
+.arkme-contact-profile-fields { display: grid; gap: 5px; margin: 0; }
+.arkme-contact-profile-fields > div { min-width: 0; display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 10px; font-size: 13px; line-height: 20px; }
+.arkme-contact-profile-fields dt, .arkme-contact-profile-row dt { color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-contact-profile-fields dt, .arkme-contact-profile-fields dd, .arkme-contact-profile-row dt, .arkme-contact-profile-row dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.arkme-contact-profile-fields dd, .arkme-contact-profile-row dd { color: var(--dsw-alias-label-primary, #17191c); }
+.arkme-contact-profile-section { padding: 24px 0; border-top: 1px solid var(--dsw-alias-border-l1, var(--arkme-line)); }
+.arkme-contact-profile-section-title { margin: 0 0 16px; color: var(--dsw-alias-label-secondary, #68707c); font-size: 14px; line-height: 22px; font-weight: 500; }
+.arkme-contact-profile-row { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 18px; margin: 0; font-size: 14px; line-height: 22px; }
+.arkme-contact-profile-remark { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.arkme-contact-profile-remark > span { min-width: 0; }
+.arkme-contact-profile-remark .arkme-contact-remark-edit { display: inline-flex; align-items: center; gap: 5px; flex: none; margin: -4px -6px -4px 0; padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-state-business-primary, #4f5fbf); font: inherit; font-size: 13px; line-height: 22px; cursor: pointer; }
+.arkme-contact-remark-edit:hover { background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); }
+.arkme-contact-remark-backdrop { position: fixed; inset: 0; z-index: 10300; display: grid; place-items: center; padding: 16px; box-sizing: border-box; background: var(--dsw-alias-bg-mask-1, rgba(19, 22, 26, .34)); backdrop-filter: blur(2px); font-family: inherit; }
+.arkme-contact-remark-dialog { width: min(440px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; box-sizing: border-box; margin: 0; padding: 24px; border: 1px solid var(--dsw-alias-border-l2, #e5e7eb); border-radius: 14px; background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-primary, #17191c); box-shadow: var(--dsw-shadow-lv2, 0 12px 40px rgba(0, 0, 0, .16)); }
+.arkme-contact-remark-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.arkme-contact-remark-header h2 { margin: 0; font-size: 18px; line-height: 26px; font-weight: 600; }
+.arkme-contact-remark-dialog button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; box-sizing: border-box; border: 1px solid var(--dsw-alias-border-l2, #e5e7eb); border-radius: 8px; font: inherit; font-size: 13px; cursor: pointer; }
+.arkme-contact-remark-dialog .arkme-contact-remark-close { width: 30px; min-height: 30px; padding: 0; margin: -4px -4px -4px 0; border: 0; background: transparent; color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-contact-remark-label { display: block; margin-bottom: 9px; color: var(--dsw-alias-label-secondary, #68707c); font-size: 13px; line-height: 20px; }
+.arkme-contact-remark-input { display: block; width: 100%; min-width: 0; height: 42px; box-sizing: border-box; border: 1px solid var(--dsw-alias-border-l2, #e5e7eb); border-radius: 8px; padding: 0 12px; background: var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-1, #f8f9fa)); color: var(--dsw-alias-label-primary, #17191c); font: inherit; font-size: 14px; }
+.arkme-contact-remark-input::placeholder { color: var(--dsw-alias-label-tertiary, #9097a1); }
+.arkme-contact-remark-input:focus, .arkme-contact-remark-dialog button:focus-visible, .arkme-contact-remark-edit:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8); outline-offset: 2px; }
+.arkme-contact-remark-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 26px; }
+.arkme-contact-remark-cancel { min-width: 76px; padding: 0 18px; background: var(--dsw-alias-button-elevated-fill, var(--dsw-specific-input-major, #f8f9fa)); color: var(--dsw-alias-label-primary, #17191c); }
+.arkme-contact-remark-dialog .arkme-contact-remark-confirm { min-width: 84px; padding: 0 18px; border-color: transparent; background: var(--dsw-alias-state-business-primary, #4f5fbf); color: var(--dsw-alias-label-primary-inverted, #fff); }
+.arkme-contact-remark-dialog button:hover:not(:disabled) { filter: brightness(.96); }
+.arkme-contact-remark-dialog button:disabled, .arkme-contact-remark-input:disabled { opacity: .55; cursor: default; }
+.arkme-contact-remark-error { margin: 10px 0 0; color: var(--dsw-alias-state-error-primary, #b42318); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.arkme-contact-profile-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 26px 0 0; border-top: 1px solid var(--dsw-alias-border-l1, var(--arkme-line)); }
+.arkme-contact-profile-actions .arkme-contact-profile-action { min-width: 0; min-height: 78px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border: 0; border-radius: 8px; padding: 10px 2px; background: transparent; color: var(--dsw-alias-state-business-primary, #4f5fbf) !important; font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; }
+.arkme-contact-profile-actions .arkme-contact-profile-action:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); }
+.arkme-contact-profile-actions .arkme-contact-profile-action:disabled { opacity: .5; cursor: default; }
+.arkme-contact-profile-action svg { flex: none; }
+.arkme-contact-profile-error, .arkme-contact-profile-message-error { color: var(--dsw-alias-state-error-primary, #b42318); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.arkme-contact-profile-message-error { margin-top: 12px; text-align: center; }
+.arkme-contact-profile-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; margin-bottom: 24px; border-radius: 8px; background: var(--dsw-alias-state-error-tertiary, #fff1f0); }
+.arkme-contact-profile-status { padding: 24px 0; color: var(--dsw-alias-label-secondary, var(--arkme-muted)); font-size: 13px; }
 .arkme-team-detail {
   min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden; background: var(--dsw-alias-bg-base, #fff);
@@ -1819,43 +1729,19 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
 .arkme-team-member-more { width: calc(100% - 24px); margin: 12px !important; color: var(--dsw-alias-state-business-primary, #4f5fbf) !important; }
 .arkme-team-member-more:disabled { opacity: .55; cursor: default; }
 .arkme-team-member-more-error { padding: 12px 14px 0; font-size: 12px; }
-.arkme-contact-world { min-height: 0; display: grid; overflow: hidden; }
-.arkme-contact-detail > .arkme-contact-world {
-  box-sizing: border-box; padding: 22px clamp(20px, 4vw, 52px) 28px; background: var(--dsw-alias-bg-subtle, #f7f7f8);
-}
-.arkme-contact-world-container {
-  width: min(100%, 980px); min-width: 0; min-height: 0; height: 100%; box-sizing: border-box; display: flex; flex-direction: column;
-  margin: 0 auto; overflow-y: auto;
-  border-radius: 18px; background: var(--dsw-alias-bg-layer-1, #fff); box-shadow: 0 16px 48px rgba(22, 27, 35, .06);
-}
-.arkme-contact-world-title { width: min(100%, 760px); box-sizing: border-box; margin: 0 auto; padding: 22px 28px 10px; font-size: 15px; line-height: 22px; font-weight: 650; }
-.arkme-contact-world-list { width: min(100%, 760px); min-height: 0; box-sizing: border-box; display: grid; align-content: start; gap: 30px; margin: 0 auto; padding: 28px 28px 42px; }
-.arkme-contact-world-year { min-width: 0; display: grid; gap: 24px; }
-.arkme-contact-world-year > h2 { margin: 0; font-size: 28px; line-height: 36px; font-weight: 750; letter-spacing: -.04em; }
-.arkme-contact-world-entry { min-width: 0; display: grid; gap: 8px; }
-.arkme-contact-world-diary { color: var(--dsw-alias-label-secondary, #68707c); font-size: 13px; line-height: 19px; font-weight: 500; }
-.arkme-contact-world-entry > .arkme-contact-world-time { display: flex; align-items: center; gap: 8px; color: var(--dsw-alias-label-tertiary, var(--arkme-muted)); font-size: 11px; line-height: 16px; }
-.arkme-contact-world-entry > .arkme-contact-world-time span { font-size: 17px; line-height: 10px; }
-.arkme-contact-world-card { display: grid; gap: 10px; padding: 15px 16px; border: 1px dashed var(--dsw-alias-border-l2, #d9dce2); border-radius: 14px; background: var(--dsw-alias-bg-layer-1, #fff); }
-.arkme-contact-world-card-header { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 9px; }
-.arkme-contact-world-author { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
-.arkme-contact-world-time { flex: none; color: var(--dsw-alias-label-tertiary, var(--arkme-muted)); font-size: 11px; }
-.arkme-contact-world-headline { margin: 2px 0 0; font-size: 14px; line-height: 20px; }
-.arkme-contact-world-text { margin: 0; color: var(--dsw-alias-label-secondary, #68707c); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; }
-.arkme-contact-world-images { width: 100%; max-width: 620px; min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.arkme-contact-world-image { width: 100%; aspect-ratio: 1; display: block; border-radius: 11px; object-fit: cover; }
-.arkme-contact-world-image-error, .arkme-contact-world-image-loading { width: 100%; min-width: 0; aspect-ratio: 1; display: grid; place-items: center; border-radius: 11px; background: var(--dsw-alias-bg-layer-2, var(--arkme-soft)); color: var(--dsw-alias-label-tertiary, var(--arkme-muted)); }
-.arkme-contact-world-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.arkme-contact-world-tag { padding: 2px 7px; border-radius: 999px; background: var(--dsw-alias-bg-layer-2, var(--arkme-soft)); color: var(--dsw-alias-label-secondary, var(--arkme-muted)); font-size: 11px; }
-.arkme-contact-world-empty { min-height: 240px; flex: 1; display: grid; place-content: center; justify-items: center; padding: 36px 20px; box-sizing: border-box; text-align: center; }
-.arkme-contact-world-empty img { width: 140px; height: 100px; display: block; }
-.arkme-contact-world-empty p { margin: 16px 0 0; color: var(--dsw-alias-label-secondary, #858992); font-size: 13px; line-height: 20px; }
-.arkme-contact-world-error, .arkme-contact-world-status { align-self: center; justify-self: center; padding: 28px 20px; color: var(--dsw-alias-label-tertiary, var(--arkme-muted)); font-size: 12px; text-align: center; }
-.arkme-contact-world-error { color: var(--dsw-alias-state-error-primary, #b42318); }
-.arkme-contact-world-load-more { align-self: center; justify-self: center; min-height: 34px; padding: 0 12px; border-radius: 9px; background: transparent; color: var(--dsw-alias-state-business-primary, #4f5fbf) !important; cursor: pointer; }
-.arkme-contact-world-load-more-status, .arkme-contact-world-load-more-error { min-height: 20px; padding: 8px 16px; color: var(--dsw-alias-label-tertiary, var(--arkme-muted)); font-size: 11px; text-align: center; }
-.arkme-contact-world-load-more-error { color: var(--dsw-alias-state-error-primary, #b42318); }
-.arkme-contact-world-page-empty { align-self: center; padding: 28px 20px; color: var(--dsw-alias-label-tertiary, var(--arkme-muted)); font-size: 12px; text-align: center; }
+.arkme-contact-world { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 18px; padding: 24px 0; border-top: 1px solid var(--dsw-alias-border-l1, var(--arkme-line)); }
+.arkme-contact-world-title { margin: 0; color: var(--dsw-alias-label-secondary, #68707c); font-size: 14px; line-height: 22px; font-weight: 400; }
+.arkme-contact-world-content, .arkme-contact-world-summary { min-width: 0; }
+.arkme-contact-world-preview { min-width: 0; display: flex; align-items: flex-start; gap: 12px; }
+.arkme-contact-world-thumbnail { width: 56px; height: 56px; flex: none; overflow: hidden; border-radius: 4px; }
+.arkme-contact-world-image { display: block; width: 100%; height: 100%; object-fit: cover; }
+.arkme-contact-world-image-error, .arkme-contact-world-image-loading { width: 100%; height: 100%; display: grid; place-items: center; background: var(--dsw-alias-bg-layer-2, var(--arkme-soft)); color: var(--dsw-alias-label-secondary, var(--arkme-muted)); font-size: 11px; line-height: 16px; text-align: center; }
+.arkme-contact-world-headline, .arkme-contact-world-text { margin: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; color: var(--dsw-alias-label-primary, #17191c); font-size: 14px; line-height: 22px; font-weight: 400; }
+.arkme-contact-world-headline { -webkit-line-clamp: 1; font-weight: 500; }
+.arkme-contact-world-time { display: block; margin-top: 5px; color: var(--dsw-alias-label-secondary, var(--arkme-muted)); font-size: 12px; line-height: 18px; }
+.arkme-contact-world-empty, .arkme-contact-world-page-empty, .arkme-contact-world-status { color: var(--dsw-alias-label-secondary, var(--arkme-muted)); font-size: 13px; line-height: 22px; }
+.arkme-contact-world-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--dsw-alias-state-error-primary, #b42318); font-size: 13px; line-height: 22px; margin-bottom: 8px; }
+
 .arkme-directory-unmarked-speaker-detail { min-height: 0; padding: clamp(28px, 5vw, 60px); overflow-y: auto; background: var(--dsw-alias-bg-base, #fff); }
 .arkme-unmarked-speaker-token-avatar {
   flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f1f2f3));
@@ -1941,8 +1827,9 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
 .arkme-contact-directory button:focus-visible, .arkme-directory-detail-pane button:focus-visible { outline: 2px solid var(--arkme-focus); outline-offset: 2px; }
 [data-arkme-owned="product-navigation"] button:focus-visible { outline: 2px solid var(--arkme-focus); outline-offset: 2px; }
 
+body[data-ds-dark-theme] .arkme-contact-directory { --arkme-contact-directory-header-fill: var(--dsw-alias-bg-base); }
 body[data-ds-dark-theme] .arkme-contact-directory, body[data-ds-dark-theme] .arkme-directory-detail-pane { background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); }
-body[data-ds-dark-theme] .arkme-contact-directory-row.is-selected, body[data-ds-dark-theme] .arkme-contact-world-card, body[data-ds-dark-theme] .arkme-unmarked-speaker-choice { background: var(--dsw-alias-interactive-bg-active); }
+body[data-ds-dark-theme] .arkme-contact-directory-row.is-selected, body[data-ds-dark-theme] .arkme-unmarked-speaker-choice { background: var(--dsw-alias-interactive-bg-active); }
 body[data-ds-dark-theme] .arkme-unmarked-speaker-inference,
 body[data-ds-dark-theme] .arkme-unmarked-speaker-segment-card,
 body[data-ds-dark-theme] .arkme-unmarked-speaker-choice-option,
@@ -1951,8 +1838,6 @@ body[data-ds-dark-theme] .arkme-unmarked-speaker-inference-icon,
 body[data-ds-dark-theme] .arkme-unmarked-speaker-action-icon,
 body[data-ds-dark-theme] .arkme-unmarked-speaker-segment-play { background: var(--dsw-specific-input-major); color: var(--dsw-alias-label-secondary); }
 body[data-ds-dark-theme] .arkme-unmarked-speaker-choice-option:has(input:checked) { background: var(--dsw-alias-interactive-bg-active); border-color: var(--dsw-alias-state-business-primary); }
-body[data-ds-dark-theme] .arkme-contact-detail > .arkme-contact-world { background: var(--dsw-alias-bg-subtle); }
-body[data-ds-dark-theme] .arkme-contact-world-container { background: var(--dsw-alias-bg-layer-1); box-shadow: none; }
 body[data-ds-dark-theme] .arkme-team-detail { background: var(--dsw-alias-bg-base); }
 body[data-ds-dark-theme] .arkme-team-members { background: var(--dsw-alias-bg-subtle); }
 body[data-ds-dark-theme] .arkme-team-member-list { background: var(--dsw-alias-bg-layer-1); box-shadow: none; }
@@ -1963,11 +1848,8 @@ body[data-ds-dark-theme] .arkme-contact-world-image-loading { background: var(--
 body[data-ds-dark-theme] .arkme-unmarked-speaker-success { background: var(--dsw-alias-state-success-tertiary); color: var(--dsw-alias-state-success-primary); }
 body[data-ds-dark-theme] .arkme-contact-profile-error,
 body[data-ds-dark-theme] .arkme-contact-profile-message-error,
-body[data-ds-dark-theme] .arkme-contact-world-error,
-body[data-ds-dark-theme] .arkme-contact-world-load-more-error { color: var(--dsw-alias-state-error-primary); }
-body[data-ds-dark-theme] .arkme-contact-profile-message { background: var(--dsw-alias-button-primary-fill); }
-body[data-ds-dark-theme] .arkme-contact-directory-more,
-body[data-ds-dark-theme] .arkme-contact-world-load-more { color: var(--dsw-alias-state-business-primary); }
+body[data-ds-dark-theme] .arkme-contact-world-error { color: var(--dsw-alias-state-error-primary); }
+body[data-ds-dark-theme] .arkme-contact-directory-more { color: var(--dsw-alias-state-business-primary); }
 
 @media (max-width: 1024px) {
   [data-arkme-owned="persistent-sidebar"] [data-arkme-directory-mode="contacts"] { min-width: 0; }
@@ -1989,8 +1871,8 @@ body[data-ds-dark-theme] .arkme-contact-world-load-more { color: var(--dsw-alias
   }
   .arkme-directory-mobile-back::before { content: "‹"; font-size: 18px; line-height: 1; }
   .arkme-directory-mobile-back:hover { color: var(--dsw-alias-label-primary, #202124); }
-  .arkme-contact-profile { padding: 26px 20px; }
-  .arkme-contact-profile-main { grid-template-columns: 56px minmax(0, 1fr) auto; gap: 12px; }
+  .arkme-contact-detail { padding: 28px 20px; }
+  .arkme-contact-profile-main { grid-template-columns: 56px minmax(0, 1fr); gap: 18px; }
   .arkme-contact-profile-avatar { width: 56px; height: 56px; }
   .arkme-contact-profile-avatar > span { width: 56px !important; height: 56px !important; }
   .arkme-team-detail-header { padding: 26px 20px; }
@@ -2002,7 +1884,8 @@ body[data-ds-dark-theme] .arkme-contact-world-load-more { color: var(--dsw-alias
   .arkme-team-members { padding: 18px 20px 28px; }
   .arkme-team-member-list { border-radius: 12px; }
   .arkme-team-member-row { padding-right: 12px; padding-left: 12px; }
-  .arkme-contact-world-title { padding-right: 20px; padding-left: 20px; }
+  .arkme-contact-world, .arkme-contact-profile-row { grid-template-columns: 64px minmax(0, 1fr); gap: 12px; }
+  .arkme-contact-world-thumbnail { width: 44px; height: 44px; }
   .arkme-directory-unmarked-speaker-detail { padding: 20px 18px 30px; }
   .arkme-unmarked-speaker-summary, .arkme-unmarked-speaker-audio, .arkme-unmarked-speaker-choice { gap: 14px; }
   .arkme-unmarked-speaker-stats { gap: 7px 14px; }

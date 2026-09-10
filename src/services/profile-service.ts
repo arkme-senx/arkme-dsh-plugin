@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeEnvironment,
@@ -446,6 +447,7 @@ export class ProfileService {
     }
     for (const batch of chunksOf(missing, 50)) {
       if (batch.length === 0) continue
+      const startedAtMillis = Date.now()
       const data = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
         '/api/v1/auth/get-public-users-by-ids',
         { user_ids: batch },
@@ -456,8 +458,15 @@ export class ProfileService {
           key: `public-profiles:${batch.join('|')}`,
           failureCooldownMs: 5_000,
         },
-      )
-      for (const raw of listValue(data.items)) {
+      ).catch((error: unknown) => {
+        logArkmeAvatarDiagnostic('profile_fetch_failed', {
+          environment: this.runtime.config.environment, viewerUserId: session.userId,
+          targetUserIds: batch, durationMillis: Math.max(0, Date.now() - startedAtMillis),
+        }, error)
+        throw error
+      })
+      if (!Array.isArray(data.items)) throw new ArkmePluginError('public-profile-contract-invalid', '联系人资料响应不完整', false, 502)
+      for (const raw of data.items) {
         const item = objectValue(raw)
         const userId = numberValue(item.user_id)
         if (!batch.includes(userId)) continue
@@ -475,8 +484,12 @@ export class ProfileService {
           try {
             trustedSignedImageUrl(this.runtime.config.environment, avatarUrl)
             trustedAvatarUrl = avatarUrl
-          } catch {
+          } catch (error) {
             trustedAvatarUrl = undefined
+            // phone_avatar is a supported fallback, not an invalid remote image.
+            if (avatarFallback === undefined) logArkmeAvatarDiagnostic('profile_avatar_rejected', {
+              environment: this.runtime.config.environment, viewerUserId: session.userId, targetUserId: userId,
+            }, error)
           }
         }
         const avatarCacheKey = `${String(session.userId)}:${String(userId)}`
@@ -495,6 +508,10 @@ export class ProfileService {
           ...(arkmeId === '' ? {} : { arkmeId }),
         })
       }
+      const missingUserIds = batch.filter(userId => !profiles.has(userId))
+      if (missingUserIds.length > 0) logArkmeAvatarDiagnostic('profile_missing', {
+        environment: this.runtime.config.environment, viewerUserId: session.userId, targetUserIds: missingUserIds,
+      })
       for (const userId of batch) {
         const value = profiles.get(userId) ?? null
         this.publicProfileCache.set(`${String(session.userId)}:${String(userId)}`, {

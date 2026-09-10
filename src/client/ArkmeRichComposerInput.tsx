@@ -1,3 +1,5 @@
+import { ArkmeMarkdownComposerInput } from './ArkmeMarkdownComposerInput.js'
+import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import {
   forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState,
   type ClipboardEvent, type CSSProperties, type FocusEvent, type KeyboardEvent,
@@ -47,6 +49,9 @@ export interface ArkmeComposerCaretGeometry {
 }
 
 export interface ArkmeRichComposerInputProps {
+  markdownEnabled?: boolean
+  markdown?: ArkmeMarkdownDraft | undefined
+  onMarkdownChange?(value: ArkmeMarkdownDraft, text: string, mentions: readonly ArkmeComposerMention[], emojis: readonly ArkmeComposerEmoji[]): void
   className?: string
   value: string
   mentions: readonly ArkmeComposerMention[]
@@ -57,6 +62,8 @@ export interface ArkmeRichComposerInputProps {
   disabled: boolean
   style: CSSProperties
   onTextChange(text: string): void
+  /** Genuine editor activity, including provisional IME text; never a draft commit. */
+  onInputActivity?(text: string): void
   onSelectionChange?(text: string, selectionStart: number, selectionEnd: number): void
   onFocus?(event: FocusEvent<HTMLDivElement>): void
   onBlur?(event: FocusEvent<HTMLDivElement>): void
@@ -254,10 +261,10 @@ function renderEditorContents(
 }
 
 /** Native contenteditable surface whose rich emoji spans remain atomic, selectable inline objects. */
-export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(
+const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(
   function ArkmeRichComposerInput({
     className, value, mentions, emojis, maxLength, placeholder, ariaLabel, disabled, style,
-    onTextChange, onSelectionChange, onFocus, onBlur, onPaste, onKeyDown,
+    onTextChange, onInputActivity, onSelectionChange, onFocus, onBlur, onPaste, onKeyDown,
   }, forwardedRef) {
     const editorRef = useRef<HTMLDivElement>(null)
     const valueRef = useRef(value)
@@ -331,6 +338,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       selectionRef.current = selection
       pendingSelectionRef.current = selection
       onTextChange(nextText)
+      onInputActivity?.(nextText)
       onSelectionChange?.(nextText, selection.start, selection.end)
     }
 
@@ -342,6 +350,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       selectionRef.current = { start: caret, end: caret }
       pendingSelectionRef.current = selectionRef.current
       onTextChange(nextText)
+      onInputActivity?.(nextText)
     }
 
     const insertPastedText = (root: HTMLDivElement, text: string) => {
@@ -352,6 +361,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       selectionRef.current = { start: caret, end: caret }
       pendingSelectionRef.current = selectionRef.current
       onTextChange(nextText)
+      onInputActivity?.(nextText)
       onSelectionChange?.(nextText, caret, caret)
     }
 
@@ -369,6 +379,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
         spellCheck
         style={{ ...style, ...styles.editor, position: 'relative', zIndex: 1 }}
         data-arkme-rich-composer="true"
+        data-arkme-composer-editor-box="true"
         onCompositionEnd={event => {
           const text = editorSemanticText(event.currentTarget)
           setEditorHasContent(text !== '')
@@ -378,6 +389,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
           const text = editorSemanticText(event.currentTarget)
           setEditorHasContent(text !== '')
           if (!(event.nativeEvent as InputEvent).isComposing) commitDom(event.currentTarget, text)
+          else onInputActivity?.(text)
         }}
         onFocus={onFocus}
         onBlur={onBlur}
@@ -416,3 +428,10 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
     </div>
   },
 )
+
+export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(function ArkmeRichComposerInput(props, ref) {
+  if ((props.markdownEnabled || props.markdown !== undefined) && props.onMarkdownChange !== undefined) {
+    return <ArkmeMarkdownComposerInput {...props} ref={ref} onMarkdownChange={props.onMarkdownChange} />
+  }
+  return <ArkmePlainComposerInput {...props} ref={ref} />
+})

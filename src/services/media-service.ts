@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { avatarReferenceDiagnostic, logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
 import { createReadStream } from 'node:fs'
 import { open as openFile } from 'node:fs/promises'
 import OSS from 'ali-oss'
@@ -601,17 +602,37 @@ export class MediaService {
 
   async readImage(
     imageRef: string,
-    options: { maxBytes?: number; signal?: AbortSignal } = {},
+    options: { maxBytes?: number; signal?: AbortSignal; refresh?: boolean } = {},
   ): Promise<ArkmeImageBytes> {
+    options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
     const isProfileImage = imageRef.trim().startsWith('arkme-profile-image-v1.')
+    const isBotImage = imageRef.trim().startsWith('arkme-bot-image-v1.')
+    const isAvatar = isProfileImage || isBotImage
     const maximumBytes = isProfileImage ? MAX_ARKME_PROFILE_IMAGE_BYTES : MAX_ARKME_IMAGE_BYTES
     const byteLimit = Math.min(maximumBytes, Math.max(1, Math.trunc(options.maxBytes ?? maximumBytes)))
     const cacheKey = `${String(session.userId)}:${String(byteLimit)}:${imageRef.trim()}`
-    const cached = this.cachedImage(cacheKey)
+    if (isProfileImage) await this.profile.openProfileImageRef(imageRef, session.userId)
+    const persisted = isAvatar ? await this.runtime.stateStore.readAvatarCache?.(session.userId, imageRef).catch(() => undefined) : undefined
+    if (persisted !== undefined && options.refresh !== true && persisted.bytes <= byteLimit) {
+      this.cacheImage(cacheKey, persisted)
+      return cloneImageBytes(persisted)
+    }
+    if (isBotImage) {
+      try {
+        if (this.botImages === undefined) throw new ArkmePluginError('bot-image-ref-invalid', 'Bot 头像引用不可用', false, 403)
+        await this.botImages.openBotImageRef(imageRef, session.userId)
+      } catch (error) {
+        // The account-scoped DB row authorizes historical local bytes, never an expired upstream URL.
+        if (persisted !== undefined && persisted.bytes <= byteLimit) return cloneImageBytes(persisted)
+        throw error
+      }
+    }
+    const cached = options.refresh === true ? undefined : this.cachedImage(cacheKey)
     if (cached !== undefined) return cached
     const existing = this.imageInFlight.get(cacheKey)
     if (existing !== undefined) return cloneImageBytes(await existing)
+    const startedAtMillis = Date.now()
     const pending = this.withImageDownloadPermit(
       async () => await this.readImageUncached(session, imageRef, byteLimit, options.signal),
     )
@@ -619,7 +640,16 @@ export class MediaService {
     try {
       const value = await pending
       this.cacheImage(cacheKey, value)
+      if (isAvatar) await this.runtime.stateStore.writeAvatarCache?.(session.userId, imageRef, value).catch(() => { console.warn('dsh-arkme: avatar_cache_write_failed') })
       return cloneImageBytes(value)
+    } catch (error) {
+      options.signal?.throwIfAborted()
+      if (persisted !== undefined && persisted.bytes <= byteLimit) return cloneImageBytes(persisted)
+      if (isProfileImage) logArkmeAvatarDiagnostic('image_read_failed', {
+        environment: this.runtime.config.environment, viewerUserId: session.userId,
+        ...avatarReferenceDiagnostic(imageRef), durationMillis: Math.max(0, Date.now() - startedAtMillis),
+      }, error)
+      throw error
     } finally {
       if (this.imageInFlight.get(cacheKey) === pending) this.imageInFlight.delete(cacheKey)
     }
@@ -1099,6 +1129,13 @@ export class MediaService {
     this.mediaRefs.set(ref, { ...descriptor, viewerUserId, expiresAtMillis: now + resolvedLifetimeMillis, ...(stableKey === undefined ? {} : { stableKey }) })
     if (stableKey !== undefined) this.stableMediaRefs.set(stableKey, ref)
     return ref
+  }
+
+  /** A current Record version does not imply that every media URL was resolved. */
+  recordMediaUnavailable(raw: unknown, blocks: readonly ArkmeContentBlock[]): boolean {
+    if (this.runtime.config.richMediaRenderEnabled === false) return false
+    const displayed = new Set(blocks.map(block => block.fileAssetUid))
+    return this.recordMediaRefs(raw).some(ref => !displayed.has(stringValue(ref.file_asset_uid).trim()))
   }
 
   richContentBlocks(raw: unknown, viewerUserId: number, hydratedDisplayItems: unknown[] = []): ArkmeContentBlock[] {

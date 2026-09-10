@@ -3,6 +3,57 @@ import { once } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from '../src/runtime-instance.js'
+import { ArkmePluginError } from '../src/services/service.js'
+
+it('passes home preference read cancellation through the Host owner', async () => {
+  const controller = new AbortController()
+  const service = { topicHomeVisibility: vi.fn() }
+  await dispatchArkmeHostOperation(service as never, 'topic.home-visibility', { sourceRef: 'topic-ref' }, undefined, undefined, undefined, undefined, controller.signal)
+  expect(service.topicHomeVisibility).toHaveBeenCalledWith('topic-ref', undefined, controller.signal)
+})
+
+it('passes contact detail request cancellation to each existing business owner', async () => {
+  const controller = new AbortController()
+  const service = {
+    directoryContactProfile: vi.fn(), directoryContactWorld: vi.fn(), openDirectoryContactChat: vi.fn(),
+  }
+  for (const operation of ['directory.contact.profile', 'directory.contact.world', 'directory.contact.open-chat'] as const) {
+    await dispatchArkmeHostOperation(service as never, operation, { contactRef: 'contact-ref' }, undefined, undefined, undefined, undefined, controller.signal)
+  }
+  expect(service.directoryContactProfile).toHaveBeenCalledWith('contact-ref', controller.signal)
+  expect(service.directoryContactWorld).toHaveBeenCalledWith('contact-ref', expect.objectContaining({ signal: controller.signal }))
+  expect(service.openDirectoryContactChat).toHaveBeenCalledWith('contact-ref', controller.signal)
+})
+
+it('serializes only safe Host recovery metadata across the real HTTP boundary', async () => {
+  const service = { listDirectory: async () => {
+    throw new ArkmePluginError('arkme-code-1002', '服务器繁忙', true, 502, {
+      failureKind: 'rate_limited', retryAfterMillis: 1200, retryScope: 'route',
+      recovery: { owner: 'host', attempts: 3, exhausted: true },
+      responseData: { accessToken: 'must-not-leak' }, cause: new Error('private-upstream-details'),
+    })
+  } }
+  const server = createServer(createArkmeHostApi(service as never, { expectedPort: 0, allowNonLoopback: false }))
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const address = server.address()
+  if (address === null || typeof address === 'string') throw new Error('test server address missing')
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/arkme-self/api`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operation: 'directory.list', params: { section: 'contacts', limit: 1 } }),
+    })
+    expect(response.status).toBe(502)
+    expect(await response.json()).toEqual({ ok: false, error: {
+      code: 'arkme-code-1002', message: '服务器繁忙', retryable: true,
+      failureKind: 'rate_limited', retryAfterMillis: 1200, retryScope: 'route',
+      recovery: { owner: 'host', attempts: 3, exhausted: true },
+    } })
+  } finally {
+    server.close()
+    await once(server, 'close')
+  }
+})
 
 function fakeService() {
   return {
@@ -73,6 +124,10 @@ function fakeService() {
     putLongArticleDraft: vi.fn(async () => undefined),
     removeLongArticleDraft: vi.fn(async () => undefined),
     recordReeditEditor: vi.fn(async (sourceRef: string, itemUid: string) => ({ sourceRef, itemUid })),
+    saveRecordReeditDraft: vi.fn(async () => ({ draftRevision: 7 })),
+    submitRecordReedit: vi.fn(async () => ({ state: 'pending', submissionId: 'submission' })),
+    recordReeditSubmissions: vi.fn(async () => []),
+    resumeRecordReeditSubmissions: vi.fn(async () => {}),
     prepareRecordReedit: vi.fn(async (input: unknown) => ({
       ...(input as Record<string, unknown>), expectedUserId: 42, sourceIdentityKey: 'host-only',
       draftRevision: 7, baseVersion: 3, baseContentFingerprint: 'fingerprint',
@@ -149,6 +204,16 @@ describe('account settings Host API dispatch', () => {
 })
 
 describe('user-ban Host API dispatch', () => {
+  it('preserves cancellation through both related-recording routes', async () => {
+    const controller = new AbortController()
+    const service = { relatedRecordingEligibility: vi.fn(), relatedRecordings: vi.fn() }
+    await dispatchArkmeHostOperation(service as never, 'related-recordings.eligibility', { sourceRef: 'source' },
+      undefined, undefined, undefined, undefined, controller.signal)
+    await dispatchArkmeHostOperation(service as never, 'related-recordings.page', { sourceRef: 'source' },
+      undefined, undefined, undefined, undefined, controller.signal)
+    expect(service.relatedRecordingEligibility).toHaveBeenCalledWith('source', controller.signal)
+    expect(service.relatedRecordings).toHaveBeenCalledWith('source', expect.objectContaining({ signal: controller.signal }))
+  })
   it('forwards only the account-bound private-chat source and bounded remark', async () => {
     const service = fakeService()
 
@@ -169,6 +234,47 @@ describe('user-ban Host API dispatch', () => {
     expect(banned).not.toHaveProperty('targetUserId')
     expect(banned).not.toHaveProperty('operatorUserId')
     expect(unbanned).not.toHaveProperty('targetUserId')
+  })
+
+  it('passes the creating conversation capability and cancellation signal to the existing topic owner', async () => {
+    const service = { createTopic: vi.fn(async () => ({ source: {} })) }
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'topic.create', { title: '新主题', contextSourceRef: 'signed-self' },
+      undefined, undefined, undefined, undefined, signal)
+    expect(service.createTopic).toHaveBeenCalledWith('新主题', undefined, { contextSourceRef: 'signed-self', signal })
+  })
+
+  it('routes topic candidates separately from conversation directory reads with cancellation', async () => {
+    const service = { listTopicCandidates: vi.fn(async () => ({ items: [], hasMore: false })) }
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'topic.candidates', { keyword: '工作', cursor: 'opaque-cursor' },
+      undefined, undefined, undefined, undefined, signal)
+    expect(service.listTopicCandidates).toHaveBeenCalledWith('工作', 'opaque-cursor', signal)
+  })
+
+  it('dispatches topic assignment with exact references and the request cancellation signal', async () => {
+    const service = { assignRecordTopic: vi.fn(async () => ({ movedRecordUids: ['r1'], projectionRefreshPending: false })) }
+    const signal = new AbortController().signal
+    const params = { sourceRef: 'self', assignmentRefs: ['signed-r1'], targetSourceRef: 'topic' }
+    await dispatchArkmeHostOperation(service as never, 'source.record-topic.assign', params,
+      undefined, undefined, undefined, undefined, signal)
+    expect(service.assignRecordTopic).toHaveBeenCalledWith(params, signal)
+  })
+
+  it.each([null, 1, {}, []])('never coerces a malformed assignment target into release: %j', async targetSourceRef => {
+    const service = { assignRecordTopic: vi.fn() }
+    await expect(dispatchArkmeHostOperation(service as never, 'source.record-topic.assign', {
+      sourceRef: 'topic', assignmentRefs: ['signed-r1'], targetSourceRef,
+    })).rejects.toMatchObject({ code: 'record-topic-target-invalid' })
+    expect(service.assignRecordTopic).not.toHaveBeenCalled()
+  })
+
+  it.each([undefined, 'ref', ['ref', null]])('rejects malformed assignment arrays: %j', async assignmentRefs => {
+    const service = { assignRecordTopic: vi.fn() }
+    await expect(dispatchArkmeHostOperation(service as never, 'source.record-topic.assign', {
+      sourceRef: 'topic', assignmentRefs,
+    })).rejects.toMatchObject({ code: 'record-topic-selection-invalid' })
+    expect(service.assignRecordTopic).not.toHaveBeenCalled()
   })
 
   it('requires the active same-origin Browser before a ban mutation', async () => {
@@ -618,6 +724,14 @@ describe('group AI polish Host API dispatch', () => {
 })
 
 describe('conversation member Host API dispatch', () => {
+  it('propagates timeline cancellation without changing its query', async () => {
+    const service = { readSource: vi.fn().mockResolvedValue({ items: [] }) }
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'source.timeline', {
+      sourceRef: 'source-ref', limit: 40,
+    }, undefined, undefined, undefined, undefined, signal)
+    expect(service.readSource).toHaveBeenCalledWith('source-ref', { limit: 40, signal })
+  })
   it('forwards the exact record identity and bounded around window', async () => {
     const service = fakeService()
     await dispatchArkmeHostOperation(service as never, 'source.timeline-around', {
@@ -862,6 +976,7 @@ describe('message action Host API dispatch', () => {
     expect(service.sourceMessageExtensionContext).toHaveBeenCalledWith('source-ref', 'action-1', expect.any(Object))
     expect(service.extendSourceMessage).toHaveBeenCalledWith(
       'source-ref', 'action-1', ' 附件延展 ', 'record-2', ['file-1', 'file-2'], {
+        title: '', textContent: ' 附件延展 ', displayKind: 0, assets: [],
         relationUid: 'relation-2', parentRecordUid: 'parent-extension-2',
       },
     )
@@ -1317,10 +1432,10 @@ describe('outgoing call Host API dispatch', () => {
     })
 
     expect(service.recordReeditEditor).toHaveBeenCalledWith('source-1', 'record-1')
+    expect(service.saveRecordReeditDraft).toHaveBeenCalledWith({
+      sourceRef: 'source-1', itemUid: 'record-1', newText: '草稿正文', expectedVersion: 3,
+    })
     expect(service.prepareRecordReedit).toHaveBeenNthCalledWith(1, {
-      sourceRef: 'source-1', itemUid: 'record-1', newText: '草稿正文',
-    }, { expectedBaseVersion: 3 })
-    expect(service.prepareRecordReedit).toHaveBeenNthCalledWith(2, {
       sourceRef: 'source-1', itemUid: 'record-1', newText: '最终正文',
     }, { expectedBaseVersion: 3 })
     expect(draft).toEqual({ saved: true, draftRevision: 7 })
@@ -1328,6 +1443,41 @@ describe('outgoing call Host API dispatch', () => {
     expect(updated).toMatchObject({ status: 'committed', version: 4 })
     expect(service.prepareDiscardRecordReeditDraft).toHaveBeenCalledWith('source-1', 'record-1')
     expect(service.discardRecordReeditDraft).toHaveBeenCalledOnce()
+  })
+
+  it('separates receipt reads from explicit recovery commands', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.record-reedit.submissions', { sourceRef: 'source-1', reconcile: true })
+    expect(service.recordReeditSubmissions).toHaveBeenCalledWith('source-1')
+    expect(service.resumeRecordReeditSubmissions).not.toHaveBeenCalled()
+    await dispatchArkmeHostOperation(service as never, 'source.record-reedit.resume', { sourceRef: 'source-1', reconcile: true })
+    expect(service.resumeRecordReeditSubmissions).toHaveBeenCalledWith('source-1', true)
+  })
+
+  it('forwards explicit attachment removal and draft CAS without inventing replacement text', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.record-reedit.draft.put', {
+      sourceRef: 's', itemUid: 'r', attachments: [], expectedVersion: 7, expectedDraftRevision: 4,
+    })
+    expect(service.saveRecordReeditDraft).toHaveBeenCalledWith({
+      sourceRef: 's', itemUid: 'r', attachments: [], expectedDraftRevision: 4, expectedVersion: 7,
+    })
+  })
+  it('keeps local admission distinct from committed Tool results', async () => {
+    const service = fakeService()
+    const accepted = await dispatchArkmeHostOperation(service as never, 'source.record-reedit.submit', {
+      sourceRef: 's', itemUid: 'r', attachments: [], expectedVersion: 7, expectedDraftRevision: 4, expectedUserId: 999,
+    })
+    expect(accepted).toMatchObject({ state: 'pending' })
+    expect(service.submitRecordReedit).toHaveBeenCalledWith({ sourceRef: 's', itemUid: 'r', attachments: [], expectedVersion: 7, expectedDraftRevision: 4 })
+    expect(service.commitRecordReedit).not.toHaveBeenCalled()
+  })
+  it('does not discard a newer draft than the one confirmed in the editor', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.record-reedit.draft.delete', {
+      sourceRef: 'source-1', itemUid: 'record-1', expectedDraftRevision: 1,
+    })).rejects.toMatchObject({ code: 'record-reedit-draft-changed' })
+    expect(service.discardRecordReeditDraft).not.toHaveBeenCalled()
   })
 
   it('dispatches built-in search lanes without forwarding caller account fields', async () => {

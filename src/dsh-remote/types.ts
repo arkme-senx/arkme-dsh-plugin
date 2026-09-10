@@ -14,6 +14,7 @@ export const DSH_REMOTE_MAX_MODEL_OPTIONS = 100
 
 export type DshRemoteCapability =
   | 'workspace.list'
+  | 'session.current'
   | 'session.list'
   | 'session.create'
   | 'session.create.model'
@@ -21,6 +22,7 @@ export type DshRemoteCapability =
   | 'session.model.select'
   | 'model.list'
   | 'session.history'
+  | 'session.history.compact'
   | 'session.prompt'
   | 'session.prompt.queue'
   | 'session.prompt.steer'
@@ -36,6 +38,7 @@ export type DshRemoteOperation =
   | 'model.list'
   | 'session.model.get'
   | 'session.model.select'
+  | 'session.current'
   | 'session.list'
   | 'session.create'
   | 'session.history'
@@ -203,6 +206,7 @@ export interface DshRemoteTurnProjection {
 }
 
 export interface DshRemoteRealtimeTransport {
+  revalidate(): void
   subscribeDisconnect(listener: (error: Error) => void): () => void
   connect(input: { profileRef: string; clientRef: string; signal: AbortSignal }): Promise<void>
   disconnect(): Promise<void>
@@ -309,6 +313,8 @@ export interface DshRemoteHostFacade {
   start(): Promise<void>
   stop(): Promise<void>
   getStatus(): DshRemoteStatus
+  reportCurrentSession(input: { accountId: string; windowRef: string; revision: number; sessionRef: string | null }): void
+  currentSession(): Promise<{ session: { sessionRef: string; workspaceRef: string; title?: string; running?: boolean; projectionAsOfSeq?: number } | null }>
   renameDesktop(displayName: string): Promise<DshRemoteStatus>
   subscribe(listener: (status: DshRemoteStatus) => void): () => void
 }

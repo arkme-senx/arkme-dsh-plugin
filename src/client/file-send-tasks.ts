@@ -22,7 +22,7 @@ export function fileTaskShowsInlineStatus(task: ArkmeFileSendTask): boolean {
 export function fileTaskTimelineItem(task: ArkmeFileSendTask): ArkmeTimelineItem {
   const visibleFiles = visibleTaskFiles(task)
   return {
-    itemUid: task.result?.itemUid ?? task.recordUid, title: task.content.title ?? '', textContent: task.content.textContent ?? '',
+    itemUid: task.result?.itemUid ?? task.recordUid, title: task.content.title ?? '', textContent: task.content.textContent ?? '', textFormat: task.content.textFormat ?? 'plain',
     sendAtMillis: task.createdAtMillis, senderName: '我', isMe: true, status: task.result?.status ?? 0, displayKind: 0,
     ...(task.result?.messageActionRef === undefined ? {} : { messageActionRef: task.result.messageActionRef }),
     contentBlocks: visibleFiles.map((file, index) => ({ ...localFileBlock(file, index),

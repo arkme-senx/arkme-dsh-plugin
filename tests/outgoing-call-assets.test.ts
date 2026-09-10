@@ -31,6 +31,12 @@ async function request(path: string, method = 'GET') {
 }
 
 describe('outgoing call assets', () => {
+  it.each(['call-outgoing-linear.svg', 'call-incoming-linear.svg', 'video-outgoing-linear.svg', 'video-incoming-linear.svg'])('serves the original desktop detail icon %s', async name => {
+    const response = await request(`/arkme-self/api/call/${name}`)
+    expect(response.status).toBe(200)
+    expect(response.headers['Content-Type']).toBe('image/svg+xml; charset=utf-8')
+    expect(response.body.toString()).toContain('<svg')
+  })
   it('serves the iframe document with the script policy required by the pinned CallEngine bundle', async () => {
     const response = await request('/arkme-self/api/call/index.html')
 
@@ -57,6 +63,8 @@ describe('outgoing call assets', () => {
   it('serves the bundle, icon, and manifest with exact content types', async () => {
     const bundle = await request('/arkme-self/api/call/bundle.js')
     const icon = await request('/arkme-self/api/call/call-linear-strong.svg')
+    const menuCallIcon = await request('/arkme-self/api/call/call-linear.svg')
+    const menuVideoIcon = await request('/arkme-self/api/call/video-linear.svg')
     const manifest = await request('/arkme-self/api/call/manifest.json')
     const demoPeer = await request('/arkme-self/api/call/call-demo-peer.png')
     const demoSelf = await request('/arkme-self/api/call/call-demo-self.png')
@@ -70,6 +78,17 @@ describe('outgoing call assets', () => {
       'Content-Type': 'image/svg+xml; charset=utf-8',
       'Cache-Control': 'public, max-age=31536000, immutable',
     }) })
+    expect(menuCallIcon).toMatchObject({ status: 200, headers: expect.objectContaining({
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    }) })
+    expect(menuVideoIcon).toMatchObject({ status: 200, headers: expect.objectContaining({
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    }) })
+    // Git checkouts may use CRLF on Windows; compare the original SVG content with LF endings.
+    expect(createHash('sha256').update(menuCallIcon.body.toString().replace(/\r\n/g, '\n')).digest('hex')).toBe('f9407702eb8b6086a71fac0c8b0d2a315d360abc3ea82700615082e47c99e989')
+    expect(createHash('sha256').update(menuVideoIcon.body.toString().replace(/\r\n/g, '\n')).digest('hex')).toBe('1d034663d515141689b74c33f1ff189ca436cc2c0ad0c50c0bbb05a34ad31728')
     expect(manifest).toMatchObject({ status: 200, headers: expect.objectContaining({
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',

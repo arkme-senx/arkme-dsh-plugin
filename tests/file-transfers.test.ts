@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +7,7 @@ import { arkmeCanInlineLocalFile, arkmePickedFileKind, arkmeVisibleUploadFractio
 import { fileTaskTimelineItem } from '../src/client/file-send-tasks.js'
 import { createArkmeFileTransfers } from '../src/file-transfer-owner.js'
 import { ArkmePluginError } from '../src/services/service.js'
+import { ArkmeStateStore } from '../src/state-store.js'
 
 const directories: string[] = []
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
@@ -22,15 +23,350 @@ async function fixture() {
   const ports: FileTransferPorts = { currentUser: async () => user, upload, send, validateSource,
     fetchMedia: async () => { throw new Error('unexpected download') }, openPath }
   const owner = new FileTransfers(directory, ports, 1000)
-  async function stage(name: string) {
-    const path = join(directory, name); await writeFile(path, name.padEnd(10, '.'))
-    return owner.stage(path, { fileName: name, mimeType: 'application/pdf', size: 10 })
+  async function stage(name: string, retention?: 'references') {
+    const path = join(directory, name); await writeFile(path, name.padEnd(10, '.').slice(0, 10))
+    return owner.stage(path, { fileName: name, mimeType: 'application/pdf', size: 10 }, undefined, retention)
   }
   return { owner, directory, ports, upload, send, validateSource, openPath, stage, setUser: (value: number) => { user = value } }
 }
 const input = (fileRefs: string[]) => ({ sourceRef: 'source', recordUid: '00000000-0000-4000-8000-000000000001', relationUid: '00000000-0000-4000-8000-000000000002', fileRefs, content: { textContent: 'hello' } })
 
 describe('account-bound file lifecycle', () => {
+  it('reclaims expired reference-managed staging after receipts release it, including after restart', async () => {
+    const f = await fixture()
+    const file = await f.stage('edit.pdf', 'references')
+    let retained = [file.fileRef]
+    f.ports.retainedFileRefs = async () => retained
+    await f.owner.uploadRefs([file.fileRef])
+    const restarted = new FileTransfers(f.directory, f.ports, 1000)
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 30 * 24 * 3600_000)
+    try {
+      await restarted.stageBytes('YQ==', { fileName: 'retained.pdf', mimeType: 'application/pdf' })
+      await expect(restarted.readLocal(file.fileRef)).resolves.toMatchObject({ file })
+      retained = []
+      await restarted.stageBytes('Yg==', { fileName: 'released.pdf', mimeType: 'application/pdf' })
+      await expect(restarted.readLocal(file.fileRef)).rejects.toMatchObject({ code: 'file-ref-invalid' })
+      expect(await restarted.tasks()).toEqual([])
+    } finally { clock.mockRestore() }
+  })
+
+  it('does not change shared file retention when a re-edit borrows and uploads it', async () => {
+    const f = await fixture()
+    const file = await f.stage('shared.pdf')
+    f.ports.retainedFileRefs = async () => []
+    await f.owner.uploadRefs([file.fileRef])
+    const restarted = new FileTransfers(f.directory, f.ports, 1000)
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 30 * 24 * 3600_000)
+    try {
+      await restarted.stageBytes('YQ==', { fileName: 'next.pdf', mimeType: 'application/pdf' })
+      await expect(restarted.readLocal(file.fileRef)).resolves.toMatchObject({ file })
+    } finally { clock.mockRestore() }
+  })
+
+  it('releases expired abandoned re-edit capacity without raising the 256-file limit', async () => {
+    const f = await fixture()
+    f.ports.retainedFileRefs = async () => []
+    for (let index = 0; index < 256; index++) await f.stage('edit.pdf', 'references')
+    await expect(f.stage('full.pdf')).rejects.toMatchObject({ code: 'file-cache-full' })
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
+    try {
+      const next = await f.stage('next.pdf')
+      expect(await f.owner.files()).toEqual([next])
+    } finally { clock.mockRestore() }
+  })
+
+  it('persists cleanup even when the subsequent import fails', async () => {
+    const f = await fixture()
+    f.ports.retainedFileRefs = async () => []
+    await f.stage('edit.pdf', 'references')
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
+    try {
+      await expect(f.owner.stage(join(f.directory, 'missing'), { fileName: 'a.pdf', mimeType: 'application/pdf', size: 10 })).rejects.toThrow()
+      const restarted = new FileTransfers(f.directory, f.ports, 1000)
+      expect(await restarted.files()).toEqual([])
+    } finally { clock.mockRestore() }
+  })
+
+  it('keeps bytes and in-memory metadata when cleanup persistence fails', async () => {
+    const f = await fixture()
+    f.ports.retainedFileRefs = async () => []
+    const file = await f.stage('edit.pdf', 'references')
+    const path = join(f.directory, '42', 'state.json')
+    await rm(path)
+    await mkdir(path)
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
+    try {
+      await expect(f.stage('next.pdf')).rejects.toThrow()
+      await expect(f.owner.readLocal(file.fileRef)).resolves.toMatchObject({ file })
+      expect(await f.owner.files()).toEqual([file])
+    } finally { clock.mockRestore() }
+  })
+
+  it('serializes reference persistence with removal and cache collection', async () => {
+    const f = await fixture()
+    const file = await f.stage('edit.pdf', 'references')
+    let retained: string[] = []
+    f.ports.retainedFileRefs = async () => retained
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
+    let release!: () => void
+    try {
+      const saved = f.owner.withReferences([file.fileRef], 42, async () => {
+        await new Promise<void>(resolve => { release = resolve })
+        retained = [file.fileRef]
+        return 'saved'
+      })
+      await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+      const staging = f.stage('next.pdf')
+      const removing = expect(f.owner.remove(file.fileRef)).rejects.toMatchObject({ code: 'file-in-use' })
+      release()
+      expect(await saved).toBe('saved')
+      await staging
+      await removing
+      await expect(f.owner.readLocal(file.fileRef)).resolves.toMatchObject({ file })
+      retained = []
+      await f.owner.remove(file.fileRef)
+      const write = vi.fn()
+      await expect(f.owner.withReferences([file.fileRef], 42, write)).rejects.toMatchObject({ code: 'file-ref-invalid' })
+      expect(write).not.toHaveBeenCalled()
+    } finally { release?.(); clock.mockRestore() }
+  })
+
+  it('keeps reference-managed staging while retention evidence is unavailable', async () => {
+    const f = await fixture()
+    const file = await f.stage('edit.pdf', 'references')
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
+    try {
+      await f.stage('without.pdf')
+      await expect(f.owner.readLocal(file.fileRef)).resolves.toMatchObject({ file })
+      f.ports.retainedFileRefs = async () => { throw new Error('unavailable') }
+      await f.stage('failed.pdf')
+      await expect(f.owner.readLocal(file.fileRef)).resolves.toMatchObject({ file })
+    } finally { clock.mockRestore() }
+  })
+
+  it('never treats a malformed persisted draft as proof of reference release', async () => {
+    const f = await fixture()
+    const file = await f.stage('edit.pdf', 'references')
+    const store = new ArkmeStateStore(f.directory)
+    await store.putRecordReeditDraft(42, {
+      schemaVersion: 1, sourceIdentityKey: 'identity', lastSourceRef: 'source', itemUid: 'record',
+      title: '', textContent: '保留草稿', attachments: [{ fileRef: file.fileRef }],
+      baseVersion: 7, baseContentFingerprint: 'a'.repeat(64), editDurationMillis: 0, updatedAtMillis: 1,
+    })
+    const path = join(f.directory, 'state.json')
+    const raw = JSON.parse(await readFile(path, 'utf8'))
+    raw.recordReeditDraftsByUser['42']['identity\u0000record'].draftRevision = 'corrupted'
+    await writeFile(path, JSON.stringify(raw))
+    const restarted = new ArkmeStateStore(f.directory)
+    f.ports.retainedFileRefs = userId => restarted.recordReeditFileRefs(userId)
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
+    try {
+      const ordinary = await f.stage('next.pdf')
+      await expect(f.owner.readLocal(file.fileRef)).resolves.toMatchObject({ file })
+      await f.owner.enqueue(input([ordinary.fileRef]))
+      await f.owner.settled()
+      expect(f.send).toHaveBeenCalledOnce()
+      await restarted.putPending(42, { recordUid: 'ordinary', textContent: '普通消息', createdAtMillis: 1, sendAtMillis: 1, attempts: 0 })
+      expect(JSON.parse(await readFile(path, 'utf8')).recordReeditDraftsByUser).toEqual(raw.recordReeditDraftsByUser)
+      await expect(new ArkmeStateStore(f.directory).recordReeditFileRefs(42)).rejects.toThrow('草稿')
+    } finally { clock.mockRestore() }
+  })
+
+  it('never infers reference release from a sent task when the reference provider is absent', async () => {
+    const f = await fixture()
+    const file = await f.stage('edit.pdf', 'references')
+    await f.owner.enqueue(input([file.fileRef]))
+    await f.owner.settled()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
+    try {
+      await f.stage('next.pdf')
+      await expect(f.owner.readLocal(file.fileRef)).resolves.toMatchObject({ file })
+    } finally { clock.mockRestore() }
+  })
+
+  it('preserves missing already-owned references for draft recovery but rejects new missing references', async () => {
+    const f = await fixture()
+    const file = await f.stage('edit.pdf', 'references')
+    f.ports.retainedFileRefs = async () => [file.fileRef]
+    await rm((await f.owner.readLocal(file.fileRef)).path)
+    const persist = vi.fn(async () => 'draft text preserved')
+    await expect(f.owner.withReferences([file.fileRef], 42, persist)).resolves.toBe('draft text preserved')
+    const unknown = 'arkme-file-v1.00000000-0000-4000-8000-000000000099'
+    await expect(f.owner.withReferences([unknown], 42, persist)).rejects.toMatchObject({ code: 'file-ref-invalid' })
+    expect(persist).toHaveBeenCalledOnce()
+  })
+
+  it('releases the local critical section on persistence failure and rejects account changes', async () => {
+    const f = await fixture()
+    const file = await f.stage('edit.pdf', 'references')
+    await expect(f.owner.withReferences([file.fileRef], 42, async () => { throw new Error('disk failed') })).rejects.toThrow('disk failed')
+    await expect(f.stage('next.pdf')).resolves.toBeDefined()
+    f.setUser(43)
+    const persist = vi.fn()
+    await expect(f.owner.withReferences([file.fileRef], 42, persist)).rejects.toMatchObject({ code: 'file-account-changed' })
+    expect(persist).not.toHaveBeenCalled()
+  })
+
+  it.each(['direct', 'send'] as const)('protects expired reference-managed bytes during %s upload without blocking staging', async mode => {
+    const f = await fixture()
+    f.ports.retainedFileRefs = async () => []
+    const file = await f.stage('edit.pdf', 'references')
+    let release!: () => void
+    f.upload.mockImplementationOnce(async (_path, metadata) => {
+      await new Promise<void>(resolve => { release = resolve })
+      return { ...metadata, fileAssetUid: 'asset' }
+    })
+    const job = mode === 'direct' ? f.owner.uploadRefs([file.fileRef]) : f.owner.enqueue(input([file.fileRef]))
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
+    try {
+      await f.stage('next.pdf')
+      await expect(f.owner.readLocal(file.fileRef)).resolves.toMatchObject({ file })
+    } finally { release(); await job; await f.owner.settled(); clock.mockRestore() }
+  })
+
+  it.each(['owner_not_accepted', 'owner_outcome_unknown'] as const)('protects expired reference-managed files for %s send recovery', async kind => {
+    const f = await fixture()
+    f.ports.retainedFileRefs = async () => []
+    const file = await f.stage('edit.pdf', 'references')
+    f.send.mockResolvedValueOnce({ kind, message: 'retry later' })
+    await f.owner.enqueue(input([file.fileRef]))
+    await f.owner.settled()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
+    try {
+      await f.stage('next.pdf')
+      await expect(f.owner.readLocal(file.fileRef)).resolves.toMatchObject({ file })
+    } finally { clock.mockRestore() }
+  })
+  it('keeps ordinary staging and sending available when edit retention evidence is unreadable', async () => {
+    const f = await fixture()
+    const original = await f.stage('keep.pdf')
+    f.ports.retainedFileRefs = async () => { throw new Error('提交状态损坏') }
+    const next = await f.stage('next.pdf')
+    await f.owner.enqueue(input([next.fileRef]))
+    await f.owner.settled()
+    expect(f.send).toHaveBeenCalledOnce()
+    await expect(f.owner.remove(original.fileRef)).rejects.toThrow('提交状态损坏')
+    expect((await f.owner.readLocal(original.fileRef)).file.fileRef).toBe(original.fileRef)
+  })
+
+  it('deduplicates queued direct uploads of the same file', async () => {
+    const f = await fixture()
+    const file = await f.stage('edit.pdf')
+    let release!: () => void
+    f.upload.mockImplementationOnce(async (_path, metadata) => {
+      await new Promise<void>(resolve => { release = resolve })
+      return { ...metadata, fileAssetUid: 'edit-asset' }
+    })
+    const first = f.owner.uploadRefs([file.fileRef])
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    const second = f.owner.uploadRefs([file.fileRef])
+    release()
+    expect(await second).toEqual(await first)
+    expect(f.upload).toHaveBeenCalledOnce()
+  })
+
+  it('does not upload a cancelled direct request after its queue predecessor finishes', async () => {
+    const f = await fixture()
+    const firstFile = await f.stage('first.pdf')
+    const nextFile = await f.stage('next.pdf')
+    let release!: () => void
+    f.upload.mockImplementationOnce(async (_path, metadata) => {
+      await new Promise<void>(resolve => { release = resolve })
+      return { ...metadata, fileAssetUid: 'first-asset' }
+    })
+    const first = f.owner.uploadRefs([firstFile.fileRef])
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    const controller = new AbortController()
+    const cancelled = f.owner.uploadRefs([nextFile.fileRef], controller.signal)
+    const rejected = expect(cancelled).rejects.toThrow()
+    controller.abort()
+    release()
+    await first
+    await rejected
+    expect(f.upload).toHaveBeenCalledOnce()
+    await f.owner.remove(nextFile.fileRef)
+  })
+
+  it('keeps ordinary staging and sending responsive during a direct re-edit upload', async () => {
+    const f = await fixture()
+    const file = await f.stage('edit.pdf')
+    let release!: () => void
+    f.upload.mockImplementationOnce(async (_path, metadata) => {
+      await new Promise<void>(resolve => { release = resolve })
+      return { ...metadata, fileAssetUid: 'edit-asset' }
+    })
+    const editing = f.owner.uploadRefs([file.fileRef])
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    let staged = false
+    const ordinary = f.stage('next.pdf').then(value => { staged = true; return value })
+    try {
+      await vi.waitFor(() => expect(staged).toBe(true), { timeout: 300 })
+      await f.owner.enqueue(input([(await ordinary).fileRef]))
+      await vi.waitFor(() => expect(f.send).toHaveBeenCalledOnce())
+      await expect(f.owner.remove(file.fileRef)).rejects.toMatchObject({ code: 'file-in-use' })
+    } finally {
+      release()
+      await editing
+      await ordinary
+      await f.owner.settled()
+    }
+    await f.owner.remove(file.fileRef)
+  })
+
+  it('does not reuse a background audio asset for an ordinary re-edit attachment', async () => {
+    const f = await fixture()
+    const path = join(f.directory, 'audio.m4a'); await writeFile(path, '0123456789')
+    const audio = await f.owner.stage(path, { fileName: 'audio.m4a', mimeType: 'audio/mp4', size: 10 })
+    await f.owner.enqueue({ ...input([audio.fileRef]), backgroundSound: { fileRefs: [audio.fileRef], amplitudes: [0.3] } })
+    await f.owner.settled()
+    expect(f.upload.mock.calls.map(call => call[1].fileKind)).toEqual([2])
+    const result = await f.owner.uploadRefs([audio.fileRef])
+    expect(f.upload.mock.calls.map(call => call[1].fileKind)).toEqual([2, 4])
+    expect(result[0]?.fileKind).toBe(4)
+  })
+
+  it('protects files referenced by an edit draft until that draft releases them', async () => {
+    const f = await fixture()
+    const file = await f.stage('edit.pdf')
+    f.ports.retainedFileRefs = async userId => userId === 42 ? [file.fileRef] : []
+    await expect(f.owner.remove(file.fileRef)).rejects.toMatchObject({ code: 'file-in-use' })
+    expect((await f.owner.readLocal(file.fileRef)).file).toEqual(file)
+    f.ports.retainedFileRefs = async () => []
+    await f.owner.remove(file.fileRef)
+    expect(await f.owner.files()).toEqual([])
+  })
+  it('does not prune an old sent file still selected by an edit draft', async () => {
+    const f = await fixture()
+    const file = await f.stage('keep.pdf')
+    await f.owner.enqueue(input([file.fileRef]))
+    await f.owner.settled()
+    f.ports.retainedFileRefs = async () => [file.fileRef]
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 8 * 24 * 3600_000)
+    try {
+      await f.stage('next.pdf')
+      expect((await f.owner.readLocal(file.fileRef)).file).toEqual(file)
+      f.ports.retainedFileRefs = async () => []
+      await f.stage('after.pdf')
+      await expect(f.owner.readLocal(file.fileRef)).rejects.toMatchObject({ code: 'file-ref-invalid' })
+    } finally { clock.mockRestore() }
+  })
+  it('resumes cleanup only after unavailable edit retention evidence recovers', async () => {
+    const f = await fixture()
+    const file = await f.stage('keep.pdf')
+    await f.owner.enqueue(input([file.fileRef]))
+    await f.owner.settled()
+    f.ports.retainedFileRefs = async () => { throw new Error('提交状态损坏') }
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
+    try {
+      await f.stage('during.pdf')
+      expect((await f.owner.readLocal(file.fileRef)).file).toEqual(file)
+      f.ports.retainedFileRefs = async () => []
+      await f.stage('after.pdf')
+      await expect(f.owner.readLocal(file.fileRef)).rejects.toMatchObject({ code: 'file-ref-invalid' })
+    } finally { clock.mockRestore() }
+  })
   it('stages locally without a cloud upload and rejects another account', async () => {
     const f = await fixture(); const file = await f.stage('one.pdf')
     expect(f.upload).not.toHaveBeenCalled()
@@ -169,7 +505,7 @@ describe('account-bound file lifecycle', () => {
     const owner = createArkmeFileTransfers({
       directory,
       maxUploadBytes: 1_000,
-      runtime: { requireSession: async () => ({ userId: 42 }) } as never,
+      runtime: { requireSession: async () => ({ userId: 42 }), stateStore: { recordReeditFileRefs: async () => [] } } as never,
       source: { openSourceRef: async () => ({ kind: 'private_chat' }) } as never,
       media: { uploadLocalFile: async (_path: string, metadata: { fileName: string }) => ({
         ...metadata, fileAssetUid: `asset-${metadata.fileName}`,
@@ -212,7 +548,7 @@ describe('account-bound file lifecycle', () => {
     const owner = createArkmeFileTransfers({
       directory,
       maxUploadBytes: 1_000,
-      runtime: { requireSession: async () => ({ userId: 42 }) } as never,
+      runtime: { requireSession: async () => ({ userId: 42 }), stateStore: { recordReeditFileRefs: async () => [] } } as never,
       source: { openSourceRef: async () => ({ kind: 'send_to_self' }) } as never,
       media: { uploadLocalFile: async (_path: string, metadata: { fileName: string }) => ({
         ...metadata, fileAssetUid: `asset-${metadata.fileName}`,
@@ -315,6 +651,15 @@ describe('account-bound file lifecycle', () => {
     expect(f.send).toHaveBeenCalledTimes(2)
     expect((await f.owner.tasks())[0]).toMatchObject({ state: 'sent' })
     expect((await f.owner.tasks())[0]).not.toHaveProperty('errorCode')
+  })
+  it('persists terminal permission rejection and does not retry it after restart', async () => {
+    const f = await fixture(); const file = await f.stage('a.pdf')
+    f.send.mockResolvedValueOnce({ kind: 'owner_not_accepted', code: 'arkme-code-1004', message: '对方已拒收消息', retryable: false })
+    const task = await f.owner.enqueue(input([file.fileRef])); await f.owner.settled()
+    expect((await f.owner.tasks())[0]).toMatchObject({ state: 'failed', retryable: false })
+    const restored = new FileTransfers(f.directory, f.ports, 1000)
+    await expect(restored.retry(task.taskRef)).rejects.toMatchObject({ code: 'arkme-code-1004' })
+    expect(f.send).toHaveBeenCalledTimes(1)
   })
   it('keeps a retryable send failure uncertain and preserves its safe code for reconciliation', async () => {
     const f = await fixture(); const file = await f.stage('a.pdf')

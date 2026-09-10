@@ -1,3 +1,4 @@
+import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import type { ArkmeSourceItem, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
@@ -23,6 +24,7 @@ export interface ArkmeComposerEmoji {
 }
 
 export interface ArkmeComposerDraftSnapshot {
+  markdown?: ArkmeMarkdownDraft
   text: string
   attachments: readonly ArkmeComposerAttachment[]
   mentions: readonly ArkmeComposerMention[]
@@ -34,6 +36,13 @@ export type ArkmeComposerDeleteDirection = 'backward' | 'forward'
 
 export interface ArkmeComposerAtomicDeletion {
   text: string
+  caretIndex: number
+}
+
+export interface ArkmeComposerMentionInsertion {
+  text: string
+  mentions: ArkmeComposerMention[]
+  emojis: ArkmeComposerEmoji[]
   caretIndex: number
 }
 
@@ -101,11 +110,13 @@ export function reconcileArkmeComposerEmojis(
 }
 
 export interface ArkmeSerializedComposerDraft {
+  textFormat?: 'plain' | 'markdown'
   text: string
   mentions: readonly ArkmeComposerMention[]
 }
 
 export function serializeArkmeComposerDraft(snapshot: ArkmeComposerDraftSnapshot): ArkmeSerializedComposerDraft {
+  if (snapshot.markdown !== undefined) return { text: snapshot.markdown.source, mentions: snapshot.markdown.mentions, textFormat: 'markdown' }
   if (snapshot.emojis.length === 0) return { text: snapshot.text, mentions: snapshot.mentions }
   const emojis = [...snapshot.emojis].sort((left, right) => left.startIndex - right.startIndex)
   const buffer: string[] = []
@@ -176,6 +187,45 @@ export function arkmeComposerAtomicDeletion(
   }
 }
 
+export function insertArkmeComposerMentionToken(
+  snapshot: Pick<ArkmeComposerDraftSnapshot, 'text' | 'mentions' | 'emojis'>,
+  mention: Pick<ArkmeComposerMention, 'mentionRef' | 'botRef' | 'all'>,
+  displayName: string,
+  selectionStart: number,
+  selectionEnd = selectionStart,
+): ArkmeComposerMentionInsertion | undefined {
+  const normalizedDisplayName = displayName.trim()
+  const normalizedMentionRef = mention.mentionRef?.trim()
+  const normalizedBotRef = mention.botRef?.trim()
+  if (normalizedDisplayName === '') return undefined
+  if (mention.all !== true
+    && (normalizedMentionRef === undefined || normalizedMentionRef === '')
+    && (normalizedBotRef === undefined || normalizedBotRef === '')) return undefined
+  const start = Math.max(0, Math.min(snapshot.text.length, Math.trunc(selectionStart)))
+  const end = Math.max(start, Math.min(snapshot.text.length, Math.trunc(selectionEnd)))
+  const token = `@${normalizedDisplayName}`
+  const inserted = `${token} `
+  const withoutSelection = snapshot.text.slice(0, start) + snapshot.text.slice(end)
+  const text = snapshot.text.slice(0, start) + inserted + snapshot.text.slice(end)
+  const mentions = reconcileArkmeComposerMentions(snapshot.text, withoutSelection, snapshot.mentions)
+    .map(item => item.startIndex >= start
+      ? { ...item, startIndex: item.startIndex + inserted.length }
+      : item)
+  if (mention.all === true) {
+    mentions.push({ all: true, displayName: normalizedDisplayName, startIndex: start, length: token.length })
+  } else if (normalizedBotRef !== undefined && normalizedBotRef !== '') {
+    mentions.push({ botRef: normalizedBotRef, displayName: normalizedDisplayName, startIndex: start, length: token.length })
+  } else {
+    mentions.push({ mentionRef: normalizedMentionRef!, displayName: normalizedDisplayName, startIndex: start, length: token.length })
+  }
+  mentions.sort((left, right) => left.startIndex - right.startIndex)
+  const emojis = reconcileArkmeComposerEmojis(snapshot.text, withoutSelection, snapshot.emojis)
+    .map(emoji => emoji.startIndex >= start
+      ? { ...emoji, startIndex: emoji.startIndex + inserted.length }
+      : emoji)
+  return { text, mentions, emojis, caretIndex: start + inserted.length }
+}
+
 export function arkmeComposerCanSend(text: string, attachmentCount: number, busy: boolean): boolean {
   return !busy && (text.trim() !== '' || attachmentCount > 0)
 }
@@ -238,7 +288,7 @@ export class ArkmeComposerDraftStore {
         const attachments = draft.attachments.filter(item => item.localFile !== undefined && /^arkme-file-v1\.[0-9a-f-]{36}$/.test(item.localFile.fileRef)
           && typeof item.localFile.fileName === 'string' && typeof item.localFile.mimeType === 'string' && Number.isSafeInteger(item.localFile.size))
           .slice(0, 9).map(item => ({ localFile: item.localFile! }))
-        if (attachments.length > 0) { this.drafts.set(entry[0], { ...draft, attachments }); this.restoredKeys.add(entry[0]) }
+        if (attachments.length > 0 || draft.markdown?.document?.type === 'doc') { this.drafts.set(entry[0], { ...draft, attachments }); this.restoredKeys.add(entry[0]) }
       }
     } catch { /* An unavailable browser store must not prevent editing a local draft. */ }
   }
@@ -252,6 +302,11 @@ export class ArkmeComposerDraftStore {
 
   get(key: string | undefined): ArkmeComposerDraftSnapshot {
     return key === undefined ? EMPTY_DRAFT : this.drafts.get(key) ?? EMPTY_DRAFT
+  }
+
+  setMarkdown(key: string | undefined, markdown: ArkmeMarkdownDraft, text: string, mentions: readonly ArkmeComposerMention[], emojis: readonly ArkmeComposerEmoji[]): void {
+    if (key === undefined) return
+    this.storeOrDelete(key, { ...this.get(key), text, mentions, emojis, markdown })
   }
 
   setText(key: string | undefined, text: string): void {
@@ -303,43 +358,12 @@ export class ArkmeComposerDraftStore {
     selectionStart: number,
     selectionEnd = selectionStart,
   ): number | undefined {
-    const normalizedDisplayName = displayName.trim()
-    const normalizedMentionRef = mention.mentionRef?.trim()
-    const normalizedBotRef = mention.botRef?.trim()
-    if (key === undefined || normalizedDisplayName === '') return undefined
-    if (mention.all !== true
-      && (normalizedMentionRef === undefined || normalizedMentionRef === '')
-      && (normalizedBotRef === undefined || normalizedBotRef === '')) return undefined
+    if (key === undefined) return undefined
     const current = this.get(key)
-    const start = Math.max(0, Math.min(current.text.length, Math.trunc(selectionStart)))
-    const end = Math.max(start, Math.min(current.text.length, Math.trunc(selectionEnd)))
-    const token = `@${normalizedDisplayName}`
-    const inserted = `${token} `
-    const text = current.text.slice(0, start) + inserted + current.text.slice(end)
-    const mentions = reconcileArkmeComposerMentions(
-      current.text,
-      current.text.slice(0, start) + current.text.slice(end),
-      current.mentions,
-    ).map(mention => mention.startIndex >= start
-      ? { ...mention, startIndex: mention.startIndex + inserted.length }
-      : mention)
-    if (mention.all === true) {
-      mentions.push({ all: true, displayName: normalizedDisplayName, startIndex: start, length: token.length })
-    } else if (normalizedBotRef !== undefined && normalizedBotRef !== '') {
-      mentions.push({ botRef: normalizedBotRef, displayName: normalizedDisplayName, startIndex: start, length: token.length })
-    } else {
-      mentions.push({ mentionRef: normalizedMentionRef!, displayName: normalizedDisplayName, startIndex: start, length: token.length })
-    }
-    mentions.sort((left, right) => left.startIndex - right.startIndex)
-    const emojis = reconcileArkmeComposerEmojis(
-      current.text,
-      current.text.slice(0, start) + current.text.slice(end),
-      current.emojis,
-    ).map(emoji => emoji.startIndex >= start
-      ? { ...emoji, startIndex: emoji.startIndex + inserted.length }
-      : emoji)
-    this.store(key, { text, attachments: current.attachments, mentions, emojis })
-    return start + inserted.length
+    const inserted = insertArkmeComposerMentionToken(current, mention, displayName, selectionStart, selectionEnd)
+    if (inserted === undefined) return undefined
+    this.store(key, { text: inserted.text, attachments: current.attachments, mentions: inserted.mentions, emojis: inserted.emojis })
+    return inserted.caretIndex
   }
 
   insertMention(
@@ -438,7 +462,7 @@ export class ArkmeComposerDraftStore {
       retained.push(attachment)
     }
     if (retained.length === current.attachments.length) return
-    this.store(key, { text: current.text, attachments: retained, mentions: current.mentions, emojis: current.emojis })
+    this.store(key, { ...current, attachments: retained })
   }
 
   removeAttachment(key: string | undefined, fileAssetUid: string): void {
@@ -449,6 +473,7 @@ export class ArkmeComposerDraftStore {
     if (removed.length === 0) return
     for (const attachment of removed) releaseArkmeComposerAttachment(attachment)
     this.storeOrDelete(key, {
+      ...current,
       text: current.text,
       attachments: current.attachments.filter(item => arkmeAttachmentId(item) !== fileAssetUid),
       mentions: current.mentions,
@@ -502,6 +527,7 @@ export class ArkmeComposerDraftStore {
       : undefined
     this.storeOrDelete(key, {
       text, attachments: merged, mentions, emojis,
+      ...((current.text === '' ? snapshot.markdown : current.markdown) === undefined ? {} : { markdown: (current.text === '' ? snapshot.markdown : current.markdown)! }),
       ...(restoreIdentity === undefined ? {} : { fileSendIdentity: restoreIdentity }),
     })
   }
@@ -529,7 +555,10 @@ export class ArkmeComposerDraftStore {
   }
 
   private storeOrDelete(key: string, snapshot: ArkmeComposerDraftSnapshot): void {
-    if (snapshot.text === '' && snapshot.attachments.length === 0 && snapshot.mentions.length === 0 && snapshot.emojis.length === 0) {
+    // A newly typed heading/list/fence has no visible text yet, but is still an editable draft.
+    // Inspect the document: serializers may omit an empty heading or task item's Markdown source.
+    const hasMarkdownStructure = snapshot.markdown?.document.content?.some(node => node.type !== 'paragraph' || (node.content?.length ?? 0) > 0)
+    if (snapshot.text === '' && !hasMarkdownStructure && snapshot.attachments.length === 0 && snapshot.mentions.length === 0 && snapshot.emojis.length === 0) {
       if (!this.drafts.delete(key)) return
       this.publish()
       return
@@ -541,6 +570,7 @@ export class ArkmeComposerDraftStore {
     this.restoredKeys.delete(key)
     this.drafts.set(key, Object.freeze({
       text: snapshot.text,
+      ...(snapshot.markdown === undefined ? {} : { markdown: snapshot.markdown }),
       attachments: Object.freeze([...snapshot.attachments]),
       mentions: Object.freeze(snapshot.mentions.map(mention => Object.freeze({ ...mention }))),
       emojis: Object.freeze(snapshot.emojis.map(emoji => Object.freeze({ ...emoji }))),
@@ -551,8 +581,8 @@ export class ArkmeComposerDraftStore {
 
   private publish(): void {
     try {
-      // Only file drafts opt into persistence; existing Arko/text-only semantics stay unchanged.
-      const entries = [...this.drafts].filter(([, draft]) => draft.attachments.some(item => item.localFile !== undefined))
+      // Markdown documents and file drafts survive a window restart, scoped by account and source.
+      const entries = [...this.drafts].filter(([, draft]) => draft.markdown !== undefined || draft.attachments.some(item => item.localFile !== undefined))
         .map(([key, draft]) => [key, { ...draft, attachments: draft.attachments.flatMap(item => item.localFile === undefined ? [] : [{ localFile: item.localFile }]) }])
       this.storage?.setItem(ArkmeComposerDraftStore.storageKey, JSON.stringify(entries))
     } catch { /* The Host still owns staged bytes and accepted send tasks. */ }

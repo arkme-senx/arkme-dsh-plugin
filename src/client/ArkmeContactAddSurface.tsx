@@ -95,10 +95,11 @@ function qrDataUrl(content: string): string | undefined {
   return qr.createDataURL(5, 8)
 }
 
-export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compact = false }: {
+export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compact = false, submitLabel = '添加并打开会话' }: {
   shareWebsite: string
   onSourceActivated(source: ArkmeSourceItem): void
   compact?: boolean
+  submitLabel?: string
 }) {
   const [identifier, setIdentifier] = useState('')
   const [candidate, setCandidate] = useState<ArkmeContactSearchResult>()
@@ -228,7 +229,7 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
         ...(remark.trim() === '' ? {} : { remark: remark.trim() }),
         requestUid: crypto.randomUUID(),
       })
-      setNotice(result.state === 'pending' ? '已添加待注册联系人并打开会话' : '联系人已添加')
+      setNotice(result.state === 'pending' ? '已添加待注册联系人' : '联系人已添加')
       onSourceActivated(result.source)
     } catch (caught) { setError(errorMessage(caught)) }
     finally { setBusy(false) }
@@ -296,7 +297,7 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
           <div style={styles.identity}><ArkmeUserAvatar {...(candidate.avatarRef === undefined ? {} : { avatarRef: candidate.avatarRef })} size={48} label={`${candidate.displayName}的头像`} /><div style={styles.identityText}>
             <p style={styles.name}>{candidate.displayName}</p><p style={styles.meta}>{candidate.arkmeId === undefined ? '' : `即我号：${candidate.arkmeId} · `}{candidate.registered ? '已注册' : candidate.inviteBySms ? '未注册，将创建待注册联系人' : '未注册'}</p>
           </div></div>
-          {candidate.isSelf ? <div style={styles.notice}>这是你自己，不能添加为联系人</div> : !candidate.canAdd ? <div style={styles.notice}>该账号当前无法添加</div> : <><input style={styles.remark} maxLength={100} value={remark} placeholder="备注（可选）" onChange={event => { setRemark(event.target.value) }} /><button type="button" style={styles.primary} disabled={busy} onClick={() => { void add() }}>添加并打开会话</button></>}
+          {candidate.isSelf ? <div style={styles.notice}>这是你自己，不能添加为联系人</div> : !candidate.canAdd ? <div style={styles.notice}>该账号当前无法添加</div> : <><input style={styles.remark} maxLength={100} value={remark} placeholder="备注（可选）" onChange={event => { setRemark(event.target.value) }} /><button type="button" style={styles.primary} disabled={busy} onClick={() => { void add() }}>{submitLabel}</button></>}
         </section>}
       </div>
     </div>

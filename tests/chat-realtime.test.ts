@@ -6,9 +6,9 @@ import {
   ARKME_PROJECTION_INVALIDATED_BIZ_TYPE, ARKME_RUNTIME_INSTANCE_ID_HEADER,
   ARKME_SSE_IDENTITY_VERSION, ARKME_SSE_IDENTITY_VERSION_HEADER, ArkmeChatRealtimeRuntime,
   decodeArkmeChatReadCursorAdvancedDataLine, decodeArkmeChatReceiveDataLine,
-  decodeArkmeChatTimelineChangedDataLine,
+  decodeArkmeChatTimelineChangedDataLine, decodeArkmeChatPolicyUpdatedDataLine,
   decodeArkmeConversationListPreferenceUpdatedDataLine,
-  decodeArkmeProjectionInvalidatedDataLine,
+  decodeArkmeProjectionInvalidatedDataLine, decodeArkmeMemberJoinedDataLine,
 } from '../src/chat-realtime.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from '../src/runtime-instance.js'
 
@@ -162,9 +162,10 @@ describe('Arkme Chat realtime', () => {
 
   it('connects with Host credentials and advances one revision per unique hint', async () => {
     let stream!: ReadableStreamDefaultController<Uint8Array>
+    const connectionDate = 'Sun, 07 Sep 2026 04:00:00 GMT'
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({
       start(controller) { stream = controller },
-    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream', Date: connectionDate } }))
     const runtime = new ArkmeChatRealtimeRuntime({
       imBaseUrl: 'https://im.example.test',
       readSession: async () => ({ userId: 10001, accessToken: 'access-secret', refreshToken: 'refresh-secret' }),
@@ -176,14 +177,22 @@ describe('Arkme Chat realtime', () => {
     const observed: number[] = []
     const causes: string[] = []
     const cursorSequences: number[] = []
+    let reconcileConnection: { userId?: number; startedAtMillis?: number }
     const unsubscribe = runtime.subscribe(notice => {
       observed.push(notice.state.revision)
       causes.push(notice.cause)
+      if (notice.cause === 'reconcile') {
+        reconcileConnection = {
+          userId: notice.connectionUserId,
+          startedAtMillis: notice.connectionStartedAtMillis,
+        }
+      }
       if (notice.readCursorAdvanced !== undefined) cursorSequences.push(notice.readCursorAdvanced.readSequence)
     })
     await vi.waitFor(() => {
       expect(runtime.state()).toMatchObject({ connected: true, revision: 1, connectionGeneration: 1 })
     })
+    expect(reconcileConnection!).toEqual({ userId: 10001, startedAtMillis: Date.parse(connectionDate) })
 
     const encoder = new TextEncoder()
     stream.enqueue(encoder.encode(`data:\n\ndata: ${JSON.stringify(chatHint)}\n\n`))
@@ -625,4 +634,58 @@ describe('Arkme Chat realtime', () => {
       }
     },
   )
+})
+
+
+describe('Chat policy realtime contract', () => {
+  const policy = { t: 19, event_uid: 'policy-1', chat_session_uid: 'chat-1', user_id: 42, pin_state: 2, policy_update_at: 1000, event_at: 1000, source_client_id: 9 }
+  it.each([1, 2])('decodes pin state %s without treating it as message content', pinState => {
+    expect(decodeArkmeChatPolicyUpdatedDataLine(`data: ${JSON.stringify({ ...policy, pin_state: pinState })}`))
+      .toEqual({ eventUid: 'policy-1', chatSessionUid: 'chat-1', userId: 42, pinState, policyUpdateAtMillis: 1000, eventAtMillis: 1000 })
+  })
+  it.each([{ t: 26 }, { pin_state: 0 }, { user_id: 0 }, { policy_update_at: 0 }, { chat_session_uid: '' }, { source_client_id: -1 }, { rel_uid: 'message-1' }, { unread_count: 3 }, { payload: {} }])('rejects malformed or mixed policy metadata %j', extra => {
+    expect(decodeArkmeChatPolicyUpdatedDataLine(`data: ${JSON.stringify({ ...policy, ...extra })}`)).toBeUndefined()
+  })
+  it('routes each same-account event once and ignores other-account or aborted-connection hints', () => {
+    const runtime = new ArkmeChatRealtimeRuntime({ imBaseUrl: 'https://unused.test', async readSession() { return undefined } })
+    const notices: unknown[] = []
+    runtime.subscribe(notice => { notices.push(notice) })
+    const receiver = runtime as unknown as { acceptLine(line: string, userId: number, signal: AbortSignal): void }
+    const controller = new AbortController()
+    const receive = (value: typeof policy) => { receiver.acceptLine(`data: ${JSON.stringify(value)}`, 42, controller.signal) }
+    receive({ ...policy, user_id: 43 })
+    receive(policy)
+    receive(policy)
+    expect(notices).toEqual([expect.objectContaining({ cause: 'chat-policy-invalidation', connectionUserId: 42, policyUpdated: expect.objectContaining({ userId: 42 }) })])
+    controller.abort()
+    receive({ ...policy, event_uid: 'policy-2' })
+    expect(notices).toHaveLength(1)
+  })
+})
+
+
+it('routes t=24 joins once as roster invalidation, separate from t=27 history and t=17 messages', async () => {
+  const frame = { t: 24, event_uid: 'group:2:123:member-joined', chat_session_uid: 'group', actor_user_id: 1,
+    member_user_id: 2, join_at: 123, event_at: 124, source_client_id: 0 }
+  expect(decodeArkmeMemberJoinedDataLine(`data: ${JSON.stringify(frame)}`)).toEqual({ eventUid: frame.event_uid, chatSessionUid: 'group', eventAtMillis: 124 })
+  for (const invalid of [{ ...frame, member_user_id: 0 }, { ...frame, unread_count: 9 }, { ...frame, display_name: 'private' }]) {
+    expect(decodeArkmeMemberJoinedDataLine(`data: ${JSON.stringify(invalid)}`)).toBeUndefined()
+  }
+  let stream!: ReadableStreamDefaultController<Uint8Array>
+  const runtime = new ArkmeChatRealtimeRuntime({ imBaseUrl: 'https://im.test',
+    readSession: async () => ({ userId: 1, accessToken: 'synthetic', refreshToken: 'synthetic' }),
+    fetchImpl: async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller } }), { headers: { 'Content-Type': 'text/event-stream' } }),
+  })
+  const notices: import('../src/chat-realtime.js').ArkmeChatRealtimeNotice[] = []
+  const release = runtime.subscribe(notice => { if (notice.cause === 'chat-hint') notices.push(notice) })
+  const stop = runtime.start()
+  try {
+    await vi.waitFor(() => expect(runtime.state().connected).toBe(true))
+    const bytes = new TextEncoder().encode(`data: ${JSON.stringify(frame)}\n\n`)
+    stream.enqueue(bytes); stream.enqueue(bytes)
+    await vi.waitFor(() => expect(notices).toHaveLength(1))
+    expect(notices[0]).toMatchObject({ memberJoined: { chatSessionUid: 'group' }, connectionUserId: 1 })
+    expect(notices[0]?.memberEvent).toBeUndefined()
+    expect(notices[0]?.hint).toBeUndefined()
+  } finally { stop(); release() }
 })

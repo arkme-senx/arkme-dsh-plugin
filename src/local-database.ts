@@ -1,9 +1,13 @@
+import { applyMemberUpdate, mergeMemberJoinEvents, validateMemberUpdate, cachedMemberItem } from './member-directory.js'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { ArkmeStateStore } from './state-store.js'
 import type {
   ArkmeCachedSnapshot,
+  ArkmeSourceList, ArkmeSourceItem, ArkmeDirectoryProjection, ArkmeImageBytes,
+  ArkmeConversationMemberCache,
+  ArkmeConversationMemberUpdate,
   ArkmeCachedQueryResult,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
@@ -83,6 +87,26 @@ export class ArkmeLocalDatabase {
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = NORMAL;
       PRAGMA foreign_keys = ON;
+      CREATE TABLE IF NOT EXISTS conversation_directory (
+        user_id INTEGER NOT NULL, identity TEXT NOT NULL, payload TEXT NOT NULL,
+        visibility TEXT, PRIMARY KEY(user_id, identity)
+      );
+      CREATE TABLE IF NOT EXISTS conversation_directory_meta (
+        user_id INTEGER PRIMARY KEY, payload TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS avatar_cache (
+        user_id INTEGER NOT NULL, image_ref TEXT NOT NULL, media_type TEXT NOT NULL,
+        data BLOB NOT NULL, touched_at INTEGER NOT NULL,
+        PRIMARY KEY(user_id, image_ref)
+      );
+      CREATE TABLE IF NOT EXISTS conversation_member_cache (
+        user_id INTEGER NOT NULL,
+        group_key TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        payload_bytes INTEGER NOT NULL DEFAULT 0,
+        updated_at_millis INTEGER NOT NULL,
+        PRIMARY KEY (user_id, group_key)
+      );
       CREATE TABLE IF NOT EXISTS record_cache (
         user_id INTEGER NOT NULL,
         record_uid TEXT NOT NULL,
@@ -150,6 +174,13 @@ export class ArkmeLocalDatabase {
       CREATE UNIQUE INDEX IF NOT EXISTS extension_review_outbox_user_record
         ON extension_review_outbox (user_id, record_uid);
     `)
+    this.transaction(() => {
+      const columns = this.database.prepare('PRAGMA table_info(conversation_member_cache)').all() as unknown as Array<{ name: string }>
+      if (!columns.some(column => column.name === 'payload_bytes')) {
+        this.database.exec('ALTER TABLE conversation_member_cache ADD COLUMN payload_bytes INTEGER NOT NULL DEFAULT 0')
+        this.database.exec('UPDATE conversation_member_cache SET payload_bytes = LENGTH(CAST(snapshot_json AS BLOB))')
+      }
+    })
     const recordColumns = this.database.prepare('PRAGMA table_info(record_cache)').all() as unknown as Array<{ name: string }>
     if (!recordColumns.some(column => column.name === 'record_duration_millis')) {
       this.database.exec('ALTER TABLE record_cache ADD COLUMN record_duration_millis INTEGER NOT NULL DEFAULT 0')
@@ -173,6 +204,70 @@ export class ArkmeLocalDatabase {
 
   async uniqueCode(): Promise<string> {
     return await this.operationalState.uniqueCode()
+  }
+
+  async readDirectoryCache(userId: number): Promise<ArkmeSourceList | undefined> {
+    const meta = this.database.prepare('SELECT payload FROM conversation_directory_meta WHERE user_id=?').get(userId) as { payload: string } | undefined
+    if (meta === undefined) return undefined
+    const rows = this.database.prepare('SELECT payload, visibility FROM conversation_directory WHERE user_id=?').all(userId) as unknown as Array<{ payload: string; visibility: string | null }>
+    const projection = JSON.parse(meta.payload) as ArkmeDirectoryProjection
+    return { directory: 'root', items: rows.map(row => JSON.parse(row.payload) as ArkmeSourceItem), hasMore: projection.phase !== 'complete',
+      projection: { ...projection, phase: 'cached', visibility: rows.flatMap(row => row.visibility === null ? [] : [JSON.parse(row.visibility)]).concat(projection.visibility.filter(item => item.entryKind === 'bot')) } }
+  }
+
+  async writeDirectoryCache(userId: number, page: ArkmeSourceList): Promise<void> {
+    if (page.projection === undefined) return
+    const visibility = new Map(page.projection.visibility.map(item => [item.entryRef, item]))
+    this.transaction(() => {
+      for (const key of page.projection!.removedSourceKeys ?? []) this.database.prepare('DELETE FROM conversation_directory WHERE user_id=? AND identity=?').run(userId, key)
+      const upsert = this.database.prepare(`INSERT INTO conversation_directory VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id, identity) DO UPDATE SET payload=excluded.payload,
+          visibility=COALESCE(excluded.visibility, conversation_directory.visibility)
+        WHERE conversation_directory.payload != excluded.payload OR (excluded.visibility IS NOT NULL AND excluded.visibility IS NOT conversation_directory.visibility)`)
+      for (const source of page.items.filter(source => !page.projection!.removedSourceKeys?.includes(source.sourceKey ?? source.sourceRef))) upsert.run(userId, source.sourceKey ?? source.sourceRef, JSON.stringify(source), visibility.has(source.sourceRef) ? JSON.stringify(visibility.get(source.sourceRef)) : null)
+      for (const item of page.projection!.visibility.filter(item => item.entryKind === 'source')) {
+        this.database.prepare("UPDATE conversation_directory SET visibility=? WHERE user_id=? AND json_extract(payload, '$.sourceRef')=? AND visibility IS NOT ?").run(JSON.stringify(item), userId, item.entryRef, JSON.stringify(item))
+      }
+      const previousMeta = this.database.prepare('SELECT payload FROM conversation_directory_meta WHERE user_id=?').get(userId) as { payload: string } | undefined
+      const previousVisibility = previousMeta === undefined ? [] : (JSON.parse(previousMeta.payload) as ArkmeDirectoryProjection).visibility
+      const botVisibility = new Map(previousVisibility.filter(item => item.entryKind === 'bot').map(item => [item.entryRef, item]))
+      for (const item of page.projection!.visibility) if (item.entryKind === 'bot') botVisibility.set(item.entryRef, item)
+      for (const ref of page.projection!.removedBotRefs ?? []) botVisibility.delete(ref)
+      if (page.projection!.bots.length > 0) {
+        const currentRefs = new Set(page.projection!.bots.map(bot => bot.botRef))
+        for (const ref of botVisibility.keys()) if (!currentRefs.has(ref)) botVisibility.delete(ref)
+      }
+      this.database.prepare('INSERT INTO conversation_directory_meta VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload').run(userId, JSON.stringify({ ...page.projection, visibility: [...botVisibility.values()] }))
+      const size = this.database.prepare('SELECT count(*) AS count, sum(length(CAST(payload AS BLOB))) AS bytes FROM conversation_directory WHERE user_id=?').get(userId) as { count: number; bytes: number }
+      if (size.count > 20_000 || size.bytes > 32 * 1024 * 1024) throw new Error('Conversation directory cache capacity exceeded; synchronization remains incomplete')
+    })
+    this.secureDatabaseFiles()
+  }
+
+  async readAvatarCache(userId: number, imageRef: string): Promise<ArkmeImageBytes | undefined> {
+    const row = this.database.prepare('SELECT media_type, data FROM avatar_cache WHERE user_id=? AND image_ref=?').get(userId, imageRef) as { media_type: ArkmeImageBytes['mediaType']; data: Uint8Array } | undefined
+    if (row === undefined) return undefined
+    this.database.prepare('UPDATE avatar_cache SET touched_at=? WHERE user_id=? AND image_ref=?').run(Date.now(), userId, imageRef)
+    return { mediaType: row.media_type, data: row.data, bytes: row.data.byteLength }
+  }
+
+  async writeAvatarCache(userId: number, imageRef: string, image: ArkmeImageBytes): Promise<void> {
+    if (image.bytes > 8 * 1024 * 1024) throw new Error("Avatar exceeds the established image limit")
+    this.transaction(() => {
+      this.database.prepare(`INSERT INTO avatar_cache VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, image_ref)
+        DO UPDATE SET media_type=excluded.media_type, data=excluded.data, touched_at=excluded.touched_at`).run(userId, imageRef, image.mediaType, image.data, Date.now())
+      // Disk cache has a byte budget; eviction never deletes directory identities or preferences.
+      let bytes = (this.database.prepare('SELECT COALESCE(sum(length(data)),0) AS bytes FROM avatar_cache').get() as { bytes: number }).bytes
+      if (bytes <= 256 * 1024 * 1024) return
+      const oldest = this.database.prepare('SELECT a.user_id, a.image_ref, length(a.data) AS bytes FROM avatar_cache a WHERE NOT EXISTS (SELECT 1 FROM conversation_directory d, json_tree(d.payload) j WHERE d.user_id=a.user_id AND j.value=a.image_ref) AND NOT EXISTS (SELECT 1 FROM conversation_directory_meta m, json_tree(m.payload) j WHERE m.user_id=a.user_id AND j.value=a.image_ref) ORDER BY a.touched_at').all() as unknown as Array<{ user_id: number; image_ref: string; bytes: number }>
+      for (const row of oldest) {
+        if (bytes <= 256 * 1024 * 1024) break
+        this.database.prepare('DELETE FROM avatar_cache WHERE user_id=? AND image_ref=?').run(row.user_id, row.image_ref)
+        bytes -= row.bytes
+      }
+      if (bytes > 256 * 1024 * 1024) throw new Error("Avatar cache capacity exceeded; previous directory images retained")
+    })
+    this.secureDatabaseFiles()
   }
 
   async cachedSnapshot(userId: number): Promise<ArkmeCachedSnapshot> {
@@ -264,6 +359,55 @@ export class ArkmeLocalDatabase {
       cachedAtMillis: row?.updated_at_millis ?? 0,
       revision: await this.revision(userId),
     }
+  }
+
+  async cachedConversationMembers(userId: number, group: string): Promise<ArkmeConversationMemberCache | undefined> {
+    return this.readConversationMembers(userId, group)
+  }
+
+  private readConversationMembers(userId: number, group: string): ArkmeConversationMemberCache | undefined {
+    const row = this.database.prepare('SELECT snapshot_json, updated_at_millis FROM conversation_member_cache WHERE user_id = ? AND group_key = ?').get(userId, group) as { snapshot_json: string; updated_at_millis: number } | undefined
+    if (row === undefined || Date.now() - row.updated_at_millis > 14 * 24 * 60 * 60 * 1000 || Buffer.byteLength(row.snapshot_json) > 4_000_000) return undefined
+    try {
+      const data = JSON.parse(row.snapshot_json) as ArkmeConversationMemberCache & { schemaVersion: number }
+      if (data.schemaVersion !== 1 || !Array.isArray(data.items) || data.items.length > 20_000 || !Array.isArray(data.joinEvents)) return undefined
+      const items = data.items.map(cachedMemberItem)
+      if (items.some(item => item === undefined) || new Set(items.map(item => item!.memberRef)).size !== items.length) return undefined
+      const joinEvents = mergeMemberJoinEvents([], data.joinEvents)
+      return { items: items as ArkmeConversationMemberCache['items'], joinEvents, cachedAtMillis: row.updated_at_millis }
+    } catch { return undefined }
+  }
+
+  async mergeConversationMembers(userId: number, group: string, update: ArkmeConversationMemberUpdate): Promise<void> {
+    validateMemberUpdate(update)
+    // This read/merge/write is synchronous in one SQLite owner turn; concurrent pages cannot lose updates.
+    const previous = this.readConversationMembers(userId, group)
+    if (update.kind === 'presentation' && previous === undefined) return
+    const members = new Map(previous?.items.map(item => [item.memberRef, item]))
+    applyMemberUpdate(members, update)
+    const joins = mergeMemberJoinEvents(previous?.joinEvents ?? [], update.kind === 'membership' ? update.joinEvents ?? [] : [])
+    this.writeConversationMembers(userId, group, [...members.values()], joins)
+  }
+
+  async forgetCachedMembers(userId: number, group: string, refs: readonly string[]): Promise<void> {
+    const cache = this.readConversationMembers(userId, group)
+    if (cache === undefined) return
+    const invalid = new Set(refs)
+    this.writeConversationMembers(userId, group, cache.items.filter(item => !invalid.has(item.memberRef)), cache.joinEvents)
+  }
+
+  private writeConversationMembers(userId: number, group: string, items: ArkmeConversationMemberCache['items'], joins: ArkmeConversationMemberCache['joinEvents']): void {
+    const payload = JSON.stringify({ schemaVersion: 1, items, joinEvents: joins })
+    if (items.length > 20_000 || Buffer.byteLength(payload) > 4_000_000) return
+    this.database.prepare('INSERT INTO conversation_member_cache (user_id, group_key, snapshot_json, payload_bytes, updated_at_millis) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, group_key) DO UPDATE SET snapshot_json=excluded.snapshot_json, payload_bytes=excluded.payload_bytes, updated_at_millis=excluded.updated_at_millis').run(userId, group, payload, Buffer.byteLength(payload), Date.now())
+    this.database.prepare('DELETE FROM conversation_member_cache WHERE updated_at_millis < ? OR rowid NOT IN (SELECT rowid FROM conversation_member_cache ORDER BY updated_at_millis DESC, rowid DESC LIMIT 100)').run(Date.now() - 14 * 24 * 60 * 60 * 1000)
+    while (Number(this.database.prepare('SELECT COALESCE(SUM(payload_bytes), 0) AS bytes FROM conversation_member_cache').get()?.bytes) > 32 * 1024 * 1024) {
+      this.database.prepare('DELETE FROM conversation_member_cache WHERE rowid = (SELECT rowid FROM conversation_member_cache ORDER BY updated_at_millis, rowid LIMIT 1)').run()
+    }
+  }
+
+  async clearConversationMembers(userId: number, group: string): Promise<void> {
+    this.database.prepare('DELETE FROM conversation_member_cache WHERE user_id = ? AND group_key = ?').run(userId, group)
   }
 
   async cacheProfile(userId: number, profile: ArkmeUserProfile): Promise<ArkmeUserProfileSnapshot> {
@@ -492,8 +636,29 @@ export class ArkmeLocalDatabase {
   async putRecordReeditDraft(
     userId: number,
     draft: Omit<ArkmeRecordReeditDraft, 'draftRevision'>,
+    expectedRevision?: number,
   ): Promise<ArkmeRecordReeditDraft> {
-    return await this.operationalState.putRecordReeditDraft(userId, draft)
+    return await this.operationalState.putRecordReeditDraft(userId, draft, expectedRevision)
+  }
+
+  async recordReeditFileRefs(userId: number): Promise<string[]> {
+    return await this.operationalState.recordReeditFileRefs(userId)
+  }
+
+  async listRecordReeditSubmissions(userId: number) {
+    return await this.operationalState.listRecordReeditSubmissions(userId)
+  }
+
+  async acknowledgeRecordReeditSubmission(userId: number, identity: string, submissionId: string, version: number) {
+    return await this.operationalState.acknowledgeRecordReeditSubmission(userId, identity, submissionId, version)
+  }
+
+  async discardRecordReeditCandidate(userId: number, sourceIdentityKey: string, itemUid: string, expectedRevision: number) {
+    return await this.operationalState.discardRecordReeditCandidate(userId, sourceIdentityKey, itemUid, expectedRevision)
+  }
+
+  async putRecordReeditSubmission(userId: number, job: import('./record-reedit-contract.js').ArkmeRecordReeditSubmission, expectedId?: string) {
+    return await this.operationalState.putRecordReeditSubmission(userId, job, expectedId)
   }
 
   async removeRecordReeditDraft(
@@ -501,9 +666,10 @@ export class ArkmeLocalDatabase {
     sourceIdentityKey: string,
     itemUid: string,
     expectedRevision: number,
+    expectedCandidate?: ArkmeRecordReeditDraft,
   ): Promise<boolean> {
     return await this.operationalState.removeRecordReeditDraft(
-      userId, sourceIdentityKey, itemUid, expectedRevision,
+      userId, sourceIdentityKey, itemUid, expectedRevision, expectedCandidate,
     )
   }
 
@@ -527,16 +693,18 @@ export class ArkmeLocalDatabase {
     userId: number,
     job: RecordingImportJob,
     unresolvedLimit: number,
+    signal?: AbortSignal,
   ): ReturnType<ArkmeStateStore['admitRecordingImportJob']> {
-    return await this.operationalState.admitRecordingImportJob(userId, job, unresolvedLimit)
+    return await this.operationalState.admitRecordingImportJob(userId, job, unresolvedLimit, signal)
   }
 
   async replaceRecordingImportJob(
     userId: number,
     job: RecordingImportJob,
     expectedRevision: number,
+    signal?: AbortSignal,
   ): Promise<boolean> {
-    return await this.operationalState.replaceRecordingImportJob(userId, job, expectedRevision)
+    return await this.operationalState.replaceRecordingImportJob(userId, job, expectedRevision, signal)
   }
 
   async removeRecordingImportJob(userId: number, jobId: string): Promise<void> {

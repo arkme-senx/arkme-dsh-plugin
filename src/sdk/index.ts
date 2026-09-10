@@ -1,4 +1,6 @@
 import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
+import type { ArkmeDirectMessageAdmission } from '../direct-message-admission.js'
+export type { ArkmeDirectMessageAdmission, ArkmeDirectMessageAdmissionPort } from '../direct-message-admission.js'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type {
   ArkmeArrangementDetail,
@@ -33,6 +35,8 @@ import type {
   ArkmeFavoriteStickerAddInput,
   ArkmeFavoriteStickerManageAction,
   ArkmeConversationMemberList,
+  ArkmeConversationMemberPresentation, ArkmeConversationMemberPage,
+  ArkmeConversationMemberCache,
   ArkmeConversationMemberRecordMode,
   ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
@@ -187,6 +191,8 @@ export type {
   ArkmeContentKind,
   ArkmeConversationMemberItem,
   ArkmeConversationMemberList,
+  ArkmeConversationMemberPresentation, ArkmeConversationMemberPage,
+  ArkmeConversationMemberCache,
   ArkmeConversationMemberRecordMode,
   ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
@@ -458,6 +464,21 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Safe directory projection shared with the built-in UI; never an implicit full candidate baseline. */
+  async listDirectory(
+    section: import('../types.js').ArkmeDirectorySectionKind,
+    options: { limit?: number; cursor?: string; refresh?: boolean; signal?: AbortSignal } = {},
+  ): Promise<import('../types.js').ArkmeDirectoryPage> {
+    if (!['groups', 'bots', 'unmarked-speakers', 'teams', 'contacts'].includes(section)) throw new TypeError('Unknown directory section')
+    if (options.refresh === true && options.cursor !== undefined) throw new TypeError('Refresh must start a new directory page')
+    if ((await this.capabilities(options.signal)).features.contactDirectoryReads !== true) throw new Error('当前 Provider 不支持联系人目录读取')
+    return await this.call('directory.list', {
+      section, ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
+    }, options.signal)
+  }
+
   /** Resolve exact Team Jotmo IDs or names only within the current account's Teams. */
   async resolveTeams(items: readonly ArkmeTeamResolveItem[], signal?: AbortSignal): Promise<ArkmeTeamResolution[]> {
     return await this.call<ArkmeTeamResolution[]>('team.resolve', { items }, signal)
@@ -699,6 +720,24 @@ export class ArkmeSdk {
   async userBanStatus(sourceRef: string, signal?: AbortSignal): Promise<ArkmeUserBanSnapshot> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme private-chat source reference must not be empty')
     return await this.call<ArkmeUserBanSnapshot>('user-ban.status', { sourceRef }, signal)
+  }
+
+  async directMessageAdmission(sourceRef: string, signal?: AbortSignal): Promise<ArkmeDirectMessageAdmission> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme private-chat source reference must not be empty')
+    if ((await this.capabilities(signal)).features.directMessageAdmission !== true) {
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持私聊拒收，请升级', retryable: false })
+    }
+    return await this.call('chat.direct-message-admission', { sourceRef }, signal)
+  }
+
+  async setDirectMessageRefusal(sourceRef: string, refused: boolean, expectedRevision: number, signal?: AbortSignal): Promise<ArkmeDirectMessageAdmission> {
+    if (sourceRef.trim() === '' || typeof refused !== 'boolean' || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      throw new TypeError('Arkme private-chat refusal input is invalid')
+    }
+    if ((await this.capabilities(signal)).features.directMessageAdmission !== true) {
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持私聊拒收，请升级', retryable: false })
+    }
+    return await this.call('chat.direct-message-refusal.set', { sourceRef, refused, expectedRevision }, signal)
   }
 
   /** Employee-only idempotent ban. Callers must obtain explicit human approval first. */
@@ -1278,13 +1317,29 @@ export class ArkmeSdk {
 
   async listSources(
     directory: ArkmeSourceDirectory,
-    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; localFirst?: boolean; refresh?: boolean } = {},
   ): Promise<ArkmeSourceList> {
+    if (options.localFirst === true && (await this.capabilities(options.signal)).features.localFirstDirectory !== true) throw new Error('当前 Provider 不支持本地会话目录')
     return await this.call<ArkmeSourceList>('sources.list', {
       directory,
+      ...(options.localFirst === undefined ? {} : { localFirst: options.localFirst }),
+      ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
     }, options.signal)
+  }
+
+  async setBotDirectoryPin(botRef: string, pinned: boolean, signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.localFirstDirectory !== true) throw new Error('当前 Provider 不支持本地会话目录')
+    await this.call('conversation.directory.bot-pin', { botRef, pinned }, signal)
+  }
+
+  /** Read or explicitly set the existing topic home preference. */
+  async topicHomeVisibility(sourceRef: string, showInHome?: boolean, signal?: AbortSignal): Promise<{ showInHome: boolean }> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme topic source reference must not be empty')
+    return await this.call('topic.home-visibility', {
+      sourceRef, ...(showInHome === undefined ? {} : { showInHome }),
+    }, signal)
   }
 
   async listGroupMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupMemberList> {
@@ -1347,6 +1402,24 @@ export class ArkmeSdk {
   ): Promise<ArkmeGroupAiPolishMutationResult> {
     if (confirmationRef.trim() === '') throw new TypeError('Arkme AI polish confirmation reference must not be empty')
     return await this.call<ArkmeGroupAiPolishMutationResult>('source.ai-polish.confirm-disable', { confirmationRef }, signal)
+  }
+
+  async cachedSourceMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeConversationMemberCache | null> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme source reference must not be empty')
+    return await this.call('source.members.cached', { sourceRef }, signal)
+  }
+
+  async pageSourceMembers(sourceRef: string, options: { cursor?: string; limit?: number; signal?: AbortSignal } = {}): Promise<ArkmeConversationMemberPage> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme source reference must not be empty')
+    if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100)) throw new TypeError('Arkme member page limit must be 1-100')
+    return await this.call('source.members.page', { sourceRef,
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }), ...(options.limit === undefined ? {} : { limit: options.limit }),
+    }, options.signal)
+  }
+
+  async sourceMembersPresentation(sourceRef: string, memberRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeConversationMemberPresentation> {
+    if (!sourceRef.trim() || memberRefs.length < 1 || memberRefs.length > 50 || memberRefs.some(ref => !ref.trim())) throw new TypeError('Arkme member presentation needs 1-50 member references')
+    return await this.call('source.members.presentation', { sourceRef, memberRefs: [...memberRefs] }, signal)
   }
 
   async listSourceMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeConversationMemberList> {
@@ -1515,6 +1588,7 @@ export class ArkmeSdk {
     itemUid: string,
     sequence: number,
     signal?: AbortSignal,
+    options: { basicOnly?: boolean } = {},
   ): Promise<ArkmeMessageReadReceiptDetail> {
     const normalizedSourceRef = sourceRef.trim()
     const normalizedItemUid = itemUid.trim()
@@ -1523,7 +1597,7 @@ export class ArkmeSdk {
     }
     return await this.call<ArkmeMessageReadReceiptDetail>(
       'source.read-receipts.detail',
-      { sourceRef: normalizedSourceRef, itemUid: normalizedItemUid, sequence },
+      { sourceRef: normalizedSourceRef, itemUid: normalizedItemUid, sequence, ...(options.basicOnly === undefined ? {} : { basicOnly: options.basicOnly }) },
       signal,
     )
   }
@@ -1851,10 +1925,10 @@ export class ArkmeSdk {
     return `${this.route}/files/local?ref=${encodeURIComponent(fileRef)}${download ? '&download=1' : ''}`
   }
 
-  /** Stage locally only. Cloud upload starts when sendFiles accepts a task. */
-  async stageFile(file: Blob & { name?: string }, options: { fileName?: string; expectedUserId?: number; signal?: AbortSignal } = {}): Promise<ArkmeLocalFile> {
+  /** Stage locally. Reference-managed files require a Host-persisted draft or task to retain them beyond seven days. */
+  async stageFile(file: Blob & { name?: string }, options: { fileName?: string; expectedUserId?: number; signal?: AbortSignal; retention?: 'references' } = {}): Promise<ArkmeLocalFile> {
     const response = await this.fetchImpl(`${this.route}/files/stage`, {
-      method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Arkme-File-Name': encodeURIComponent(options.fileName ?? file.name ?? 'attachment'), ...expectedUserIdHeaders(options.expectedUserId) },
+      method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Arkme-File-Name': encodeURIComponent(options.fileName ?? file.name ?? 'attachment'), ...expectedUserIdHeaders(options.expectedUserId), ...(options.retention ? { 'X-Arkme-File-Retention': options.retention } : {}) },
       body: file, ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
     const payload = await response.json() as ArkmePluginResponse<ArkmeLocalFile>
@@ -2007,6 +2081,10 @@ export class ArkmeSdk {
     }
   }
 
+  async currentDesktopSession(signal?: AbortSignal): Promise<{ session: { sessionRef: string; workspaceRef: string; title?: string; running?: boolean; projectionAsOfSeq?: number } | null }> {
+    return await this.call('remote.currentSession', undefined, signal)
+  }
+
   async remoteStatus(signal?: AbortSignal): Promise<DshRemoteStatus> {
     return await this.call<DshRemoteStatus>('remote.getStatus', undefined, signal)
   }
@@ -2078,3 +2156,4 @@ export async function callArkme<T>(
 ): Promise<T> {
   return await defaultSdk.call<T>(operation, params, signal)
 }
+export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem } from '../types.js'

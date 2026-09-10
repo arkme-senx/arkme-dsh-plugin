@@ -91,8 +91,8 @@ async function mountProductionContacts(): Promise<ReactTestRenderer> {
 }
 
 beforeEach(() => {
-  class FakeEventSource { onopen: (() => void) | null = null; onmessage: ((event: MessageEvent) => void) | null = null; close() {} }
-  vi.stubGlobal('EventSource', FakeEventSource)
+  class FakeWebSocket { onopen: (() => void) | null = null; onmessage: ((event: MessageEvent) => void) | null = null; close() {} }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
   vi.stubGlobal('window', {
     addEventListener: vi.fn(), removeEventListener: vi.fn(),
     matchMedia: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),

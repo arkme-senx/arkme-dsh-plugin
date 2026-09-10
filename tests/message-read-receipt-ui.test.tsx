@@ -11,6 +11,7 @@ const receiptMock = vi.hoisted(() => ({
   store: {
     subscribe: () => () => undefined,
     getSnapshot: () => 1,
+    getAccountGeneration: () => 0,
     register: () => () => undefined,
     setVisible: vi.fn(),
     get: () => receiptMock.entry,

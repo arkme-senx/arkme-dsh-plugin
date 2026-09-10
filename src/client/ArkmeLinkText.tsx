@@ -86,16 +86,19 @@ export function ArkmeTextLink({ href, text, linkLabelMode = 'resolved', fallback
 
 export function ArkmeLinkText({ text, renderText, renderLink, linkLabelMode = 'resolved', metadataResolver = arkmeLinkMetadataResolver, fallbackLabel = ARKME_LINK_FALLBACK_LABEL }: {
   text: string
-  renderText?: (text: string) => ReactNode
+  renderText?: (text: string, startIndex: number) => ReactNode
   renderLink?: ArkmeLinkRenderer
   linkLabelMode?: ArkmeLinkLabelMode
   metadataResolver?: ArkmeLinkMetadataResolver
   fallbackLabel?: string
 }) {
+  let cursor = 0
   return <>{textLinkRuns(text).map((run, index) => {
+    const startIndex = cursor
+    cursor += run.text.length
     if (run.kind === 'text') {
       return <Fragment key={`${String(index)}:text`}>
-        {renderText === undefined ? run.text : renderText(run.text)}
+        {renderText === undefined ? run.text : renderText(run.text, startIndex)}
       </Fragment>
     }
     const projection = renderLink?.(run)

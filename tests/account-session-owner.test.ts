@@ -126,6 +126,48 @@ describe('Arkme account session owner', () => {
     expect(bridge.prepare).not.toHaveBeenCalled()
   })
 
+  test('updates only the current login access token without a scope transition', async () => {
+    const initial = credentials(42)
+    const { bridge, owner, store } = fixture(initial)
+    await owner.start()
+
+    await expect(owner.updateAccessToken(initial, 'refreshed-access')).resolves.toBe(true)
+
+    expect(await store.read()).toEqual({ ...initial, accessToken: 'refreshed-access' })
+    expect(bridge.prepare).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    credentials(43),
+    { ...credentials(42), refreshToken: 'another-login-refresh' },
+  ])('does not refresh or clear a replacement login $userId/$refreshToken', async replacement => {
+    const initial = credentials(42)
+    const { bridge, owner, store } = fixture(initial)
+    await owner.start()
+    const switchLogin = owner.write(replacement)
+    const refresh = owner.updateAccessToken(initial, 'stale-access')
+    const clear = owner.deleteIfCurrent(initial)
+
+    await switchLogin
+    await expect(refresh).resolves.toBe(false)
+    await expect(clear).resolves.toBe(false)
+
+    expect(await store.read()).toEqual(replacement)
+    expect(store.delete).not.toHaveBeenCalled()
+    expect(bridge.prepare).toHaveBeenCalledTimes(replacement.userId === initial.userId ? 0 : 1)
+  })
+
+  test('clears matching failed credentials through the existing scope transition', async () => {
+    const initial = credentials(42)
+    const { bridge, owner, store } = fixture(initial)
+    await owner.start()
+
+    await expect(owner.deleteIfCurrent(initial)).resolves.toBe(true)
+
+    expect(await store.read()).toBeUndefined()
+    expect(bridge.prepare).toHaveBeenCalledExactlyOnceWith({ kind: 'guest' })
+  })
+
   test('marks an empty guest scope so an existing account container can be restored', async () => {
     const { bridge, owner } = fixture()
     owner.attachGuestConversationProbe(async () => false)

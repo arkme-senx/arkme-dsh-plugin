@@ -1,3 +1,5 @@
+import { DshLiveEventBatcher, LIVE_BATCH_ITEMS, type LiveEventBatch } from './live-event-batcher.js'
+import { DesktopSessionPresence } from './desktop-session-presence.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { hostname } from 'node:os'
 import { scheduler } from 'node:timers/promises'
@@ -8,7 +10,7 @@ import {
 } from './api-proxy-adapter.js'
 import { DshRemoteHostChannelManager } from './channel-manager.js'
 import { DshRemoteCommandLedger, type DshRemoteLedgerEntry } from './command-ledger.js'
-import type { DshRemoteHistoryEntry } from './dsh-event-contract.js'
+import { dshTranscriptHistoryEntries, type DshRemoteHistoryEntry } from './dsh-event-contract.js'
 import { DSH_REMOTE_PRESENTATION_VERSION } from './presentation.js'
 import { asDshRemoteError, DshRemoteError } from './errors.js'
 import { dshRemoteRequestIdentity, parseDshRemoteRequest } from './protocol-v1.js'
@@ -34,9 +36,7 @@ import {
 } from './types.js'
 
 const PROJECTION_SYNC_INTERVAL_MILLIS = 30_000
-const LIVE_EVENT_BATCH_DELAY_MILLIS = 40
-const LIVE_EVENT_BATCH_MAX_ITEMS = 50
-const LIVE_EVENT_BATCH_MAX_BYTES = 32 * 1024
+const LIVE_EVENT_BATCH_MAX_ITEMS = LIVE_BATCH_ITEMS
 const HISTORY_OBJECT_BACKFILL_INITIAL_DELAY_MILLIS = 5_000
 const HISTORY_OBJECT_BACKFILL_NEXT_DELAY_MILLIS = 250
 const HISTORY_OBJECT_BACKFILL_RETRY_DELAY_MILLIS = 30_000
@@ -82,14 +82,11 @@ interface HostRuntimeContext {
   metadata: DshRemoteTrustedEventMetadata
 }
 
-interface PendingSessionEventBatch {
+interface ScopedLiveEventBatch extends LiveEventBatch {
   accountId: string
   runtime: DshRemoteRuntimeProjection
-  sessionRef: string
-  entries: DshRemoteHistoryEntry[]
-  bytes: number
-  issuedAt: number
-  timer?: ReturnType<typeof setTimeout>
+  generation: number
+  scopeKey: string
 }
 
 interface TurnObjectUploadCapability {
@@ -129,6 +126,7 @@ export interface ArkmeRemoteRealtimeHostOptions {
   hostClientRef: string
   displayName?: string
   platform?: NodeJS.Platform
+  readLifecycle?: () => Promise<{ resumeGeneration: number; suspended: boolean } | undefined>
   readSession: () => Promise<HostSession | undefined>
   secretBroker: DshRemoteRuntimeSecretBroker
   runtimeStore: DshRemoteRuntimeStore
@@ -146,6 +144,7 @@ export interface ArkmeRemoteRealtimeHostOptions {
   sessionPersistence?: DshRemoteSessionPersistenceLike
   now?: () => number
   yieldToEventLoop?: () => Promise<void>
+  onDiagnostic?: (event: string, fields: Record<string, unknown>) => void
 }
 
 function stringBody(body: Record<string, unknown>, key: string, max = 256): string {
@@ -176,6 +175,7 @@ function requiredCapabilities(operation: DshRemoteOperation): DshRemoteCapabilit
     case 'model.list': return ['model.list']
     case 'session.model.get': return ['session.model.get']
     case 'session.model.select': return ['session.model.select']
+    case 'session.current': return ['session.list', 'workspace.list']
     case 'session.list': return ['session.list']
     case 'session.create': return ['session.create']
     case 'session.history': return ['session.history']
@@ -232,6 +232,8 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private readonly now: () => number
   private readonly listeners = new Set<(status: DshRemoteStatus) => void>()
   private runtime: DshRemoteRuntimeProjection | undefined
+  private accountGeneration = 0
+  private projectionController = new AbortController()
   private accountId: string | undefined
   private clientId = 0
   private ledger: DshRemoteCommandLedger | undefined
@@ -239,6 +241,9 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private turnUploadActivationFlight: Promise<void> | undefined
   private turnUploadActivationController: AbortController | undefined
   private nextTurnUploadActivationAt = 0
+  private attemptId: string | undefined
+  private failedAttemptId: string | undefined
+  private resumeGeneration: number | undefined
   private started = false
   private connected = false
   private serviceLeaseGeneration = 0
@@ -263,9 +268,11 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private historyObjectBackfillFlight: Promise<boolean> | undefined
   private historyObjectBackfillController: AbortController | undefined
   private readonly historyObjectBackfillFailures = new Map<string, { revision: string; nextAttemptAt: number }>()
-  private readonly liveProjectionTails = new Map<string, Promise<void>>()
-  private readonly pendingSessionEventBatches = new Map<string, PendingSessionEventBatch>()
+  private liveEventBatcher: { key: string; value: DshLiveEventBatcher } | undefined
+  private liveDeliveryStats: Record<string, number> = {}
+  private lastDeliveryReportAt = performance.now()
   private projectionSyncTail: Promise<void> = Promise.resolve()
+  private backgroundProjectionFlight: Promise<void> | undefined
 
   constructor(private readonly options: ArkmeRemoteRealtimeHostOptions) {
     this.now = options.now ?? Date.now
@@ -305,9 +312,89 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (this.stableConnectionTimer !== undefined) clearTimeout(this.stableConnectionTimer)
     this.stableConnectionTimer = undefined
     this.reconnectAttempt = 0
-    this.liveProjectionTails.clear()
     await this.deactivateAccount()
     this.bump()
+  }
+
+  private readonly desktopSessions = new DesktopSessionPresence()
+  private desktopSelectionTimer: ReturnType<typeof setTimeout> | undefined
+  private desktopSelectionFlight: Promise<void> | undefined
+  private desktopSelectionDirty = false
+  private publishedDesktopSelection: string | undefined
+
+  private scheduleDesktopSelection(): void {
+    if (this.desktopSelectionTimer !== undefined) clearTimeout(this.desktopSelectionTimer)
+    this.desktopSelectionTimer = undefined
+    const delay = this.desktopSessions.expiryDelay(performance.now())
+    if (delay !== undefined) {
+      this.desktopSelectionTimer = setTimeout(() => { this.scheduleDesktopSelection() }, delay)
+      this.desktopSelectionTimer.unref()
+    }
+    const manager = this.channelManager
+    const runtime = this.runtime
+    const generation = this.accountGeneration
+    if (!this.started || !this.connected || manager === undefined || runtime === undefined) return
+    this.desktopSelectionDirty = true
+    if (this.desktopSelectionFlight !== undefined) return
+    const flight = (async () => {
+      while (this.desktopSelectionDirty && generation === this.accountGeneration && manager === this.channelManager) {
+        this.desktopSelectionDirty = false
+        const selection = this.desktopSessions.snapshot(performance.now())
+        const fingerprint = JSON.stringify([selection.revision, selection.sessionRef ?? null])
+        if (fingerprint === this.publishedDesktopSelection) continue
+        const value = await this.currentSession()
+        if (generation !== this.accountGeneration || manager !== this.channelManager) return
+        if (this.desktopSessions.snapshot(performance.now()).revision !== selection.revision) {
+          this.desktopSelectionDirty = true
+          continue
+        }
+        const requestRef = `desktop_selection_${randomUUID()}`
+        await manager.publishProjectionEvent({
+          protocol: DSH_REMOTE_PROTOCOL, protocol_major: DSH_REMOTE_PROTOCOL_MAJOR,
+          kind: 'event', request_ref: requestRef, host_generation: runtime.hostGeneration,
+          issued_at: this.now(), operation: 'session.current',
+          body: { ...value, selectionRevision: selection.revision },
+        }, requestRef)
+        if (generation !== this.accountGeneration || manager !== this.channelManager) return
+        // A just-created session may not be owned until its canonical baseline arrives.
+        if (value.session !== null || selection.sessionRef === undefined) this.publishedDesktopSelection = fingerprint
+      }
+    })().catch(error => {
+      this.diagnostic('desktop_selection_failed', { error_code: asDshRemoteError(error).code })
+    }).finally(() => {
+      if (this.desktopSelectionFlight === flight) {
+        this.desktopSelectionFlight = undefined
+        if (this.desktopSelectionDirty && generation === this.accountGeneration) this.scheduleDesktopSelection()
+      }
+    })
+    this.desktopSelectionFlight = flight
+  }
+
+  reportCurrentSession(input: { accountId: string; windowRef: string; revision: number; sessionRef: string | null }): void {
+    this.requireActiveAccount(input.accountId)
+    this.desktopSessions.report(input, performance.now())
+    this.scheduleDesktopSelection()
+  }
+
+  async currentSession(): Promise<{ session: { sessionRef: string; workspaceRef: string; title?: string; running: boolean; projectionAsOfSeq?: number } | null }> {
+    const accountId = this.accountId
+    const generation = this.accountGeneration
+    const sessionRef = this.desktopSessions.current(performance.now())
+    if (accountId === undefined || sessionRef === undefined) return { session: null }
+    const owned = await this.options.sessionOwnership.listOwned(accountId, [sessionRef])
+    if (generation !== this.accountGeneration || !owned.has(sessionRef)) return { session: null }
+    const page = await this.options.apiProxy.sessions({ sessionId: sessionRef, limit: 1 })
+    this.requireActiveAccount(accountId)
+    // A slow lookup may outlive a tab switch or the Browser lease.
+    if (generation !== this.accountGeneration || this.desktopSessions.current(performance.now()) !== sessionRef) return { session: null }
+    const session = page.items.find(item => item.sessionId === sessionRef && !item.archived && item.origin !== 'subagent')
+    return { session: session === undefined ? null : { sessionRef, workspaceRef: session.workspaceId, running: session.running, ...(session.title === undefined ? {} : { title: session.title }), ...(session.projectionAsOfSeq === undefined ? {} : { projectionAsOfSeq: session.projectionAsOfSeq }) } }
+  }
+
+  private capabilities(): DshRemoteCapability[] {
+    const values = this.options.apiProxy.capabilities()
+    return values.includes('session.list') && values.includes('workspace.list')
+      ? [...values, 'session.current'] : values
   }
 
   getStatus(): DshRemoteStatus {
@@ -319,7 +406,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       enabled: this.options.featureEnabled && this.accountId !== undefined,
       connected: this.connected,
       hostGeneration: this.runtime?.hostGeneration ?? 0,
-      capabilities: this.runtime?.capabilities ?? this.options.apiProxy.capabilities(),
+      capabilities: this.runtime?.capabilities ?? this.capabilities(),
       revision: this.revision,
       ...(this.accountId === undefined ? {} : { accountId: this.accountId }),
       ...(this.runtime?.desktopRef === undefined ? {} : { desktopRef: this.runtime.desktopRef }),
@@ -435,6 +522,16 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
 
   private async syncSession(): Promise<void> {
     if (!this.started || !this.options.featureEnabled) return
+    const lifecycle = await this.options.readLifecycle?.()
+    if (lifecycle !== undefined) {
+      const resumed = this.resumeGeneration !== undefined && lifecycle.resumeGeneration !== this.resumeGeneration
+      this.resumeGeneration = lifecycle.resumeGeneration
+      if (resumed) {
+        if (this.connected) this.options.realtime.revalidate()
+        if (this.reconnectTimer !== undefined) clearTimeout(this.reconnectTimer)
+        this.reconnectTimer = undefined
+      }
+    }
     const session = await this.options.readSession()
     if (session === undefined) {
       if (this.accountId !== undefined) await this.deactivateAccount()
@@ -457,11 +554,13 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (this.accountId !== undefined) await this.deactivateAccount()
     this.clientId = session.clientId
     this.accountId = accountId
+    this.accountGeneration += 1
+    this.projectionController = new AbortController()
     await this.adoptExistingSessions(accountId)
     this.runtime = await this.options.runtimeStore.activateRuntime({
       accountId,
       profileRef: this.options.profileRef,
-      capabilities: this.options.apiProxy.capabilities(),
+      capabilities: this.capabilities(),
       nowMillis: this.now(),
     })
     const accountKey = await this.options.secretBroker.ledgerKey(accountId)
@@ -739,7 +838,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private async ensureAutomaticConnection(): Promise<void> {
     if (this.accountId === undefined || this.runtime === undefined) return
     if (this.connected) {
-      await this.syncProjectionSnapshotSafely()
+      this.scheduleProjectionSnapshot()
       return
     }
     if (this.options.transportAvailable === false || this.options.apiProxy.capabilities().length === 0) {
@@ -752,12 +851,27 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (this.connectionFlight !== undefined) return await this.connectionFlight
     this.startApiProxyEvents()
     const controller = new AbortController()
-    const flight = this.connectHost(controller.signal)
+    this.attemptId = randomUUID()
+    const startedAt = performance.now()
+    this.diagnostic('connect_started', { attempt_id: this.attemptId, user_id: this.accountId, client_id: this.clientId, runtime_ref: this.runtime.runtimeRef })
+    const timeoutError = new DshRemoteError('REMOTE_TRANSPORT_FAILED', '远控连接准备超时', true, { reason: 'connect_timeout' })
+    const timer = setTimeout(() => { controller.abort(timeoutError) }, 30_000)
+    timer.unref()
+    let removeAbort = () => undefined as void
+    const aborted = new Promise<never>((_, reject) => {
+      const abort = () => { reject(controller.signal.reason) }
+      controller.signal.addEventListener('abort', abort, { once: true })
+      removeAbort = () => { controller.signal.removeEventListener('abort', abort) }
+    })
+    const flight = Promise.race([this.connectHost(controller.signal), aborted])
       .catch(error => {
-        if (!controller.signal.aborted) this.handleTransportDisconnect(error)
+        if (!controller.signal.aborted || controller.signal.reason === timeoutError) this.handleTransportDisconnect(error)
         throw error
       })
       .finally(() => {
+        clearTimeout(timer)
+        removeAbort()
+        this.diagnostic('connect_finished', { attempt_id: this.attemptId, user_id: this.accountId, duration_ms: Math.round(performance.now() - startedAt) })
         if (this.connectionFlight === flight) this.connectionFlight = undefined
         if (this.connectionController === controller) this.connectionController = undefined
       })
@@ -770,12 +884,17 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (!this.started || !this.options.featureEnabled || this.sessionTimer !== undefined) return
     this.sessionTimer = setTimeout(() => {
       this.sessionTimer = undefined
+      this.reportLiveDelivery()
       void this.syncSessionSafely().finally(() => { this.scheduleSessionSync() })
     }, 2_000)
     this.sessionTimer.unref()
   }
 
   private async deactivateAccount(): Promise<void> {
+    this.accountGeneration += 1
+    this.projectionController.abort()
+    this.backgroundProjectionFlight = undefined
+    this.projectionSyncTail = Promise.resolve()
     this.stopApiProxyEvents()
     this.connectionController?.abort()
     this.connectionController = undefined
@@ -799,9 +918,6 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (this.historyObjectBackfillTimer !== undefined) clearTimeout(this.historyObjectBackfillTimer)
     this.historyObjectBackfillTimer = undefined
     await this.flushPendingSessionEventBatches()
-    await Promise.all([...this.liveProjectionTails.values()].map(async tail => {
-      await tail.catch(() => undefined)
-    }))
     let unregistered = false
     try {
       if (this.connected) {
@@ -822,6 +938,12 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.nextTurnUploadActivationAt = 0
     this.runtime = undefined
     this.accountId = undefined
+    if (this.desktopSelectionTimer !== undefined) clearTimeout(this.desktopSelectionTimer)
+    this.desktopSelectionTimer = undefined
+    this.desktopSelectionDirty = false
+    this.desktopSelectionFlight = undefined
+    this.publishedDesktopSelection = undefined
+    this.desktopSessions.clear()
     this.clientId = 0
     this.connectionError = undefined
     this.historySyncError = undefined
@@ -830,7 +952,6 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.lastProjectionSyncAttemptMillis = 0
     this.projectionVersion = 0
     this.clearPendingSessionEventBatches()
-    this.liveProjectionTails.clear()
   }
 
   private startApiProxyEvents(): void {
@@ -940,7 +1061,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
           ? HISTORY_OBJECT_BACKFILL_NEXT_DELAY_MILLIS
           : HISTORY_OBJECT_BACKFILL_RETRY_DELAY_MILLIS,
       )
-      await this.enqueueSessionEventBatch(accountId, runtime, event.sessionId, event.entry, issuedAt)
+      this.enqueueSessionEventBatch(accountId, runtime, event.sessionId, event.entry, issuedAt)
       return
     }
     if (event.kind === 'session-projection') {
@@ -1003,70 +1124,62 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     }, requestRef)
   }
 
-  private sessionEventBatchKey(
-    accountId: string,
-    runtime: DshRemoteRuntimeProjection,
-    sessionRef: string,
-  ): string {
-    return `${accountId}\u0000${runtime.runtimeRef}\u0000${String(runtime.hostGeneration)}\u0000${sessionRef}`
-  }
-
-  private async enqueueSessionEventBatch(
-    accountId: string,
-    runtime: DshRemoteRuntimeProjection,
-    sessionRef: string,
-    entry: DshRemoteHistoryEntry,
-    issuedAt: number,
-  ): Promise<void> {
-    const key = this.sessionEventBatchKey(accountId, runtime, sessionRef)
-    const entryBytes = Buffer.byteLength(JSON.stringify(entry))
-    const flushes: Promise<void>[] = []
-    let batch = this.pendingSessionEventBatches.get(key)
-    if (batch !== undefined && batch.entries.length > 0
-      && batch.bytes + entryBytes > LIVE_EVENT_BATCH_MAX_BYTES) {
-      flushes.push(this.flushSessionEventBatch(key))
-      batch = undefined
-    }
-    if (batch === undefined) {
-      batch = { accountId, runtime, sessionRef, entries: [], bytes: 0, issuedAt }
-      this.pendingSessionEventBatches.set(key, batch)
-    }
-    batch.entries.push(entry)
-    batch.bytes += entryBytes
-
-    const delayedChunk = entry.event.type === 'assistant/chunk'
-    const mustFlush = !delayedChunk
-      || batch.entries.length >= LIVE_EVENT_BATCH_MAX_ITEMS
-      || batch.bytes >= LIVE_EVENT_BATCH_MAX_BYTES
-    if (mustFlush) {
-      flushes.push(this.flushSessionEventBatch(key))
-    } else if (batch.timer === undefined) {
-      batch.timer = setTimeout(() => {
-        void this.flushSessionEventBatch(key).catch(error => {
-          if (!this.historyOwnerMatches(accountId, runtime)) return
+  private enqueueSessionEventBatch(
+    accountId: string, runtime: DshRemoteRuntimeProjection, sessionRef: string,
+    entry: DshRemoteHistoryEntry, issuedAt: number,
+  ): void {
+    const generation = this.accountGeneration
+    const key = `${accountId}/${runtime.runtimeRef}/${runtime.hostGeneration}/${generation}`
+    if (this.liveEventBatcher?.key !== key) {
+      this.clearPendingSessionEventBatches()
+      const current = () => this.liveEventBatcher?.key === key && this.historyOwnerMatches(accountId, runtime)
+      this.liveEventBatcher = { key, value: new DshLiveEventBatcher({
+        publish: async batch => {
+          if (current()) await this.publishSessionEventBatch({ ...batch, accountId, runtime, generation, scopeKey: key })
+        },
+        replay: async (ref, afterSeq, throughSeq) => {
+          if (!current()) throw new DshRemoteError('HOST_GENERATION_STALE', 'Live delivery scope changed')
+          // Overflow belongs to the same live producer and uses the same adoption policy.
+          const owned = await this.options.sessionOwnership.claimUnownedAndListOwned({
+            accountId, sessionRefs: [ref], origin: 'observed-while-active',
+            nowMillis: this.now(), canClaim: current,
+          })
+          if (!current()) throw new DshRemoteError('HOST_GENERATION_STALE', 'Live delivery scope changed')
+          if (!owned.has(ref)) return { entries: [], throughSeq }
+          let upper = throughSeq
+          while (true) {
+            const page = await this.options.apiProxy.history({ sessionId: ref, beforeSeq: upper + 1, limit: LIVE_BATCH_ITEMS })
+            if (!current()) throw new DshRemoteError('HOST_GENERATION_STALE', 'Live delivery scope changed')
+            if (page.hasMore && page.nextCursor !== undefined && page.nextCursor > afterSeq + 1) {
+              if (upper <= afterSeq + 1) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', 'Canonical event exceeds history replay limit')
+              upper = afterSeq + Math.max(1, Math.floor((upper - afterSeq) / 2))
+              continue
+            }
+            const knownThrough = page.projectionAsOfSeq ?? page.entries.at(-1)?.event.seq ?? -1
+            if (knownThrough < upper) {
+              const head = await this.options.apiProxy.history({ sessionId: ref, limit: 1 })
+              if (!current()) throw new DshRemoteError('HOST_GENERATION_STALE', 'Live delivery scope changed')
+              if ((head.projectionAsOfSeq ?? head.entries.at(-1)?.event.seq ?? -1) < upper) {
+                throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'Canonical history has not reached the pending live range', true)
+              }
+            }
+            return { entries: page.entries.filter(item => item.event.seq > afterSeq && item.event.seq <= upper), throughSeq: upper }
+          }
+        },
+        onError: error => {
+          if (!current()) return
           this.projectionError = asDshRemoteError(error)
           this.bump()
-        })
-      }, LIVE_EVENT_BATCH_DELAY_MILLIS)
-      batch.timer.unref()
+        },
+      }) }
     }
-    if (flushes.length > 0) await Promise.all(flushes)
+    this.liveEventBatcher.value.enqueue(sessionRef, entry, issuedAt)
   }
 
-  private async flushSessionEventBatch(key: string): Promise<void> {
-    const batch = this.pendingSessionEventBatches.get(key)
-    if (batch === undefined) return
-    this.pendingSessionEventBatches.delete(key)
-    if (batch.timer !== undefined) clearTimeout(batch.timer)
-    delete batch.timer
-    await this.enqueueLiveProjection(batch.sessionRef, async () => {
-      await this.publishSessionEventBatch(batch)
-    })
-  }
-
-  private async publishSessionEventBatch(batch: PendingSessionEventBatch): Promise<void> {
+  private async publishSessionEventBatch(batch: ScopedLiveEventBatch): Promise<void> {
     const { accountId, runtime, sessionRef } = batch
-    if (!this.historyOwnerMatches(accountId, runtime) || batch.entries.length === 0) return
+    if (this.liveEventBatcher?.key !== batch.scopeKey || !this.historyOwnerMatches(accountId, runtime) || batch.entries.length === 0) return
+    const prepareStarted = performance.now()
     const owned = await this.options.sessionOwnership.claimUnownedAndListOwned({
       accountId,
       sessionRefs: [sessionRef],
@@ -1074,11 +1187,13 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       nowMillis: batch.issuedAt,
       canClaim: () => this.historyOwnerMatches(accountId, runtime),
     })
-    if (!owned.has(sessionRef) || !this.historyOwnerMatches(accountId, runtime)) return
+    if (!owned.has(sessionRef) || this.liveEventBatcher?.key !== batch.scopeKey || !this.historyOwnerMatches(accountId, runtime)) return
 
     const entries = [...batch.entries].sort((left, right) => left.event.seq - right.event.seq)
     const firstSeq = entries[0]!.event.seq
     const lastSeq = entries.at(-1)!.event.seq
+    const ownershipMs = performance.now() - prepareStarted
+    const captureStarted = performance.now()
     if (this.turnUpload !== undefined) {
       try { await this.turnUpload.capture(sessionRef, entries) }
       catch (error) {
@@ -1089,6 +1204,8 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       }
     }
 
+    const captureMs = performance.now() - captureStarted
+    if (batch.generation !== this.accountGeneration || this.liveEventBatcher?.key !== batch.scopeKey) return
     const manager = this.channelManager
     // Backend durability is independent from Realtime presence. A disconnected
     // Host still persists the DSH batch; only the live mobile projection waits.
@@ -1105,6 +1222,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       requestRef: diagnosticRef(requestRef),
     })
     const runState = liveRunState(entries)
+    let completed = false
     try {
       await manager.publishProjectionEvent({
         protocol: DSH_REMOTE_PROTOCOL,
@@ -1122,7 +1240,27 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         },
         session_seq: lastSeq,
         projection_as_of_seq: lastSeq,
-      }, requestRef)
+      }, requestRef, timing => {
+        completed = timing.completed
+        if (batch.generation !== this.accountGeneration || this.liveEventBatcher?.key !== batch.scopeKey) return
+        const stats = this.liveDeliveryStats
+        const values = { queue_ms: batch.queueWaitMs, ownership_ms: ownershipMs, capture_ms: captureMs,
+          channel_queue_ms: timing.queueMs, publish_ack_ms: timing.publishMs }
+        stats.batch_count = (stats.batch_count ?? 0) + 1
+        stats.event_count = (stats.event_count ?? 0) + entries.length
+        stats.incomplete_batches = (stats.incomplete_batches ?? 0) + Number(!timing.completed)
+        stats.replayed_batches = (stats.replayed_batches ?? 0) + Number(batch.replayed)
+        stats.payload_bytes = (stats.payload_bytes ?? 0) + batch.bytes
+        for (const [name, value] of Object.entries(values)) {
+          stats[`${name}_sum`] = (stats[`${name}_sum`] ?? 0) + Math.round(value)
+          stats[`${name}_max`] = Math.max(stats[`${name}_max`] ?? 0, Math.round(value))
+        }
+        const pending = this.liveEventBatcher?.value.stats()
+        stats.pending_bytes_max = Math.max(stats.pending_bytes_max ?? 0, pending?.bufferedBytes ?? 0)
+        stats.pending_entries_max = Math.max(stats.pending_entries_max ?? 0, pending?.bufferedEntries ?? 0)
+        this.reportLiveDelivery()
+      })
+      if (!completed || batch.generation !== this.accountGeneration) return
       remoteDiagnostic('remote_session_event_batch_publish_acked', {
         sessionRef: diagnosticRef(sessionRef), firstSeq, lastSeq,
         itemCount: entries.length, requestRef: diagnosticRef(requestRef),
@@ -1138,37 +1276,30 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         itemCount: entries.length, requestRef: diagnosticRef(requestRef),
         code: remote.code, message: remote.message,
       })
-      throw error
+      // ChannelManager owns bounded wire retries. Re-enqueueing an already captured
+      // batch would replay turn/start into the outbox and could seal a newer Turn.
+      this.projectionError = remote
+      this.bump()
     }
   }
 
   private clearPendingSessionEventBatches(): void {
-    for (const batch of this.pendingSessionEventBatches.values()) {
-      if (batch.timer !== undefined) clearTimeout(batch.timer)
-    }
-    this.pendingSessionEventBatches.clear()
+    this.liveEventBatcher?.value.close()
+    this.liveEventBatcher = undefined
+    this.liveDeliveryStats = {}
+    this.lastDeliveryReportAt = performance.now()
   }
 
   private async flushPendingSessionEventBatches(): Promise<void> {
-    await Promise.all([...this.pendingSessionEventBatches.keys()].map(async key => {
-      await this.flushSessionEventBatch(key)
-    }))
+    await this.liveEventBatcher?.value.flush()
   }
 
-  private async enqueueLiveProjection(
-    sessionRef: string,
-    action: () => Promise<void>,
-  ): Promise<void> {
-    const previous = this.liveProjectionTails.get(sessionRef) ?? Promise.resolve()
-    const queued = previous.catch(() => undefined).then(action)
-    this.liveProjectionTails.set(sessionRef, queued)
-    try {
-      await queued
-    } finally {
-      if (this.liveProjectionTails.get(sessionRef) === queued) {
-        this.liveProjectionTails.delete(sessionRef)
-      }
-    }
+  private reportLiveDelivery(): void {
+    const stats = this.liveDeliveryStats
+    if (!stats.batch_count || performance.now() - this.lastDeliveryReportAt < 10_000) return
+    this.lastDeliveryReportAt = performance.now()
+    this.diagnostic('live_delivery_window', { user_id: this.accountId, runtime_ref: this.runtime?.runtimeRef, ...stats })
+    this.liveDeliveryStats = {}
   }
 
   private historyOwnerMatches(accountId: string, runtime: DshRemoteRuntimeProjection): boolean {
@@ -1184,6 +1315,9 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private handleTransportDisconnect(error: unknown): void {
     if (!this.started || this.runtime === undefined) return
     const remote = asDshRemoteError(error)
+    if (!this.connected && this.attemptId !== undefined && this.failedAttemptId === this.attemptId) return
+    this.failedAttemptId = this.attemptId
+    this.diagnostic('connection_failed', { attempt_id: this.attemptId, user_id: this.accountId, client_id: this.clientId, runtime_ref: this.runtime.runtimeRef, error_code: remote.code, retryable: remote.retryable, reason: remote.details.reason })
     this.connectionError = remote
     this.connected = false
     this.serviceLeaseGeneration = 0
@@ -1224,7 +1358,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     const displayName = (await this.options.runtimeStore.account(accountId)).displayName
       ?? this.options.displayName ?? hostname()
     signal.throwIfAborted()
-    const desktop = await this.options.controlPlane.registerDesktop({ display_name: displayName, platform })
+    const desktop = await this.options.controlPlane.registerDesktop({ display_name: displayName, platform }, AbortSignal.any([signal, AbortSignal.timeout(10_000)]))
     signal.throwIfAborted()
     const desktopRef = typeof desktop.desktop_ref === 'string' ? desktop.desktop_ref
       : typeof desktop.desktopRef === 'string' ? desktop.desktopRef : ''
@@ -1241,7 +1375,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       protocol_major: DSH_REMOTE_PROTOCOL_MAJOR,
       host_generation: localRuntime.hostGeneration,
       capabilities: localRuntime.capabilities,
-    })
+    }, AbortSignal.any([signal, AbortSignal.timeout(10_000)]))
     signal.throwIfAborted()
     const backendRuntimeRef = typeof registeredRuntime.runtime_ref === 'string' ? registeredRuntime.runtime_ref : ''
     const backendHostGeneration = typeof registeredRuntime.host_generation === 'number'
@@ -1250,17 +1384,12 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     if (backendRuntimeRef === '' || backendHostGeneration < localRuntime.hostGeneration) {
       throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Backend 未返回匹配的 Runtime 引用与 Host generation', true)
     }
-    this.runtime = {
-      ...(await this.options.runtimeStore.adoptRuntimeRef(
-        accountId,
-        this.options.profileRef,
-        backendRuntimeRef,
-        backendHostGeneration,
-      )),
-      desktopRef,
-    }
+    const adopted = await this.options.runtimeStore.adoptRuntimeRef(
+      accountId, this.options.profileRef, backendRuntimeRef, backendHostGeneration,
+    )
     signal.throwIfAborted()
-    await this.syncProjectionSnapshotSafely(true)
+    if (this.accountId !== accountId) throw new DshRemoteError('REMOTE_LOGIN_REQUIRED', '账号已切换')
+    this.runtime = { ...adopted, desktopRef }
     signal.throwIfAborted()
     await this.options.realtime.connect({
       profileRef: this.options.profileRef,
@@ -1272,6 +1401,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       profileRef: this.options.profileRef,
       hostClientRef: this.options.hostClientRef,
       runtimeRef: backendRuntimeRef,
+      signal,
       realtime: this.options.realtime,
       secretBroker: this.options.secretBroker,
       dispatch: async (request, context) => await this.dispatchAuthorizedRequest(request, context),
@@ -1289,12 +1419,17 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         capabilities: this.runtime.capabilities,
         signal,
       })
-      await manager.activate(registered.serviceLeaseGeneration)
+      manager.activate(registered.serviceLeaseGeneration)
       signal.throwIfAborted()
       this.channelManager = manager
       this.serviceLeaseGeneration = registered.serviceLeaseGeneration
       this.connected = true
+      this.publishedDesktopSelection = undefined
+      this.scheduleDesktopSelection()
+      this.failedAttemptId = undefined
       this.connectionError = undefined
+      this.diagnostic('host_registered', { attempt_id: this.attemptId, user_id: accountId, client_id: this.clientId, runtime_ref: backendRuntimeRef, host_generation: this.runtime.hostGeneration, lease_generation: this.serviceLeaseGeneration })
+      this.scheduleProjectionSnapshot(true)
       if (this.reconnectAttempt > 0) {
         const stableManager = manager
         this.stableConnectionTimer = setTimeout(() => {
@@ -1304,23 +1439,34 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       }
       this.bump()
     } catch (error) {
-      await this.options.realtime.disconnect()
+      if (!signal.aborted) await this.options.realtime.disconnect()
       await manager.close()
       throw error
     }
   }
 
+  private scheduleProjectionSnapshot(force = false): void {
+    if (this.backgroundProjectionFlight !== undefined) return
+    const flight = this.syncProjectionSnapshotSafely(force).finally(() => {
+      if (this.backgroundProjectionFlight === flight) this.backgroundProjectionFlight = undefined
+    })
+    this.backgroundProjectionFlight = flight
+  }
+
   private async syncProjectionSnapshotSafely(force = false): Promise<void> {
+    const generation = this.accountGeneration
     const now = this.now()
     if (!force && now - this.lastProjectionSyncAttemptMillis < PROJECTION_SYNC_INTERVAL_MILLIS) return
     this.lastProjectionSyncAttemptMillis = now
     try {
       await this.syncProjectionSnapshot(force)
+      if (generation !== this.accountGeneration) return
       if (this.projectionError !== undefined) {
         this.projectionError = undefined
         this.bump()
       }
     } catch (error) {
+      if (generation !== this.accountGeneration) return
       this.projectionError = asDshRemoteError(error)
       this.bump()
     }
@@ -1332,16 +1478,26 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   }
 
   private async syncProjectionSnapshot(force = false): Promise<void> {
-    const run = async (): Promise<void> => { await this.performProjectionSnapshot(force) }
+    const generation = this.accountGeneration
+    const run = async (): Promise<void> => {
+      if (generation === this.accountGeneration) await this.performProjectionSnapshot(force, generation)
+    }
     const next = this.projectionSyncTail.then(run, run)
     this.projectionSyncTail = next.then(() => undefined, () => undefined)
     await next
   }
 
-  private async performProjectionSnapshot(force = false): Promise<void> {
+  private async performProjectionSnapshot(force = false, generation = this.accountGeneration): Promise<void> {
     const runtime = this.runtime
     const accountId = this.accountId
     if (runtime === undefined || accountId === undefined) return
+    const signal = AbortSignal.any([this.projectionController.signal, AbortSignal.timeout(30_000)])
+    const check = () => {
+      signal.throwIfAborted()
+      if (generation !== this.accountGeneration) throw new DshRemoteError('REMOTE_LOGIN_REQUIRED', '账号作用域已切换')
+      this.requireActiveAccount(accountId, runtime.runtimeRef)
+    }
+    check()
     if (force) this.lastProjectionSyncAttemptMillis = this.now()
     const capabilities = new Set(this.options.apiProxy.capabilities())
     const projectionAt = this.nextProjectionVersion()
@@ -1353,6 +1509,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     const workspaceInventory = capabilities.has('workspace.list')
       ? await this.options.apiProxy.workspaceInventory()
       : { items: [], archivedSessionIds: [] }
+    check()
     const workspaces = workspaceInventory.items
     const currentWorkspaceRefs = new Set(workspaces.map(item => item.workspaceId))
     const workspaceItems = [
@@ -1378,12 +1535,13 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         })),
     ]
     for (let offset = 0; offset < workspaceItems.length || offset === 0; offset += 100) {
+      check()
       await this.options.controlPlane.syncWorkspaces({
         runtime_ref: runtime.runtimeRef,
         host_generation: runtime.hostGeneration,
         snapshot_ref: snapshotRef,
         items: workspaceItems.slice(offset, offset + 100),
-      })
+      }, signal)
       if (workspaceItems.length === 0) break
     }
 
@@ -1445,21 +1603,24 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         })),
     ]
     for (let offset = 0; offset < sessionItems.length || offset === 0; offset += 100) {
+      check()
       await this.options.controlPlane.syncSessions({
         runtime_ref: runtime.runtimeRef,
         host_generation: runtime.hostGeneration,
         snapshot_ref: snapshotRef,
         items: sessionItems.slice(offset, offset + 100),
-      })
+      }, signal)
       if (sessionItems.length === 0) break
     }
+    check()
     await this.options.controlPlane.completeProjectionSnapshot({
       runtime_ref: runtime.runtimeRef,
       host_generation: runtime.hostGeneration,
       snapshot_ref: snapshotRef,
       workspace_count: workspaces.length,
       session_count: sessions.length,
-    })
+    }, signal)
+    check()
     await this.options.runtimeStore.saveProjectionInventory(
       accountId,
       this.options.profileRef,
@@ -1476,7 +1637,11 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
 
   private async dispatch(request: DshRemoteRequest): Promise<{ duplicate: boolean; value: unknown }> {
     switch (request.operation) {
-      case 'capabilities.get': return { duplicate: false, value: { capabilities: this.options.apiProxy.capabilities() } }
+      case 'session.current': {
+        const selection = this.desktopSessions.snapshot(performance.now())
+        return { duplicate: false, value: { ...await this.currentSession(), selectionRevision: selection.revision } }
+      }
+      case 'capabilities.get': return { duplicate: false, value: { capabilities: this.capabilities() } }
       case 'snapshot.get': {
         const cursor = optionalString(request.body, 'cursor')
         const limit = optionalPositive(request.body, 'limit')
@@ -1529,11 +1694,14 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         const limit = optionalPositive(request.body, 'limit')
         const sessionId = stringBody(request.body, 'session_ref')
         await this.requireSessionOwnership(this.accountId!, sessionId)
-        return { duplicate: false, value: await this.options.apiProxy.history({
+        const history = await this.options.apiProxy.history({
           sessionId,
           ...(beforeSeq === undefined ? {} : { beforeSeq }),
           ...(limit === undefined ? {} : { limit }),
-        }) }
+        })
+        return { duplicate: false, value: request.body.omit_superseded_chunks === true
+          ? { ...history, entries: dshTranscriptHistoryEntries(history.entries) }
+          : history }
       }
       default: return await this.dispatchWrite(request)
     }
@@ -1765,4 +1933,9 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     const snapshot = this.getStatus()
     for (const listener of this.listeners) listener(snapshot)
   }
+
+  private diagnostic(event: string, fields: Record<string, unknown>): void {
+    try { this.options.onDiagnostic?.(event, fields) } catch { /* Observability must not affect transport state. */ }
+  }
+
 }

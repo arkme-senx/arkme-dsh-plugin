@@ -27,6 +27,17 @@ describe('DeepSeekHarnessSurface', () => {
     expect(markup).toContain('<iframe')
   })
 
+  it.each([
+    { visible: true, accountId: 42, followSession: true, expected: 'true' },
+    { visible: false, accountId: 42, followSession: true, expected: 'false' },
+    { visible: true, accountId: 42, followSession: false, expected: 'false' },
+    { visible: true, accountId: undefined, followSession: true, expected: 'false' },
+  ])('reports only an authenticated visible Harness surface: %j', ({ expected, ...props }) => {
+    const markup = renderToStaticMarkup(<DeepSeekHarnessSurface {...props} />)
+    expect(markup).toContain(`data-arkme-follow-session="${expected}"`)
+    expect(markup.match(/<iframe/g)).toHaveLength(1)
+  })
+
   it('marks only the nested client as the native Harness document', () => {
     expect(deepSeekHarnessEmbedRequested('?arkme-harness-embed=1')).toBe(true)
     expect(deepSeekHarnessEmbedRequested('?arkme-harness-embed=0')).toBe(false)

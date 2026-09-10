@@ -2,13 +2,14 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../src/client/ArkmeOutgoingCallHost.js', () => ({ ArkmeOutgoingCallHost: () => null }))
-vi.mock('../src/client/realtime-client-events.js', () => ({ useArkmeRealtimeClientEvents: () => undefined }))
+vi.mock('../src/client/realtime-client-events.js', () => ({ useArkmeRealtimeClientEvents: vi.fn() }))
 
 import { ArkmePersistentClientRuntime } from '../src/client/ArkmePersistentShell.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeAvatarImages } from '../src/client/avatar-image-runtime.js'
 import { arkmePresentationMaintenance } from '../src/client/presentation-maintenance-runtime.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { useArkmeRealtimeClientEvents } from '../src/client/realtime-client-events.js'
 
 describe('Arkme persistent client runtime', () => {
   let renderer: ReactTestRenderer | undefined
@@ -47,6 +48,10 @@ describe('Arkme persistent client runtime', () => {
     await act(async () => { renderer = create(<ArkmePersistentClientRuntime />) })
     expect(activateScope).toHaveBeenLastCalledWith('prod:10002')
     expect(startMaintenance).toHaveBeenCalledOnce()
+    expect(useArkmeRealtimeClientEvents).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'authenticated', environment: 'prod', userId: 10002 }),
+      expect.any(Number), true, { ownsMessagePreparing: true },
+    )
 
     await act(async () => {
       arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10002 })

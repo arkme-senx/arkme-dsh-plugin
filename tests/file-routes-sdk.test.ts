@@ -23,7 +23,7 @@ describe('file Host and external SDK transport contract', () => {
       } }
     })
     const openPath = vi.fn(async () => {})
-    const owner = new FileTransfers(directory, { currentUser: async () => userId, validateSource: async () => {}, upload, send, fetchMedia: async () => { throw new Error('not expected') }, openPath }, 1000)
+    const owner = new FileTransfers(directory, { currentUser: async () => userId, retainedFileRefs: async () => [], validateSource: async () => {}, upload, send, fetchMedia: async () => { throw new Error('not expected') }, openPath }, 1000)
     const facade = {
       fileSessionUser: async () => userId, fileStage: owner.stage.bind(owner), fileReadLocal: owner.readLocal.bind(owner),
       fileCapabilities: owner.capabilities.bind(owner), fileList: owner.files.bind(owner), fileSend: owner.enqueue.bind(owner),
@@ -54,6 +54,18 @@ describe('file Host and external SDK transport contract', () => {
       expect(file).toMatchObject({ fileKind: 4, size: 10 }); expect(upload).not.toHaveBeenCalled()
       const image = await sdk.stageFile(new Blob(['abcdefghij']), { fileName: 'browser-photo.jpg' })
       expect(image).toMatchObject({ fileKind: 1, mimeType: 'image/jpeg', size: 10 })
+      const editFile = await sdk.stageFile(new Blob(['abcdefghij']), { fileName: 'edit.pdf', retention: 'references' })
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
+      try {
+        const next = await sdk.stageFile(new Blob(['abcdefghij']), { fileName: 'next.pdf' })
+        await expect(owner.readLocal(editFile.fileRef)).rejects.toMatchObject({ code: 'file-ref-invalid' })
+        await expect(owner.readLocal(image.fileRef)).resolves.toMatchObject({ file: image })
+        await sdk.removeLocalFile(next.fileRef)
+      } finally { clock.mockRestore() }
+      const invalidRetention = await fetch(`${base}/files/stage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/pdf', 'X-Arkme-File-Name': 'invalid.pdf', 'X-Arkme-File-Retention': 'anything' }, body: 'abcdefghij',
+      })
+      expect(invalidRetention.status).toBe(400)
       const directResponse = await fetch(`${base}/media/upload`, {
         method: 'POST',
         headers: { 'content-type': 'audio/mpeg', 'content-length': '10', 'x-arkme-file-name': encodeURIComponent('picked.mp3'), 'x-arkme-expected-user-id': '42' },

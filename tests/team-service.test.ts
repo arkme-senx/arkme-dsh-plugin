@@ -42,10 +42,23 @@ function fixture(overrides: Partial<OpenApiTeamCapabilityClient> = {}) {
       arkmeIds.map(arkmeId => [arkmeId, { avatarRef: `avatar:${arkmeId}` }]),
     )),
   }
-  return { avatars, client, service: new TeamService(client, avatars) }
+  const reads = {
+    runOwnerRead: async <T>(_route: string, _parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal) => operation(signal ?? new AbortController().signal),
+    withOwnerReadInvalidation: vi.fn(async <T>(_route: string, operation: () => Promise<T>) => operation()),
+  }
+  return { avatars, client, reads, service: new TeamService(client, avatars, reads) }
 }
 
 describe('TeamService', () => {
+  it('invalidates only Team list flights for create/join without replaying failed writes', async () => {
+    const failure = new OpenApiCapabilityError('unavailable', 'busy', true)
+    const { service, client, reads } = fixture({ create: vi.fn(async () => { throw failure }), joinByJotmoID: vi.fn(async () => { throw failure }) })
+    await expect(service.create([{ itemId: 'create', idempotencyKey: 'create-key', name: '新团队', jotmoId: 'test_team' }])).rejects.toMatchObject({ retryable: true })
+    await expect(service.joinByJotmoID([{ itemId: 'join', jotmoId: 'test_team' }])).rejects.toMatchObject({ retryable: true })
+    expect(client.create).toHaveBeenCalledOnce()
+    expect(client.joinByJotmoID).toHaveBeenCalledOnce()
+    expect(reads.withOwnerReadInvalidation.mock.calls.map(call => call[0])).toEqual(['openapi:teams:list', 'openapi:teams:list'])
+  })
   it('owns Team directory projection and preserves the canonical OpenAPI cursor', async () => {
     const { service, client } = fixture()
     await expect(service.listDirectory({ limit: 20 })).resolves.toEqual({

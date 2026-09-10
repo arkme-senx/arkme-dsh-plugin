@@ -13,6 +13,7 @@ import type {
 
 export interface DshRemoteHostChannelManagerOptions {
   accountId: string
+  signal?: AbortSignal
   profileRef: string
   hostClientRef: string
   runtimeRef: string
@@ -44,8 +45,13 @@ export class DshRemoteHostChannelManager {
   private outboundTail: Promise<void> = Promise.resolve()
   private readonly pendingEvents: Array<{ payload: DshRemoteRealtimePayload; metadata: DshRemoteTrustedEventMetadata }> = []
   private closed = false
+  private readonly detachParent: () => void
 
   constructor(private readonly options: DshRemoteHostChannelManagerOptions) {
+    const abort = () => { this.controller.abort(); this.unsubscribe?.() }
+    options.signal?.addEventListener('abort', abort, { once: true })
+    if (options.signal?.aborted) abort()
+    this.detachParent = () => { options.signal?.removeEventListener('abort', abort) }
     this.target = {
       runtimeRef: options.runtimeRef,
       hostProfileRef: options.profileRef,
@@ -55,22 +61,19 @@ export class DshRemoteHostChannelManager {
   }
 
   async prepare(): Promise<void> {
+    this.controller.signal.throwIfAborted()
     if (this.closed || this.unsubscribe !== undefined) throw new DshRemoteError('REMOTE_REQUEST_INVALID', 'Runtime channel 已准备')
     this.lastTransportSequence = await this.options.secretBroker.runtimeCursor({
       accountId: this.options.accountId,
       runtimeRef: this.options.runtimeRef,
       channelRef: this.options.runtimeRef,
     })
+    this.controller.signal.throwIfAborted()
     this.persistedTransportSequence = this.lastTransportSequence
     const subscribe = async (afterSequence?: number): Promise<() => void> => await this.options.realtime.subscribe({
       target: this.target,
       ...(afterSequence === undefined ? {} : { afterSequence }),
-      onEvent: (payload, metadata) => {
-        void this.handle(payload, metadata).catch(error => {
-          if (logicalPayloadTooLarge(error)) this.options.onProjectionError(error)
-          else this.options.onFatal(error)
-        })
-      },
+      onEvent: (payload, metadata) => { this.consume(payload, metadata) },
       signal: this.controller.signal,
     })
     try {
@@ -81,38 +84,55 @@ export class DshRemoteHostChannelManager {
     }
   }
 
-  async activate(serviceLeaseGeneration: number): Promise<void> {
+  activate(serviceLeaseGeneration: number): void {
+    this.controller.signal.throwIfAborted()
     if (this.closed || this.unsubscribe === undefined || !Number.isSafeInteger(serviceLeaseGeneration) || serviceLeaseGeneration <= 0) {
       throw new DshRemoteError('HOST_CHANNEL_NOT_READY', 'Runtime channel 尚未完成 Host 注册', true)
     }
     this.target = { ...this.target, hostLeaseGeneration: serviceLeaseGeneration }
-    for (const event of this.pendingEvents.splice(0)) await this.handle(event.payload, event.metadata)
+    const pending = this.pendingEvents.splice(0)
+    queueMicrotask(() => {
+      for (const event of pending) {
+        if (this.closed || this.controller.signal.aborted) return
+        this.consume(event.payload, event.metadata)
+      }
+    })
   }
 
   status(): { runtimeRef: string; serviceLeaseGeneration: number; ready: boolean } {
     return {
       runtimeRef: this.options.runtimeRef,
       serviceLeaseGeneration: this.target.hostLeaseGeneration,
-      ready: !this.closed && this.unsubscribe !== undefined && this.target.hostLeaseGeneration > 0,
+      ready: !this.closed && !this.controller.signal.aborted && this.unsubscribe !== undefined && this.target.hostLeaseGeneration > 0,
     }
   }
 
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    this.pendingEvents.length = 0
+    this.detachParent()
+    this.controller.abort()
     if (this.lastTransportSequence > this.persistedTransportSequence) await this.persistCursor().catch(() => undefined)
     this.unsubscribe?.()
     this.unsubscribe = undefined
-    this.controller.abort()
   }
 
-  async publishProjectionEvent(envelope: Record<string, unknown>, commandId: string): Promise<void> {
+  async publishProjectionEvent(envelope: Record<string, unknown>, commandId: string, onTiming?: (timing: { queueMs: number; publishMs: number; completed: boolean }) => void): Promise<void> {
     if (!this.status().ready) return
-    await this.publishPayload(envelope, commandId, 'event')
+    await this.publishPayload(envelope, commandId, 'event', onTiming)
+  }
+
+  private consume(payload: DshRemoteRealtimePayload, metadata: DshRemoteTrustedEventMetadata): void {
+    void this.handle(payload, metadata).catch(error => {
+      if (this.closed || this.controller.signal.aborted) return
+      if (logicalPayloadTooLarge(error)) this.options.onProjectionError(error)
+      else this.options.onFatal(error)
+    })
   }
 
   private async handle(payload: DshRemoteRealtimePayload, metadata: DshRemoteTrustedEventMetadata): Promise<void> {
-    if (this.closed) return
+    if (this.closed || this.controller.signal.aborted) return
     if (metadata.transportSequence !== undefined && metadata.transportSequence > this.lastTransportSequence) {
       this.lastTransportSequence = metadata.transportSequence
       if (this.lastTransportSequence - this.persistedTransportSequence >= 16) {
@@ -148,28 +168,38 @@ export class DshRemoteHostChannelManager {
     envelope: unknown,
     commandId: string,
     direction: 'event' | 'response',
+    onTiming?: (timing: { queueMs: number; publishMs: number; completed: boolean }) => void,
   ): Promise<void> {
+    const queuedAt = performance.now()
     const publish = async (): Promise<void> => {
-      const frames = dshRemoteOutboundPayloads(envelope, commandId)
-      for (const frame of frames) {
-        if (!this.status().ready) return
-        const frameCommandId = frame.commandId ?? commandId
-        for (let attempt = 0; ; attempt += 1) {
-          try {
-            await this.options.realtime.publish({
-              target: this.target,
-              commandId: frameCommandId,
-              direction,
-              payload: frame.value as Record<string, unknown>,
-              signal: this.controller.signal,
-            })
-            break
-          } catch (error) {
-            const remote = asDshRemoteError(error)
-            if (!remote.retryable || attempt >= 2 || this.controller.signal.aborted) throw error
-            await delay(100 * (2 ** attempt), undefined, { signal: this.controller.signal })
+      const startedAt = performance.now()
+      let completed = false
+      try {
+        const frames = dshRemoteOutboundPayloads(envelope, commandId)
+        for (const frame of frames) {
+          if (!this.status().ready) return
+          const frameCommandId = frame.commandId ?? commandId
+          for (let attempt = 0; ; attempt += 1) {
+            try {
+              await this.options.realtime.publish({
+                target: this.target,
+                commandId: frameCommandId,
+                direction,
+                payload: frame.value as Record<string, unknown>,
+                signal: this.controller.signal,
+              })
+              break
+            } catch (error) {
+              const remote = asDshRemoteError(error)
+              if (!remote.retryable || attempt >= 2 || this.controller.signal.aborted) throw error
+              await delay(100 * (2 ** attempt), undefined, { signal: this.controller.signal })
+            }
           }
         }
+        completed = true
+      } finally {
+        try { onTiming?.({ queueMs: startedAt - queuedAt, publishMs: performance.now() - startedAt, completed }) }
+        catch { /* Timing cannot affect delivery. */ }
       }
     }
     const result = this.outboundTail.then(publish)

@@ -1,10 +1,11 @@
 import { getOrCreateAnonymousUserId, type AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import type { Context } from '@deepseek-ai/cordis'
-import { LlmAdapter, LlmError, ProviderRequestId } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, LlmError, ProviderRequestId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {
   AdapterRegistrationHandle,
   GenerateOptions,
   LlmModelInfo,
+  LlmModelReasoningInfo,
   LlmProviderInfo,
   LlmResolvedModelInfo,
   ResolvedRetryPolicy,
@@ -14,22 +15,24 @@ import { DeepSeekAdapter, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-dee
 import type { DeepSeekCatalogModel, DeepSeekConnectionOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import type { ManagedAccessCredentialProvider } from '../managed-access-credential.js'
 import type { SecretValue } from '../secret-value.js'
+import {
+  ManagedAiTransport,
+  type ManagedImageAttachmentReader,
+  type ManagedImageCapability,
+  type ManagedModelCapability,
+} from './transport.js'
 
 export const ARKME_MANAGED_PROVIDER = 'arkme-managed'
 export const ARKME_MANAGED_MODEL = 'deepseek-v4-flash'
 
-const ARKME_MANAGED_PROVIDER_NAME = 'Arkme · 余额计费'
+const ARKME_MANAGED_PROVIDER_NAME = 'Arkme'
 const ARKME_MANAGED_CATALOG_TTL_MS = 60_000
+const ARKME_MANAGED_CATALOG_MAX_STALE_MS = 5 * ARKME_MANAGED_CATALOG_TTL_MS
 const ARKME_MANAGED_CATALOG_TIMEOUT_MS = 10_000
+const ARKME_MANAGED_MAXIMUM_IMAGE_PIXELS = 40_000_000
+const ARKME_MANAGED_MAXIMUM_REQUEST_IMAGE_BYTES = 1 << 30
 const ARKME_INSUFFICIENT_BALANCE_MESSAGE = 'Arkme AI 余额不足，请前往 Arkme 设置中的余额充值后重试'
 const ARKME_LOGIN_MESSAGE = '请先登录或重新登录 Arkme 后再使用托管模型'
-const ARKME_MANAGED_FALLBACK_MODEL: DeepSeekCatalogModel = {
-  id: ARKME_MANAGED_MODEL,
-  name: 'DeepSeek-V4-Flash',
-  contextWindow: 1_000_000,
-  maxTokens: 256_000,
-}
-const ARKME_MANAGED_FALLBACK_MODELS: readonly DeepSeekCatalogModel[] = [ARKME_MANAGED_FALLBACK_MODEL]
 const ARKME_AUTH_FAILURE_CODES = new Set([
   'login-required',
   'login-expired',
@@ -40,8 +43,10 @@ const ARKME_AUTH_FAILURE_CODES = new Set([
 export interface ManagedAiLlmAdapterOptions {
   intelligentBaseUrl: string
   credentialOwner: ManagedAccessCredentialProvider
+  /** Resolves DSH's current durable attachment owner only when an image request needs it. */
+  resolveAttachmentReader?: () => ManagedImageAttachmentReader | undefined
   resolveAnonymousUserId?: () => AnonymousUserId
-  /** Test/runtime seam for the authenticated Arkme model-directory request. */
+  /** Test/runtime seam shared by catalog, direct OSS upload, and managed model transport. */
   fetchImpl?: typeof fetch
 }
 
@@ -106,6 +111,12 @@ function managedAiLocalizedFailure(facts: ManagedAiFailureFacts): { code: string
   }
   if (facts.code === 'TRANSPORT') {
     return { code: 'TRANSPORT', message: '无法连接 Arkme AI 服务，请检查网络后重试' }
+  }
+  if (facts.code === 'ATTACHMENT_UNAVAILABLE') {
+    return { code: facts.code, message: '历史图片已不可用，请重新附加后继续' }
+  }
+  if (facts.code === 'ATTACHMENT_READ_FAILED') {
+    return { code: facts.code, message: '无法读取历史图片，请检查本地附件存储后重试' }
   }
   if (facts.code === 'CONTEXT_WINDOW_EXCEEDED') {
     return { code: facts.code, message: '对话内容过长，请新建对话或减少上下文后重试' }
@@ -283,13 +294,12 @@ function managedConnection(
 ): DeepSeekConnectionOptions {
   const defaults = models.find(model => model.id === ARKME_MANAGED_MODEL)
     ?? models[0]
-    ?? ARKME_MANAGED_FALLBACK_MODEL
   return resolveAdapterOptions({
     baseURL: baseUrl,
     thinking: 'enabled',
     reasoningEffort: 'high',
-    maxTokens: defaults.maxTokens ?? 256_000,
-    defaultContextWindow: defaults.contextWindow ?? 1_000_000,
+    maxTokens: defaults?.maxTokens ?? 256_000,
+    defaultContextWindow: defaults?.contextWindow ?? 1_000_000,
     models: [...models],
     retryPolicy: { mode: 'normal', maxRetries: 0 },
   })
@@ -335,7 +345,196 @@ function requiredCatalogTokens(
   return parsed
 }
 
-function parseManagedCatalog(payload: unknown): DeepSeekCatalogModel[] {
+function requiredCapabilityText(
+  source: Record<string, unknown>,
+  key: string,
+  label: string,
+): string {
+  const value = source[key]
+  if (typeof value !== 'string' || value.trim() === '' || value.length > 128 || /[\u0000-\u001F\u007F]/u.test(value)) {
+    throw new LlmError(`Arkme 模型目录中的${label}无效`, 'MALFORMED_RESPONSE')
+  }
+  return value.trim()
+}
+
+function requiredCapabilityInteger(
+  source: Record<string, unknown>,
+  key: string,
+  label: string,
+): number {
+  const value = source[key]
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new LlmError(`Arkme 模型目录中的${label}无效`, 'MALFORMED_RESPONSE')
+  }
+  return value
+}
+
+function optionalCapabilityInteger(
+  source: Record<string, unknown>,
+  key: string,
+  label: string,
+): number | undefined {
+  if (source[key] === undefined) return undefined
+  return requiredCapabilityInteger(source, key, label)
+}
+
+function parseModalities(value: unknown, label: string): Array<'text' | 'image'> {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 8) {
+    throw new LlmError(`Arkme 模型目录中的${label}无效`, 'MALFORMED_RESPONSE')
+  }
+  const result: Array<'text' | 'image'> = []
+  for (const item of value) {
+    if (item !== 'text' && item !== 'image') {
+      throw new LlmError(`Arkme 模型目录中的${label}无效`, 'MALFORMED_RESPONSE')
+    }
+    if (result.includes(item)) {
+      throw new LlmError(`Arkme 模型目录中的${label}包含重复值`, 'MALFORMED_RESPONSE')
+    }
+    result.push(item)
+  }
+  return result
+}
+
+function parseImageCapability(value: unknown): ManagedImageCapability {
+  const source = asRecord(value)
+  if (source === undefined) throw new LlmError('Arkme 模型目录中的图片能力无效', 'MALFORMED_RESPONSE')
+  const allowed = source.allowed_media_types
+  if (!Array.isArray(allowed) || allowed.length === 0 || allowed.length > 4) {
+    throw new LlmError('Arkme 模型目录中的图片格式无效', 'MALFORMED_RESPONSE')
+  }
+  const supported = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+  const allowedMediaTypes: string[] = []
+  for (const item of allowed) {
+    if (typeof item !== 'string' || !supported.has(item) || allowedMediaTypes.includes(item)) {
+      throw new LlmError('Arkme 模型目录中的图片格式无效', 'MALFORMED_RESPONSE')
+    }
+    allowedMediaTypes.push(item)
+  }
+  const maximumImages = requiredCapabilityInteger(source, 'maximum_images', '图片数量上限')
+  const maximumBytesPerImage = requiredCapabilityInteger(source, 'maximum_bytes_per_image', '单图大小上限')
+  const maximumTotalBytes = optionalCapabilityInteger(source, 'maximum_total_bytes', '图片总大小上限')
+  const maximumPixels = optionalCapabilityInteger(source, 'maximum_pixels', '图片像素上限')
+  const minimumWidth = optionalCapabilityInteger(source, 'minimum_width', '图片宽度下限')
+  const minimumHeight = optionalCapabilityInteger(source, 'minimum_height', '图片高度下限')
+  const maximumWidth = optionalCapabilityInteger(source, 'maximum_width', '图片宽度上限')
+  const maximumHeight = optionalCapabilityInteger(source, 'maximum_height', '图片高度上限')
+  const maximumAspectRatio = optionalCapabilityInteger(source, 'maximum_aspect_ratio', '图片宽高比上限')
+  const effectiveMaximumTotalBytes = maximumTotalBytes ?? maximumImages * maximumBytesPerImage
+  if ((minimumWidth === undefined) !== (minimumHeight === undefined)
+    || (maximumWidth === undefined) !== (maximumHeight === undefined)
+    || (minimumWidth !== undefined && maximumWidth !== undefined
+      && (minimumWidth > maximumWidth || minimumHeight! > maximumHeight!))
+    || (maximumAspectRatio !== undefined && maximumAspectRatio > 10_000)
+    || maximumImages > 2_048 || maximumBytesPerImage > 64 << 20
+    || maximumPixels === undefined || maximumPixels > ARKME_MANAGED_MAXIMUM_IMAGE_PIXELS
+    || effectiveMaximumTotalBytes > ARKME_MANAGED_MAXIMUM_REQUEST_IMAGE_BYTES
+    || (maximumTotalBytes !== undefined && maximumTotalBytes < maximumBytesPerImage)) {
+    throw new LlmError('Arkme 模型目录中的图片能力超出客户端安全边界', 'MALFORMED_RESPONSE')
+  }
+  const rawCountLimits = source.count_dimension_limits
+  if (rawCountLimits !== undefined && !Array.isArray(rawCountLimits)) {
+    throw new LlmError('Arkme 模型目录中的图片数量维度规则无效', 'MALFORMED_RESPONSE')
+  }
+  let previousMinimum = 0
+  let previousMaximumWidth = maximumWidth
+  let previousMaximumHeight = maximumHeight
+  const countDimensionLimits = (rawCountLimits ?? []).map((value) => {
+    const limit = asRecord(value)
+    if (limit === undefined) throw new LlmError('Arkme 模型目录中的图片数量维度规则无效', 'MALFORMED_RESPONSE')
+    const minimumImages = requiredCapabilityInteger(limit, 'minimum_images', '图片数量维度阈值')
+    const maximumLimitWidth = requiredCapabilityInteger(limit, 'maximum_width', '图片数量维度宽度')
+    const maximumLimitHeight = requiredCapabilityInteger(limit, 'maximum_height', '图片数量维度高度')
+    if (minimumImages <= 1 || minimumImages > maximumImages || minimumImages <= previousMinimum
+      || (minimumWidth !== undefined && maximumLimitWidth < minimumWidth)
+      || (minimumHeight !== undefined && maximumLimitHeight < minimumHeight)
+      || (previousMaximumWidth !== undefined && maximumLimitWidth > previousMaximumWidth)
+      || (previousMaximumHeight !== undefined && maximumLimitHeight > previousMaximumHeight)) {
+      throw new LlmError('Arkme 模型目录中的图片数量维度规则无效', 'MALFORMED_RESPONSE')
+    }
+    previousMinimum = minimumImages
+    previousMaximumWidth = maximumLimitWidth
+    previousMaximumHeight = maximumLimitHeight
+    return { minimumImages, maximumWidth: maximumLimitWidth, maximumHeight: maximumLimitHeight }
+  })
+  const rawMediaLimits = source.media_type_dimension_limits
+  if (rawMediaLimits !== undefined && !Array.isArray(rawMediaLimits)) {
+    throw new LlmError('Arkme 模型目录中的图片格式维度规则无效', 'MALFORMED_RESPONSE')
+  }
+  const limitedMediaTypes = new Set<string>()
+  const mediaTypeDimensionLimits = (rawMediaLimits ?? []).map((value) => {
+    const limit = asRecord(value)
+    if (limit === undefined) throw new LlmError('Arkme 模型目录中的图片格式维度规则无效', 'MALFORMED_RESPONSE')
+    const mediaType = requiredCapabilityText(limit, 'media_type', '图片格式维度类型')
+    const maximumLongEdge = requiredCapabilityInteger(limit, 'maximum_long_edge', '图片格式长边上限')
+    const maximumShortEdge = requiredCapabilityInteger(limit, 'maximum_short_edge', '图片格式短边上限')
+    if (!allowedMediaTypes.includes(mediaType) || limitedMediaTypes.has(mediaType) || maximumLongEdge < maximumShortEdge
+      || (minimumWidth !== undefined && (maximumLongEdge < Math.max(minimumWidth, minimumHeight!)
+        || maximumShortEdge < Math.min(minimumWidth, minimumHeight!)))) {
+      throw new LlmError('Arkme 模型目录中的图片格式维度规则无效', 'MALFORMED_RESPONSE')
+    }
+    limitedMediaTypes.add(mediaType)
+    return { mediaType, maximumLongEdge, maximumShortEdge }
+  })
+  return {
+    allowedMediaTypes,
+    maximumImages,
+    maximumBytesPerImage,
+    ...(maximumTotalBytes === undefined ? {} : { maximumTotalBytes }),
+    ...(maximumPixels === undefined ? {} : { maximumPixels }),
+    ...(minimumWidth === undefined ? {} : { minimumWidth }),
+    ...(minimumHeight === undefined ? {} : { minimumHeight }),
+    ...(maximumWidth === undefined ? {} : { maximumWidth }),
+    ...(maximumHeight === undefined ? {} : { maximumHeight }),
+    ...(maximumAspectRatio === undefined ? {} : { maximumAspectRatio }),
+    countDimensionLimits,
+    mediaTypeDimensionLimits,
+  }
+}
+
+function parseCapability(value: unknown): ManagedModelCapability {
+  const source = asRecord(value)
+  if (source === undefined) throw new LlmError('Arkme 模型目录中的能力声明无效', 'MALFORMED_RESPONSE')
+  const contractVersion = requiredCapabilityText(source, 'contract_version', '能力合同版本')
+  const inputModalities = parseModalities(source.input_modalities, '输入模态')
+  const outputModalities = parseModalities(source.output_modalities, '输出模态')
+  if (!inputModalities.includes('text')) {
+    throw new LlmError('Arkme 模型目录中的输入模态缺少文本', 'MALFORMED_RESPONSE')
+  }
+  const hasImage = inputModalities.includes('image')
+  if (!hasImage && source.image !== undefined) {
+    throw new LlmError('Arkme 模型目录中的图片能力与输入模态不一致', 'MALFORMED_RESPONSE')
+  }
+  return {
+    contractVersion,
+    inputModalities,
+    outputModalities,
+    ...(hasImage ? { image: parseImageCapability(source.image) } : {}),
+  }
+}
+
+interface ManagedCatalogSnapshot {
+  models: DeepSeekCatalogModel[]
+  capabilities: Map<string, ManagedModelCapability>
+  reasoning: Map<string, LlmModelReasoningInfo>
+}
+
+function parseReasoning(value: unknown): LlmModelReasoningInfo {
+  const source = asRecord(value)
+  const efforts = source?.efforts
+  const defaultEffort = source?.default_effort
+  if (!Array.isArray(efforts) || efforts.length === 0 || efforts.length > 8
+    || efforts.some(effort => typeof effort !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/u.test(effort))
+    || new Set(efforts).size !== efforts.length || typeof defaultEffort !== 'string' || !efforts.includes(defaultEffort)) {
+    throw new LlmError('Arkme 模型目录中的推理选项无效', 'MALFORMED_RESPONSE')
+  }
+  const names: Record<string, string> = { off: '关闭', low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高' }
+  return {
+    efforts: efforts.map((effort: string) => ({ id: ReasoningEffortId(effort), name: names[effort] ?? effort })),
+    defaultEffort: ReasoningEffortId(defaultEffort),
+  }
+}
+
+function parseManagedCatalog(payload: unknown): ManagedCatalogSnapshot {
   const envelope = asRecord(payload)
   if (envelope?.code !== 200) {
     const status = validHttpStatus(envelope?.code)
@@ -351,7 +550,9 @@ function parseManagedCatalog(payload: unknown): DeepSeekCatalogModel[] {
   }
 
   const seen = new Set<string>()
-  return items.map((value) => {
+  const capabilities = new Map<string, ManagedModelCapability>()
+  const reasoning = new Map<string, LlmModelReasoningInfo>()
+  const models = items.map((value) => {
     const item = asRecord(value)
     if (item?.provider !== ARKME_MANAGED_PROVIDER) {
       throw new LlmError('Arkme 模型目录包含无效提供商', 'MALFORMED_RESPONSE')
@@ -367,6 +568,8 @@ function parseManagedCatalog(payload: unknown): DeepSeekCatalogModel[] {
     if (defaultMaxTokens > maximumMaxTokens || maximumMaxTokens > contextWindow) {
       throw new LlmError(`Arkme 模型“${id}”的 Token 上限无效`, 'MALFORMED_RESPONSE')
     }
+    capabilities.set(id, parseCapability(item.capability))
+    reasoning.set(id, parseReasoning(item.reasoning))
     return {
       id,
       name: requiredCatalogText(item, 'display_name', '显示名称'),
@@ -374,6 +577,7 @@ function parseManagedCatalog(payload: unknown): DeepSeekCatalogModel[] {
       maxTokens: defaultMaxTokens,
     }
   })
+  return { models, capabilities, reasoning }
 }
 
 function waitForSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -401,7 +605,9 @@ class ManagedModelCatalog {
   private readonly baseUrl: string
   private readonly fetchImpl: typeof fetch
   private connectionSnapshot: DeepSeekConnectionOptions
-  private modelIds = new Set<string>(ARKME_MANAGED_FALLBACK_MODELS.map(model => model.id))
+  private modelIds = new Set<string>()
+  private capabilitySnapshot = new Map<string, ManagedModelCapability>()
+  private reasoningSnapshot = new Map<string, LlmModelReasoningInfo>()
   private hasRemoteSnapshot = false
   private refreshedAt = 0
   private refreshPromise: Promise<void> | undefined
@@ -413,15 +619,32 @@ class ManagedModelCatalog {
   ) {
     this.baseUrl = managedAiBaseUrl(intelligentBaseUrl)
     this.fetchImpl = fetchImpl
-    this.connectionSnapshot = managedConnection(this.baseUrl, ARKME_MANAGED_FALLBACK_MODELS)
+    this.connectionSnapshot = managedConnection(this.baseUrl, [])
   }
 
   connection(): DeepSeekConnectionOptions {
     return this.connectionSnapshot
   }
 
+  capability(model: string): ManagedModelCapability {
+    const capability = this.capabilitySnapshot.get(model)
+    if (capability === undefined) {
+      throw new LlmError(`当前 Arkme 托管服务不支持模型“${model}”，请重新选择模型`, 'UNKNOWN_MODEL')
+    }
+    return capability
+  }
+
+  reasoning(model: string): LlmModelReasoningInfo {
+    this.assertModel(model)
+    return this.reasoningSnapshot.get(model)!
+  }
+
   private isFresh(): boolean {
     return this.hasRemoteSnapshot && Date.now() - this.refreshedAt < ARKME_MANAGED_CATALOG_TTL_MS
+  }
+
+  private canUseLastGood(): boolean {
+    return this.hasRemoteSnapshot && Date.now() - this.refreshedAt < ARKME_MANAGED_CATALOG_MAX_STALE_MS
   }
 
   private async fetchCatalog(signal?: AbortSignal): Promise<void> {
@@ -464,9 +687,11 @@ class ManagedModelCatalog {
         if (controller.signal.aborted) throw error
         throw new LlmError('Arkme 模型目录返回异常', 'MALFORMED_RESPONSE', { cause: error })
       }
-      const models = parseManagedCatalog(payload)
-      this.connectionSnapshot = managedConnection(this.baseUrl, models)
-      this.modelIds = new Set(models.map(model => model.id))
+      const snapshot = parseManagedCatalog(payload)
+      this.connectionSnapshot = managedConnection(this.baseUrl, snapshot.models)
+      this.modelIds = new Set(snapshot.models.map(model => model.id))
+      this.capabilitySnapshot = snapshot.capabilities
+      this.reasoningSnapshot = snapshot.reasoning
       this.hasRemoteSnapshot = true
       this.refreshedAt = Date.now()
     } catch (error) {
@@ -498,19 +723,18 @@ class ManagedModelCatalog {
     if (this.isFresh()) return
     try {
       await this.refresh()
-    } catch {
-      // Keep the last-good snapshot. Before the first successful refresh this is the legacy Flash route.
+    } catch (error) {
+      if (!this.canUseLastGood()) throw error
     }
   }
 
   async ensureModel(model: string, signal?: AbortSignal): Promise<void> {
     const known = this.modelIds.has(model)
-    if ((known && !this.hasRemoteSnapshot) || this.isFresh()) return
+    if (this.isFresh()) return
     try {
       await this.refresh(signal)
     } catch (error) {
-      if (signal?.aborted === true) throw error
-      if (!known) throw error
+      if (signal?.aborted === true || !this.canUseLastGood() || !known) throw error
     }
   }
 
@@ -525,6 +749,7 @@ class ManagedAiLlmAdapter extends LlmAdapter {
   constructor(
     private readonly delegate: DeepSeekAdapter,
     private readonly catalog: ManagedModelCatalog,
+    private readonly transport: ManagedAiTransport,
   ) {
     super()
   }
@@ -540,7 +765,11 @@ class ManagedAiLlmAdapter extends LlmAdapter {
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     assertManagedProvider(provider)
     await this.catalog.refreshForListing()
-    return await this.delegate.listModels(provider)
+    const models = await this.delegate.listModels(provider)
+    return models.map(model => ({
+      ...model,
+      inputModalities: this.catalog.capability(model.id).inputModalities,
+    }))
   }
 
   override async resolveModel(
@@ -551,7 +780,8 @@ class ManagedAiLlmAdapter extends LlmAdapter {
     assertManagedProvider(provider)
     await this.catalog.ensureModel(model, signal)
     this.catalog.assertModel(model)
-    return await this.delegate.resolveModel(provider, model, signal)
+    const resolved = await this.delegate.resolveModel(provider, model, signal)
+    return { ...resolved, inputModalities: this.catalog.capability(model).inputModalities, reasoning: this.catalog.reasoning(model) }
   }
 
   async prepareCall(
@@ -573,7 +803,7 @@ class ManagedAiLlmAdapter extends LlmAdapter {
       assertManagedProvider(options.provider)
       await this.catalog.ensureModel(options.model, options.signal)
       this.catalog.assertModel(options.model)
-      yield* keepToolCallIdentity(this.delegate.stream(options))
+      yield* keepToolCallIdentity(this.transport.stream(options, this.catalog.capability(options.model)))
     } catch (error) {
       throw localizeManagedAiError(error)
     }
@@ -581,17 +811,26 @@ class ManagedAiLlmAdapter extends LlmAdapter {
 }
 
 export function createManagedAiLlmAdapter(options: ManagedAiLlmAdapterOptions): LlmAdapter {
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch
+  const resolveAnonymousUserId = options.resolveAnonymousUserId ?? getOrCreateAnonymousUserId
   const catalog = new ManagedModelCatalog(
     options.intelligentBaseUrl,
     options.credentialOwner,
-    options.fetchImpl ?? globalThis.fetch,
+    fetchImpl,
   )
   const delegate = new DeepSeekAdapter({
     options: () => catalog.connection(),
     resolveApiKey: async () => await resolveBearer(options.credentialOwner),
-    resolveUserId: options.resolveAnonymousUserId ?? getOrCreateAnonymousUserId,
+    resolveUserId: resolveAnonymousUserId,
   })
-  return new ManagedAiLlmAdapter(delegate, catalog)
+  const transport = new ManagedAiTransport({
+    baseUrl: managedAiBaseUrl(options.intelligentBaseUrl),
+    resolveAttachmentReader: options.resolveAttachmentReader ?? (() => undefined),
+    fetchImpl,
+    resolveBearer: async () => await resolveBearer(options.credentialOwner),
+    resolveAnonymousUserId,
+  })
+  return new ManagedAiLlmAdapter(delegate, catalog, transport)
 }
 
 export function registerManagedAiProvider(

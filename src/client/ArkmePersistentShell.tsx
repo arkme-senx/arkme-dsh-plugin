@@ -1,6 +1,6 @@
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
-  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent,
+  type ReactNode, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent,
 } from 'react'
 import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionSearchResultItem } from '@deepseek-ai/dsh-client-runtime/client'
@@ -9,9 +9,13 @@ import type {} from './slots-contract.js'
 import type { ArkmeAuthSnapshot, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
+import { ArkmeQuickAddButton } from './ArkmeQuickAdd.js'
+import { arkmePrependSourceByIdentity } from './source-identity.js'
 import { ArkmeSurface } from './ArkmeSidebar.js'
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
 import type { ArkmeDshMessageSearchResult } from './ArkmeSearchSurface.js'
+import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
+import { ContactDirectoryAddDialog } from './redesign/contacts/ContactDirectoryAddDialog.js'
 import { ContactDirectorySurface } from './redesign/contacts/ContactDirectorySurface.js'
 import { DirectoryDetailPane } from './redesign/contacts/DirectoryDetailPane.js'
 import { UnmarkedSpeakerDetail } from './redesign/contacts/UnmarkedSpeakerDetail.js'
@@ -56,7 +60,7 @@ const ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH = 76
 const ARKME_PERSISTENT_NAVIGATION_WIDTH = 72
 const ARKME_PERSISTENT_DIVIDER_BUDGET = ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH - ARKME_PERSISTENT_NAVIGATION_WIDTH
 const ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH = 64
-const ARKME_PERSISTENT_DIRECTORY_AVATAR_ONLY_WIDTH = 200
+const ARKME_PERSISTENT_DIRECTORY_COMPACT_WIDTH = 200
 const ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH = ARKME_PERSISTENT_NAVIGATION_WIDTH
   + ARKME_PERSISTENT_DIVIDER_BUDGET
   + ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH
@@ -118,7 +122,7 @@ export function ArkmePersistentClientRuntime() {
     return arkmePresentationMaintenance.start()
   }, [avatarScopeKey])
 
-  useArkmeRealtimeClientEvents(auth, ui.authRevision, true)
+  useArkmeRealtimeClientEvents(auth, ui.authRevision, true, { ownsMessagePreparing: true })
 
   useEffect(() => {
     if (!shouldRestoreWebAuthenticatedWorkspace(auth, ui.mode)) return
@@ -146,12 +150,25 @@ export type ArkmePersistentSidebarProps = PropsRuntime<'sidebar'>
     openDshSession?(sessionId: string): void
   }
 
-/** Arkme permanently owns the DSH sidebar seat so navigation stays stable across Arkme and Harness conversations. */
+/** Only the two directory panels are retained; account keys delimit their lifetime. */
+function PersistentDirectoryPanel({ active, mode, children }: { active: boolean; mode: 'contacts' | 'conversations'; children: ReactNode }) {
+  const [visited, setVisited] = useState(active)
+  useEffect(() => { if (active) setVisited(true) }, [active])
+  if (!active && !visited) return null
+  return <div hidden={!active} aria-hidden={!active || undefined}
+    style={{ ...styles.taskDirectory, ...(active ? {} : { display: 'none' }) }}
+    data-arkme-directory-mode={active ? mode : undefined} data-arkme-retained-directory={mode}>
+    {children}
+  </div>
+}
+
+/** Arkme permanently owns the DSH sidebar seat. */
 export function ArkmePersistentSidebar({
   collapsed, width, useSessions, renderSlot, closeDetails,
   searchDshMessages = async () => ({ items: [], hasMore: false }), openDshSession = () => undefined,
 }: ArkmePersistentSidebarProps) {
   const sessionState = useSessions(state => state)
+  const directorySnapshot = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot, arkmeChatDirectory.getSnapshot)
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const recordRevision = useSyncExternalStore(
     arkmeUi.subscribe, arkmeUi.getRecordRevision, arkmeUi.getRecordRevision,
@@ -170,6 +187,13 @@ export function ArkmePersistentSidebar({
   const handoffControllerRef = useRef<AbortController>()
   const contactsContextRef = useRef({ accountKey: contactsAccountKey, contactsMode })
   contactsContextRef.current = { accountKey: contactsAccountKey, contactsMode }
+  const [contactAddSession, setContactAddSession] = useState<{ accountKey: string | undefined }>()
+  const [contactsAddedRevision, setContactsAddedRevision] = useState(0)
+  useEffect(() => {
+    if (!contactsMode || loginMode || ui.calendarOpen === true || contactAddSession?.accountKey !== contactsAccountKey) {
+      setContactAddSession(undefined)
+    }
+  }, [contactsMode, loginMode, ui.calendarOpen, contactsAccountKey, contactAddSession])
   const [sendToSelfState, setSendToSelfState] = useState<{
     userId: number
     source: ArkmeSourceItem
@@ -191,7 +215,7 @@ export function ArkmePersistentSidebar({
     collapsed, hostSidebarWidth, preferredSidebarWidth, compactSidebarWidthOverride,
   )
   const renderedDirectoryWidth = renderedSidebarWidth - ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
-  const avatarOnly = !contactsMode && renderedDirectoryWidth <= ARKME_PERSISTENT_DIRECTORY_AVATAR_ONLY_WIDTH
+  const compactDirectory = !contactsMode && renderedDirectoryWidth <= ARKME_PERSISTENT_DIRECTORY_COMPACT_WIDTH
   useEffect(() => {
     if (authenticatedUserId === undefined) {
       setSendToSelfState(undefined)
@@ -210,7 +234,7 @@ export function ArkmePersistentSidebar({
   }, [authenticatedUserId, recordRevision])
   const sendToSelfSource = sendToSelfState !== undefined && sendToSelfState.userId === authenticatedUserId
     ? sendToSelfState.source
-    : undefined
+    : directorySnapshot.projection?.sendToSelf
   const searchDsh = useCallback(async (query: string, signal: AbortSignal): Promise<ArkmeDshMessageSearchResult> => {
     const result = await searchDshMessages(query, signal)
     return {
@@ -237,7 +261,10 @@ export function ArkmePersistentSidebar({
   useEffect(() => {
     if (!contactsMode) handoffControllerRef.current?.abort()
   }, [contactsMode, contactsAccountKey, contacts.generation])
-  useEffect(() => () => { handoffControllerRef.current?.abort() }, [])
+  useEffect(() => () => {
+    handoffControllerRef.current?.abort()
+    contactsContextRef.current = { ...contactsContextRef.current, contactsMode: false }
+  }, [])
 
   const beginSidebarResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
@@ -343,7 +370,7 @@ export function ArkmePersistentSidebar({
     {sidebarSizingStyle}
     <ArkmeProductNavigation compact={false} hosted taskExpanded locked />
     <div style={styles.taskDirectory} data-arkme-directory-mode="web-locked">
-      <ArkmeNavigation wide avatarOnly={avatarOnly} embeddedProductShell showHarnessEntry lockedDirectory />
+      <ArkmeNavigation wide compactDirectory={compactDirectory} embeddedProductShell showHarnessEntry lockedDirectory />
     </div>
     {sidebarResizeHandle}
   </aside> : <aside
@@ -375,15 +402,34 @@ export function ArkmePersistentSidebar({
       taskExpanded
       currentSessionId={sessionState.current}
     />
-    {directoryVisible && <div style={styles.taskDirectory} data-arkme-directory-mode={contactsMode ? 'contacts' : 'conversations'}>
-      {contactsMode ? <ContactDirectorySurface
+    <PersistentDirectoryPanel key={`${contactsAccountKey}:contacts`} active={directoryVisible && contactsMode} mode="contacts">
+      <ContactDirectorySurface active={directoryVisible && contactsMode}
         accountKey={contactsAccountKey ?? ''} selection={scopedContacts.selection} refreshRevision={scopedContacts.refreshRevision}
+        contactsAddedRevision={contactsAddedRevision}
+        cacheFresh={contactsDirectoryCache?.fresh ?? false}
         expandedSections={scopedContacts.expandedSections}
+        contactProfiles={scopedContacts.contactProfiles}
+        toolbarActions={<ArkmeQuickAddButton
+          notificationActivationRevision={ui.notificationActivationRevision ?? 0}
+          onContactAdd={() => { setContactAddSession({ accountKey: contactsAccountKey }) }}
+          onSourceCreated={source => {
+            const context = contactsContextRef.current
+            if (context.accountKey !== contactsAccountKey || !context.contactsMode) return
+            arkmeContactsTab.invalidateDirectoryCache()
+            arkmeChatDirectory.publish(arkmePrependSourceByIdentity(source, arkmeChatDirectory.getSnapshot().sources))
+            arkmeUi.selectSource(source)
+          }}
+          onBotCreated={bot => {
+            const context = contactsContextRef.current
+            if (context.accountKey !== contactsAccountKey || !context.contactsMode) return
+            arkmeContactsTab.invalidateDirectoryCache()
+            arkmeUi.openBotConversation(bot)
+          }}
+        />}
         {...(contactsDirectoryCache === undefined ? {} : {
           initialState: contactsDirectoryCache.state,
-          cacheFresh: contactsDirectoryCache.fresh,
         })}
-        onStateChange={(state, refreshed) => { arkmeContactsTab.cacheDirectoryState(state, refreshed) }}
+        onStateChange={(state, refreshed, acknowledgedProfiles) => { arkmeContactsTab.cacheDirectoryState(state, refreshed, acknowledgedProfiles) }}
         onSelectionChange={selection => { arkmeContactsTab.activateAccount(contactsAccountKey); arkmeContactsTab.select(selection) }}
         onExpandedChange={(section, expanded) => { arkmeContactsTab.setSectionExpanded(section, expanded) }}
         onOpenGroup={sourceRef => {
@@ -414,9 +460,13 @@ export function ArkmePersistentSidebar({
           }).catch(() => undefined)
           arkmeUi.openBotConversation(bot)
         }}
-      /> : <ArkmeNavigation
+      />
+    </PersistentDirectoryPanel>
+    <PersistentDirectoryPanel key={`${contactsAccountKey}:conversations`} active={directoryVisible && !contactsMode} mode="conversations">
+      <ArkmeNavigation
+        active={directoryVisible && !contactsMode}
         wide
-        avatarOnly={avatarOnly}
+        compactDirectory={compactDirectory}
         embeddedProductShell
         showHarnessEntry
         currentSessionId={sessionState.current}
@@ -424,8 +474,26 @@ export function ArkmePersistentSidebar({
         searchDshMessages={searchDsh}
         onOpenDshSession={sessionId => { openDshSession(sessionId); arkmeUi.showHarness() }}
         {...(sendToSelfSource === undefined ? {} : { sendToSelfSource })}
-      />}
-    </div>}
+      />
+    </PersistentDirectoryPanel>
+    {directoryVisible && contactsMode && contactAddSession !== undefined && contactAddSession.accountKey === contactsAccountKey && <ContactDirectoryAddDialog
+      shareWebsite={authState.config?.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE}
+      onClose={() => { setContactAddSession(undefined) }}
+      onAdded={source => {
+        const auth = arkmeAuthStore.getSnapshot().auth
+        const currentAccountKey = auth?.status === 'authenticated' ? `${auth.environment}:${String(auth.userId)}` : undefined
+        if (currentAccountKey !== contactAddSession.accountKey) return
+        arkmeContactsTab.invalidateDirectoryCache()
+        arkmeChatDirectory.publish(arkmePrependSourceByIdentity(source, arkmeChatDirectory.getSnapshot().sources))
+        const context = contactsContextRef.current
+        if (context.accountKey !== currentAccountKey) return
+        // Retained hidden directories consume this refresh when they become active again.
+        setContactsAddedRevision(value => value + 1)
+        if (!context.contactsMode) return
+        // A late result from a closed dialog must not dismiss a newer dialog.
+        setContactAddSession(current => current === contactAddSession ? undefined : current)
+      }}
+    />}
     {directoryVisible && !contactsMode && sidebarResizeHandle}
   </aside>
 }
@@ -468,6 +536,8 @@ export function ArkmePersistentWorkspace({
     <DeepSeekHarnessSurface
       visible={harnessVisible}
       nativeSettings={webLockedHarness}
+      accountId={authenticatedUserId}
+      followSession={ui.mode === 'harness'}
     />
     {!webLockedHarness && <div
         data-arkme-owned="arkme-conversation-layer"
@@ -493,6 +563,7 @@ export function ArkmePersistentWorkspace({
       {scopedContacts.selection.kind !== 'none' && <button type="button" className="arkme-directory-mobile-back" onClick={() => { arkmeContactsTab.clear() }}>返回联系人目录</button>}
       <DirectoryDetailPane
         accountKey={contactsAccountKey ?? ''} selection={scopedContacts.selection}
+        onProfileUpdated={profile => { if (contactsAccountKey !== undefined) arkmeContactsTab.updateContactProfile(contactsAccountKey, profile) }}
         onSelectionChange={selection => { arkmeContactsTab.activateAccount(contactsAccountKey); arkmeContactsTab.select(selection) }}
         onSourceActivated={source => {
           const current = arkmeContactsTab.getSnapshot()

@@ -10,6 +10,8 @@ const SUMMARY_DEBOUNCE_MS = 180
 const SUMMARY_POLL_MS = 15_000
 const SUMMARY_MAX_POLL_MS = 60_000
 const DETAIL_CACHE_TTL_MS = 30_000
+const MAX_CACHED_DETAILS = 100
+const MAX_CACHED_SUMMARIES = 2_000
 
 export interface ArkmeMessageReadReceiptTarget {
   sourceRef: string
@@ -43,6 +45,7 @@ interface DetailCacheEntry {
   expiresAtMillis: number
   pending: Promise<ArkmeMessageReadReceiptDetail>
   value?: ArkmeMessageReadReceiptDetail
+  controller: AbortController
 }
 
 export interface ArkmeMessageReadReceiptStoreOptions {
@@ -98,7 +101,13 @@ export class ArkmeMessageReadReceiptStore {
   private readonly visible = new Set<string>()
   private readonly detailCache = new Map<string, DetailCacheEntry>()
   private readonly detailControllers = new Set<AbortController>()
+  private readonly detailObservers = new Map<string, {
+    target: ArkmeMessageReadReceiptTarget
+    listeners: Set<() => void>
+    timer: ReturnType<typeof setTimeout> | undefined
+  }>()
   private accountUserId: number | undefined
+  private accountScope: string | undefined
   private generation = 0
   private revision = 0
   private foreground = true
@@ -114,7 +123,7 @@ export class ArkmeMessageReadReceiptStore {
       'source.read-receipts.summary-list', { sourceRef, items }, signal,
     ))
     this.loadDetail = options.loadDetail ?? (async (sourceRef, itemUid, sequence, signal) => await callArkme(
-      'source.read-receipts.detail', { sourceRef, itemUid, sequence }, signal,
+      'source.read-receipts.detail', { sourceRef, itemUid, sequence, basicOnly: true }, signal,
     ))
     this.now = options.now ?? Date.now
   }
@@ -125,12 +134,14 @@ export class ArkmeMessageReadReceiptStore {
   }
 
   readonly getSnapshot = (): number => this.revision
+  readonly getAccountGeneration = (): number => this.generation
 
-  activateAccount(userId: number | undefined): void {
+  activateAccount(userId: number | undefined, scope = userId === undefined ? undefined : String(userId)): void {
     const normalized = userId !== undefined && Number.isSafeInteger(userId) && userId > 0 ? userId : undefined
-    if (this.accountUserId === normalized) return
+    if (this.accountUserId === normalized && this.accountScope === scope) return
     const preserveMountedTargets = this.accountUserId === undefined && normalized !== undefined
     this.accountUserId = normalized
+    this.accountScope = scope
     this.generation += 1
     this.cancelScheduledWork()
     for (const controller of this.detailControllers) controller.abort()
@@ -143,6 +154,8 @@ export class ArkmeMessageReadReceiptStore {
       this.visible.clear()
     }
     this.detailCache.clear()
+    for (const observer of this.detailObservers.values()) if (observer.timer !== undefined) clearTimeout(observer.timer)
+    this.detailObservers.clear()
     this.failureCount = 0
     this.publish()
     if (preserveMountedTargets) this.scheduleFlush(0)
@@ -162,7 +175,9 @@ export class ArkmeMessageReadReceiptStore {
       target: normalized,
       registrations: (current?.registrations ?? 0) + 1,
     })
-    if (!this.entries.has(key)) this.entries.set(key, { target: normalized, status: 'unknown' })
+    const entry = this.entries.get(key)
+    if (entry === undefined) this.entries.set(key, { target: normalized, status: 'unknown' })
+    else if (entry.target.sourceRef !== normalized.sourceRef) this.entries.set(key, { ...entry, target: normalized, status: 'stale' })
     return () => {
       const registered = this.tracked.get(key)
       if (registered === undefined) return
@@ -172,6 +187,7 @@ export class ArkmeMessageReadReceiptStore {
       }
       this.tracked.delete(key)
       this.visible.delete(key)
+      this.trimCache()
       this.schedulePoll()
     }
   }
@@ -196,6 +212,7 @@ export class ArkmeMessageReadReceiptStore {
     if (!validTarget(target) || this.accountUserId === undefined) return
     const key = targetKey(target)
     this.entries.set(key, { target, status: 'provisional' })
+    this.trimCache()
     this.publish()
   }
 
@@ -215,13 +232,15 @@ export class ArkmeMessageReadReceiptStore {
     for (const [key, entry] of this.entries) {
       if (entry.target.sourceKey !== normalizedKey || entry.target.sequence > throughSequence) continue
       this.entries.set(key, { ...entry, status: 'stale' })
-      this.detailCache.delete(key)
       changed = true
     }
     for (const [key, entry] of this.detailCache) {
       if (entry.target.sourceKey === normalizedKey && entry.target.sequence <= throughSequence) {
-        this.detailCache.delete(key)
+        this.invalidateDetail(key)
       }
+    }
+    for (const [key, observer] of this.detailObservers) {
+      if (observer.target.sourceKey === normalizedKey && observer.target.sequence <= throughSequence) this.invalidateDetail(key)
     }
     if (!changed) return
     this.publish()
@@ -229,14 +248,16 @@ export class ArkmeMessageReadReceiptStore {
   }
 
   reconcile(): void {
-    if (this.accountUserId === undefined || this.visible.size === 0) return
+    if (this.accountUserId === undefined) return
+    for (const key of this.detailObservers.keys()) this.invalidateDetail(key)
+    if (this.visible.size === 0) return
     this.summaryController?.abort()
     let changed = false
     for (const key of this.visible) {
       const entry = this.entries.get(key)
       if (entry === undefined) continue
       this.entries.set(key, { ...entry, status: 'stale' })
-      this.detailCache.delete(key)
+      this.invalidateDetail(key)
       changed = true
     }
     if (changed) this.publish()
@@ -249,9 +270,51 @@ export class ArkmeMessageReadReceiptStore {
     if (!foreground) {
       if (this.pollTimer !== undefined) clearTimeout(this.pollTimer)
       this.pollTimer = undefined
+      for (const key of this.detailObservers.keys()) this.invalidateDetail(key)
       return
     }
     this.reconcile()
+  }
+
+  observeDetail(target: ArkmeMessageReadReceiptTarget, listener: () => void): () => void {
+    const key = targetKey(target)
+    let observer = this.detailObservers.get(key)
+    if (observer === undefined) {
+      observer = { target, listeners: new Set(), timer: undefined }
+      this.detailObservers.set(key, observer)
+    }
+    observer.target = target
+    observer.listeners.add(listener)
+    const current = observer
+    return () => {
+      current.listeners.delete(listener)
+      if (current.listeners.size > 0 || this.detailObservers.get(key) !== current) return
+      if (current.timer !== undefined) clearTimeout(current.timer)
+      this.detailObservers.delete(key)
+      const cached = this.detailCache.get(key)
+      if (cached?.value === undefined) {
+        cached?.controller.abort()
+        this.detailCache.delete(key)
+      }
+      this.trimCache()
+    }
+  }
+
+  private invalidateDetail(key: string): void {
+    this.detailCache.get(key)?.controller.abort()
+    this.detailCache.delete(key)
+    const observer = this.detailObservers.get(key)
+    if (observer === undefined) return
+    if (!this.foreground) {
+      if (observer.timer !== undefined) clearTimeout(observer.timer)
+      observer.timer = undefined
+      return
+    }
+    if (observer.timer !== undefined) return
+    observer.timer = setTimeout(() => {
+      observer.timer = undefined
+      if (this.foreground && this.detailObservers.get(key) === observer) for (const listener of observer.listeners) listener()
+    }, SUMMARY_DEBOUNCE_MS)
   }
 
   async detail(target: ArkmeMessageReadReceiptTarget, force = false): Promise<ArkmeMessageReadReceiptDetail> {
@@ -259,21 +322,34 @@ export class ArkmeMessageReadReceiptStore {
     if (!validTarget(target) || target.conversationKind !== 'group_chat') throw new Error('该消息不支持成员已读详情')
     const key = targetKey(target)
     const cached = this.detailCache.get(key)
-    if (!force && cached !== undefined && cached.expiresAtMillis > this.now()) {
+    if (cached !== undefined && sameTarget(target, cached.target)
+      && (cached.value === undefined || (!force && cached.expiresAtMillis > this.now()))) {
       return cached.value ?? await cached.pending
     }
+    cached?.controller.abort()
     const generation = this.generation
     const controller = new AbortController()
     this.detailControllers.add(controller)
     const entry: DetailCacheEntry = {
       target,
+      controller,
       expiresAtMillis: this.now() + DETAIL_CACHE_TTL_MS,
       pending: Promise.resolve(undefined as never),
     }
     entry.pending = this.loadDetail(target.sourceRef, target.itemUid, target.sequence, controller.signal)
       .then(result => {
-        if (generation !== this.generation || !sameTarget(target, result)) throw new Error('已读详情已失效')
+        if (generation !== this.generation || controller.signal.aborted || this.detailCache.get(key) !== entry
+          || !sameTarget(target, result)) throw new Error('已读详情已失效')
         entry.value = result
+        entry.expiresAtMillis = this.now() + DETAIL_CACHE_TTL_MS
+        const summary: ArkmeMessageReadReceiptSummary = {
+          itemUid: result.itemUid, sequence: result.sequence, readCount: result.readCount,
+          unreadCount: result.unreadCount, totalMemberCount: result.totalMemberCount,
+          status: result.unreadCount === 0 ? 'read' : result.readCount === 0 ? 'unread' : 'partially_read',
+        }
+        this.entries.set(key, { target, status: 'ready', summary })
+        this.publish()
+        this.trimCache()
         return result
       })
       .catch(error => {
@@ -282,7 +358,19 @@ export class ArkmeMessageReadReceiptStore {
       })
       .finally(() => { this.detailControllers.delete(controller) })
     this.detailCache.set(key, entry)
+    this.trimCache()
     return await entry.pending
+  }
+
+  private trimCache(): void {
+    for (const [key, entry] of this.detailCache) {
+      if (this.detailObservers.has(key) || entry.value === undefined) continue
+      if (entry.expiresAtMillis <= this.now() || this.detailCache.size > MAX_CACHED_DETAILS) this.detailCache.delete(key)
+    }
+    for (const key of this.entries.keys()) {
+      if (this.entries.size <= MAX_CACHED_SUMMARIES) break
+      if (!this.tracked.has(key) && !this.detailObservers.has(key)) this.entries.delete(key)
+    }
   }
 
   private publish(): void {
@@ -332,7 +420,12 @@ export class ArkmeMessageReadReceiptStore {
     const generation = this.generation
     const controller = new AbortController()
     this.summaryController = controller
-    for (const item of requested) this.entries.set(item.key, { ...item.entry, status: 'loading' })
+    const loadingEntries = new Map<string, ArkmeMessageReadReceiptEntry>()
+    for (const item of requested) {
+      const loading: ArkmeMessageReadReceiptEntry = { ...item.entry, status: 'loading' }
+      loadingEntries.set(item.key, loading)
+      this.entries.set(item.key, loading)
+    }
     this.publish()
     const groups = new Map<string, typeof requested>()
     for (const item of requested) {
@@ -356,6 +449,7 @@ export class ArkmeMessageReadReceiptStore {
             if (generation !== this.generation || controller.signal.aborted) return
             const summaries = new Map(result.items.map(item => [JSON.stringify([item.itemUid, item.sequence]), item]))
             for (const item of chunk) {
+              if (this.entries.get(item.key) !== loadingEntries.get(item.key)) continue
               const target = item.tracked.target
               const summary = result.sourceRef === target.sourceRef
                 ? summaries.get(JSON.stringify([target.itemUid, target.sequence]))
@@ -363,12 +457,18 @@ export class ArkmeMessageReadReceiptStore {
               this.entries.set(item.key, summary === undefined
                 ? { ...item.entry, status: 'error' }
                 : { target, status: 'ready', summary })
+              if (summary !== undefined && item.entry.summary !== undefined
+                && (summary.readCount !== item.entry.summary.readCount || summary.totalMemberCount !== item.entry.summary.totalMemberCount)) {
+                this.invalidateDetail(item.key)
+              }
               if (summary === undefined) failed = true
             }
           } catch (error) {
             if (generation !== this.generation || controller.signal.aborted) return
             failed = true
-            for (const item of chunk) this.entries.set(item.key, { ...item.entry, status: 'error' })
+            for (const item of chunk) {
+              if (this.entries.get(item.key) === loadingEntries.get(item.key)) this.entries.set(item.key, { ...item.entry, status: 'error' })
+            }
           }
         }
       }
@@ -377,7 +477,8 @@ export class ArkmeMessageReadReceiptStore {
         this.publish()
       }
     } finally {
-      if (this.summaryController === controller) this.summaryController = undefined
+      if (this.summaryController !== controller) return
+      this.summaryController = undefined
       this.summaryInFlight = false
       if (generation === this.generation && this.refreshQueued) this.scheduleFlush(0)
       else this.schedulePoll()

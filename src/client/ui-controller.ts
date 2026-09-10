@@ -11,7 +11,10 @@ function sameSelectedSource(left: ArkmeSourceItem | undefined, right: ArkmeSourc
     && left.unreadCount === right.unreadCount && left.hasUnreadMention === right.hasUnreadMention
     && left.badgeUnreadCount === right.badgeUnreadCount
     && left.notificationAllowed === right.notificationAllowed
+    && left.directMessageAdmissionApplicable === right.directMessageAdmissionApplicable
     && left.isMuted === right.isMuted && left.isPinned === right.isPinned
+    && left.chatPolicyUpdatedAtMillis === right.chatPolicyUpdatedAtMillis
+    && left.chatNotificationPolicyUpdatedAtMillis === right.chatNotificationPolicyUpdatedAtMillis
     && left.latestSequence === right.latestSequence
     && left.avatarRef === right.avatarRef && (left.avatarRefs ?? []).join('|') === (right.avatarRefs ?? []).join('|')
     && JSON.stringify(left.groupAvatar) === JSON.stringify(right.groupAvatar)
@@ -19,7 +22,7 @@ function sameSelectedSource(left: ArkmeSourceItem | undefined, right: ArkmeSourc
 
 function sameBot(left: ArkmeBotSummary | undefined, right: ArkmeBotSummary | undefined): boolean {
   if (left === undefined || right === undefined) return left === right
-  return left.botRef === right.botRef && left.name === right.name && left.provider === right.provider
+  return left.botRef === right.botRef && left.directoryKey === right.directoryKey && left.name === right.name && left.provider === right.provider
     && left.description === right.description && left.status === right.status && left.avatarRef === right.avatarRef
     && left.directChatAvailable === right.directChatAvailable
     && left.privateChatOutboundEnabled === right.privateChatOutboundEnabled
@@ -43,6 +46,7 @@ export interface ArkmeUiState {
   selectedBot?: ArkmeBotSummary
   /** Forces a real conversation-surface commit for every native notification click, including the current source. */
   notificationActivationRevision?: number
+  conversationUnreadJumpRevision?: number
   conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: number }
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   searchTarget?: { revision: number; query: string }
@@ -129,24 +133,26 @@ export class ArkmeUiController {
     this.leaveContacts()
     if (authenticated) {
       if (resetSelection) this.lastConversationDestination = undefined
-      const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _dialogFromSelection, ...stateWithoutSelection } = this.state
+      const { selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _dialogFromSelection, ...stateWithoutSelection } = this.state
       const { calendarOpen: _activeCalendar, productMode: _activeProductMode, webLoginDialogOpen: _dialogFromCalendar, ...stateWithoutCalendar } = this.state
       const state = resetSelection ? stateWithoutSelection : stateWithoutCalendar
       const startsClientConversation = state.mode === 'login'
       if (startsClientConversation) this.lastConversationDestination = { kind: 'harness' }
       this.publish({
         ...state,
-        mode: startsClientConversation ? 'harness' : state.mode,
+        mode: startsClientConversation ? 'harness' : resetSelection && state.mode === 'bot' ? 'source' : state.mode,
         authRevision: this.state.authRevision + 1,
+        conversationUnreadJumpRevision: 0,
       })
       return
     }
     this.lastConversationDestination = undefined
-    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
+    const { selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
     this.publish({
       ...rest,
       mode: 'login',
       authRevision: this.state.authRevision + 1,
+        conversationUnreadJumpRevision: 0,
     })
   }
 
@@ -304,6 +310,11 @@ export class ArkmeUiController {
     })
   }
 
+  locateNextUnreadConversation(): void {
+    this.showConversations()
+    this.publish({ ...this.state, conversationUnreadJumpRevision: (this.state.conversationUnreadJumpRevision ?? 0) + 1 })
+  }
+
   showContacts(): void {
     const { recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
     this.publish({ ...rest, mode: 'source', productMode: 'contacts' })
@@ -426,6 +437,7 @@ export class ArkmeUiController {
       && next.productMode === this.state.productMode
       && next.calendarOpen === this.state.calendarOpen
       && next.notificationActivationRevision === this.state.notificationActivationRevision
+      && next.conversationUnreadJumpRevision === this.state.conversationUnreadJumpRevision
       && next.conversationTarget?.revision === this.state.conversationTarget?.revision
       && next.conversationTarget?.itemUid === this.state.conversationTarget?.itemUid
       && next.conversationTarget?.sendAtMillis === this.state.conversationTarget?.sendAtMillis

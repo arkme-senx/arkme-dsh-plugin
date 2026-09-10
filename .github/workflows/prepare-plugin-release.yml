@@ -14,6 +14,10 @@ on:
         required: true
         type: string
 
+env:
+  # 验证源码后显式构建，安装依赖时不重复构建。
+  ARKME_SKIP_PREPARE_BUILD: 'true'
+
 permissions:
   contents: write
   pull-requests: write
@@ -30,16 +34,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: 安装依赖
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
       - name: 写入发版元数据
         id: release
         env:
           RELEASE_BUMP: ${{ inputs.bump }}
           RELEASE_SUMMARY: ${{ inputs.summary }}
         run: node scripts/prepare-plugin-release.mjs --bump "$RELEASE_BUMP" --summary "$RELEASE_SUMMARY" >> "$GITHUB_OUTPUT"
+      - name: 安装依赖
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
       - name: 验证发版内容
         run: |
           pnpm test

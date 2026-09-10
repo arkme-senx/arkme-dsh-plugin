@@ -1,4 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
+import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
+import { postChatMessageCreation } from './direct-message-admission-service.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   MessageActionCapabilityCodec,
@@ -86,7 +88,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
   }
 
   async forwardToChat(input: Parameters<MessageActionGateway['forwardToChat']>[0]): Promise<ArkmeSourceSendResult> {
-    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+    const data = await postChatMessageCreation<Record<string, unknown>>(this.runtime,
       '/api/v1/chats/records/forward', {
         chat_session_uid: input.target.ownerRef,
         client_request_id: input.requestId,
@@ -190,7 +192,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
         render_kind: 'forward_records', schema_version: 1, forward_id: requestId,
         source_type: references[0]?.ownerKind === 'agent' ? 'agent' : 'quick_records',
         title: '转发快记', source_record_uids: sourceRecordUids, created_at: sendAtMillis,
-        summary_lines: references.slice(0, 3).map(reference => `${reference.senderName}: ${reference.textContent.trim().slice(0, 500)}`),
+        summary_lines: references.slice(0, 3).map(reference => `${reference.senderName}: ${arkmeEmojiTokenSafePrefix(reference.textContent.trim(), 500, 'codeUnits')}`),
         items: references.map((reference, index) => ({
           item_order: index,
           source_kind: reference.ownerKind === 'agent' ? 'agent_message' : reference.ownerKind === 'bot_chat' ? 'chat_relation' : 'record',
@@ -212,7 +214,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
           template_kind: 1,
           display_kind: 0,
           text: reference.textContent,
-          text_preview: reference.textContent.trim().slice(0, 500),
+          text_preview: arkmeEmojiTokenSafePrefix(reference.textContent.trim(), 500, 'codeUnits'),
         })),
       },
     }

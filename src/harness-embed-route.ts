@@ -1,3 +1,4 @@
+import { HARNESS_SESSION_CLIENT_ID, HARNESS_SESSION_CLIENT_PATH } from './harness-embed-contract.js'
 import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
@@ -42,9 +43,11 @@ export interface DshWebBootGraph {
 }
 
 interface HarnessEmbedRouteOptions {
+  modelClient?: DshWebBootEntry
   getGraph(): DshWebBootGraph
   installedPackageNames(): readonly string[]
   readRootHtml(request: IncomingMessage): Promise<string>
+  sessionClient?: { revision: string; apiPath: string }
   onError?(error: unknown): void
 }
 
@@ -166,6 +169,7 @@ function projectBootBatches(
 export function projectHarnessBootGraph(
   graph: DshWebBootGraph,
   installedPackageNames: readonly string[],
+  modelClient?: DshWebBootEntry,
 ): DshWebBootGraph {
   const requiredPackageNames = requiredBootPackages(graph.entries)
   const removedPackageNames = new Set([
@@ -183,6 +187,10 @@ export function projectHarnessBootGraph(
   }
   assertNoRemovedDependencies(entries, removedPackageNames)
   const batches = projectBootBatches(graph.batches, new Set(entries.map(entry => entry.id)))
+  if (modelClient && entries.some(entry => entry.id === '@deepseek-ai/dsh-client-ui-model-selection')) {
+    entries.push(modelClient)
+    batches?.push({ phase: 'application', url: modelClient.url, rev: modelClient.rev, entries: [modelClient.id] })
+  }
 
   return {
     rev: shortHash(JSON.stringify(batches === undefined ? entries : { entries, batches })),
@@ -229,8 +237,26 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
 
     try {
       const fullGraph = options.getGraph()
-      const projectedGraph = projectHarnessBootGraph(fullGraph, options.installedPackageNames())
-      const html = replaceHarnessBootGraph(await options.readRootHtml(request), fullGraph, projectedGraph)
+      const projectedGraph = projectHarnessBootGraph(fullGraph, options.installedPackageNames(), options.modelClient)
+      if (options.sessionClient !== undefined) {
+        const rev = options.sessionClient.revision
+        projectedGraph.entries.push({
+          id: HARNESS_SESSION_CLIENT_ID, url: HARNESS_SESSION_CLIENT_PATH, rev,
+          inject: [...requiredBootPackages(projectedGraph.entries)].filter(id => !id.endsWith('dsh-client-modules')),
+        })
+        projectedGraph.batches?.push({
+          phase: 'application', url: HARNESS_SESSION_CLIENT_PATH, rev, entries: [HARNESS_SESSION_CLIENT_ID],
+        })
+        projectedGraph.rev = shortHash(`${projectedGraph.rev}:${rev}`)
+      }
+      let html = replaceHarnessBootGraph(await options.readRootHtml(request), fullGraph, projectedGraph)
+      if (options.sessionClient !== undefined) {
+        const apiPath = options.sessionClient.apiPath
+        if (!/^\/[A-Za-z0-9/_-]+$/.test(apiPath) || !html.includes('</head>')) {
+          throw new Error('harness session observer configuration is invalid')
+        }
+        html = html.replace('</head>', `<meta name="arkme-session-api" content="${apiPath}"></head>`)
+      }
       const body = Buffer.from(html)
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',

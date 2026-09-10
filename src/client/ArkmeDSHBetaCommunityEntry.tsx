@@ -8,7 +8,7 @@ import type { ArkmeGroupAvatarPresentation, ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeAvatarMosaic, ArkmeSourceAvatar } from './ArkmeAvatar.js'
 
-type EntryPhase = 'loading' | 'hidden' | 'ready' | 'joining'
+type EntryPhase = 'hidden' | 'ready' | 'joining'
 
 interface ReadyEntry {
   groupAvatar: ArkmeGroupAvatarPresentation
@@ -29,7 +29,6 @@ const colors = {
 }
 
 const styles: Record<string, CSSProperties> = {
-  loading: { height: 80, flex: 'none' },
   section: { boxSizing: 'border-box' },
   sectionHeader: { display: 'flex', alignItems: 'center', padding: '8px 0 2px 12px' },
   sectionLabel: {
@@ -169,7 +168,7 @@ export function ArkmeDSHBetaCommunityJoinConfirmation({
 }
 
 export function ArkmeDSHBetaCommunityEntry({ onJoined }: ArkmeDSHBetaCommunityEntryProps) {
-  const [phase, setPhase] = useState<EntryPhase>('loading')
+  const [phase, setPhase] = useState<EntryPhase>('hidden')
   const [ready, setReady] = useState<ReadyEntry>()
   const [confirmationOpen, setConfirmationOpen] = useState(false)
   const epochRef = useRef(0)
@@ -177,7 +176,8 @@ export function ArkmeDSHBetaCommunityEntry({ onJoined }: ArkmeDSHBetaCommunityEn
 
   useEffect(() => {
     const epoch = ++epochRef.current
-    void callArkme<ArkmeDSHBetaCommunityEntryState>('dsh-beta-community.entry-state')
+    const controller = new AbortController()
+    void callArkme<ArkmeDSHBetaCommunityEntryState>('dsh-beta-community.entry-state', undefined, controller.signal)
       .then(async entry => {
         if (!entry.visible || entry.status !== 'ready' || entry.memberCount <= 0) return undefined
         const groupAvatar = entry.groupAvatar ?? {
@@ -204,7 +204,7 @@ export function ArkmeDSHBetaCommunityEntry({ onJoined }: ArkmeDSHBetaCommunityEn
           setPhase('hidden')
         }
       })
-    return () => { epochRef.current += 1 }
+    return () => { epochRef.current += 1; controller.abort() }
   }, [])
 
   const confirmJoin = (): void => {
@@ -233,8 +233,8 @@ export function ArkmeDSHBetaCommunityEntry({ onJoined }: ArkmeDSHBetaCommunityEn
     joinInFlightRef.current = pending
   }
 
-  if (phase === 'hidden') return null
-  if (phase === 'loading' || ready === undefined) return <div style={styles.loading} aria-hidden />
+  // Unknown/failed membership is not a visible entry and must not reserve sidebar space.
+  if (phase === 'hidden' || ready === undefined) return null
   return <>
     <ArkmeDSHBetaCommunityEntryContent
       avatarUrls={[]}

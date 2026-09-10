@@ -9,8 +9,13 @@ export interface OutgoingCallAssetHandlerOptions {
 }
 
 const ASSETS = {
+  'call-outgoing-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'call-incoming-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'video-outgoing-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'video-incoming-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'index.html': { contentType: 'text/html; charset=utf-8', cacheControl: 'no-store' },
   'bundle.js': { contentType: 'text/javascript; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'call-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'call-linear-strong.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'image_search.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'image_search_grey.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
@@ -19,6 +24,7 @@ const ASSETS = {
   'close.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'arrow_left.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'video_play_white.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'video-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'arkme-video-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'user-add-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'profile-circle-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
