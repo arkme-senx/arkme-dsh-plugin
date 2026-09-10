@@ -6,8 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { SessionId } from '@deepseek-ai/dsh-session'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { createRequire } from 'node:module'
 
 const dshRoot = process.env.ARKME_DSH_CHECKOUT
 const profile = process.env.ARKME_PACKED_PROFILE
@@ -18,11 +17,14 @@ if (new URL(fixture.url).hostname !== '127.0.0.1') throw new Error('Owner must b
 const manifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
 if (!/^file:.*\.tgz$/.test(manifest.dependencies?.['@senguoyun/dsh-arkme'] ?? '')) throw new Error('Officially install an immutable tgz first')
 const { launchWebScaffold } = await import(/* @vite-ignore */ pathToFileURL(join(dshRoot, 'apps/web/tests/scaffold.ts')).href)
+const { connectFreshWorkspace } = await import(/* @vite-ignore */ pathToFileURL(join(dshRoot, 'apps/web/tests/support.ts')).href)
+const { LlmAdapter } = await import(/* @vite-ignore */ pathToFileURL(join(dshRoot, 'packages/llm/llm/src/index.ts')).href)
+const { chromium } = createRequire(join(dshRoot, 'apps/web/package.json'))('playwright')
 
 describe('packed Arkme group governance through official DSH session and MCP', () => {
   it('discovers, calls, and revokes all six atomic capabilities through the real owners', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme group governance '))
-    let scaffold, agentHandle
+    let scaffold, browser
     const tokenParts = [{ alg: 'HS256', typ: 'JWT' }, { user_id: 1001, client_id: 7, exp: Math.floor(Date.now() / 1000) + 600 }]
       .map(value => Buffer.from(JSON.stringify(value)).toString('base64url')).join('.')
     const token = `${tokenParts}.${createHmac('sha256', 'isolated-group-governance').update(tokenParts).digest('base64url')}`
@@ -56,33 +58,74 @@ describe('packed Arkme group governance through official DSH session and MCP', (
       expect(await service.testLogin(1001)).toMatchObject({ status: 'authenticated', userId: 1001 })
       const names = ['query_group_message_moderation_targets', 'withdraw_group_messages', 'batch_get_group_members', 'remove_group_members', 'set_group_join_restrictions', 'list_group_join_restrictions']
       await expect.poll(() => scaffold.ctx.tools.schemas().map(tool => tool.name), { timeout: 30_000 }).toEqual(expect.arrayContaining(names.map(name => `mcp__arkme__${name}`)))
-      agentHandle = await scaffold.ctx.agents.create({ sessionId: SessionId(`group-${randomUUID()}`), meta: { cwd: scaffold.workspaceCwd }, setup: agentCtx => scaffold.ctx.agentPresets.mount(agentCtx).then(() => undefined) })
-      const agent = agentHandle.agent
-      const session = agent.session
-      for (const name of ['arkme_message_withdraw', 'arkme_group_member_remove', 'arkme_group_join_restriction_set', 'arkme_group_join_restrictions']) expect(scaffold.ctx.tools.get(name, agent)).toBeUndefined()
-      let count = 0
-      const call = async (name, args, error = false) => {
-        const callId = CallId(`group-${++count}`); const fullName = `mcp__arkme__${name}`
-        session.append('tool/call', { turn: 1, step: count, callId, name: fullName, arguments: JSON.stringify(args) })
-        const result = await scaffold.ctx.tools.execute({ callId, name: fullName, arguments: args, agent, signal: new AbortController().signal })
-        expect(result.isError, JSON.stringify(result.content)).toBe(error)
-        return result.content.filter(item => item.type === 'text').map(item => item.text).join('\n')
-      }
+      for (const name of ['arkme_message_withdraw', 'arkme_group_member_remove', 'arkme_group_join_restriction_set', 'arkme_group_join_restrictions']) expect(scaffold.ctx.tools.schemas().some(tool => tool.name === name)).toBe(false)
       const locator = { item_id: 'dsh-member', chat_session_uid: fixture.group, target_user_ref: fixture.user_ref }
-      expect(await call('batch_get_group_members', { items: [locator] })).toContain('"version":0')
-      await call('set_group_join_restrictions', { items: [{ ...locator, expected_version: 0 }] }, true)
-      expect(await call('remove_group_members', { items: [{ ...locator, expected_version: 0, prevent_rejoin: true }] })).toContain('succeeded')
-      expect(await call('remove_group_members', { items: [{ ...locator, expected_version: 0 }] })).toContain('stale_version')
-      expect(await call('query_group_message_moderation_targets', { chat_session_uid: fixture.group, sender_user_refs: [fixture.user_ref] })).toContain('"sequence":3')
-      expect(await call('withdraw_group_messages', { items: [{ item_id: 'dsh-message', chat_session_uid: fixture.group, sequence: 3 }] })).toContain('succeeded')
-      expect(await call('list_group_join_restrictions', { chat_session_uid: fixture.group })).toContain(fixture.user_ref)
-      expect(await call('set_group_join_restrictions', { items: [{ ...locator, expected_version: 1, restricted: true }] })).toContain('succeeded')
+      const steps = [
+        ['batch_get_group_members', { items: [locator] }, '"version":0'],
+        ['remove_group_members', { items: [{ ...locator, expected_version: 0, prevent_rejoin: true }] }, 'succeeded'],
+        ['remove_group_members', { items: [{ ...locator, expected_version: 0 }] }, 'stale_version'],
+        ['query_group_message_moderation_targets', { chat_session_uid: fixture.group, sender_user_refs: [fixture.user_ref] }, '"sequence":3'],
+        ['withdraw_group_messages', { items: [{ item_id: 'dsh-message', chat_session_uid: fixture.group, sequence: 3 }] }, 'succeeded'],
+        ['list_group_join_restrictions', { chat_session_uid: fixture.group }, fixture.user_ref],
+        ['set_group_join_restrictions', { items: [{ ...locator, expected_version: 1, restricted: true }] }, 'succeeded'],
+      ]
+      // Only model output is deterministic: the browser submission, agent loop,
+      // tool grants, official MCP transport and downstream owners remain real.
+      class GovernanceAdapter extends LlmAdapter {
+        count = 0
+        providerInfo() { return { id: 'group-e2e', name: 'Group E2E' } }
+        async listModels() { return [{ provider: 'group-e2e', id: 'governance', name: 'Group Governance' }] }
+        async resolveModel() { return { provider: 'group-e2e', id: 'governance', name: 'Group Governance', contextWindow: 128000 } }
+        async *stream() {
+          const step = steps[this.count++]
+          if (step) {
+            const id = `group-browser-${this.count}`
+            const name = `mcp__arkme__${step[0]}`
+            const args = JSON.stringify(step[1])
+            yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+            yield { type: 'tool-call-delta', index: 0, id, name, argumentsDelta: args }
+            yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name, arguments: args } }
+            yield { type: 'finish', reason: { kind: 'tool-calls' } }
+          } else {
+            yield { type: 'block-start', index: 0, blockType: 'text' }
+            yield { type: 'block-end', index: 0, block: { type: 'text', text: 'GROUP_GOVERNANCE_E2E_OK' } }
+            yield { type: 'finish', reason: { kind: 'stop' } }
+          }
+        }
+      }
+      const adapter = new GovernanceAdapter()
+      scaffold.ctx.effect(() => scaffold.ctx.llm.registerAdapter(['group-e2e'], adapter))
+      await scaffold.ctx.agentDefaultModel.saveSelection({ provider: 'group-e2e', model: 'governance' })
+      const events = []
+      scaffold.ctx.on('session/event', (_session, event) => { if (event.type === 'tool/result') events.push(event) })
+      browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
+      const page = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: 'en-US' })
+      await page.addInitScript(() => localStorage.setItem('dsh.locale', 'en'))
+      await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+      const frameElement = await page.waitForSelector('iframe[title="DeepSeek Harness"]')
+      const frame = await frameElement.contentFrame()
+      await connectFreshWorkspace(frame, scaffold.workspaceCwd)
+      const input = frame.locator('[data-composer-input]').first()
+      await input.fill('移出指定刷屏成员并禁止再次加入，批量撤回其历史消息，然后核验状态。')
+      const settled = scaffold.whenTurnSettled(60000)
+      await input.press('Enter')
+      await settled
+      if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
+      expect(adapter.count, await frame.locator("body").innerText()).toBe(steps.length + 1)
+      await frame.getByText('GROUP_GOVERNANCE_E2E_OK', { exact: true }).last().waitFor()
+      expect(events).toHaveLength(steps.length)
+      for (let i = 0; i < steps.length; i++) {
+        expect(events[i].data.message.content[0].isError).toBe(false)
+        const content = events[i].data.message.content[0].content.filter(item => item.type === 'text').map(item => item.text).join('\n')
+        expect(content).toContain(steps[i][2])
+      }
+      if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
       await service.logout()
       await expect.poll(() => scaffold.ctx.tools.schemas().some(tool => tool.name.startsWith('mcp__arkme__')), { timeout: 10_000 }).toBe(false)
       await writeFile(ready + '.finished', 'verified\n', { mode: 0o600 })
     } finally {
       await scaffold?.ctx.get('arkmeData')?.logout().catch(() => {})
-      await agentHandle?.dispose()
+      await browser?.close()
       await scaffold?.close()
       await new Promise(resolve => proxy.close(resolve))
       await rm(root, { recursive: true, force: true })
