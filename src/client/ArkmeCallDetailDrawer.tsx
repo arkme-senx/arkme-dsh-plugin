@@ -5,11 +5,7 @@ import { TimerIcon } from '@phosphor-icons/react/dist/csr/Timer'
 import type { ArkmeCallDetail, ArkmeTimelineItem } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { ArkmeCallTranscript } from './ArkmeCallTranscript.js'
-import { ArkmeCallVideoClips } from './ArkmeCallVideoClips.js'
-import { ArkmeUserAvatar } from './ArkmeAvatar.js'
-import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown'
-import { CaretUpIcon } from '@phosphor-icons/react/dist/csr/CaretUp'
+import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
 
 const styles: Record<string, CSSProperties> = {
   drawer: { position: 'absolute', inset: '0 0 0 auto', zIndex: 10, width: 'min(460px, 100%)', minWidth: 0, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', background: arkmeTheme.base, color: arkmeTheme.text, boxShadow: '-12px 0 28px rgba(29,32,40,.08)' },
@@ -17,7 +13,7 @@ const styles: Record<string, CSSProperties> = {
   close: { display: 'grid', placeItems: 'center', width: 28, height: 28, padding: 0, border: 0, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer', flex: 'none' },
   overview: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, padding: '12px 16px 16px', fontSize: 12, flex: 'none' },
   cell: { display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, fontVariantNumeric: 'tabular-nums' },
-  content: { flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', padding: '0 16px 20px' },
+  content: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' },
   state: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: arkmeTheme.tertiary, fontSize: 12, textAlign: 'center' },
   retry: { border: `1px solid ${arkmeTheme.border}`, borderRadius: 6, background: arkmeTheme.base, color: arkmeTheme.secondary, padding: '5px 10px', cursor: 'pointer', font: 'inherit' },
 }
@@ -33,12 +29,11 @@ function startTime(millis: number): string {
   return new Date(millis).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-export function ArkmeCallDetailDrawer({ item, onClose }: { item: ArkmeTimelineItem; onClose: () => void }) {
+export function ArkmeCallDetailDrawer({ item, onClose, initialVideoUrl }: { item: ArkmeTimelineItem; onClose: () => void; initialVideoUrl?: string | undefined }) {
   const [detail, setDetail] = useState<ArkmeCallDetail>()
   const [error, setError] = useState('')
   const [revision, setRevision] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [participantsOpen, setParticipantsOpen] = useState(true)
   const closeButton = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLElement>(null)
   const onCloseRef = useRef(onClose)
@@ -69,6 +64,8 @@ export function ArkmeCallDetailDrawer({ item, onClose }: { item: ArkmeTimelineIt
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
     closeButton.current?.focus({ preventScroll: true })
     const element = panel.current
+    const animation = typeof window !== 'undefined' && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      ? element?.animate?.([{ transform: 'translateX(100%)' }, { transform: 'translateX(0)' }], { duration: 180, easing: 'ease-out' }) : undefined
     const escape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       event.preventDefault()
@@ -77,6 +74,7 @@ export function ArkmeCallDetailDrawer({ item, onClose }: { item: ArkmeTimelineIt
     document.addEventListener('keydown', escape)
     return () => {
       document.removeEventListener('keydown', escape)
+      animation?.cancel()
       if (trigger?.isConnected && (document.activeElement === document.body || element?.contains(document.activeElement))) trigger.focus({ preventScroll: true })
     }
   }, [])
@@ -85,7 +83,6 @@ export function ArkmeCallDetailDrawer({ item, onClose }: { item: ArkmeTimelineIt
   const video = mediaType === 'video'
   const icon = `${video ? 'video' : 'call'}-${item.callRecord?.direction ?? (item.isMe ? 'outgoing' : 'incoming')}-linear.svg`
   const iconColor = (detail?.acceptedAtMillis ?? 0) > 0 ? arkmeTheme.accent : arkmeTheme.danger
-  const segments = detail?.transcriptSegments ?? []
   return <aside ref={panel} role="dialog" aria-label="通话详情" data-arkme-call-detail="true" style={styles.drawer}>
     <header style={styles.header}>
       <h3 style={{ margin: 0, fontSize: 18, lineHeight: '26px', fontWeight: 600 }}>通话详情</h3>
@@ -100,21 +97,15 @@ export function ArkmeCallDetailDrawer({ item, onClose }: { item: ArkmeTimelineIt
       {loading ? <div role="status" style={styles.state}>加载中…</div>
         : error ? <div role="alert" style={styles.state}>{error}{callRef && <button type="button" style={styles.retry} onClick={() => { setRevision(value => value + 1) }}>重试</button>}</div>
           : <>
-            {detail?.summaryText && <p data-arkme-call-summary="true" style={{ margin: '4px 0 0', padding: '10px 12px', border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 12, background: arkmeTheme.layer1, color: arkmeTheme.secondary, fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>AI 摘要：{detail.summaryText}</p>}
-            {detail && <ArkmeCallVideoClips key={detail.callRef} detail={detail} />}
-            {segments.length > 0 && detail ? <ArkmeCallTranscript detail={detail} /> : <div role="status" style={styles.state}>{detail?.transcriptFailed ? '转写失败' : detail?.transcriptPending ? '转写处理中' : '暂无转写内容'}
-              {(detail?.transcriptFailed || detail?.transcriptPending) && <button type="button" style={styles.retry} onClick={() => { setRevision(value => value + 1) }}>刷新</button>}
-            </div>}
+            {detail && <ArkmeCallDetailContent key={detail.callRef} compact detail={detail} detailState="ready" initialVideoUrl={initialVideoUrl} selectedItem={{
+              callRef: detail.callRef,
+              peerDisplayName: '',
+              mediaType: mediaType ?? 'unknown',
+              acceptedAtMillis: detail.acceptedAtMillis,
+              durationSeconds: detail.durationSeconds,
+            }} />}
+            {(detail?.transcriptFailed || detail?.transcriptPending || detail?.summaryStatus === 'pending') && <button type="button" style={styles.retry} onClick={() => { setRevision(value => value + 1) }}>刷新</button>}
           </>}
     </div>
-    {!loading && !error && detail && detail.participants.length > 0 && <footer style={{ flex: 'none', borderRadius: '18px 18px 0 0', background: arkmeTheme.base, boxShadow: '0 -8px 24px rgba(29,32,40,.08)', padding: '0 16px 14px' }}>
-      <button type="button" aria-label={participantsOpen ? '收起参与者' : '展开参与者'} title={participantsOpen ? '收起参与者' : '展开参与者'} aria-expanded={participantsOpen} onClick={() => { setParticipantsOpen(value => !value) }} style={{ display: 'grid', placeItems: 'center', width: '100%', height: 24, padding: 0, border: 0, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer' }}>{participantsOpen ? <CaretDownIcon size={18} /> : <CaretUpIcon size={18} />}</button>
-      {participantsOpen && <ul aria-label="通话参与者" style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 120, overflowY: 'auto' }}>
-        {detail.participants.map((participant, index) => <li key={participant.userId ?? `${participant.displayName}:${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px 4px 4px', minWidth: 0, maxWidth: '100%', border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 20, background: arkmeTheme.layer1, color: arkmeTheme.secondary, fontSize: 12 }}>
-          <ArkmeUserAvatar size={24} label={`${participant.displayName}的头像`} {...(participant.avatarRef ? { avatarRef: participant.avatarRef } : {})} />
-          <span style={{ overflowWrap: 'anywhere', minWidth: 0 }}>{participant.displayName}</span>
-        </li>)}
-      </ul>}
-    </footer>}
   </aside>
 }

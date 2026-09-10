@@ -1101,6 +1101,8 @@ export interface ArkmeCallParticipant {
 
 export interface ArkmeCallTranscriptSegment {
   segmentId: string
+  /** Standalone recording of this segment; playback starts at zero, not startMillis. */
+  audioUrl?: string
   speakerDisplayName: string
   speakerUserId?: number
   text: string
@@ -1613,6 +1615,8 @@ export interface ArkmeTimelineItem {
     direction?: 'outgoing' | 'incoming'
     startedAtMillis?: number
     durationSeconds?: number
+    summaryText?: string
+    summaryStatus?: ArkmeCallSummaryStatus
   }
   /** Signed observed personal-topic membership; distinct from forwarding snapshots. */
   recordTopicAssignmentRef?: string

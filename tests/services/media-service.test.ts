@@ -17,6 +17,36 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('MediaService', () => {
+  it('proxies trusted production COS call audio with ranges and account isolation', async () => {
+    let userId = 42
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId, accessToken: 'fixture', refreshToken: 'fixture' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async () => new Response('audio', { status: 206 }))
+    const runtime = new ServiceRuntime({ ...config, environment: 'prod' }, sessions, {} as StateStore, fetchImpl)
+    const media = new MediaService(runtime, new ProfileService(runtime), {} as never, {} as never)
+    const url = 'https://webrtc-record-prod-1403070603.cos.ap-shanghai.myqcloud.com/clip.wav?q-signature=secret'
+    const blocks = media.forwardContentBlocks([{ type: 2, download_url: url }], 42)
+    expect(blocks).toHaveLength(1)
+    const result = await media.fetchMedia(blocks[0]!.mediaRef, 'bytes=0-4')
+    expect(result.response.status).toBe(206)
+    await expect(result.response.text()).resolves.toBe('audio')
+    expect(fetchImpl).toHaveBeenCalledWith(new URL(url), expect.objectContaining({ headers: { Range: 'bytes=0-4' }, redirect: 'error' }))
+    for (const rejected of [url.replace('https:', 'http:'), url.replace('https://', 'https://user:pass@'),
+      url.replace('.com/', '.com:8443/'), `${url}#fragment`, url.replace('.com/', '.com.evil.test/'),
+      url.replace('1403070603', '9999999999')]) {
+      expect(media.forwardContentBlocks([{ type: 2, download_url: rejected }], 42)).toEqual([])
+    }
+    runtime.config.environment = 'test'
+    expect(media.forwardContentBlocks([{ type: 2, download_url: url }], 42)).toEqual([])
+    await expect(media.fetchMedia(blocks[0]!.mediaRef)).rejects.toMatchObject({ code: 'media-host-rejected' })
+    runtime.config.environment = 'prod'
+    userId = 99
+    await expect(media.fetchMedia(blocks[0]!.mediaRef)).rejects.toMatchObject({ code: 'media-ref-invalid' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('marks partially resolved media by asset identity, not just by count', () => {
     const runtime = { config: {} } as ServiceRuntime
     const media = new MediaService(runtime, {} as never, {} as never, { recordUid() { return 'r' } })

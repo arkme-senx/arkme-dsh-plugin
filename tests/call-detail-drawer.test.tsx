@@ -9,20 +9,18 @@ const item: ArkmeTimelineItem = { itemUid: 'message', senderName: '我', isMe: t
 const detail: ArkmeCallDetail = { callRef: 'sealed-call', title: '通话详情', mediaType: 'video', startedAtMillis: 1788949920000, acceptedAtMillis: 0, endedAtMillis: 1788949922000, durationSeconds: 2, callResult: 'Cancel', resultLabel: '已取消', summaryStatus: 'idle', transcriptPending: false, transcriptFailed: false, participants: [], transcriptSegments: [] }
 
 describe('call detail drawer', () => {
-  it('shows portrait clips beside participants and opens controls only after clicking', async () => {
+  it('uses the call surface detail and opens its video controls only after clicking', async () => {
     vi.mocked(callArkme).mockResolvedValue({ ...detail, participants: [{ userId: 2, displayName: 'Peer', isCurrentUser: false }], videoRecord: { available: true, source: 'real', perspectives: [{ perspective: 'peer', userId: 2, videoUrl: 'https://example.com/clip.mp4' }] } })
     let view: ReturnType<typeof create>
     await act(async () => { view = create(<ArkmeCallDetailDrawer item={item} onClose={() => {}} />) })
     expect(view!.root.findAllByType('video').every(video => !video.props.controls)).toBe(true)
-    const trigger = view!.root.findByProps({ 'aria-label': '播放通话录像' })
-    expect(trigger.props.style.width).toBe(78)
-    expect(view!.root.findByProps({ 'data-arkme-call-video': 'peer' })).toBeTruthy()
+    const trigger = view!.root.findByProps({ 'aria-label': '播放视频记录' })
+    expect(view!.root.findByProps({ 'data-arkme-call-detail-content': 'true' })).toBeTruthy()
     act(() => { trigger.props.onClick() })
     expect(view!.root.findAllByType('video').every(video => !video.props.controls)).toBe(true)
-    expect(view!.root.findByProps({ 'aria-label': '播放进度' })).toBeTruthy()
-    expect(view!.root.findByProps({ 'data-arkme-video-overlay': 'true' }).props.style.zIndex).toBe(2147483647)
-    act(() => { view!.root.findByProps({ 'aria-label': '关闭录像' }).props.onClick() })
-    expect(view!.root.findAllByType('video').every(video => !video.props.controls)).toBe(true)
+    expect(view!.root.findByProps({ 'aria-label': '视频播放控制' })).toBeTruthy()
+    act(() => { view!.root.findByProps({ 'aria-label': '暂停视频记录' }).props.onClick() })
+    expect(view!.root.findByProps({ 'aria-label': '继续播放视频记录' })).toBeTruthy()
     act(() => { view!.unmount() })
   })
   it('loads the exact referenced call and renders the desktop empty state without note controls', async () => {

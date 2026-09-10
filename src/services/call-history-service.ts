@@ -16,7 +16,8 @@ import type {
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue } from './service.js'
 import { ProfileService } from './profile-service.js'
-import { callRecordRoomId, callRecordSource, projectCallRecord } from '../call-record-presentation.js'
+import type { MediaService } from './media-service.js'
+import { callRecordRoomId, callRecordSource, projectCallRecord, renderCallRecordSummary } from '../call-record-presentation.js'
 import type { ArkmeTimelineItem } from '../types.js'
 
 interface ArkmeCallRefPayload {
@@ -294,6 +295,7 @@ export class CallHistoryService {
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly profile: ProfileService,
+    private readonly media?: Pick<MediaService, 'forwardContentBlocks'>,
   ) {}
 
   async listCallHistory(options: ArkmeCallHistoryOptions = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> {
@@ -577,13 +579,12 @@ export class CallHistoryService {
     const endedAtMillis = firstEpochMillis(raw, ['ended_at_millis', 'endedAtMillis', 'end_time', 'endTime'])
     const duration = durationSeconds(acceptedAtMillis, startedAtMillis, endedAtMillis)
     const callResult = firstString(raw, ['call_result', 'callResult', 'result'])
-    const summaryText = safeSummary(firstString(raw, ['call_summary', 'callSummary', 'summary_text', 'summaryText', 'summary']))
     const summaryUpdatedAtMillis = firstEpochMillis(raw, [
       'call_summary_updated_at', 'callSummaryUpdatedAt', 'summary_updated_at', 'summaryUpdatedAt',
     ])
     const mediaType = callMediaType(firstValue(raw, ['call_media_type', 'callMediaType', 'media_type', 'mediaType']))
     const videoRecord = callVideoRecord(raw, mediaType, session.userId)
-    const transcriptSegments = this.transcriptSegments(raw, startedAtMillis).slice(0, 200)
+    const transcriptSegments = this.transcriptSegments(raw, startedAtMillis, session.userId).slice(0, 200)
     const hangupUserId = callResult.toLowerCase().replace(/[_\s-]/g, '') === 'normalend'
       ? listValue(raw.member_actions).map(objectValue).reverse().find(action => firstString(action, ['action']).toLowerCase() === 'hangup' && firstNumber(action, ['user_id']) > 0)?.user_id
       : undefined
@@ -595,6 +596,7 @@ export class CallHistoryService {
       }
     }
     const participants = await this.attachParticipantAvatars(participantSeeds.slice(0, 50), session, signal)
+    const summaryText = safeSummary(renderCallRecordSummary(raw, session.userId, new Map(participants.flatMap(participant => participant.userId ? [[participant.userId, participant.displayName] as const] : []))))
     const hangupParticipant = participants.find(participant => participant.userId === numberValue(hangupUserId))
     return {
       callRef: await this.sealCallRef({ ...payload, issuedAtMillis: Date.now() }),
@@ -655,13 +657,16 @@ export class CallHistoryService {
     return participants.slice(0, 50)
   }
 
-  private transcriptSegments(raw: Record<string, unknown>, startedAtMillis: number): ArkmeCallTranscriptSegment[] {
+  private transcriptSegments(raw: Record<string, unknown>, startedAtMillis: number, viewerUserId: number): ArkmeCallTranscriptSegment[] {
     return listValue(firstValue(raw, ['segments', 'transcript_segments', 'room_transcript_segments']))
       .map((item, index) => {
         const rawItem = objectValue(item)
         const text = clippedText(firstString(rawItem, ['text', 'transcript', 'content']), 2_000)
         if (text === '') return undefined
         const segmentId = firstString(rawItem, ['segment_id', 'segmentId', 'id']) || `segment-${String(index + 1)}`
+        const remoteAudioUrl = firstString(rawItem, ['audio_url', 'audioUrl'])
+        const audioBlock = remoteAudioUrl ? this.media?.forwardContentBlocks([{ type: 2, name: '通话片段', download_url: remoteAudioUrl }], viewerUserId).find(block => block.kind === 'audio') : undefined
+        const audioUrl = audioBlock ? `${this.runtime.config.routePath}/media?ref=${encodeURIComponent(audioBlock.mediaRef)}` : undefined
         const speakerUserId = Math.trunc(firstNumber(rawItem, ['speaker_user_id', 'speakerUserId', 'user_id', 'userId']))
         // start_ms/end_ms are absolute epoch milliseconds in the desktop contract;
         // older providers supply relative millisecond offsets. Never multiply offsets by 1000.
@@ -671,6 +676,7 @@ export class CallHistoryService {
         const absoluteEnd = end >= 100_000_000_000
         return {
           segmentId,
+          ...(audioUrl ? { audioUrl } : {}),
           speakerDisplayName: firstString(rawItem, ['speaker_display_name', 'speakerDisplayName', 'speaker_name', 'speakerName'])
             || (speakerUserId > 0 ? `Arkme 用户 ${String(speakerUserId)}` : '说话人'),
           ...(speakerUserId > 0 ? { speakerUserId } : {}),

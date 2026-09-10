@@ -1362,7 +1362,7 @@ export class ChatService {
     private readonly realtime: ArkmeChatRealtimePort,
     private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
     private readonly messageActions?: MessageActionService,
-    private readonly callHistory = new CallHistoryService(runtime, profile),
+    private readonly callHistory = new CallHistoryService(runtime, profile, media),
   ) {
     this.memberEvents = new MemberEventService(runtime, source, profile, (userId, options) => this.openPrivateChatFromUser(userId, options))
   }

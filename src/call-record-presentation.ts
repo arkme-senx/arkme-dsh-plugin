@@ -11,6 +11,24 @@ function first(source: Record<string, unknown>, keys: string[]): unknown {
   return keys.map(key => source[key]).find(value => value !== undefined && value !== null && value !== '')
 }
 
+/** Flutter-compatible summary templates, resolved on the host before projection. */
+export function renderCallRecordSummary(source: Record<string, unknown>, viewerUserId: number, displayNames: ReadonlyMap<number, string> = new Map()): string {
+  const fallback = String(first(source, ['sm', 'call_summary', 'callSummary', 'summary_text', 'summaryText', 'summary']) ?? '').trim()
+  const template = String(first(source, ['smt', 'call_summary_template', 'callSummaryTemplate', 'summary_template', 'summaryTemplate']) ?? '').trim()
+  const labels = object(first(source, ['ssl', 'summary_speaker_labels', 'call_summary_speaker_labels']))
+  const users = object(first(source, ['ssu', 'summary_speaker_user_ids', 'call_summary_speaker_user_ids']))
+  const rendered = template.replace(/\{\{(user|speaker):([^{}]+)\}\}/g, (token: string, kind: string, key: string) => {
+    const userId = Number(kind === 'user' ? key : users[token] ?? users[key])
+    if (userId > 0 && userId === viewerUserId) return '我'
+    const name = displayNames.get(userId)
+    if (name?.trim()) return name.trim()
+    const label = kind === 'speaker' ? labels[token] ?? labels[key] : undefined
+    return typeof label === 'string' && label.trim() ? label.trim() : token
+  })
+  const text = rendered && !rendered.includes('{{') ? rendered : fallback
+  return text.includes('{{') ? '' : text
+}
+
 function callRecordCandidates(raw: unknown): Record<string, unknown>[] {
   const root = object(raw)
   const record = object(root.record)
@@ -75,5 +93,13 @@ export function projectCallRecord(raw: unknown, viewerUserId: number): ArkmeTime
     case 'callbusy': case 'busy': text = isCaller ? '对方忙线中' : '未接听(忙线)'; break
     case 'offline': text = isCaller ? '对方离线' : '未接听(离线)'; break
   }
-  return { mediaType, text }
+  const summary = renderCallRecordSummary(source, viewerUserId)
+  const rawStatus = String(first(source, ['ss', 'call_summary_status', 'summary_status', 'summaryStatus']) ?? '').toLowerCase()
+  const summaryStatus = ['pending', 'processing', 'generating'].includes(rawStatus) ? 'pending'
+    : ['done', 'success', 'finished'].includes(rawStatus) ? 'done'
+      : ['failed', 'error'].includes(rawStatus) ? 'failed' : undefined
+  return { mediaType, text,
+    ...(summary && !summary.includes('{{') ? { summaryText: summary } : {}),
+    ...(summaryStatus ? { summaryStatus } : {}),
+  }
 }

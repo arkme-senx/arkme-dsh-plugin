@@ -353,7 +353,9 @@ export class ArkmeService {
     this.calendar = new CalendarService(this.runtime, this.privacy)
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
-    this.callHistory = new CallHistoryService(this.runtime, this.profile)
+    this.callHistory = new CallHistoryService(this.runtime, this.profile, {
+      forwardContentBlocks: (files, viewerUserId) => this.media.forwardContentBlocks(files, viewerUserId),
+    })
     this.extensionReview = new ExtensionReviewService(this.runtime, this.profile, {
       createTextForConversation: async (recordUid, textContent) => {
         return await this.createTextForConversation(recordUid, textContent)
