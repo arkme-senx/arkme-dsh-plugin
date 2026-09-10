@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createArkmeSdk } from '../sdk/index.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
+import { ARKME_DSH_INPUT_TOPIC_TITLE, ARKME_DSH_INPUT_TOPIC_DESCRIPTION } from '../topic-policy.js'
 
 const styles: Record<string, CSSProperties> = {
   footer: { flexShrink: 0, minHeight: 72, width: '100%', boxSizing: 'border-box',
@@ -45,8 +46,8 @@ function TopicHomeVisibilitySetting({ sourceRef }: { sourceRef: string }) {
   }, [sourceRef, retry])
   return <footer aria-label="DSH 输入主题设置" style={styles.footer} aria-busy={busy}>
     <div style={styles.row}>
-      <div><div style={styles.title}>系统主题 · DSH 会话输入记录</div>
-        <div style={styles.hint}>不支持在此新增快记</div></div>
+      <div><div style={styles.title}>系统主题 · {ARKME_DSH_INPUT_TOPIC_TITLE}</div>
+        <div style={styles.hint}>{ARKME_DSH_INPUT_TOPIC_DESCRIPTION}</div></div>
     {value === undefined ? (busy ? <span role="status">正在读取设置…</span> : null)
       : <label style={styles.setting}><input type="checkbox" aria-label="在首页展示" style={styles.checkbox} checked={value} disabled={busy}
       onChange={event => {

@@ -11,6 +11,12 @@ describe('DSH topic home setting', () => {
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<ArkmeTopicHomeVisibility sourceRef="topic-a" />) })
     const checkbox = () => renderer.root.findByType('input')
+    const text = JSON.stringify(renderer.toJSON())
+    expect(text).toContain('发给 DSH 的消息')
+    expect(text).not.toContain('DSH Agent Input')
+    expect(text).not.toContain('更多创建时信息')
+    expect(text).not.toContain('创建于')
+    expect(text).not.toContain('耗时')
     expect(checkbox().props.checked).toBe(false)
     expect(checkbox().props.disabled).toBe(false)
     mocks.policy.mockRejectedValueOnce(new Error('offline'))

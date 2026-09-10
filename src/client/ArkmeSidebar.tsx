@@ -2,7 +2,7 @@ import { ArkmeRecordTopicAssignmentDialog } from './ArkmeRecordTopicAssignmentDi
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import { arkmeMarkdownPlainText } from '../markdown.js'
 import { arkmeCallRecordBubbleStyle } from './ArkmeCallRecordContent.js'
-import { arkmeSourceAllowsUserWrite, isArkmeDSHInputTopic } from '../topic-policy.js'
+import { arkmeSourceAllowsUserWrite, isArkmeDSHInputTopic, arkmeTopicDisplayName } from '../topic-policy.js'
 import { ArkmeTopicHomeVisibility } from './ArkmeTopicHomeVisibility.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { ArkmeCallDetailDrawer } from './ArkmeCallDetailDrawer.js'
@@ -1220,7 +1220,8 @@ export function arkmeVisibleMemberJoinInvitees(
 }
 
 export function arkmeSourceDestinationLabel(source: ArkmeSourceItem | undefined): string {
-  return source?.displayName ?? '发给自己'
+  return source === undefined ? '发给自己'
+    : arkmeTopicDisplayName(source.displayName, source.kind === 'topic' ? source.topicKind : undefined)
 }
 
 function arkmeComposerPlaceholderTargetForSource(

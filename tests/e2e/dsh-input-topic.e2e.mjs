@@ -161,7 +161,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         }
         await route.continue()
       })
-      await topicTree.getByRole('button', { name: /DSH Agent Input/ }).click()
+      await topicTree.getByRole('button', { name: /发给 DSH 的消息/ }).click()
       const setting = page.getByRole('checkbox', { name: '在首页展示' })
       await setting.waitFor({ state: 'visible' })
       await expect.poll(() => setting.isEnabled()).toBe(true)
