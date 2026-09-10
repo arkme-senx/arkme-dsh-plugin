@@ -2,6 +2,7 @@ import { sealRecordTopicAssignmentRef } from '../record-topic-assignment-ref.js'
 import { arkmeTopicDisplayName } from '../topic-policy.js'
 import { CallHistoryService } from './call-history-service.js'
 import { patchChatPolicy } from './chat-policy.js'
+import { readTopicRecordPage } from './topic-record-page.js'
 import { invalidatesMemberSnapshot } from '../member-directory.js'
 import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges, arkmeMarkdownPlainText, arkmeMarkdownTextRanges } from '../markdown.js'
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
@@ -2171,21 +2172,25 @@ export class ChatService {
       }
       if (source.kind === 'topic') {
         const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
-        const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-          '/api/v1/topics/display/detail',
-          {
-            topic_uid: source.ownerRef,
-            limit,
-            ...(options.cursor?.sendAtMillis === undefined ? {} : { cursor_send_at: options.cursor.sendAtMillis }),
-            ...(options.cursor?.itemUid === undefined ? {} : { cursor_record_uid: options.cursor.itemUid }),
-          },
-          session,
-          options.signal,
-        )
-        if (arkmePrivacyLockedTopic(data.topic_core)) {
+        const [page, metadata] = await Promise.all([
+          readTopicRecordPage(this.runtime, session, source.ownerRef, { ...options, limit }),
+          this.runtime.authenticatedPost<Record<string, unknown>>(
+            '/api/v1/topics/display/metadata',
+            { topic_uid: source.ownerRef },
+            session,
+            options.signal,
+          ),
+        ])
+        if (arkmePrivacyLockedTopic({ privacy_state: page.privacyState })) {
           throw new ArkmePluginError('topic-privacy-locked', '隐私锁主题不能在 Arkme 插件中查看', false, 403)
         }
-        const rawRecords = listValue(data.records).filter(raw => !arkmePrivacyLockedRecord(raw)
+        const topicCore = objectValue(metadata.topic_core)
+        const topicKind = numberValue(topicCore.kind)
+        if (stringValue(topicCore.topic_uid).trim() !== source.ownerRef
+          || !Number.isSafeInteger(topicKind) || topicKind <= 0) {
+          throw new ArkmePluginError('topic-metadata-invalid', '主题信息返回不完整，请重试或确认服务端已升级', true, 502)
+        }
+        const rawRecords = page.records.filter(raw => !arkmePrivacyLockedRecord(raw)
           && !lockedRecordUids.has(this.record.recordUid(raw)))
         const media = await this.media.hydrateRecordMediaPage(rawRecords, session, options.signal)
         const signingKey = await this.runtime.stateStore.uniqueCode()
@@ -2199,15 +2204,12 @@ export class ChatService {
           return this.withRecordTopicAssignmentRef(source, item, session.userId, signingKey,
             numberValue(objectValue(raw).owner_user_id), source.ownerRef)
         })
-        const nextSendAt = numberValue(data.next_cursor_send_at)
-        const nextUid = stringValue(data.next_cursor_record_uid).trim()
-        const topicKind = numberValue(objectValue(data.topic_core).kind) || 1
         return {
           source: { ...await this.source.sourceItem(source),
             topicKind, displayName: arkmeTopicDisplayName(source.displayName, topicKind) },
           items: records.map(item => this.withRecordMessageActionRef(source, item, session.userId, signingKey)),
-          hasMore: data.has_more === true,
-          ...(nextSendAt > 0 && nextUid !== '' ? { nextCursor: { sendAtMillis: nextSendAt, itemUid: nextUid } } : {}),
+          hasMore: page.hasMore,
+          ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
         }
       }
       const aiPolishDecorations = source.kind === 'group_chat' && options.cursor === undefined

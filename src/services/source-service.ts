@@ -1,4 +1,5 @@
 import { patchChatPolicy, type ChatPolicySnapshot } from './chat-policy.js'
+import { readTopicRecordPage } from './topic-record-page.js'
 import { arkmeRecordTextFormat, arkmeMarkdownPlainText } from '../markdown.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
@@ -974,25 +975,17 @@ export class SourceService {
     let cursorSendAt: number | undefined
     let cursorRecordUid: string | undefined
     for (let pageIndex = 0; pageIndex < 1_000; pageIndex += 1) {
-      const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-        '/api/v1/topics/display/detail',
-        {
-          topic_uid: topicUid,
-          limit: 100,
-          ...(cursorSendAt === undefined ? {} : { cursor_send_at: cursorSendAt }),
-          ...(cursorRecordUid === undefined ? {} : { cursor_record_uid: cursorRecordUid }),
-        },
-        session,
-      )
-      for (const raw of listValue(data.records)) {
-        const item = objectValue(raw)
-        const uid = stringValue(item.record_uid ?? objectValue(item.record_core).record_uid).trim()
-        if (uid !== '') recordUids.add(uid)
+      const page = await readTopicRecordPage(this.runtime, session, topicUid, {
+        limit: 100,
+        ...(cursorSendAt === undefined || cursorRecordUid === undefined ? {} : { cursor: { sendAtMillis: cursorSendAt, itemUid: cursorRecordUid } }),
+      })
+      for (const raw of page.records) {
+        recordUids.add(stringValue(objectValue(raw).record_uid).trim())
       }
       onProgress?.(recordUids.size)
-      if (data.has_more !== true) return [...recordUids]
-      const nextSendAt = numberValue(data.next_cursor_send_at)
-      const nextRecordUid = stringValue(data.next_cursor_record_uid).trim()
+      if (!page.hasMore) return [...recordUids]
+      const nextSendAt = page.nextCursor?.sendAtMillis ?? 0
+      const nextRecordUid = page.nextCursor?.itemUid ?? ''
       const cursorKey = `${String(nextSendAt)}:${nextRecordUid}`
       if (nextSendAt <= 0 || nextRecordUid === '' || seenCursors.has(cursorKey)) {
         throw new ArkmePluginError('topic-dissolve-record-page-invalid', '主题快记加载不完整，未解散主题，请刷新后重试', true, 502)

@@ -82,6 +82,7 @@ const expectedServiceFiles = [
   'chat-policy.ts',
   'direct-message-admission-service.ts',
   'record-topic-assignment-service.ts',
+  'topic-record-page.ts',
   'background-sound-preference-service.ts',
   'background-sound-membership-service.ts',
   'file-transfers.ts',

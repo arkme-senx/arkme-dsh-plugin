@@ -12,6 +12,13 @@ it('passes home preference read cancellation through the Host owner', async () =
   expect(service.topicHomeVisibility).toHaveBeenCalledWith('topic-ref', undefined, controller.signal)
 })
 
+it('forwards timeline cancellation without accepting caller-owned user identity', async () => {
+  const signal = new AbortController().signal
+  const service = { readSource: vi.fn() }
+  await dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'topic-ref', limit: 40, userId: 999 }, undefined, undefined, undefined, undefined, signal)
+  expect(service.readSource).toHaveBeenCalledWith('topic-ref', { limit: 40, signal })
+})
+
 it('passes contact detail request cancellation to each existing business owner', async () => {
   const controller = new AbortController()
   const service = {

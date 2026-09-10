@@ -40,14 +40,14 @@ describe('forwarded recording reads from the Record owner', () => {
   it.each(['send_to_self', 'topic'] as const)('reads %s through the owner API without hydrating the original Audio session', async kind => {
     const core = recording()
     const raw = { record_uid: core.record_uid, record_core: core }
-    const endpoint = kind === 'send_to_self' ? '/api/v1/home/feed/query' : '/api/v1/topics/display/detail'
+    const endpoint = kind === 'send_to_self' ? '/api/v1/home/feed/query' : '/api/v1/topics/display/records/page'
     const runtime = {
       config: { maxTextLength: 20_000 },
       stateStore: { uniqueCode: async () => 'snapshot-test-key' },
       requireSession: async () => ({ userId: 42 }),
       authenticatedPost: vi.fn(async (path: string) => {
         expect(path).toBe(endpoint)
-        return kind === 'send_to_self' ? { items: [raw], has_more: false } : { records: [raw], has_more: false }
+        return kind === 'send_to_self' ? { items: [raw], has_more: false } : { topic_uid: 'destination', privacy_state: 1, records: [raw], has_more: false }
       }),
     }
     const source = {
