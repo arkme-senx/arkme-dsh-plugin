@@ -200,6 +200,8 @@ import {
   RelatedRecordingsPanel, shouldShowPrivateChatActions,
 } from './related-recordings.js'
 import { isArkmeChatDirectorySource, isArkmeSelfWorkspaceSource } from './source-list.js'
+import { ArkmeOfficialAuthorGuide, isArkmeOfficialAuthor } from './ArkmeOfficialAuthorGuide.js'
+import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { arkmeLoginErrorMessage, arkmeStoredLoginErrorMessage } from './arkme-login-errors.js'
 import {
   defaultArkmeLoginTranslate, type ArkmeLoginTranslate,
@@ -6853,6 +6855,7 @@ export function ArkmeSurface({
               : <div style={styles.titleBlock}>
                 <span style={styles.titleLine}>
                   <h2 style={styles.title}>{surfaceTitle}</h2>
+                  {isArkmeOfficialAuthor(source) && <ArkmeTopicTagBadge label="官方" />}
                   {source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon size={16} /></span>}
                 </span>
                 {authenticated && conversationBackdropVisible && source?.kind === 'group_chat'
@@ -7268,6 +7271,12 @@ export function ArkmeSurface({
               {newMessageCount} 条新消息
             </button>}
           </div>
+          {isArkmeOfficialAuthor(source) && timelineStateKey === conversationKey
+            && timelineLoadingKey !== conversationKey && error === ''
+            && conversationCacheRef.current.getTimeline(conversationKey) !== undefined
+            && displayRows.length === 0 && !hasMore && !newerHasMore
+            && (source?.latestSequence ?? 0) === 0
+            && <ArkmeOfficialAuthorGuide />}
           {activeConversation && forwardSuccessFeedback !== undefined && <div style={styles.forwardSuccessBannerWrap}>
             <button
               type="button"

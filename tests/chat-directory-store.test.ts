@@ -12,6 +12,37 @@ import {
 } from '../src/client/chat-directory-store.js'
 
 describe('ArkmeChatDirectoryStore', () => {
+  it('retains a private peer across partial message updates and rotated refs', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'author-before', sourceKey: 'chat:author', kind: 'private_chat' as const,
+      displayName: '作者昵称', peerUserId: 11, activeAtMillis: 1, unreadCount: 0, latestSequence: 0,
+    }
+    store.publish([source])
+    const { peerUserId: _peer, ...partial } = source
+    for (const latestSequence of [1, 1, 0]) {
+      store.upsert({ ...partial, sourceRef: 'author-after', latestSequence, latestPreview: 'hi' })
+      expect(store.getSnapshot().sources).toHaveLength(1)
+      expect(store.getSnapshot().sources[0]).toMatchObject({ peerUserId: 11, latestPreview: 'hi' })
+    }
+    store.upsert({ ...partial, sourceRef: 'other', sourceKey: 'chat:other' })
+    expect(store.getSnapshot().sources.find(item => item.sourceKey === 'chat:other')).not.toHaveProperty('peerUserId')
+    store.upsert({ ...partial, peerUserId: 12 })
+    expect(store.getSnapshot().sources.find(item => item.sourceKey === 'chat:author')?.peerUserId).toBe(12)
+    store.publish([partial])
+    expect(store.getSnapshot().sources[0]).not.toHaveProperty('peerUserId')
+    store.publish([source])
+    store.upsert({ ...partial, kind: 'group_chat' })
+    expect(store.getSnapshot().sources[0]).not.toHaveProperty('peerUserId')
+    store.activateAccount('test:1')
+    store.publish([source])
+    store.activateAccount('test:2')
+    expect(store.getSnapshot().sources).toEqual([])
+    store.publish([partial])
+    store.upsert(partial)
+    expect(store.getSnapshot().sources[0]).not.toHaveProperty('peerUserId')
+  })
+
   afterEach(() => { vi.useRealTimers() })
 
   it('recovers a transient policy read in the shared silent refresh without losing visible rows', async () => {
