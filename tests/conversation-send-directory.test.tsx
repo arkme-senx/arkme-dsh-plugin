@@ -3918,6 +3918,11 @@ describe('conversation send directory projection', () => {
     })
     expect(targetPreview.findAll(node => node.children.some(child => typeof child === 'string' && child.includes('正在延展')))).toHaveLength(0)
     const destinationHint = renderer!.root.findByProps({ 'data-arkme-composer-destination-hint': 'true' })
+    // Desktop NoteInput places private-chat hints between the extension and
+    // the separately decorated input card, not inside either of them.
+    expect(destinationHint.parent).toBe(targetPreview.parent)
+    expect(destinationHint.parent!.children.indexOf(destinationHint))
+      .toBeGreaterThan(destinationHint.parent!.children.indexOf(targetPreview))
     expect(destinationHint.findAll(node => node.children.includes('正在给 '))).toHaveLength(1)
     expect(destinationHint.findAll(node => node.children.includes('Harness4')).length).toBeGreaterThan(0)
     expect(destinationHint.findAll(node => node.children.includes(' 发消息'))).toHaveLength(1)
@@ -5304,6 +5309,49 @@ describe('conversation send directory projection', () => {
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline').length).toBeGreaterThan(1)
   })
 
+  it.each([false, true])('closes a submitted reference while the request is pending and preserves newer input on failure (newer=%s)', async newer => {
+    timeline = [{
+      itemUid: 'extension-pending', messageActionRef: 'opaque-extension-pending',
+      senderName: '小林', isMe: false, sendAtMillis: 1, title: '', textContent: '原消息', status: 1,
+    }]
+    const defaultCall = mocks.callArkme.getMockImplementation()!
+    let rejectSend!: (error: Error) => void
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'source.message-extension.extend') return new Promise((_resolve, reject) => { rejectSend = reject })
+      return defaultCall(operation, params)
+    })
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) } : null,
+      })
+      await Promise.resolve()
+    })
+    const extend = async () => {
+      const bubble = renderer!.root.findAllByProps({ 'aria-label': '打开快记详情' })[0]!
+      act(() => bubble.props.onContextMenu({ preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180 }))
+      const menu = renderer!.root.findByProps({ 'aria-label': '消息操作' })
+      const action = menu.findAll(node => node.props.role === 'menuitem'
+        && node.findAll(child => child.children.includes('延展')).length > 0)[0]!
+      await act(async () => { action.props.onClick(); await Promise.resolve() })
+    }
+    await extend()
+    const draftKey = arkmeSourceComposerDraftKey(42, target)!
+    act(() => arkmeComposerDraftStore.setText(draftKey, '待发送延展'))
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+      await Promise.resolve(); await Promise.resolve()
+    })
+    expect(rejectSend).toBeTypeOf('function')
+    expect(renderer!.root.findAllByProps({ 'data-arkme-composer-extension-target': 'true' })).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-composer-destination-hint': 'true' })).toHaveLength(1)
+    expect(arkmeComposerDraftStore.get(draftKey).text).toBe('')
+    if (newer) act(() => arkmeComposerDraftStore.setText(draftKey, '下一条普通消息'))
+    await act(async () => { rejectSend(new Error('网络中断')); await Promise.resolve(); await Promise.resolve() })
+    expect(arkmeComposerDraftStore.get(draftKey).text).toBe(newer ? '下一条普通消息' : '待发送延展')
+    expect(renderer!.root.findAllByProps({ 'data-arkme-composer-extension-target': 'true' })).toHaveLength(newer ? 0 : 1)
+  })
+
   it('reuses the extension record uid after failure and removes staged attachments only after success', async () => {
     timeline = [{
       itemUid: 'extension-retry-source', messageActionRef: 'opaque-extension-retry-action',
@@ -5369,6 +5417,25 @@ describe('conversation send directory projection', () => {
     })
   })
 
+  it('matches the desktop group destination hint height, name truncation and focus transition', async () => {
+    arkmeUi.selectSource({ ...group, displayName: '一二三四五六七八九十甲乙' })
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+    const hint = () => renderer!.root.findByProps({ 'data-arkme-composer-destination-hint': 'true' })
+    expect(hint().props.style).toMatchObject({ height: 20, opacity: 0, paddingLeft: 4 })
+    expect(hint().findAll(node => node.children.includes('一二三四五六七八九十...'))).toHaveLength(1)
+    expect(hint().findAll(node => node.children.includes('💡'))[0]!.props.style.fontSize).toBe(14)
+    expect(renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
+      .findAllByProps({ 'data-arkme-composer-destination-hint': 'true' })).toHaveLength(0)
+    const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    act(() => composer.props.onFocus())
+    expect(hint().props.style).toMatchObject({ height: 20, opacity: 1 })
+    act(() => composer.props.onBlur())
+    expect(hint().props.style).toMatchObject({ height: 20, opacity: 0 })
+  })
+
   it('restores the desktop composer focus fill and centered paper-plane action', async () => {
     await act(async () => {
       renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
@@ -5387,6 +5454,13 @@ describe('conversation send directory projection', () => {
       'data-arkme-primary-composer': 'true',
       'data-arkme-composer-focused': 'false',
     })
+    const destinationHint = () => renderer!.root.findByProps({ 'data-arkme-composer-destination-hint': 'true' })
+    expect(destinationHint().props.style).toMatchObject({ height: 30, opacity: 0, paddingLeft: 4,
+      transition: 'opacity 150ms linear, height 150ms linear' })
+    expect(destinationHint().props['aria-hidden']).toBe(true)
+    expect(composerShell.findAllByProps({ 'data-arkme-composer-destination-hint': 'true' })).toHaveLength(0)
+    expect(destinationHint().parent).toBe(composerShell.parent)
+    expect(composerShell.props.style.borderColor).toBe('transparent')
     expect(sendButton.props.disabled).toBe(true)
     expect(sendButton.props.style).toMatchObject({
       width: 36,
@@ -5403,10 +5477,14 @@ describe('conversation send directory projection', () => {
       boxShadow: 'none',
     })
     expect(composerShell.props['data-arkme-composer-focused']).toBe('true')
+    expect(destinationHint().props.style).toMatchObject({ height: 30, opacity: 1 })
+    expect(destinationHint().props['aria-hidden']).toBe(false)
+    expect(composerShell.props.style.borderColor).not.toBe('transparent')
 
     act(() => { composer.props.onBlur() })
     composerShell = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
     expect(composerShell.props['data-arkme-composer-focused']).toBe('false')
+    expect(destinationHint().props.style).toMatchObject({ height: 30, opacity: 0 })
     expect(composerShell.props.style.background).toBe('var(--arkme-primary-composer-idle, #f6f6f6)')
 
     await act(async () => {

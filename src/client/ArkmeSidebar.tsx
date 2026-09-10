@@ -141,7 +141,7 @@ import {
   serializeArkmeComposerDraft,
   type ArkmeComposerAttachment,
 } from './composer-draft-store.js'
-import { arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
+import { arkmeConversationComposerBorder, arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
 import { focusArkmeComposerFromClick, restoreArkmeComposerFocus } from './composer-focus.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import {
@@ -581,10 +581,11 @@ const styles: Record<string, CSSProperties> = {
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
   composer: { ...arkmeConversationComposerLayout.composer, background: '#fff' },
   composerDestinationHint: {
-    minHeight: 18, margin: '0 0 5px 6px', display: 'flex', alignItems: 'center', gap: 0,
-    color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px',
+    flex: 'none', paddingLeft: 4, display: 'flex', alignItems: 'center', gap: 0,
+    color: arkmeTheme.tertiary, fontSize: 11, lineHeight: 'normal', whiteSpace: 'pre',
+    transition: 'opacity 150ms linear, height 150ms linear', pointerEvents: 'none',
   },
-  composerDestinationHintIcon: { marginRight: 6, fontSize: 14, lineHeight: '18px' },
+  composerDestinationHintIcon: { marginRight: 6, lineHeight: 'normal' },
   composerDestinationHintName: { color: arkmeTheme.secondary, fontWeight: 500 },
   composerExtensionTarget: {
     margin: 0, padding: 8, display: 'flex', alignItems: 'flex-start', gap: 10,
@@ -799,7 +800,6 @@ const styles: Record<string, CSSProperties> = {
   copyLinkDetailContentLabel: { margin: '6px 0 0', color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '18px' },
   composerInner: {
     ...arkmeConversationComposerLayout.composerInner,
-    border: `1px solid ${colors.border}`,
     background: 'var(--arkme-primary-composer-idle, #f6f6f6)', boxShadow: 'none',
     transition: 'background-color 140ms ease',
   },
@@ -807,7 +807,6 @@ const styles: Record<string, CSSProperties> = {
     background: 'var(--arkme-primary-composer-focused, #ffffff)',
     boxShadow: 'none',
   },
-  composerInnerExtension: { borderTop: 0, borderRadius: '0 0 15px 15px' },
   composerStack: { width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column' },
   composerHint: { alignSelf: 'flex-end', margin: '4px 4px 0 0', color: arkmeTheme.tertiary, fontSize: 10, lineHeight: '14px' },
   textarea: {
@@ -4713,6 +4712,20 @@ export function ArkmeSurface({
     // Take the draft before any network await.  The next keystroke now belongs to a
     // fresh draft and can be sent independently instead of being swallowed by a busy lock.
     const pendingDraft = arkmeComposerDraftStore.take(targetDraftKey)
+    // The reference belongs to the submitted draft, not the next message. Do not
+    // leave it visible until the network request and attachment cleanup finish.
+    if (extensionTarget !== undefined && sameTargetComposer()) {
+      setComposerExtensionTarget(current => current === extensionTarget ? undefined : current)
+    }
+    const restorePendingDraft = () => {
+      arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
+      // Only restore the reference when restore() accepted the original draft
+      // identity; a newer draft or reference must keep its own destination.
+      if (extensionTarget !== undefined && sameTargetComposer()
+        && arkmeComposerDraftStore.get(targetDraftKey).fileSendIdentity?.recordUid === recordUid) {
+        setComposerExtensionTarget(current => current ?? extensionTarget)
+      }
+    }
     setHashTagTrigger(undefined)
     setHashTagCandidateIndex(0)
     activeHashTagStartRef.current = undefined
@@ -4725,7 +4738,8 @@ export function ArkmeSurface({
     try {
       inputCapture = await capturePromise
     } catch (caught) {
-      arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
+      if (sameTargetAccount()) restorePendingDraft()
+      else releaseArkmeComposerDraft(pendingDraft)
       if (sameTargetComposer()) setError(errorMessage(caught) || '输入快照采集失败，请重试')
       return
     }
@@ -4831,10 +4845,6 @@ export function ArkmeSurface({
         rememberSentHashTags(targetAccountKey, result.recordUid, textContent, now, textFormat)
         await Promise.allSettled(pendingFileRefs.map(fileRef => callArkme('files.local.remove', { fileRef })))
         releaseArkmeComposerDraft(pendingDraft)
-        if (sameTargetComposer()) {
-          setComposerExtensionTarget(current => current?.sourceRef === extensionTarget.sourceRef
-            && current.item.itemUid === extensionTarget.item.itemUid ? undefined : current)
-        }
         arkmeUi.chatChanged()
         return
       }
@@ -5098,7 +5108,7 @@ export function ArkmeSurface({
       if (sameTargetAccount()) {
         // restore() preserves any newer text entered after this send started.
         if (!durableFileSendUncertain) {
-          arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
+          restorePendingDraft()
           recordInputCaptureOwner.restoreForRetry(targetDraftKey, inputCapture)
         } else releaseArkmeComposerDraft(pendingDraft)
       } else {
@@ -6645,6 +6655,24 @@ export function ArkmeSurface({
       textContent: activeRecordReeditComposer.snapshot?.textContent ?? activeRecordReeditComposer.item.textContent,
     }
   const composerHasTarget = activeComposerTargetItem !== undefined
+  // The desktop hint sits above the bordered input card. Keep its reserved
+  // space outside that card so fading it never adds blank space above the text.
+  const destinationName = source?.displayName ?? ''
+  const destinationMemberCount = source?.kind === 'group_chat'
+    ? arkmeComposerGroupMemberCount(conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined
+      ? conversationMembers.length : 0, source.groupAvatar?.memberCount)
+    : undefined
+  const composerDestinationHint = sourceIsChat && <div
+    style={{ ...styles.composerDestinationHint, height: source?.kind === 'private_chat' ? 30 : 20,
+      opacity: composerInputFocused ? 1 : 0 }}
+    data-arkme-composer-destination-hint="true"
+    aria-hidden={!composerInputFocused}
+  >
+    <span style={{ ...styles.composerDestinationHintIcon, fontSize: source?.kind === 'private_chat' ? 16 : 14 }} aria-hidden>💡</span><span>正在给 </span>
+    <span style={styles.composerDestinationHintName}>{source?.kind === 'group_chat' && destinationName.length > 10
+      ? `${destinationName.slice(0, 10)}...` : destinationName}</span>
+    {destinationMemberCount !== undefined && destinationMemberCount > 1 && <span>{` (${destinationMemberCount}人)`}</span>}<span> 发消息</span>
+  </div>
   const localNotificationBlockingOverlayOpen = addMenuOpen
     || longArticleCreating
     || groupMembersOpen
@@ -7375,10 +7403,7 @@ export function ArkmeSurface({
             onDragOver={event => { if (!composerFileAddingDisabled && Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
             onDrop={event => { if (!composerFileAddingDisabled && event.dataTransfer.files.length > 0) { event.preventDefault(); void selectFiles(event.dataTransfer.files) } }}
           ><div style={styles.composerStack}>
-            {activeComposerExtensionTarget !== undefined && <div style={styles.composerDestinationHint} data-arkme-composer-destination-hint="true">
-              <span style={styles.composerDestinationHintIcon} aria-hidden>💡</span><span>正在给 </span>
-              <span style={styles.composerDestinationHintName}>{arkmeSourceDestinationLabel(source)}</span><span> 发消息</span>
-            </div>}
+            {source?.kind === 'group_chat' && composerDestinationHint}
             {activeRecordReeditComposer !== undefined && activeRecordReeditComposer.error !== ''
               && <div role="alert" style={styles.error}>{activeRecordReeditComposer.error}</div>}
             {activeRecordReeditComposer !== undefined && (activeRecordReeditComposer.conflict !== undefined
@@ -7438,6 +7463,7 @@ export function ArkmeSurface({
                 }}
               >×</button>
             </div>}
+            {source?.kind === 'private_chat' && composerDestinationHint}
             <div
               ref={composerRef}
               className="arkme-conversation-composer-inner"
@@ -7446,8 +7472,7 @@ export function ArkmeSurface({
               style={{
               ...styles.composerInner,
               ...(composerInputFocused ? styles.composerInnerFocused : {}),
-              ...(composerHasTarget ? styles.composerInnerExtension : {}),
-              ...(composerResize.highlighted ? { border: '1px solid #09B83E', borderRadius: 12 } : {}),
+              ...arkmeConversationComposerBorder(composerInputFocused || composerHasTarget ? colors.border : 'transparent', composerHasTarget, composerResize.highlighted),
               }}
             >
             {composerResize.handle}

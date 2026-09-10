@@ -2,6 +2,19 @@ import type { CSSProperties } from 'react'
 
 const arkmeConversationComposerMaxHeight = 336
 
+/** Keep each border property present across target and resize transitions. */
+export function arkmeConversationComposerBorder(color: string, hasTarget: boolean, highlighted: boolean): CSSProperties {
+  return {
+    borderStyle: 'solid',
+    borderColor: highlighted ? '#09B83E' : color,
+    borderTopWidth: hasTarget && !highlighted ? 0 : 1,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderLeftWidth: 1,
+    borderRadius: highlighted ? 12 : hasTarget ? '0 0 15px 15px' : 15,
+  }
+}
+
 /** Shared size and layout contract for Arkme chat composers. Interaction stays with each surface. */
 export const arkmeConversationComposerLayout = {
   composer: {
