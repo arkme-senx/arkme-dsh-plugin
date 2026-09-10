@@ -53,6 +53,19 @@ export const ARKME_EXTENSION_DETAIL_MODAL_MAX_WIDTH = 920
 export const ARKME_EXTENSION_DETAIL_MODAL_MAX_HEIGHT = 680
 export const ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE = 70
 
+export async function extensionRestartPageReady(
+  href: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  try {
+    return (await fetchImpl(new URL('/', href), {
+      cache: 'no-store', credentials: 'same-origin',
+    })).ok
+  } catch {
+    return false
+  }
+}
+
 export function extensionTabLoadMode(loadedTabs: ReadonlySet<string>, target: string): 'initial' | 'refresh' {
   return loadedTabs.has(target) ? 'refresh' : 'initial'
 }
@@ -1873,7 +1886,7 @@ export function ArkmeMarketplace({
     while (Date.now() < deadline) {
       await new Promise(resolve => window.setTimeout(resolve, 300))
       const next = await hostInstance()
-      if (next !== undefined && next !== previous) {
+      if (next !== undefined && next !== previous && await extensionRestartPageReady(window.location.href)) {
         window.location.reload()
         return
       }

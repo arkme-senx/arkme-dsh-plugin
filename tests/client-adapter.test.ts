@@ -55,7 +55,8 @@ describe('official DSH client adapter', () => {
       children?: Record<string, unknown>
       inject?: () => unknown
     }> = []
-    const inject = vi.fn((_key: string, register: () => unknown) => {
+    const inject = vi.fn((key: string, register: () => unknown) => {
+      if (key === 'main.conversation') return () => {}
       register()
       return () => {}
     })
@@ -89,6 +90,8 @@ describe('official DSH client adapter', () => {
     } as never)
 
     expect(registered.map(item => item.name)).toEqual([
+      'arkme.topic.actions',
+      'arkme.send-to-self.entry',
       'sidebar',
       'conversation',
       'details',
@@ -101,6 +104,8 @@ describe('official DSH client adapter', () => {
         priority: -100,
         children: {
           'arkme.directory.entry': { kind: 'list', scope: 'root' },
+          'arkme.send-to-self.entry': { kind: 'single', scope: 'root' },
+          'arkme.topic.actions': { kind: 'single', scope: 'root' },
         },
       }),
       expect.objectContaining({
@@ -140,6 +145,36 @@ describe('official DSH client adapter', () => {
     expect(registered.map(item => item.name)).not.toContain('settings.general.item')
     expect(registered.find(item => item.name === 'conversation')?.children).toBeUndefined()
     cleanups.forEach(cleanup => { cleanup() })
+  })
+
+  it('uses the DSH 0.1.5 rightbar API when the legacy details API is unavailable', () => {
+    let sidebarFace: { closeDetails(): void } | undefined
+    const registeredNames: string[] = []
+    const closeRightbar = vi.fn()
+    const register = vi.fn((options: { name: string; inject?: () => unknown }) => {
+      registeredNames.push(options.name)
+      if (options.name === 'sidebar') sidebarFace = options.inject?.() as typeof sidebarFace
+      return vi.fn()
+    })
+    const inject = vi.fn((key: string, registerEntry: () => unknown) => {
+      if (key === 'conversation' || key === 'details') return () => {}
+      return registerEntry()
+    })
+    const effect = vi.fn((factory: () => unknown, label: string) => {
+      if (label.includes('official settings sidebar') || label.includes('embedded DeepSeek Harness')) return factory()
+    })
+
+    apply({
+      slots: { inject, register },
+      layout: { toggleSidebar: vi.fn(), closeRightbar },
+      locale: createClientLocaleStub(),
+      sessions: { open: vi.fn() },
+      effect,
+    } as never)
+
+    sidebarFace?.closeDetails()
+    expect(closeRightbar).toHaveBeenCalledOnce()
+    expect(registeredNames).toContain('main.conversation')
   })
 
   it('tracks the official settings trigger instead of mistaking an unrelated dialog for settings', () => {
