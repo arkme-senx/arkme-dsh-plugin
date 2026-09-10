@@ -19,4 +19,4 @@
 
 仅登录、managed credential 控制面和模型输出使用确定性 fixture，不验证线上登录或模型规划质量。未运行外部 MQ、旧客户端消费者或 Elasticsearch；对应 owner/投递边界由仓内回归覆盖，不能把它们描述为真实端到端投递验收。使用本地额外 CA，不关闭 TLS 校验；不调用生产账号、不替换常驻实例。
 
-本轮验证基于已合入的 dev `998e1bd`、官方 DSH `052bacaa97166b6b3240c37956ea2a1b4d3d396b`，Node 24。正式安装的 `.tgz` SHA-256 为 `a1399a4d593e1cbd8443253d64dadb94269b23fcb534e4cdfe1b4e3859f6c704`；后续仅补充测试和文档，产品代码与该包一致。typecheck/build/pack 通过，全量 vitest 5759 通过、9 跳过，1 项已有 client-adapter seat 列表断言失败已在原始 dev 复现。此次运行平台为 macOS，未声称 Windows/Linux 实机验收。
+本轮验证基于已合入的 dev `b103f06`、官方 DSH `052bacaa97166b6b3240c37956ea2a1b4d3d396b`，Node 24。正式安装的 `.tgz` SHA-256 为 `7f199e2d2a8b67381877bfe4e2d2136fbd0278376fedc0a1838aaabb06d070e3`；后续仅补充测试和文档，产品代码与该包一致。typecheck/build/pack 通过，最新 dev 已修正此前 client-adapter seat 列表断言；合入后全量 vitest 5763 通过、9 跳过，无失败。此次运行平台为 macOS，未声称 Windows/Linux 实机验收。
