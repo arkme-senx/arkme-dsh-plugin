@@ -1949,6 +1949,9 @@ describe('ArkmeService', () => {
         records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
         has_more: true, next_cursor_send_at: 79, next_cursor_record_uid: 'record-next',
       } })
+      if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
+        topic_core: { topic_uid: body.topic_uid, kind: 1, privacy_state: 1, show_in_home: true },
+      } })
       if (url.endsWith('/api/v1/topics/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
       throw new Error(`unexpected ${url}`)
     })
@@ -2108,6 +2111,9 @@ describe('ArkmeService', () => {
         { record_uid: 'foreign-self-creator', owner_user_id: 999, creator_user_id: 10001, status: 1 },
         { record_uid: 'pending-record', owner_user_id: 10001, creator_user_id: 10001, status: 0 },
       ], has_more: false } })
+      if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
+        topic_core: { topic_uid: body.topic_uid, kind: 1, privacy_state: 1, show_in_home: true },
+      } })
       if (url.endsWith('/api/v1/topics/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
       throw new Error(`unexpected ${url}`)
     })
@@ -6064,6 +6070,9 @@ describe('ArkmeService', () => {
             text_content: '同页文字仍然可读',
           }],
           has_more: false,
+        } })
+        if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
+          topic_core: { topic_uid: 'topic-media', kind: 1, privacy_state: 1, show_in_home: true },
         } })
         if (url.endsWith('/api/v1/records/media/batch-list')) {
           mediaCalls += 1

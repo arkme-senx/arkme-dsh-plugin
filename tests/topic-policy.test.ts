@@ -23,14 +23,16 @@ describe('DSH topic policy', () => {
 
   it('uses the existing policy endpoint and never replays name/privacy defaults', async () => {
     const session = { userId: 42 }
-    const post = vi.fn().mockResolvedValueOnce({ topic_core: { show_in_home: false } }).mockResolvedValueOnce({ show_in_home: true })
+    const post = vi.fn().mockResolvedValueOnce({ topic_core: {
+      topic_uid: 'owned-topic', kind: 3, privacy_state: 1, show_in_home: false,
+    } }).mockResolvedValueOnce({ show_in_home: true })
     const service = new SourceService({ requireSession: async () => session, authenticatedPost: post } as never, {} as never, {} as never)
     vi.spyOn(service, 'openSourceRef').mockResolvedValue({ version: 1, userId: 42, kind: 'topic', ownerRef: 'owned-topic', displayName: 'Archive' })
     expect(await service.topicHomeVisibility('opaque')).toEqual({ showInHome: false })
     expect(await service.topicHomeVisibility('opaque', true)).toEqual({ showInHome: true })
     expect(post.mock.calls[1]).toEqual(['/api/v1/topics/display/policy/set', { topic_uid: 'owned-topic', show_in_home: true }, session, undefined])
     post.mockResolvedValueOnce({})
-    await expect(service.topicHomeVisibility('opaque')).rejects.toMatchObject({ code: 'topic-policy-contract-invalid' })
+    await expect(service.topicHomeVisibility('opaque')).rejects.toMatchObject({ code: 'topic-metadata-invalid' })
     vi.mocked(service.openSourceRef).mockRejectedValueOnce(new Error('wrong account'))
     post.mockClear()
     await expect(service.topicHomeVisibility('opaque', false)).rejects.toThrow('wrong account')

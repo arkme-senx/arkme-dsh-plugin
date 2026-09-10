@@ -2,6 +2,7 @@ import { sealRecordTopicAssignmentRef } from '../record-topic-assignment-ref.js'
 import { arkmeTopicDisplayName } from '../topic-policy.js'
 import { CallHistoryService } from './call-history-service.js'
 import { patchChatPolicy } from './chat-policy.js'
+import { readTopicMetadata } from './topic-metadata.js'
 import { readTopicRecordPage } from './topic-record-page.js'
 import { invalidatesMemberSnapshot } from '../member-directory.js'
 import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges, arkmeMarkdownPlainText, arkmeMarkdownTextRanges } from '../markdown.js'
@@ -2174,22 +2175,12 @@ export class ChatService {
         const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
         const [page, metadata] = await Promise.all([
           readTopicRecordPage(this.runtime, session, source.ownerRef, { ...options, limit }),
-          this.runtime.authenticatedPost<Record<string, unknown>>(
-            '/api/v1/topics/display/metadata',
-            { topic_uid: source.ownerRef },
-            session,
-            options.signal,
-          ),
+          readTopicMetadata(this.runtime, session, source.ownerRef, options.signal),
         ])
-        if (arkmePrivacyLockedTopic({ privacy_state: page.privacyState })) {
+        if (arkmePrivacyLockedTopic({ privacy_state: page.privacyState }) || metadata.privacyState === 2) {
           throw new ArkmePluginError('topic-privacy-locked', '隐私锁主题不能在 Arkme 插件中查看', false, 403)
         }
-        const topicCore = objectValue(metadata.topic_core)
-        const topicKind = numberValue(topicCore.kind)
-        if (stringValue(topicCore.topic_uid).trim() !== source.ownerRef
-          || !Number.isSafeInteger(topicKind) || topicKind <= 0) {
-          throw new ArkmePluginError('topic-metadata-invalid', '主题信息返回不完整，请重试或确认服务端已升级', true, 502)
-        }
+        const topicKind = metadata.topicKind
         const rawRecords = page.records.filter(raw => !arkmePrivacyLockedRecord(raw)
           && !lockedRecordUids.has(this.record.recordUid(raw)))
         const media = await this.media.hydrateRecordMediaPage(rawRecords, session, options.signal)

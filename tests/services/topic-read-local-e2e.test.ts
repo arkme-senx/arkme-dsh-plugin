@@ -83,6 +83,7 @@ it.skipIf(baseUrl === '')('real topic pages reach ChatService, Host, SDK and Too
     const first = await chat.readSource(sourceRef, { limit: 2 })
     expect(first.items).toHaveLength(2)
     expect(first.hasMore).toBe(true)
+    expect(first.source).toMatchObject({ topicKind: 1, displayName: 'plugin HTTP acceptance' })
     const last = await chat.readSource(sourceRef, { limit: 2, cursor: first.nextCursor })
     expect(last.hasMore).toBe(false)
     expect(new Set([...first.items, ...last.items].map(item => item.itemUid))).toEqual(new Set(ids))
@@ -98,6 +99,7 @@ it.skipIf(baseUrl === '')('real topic pages reach ChatService, Host, SDK and Too
     const output = await tool.execute({ source_ref: sourceRef }, { signal: new AbortController().signal } as never)
     expect(output).toContain('plugin HTTP body')
     expect(paths).toContain('/api/v1/topics/display/records/page')
+    expect(paths).toContain('/api/v1/topics/display/metadata')
     expect(paths).not.toContain('/api/v1/topics/display/detail')
     expect(paths).not.toContain('/api/v1/topics/display/summary')
     await runtime.authenticatedPost('/api/v1/topics/display/policy/set', {
