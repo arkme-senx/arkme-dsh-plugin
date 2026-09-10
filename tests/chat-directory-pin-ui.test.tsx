@@ -75,6 +75,24 @@ afterEach(async () => {
 })
 
 describe('conversation pin interaction', () => {
+  it.each(['private_chat', 'group_chat'] as const)('shows the corner only after a confirmed %s pin and removes it after unpin', async kind => {
+    const corners = () => row().findAllByProps({ role: 'img', 'aria-label': '已置顶' })
+    await act(async () => { arkmeChatDirectory.publish([{ ...source, kind }]) })
+    expect(corners()).toHaveLength(0)
+    await startPin()
+    expect(corners()).toHaveLength(0)
+    await act(async () => { resolvePin({ sourceRef: source.sourceRef, pinned: true, policyUpdatedAtMillis: 2000 }) })
+    expect(corners()).toHaveLength(1)
+    await act(async () => { arkmeUi.showHarness() })
+    expect(corners()).toHaveLength(1)
+    await startPin()
+    await act(async () => { rejectPin(new Error('取消置顶失败')) })
+    expect(corners()).toHaveLength(1)
+    await startPin()
+    await act(async () => { resolvePin({ sourceRef: source.sourceRef, pinned: false, policyUpdatedAtMillis: 3000 }) })
+    expect(corners()).toHaveLength(0)
+  })
+
   it.each([false, true])('keeps special entry destinations distinct in compact=%s', async compactDirectory => {
     await act(async () => { renderer!.update(<ArkmeNavigation compactDirectory={compactDirectory} showHarnessEntry embeddedProductShell />) })
     await act(async () => { renderer!.root.findByType(DeepSeekHarnessRow).props.onClick() })
@@ -135,6 +153,8 @@ describe('conversation pin interaction', () => {
     expect(menu().children).toEqual(['取消置顶'])
     await openMenu()
     expect(menu().children).toEqual(['置顶对话'])
+    expect(botRow().findAllByProps({ role: 'img', 'aria-label': '已置顶' })).toHaveLength(1)
+    expect(row().findAllByProps({ role: 'img', 'aria-label': '已置顶' })).toHaveLength(0)
   })
 
   it('keeps an open menu bound to the current pin and current capability for the same conversation', async () => {
