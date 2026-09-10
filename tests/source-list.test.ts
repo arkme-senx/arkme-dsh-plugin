@@ -51,6 +51,17 @@ describe('Arkme send-to-self source list', () => {
     expect(arkmeRootChatPreview({ ...author, kind: 'group_chat' })).toBe('')
   })
 
+  it('shows the first incoming author message immediately without requiring an outgoing message', () => {
+    const author: ArkmeSourceItem = {
+      sourceRef: 'author', kind: 'private_chat', displayName: '作者昵称', peerUserId: 11,
+      activeAtMillis: 1, unreadCount: 1, latestSequence: 1, latestPreview: '作者先发来的消息',
+    }
+    expect(arkmeRootChatPreview(author)).toBe('作者先发来的消息')
+    const rendered = renderToStaticMarkup(createElement(ArkmeRootChatPreview, { source: author }))
+    expect(rendered).toContain('作者先发来的消息')
+    expect(rendered).not.toContain('问题反馈与使用建议')
+  })
+
   it('keeps the aggregate selected in the left navigation while excluding it from category rows', () => {
     const aggregate = { ...source('aggregate', '发给自己', 0, 0), kind: 'send_to_self' as const }
     const defaultCategory = { ...source('default', '默认分类', 0, 0), kind: 'default_category' as const }
