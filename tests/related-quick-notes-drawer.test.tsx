@@ -1,7 +1,12 @@
 import { emojiSample } from './fixtures/emoji.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ArkmeRelatedQuickNoteList, ArkmeSourceMessageExtendResult, ArkmeTimelineItem } from '../src/types.js'
+import type {
+  ArkmeConversationMemberItem,
+  ArkmeRelatedQuickNoteList,
+  ArkmeSourceMessageExtendResult,
+  ArkmeTimelineItem,
+} from '../src/types.js'
 
 const mocks = vi.hoisted(() => ({
   callArkme: vi.fn(),
@@ -534,7 +539,7 @@ describe('normal timeline related quick note drawer', () => {
     expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
   })
 
-  it('uses the desktop detail footer divider and visible composer surface while retaining the arrow send control', async () => {
+  it('uses the desktop detail footer divider and the shared chat send control', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
       throw new Error(`unexpected operation: ${operation}`)
@@ -576,8 +581,8 @@ describe('normal timeline related quick note drawer', () => {
     expect(attachmentButton.children).not.toContain('＋')
     expect(attachmentButton.props.style).toMatchObject({ width: 18, height: 28 })
     const sendButton = renderer.root.findByProps({ 'aria-label': '发送延展' })
-    expect(sendButton.children).toContain('↑')
-    expect(sendButton.props.style).toMatchObject({ width: 28, height: 28 })
+    expect(sendButton.findByType('svg').props.viewBox).toBe('9.7 6.1 16 16')
+    expect(sendButton.props.style).toMatchObject({ width: 36, height: 28, background: '#DCE1E9' })
 
     const pastedImage = { name: 'desktop.png', type: 'image/png', size: 12 }
     const preventDefault = vi.fn()
@@ -641,6 +646,288 @@ describe('normal timeline related quick note drawer', () => {
     act(() => { renderer.root.findByProps({ 'aria-label': '返回快记详情' }).props.onClick() })
     expect(renderer.root.findByType(ArkmeRichComposerInput).props.value).toBe('独立抽屉草稿')
     expect(renderer.root.findAllByProps({ 'aria-label': 'draft.png，第 1 个附件' })).toHaveLength(1)
+  })
+
+  it('sends detail extension mentions with the same range payload as chat messages', async () => {
+    const sent: ArkmeSourceMessageExtendResult = {
+      recordUid: '11111111-1111-4111-8111-111111111111',
+      parentRecordUid: 'record-source',
+      relationUid: '22222222-2222-4222-8222-222222222222',
+      status: 1,
+      localState: 'synced',
+      extension: {
+        recordUid: '11111111-1111-4111-8111-111111111111', level: 2, sourceKind: 'record_extension',
+        senderDisplayName: '我', title: '', textContent: '前缀@小林 收到', sendAtMillis: 1_710_000_180_000,
+        templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [],
+      },
+    }
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.message-extension.context') return {
+        parentRecordUid: 'record-source', extensionCount: 0, extensions: [],
+      }
+      if (operation === 'group.bots') return {
+        groupSourceRef: 'opaque-source', displayName: '测试群', canAddBots: false, items: [],
+      }
+      if (operation === 'source.message-extension.extend') return sent
+      throw new Error(`unexpected operation: ${operation}`)
+    })
+    vi.stubGlobal('crypto', { randomUUID: vi.fn()
+      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222') })
+    const member: ArkmeConversationMemberItem = {
+      memberRef: 'member-ref',
+      mentionRef: 'mention-ref',
+      mentionDisplayName: '小林',
+      displayName: '小林',
+      role: 'member',
+      status: 'active',
+      isSelf: false,
+      isOwner: false,
+      joinedAtMillis: 1,
+      recordCount: 0,
+      mentionCount: 0,
+    }
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeTimelineDetailDrawer
+        item={timelineItem}
+        sourceRef="opaque-source"
+        sourceKind="group_chat"
+        conversationMembers={[member]}
+        showOriginal={false}
+        onClose={vi.fn()}
+        onToggleOriginal={vi.fn()}
+      />)
+      await Promise.resolve(); await Promise.resolve()
+    })
+    act(() => {
+      const input = renderer.root.findByType(ArkmeRichComposerInput)
+      input.props.onTextChange('前缀@小')
+      input.props.onSelectionChange('前缀@小', 4, 4)
+    })
+    const option = renderer.root.findByProps({ role: 'option' })
+    act(() => {
+      option.props.onMouseDown({ preventDefault: vi.fn() })
+    })
+    act(() => {
+      renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('前缀@小林 收到')
+    })
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-extension.extend', expect.objectContaining({
+      sourceRef: 'opaque-source',
+      messageActionRef: 'opaque-action',
+      textContent: '前缀@小林 收到',
+      humanMentions: [{ mentionRef: 'mention-ref', startIndex: 2, length: 3 }],
+    }), expect.any(AbortSignal))
+
+    const mentionLinks = renderer.root.findAllByProps({ 'aria-label': '查看 @小林' })
+    expect(mentionLinks).toHaveLength(1)
+    act(() => {
+      mentionLinks[0]!.props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() })
+    })
+    expect(renderer.root.findAllByProps({ 'data-arkme-profile-send-state': 'idle' })).toHaveLength(1)
+  })
+
+  it('sends detail extension reserved Asen mentions as bot mention metadata', async () => {
+    const sent: ArkmeSourceMessageExtendResult = {
+      recordUid: '11111111-1111-4111-8111-111111111111',
+      parentRecordUid: 'record-source',
+      relationUid: '22222222-2222-4222-8222-222222222222',
+      status: 1,
+      localState: 'synced',
+      extension: {
+        recordUid: '11111111-1111-4111-8111-111111111111', level: 2, sourceKind: 'record_extension',
+        senderDisplayName: '我', title: '', textContent: '@阿森 帮看', sendAtMillis: 1_710_000_180_000,
+        templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [],
+      },
+    }
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.message-extension.context') return {
+        parentRecordUid: 'record-source', extensionCount: 0, extensions: [],
+      }
+      if (operation === 'group.bots') return {
+        groupSourceRef: 'opaque-source', displayName: '测试群', canAddBots: false, items: [],
+      }
+      if (operation === 'source.message-extension.extend') return sent
+      throw new Error(`unexpected operation: ${operation}`)
+    })
+    vi.stubGlobal('crypto', { randomUUID: vi.fn()
+      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222') })
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeTimelineDetailDrawer
+        item={timelineItem}
+        sourceRef="opaque-source"
+        sourceKind="group_chat"
+        conversationMembers={[]}
+        showOriginal={false}
+        onClose={vi.fn()}
+        onToggleOriginal={vi.fn()}
+      />)
+      await Promise.resolve(); await Promise.resolve()
+    })
+    act(() => {
+      const input = renderer.root.findByType(ArkmeRichComposerInput)
+      input.props.onTextChange('@阿')
+      input.props.onSelectionChange('@阿', 2, 2)
+    })
+    const option = renderer.root.findByProps({ role: 'option' })
+    expect(option.findByType('img').props.src).toContain('image/svg+xml')
+    expect(option.findAllByType('span').some(span => span.children.includes('AI智能体'))).toBe(true)
+    act(() => {
+      option.props.onMouseDown({ preventDefault: vi.fn() })
+    })
+    act(() => {
+      renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('@阿森 帮看')
+    })
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-extension.extend', expect.objectContaining({
+      sourceRef: 'opaque-source',
+      messageActionRef: 'opaque-action',
+      textContent: '@阿森 帮看',
+      botMentions: [{ botRef: 'asen', startIndex: 0, length: 3 }],
+    }), expect.any(AbortSignal))
+  })
+
+  it('triggers and sends detail Asen mentions after leading text like the desktop composer', async () => {
+    const sent: ArkmeSourceMessageExtendResult = {
+      recordUid: '11111111-1111-4111-8111-111111111111',
+      parentRecordUid: 'record-source',
+      relationUid: '22222222-2222-4222-8222-222222222222',
+      status: 1,
+      localState: 'synced',
+      extension: {
+        recordUid: '11111111-1111-4111-8111-111111111111', level: 2, sourceKind: 'record_extension',
+        senderDisplayName: '我', title: '', textContent: '前缀@阿森 帮看', sendAtMillis: 1_710_000_180_000,
+        templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [],
+      },
+    }
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.message-extension.context') return {
+        parentRecordUid: 'record-source', extensionCount: 0, extensions: [],
+      }
+      if (operation === 'group.bots') return {
+        groupSourceRef: 'opaque-source', displayName: '测试群', canAddBots: false, items: [],
+      }
+      if (operation === 'source.message-extension.extend') return sent
+      throw new Error(`unexpected operation: ${operation}`)
+    })
+    vi.stubGlobal('crypto', { randomUUID: vi.fn()
+      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222') })
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeTimelineDetailDrawer
+        item={timelineItem}
+        sourceRef="opaque-source"
+        sourceKind="group_chat"
+        conversationMembers={[]}
+        showOriginal={false}
+        onClose={vi.fn()}
+        onToggleOriginal={vi.fn()}
+      />)
+      await Promise.resolve(); await Promise.resolve()
+    })
+    act(() => {
+      const input = renderer.root.findByType(ArkmeRichComposerInput)
+      input.props.onTextChange('前缀@阿')
+      input.props.onSelectionChange('前缀@阿', 4, 4)
+    })
+    const option = renderer.root.findByProps({ role: 'option' })
+    act(() => {
+      option.props.onMouseDown({ preventDefault: vi.fn() })
+    })
+    act(() => {
+      renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('前缀@阿森 帮看')
+    })
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-extension.extend', expect.objectContaining({
+      sourceRef: 'opaque-source',
+      messageActionRef: 'opaque-action',
+      textContent: '前缀@阿森 帮看',
+      botMentions: [{ botRef: 'asen', startIndex: 2, length: 3 }],
+    }), expect.any(AbortSignal))
+  })
+
+  it('keeps raw detail extension text so leading trim does not corrupt Asen mention ranges', async () => {
+    const sent: ArkmeSourceMessageExtendResult = {
+      recordUid: '11111111-1111-4111-8111-111111111111',
+      parentRecordUid: 'record-source',
+      relationUid: '22222222-2222-4222-8222-222222222222',
+      status: 1,
+      localState: 'synced',
+      extension: {
+        recordUid: '11111111-1111-4111-8111-111111111111', level: 2, sourceKind: 'record_extension',
+        senderDisplayName: '我', title: '', textContent: '@阿森 帮看', sendAtMillis: 1_710_000_180_000,
+        templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [],
+      },
+    }
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.message-extension.context') return {
+        parentRecordUid: 'record-source', extensionCount: 0, extensions: [],
+      }
+      if (operation === 'group.bots') return {
+        groupSourceRef: 'opaque-source', displayName: '测试群', canAddBots: false, items: [],
+      }
+      if (operation === 'source.message-extension.extend') return sent
+      throw new Error(`unexpected operation: ${operation}`)
+    })
+    vi.stubGlobal('crypto', { randomUUID: vi.fn()
+      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222') })
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeTimelineDetailDrawer
+        item={timelineItem}
+        sourceRef="opaque-source"
+        sourceKind="group_chat"
+        conversationMembers={[]}
+        showOriginal={false}
+        onClose={vi.fn()}
+        onToggleOriginal={vi.fn()}
+      />)
+      await Promise.resolve(); await Promise.resolve()
+    })
+    act(() => {
+      const input = renderer.root.findByType(ArkmeRichComposerInput)
+      input.props.onTextChange('  @阿')
+      input.props.onSelectionChange('  @阿', 4, 4)
+    })
+    const option = renderer.root.findByProps({ role: 'option' })
+    act(() => {
+      option.props.onMouseDown({ preventDefault: vi.fn() })
+    })
+    act(() => {
+      renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('  @阿森 帮看')
+    })
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick()
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-extension.extend', expect.objectContaining({
+      sourceRef: 'opaque-source',
+      messageActionRef: 'opaque-action',
+      textContent: '  @阿森 帮看',
+      botMentions: [{ botRef: 'asen', startIndex: 2, length: 3 }],
+    }), expect.any(AbortSignal))
   })
 
   it('reuses the same detail extension record uid after a failed send', async () => {

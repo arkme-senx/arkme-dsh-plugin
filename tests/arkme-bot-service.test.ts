@@ -1217,6 +1217,55 @@ describe('ArkmeService Bot owner adapter', () => {
     })
   })
 
+  it('sends the reserved Asen Bot mention without resolving a sealed Bot ref', async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
+        record_uid: body.record_uid, rel_uid: body.rel_uid, seq: 14, audit_status: 1,
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+    const groupRef = groupSourceRef(10001, 'group-session-asen', '讨论群', { rmSubjectId: 88002 })
+
+    await expect(service.sendSourceText(groupRef, '@阿森 看看', {
+      recordUid: 'record-asen-bot-mention',
+      relationUid: 'relation-asen-bot-mention',
+      botMentions: [{ botRef: 'asen', startIndex: 0, length: 3 }],
+    })).resolves.toMatchObject({ itemUid: 'record-asen-bot-mention', sequence: 14, localState: 'synced' })
+
+    expect(requests.map(request => request.url).some(url => url.endsWith('/bot/list') || url.endsWith('/bot/group/list'))).toBe(false)
+    expect(requests.at(-1)?.body).toMatchObject({
+      chat_session_uid: 'group-session-asen',
+      text_content: '@阿森 看看',
+      content_payload: {
+        mention_metadata: {
+          bot_mentions: [{ bot_uid: 'asen', display_name_snapshot: '阿森', start_index: 0, length: 3 }],
+        },
+      },
+    })
+
+    requests.length = 0
+    await expect(service.sendSourceText(groupRef, '看看', {
+      recordUid: 'record-asen-prefix',
+      relationUid: 'relation-asen-prefix',
+      botRefs: ['asen'],
+    })).resolves.toMatchObject({ itemUid: 'record-asen-prefix', sequence: 14, localState: 'synced' })
+    expect(requests.map(request => request.url).some(url => url.endsWith('/bot/list') || url.endsWith('/bot/group/list'))).toBe(false)
+    expect(requests.at(-1)?.body).toMatchObject({
+      chat_session_uid: 'group-session-asen',
+      text_content: '@阿森 看看',
+      content_payload: {
+        mention_metadata: {
+          bot_mentions: [{ bot_uid: 'asen', display_name_snapshot: '阿森', start_index: 0, length: 3 }],
+        },
+      },
+    })
+  })
+
   it('fails closed for duplicate or uninstalled Bot mentions before sending chat text', async () => {
     const urls: string[] = []
     const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })

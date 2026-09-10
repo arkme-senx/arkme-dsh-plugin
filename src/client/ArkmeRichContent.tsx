@@ -8,7 +8,7 @@ import { arkmeTheme } from './arkme-theme.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
 import type {
   ArkmeContentBlock, ArkmeLinkMetadata, ArkmeLongArticleDetail, ArkmeRelatedRecordingItem,
-  ArkmeSharedRecordingPreview, ArkmeTimelineItem, ArkmeUploadedAsset,
+  ArkmeSharedRecordingPreview, ArkmeTimelineItem, ArkmeTimelineMentionTarget, ArkmeUploadedAsset,
 } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeCallRecordContent } from './ArkmeCallRecordContent.js'
@@ -172,6 +172,7 @@ function ArkmeMessageRichText({
   textStyle,
   highlightMentions,
   linkLabelMode,
+  mentionTargets,
   shareWebsite,
   onMessageCopyLinkOpen,
   onMentionClick,
@@ -182,6 +183,7 @@ function ArkmeMessageRichText({
   textStyle?: Pick<CSSProperties, 'fontSize' | 'lineHeight'> | undefined
   highlightMentions: boolean
   linkLabelMode: ArkmeLinkLabelMode
+  mentionTargets?: readonly ArkmeTimelineMentionTarget[]
   shareWebsite?: string
   onMessageCopyLinkOpen?: (sid: string) => void
   onMentionClick?: ArkmeMentionClickHandler
@@ -210,6 +212,7 @@ function ArkmeMessageRichText({
     text={text}
     highlightMentions={highlightMentions}
     linkLabelMode={linkLabelMode}
+    {...(mentionTargets === undefined ? {} : { mentionTargets })}
     renderLink={renderLink}
     {...(onMentionClick === undefined ? {} : { onMentionClick })}
     {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
@@ -262,6 +265,7 @@ function LongText({
   collapseText = true,
   expanded = false,
   linkLabelMode,
+  mentionTargets,
   shareWebsite,
   onMessageCopyLinkOpen,
   onMentionClick,
@@ -273,6 +277,7 @@ function LongText({
   collapseText?: boolean
   expanded?: boolean
   linkLabelMode: ArkmeLinkLabelMode
+  mentionTargets?: readonly ArkmeTimelineMentionTarget[]
   shareWebsite?: string
   onMessageCopyLinkOpen?: (sid: string) => void
   onMentionClick?: ArkmeMentionClickHandler
@@ -300,6 +305,7 @@ function LongText({
     {...(textFormat === undefined ? {} : { textFormat })}
     highlightMentions={highlightMentions}
     linkLabelMode={linkLabelMode}
+    {...(mentionTargets === undefined ? {} : { mentionTargets })}
     {...(shareWebsite === undefined ? {} : { shareWebsite })}
     {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
     {...(onMentionClick === undefined ? {} : { onMentionClick })}
@@ -934,6 +940,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
       {...(item.textFormat === undefined ? {} : { textFormat: item.textFormat })}
       highlightMentions={highlightMentions}
       linkLabelMode={linkLabelMode}
+      {...(display.mentions === undefined ? {} : { mentionTargets: display.mentions })}
       {...(shareWebsite === undefined ? {} : { shareWebsite })}
       {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
       {...(onMentionClick === undefined ? {} : { onMentionClick })}
@@ -974,6 +981,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
             collapseText={collapseText}
             expanded={presentation === 'detail'}
             linkLabelMode={linkLabelMode}
+            {...(display.mentions === undefined ? {} : { mentionTargets: display.mentions })}
             {...(shareWebsite === undefined ? {} : { shareWebsite })}
             {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
             {...(onMentionClick === undefined ? {} : { onMentionClick })}

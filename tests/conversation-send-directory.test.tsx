@@ -1011,8 +1011,9 @@ describe('conversation send directory projection', () => {
       joinedAtMillis: 1, recordCount: 0, mentionCount: 0,
     }
 
-    expect(arkmeGroupMentionCandidates('', [], [member]).map(candidate => candidate.kind))
-      .toEqual(['all'])
+    const candidates = arkmeGroupMentionCandidates('', [], [member])
+    expect(candidates.map(candidate => candidate.kind)).toEqual(['all', 'bot'])
+    expect(candidates.map(candidate => candidate.displayName)).toEqual(['所有人', '阿森'])
   })
 
   it('highlights visible @ mentions in private conversation bubbles for self and peer messages', async () => {
@@ -2642,6 +2643,15 @@ describe('conversation send directory projection', () => {
     )
     expect(arkmeComposerDraftStore.get(draftKey).text).toBe('')
     expect(arkmeChatDirectory.getSnapshot()).toEqual(directoryBeforeSend)
+    const sentMention = renderer!.root.findByProps({ 'aria-label': '查看 @Tison' })
+    await act(async () => {
+      sentMention.props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() })
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findByType(ArkmeMemberProfileCard).props.member).toMatchObject({
+      memberRef: 'arkme-chat-member-v1.stable.signature',
+      displayName: '我的私有备注',
+    })
 
     await act(async () => {
       composer.props.onTextChange('  @T')
@@ -3387,7 +3397,14 @@ describe('conversation send directory projection', () => {
       isMe: false,
       sendAtMillis: 1,
       title: '',
-      textContent: '麻烦 @cruisin 看看，@所有人 先不用处理',
+      textContent: '麻烦 @历史昵称 看看，@所有人 先不用处理',
+      mentions: [{
+        kind: 'member',
+        memberRef: mentionedMember.memberRef,
+        displayName: '历史昵称',
+        startIndex: 3,
+        length: 5,
+      }],
       status: 1,
       sequence: 1,
     }]
@@ -3411,7 +3428,7 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    const mention = renderer!.root.findByProps({ 'aria-label': '查看 @cruisin' })
+    const mention = renderer!.root.findByProps({ 'aria-label': '查看 @历史昵称' })
     expect(renderer!.root.findAllByProps({ 'aria-label': '查看 @所有人' })).toHaveLength(0)
     const clickEvent = { preventDefault: vi.fn(), stopPropagation: vi.fn() }
     await act(async () => {
@@ -3437,6 +3454,65 @@ describe('conversation send directory projection', () => {
       memberRef: mentionedMember.memberRef,
     }, expect.any(AbortSignal))
     expect(arkmeUi.getSnapshot().selectedSource?.sourceKey).toBe(privateSource.sourceKey)
+  })
+
+  it('opens the group member profile card from a kaomoji visible mention', async () => {
+    const kaomojiMember: ArkmeConversationMemberItem = {
+      memberRef: 'member-kaomoji',
+      mentionRef: 'mention-kaomoji',
+      mentionDisplayName: '♪(▽*)',
+      displayName: '颜文字同事',
+      memberName: '♪(▽*)',
+      role: 'member',
+      status: 'active',
+      isSelf: false,
+      isOwner: false,
+      joinedAtMillis: 1,
+      recordCount: 0,
+      mentionCount: 1,
+    }
+    activeSource = group
+    arkmeChatDirectory.publish([group])
+    arkmeUi.selectSource(group)
+    timeline = [{
+      itemUid: 'message-kaomoji-visible-mention',
+      senderName: '同事',
+      isMe: false,
+      sendAtMillis: 1,
+      title: '',
+      textContent: '麻烦 @♪(▽*) 看看',
+      status: 1,
+      sequence: 1,
+    }]
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'source.members') return {
+        source: group,
+        items: [kaomojiMember],
+        total: 1,
+        activeCount: 1,
+      }
+      if (operation === 'source.timeline') return { source: group, items: timeline, hasMore: false }
+      if (operation === 'group.bots') return { source: group, items: [], total: 0 }
+      return await baseCall(operation, params, signal)
+    })
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const mention = renderer!.root.findByProps({ 'aria-label': '查看 @♪(▽*)' })
+    await act(async () => {
+      mention.props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() })
+      await Promise.resolve()
+    })
+
+    expect(renderer!.root.findByType(ArkmeMemberProfileCard).props.member).toMatchObject({
+      memberRef: 'member-kaomoji',
+      displayName: '颜文字同事',
+    })
   })
 
   it('opens send-to-self when the current user sends from a self mention profile card', async () => {

@@ -49,8 +49,10 @@ describe('group member add UI', () => {
     expect(source).toContain('onPointerDown={event => { event.preventDefault(); props.onClose() }}')
     expect(source).toContain("window.addEventListener('keydown', dismissOnEscape)")
 
-    const sidebarSource = readFileSync(join(process.cwd(), 'src/client/ArkmeSidebar.tsx'), 'utf8')
-    expect(sidebarSource).toContain('member.avatarRef === undefined')
-    expect(sidebarSource).toContain('<RobotIcon size={14} weight="fill" />')
+    const mentionRowSource = readFileSync(join(process.cwd(), 'src/client/ArkmeMentionSuggestionRow.tsx'), 'utf8')
+    expect(mentionRowSource).toContain('candidate.avatarRef === undefined')
+    expect(mentionRowSource).toContain('<RobotIcon size={14} weight="fill" />')
+    expect(mentionRowSource).toContain('image_at_all_member_light.png')
+    expect(mentionRowSource).toContain('icon_ai_thought.svg')
   })
 })

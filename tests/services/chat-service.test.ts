@@ -676,6 +676,71 @@ describe('ChatService', () => {
     )
   })
 
+  it('projects group timeline human mention metadata into member card targets', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = {
+      config,
+      stateStore: { uniqueCode: vi.fn(async () => 'timeline-mention-signing-key') },
+    }
+    const source = {
+      chatTimelineItemKey: vi.fn(async () => 'timeline-key'),
+    }
+    const profile = {
+      sealProfileImageRef: vi.fn(async () => 'arkme-profile-image-v1.sender'),
+    }
+    const media = {
+      recordContentPayload: vi.fn(() => ({})),
+      richContentBlocks: vi.fn(() => []),
+      recordMediaUnavailable: vi.fn(() => false),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, media as never, {} as never,
+      {} as never, { currentUserAgentSourceFallback: vi.fn() } as never,
+      { timelineAiPolish: vi.fn(() => undefined) } as never, {} as never,
+      undefined as never, undefined, { timelineCallRecord: vi.fn(async () => undefined) } as never,
+    )
+
+    await expect(chat.chatTimelineItems({
+      items: [{
+        relation: {
+          rel_uid: 'relation-1',
+          record_uid: 'record-1',
+          sender_user_id: 7,
+          display_name_snapshot: '发送者',
+          attach_at: 1_710_000_000_000,
+          seq: 11,
+        },
+        record: {
+          status: 1,
+          payload: {
+            record_uid: 'record-1',
+            title: '',
+            text_content: '前缀@历史昵称 收到',
+            mention_metadata: {
+              schema_version: 1,
+              human_mentions: [{
+                user_id: 9,
+                display_name_snapshot: '历史昵称',
+                start_index: 2,
+                length: 5,
+              }],
+            },
+          },
+        },
+      }],
+    }, session, 'chat-1', 'group_chat')).resolves.toMatchObject([{
+      itemUid: 'record-1',
+      textContent: '前缀@历史昵称 收到',
+      mentions: [{
+        kind: 'member',
+        displayName: '历史昵称',
+        startIndex: 2,
+        length: 5,
+        memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+      }],
+    }])
+  })
+
   it('blocks a Markdown writer before any service call until rollout is enabled', async () => {
     const requireSession = vi.fn()
     const chat = new ChatService({ config: { maxTextLength: 20_000 }, requireSession } as never,
@@ -1711,6 +1776,162 @@ describe('ChatService', () => {
     expect(chatPost).toHaveBeenCalledTimes(1)
     expect(runtime.authenticatedWorldPost).not.toHaveBeenCalled()
     expect(realtime.scheduleChatSessionProjection).toHaveBeenCalledWith('chat-1', 18)
+  })
+
+  it('creates group-chat extensions with reserved Asen mention ranges adjusted from raw input', async () => {
+    const childRecordUid = '11111111-1111-4111-8111-111111111111'
+    const childRelationUid = '22222222-2222-4222-8222-222222222222'
+    const chatPost = vi.fn(async (path: string, body: Record<string, unknown>) => {
+      if (path !== '/api/v1/chats/extensions/children/create') throw new Error(`unexpected chat path: ${path}`)
+      return { child_record_uid: body.child_record_uid, child_rel_uid: body.child_rel_uid, seq: 19 }
+    })
+    const runtime = {
+      config,
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: chatPost,
+      authenticatedWorldPost: vi.fn(async () => { throw new Error('group chat extension must not use the public-record API') }),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({
+      version: 1, userId: 42, kind: 'group_chat', ownerRef: 'chat-1', displayName: '512',
+    })) }
+    const profile = { refreshProfile: vi.fn(async () => ({ profile: {
+      userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
+      createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
+    } })) }
+    const realtime = { scheduleChatSessionProjection: vi.fn() }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, realtime as never,
+    )
+
+    await expect(chat.extendSourceMessage(
+      'opaque-source', snapshotActionRef(), '  @阿森 看看 ', childRecordUid, [], {
+        relationUid: childRelationUid,
+        botMentions: [{ botRef: 'asen', startIndex: 2, length: 3 }],
+      },
+    )).resolves.toMatchObject({
+      recordUid: childRecordUid,
+      parentRecordUid: 'record-snapshot-1',
+      relationUid: childRelationUid,
+      sequence: 19,
+      localState: 'synced',
+      extension: { textContent: '@阿森 看看' },
+    })
+    expect(chatPost).toHaveBeenCalledWith(
+      '/api/v1/chats/extensions/children/create',
+      expect.objectContaining({
+        chat_session_uid: 'chat-1',
+        parent_record_owner_user_id: 42,
+        parent_record_uid: 'record-snapshot-1',
+        child_record_uid: childRecordUid,
+        child_rel_uid: childRelationUid,
+        text_content: '@阿森 看看',
+        content_payload: expect.objectContaining({
+          mention_metadata: expect.objectContaining({
+            bot_mentions: [expect.objectContaining({
+              bot_uid: 'asen',
+              display_name_snapshot: '阿森',
+              start_index: 0,
+              length: 3,
+            })],
+          }),
+        }),
+      }),
+      expect.anything(),
+      undefined,
+    )
+    expect(runtime.authenticatedWorldPost).not.toHaveBeenCalled()
+    expect(realtime.scheduleChatSessionProjection).toHaveBeenCalledWith('chat-1', 19)
+  })
+
+  it('creates group-chat extensions with human mention ranges adjusted from raw input', async () => {
+    const childRecordUid = '11111111-1111-4111-8111-111111111111'
+    const childRelationUid = '22222222-2222-4222-8222-222222222222'
+    const chatPost = vi.fn(async (path: string, body: Record<string, unknown>) => {
+      if (path === '/api/v1/chats/members/list') return { items: [{ user_id: 7, status: 1 }] }
+      if (path === '/api/v1/chats/extensions/children/create') return {
+        child_record_uid: body.child_record_uid,
+        child_rel_uid: body.child_rel_uid,
+        seq: 20,
+      }
+      throw new Error(`unexpected chat path: ${path}`)
+    })
+    const runtime = {
+      config,
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: chatPost,
+      authenticatedWorldPost: vi.fn(async () => { throw new Error('group chat extension must not use the public-record API') }),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({
+      version: 1, userId: 42, kind: 'group_chat', ownerRef: 'chat-1', displayName: '512',
+    })) }
+    const profile = { refreshProfile: vi.fn(async () => ({ profile: {
+      userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
+      createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
+    } })) }
+    const realtime = { scheduleChatSessionProjection: vi.fn() }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, realtime as never,
+    )
+    const payload = Buffer.from(JSON.stringify({
+      version: 1, viewerUserId: 42, chatSessionUid: 'chat-1', targetUserId: 7, displayNameSnapshot: '小林',
+    }), 'utf8').toString('base64url')
+    const mentionRef = `arkme-chat-human-mention-v1.${payload}.${createHmac('sha256', 'snapshot-test-signing-key')
+      .update(`arkme-chat-human-mention-v1.${payload}`).digest('base64url')}`
+
+    await expect(chat.extendSourceMessage(
+      'opaque-source', snapshotActionRef(), '  前缀@小林 收到 ', childRecordUid, [], {
+        relationUid: childRelationUid,
+        humanMentions: [{ mentionRef, startIndex: 4, length: 3 }],
+      },
+    )).resolves.toMatchObject({
+      recordUid: childRecordUid,
+      parentRecordUid: 'record-snapshot-1',
+      relationUid: childRelationUid,
+      sequence: 20,
+      localState: 'synced',
+      extension: { textContent: '前缀@小林 收到' },
+    })
+    expect(chatPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/v1/chats/members/list',
+      { chat_session_uid: 'chat-1', active_only: true },
+      expect.anything(),
+      undefined,
+    )
+    expect(chatPost).toHaveBeenLastCalledWith(
+      '/api/v1/chats/extensions/children/create',
+      expect.objectContaining({
+        chat_session_uid: 'chat-1',
+        parent_record_owner_user_id: 42,
+        parent_record_uid: 'record-snapshot-1',
+        child_record_uid: childRecordUid,
+        child_rel_uid: childRelationUid,
+        text_content: '前缀@小林 收到',
+        content_payload: expect.objectContaining({
+          mention_metadata: expect.objectContaining({
+            human_mentions: [expect.objectContaining({
+              user_id: 7,
+              display_name_snapshot: '小林',
+              start_index: 2,
+              length: 3,
+            })],
+            source_checksum: createHash('sha256').update(JSON.stringify({
+              text_content: '前缀@小林 收到',
+              human_mentions: [{ user_id: 7, start_index: 2, length: 3 }],
+              bot_mentions: [],
+            })).digest('hex'),
+          }),
+        }),
+      }),
+      expect.anything(),
+      undefined,
+    )
+    expect(runtime.authenticatedWorldPost).not.toHaveBeenCalled()
+    expect(realtime.scheduleChatSessionProjection).toHaveBeenCalledWith('chat-1', 20)
   })
 
   it('creates a send-to-self extension through the durable desktop record-extension contract', async () => {

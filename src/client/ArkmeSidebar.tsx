@@ -10,7 +10,6 @@ import {
 import { createPortal } from 'react-dom'
 import { invalidateDirectMessageAdmission, requireDirectMessageSendAllowed, useDirectMessageAdmission } from './direct-message-admission.js'
 import { ConversationActionsMenu, privateChatActionItems, usePrivateChatActions } from './PrivateChatActions.js'
-import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import qrcode from 'qrcode-generator'
 import { retainPartialTimelineMedia } from './timeline-media.js'
@@ -19,7 +18,7 @@ import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import type {
   ArkmeGroupNotificationResult, ArkmeAuthSnapshot, ArkmeGroupAiPolishNotice, ArkmeGroupAiPolishSnapshot, ArkmeSourceReadResult,
   ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPage,
-  ArkmeRelatedRecordingPageState, ArkmeSourceItem, ArkmeSourceSendResult, ArkmeTimelineAroundPage, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage, ArkmeMessageSnapshotDetail,
+  ArkmeRelatedRecordingPageState, ArkmeSourceItem, ArkmeSourceSendResult, ArkmeTimelineAroundPage, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelineMentionTarget, ArkmeTimelinePage, ArkmeMessageSnapshotDetail,
   ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmePluginResponse,
   ArkmeRelatedQuickNoteDetail, ArkmeRelatedQuickNoteItem, ArkmeRelatedQuickNoteList,
   ArkmeMessageCopyLinkExtendResult, ArkmeMessageCopyLinkExtensionItem, ArkmeMessageCopyLinkResolveResult, ArkmeMessageCopyLinkResult, ArkmeMessageCopyLinkSnapshotItem,
@@ -29,7 +28,7 @@ import type {
   ArkmeHumanMentionInput,
   ArkmeTopicHierarchyMoveResult,
   ArkmeTopicDissolveTask,
-  ArkmeBotList, ArkmeGroupBotCandidate, ArkmeGroupBotCandidateList,
+  ArkmeBotList, ArkmeGroupBotCandidateList,
   ArkmeSharedRecordingPreview,
   ArkmeBackgroundSoundPreference, ArkmeBackgroundSoundEligibilityReason, ArkmeProviderCapabilities,
   ArkmeRecordTagItem, ArkmeRecordTagList,
@@ -142,6 +141,7 @@ import {
   releaseArkmeComposerDraft,
   serializeArkmeComposerDraft,
   type ArkmeComposerAttachment,
+  type ArkmeComposerMention,
 } from './composer-draft-store.js'
 import { arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
 import { focusArkmeComposerFromClick, restoreArkmeComposerFocus } from './composer-focus.js'
@@ -156,6 +156,29 @@ import {
   arkmeComposerGroupMemberCount, arkmeComposerPlaceholderText,
   type ArkmeComposerPlaceholderTarget,
 } from './composer-placeholder.js'
+import {
+  arkmeComposerMentionTrigger,
+  arkmeGroupMentionCandidates,
+  arkmeMemberForMention,
+  arkmeMentionCandidateKey,
+  arkmePrivateMentionCandidates,
+  type ArkmeComposerMentionTrigger,
+  type ArkmeMentionCandidate,
+} from './mention-candidates.js'
+export {
+  arkmeComposerMentionTrigger,
+  arkmeGroupMentionCandidates,
+  arkmeMemberForMention,
+  arkmeMemberForMentionTarget,
+  arkmeMemberForVisibleMention,
+  arkmeMentionCandidateMatches,
+  arkmeMentionCandidateKey,
+  arkmeMentionCandidatePrimaryText,
+  arkmePrivateMentionCandidates,
+} from './mention-candidates.js'
+export type { ArkmeComposerMentionTrigger, ArkmeMentionCandidate } from './mention-candidates.js'
+import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
+import { ArkmeMentionSuggestionRow, ArkmeMentionSuggestionThemeStyles } from './ArkmeMentionSuggestionRow.js'
 import {
   ARKME_CONVERSATION_HEADER_HEIGHT, ArkmeInterwovenDetailAside, ArkmeInterwovenMentionCard,
   mergeConversationRows, projectInterwovenWindow, ArkmeInterwovenPrelude, resolveInterwovenGroupTarget,
@@ -849,12 +872,6 @@ const styles: Record<string, CSSProperties> = {
   mentionSuggestionName: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, lineHeight: '17px', fontWeight: 500 },
   mentionSuggestionSecondary: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: colors.secondary, fontSize: 11, lineHeight: '15px' },
   mentionSuggestionsEmpty: { padding: '8px 10px', color: colors.secondary, fontSize: 12, lineHeight: '18px' },
-  send: {
-    width: 36, height: 28, flex: 'none', display: 'grid', placeItems: 'center',
-    border: 0, borderRadius: 14, background: '#09B83E',
-    color: '#fff', cursor: 'pointer', transform: 'translateY(-2px)', transition: 'background-color 100ms ease',
-  },
-  sendDisabled: { background: '#DCE1E9', color: '#fff', cursor: 'default' },
   forwardDrawerDismiss: { position: 'absolute', top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, left: 0, zIndex: 9, background: 'transparent' },
   loginBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
 }
@@ -1218,131 +1235,6 @@ function arkmeComposerPlaceholderTargetForSource(
   }
 }
 
-export interface ArkmeComposerMentionTrigger {
-  startIndex: number
-  endIndex: number
-  query: string
-}
-
-export function arkmeComposerMentionTrigger(
-  text: string,
-  selectionStart: number,
-  selectionEnd = selectionStart,
-): ArkmeComposerMentionTrigger | undefined {
-  const start = Math.max(0, Math.min(text.length, Math.trunc(selectionStart)))
-  const end = Math.max(0, Math.min(text.length, Math.trunc(selectionEnd)))
-  if (start !== end) return undefined
-  const prefix = text.slice(0, start)
-  const atIndex = prefix.lastIndexOf('@')
-  if (atIndex < 0) return undefined
-  const previousChar = atIndex > 0 ? text.charAt(atIndex - 1) : ''
-  if (previousChar !== '' && !/[\s([{（【,，。；;：:！!?？、]/u.test(previousChar)) return undefined
-  const query = text.slice(atIndex + 1, start)
-  if (/[\s@]/u.test(query)) return undefined
-  return { startIndex: atIndex, endIndex: start, query }
-}
-
-export function arkmeMentionCandidateMatches(
-  member: Pick<ArkmeConversationMemberItem, 'displayName'> & {
-    mentionDisplayName?: string
-    mentionSecondaryName?: string
-    memberName?: string
-    secondaryName?: string
-  },
-  query: string,
-): boolean {
-  const normalizedQuery = query.trim().toLowerCase()
-  if (normalizedQuery === '') return true
-  return [
-    member.displayName, member.mentionDisplayName, member.mentionSecondaryName, member.memberName, member.secondaryName,
-  ]
-    .some(value => (value ?? '').toLowerCase().includes(normalizedQuery))
-}
-
-type ArkmeMentionCandidate =
-  | { kind: 'all'; displayName: '所有人' }
-  | { kind: 'bot'; displayName: string; botRef: string; secondaryName?: string; avatarRef?: string }
-  | ({ kind: 'member'; mentionRef: string } & ArkmeConversationMemberItem)
-
-export function arkmeMentionCandidatePrimaryText(
-  member: {
-    kind: 'all' | 'bot' | 'member'
-    displayName: string
-    mentionDisplayName?: string
-    mentionSecondaryName?: string
-    secondaryName?: string
-  },
-): string {
-  const displayName = (member.kind === 'member' ? member.mentionDisplayName : member.displayName)?.trim() || '成员'
-  if (member.kind !== 'member') return displayName
-  const secondaryName = (member.mentionSecondaryName ?? '').trim()
-  if (secondaryName !== '' && secondaryName !== displayName) return `${displayName}（${secondaryName}）`
-  return displayName
-}
-
-function arkmeAllMentionMatches(query: string): boolean {
-  const normalizedQuery = query.trim().toLowerCase()
-  return normalizedQuery === '' || '所有人'.toLowerCase().includes(normalizedQuery)
-}
-
-export function arkmeGroupMentionCandidates(
-  query: string,
-  bots: readonly ArkmeGroupBotCandidate[],
-  members: readonly ArkmeConversationMemberItem[],
-): ArkmeMentionCandidate[] {
-  const candidates: ArkmeMentionCandidate[] = []
-  if (arkmeAllMentionMatches(query)) {
-    candidates.push({ kind: 'all', displayName: '所有人' })
-  }
-  candidates.push(...bots
-    .filter(bot => bot.installed && arkmeMentionCandidateMatches({
-      displayName: bot.name,
-      secondaryName: bot.description,
-    }, query))
-    .map(bot => ({
-      kind: 'bot' as const,
-      botRef: bot.botRef,
-      displayName: bot.name,
-      ...(bot.description.trim() === '' ? {} : { secondaryName: bot.description.trim() }),
-      ...(bot.avatarRef === undefined ? {} : { avatarRef: bot.avatarRef }),
-    })))
-  candidates.push(...members
-    .filter((member): member is ArkmeConversationMemberItem & { mentionRef: string; mentionDisplayName: string } =>
-      !member.isSelf
-      && member.mentionRef !== undefined
-      && member.mentionDisplayName !== undefined
-      && arkmeMentionCandidateMatches(member, query))
-    .map(member => ({ ...member, kind: 'member' as const })))
-  return candidates
-}
-
-function arkmeVisibleMentionLabel(mentionText: string): string {
-  const trimmed = mentionText.trim()
-  return trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed
-}
-
-export function arkmeMemberForVisibleMention(
-  mentionText: string,
-  members: readonly ArkmeConversationMemberItem[],
-): ArkmeConversationMemberItem | undefined {
-  const label = arkmeVisibleMentionLabel(mentionText)
-  if (label === '' || label === '所有人') return undefined
-  const matches = new Map<string, ArkmeConversationMemberItem>()
-  for (const member of members) {
-    if (member.status !== 'active') continue
-    if ([
-      member.mentionDisplayName,
-      member.displayName,
-      member.memberName,
-      member.secondaryName,
-      member.mentionSecondaryName,
-    ].some(value => (value ?? '').trim() === label)) {
-      matches.set(member.memberRef, member)
-    }
-  }
-  return matches.size === 1 ? matches.values().next().value : undefined
-}
-
 export interface ArkmeAccountSelfSourcesResolution {
   userId: number
   resolution: ArkmeSelfSourcesResolution
@@ -1383,6 +1275,8 @@ function mergeItems(current: ArkmeTimelineItem[], incoming: ArkmeTimelineItem[])
         ? { locationCapture: previous.locationCapture } : {}),
       ...(previous?.messageActionRef !== undefined && item.messageActionRef === undefined
         ? { messageActionRef: previous.messageActionRef } : {}),
+      ...(previous?.mentions !== undefined && item.mentions === undefined
+        ? { mentions: previous.mentions } : {}),
     })
   }
   return [...map.values()].sort((a, b) => a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid))
@@ -1508,6 +1402,8 @@ function applySourceSendResult(
       ? { editDurationMillis: optimistic.editDurationMillis } : {}),
     ...(candidate.captureContext === undefined && optimistic?.captureContext !== undefined
       ? { captureContext: optimistic.captureContext } : {}),
+    ...(candidate.mentions === undefined && optimistic?.mentions !== undefined
+      ? { mentions: optimistic.mentions } : {}),
   }
   const confirmed: ArkmeTimelineItem = {
     ...base,
@@ -1527,6 +1423,36 @@ function applySourceSendResult(
     current.filter(item => item.itemUid !== optimisticItemUid && item.itemUid !== result.itemUid),
     [confirmed],
   )
+}
+
+function optimisticTimelineMentionTargets(
+  mentions: readonly ArkmeComposerMention[],
+  members: readonly ArkmeConversationMemberItem[],
+  rawText: string,
+  text: string,
+  textFormat: 'plain' | 'markdown' | undefined,
+): ArkmeTimelineMentionTarget[] {
+  const leadingTrim = textFormat === 'markdown' ? 0 : rawText.length - rawText.trimStart().length
+  return mentions.flatMap<ArkmeTimelineMentionTarget>(mention => {
+    const startIndex = Math.trunc(mention.startIndex) - leadingTrim
+    const length = Math.trunc(mention.length)
+    if (startIndex < 0 || length < 2 || startIndex + length > text.length
+      || text.slice(startIndex, startIndex + length) !== `@${mention.displayName}`) return []
+    if (mention.all === true) {
+      return [{ kind: 'all', startIndex, length, displayName: mention.displayName }]
+    }
+    if (mention.botRef !== undefined) {
+      return [{ kind: 'bot', startIndex, length, displayName: mention.displayName, botRef: mention.botRef }]
+    }
+    const member = members.find(item => item.status === 'active' && item.mentionRef !== undefined && item.mentionRef === mention.mentionRef)
+    return member === undefined ? [] : [{
+      kind: 'member',
+      startIndex,
+      length,
+      displayName: mention.displayName,
+      memberRef: member.memberRef,
+    }]
+  })
 }
 
 interface ArkmeTimelineViewState {
@@ -4738,10 +4664,18 @@ export function ArkmeSurface({
     const now = Date.now()
     const optimisticSenderName = selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'
     const optimisticAvatarRef = selfProfile?.avatarRef.trim()
+    const optimisticMentions = optimisticTimelineMentionTargets(
+      serializedDraft.mentions,
+      conversationMembers,
+      rawTextContent,
+      textContent,
+      textFormat,
+    )
     const optimistic: ArkmeTimelineItem = {
       itemUid: recordUid, senderName: optimisticSenderName, isMe: true, sendAtMillis: now,
       ...(optimisticAvatarRef === undefined || optimisticAvatarRef === '' ? {} : { avatarRef: optimisticAvatarRef }),
       title: '', textContent, textFormat: textFormat ?? 'plain', status: 0,
+      ...(optimisticMentions.length === 0 ? {} : { mentions: optimisticMentions }),
       ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
       captureContext,
       ...(targetSource.kind === 'group_chat' && aiPolishSettings?.enabled === true
@@ -5246,20 +5180,7 @@ export function ArkmeSurface({
           conversationMembers,
         )
       } else if (source?.kind === 'private_chat') {
-        const candidates: ArkmeMentionCandidate[] = []
-        candidates.push(...(privateMentionBots?.items ?? [])
-          .filter(bot => bot.provider === 'openclaw' && arkmeMentionCandidateMatches({
-            displayName: bot.name,
-            secondaryName: bot.description,
-          }, mentionTrigger.query))
-          .slice(0, 8)
-          .map(bot => ({
-            kind: 'bot' as const,
-            botRef: bot.botRef,
-            displayName: bot.name,
-            ...(bot.description.trim() === '' ? {} : { secondaryName: bot.description.trim() }),
-          })))
-        return candidates
+        return arkmePrivateMentionCandidates(mentionTrigger.query, privateMentionBots?.items ?? [])
       }
       return []
     },
@@ -5316,13 +5237,13 @@ export function ArkmeSurface({
     setMemberRecords(undefined)
     setMemberProfile(member)
   }, [source?.kind])
-  const mentionOpensMemberProfile = useCallback((mentionText: string): boolean => (
+  const mentionOpensMemberProfile = useCallback((mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget): boolean => (
     source?.kind === 'group_chat'
-    && arkmeMemberForVisibleMention(mentionText, conversationMembers) !== undefined
+    && arkmeMemberForMention(mentionText, conversationMembers, mentionTarget) !== undefined
   ), [conversationMembers, source?.kind])
-  const openMentionMemberProfile = useCallback((mentionText: string) => {
+  const openMentionMemberProfile = useCallback((mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget) => {
     if (source?.kind !== 'group_chat') return
-    const member = arkmeMemberForVisibleMention(mentionText, conversationMembers)
+    const member = arkmeMemberForMention(mentionText, conversationMembers, mentionTarget)
     if (member === undefined) return
     openMemberProfile(member)
   }, [conversationMembers, openMemberProfile, source?.kind])
@@ -7498,45 +7419,25 @@ export function ArkmeSurface({
                 </button>)}
             </div>}
             {activeRecordReeditComposer === undefined && mentionTrigger !== undefined && <div style={styles.mentionSuggestions} role="listbox" aria-label="选择要 @ 的对象">
+              <ArkmeMentionSuggestionThemeStyles />
               {mentionCandidates.length === 0
                 ? <div style={styles.mentionSuggestionsEmpty}>暂无可 @ 的对象</div>
-                : mentionCandidates.map((member, index) => {
-                  const primary = arkmeMentionCandidatePrimaryText(member)
-                  const secondary = member.kind === 'bot' ? (member.secondaryName ?? 'Bot').trim() : ''
-                  return <button
-                    key={member.kind === 'all'
-                      ? 'all'
-                      : member.kind === 'bot'
-                        ? `bot:${member.botRef}`
-                        : `member:${member.mentionRef}`}
-                    type="button"
-                    role="option"
-                    aria-selected={index === mentionCandidateIndex}
-                    style={{
-                      ...styles.mentionSuggestionRow,
-                      ...(index === mentionCandidateIndex ? styles.mentionSuggestionRowActive : {}),
-                    }}
-                    onMouseEnter={() => { setMentionCandidateIndex(index) }}
-                    onMouseDown={event => {
-                      event.preventDefault()
-                      insertMentionCandidate(member)
-                    }}
-                  >
-                    <span style={styles.mentionSuggestionAvatar} aria-hidden>
-                      {member.kind === 'bot'
-                        ? member.avatarRef === undefined
-                          ? <span style={styles.mentionSuggestionBotAvatar}><RobotIcon size={14} weight="fill" /></span>
-                          : <ArkmeUserAvatar avatarRef={member.avatarRef} size={28} label={member.displayName} />
-                        : <ArkmeUserAvatar {...(member.kind === 'member' && member.avatarRef !== undefined ? { avatarRef: member.avatarRef } : {})} size={28} label={member.displayName} />}
-                    </span>
-                    <span style={styles.mentionSuggestionText}>
-                      <span style={styles.mentionSuggestionName}>{primary}</span>
-                      {secondary !== '' && secondary !== member.displayName
-                        ? <span style={styles.mentionSuggestionSecondary}>{secondary}</span>
-                        : null}
-                    </span>
-                  </button>
-                })}
+                : mentionCandidates.map((member, index) => <ArkmeMentionSuggestionRow
+                  key={arkmeMentionCandidateKey(member)}
+                  candidate={member}
+                  active={index === mentionCandidateIndex}
+                  styles={{
+                    row: styles.mentionSuggestionRow!,
+                    rowActive: styles.mentionSuggestionRowActive!,
+                    avatar: styles.mentionSuggestionAvatar!,
+                    botAvatar: styles.mentionSuggestionBotAvatar!,
+                    text: styles.mentionSuggestionText!,
+                    name: styles.mentionSuggestionName!,
+                    secondary: styles.mentionSuggestionSecondary!,
+                  }}
+                  onActive={() => { setMentionCandidateIndex(index) }}
+                  onSelect={() => { insertMentionCandidate(member) }}
+                />)}
             </div>}
             <ArkmeRichComposerInput markdownEnabled={activeRecordReeditComposer === undefined && markdownQuickNotesEnabled} key={activeRecordReeditComposer === undefined ? composerDraftKey : `record-reedit:${activeRecordReeditComposer.generation}`} className="arkme-conversation-textarea" ref={textareaRef} style={{ ...styles.textarea!, ...composerResize.editorStyle }} value={visibleComposerText} mentions={activeRecordReeditComposer === undefined ? composerDraft.mentions : []} emojis={activeRecordReeditComposer === undefined ? composerDraft.emojis : []} maxLength={activeRecordReeditComposer?.snapshot?.maxTextLength ?? 20000} placeholder={effectiveComposerPlaceholder} ariaLabel={activeRecordReeditComposer === undefined ? effectiveComposerPlaceholder : '重新编辑快记'} disabled={composerFilesDisabled}
               markdown={activeRecordReeditComposer === undefined && !directAdmission.blocked ? composerDraft.markdown : undefined}
@@ -7650,26 +7551,11 @@ export function ArkmeSurface({
                   textareaRef.current?.focus()
                 }}
               />
-              <button
-              type="button"
-              style={{ ...styles.send, ...(canSend ? {} : styles.sendDisabled) }}
-              disabled={!canSend}
-              aria-label={activeRecordReeditComposer === undefined ? '发送消息' : '保存重新编辑'}
-              onMouseDown={event => { event.preventDefault() }}
-              onMouseEnter={event => {
-                if (!event.currentTarget.disabled) {
-                  event.currentTarget.style.background = '#08A437'
-                }
-              }}
-              onMouseLeave={event => {
-                if (!event.currentTarget.disabled) event.currentTarget.style.background = '#09B83E'
-              }}
-              onClick={() => { void send() }}
-            >
-              <svg viewBox="9.7 6.1 16 16" width="16" height="16" aria-hidden>
-                <path d="M23.5521 7.04659L11.5965 10.7238C10.7646 10.9798 10.6133 12.092 11.3467 12.5609L14.879 14.8189C15.0627 14.9363 15.2792 14.9919 15.4967 14.9775C15.7142 14.9631 15.9214 14.8794 16.088 14.7388L20.4967 11.0186C20.7357 10.8169 21.0582 11.1392 20.8566 11.3784L17.1366 15.7879C16.996 15.9545 16.9124 16.1617 16.8981 16.3792C16.8837 16.5966 16.9393 16.813 17.0568 16.9966L19.3143 20.5285C19.783 21.2617 20.8954 21.1104 21.1513 20.2787L24.8286 8.32335C25.0696 7.53956 24.3356 6.80563 23.5521 7.04659Z" fill="currentColor" />
-              </svg>
-              </button>
+              <ArkmeComposerSendButton
+                disabled={!canSend}
+                ariaLabel={activeRecordReeditComposer === undefined ? '发送消息' : '保存重新编辑'}
+                onClick={() => { void send() }}
+              />
             </div></div>
             {activeRecordReeditComposer === undefined && arkmeSourceSupportsRecordInputCapture(source?.kind) && <ArkmeBackgroundSoundWaveform
               owner={recordInputCaptureOwner}
@@ -8062,12 +7948,15 @@ export function ArkmeSurface({
           key={detailItem.itemUid}
           item={detailItem}
           sourceRef={source?.sourceRef}
+          sourceKind={source?.kind}
+          conversationMembers={conversationMembers}
           showOriginal={showOriginal}
           onClose={() => { setDrawer(undefined) }}
           onToggleOriginal={() => { setShowOriginal(value => !value) }}
           shareWebsite={shareWebsite}
           onMessageCopyLinkOpen={openMessageCopyLinkDetail}
           onExtensionSent={acceptDetailExtension}
+          onOpenPrivateChatMember={openPrivateChatForMember}
           messageCreationBlocked={directAdmission.blocked}
           messageCreationRestriction={directAdmission.blocked ? directAdmission.message : ''}
           onToast={showMessageActionStatus}
