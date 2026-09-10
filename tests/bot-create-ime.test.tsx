@@ -6,7 +6,10 @@ import { ArkmeBotCreateDialog } from '../src/client/ArkmeBotCreateDialog.js'
 import { callArkme } from '../src/client/api.js'
 import type { ArkmeBotSummary } from '../src/types.js'
 
-vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn(), ArkmeClientError: Error }))
+vi.mock('../src/client/api.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/api.js')>(),
+  callArkme: vi.fn(),
+}))
 
 let host: HTMLDivElement
 let root: Root
@@ -70,7 +73,7 @@ it('确认候选文字后再次正常回车，使用最终名称创建一次', a
   act(() => { nameInput().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '测试' })) })
   enterName('  测试  ')
   await keyDown()
-  expect(callArkme).toHaveBeenCalledExactlyOnceWith('bots.create', { name: '测试', provider: 'openclaw' })
+  expect(callArkme).toHaveBeenCalledExactlyOnceWith('bots.create', { name: '测试', provider: 'openclaw', requestUid: expect.stringMatching(/^[0-9a-f-]{36}$/) })
   expect(onBotCreated).toHaveBeenCalledWith(bot)
   expect(onClose).toHaveBeenCalledTimes(1)
 })
@@ -78,7 +81,7 @@ it('确认候选文字后再次正常回车，使用最终名称创建一次', a
 it('鼠标创建保留原路径', async () => {
   enterName()
   await act(async () => { createButton().click() })
-  expect(callArkme).toHaveBeenCalledExactlyOnceWith('bots.create', { name: '测试 Bot', provider: 'openclaw' })
+  expect(callArkme).toHaveBeenCalledExactlyOnceWith('bots.create', { name: '测试 Bot', provider: 'openclaw', requestUid: expect.stringMatching(/^[0-9a-f-]{36}$/) })
 })
 
 it('空白名称不会发请求', async () => {
@@ -114,6 +117,7 @@ it('创建失败显示错误并恢复输入，允许用户主动重试', async (
   expect(onClose).not.toHaveBeenCalled()
   await keyDown()
   expect(callArkme).toHaveBeenCalledTimes(2)
+  expect(vi.mocked(callArkme).mock.calls[1][1]).toEqual(vi.mocked(callArkme).mock.calls[0][1])
   expect(onClose).toHaveBeenCalledTimes(1)
 })
 
@@ -148,7 +152,7 @@ it('Webhook 和简介保持独立字段，简介换行不提交', async () => {
   expect(callArkme).not.toHaveBeenCalled()
   await keyDown()
   expect(callArkme).toHaveBeenCalledExactlyOnceWith('bots.create', {
-    name: '测试 Bot', provider: 'webhook', description: '简介\n第二行',
+    name: '测试 Bot', provider: 'webhook', description: '简介\n第二行', requestUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
   })
 })
 
