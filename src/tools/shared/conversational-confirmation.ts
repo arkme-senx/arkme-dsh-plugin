@@ -225,7 +225,13 @@ function confirmationResult(agent: Agent, pending: PendingConfirmation): { seq: 
     if (event.type !== 'tool/result' || (event.surfaceOp !== undefined && event.surfaceOp !== 'append')) continue
     const [result] = event.data.message.content
     if (event.data.message.source.callId === pending.preparedRootCallId && result.toolCallId === pending.preparedRootCallId) {
-      return { seq: event.seq, isError: result.isError === true || !preparedSucceeded }
+      // MCP output schemas describe owner results, so its local confirmation is
+      // a non-execution error. Only this exact, already prepared direct result
+      // establishes publication; arbitrary failures still require preparation.
+      const publishedConfirmation = pending.preparedCallId === pending.preparedRootCallId
+        && result.content.length === 1 && result.content[0]?.type === 'text'
+        && result.content[0].text === JSON.stringify({ status: 'confirmation_required', question: pending.question, expiresAtMillis: pending.expiresAtMillis })
+      return { seq: event.seq, isError: (result.isError === true && !publishedConfirmation) || !preparedSucceeded }
     }
   }
   return undefined

@@ -195,6 +195,30 @@ function sourceRefFor(
 }
 
 describe('ArkmeService', () => {
+  it.each(['success', 'unknown', 'account-switch', 'cache-error'])('invalidates MCP member presentation without replacing the %s outcome', async mode => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const clearConversationMembers = vi.fn(async () => { if (mode === 'cache-error') throw new Error('disk unavailable') })
+    const state = Object.assign(new MemoryStateStore(), { clearConversationMembers })
+    const service = new ArkmeService(config, sessions, state)
+    const events: { type: string }[] = []
+    const unsubscribe = service.subscribeChatRealtime(event => events.push(event))
+    const failure = new Error('acknowledgement lost')
+    const result = { items: [{ status: 'succeeded' }, { status: 'rejected' }] }
+    try {
+      const work = service.withGroupMemberInvalidation(['group-a', 'group-a', 'group-b'], async () => {
+        expect(clearConversationMembers).not.toHaveBeenCalled()
+        if (mode === 'account-switch') sessions.session = { userId: 20002, accessToken: 'next', refreshToken: 'next' }
+        if (mode === 'unknown') throw failure
+        return result
+      })
+      if (mode === 'unknown') await expect(work).rejects.toBe(failure)
+      else await expect(work).resolves.toBe(result)
+      expect(clearConversationMembers.mock.calls).toEqual([[10001, 'group-a'], [10001, 'group-b']])
+      expect(events.filter(event => event.type === 'members-invalidated')).toHaveLength(mode === 'account-switch' || mode === 'cache-error' ? 0 : 2)
+    } finally { unsubscribe(); service.dispose() }
+  })
+
   for (const disabled of [false, true]) {
     it(disabled
       ? 'allows a deployment override to disable production Markdown writes'

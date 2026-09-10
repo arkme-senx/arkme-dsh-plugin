@@ -740,7 +740,7 @@ describe('Arkme conversation tools', () => {
     }
 
     registerArkmeTools(ctx as never, service as never)
-    expect(ctx.on).not.toHaveBeenCalled()
+    expect(ctx.on.mock.calls.map(call => call[0])).toEqual(['tools/execute'])
 
     const events = sessionEvents([
       { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '把即我号改成 Chosen_01' }] } },
