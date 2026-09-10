@@ -203,7 +203,7 @@ describe('ArkmeService Bot owner adapter', () => {
       item.name, item.directChatAvailable, item.privateChatOutboundEnabled, item.conversationProjection,
     ])).toEqual([
       ['Subject', true, false, 'record'],
-      ['Chat', true, true, 'chat'],
+      ['Chat', true, false, 'chat'],
       ['Conflict', false, false, 'none'],
       ['Missing', false, false, 'none'],
     ])
@@ -348,6 +348,7 @@ describe('ArkmeService Bot owner adapter', () => {
       botRef: expect.stringMatching(/^arkme-bot-v2\./),
       name: '回调测试',
       provider: 'webhook',
+      privateChatOutboundEnabled: false,
       conversationProjection: 'chat',
     })
     expect(result.secret.reveal()).toBe('jbot_webhook_secret')
@@ -527,11 +528,11 @@ describe('ArkmeService Bot owner adapter', () => {
     const managed = await service.manageBotProfile(listed.botRef)
     const updated = await service.updateManagedBot(listed.botRef, { name: '更新后的 Chat Bot', description: '' })
 
-    for (const item of [managed, updated]) {
+    for (const item of [listed, managed, updated]) {
       expect(item).toMatchObject({
         botRef: listed.botRef,
         directChatAvailable: true,
-        privateChatOutboundEnabled: true,
+        privateChatOutboundEnabled: false,
         conversationProjection: 'chat',
         chatSourceKey: listed.chatSourceKey,
       })
@@ -798,7 +799,7 @@ describe('ArkmeService Bot owner adapter', () => {
     const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
     const service = new ArkmeService(config, sessions, stateStore, async (input, init) => {
       if (String(input).endsWith('/bot/list')) return json({ code: 200, data: { bots: [{
-        bot_id: 'chat-bot', name: 'Chat Bot', provider: 'webhook', subject_uid: '', chat_session_uid: 'chat-1',
+        bot_id: 'chat-bot', name: 'Chat Bot', provider: 'openclaw', subject_uid: '', chat_session_uid: 'chat-1',
       }] } })
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
       return json({ code: 200, data: {
@@ -814,13 +815,14 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(events).toEqual([])
   })
 
-  it('rejects an outbound Subject Webhook message before calling the write endpoint', async () => {
+  it.each(['subject', 'chat'] as const)('rejects an outbound %s Webhook message before any write', async owner => {
     const requests: string[] = []
     const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
     const service = new ArkmeService(config, sessions, stateStore, async input => {
       requests.push(String(input))
       if (String(input).endsWith('/bot/list')) return json({ code: 200, data: { bots: [{
-        bot_id: 'subject-webhook', name: 'Webhook', provider: 'webhook', subject_uid: 'subject-1', chat_session_uid: '',
+        bot_id: 'webhook', name: 'Webhook', provider: 'webhook',
+        subject_uid: owner === 'subject' ? 'subject-1' : '', chat_session_uid: owner === 'chat' ? 'chat-1' : '',
       }] } })
       return json({ code: 200, data: {
         status: 'ok', user_message: { message_id: 'message-1', role: 'user', content: '测试', created_at: 2 },
@@ -831,7 +833,8 @@ describe('ArkmeService Bot owner adapter', () => {
     await expect(service.sendBotPrivateChatMessage(botRef, '测试')).rejects.toMatchObject({
       code: 'bot-conversation-send-unsupported', retryable: false,
     })
-    expect(requests.filter(url => url.endsWith('/private-chat/message/send'))).toHaveLength(0)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatch(/\/bot\/list$/)
   })
 
   it('reports an unknown Subject send outcome without retrying the write', async () => {
@@ -876,7 +879,7 @@ describe('ArkmeService Bot owner adapter', () => {
     const service = new ArkmeService(config, sessions, stateStore, async input => {
       requests.push(String(input))
       if (String(input).endsWith('/bot/list')) return json({ code: 200, data: { bots: [{
-        bot_id: 'chat-bot', name: 'Chat Bot', provider: 'webhook', subject_uid: '', chat_session_uid: 'chat-1',
+        bot_id: 'chat-bot', name: 'Chat Bot', provider: 'openclaw', subject_uid: '', chat_session_uid: 'chat-1',
       }] } })
       throw new TypeError('chat transport failed')
     })

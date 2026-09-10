@@ -41,14 +41,56 @@ describe('ArkmeBotConversationSurface business gates', () => {
     expect(markup).toContain('placeholder="发消息给 OpenClaw"')
   })
 
-  it('preserves the master composer when an external summary has no new capability fields', () => {
-    const markup = renderToStaticMarkup(<ArkmeBotConversationSurface bot={{
-      botRef: 'external-summary', name: '外部摘要', provider: 'webhook', description: '', status: 'online',
+  it.each([undefined, true, false])('keeps Webhook receive-only when a summary contains outbound=%s', async privateChatOutboundEnabled => {
+    const bot = {
+      botRef: 'external-summary', name: 'Webhook', provider: 'webhook' as const, description: '', status: 'online' as const,
       directChatAvailable: true,
-    }} />)
+      ...(privateChatOutboundEnabled === undefined ? {} : { privateChatOutboundEnabled }),
+    }
+    mocks.callArkme.mockResolvedValue({ messages: [] })
+    await act(async () => { renderer = create(<ArkmeBotConversationSurface bot={bot} />) })
+    expect(renderer!.root.findAllByType('textarea')).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('暂无消息，等待外部系统推送')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('打个招呼吧')
+  })
 
-    expect(markup).toContain('<textarea')
-    expect(markup).not.toContain('Webhook Bot 仅接收外部系统推送')
+  it('does not call a disabled OpenClaw session a Webhook', async () => {
+    await act(async () => { renderer = create(<ArkmeBotConversationSurface bot={{ ...subjectOpenClaw, privateChatOutboundEnabled: false }} />) })
+    const content = JSON.stringify(renderer!.toJSON())
+    expect(content).toContain('当前 Bot 会话暂不可用')
+    expect(content).not.toContain('Webhook')
+    expect(content).not.toContain('外部系统推送')
+    expect(content).not.toContain('打个招呼吧')
+    expect(renderer!.root.findAllByType('textarea')).toHaveLength(0)
+  })
+
+  it.each(['record', 'chat'] as const)('recovers a failed %s Webhook load without presenting failure as empty data', async conversationProjection => {
+    mocks.callArkme.mockRejectedValueOnce(new Error('会话加载失败')).mockResolvedValue({ messages: [] })
+    await act(async () => { renderer = create(<ArkmeBotConversationSurface bot={{ ...subjectOpenClaw, provider: 'webhook', privateChatOutboundEnabled: false, conversationProjection }} />) })
+    const content = JSON.stringify(renderer!.toJSON())
+    expect(content).toContain('会话加载失败')
+    expect(content).not.toContain('暂无消息')
+    expect(content).not.toContain('打个招呼吧')
+    await act(async () => {
+      if (conversationProjection === 'chat') arkmeUi.chatChanged()
+      else arkmeUi.recordChanged()
+    })
+    expect(renderer!.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('暂无消息，等待外部系统推送')
+  })
+
+  it('keeps a pending Webhook load distinct from a confirmed empty conversation', async () => {
+    let finishLoad: ((value: unknown) => void) | undefined
+    mocks.callArkme.mockImplementationOnce(() => new Promise(resolve => { finishLoad = resolve }))
+    await act(async () => { renderer = create(<ArkmeBotConversationSurface bot={{
+      ...subjectOpenClaw, provider: 'webhook', privateChatOutboundEnabled: false,
+    }} />) })
+    expect(renderer!.root.findAllByProps({ role: 'status' })).toHaveLength(1)
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('暂无消息')
+    expect(renderer!.root.findAllByType('textarea')).toHaveLength(0)
+    await act(async () => { finishLoad?.({ messages: [] }) })
+    expect(renderer!.root.findAllByProps({ role: 'status' })).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('暂无消息，等待外部系统推送')
   })
 
   it('uses an inbound-only notice instead of a composer for a Subject Webhook Bot', () => {
@@ -72,14 +114,45 @@ describe('ArkmeBotConversationSurface business gates', () => {
     expect(markup).not.toContain('Webhook Bot 仅接收外部系统推送')
   })
 
-  it('keeps the current Chat-owned Webhook surface out of the Subject-only UI gate', () => {
-    const markup = renderToStaticMarkup(<ArkmeBotConversationSurface bot={{
-      botRef: 'chat-webhook', name: 'Chat Webhook', provider: 'webhook', description: '', status: 'online',
-      directChatAvailable: true, privateChatOutboundEnabled: true, conversationProjection: 'chat',
-    }} />)
+  it.each(['record', 'chat'] as const)('shows a receive-only empty state for a %s Webhook Bot', async conversationProjection => {
+    const bot = {
+      botRef: 'webhook', name: 'Webhook', provider: 'webhook' as const, description: '', status: 'online' as const,
+      directChatAvailable: true, privateChatOutboundEnabled: false, conversationProjection,
+    }
+    mocks.callArkme.mockResolvedValue({ messages: [] })
+    await act(async () => { renderer = create(<ArkmeBotConversationSurface bot={bot} />) })
 
-    expect(markup).toContain('<textarea')
-    expect(markup).not.toContain('Webhook Bot 仅接收外部系统推送')
+    expect(renderer!.root.findAllByType('textarea')).toHaveLength(0)
+    const content = JSON.stringify(renderer!.toJSON())
+    expect(content).toContain('Webhook Bot 仅接收外部系统推送')
+    expect(content).toContain('暂无消息，等待外部系统推送')
+    expect(content).not.toContain('打个招呼吧')
+    expect(mocks.callArkme.mock.calls.some(call => call[0] === 'bots.private-chat.send')).toBe(false)
+  })
+
+  it.each(['record', 'chat'] as const)('keeps the greeting and composer for an empty %s OpenClaw Bot', async conversationProjection => {
+    await act(async () => { renderer = create(<ArkmeBotConversationSurface bot={{ ...subjectOpenClaw, conversationProjection }} />) })
+    expect(renderer!.root.findAllByType('textarea')).toHaveLength(1)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('打个招呼吧')
+  })
+
+  it.each(['record', 'chat'] as const)('shows external pushes after a %s Webhook refresh without offering send', async conversationProjection => {
+    const bot = {
+      botRef: 'webhook', name: 'Webhook', provider: 'webhook' as const, description: '', status: 'online' as const,
+      directChatAvailable: true, privateChatOutboundEnabled: false, conversationProjection,
+    }
+    mocks.callArkme.mockResolvedValueOnce({ messages: [] }).mockResolvedValue({ messages: [{
+      messageId: 'push-1', role: 'assistant', content: '外部通知', status: 'sent', createdAtMillis: 1,
+    }] })
+    await act(async () => { renderer = create(<ArkmeBotConversationSurface bot={bot} />) })
+    await act(async () => {
+      if (conversationProjection === 'chat') arkmeUi.chatChanged()
+      else arkmeUi.recordChanged()
+    })
+    const content = JSON.stringify(renderer!.toJSON())
+    expect(content).toContain('外部通知')
+    expect(content).not.toContain('暂无消息，等待外部系统推送')
+    expect(renderer!.root.findAllByType('textarea')).toHaveLength(0)
   })
 
   it('renders Subject-owned and Chat-owned Bots with the same existing DOM and styles', () => {
