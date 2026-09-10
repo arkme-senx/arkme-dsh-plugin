@@ -735,6 +735,7 @@ export class SourceService {
     }
 
     const sourceRef = await this.sealSourceRef(session.userId, 'topic', topicUid, title)
+    const topicHierarchyKey = await this.topicHierarchyKey(session.userId, topicUid)
     if (parentTopicUid !== undefined) {
       try {
         const bound = await this.runtime.authenticatedPost<Record<string, unknown>>(
@@ -766,6 +767,7 @@ export class SourceService {
           return {
             source: {
               sourceRef,
+              topicHierarchyKey,
               kind: 'topic',
               displayName: title,
               activeAtMillis: createdAtMillis,
@@ -782,13 +784,19 @@ export class SourceService {
           409,
           { cause: bindError },
         )
+      } finally {
+        this.invalidateSourceListCache(session.userId, 'send_to_self')
       }
     }
 
     return {
       source: {
         sourceRef,
-        ...(parentSourceRef !== undefined ? { parentSourceRef } : {}),
+        topicHierarchyKey,
+        ...(parentSourceRef !== undefined && parentTopicUid !== undefined ? {
+          parentSourceRef,
+          parentTopicHierarchyKey: await this.topicHierarchyKey(session.userId, parentTopicUid),
+        } : {}),
         kind: 'topic',
         displayName: title,
         activeAtMillis: createdAtMillis,
@@ -1152,7 +1160,9 @@ export class SourceService {
       const title = stringValue(core.title).trim()
       if (!topicUid || !title || seen.has(topicUid)) continue
       seen.add(topicUid)
+      const recordCount = objectValue(entry.summary).record_count
       items.push({ kind: 'topic', displayName: title, activeAtMillis: numberValue(core.update_at), unreadCount: 0,
+        ...(typeof recordCount === 'number' && Number.isSafeInteger(recordCount) && recordCount >= 0 ? { recordCount } : {}),
         sourceRef: await this.sealSourceRef(session.userId, 'topic', topicUid, title),
         topicHierarchyKey: await this.topicHierarchyKey(session.userId, topicUid),
       })
@@ -1276,11 +1286,23 @@ export class SourceService {
 
   async countGroupSources(signal?: AbortSignal): Promise<number> {
     const session = await this.runtime.requireSession()
-    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-      '/api/v1/chats/list', { limit: 0, session_kind: 2 }, session, signal,
-      { lane: 'interactive-read', key: 'directory:groups:count', failureCooldownMs: 2_000 },
-    )
-    return Math.max(0, numberValue(data.total ?? data.total_count))
+    let total = 0
+    let cursor: Record<string, unknown> | undefined
+    const seen = new Set<string>()
+    for (let page = 0; page < 100; page += 1) {
+      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/list', { limit: 100, session_kind: 2, ...(cursor === undefined ? {} : { page_cursor: cursor }) }, session, signal,
+        { lane: 'background-read' },
+      )
+      if (!Array.isArray(data.items)) throw new ArkmePluginError('directory-groups-contract-invalid', '群聊列表响应不完整', false, 502)
+      total += data.items.length
+      if (data.has_more !== true) return total
+      cursor = objectValue(data.next_page_cursor)
+      const key = JSON.stringify(cursor)
+      if (Object.keys(cursor).length === 0 || seen.has(key)) throw new ArkmePluginError('directory-groups-cursor-invalid', '群聊分页响应不完整', false, 502)
+      seen.add(key)
+    }
+    throw new ArkmePluginError('directory-groups-pagination-limit', '群聊列表超过安全分页上限', false, 502)
   }
 
   private async listSourcesUncached(

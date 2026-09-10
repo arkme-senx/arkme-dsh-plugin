@@ -32,9 +32,13 @@ const redesignCss = readFileSync(
 )
 
 describe('Arkme product navigation', () => {
-  it('uses the same server-owned attention summary for product navigation and the legacy footer seat', () => {
-    expect(productNavigationSource).toContain('arkmeAttentionSummary.subscribe')
-    expect(footerDropdownSource).toContain('arkmeAttentionSummary.subscribe')
+  it('uses the same conversation directory total for product navigation and the legacy footer seat', () => {
+    expect(productNavigationSource).toContain('arkmeChatDirectory.subscribe')
+    expect(footerDropdownSource).toContain('arkmeChatDirectory.subscribe')
+    expect(productNavigationSource).toContain('arkmeChatDirectory.getConversationSnapshot')
+    expect(footerDropdownSource).toContain('arkmeChatDirectory.getConversationSnapshot')
+    expect(productNavigationSource).toContain('? directory.badgeCount')
+    expect(footerDropdownSource).toContain('? directory.badgeCount')
     expect(productNavigationSource).not.toContain('totalUnreadCount')
     expect(footerDropdownSource).not.toContain('totalUnreadCount')
   })
@@ -135,9 +139,9 @@ describe('Arkme product navigation', () => {
     expect(markup).not.toContain('data-arkme-owned="product-brand"')
   })
 
-  it('shows the conversation unread indicator from the server-owned account summary', () => {
+  it('sums row badges even when an independent attention summary disagrees', () => {
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 901 })
-    arkmeChatDirectory.activateAccount(901)
+    arkmeChatDirectory.activateAccount('test:901')
     arkmeAttentionSummary.activateAccount(901)
     arkmeChatDirectory.publish([{
       sourceRef: 'private-chat-1', kind: 'private_chat', displayName: '小林',
@@ -149,8 +153,9 @@ describe('Arkme product navigation', () => {
       sourceRef: 'muted-group-chat-1', kind: 'group_chat', displayName: '免打扰群',
       activeAtMillis: 3, unreadCount: 80, isMuted: true,
     }])
+    arkmeChatDirectory.hydrateVisibility(arkmeChatDirectory.getSnapshot().sources.map(source => ({ entryKind: 'source', entryRef: source.sourceRef, hidden: false })))
     arkmeAttentionSummary.apply({
-      badgeCount: 110, mutedUnreadCount: 80, sessionCountWithUnread: 3,
+      badgeCount: 999, mutedUnreadCount: 80, sessionCountWithUnread: 3,
       hasAttention: false, summaryVersion: 1, updatedAtMillis: 1,
     })
 

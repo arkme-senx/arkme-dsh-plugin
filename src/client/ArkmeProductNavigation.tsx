@@ -20,7 +20,7 @@ import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 import { ArkmeUpdateRailSlot } from './ArkmeUpdateSurfaces.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { arkmeAttentionSummary } from './attention-summary-store.js'
+import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
 
 export interface ArkmeProductNavigationProps {
@@ -133,10 +133,10 @@ export function ArkmeProductNavigation({
 }: ArkmeProductNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
-  const attention = useSyncExternalStore(
-    arkmeAttentionSummary.subscribe,
-    arkmeAttentionSummary.getSnapshot,
-    arkmeAttentionSummary.getSnapshot,
+  const directory = useSyncExternalStore(
+    arkmeChatDirectory.subscribe,
+    arkmeChatDirectory.getConversationSnapshot,
+    arkmeChatDirectory.getConversationSnapshot,
   )
   const [profileOpen, setProfileOpen] = useState(false)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
@@ -182,9 +182,9 @@ export function ArkmeProductNavigation({
     : ui.mode === 'calls' ? 'calls'
     : ui.mode === 'recordings' ? 'recordings'
       : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
-  const conversationUnreadCount = authState.auth?.status === 'authenticated' && attention.ready
-    && attention.accountUserId === authState.auth.userId
-    ? attention.summary?.badgeCount ?? 0
+  const conversationUnreadCount = authState.auth?.status === 'authenticated'
+    && directory.accountScope === `${authState.auth.environment}:${String(authState.auth.userId)}`
+    ? directory.badgeCount
     : 0
   const conversationUnreadLabel = conversationUnreadCount > 99 ? '99+' : String(conversationUnreadCount)
   const navigationItems = items
@@ -256,6 +256,15 @@ export function ArkmeProductNavigation({
             ...(active ? styles.activeButton : {}),
           }}
           onClick={() => { activate(item.id) }}
+          onDoubleClick={item.id === 'conversations' && !locked ? () => { arkmeUi.locateNextUnreadConversation() } : undefined}
+          title={item.id === 'conversations' && !locked ? '双击定位下一个未读对话（Shift+Enter）' : undefined}
+          aria-keyshortcuts={item.id === 'conversations' && !locked ? 'Shift+Enter' : undefined}
+          onKeyDown={event => {
+            if (item.id === 'conversations' && !locked && event.shiftKey && event.key === 'Enter') {
+              event.preventDefault()
+              arkmeUi.locateNextUnreadConversation()
+            }
+          }}
         >
           {active && <span aria-hidden style={{
             ...styles.activeMarker,

@@ -6,18 +6,34 @@ import { arkmeTheme } from './arkme-theme.js'
 import { recordTopicAssignmentPort, type RecordTopicAssignmentPort, type RecordTopicAssignmentTarget } from './record-topic-assignment-port.js'
 
 const styles = {
-  search: { width: '100%', boxSizing: 'border-box', marginTop: 16, padding: '9px 12px', borderRadius: 8,
-    border: `1px solid ${arkmeTheme.border}`, background: arkmeTheme.input, color: arkmeTheme.text, font: 'inherit' },
-  list: { maxHeight: 'min(360px, 45vh)', overflowY: 'auto', marginTop: 10 },
-  topic: { width: '100%', textAlign: 'left', border: 0, borderRadius: 8, padding: '10px 12px',
-    background: 'transparent', color: arkmeTheme.text, font: 'inherit', cursor: 'pointer', overflowWrap: 'anywhere' },
-  status: { fontSize: 13, color: arkmeTheme.secondary, padding: '12px 0' },
+  header: { display: 'flex', alignItems: 'center', gap: 19, margin: 16 },
+  search: { flex: 1, minWidth: 0, height: 40, boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8,
+    border: 0, background: arkmeTheme.subtle, color: arkmeTheme.text, font: 'inherit', fontSize: 16 },
+  action: { display: 'grid', placeItems: 'center', flexShrink: 0, width: 20, height: 20, padding: 0,
+    border: 0, background: 'transparent', color: arkmeTheme.text, cursor: 'pointer' },
+  list: { maxHeight: 'min(384px, calc(100vh - 136px))', overflowY: 'auto', margin: '0 16px 16px' },
+  topic: { display: 'flex', alignItems: 'center', gap: 10, width: '100%', height: 52, textAlign: 'left',
+    border: 0, borderRadius: 12, padding: '10px 12px', background: 'transparent', color: arkmeTheme.text,
+    font: 'inherit', fontSize: 16, cursor: 'pointer' },
+  title: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  meta: { flexShrink: 0, color: arkmeTheme.secondary, fontSize: 12 },
+  status: { fontSize: 13, color: arkmeTheme.secondary, padding: '12px 16px' },
 } satisfies Record<string, CSSProperties>
+
+function TopicPickerIcon({ release = false }: { release?: boolean }) {
+  // Flutter icon_add.svg and icon_release.svg.
+  return <svg width="20" height="20" viewBox={release ? '0 0 21 20' : '0 0 20 20'} fill="none" aria-hidden="true">
+    {(release ? ['M3.5 7V4C3.5 3.44772 3.94772 3 4.5 3H7.5', 'M3.5 13V16C3.5 16.5523 3.94772 17 4.5 17H7.5',
+      'M17.5 7V4C17.5 3.44772 17.0523 3 16.5 3H13.5', 'M17.5 13L15.5 15L13.5 17', 'M13.5 13L15.5 15L17.5 17']
+      : ['M16.0721 10H3.92773', 'M10 3.92773V16.0721']).map(d => <path key={d} d={d} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />)}
+  </svg>
+}
 
 export function ArkmeRecordTopicAssignmentDialog(props: {
   source: ArkmeSourceItem
   assignmentRefs: readonly string[]
   firstRecordText: string
+  currentTopicKey?: string
   port?: RecordTopicAssignmentPort
   onCancel(): void
   onRefresh(): void
@@ -30,6 +46,7 @@ export function ArkmeRecordTopicAssignmentDialog(props: {
   const [loading, setLoading] = useState(true)
   const [readError, setReadError] = useState('')
   const [writeError, setWriteError] = useState('')
+  const [selectionNotice, setSelectionNotice] = useState('')
   const [pending, setPending] = useState(false)
   const [pendingLabel, setPendingLabel] = useState('正在指定主题…')
   const readRef = useRef<AbortController>()
@@ -71,6 +88,11 @@ export function ArkmeRecordTopicAssignmentDialog(props: {
 
   const assign = async (target?: ArkmeSourceItem, create = false) => {
     if (writeRef.current || requiresRefresh || selectionError !== '') return
+    if (!create && target?.topicHierarchyKey && target.topicHierarchyKey === props.currentTopicKey) {
+      setSelectionNotice('已在当前主题中！')
+      return
+    }
+    setSelectionNotice('')
     const controller = new AbortController()
     writeRef.current = controller
     setPending(true)
@@ -102,23 +124,36 @@ export function ArkmeRecordTopicAssignmentDialog(props: {
   }
   const cancel = () => { if (!writeRef.current) props.onCancel() }
   return <ArkmeConfirmDialog
+    layout="picker"
     titleId="arkme-record-topic-assignment-title" title="指定主题"
-    description={`已选择 ${props.assignmentRefs.length} 条快记`}
-    busy={pending} confirmDisabled={requiresRefresh || selectionError !== ''} confirmLabel="新建主题" busyLabel={pendingLabel}
-    onClose={cancel} onConfirm={() => { void assign(undefined, true) }} error={writeError || selectionError}
+    busy={pending} onClose={cancel} error={writeError || selectionError}
   >
-    <input aria-label="搜索主题名" type="search" style={styles.search} value={keyword} disabled={locked}
-      onChange={event => { setKeyword(event.currentTarget.value) }} />
+    <style>{`.arkme-topic-picker-row:not(:disabled):hover { background: ${arkmeTheme.layer1} !important; }
+      .arkme-topic-picker-action:disabled { opacity: .45; cursor: not-allowed; }`}</style>
+    <div style={styles.header}>
+      <input aria-label="搜索主题名" placeholder="搜索主题名" type="search" style={styles.search} value={keyword} disabled={locked}
+        onChange={event => { setKeyword(event.currentTarget.value) }} />
+      {props.source.kind === 'topic' && <button className="arkme-topic-picker-action" type="button" style={styles.action}
+        aria-label="移出主题" title="移出主题" disabled={locked} onClick={() => { void assign() }}><TopicPickerIcon release /></button>}
+      <button className="arkme-topic-picker-action" type="button" style={styles.action} aria-label="新建主题" title="创建新主题"
+        disabled={locked} onClick={() => { void assign(undefined, true) }}><TopicPickerIcon /></button>
+    </div>
     <div style={styles.list} aria-label="可指定主题">
-      {topics.map(topic => <button type="button" key={topic.topicHierarchyKey} style={{ ...styles.topic, opacity: locked ? .45 : 1 }}
-        aria-label={`指定到${topic.displayName}`} disabled={locked} onClick={() => { void assign(topic) }}
-      >{topic.displayName}</button>)}
+      {topics.map(topic => <button className="arkme-topic-picker-row" type="button" key={topic.topicHierarchyKey}
+        style={{ ...styles.topic, opacity: locked ? .45 : 1 }} aria-label={`指定到${topic.displayName}`}
+        disabled={locked} onClick={() => { void assign(topic) }}>
+        <span style={styles.title}>{topic.displayName}</span>
+        <span style={styles.meta}>{topic.topicHierarchyKey === props.currentTopicKey ? '当前主题' : topic.recordCount}</span>
+      </button>)}
       {loading && <p role="status" style={styles.status}>主题加载中…</p>}
-      {!loading && topics.length === 0 && readError === '' && <p style={styles.status}>暂无可选主题</p>}
+      {!loading && topics.length === 0 && readError === '' && <button type="button" style={styles.topic} disabled={locked}
+        onClick={() => { void assign(undefined, true) }}>+ 创建新主题</button>}
       {readError !== '' && <p role="alert">{readError}<button type="button" disabled={locked} onClick={() => { void load(nextCursor) }}>重试</button></p>}
       {nextCursor && readError === '' && <button type="button" disabled={loading || locked} onClick={() => { void load(nextCursor) }}>加载更多主题</button>}
     </div>
-    {props.source.kind === 'topic' && <button type="button" style={styles.topic} disabled={locked} onClick={() => { void assign() }}>移出主题</button>}
-    {requiresRefresh && <button type="button" onClick={props.onRefresh}>刷新并重新选择</button>}
+    {selectionNotice && <p role="status" style={styles.status}>{selectionNotice}</p>}
+    {pending && <p role="status" style={styles.status}>{pendingLabel}</p>}
+    {requiresRefresh && <button type="button" style={styles.topic} onClick={props.onRefresh}>刷新并重新选择</button>}
+
   </ArkmeConfirmDialog>
 }

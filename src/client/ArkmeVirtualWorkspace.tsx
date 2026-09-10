@@ -1,3 +1,4 @@
+import { nextArkmeUnreadConversation } from '../conversation-attention.js'
 import { ArkmeDirectoryWindow } from './ArkmeDirectoryWindow.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -52,7 +53,7 @@ import {
   updateBotDirectoryPreferences,
   type ArkmeBotDirectoryPreferences,
 } from './bot-directory-preferences.js'
-import { mergeBotDirectoryActivity, mergeBotDirectorySnapshots, projectBotChatDirectory } from './bot-chat-directory-projection.js'
+import { mergeBotDirectoryActivity, mergeBotDirectorySnapshots } from './bot-chat-directory-projection.js'
 import {
   applyConversationVisibilityQueryFailure,
   applyConversationVisibilityQuerySuccess,
@@ -64,10 +65,7 @@ import {
   conversationVisibilityKey,
   conversationVisibilityScope,
   dismissConversationVisibilityEntry,
-  emptyConversationVisibilityHydration,
   emptyConversationVisibilityOverlay,
-  markConversationVisibilityScopeHydrated,
-  type ConversationVisibilityHydration,
   type ConversationVisibilityOverlay,
 } from './conversation-directory-visibility-overlay.js'
 import {
@@ -78,7 +76,7 @@ import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
 export interface ArkmeNavigationProps {
   active?: boolean
   wide?: boolean
-  avatarOnly?: boolean
+  compactDirectory?: boolean
   currentSessionId?: string | undefined
   embeddedProductShell?: boolean
   onClose?: () => void
@@ -191,7 +189,7 @@ const styles: Record<string, CSSProperties> = {
   topicCardList: { paddingTop: 0 },
   chatRow: {
     position: 'relative', width: '100%', minHeight: 52, margin: '1px 0', display: 'flex', alignItems: 'center', gap: 10,
-    padding: '7px 10px', boxSizing: 'border-box', border: 0, borderRadius: 13,
+    padding: '7px 10px', boxSizing: 'border-box', overflow: 'hidden', border: 0, borderRadius: 13,
     background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: 0,
   },
   chatRowActive: { background: colors.active },
@@ -859,7 +857,7 @@ export function ArkmeSourceSortControl({
 }
 
 export function ArkmeNavigation({
-  active = true, wide = true, avatarOnly = false, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
+  active = true, wide = true, compactDirectory = false, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
   lockedDirectory = false, sendToSelfSource, directoryLead, onCreateTask, searchDshMessages, onOpenDshSession, renderSlot,
 }: ArkmeNavigationProps) {
   const activeRef = useRef(active)
@@ -877,6 +875,9 @@ export function ArkmeNavigation({
   const chatDirectory = useSyncExternalStore(
     arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot, arkmeChatDirectory.getSnapshot,
   )
+  const conversationProjection = useSyncExternalStore(
+    arkmeChatDirectory.subscribe, arkmeChatDirectory.getConversationSnapshot, arkmeChatDirectory.getConversationSnapshot,
+  )
   const notificationActivation = useSyncExternalStore(
     arkmeNotificationActivation.subscribe,
     arkmeNotificationActivation.getSnapshot,
@@ -889,6 +890,9 @@ export function ArkmeNavigation({
   const topicCreateRequestRef = useRef(false)
   const rootRowElementsRef = useRef(new Map<string, HTMLButtonElement>())
   const revealedSourceIdentityRef = useRef<string>()
+  const unreadJumpCursorRef = useRef<string>()
+  const unreadJumpHandledRef = useRef(0)
+  const [unreadJumpTarget, setUnreadJumpTarget] = useState<{ key?: string; refKey?: string; top?: boolean; revision: number }>()
   const directoryScrollRef = useRef<HTMLDivElement>(null)
   const directoryScrollTopRef = useRef(0)
   const directoryContextMenuRef = useRef<HTMLDivElement>(null)
@@ -902,7 +906,11 @@ export function ArkmeNavigation({
     [],
   )
   const botPinMigration = useRef<Promise<void> | undefined>(undefined)
-  const [bots, setBots] = useState<ArkmeBotSummary[]>([])
+  const lastSelectedBotProjectionRef = useRef<ArkmeBotSummary>()
+  const bots = conversationProjection.directory.bots
+  const setBots = useCallback((update: ArkmeBotSummary[] | ((current: ArkmeBotSummary[]) => ArkmeBotSummary[])) => {
+    arkmeChatDirectory.updateBots(update)
+  }, [])
   const [botDirectoryPreferences, setBotDirectoryPreferences] = useState<ArkmeBotDirectoryPreferences>(() => readBotDirectoryPreferences(auth?.userId))
   const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
   const [sourceSort, setSourceSort] = useState<ArkmeSourceSort>('default')
@@ -927,9 +935,6 @@ export function ArkmeNavigation({
   const [officialAuthorProfile, setOfficialAuthorProfile] = useState<ArkmeOfficialAuthorProfile>()
   const [conversationVisibility, setConversationVisibility] = useState<ConversationVisibilityOverlay>(
     emptyConversationVisibilityOverlay,
-  )
-  const [conversationVisibilityHydrated, setConversationVisibilityHydrated] = useState<ConversationVisibilityHydration>(
-    emptyConversationVisibilityHydration,
   )
   const conversationVisibilityEpochRef = useRef(0)
   const conversationVisibilityFeedbackRef = useRef<ConversationVisibilityOverlay>(
@@ -994,11 +999,8 @@ export function ArkmeNavigation({
   )
   const cardMode = sourceSort !== 'default'
   const bindingRequired = auth?.status === 'binding-required'
-  const rootSources = sources
-  const botChatDirectory = useMemo(
-    () => projectBotChatDirectory(rootSources, bots),
-    [bots, rootSources],
-  )
+  const rootSources = directory === 'root' ? chatDirectory.sources : sources
+  const botChatDirectory = conversationProjection.directory
   const conversationVisibilityActivity = useMemo(() => new Map<string, { sequence: number; activityAtMillis: number }>([
     ...botChatDirectory.sources.map(source => [
       `source:${conversationSourceVisibilityKey(source)}`,
@@ -1026,10 +1028,9 @@ export function ArkmeNavigation({
       arkmeArkoConversationPreviewStore.setLatestFromSurface(userId, [{ key: 'cached-directory', text: arkoPreview.text, createdAtMillis: arkoPreview.createdAtMillis }])
     }
   }, [authenticated, auth?.userId, chatDirectory.projection?.arkoProfile, chatDirectory.projection?.arkoPreview])
-  const hostVisibility = useMemo(() => new Map((chatDirectory.projection?.visibility ?? []).map(item => [`${item.entryKind}:${item.entryRef}`, item.hidden])), [chatDirectory.projection?.visibility])
+  const hostVisibility = useMemo(() => new Map(conversationProjection.visibility.map(item => [`${item.entryKind}:${item.entryRef}`, item.hidden])), [conversationProjection.visibility])
   useEffect(() => {
     if (chatDirectory.projection !== undefined) {
-      setBots(current => sortArkmeBotsByCreatedAt(mergeBotDirectorySnapshots(current, chatDirectory.projection!.bots, chatDirectory.projection!.removedBotRefs)))
       if (chatDirectory.projection.botPinnedKeys !== undefined) {
         const userId = authenticated ? auth?.userId : undefined
         const legacy = readBotDirectoryPreferences(userId)
@@ -1045,22 +1046,13 @@ export function ArkmeNavigation({
       }
     }
   }, [chatDirectory.projection?.bots, chatDirectory.projection?.botPinnedKeys, chatDirectory.projection?.removedBotRefs])
-  const rootConversationRows = useMemo(() => [
-    ...botChatDirectory.sources
-      .filter(source => {
-        const sourceKey = conversationVisibilityKey('source', conversationSourceVisibilityKey(source))
-        return (hostVisibility.has(`source:${source.sourceRef}`) ? !hostVisibility.get(`source:${source.sourceRef}`) : conversationVisibilityHydrated.has(sourceKey) && !conversationVisibility.has(sourceKey))
-      })
-      .map(source => ({ kind: 'source' as const, source, activeAtMillis: source.activeAtMillis, pinned: source.isPinned === true })),
-    ...botChatDirectory.bots
-      .filter(bot => {
-        const botKey = conversationVisibilityKey('bot', conversationBotVisibilityKey(bot))
-        return (hostVisibility.has(`bot:${bot.botRef}`) ? !hostVisibility.get(`bot:${bot.botRef}`) : conversationVisibilityHydrated.has(botKey) && !conversationVisibility.has(botKey))
-      })
-      .map(bot => ({ kind: 'bot' as const, bot, activeAtMillis: botActivityAtMillis(bot), pinned: botDirectoryIsPinned(botDirectoryPreferences, bot) })),
-  ].sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.activeAtMillis - left.activeAtMillis), [
-    botChatDirectory, botDirectoryPreferences, conversationVisibility, conversationVisibilityHydrated, hostVisibility,
-  ])
+  const rootConversationRows = useMemo(() => {
+    if (conversationProjection.accountScope !== `${auth?.environment}:${String(auth?.userId)}`) return []
+    return [
+      ...conversationProjection.sources.map(source => ({ kind: 'source' as const, source, activeAtMillis: source.activeAtMillis, pinned: source.isPinned === true })),
+      ...conversationProjection.bots.map(bot => ({ kind: 'bot' as const, bot, activeAtMillis: botActivityAtMillis(bot), pinned: botDirectoryIsPinned(botDirectoryPreferences, bot) })),
+    ].sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.activeAtMillis - left.activeAtMillis)
+  }, [auth?.environment, auth?.userId, conversationProjection, botDirectoryPreferences])
   const directoryContextMenu = useMemo(() => {
     if (directoryContextTarget === undefined) return undefined
     const row = rootConversationRows.find(row => row.kind === directoryContextTarget.kind
@@ -1241,7 +1233,6 @@ export function ArkmeNavigation({
     conversationVisibilityEpochRef.current += 1
     conversationVisibilityFeedbackRef.current = emptyConversationVisibilityOverlay()
     setConversationVisibility(emptyConversationVisibilityOverlay())
-    setConversationVisibilityHydrated(emptyConversationVisibilityHydration())
     const controller = new AbortController()
     directoryMutationAbortRef.current = controller
     setDirectoryMutation(undefined)
@@ -1300,28 +1291,27 @@ export function ArkmeNavigation({
         || authenticatedUserIdRef.current !== visibilityUserId
         || conversationVisibilityEpochRef.current !== visibilityEpoch) return
       if (!Array.isArray(result.items)) throw new Error('conversation visibility response is invalid')
+      arkmeChatDirectory.hydrateVisibility(result.items)
       setConversationVisibility(current => applyConversationVisibilityQuerySuccess(
         current,
         scope,
         result,
         protectedKeysAtRequest,
       ))
-      setConversationVisibilityHydrated(current => markConversationVisibilityScopeHydrated(
-        current,
-        scope,
-      ))
     }).catch(() => {
       if (controller.signal.aborted
         || authenticatedUserIdRef.current !== visibilityUserId
         || conversationVisibilityEpochRef.current !== visibilityEpoch) return
+      arkmeChatDirectory.hydrateVisibility([
+        ...scope.sourceRefs.map(entryRef => ({ entryKind: 'source' as const, entryRef,
+          hidden: conversationVisibility.has(scope.keyByHandle.get(`source:${entryRef}`) ?? '') })),
+        ...scope.botRefs.map(entryRef => ({ entryKind: 'bot' as const, entryRef,
+          hidden: conversationVisibility.has(scope.keyByHandle.get(`bot:${entryRef}`) ?? '') })),
+      ])
       setConversationVisibility(current => applyConversationVisibilityQueryFailure(
         current,
         scope,
         protectedKeysAtRequest,
-      ))
-      setConversationVisibilityHydrated(current => markConversationVisibilityScopeHydrated(
-        current,
-        scope,
       ))
     })
     return () => { controller.abort() }
@@ -1353,12 +1343,20 @@ export function ArkmeNavigation({
   }, [])
   useEffect(() => {
     const selectedBot = ui.mode === 'bot' ? ui.selectedBot : undefined
-    if (selectedBot === undefined) return
+    if (selectedBot === undefined) { lastSelectedBotProjectionRef.current = undefined; return }
+    const current = bots.find(bot => conversationBotVisibilityKey(bot) === conversationBotVisibilityKey(selectedBot))
+    if (current !== undefined && current.botRef !== selectedBot.botRef) {
+      lastSelectedBotProjectionRef.current = current
+      arkmeUi.openBotConversation(current)
+      return
+    }
+    if (lastSelectedBotProjectionRef.current === selectedBot) return
+    lastSelectedBotProjectionRef.current = selectedBot
     setBots(current => sortArkmeBotsByCreatedAt([
       selectedBot,
-      ...current.filter(item => item.botRef !== selectedBot.botRef),
+      ...current.filter(item => conversationBotVisibilityKey(item) !== conversationBotVisibilityKey(selectedBot)),
     ]))
-  }, [ui.mode, ui.selectedBot])
+  }, [ui.mode, ui.selectedBot, bots, setBots])
   useEffect(() => {
     activateNativeEntry()
   }, [activateNativeEntry, auth?.userId, currentSessionId, directory, ui.mode, ui.selectedSource?.sourceRef])
@@ -1487,6 +1485,43 @@ export function ArkmeNavigation({
       return next
     })
   }, [sources, ui.selectedSource])
+  useEffect(() => {
+    unreadJumpCursorRef.current = undefined
+    unreadJumpHandledRef.current = 0
+    setUnreadJumpTarget(undefined)
+  }, [auth?.environment, auth?.userId])
+
+  useEffect(() => {
+    const revision = ui.conversationUnreadJumpRevision ?? 0
+    if (!active || !authenticated || revision === 0 || revision === unreadJumpHandledRef.current) return
+    if (directory !== 'root') { void loadDirectory('root'); return }
+    unreadJumpHandledRef.current = revision
+    const target = nextArkmeUnreadConversation(rootConversationRows.map(row => row.kind === 'source'
+      ? { ...row.source, key: arkmeSourceIdentityKey(row.source), refKey: row.source.sourceRef }
+      : { ...row.bot, key: conversationBotVisibilityKey(row.bot), refKey: `bot:${row.bot.botRef}` }), unreadJumpCursorRef.current)
+    if (target === undefined) return
+    if ('top' in target) {
+      unreadJumpCursorRef.current = undefined
+      setUnreadJumpTarget({ top: true, revision })
+    } else {
+      unreadJumpCursorRef.current = target.key
+      setUnreadJumpTarget({ key: target.key, refKey: target.refKey, revision })
+    }
+  }, [active, authenticated, directory, loadDirectory, rootConversationRows, ui.conversationUnreadJumpRevision])
+
+  useLayoutEffect(() => {
+    if (!active || directory !== 'root' || unreadJumpTarget === undefined) return
+    const list = directoryScrollRef.current
+    if (list === null) return
+    if (unreadJumpTarget.top) list.scrollTo({ top: 0, behavior: 'instant' })
+    else {
+      const row = rootRowElementsRef.current.get(unreadJumpTarget.refKey ?? '')
+      if (row === undefined) return
+      list.scrollTo({ top: list.scrollTop + row.getBoundingClientRect().top - list.getBoundingClientRect().top, behavior: 'instant' })
+    }
+    directoryScrollTopRef.current = list.scrollTop
+  }, [active, directory, unreadJumpTarget])
+
   useEffect(() => {
     if (!active || directory !== 'root' || activeDirectoryEntryId !== undefined || ui.mode !== 'source' || ui.selectedSource === undefined
       || typeof window === 'undefined') return
@@ -1663,6 +1698,7 @@ export function ArkmeNavigation({
         || conversationVisibilityActivityAdvanced(submittedActivity, currentActivity)) {
         return
       }
+      arkmeChatDirectory.confirmVisibility(entryKind, entryRef, true)
       setConversationVisibility(current => dismissConversationVisibilityEntry(
         current,
         entryKind,
@@ -1837,7 +1873,7 @@ export function ArkmeNavigation({
     style={styles.shell}
     aria-label="Arkme 会话列表"
     data-arkme-layout={embeddedProductShell ? 'product-directory' : undefined}
-    data-arkme-avatar-only={avatarOnly ? 'true' : undefined}
+    data-arkme-directory-compact={compactDirectory ? 'true' : undefined}
   >
     {directory === 'send_to_self' && <header style={styles.header}>
       <button
@@ -1968,7 +2004,7 @@ export function ArkmeNavigation({
           <div style={{ ...styles.status, color: '#c2413b' }}>会话加载失败，请重试</div>
           <button type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>重新加载</button>
         </>}
-        <ArkmeDirectoryWindow activeKey={ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" ? ui.selectedBot?.botRef : undefined}>{rootConversationRows.map(row => {
+        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{rootConversationRows.map(row => {
           if (row.kind === 'bot') {
             const { bot } = row
             const selected = activeDirectoryEntryId === undefined && ui.mode === 'bot' && ui.selectedBot?.botRef === bot.botRef
@@ -1978,7 +2014,11 @@ export function ArkmeNavigation({
             const interactionsDisabled = directoryMutation?.kind === 'bot'
               && directoryMutation.key === conversationBotVisibilityKey(bot)
             return <button
-              key={bot.botRef} type="button" role="treeitem" aria-selected={selected}
+              key={conversationBotVisibilityKey(bot)} type="button" role="treeitem" aria-selected={selected}
+              ref={node => {
+                if (node === null) rootRowElementsRef.current.delete(`bot:${bot.botRef}`)
+                else rootRowElementsRef.current.set(`bot:${bot.botRef}`, node)
+              }}
               aria-label={unreadPlacement === 'avatar'
                 ? `${bot.name}，${String(badgeUnreadCount)} 条未读`
                 : unreadPlacement === 'dot' ? `${bot.name}，有未读消息，已免打扰` : bot.name}

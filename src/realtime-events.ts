@@ -1,3 +1,4 @@
+import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ArkmeService } from './arkme-service.js'
 import type { ArkmeChatClientEvent } from './types.js'
@@ -9,7 +10,7 @@ function isLoopback(address: string | undefined): boolean {
 }
 
 function dataLine(event: ArkmeChatClientEvent): string {
-  return `data: ${JSON.stringify(event)}\n\n`
+  return `data: ${JSON.stringify({ ...event, providerInstanceId: ARKME_RUNTIME_INSTANCE_ID })}\n\n`
 }
 
 export class ArkmeRealtimeEvents {

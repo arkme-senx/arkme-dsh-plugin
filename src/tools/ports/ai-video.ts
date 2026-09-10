@@ -1,4 +1,5 @@
 import type {
+  ArkmeRecordingMaterialUtterance,
   ArkmeAiVideoJob,
   ArkmeAiVideoListResult,
   ArkmeAiVideoPreflightResult,
@@ -6,6 +7,7 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeAiVideoToolPort {
+  aiVideoResolveSelection(recordingUid: string, utterances: readonly ArkmeRecordingMaterialUtterance[], signal?: AbortSignal): Promise<ArkmeAiVideoSegmentSelector[]>
   aiVideoList(options: {
     limit: number
     cursor?: string

@@ -19,6 +19,32 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('exposes the five-section directory, passes refresh/cursor and preserves Host recovery metadata', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      const call = JSON.parse(String(init?.body)); calls.push(call)
+      if (call.operation === 'provider.capabilities') return success({ contractVersion: 1, features: { contactDirectoryReads: true } })
+      if (call.params.section === 'contacts') return new Response(JSON.stringify({ ok: false, error: {
+        code: 'arkme-code-1002', message: '请求较频繁，请稍后重试', retryable: true, failureKind: 'rate_limited',
+        retryAfterMillis: 700, retryScope: 'route', recovery: { owner: 'host', attempts: 3, exhausted: true },
+      } }), { status: 502 })
+      return success({ section: call.params.section, items: [], total: 0, hasMore: false })
+    } })
+    for (const section of ['groups', 'bots', 'unmarked-speakers', 'teams'] as const) {
+      await expect(sdk.listDirectory(section, { refresh: true })).resolves.toMatchObject({ section })
+    }
+    await expect(sdk.listDirectory('contacts')).rejects.toMatchObject({ body: { failureKind: 'rate_limited', retryAfterMillis: 700, recovery: { owner: 'host', attempts: 3 } } })
+    expect(calls.filter(c => c.operation === 'directory.list')).toHaveLength(5)
+    expect(calls[1]?.params).toEqual({ section: 'groups', refresh: true })
+    await expect(sdk.listDirectory('contacts', { refresh: true, cursor: 'old' })).rejects.toThrow('Refresh')
+  })
+
+  it('fails directory capability discovery explicitly on an older provider', async () => {
+    const fetcher = vi.fn(async () => success({ contractVersion: 1, features: {} }))
+    const sdk = createArkmeSdk({ fetchImpl: fetcher })
+    await expect(sdk.listDirectory('contacts')).rejects.toThrow('不支持联系人目录')
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
   it('exposes employee user-ban operations through the same source-bound Host contract', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {

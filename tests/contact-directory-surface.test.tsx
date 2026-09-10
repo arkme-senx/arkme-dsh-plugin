@@ -253,7 +253,7 @@ describe('ContactDirectorySurface content', () => {
     expect(markup.indexOf('arkme-contact-directory-section-title')).toBeLessThan(markup.indexOf('arkme-contact-directory-count'))
   })
 
-  it('renders retry and load-more as native buttons while keeping stale rows visible', () => {
+  it('offers a product refresh only after failure, without a manual pagination button', () => {
     const section: ContactDirectorySectionState = {
       ...readyState().sections.contacts,
       status: 'error',
@@ -281,11 +281,11 @@ describe('ContactDirectorySurface content', () => {
     try {
       const buttons = renderer.root.findAllByType('button')
       act(() => {
-        buttons.find(button => button.children.join('') === '重试')!.props.onClick()
-        buttons.find(button => button.children.join('') === '加载更多')!.props.onClick()
+        buttons.find(button => button.children.join('') === '刷新')!.props.onClick()
       })
       expect(onRetry).toHaveBeenCalledOnce()
-      expect(onLoadMore).toHaveBeenCalledOnce()
+      expect(onLoadMore).not.toHaveBeenCalled()
+      expect(markup).not.toContain('加载更多')
     } finally {
       act(() => { renderer.unmount() })
     }
@@ -501,7 +501,7 @@ describe('ContactDirectorySurface content', () => {
     expect(renderer.root.findByProps({ 'data-directory-row-ref': teamSelection.teamRef }).props['aria-current']).toBe(true)
   })
 
-  it('automatically loads every contact page while leaving other section pagination explicit', async () => {
+  it('loads later contact pages only when the scroll boundary requests them', async () => {
     const loadPage = vi.fn(async (
       section: ArkmeDirectorySectionKind,
       options: { limit: number; cursor?: string; countOnly?: boolean },
@@ -533,6 +533,10 @@ describe('ContactDirectorySurface content', () => {
       await Promise.resolve()
     })
 
+    expect(loadPage.mock.calls.filter(([section]) => section === 'contacts')).toHaveLength(1)
+    await act(async () => {
+      renderer.root.findAllByType(CollapsibleDirectorySection).find(node => node.props.section.section === 'contacts')!.props.onLoadMore()
+    })
     expect(loadPage.mock.calls.filter(([section]) => section === 'contacts').map(([, options]) => options))
       .toEqual([{ limit: 50 }, { limit: 50, cursor: 'contacts-page-2' }])
     expect(loadPage.mock.calls.filter(([section]) => section === 'groups')).toHaveLength(1)
@@ -575,7 +579,7 @@ describe('ContactDirectorySurface content', () => {
     await act(async () => { groupsSection.findByType('button').props.onClick(); await Promise.resolve() })
     expect(count()).toEqual(['137'])
     await act(async () => {
-      groupsSection.findByProps({ className: 'arkme-contact-directory-more' }).props.onClick()
+      renderer.root.findAllByType(CollapsibleDirectorySection).find(node => node.props.section.section === 'groups')!.props.onLoadMore()
       await Promise.resolve()
     })
     expect(count()).toEqual(['137'])
@@ -639,6 +643,8 @@ it('pauses automatic contact pagination while hidden and resumes without replaci
   expect(loadPage.mock.calls.filter(([section]) => section === 'contacts')).toHaveLength(1)
   expect(JSON.stringify(view.toJSON())).toContain('Alice')
   await act(async () => { view.update(<ContactDirectorySurface {...props} active />) })
+  expect(loadPage.mock.calls.filter(([section]) => section === 'contacts')).toHaveLength(1)
+  await act(async () => { view.root.findAllByType(CollapsibleDirectorySection).find(node => node.props.section.section === 'contacts')!.props.onLoadMore() })
   expect(loadPage.mock.calls.filter(([section]) => section === 'contacts')).toHaveLength(2)
   expect(JSON.stringify(view.toJSON())).toContain('Alice')
   expect(JSON.stringify(view.toJSON())).toContain('张三')

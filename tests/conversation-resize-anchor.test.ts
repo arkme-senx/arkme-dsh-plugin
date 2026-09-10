@@ -1,8 +1,36 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { observeConversationResize, resizedConversationScrollTop } from '../src/client/conversation-resize-anchor.js'
+import { createElement, useLayoutEffect } from 'react'
+import { act, create } from 'react-test-renderer'
+import { observeConversationResize, resizedConversationScrollTop, useConversationResizeAnchor } from '../src/client/conversation-resize-anchor.js'
 
 afterEach(() => vi.unstubAllGlobals())
 describe('composer and message viewport resize', () => {
+  it('resets pre-selection bottom metrics after the selected message anchor is restored', () => {
+    let resized = () => {}
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized = callback }
+      observe() {}
+      disconnect = disconnect
+    })
+    const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
+      addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    const ref = { current: body as unknown as HTMLDivElement }
+    function Harness({ selecting }: { selecting: boolean }) {
+      useLayoutEffect(() => {
+        if (selecting) Object.assign(body, { scrollTop: 1520, scrollHeight: 2400, clientHeight: 700 })
+      }, [selecting])
+      useConversationResizeAnchor(ref, 'chat', undefined, selecting)
+      return null
+    }
+    let renderer: ReturnType<typeof create>
+    act(() => { renderer = create(createElement(Harness, { selecting: false })) })
+    act(() => { renderer.update(createElement(Harness, { selecting: true })) })
+    expect(disconnect).toHaveBeenCalledOnce()
+    resized()
+    expect(body.scrollTop).toBe(1520)
+    act(() => { renderer.unmount() })
+  })
   it('raises bottom messages by exactly the lost viewport height, and follows reset', () => {
     expect(resizedConversationScrollTop({ scrollTop: 1400, scrollHeight: 2000, clientHeight: 600 }, { scrollTop: 1400, scrollHeight: 2000, clientHeight: 400 })).toBe(1600)
     expect(resizedConversationScrollTop({ scrollTop: 1600, scrollHeight: 2000, clientHeight: 400 }, { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600 })).toBe(1400)

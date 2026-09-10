@@ -49,6 +49,24 @@ function service(fetchImpl: typeof fetch, override: Partial<ArkmeServiceConfig> 
 }
 
 describe('CallHistoryService', () => {
+  it('seals a timeline call for the existing detail endpoint without exposing its room', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('https://webrtc.test/api/v1/trtc/call-detail')
+      expect(JSON.parse(String(init?.body))).toMatchObject({ room_id: 'timeline-private-room' })
+      return envelope({ call_media_type: 1, start_time: 1788949920, end_time: 1788949922, call_result: 'Cancel' })
+    })
+    const owner = service(fetchImpl)
+    const presentation = await owner.timelineCallRecord({ record: { payload: { content_payload: { crd: { ri: 'timeline-private-room', cr: 42, mt: 'Video', rs: 'Cancel', st: 1788949920, du: 0 } } } } }, 42)
+    expect(presentation).toMatchObject({ mediaType: 'video', text: '已取消', startedAtMillis: 1788949920000, durationSeconds: 0 })
+    expect(JSON.stringify(presentation)).not.toContain('timeline-private-room')
+    const detail = await owner.callDetail(presentation!.callRef!)
+    expect(detail).toMatchObject({ mediaType: 'video', durationSeconds: 2, transcriptSegments: [] })
+    const anchored = await owner.timelineCallRecord({ content_payload: { structured_anchor: { anchor_kind: 2, anchor_uid: 'timeline-private-room' }, crd: { mt: 'Video', rs: 'Cancel', cr: 42 } } }, 42)
+    await expect(owner.callDetail(anchored!.callRef!)).resolves.toMatchObject({ mediaType: 'video' })
+    const foreign = await owner.timelineCallRecord({ crd: { ri: 'other-room', mt: 'Audio', rs: 'Cancel', cr: 77 } }, 77)
+    await expect(owner.callDetail(foreign!.callRef!)).rejects.toMatchObject({ code: 'call-ref-invalid' })
+  })
+
   it('lists safe call history without leaking raw room or media fields', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async input => {
       expect(String(input)).toBe('https://data.test/api/v1/call/history-aggregate')

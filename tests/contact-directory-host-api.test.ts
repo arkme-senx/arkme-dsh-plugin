@@ -82,9 +82,9 @@ describe('contact directory UI-only Host operations', () => {
       contactRef: ' contact-ref ', ...injected,
     })).resolves.toEqual({ contactRef: 'contact-ref' })
 
-    expect(service.directoryContactProfile).toHaveBeenCalledWith('contact-ref')
+    expect(service.directoryContactProfile).toHaveBeenCalledWith('contact-ref', undefined)
     expect(service.directoryContactWorld).toHaveBeenCalledWith('contact-ref', { limit: 20, offset: 0 })
-    expect(service.openDirectoryContactChat).toHaveBeenCalledWith('contact-ref')
+    expect(service.openDirectoryContactChat).toHaveBeenCalledWith('contact-ref', undefined)
   })
 })
 

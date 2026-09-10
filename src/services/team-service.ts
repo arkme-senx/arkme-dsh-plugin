@@ -1,4 +1,5 @@
 import { OpenApiCapabilityError, type OpenApiTeamCapabilityClient } from '../openapi-capability-gateway.js'
+import type { ArkmeOwnerReadPort } from './service.js'
 import type {
   ArkmeDirectoryPage,
   ArkmeGroupAvatarFallback,
@@ -47,15 +48,18 @@ export class TeamService implements TeamServicePort {
   constructor(
     private readonly client: OpenApiTeamCapabilityClient,
     private readonly avatars: TeamMemberAvatarPort,
+    private readonly reads: ArkmeOwnerReadPort,
   ) {}
 
   async list(options: { limit?: number; pageCursor?: string; signal?: AbortSignal } = {}): Promise<ArkmeTeamPage> {
     const limit = pageLimit(options.limit, 100, 50)
     const pageCursor = optionalCursor(options.pageCursor)
-    const data = await this.execute(options.signal, signal => this.client.list({
+    const parameters = {
       limit,
       ...(pageCursor === undefined ? {} : { page_cursor: pageCursor }),
-    }, signal))
+    }
+    const data = await this.reads.runOwnerRead('openapi:teams:list', parameters,
+      signal => this.execute(signal, active => this.client.list(parameters, active)), options.signal)
     const source = object(data, '团队列表响应无效')
     const items = array(source.items, '团队列表响应无效').map(team)
     const totalCount = nonNegativeInteger(source.total_count, '团队列表响应无效')
@@ -146,7 +150,8 @@ export class TeamService implements TeamServicePort {
       seenIdempotencyKeys.add(item.idempotencyKey)
       return { item_id: itemId, idempotency_key: item.idempotencyKey, name, jotmo_id: jotmoId }
     })
-    const data = await this.execute(signal, active => this.client.create({ items: requestItems }, active))
+    const data = await this.reads.withOwnerReadInvalidation('openapi:teams:list',
+      () => this.execute(signal, active => this.client.create({ items: requestItems }, active)))
     return createResults(data, requestItems.map(item => item.item_id))
   }
 
@@ -160,7 +165,8 @@ export class TeamService implements TeamServicePort {
       seen.add(itemId)
       return { item_id: itemId, jotmo_id: jotmoId }
     })
-    const data = await this.execute(signal, active => this.client.joinByJotmoID({ items: requestItems }, active))
+    const data = await this.reads.withOwnerReadInvalidation('openapi:teams:list',
+      () => this.execute(signal, active => this.client.joinByJotmoID({ items: requestItems }, active)))
     return joinResults(data, requestItems.map(item => item.item_id))
   }
 
@@ -194,7 +200,11 @@ export class TeamService implements TeamServicePort {
       if (error instanceof ArkmePluginError) throw error
       if (error instanceof OpenApiCapabilityError) {
         const status = error.code === 'invalid-input' ? 400 : error.code === 'account-changed' ? 409 : 503
-        throw new ArkmePluginError(`team-openapi-${error.code}`, error.message, error.retryable, status, { cause: error })
+        throw new ArkmePluginError(`team-openapi-${error.code}`, error.message, error.retryable, status, {
+          cause: error,
+          ...(error.retryAfterMillis === undefined ? {} : { retryAfterMillis: error.retryAfterMillis }),
+          ...(error.upstreamStatus === undefined ? {} : { upstreamStatus: error.upstreamStatus }),
+        })
       }
       throw new ArkmePluginError('team-openapi-unavailable', '团队能力暂时不可用', true, 503, { cause: error })
     }

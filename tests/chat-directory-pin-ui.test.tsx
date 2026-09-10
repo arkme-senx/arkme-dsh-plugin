@@ -13,7 +13,7 @@ vi.mock('../src/client/arko-conversation-preview-sync.js', () => ({
   ArkmeArkoConversationPreviewSync: class { start() { return () => undefined } },
 }))
 
-import { ArkmeNavigation } from '../src/client/ArkmeVirtualWorkspace.js'
+import { ArkmeArkoRow, ArkmeNavigation, DeepSeekHarnessRow } from '../src/client/ArkmeVirtualWorkspace.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
@@ -75,6 +75,39 @@ afterEach(async () => {
 })
 
 describe('conversation pin interaction', () => {
+  it.each([false, true])('keeps special entry destinations distinct in compact=%s', async compactDirectory => {
+    await act(async () => { renderer!.update(<ArkmeNavigation compactDirectory={compactDirectory} showHarnessEntry embeddedProductShell />) })
+    await act(async () => { renderer!.root.findByType(DeepSeekHarnessRow).props.onClick() })
+    expect(arkmeUi.getSnapshot().mode).toBe('harness')
+    await act(async () => { renderer!.root.findByType(ArkmeArkoRow).props.onClick() })
+    expect(arkmeUi.getSnapshot().mode).toBe('arko')
+    await act(async () => { row().props.onClick() })
+    expect(arkmeUi.getSnapshot().mode).toBe('source')
+    expect(arkmeUi.getSnapshot().selectedSource?.sourceKey).toBe(source.sourceKey)
+    const self = renderer!.root.findAllByProps({ role: 'treeitem' }).find(node => node.type === 'button'
+      && node.findAllByType('span').some(span => span.children.length === 1 && span.children[0] === '发给自己'))!
+    await act(async () => { self.props.onClick() })
+    expect(arkmeUi.getSnapshot().mode).toBe('source')
+    expect(arkmeUi.getSnapshot().selectedSource).toBeUndefined()
+    expect(pinCalls()).toHaveLength(0)
+  })
+
+  it('preserves a pending pin and its reentry guard while the directory narrows and expands', async () => {
+    await startPin()
+    for (const compactDirectory of [true, false]) {
+      await act(async () => { renderer!.update(<ArkmeNavigation compactDirectory={compactDirectory} />) })
+      expect(row().props['aria-busy']).toBe(true)
+      expect(row().props.disabled).toBe(false)
+      await openMenu()
+      expect(renderer!.root.findAllByProps({ role: 'menuitem' })).toHaveLength(0)
+      expect(pinCalls()).toHaveLength(1)
+    }
+    await act(async () => { resolvePin({ sourceRef: source.sourceRef, pinned: true, policyUpdatedAtMillis: 2000 }) })
+    expect(arkmeChatDirectory.getSnapshot().sources[0]?.isPinned).toBe(true)
+    await openMenu()
+    expect(menu().children).toEqual(['取消置顶'])
+  })
+
   it('pins a group through the same Chat operation and current directory projection', async () => {
     await act(async () => { arkmeChatDirectory.publish([{ ...source, kind: 'group_chat' }]) })
     await startPin()
@@ -405,4 +438,68 @@ it('restores the scroll position before showing a retained conversation list', a
   act(() => { tree.props.onScroll({ currentTarget: scrollElement }) })
   await act(async () => { renderer!.update(<ArkmeNavigation active />) })
   expect(scrollElement.scrollTop).toBe(630)
+})
+
+
+it('jumps immediately through unread rows and does not open or acknowledge the target', async () => {
+  await act(async () => { renderer?.unmount() })
+  const scrollTo = vi.fn()
+  const list = { scrollTop: 0, scrollTo, getBoundingClientRect: () => ({ top: 100 }), getClientRects: () => [{}] }
+  await act(async () => { renderer = create(<ArkmeNavigation />, { createNodeMock: node => {
+    if (node.props['aria-label'] === 'Arkme 会话') return list
+    if (node.props['data-arkme-directory-row'] === 'source') return { getBoundingClientRect: () => ({ top: node.props['aria-label'].startsWith('First') ? 400 : 700 }), closest: () => null }
+    return null
+  } }) })
+  await act(async () => { arkmeChatDirectory.applyHostPage({ directory: 'root', items: [
+    { ...source, sourceRef: 'first', sourceKey: 'first', displayName: 'First', unreadCount: 3, activeAtMillis: 20 },
+    { ...source, sourceRef: 'second', sourceKey: 'second', displayName: 'Second', unreadCount: 2, activeAtMillis: 10 },
+  ], hasMore: false, projection: { revision: 1, phase: 'complete', cachedAtMillis: 1, bots: [], visibility: [
+    { entryKind: 'source', entryRef: 'first', hidden: false }, { entryKind: 'source', entryRef: 'second', hidden: false },
+  ] } }) })
+  const selected = arkmeUi.getSnapshot().selectedSource
+  mocks.callArkme.mockClear()
+  await act(async () => { arkmeUi.locateNextUnreadConversation() })
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 300, behavior: 'instant' })
+  await act(async () => { arkmeUi.locateNextUnreadConversation() })
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 600, behavior: 'instant' })
+  await act(async () => { arkmeUi.locateNextUnreadConversation() })
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'instant' })
+  await act(async () => { arkmeUi.locateNextUnreadConversation() })
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 300, behavior: 'instant' })
+  expect(arkmeUi.getSnapshot().selectedSource).toEqual(selected)
+  expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.mark-read')).toBe(false)
+})
+
+
+it('does not unmount a row between a new-message sourceRef and its visibility receipt', async () => {
+  const original = { ...source, latestSequence: 10, unreadCount: 0, avatarRef: 'same-avatar' }
+  await act(async () => { arkmeChatDirectory.applyHostPage({ directory: 'root', items: [original], hasMore: false,
+    projection: { revision: 1, phase: 'complete', cachedAtMillis: 1, bots: [], visibility: [
+      { entryKind: 'source', entryRef: original.sourceRef, hidden: false },
+    ] } }) })
+  const firstRow = renderer!.root.findByProps({ 'data-arkme-directory-row': 'source' })
+  mocks.callArkme.mockClear()
+  const received = { ...original, sourceRef: 'new-message-capability', latestSequence: 11, unreadCount: 1, activeAtMillis: 101 }
+  await act(async () => { arkmeChatDirectory.upsert(received) })
+  expect(renderer!.root.findByProps({ 'data-arkme-directory-row': 'source' })).toBe(firstRow)
+  expect(arkmeChatDirectory.totalBadgeUnreadCount()).toBe(1)
+  expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'conversation.directory.visibility.query')).toBe(false)
+  await act(async () => { arkmeChatDirectory.applyHostPage({ directory: 'root', items: [received], hasMore: false,
+    projection: { revision: 2, phase: 'complete', cachedAtMillis: 2, bots: [], visibility: [
+      { entryKind: 'source', entryRef: received.sourceRef, hidden: false },
+    ] } }) })
+  expect(renderer!.root.findByProps({ 'data-arkme-directory-row': 'source' })).toBe(firstRow)
+})
+
+it('keeps a Bot opened before the Host directory snapshot in the same row-and-total owner', async () => {
+  mocks.callArkme.mockImplementation(async (operation: string, params: { botRefs?: string[]; sourceRefs?: string[] }) => {
+    if (operation === 'conversation.directory.visibility.query') return { items: [
+      ...(params.sourceRefs ?? []).map(entryRef => ({ entryKind: 'source', entryRef, hidden: false })),
+      ...(params.botRefs ?? []).map(entryRef => ({ entryKind: 'bot', entryRef, hidden: false })),
+    ] }
+    return {}
+  })
+  await act(async () => { arkmeUi.openBotConversation({ botRef: 'early-bot', directoryKey: 'stable-early-bot', name: 'Early Bot', provider: 'openclaw', description: '', status: 'offline', directChatAvailable: true, unreadCount: 2 }) })
+  expect(renderer!.root.findAllByProps({ role: 'treeitem' }).some(node => node.props['aria-label'] === 'Early Bot，2 条未读')).toBe(true)
+  expect(arkmeChatDirectory.totalBadgeUnreadCount()).toBe(2)
 })

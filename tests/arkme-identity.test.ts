@@ -228,7 +228,10 @@ describe('Arkme plugin identity', () => {
         file,
         withoutOpenClawProtocolNames(file, withoutBotOwnerProtocolNames(file, source)),
       ))
-      return /jotmo|jiwo|即我/i.test(content) ? [file.slice(root.length)] : []
+      // Engineering plans identify real repository owners, not product branding.
+      const productCopy = file.includes('/docs/plans/recording-')
+        ? content.replace(/jotmo-(audio|openapi|meta|intelligent)\b/g, '') : content
+      return /jotmo|jiwo|即我/i.test(productCopy) ? [file.slice(root.length)] : []
     })
 
     expect(residuals).toEqual([])

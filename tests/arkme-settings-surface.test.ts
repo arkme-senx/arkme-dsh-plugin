@@ -115,7 +115,7 @@ describe('ArkmeSettingsSurface', () => {
     expect(redesignCss).toContain('[data-arkme-directory-visible="true"]')
     expect(redesignCss).toContain('[data-arkme-directory-visible="false"]')
     expect(redesignCss).toContain('grid-template-columns: var(--arkme-persistent-sidebar-width, 356px) minmax(0, 1fr) 0 !important')
-    expect(redesignCss).toContain('[data-arkme-avatar-only="true"]')
+    expect(redesignCss).toContain('[data-arkme-directory-compact="true"]')
     expect(redesignCss).toContain('grid-template-columns: 72px minmax(0, 1fr) 0 !important')
     expect(redesignCss).toContain('[data-arkme-login-mode="true"]:not([data-arkme-web-locked])')
     expect(redesignCss).toContain('overflow-y: auto')

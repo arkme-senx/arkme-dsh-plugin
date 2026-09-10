@@ -1,3 +1,4 @@
+import { ARKME_RUNTIME_INSTANCE_ID } from '../src/runtime-instance.js'
 import { EventEmitter } from 'node:events'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, expect, it, vi } from 'vitest'
@@ -41,6 +42,7 @@ describe('Arkme local realtime events', () => {
       headers: { origin: 'http://127.0.0.1:3084' },
     } as IncomingMessage, response as unknown as ServerResponse)
 
+    expect(response.chunks.join('')).toContain(JSON.stringify(ARKME_RUNTIME_INSTANCE_ID))
     expect(response.status).toBe(200)
     expect(response.headers['Content-Type']).toContain('text/event-stream')
     expect(response.chunks.join('')).toContain('"revision":1')

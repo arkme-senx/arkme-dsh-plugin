@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.49",
+  "version": "0.1.51",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -68,10 +68,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.49 更新",
-      "summary": "0908-1918",
-      "publishedAt": "2026-09-08T11:19:21.507Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.49"
+      "title": "Arkme 插件 0.1.51 更新",
+      "summary": "fix(release): 功能点: 合入 dev，修复发给自己加载循环与多选滚动",
+      "publishedAt": "2026-09-09T11:06:51.045Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.51"
     }
   },
   "scripts": {
