@@ -25,3 +25,5 @@ bash scripts/run-managed-ai-e2e.sh
 登录与充值种子为本地 fixture，不能宣称此测试覆盖了真实生产登录/支付。没有生产 Ingress、K8S 和 Windows/Linux 真机验收。测试使用独立 TLS、状态目录和 keychain namespace，保留常驻客户端；shell 退出删除本次生成的 TLS 文件，调用方负责回收其创建的 MySQL 容器和临时安装 profile。
 
 2026-09-10 初验：官方 DSH `d347e703`、插件 dev `562b61d`，确定性四场景与真实 DeepSeek 场景均通过。后续同步 dev `6cdc5b0`，修正其新 Bot 输入法测试的请求 UID/错误类 mock 与现行合同的偏差；没有改 Bot 产品逻辑。串行全量 5,715 tests passed / 8 skipped（492 files passed / 6 skipped）。完整场景/实现/账本矩阵在 Intelligent 同任务分支的 `docs/managed-ai-model-proxy-premerge-review.md`。
+
+12:12:06 最终回归：提交 `b36cc08` 串行重建 tgz 并以另一个全新 profile 正式安装，四场景再次通过；两次成功各扣 19,110 nano-CNY/结算一次，两次失败各释放一次且不扣费，最终预占为零。
