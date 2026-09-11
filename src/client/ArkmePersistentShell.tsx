@@ -8,6 +8,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from './slots-contract.js'
 import type { ArkmeAuthSnapshot, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
+import { ArkmeHomeTour } from './ArkmeHomeTour.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 import { ArkmeQuickAddButton } from './ArkmeQuickAdd.js'
 import { arkmePrependSourceByIdentity } from './source-identity.js'
@@ -115,6 +116,10 @@ export function ArkmePersistentClientRuntime() {
   const avatarScopeKey = auth?.status === 'authenticated'
     ? `${auth.environment}:${String(auth.userId)}`
     : undefined
+  const homeTourRouteActive = ui.calendarOpen !== true && (
+    ui.mode === 'harness' || ui.mode === 'arko' || ui.mode === 'bot'
+    || (ui.mode === 'source' && ui.productMode !== 'contacts')
+  )
 
   useLayoutEffect(() => { arkmeAvatarImages.activateScope(avatarScopeKey) }, [avatarScopeKey])
   useEffect(() => {
@@ -129,7 +134,13 @@ export function ArkmePersistentClientRuntime() {
     arkmeUi.authChanged(true, true)
   }, [auth, ui.mode])
 
-  return <ArkmeOutgoingCallHost />
+  return <>
+    <ArkmeOutgoingCallHost />
+    <ArkmeHomeTour auth={auth}
+      blocked={ui.mode === 'login' || ui.webLoginDialogOpen === true}
+      routeActive={homeTourRouteActive}
+      notificationRevision={ui.notificationActivationRevision ?? 0} />
+  </>
 }
 
 /** The persistent shell remains mounted even when a transient Web login dialog has already unmounted. */
@@ -534,6 +545,7 @@ export function ArkmePersistentWorkspace({
     <ArkmePersistentClientRuntime />
     <ArkmeExtensionRecoveryNotice />
     <DeepSeekHarnessSurface
+      key={contactsAccountKey ?? 'guest'}
       visible={harnessVisible}
       nativeSettings={webLockedHarness}
       accountId={authenticatedUserId}

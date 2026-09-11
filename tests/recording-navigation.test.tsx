@@ -112,6 +112,7 @@ describe('Arko navigation entry', () => {
     expect(markup).toContain('>AI</span>')
     expect(markup).not.toContain('>Agent</span>')
     expect(markup).toContain('刚刚完成了资料整理')
+    expect(markup).toContain('data-arkme-home-tour-target="arko"')
     expect(markup).toContain('<time')
     expect(markup).toContain('dateTime=')
     expect(markup).toContain(`>${expectedTime}</time>`)
@@ -136,5 +137,28 @@ describe('DeepSeek Harness navigation entry', () => {
     expect(markup).toContain('DeepSeek Harness')
     expect(markup).toContain('原生 DeepSeek 开发环境')
     expect(markup).toContain('src="/favicon.svg"')
+    expect(markup).toContain('data-arkme-home-tour-target="harness"')
+  })
+})
+
+describe('home tour directory integration', () => {
+  it('marks the real optional author clickable row', () => {
+    const markup = renderToStaticMarkup(<navigation.ArkmeOfficialAuthorRow onClick={vi.fn()} />)
+    expect(markup).toContain('data-arkme-home-tour-target="official-author"')
+    expect(markup).toContain('>联系作者<')
+  })
+
+  it('derives root readiness from the current authenticated directory owner', () => {
+    const ready = navigation.arkmeHomeTourDirectoryAttributes({
+      directory: 'root', accountKey: 'prod:7', accountScopeMatches: true,
+      authenticated: true, active: true, embeddedProductShell: true, baselineReady: true,
+    })
+    const stale = navigation.arkmeHomeTourDirectoryAttributes({
+      directory: 'root', accountKey: 'prod:7', accountScopeMatches: false,
+      authenticated: true, active: true, embeddedProductShell: true, baselineReady: true,
+    })
+    expect(renderToStaticMarkup(<div {...ready} />)).toContain('data-arkme-home-tour-ready="true"')
+    expect(renderToStaticMarkup(<div {...ready} />)).toContain('data-arkme-home-tour-account="prod:7"')
+    expect(renderToStaticMarkup(<div {...stale} />)).toContain('data-arkme-home-tour-ready="false"')
   })
 })

@@ -1,7 +1,8 @@
 import { createElement, useSyncExternalStore } from 'react'
 import * as clientApi from '../src/client/api.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as providerInstance from '../src/client/provider-instance-runtime.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
@@ -28,6 +29,12 @@ const delta: Extract<ArkmeChatClientEvent, { type: 'sessions-delta' }> = {
     timelineItems: [],
   }],
 }
+
+beforeEach(() => {
+  arkmeChatDirectory.activateAccount(undefined)
+  // These routing tests supply only sources.list responses; instance transport is independent.
+  vi.spyOn(providerInstance, 'reconcileArkmeProviderInstance').mockResolvedValue(false)
+})
 
 afterEach(() => {
   arkmeMemberEvents.activateAccount(undefined)
@@ -88,6 +95,39 @@ describe('Chat-owned Bot realtime invalidation', () => {
 })
 
 describe('realtime reconcile routing', () => {
+  it('joins startup instance preparation on first connection without clearing a newly loaded directory', async () => {
+    let channel!: { onopen: (() => void) | null }
+    class FakeEventSource {
+      onopen: (() => void) | null = null
+      onmessage = null
+      constructor() { channel = this }
+      close() {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+    const prepared = Promise.withResolvers<boolean>()
+    vi.mocked(providerInstance.reconcileArkmeProviderInstance).mockReturnValue(prepared.promise)
+    const reads = vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ directory: 'root', items: [], hasMore: false })
+    const readiness: boolean[] = []
+    const unsubscribe = arkmeChatDirectory.subscribe(() => { readiness.push(arkmeChatDirectory.getSnapshot().baselineReady) })
+    const auth: ArkmeAuthSnapshot = { status: 'authenticated', userId: 84, environment: 'test' }
+    function Harness() { useArkmeRealtimeClientEvents(auth, 1, true); return null }
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(createElement(Harness)) })
+      await act(async () => { channel.onopen?.(); channel.onopen?.() })
+      expect(reads.mock.calls.filter(([operation]) => operation === 'sources.list')).toHaveLength(0)
+      await act(async () => { prepared.resolve(true) })
+      expect(reads.mock.calls.filter(([operation]) => operation === 'sources.list')).toHaveLength(1)
+      expect(providerInstance.reconcileArkmeProviderInstance).toHaveBeenCalledTimes(1)
+      expect(arkmeChatDirectory.getSnapshot().baselineReady).toBe(true)
+      expect(readiness.slice(readiness.indexOf(true))).not.toContain(false)
+    } finally {
+      unsubscribe()
+      if (renderer !== undefined) await act(async () => { renderer.unmount() })
+    }
+  })
+
   it('updates a mounted directory after a policy notification read fails transiently, without another event or focus', async () => {
     vi.useFakeTimers()
     let channel!: FakeEventSource

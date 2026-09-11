@@ -1,5 +1,6 @@
 import { ArkmeDirectoryWindow } from './ArkmeDirectoryWindow.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { createHomeTourTrace } from './home-tour-diagnostics.js'
 import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
@@ -122,6 +123,27 @@ export function arkmeRootDirectoryLoadState({
   if (error.trim() !== '') return 'error'
   if (!isRefreshing && baselineReady) return 'idle'
   return hasSources ? 'updating' : 'loading'
+}
+
+export function arkmeHomeTourDirectoryAttributes({
+  directory, accountKey, accountScopeMatches, authenticated, active, embeddedProductShell, baselineReady,
+}: {
+  directory: ArkmeSourceDirectory
+  accountKey: string | undefined
+  accountScopeMatches: boolean
+  authenticated: boolean
+  active: boolean
+  embeddedProductShell: boolean
+  baselineReady: boolean
+}): Record<string, string> {
+  if (directory !== 'root') return {}
+  return {
+    'data-arkme-home-tour-directory': 'root',
+    ...(accountKey === undefined ? {} : { 'data-arkme-home-tour-account': accountKey }),
+    'data-arkme-home-tour-ready': String(
+      accountKey !== undefined && accountScopeMatches && authenticated && active && embeddedProductShell && baselineReady,
+    ),
+  }
 }
 
 const colors = {
@@ -368,8 +390,8 @@ function SelfAvatar() {
 
 /** Arkme-owned visual shell for every consumer contributed directory entry. */
 export function ArkmeDirectoryRow({
-  avatar, title, preview, selected, disabled = false, ariaLabel, onClick,
-}: ArkmeDirectoryRowProps) {
+  avatar, title, preview, selected, disabled = false, ariaLabel, onClick, homeTourTarget,
+}: ArkmeDirectoryRowProps & { homeTourTarget?: 'official-author' }) {
   return <button
     type="button"
     role="treeitem"
@@ -377,6 +399,7 @@ export function ArkmeDirectoryRow({
     aria-selected={selected}
     disabled={disabled}
     title={title}
+    data-arkme-home-tour-target={homeTourTarget}
     style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
     onClick={onClick}
   >
@@ -500,6 +523,7 @@ export function ArkmeArkoRow({
     : new Date(latestAtMillis).toISOString()
   return <button
     type="button"
+    data-arkme-home-tour-target="arko"
     role="treeitem"
     aria-selected={selected}
     style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
@@ -524,6 +548,7 @@ export function ArkmeArkoRow({
 export function DeepSeekHarnessRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
   return <button
     type="button"
+    data-arkme-home-tour-target="harness"
     role="treeitem"
     aria-selected={selected}
     style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
@@ -570,6 +595,7 @@ export function ArkmeOfficialAuthorRow({
     selected={false}
     disabled={busy}
     ariaLabel="联系作者"
+    homeTourTarget="official-author"
     onClick={onClick}
   />
 }
@@ -885,6 +911,7 @@ export function ArkmeNavigation({
   const [initialCache] = useState(readLastNavigationCache)
   const cacheRef = useRef<ArkmeNavigationCache | undefined>(initialCache)
   const authenticatedUserIdRef = useRef<number | undefined>(initialCache?.userId)
+  const [directoryAccountKey, setDirectoryAccountKey] = useState<string>()
   const directoryRequestAbortRef = useRef<AbortController>()
   const topicCreateRequestRef = useRef(false)
   const rootRowElementsRef = useRef(new Map<string, HTMLButtonElement>())
@@ -952,6 +979,21 @@ export function ArkmeNavigation({
   const activateDirectoryEntry = useCallback((entryId?: string) => { setActiveDirectoryEntryId(entryId) }, [])
   const activateNativeEntry = useCallback(() => { setActiveDirectoryEntryId(undefined) }, [])
   const authenticated = auth?.status === 'authenticated'
+  const currentAccountKey = authenticated && auth.userId !== undefined
+    ? `${auth.environment}:${String(auth.userId)}`
+    : undefined
+  const [traceNavigation] = useState(createHomeTourTrace)
+  useEffect(() => {
+    traceNavigation('navigation-mounted')
+    return () => { traceNavigation('navigation-unmounted') }
+  }, [traceNavigation])
+  useEffect(() => {
+    traceNavigation('navigation-readiness-inputs', {
+      accountKey: currentAccountKey, directoryAccountKey, authenticated, directory,
+      accountScopeMatches: directoryAccountKey === currentAccountKey,
+      active, embeddedProductShell, baselineReady: chatDirectory.baselineReady,
+    })
+  }, [traceNavigation, currentAccountKey, directoryAccountKey, authenticated, directory, active, embeddedProductShell, chatDirectory.baselineReady])
   const closeGlobalSearch = useCallback(() => {
     setGlobalSearchOpen(false)
     const revision = arkmeUi.getSnapshot().searchTarget?.revision
@@ -1160,6 +1202,7 @@ export function ArkmeNavigation({
 
   const reconcileAuth = useCallback((status: ArkmeAuthSnapshot['status'] | undefined, environment: ArkmeAuthSnapshot['environment'] | undefined, userId: number | undefined) => {
     if (status !== 'authenticated' || userId === undefined) {
+      setDirectoryAccountKey(undefined)
       authenticatedUserIdRef.current = undefined
       cacheRef.current = undefined
       clearLastNavigationCache()
@@ -1167,7 +1210,9 @@ export function ArkmeNavigation({
       setDirectory('root'); setSources([])
       return
     }
-    arkmeChatDirectory.activateAccount(`${environment}:${String(userId)}`)
+    const accountKey = `${environment}:${String(userId)}`
+    arkmeChatDirectory.activateAccount(accountKey)
+    setDirectoryAccountKey(accountKey)
     authenticatedUserIdRef.current = userId
     const cached = readNavigationCache(userId) ?? {
       version: 1, userId: userId, directory: 'root', sources: {}, updatedAtMillis: 0,
@@ -1899,6 +1944,16 @@ export function ArkmeNavigation({
     {directory === 'root' && embeddedProductShell && directoryLead}
     <div
       ref={directoryScrollRef}
+      {...arkmeHomeTourDirectoryAttributes({
+        directory,
+        accountKey: currentAccountKey,
+        accountScopeMatches: directoryAccountKey === currentAccountKey,
+        authenticated,
+        active,
+        embeddedProductShell,
+        baselineReady: chatDirectory.baselineReady,
+      })}
+      data-arkme-home-tour-scroll-container="directory"
       onScroll={event => { if (activeRef.current && event.currentTarget.getClientRects().length > 0) directoryScrollTopRef.current = event.currentTarget.scrollTop }}
       style={{
         ...styles.list,
@@ -1934,6 +1989,7 @@ export function ArkmeNavigation({
         />}
         {showSelfInSearch && <button
           type="button" role="treeitem"
+          data-arkme-home-tour-target="send-to-self"
           aria-selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource)}
           style={{ ...styles.chatRow, ...(activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
           onClick={() => {

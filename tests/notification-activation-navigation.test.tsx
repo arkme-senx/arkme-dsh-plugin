@@ -59,6 +59,7 @@ beforeEach(() => {
   })
   testState.callArkme.mockReset()
   testState.callArkme.mockImplementation(async (operation: string) => {
+    if (operation === 'provider.instance') return { instanceId: 'notification-navigation-instance' }
     if (operation === 'sources.list') {
       return { directory: 'root', items: [targetSource], hasMore: false }
     }
@@ -139,6 +140,7 @@ describe('system notification navigation activation', () => {
     let resolveAuthor: ((value: { source: ArkmeSourceItem }) => void) | undefined
     const authorOpening = new Promise<{ source: ArkmeSourceItem }>(resolve => { resolveAuthor = resolve })
     testState.callArkme.mockImplementation(async (operation: string) => {
+    if (operation === 'provider.instance') return { instanceId: 'notification-navigation-instance' }
       if (operation === 'sources.list') return { directory: 'root', items: [targetSource], hasMore: false }
       if (operation === 'bots.private-chat.directory') return { items: [] }
       if (operation === 'chat.official-author.private.open') return await authorOpening

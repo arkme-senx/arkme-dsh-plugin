@@ -12,6 +12,45 @@ import {
 } from '../src/client/chat-directory-store.js'
 
 describe('ArkmeChatDirectoryStore', () => {
+  it('waits for instance preparation before loading the first directory and coalesces concurrent reads', async () => {
+    const prepared = Promise.withResolvers<void>()
+    const prepareLoad = vi.fn(() => prepared.promise)
+    const loadPage = vi.fn(async () => ({ directory: 'root' as const, items: [], hasMore: false }))
+    const store = new ArkmeChatDirectoryStore({ prepareLoad, loadPage })
+    store.activateAccount('test:1')
+    const readiness: boolean[] = []
+    store.subscribe(() => { readiness.push(store.getSnapshot().baselineReady) })
+    const first = store.refreshRoot()
+    const second = store.refreshRoot()
+    await Promise.resolve()
+    expect(loadPage).not.toHaveBeenCalled()
+    expect(store.getSnapshot().baselineReady).toBe(false)
+    prepared.resolve()
+    await Promise.all([first, second])
+    expect(prepareLoad).toHaveBeenCalledTimes(1)
+    expect(loadPage).toHaveBeenCalledTimes(1)
+    expect(store.getSnapshot().baselineReady).toBe(true)
+    expect(readiness.slice(readiness.indexOf(true))).not.toContain(false)
+  })
+
+  it('retries failed preparation without reading a directory and ignores an old account preparation', async () => {
+    const prepared = Promise.withResolvers<void>()
+    const prepareLoad = vi.fn().mockRejectedValueOnce(new Error('instance unavailable')).mockImplementation(() => prepared.promise)
+    const loadPage = vi.fn(async () => ({ directory: 'root' as const, items: [], hasMore: false }))
+    const store = new ArkmeChatDirectoryStore({ prepareLoad, loadPage })
+    store.activateAccount('test:1')
+    await expect(store.refreshRoot()).rejects.toThrow('instance unavailable')
+    expect(loadPage).not.toHaveBeenCalled()
+    const pending = store.refreshRoot()
+    store.activateAccount('test:2')
+    prepared.resolve()
+    await pending
+    expect(loadPage).not.toHaveBeenCalled()
+    expect(store.getSnapshot().baselineReady).toBe(false)
+    await store.refreshRoot()
+    expect(store.getSnapshot().baselineReady).toBe(true)
+  })
+
   afterEach(() => { vi.useRealTimers() })
 
   it('recovers a transient policy read in the shared silent refresh without losing visible rows', async () => {
