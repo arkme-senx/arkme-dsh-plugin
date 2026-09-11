@@ -2633,6 +2633,7 @@ export function ArkmeSurface({
   const surfaceRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
+  const recordsRef = useRef<HTMLUListElement>(null)
   const endAccessoryRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const newerSentinelRef = useRef<HTMLDivElement>(null)
@@ -3128,6 +3129,7 @@ export function ArkmeSurface({
     viewport: ArkmeConversationViewportSnapshot | undefined
     newerPageStartAnchorId?: string
   }>()
+  const viewportRestoreIntentRef = useRef<boolean>()
   const pendingConversationTargetLocateRef = useRef<{
     sourceKey: string
     itemUid: string
@@ -5718,6 +5720,7 @@ export function ArkmeSurface({
     const maximumTop = Math.max(0, body.scrollHeight - body.clientHeight)
     pendingConversationTargetLocateRef.current = undefined
     pendingViewportRestoreRef.current = undefined
+    viewportRestoreIntentRef.current = false
     body.scrollTo({ top: Math.max(0, Math.min(maximumTop, centeredTop)), behavior: 'auto' })
     setHighlightedTargetUid(pending.itemUid)
     conversationTargetLocatedRevisionRef.current = pending.revision
@@ -6558,9 +6561,11 @@ export function ArkmeSurface({
         ? pending.viewport?.scrollTop ?? body.scrollTop
         : body.scrollTop + newerPageStartOffset))
     conversationCacheRef.current.storeViewport(pending.sourceKey, arkmeConversationViewport(body))
+    viewportRestoreIntentRef.current = pending.newerPageStartAnchorId === undefined
+      && (pending.viewport === undefined || pending.viewport.stickToBottom)
     pendingViewportRestoreRef.current = undefined
   }, [active, activeSelectMode, displayRows, timelineStateKey])
-  useConversationResizeAnchor(bodyRef, active && activeConversation ? conversationKey : undefined, endAccessoryRef, activeSelectMode !== undefined)
+  useConversationResizeAnchor(bodyRef, active && activeConversation ? conversationKey : undefined, endAccessoryRef, activeSelectMode !== undefined, recordsRef, viewportRestoreIntentRef)
   const handleConversationScroll = useCallback(() => {
     const body = bodyRef.current
     if (body === null || timelineStateKey === '') return
@@ -7019,7 +7024,7 @@ export function ArkmeSurface({
               <span style={styles.timelineSkeletonAvatar} />
               <span style={{ ...styles.timelineSkeletonBubble, width: `${width}%` }} />
             </div>)}</div>}
-            {displayRows.length > 0 && <ul className={`arkme-conversation-records${timelineRevealKey === conversationKey
+            {displayRows.length > 0 && <ul ref={recordsRef} className={`arkme-conversation-records${timelineRevealKey === conversationKey
               ? ' arkme-conversation-records-reveal'
               : ''}`} style={styles.records}>
               {displayRows.map((row, index) => {
@@ -7118,6 +7123,8 @@ export function ArkmeSurface({
                       ...(isForwardMessageCard ? styles.forwardMessageLine : {}),
                       ...(isSharedRecordingCard ? styles.sharedRecordingMessageLine : {}),
                       ...(activeSelectMode !== undefined && selectionAnchor === 'card-center' ? styles.messageLineSelectCardCenterMode : {}),
+                      // The viewport already supplies the gap above the composer.
+                      ...(index === displayRows.length - 1 ? { marginBottom: 0 } : {}),
                     }}>
                       {!isExtensionMessage && messageAvatar}
                       <div style={{

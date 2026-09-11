@@ -5,6 +5,67 @@ import { observeConversationResize, resizedConversationScrollTop, useConversatio
 
 afterEach(() => vi.unstubAllGlobals())
 describe('composer and message viewport resize', () => {
+  it('does not lose the bottom when React commits before the resize delivery', () => {
+    let resized = () => {}
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized = callback }
+      observe() {}
+      disconnect = disconnect
+    })
+    let height = 2000
+    const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
+      addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    const ref = { current: body as unknown as HTMLDivElement }
+    const content = { current: { getBoundingClientRect: () => ({ height }) } as HTMLElement }
+    function Harness({ grown }: { grown: boolean }) {
+      useLayoutEffect(() => {
+        if (grown) { height += 85; body.scrollHeight += 85 }
+      }, [grown])
+      useConversationResizeAnchor(ref, 'chat', undefined, false, content)
+      return null
+    }
+    let renderer: ReturnType<typeof create>
+    act(() => { renderer = create(createElement(Harness, { grown: false })) })
+    act(() => { renderer.update(createElement(Harness, { grown: true })) })
+    expect(body.scrollTop).toBe(1485)
+    resized()
+    expect(body.scrollTop).toBe(1485)
+    expect(disconnect).not.toHaveBeenCalled()
+    act(() => { renderer.unmount() })
+    expect(disconnect).toHaveBeenCalledOnce()
+  })
+  it.each([false, true])('follows delayed message growth from the bottom (scroll delivered first: %s)', scrollFirst => {
+    let resized = () => {}
+    let scrolled = () => {}
+    let height = 2000
+    const observe = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized = callback }
+      observe = observe
+      disconnect() {}
+    })
+    const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
+      addEventListener: vi.fn((_name, listener) => { scrolled = listener }), removeEventListener: vi.fn() }
+    const content = { getBoundingClientRect: () => ({ height }) }
+    const cleanup = observeConversationResize(body as unknown as HTMLElement, undefined, content as unknown as HTMLElement)
+    resized()
+    height += 500; body.scrollHeight += 500
+    if (scrollFirst) scrolled()
+    resized()
+    expect(body.scrollTop).toBe(1900)
+    expect(observe.mock.calls.map(([node]) => node)).toEqual([body, content])
+    // Moving up cancels following, including another image finishing its layout.
+    body.scrollTop = 300; scrolled()
+    height += 300; body.scrollHeight += 300; resized()
+    expect(body.scrollTop).toBe(300)
+    // Returning to the bottom enables following again.
+    body.scrollTop = 2200; scrolled()
+    height += 200; body.scrollHeight += 200; resized()
+    expect(body.scrollTop).toBe(2400)
+    cleanup()
+  })
+
   it('resets pre-selection bottom metrics after the selected message anchor is restored', () => {
     let resized = () => {}
     const disconnect = vi.fn()
@@ -29,6 +90,42 @@ describe('composer and message viewport resize', () => {
     expect(disconnect).toHaveBeenCalledOnce()
     resized()
     expect(body.scrollTop).toBe(1520)
+    act(() => { renderer.unmount() })
+  })
+  it('rebases after history paging or locating and disconnects on leaving the conversation', () => {
+    let resized = () => {}
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized = callback }
+      observe() {}
+      disconnect = disconnect
+    })
+    let height = 2000
+    const content = { current: { getBoundingClientRect: () => ({ height }) } as HTMLElement }
+    const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
+      addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    const ref = { current: body as unknown as HTMLDivElement }
+    const restoreIntent = { current: undefined as boolean | undefined }
+    function Harness({ revision, active = true }: { revision: number; active?: boolean }) {
+      useLayoutEffect(() => {
+        if (revision === 1) {
+          height = 3000
+          Object.assign(body, { scrollTop: 700, scrollHeight: height })
+          restoreIntent.current = false
+        }
+      }, [revision])
+      useConversationResizeAnchor(ref, active ? 'chat' : undefined, undefined, false, content, restoreIntent)
+      return null
+    }
+    let renderer: ReturnType<typeof create>
+    act(() => { renderer = create(createElement(Harness, { revision: 0 })) })
+    act(() => { renderer.update(createElement(Harness, { revision: 1 })) })
+    expect(disconnect).not.toHaveBeenCalled()
+    height += 500; body.scrollHeight += 500; resized()
+    expect(body.scrollTop).toBe(700)
+    act(() => { renderer.update(createElement(Harness, { revision: 1, active: false })) })
+    expect(disconnect).toHaveBeenCalledTimes(1)
+    expect(body.removeEventListener).toHaveBeenCalledTimes(1)
     act(() => { renderer.unmount() })
   })
   it('raises bottom messages by exactly the lost viewport height, and follows reset', () => {

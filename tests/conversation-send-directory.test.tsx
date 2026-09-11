@@ -3321,6 +3321,56 @@ describe('conversation send directory projection', () => {
       .toHaveLength(timelineCallsBeforeMutation)
   })
 
+  it.each([target, group])('follows incoming messages only at the bottom of $kind', async source => {
+    timeline = [{ itemUid: 'old', sequence: 8, senderName: 'Tison', isMe: false,
+      sendAtMillis: 8, title: '', textContent: 'old message', status: 1 }]
+    arkmeChatDirectory.publish([source])
+    arkmeUi.selectSource(source)
+    let top = 0
+    let deferredHeight = 0
+    let contentResized = () => {}
+    const content = { getBoundingClientRect: () => ({ height: body.scrollHeight }) }
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(private callback: () => void) {}
+      observe(node: unknown) { if (node === content) contentResized = this.callback }
+      disconnect() {}
+    })
+    const body = {
+      get scrollTop() { return top },
+      set scrollTop(value: number) { top = Math.max(0, Math.min(value, this.scrollHeight - 600)) },
+      get scrollHeight() {
+        try { return 2000 + deferredHeight + (renderer?.root.findAllByProps({ 'data-arkme-message-item-uid': 'incoming' }).length ?? 0) * 400 }
+        catch { return 2000 }
+      },
+      clientHeight: 600,
+      querySelectorAll: () => [],
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    }
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body
+          : element.type === 'ul' && element.props.className?.includes('arkme-conversation-records') ? content : null,
+      })
+    })
+    top = 1400
+    act(() => renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll())
+    const incoming: ArkmeTimelineItem = { ...timeline[0]!, itemUid: 'incoming', sequence: 9, sendAtMillis: 9, textContent: 'new message' }
+    await act(async () => { arkmeChatTimelineDelta.publish([{ source, items: [incoming] }]) })
+    expect(body.scrollHeight).toBe(2400)
+    expect(top).toBe(1800)
+    deferredHeight = 500
+    act(() => contentResized())
+    expect(top).toBe(2300)
+    top = 300
+    act(() => renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll())
+    await act(async () => { arkmeChatTimelineDelta.publish([{ source, items: [{ ...incoming, itemUid: 'incoming-2', sequence: 10 }] }]) })
+    expect(top).toBe(300)
+    deferredHeight += 300
+    act(() => contentResized())
+    expect(top).toBe(300)
+  })
+
   it('keeps the current group mounted and applies a complete realtime delta without a duplicate timeline read', async () => {
     const stableGroup: ArkmeSourceItem = {
       ...target,
