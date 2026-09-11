@@ -11,13 +11,35 @@ function first(source: Record<string, unknown>, keys: string[]): unknown {
   return keys.map(key => source[key]).find(value => value !== undefined && value !== null && value !== '')
 }
 
-/** Port of desktop call_record.dart; identifiers remain on the host. */
-export function projectCallRecord(raw: unknown, viewerUserId: number): ArkmeTimelineItem['callRecord'] {
+/** Flutter-compatible summary templates, resolved on the host before projection. */
+export function renderCallRecordSummary(source: Record<string, unknown>, viewerUserId: number, displayNames: ReadonlyMap<number, string> = new Map()): string {
+  const fallback = String(first(source, ['sm', 'call_summary', 'callSummary', 'summary_text', 'summaryText', 'summary']) ?? '').trim()
+  const template = String(first(source, ['smt', 'call_summary_template', 'callSummaryTemplate', 'summary_template', 'summaryTemplate']) ?? '').trim()
+  const labels = object(first(source, ['ssl', 'summary_speaker_labels', 'call_summary_speaker_labels']))
+  const users = object(first(source, ['ssu', 'summary_speaker_user_ids', 'call_summary_speaker_user_ids']))
+  const rendered = template.replace(/\{\{(user|speaker):([^{}]+)\}\}/g, (token: string, kind: string, key: string) => {
+    const userId = Number(kind === 'user' ? key : users[token] ?? users[key])
+    if (userId > 0 && userId === viewerUserId) return '我'
+    const name = displayNames.get(userId)
+    if (name?.trim()) return name.trim()
+    const label = kind === 'speaker' ? labels[token] ?? labels[key] : undefined
+    return typeof label === 'string' && label.trim() ? label.trim() : token
+  })
+  const text = rendered && !rendered.includes('{{') ? rendered : fallback
+  return text.includes('{{') ? '' : text
+}
+
+function callRecordCandidates(raw: unknown): Record<string, unknown>[] {
   const root = object(raw)
   const record = object(root.record)
   const core = object(root.record_core)
   const payload = object(record.payload ?? root.payload)
-  const candidates = [payload, record, root, core].flatMap(value => [value, object(value.content_payload ?? value.contentPayload)])
+  return [payload, record, root, core].flatMap(value => [value, object(value.content_payload ?? value.contentPayload)])
+}
+
+/** Host-only metadata used by the existing call-history owner to seal a detail reference. */
+export function callRecordSource(raw: unknown): Record<string, unknown> | undefined {
+  const candidates = callRecordCandidates(raw)
   const details = (value: Record<string, unknown>, depth = 0): Record<string, unknown> | undefined => {
     if (depth > 3) return undefined
     for (const key of ['crd', 'call_record', 'callRecord', 'call', 'call_detail', 'callDetail']) {
@@ -30,7 +52,26 @@ export function projectCallRecord(raw: unknown, viewerUserId: number): ArkmeTime
       && first(value, ['rs', 'call_result', 'callResult', 'caller_id', 'callerId', 'cr']) !== undefined) return value
     return undefined
   }
-  const source = candidates.map(value => details(value)).find(value => value !== undefined)
+  return candidates.map(value => details(value)).find(value => value !== undefined)
+}
+
+export function callRecordRoomId(raw: unknown): string {
+  const source = callRecordSource(raw)
+  const room = source && first(source, ['ri', 'room_id', 'roomId', 'room_uid', 'roomUid'])
+  if (typeof room === 'string' && room.trim()) return room.trim()
+  // New Record payloads use the call structured anchor as the room locator.
+  for (const candidate of callRecordCandidates(raw)) {
+    const anchor = object(candidate.structured_anchor ?? candidate.structuredAnchor ?? candidate)
+    if (Number(anchor.anchor_kind ?? anchor.anchorKind) !== 2) continue
+    const uid = anchor.anchor_uid ?? anchor.anchorUid
+    if (typeof uid === 'string' && uid.trim()) return uid.trim()
+  }
+  return ''
+}
+
+/** Port of desktop call_record.dart; identifiers remain on the host. */
+export function projectCallRecord(raw: unknown, viewerUserId: number): ArkmeTimelineItem['callRecord'] {
+  const source = callRecordSource(raw)
   // Do not manufacture a cancelled state for a structured anchor with no result.
   if (!source) return undefined
   const media = String(first(source, ['mt', 'media_type', 'mediaType', 'call_media_type', 'callMediaType']) ?? '').trim().toLowerCase()
@@ -52,5 +93,13 @@ export function projectCallRecord(raw: unknown, viewerUserId: number): ArkmeTime
     case 'callbusy': case 'busy': text = isCaller ? '对方忙线中' : '未接听(忙线)'; break
     case 'offline': text = isCaller ? '对方离线' : '未接听(离线)'; break
   }
-  return { mediaType, text }
+  const summary = renderCallRecordSummary(source, viewerUserId)
+  const rawStatus = String(first(source, ['ss', 'call_summary_status', 'summary_status', 'summaryStatus']) ?? '').toLowerCase()
+  const summaryStatus = ['pending', 'processing', 'generating'].includes(rawStatus) ? 'pending'
+    : ['done', 'success', 'finished'].includes(rawStatus) ? 'done'
+      : ['failed', 'error'].includes(rawStatus) ? 'failed' : undefined
+  return { mediaType, text,
+    ...(summary && !summary.includes('{{') ? { summaryText: summary } : {}),
+    ...(summaryStatus ? { summaryStatus } : {}),
+  }
 }

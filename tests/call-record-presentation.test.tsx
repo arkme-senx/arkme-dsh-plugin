@@ -44,4 +44,12 @@ describe('desktop call record presentation', () => {
     expect(projectCallRecord({ crd: { mt: 'Audio', rs: 'future-result' } }, 42)?.text).toBe('语音通话')
     expect(projectCallRecord({ extra: '{invalid' }, 42)).toBeUndefined()
   })
+
+  it('projects Flutter summaries and resolves speaker templates without exposing tokens', () => {
+    const crd = { mt: 'Video', rs: 'NormalEnd', du: 65, sm: '原始摘要', ss: 'done', smt: '{{speaker:s1}}与{{speaker:s2}}确认排期', ssu: { s1: 42 }, ssl: { s2: '小林' } }
+    expect(projectCallRecord({ crd }, 42)).toMatchObject({ summaryText: '我与小林确认排期', summaryStatus: 'done' })
+    expect(projectCallRecord({ crd: { ...crd, smt: '{{user:77}}确认排期' } }, 42)?.summaryText).toBe('原始摘要')
+    expect(projectCallRecord({ crd: { ...crd, sm: '', smt: '{{unknown}}' } }, 42)?.summaryText).toBeUndefined()
+    expect(projectCallRecord({ crd: { ...crd, ss: 'processing' } }, 42)?.summaryStatus).toBe('pending')
+  })
 })

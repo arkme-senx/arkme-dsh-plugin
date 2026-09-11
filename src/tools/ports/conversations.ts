@@ -15,6 +15,7 @@ export interface ArkmeConversationToolPort {
   cachedSourceMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeConversationMemberCache | undefined>
   pageSourceMembers(sourceRef: string, options?: { cursor?: string; limit?: number; signal?: AbortSignal }): Promise<ArkmeConversationMemberPage>
   sourceMembersPresentation(sourceRef: string, memberRefs: readonly string[], options?: { signal?: AbortSignal }): Promise<ArkmeConversationMemberPresentation>
+  topicHomeVisibility(sourceRef: string, showInHome?: boolean): Promise<{ showInHome: boolean }>
   listSources(
     directory: ArkmeSourceDirectory,
     options?: { limit?: number; cursor?: string; signal?: AbortSignal; localFirst?: boolean },

@@ -51,6 +51,37 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(store.getSnapshot().baselineReady).toBe(true)
   })
 
+  it('retains a private peer across partial message updates and rotated refs', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'author-before', sourceKey: 'chat:author', kind: 'private_chat' as const,
+      displayName: '作者昵称', peerUserId: 11, activeAtMillis: 1, unreadCount: 0, latestSequence: 0,
+    }
+    store.publish([source])
+    const { peerUserId: _peer, ...partial } = source
+    for (const latestSequence of [1, 1, 0]) {
+      store.upsert({ ...partial, sourceRef: 'author-after', latestSequence, latestPreview: 'hi' })
+      expect(store.getSnapshot().sources).toHaveLength(1)
+      expect(store.getSnapshot().sources[0]).toMatchObject({ peerUserId: 11, latestPreview: 'hi' })
+    }
+    store.upsert({ ...partial, sourceRef: 'other', sourceKey: 'chat:other' })
+    expect(store.getSnapshot().sources.find(item => item.sourceKey === 'chat:other')).not.toHaveProperty('peerUserId')
+    store.upsert({ ...partial, peerUserId: 12 })
+    expect(store.getSnapshot().sources.find(item => item.sourceKey === 'chat:author')?.peerUserId).toBe(12)
+    store.publish([partial])
+    expect(store.getSnapshot().sources[0]).not.toHaveProperty('peerUserId')
+    store.publish([source])
+    store.upsert({ ...partial, kind: 'group_chat' })
+    expect(store.getSnapshot().sources[0]).not.toHaveProperty('peerUserId')
+    store.activateAccount('test:1')
+    store.publish([source])
+    store.activateAccount('test:2')
+    expect(store.getSnapshot().sources).toEqual([])
+    store.publish([partial])
+    store.upsert(partial)
+    expect(store.getSnapshot().sources[0]).not.toHaveProperty('peerUserId')
+  })
+
   afterEach(() => { vi.useRealTimers() })
 
   it('recovers a transient policy read in the shared silent refresh without losing visible rows', async () => {
@@ -322,6 +353,7 @@ describe('ArkmeChatDirectoryStore', () => {
 
     expect(store.totalUnreadCount()).toBe(124)
     expect(store.totalUnreadCount({ excludeMuted: true })).toBe(4)
+    store.hydrateVisibility(store.getSnapshot().sources.map(source => ({ entryKind: 'source', entryRef: source.sourceRef, hidden: false })))
     expect(store.totalBadgeUnreadCount()).toBe(4)
   })
 
@@ -1244,3 +1276,18 @@ it('does not resurrect a left group through a late snapshot or realtime delta', 
   store.applyHostPage({ ...initial, projection: { ...initial.projection, revision: 3, removedSourceKeys: [] } })
   expect(store.getSnapshot().sources).toMatchObject([source])
 })
+
+it('bounds rotating source-ref aliases without losing stable-key read acknowledgements', () => {
+  const store = new ArkmeChatDirectoryStore()
+  const initial = { sourceRef: 'initial', sourceKey: 'stable', kind: 'private_chat' as const, displayName: 'Chat', activeAtMillis: 1, unreadCount: 1, latestSequence: 1 }
+  store.activateAccount('test:alias-capacity')
+  store.publish([initial])
+  store.hydrateVisibility([{ entryKind: 'source', entryRef: 'initial', hidden: false }])
+  store.upsertMany(Array.from({ length: 40010 }, (_, i) => ({ ...initial, sourceRef: `ref-${i}`, activeAtMillis: i + 2, latestSequence: i + 2 })))
+  expect((store as unknown as { sourceKeysByRef: Map<string, string> }).sourceKeysByRef.size).toBeLessThanOrEqual(40000)
+  expect(store.totalBadgeUnreadCount()).toBe(1)
+  store.updateReadAck('initial', 'stable', 40011, 0)
+  expect(store.totalBadgeUnreadCount()).toBe(0)
+  store.activateAccount('test:next')
+  expect((store as unknown as { sourceKeysByRef: Map<string, string> }).sourceKeysByRef.size).toBe(0)
+}, 10000)

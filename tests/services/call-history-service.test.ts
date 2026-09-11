@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { CallHistoryService } from '../../src/services/call-history-service.js'
 import { ProfileService } from '../../src/services/profile-service.js'
+import { MediaService } from '../../src/services/media-service.js'
 import { ArkmePluginError, ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 
 const config: ArkmeServiceConfig = {
@@ -45,10 +46,62 @@ function service(fetchImpl: typeof fetch, override: Partial<ArkmeServiceConfig> 
     { async uniqueCode() { return 'call-history-secret' } } as StateStore,
     fetchImpl,
   )
-  return new CallHistoryService(runtime, new ProfileService(runtime))
+  const profile = new ProfileService(runtime)
+  return new CallHistoryService(runtime, profile, new MediaService(runtime, profile, {} as never, {} as never))
 }
 
 describe('CallHistoryService', () => {
+  it('projects real COS room transcript audio through the local media proxy', async () => {
+    const owner = service(vi.fn<typeof fetch>(async () => envelope({ room_transcript_segments: [
+      { start_ms: 2000, end_ms: 3000, text: '录音片段', speaker_user_id: 42,
+        audio_url: 'https://webrtc-record-prod-1403070603.cos.ap-shanghai.myqcloud.com/clip.wav?q-signature=private' },
+    ] })), { environment: 'prod' })
+    const presentation = await owner.timelineCallRecord({ crd: { ri: 'cos-room', mt: 'Audio', rs: 'NormalEnd', cr: 42 } }, 42)
+    const result = await owner.callDetail(presentation!.callRef!)
+    expect(result.transcriptSegments[0]?.audioUrl).toMatch(/^\/arkme-self\/api\/media\?ref=/)
+    expect(JSON.stringify(result)).not.toMatch(/myqcloud|q-signature|private/)
+  })
+
+  it('projects standalone transcript audio URLs and drops unsupported URL schemes', async () => {
+    const owner = service(vi.fn<typeof fetch>(async () => envelope({ segments: [
+      { id: 'a', text: '可播放', start_ms: 2000, end_ms: 3000, audio_url: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/clip.wav' },
+      { id: 'b', text: '无录音', audio_url: 'javascript:alert(1)' },
+      { id: 'c', text: '本地文件不可读', audio_url: 'file:///private/clip.wav' },
+    ] })))
+    const presentation = await owner.timelineCallRecord({ crd: { ri: 'audio-room', mt: 'Audio', rs: 'NormalEnd', cr: 42 } }, 42)
+    const result = await owner.callDetail(presentation!.callRef!)
+    expect(result.transcriptSegments.find(segment => segment.segmentId === 'a')).toMatchObject({ audioUrl: expect.stringMatching(/^\/arkme-self\/api\/media\?ref=/), startMillis: 2000 })
+    expect(JSON.stringify(result)).not.toContain('oss-cn-hangzhou')
+    expect(result.transcriptSegments.filter(segment => segment.segmentId !== 'a').every(segment => segment.audioUrl === undefined)).toBe(true)
+  })
+
+  it('renders a template-only summary for the viewer through the timeline detail reference', async () => {
+    const owner = service(vi.fn<typeof fetch>(async () => envelope({
+      call_media_type: 0, call_summary_status: 'done', call_summary_template: '{{speaker:s1}}确认周五上线',
+      summary_speaker_user_ids: { s1: 42 },
+    })))
+    const presentation = await owner.timelineCallRecord({ crd: { ri: 'template-room', mt: 'Audio', rs: 'NormalEnd', cr: 42 } }, 42)
+    await expect(owner.callDetail(presentation!.callRef!)).resolves.toMatchObject({ summaryText: '我确认周五上线', summaryStatus: 'done' })
+  })
+
+  it('seals a timeline call for the existing detail endpoint without exposing its room', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('https://webrtc.test/api/v1/trtc/call-detail')
+      expect(JSON.parse(String(init?.body))).toMatchObject({ room_id: 'timeline-private-room' })
+      return envelope({ call_media_type: 1, start_time: 1788949920, end_time: 1788949922, call_result: 'Cancel' })
+    })
+    const owner = service(fetchImpl)
+    const presentation = await owner.timelineCallRecord({ record: { payload: { content_payload: { crd: { ri: 'timeline-private-room', cr: 42, mt: 'Video', rs: 'Cancel', st: 1788949920, du: 0 } } } } }, 42)
+    expect(presentation).toMatchObject({ mediaType: 'video', text: '已取消', startedAtMillis: 1788949920000, durationSeconds: 0 })
+    expect(JSON.stringify(presentation)).not.toContain('timeline-private-room')
+    const detail = await owner.callDetail(presentation!.callRef!)
+    expect(detail).toMatchObject({ mediaType: 'video', durationSeconds: 2, transcriptSegments: [] })
+    const anchored = await owner.timelineCallRecord({ content_payload: { structured_anchor: { anchor_kind: 2, anchor_uid: 'timeline-private-room' }, crd: { mt: 'Video', rs: 'Cancel', cr: 42 } } }, 42)
+    await expect(owner.callDetail(anchored!.callRef!)).resolves.toMatchObject({ mediaType: 'video' })
+    const foreign = await owner.timelineCallRecord({ crd: { ri: 'other-room', mt: 'Audio', rs: 'Cancel', cr: 77 } }, 77)
+    await expect(owner.callDetail(foreign!.callRef!)).rejects.toMatchObject({ code: 'call-ref-invalid' })
+  })
+
   it('lists safe call history without leaking raw room or media fields', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async input => {
       expect(String(input)).toBe('https://data.test/api/v1/call/history-aggregate')

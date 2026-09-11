@@ -134,8 +134,7 @@ function botConversationCapabilities(target: BotConversationTarget, provider: 'o
     : target.kind === 'chat' ? BOT_CONVERSATION_OWNER.chat : undefined
   return {
     directChatAvailable: owner !== undefined,
-    privateChatOutboundEnabled: owner === BOT_CONVERSATION_OWNER.chat
-      || (owner === BOT_CONVERSATION_OWNER.subject && provider === 'openclaw'),
+    privateChatOutboundEnabled: owner !== undefined && provider === 'openclaw',
     refreshOnRecordChanges: owner === BOT_CONVERSATION_OWNER.subject,
     conversationProjection: owner === BOT_CONVERSATION_OWNER.subject
       ? 'record' as const
@@ -252,10 +251,16 @@ export class BotService {
     let data: Record<string, unknown>
     try {
       data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
-        '/api/v1/bot/create', { name, provider, description, avatar }, session, options.signal,
+        '/api/v1/bot/create', {
+          name, provider, description, avatar,
+          direct_chat_owner: BOT_CONVERSATION_OWNER.chat, request_uid: input.requestUid?.trim() || randomUUID(),
+        }, session, options.signal,
       )
     } catch (error) {
-      if (error instanceof ArkmePluginError && ['arkme-network-error', 'arkme-timeout'].includes(error.code)) {
+      if (error instanceof ArkmePluginError && (
+        ['arkme-network-error', 'arkme-timeout', 'arkme-response-invalid', 'arkme-code-1002'].includes(error.code)
+        || (error.code === 'arkme-http-error' && error.retryable)
+      )) {
         throw new ArkmePluginError(
           'bot-create-outcome-unknown',
           'Bot 创建结果未知，请刷新 Bot 列表确认；不会自动重试',
@@ -263,6 +268,9 @@ export class BotService {
           409,
           { cause: error },
         )
+      }
+      if (error instanceof ArkmePluginError && error.code === 'arkme-code-1001') {
+        throw new ArkmePluginError(error.code, error.message, false, 400, { cause: error })
       }
       throw error
     }
@@ -759,7 +767,11 @@ export class BotService {
       if (bot.directoryKey === undefined) return []
       const payload = Buffer.from(JSON.stringify({ directoryKey: bot.directoryKey })).toString('base64url')
       const signature = createHmac('sha256', secret).update(`bot-directory-entry-v1:${userId}:${payload}`).digest('base64url')
-      return [{ ...bot, botRef: `arkme-bot-directory-entry-v1.${payload}.${signature}` }]
+      return [{
+        ...bot,
+        privateChatOutboundEnabled: bot.directChatAvailable && bot.provider === 'openclaw',
+        botRef: `arkme-bot-directory-entry-v1.${payload}.${signature}`,
+      }]
     })
   }
 

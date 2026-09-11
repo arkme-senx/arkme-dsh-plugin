@@ -3,6 +3,7 @@
 // Usage: node tests/fixtures/private-chat-actions-browser.mjs http://127.0.0.1:<isolated-dsh-port>
 import http from 'node:http'
 import net from 'node:net'
+import { WebSocketServer } from 'ws'
 
 const upstream = new URL(process.argv[2])
 if (upstream.hostname !== '127.0.0.1' || upstream.protocol !== 'http:') throw new Error('Use an isolated loopback DSH')
@@ -78,7 +79,6 @@ const server = http.createServer(async (request, response) => {
   }
   if (url.pathname.startsWith('/arkme-self/api')) {
     if (request.method !== 'POST' || url.pathname !== '/arkme-self/api') {
-      if (url.pathname.endsWith('/events')) { response.writeHead(200, { 'content-type': 'text/event-stream' }); response.write(': fixture\n\n'); return }
       json(response, { ok: false, error: { code: 'fixture-read-unavailable', message: '本地验收无此资源', retryable: false } }, 404); return
     }
     try {
@@ -94,7 +94,18 @@ const server = http.createServer(async (request, response) => {
   }, incoming => { response.writeHead(incoming.statusCode, incoming.headers); incoming.pipe(response) })
   proxy.on('error', () => { response.writeHead(502); response.end('Isolated DSH unavailable') }); request.pipe(proxy)
 })
+const fixtureEvents = new WebSocketServer({ noServer: true })
 server.on('upgrade', (request, socket, head) => {
+  const pathname = new URL(request.url, 'http://localhost').pathname
+  if (pathname === '/arkme-self/api/events') {
+    fixtureEvents.handleUpgrade(request, socket, head, client => {
+      client.on('error', () => client.terminate())
+      client.on('message', () => client.close(1008))
+      client.send(JSON.stringify({ type: 'reconcile', revision: 1, connected: true, connectionGeneration: 1, refresh: 'none' }))
+    })
+    return
+  }
+  if (pathname.startsWith('/arkme-self/api')) { socket.destroy(); return }
   const target = net.connect(Number(upstream.port), upstream.hostname, () => {
     const headers = { ...request.headers, host: upstream.host, origin: upstream.origin }
     target.write(`${request.method} ${request.url} HTTP/1.1\r\n${Object.entries(headers).map(([key, value]) => `${key}: ${value}`).join('\r\n')}\r\n\r\n`)

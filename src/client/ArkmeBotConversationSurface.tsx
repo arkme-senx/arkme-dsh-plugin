@@ -196,9 +196,17 @@ export function ArkmeBotConversationSurface({
     input.style.height = `${String(arkmeConversationComposerHeight(input.scrollHeight))}px`
   }, [draft])
 
+  const privateChatInboundOnly = bot.provider === 'webhook'
+  const privateChatUnavailable = !bot.directChatAvailable
+    || (!privateChatInboundOnly && bot.privateChatOutboundEnabled === false)
+
+  const emptyMessage = privateChatUnavailable
+    ? '当前 Bot 会话暂不可用'
+    : privateChatInboundOnly ? '暂无消息，等待外部系统推送' : `和 ${bot.name} 打个招呼吧`
+
   const send = async () => {
     const content = draft.trim()
-    if (content === '' || sendInFlightRef.current) return
+    if (privateChatUnavailable || privateChatInboundOnly || content === '' || sendInFlightRef.current) return
     sendInFlightRef.current = true
     setSending(true)
     setError('')
@@ -221,9 +229,6 @@ export function ArkmeBotConversationSurface({
     }
   }
 
-  const privateChatUnavailable = !bot.directChatAvailable
-  const privateChatInboundOnly = bot.directChatAvailable && bot.privateChatOutboundEnabled === false
-
   return <section style={styles.shell} aria-label={`${bot.name} Bot 对话`}>
     <header style={styles.header}>
       <span style={styles.avatar} aria-hidden><RobotIcon size={20} weight="fill" /></span>
@@ -233,7 +238,7 @@ export function ArkmeBotConversationSurface({
     <div ref={bodyRef} style={styles.body}>
       {error !== '' && <div role="alert" style={styles.error}>{error}</div>}
       {loading ? <div role="status" style={styles.loading}>正在加载 Bot 对话…</div>
-        : messages.length === 0 ? <div style={styles.empty}>和 {bot.name} 打个招呼吧</div>
+        : messages.length === 0 ? (error === '' && <div style={styles.empty}>{emptyMessage}</div>)
           : <div style={styles.messages}>{messages.map((message, index) => {
             const actionItem = messageActionItems.find(candidate => candidate.id === message.messageId)
             const selectedForAction = messageActions.selectedIds.has(message.messageId)

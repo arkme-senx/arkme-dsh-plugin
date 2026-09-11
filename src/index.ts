@@ -815,8 +815,7 @@ export function apply(ctx: Context, config: Config): void {
     handler: extensionPreviewReadHandler,
   }), 'dsh-arkme: extension preview read route')
   ctx.effect(() => {
-    const disposeRoute = ctx.webServer.register({
-      kind: 'exact',
+    const disposeRoute = ctx.webServer.registerUpgrade({
       path: `${config.routePath}/events`,
       handler: realtimeEvents.handler,
     })

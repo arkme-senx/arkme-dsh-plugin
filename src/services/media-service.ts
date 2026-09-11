@@ -133,6 +133,12 @@ function allowedSignedAudioHost(environment: 'test' | 'prod', hostname: string):
   return allowed.includes(hostname.toLowerCase())
 }
 
+/** Call transcript clips use a separate COS bucket, not the user-audio OSS bucket. */
+function allowedSignedCallAudioHost(environment: 'test' | 'prod', hostname: string): boolean {
+  return environment === 'prod'
+    && hostname.toLowerCase() === 'webrtc-record-prod-1403070603.cos.ap-shanghai.myqcloud.com'
+}
+
 /** Record audio can originate from the dedicated audio or generic file bucket. */
 function allowedSignedRecordAudioHost(environment: 'test' | 'prod', hostname: string): boolean {
   return allowedSignedAudioHost(environment, hostname) || allowedSignedImageHost(environment, hostname)
@@ -449,8 +455,10 @@ export class MediaService {
     }
     const url = new URL(descriptor.remoteUrl)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== ''
+      || url.port !== '' || url.hash !== ''
       || !(allowedSignedImageHost(this.runtime.config.environment, url.hostname)
-        || allowedSignedAudioHost(this.runtime.config.environment, url.hostname))) {
+        || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)
+        || allowedSignedCallAudioHost(this.runtime.config.environment, url.hostname))) {
       throw new ArkmePluginError('media-host-rejected', '媒体来源不受信任', false, 403)
     }
     const response = await this.runtime.fetchImpl(url, {
@@ -1058,7 +1066,8 @@ export class MediaService {
         if (value === undefined) return undefined
         const url = new URL(value)
         return url.port === '' && url.hash === '' && (allowedSignedImageHost(this.runtime.config.environment, url.hostname)
-          || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)) ? value : undefined
+          || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)
+          || allowedSignedCallAudioHost(this.runtime.config.environment, url.hostname)) ? value : undefined
       }
       const downloadUrl = trustedUrl(file.download_url ?? file.downloadUrl)
       const previewUrl = trustedUrl(file.preview_url ?? file.previewUrl)

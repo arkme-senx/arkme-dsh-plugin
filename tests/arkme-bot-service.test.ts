@@ -203,7 +203,7 @@ describe('ArkmeService Bot owner adapter', () => {
       item.name, item.directChatAvailable, item.privateChatOutboundEnabled, item.conversationProjection,
     ])).toEqual([
       ['Subject', true, false, 'record'],
-      ['Chat', true, true, 'chat'],
+      ['Chat', true, false, 'chat'],
       ['Conflict', false, false, 'none'],
       ['Missing', false, false, 'none'],
     ])
@@ -291,6 +291,7 @@ describe('ArkmeService Bot owner adapter', () => {
 
     expect(requests).toEqual([{ body: {
       name: '八卦雷达', provider: 'openclaw', description: '高亮八卦', avatar: 'file_asset://avatar-asset-1',
+      direct_chat_owner: 'jotmo-chat', request_uid: expect.any(String),
     } }])
     expect(result.bot).toMatchObject({
       botRef: expect.stringMatching(/^arkme-bot-v2\./),
@@ -327,7 +328,7 @@ describe('ArkmeService Bot owner adapter', () => {
         data: {
           bot: {
             bot_id: 'webhook-owner-id-1', name: '回调测试', provider: 'webhook', description: '验证回调',
-            avatar: '', status: 'default', subject_uid: 'subject-webhook', chat_session_uid: '', token_preview: 'jbot_***',
+            avatar: '', status: 'default', subject_uid: '', chat_session_uid: 'chat-webhook', token_preview: 'jbot_***',
           },
           token_info: { token: 'jbot_webhook_secret', token_preview: 'jbot_***', issued_at: 123 },
           webhook_url: 'https://bot.test/api/public/v1/bot/webhook/webhook-owner-id-1',
@@ -336,16 +337,19 @@ describe('ArkmeService Bot owner adapter', () => {
     })
 
     const result = await service.createBot({
-      name: ' 回调测试 ', provider: 'webhook', description: ' 验证回调 ',
+      name: ' 回调测试 ', provider: 'webhook', description: ' 验证回调 ', requestUid: 'webhook-create-1',
     })
 
     expect(requests).toEqual([{ body: {
       name: '回调测试', provider: 'webhook', description: '验证回调', avatar: '',
+      direct_chat_owner: 'jotmo-chat', request_uid: 'webhook-create-1',
     } }])
     expect(result.bot).toMatchObject({
       botRef: expect.stringMatching(/^arkme-bot-v2\./),
       name: '回调测试',
       provider: 'webhook',
+      privateChatOutboundEnabled: false,
+      conversationProjection: 'chat',
     })
     expect(result.secret.reveal()).toBe('jbot_webhook_secret')
     expect(JSON.stringify(result.secret)).toBe('{}')
@@ -367,6 +371,30 @@ describe('ArkmeService Bot owner adapter', () => {
       retryable: false,
     })
     expect(attempts).toBe(1)
+  })
+
+  it.each(['openclaw', 'webhook'] as const)('%s creation treats incomplete upstream outcomes as unknown', async provider => {
+    for (const response of [
+      () => new Response('{', { status: 200 }),
+      () => new Response('gateway unavailable', { status: 502 }),
+      () => json({ code: 1002, message: '服务器繁忙' }),
+    ]) {
+      let attempts = 0
+      const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+      const service = new ArkmeService(config, sessions, stateStore, async () => { attempts++; return response() })
+      await expect(service.createBot({ name: '只创建一次', provider })).rejects.toMatchObject({
+        code: 'bot-create-outcome-unknown', retryable: false,
+      })
+      expect(attempts).toBe(1)
+    }
+  })
+
+  it('does not mark a permanent create conflict as retryable', async () => {
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async () => json({ code: 1001, message: '参数错误' }))
+    await expect(service.createBot({ name: '冲突', provider: 'webhook' })).rejects.toMatchObject({
+      code: 'arkme-code-1001', retryable: false,
+    })
   })
 
   it('rejects tampered and cross-account Bot references before revealing a secret', async () => {
@@ -500,11 +528,11 @@ describe('ArkmeService Bot owner adapter', () => {
     const managed = await service.manageBotProfile(listed.botRef)
     const updated = await service.updateManagedBot(listed.botRef, { name: '更新后的 Chat Bot', description: '' })
 
-    for (const item of [managed, updated]) {
+    for (const item of [listed, managed, updated]) {
       expect(item).toMatchObject({
         botRef: listed.botRef,
         directChatAvailable: true,
-        privateChatOutboundEnabled: true,
+        privateChatOutboundEnabled: false,
         conversationProjection: 'chat',
         chatSourceKey: listed.chatSourceKey,
       })
@@ -562,7 +590,7 @@ describe('ArkmeService Bot owner adapter', () => {
       code: 'bot-provider-mismatch',
       retryable: false,
     })
-    expect(requests).toEqual([
+    expect(requests.filter(url => !url.endsWith('/conversation-list/preferences/query'))).toEqual([
       'https://bot.test/api/v1/bot/list',
       'https://bot.test/api/v1/bot/list',
     ])
@@ -625,7 +653,7 @@ describe('ArkmeService Bot owner adapter', () => {
 
     await expect(service.openBotChat(botRef)).rejects.toMatchObject({ code: 'bot-chat-source-unavailable' })
 
-    expect(calls.map(call => call.url)).toEqual([
+    expect(calls.map(call => call.url).filter(url => !url.endsWith('/conversation-list/preferences/query'))).toEqual([
       'https://bot.test/api/v1/bot/list',
       'https://bot.test/api/v1/bot/list',
       'https://bot.test/api/v1/bot/private-chat/open',
@@ -715,7 +743,7 @@ describe('ArkmeService Bot owner adapter', () => {
       url: 'https://bot.test/api/v1/bot/private-chat/message/send',
       body: { bot_id: 'bot-owner-id-direct', content: '测试' },
     })
-    expect(requests.map(request => request.url)).toEqual([
+    expect(requests.map(request => request.url).filter(url => !url.endsWith('/conversation-list/preferences/query'))).toEqual([
       'https://bot.test/api/v1/bot/list',
       'https://bot.test/api/v1/bot/private-chat/open',
       'https://bot.test/api/v1/bot/private-chat/message/send',
@@ -771,7 +799,7 @@ describe('ArkmeService Bot owner adapter', () => {
     const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
     const service = new ArkmeService(config, sessions, stateStore, async (input, init) => {
       if (String(input).endsWith('/bot/list')) return json({ code: 200, data: { bots: [{
-        bot_id: 'chat-bot', name: 'Chat Bot', provider: 'webhook', subject_uid: '', chat_session_uid: 'chat-1',
+        bot_id: 'chat-bot', name: 'Chat Bot', provider: 'openclaw', subject_uid: '', chat_session_uid: 'chat-1',
       }] } })
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
       return json({ code: 200, data: {
@@ -787,13 +815,14 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(events).toEqual([])
   })
 
-  it('rejects an outbound Subject Webhook message before calling the write endpoint', async () => {
+  it.each(['subject', 'chat'] as const)('rejects an outbound %s Webhook message before any write', async owner => {
     const requests: string[] = []
     const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
     const service = new ArkmeService(config, sessions, stateStore, async input => {
       requests.push(String(input))
       if (String(input).endsWith('/bot/list')) return json({ code: 200, data: { bots: [{
-        bot_id: 'subject-webhook', name: 'Webhook', provider: 'webhook', subject_uid: 'subject-1', chat_session_uid: '',
+        bot_id: 'webhook', name: 'Webhook', provider: 'webhook',
+        subject_uid: owner === 'subject' ? 'subject-1' : '', chat_session_uid: owner === 'chat' ? 'chat-1' : '',
       }] } })
       return json({ code: 200, data: {
         status: 'ok', user_message: { message_id: 'message-1', role: 'user', content: '测试', created_at: 2 },
@@ -804,7 +833,8 @@ describe('ArkmeService Bot owner adapter', () => {
     await expect(service.sendBotPrivateChatMessage(botRef, '测试')).rejects.toMatchObject({
       code: 'bot-conversation-send-unsupported', retryable: false,
     })
-    expect(requests.filter(url => url.endsWith('/private-chat/message/send'))).toHaveLength(0)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatch(/\/bot\/list$/)
   })
 
   it('reports an unknown Subject send outcome without retrying the write', async () => {
@@ -849,7 +879,7 @@ describe('ArkmeService Bot owner adapter', () => {
     const service = new ArkmeService(config, sessions, stateStore, async input => {
       requests.push(String(input))
       if (String(input).endsWith('/bot/list')) return json({ code: 200, data: { bots: [{
-        bot_id: 'chat-bot', name: 'Chat Bot', provider: 'webhook', subject_uid: '', chat_session_uid: 'chat-1',
+        bot_id: 'chat-bot', name: 'Chat Bot', provider: 'openclaw', subject_uid: '', chat_session_uid: 'chat-1',
       }] } })
       throw new TypeError('chat transport failed')
     })
@@ -981,7 +1011,7 @@ describe('ArkmeService Bot owner adapter', () => {
     })
     expect(added).toEqual({ botRef, groupSourceRef: sourceRef, installed: true })
     expect(removed).toEqual({ botRef, groupSourceRef: sourceRef, installed: false })
-    expect(calls.slice(1)).toEqual([
+    expect(calls.slice(1).filter(call => !call.url.endsWith('/conversation-list/preferences/query'))).toEqual([
       { url: 'https://bot.test/api/v1/bot/group/list', body: { rm_subject_id: 88001 } },
       { url: 'https://bot.test/api/v1/bot/group/add', body: {
         bot_id: 'bot-owner-id-5', rm_subject_id: 88001, subject_title: '研发群',
@@ -1122,7 +1152,7 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(result).toMatchObject({ itemUid: 'record-mention-1', sequence: 12, localState: 'synced' })
     expect(requests.find(request => request.url.endsWith('/bot/group/list'))?.body)
       .toEqual({ rm_subject_id: 88002 })
-    const sent = requests.at(-1)!.body
+    const sent = requests.findLast(request => request.url.endsWith('/api/v1/chats/records/send'))!.body
     expect(sent).toEqual({
       chat_session_uid: 'group-session-2', record_uid: 'record-mention-1', rel_uid: 'relation-mention-1',
       template_kind: 1,
@@ -1182,7 +1212,7 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(result).toMatchObject({ itemUid: 'record-structured-bot-mention', sequence: 13, localState: 'synced' })
     expect(requests.find(request => request.url.endsWith('/bot/group/list'))?.body)
       .toEqual({ rm_subject_id: 88002 })
-    expect(requests.at(-1)?.body).toMatchObject({
+    expect(requests.findLast(request => request.url.endsWith('/api/v1/chats/records/send'))?.body).toMatchObject({
       chat_session_uid: 'group-session-2',
       text_content: '@总结 和 @🚀助手 看看',
       content_payload: {
@@ -1205,13 +1235,62 @@ describe('ArkmeService Bot owner adapter', () => {
     }, {
       recordUid: 'record-rich-bot-mention', relationUid: 'relation-rich-bot-mention',
     })).resolves.toMatchObject({ itemUid: 'record-rich-bot-mention', sequence: 13 })
-    expect(requests.at(-1)?.body).toMatchObject({
+    expect(requests.findLast(request => request.url.endsWith('/api/v1/chats/records/send'))?.body).toMatchObject({
       template_kind: 2,
       content_payload: {
         payload_kind: 2,
         media_refs: [{ file_asset_uid: 'asset-bot-mention-image', render_role: 1 }],
         mention_metadata: {
           bot_mentions: [{ bot_uid: 'bot-summary', display_name_snapshot: '总结', start_index: 0, length: 3 }],
+        },
+      },
+    })
+  })
+
+  it('sends the reserved Asen Bot mention without resolving a sealed Bot ref', async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
+        record_uid: body.record_uid, rel_uid: body.rel_uid, seq: 14, audit_status: 1,
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+    const groupRef = groupSourceRef(10001, 'group-session-asen', '讨论群', { rmSubjectId: 88002 })
+
+    await expect(service.sendSourceText(groupRef, '@阿森 看看', {
+      recordUid: 'record-asen-bot-mention',
+      relationUid: 'relation-asen-bot-mention',
+      botMentions: [{ botRef: 'asen', startIndex: 0, length: 3 }],
+    })).resolves.toMatchObject({ itemUid: 'record-asen-bot-mention', sequence: 14, localState: 'synced' })
+
+    expect(requests.map(request => request.url).some(url => url.endsWith('/bot/list') || url.endsWith('/bot/group/list'))).toBe(false)
+    expect(requests.at(-1)?.body).toMatchObject({
+      chat_session_uid: 'group-session-asen',
+      text_content: '@阿森 看看',
+      content_payload: {
+        mention_metadata: {
+          bot_mentions: [{ bot_uid: 'asen', display_name_snapshot: '阿森', start_index: 0, length: 3 }],
+        },
+      },
+    })
+
+    requests.length = 0
+    await expect(service.sendSourceText(groupRef, '看看', {
+      recordUid: 'record-asen-prefix',
+      relationUid: 'relation-asen-prefix',
+      botRefs: ['asen'],
+    })).resolves.toMatchObject({ itemUid: 'record-asen-prefix', sequence: 14, localState: 'synced' })
+    expect(requests.map(request => request.url).some(url => url.endsWith('/bot/list') || url.endsWith('/bot/group/list'))).toBe(false)
+    expect(requests.at(-1)?.body).toMatchObject({
+      chat_session_uid: 'group-session-asen',
+      text_content: '@阿森 看看',
+      content_payload: {
+        mention_metadata: {
+          bot_mentions: [{ bot_uid: 'asen', display_name_snapshot: '阿森', start_index: 0, length: 3 }],
         },
       },
     })

@@ -124,7 +124,7 @@ describe('BotConversationService', () => {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>
         calls.push({ url, body })
         if (url.endsWith('/api/v1/bot/list')) return json({ code: 200, data: { bots: [{
-          bot_id: 'bot-chat-1', name: 'Chat Bot', provider: 'webhook', status: 'online',
+          bot_id: 'bot-chat-1', name: 'Chat Bot', provider: 'openclaw', status: 'online',
           subject_uid: '', chat_session_uid: 'chat-session-1',
         }] } })
         if (url.endsWith('/api/v1/bot/private-chat/open')) return json({ code: 200, data: {
@@ -191,7 +191,7 @@ describe('BotConversationService', () => {
       async input => {
         const url = String(input)
         if (url.endsWith('/api/v1/bot/list')) return json({ code: 200, data: { bots: [{
-          bot_id: 'bot-chat-1', name: 'Chat Bot', provider: 'webhook', status: 'online',
+          bot_id: 'bot-chat-1', name: 'Chat Bot', provider: 'openclaw', status: 'online',
           subject_uid: '', chat_session_uid: 'chat-session-1',
         }] } })
         if (url.endsWith('/api/v1/chats/records/send')) {

@@ -15,6 +15,63 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('cancels home preference reads without cancelling durable writes', async () => {
+    const session = { userId: 42 }
+    const post = vi.fn().mockResolvedValue({
+      topic_core: { topic_uid: 'archive', kind: 3, privacy_state: 1, show_in_home: false },
+      show_in_home: true,
+    })
+    const runtime = { config, requireSession: async () => session, authenticatedPost: post } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    vi.spyOn(service, 'openSourceRef').mockResolvedValue({ version: 1, userId: 42, kind: 'topic', ownerRef: 'archive', displayName: 'Archive' })
+    const invalidate = vi.spyOn(service, 'invalidateSourceListCache').mockImplementation(() => {})
+    const controller = new AbortController()
+    await expect(service.topicHomeVisibility('topic-ref', undefined, controller.signal)).resolves.toEqual({ showInHome: false })
+    expect(post).toHaveBeenLastCalledWith('/api/v1/topics/display/metadata', { topic_uid: 'archive' }, session, controller.signal)
+    expect(invalidate).not.toHaveBeenCalled()
+    await expect(service.topicHomeVisibility('topic-ref', true, controller.signal)).resolves.toEqual({ showInHome: true })
+    expect(post).toHaveBeenLastCalledWith('/api/v1/topics/display/policy/set', { topic_uid: 'archive', show_in_home: true }, session, undefined)
+    expect(invalidate).toHaveBeenCalledWith(42, 'send_to_self')
+  })
+
+  it('excludes system topics from write candidates without losing pagination or same-name ordinary topics', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async (_input, init) => {
+      const body = JSON.parse(String(init?.body))
+      expect(body.keyword).toBe('DSH Agent Input')
+      const secondPage = body.offset === 1
+      return new Response(JSON.stringify({ code: 0, data: {
+        items: [{ topic_core: {
+          topic_uid: secondPage ? 'ordinary-topic' : 'system-topic',
+          title: 'DSH Agent Input', kind: secondPage ? 1 : 3, status: 1,
+        } }],
+        has_more: !secondPage,
+        ...(!secondPage ? { next_offset: 1 } : {}),
+      } }), { status: 200 })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+
+    const first = await service.listTopicCandidates(' DSH Agent Input ')
+    expect(first.items).toEqual([])
+    expect(first.hasMore).toBe(true)
+    expect(first.nextCursor).toBeTruthy()
+    const second = await service.listTopicCandidates('DSH Agent Input', first.nextCursor)
+    expect(second.items).toHaveLength(1)
+    expect(second.items[0]).toMatchObject({ kind: 'topic', topicKind: 1, displayName: 'DSH Agent Input' })
+    expect(second.hasMore).toBe(false)
+    expect(second.nextCursor).toBeUndefined()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('logs private avatar sealing failure without dropping the last good presentation', async () => {
     const runtime = { config } as ServiceRuntime
     const profile = {
@@ -623,6 +680,31 @@ describe('SourceService', () => {
     await expect(read).rejects.toMatchObject({ name: 'AbortError' })
     expect(latestRecordSignal?.aborted).toBe(true)
   })
+
+  it.each(['empty-title', 'long-title', 'aggregate-parent', 'uncategorized-parent'] as const)(
+    'rejects %s before creating any owner data', async invalid => {
+      const sessions: ArkmeSessionStore = {
+        async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+        async write() {}, async delete() {},
+      }
+      const fetchImpl = vi.fn(async () => { throw new Error('unexpected owner write') })
+      const runtime = new ServiceRuntime(config, sessions, {
+        async uniqueCode() { return 'device-secret' },
+      } as StateStore, fetchImpl)
+      const service = new SourceService(runtime, new ProfileService(runtime), {
+        async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+        recordItem() { return undefined },
+      })
+      const parent = invalid === 'aggregate-parent' || invalid === 'uncategorized-parent'
+        ? await service.sealSourceRef(42, invalid === 'aggregate-parent' ? 'send_to_self' : 'default_category', 'root', '入口')
+        : undefined
+      const title = invalid === 'empty-title' ? '  ' : invalid === 'long-title' ? '字'.repeat(101) : '子主题'
+      await expect(service.createTopic(title, parent)).rejects.toMatchObject({
+        code: parent === undefined ? 'topic-title-invalid' : 'topic-parent-invalid',
+      })
+      expect(fetchImpl).not.toHaveBeenCalled()
+    },
+  )
 
   it('creates a topic with an account-bound source reference', async () => {
     const sessions: ArkmeSessionStore = {

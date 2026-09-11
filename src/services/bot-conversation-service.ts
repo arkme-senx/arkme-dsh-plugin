@@ -155,9 +155,6 @@ class SubjectBotConversationAdapter implements BotConversationOwnerAdapter {
   async send(context: BotConversationContext, contentInput: string, signal?: AbortSignal): Promise<ArkmeBotConversationSendResult> {
     this.subjectTarget(context)
     const content = contentInput.trim()
-    if (context.reference.provider === 'webhook') {
-      throw new ArkmePluginError('bot-conversation-send-unsupported', 'Webhook Bot 仅接收外部系统推送', false, 400)
-    }
     if (content === '' || content.length > this.runtime.config.maxTextLength) {
       throw new ArkmePluginError('bot-conversation-content-invalid', 'Bot 消息为空或超过长度限制', false, 400)
     }
@@ -373,6 +370,9 @@ export class BotConversationService {
     options: { signal?: AbortSignal } = {},
   ): Promise<ArkmeBotConversationSendResult> {
     const context = await this.context(botRef)
+    if (context.reference.provider === 'webhook') {
+      throw new ArkmePluginError('bot-conversation-send-unsupported', 'Webhook Bot 仅接收外部系统推送', false, 400)
+    }
     const result = await this.adapter(context).send(context, content, options.signal)
     if (context.reference.target.kind === 'subject') await this.invalidateRecordProjection()
     return result

@@ -1944,9 +1944,13 @@ describe('ArkmeService', () => {
           size: 31, duration_sec: 31, download_url: 'https://media.test/aggregate-voice.m4a',
         }],
       }] } })
-      if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
+      if (url.endsWith('/api/v1/topics/display/records/page')) return json({ code: 0, data: {
+        topic_uid: body.topic_uid, privacy_state: 1,
         records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
         has_more: true, next_cursor_send_at: 79, next_cursor_record_uid: 'record-next',
+      } })
+      if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
+        topic_core: { topic_uid: body.topic_uid, kind: 1, privacy_state: 1, show_in_home: true },
       } })
       if (url.endsWith('/api/v1/topics/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
       throw new Error(`unexpected ${url}`)
@@ -2102,11 +2106,14 @@ describe('ArkmeService', () => {
           record_uid: item.record_uid, target_status: 1, target_is_primary: true, ...(item.source_topic_uid ? { source_status: 2 } : {}),
         })),
       } })
-      if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: { records: [
+      if (url.endsWith('/api/v1/topics/display/records/page')) return json({ code: 0, data: { topic_uid: body.topic_uid, privacy_state: 1, records: [
         { record_uid: 'owned-other-creator', owner_user_id: 10001, creator_user_id: 999, status: 1 },
         { record_uid: 'foreign-self-creator', owner_user_id: 999, creator_user_id: 10001, status: 1 },
         { record_uid: 'pending-record', owner_user_id: 10001, creator_user_id: 10001, status: 0 },
       ], has_more: false } })
+      if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
+        topic_core: { topic_uid: body.topic_uid, kind: 1, privacy_state: 1, show_in_home: true },
+      } })
       if (url.endsWith('/api/v1/topics/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
       throw new Error(`unexpected ${url}`)
     })
@@ -2168,6 +2175,7 @@ describe('ArkmeService', () => {
     const state = new MemoryStateStore()
     const calls: Array<{ url: string; body: Record<string, unknown> }> = []
     let createCount = 0
+    const createdTopics: Array<{ topic_core: { topic_uid: string; title: string } }> = []
     const service = new ArkmeService(config, sessions, state, async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
@@ -2178,13 +2186,16 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-parent', title: '工作', update_at: 100 },
         summary: { record_count: 2 },
-      }] } })
-      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [] } })
+      }, ...createdTopics] } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: {
+        relations: createCount < 2 ? [] : [{ rel_kind: 1, status: 1, parent_topic_uid: 'topic-parent', child_topic_uid: 'topic-created-2' }],
+      } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) {
         return json({ code: 0, data: { record_count: 7, words_count: 20, total_sec: 0 } })
       }
       if (url.endsWith('/api/v1/topics/create')) {
         createCount += 1
+        createdTopics.push({ topic_core: { topic_uid: `topic-created-${createCount}`, title: String(body.title) } })
         return json({ code: 0, data: { topic_uid: `topic-created-${createCount}`, status: 1 } })
       }
       if (url.endsWith('/api/v1/topics/hierarchy/bind')) return json({ code: 0, data: { relation: { status: 1 } } })
@@ -2194,6 +2205,17 @@ describe('ArkmeService', () => {
     const parent = (await service.listSources('send_to_self')).items.find(item => item.displayName === '工作')!
     const root = await service.createTopic('  旅行 ')
     const child = await service.createTopic('路线', parent.sourceRef)
+
+    const refreshed = (await service.listSources('send_to_self', { refresh: true })).items
+    for (const result of [root, child]) {
+      const listed = refreshed.find(source => source.sourceRef === result.source.sourceRef)!
+      expect(listed).toBeDefined()
+      expect(result.source.topicHierarchyKey).toBe(listed.topicHierarchyKey)
+      expect(result.source.topicHierarchyKey).toMatch(/^arkme-topic-hierarchy-v1\./)
+      expect(result.source.topicHierarchyKey).not.toBe(result.source.sourceRef)
+    }
+    expect(child.source.parentTopicHierarchyKey).toBe(parent.topicHierarchyKey)
+    expect(root.source).not.toHaveProperty('parentTopicHierarchyKey')
 
     expect(root).toMatchObject({ source: { kind: 'topic', displayName: '旅行', recordCount: 0 } })
     expect(root.source).not.toHaveProperty('parentSourceRef')
@@ -2209,6 +2231,69 @@ describe('ArkmeService', () => {
     expect(calls.find(call => call.url.endsWith('/api/v1/topics/hierarchy/bind'))?.body).toEqual({
       parent_topic_uid: 'topic-parent', child_topic_uid: 'topic-created-2',
     })
+  })
+
+  it.each(['bound', 'rolled-back', 'partial'] as const)('retires directory snapshots taken during child creation when it finishes %s', async outcome => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let created = false
+    let bound = false
+    let listReads = 0
+    let finishBind!: () => void
+    let enteredBind!: () => void
+    const bindGate = new Promise<void>(resolve => { finishBind = resolve })
+    const binding = new Promise<void>(resolve => { enteredBind = resolve })
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (url.endsWith('/api/v1/topics/display/list')) {
+        listReads += 1
+        return json({ code: 0, data: { items: [
+          { topic_core: { topic_uid: 'parent', title: '父主题' } },
+          ...(created ? [{ topic_core: { topic_uid: 'child', title: '子主题' } }] : []),
+        ] } })
+      }
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: {
+        relations: bound ? [{ rel_kind: 1, status: 1, parent_topic_uid: 'parent', child_topic_uid: 'child' }] : [],
+      } })
+      if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 0 } })
+      if (url.endsWith('/api/v1/records/uncategorized/query')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (url.endsWith('/api/v1/topics/create')) { created = true; return json({ code: 0, data: { topic_uid: 'child', status: 1 } }) }
+      if (url.endsWith('/api/v1/topics/hierarchy/bind')) {
+        enteredBind()
+        await bindGate
+        if (outcome !== 'bound') throw new Error('bind failed')
+        bound = true
+        return json({ code: 0, data: { relation: { status: 1 } } })
+      }
+      if (url.endsWith('/api/v1/topics/update')) {
+        if (outcome === 'partial') throw new Error('cleanup failed')
+        created = false
+        return json({ code: 0, data: { topic_uid: 'child', updated: true } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const parent = (await service.listSources('send_to_self')).items.find(source => source.kind === 'topic')!
+    const createResult = service.createTopic('子主题', parent.sourceRef).then(value => ({ value }), error => ({ error }))
+    await binding
+    const interim = (await service.listSources('send_to_self')).items.find(source => source.displayName === '子主题')!
+    expect(interim).toBeDefined()
+    expect(interim.parentTopicHierarchyKey).toBeUndefined()
+    finishBind()
+    const result = await createResult
+    const final = (await service.listSources('send_to_self')).items.find(source => source.displayName === '子主题')
+    expect(listReads).toBe(3)
+    if (outcome === 'bound') {
+      expect('value' in result).toBe(true)
+      expect(final?.parentTopicHierarchyKey).toBe(parent.topicHierarchyKey)
+    } else if (outcome === 'rolled-back') {
+      expect('error' in result).toBe(true)
+      expect(final).toBeUndefined()
+    } else {
+      expect('value' in result && result.value.warning).toContain('自动清理均未完成')
+      expect(final).toBeDefined()
+      expect(final?.parentTopicHierarchyKey).toBeUndefined()
+    }
   })
 
   it('renames and safely dissolves a topic while promoting its direct children', async () => {
@@ -2231,8 +2316,9 @@ describe('ArkmeService', () => {
         relations: [{ rel_kind: 1, status: 1, parent_topic_uid: 'topic-parent', child_topic_uid: 'topic-child', sibling_order: 1 }],
       } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 0 } })
-      if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
-        records: [{ record_core: { record_uid: 'record-1' } }, { record_core: { record_uid: 'record-2' } }], has_more: false,
+      if (url.endsWith('/api/v1/topics/display/records/page')) return json({ code: 0, data: {
+        topic_uid: body.topic_uid, privacy_state: 1,
+        records: [{ record_uid: 'record-1' }, { record_uid: 'record-2' }], has_more: false,
       } })
       if (url.endsWith('/api/v1/topics/records/bind') || url.endsWith('/api/v1/topics/records/unbind')) {
         return json({ code: 0, data: { rel_uid: `${String(body.topic_uid)}:${String(body.record_uid)}` } })
@@ -2334,7 +2420,10 @@ describe('ArkmeService', () => {
     const result = await service.createTopic('未绑定子主题', parent.sourceRef)
 
     expect(result.warning).toContain('自动清理均未完成')
-    expect(result.source).toMatchObject({ kind: 'topic', displayName: '未绑定子主题' })
+    expect(result.source).toMatchObject({ kind: 'topic', displayName: '未绑定子主题',
+      topicHierarchyKey: expect.stringMatching(/^arkme-topic-hierarchy-v1\./),
+    })
+    expect(result.source).not.toHaveProperty('parentTopicHierarchyKey')
     expect(result.source).not.toHaveProperty('parentSourceRef')
   })
 
@@ -5971,7 +6060,8 @@ describe('ArkmeService', () => {
         if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
           return json({ code: 0, data: { items: [], has_more: false } })
         }
-        if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
+        if (url.endsWith('/api/v1/topics/display/records/page')) return json({ code: 0, data: {
+          topic_uid: 'topic-media', privacy_state: 1,
           records: [{
             record_uid: 'record-media-only', creator_user_id: 10001, send_at: 100, status: 1,
             record_core: { content_payload: { media_refs: [{ file_asset_uid: 'asset-missing', content_file_role: 1 }] } },
@@ -5980,6 +6070,9 @@ describe('ArkmeService', () => {
             text_content: '同页文字仍然可读',
           }],
           has_more: false,
+        } })
+        if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
+          topic_core: { topic_uid: 'topic-media', kind: 1, privacy_state: 1, show_in_home: true },
         } })
         if (url.endsWith('/api/v1/records/media/batch-list')) {
           mediaCalls += 1

@@ -31,6 +31,12 @@ async function request(path: string, method = 'GET') {
 }
 
 describe('outgoing call assets', () => {
+  it.each(['call-outgoing-linear.svg', 'call-incoming-linear.svg', 'video-outgoing-linear.svg', 'video-incoming-linear.svg'])('serves the original desktop detail icon %s', async name => {
+    const response = await request(`/arkme-self/api/call/${name}`)
+    expect(response.status).toBe(200)
+    expect(response.headers['Content-Type']).toBe('image/svg+xml; charset=utf-8')
+    expect(response.body.toString()).toContain('<svg')
+  })
   it('serves the iframe document with the script policy required by the pinned CallEngine bundle', async () => {
     const response = await request('/arkme-self/api/call/index.html')
 

@@ -401,30 +401,8 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
   flex: 0 0 72px !important;
 }
 [data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 64px !important; }
-[data-arkme-avatar-only="true"] > :not([role="tree"]) { display: none !important; }
-[data-arkme-avatar-only="true"] [role="tree"] { padding: 8px 6px 18px !important; }
-[data-arkme-avatar-only="true"] [role="tree"] > button {
-  justify-content: center !important;
-  gap: 0 !important;
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-}
-[data-arkme-avatar-only="true"] [role="tree"] > button > :not(:first-child) { display: none !important; }
-[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child:has(> span:nth-child(2)) {
-  width: auto !important;
-  min-width: 38px !important;
-  justify-content: center !important;
-  gap: 0 !important;
-}
-[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) { display: contents !important; }
-[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) > span:first-child { display: none !important; }
-[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) > span:last-child { display: contents !important; }
-[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) > span:last-child > :not([style*="min-width: 17px"]) { display: none !important; }
-[data-arkme-avatar-only="true"] [role="tree"] > button > span:first-child > span:nth-child(2) > span:last-child > [style*="min-width: 17px"] {
-  position: absolute !important;
-  top: 3px;
-  right: 3px;
-}
+[data-arkme-directory-compact="true"] > :not([role="tree"]) { display: none !important; }
+[data-arkme-directory-compact="true"] [role="tree"] { padding: 8px 6px 18px !important; }
 
 .arkme-redesign-feature-page {
   width: 100%;

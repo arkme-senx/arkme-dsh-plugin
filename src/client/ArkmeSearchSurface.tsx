@@ -92,7 +92,6 @@ import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
 
 const quickEntries: Array<{ key: QuickKey; label: string; tabLabel: string }> = [
   { key: 'image', label: '图片', tabLabel: '图片库' },
-  { key: 'ai_video', label: 'AI 视频', tabLabel: 'AI 视频' },
   { key: 'audio', label: '语音', tabLabel: '语音' },
   { key: 'file', label: '文件', tabLabel: '文件' },
 ]

@@ -40,7 +40,9 @@ const styles: Record<string, CSSProperties> = {
   },
   taskDirectory: { minWidth: 0, flex: 1, overflow: 'hidden', borderLeft: '1px solid #ececef', background: '#fff' },
   sidebarResizeHandle: {
-    position: 'absolute', zIndex: 3, top: 0, right: 0, bottom: 0, width: 10,
+    // Share the 4px divider budget with taskDirectory's 1px border. Keeping
+    // this in the flex layout leaves the native scrollbar fully hit-testable.
+    position: 'relative', zIndex: 3, alignSelf: 'stretch', flex: '0 0 3px', width: 3,
     cursor: 'ew-resize', touchAction: 'none',
   },
   workspace: {
@@ -61,7 +63,7 @@ const ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH = 76
 const ARKME_PERSISTENT_NAVIGATION_WIDTH = 72
 const ARKME_PERSISTENT_DIVIDER_BUDGET = ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH - ARKME_PERSISTENT_NAVIGATION_WIDTH
 const ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH = 64
-const ARKME_PERSISTENT_DIRECTORY_AVATAR_ONLY_WIDTH = 200
+const ARKME_PERSISTENT_DIRECTORY_COMPACT_WIDTH = 200
 const ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH = ARKME_PERSISTENT_NAVIGATION_WIDTH
   + ARKME_PERSISTENT_DIVIDER_BUDGET
   + ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH
@@ -153,7 +155,7 @@ export function shouldRestoreWebAuthenticatedWorkspace(
 }
 
 export type ArkmePersistentSidebarProps = PropsRuntime<'sidebar'>
-  & PropsRenderSlots<'arkme.directory.entry'>
+  & PropsRenderSlots<'arkme.directory.entry' | 'arkme.send-to-self.entry' | 'arkme.topic.actions'>
   & {
     collapseSidebar(): void
     closeDetails(): void
@@ -226,7 +228,7 @@ export function ArkmePersistentSidebar({
     collapsed, hostSidebarWidth, preferredSidebarWidth, compactSidebarWidthOverride,
   )
   const renderedDirectoryWidth = renderedSidebarWidth - ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
-  const avatarOnly = !contactsMode && renderedDirectoryWidth <= ARKME_PERSISTENT_DIRECTORY_AVATAR_ONLY_WIDTH
+  const compactDirectory = !contactsMode && renderedDirectoryWidth <= ARKME_PERSISTENT_DIRECTORY_COMPACT_WIDTH
   useEffect(() => {
     if (authenticatedUserId === undefined) {
       setSendToSelfState(undefined)
@@ -381,7 +383,7 @@ export function ArkmePersistentSidebar({
     {sidebarSizingStyle}
     <ArkmeProductNavigation compact={false} hosted taskExpanded locked />
     <div style={styles.taskDirectory} data-arkme-directory-mode="web-locked">
-      <ArkmeNavigation wide avatarOnly={avatarOnly} embeddedProductShell showHarnessEntry lockedDirectory />
+      <ArkmeNavigation wide compactDirectory={compactDirectory} embeddedProductShell showHarnessEntry lockedDirectory />
     </div>
     {sidebarResizeHandle}
   </aside> : <aside
@@ -477,7 +479,7 @@ export function ArkmePersistentSidebar({
       <ArkmeNavigation
         active={directoryVisible && !contactsMode}
         wide
-        avatarOnly={avatarOnly}
+        compactDirectory={compactDirectory}
         embeddedProductShell
         showHarnessEntry
         currentSessionId={sessionState.current}

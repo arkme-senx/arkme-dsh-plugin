@@ -13,7 +13,7 @@ import {
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
   executeExtensionShareAuthorAction, extensionAuthorWorldTarget, extensionGithubProfileUrl,
   classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
-  extensionEnabledLabel,
+  extensionEnabledLabel, extensionRestartPageReady,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   sameExtensionInstallTaskSnapshot,
   extensionVersionLabel, installedExtensionCatalogItem, mergeInstalledExtensionCatalogItem,
@@ -37,6 +37,18 @@ const previewModule = marketplaceModule as unknown as {
 }
 
 describe('Arkme marketplace UI', () => {
+  it('does not reload into the transient 404 between Host and Web readiness', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(new Response('<!doctype html>', { status: 200 }))
+
+    await expect(extensionRestartPageReady('http://127.0.0.1:3081/market', fetchImpl)).resolves.toBe(false)
+    await expect(extensionRestartPageReady('http://127.0.0.1:3081/market', fetchImpl)).resolves.toBe(true)
+    expect(fetchImpl).toHaveBeenCalledWith(new URL('http://127.0.0.1:3081/'), {
+      cache: 'no-store', credentials: 'same-origin',
+    })
+  })
+
   it('treats missing manifest permissions as no declared permissions', () => {
     const ManifestDetails = previewModule.ArkmeExtensionManifestDetails
     expect(ManifestDetails).toBeTypeOf('function')

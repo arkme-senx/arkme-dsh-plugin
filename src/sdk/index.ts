@@ -1334,6 +1334,14 @@ export class ArkmeSdk {
     await this.call('conversation.directory.bot-pin', { botRef, pinned }, signal)
   }
 
+  /** Read or explicitly set the existing topic home preference. */
+  async topicHomeVisibility(sourceRef: string, showInHome?: boolean, signal?: AbortSignal): Promise<{ showInHome: boolean }> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme topic source reference must not be empty')
+    return await this.call('topic.home-visibility', {
+      sourceRef, ...(showInHome === undefined ? {} : { showInHome }),
+    }, signal)
+  }
+
   async listGroupMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupMemberList> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
     return await this.call<ArkmeGroupMemberList>('group.members', { sourceRef, activeOnly: true }, signal)

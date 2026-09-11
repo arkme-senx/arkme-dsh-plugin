@@ -513,7 +513,7 @@ describe('Arkme rich content presentation', () => {
 
     expect(event.preventDefault).toHaveBeenCalled()
     expect(event.stopPropagation).toHaveBeenCalled()
-    expect(onMentionClick).toHaveBeenCalledWith('@小林')
+    expect(onMentionClick).toHaveBeenCalledWith('@小林', undefined)
   })
 
   it.each([

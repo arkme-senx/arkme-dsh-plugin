@@ -55,3 +55,14 @@ it('retains visible rows while the entire sidebar panel is hidden', () => {
   expect(view!.root.findAllByType('button')).toHaveLength(0)
   act(() => { view!.unmount() })
 })
+
+
+it('materializes an unread jump chunk without changing or unmounting the active conversation', () => {
+  vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} })
+  const rows = Array.from({ length: 240 }, (_, i) => <button key={String(i)}>Row {i}</button>)
+  let view: ReturnType<typeof create>
+  act(() => { view = create(<ArkmeDirectoryWindow activeKey="21" revealKey="201">{rows}</ArkmeDirectoryWindow>) })
+  expect(view!.root.findAllByType('button')).toHaveLength(60)
+  expect(view!.root.findAllByType('button').some(row => row.props.children[1] === 201)).toBe(true)
+  act(() => { view!.unmount() })
+})

@@ -294,3 +294,42 @@ it('rebinds cached Bot visibility to its directory lookup and keeps local action
   expect(merged.isMuted).toBe(true)
   expect(merged.chatNotificationPolicyUpdatedAtMillis).toBe(30)
 })
+
+it('projects known unread immediately while a later directory page is pending', async () => {
+  const later = gate<ArkmeSourceList>()
+  const test = setup(async cursor => cursor === undefined ? page([row(1, { unreadCount: 2 })], 'next') : later.promise)
+  await test.owner.read()
+  let result: Awaited<ReturnType<ConversationDirectoryService['attentionSummary']>> | undefined
+  const pending = test.owner.attentionSummary().then(value => { result = value })
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(result?.badgeCount).toBe(2)
+    expect(result?.stale).toBe(true)
+  } finally {
+    later.resolve(page([row(2, { unreadCount: 3 })]))
+    await test.owner.settled()
+    await pending
+  }
+  expect((await test.owner.attentionSummary()).badgeCount).toBe(5)
+})
+
+it('keeps directory summary versions monotonic when wall-clock time moves backwards', async () => {
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(2000)
+  const test = setup(async () => page([row(10, { unreadCount: 2 })]))
+  try {
+    await test.owner.read(); await test.owner.settled()
+    const before = await test.owner.attentionSummary()
+    clock.mockReturnValue(1000)
+    await test.owner.accept({ type: 'read-ack', revision: 99, sourceRef: 'ref-10', sourceKey: 'key-10', effectiveReadSequence: 10, unreadCount: 0 })
+    const after = await test.owner.attentionSummary()
+    expect(after.badgeCount).toBe(0)
+    expect(after.summaryVersion).toBeGreaterThan(before.summaryVersion)
+  } finally { clock.mockRestore() }
+})
+
+it('accepts current-account Bot facts before the first root directory read', async () => {
+  const test = setup(async () => page([]))
+  test.preferences.query.mockImplementation(async (_sources: string[], bots?: string[]) => ({ items: (bots ?? []).map(entryRef => ({ entryKind: 'bot' as const, entryRef, hidden: false })) }))
+  await test.owner.rememberBots([{ botRef: 'early', directoryKey: 'stable-early', name: 'Early', provider: 'openclaw', description: '', status: 'offline', directChatAvailable: true, unreadCount: 2 }], 1)
+  expect((await test.owner.attentionSummary()).badgeCount).toBe(2)
+})

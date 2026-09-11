@@ -1,4 +1,6 @@
 import { patchChatPolicy, type ChatPolicySnapshot } from './chat-policy.js'
+import { readTopicRecordPage } from './topic-record-page.js'
+import { readTopicMetadata } from './topic-metadata.js'
 import { arkmeRecordTextFormat, arkmeMarkdownPlainText } from '../markdown.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
@@ -33,6 +35,7 @@ import { arkmeMediaKind } from '../file-transfer-contract.js'
 import { projectArkmeChatAttention, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import { arkmeEmojiTokenSafePrefix, arkmeHasKnownEmojiToken } from '../arkme-emoji-text.js'
+import { arkmeSourceAllowsUserWrite, arkmeTopicDisplayName } from '../topic-policy.js'
 
 export interface ArkmeSourceRefPayload {
   version: 1
@@ -735,6 +738,7 @@ export class SourceService {
     }
 
     const sourceRef = await this.sealSourceRef(session.userId, 'topic', topicUid, title)
+    const topicHierarchyKey = await this.topicHierarchyKey(session.userId, topicUid)
     if (parentTopicUid !== undefined) {
       try {
         const bound = await this.runtime.authenticatedPost<Record<string, unknown>>(
@@ -766,6 +770,7 @@ export class SourceService {
           return {
             source: {
               sourceRef,
+              topicHierarchyKey,
               kind: 'topic',
               displayName: title,
               activeAtMillis: createdAtMillis,
@@ -782,13 +787,19 @@ export class SourceService {
           409,
           { cause: bindError },
         )
+      } finally {
+        this.invalidateSourceListCache(session.userId, 'send_to_self')
       }
     }
 
     return {
       source: {
         sourceRef,
-        ...(parentSourceRef !== undefined ? { parentSourceRef } : {}),
+        topicHierarchyKey,
+        ...(parentSourceRef !== undefined && parentTopicUid !== undefined ? {
+          parentSourceRef,
+          parentTopicHierarchyKey: await this.topicHierarchyKey(session.userId, parentTopicUid),
+        } : {}),
         kind: 'topic',
         displayName: title,
         activeAtMillis: createdAtMillis,
@@ -829,6 +840,29 @@ export class SourceService {
       sourceRef: await this.sealSourceRef(session.userId, 'topic', topic.ownerRef, title),
       displayName: title,
     }
+  }
+
+  /** Reuse the record owner's topic policy, without replaying title/privacy defaults. */
+  async topicHomeVisibility(sourceRef: string, showInHome?: boolean, signal?: AbortSignal): Promise<{ showInHome: boolean }> {
+    const session = await this.runtime.requireSession()
+    const topic = await this.openSourceRef(sourceRef, session.userId)
+    if (topic.kind !== 'topic') throw new ArkmePluginError('topic-policy-invalid', '请选择主题', false)
+    if (showInHome === undefined) {
+      const metadata = await readTopicMetadata(this.runtime, session, topic.ownerRef, signal)
+      return { showInHome: metadata.showInHome }
+    }
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/topics/display/policy/set',
+      { topic_uid: topic.ownerRef, show_in_home: showInHome },
+      session,
+      // Detach obsolete reads, but let a submitted preference write complete
+      // and invalidate projections even if its settings surface has closed.
+      undefined,
+    )
+    const value = data.show_in_home
+    if (typeof value !== 'boolean') throw new ArkmePluginError('topic-policy-contract-invalid', '主题设置响应不完整，请重试', true, 502)
+    this.invalidateSourceListCache(session.userId, 'send_to_self')
+    return { showInHome: value }
   }
 
   /**
@@ -946,25 +980,17 @@ export class SourceService {
     let cursorSendAt: number | undefined
     let cursorRecordUid: string | undefined
     for (let pageIndex = 0; pageIndex < 1_000; pageIndex += 1) {
-      const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-        '/api/v1/topics/display/detail',
-        {
-          topic_uid: topicUid,
-          limit: 100,
-          ...(cursorSendAt === undefined ? {} : { cursor_send_at: cursorSendAt }),
-          ...(cursorRecordUid === undefined ? {} : { cursor_record_uid: cursorRecordUid }),
-        },
-        session,
-      )
-      for (const raw of listValue(data.records)) {
-        const item = objectValue(raw)
-        const uid = stringValue(item.record_uid ?? objectValue(item.record_core).record_uid).trim()
-        if (uid !== '') recordUids.add(uid)
+      const page = await readTopicRecordPage(this.runtime, session, topicUid, {
+        limit: 100,
+        ...(cursorSendAt === undefined || cursorRecordUid === undefined ? {} : { cursor: { sendAtMillis: cursorSendAt, itemUid: cursorRecordUid } }),
+      })
+      for (const raw of page.records) {
+        recordUids.add(stringValue(objectValue(raw).record_uid).trim())
       }
       onProgress?.(recordUids.size)
-      if (data.has_more !== true) return [...recordUids]
-      const nextSendAt = numberValue(data.next_cursor_send_at)
-      const nextRecordUid = stringValue(data.next_cursor_record_uid).trim()
+      if (!page.hasMore) return [...recordUids]
+      const nextSendAt = page.nextCursor?.sendAtMillis ?? 0
+      const nextRecordUid = page.nextCursor?.itemUid ?? ''
       const cursorKey = `${String(nextSendAt)}:${nextRecordUid}`
       if (nextSendAt <= 0 || nextRecordUid === '' || seenCursors.has(cursorKey)) {
         throw new ArkmePluginError('topic-dissolve-record-page-invalid', '主题快记加载不完整，未解散主题，请刷新后重试', true, 502)
@@ -1148,12 +1174,14 @@ export class SourceService {
       const entry = objectValue(raw)
       const core = objectValue(entry.topic_core)
       if (arkmePrivacyLockedTopic(entry) || core.status !== 1) continue
+      const topicKind = numberValue(core.kind) || 1
+      if (!arkmeSourceAllowsUserWrite({ kind: 'topic', topicKind })) continue
       const topicUid = stringValue(core.topic_uid).trim()
       const title = stringValue(core.title).trim()
       if (!topicUid || !title || seen.has(topicUid)) continue
       seen.add(topicUid)
       const recordCount = objectValue(entry.summary).record_count
-      items.push({ kind: 'topic', displayName: title, activeAtMillis: numberValue(core.update_at), unreadCount: 0,
+      items.push({ kind: 'topic', topicKind, displayName: title, activeAtMillis: numberValue(core.update_at), unreadCount: 0,
         ...(typeof recordCount === 'number' && Number.isSafeInteger(recordCount) && recordCount >= 0 ? { recordCount } : {}),
         sourceRef: await this.sealSourceRef(session.userId, 'topic', topicUid, title),
         topicHierarchyKey: await this.topicHierarchyKey(session.userId, topicUid),
@@ -1376,6 +1404,7 @@ export class SourceService {
       }
       const topicDescriptors: Array<{
         topicUid: string
+        topicKind: number
         parentTopicUid?: string
         siblingOrder: number
         title: string
@@ -1424,6 +1453,7 @@ export class SourceService {
         ).trim()
         topicDescriptors.push({
           topicUid,
+          topicKind: numberValue(core.kind) || 1,
           ...(parentTopicUid === '' || parentTopicUid === topicUid ? {} : { parentTopicUid }),
           siblingOrder: numberValue(siblingOrderByChild.get(topicUid) ?? core.sibling_order ?? item.sibling_order),
           title,
@@ -1459,7 +1489,8 @@ export class SourceService {
           ...(parentTopicHierarchyKey === undefined ? {} : { parentTopicHierarchyKey }),
           ...(topic.siblingOrder > 0 ? { siblingOrder: topic.siblingOrder } : {}),
           kind: 'topic',
-          displayName: topic.title,
+          topicKind: topic.topicKind,
+          displayName: arkmeTopicDisplayName(topic.title, topic.topicKind),
           ...(topic.latestPreview === '' ? {} : { latestPreview: topic.latestPreview }),
           activeAtMillis: topic.activeAtMillis,
           unreadCount: 0,

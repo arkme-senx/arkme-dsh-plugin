@@ -1,3 +1,4 @@
+import { arkmeAttentionSummary } from '../src/client/attention-summary-store.js'
 import { createElement, useSyncExternalStore } from 'react'
 import * as clientApi from '../src/client/api.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
@@ -97,13 +98,13 @@ describe('Chat-owned Bot realtime invalidation', () => {
 describe('realtime reconcile routing', () => {
   it('joins startup instance preparation on first connection without clearing a newly loaded directory', async () => {
     let channel!: { onopen: (() => void) | null }
-    class FakeEventSource {
+    class FakeWebSocket {
       onopen: (() => void) | null = null
       onmessage = null
       constructor() { channel = this }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     const prepared = Promise.withResolvers<boolean>()
     vi.mocked(providerInstance.reconcileArkmeProviderInstance).mockReturnValue(prepared.promise)
@@ -130,14 +131,14 @@ describe('realtime reconcile routing', () => {
 
   it('updates a mounted directory after a policy notification read fails transiently, without another event or focus', async () => {
     vi.useFakeTimers()
-    let channel!: FakeEventSource
-    class FakeEventSource {
+    let channel!: FakeWebSocket
+    class FakeWebSocket {
       onopen: (() => void) | null = null
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor() { channel = this }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     const row = { sourceKey: 'group', sourceRef: 'group-ref', kind: 'group_chat' as const,
       displayName: '群聊', activeAtMillis: 1, unreadCount: 3, latestPreview: '消息保持',
@@ -171,14 +172,14 @@ describe('realtime reconcile routing', () => {
   })
 
   it('applies reconnect pins without triggering directory, message, receipt or notification refreshes', async () => {
-    let channel!: FakeEventSource
-    class FakeEventSource {
+    let channel!: FakeWebSocket
+    class FakeWebSocket {
       onopen: (() => void) | null = null
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor() { channel = this }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     const receipts = vi.spyOn(arkmeMessageReadReceipts, 'reconcile').mockImplementation(() => undefined)
     const interwoven = vi.spyOn(arkmeInterwovenInvalidation, 'invalidate')
@@ -207,14 +208,14 @@ describe('realtime reconcile routing', () => {
   })
 
   it('refreshes only the directory for a policy invalidation and deduplicates Browser revisions', async () => {
-    let source!: FakeEventSource
-    class FakeEventSource {
+    let source!: FakeWebSocket
+    class FakeWebSocket {
       onopen: (() => void) | null = null
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor() { source = this }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     const receipts = vi.spyOn(arkmeMessageReadReceipts, 'reconcile').mockImplementation(() => undefined)
     const interwoven = vi.spyOn(arkmeInterwovenInvalidation, 'invalidate')
@@ -242,8 +243,8 @@ describe('realtime reconcile routing', () => {
   })
 
   it('clears member-event memory on logout even when no conversation is mounted',async()=>{
-    class FakeEventSource { onopen=null;onmessage=null;close(){} }
-    vi.stubGlobal('EventSource',FakeEventSource)
+    class FakeWebSocket { onopen=null;onmessage=null;close(){} }
+    vi.stubGlobal('WebSocket',FakeWebSocket)
     vi.spyOn(arkmeAuthStore,'refresh').mockResolvedValue()
     vi.spyOn(arkmeMessageReadReceipts,'reconcile').mockImplementation(()=>undefined)
     function Harness({auth}:{auth:ArkmeAuthSnapshot}) {useArkmeRealtimeClientEvents(auth,1,false);return null}
@@ -264,14 +265,14 @@ describe('realtime reconcile routing', () => {
   })
 
   it('refreshes members for a join without invalidating historical leave rows', async () => {
-    let socket!: FakeEventSource
-    class FakeEventSource {
+    let socket!: FakeWebSocket
+    class FakeWebSocket {
       onopen: (() => void) | null = null
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor() { socket = this }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     const members = vi.spyOn(arkmeConversationMembers, 'invalidate').mockImplementation(() => {})
     const history = vi.spyOn(arkmeMemberEvents, 'invalidate')
@@ -285,16 +286,16 @@ describe('realtime reconcile routing', () => {
     } finally { await act(async () => { renderer.unmount() }); arkmeConversationMembers.activateAccount(undefined) }
   })
 
-  it('records an SSE hint for an inactive cached group without a background query',async()=>{
+  it('records a Host event hint for an inactive cached group without a background query',async()=>{
     vi.useFakeTimers();vi.setSystemTime(1000)
-    let source!:FakeEventSource
-    class FakeEventSource {
+    let source!:FakeWebSocket
+    class FakeWebSocket {
       onopen:(()=>void)|null=null
       onmessage:((event:MessageEvent<string>)=>void)|null=null
       constructor(){source=this}
       close(){}
     }
-    vi.stubGlobal('EventSource',FakeEventSource)
+    vi.stubGlobal('WebSocket',FakeWebSocket)
     vi.spyOn(arkmeAuthStore,'refresh').mockResolvedValue()
     vi.spyOn(arkmeMessageReadReceipts,'reconcile').mockImplementation(()=>undefined)
     const refresh=vi.spyOn(arkmeChatDirectory,'refreshRoot').mockResolvedValue([])
@@ -319,14 +320,14 @@ describe('realtime reconcile routing', () => {
     vi.useRealTimers()
   })
   it('does not refresh the directory when 75-second or lease reconnects publish refresh none', async () => {
-    let source!: FakeEventSource
-    class FakeEventSource {
+    let source!: FakeWebSocket
+    class FakeWebSocket {
       onopen: (() => void) | null = null
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor(readonly url: string) { source = this }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     const refreshRoot = vi.spyOn(arkmeChatDirectory, 'refreshRoot').mockResolvedValue([])
     const invalidate = vi.spyOn(arkmeInterwovenInvalidation, 'invalidate')
@@ -354,14 +355,14 @@ describe('realtime reconcile routing', () => {
   })
 
   it('applies timeline deletions even when no conversation is in the foreground', async () => {
-    let source!: FakeEventSource
-    class FakeEventSource {
+    let source!: FakeWebSocket
+    class FakeWebSocket {
       onopen: (() => void) | null = null
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor(readonly url: string) { source = this }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     vi.spyOn(arkmeMessageReadReceipts, 'reconcile').mockImplementation(() => undefined)
     const apply = vi.spyOn(arkmeChatTimelineDelta, 'applyTimelineChange')
@@ -388,4 +389,95 @@ describe('realtime reconcile routing', () => {
     })
     await act(async () => { renderer.unmount() })
   })
+})
+
+
+describe('Host epoch recovery', () => {
+  it('accepts a new Host zero baseline, rejects old Host frames, and keeps same-Host revision ordering', async () => {
+    let channel!: FakeWebSocket
+    class FakeWebSocket {
+      onopen: (() => void) | null = null
+      onmessage: ((event: MessageEvent<string>) => void) | null = null
+      constructor() { channel = this }
+      close() {}
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+    vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ instanceId: 'host-for-recovery-test' })
+    vi.spyOn(arkmeChatDirectory, 'refreshRoot').mockResolvedValue([])
+    function Harness() {
+      useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 789, environment: 'test' }, 1, false)
+      return null
+    }
+    let renderer!: ReactTestRenderer
+    const send = async (providerInstanceId: string, revision: number, count: number, type = 'attention-summary') => {
+      const summary = { badgeCount: count, mutedUnreadCount: 0, sessionCountWithUnread: count > 0 ? 1 : 0,
+        hasAttention: false, summaryVersion: 100 + revision, updatedAtMillis: 100 + revision }
+      await act(async () => { channel.onmessage?.({ data: JSON.stringify({ providerInstanceId, revision, type,
+        ...(type === 'reconcile' ? { refresh: 'none', attentionSummary: summary } : { summary }),
+      }) } as MessageEvent<string>) })
+    }
+    try {
+      await act(async () => { renderer = create(createElement(Harness)) })
+      await send('old', 100, 3, 'reconcile')
+      expect(arkmeAttentionSummary.getSnapshot().summary?.badgeCount).toBe(3)
+      await act(async () => { channel.onopen?.() })
+      await send('new', 1, 0, 'reconcile')
+      expect(arkmeAttentionSummary.getSnapshot().summary?.badgeCount).toBe(0)
+      await send('old', 101, 3)
+      await send('new', 0, 9)
+      expect(arkmeAttentionSummary.getSnapshot().summary?.badgeCount).toBe(0)
+      await send('new', 2, 4)
+      await act(async () => { channel.onopen?.() })
+      await send('new', 1, 0, 'reconcile')
+      expect(arkmeAttentionSummary.getSnapshot().summary?.badgeCount).toBe(4)
+    } finally { await act(async () => { renderer?.unmount() }) }
+  })
+})
+
+it('does not clear a new Host directory again when the slower provider-instance lookup completes', async () => {
+  let channel!: { onopen: (() => void) | null; onmessage: ((event: MessageEvent<string>) => void) | null }
+  vi.stubGlobal('WebSocket', class {
+    onopen = null; onmessage = null
+    constructor() { channel = this }
+    close() {}
+  })
+  const provider = await import('../src/client/provider-instance-runtime.js')
+  let release!: (changed: boolean) => void
+  vi.spyOn(provider, 'reconcileArkmeProviderInstance').mockImplementation(() => new Promise(resolve => { release = resolve }))
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  vi.spyOn(arkmeChatDirectory, 'refreshRoot').mockResolvedValue([])
+  function Harness() { useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 3456, environment: 'test' }, 1, false); return null }
+  let renderer!: ReactTestRenderer
+  const emit = async (update: unknown) => { await act(async () => { channel.onmessage?.({ data: JSON.stringify(update) } as MessageEvent<string>) }) }
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    await emit({ type: 'reconcile', revision: 100, providerInstanceId: 'old', refresh: 'none' })
+    await act(async () => { channel.onopen?.() })
+    await emit({ type: 'reconcile', revision: 1, providerInstanceId: 'new', refresh: 'none' })
+    await emit({ type: 'directory-update', revision: 2, providerInstanceId: 'new', page: { directory: 'root', items: [{ sourceRef: 'new-ref', sourceKey: 'stable-key', kind: 'private_chat', displayName: 'Recovered', unreadCount: 0, activeAtMillis: 1 }], hasMore: false,
+      projection: { revision: 2, phase: 'complete', cachedAtMillis: 1, bots: [], visibility: [{ entryKind: 'source', entryRef: 'new-ref', hidden: false }] } } })
+    await act(async () => { release(true) })
+    expect(arkmeChatDirectory.getConversationSnapshot().sources).toHaveLength(1)
+  } finally { await act(async () => { renderer.unmount() }) }
+})
+
+it('revalidates the local directory cache on same-Host reconnect without forcing an upstream scan', async () => {
+  let channel!: { onopen: (() => void) | null; onmessage: ((event: MessageEvent<string>) => void) | null }
+  vi.stubGlobal('WebSocket', class { onopen = null; onmessage = null; constructor() { channel = this } close() {} })
+  const provider = await import('../src/client/provider-instance-runtime.js')
+  vi.spyOn(provider, 'reconcileArkmeProviderInstance').mockResolvedValue(false)
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  const refresh = vi.spyOn(arkmeChatDirectory, 'refreshRoot').mockResolvedValue([])
+  const invalidate = vi.spyOn(arkmeChatDirectory, 'invalidateRoot')
+  function Harness() { useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 4567, environment: 'test' }, 1, false); return null }
+  let renderer!: ReactTestRenderer
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    await act(async () => { channel.onmessage?.({ data: JSON.stringify({ type: 'reconcile', revision: 1, providerInstanceId: 'same', refresh: 'none' }) } as MessageEvent<string>) })
+    await act(async () => { channel.onopen?.() })
+    await act(async () => { channel.onmessage?.({ data: JSON.stringify({ type: 'reconcile', revision: 2, providerInstanceId: 'same', refresh: 'if-stale' }) } as MessageEvent<string>) })
+    expect(invalidate).toHaveBeenCalledOnce()
+    expect(refresh).toHaveBeenLastCalledWith({ force: false })
+  } finally { await act(async () => { renderer.unmount() }) }
 })

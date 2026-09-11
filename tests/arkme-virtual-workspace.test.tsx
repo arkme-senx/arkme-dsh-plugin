@@ -171,11 +171,11 @@ describe('Arkme conversation directory load state', () => {
     )
   })
 
-  it('does not render a newly loaded owner row before visibility hydration settles', () => {
-    expect(workspaceSource).toContain('const [conversationVisibilityHydrated, setConversationVisibilityHydrated]')
-    expect(workspaceSource).toContain('conversationVisibilityHydrated.has(sourceKey)')
-    expect(workspaceSource).toContain('conversationVisibilityHydrated.has(botKey)')
-    expect(workspaceSource).toContain('setConversationVisibilityHydrated(current => markConversationVisibilityScopeHydrated(')
+  it('uses the shared visible-row projection instead of component-local visibility hydration', () => {
+    expect(workspaceSource).toContain('arkmeChatDirectory.getConversationSnapshot')
+    expect(workspaceSource).toContain('arkmeChatDirectory.hydrateVisibility(result.items)')
+    expect(workspaceSource).not.toContain('setLegacyBots')
+    expect(workspaceSource).not.toContain('conversationVisibilityHydrated')
   })
 
   it('retains the confirmed owner overlay while the conversation directory is unmounted', () => {

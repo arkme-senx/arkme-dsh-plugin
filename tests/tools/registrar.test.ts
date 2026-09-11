@@ -117,6 +117,29 @@ describe('registerArkmeTools', () => {
     await registration.dispose()
     expect(ctx.tools.schemas().some(tool => tool.name === 'arkme_direct_message_refusal_set')).toBe(false)
   })
+  it('reads home visibility immediately but confirms a policy write through the existing grant', async () => {
+    const ctx = await setup()
+    const topicHomeVisibility = vi.fn(async (_ref: string, value?: boolean) => ({ showInHome: value ?? false }))
+    await mountArkmeTools(ctx, 'business', { ...ports, topicHomeVisibility } as unknown as ArkmeToolPorts)
+    const events = sessionEvents([
+      { seq: 0, type: 'turn/start', data: { turn: 1 } },
+      { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '展示这个主题' }] } },
+    ])
+    const agent = { id: SessionId('home-setting'), session: { get events() { return events } } } as unknown as Agent
+    const signal = new AbortController().signal
+    const base = { name: 'arkme_topic_home_visibility', agent, signal }
+    const read = await ctx.tools.execute({ ...base, callId: CallId('read'), arguments: { source_ref: 'topic-ref' } })
+    expect(read.isError).toBe(false)
+    expect(topicHomeVisibility).toHaveBeenCalledOnce()
+    const args = { source_ref: 'topic-ref', show_in_home: true }
+    const prepared = await ctx.tools.execute({ ...base, callId: CallId('prepare'), arguments: args })
+    expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
+    expect(topicHomeVisibility).toHaveBeenCalledOnce()
+    events.push({ seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认' }] } })
+    const saved = await ctx.tools.execute({ ...base, callId: CallId('save'), arguments: args })
+    expect(saved.isError).toBe(false)
+    expect(topicHomeVisibility).toHaveBeenLastCalledWith('topic-ref', true)
+  })
   it('registers the core business surface and matching prompt', async () => {
     const ctx = await setup()
     await mountArkmeTools(ctx, 'business')
@@ -179,6 +202,7 @@ describe('registerArkmeTools', () => {
       'arkme_wechat_locations',
       'arkme_sources_list',
       'arkme_bot_conversation_pin',
+      'arkme_topic_home_visibility',
       'arkme_unread_conversations',
       'arkme_group_member_candidates',
       'arkme_group_member_add',

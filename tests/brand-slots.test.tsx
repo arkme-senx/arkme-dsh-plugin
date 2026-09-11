@@ -20,7 +20,7 @@ describe('Arkme public brand slots', () => {
     const source = await readFile(new URL('../src/client/index.tsx', import.meta.url), 'utf8')
 
     expect(source).toContain("ctx.slots.inject('sidebar'")
-    expect(source).toContain("ctx.slots.inject('conversation'")
+    expect(source).toContain("['conversation', 'main.conversation']")
     expect(source).not.toContain("ctx.slots.inject('sidebar.brand.mark'")
     expect(source).not.toContain("ctx.slots.inject('conversation.hero.brand.mark'")
     expect(source).not.toContain('MutationObserver')

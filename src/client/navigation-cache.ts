@@ -7,6 +7,7 @@ import type {
 } from '../types.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 import { homeTourDiagnostic } from './home-tour-diagnostics.js'
+import { arkmeTopicDisplayName } from '../topic-policy.js'
 
 const POINTER_KEY = 'dsh-arkme:navigation:v1:last-user'
 const CACHE_KEY_PREFIX = 'dsh-arkme:navigation:v1:user:'
@@ -80,6 +81,8 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     || typeof item.activeAtMillis !== 'number' || !Number.isFinite(item.activeAtMillis)
     || typeof item.unreadCount !== 'number' || !Number.isFinite(item.unreadCount)) return undefined
   const groupAvatar = groupAvatarPresentation(item.groupAvatar)
+  const topicKind = item.kind === 'topic' && typeof item.topicKind === 'number'
+    && Number.isSafeInteger(item.topicKind) ? item.topicKind : undefined
   return {
     sourceRef: item.sourceRef,
     ...(typeof item.sourceKey === 'string' && item.sourceKey.trim() !== ''
@@ -95,7 +98,8 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
       ? { parentTopicHierarchyKey: item.parentTopicHierarchyKey }
       : {}),
     kind: item.kind,
-    displayName: item.displayName,
+    ...(topicKind === undefined ? {} : { topicKind }),
+    displayName: arkmeTopicDisplayName(item.displayName, topicKind),
     ...(typeof item.avatarRef === 'string' && item.avatarRef !== '' ? { avatarRef: item.avatarRef } : {}),
     ...(Array.isArray(item.avatarRefs)
       ? { avatarRefs: item.avatarRefs.filter(value => typeof value === 'string' && value !== '').slice(0, 5) as string[] }

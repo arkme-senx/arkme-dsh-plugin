@@ -1101,11 +1101,15 @@ export interface ArkmeCallParticipant {
 
 export interface ArkmeCallTranscriptSegment {
   segmentId: string
+  /** Standalone recording of this segment; playback starts at zero, not startMillis. */
+  audioUrl?: string
   speakerDisplayName: string
   speakerUserId?: number
   text: string
   startMillis: number
   endMillis: number
+  /** Absolute speech timestamp, when supplied by the call transcript service. */
+  spokenAtMillis?: number
 }
 
 export interface ArkmeCallVideoRecord {
@@ -1117,6 +1121,7 @@ export interface ArkmeCallVideoRecord {
 }
 
 export interface ArkmeCallVideoPerspective {
+  userId?: number
   perspective: 'self' | 'peer' | 'main' | 'unknown'
   label?: string
   videoUrl?: string
@@ -1141,6 +1146,8 @@ export interface ArkmeCallDetail {
   videoRecord?: ArkmeCallVideoRecord
   participants: ArkmeCallParticipant[]
   transcriptSegments: ArkmeCallTranscriptSegment[]
+  /** Actual final hangup event, not inferred from the caller or peer. */
+  hangupParticipant?: ArkmeCallParticipant
 }
 
 export interface ArkmeCallSummaryRetryResult {
@@ -1171,6 +1178,8 @@ export interface ArkmeProviderCapabilities {
     imageLibrary?: true
     sourceDirectory: true
     localFirstDirectory?: true
+    /** Topic home preference uses the record-owned policy without changing topic contents. */
+    topicHomeVisibility?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     contactDirectoryReads?: true
     sourceTimeline: true
@@ -1377,6 +1386,8 @@ export interface ArkmeGroupAvatarPresentation {
 }
 
 export interface ArkmeSourceItem {
+  /** Record-owned topic container kind; never a chat kind or creation source. */
+  topicKind?: number
   sourceRef: string
   /** Established human Direct session, never PendingPrivate or Bot direct. */
   directMessageAdmissionApplicable?: boolean
@@ -1584,9 +1595,29 @@ export interface ArkmeMessageSnapshotDetail {
   syncState?: 'synced' | 'syncing' | 'failed' | 'not-synced'
 }
 
+export interface ArkmeTimelineMentionTarget {
+  kind: 'member' | 'all' | 'bot'
+  startIndex: number
+  length: number
+  displayName: string
+  /** Browser-safe account-and-session scoped member identity for opening the profile card. */
+  memberRef?: string
+  botRef?: string
+}
+
 export interface ArkmeTimelineItem {
   /** Display-only call status; room, participant and call identifiers stay host-side. */
-  callRecord?: { mediaType: 'audio' | 'video'; text: string }
+  callRecord?: {
+    mediaType: 'audio' | 'video'
+    text: string
+    /** Account-bound encrypted reference accepted by calls.history.detail. */
+    callRef?: string
+    direction?: 'outgoing' | 'incoming'
+    startedAtMillis?: number
+    durationSeconds?: number
+    summaryText?: string
+    summaryStatus?: ArkmeCallSummaryStatus
+  }
   /** Signed observed personal-topic membership; distinct from forwarding snapshots. */
   recordTopicAssignmentRef?: string
   /** Stable topic identity from assignment membership evidence, not the display card. */
@@ -1609,6 +1640,8 @@ export interface ArkmeTimelineItem {
   isMe: boolean
   /** Browser-safe projection of whether this incoming message mentions the current viewer. */
   mentionsViewer?: boolean
+  /** Browser-safe mention ranges projected from provider metadata; used for exact highlight and member cards. */
+  mentions?: ArkmeTimelineMentionTarget[]
   sendAtMillis: number
   title: string
   textContent: string
@@ -1992,6 +2025,7 @@ export interface ArkmeLongArticleDetail {
   title: string
   textContent: string
   textFormat?: 'plain' | 'markdown'
+  mentions?: ArkmeTimelineMentionTarget[]
   sendAtMillis: number
   updateAtMillis: number
   recordDurationMillis: number
@@ -2092,6 +2126,7 @@ export interface ArkmeMessageCopyLinkSnapshotItem {
   title: string
   textContent: string
   textFormat?: 'plain' | 'markdown'
+  mentions?: ArkmeTimelineMentionTarget[]
   sendAtMillis: number
   templateKind: number
   displayKind: number
@@ -3183,6 +3218,8 @@ export interface ArkmeChatRealtimeState {
 
 /** Server-owned unread attention summary across every visible conversation. */
 export interface ArkmeChatAttentionSummary {
+  /** Last visible directory snapshot is usable while its background refresh recovers. */
+  stale?: boolean
   badgeCount: number
   mutedUnreadCount: number
   sessionCountWithUnread: number
@@ -3192,6 +3229,9 @@ export interface ArkmeChatAttentionSummary {
 }
 
 export type ArkmeChatClientEvent = {
+  /** Local Host epoch; revisions are comparable only within this instance. */
+  providerInstanceId?: string
+} & ({
   type: 'directory-update'
   revision: number
   page: ArkmeSourceList
@@ -3292,9 +3332,12 @@ export type ArkmeChatClientEvent = {
   sourceKey: string
   eventId: string
   occurredAtMillis: number
-}
+})
 
 export type ArkmePluginOperation =
+  | 'topic.dissolve.active'
+  | 'topic.rename'
+  | 'topic.dissolve'
   | 'provider.capabilities'
   | 'provider.state'
   | 'chat.realtime.state'
@@ -3519,6 +3562,7 @@ export type ArkmePluginOperation =
   | 'extensions.classification.items'
   | 'topic.hierarchy.move'
   | 'topic.rename'
+  | 'topic.home-visibility'
   | 'topic.dissolve'
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'

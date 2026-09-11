@@ -353,7 +353,9 @@ export class ArkmeService {
     this.calendar = new CalendarService(this.runtime, this.privacy)
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
-    this.callHistory = new CallHistoryService(this.runtime, this.profile)
+    this.callHistory = new CallHistoryService(this.runtime, this.profile, {
+      forwardContentBlocks: (files, viewerUserId) => this.media.forwardContentBlocks(files, viewerUserId),
+    })
     this.extensionReview = new ExtensionReviewService(this.runtime, this.profile, {
       createTextForConversation: async (recordUid, textContent) => {
         return await this.createTextForConversation(recordUid, textContent)
@@ -425,8 +427,12 @@ export class ArkmeService {
     this.directory = new ConversationDirectoryService(this.runtime, this.source, this.conversationDirectoryVisibility,
       async signal => await this.botConversation.directory({ signal }),
       async (ref, signal) => await this.media.readImage(ref, { signal, refresh: true }),
-      page => { this.realtime.emitChatClientEvent({ type: 'directory-update', revision: this.realtime.nextChatClientRevision(), page }) },
+      page => {
+        this.realtime.emitChatClientEvent({ type: 'directory-update', revision: this.realtime.nextChatClientRevision(), page })
+        void this.realtime.refreshAttentionSummary()
+      },
       async (bots, userId) => await this.bot.restoreDirectoryBots(bots, userId))
+    this.realtime.directoryAttention = async retry => await this.directory.attentionSummary(retry)
     this.realtime.directoryBaseline = async () => await this.directory.complete()
     this.realtime.subscribeChatRealtime(event => { if (event.type !== 'directory-update') void this.directory.accept(event).catch(() => undefined) })
     this.chat = new ChatService(
@@ -441,6 +447,7 @@ export class ArkmeService {
       this.realtime,
       this.privacy,
       this.messageActions,
+      this.callHistory,
     )
     this.userBan = new UserBanService(this.runtime, this.chat)
     this.directMessageAdmissionOwner = new DirectMessageAdmissionService(this.runtime, this.source)
@@ -738,6 +745,7 @@ export class ArkmeService {
         imageLibrary: true,
         sourceDirectory: true,
         localFirstDirectory: true,
+        topicHomeVisibility: true,
         contactDirectoryReads: true,
         sourceTimeline: true,
         forwardContent: true,
@@ -1093,6 +1101,12 @@ export class ArkmeService {
 
   async renameTopic(sourceRef: string, title: string): Promise<ArkmeTopicRenameResult> {
     return await this.source.renameTopic(sourceRef, title)
+  }
+
+  async topicHomeVisibility(sourceRef: string, showInHome?: boolean, signal?: AbortSignal): Promise<{ showInHome: boolean }> {
+    const result = await this.source.topicHomeVisibility(sourceRef, showInHome, signal)
+    if (showInHome !== undefined) await this.realtime.invalidateRecordProjection()
+    return result
   }
 
   async dissolveTopic(
