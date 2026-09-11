@@ -55,7 +55,6 @@ function validateMaterializedTool(module: ArkmeToolModule, definition: ToolDefin
 export function createArkmeCoreToolDefinitions(
   ports: ArkmeCoreToolPorts,
   profile: ArkmeToolProfile = 'business',
-  presentation?: GroupGovernancePresentation,
 ): ToolDefinition[] {
   return arkmeToolCatalog.modulesFor(profile).filter(isArkmeCoreToolModule)
     .map(module => validateMaterializedTool(module, module.create(ports)))

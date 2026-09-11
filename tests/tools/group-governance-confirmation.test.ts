@@ -28,9 +28,9 @@ async function fixture(name: string, code = false) {
     }
     await ctx.plugin(OfflineRuntime)
   }
-  const ownerResult = { items: [{ status: 'succeeded' }, { status: 'rejected', reason: 'stale_version' }] }
+  const ownerResult = { items: [{ status: 'succeeded' }, { status: 'rejected', reason: 'member_unavailable' }] }
   const execute = vi.fn(async () => ({ content: [{ type: 'text', text: JSON.stringify(ownerResult) }], structuredContent: ownerResult }))
-  ctx.tools.register({ name, description: 'fixture', parameters: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: {}, additionalProperties: true } } }, required: ['items'], additionalProperties: false }, output: {
+  ctx.tools.register({ name, description: 'fixture', parameters: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { item_id: { type: 'string' }, chat_session_uid: { type: 'string' }, target_user_ref: { type: 'string' }, sequence: { type: 'integer' }, prevent_rejoin: { type: 'boolean' }, restricted: { type: 'boolean' } }, required: ['item_id', 'chat_session_uid', ...(name.endsWith('withdraw_group_messages') ? ['sequence'] : ['target_user_ref']), ...(name.endsWith('set_group_join_restrictions') ? ['restricted'] : [])], additionalProperties: false } } }, required: ['items'], additionalProperties: false }, output: {
     schema: { type: 'object', properties: { content: { type: 'array', items: {} }, structuredContent: { type: 'object', properties: { items: { type: 'array', items: {} } }, required: ['items'], additionalProperties: false } }, required: ['content', 'structuredContent'], additionalProperties: false },
     render: (_args, value) => [{ type: 'text', text: JSON.stringify((value as { structuredContent: unknown }).structuredContent) }],
   }, execute })
@@ -41,7 +41,7 @@ async function fixture(name: string, code = false) {
   const inbox = new Inbox(session, { inserted() {}, discarded() {}, claimed() {} })
   const agent = { id: session.id, session, inbox } as unknown as Agent
   let count = 0
-  const invoke = async (args: unknown = { items: [{ chat_session_uid: 'group-a', prevent_rejoin: true, restricted: true, expected_version: 0 }] }) => {
+  const invoke = async (args: unknown = { items: [{ item_id: 'member', chat_session_uid: 'group-a', ...(name.endsWith('withdraw_group_messages') ? { sequence: 1 } : { target_user_ref: 'target-a' }), ...(name.endsWith('set_group_join_restrictions') ? { restricted: true } : {}) }] }) => {
     const toolName = code ? 'run_code' : name
     const input = code ? { code: JSON.stringify(args), description: '组合治理工具' } : args
     const callId = CallId(`call-${++count}`)
@@ -57,7 +57,7 @@ async function fixture(name: string, code = false) {
   return { ctx, execute, invoke, user, invalidate, currentAccount, session, runtimeState }
 }
 
-describe('group governance migration preserves conversational confirmation', () => {
+describe('group governance tools preserve conversational confirmation', () => {
   it.each(['withdraw_group_messages', 'remove_group_members', 'set_group_join_restrictions'])('confirms %s through the official code dispatch bridge', async name => {
     const f = await fixture(`mcp__arkme__${name}`, true)
     try {
@@ -120,17 +120,17 @@ describe('group governance migration preserves conversational confirmation', () 
       expect(result.value).toEqual(await f.execute.mock.results[0]!.value)
       expect(f.execute).toHaveBeenCalledOnce()
       expect(f.invalidate).toHaveBeenCalledTimes(name === 'remove_group_members' ? 1 : 0)
-      expect(JSON.stringify(result)).toContain('stale_version')
+      expect(JSON.stringify(result)).toContain('member_unavailable')
     } finally { await f.ctx.fiber.dispose() }
   })
 
-  it('validates using the registered schema and re-confirms changed versions or targets', async () => {
+  it('validates using the registered schema and re-confirms changed targets', async () => {
     const f = await fixture('mcp__arkme__remove_group_members')
     try {
       expect((await f.invoke({})).isError).toBe(true)
       expect(JSON.stringify(await f.invoke())).toContain('confirmation_required')
       f.user()
-      expect(JSON.stringify(await f.invoke({ items: [{ expected_version: 1, target_user_ref: 'different' }] }))).toContain('confirmation_required')
+      expect(JSON.stringify(await f.invoke({ items: [{ item_id: 'member', chat_session_uid: 'group-a', target_user_ref: 'different' }] }))).toContain('confirmation_required')
       expect(f.execute).not.toHaveBeenCalled()
     } finally { await f.ctx.fiber.dispose() }
   })
