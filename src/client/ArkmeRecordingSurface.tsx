@@ -662,6 +662,10 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     }
   }, [playback.stop, selectedDate])
 
+  useEffect(() => {
+    setEditingSpeaker(undefined)
+  }, [auth.auth?.status, auth.auth?.environment, auth.auth?.userId])
+
   const loadModelConfig = (dialogKind?: ArkmeRecordingProjectionKind) => {
     const controller = new AbortController()
     modelConfigAbortRef.current?.abort()

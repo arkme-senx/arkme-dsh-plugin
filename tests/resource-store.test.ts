@@ -5,6 +5,33 @@ const deferred = <T>() => { let resolve!: (value: T) => void; let reject!: (erro
 afterEach(() => { vi.useRealTimers() })
 
 describe('shared resource snapshots', () => {
+  it('restores asynchronous local data before the network completes, then replaces it', async () => {
+    const remote = deferred<number>()
+    const store = new ResourceStore<number, string>({ loadCached: async () => 1, load: () => remote.promise })
+    const pending = store.refresh('key', 'source')
+    await vi.waitFor(() => expect(store.get('key').value).toBe(1))
+    expect(store.get('key').refreshing).toBe(true)
+    remote.resolve(2)
+    await pending
+    expect(store.get('key').value).toBe(2)
+  })
+  it('does not publish a late local restoration after reset', async () => {
+    const local = deferred<number>()
+    const load = vi.fn(async () => 2)
+    const store = new ResourceStore<number, string>({ loadCached: () => local.promise, load })
+    const pending = store.refresh('key', 'source').catch(error => error)
+    await Promise.resolve()
+    store.reset()
+    local.resolve(1)
+    await pending
+    expect(store.get('key').value).toBeUndefined()
+    expect(load).not.toHaveBeenCalled()
+  })
+  it('continues to the owner when optional local storage fails', async () => {
+    const store = new ResourceStore<number, string>({ loadCached: async () => { throw new Error('disk') }, load: async () => 2 })
+    await expect(store.refresh('key', 'source')).resolves.toBe(2)
+  })
+
   it('can use a still-fresh fact without waiting for an unrelated background refresh', async () => {
     const pending = deferred<number>()
     const load = vi.fn().mockResolvedValueOnce(1).mockReturnValueOnce(pending.promise)
