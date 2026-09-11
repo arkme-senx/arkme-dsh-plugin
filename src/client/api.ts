@@ -88,6 +88,8 @@ export async function uploadArkmeRecording(
 }
 
 type ArkmeUiOperation = ArkmePluginOperation
+  | 'emoji.recent.list'
+  | 'emoji.recent.record'
   | 'topic.candidates'
   | 'provider.instance'
   | 'link.metadata'

@@ -13,6 +13,13 @@ const redesignStylesSource = readFileSync(
 )
 
 describe('Arkme redesign dark theme', () => {
+  it('keeps detail extension input colors readable in dark mode', () => {
+    const shell = redesignCss.match(/body\[data-ds-dark-theme\] \.arkme-detail-extension-input-shell\s*\{([^{}]+)\}/)?.[1]
+    const bar = redesignCss.match(/body\[data-ds-dark-theme\] \.arkme-detail-extension-input-bar\s*\{([^{}]+)\}/)?.[1]
+    expect(shell).toContain('background: #2b2b2b !important')
+    expect(bar).toContain('border-top-color: #363636 !important')
+  })
+
   it('keeps Contact World preview media bounded within its thumbnail', () => {
     const imageRule = redesignCss.match(/\.arkme-contact-world-image\s*\{([^{}]+)\}/)?.[1] ?? ''
     const thumbnailRule = redesignCss.match(/\.arkme-contact-world-thumbnail\s*\{([^{}]+)\}/)?.[1] ?? ''

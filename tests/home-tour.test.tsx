@@ -520,6 +520,27 @@ describe('home tour browser behavior', () => {
     expect(panel()).toBeNull()
   })
 
+  it('identifies the login overlay in diagnostics by its stable marker regardless of localized label', async () => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const dialog = document.createElement('section')
+    dialog.setAttribute('role', 'dialog')
+    dialog.setAttribute('data-arkme-web-login-dialog', 'true')
+    dialog.setAttribute('aria-label', 'Arkme 登录')
+    document.body.append(dialog)
+    try {
+      await render()
+      expect(panel()).toBeNull()
+      expect(log.mock.calls.some(([prefix, payload]) => {
+        if (prefix !== '[ArkmeHomeTour]' || typeof payload !== 'string') return false
+        const event = JSON.parse(payload)
+        return event.event === 'blocked' && event.overlays.some((overlay: { login: boolean }) => overlay.login)
+      })).toBe(true)
+    } finally {
+      dialog.remove()
+      log.mockRestore()
+    }
+  })
+
   it.each(['logout', 'notification', 'overlay'])('withdraws on %s without saving completion or reopening in the page session', async reason => {
     await render()
     await click('下一步')

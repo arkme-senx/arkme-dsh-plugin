@@ -1,4 +1,5 @@
 import { applyMemberUpdate, mergeMemberJoinEvents, validateMemberUpdate, cachedMemberItem } from './member-directory.js'
+import { isRecentEmojiId, normalizeRecentEmojiIds, type RecentEmojiStore } from './emoji-recent.js'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -72,7 +73,7 @@ interface ProfileRow {
   updated_at_millis: number
 }
 
-export class ArkmeLocalDatabase {
+export class ArkmeLocalDatabase implements RecentEmojiStore {
   private readonly path: string
   private readonly database: DatabaseSync
   private readonly migrations = new Map<number, Promise<void>>()
@@ -87,6 +88,9 @@ export class ArkmeLocalDatabase {
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = NORMAL;
       PRAGMA foreign_keys = ON;
+      CREATE TABLE IF NOT EXISTS recent_emoji (
+        account_key TEXT PRIMARY KEY, emoji_ids TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS conversation_directory (
         user_id INTEGER NOT NULL, identity TEXT NOT NULL, payload TEXT NOT NULL,
         visibility TEXT, PRIMARY KEY(user_id, identity)
@@ -861,12 +865,33 @@ export class ArkmeLocalDatabase {
     }
   }
 
+  private readRecentEmojiIds(accountKey: string): string[] {
+    const row = this.database.prepare('SELECT emoji_ids FROM recent_emoji WHERE account_key=?').get(accountKey) as { emoji_ids: string } | undefined
+    if (!row) return []
+    try { return normalizeRecentEmojiIds(JSON.parse(row.emoji_ids)) } catch { return [] }
+  }
+
+  async recentEmojiIds(accountKey: string): Promise<string[]> {
+    return this.readRecentEmojiIds(accountKey)
+  }
+
+  async recordRecentEmoji(accountKey: string, emojiId: string): Promise<string[]> {
+    if (!isRecentEmojiId(emojiId)) throw new Error('Invalid recent emoji')
+    let ids: string[] = []
+    this.transaction(() => {
+      ids = normalizeRecentEmojiIds([emojiId, ...this.readRecentEmojiIds(accountKey)])
+      this.database.prepare(`INSERT INTO recent_emoji (account_key, emoji_ids) VALUES (?, ?)
+        ON CONFLICT(account_key) DO UPDATE SET emoji_ids=excluded.emoji_ids`).run(accountKey, JSON.stringify(ids))
+    })
+    return ids
+  }
+
   private transaction(work: () => void): void {
     this.database.exec('BEGIN IMMEDIATE')
     try {
       work()
-      this.database.exec('COMMIT')
       this.secureDatabaseFiles()
+      this.database.exec('COMMIT')
     } catch (error) {
       this.database.exec('ROLLBACK')
       throw error

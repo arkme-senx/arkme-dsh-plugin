@@ -1,4 +1,5 @@
 import { arkmeEmojiAssetUrls } from './arkme-emoji-assets.js'
+import { recentEmojiLimit } from '../emoji-recent.js'
 import { arkmeDefaultEmojiSeeds, type ArkmeEmojiSeed } from '../arkme-emoji-text.js'
 
 export {
@@ -48,7 +49,7 @@ export function insertArkmeEmojiAtSelection(
 export function nextArkmeRecentEmojiIds(
   current: readonly string[],
   emojiId: string,
-  maxCount = 8,
+  maxCount = recentEmojiLimit,
 ): string[] {
   if (arkmeEmojiById[emojiId] === undefined || maxCount <= 0) return current.slice(0, Math.max(0, maxCount))
   return [emojiId, ...current.filter(id => id !== emojiId && arkmeEmojiById[id] !== undefined)].slice(0, maxCount)

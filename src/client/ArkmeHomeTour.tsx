@@ -405,7 +405,7 @@ export function ArkmeHomeTour({ auth, blocked, routeActive, notificationRevision
         [...ownerDocument.querySelectorAll<HTMLElement>(overlaySelector)].filter(element =>
           !element.closest('[data-arkme-home-tour-panel]')
           && (element.matches('dialog[open]') ? visiblyPresentedNativeDialog(element) : visible(element))))
-      const overlayDetails = overlays.map(element => ({ tag: element.tagName, role: element.getAttribute('role'), inFrame: element.ownerDocument !== document, statement: isHarnessFirstRunStatement(element), login: element.getAttribute('aria-label') === '即我登录', native: element.matches('dialog[open]') }))
+      const overlayDetails = overlays.map(element => ({ tag: element.tagName, role: element.getAttribute('role'), inFrame: element.ownerDocument !== document, statement: isHarnessFirstRunStatement(element), login: element.matches('[data-arkme-web-login-dialog="true"]'), native: element.matches('dialog[open]') }))
       if (document.visibilityState === 'hidden' || overlays.some(element => !isHarnessFirstRunStatement(element))) {
         initialStability = undefined
         trace('blocked', { visibility: document.visibilityState, overlays: overlayDetails, started: startedStepIds !== undefined })

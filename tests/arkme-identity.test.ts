@@ -141,6 +141,14 @@ function withoutOfficialCommunityProductCopy(file: string, content: string): str
   return content
 }
 
+function withoutMobileRecordingGuideProductCopy(file: string, content: string): string {
+  if (file !== join(root, 'src/client/recordings/ArkmeRecordingMobileGuideDialog.tsx')) return content
+  // The guide names the separate mobile app the user must open, not the Arkme desktop product.
+  return content
+    .replaceAll('>即我</span>', '></span>')
+    .replaceAll('打开手机即我，登录同一账号', '')
+}
+
 function withoutApprovedJiwoScanLoginFeature(file: string, content: string): string {
   const allowedFiles = new Set([
     join(root, 'cordis.patch.yml'),
@@ -184,6 +192,15 @@ function withoutApprovedLinkMetadataCompatibilityAliases(file: string, content: 
 }
 
 describe('Arkme plugin identity', () => {
+  it('allows only the mobile recording guide app references without hiding other legacy branding', () => {
+    const guide = join(root, 'src/client/recordings/ArkmeRecordingMobileGuideDialog.tsx')
+    expect(withoutMobileRecordingGuideProductCopy(guide, '>即我</span>打开手机即我，登录同一账号')).toBe('></span>')
+    const legacyBranding = 'Jotmo jiwo 即我产品 即我登录'
+    expect(withoutMobileRecordingGuideProductCopy(guide, legacyBranding)).toBe(legacyBranding)
+    expect(withoutMobileRecordingGuideProductCopy(join(root, 'src/client/ArkmeHomeTour.tsx'), '打开手机即我，登录同一账号'))
+      .toBe('打开手机即我，登录同一账号')
+  })
+
   it('allows contact account terminology while retaining legacy branding checks', () => {
     const contactDetail = join(root, 'src/client/redesign/contacts/ContactProfileDetail.tsx')
     expect(withoutArkmeIdCompatibilityAliases(contactDetail, '即我号')).toBe('')
@@ -218,7 +235,8 @@ describe('Arkme plugin identity', () => {
               file,
               withoutOfficialCommunityProductCopy(
                 file,
-                withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+                withoutMobileRecordingGuideProductCopy(file,
+                  withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8'))),
               ),
             ),
           ),
