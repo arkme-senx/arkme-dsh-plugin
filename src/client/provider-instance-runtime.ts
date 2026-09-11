@@ -4,6 +4,7 @@ import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import type { ArkmeAvatarImagePort } from './avatar-image-store.js'
 import type { ArkmeClientAccountScope } from './chat-directory-store.js'
 import { reconcileNavigationProviderInstance } from './navigation-cache.js'
+import { resetRecordingSpeakerCaches } from './recordings/recording-speaker-options-store.js'
 import { privateChatActions } from './private-chat-actions-store.js'
 
 interface ArkmeProviderInstanceGuardOptions {
@@ -65,6 +66,7 @@ export const reconcileArkmeProviderInstance = createArkmeProviderInstanceGuard({
   },
   onInvalidate: () => {
     privateChatActions.reset()
+    resetRecordingSpeakerCaches()
     revalidateArkmeProviderAvatarImages(arkmeAvatarImages)
   },
 })

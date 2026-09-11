@@ -11,6 +11,7 @@ export interface ResourceSnapshot<T> {
 
 export interface ResourceAdapter<T, B> {
   load(binding: B, signal: AbortSignal): Promise<T>
+  loadCached?(binding: B, signal: AbortSignal): Promise<T | undefined>
   accept?(current: T, next: T): boolean
   restore?(binding: B): T | undefined
   persist?(binding: B, value: T): void
@@ -103,7 +104,16 @@ export class ResourceStore<T, B> {
     const current = () => !controller.signal.aborted && this.entries.get(key) === entry && entry.version === version
     entry.reader = controller
     entry.dirty = false
-    const pending = Promise.resolve().then(() => this.adapter.load(binding, controller.signal)).then(value => {
+    const pending = Promise.resolve().then(async () => {
+      if (entry.snapshot.value === undefined && this.adapter.loadCached !== undefined) {
+        let cached: T | undefined
+        try { cached = await this.adapter.loadCached(binding, controller.signal) } catch { /* Optional local storage cannot block an owner read. */ }
+        if (!current()) throw resourceCancelled()
+        if (cached !== undefined) this.commit(entry, cached)
+      }
+      if (!current()) throw resourceCancelled()
+      return this.adapter.load(binding, controller.signal)
+    }).then(value => {
       if (!current()) throw resourceCancelled()
       this.commit(entry, value)
       return value

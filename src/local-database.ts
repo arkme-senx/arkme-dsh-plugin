@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite'
 import type { ArkmeStateStore } from './state-store.js'
 import type {
   ArkmeCachedSnapshot,
+  ArkmeRecordingSpeakerCandidate,
   ArkmeSourceList, ArkmeSourceItem, ArkmeDirectoryProjection, ArkmeImageBytes,
   ArkmeConversationMemberCache,
   ArkmeConversationMemberUpdate,
@@ -88,6 +89,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = NORMAL;
       PRAGMA foreign_keys = ON;
+      CREATE TABLE IF NOT EXISTS recording_speaker_cache (
+        scope TEXT NOT NULL, user_id INTEGER NOT NULL, payload TEXT NOT NULL,
+        PRIMARY KEY(scope, user_id)
+      );
       CREATE TABLE IF NOT EXISTS recent_emoji (
         account_key TEXT PRIMARY KEY, emoji_ids TEXT NOT NULL
       );
@@ -208,6 +213,28 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
 
   async uniqueCode(): Promise<string> {
     return await this.operationalState.uniqueCode()
+  }
+
+  async readRecordingSpeakerCache(scope: string, userId: number): Promise<ArkmeRecordingSpeakerCandidate[] | undefined> {
+    const row = this.database.prepare('SELECT payload FROM recording_speaker_cache WHERE scope=? AND user_id=?').get(scope, userId) as { payload: string } | undefined
+    if (row === undefined) return undefined
+    try {
+      const value: unknown = JSON.parse(row.payload)
+      if (!Array.isArray(value) || !value.every(item => item !== null && typeof item === 'object'
+        && typeof item.optionKey === 'string' && typeof item.speakerRef === 'string' && typeof item.label === 'string'
+        && (item.kind === 'speaker' || item.kind === 'arkme-user') && typeof item.isCurrentUser === 'boolean'
+        && (item.avatarRef === undefined || typeof item.avatarRef === 'string'))) return undefined
+      return value
+    } catch { return undefined }
+  }
+
+  async writeRecordingSpeakerCache(scope: string, userId: number, candidates: ArkmeRecordingSpeakerCandidate[]): Promise<void> {
+    this.database.prepare('INSERT INTO recording_speaker_cache VALUES (?, ?, ?) ON CONFLICT(scope, user_id) DO UPDATE SET payload=excluded.payload')
+      .run(scope, userId, JSON.stringify(candidates))
+  }
+
+  async clearRecordingSpeakerCache(scope: string, userId: number): Promise<void> {
+    this.database.prepare('DELETE FROM recording_speaker_cache WHERE scope=? AND user_id=?').run(scope, userId)
   }
 
   async readDirectoryCache(userId: number): Promise<ArkmeSourceList | undefined> {

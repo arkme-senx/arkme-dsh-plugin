@@ -2701,6 +2701,8 @@ export interface ArkmeRecordingWorkbenchItem {
   endAtMillis: number
   speakerNumber: number
   speakerKey: string
+  /** Candidate identity of the assignment in this transcript snapshot. */
+  assignedSpeakerOptionKey?: string
   speakerColorIndex: number
   speakerLabel: string
   speakerAvatarRef?: string
@@ -2717,13 +2719,22 @@ export interface ArkmeRecordingPlayback {
   endOffsetMillis: number
 }
 
-export interface ArkmeRecordingSpeakerOption {
+export interface ArkmeRecordingSpeakerCandidate {
+  /** Stable candidate identity; never an authorization or mutation reference. */
+  optionKey: string
   speakerRef: string
   label: string
   avatarRef?: string
   kind: 'arkme-user' | 'speaker'
-  currentAssignment: boolean
   isCurrentUser: boolean
+}
+
+export interface ArkmeRecordingSpeakerRecommendation {
+  optionKey?: string
+}
+
+export interface ArkmeRecordingSpeakerOption extends ArkmeRecordingSpeakerCandidate {
+  currentAssignment: boolean
   recommended: boolean
 }
 
@@ -3615,6 +3626,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.import.session.delete'
   | 'recordings.playback.open'
   | 'recordings.speaker.options'
+  | 'recordings.speaker.cached-options'
+  | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
   | 'search.records'
   | 'search.scene'
