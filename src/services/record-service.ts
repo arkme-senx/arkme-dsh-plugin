@@ -1003,9 +1003,12 @@ export class RecordService {
     }
     const originContainerRef = stringValue(core.origin_container_ref).trim()
     const originKind = Math.trunc(numberValue(core.origin_kind))
+    const sourceKind = Math.trunc(numberValue(core.source_kind))
+    const personalSource = sourceKind === 1 || (sourceKind === 0 && originKind === 1)
+    const topicSource = sourceKind === 2 || (sourceKind === 0 && originKind === 2)
     const topicUid = stringValue(objectValue(data.topic_core).topic_uid).trim()
     if (source.kind === 'topic') {
-      if (originKind !== 2 || topicUid !== source.ownerRef) {
+      if (!topicSource || topicUid !== source.ownerRef) {
         throw new ArkmePluginError('record-reedit-source-mismatch', '快记不属于当前来源', false, 403)
       }
     } else if (source.kind === 'private_chat' || source.kind === 'group_chat') {
@@ -1014,10 +1017,10 @@ export class RecordService {
         throw new ArkmePluginError('record-reedit-source-mismatch', '快记不属于当前会话', false, 403)
       }
     } else if (source.kind === 'default_category') {
-      if (originKind !== 1 || originContainerRef !== '' || topicUid !== '') {
+      if (!personalSource || originContainerRef !== '' || topicUid !== '') {
         throw new ArkmePluginError('record-reedit-source-mismatch', '快记不属于未分类来源', false, 403)
       }
-    } else if (source.kind === 'send_to_self' && originKind !== 1 && originKind !== 2) {
+    } else if (source.kind === 'send_to_self' && !personalSource && !topicSource) {
       throw new ArkmePluginError('record-reedit-source-mismatch', '快记不属于发给自己的内容来源', false, 403)
     }
     const templateKind = Math.trunc(numberValue(core.template_kind))
