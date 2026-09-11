@@ -32,7 +32,7 @@ const mandatoryDirectoryIds = ['harness', 'arko', 'send-to-self'] as const satis
 const navigationIds = navigationSteps.map(step => step.id)
 const stepById = new Map<HomeTourStepId, HomeTourStep>(allSteps.map(step => [step.id, step]))
 
-const overlaySelector = '[data-arkme-recording-tour-panel], [data-arkme-recording-tour-running], [role="dialog"], [role="alertdialog"], [role="menu"], dialog[open], [data-arkme-notification-blocking-overlay="true"], [data-arkme-web-login-dialog="true"]'
+const overlaySelector = '[data-arkme-call-tour-running], [data-arkme-self-tour-running], [data-arkme-recording-tour-panel], [data-arkme-recording-tour-running], [role="dialog"], [role="alertdialog"], [role="menu"], dialog[open], [data-arkme-notification-blocking-overlay="true"], [data-arkme-web-login-dialog="true"]'
 const overflow = { adjustX: true, adjustY: true, shiftX: 12, shiftY: 12 }
 const placements: TourProps['builtinPlacements'] = {
   right: { points: ['cl', 'cr'], offset: [14, 0], overflow, autoArrow: true },
@@ -371,7 +371,7 @@ export function ArkmeHomeTour({ auth, blocked, routeActive, notificationRevision
         if (observers.has(ownerDocument) || ownerDocument.body === null) return
         const observer = new MutationObserver(schedule)
         observer.observe(ownerDocument.body, { childList: true, subtree: true, attributes: true,
-          attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'inert', 'role', 'open', 'data-arkme-home-tour-ready', 'data-arkme-home-tour-account', 'data-arkme-home-tour-target', 'data-arkme-recording-tour-running', 'data-arkme-harness-onboarding'] })
+          attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'inert', 'role', 'open', 'data-arkme-home-tour-ready', 'data-arkme-home-tour-account', 'data-arkme-home-tour-target', 'data-arkme-recording-tour-running', 'data-arkme-self-tour-running', 'data-arkme-call-tour-running', 'data-arkme-harness-onboarding'] })
         observers.set(ownerDocument, observer)
       })
       const iframes = new Set(document.querySelectorAll<HTMLIFrameElement>('iframe'))

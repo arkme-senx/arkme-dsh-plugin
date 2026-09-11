@@ -107,6 +107,7 @@ import { ArkmeMarketplace } from './ArkmeMarketplace.js'
 import {
   ArkmeSourceBreadcrumb,
 } from './ArkmeSourceBreadcrumb.js'
+import { useSendToSelfTour } from './ArkmeSendToSelfTour.js'
 import {
   ArkmeTopicDirectoryPopover, type ArkmeSelfSourcesResolution, type ArkmeTopicCreateOpener,
 } from './ArkmeTopicDirectoryPopover.js'
@@ -6653,6 +6654,17 @@ export function ArkmeSurface({
     || memberRecords !== undefined
     || forwardTargetPicker !== undefined
 
+  const selfTour = useSendToSelfTour({
+    root: panelRef,
+    composer: textareaRef,
+    auth,
+    active: activeConversation && ui.mode === 'source' && isArkmeSelfWorkspaceSource(selectedSource),
+    blocked: authView !== 'content' || busy || ui.webLoginDialogOpen === true
+      || localNotificationBlockingOverlayOpen || activeSelectMode !== undefined || activeRecordReeditComposer !== undefined,
+    deepLink: ui.conversationTarget !== undefined,
+    notificationRevision: notificationActivationRevision,
+  })
+
   useLayoutEffect(() => {
     const target = notificationActivation.source
     if (target === undefined || typeof document === 'undefined') return
@@ -6729,6 +6741,7 @@ export function ArkmeSurface({
 
   return (
     <>
+    {selfTour.panel}
     {activeConversation && topicAssignment?.scopeKey === topicAssignmentScopeKey && <ArkmeRecordTopicAssignmentDialog
       key={topicAssignmentScopeKey}
       source={topicAssignment.source} assignmentRefs={topicAssignment.assignmentRefs} firstRecordText={topicAssignment.firstRecordText}
@@ -6810,6 +6823,7 @@ export function ArkmeSurface({
                 key={`source-breadcrumb:${conversationOverlayKey}`}
                 selectedSource={selectedSource}
                 sources={selfSources}
+                tourOpen={selfTour.topicMenuOpen}
                 loading={selfSourcesLoading}
                 {...(selfSourcesError === undefined ? {} : { error: selfSourcesError })}
                 onSelect={activateSelfSource}

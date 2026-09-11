@@ -263,11 +263,13 @@ function topicCountLabel(count: number | undefined): string {
 export function ArkmeSourceBreadcrumb({
   selectedSource, sources, loading = false, error, onSelect, onSelectAggregate,
   onCreateTopic, onCreateChildTopic, onRenameTopic, onDissolveTopic, onRetry, onMoveTopic, activeDissolve,
+  tourOpen,
 }: {
   selectedSource: ArkmeSourceItem | undefined
   sources: readonly ArkmeSourceItem[]
   loading?: boolean
   error?: string
+  tourOpen?: boolean | undefined
   onSelect(source: ArkmeSourceItem): void
   onSelectAggregate(): void
   onCreateTopic?(): void
@@ -283,7 +285,8 @@ export function ArkmeSourceBreadcrumb({
   ): Promise<void>
   activeDissolve?: ArkmeTopicDissolveTask
 }) {
-  const [open, setOpen] = useState(false)
+  const [manualOpen, setOpen] = useState(false)
+  const open = tourOpen ?? manualOpen
   const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
   const [sort, setSort] = useState<ArkmeSelfTopicSort>('latest')
   const [draggingSourceRef, setDraggingSourceRef] = useState<string>()
@@ -452,12 +455,15 @@ export function ArkmeSourceBreadcrumb({
   useEffect(() => {
     if (!open) return
     const closeOutside = (event: PointerEvent) => {
+      // The tour owns visibility, including pointer interaction with its portal.
+      if (tourOpen !== undefined) return
       if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
         setOpen(false)
         setTopicMenuSource(undefined)
       }
     }
     const closeEscape = (event: KeyboardEvent) => {
+      if (tourOpen !== undefined) return
       if (event.key !== 'Escape') return
       if (topicMenuSource !== undefined) setTopicMenuSource(undefined)
       else setOpen(false)
@@ -468,7 +474,7 @@ export function ArkmeSourceBreadcrumb({
       document.removeEventListener('pointerdown', closeOutside, true)
       document.removeEventListener('keydown', closeEscape, true)
     }
-  }, [open, topicMenuSource])
+  }, [open, topicMenuSource, tourOpen])
 
   useEffect(() => {
     if (!open || !pendingSelectedFocusRef.current) return
@@ -554,7 +560,9 @@ export function ArkmeSourceBreadcrumb({
     {activeDissolveRunning && activeDissolveTopic !== undefined && <button
       type="button" aria-label="查看解散进度" style={styles.dissolveProgressTrigger} onClick={openActiveDissolve}
     ><span aria-hidden style={styles.dissolveProgressIcon}><ArkmeTopicLoadingIcon /></span>{activeDissolveLabel}</button>}
-    {open && <div role="tree" aria-label="主题" style={styles.menu}>
+    {open && <div role="tree" aria-label="主题" data-arkme-self-topic-menu style={{ ...styles.menu,
+      ...(tourOpen ? { maxHeight: 'min(680px, calc(100vh - 116px), var(--arkme-self-tour-menu-max-height, 680px))' } : {}),
+    }}>
       <div role="group" aria-label="主题排序" style={styles.sortGroup}>
         {([
           ['latest', '最新'],

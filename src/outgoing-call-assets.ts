@@ -35,6 +35,7 @@ const ASSETS = {
   'avatar-self.png': { contentType: 'image/png', cacheControl: 'public, max-age=31536000, immutable' },
   'call-demo-peer.png': { contentType: 'image/png', cacheControl: 'public, max-age=31536000, immutable' },
   'call-demo-self.png': { contentType: 'image/png', cacheControl: 'public, max-age=31536000, immutable' },
+  'call-demo-utterance-v1.m4a': { contentType: 'audio/mp4', cacheControl: 'public, max-age=31536000, immutable' },
   'manifest.json': { contentType: 'application/json; charset=utf-8', cacheControl: 'no-store' },
 } as const
 
