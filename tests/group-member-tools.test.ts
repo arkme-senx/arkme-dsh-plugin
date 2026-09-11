@@ -16,6 +16,9 @@ describe('group member tools', () => {
     expect(definitions.map(tool => tool.name)).toEqual([
       'arkme_group_member_candidates',
       'arkme_group_member_add',
+      'arkme_group_member_remove',
+      'arkme_group_join_restrictions',
+      'arkme_group_join_restriction_set',
     ])
   })
 })

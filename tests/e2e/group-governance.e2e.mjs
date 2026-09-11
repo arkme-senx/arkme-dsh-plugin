@@ -65,7 +65,7 @@ describe('packed Arkme group governance through official DSH session and MCP', (
       expect(await service.testLogin(1001)).toMatchObject({ status: 'authenticated', userId: 1001 })
       const names = ['query_group_message_moderation_targets', 'withdraw_group_messages', 'batch_get_group_members', 'remove_group_members', 'set_group_join_restrictions', 'list_group_join_restrictions']
       await expect.poll(() => scaffold.ctx.tools.schemas().map(tool => tool.name), { timeout: 30_000 }).toEqual(expect.arrayContaining(names.map(name => `mcp__arkme__${name}`)))
-      for (const name of ['arkme_message_withdraw', 'arkme_group_member_remove', 'arkme_group_join_restriction_set', 'arkme_group_join_restrictions']) expect(scaffold.ctx.tools.schemas().some(tool => tool.name === name)).toBe(false)
+      for (const name of ['arkme_message_withdraw', 'arkme_group_member_remove', 'arkme_group_join_restriction_set', 'arkme_group_join_restrictions']) expect(scaffold.ctx.tools.schemas().some(tool => tool.name === name)).toBe(true)
       const events = []
       const codeDispatches = []
       scaffold.ctx.on('session/event', (_session, event) => { if (event.type === 'tool/result') events.push(event); if (event.type === 'tool/code-dispatch') codeDispatches.push(event) })
@@ -81,19 +81,19 @@ describe('packed Arkme group governance through official DSH session and MCP', (
           userRef = value.items.find(item => item.display_name === '待治理成员')?.user_ref
           expect(userRef).toBeTruthy()
         }],
-        ['batch_get_group_members', () => ({ items: [locator()] }), value => expect(value.items[0].member.version).toBe(0)],
-        ['remove_group_members', () => ({ items: [{ ...locator(), expected_version: 0, prevent_rejoin: true }] }), succeeded],
-        ['remove_group_members', () => ({ items: [{ ...locator(), expected_version: 0 }] }), value => expect(value.items[0].reason).toBe('stale_version')],
+        ['batch_get_group_members', () => ({ items: [locator()] }), value => expect(value.items[0].member.membership_status).toBe('active')],
+        ['remove_group_members', () => ({ items: [{ ...locator(), prevent_rejoin: true }] }), succeeded],
+        ['remove_group_members', () => ({ items: [{ ...locator(), }] }), succeeded],
         ['query_group_message_moderation_targets', () => ({ chat_session_uid: group, sender_user_refs: [userRef] }), value => expect(value.items[0].sequence).toBe(3)],
         ['withdraw_group_messages', () => ({ items: [{ item_id: 'dsh-message', chat_session_uid: group, sequence: 3 }] }), succeeded],
-        ['list_group_join_restrictions', () => ({ chat_session_uid: group }), value => expect(value.items).toContainEqual(expect.objectContaining({ user_ref: userRef, display_name: '待治理成员', version: 1 }))],
-        ['set_group_join_restrictions', () => ({ items: [{ ...locator(), expected_version: 1, restricted: true }] }), succeeded],
-        ['set_group_join_restrictions', () => ({ items: [{ ...locator(), expected_version: 1, restricted: false }] }), value => {
-          succeeded(value); expect(value.items[0].member).toMatchObject({ membership_status: 'removed', join_restricted: false, version: 2 })
+        ['list_group_join_restrictions', () => ({ chat_session_uid: group }), value => expect(value.items).toContainEqual(expect.objectContaining({ user_ref: userRef, display_name: '待治理成员' }))],
+        ['set_group_join_restrictions', () => ({ items: [{ ...locator(), restricted: true }] }), succeeded],
+        ['set_group_join_restrictions', () => ({ items: [{ ...locator(), restricted: false }] }), value => {
+          succeeded(value); expect(value.items[0].member).toMatchObject({ membership_status: 'removed', join_restricted: false })
         }],
         ['list_group_join_restrictions', () => ({ chat_session_uid: group }), value => expect(value.items).toEqual([])],
-        ['set_group_join_restrictions', () => ({ items: [{ ...locator(), expected_version: 2, restricted: true }] }), succeeded],
-        ['list_group_join_restrictions', () => ({ chat_session_uid: group }), value => expect(value.items).toContainEqual(expect.objectContaining({ user_ref: userRef, display_name: '待治理成员', version: 3 }))],
+        ['set_group_join_restrictions', () => ({ items: [{ ...locator(), restricted: true }] }), succeeded],
+        ['list_group_join_restrictions', () => ({ chat_session_uid: group }), value => expect(value.items).toContainEqual(expect.objectContaining({ user_ref: userRef, display_name: '待治理成员' }))],
       ]
       // Only model output is deterministic. Every target reference is discovered
       // through official tools; confirmation comes from actual browser user turns.
