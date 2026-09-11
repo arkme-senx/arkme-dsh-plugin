@@ -26,6 +26,7 @@ interface CallTarget {
   key: string
   displayName: string
   relation: string
+  sample?: boolean | undefined
   avatarRef?: string | undefined
   peerUserId?: number | undefined
   contactRef?: string | undefined
@@ -96,11 +97,8 @@ const SAMPLE_CALLS: readonly ArkmeCallHistoryItem[] = [
 ]
 
 const SAMPLE_CONTACTS: readonly ArkmeCallRecentContact[] = [
-  { userId: 1, displayName: '阿森' },
   { userId: 2, displayName: '林小满' },
-  { userId: 3, displayName: 'Tison' },
   { userId: 4, displayName: '妈妈' },
-  { userId: 5, displayName: '颜格蕾' },
 ]
 
 function sampleDetailForCall(callRef: string): ArkmeCallDetail | undefined {
@@ -290,6 +288,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center', gap: 9, borderRadius: 13, background: arkmeTheme.layer1, boxSizing: 'border-box',
   },
   pickerText: { minWidth: 0, display: 'grid', gap: 3 },
+  pickerNameLine: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
   pickerName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.text, fontSize: 13, lineHeight: '18px', fontWeight: 650 },
   pickerSub: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '15px' },
   pickerActions: { flex: 'none', display: 'flex', alignItems: 'center', gap: 6 },
@@ -297,6 +296,7 @@ const styles: Record<string, CSSProperties> = {
     width: 32, height: 32, display: 'grid', placeItems: 'center', border: `1px solid ${arkmeTheme.border}`,
     borderRadius: 10, background: arkmeTheme.elevated, color: arkmeTheme.text, cursor: 'pointer',
   },
+  pickerRoundDisabled: { cursor: 'default', opacity: .45 },
   pickerList: { minHeight: 0, overflowY: 'visible', display: 'grid', gap: 3 },
   pickerRowFrame: {
     minHeight: 56, width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto',
@@ -446,6 +446,7 @@ function targetForContact(contact: ArkmeCallRecentContact, options: { relation?:
     key: `recent:${String(contact.userId ?? name)}:${name}`,
     displayName: name,
     relation: options.relation ?? '最近联系人',
+    ...(options.usingSampleContacts ? { sample: true } : {}),
     ...(cleanAvatarRef(contact.avatarRef) === undefined ? {} : { avatarRef: cleanAvatarRef(contact.avatarRef) }),
     ...(peerUserId === undefined ? {} : { peerUserId, identityKey: userIdentityKey(peerUserId) }),
   }
@@ -941,13 +942,14 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
       <p style={styles.sectionLabel}>最近联系人</p>
       <div style={styles.contacts} aria-label="最近联系人" data-arkme-call-recent-contacts="rail">
         {contacts.slice(0, 5).map(contact => <button
-	          key={`${String(contact.userId)}:${contact.displayName}`}
-	          type="button"
-	          style={styles.contact}
-	          aria-label={`选择${contact.displayName}通话方式`}
-	          onClick={event => { openContact(contact, event) }}
-	        >
-          <CallAvatar name={contact.displayName} avatarRef={cleanAvatarRef(contact.avatarRef) ?? avatarRefForName(contact.displayName)} size={30} />
+          key={`${String(contact.userId)}:${contact.displayName}`}
+          type="button"
+          style={usingSampleContacts ? { ...styles.contact, cursor: 'default' } : styles.contact}
+          aria-label={usingSampleContacts ? `${contact.displayName}示例联系人` : `选择${contact.displayName}通话方式`}
+          aria-disabled={usingSampleContacts || undefined}
+          onClick={usingSampleContacts ? undefined : event => { openContact(contact, event) }}
+        >
+          <CallAvatar name={contact.displayName} avatarRef={cleanAvatarRef(contact.avatarRef) ?? avatarRefForName(contact.displayName)} assetUrl={usingSampleContacts ? sampleAvatarUrl(contact.displayName) : undefined} size={30} />
           <span style={styles.contactName}>{contact.displayName}</span>
         </button>)}
       </div>
@@ -1033,22 +1035,28 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
           <div style={styles.pickerList} data-arkme-call-picker-list="true">
             {filteredPickerTargets.length > 0 ? filteredPickerTargets.map(target => {
               const unavailable = !targetCanResolve(target)
+              const sample = target.sample === true
               return <div key={target.key} style={styles.pickerRowFrame}>
                 <button
                   type="button"
-                  style={{ ...styles.pickerRow, ...(unavailable ? styles.pickerRowDisabled : {}) }}
-                  aria-label={unavailable ? `${target.displayName}暂不可直接呼叫` : `选择${target.displayName}通话方式`}
-                  onClick={event => { openTargetTypePicker(target, event?.currentTarget, { keepPickerOpen: true }) }}
+                  style={{ ...styles.pickerRow, ...(unavailable && !sample ? styles.pickerRowDisabled : {}) }}
+                  aria-label={sample ? `${target.displayName}示例联系人，暂不可发起通话` : unavailable ? `${target.displayName}暂不可直接呼叫` : `选择${target.displayName}通话方式`}
+                  aria-disabled={sample || undefined}
+                  disabled={sample}
+                  onClick={sample ? undefined : event => { openTargetTypePicker(target, event?.currentTarget, { keepPickerOpen: true }) }}
                 >
-                  <CallAvatar name={target.displayName} avatarRef={target.avatarRef} size={36} />
+                  <CallAvatar name={target.displayName} avatarRef={target.avatarRef} assetUrl={sample ? sampleAvatarUrl(target.displayName) : undefined} size={36} />
                   <span style={styles.pickerText}>
-                    <strong style={styles.pickerName}>{target.displayName}</strong>
+                    <span style={styles.pickerNameLine}>
+                      <strong style={styles.pickerName}>{target.displayName}</strong>
+                      {sample && <em style={styles.sampleBadge}>示例</em>}
+                    </span>
                     <small style={styles.pickerSub}>{targetSubtitle(target)}</small>
                   </span>
                 </button>
                 <span style={styles.pickerActions}>
-                  <button type="button" style={styles.pickerRound} aria-label={`直接和${target.displayName}语音通话`} onClick={() => { requestTargetCall(target, 'audio') }}><PhoneCall size={16} /></button>
-                  <button type="button" style={styles.pickerRound} aria-label={`直接和${target.displayName}视频通话`} onClick={() => { requestTargetCall(target, 'video') }}><CallVideoIcon size={16} /></button>
+                  <button type="button" style={{ ...styles.pickerRound, ...(sample ? styles.pickerRoundDisabled : {}) }} aria-label={sample ? `${target.displayName}示例联系人，语音通话不可用` : `直接和${target.displayName}语音通话`} aria-disabled={sample || undefined} disabled={sample} onClick={sample ? undefined : () => { requestTargetCall(target, 'audio') }}><PhoneCall size={16} /></button>
+                  <button type="button" style={{ ...styles.pickerRound, ...(sample ? styles.pickerRoundDisabled : {}) }} aria-label={sample ? `${target.displayName}示例联系人，视频通话不可用` : `直接和${target.displayName}视频通话`} aria-disabled={sample || undefined} disabled={sample} onClick={sample ? undefined : () => { requestTargetCall(target, 'video') }}><CallVideoIcon size={16} /></button>
                 </span>
               </div>
             }) : <div style={styles.pickerEmpty}>
