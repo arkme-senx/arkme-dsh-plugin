@@ -54,7 +54,7 @@ function foregroundDocuments() {
  return docs
 }
 function blockedByOverlay(docs: Document[]) {
- return document.body.hasAttribute('data-arkme-home-tour-running') || docs.some(doc => [...doc.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"], [role="menu"], dialog[open], [data-arkme-notification-blocking-overlay="true"], [data-arkme-web-login-dialog="true"], [data-arkme-home-tour-panel]')].some(visible))
+ return document.body.hasAttribute('data-arkme-home-tour-running') || docs.some(doc => [...doc.querySelectorAll<HTMLElement>('[data-arkme-call-tour-running], [role="dialog"], [role="alertdialog"], [role="menu"], dialog[open], [data-arkme-notification-blocking-overlay="true"], [data-arkme-web-login-dialog="true"], [data-arkme-home-tour-panel]')].some(visible))
 }
 export interface RecordingTourOptions {
  root: RefObject<HTMLElement>
@@ -147,7 +147,7 @@ export function useRecordingTour({ root, auth, active, blocked, deepLink, notifi
    for (const [doc, observer] of observers) if (!docs.includes(doc)) { observer.disconnect(); observers.delete(doc) }
    for (const doc of docs) if (!observers.has(doc) && doc.body) {
     const observer = new MutationObserver(schedule)
-    observer.observe(doc.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['style','class','hidden','inert','aria-hidden','role','open','data-arkme-recording-tour-target','data-arkme-home-tour-running'] })
+    observer.observe(doc.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['style','class','hidden','inert','aria-hidden','role','open','data-arkme-recording-tour-target','data-arkme-home-tour-running','data-arkme-call-tour-running'] })
     observers.set(doc,observer)
    }
    for (const iframe of document.querySelectorAll<HTMLIFrameElement>('iframe')) if (!frameListeners.has(iframe)) { iframe.addEventListener('load',schedule); frameListeners.set(iframe,schedule) }

@@ -116,6 +116,15 @@ afterEach(async () => {
 })
 
 describe('home tour browser behavior', () => {
+  it('waits while the send-to-self guide owns the foreground', async () => {
+    const owner = document.createElement('section')
+    owner.setAttribute('data-arkme-self-tour-running', 'true')
+    document.body.append(owner)
+    await render(); expect(panel()).toBeNull()
+    owner.removeAttribute('data-arkme-self-tour-running')
+    await settle(); expect(panel()).not.toBeNull()
+  })
+
   it('does not consume an attempt or flash while the Harness onboarding step is still deciding', async () => {
     delete harnessFrame.contentDocument!.body.dataset.arkmeHarnessOnboarding
     await render()
