@@ -7413,6 +7413,7 @@ export function ArkmeSurface({
                 ? { ...current, recoveryConfirmation: false } : current)}
               onConfirm={() => { void recoverRecordReedit() }}
             />}
+            {source?.kind === 'private_chat' && composerDestinationHint}
             {activeComposerTargetItem !== undefined && <div
               style={styles.composerExtensionTarget}
               {...(activeRecordReeditComposer === undefined
@@ -7446,7 +7447,6 @@ export function ArkmeSurface({
                 }}
               >×</button>
             </div>}
-            {source?.kind === 'private_chat' && composerDestinationHint}
             <div
               ref={composerRef}
               className="arkme-conversation-composer-inner"

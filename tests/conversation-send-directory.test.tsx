@@ -4643,15 +4643,18 @@ describe('conversation send directory projection', () => {
     })
     expect(targetPreview.findAll(node => node.children.some(child => typeof child === 'string' && child.includes('正在延展')))).toHaveLength(0)
     const destinationHint = renderer!.root.findByProps({ 'data-arkme-composer-destination-hint': 'true' })
-    // Desktop NoteInput places private-chat hints between the extension and
-    // the separately decorated input card, not inside either of them.
+    // Keep the recipient hint above the extension, with the preview attached
+    // directly to the separately decorated input card.
     expect(destinationHint.parent).toBe(targetPreview.parent)
     expect(destinationHint.parent!.children.indexOf(destinationHint))
-      .toBeGreaterThan(destinationHint.parent!.children.indexOf(targetPreview))
+      .toBeLessThan(destinationHint.parent!.children.indexOf(targetPreview))
     expect(destinationHint.findAll(node => node.children.includes('正在给 '))).toHaveLength(1)
     expect(destinationHint.findAll(node => node.children.includes('Harness4')).length).toBeGreaterThan(0)
     expect(destinationHint.findAll(node => node.children.includes(' 发消息'))).toHaveLength(1)
     const composerSurface = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
+    expect(composerSurface.parent).toBe(targetPreview.parent)
+    expect(targetPreview.parent!.children.indexOf(composerSurface))
+      .toBe(targetPreview.parent!.children.indexOf(targetPreview) + 1)
     expect(composerSurface.props.style).toMatchObject({
       borderRadius: '0 0 15px 15px',
       background: 'var(--arkme-primary-composer-idle, #f6f6f6)',
