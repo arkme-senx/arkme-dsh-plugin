@@ -3568,6 +3568,8 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.active'
 
 export type ArkmeHostOperation = ArkmePluginOperation
+  | 'emoji.recent.list'
+  | 'emoji.recent.record'
   | 'topic.candidates'
   | 'source.record-topic.assign'
   | 'provider.instance'

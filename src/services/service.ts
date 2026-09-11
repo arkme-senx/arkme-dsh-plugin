@@ -9,6 +9,7 @@ import {
 } from '../request-coordinator.js'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from '../keychain-store.js'
 import { ArkmeAccountSessionOwner } from '../account-session-owner.js'
+import type { RecentEmojiStore } from '../emoji-recent.js'
 import type {
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
@@ -26,7 +27,7 @@ import type {
 import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
-export interface StateStore {
+export interface StateStore extends RecentEmojiStore {
   readDirectoryCache?(userId: number): Promise<import('../types.js').ArkmeSourceList | undefined>
   writeDirectoryCache?(userId: number, page: import('../types.js').ArkmeSourceList): Promise<void>
   readAvatarCache?(userId: number, imageRef: string): Promise<import('../types.js').ArkmeImageBytes | undefined>

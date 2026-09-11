@@ -2042,6 +2042,8 @@ export async function dispatchArkmeHostOperation(
         },
       )
     }
+    case 'emoji.recent.list': return await service.recentEmojiIds(stringParam(params, 'accountKey'), requestSignal)
+    case 'emoji.recent.record': return await service.recordRecentEmoji(stringParam(params, 'accountKey'), stringParam(params, 'emojiId'), requestSignal)
     case 'favorite-stickers.list': return await service.favoriteStickers()
     case 'favorite-stickers.add': return await service.addFavoriteSticker(favoriteStickerItemParam(params))
     case 'favorite-stickers.send': return await service.sendFavoriteSticker(

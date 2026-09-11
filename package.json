@@ -89,6 +89,7 @@
   },
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",
+    "@rc-component/tour": "2.4.0",
     "@tiptap/core": "^3.31.0",
     "@tiptap/extension-code-block": "^3.31.0",
     "@tiptap/extension-table": "^3.31.0",

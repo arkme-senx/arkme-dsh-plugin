@@ -1,6 +1,6 @@
 import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
 import { CallAvatar, cleanAvatarRef, formatDuration, sampleAvatarUrl } from './call-detail-presentation.js'
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
@@ -21,11 +21,15 @@ import { callArkme, ArkmeClientError } from './api.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
+import { arkmeAuthStore } from './auth-store.js'
+import { arkmeUi } from './ui-controller.js'
+import { useCallTour } from './ArkmeCallTour.js'
 
 interface CallTarget {
   key: string
   displayName: string
   relation: string
+  sample?: boolean | undefined
   avatarRef?: string | undefined
   peerUserId?: number | undefined
   contactRef?: string | undefined
@@ -96,11 +100,8 @@ const SAMPLE_CALLS: readonly ArkmeCallHistoryItem[] = [
 ]
 
 const SAMPLE_CONTACTS: readonly ArkmeCallRecentContact[] = [
-  { userId: 1, displayName: '阿森' },
   { userId: 2, displayName: '林小满' },
-  { userId: 3, displayName: 'Tison' },
   { userId: 4, displayName: '妈妈' },
-  { userId: 5, displayName: '颜格蕾' },
 ]
 
 function sampleDetailForCall(callRef: string): ArkmeCallDetail | undefined {
@@ -126,6 +127,7 @@ function sampleDetailForCall(callRef: string): ArkmeCallDetail | undefined {
     transcriptSegments: [
       {
         segmentId: 'sample-video-1',
+        audioUrl: '/arkme-self/api/call/call-demo-utterance-v1.m4a',
         speakerDisplayName: '林小满',
         speakerUserId: 101,
         text: '主画面已经比较稳了，我建议把 Arkme 找到结论的过程放到最前面。',
@@ -290,6 +292,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center', gap: 9, borderRadius: 13, background: arkmeTheme.layer1, boxSizing: 'border-box',
   },
   pickerText: { minWidth: 0, display: 'grid', gap: 3 },
+  pickerNameLine: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
   pickerName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.text, fontSize: 13, lineHeight: '18px', fontWeight: 650 },
   pickerSub: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '15px' },
   pickerActions: { flex: 'none', display: 'flex', alignItems: 'center', gap: 6 },
@@ -297,6 +300,7 @@ const styles: Record<string, CSSProperties> = {
     width: 32, height: 32, display: 'grid', placeItems: 'center', border: `1px solid ${arkmeTheme.border}`,
     borderRadius: 10, background: arkmeTheme.elevated, color: arkmeTheme.text, cursor: 'pointer',
   },
+  pickerRoundDisabled: { cursor: 'default', opacity: .45 },
   pickerList: { minHeight: 0, overflowY: 'visible', display: 'grid', gap: 3 },
   pickerRowFrame: {
     minHeight: 56, width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto',
@@ -446,6 +450,7 @@ function targetForContact(contact: ArkmeCallRecentContact, options: { relation?:
     key: `recent:${String(contact.userId ?? name)}:${name}`,
     displayName: name,
     relation: options.relation ?? '最近联系人',
+    ...(options.usingSampleContacts ? { sample: true } : {}),
     ...(cleanAvatarRef(contact.avatarRef) === undefined ? {} : { avatarRef: cleanAvatarRef(contact.avatarRef) }),
     ...(peerUserId === undefined ? {} : { peerUserId, identityKey: userIdentityKey(peerUserId) }),
   }
@@ -538,6 +543,10 @@ function typePickerPlacementFromAnchor(anchor: HTMLElement | undefined): TypePic
 }
 
 export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurfaceProps = {}) {
+  const surfaceRef = useRef<HTMLElement>(null)
+  const tourPickerOwned = useRef(false)
+  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
+  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const [query, setQuery] = useState('')
   const [page, setPage] = useState<ArkmeCallHistoryPage>()
   const [historyState, setHistoryState] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -803,8 +812,33 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
     setNotice('')
   }, [])
 
+  const prepareTourStep = useCallback((step: number) => {
+    tourPickerOwned.current = step === 1
+    setPickerOpen(step === 1)
+    setPickerQuery('')
+    setTypeTarget(undefined)
+    setUnavailableTarget(undefined)
+    setNotice('')
+    if (step >= 2) setQuery('')
+    if (step >= 3) selectItem(SAMPLE_CALLS[0]!)
+  }, [selectItem])
+  const closeTourPicker = useCallback(() => {
+    if (tourPickerOwned.current) { tourPickerOwned.current = false; setPickerOpen(false) }
+  }, [])
+  const tour = useCallTour({ root: surfaceRef, auth: auth.auth, active: ui.mode === 'calls',
+    ready: historyState === 'ready', blocked: auth.busy || ui.webLoginDialogOpen === true,
+    explicitEntry: initialPickerOpen, notificationRevision: ui.notificationActivationRevision ?? 0,
+    onStep: prepareTourStep, onExit: closeTourPicker })
+  const finishTour = tour.finish
+  const handleOpenPicker = () => {
+    if (tour.current === 0) tour.change(1)
+    else { finishTour(false); openPicker() }
+  }
+  const closePicker = () => { finishTour(); setPickerOpen(false) }
+
   const requestTargetCall = useCallback((target: CallTarget, mediaType: 'audio' | 'video') => {
     if (callingKey !== '') return
+    finishTour(false)
     if (!targetCanResolve(target)) {
       setPickerOpen(false)
       setTypeTarget(target)
@@ -848,15 +882,16 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
         setUnavailableTarget(targetCanResolve(target) ? undefined : target)
       })
       .finally(() => { setCallingKey('') })
-  }, [callingKey, rememberSource])
+  }, [callingKey, rememberSource, finishTour])
 
   const openTargetTypePicker = useCallback((target: CallTarget, anchor?: HTMLElement, options: { keepPickerOpen?: boolean } = {}) => {
+    finishTour(false)
     if (options.keepPickerOpen !== true) setPickerOpen(false)
     setTypeTarget(target)
     setTypePickerPlacement(typePickerPlacementFromAnchor(anchor))
     setUnavailableTarget(targetCanResolve(target) ? undefined : target)
     setNotice('')
-  }, [])
+  }, [finishTour])
 
   const startSelectedCall = useCallback((mediaType: 'audio' | 'video') => {
     const item = selectedItem
@@ -902,7 +937,10 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
         type="button"
         aria-pressed={selected}
         style={{ ...styles.callRow, ...(selected ? styles.callRowSelected : {}) }}
-        onClick={() => { selectItem(item) }}
+        onClick={() => {
+          if (tour.current === 2 && item.callRef === 'sample-video') tour.change(3)
+          else { finishTour(false); selectItem(item) }
+        }}
       >
         <CallAvatar name={item.peerDisplayName} avatarRef={sample ? undefined : avatarRefForCall(item)} assetUrl={sample ? sampleAvatarUrl(item.peerDisplayName) : undefined} />
         <span style={styles.callContent}>
@@ -929,25 +967,26 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
   const selectedIsSample = selectedItem?.callRef.startsWith('sample-') === true
   const selectedSampleAvatarUrl = selectedItem === undefined || !selectedIsSample ? undefined : sampleAvatarUrl(selectedItem.peerDisplayName)
 
-  return <section style={styles.root} aria-label="通话" data-arkme-call-surface="true">
+  return <section ref={surfaceRef} style={styles.root} aria-label="通话" data-arkme-call-surface="true">
     <aside style={styles.browser}>
       <header style={styles.heading}>
         <h1 style={styles.title}>通话</h1>
         <p style={styles.subtitle}>让每一次重要的声音与相见，都能被好好记住。</p>
       </header>
-      <button type="button" style={styles.startWide} aria-haspopup="dialog" aria-expanded={pickerOpen} onClick={() => { openPicker() }}>
+      <button type="button" data-arkme-call-tour-target="start" style={styles.startWide} aria-haspopup="dialog" aria-expanded={pickerOpen} onClick={handleOpenPicker}>
         <PhoneCall size={17} />发起通话
       </button>
       <p style={styles.sectionLabel}>最近联系人</p>
       <div style={styles.contacts} aria-label="最近联系人" data-arkme-call-recent-contacts="rail">
         {contacts.slice(0, 5).map(contact => <button
-	          key={`${String(contact.userId)}:${contact.displayName}`}
-	          type="button"
-	          style={styles.contact}
-	          aria-label={`选择${contact.displayName}通话方式`}
-	          onClick={event => { openContact(contact, event) }}
-	        >
-          <CallAvatar name={contact.displayName} avatarRef={cleanAvatarRef(contact.avatarRef) ?? avatarRefForName(contact.displayName)} size={30} />
+          key={`${String(contact.userId)}:${contact.displayName}`}
+          type="button"
+          style={usingSampleContacts ? { ...styles.contact, cursor: 'default' } : styles.contact}
+          aria-label={usingSampleContacts ? `${contact.displayName}示例联系人` : `选择${contact.displayName}通话方式`}
+          aria-disabled={usingSampleContacts || undefined}
+          onClick={usingSampleContacts ? undefined : event => { openContact(contact, event) }}
+        >
+          <CallAvatar name={contact.displayName} avatarRef={cleanAvatarRef(contact.avatarRef) ?? avatarRefForName(contact.displayName)} assetUrl={usingSampleContacts ? sampleAvatarUrl(contact.displayName) : undefined} size={30} />
           <span style={styles.contactName}>{contact.displayName}</span>
         </button>)}
       </div>
@@ -962,11 +1001,13 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
           aria-label="搜索通话记录"
         />
       </label>
-      <p style={styles.sectionLabel}>最近通话</p>
-      {historyState === 'loading' ? <div style={styles.status}>正在读取通话记录...</div>
-        : historyState === 'error' ? <div style={styles.status}>{historyError || '通话记录暂时不可用'}</div>
-          : callRows.length === 0 ? <div style={styles.status}>{query.trim() === '' ? '还没有通话记录' : '没有符合条件的通话'}</div>
-            : <ul style={styles.list}>{callRows.map(row => renderCallRow(row.item, row.sample))}</ul>}
+      <section data-arkme-call-tour-target="recent" aria-label="最近通话" style={{ minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <p style={styles.sectionLabel}>最近通话</p>
+        {historyState === 'loading' ? <div style={styles.status}>正在读取通话记录...</div>
+          : historyState === 'error' ? <div style={styles.status}>{historyError || '通话记录暂时不可用'}</div>
+            : callRows.length === 0 ? <div style={styles.status}>{query.trim() === '' ? '还没有通话记录' : '没有符合条件的通话'}</div>
+              : <ul style={styles.list}>{callRows.map(row => renderCallRow(row.item, row.sample))}</ul>}
+      </section>
     </aside>
     <main style={styles.content}>
       {selectedItem === undefined ? <div style={styles.empty}>
@@ -974,7 +1015,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
           <PhoneCall size={25} style={styles.emptyIcon} />
           <h2 style={styles.emptyTitle}>从一次问候开始</h2>
           <p style={styles.emptyCopy}>找一位想联系的人，聊过的声音和画面会留在这里。</p>
-          <button type="button" style={styles.startCenter} aria-haspopup="dialog" aria-expanded={pickerOpen} onClick={() => { openPicker() }}>
+          <button type="button" style={styles.startCenter} aria-haspopup="dialog" aria-expanded={pickerOpen} onClick={handleOpenPicker}>
             <Plus size={16} />发起通话
           </button>
         </div>
@@ -992,17 +1033,17 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
             <button type="button" style={styles.iconButton} aria-label={`和${selectedItem.peerDisplayName}视频通话`} onClick={() => { startSelectedCall('video') }}><CallVideoIcon size={19} /></button>
           </div>}
         </header>
-        <ArkmeCallDetailContent key={selectedItem.callRef} selectedItem={selectedItem} detail={detail} detailState={detailState} detailError={detailError} avatarRefForName={avatarRefForName} />
+        <ArkmeCallDetailContent key={selectedItem.callRef} selectedItem={selectedItem} detail={detail} detailState={detailState} detailError={detailError} avatarRefForName={avatarRefForName} tourSample={tour.current !== undefined && tour.current >= 3} />
       </>}
       {pickerOpen && <div
         style={styles.layer}
         role="presentation"
-        onMouseDown={event => { if (event.target === event.currentTarget) setPickerOpen(false) }}
+        onMouseDown={event => { if (event.target === event.currentTarget) closePicker() }}
       >
-        <section style={styles.picker} role="dialog" aria-modal="true" aria-label="选择通话联系人">
+        <section style={styles.picker} role="dialog" aria-modal={tour.current === 1 ? undefined : true} aria-label="选择通话联系人" data-arkme-call-tour-dialog={tour.current === 1 ? 'true' : undefined}>
           <header style={styles.pickerHeader}>
             <h3 style={styles.pickerTitle}>发起通话</h3>
-            <button type="button" style={styles.closeButton} aria-label="关闭联系人选择" onClick={() => { setPickerOpen(false) }}><X size={17} /></button>
+            <button type="button" style={styles.closeButton} aria-label="关闭联系人选择" onClick={closePicker}><X size={17} /></button>
           </header>
           <label style={styles.pickerSearch}>
             <MagnifyingGlass size={16} />
@@ -1024,7 +1065,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
               <strong style={styles.pickerName}>{recommendedTarget.displayName}</strong>
               <small style={styles.pickerSub}>{recommendedTarget.relation}</small>
             </span>
-            <span style={styles.pickerActions}>
+            <span style={styles.pickerActions} data-arkme-call-tour-target="types">
               <button type="button" style={styles.pickerRound} aria-label={`和${recommendedTarget.displayName}语音通话`} onClick={() => { requestTargetCall(recommendedTarget, 'audio') }}><PhoneCall size={17} /></button>
               <button type="button" style={styles.pickerRound} aria-label={`和${recommendedTarget.displayName}视频通话`} onClick={() => { requestTargetCall(recommendedTarget, 'video') }}><CallVideoIcon size={17} /></button>
             </span>
@@ -1033,22 +1074,28 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
           <div style={styles.pickerList} data-arkme-call-picker-list="true">
             {filteredPickerTargets.length > 0 ? filteredPickerTargets.map(target => {
               const unavailable = !targetCanResolve(target)
+              const sample = target.sample === true
               return <div key={target.key} style={styles.pickerRowFrame}>
                 <button
                   type="button"
-                  style={{ ...styles.pickerRow, ...(unavailable ? styles.pickerRowDisabled : {}) }}
-                  aria-label={unavailable ? `${target.displayName}暂不可直接呼叫` : `选择${target.displayName}通话方式`}
-                  onClick={event => { openTargetTypePicker(target, event?.currentTarget, { keepPickerOpen: true }) }}
+                  style={{ ...styles.pickerRow, ...(unavailable && !sample ? styles.pickerRowDisabled : {}) }}
+                  aria-label={sample ? `${target.displayName}示例联系人，暂不可发起通话` : unavailable ? `${target.displayName}暂不可直接呼叫` : `选择${target.displayName}通话方式`}
+                  aria-disabled={sample || undefined}
+                  disabled={sample}
+                  onClick={sample ? undefined : event => { openTargetTypePicker(target, event?.currentTarget, { keepPickerOpen: true }) }}
                 >
-                  <CallAvatar name={target.displayName} avatarRef={target.avatarRef} size={36} />
+                  <CallAvatar name={target.displayName} avatarRef={target.avatarRef} assetUrl={sample ? sampleAvatarUrl(target.displayName) : undefined} size={36} />
                   <span style={styles.pickerText}>
-                    <strong style={styles.pickerName}>{target.displayName}</strong>
+                    <span style={styles.pickerNameLine}>
+                      <strong style={styles.pickerName}>{target.displayName}</strong>
+                      {sample && <em style={styles.sampleBadge}>示例</em>}
+                    </span>
                     <small style={styles.pickerSub}>{targetSubtitle(target)}</small>
                   </span>
                 </button>
                 <span style={styles.pickerActions}>
-                  <button type="button" style={styles.pickerRound} aria-label={`直接和${target.displayName}语音通话`} onClick={() => { requestTargetCall(target, 'audio') }}><PhoneCall size={16} /></button>
-                  <button type="button" style={styles.pickerRound} aria-label={`直接和${target.displayName}视频通话`} onClick={() => { requestTargetCall(target, 'video') }}><CallVideoIcon size={16} /></button>
+                  <button type="button" style={{ ...styles.pickerRound, ...(sample ? styles.pickerRoundDisabled : {}) }} aria-label={sample ? `${target.displayName}示例联系人，语音通话不可用` : `直接和${target.displayName}语音通话`} aria-disabled={sample || undefined} disabled={sample} onClick={sample ? undefined : () => { requestTargetCall(target, 'audio') }}><PhoneCall size={16} /></button>
+                  <button type="button" style={{ ...styles.pickerRound, ...(sample ? styles.pickerRoundDisabled : {}) }} aria-label={sample ? `${target.displayName}示例联系人，视频通话不可用` : `直接和${target.displayName}视频通话`} aria-disabled={sample || undefined} disabled={sample} onClick={sample ? undefined : () => { requestTargetCall(target, 'video') }}><CallVideoIcon size={16} /></button>
                 </span>
               </div>
             }) : <div style={styles.pickerEmpty}>
@@ -1108,5 +1155,6 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
       </div>}
       {notice !== '' && <div role="status" style={styles.notice}>{notice}</div>}
     </main>
+    {tour.panel}
   </section>
 }

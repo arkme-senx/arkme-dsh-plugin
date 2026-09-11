@@ -1,4 +1,5 @@
 import { callArkme } from './api.js'
+import { homeTourDiagnostic } from './home-tour-diagnostics.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import type { ArkmeAvatarImagePort } from './avatar-image-store.js'
 import type { ArkmeClientAccountScope } from './chat-directory-store.js'
@@ -28,18 +29,23 @@ export function createArkmeProviderInstanceGuard(options: ArkmeProviderInstanceG
   return async () => {
     if (pending !== undefined) return await pending
     const check = (async () => {
+      homeTourDiagnostic('provider-check-start', { hadObservedInstance: observedInstanceId !== undefined })
       const instanceId = (await options.loadInstance()).trim()
       if (instanceId === '') throw new Error('Provider instance ID is empty')
       const liveInstanceChanged = observedInstanceId !== undefined && observedInstanceId !== instanceId
       const persistedInstanceChanged = reconcileNavigationProviderInstance(instanceId, options.storage)
       observedInstanceId = instanceId
       const changed = liveInstanceChanged || persistedInstanceChanged
+      homeTourDiagnostic('provider-check-result', { liveInstanceChanged, persistedInstanceChanged, changed })
       if (changed) options.onInvalidate()
       return changed
     })()
     pending = check
     try {
       return await check
+    } catch (error) {
+      homeTourDiagnostic('provider-check-failed')
+      throw error
     } finally {
       if (pending === check) pending = undefined
     }
@@ -68,6 +74,7 @@ export async function recoverArkmeProviderInstanceDirectory(
   options: ArkmeProviderInstanceDirectoryRecoveryOptions,
 ): Promise<void> {
   options.signal?.throwIfAborted()
+  homeTourDiagnostic('provider-directory-recovery-start', { accountKey: options.accountScope })
   options.activateAccount(undefined)
   options.activateAccount(options.accountScope)
   const wait = options.wait ?? (async (delayMillis: number) => {
@@ -83,12 +90,14 @@ export async function recoverArkmeProviderInstanceDirectory(
     await options.refreshRoot(true)
   } catch {
     options.signal?.throwIfAborted()
+    homeTourDiagnostic('provider-directory-recovery-fallback', { accountKey: options.accountScope })
     try {
       await options.refreshRoot(false)
     } catch (initialError) {
       options.signal?.throwIfAborted()
       let lastError: unknown = initialError
       for (const delayMillis of retryDelaysMillis) {
+        homeTourDiagnostic('provider-directory-recovery-retry', { accountKey: options.accountScope, delayMillis })
         if (delayMillis > 0) await wait(delayMillis)
         options.signal?.throwIfAborted()
         try {
@@ -100,9 +109,13 @@ export async function recoverArkmeProviderInstanceDirectory(
           lastError = error
         }
       }
-      if (lastError !== undefined) throw lastError
+      if (lastError !== undefined) {
+        homeTourDiagnostic('provider-directory-recovery-failed', { accountKey: options.accountScope })
+        throw lastError
+      }
     }
   }
   options.signal?.throwIfAborted()
   options.onRefreshed()
+  homeTourDiagnostic('provider-directory-recovery-complete', { accountKey: options.accountScope })
 }

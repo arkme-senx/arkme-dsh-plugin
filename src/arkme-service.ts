@@ -1,4 +1,5 @@
 import { RecordTopicAssignmentService } from './services/record-topic-assignment-service.js'
+import { isRecentEmojiId } from './emoji-recent.js'
 import type { ArkmeRecordTopicAssignmentInput, ArkmeRecordTopicAssignmentResult } from './record-topic-assignment-contract.js'
 import { ConversationDirectoryService } from './services/conversation-directory-service.js'
 import { LocalRecordingDirectorySource } from './recording-directory-source.js'
@@ -1509,6 +1510,28 @@ export class ArkmeService {
   ): Promise<ArkmeSourceSendResult> {
     return await this.chat.sendSourceRich(sourceRef, input, options)
   }
+  private async requireRecentEmojiAccount(accountKey: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
+    const { userId } = await this.runtime.requireSession()
+    signal?.throwIfAborted()
+    if (accountKey !== `${this.config.environment}:${userId}`) {
+      throw new ArkmePluginError('emoji-recent-account-changed', '登录账号已变化，请重新打开表情面板', false, 409)
+    }
+  }
+
+  async recentEmojiIds(accountKey: string, signal?: AbortSignal): Promise<string[]> {
+    await this.requireRecentEmojiAccount(accountKey, signal)
+    signal?.throwIfAborted()
+    return await this.stateStore.recentEmojiIds(accountKey)
+  }
+
+  async recordRecentEmoji(accountKey: string, emojiId: string, signal?: AbortSignal): Promise<string[]> {
+    await this.requireRecentEmojiAccount(accountKey, signal)
+    signal?.throwIfAborted()
+    if (!isRecentEmojiId(emojiId)) throw new ArkmePluginError('emoji-recent-invalid', '表情不存在', false, 400)
+    return await this.stateStore.recordRecentEmoji(accountKey, emojiId)
+  }
+
   async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.favoriteStickers(signal) }
   async addFavoriteSticker(item: ArkmeFavoriteStickerAddInput, signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.addFavoriteSticker(item, signal) }
   async sendFavoriteSticker(sourceRef: string, fileAssetUid: string, options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.sendFavoriteSticker(sourceRef, fileAssetUid, options) }

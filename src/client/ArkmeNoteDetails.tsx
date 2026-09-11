@@ -1,3 +1,4 @@
+import { arkmeDetailExtensionComposerStyles } from './detail-extension-composer-style.js'
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import type { ArkmeProviderCapabilities } from '../types.js'
@@ -89,9 +90,9 @@ const styles: Record<string, CSSProperties> = {
   extensionFooter: { flex: 'none', padding: 0, color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px' },
   extensionComposer: { display: 'flex', flexDirection: 'column' },
   extensionAttachmentPreview: { padding: '8px 16px' },
-  extensionInputBar: { position: 'relative', padding: '12px 16px', borderTop: '0.5px solid #e6e6e6' },
-  extensionInputWrap: { minHeight: 44, maxHeight: 100, display: 'flex', alignItems: 'flex-end', gap: 8, padding: '8px 8px 8px 12px', boxSizing: 'border-box', border: 0, borderRadius: 12, background: '#f6f6f6' },
-  extensionInput: { flex: 1, minWidth: 0, minHeight: 28, maxHeight: 84, boxSizing: 'border-box', fieldSizing: 'content', overflowY: 'auto', resize: 'none', border: 0, outline: 0, padding: '4px 0', background: 'transparent', color: arkmeTheme.text, font: 'inherit', fontSize: 14, lineHeight: '20px' },
+  extensionInputBar: arkmeDetailExtensionComposerStyles.bar,
+  extensionInputWrap: arkmeDetailExtensionComposerStyles.shell,
+  extensionInput: arkmeDetailExtensionComposerStyles.input,
   extensionTool: { width: 18, height: 28, flex: 'none', alignSelf: 'flex-start', display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 6, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer' },
   mentionSuggestions: {
     position: 'absolute', left: 16, right: 16, bottom: 'calc(100% + 8px)', zIndex: 23,

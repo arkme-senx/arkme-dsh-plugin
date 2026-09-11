@@ -45,6 +45,21 @@ function htmlWithGraph(
 }
 
 describe('core-only DeepSeek Harness iframe route', () => {
+  it('loads the onboarding completion bridge after native onboarding packages', async () => {
+    const full = graph()
+    full.entries.push({ id: '@deepseek-ai/dsh-client-ui-settings-models', url: '/welcome.js', rev: 'welcome' })
+    const response = responseDouble()
+    await createHarnessEmbedRouteHandler({
+      getGraph: () => full, installedPackageNames: () => [],
+      readRootHtml: async () => htmlWithGraph(full),
+      onboardingClient: { id: '@senguoyun/dsh-arkme/harness-onboarding', url: '/onboarding.js', rev: 'onboarding' },
+    })({ method: 'GET' } as IncomingMessage, response.value)
+    expect(response.status()).toBe(200)
+    expect(response.body()).toContain('/onboarding.js')
+    const boot = JSON.parse(response.body().match(/globalThis\["__DSH_BOOT__"\] = (.*?)<\/script>/)![1]!) as DshWebBootGraph
+    expect(boot.entries.at(-1)?.inject).toContain('@deepseek-ai/dsh-client-ui-settings-models')
+  })
+
   it('forwards only the same-origin browser cookie when reading an authenticated DSH root', () => {
     expect(dshRootDocumentHeaders({ headers: {} } as IncomingMessage)).toEqual({ Accept: 'text/html' })
     expect(dshRootDocumentHeaders({

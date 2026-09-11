@@ -85,7 +85,11 @@ const styles: Record<string, CSSProperties> = {
   },
   brandImage: { display: 'block', width: 48, height: 28, objectFit: 'cover' },
   brandVersion: { color: '#a5a8af', fontSize: 10, lineHeight: '13px', whiteSpace: 'nowrap' },
-  primary: { minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5 },
+  primary: {
+    minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5,
+    // Keep the existing edge marker and focus outline inside the scroll viewport.
+    margin: '-3px -8px', padding: '3px 8px', overflowY: 'auto', scrollbarWidth: 'none',
+  },
   button: {
     position: 'relative',
     minHeight: 57,
@@ -238,13 +242,17 @@ export function ArkmeProductNavigation({
           v{pluginManifest.version}
         </span>
       </div>}
-      <div style={{ ...styles.primary, ...(compact ? { flexDirection: 'row' as const } : {}) }}>
+      <div style={{ ...styles.primary,
+        ...(compact ? { flexDirection: 'row' as const, margin: 0, padding: 0, overflowY: 'visible' as const }
+          : hosted ? { margin: '-3px -4px', padding: '3px 4px' } : {}),
+      }} data-arkme-home-tour-scroll-container="navigation">
       {navigationItems.map(item => {
         const ItemIcon = item.icon
         const active = item.id === activeId
         const showsUnread = item.id === 'conversations' && conversationUnreadCount > 0
         return <button
           key={item.id}
+          data-arkme-home-tour-target={item.id}
           type="button"
           aria-current={active ? 'page' : undefined}
           aria-label={showsUnread ? `${item.label}，${String(conversationUnreadCount)} 条未读` : undefined}

@@ -44,6 +44,7 @@ export interface DshWebBootGraph {
 
 interface HarnessEmbedRouteOptions {
   modelClient?: DshWebBootEntry
+  onboardingClient?: DshWebBootEntry
   getGraph(): DshWebBootGraph
   installedPackageNames(): readonly string[]
   readRootHtml(request: IncomingMessage): Promise<string>
@@ -238,6 +239,17 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
     try {
       const fullGraph = options.getGraph()
       const projectedGraph = projectHarnessBootGraph(fullGraph, options.installedPackageNames(), options.modelClient)
+      if (options.onboardingClient !== undefined) {
+        const entry = {
+          ...options.onboardingClient,
+          // Register the final step after all native settings/onboarding contributions.
+          inject: [...requiredBootPackages(projectedGraph.entries), ...projectedGraph.entries
+            .filter(item => item.id.startsWith('@deepseek-ai/dsh-client-ui-settings')).map(item => item.id)],
+        }
+        projectedGraph.entries.push(entry)
+        projectedGraph.batches?.push({ phase: 'application', url: entry.url, rev: entry.rev, entries: [entry.id] })
+        projectedGraph.rev = shortHash(`${projectedGraph.rev}:${entry.rev}`)
+      }
       if (options.sessionClient !== undefined) {
         const rev = options.sessionClient.revision
         projectedGraph.entries.push({
