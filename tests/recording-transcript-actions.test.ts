@@ -1,20 +1,19 @@
+import { readCompleteRecordingTranscript } from '../src/recording-transcript-page.js'
 import { describe, expect, it, vi } from 'vitest'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { createArkmeHostApi } from '../src/host-api.js'
 import type { ArkmeService } from '../src/arkme-service.js'
-import { projectRecordingTranscripts, recordingDoubaoProgress } from '../src/recording-presentation.js'
 import { RecordingService, type RecordingServiceDependencies } from '../src/services/recording-service.js'
 import { OwnerRecordingForwardGateway } from '../src/services/recording-forward-gateway.js'
 import type { ServiceRuntime } from '../src/services/service.js'
 import type { RecordingForwardInput } from '../src/recording-forward-contract.js'
-import { recordingComparisonPlaybackTarget } from '../src/client/recordings/recording-transcript-comparison.js'
 
 const date = new Date(2026, 8, 4).getTime()
 const session = { userId: 42, accessToken: 'test-access', refreshToken: 'test-refresh' }
 const source = () => ({
-  session_ls: [{ id: 'audio-session', start_at: date, end_at: date + 20_000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
-  child_ls: [{ id: 'audio-child', session_id: 'audio-session', start_at: 0, has_asr: true, doubao_asr_status: 3,
+  session_ls: [{ id: '100000000000000000000001', start_at: date, end_at: date + 20_000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
+  child_ls: [{ id: '200000000000000000000001', session_id: '100000000000000000000001', start_at: 0, has_asr: true, doubao_asr_status: 3,
     asr: [{ s: 0, e: 4_000, n: 1, t: '系统第一段' }, { s: 5_000, e: 10_000, n: 1, t: '系统第二段' }],
     doubao_asr: [{ s: 500, e: 9_000, n: 1, t: '豆包独立分段', b: 1 }],
   }],
@@ -24,11 +23,36 @@ const input = (itemRefs: string[]): RecordingForwardInput => ({ itemRefs, target
 function fixture() {
   const data = source()
   const forward = vi.fn(async () => ({ recordUid: 'sent' }))
+  const media = { issueRecordingPlaybackMediaRef: vi.fn(async () => 'opaque-media') }
   const requireSession = vi.fn(async () => session)
-  const post = vi.fn(async (path: string) => path.endsWith('one-day-trans') ? data : { spk_ls: [{ id: 'speaker', nick_name: '本人' }] })
+  // These tests exercise sealed forwarding selectors, not backend speaker
+  // inference. Supply the semantic owner facts directly for each source.
+  const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
+    if (path.endsWith('/recordings/query')) return {
+      items: data.session_ls.map(row => ({ recording_uid: row.id, status: 'available', start_at: row.start_at, end_at: row.end_at, duration_ms: row.end_at-row.start_at, owner_version: 1 })), has_more: false,
+    }
+    if (!path.endsWith('/transcript/query')) throw new Error(`unexpected route ${path}`)
+    const owner = data.session_ls.find(row => row.id === body.recording_uid)!
+    const selected = data.child_ls.filter(child => child.session_id === owner.id).flatMap(child => {
+      const rows = body.source === 'primary' ? child.asr : child.doubao_asr
+      return rows.map((row, index) => ({ child, row, index }))
+    }).sort((a,b) => a.child.start_at+a.row.s-b.child.start_at-b.row.s)
+    const offset = Number(body.page_cursor ?? 0)
+    const page = selected.slice(offset, offset + Number(body.limit))
+    return {
+      recording_uid: owner.id, status: 'available', start_at: owner.start_at, revision: 'a'.repeat(64),
+      coverage: { ready_count: 1, processing_count: 0, failed_count: 0, silent_count: 0, candidate_count: 0 },
+      speakers: page.map(() => ({ reference: 'speaker:aaaaaaaaaaaaaaaa', kind: 'named', label: '本人' })),
+      utterances: page.map(({ child, row, index }, position) => ({
+        clip_locator: { child_id: child.id, source: body.source, ordinal: index }, start_offset_ms: child.start_at + row.s, end_offset_ms: child.start_at + row.e,
+        speaker_index: position, text: row.t, utterance_index: offset + position, text_start_offset: 0, text_end_offset: Array.from(row.t).length, text_total_length: Array.from(row.t).length,
+      })), has_more: offset + page.length < selected.length,
+      ...(offset + page.length < selected.length ? { next_page_cursor: String(offset + page.length) } : {}),
+    }
+  })
   const runtime = { config: { maxTextLength: 20000 }, requireSession, authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
-  const service = new RecordingService(runtime, { forwardGateway: { forward, supportsRecordTargets: async () => true } } as unknown as RecordingServiceDependencies)
-  return { data, forward, service, requireSession, post }
+  const service = new RecordingService(runtime, { media, forwardGateway: { forward, supportsRecordTargets: async () => true } } as unknown as RecordingServiceDependencies)
+  return { data, forward, service, requireSession, post, media }
 }
 
 describe('recording transcript owner boundaries', () => {
@@ -39,8 +63,10 @@ describe('recording transcript owner boundaries', () => {
     data.child_ls[0]!.id = 'abcdef0123456789abcdef01'
     data.child_ls[0]!.asr = Array.from({ length: 150 }, (_, n) => ({ s: n * 100, e: n * 100 + 100, n: 1, t: String(n) }))
     const view = await service.recordingComparison(date)
+    expect(view.system.items).toHaveLength(100)
+    view.system = await readCompleteRecordingTranscript(view.system, cursor => service.recordingTranscriptPage(date, { cursor }))
     expect(view.system.items).toHaveLength(150)
-    expect(view.system.items[0]?.sameSpeakerItemCount).toBe(150)
+    expect(view.system.items[0]?.canBindSpeaker).toBe(true)
     const body = JSON.stringify({ operation: 'recordings.forward', params: input(view.system.items.map(item => item.itemRef)) })
     expect(Buffer.byteLength(body)).toBeLessThan(128 * 1024)
     const server = createServer(createArkmeHostApi({ forwardRecording: service.forwardRecording.bind(service) } as unknown as ArkmeService, { expectedPort: 3080, allowNonLoopback: false }))
@@ -54,51 +80,16 @@ describe('recording transcript owner boundaries', () => {
       expect(forward.mock.calls[0]?.[0].segments).toHaveLength(150)
     } finally { server.close(); await once(server, 'close') }
   })
-  it.each(['system', 'doubao'] as const)('uses owner effective identity and explicit unassignment for %s', transcriptSource => {
-    const data = source()
-    const rows = [
-      { s: 0, e: 1_000, n: 1, t: '已取消绑定', speaker_identity_source: 'system', q: 'stale' },
-      { s: 1_000, e: 2_000, n: 1, t: '当前绑定', speaker_identity_source: 'item', effective_spk_id: 'current', q: 'stale' },
-    ]
-    Object.assign(data.child_ls[0]!, { [transcriptSource === 'system' ? 'asr' : 'doubao_asr']: rows })
-    const items = projectRecordingTranscripts(data, [{ id: 'current', nick_name: '当前说话人' }, { id: 'stale', nick_name: '过期说话人' }], new Map(), { viewerUserId: 42, transcriptSource })
-    expect(items[0]?.formalSpeakerId).toBe('')
-    expect(items[1]?.speakerLabel).toBe('当前说话人')
-    expect(items.some(item => item.speakerLabel === '过期说话人')).toBe(false)
-  })
-
-  it('projects independent sources, preserves paragraph indices, and keeps system-only background semantics', () => {
-    const data = source()
-    const system = projectRecordingTranscripts(data, [], new Map(), { viewerUserId: 42 })
-    const doubao = projectRecordingTranscripts(data, [], new Map(), { viewerUserId: 42, transcriptSource: 'doubao' })
-    expect(system.map(item => item.asrItemIndex)).toEqual([0, 1])
-    expect(doubao).toHaveLength(1)
-    expect(doubao[0]).toMatchObject({ transcriptSource: 'doubao', text: '豆包独立分段', isBackground: false, startAtMillis: date + 500, asrItemIndex: 0 })
-    expect(doubao[0]?.itemId).not.toBe(system[0]?.itemId)
-  })
-
-  it.each([1, 2, 4, 5])('does not expose stale completed text while the owner reports status %s', status => {
-    const data = source(); data.child_ls[0]!.doubao_asr_status = status
-    expect(projectRecordingTranscripts(data, [], new Map(), { viewerUserId: 42, transcriptSource: 'doubao' })).toEqual([])
-  })
-
-  it('counts progress only inside existing sessions and the selected day', () => {
-    const data = source()
-    data.child_ls[0]!.doubao_asr_status = 1
-    data.child_ls.push({ ...data.child_ls[0]!, id: 'orphan', session_id: 'unknown' }, { ...data.child_ls[0]!, id: 'outside', start_at: 50_000 })
-    expect(recordingDoubaoProgress(data, { dayStartMillis: date, dayEndMillis: date + 86_400_000 })).toEqual({ processingCount: 1, candidateCount: 0, failedCount: 0, silentCount: 0 })
-  })
-
   it('keeps owner IDs sealed and forwards only current selectors in time order', async () => {
     const { service, forward } = fixture()
     const comparison = await service.recordingComparison(date)
-    expect(JSON.stringify(comparison)).not.toContain('audio-session')
+    expect(JSON.stringify(comparison)).not.toContain('100000000000000000000001')
     const [first, second] = comparison.system.items
     expect(first?.sessionKey).toBe(comparison.doubao.items[0]?.sessionKey)
     await service.forwardRecording(input([second!.itemRef, first!.itemRef]))
-    expect(forward).toHaveBeenCalledWith({ sessionId: 'audio-session', segments: [
-      { childId: 'audio-child', asrItemIndex: 0, transcriptSource: 'system' },
-      { childId: 'audio-child', asrItemIndex: 1, transcriptSource: 'system' },
+    expect(forward).toHaveBeenCalledWith({ sessionId: '100000000000000000000001', segments: [
+      { childId: '200000000000000000000001', asrItemIndex: 0, transcriptSource: 'system' },
+      { childId: '200000000000000000000001', asrItemIndex: 1, transcriptSource: 'system' },
     ] }, expect.anything(), session, undefined)
     expect(JSON.stringify(forward.mock.calls[0]?.[0])).not.toContain('系统第一段')
   })
@@ -127,8 +118,8 @@ describe('recording transcript owner boundaries', () => {
 
   it('rejects cross-session selections and the 150-segment limit before owner writes', async () => {
     const { service, data, forward } = fixture()
-    data.session_ls.push({ ...data.session_ls[0]!, id: 'second-session', start_at: date + 30_000, end_at: date + 50_000 })
-    data.child_ls.push({ ...data.child_ls[0]!, id: 'second-child', session_id: 'second-session' })
+    data.session_ls.push({ ...data.session_ls[0]!, id: '100000000000000000000002', start_at: date + 30_000, end_at: date + 50_000 })
+    data.child_ls.push({ ...data.child_ls[0]!, id: '200000000000000000000002', session_id: '100000000000000000000002' })
     const view = await service.recordingComparison(date)
     const refs = [view.system.items[0]!.itemRef, view.system.items.at(-1)!.itemRef]
     await expect(service.forwardRecording(input(refs))).rejects.toMatchObject({ code: 'recording-forward-selection-invalid' })
@@ -136,15 +127,17 @@ describe('recording transcript owner boundaries', () => {
     expect(forward).not.toHaveBeenCalled()
   })
 
-  it('maps comparison playback by time within the same audio session', async () => {
-    const { service } = fixture(); const view = await service.recordingComparison(date)
-    const doubao = view.doubao.items[0]!
-    expect(recordingComparisonPlaybackTarget(doubao, view.system.items)).toBe(view.system.items[0])
-    expect(recordingComparisonPlaybackTarget({ ...doubao, startAtMillis: date + 11_000 }, view.system.items)).toBe(view.system.items[1])
-    expect(recordingComparisonPlaybackTarget({ ...doubao, startAtMillis: date + 50_000 }, view.system.items)).toBeUndefined()
-    expect(recordingComparisonPlaybackTarget({ ...doubao, sessionKey: 'other-session' }, view.system.items)).toBeUndefined()
-  })
-})
+  it('keeps enhanced playback on its exact locator without depending on primary segmentation', async () => {
+    const { service, data, media } = fixture()
+    data.child_ls[0]!.asr = []
+    const view = await service.recordingComparison(date)
+    expect(view.system.items).toEqual([])
+    const enhanced = view.doubao.items[0]!
+    await expect(service.recordingPlayback(enhanced.itemRef)).resolves.toMatchObject({ playbackRef: 'opaque-media' })
+    expect(media.issueRecordingPlaybackMediaRef).toHaveBeenCalledWith({ viewerUserId: 42,
+      locator: { child_id: '200000000000000000000001', source: 'enhanced', ordinal: 0 },
+    }, undefined)
+  })})
 
 it('rejects invalid comment identities and excessive text before any owner write', async () => {
   const { service, forward } = fixture()
@@ -157,7 +150,7 @@ it('rejects invalid comment identities and excessive text before any owner write
 })
 
 describe('recording destination owner contracts', () => {
-  const selection = { sessionId: 'audio-source', segments: [{ childId: 'audio-child', asrItemIndex: 2, transcriptSource: 'system' as const }] }
+  const selection = { sessionId: 'audio-source', segments: [{ childId: '200000000000000000000001', asrItemIndex: 2, transcriptSource: 'system' as const }] }
   const command = input(['sealed-ref'])
   function gateway(kind: string) {
     const chat = vi.fn(async () => ({ record_uid: 'chat-record', seq: 3 }))
@@ -174,7 +167,7 @@ describe('recording destination owner contracts', () => {
     await expect(result.forward(selection, command, session)).resolves.toEqual({ recordUid: 'chat-record' })
     expect(chat).toHaveBeenCalledWith('/api/v1/chats/records/forward', {
       chat_session_uid: 'target-owner', client_request_id: command.requestId, send_at: date,
-      source_items: [{ source_type: 'long_recording_segments', source_identity_kind: 'audio_session', session_id: 'audio-source', segment_selection: { kind: 'long_recording_segments', segments: [{ child_id: 'audio-child', asr_item_index: 2, transcript_source: 'system' }] } }],
+      source_items: [{ source_type: 'long_recording_segments', source_identity_kind: 'audio_session', session_id: 'audio-source', segment_selection: { kind: 'long_recording_segments', segments: [{ child_id: '200000000000000000000001', asr_item_index: 2, transcript_source: 'system' }] } }],
     }, session, undefined)
     expect(record).not.toHaveBeenCalled()
   })

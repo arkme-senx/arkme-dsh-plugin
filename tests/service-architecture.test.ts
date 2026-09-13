@@ -28,7 +28,7 @@ const expectedPublicMethods = [
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
   'recordingComparison', 'startRecordingComparison', 'recordingForwardCapabilities', 'forwardRecording',
   'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
-  'recordingDay', 'recordingPlayback',
+  'recordingDay', 'recordingTranscriptPage', 'recordingPlayback',
   'recordingSpeakerOptions', 'assignRecordingSpeaker',
   'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport',
   'cancelRecordingImport', 'updateRecordingImportSessionStart', 'updateRecordingImportSessionOwnership', 'deleteRecordingImportSession', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
@@ -94,7 +94,7 @@ const expectedServiceFiles = [
   'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
   'member-event-service.ts',
   'desktop-attention-bridge.ts',
-  'record-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-import-gateway.ts', 'recording-forward-gateway.ts', 'search-service.ts',
+  'record-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-read-owner.ts', 'recording-import-gateway.ts', 'recording-file-upload.ts', 'recording-forward-gateway.ts', 'search-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
@@ -208,7 +208,13 @@ describe('Arkme service architecture', () => {
     const source = readFileSync(join(root, 'src/recording-import-probe.ts'), 'utf8')
     const waveProbe = readFileSync(join(root, 'src/recording-wave-probe.ts'), 'utf8')
     const clientSelection = readFileSync(join(root, 'src/client/recordings/recording-import-selection.ts'), 'utf8')
-    expect(gateway).toContain('pc_upload/')
+    expect(gateway).not.toContain('pc_upload/')
+    expect(gateway).not.toContain('ali-oss')
+    expect(gateway).toContain('this.uploadFile(')
+    const upload = readFileSync(join(root, 'src/services/recording-file-upload.ts'), 'utf8')
+    expect(upload).toContain('/api/v1/audio/uploads/')
+    expect(upload).not.toContain('pc_upload/')
+    expect(upload).not.toContain('ali-oss')
     expect(gateway).toContain('arkme_')
     expect(gateway).toContain('/api/v1/audio/check-exist-same-orig')
     expect(source).toMatch(/from ['"]node:fs/)

@@ -13,12 +13,12 @@ import type { ArkmeRecordingDay } from '../src/types.js'
 function recordingDay(dateStamp: number, text: string): ArkmeRecordingDay {
   return {
     dateStamp, totalDurationMillis: 5_000,
-    transcript: {
+    transcript: { viewRef: 'fixture-view', nextCursor: '', transcriptSource: 'system',
       state: 'ready', message: '', totalDurationMillis: 5_000, processingCount: 0,
       items: [{
         itemId: text, itemRef: text, startAtMillis: dateStamp + 1_000, endAtMillis: dateStamp + 6_000,
         speakerNumber: 1, speakerKey: 'speaker', speakerColorIndex: 0, speakerLabel: '说话人',
-        sameSpeakerItemCount: 1, isSelf: false, isBackground: false, text,
+        canBindSpeaker: true, isSelf: false, isBackground: false, text,
       }],
     },
     summary: { state: 'empty', message: '', items: [] },

@@ -67,7 +67,7 @@ const segmentResponse = {
   total_count: 1,
 }
 
-function fixture(options: { connectMedia?: boolean; environment?: 'test' | 'prod' } = {}) {
+function fixture(options: { connectMedia?: boolean; environment?: 'test' | 'prod'; semantic?: boolean } = {}) {
   let currentSession = baseSession
   const remoteRequests: Array<{ url: string; range: string }> = []
   const runtime = {
@@ -82,7 +82,13 @@ function fixture(options: { connectMedia?: boolean; environment?: 'test' | 'prod
           next_cursor: '', has_more: false, projection_state: 'fresh',
         }
       }
-      if (path === '/api/v1/audio/unmarked-speakers/segments') return segmentResponse
+      if (path === '/api/v1/audio/unmarked-speakers/segments') return options.semantic ? {
+        ...segmentResponse,
+        segments: segmentResponse.segments.map(segment => ({ ...segment,
+          child_id: '123456789012345678901234',
+          clip_ref: { child_id: '123456789012345678901234', source: 'primary', ordinal: 0, audio_revision: 'a'.repeat(64) },
+        })),
+      } : segmentResponse
       if (path === '/api/v1/audio/get-sts-token') {
         return {
           access_key_id: 'private-access-key',
@@ -92,6 +98,10 @@ function fixture(options: { connectMedia?: boolean; environment?: 'test' | 'prod
         }
       }
       throw new Error(`unexpected audio path: ${path}`)
+    }),
+    authenticatedAudioStream: vi.fn(async (path: string, options: { range?: string }) => {
+      remoteRequests.push({ url: path, range: options.range ?? '' })
+      return new Response('opus', { headers: { 'content-type': 'audio/ogg', 'content-length': '4' } })
     }),
     fetchImpl: vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
       const headers = new Headers(init?.headers)
@@ -162,6 +172,21 @@ afterEach(() => {
 })
 
 describe('controlled unmarked-speaker media', () => {
+  it('reuses the recording media boundary for accepted packs without signing a filename', async () => {
+    const { speakers, media, runtime } = fixture({ semantic: true })
+    const value = await refs(speakers)
+    expect(value.mediaRef).toMatch(/^arkme-media-v1\./)
+    expect(JSON.stringify(value.segment)).not.toMatch(/audio_revision|123456789012345678901234|audio_file_name/)
+    expect(runtime.authenticatedAudioPost.mock.calls.some(([path]) => path.endsWith('/get-sts-token'))).toBe(false)
+    const result = await media.fetchMedia(value.mediaRef!, 'bytes=0-3')
+    expect(await result.response.text()).toBe('opus')
+    expect(runtime.authenticatedAudioStream).toHaveBeenCalledWith(
+      `/api/v1/audio/clips/123456789012345678901234/primary/0/${'a'.repeat(64)}`,
+      expect.objectContaining({ expectedUserId: baseSession.userId, range: 'bytes=0-3' }),
+    )
+    expect(runtime.fetchImpl).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['test', 'jotmo-useraudio-test'],
     ['prod', 'jotmo-useraudio'],

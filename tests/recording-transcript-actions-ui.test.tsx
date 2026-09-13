@@ -11,9 +11,9 @@ import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
 
 const item = (id: string, sessionKey = 'session'): ArkmeRecordingWorkbenchItem => ({
   itemId: id, itemRef: `ref-${id}`, sessionKey, transcriptSource: 'system', startAtMillis: 1_000, endAtMillis: 5_000,
-  speakerNumber: 1, speakerKey: 'speaker', speakerColorIndex: 0, speakerLabel: '说话人', sameSpeakerItemCount: 1, isSelf: false, isBackground: false, text: '😀你好你好',
+  speakerNumber: 1, speakerKey: 'speaker', speakerColorIndex: 0, speakerLabel: '说话人', canBindSpeaker: true, isSelf: false, isBackground: false, text: '😀你好你好',
 })
-const section = (items: ArkmeRecordingWorkbenchItem[]) => ({ items, state: items.length > 0 ? 'ready' as const : 'empty' as const, message: '', totalDurationMillis: 4_000, processingCount: 0 })
+const section = (items: ArkmeRecordingWorkbenchItem[]) => ({ items, dateStamp: 0, transcriptSource: items[0]?.transcriptSource ?? 'system', viewRef: `view-${items.map(item => item.itemId).join('-')}`, nextCursor: '', state: items.length > 0 ? 'ready' as const : 'empty' as const, message: '', totalDurationMillis: 4_000, processingCount: 0 })
 const comparison = (): ArkmeRecordingComparison => ({ dateStamp: 0, system: section([item('system')]), doubao: section([]), candidateCount: 0, failedCount: 0, silentCount: 0 })
 let renderer: ReactTestRenderer
 beforeEach(() => {
@@ -52,7 +52,7 @@ describe('transcript comparison lifecycle', () => {
     expect(row.props.onDoubleClick).toBeTypeOf('function')
   })
 
-  it('double-clicks the exact system counterpart and continues its playlist despite overlapping sessions', async () => {
+  it('plays and continues the exact enhanced source despite overlapping system recordings', async () => {
     const audios: Array<EventTarget & { currentTime: number; pause: ReturnType<typeof vi.fn> }> = []
     vi.stubGlobal('Audio', class extends EventTarget {
       currentTime = 0
@@ -64,18 +64,18 @@ describe('transcript comparison lifecycle', () => {
     const selected = item('target', 'right-session')
     const next = { ...item('next', 'right-session'), startAtMillis: 6000, endAtMillis: 9000 }
     initial.system = section([item('a-wrong-session', 'wrong-session'), selected, next])
-    initial.doubao = section([{ ...item('doubao', 'right-session'), transcriptSource: 'doubao', startAtMillis: 5500, endAtMillis: 5900 }])
+    initial.doubao = section([{ ...item('doubao', 'right-session'), transcriptSource: 'doubao', startAtMillis: 5500, endAtMillis: 5900 }, { ...next, itemRef: 'ref-enhanced-next', transcriptSource: 'doubao' }])
     mocks.call.mockResolvedValue({ playbackRef: 'media', startOffsetMillis: 0, endOffsetMillis: 4000 })
     await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={{ data: initial, pending: false, notice: '' }} onClose={() => {}} />) })
     const row = renderer.root.findByProps({ 'data-transcript-time': 5500 })
     expect(row.props.onClick).toBeUndefined()
     await act(async () => { row.props.onDoubleClick() })
-    expect(mocks.call.mock.calls[0]?.[1]).toEqual({ itemRef: 'ref-target' })
-    // Flutter starts the nearest segment at its beginning when the time falls outside it.
+    expect(mocks.call.mock.calls[0]?.[1]).toEqual({ itemRef: 'ref-doubao' })
+    // Independent enhanced audio starts at its own beginning.
     expect(audios[0]?.currentTime).toBe(0)
     expect(renderer.root.findAllByProps({ 'aria-label': '暂停播放' }).length).toBeGreaterThan(0)
     await act(async () => { audios[0]!.dispatchEvent(new Event('ended')) })
-    expect(mocks.call.mock.calls[1]?.[1]).toEqual({ itemRef: 'ref-next' })
+    expect(mocks.call.mock.calls[1]?.[1]).toEqual({ itemRef: 'ref-enhanced-next' })
     await act(async () => { renderer.unmount() })
     expect(audios[1]?.pause).toHaveBeenCalled()
   })
@@ -94,14 +94,15 @@ describe('transcript comparison lifecycle', () => {
     expect(mocks.call).toHaveBeenCalledTimes(4)
   })
 
-  it('does not offer a transcript reload for a missing playback counterpart', async () => {
+  it('reports media failure without replacing enhanced audio with a nearby system clip', async () => {
     const initial = comparison()
-    initial.doubao = section([{ ...item('doubao', 'other-session'), transcriptSource: 'doubao', startAtMillis: 10_000 }])
+    initial.doubao = section([{ ...item('doubao', 'other-session'), transcriptSource: 'doubao', startAtMillis: 10_000, endAtMillis: 11_000 }])
+    mocks.call.mockRejectedValue(new Error('原始来源音频不可用'))
     await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={{ data: initial, pending: false, notice: '' }} onClose={() => {}} />) })
     await act(async () => { renderer.root.findByProps({ 'data-transcript-time': 10_000 }).props.onDoubleClick() })
-    expect(JSON.stringify(renderer.toJSON())).toContain('该片段暂无可播放的系统录音')
+    expect(JSON.stringify(renderer.toJSON())).toContain('原始来源音频不可用')
     expect(renderer.root.findAllByType('button').filter(button => button.children.includes('重试'))).toHaveLength(0)
-    expect(mocks.call).not.toHaveBeenCalled()
+    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('recordings.playback.open', { itemRef: 'ref-doubao' }, expect.any(AbortSignal))
   })
 
   it('does not open an empty comparison when audio has expired', async () => {

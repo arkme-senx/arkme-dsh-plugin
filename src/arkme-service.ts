@@ -1,3 +1,4 @@
+import type { ArkmeRecordingTranscriptPageOptions } from './types.js'
 import { RecordTopicAssignmentService } from './services/record-topic-assignment-service.js'
 import type { ArkmeRecordTopicAssignmentInput, ArkmeRecordTopicAssignmentResult } from './record-topic-assignment-contract.js'
 import { ConversationDirectoryService } from './services/conversation-directory-service.js'
@@ -731,6 +732,9 @@ export class ArkmeService {
       sdk: '@senguoyun/dsh-arkme/sdk',
       environment: this.config.environment,
       features: {
+        ...(this.config.recordingWorkbenchEnabled !== false && this.config.recordingImportDirectory
+          ? { recordingFileImport: true as const } : {}),
+        recordingTranscriptPages: true,
         authStatus: true,
         cachedSnapshot: true,
         remoteRefresh: true,
@@ -930,6 +934,7 @@ export class ArkmeService {
   async recordingForwardCapabilities(signal?: AbortSignal) { return await this.recording.recordingForwardCapabilities(signal) }
   async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
   async startRecordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.startRecordingComparison(dateStamp, signal) }
+  async recordingTranscriptPage(dateStamp: number, options: ArkmeRecordingTranscriptPageOptions = {}) { return await this.recording.recordingTranscriptPage(dateStamp, options) }
   async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal) }
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async recordingSpeakerOptions(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerOption[]> { return await this.recording.recordingSpeakerOptions(itemRef, signal) }
@@ -1561,8 +1566,9 @@ export class ArkmeService {
     mediaRef: string,
     range?: string,
     signal?: AbortSignal,
+    method: 'GET' | 'HEAD' = 'GET',
   ): Promise<{ response: Response; descriptor: ArkmeMediaDescriptor }> {
-    return await this.chat.fetchMedia(mediaRef, range, signal)
+    return await this.chat.fetchMedia(mediaRef, range, signal, method)
   }
 
   async sendDirectText(

@@ -17,6 +17,96 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('MediaService', () => {
+  it('resolves a private locator on demand and does not cache its mutable revision', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' } },
+      async write() {}, async delete() {},
+    }
+    const locator = { child_id: '123456789012345678901234', source: 'enhanced' as const, ordinal: 7 }
+    let revision = 'a'.repeat(64)
+    const fetchImpl = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      expect(new URL(String(url)).pathname).toBe('/api/v1/audio/playback/resolve')
+      expect(JSON.parse(String(init?.body))).toEqual(locator)
+      return new Response(JSON.stringify({ code: 200, data: {
+        clip_ref: { ...locator, audio_revision: revision },
+        content_path: `/api/v1/audio/clips/${locator.child_id}/enhanced/7/${revision}`,
+        content_type: 'audio/ogg', duration_ms: 1200,
+      } }), { headers: { 'content-type': 'application/json' } })
+    })
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+    const media = new MediaService(runtime, new ProfileService(runtime), {} as never, {} as never)
+    const input = { viewerUserId: 42, locator }
+    const first = await media.issueRecordingPlaybackMediaRef(input)
+    revision = 'b'.repeat(64)
+    const second = await media.issueRecordingPlaybackMediaRef(input)
+    expect(first).toMatch(/^arkme-media-v1\./)
+    expect(second).not.toBe(first)
+    expect(second).not.toContain(locator.child_id)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['ordinal', 'path', 'mime', 'duration'])('rejects mismatched locator resolution %s without OSS fallback', async mode => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' } },
+      async write() {}, async delete() {},
+    }
+    const locator = { child_id: '123456789012345678901234', source: 'primary' as const, ordinal: 0 }
+    const revision = 'a'.repeat(64)
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ code: 200, data: {
+      clip_ref: { ...locator, ordinal: mode === 'ordinal' ? 1 : 0, audio_revision: revision },
+      content_path: mode === 'path' ? 'https://untrusted.test/audio' : `/api/v1/audio/clips/${locator.child_id}/primary/0/${revision}`,
+      content_type: mode === 'mime' ? 'text/html' : 'audio/ogg', duration_ms: mode === 'duration' ? 0 : 1000,
+    } }), { headers: { 'content-type': 'application/json' } }))
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+    const media = new MediaService(runtime, new ProfileService(runtime), {} as never, {} as never)
+    await expect(media.issueRecordingPlaybackMediaRef({ viewerUserId: 42, locator })).rejects.toMatchObject({ code: 'recording-media-invalid' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('discards a locator response after the account changes', async () => {
+    let userId = 42
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId, accessToken: 'fixture', refreshToken: 'fixture' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async () => {
+      userId = 99
+      return new Response(JSON.stringify({ code: 200, data: {} }), { headers: { 'content-type': 'application/json' } })
+    })
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+    const media = new MediaService(runtime, new ProfileService(runtime), {} as never, {} as never)
+    await expect(media.issueRecordingPlaybackMediaRef({ viewerUserId: 42, locator: { child_id: '123456789012345678901234', source: 'primary', ordinal: 0 } }))
+      .rejects.toMatchObject({ code: 'recording-playback-account-mismatch' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses an opaque account-scoped ref for semantic playback without OSS credentials', async () => {
+    let userId = 42
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId, accessToken: 'private-fixture', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async (url: URL | RequestInfo) => String(url).endsWith('/playback/resolve')
+      ? new Response(JSON.stringify({ code: 200, data: { clip_ref: clip, content_path: `/api/v1/audio/clips/${clip.child_id}/enhanced/3/${clip.audio_revision}`, content_type: 'audio/ogg', duration_ms: 1000 } }), { headers: { 'content-type': 'application/json' } })
+      : new Response('audio', { headers: { 'content-type': 'audio/ogg', 'content-length': '5' } }))
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+    const media = new MediaService(runtime, new ProfileService(runtime), {} as never, {} as never)
+    const clip = { child_id: '123456789012345678901234', source: 'enhanced' as const, ordinal: 3, audio_revision: 'a'.repeat(64) }
+    const mediaRef = await media.issueRecordingPlaybackMediaRef({
+      viewerUserId: 42, locator: { child_id: clip.child_id, source: clip.source, ordinal: clip.ordinal },
+    })
+    expect(mediaRef).toMatch(/^arkme-media-v1\./)
+    expect(mediaRef).not.toContain(clip.child_id)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const result = await media.fetchMedia(mediaRef)
+    expect(await result.response.text()).toBe('audio')
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(new URL(String(fetchImpl.mock.calls[1]![0])).pathname).toBe(`/api/v1/audio/clips/${clip.child_id}/enhanced/3/${clip.audio_revision}`)
+    userId = 99
+    await expect(media.fetchMedia(mediaRef)).rejects.toMatchObject({ code: 'media-ref-invalid' })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('proxies trusted production COS call audio with ranges and account isolation', async () => {
     let userId = 42
     const sessions: ArkmeSessionStore = {
@@ -163,44 +253,44 @@ describe('MediaService', () => {
       ['unknown.bin', 'application/octet-stream', 'file'],
     ])
   })
-  it('signs recording playback only inside the Host and keeps the resulting media ref account-bound', async () => {
+  it('proxies owner-authorized recording bytes with Range and HEAD while keeping the media ref account-bound', async () => {
     let userId = 42
     const sessions: ArkmeSessionStore = {
       async read() { return { userId, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
     }
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const locator = { child_id: 'aaaaaaaaaaaaaaaaaaaaaaaa', source: 'primary' as const, ordinal: 3 }
+    const revision = 'b'.repeat(64)
+    const path = `/api/v1/audio/clips/${locator.child_id}/primary/3/${revision}`
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
-      if (url.hostname === 'audio.test') return new Response(JSON.stringify({ code: 200, data: {
-        access_key_id: 'key', access_key_secret: 'secret', security_token: 'token',
-        expiration: '2099-01-01T00:00:00.000Z',
+      if (url.pathname.endsWith('/playback/resolve')) return new Response(JSON.stringify({ code: 200, data: {
+        clip_ref: { ...locator, audio_revision: revision }, content_path: path, content_type: 'audio/ogg', duration_ms: 1000,
       } }), { status: 200, headers: { 'content-type': 'application/json' } })
+      if (init?.method === 'HEAD') return new Response(null, { headers: { 'content-type': 'audio/ogg', 'content-length': '100' } })
       return new Response('audio', { status: 206, headers: {
-        'content-type': 'audio/mp4', 'content-range': 'bytes 0-4/100', 'accept-ranges': 'bytes',
+        'content-type': 'audio/ogg', 'content-range': 'bytes 0-4/100', 'content-length': '5', 'accept-ranges': 'bytes',
       } })
     }) as typeof fetch
     const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
     const service = new MediaService(runtime, new ProfileService(runtime), {} as never, { recordUid() { return '' } })
 
     const mediaRef = await service.issueRecordingPlaybackMediaRef({
-      viewerUserId: 42, sessionId: 'session-1', childId: 'child-1',
-      asrItemStartAt: 1_000, asrItemEndAt: 2_000, speakerNumber: 3,
+      viewerUserId: 42, locator,
     })
     expect(mediaRef).toMatch(/^arkme-media-v1\./)
     expect(mediaRef).not.toContain('secret')
-    await expect(service.fetchMedia(mediaRef, 'bytes=100-199')).resolves.toMatchObject({
-      response: { status: 206 }, descriptor: { mimeType: 'audio/flac', fileName: '1000_2000_3.flac' },
+    await expect(service.fetchMedia(mediaRef, 'bytes=0-4')).resolves.toMatchObject({
+      response: { status: 206 }, descriptor: { mimeType: 'application/octet-stream', fileName: 'recording-audio' },
     })
     const signedRequest = vi.mocked(fetchImpl).mock.calls.at(-1)?.[0]
     const signedUrl = new URL(typeof signedRequest === 'string' || signedRequest instanceof URL
       ? signedRequest : signedRequest!.url)
-    expect(signedUrl.hostname).toBe('jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com')
-    expect(decodeURIComponent(signedUrl.pathname)).toBe(
-      '/a1d0c6e83f027327d8461063f4ac58a6/42/audio_output/session-1/child-1/1000_2000_3.flac',
-    )
+    expect(signedUrl.hostname).toBe('audio.test')
+    expect(signedUrl.pathname).toBe(path)
 
     const server = createServer(createArkmeMediaHandler({
-      fetchMedia: async (ref: string, range?: string, signal?: AbortSignal) => await service.fetchMedia(ref, range, signal),
+      fetchMedia: async (ref: string, range?: string, signal?: AbortSignal, method?: 'GET' | 'HEAD') => await service.fetchMedia(ref, range, signal, false, method),
     } as never, {
       expectedPort: 0, allowNonLoopback: false, temporaryDirectory: '/tmp/unused-recording-media-test', maxUploadBytes: 1,
     }))
@@ -213,8 +303,10 @@ describe('MediaService', () => {
       expect(ranged.headers.get('content-range')).toBe('bytes 0-4/100')
       await expect(ranged.text()).resolves.toBe('audio')
       const head = await fetch(playbackUrl, { method: 'HEAD' })
-      expect(head.status).toBe(206)
-      expect(head.headers.get('content-type')).toBe('audio/mp4')
+      expect(head.status).toBe(200)
+      expect(head.headers.get('content-length')).toBe('100')
+      expect(vi.mocked(fetchImpl).mock.calls.at(-1)?.[1]?.method).toBe('HEAD')
+      expect(head.headers.get('content-type')).toBe('audio/ogg')
       await expect(head.text()).resolves.toBe('')
     } finally {
       await new Promise<void>((resolve, reject) => server.close(error => error === undefined ? resolve() : reject(error)))
@@ -223,9 +315,8 @@ describe('MediaService', () => {
     userId = 99
     await expect(service.fetchMedia(mediaRef)).rejects.toMatchObject({ code: 'media-ref-invalid' })
     await expect(service.issueRecordingPlaybackMediaRef({
-      viewerUserId: 99, sessionId: '../other-user', childId: 'child-1',
-      asrItemStartAt: 1_000, asrItemEndAt: 2_000, speakerNumber: 3,
-    })).rejects.toMatchObject({ code: 'recording-playback-path-invalid' })
+      viewerUserId: 99, locator: { ...locator, child_id: '../other-user' },
+    })).rejects.toMatchObject({ code: 'recording-media-invalid' })
   })
 
   it('keeps forwarded media account-bound, rejects untrusted URLs, and preserves valid siblings', async () => {

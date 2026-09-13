@@ -284,7 +284,7 @@ describe('ArkmeRecordingSurface layout', () => {
         speakerKey: 'speaker:16',
         speakerColorIndex: 0,
         speakerLabel,
-        sameSpeakerItemCount: 3,
+        canBindSpeaker: true,
         isSelf: false,
         isBackground: false,
         text: '我就是九了。',
@@ -327,7 +327,7 @@ describe('ArkmeRecordingSurface layout', () => {
         itemId: 'self-item', itemRef: 'self-ref', startAtMillis: 1_000, endAtMillis: 2_000,
         speakerNumber: 636, speakerKey: 'speaker:self', speakerColorIndex: 0,
         speakerLabel: 'HooXi', speakerAvatarRef: 'arkme-profile-image-v1.self',
-        sameSpeakerItemCount: 88, isSelf: true, isBackground: false, text: '自己的发言',
+        canBindSpeaker: true, isSelf: true, isBackground: false, text: '自己的发言',
       }}
       selected={false}
       onEditSpeaker={() => undefined}

@@ -11,6 +11,22 @@ function deferred<T>() {
 afterEach(() => { vi.useRealTimers() })
 
 describe('ArkmeRequestCoordinator', () => {
+  it('stream headers do not release admission or coalesce separate readers', async () => {
+    const coordinator = new ArkmeRequestCoordinator({ defaultServiceLimit: { maxConcurrent: 1 } })
+    const firstFinished = deferred<void>()
+    const request = { scope: 'user:1', lane: 'interactive-read' as const, service: 'audio' as const }
+    const first = await coordinator.runStream({ ...request, operation: async () => ({ value: 'headers', finished: firstFinished.promise }) })
+    expect(first).toBe('headers')
+    const secondOpen = vi.fn(async () => ({ value: 'second', finished: Promise.resolve() }))
+    const second = coordinator.runStream({ ...request, operation: secondOpen })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(secondOpen).not.toHaveBeenCalled()
+    firstFinished.resolve()
+    await expect(second).resolves.toBe('second')
+    expect(secondOpen).toHaveBeenCalledTimes(1)
+    coordinator.dispose()
+  })
+
   it.each([false, true])('applies the final failure cooldown only when route-scoped (%s)', async coolsRoute => {
     vi.useFakeTimers()
     const coordinator = new ArkmeRequestCoordinator()

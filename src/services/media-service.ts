@@ -1,3 +1,4 @@
+import { recordingPlaybackPath, recordingPlaybackRef, recordingPlaybackLocator, sameRecordingPlaybackLocation, type RecordingPlaybackLocator, type RecordingPlaybackRef } from '../recording-playback-ref.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { avatarReferenceDiagnostic, logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
 import { createReadStream } from 'node:fs'
@@ -41,6 +42,8 @@ export interface ArkmeUnmarkedSpeakerMediaTuple {
   sessionId: string
   childId: string
   audioFileName: string
+  playbackRef?: RecordingPlaybackRef
+
 }
 
 export interface ArkmeUnmarkedSpeakerSegmentResolver {
@@ -50,13 +53,16 @@ export interface ArkmeUnmarkedSpeakerSegmentResolver {
 export interface ArkmeMediaDescriptor {
   purpose?: 'original'
   viewerUserId: number
-  remoteUrl: string
   mimeType: string
   fileName: string
   size: number
   expiresAtMillis: number
   stableKey?: string
 }
+
+type MediaSource = { remoteUrl: string; recordingClip?: never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never }
+type StoredMediaDescriptor = ArkmeMediaDescriptor & MediaSource
+type IssuableMediaDescriptor = Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'> & MediaSource
 
 /** Safe browser playback data issued from one verified record audio asset. */
 export interface ArkmeIssuedAudioMedia {
@@ -275,7 +281,7 @@ function cloneImageBytes(value: ArkmeImageBytes): ArkmeImageBytes {
 }
 
 export class MediaService {
-  private readonly mediaRefs = new Map<string, ArkmeMediaDescriptor>()
+  private readonly mediaRefs = new Map<string, StoredMediaDescriptor>()
   private readonly stableMediaRefs = new Map<string, string>()
   private readonly imageCache = new Map<string, CacheEntry<ArkmeImageBytes>>()
   private readonly imageInFlight = new Map<string, Promise<ArkmeImageBytes>>()
@@ -442,6 +448,7 @@ export class MediaService {
     range?: string,
     signal?: AbortSignal,
     originalOnly = false,
+    method: 'GET' | 'HEAD' = 'GET',
   ): Promise<{ response: Response; descriptor: ArkmeMediaDescriptor }> {
     const session = await this.runtime.requireSession()
     const descriptor = this.mediaRefs.get(mediaRef)
@@ -452,6 +459,13 @@ export class MediaService {
     }
     if (originalOnly && descriptor.purpose !== 'original') {
       throw new ArkmePluginError('original-unavailable', '原文件不可用，请刷新后重试；不会用预览图代替原文件', false, 404)
+    }
+    if (descriptor.recordingClip !== undefined) {
+      const response = await this.runtime.authenticatedAudioStream(recordingPlaybackPath(descriptor.recordingClip), {
+        expectedUserId: session.userId, maxBytes: 64 * 1024 * 1024, method, ...(range === undefined ? {} : { range }),
+        ...(signal === undefined ? {} : { signal }),
+      })
+      return { response, descriptor }
     }
     const url = new URL(descriptor.remoteUrl)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== ''
@@ -497,6 +511,8 @@ export class MediaService {
     if (!Number.isSafeInteger(tuple.viewerUserId) || tuple.viewerUserId <= 0 || tuple.viewerUserId !== session.userId) {
       throw new ArkmePluginError('unmarked-audio-account-mismatch', '说话片段与当前账号不匹配', false, 403)
     }
+    const clip = recordingPlaybackRef(tuple.playbackRef)
+    if (clip !== undefined) return this.issueRecordingClip(session.userId, tuple.childId, clip)
     const sessionId = audioObjectPathPart(tuple.sessionId)
     const childId = audioObjectPathPart(tuple.childId)
     const audioFileName = audioObjectPathPart(tuple.audioFileName)
@@ -558,54 +574,39 @@ export class MediaService {
 
   async issueRecordingPlaybackMediaRef(input: {
     viewerUserId: number
-    sessionId: string
-    childId: string
-    asrItemStartAt: number
-    asrItemEndAt: number
-    speakerNumber: number
+    locator: RecordingPlaybackLocator
   }, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
     if (input.viewerUserId !== session.userId) {
       throw new ArkmePluginError('recording-playback-account-mismatch', '录音片段与当前账号不匹配', false, 403)
     }
-    const sessionId = audioObjectPathPart(input.sessionId)
-    const childId = audioObjectPathPart(input.childId)
-    if (sessionId === undefined || childId === undefined
-      || !Number.isSafeInteger(input.asrItemStartAt) || input.asrItemStartAt < 0
-      || !Number.isSafeInteger(input.asrItemEndAt) || input.asrItemEndAt < input.asrItemStartAt
-      || !Number.isSafeInteger(input.speakerNumber)) {
-      throw new ArkmePluginError('recording-playback-path-invalid', '录音播放路径无效', false, 502)
+    const locator = recordingPlaybackLocator(input.locator)
+    if (locator === undefined) throw new ArkmePluginError('recording-media-invalid', '录音媒体定位无效，请刷新后重试', false, 502)
+    const resolved = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/playback/resolve', { ...locator }, session, signal, { bypassCache: true },
+    )
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) {
+      throw new ArkmePluginError('recording-playback-account-mismatch', '账号已切换，请重新选择录音', false, 403)
     }
-    const audioFileName = `${String(input.asrItemStartAt)}_${String(input.asrItemEndAt)}_${String(input.speakerNumber)}.flac`
-    const objectPath = `${md5Text(String(session.userId))}/${String(session.userId)}/audio_output/${sessionId}/${childId}/${audioFileName}`
-    const credentials = await this.audioOssCredentials(session, signal)
-    const bucket = this.runtime.config.environment === 'prod' ? 'jotmo-useraudio' : 'jotmo-useraudio-test'
-    let signedUrl: URL
-    try {
-      const client = new OSS({
-        region: 'oss-cn-hangzhou', bucket, secure: true,
-        accessKeyId: credentials.accessKeyId,
-        accessKeySecret: credentials.accessKeySecret,
-        stsToken: credentials.stsToken,
-      })
-      signedUrl = new URL(client.signatureUrl(objectPath, { method: 'GET', expires: 120 }))
-    } catch (error) {
-      throw new ArkmePluginError('recording-playback-sign-failed', '录音播放授权失败', true, 502, { cause: error })
+    const current = recordingPlaybackRef(resolved.clip_ref)
+    if (current === undefined || !sameRecordingPlaybackLocation(current, locator)
+      || resolved.content_path !== recordingPlaybackPath(current)
+      || !['audio/ogg', 'audio/flac', 'audio/mp4'].includes(stringValue(resolved.content_type))
+      || !Number.isSafeInteger(resolved.duration_ms) || numberValue(resolved.duration_ms) <= 0) {
+      throw new ArkmePluginError('recording-media-invalid', '录音媒体解析结果不匹配', false, 502)
     }
-    const signedPath = decodeURIComponent(signedUrl.pathname).replace(/^\/+/, '')
-    const hasSignature = (signedUrl.searchParams.get('Signature') ?? signedUrl.searchParams.get('x-oss-signature') ?? '').trim() !== ''
-    if (signedUrl.protocol !== 'https:' || signedUrl.username !== '' || signedUrl.password !== ''
-      || signedUrl.port !== '' || signedUrl.hash !== '' || !hasSignature
-      || !allowedSignedAudioHost(this.runtime.config.environment, signedUrl.hostname) || signedPath !== objectPath) {
-      throw new ArkmePluginError('recording-playback-target-rejected', '录音播放授权目标不受信任', false, 502)
+    return this.issueRecordingClip(session.userId, locator.child_id, current)
+  }
+
+  private issueRecordingClip(userId: number, childId: string, clip: RecordingPlaybackRef): string {
+    if (clip.child_id !== childId) {
+      throw new ArkmePluginError('recording-media-invalid', '录音媒体不属于当前片段', false, 502)
     }
-    const display = unmarkedSpeakerAudioType(audioFileName)
-    return this.issueMediaRef(session.userId, {
-      remoteUrl: signedUrl.toString(),
-      mimeType: display.mimeType,
-      fileName: audioFileName,
-      size: 0,
-    }, undefined, 110_000)
+    return this.issueMediaRef(userId, {
+      recordingClip: clip, mimeType: 'application/octet-stream', fileName: 'recording-audio', size: 0,
+    }, `recording:${recordingPlaybackPath(clip)}`)
   }
 
   async readImage(
@@ -1087,7 +1088,7 @@ export class MediaService {
 
   issueImageMediaRef(
     viewerUserId: number,
-    descriptor: Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'>,
+    descriptor: IssuableMediaDescriptor,
     stableIdentity: string,
   ): string {
     return this.issueMediaRef(viewerUserId, descriptor, stableIdentity)
@@ -1110,7 +1111,7 @@ export class MediaService {
 
   private issueMediaRef(
     viewerUserId: number,
-    descriptor: Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'>,
+    descriptor: IssuableMediaDescriptor,
     stableIdentity?: string,
     lifetimeMillis?: number,
   ): string {

@@ -19,6 +19,21 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('discovers recording paging support and forwards opaque source/cursor through the public SDK', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const signal = new AbortController().signal
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      expect(init?.signal).toBe(signal)
+      const call = JSON.parse(String(init?.body)); calls.push(call)
+      if (call.operation === 'provider.capabilities') return success({ contractVersion: 1, features: { recordingTranscriptPages: true } })
+      return success({ viewRef: 'opaque-view', nextCursor: '', items: [] })
+    } })
+    await expect(sdk.recordingTranscriptPage(1_800_000_000_000, { source: 'doubao', cursor: 'sealed-page', signal })).resolves.toMatchObject({ viewRef: 'opaque-view' })
+    expect(calls).toEqual([{ operation: 'provider.capabilities' }, { operation: 'recordings.transcript.page', params: { dateStamp: 1_800_000_000_000, source: 'doubao', cursor: 'sealed-page' } }])
+    const old = createArkmeSdk({ fetchImpl: async () => success({ contractVersion: 1, features: {} }) })
+    await expect(old.recordingTranscriptPage(1_800_000_000_000)).rejects.toThrow('不支持录音分页读取')
+  })
+
   it('exposes the five-section directory, passes refresh/cursor and preserves Host recovery metadata', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {

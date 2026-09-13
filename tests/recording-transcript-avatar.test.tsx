@@ -13,7 +13,7 @@ import { arkmeAvatarImages } from '../src/client/avatar-image-runtime.js'
 const item: ArkmeRecordingWorkbenchItem = {
   itemId: 'self', itemRef: 'sealed-self', startAtMillis: 1_000, endAtMillis: 2_000,
   speakerNumber: 636, speakerKey: 'speaker:self', speakerColorIndex: 0,
-  speakerLabel: 'HooXi', speakerAvatarRef: 'avatar-self', sameSpeakerItemCount: 88,
+  speakerLabel: 'HooXi', speakerAvatarRef: 'avatar-self', canBindSpeaker: true,
   isSelf: true, isBackground: false, text: '转写内容',
 }
 let renderer: ReactTestRenderer | undefined

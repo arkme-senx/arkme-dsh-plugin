@@ -31,11 +31,11 @@ describe('recording surface selection and real playback controller', () => {
       if (operation === 'recordings.playback.open') return { playbackRef: params.itemRef, startOffsetMillis: 2_000, endOffsetMillis: 12_000 }
       if (operation === 'recordings.day') return {
         dateStamp: params.dateStamp, totalDurationMillis: 20_000,
-        transcript: { state: 'ready', message: '', processingCount: 0, totalDurationMillis: 20_000,
+        transcript: { dateStamp: params.dateStamp, transcriptSource: 'system', viewRef: String(params.dateStamp), nextCursor: '', state: 'ready', message: '', processingCount: 0, totalDurationMillis: 20_000,
           items: [1, 2].map(index => ({
             itemId: `item-${index}`, itemRef: `ref-${index}`, startAtMillis: params.dateStamp + index * 20_000,
             endAtMillis: params.dateStamp + index * 20_000 + 10_000,
-            speakerKey: 'same-speaker', speakerColorIndex: 0, speakerLabel: '我', sameSpeakerItemCount: 2,
+            speakerKey: 'same-speaker', speakerColorIndex: 0, speakerLabel: '我', canBindSpeaker: true,
             isBackground: false, text: `片段 ${index}`,
           })),
         },

@@ -1231,6 +1231,9 @@ export interface ArkmeProviderCapabilities {
     extensionIcons?: true
     /** Extension-level preview gallery SDK and Tool mutations are available. */
     extensionPreviews?: true
+    /** Staged, account-bound recording import with resumable task status. */
+    recordingFileImport?: true
+    recordingTranscriptPages?: true
     relatedRecordings?: true
     /** Optional additive capability so older Providers remain detectable by consumer plugins. */
     worldFeed?: true
@@ -2704,10 +2707,14 @@ export interface ArkmeRecordingWorkbenchItem {
   speakerColorIndex: number
   speakerLabel: string
   speakerAvatarRef?: string
-  sameSpeakerItemCount: number
+  canBindSpeaker: boolean
   isSelf: boolean
   isBackground: boolean
   text: string
+  /** Unicode code-point coordinates within the exact owner utterance. */
+  textStartOffset: number
+  textEndOffset: number
+  textTotalLength: number
 }
 
 export interface ArkmeRecordingPlayback {
@@ -2729,7 +2736,8 @@ export interface ArkmeRecordingSpeakerOption {
 
 export interface ArkmeRecordingSpeakerMutationResult {
   scope: 'item' | 'speaker'
-  affectedCount: number
+  changedClusters: number
+  changedItems: number
   day: ArkmeRecordingDay
 }
 
@@ -2773,20 +2781,37 @@ export interface ArkmeRecordingTranscriptSection<T = ArkmeRecordingTranscriptIte
   identityCoverage?: 'complete' | 'partial'
   totalDurationMillis: number
   processingCount: number
+  /** Present when the day contains device captures. Independent of ASR work. */
+  captureCoverage?: { receiving: number; interrupted: number }
+}
+
+export interface ArkmeRecordingTranscriptPage extends ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem> {
+  dateStamp: number
+  transcriptSource: ArkmeRecordingTranscriptSource
+  /** Opaque identity of all recording revisions in this read snapshot. */
+  viewRef: string
+  /** Empty only when this snapshot has been read completely. */
+  nextCursor: string
+}
+
+export interface ArkmeRecordingTranscriptPageOptions {
+  source?: ArkmeRecordingTranscriptSource
+  cursor?: string
+  signal?: AbortSignal | undefined
 }
 
 export interface ArkmeRecordingDay {
   dateStamp: number
   totalDurationMillis: number
-  transcript: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
+  transcript: ArkmeRecordingTranscriptPage
   summary: ArkmeRecordingSection<ArkmeRecordingVersion>
   timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
 }
 
 export interface ArkmeRecordingComparison {
   dateStamp: number
-  system: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
-  doubao: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
+  system: ArkmeRecordingTranscriptPage
+  doubao: ArkmeRecordingTranscriptPage
   candidateCount: number
   failedCount: number
   silentCount: number
@@ -3335,6 +3360,7 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'recordings.transcript.page'
   | 'topic.dissolve.active'
   | 'topic.rename'
   | 'topic.dissolve'
@@ -3567,6 +3593,10 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
 
+  | 'recordings.import.file'
+  | 'recordings.import.status'
+  | 'recordings.import.retry'
+
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'topic.candidates'
   | 'source.record-topic.assign'
@@ -3605,8 +3635,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.import.preflight'
   | 'recordings.import.list'
   | 'recordings.import.history'
-  | 'recordings.import.status'
-  | 'recordings.import.retry'
   | 'recordings.import.cancel'
   | 'recordings.import.session.update-start'
   | 'recordings.import.session.update-ownership'

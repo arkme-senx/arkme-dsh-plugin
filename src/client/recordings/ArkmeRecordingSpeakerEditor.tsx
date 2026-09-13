@@ -150,7 +150,7 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
         'recordings.speaker.assign-item',
         {
           itemRef: item.itemRef,
-          scope: forceBatchUpdate || batch ? 'speaker' : 'item',
+          scope: item.canBindSpeaker && (forceBatchUpdate || batch) ? 'speaker' : 'item',
           ...(selected === '' ? { newSpeakerName } : { speakerRef: selected }),
         },
       )
@@ -163,7 +163,7 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
     setSelected(current => current === option.speakerRef ? '' : option.speakerRef)
     setQuery('')
   }
-  const canBatch = forceBatchUpdate || item.sameSpeakerItemCount > 1
+  const canBatch = item.canBindSpeaker
   const selectedCurrent = options.some(option => option.currentAssignment && option.speakerRef === selected)
   const optionsReady = !loading && optionsError === ''
   const canSubmit = optionsReady && !pending && !selectedCurrent
@@ -185,7 +185,7 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
     {optionsError !== '' && <div role="alert" style={styles.error}>{optionsError} <button type="button" aria-label="重试读取说话人候选" style={styles.unassign} onClick={() => { setOptionsEpoch(value => value + 1) }}>重试</button></div>}
     {mutationError !== '' && <div role="alert" style={styles.error}>{mutationError}</div>}
     <div style={styles.bottom}>
-      {canBatch ? <><input aria-label="批量修改" type="checkbox" checked={forceBatchUpdate || batch} disabled={pending || forceBatchUpdate} onChange={event => { if (!forceBatchUpdate) setBatch(event.target.checked) }} /><span style={styles.batchText}>批量修改 {item.sameSpeakerItemCount} 处“{item.speakerLabel}”</span></> : <span style={styles.batchText}>仅修改当前片段</span>}
+      {canBatch ? <><input aria-label="批量修改" type="checkbox" checked={forceBatchUpdate || batch} disabled={pending || forceBatchUpdate} onChange={event => { if (!forceBatchUpdate) setBatch(event.target.checked) }} /><span style={styles.batchText}>修改当天所有“{item.speakerLabel}”片段</span></> : <span style={styles.batchText}>仅修改当前片段</span>}
       <button type="button" style={{ ...styles.confirm, ...(!canSubmit ? { background: desktop.avatar, cursor: 'default' } : {}) }} disabled={!canSubmit} onClick={() => { void mutate() }}>{pending ? '保存中…' : '确认'}</button>
     </div>
   </div></>

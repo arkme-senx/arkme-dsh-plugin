@@ -1,3 +1,4 @@
+import { recordingPlaybackRef, type RecordingPlaybackRef } from '../recording-playback-ref.js'
 import { randomUUID } from 'node:crypto'
 
 import { unmarkedSpeakerDisplayName } from '../contact-directory-presentation.js'
@@ -58,6 +59,7 @@ interface SegmentRefEntry {
   sessionId: string
   childId: string
   audioFileName: string
+  playbackRef?: RecordingPlaybackRef
   expiresAtMillis: number
 }
 
@@ -399,14 +401,19 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
       const sessionId = stringValue(raw.session_id).trim()
       const childId = stringValue(raw.child_id).trim()
       const audioFileName = stringValue(raw.audio_file_name).trim()
+      const clip = recordingPlaybackRef(raw.clip_ref)
+      if (clip !== undefined && (clip.child_id !== childId || clip.source !== 'primary')) {
+        throw new ArkmePluginError('recording-media-invalid', '说话片段的媒体身份无效', false, 502)
+      }
       const occurredAt = positiveTimestamp(raw.occurred_at)
       const startMillis = boundedInteger(raw.start_ms)
       const endMillis = boundedInteger(raw.end_ms)
-      if (segmentId === '' || sessionId === '' || childId === '' || audioFileName === ''
+      if (segmentId === '' || sessionId === '' || childId === '' || (clip === undefined && audioFileName === '')
         || occurredAt === 0 || endMillis <= startMillis) continue
       const durationMillis = endMillis - startMillis
       const segmentRef = this.sealSegmentRef(session.userId, normalizedRef, entry.candidateId, {
         segmentId, sessionId, childId, audioFileName,
+        ...(clip === undefined ? {} : { playbackRef: clip }),
       })
       const mediaRef = this.media === undefined
         ? undefined
@@ -515,6 +522,7 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
     sessionId: string
     childId: string
     audioFileName: string
+    playbackRef?: RecordingPlaybackRef
   }> {
     const session = await this.runtime.requireSession()
     this.pruneRefs()
@@ -546,6 +554,7 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
       sessionId: entry.sessionId,
       childId: entry.childId,
       audioFileName: entry.audioFileName,
+      ...(entry.playbackRef === undefined ? {} : { playbackRef: entry.playbackRef }),
     }
   }
 
@@ -584,7 +593,7 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
     viewerUserId: number,
     candidateRef: string,
     candidateId: string,
-    tuple: Pick<SegmentRefEntry, 'segmentId' | 'sessionId' | 'childId' | 'audioFileName'>,
+    tuple: Pick<SegmentRefEntry, 'segmentId' | 'sessionId' | 'childId' | 'audioFileName' | 'playbackRef'>,
   ): string {
     const ref = `arkme-unmarked-segment-v1.${randomUUID()}`
     this.segmentRefs.set(ref, {

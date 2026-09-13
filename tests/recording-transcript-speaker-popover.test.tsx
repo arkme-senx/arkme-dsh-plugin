@@ -20,7 +20,7 @@ describe('recording transcript speaker popover', () => {
       if (operation === 'recordings.day') return {
         dateStamp: 1,
         totalDurationMillis: 1_000,
-        transcript: {
+        transcript: { viewRef: 'fixture-view', nextCursor: '', transcriptSource: 'system',
           state: 'ready',
           message: '',
           totalDurationMillis: 1_000,
@@ -34,7 +34,7 @@ describe('recording transcript speaker popover', () => {
             speakerKey: 'speaker:1',
             speakerColorIndex: 1,
             speakerLabel: '说话人 1',
-            sameSpeakerItemCount: 1,
+            canBindSpeaker: true,
             isSelf: false,
             isBackground: false,
             text: '转写内容',

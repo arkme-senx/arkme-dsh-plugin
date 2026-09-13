@@ -37,12 +37,12 @@ describe('recording summary and timeline generation', () => {
       if (operation === 'recordings.summary-model-config.set') return { effectiveRouteKey: String(params?.routeKey) }
       if (operation === 'recordings.day') return {
         dateStamp: Number(params?.dateStamp), totalDurationMillis: 5_000,
-        transcript: {
+        transcript: { viewRef: 'fixture-view', nextCursor: '', transcriptSource: 'system',
           state: 'ready', message: '', totalDurationMillis: 5_000, processingCount: 0,
           items: [{
             itemId: 'item-1', itemRef: 'opaque-item', startAtMillis: Number(params?.dateStamp) + 1_000,
             endAtMillis: Number(params?.dateStamp) + 6_000, speakerNumber: 1, speakerKey: 'opaque-speaker',
-            speakerColorIndex: 0, speakerLabel: '我', sameSpeakerItemCount: 1, isSelf: true,
+            speakerColorIndex: 0, speakerLabel: '我', canBindSpeaker: true, isSelf: true,
             isBackground: false, text: '今天完成了方案评审',
           }],
         },
@@ -60,6 +60,28 @@ describe('recording summary and timeline generation', () => {
     await act(async () => { renderer?.unmount(); await tick() })
     vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  it('polls received transcript work independently of incomplete capture and completed analysis', async () => {
+    vi.useFakeTimers()
+    const original = mocks.callArkme.getMockImplementation()!
+    let dayReads = 0
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      const value = await original(operation, params, signal)
+      if (operation !== 'recordings.day') return value
+      dayReads++
+      return { ...value, transcript: { ...value.transcript,
+        captureCoverage: { receiving: 0, interrupted: 1 }, processingCount: dayReads === 1 ? 1 : 0,
+      } }
+    })
+    await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />); await tick() })
+    expect(renderedText(renderer.root)).toContain('当天有录音未收齐，已收到的内容仍在整理中。')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_500); await tick() })
+    expect(dayReads).toBe(2)
+    expect(renderedText(renderer.root)).toContain('当天有录音未收齐，已收到的内容仍可查看。')
+    expect(renderedText(renderer.root)).toContain('今天完成了方案评审')
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); await tick() })
+    expect(dayReads).toBe(2)
   })
 
   it('continues owner polling beyond the fast budget until the owner exposes a retryable state', async () => {
@@ -266,12 +288,12 @@ describe('recording summary and timeline generation', () => {
         const dateStamp = Number(params?.dateStamp)
         return {
           dateStamp, totalDurationMillis: 5_000,
-          transcript: {
+          transcript: { viewRef: 'fixture-view', nextCursor: '', transcriptSource: 'system',
             state: 'ready', message: '', totalDurationMillis: 5_000, processingCount: 0,
             items: [{
               itemId: 'item-1', itemRef: 'opaque-item', startAtMillis: dateStamp + 1_000,
               endAtMillis: dateStamp + 6_000, speakerNumber: 1, speakerKey: 'opaque-speaker',
-              speakerColorIndex: 0, speakerLabel: '我', sameSpeakerItemCount: 1,
+              speakerColorIndex: 0, speakerLabel: '我', canBindSpeaker: true,
               isSelf: true, isBackground: false, text: '完成评审',
             }],
           },

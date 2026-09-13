@@ -4497,8 +4497,9 @@ export class ChatService {
       mediaRef: string,
       range?: string,
       signal?: AbortSignal,
+      method: 'GET' | 'HEAD' = 'GET',
     ): Promise<{ response: Response; descriptor: ArkmeMediaDescriptor }> {
-      return await this.media.fetchMedia(mediaRef, range, signal)
+      return await this.media.fetchMedia(mediaRef, range, signal, false, method)
     }
   
   async sendDirectText(

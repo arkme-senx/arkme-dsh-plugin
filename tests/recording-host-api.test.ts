@@ -5,6 +5,18 @@ import type { ArkmeService } from '../src/arkme-service.js'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
 
 describe('recording UI-only host operations', () => {
+  it('routes the public page through the same owner and rejects a source/cursor type mismatch', async () => {
+    const recordingTranscriptPage = vi.fn(async () => ({ items: [], nextCursor: '', viewRef: 'opaque' }))
+    const service = { recordingTranscriptPage } as unknown as ArkmeService
+    const controller = new AbortController()
+    await dispatchArkmeHostOperation(service, 'recordings.transcript.page', { dateStamp: 100, source: 'doubao', cursor: 'sealed' }, undefined, undefined, undefined, undefined, controller.signal)
+    expect(recordingTranscriptPage).toHaveBeenCalledWith(100, { source: 'doubao', cursor: 'sealed', signal: controller.signal })
+    for (const bad of [{ source: 'primary' }, { cursor: 123 }]) {
+      await expect(dispatchArkmeHostOperation(service, 'recordings.transcript.page', { dateStamp: 100, ...bad })).rejects.toMatchObject({ code: 'recording-page-input-invalid' })
+    }
+    expect(recordingTranscriptPage).toHaveBeenCalledTimes(1)
+  })
+
   it('does not silently drop malformed selectors from a recording forward command', async () => {
     const forwardRecording = vi.fn()
     await expect(dispatchArkmeHostOperation({ forwardRecording } as unknown as ArkmeService, 'recordings.forward', {
@@ -143,7 +155,7 @@ describe('recording UI-only host operations', () => {
 
     expect(recordingImportPreflight).toHaveBeenCalledWith(['new.m4a', 'old.m4a'], undefined)
     expect(recordingImportStatus).toHaveBeenCalledWith('opaque')
-    expect(retryRecordingImport).toHaveBeenCalledWith('opaque', 3)
+    expect(retryRecordingImport).toHaveBeenCalledWith('opaque', 3, undefined)
     expect(cancelRecordingImport).toHaveBeenCalledWith('opaque', 4)
     expect(recordingImportHistory).toHaveBeenCalledWith({ toMillis: 20, limit: 50, offset: 2 }, undefined)
     expect(updateRecordingImportSessionStart).toHaveBeenCalledWith('session-opaque', 10, undefined)

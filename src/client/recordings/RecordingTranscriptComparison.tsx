@@ -8,7 +8,8 @@ import type { ArkmeRecordingComparison, ArkmeRecordingWorkbenchItem } from '../.
 import { callArkme } from '../api.js'
 import { arkmeTheme as colors } from '../arkme-theme.js'
 import { useRecordingPlayback } from './useRecordingPlayback.js'
-import { recordingComparisonPlaybackTarget } from './recording-transcript-comparison.js'
+import { refreshRecordingTranscriptPage } from '../../recording-transcript-page.js'
+import { useRecordingTranscriptPages } from './useRecordingTranscriptPages.js'
 
 export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, onClose }: {
   dateStamp: number
@@ -24,8 +25,14 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
   const [revision, setRevision] = useState(0)
   const columns = useRef<Array<HTMLDivElement | null>>([])
   const synchronizedScroll = useRef<{ element: HTMLDivElement; top: number }>()
-  const player = useRecordingPlayback(mediaPath)
+  const primaryPages = useRecordingTranscriptPages(data.system, String(dateStamp), page => setData(current => ({ ...current, system: page })))
+  const enhancedPages = useRecordingTranscriptPages(data.doubao, String(dateStamp), page => setData(current => ({ ...current, doubao: page })))
+  const player = useRecordingPlayback(mediaPath, async (last, signal) => {
+    const pages = last.transcriptSource === 'system' ? primaryPages : enhancedPages
+    return (await pages.through(last.startAtMillis, signal))?.items ?? []
+  })
   const closeButton = useRef<HTMLButtonElement>(null)
+  useEffect(() => { player.stop() }, [data.system.viewRef, data.doubao.viewRef, player.stop])
 
   useEffect(() => {
     const previous = document.activeElement
@@ -41,7 +48,7 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
       try {
         const next = await callArkme<ArkmeRecordingComparison>('recordings.compare', { dateStamp }, controller.signal)
         if (controller.signal.aborted) return
-        setData(next); setError(''); setPending(next.doubao.processingCount > 0)
+        setData(current => ({ ...next, system: refreshRecordingTranscriptPage(current.system, next.system), doubao: refreshRecordingTranscriptPage(current.doubao, next.doubao) })); setError(''); setPending(next.doubao.processingCount > 0)
         if (next.doubao.processingCount > 0) timer = setTimeout(() => { void load() }, 3_000)
       } catch (reason) {
         if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : '读取转写失败')
@@ -70,15 +77,9 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
   }
 
   const play = (item: ArkmeRecordingWorkbenchItem) => {
-    const target = recordingComparisonPlaybackTarget(item, data?.system.items ?? [])
-    if (target === undefined) { setPlaybackNotice('该片段暂无可播放的系统录音'); return }
     setPlaybackNotice('')
-    const ordered = [...data.system.items].sort((left, right) => left.startAtMillis - right.startAtMillis
-      || left.endAtMillis - right.endAtMillis || left.itemId.localeCompare(right.itemId))
-    const queue = ordered.slice(ordered.findIndex(row => row.itemId === target.itemId))
-    const seek = item.startAtMillis >= target.startAtMillis && item.startAtMillis < target.endAtMillis
-      ? item.startAtMillis : target.startAtMillis
-    void player.playAt(queue, seek)
+    const section = item.transcriptSource === 'system' ? data.system : data.doubao
+    void player.playAt(section.items, item.startAtMillis)
   }
 
   return <div role="dialog" aria-modal="true" aria-label="转写对比" onKeyDown={event => {
@@ -103,7 +104,7 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
           {source === 'system' && player.isPlaying && <RecordingTranscriptButton aria-label="暂停播放" onClick={player.pause} style={{ border: 0, width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', background: 'transparent' }}><Pause size={18} /></RecordingTranscriptButton>}
           {source === 'doubao' && pending && <small role="status" style={{ color: colors.secondary }}>豆包转写中…</small>}
         </header>
-        <div ref={element => { columns.current[index] = element }} onScroll={event => { synchronize(event, index) }} style={{ overflowY: 'auto', flex: 1, overscrollBehavior: 'contain', padding: '12px 20px 24px' }}>
+        <div ref={element => { columns.current[index] = element }} onScroll={event => { synchronize(event, index); const pane = event.currentTarget; const pages = source === 'system' ? primaryPages : enhancedPages; if (pages.error === '' && pane.scrollHeight - pane.scrollTop - pane.clientHeight < 400) void pages.next().catch(() => undefined) }} style={{ overflowY: 'auto', flex: 1, overscrollBehavior: 'contain', padding: '12px 20px 24px' }}>
           {data[source].items.map(item => {
             const active = player.positionAtMillis !== undefined && player.positionAtMillis >= item.startAtMillis && player.positionAtMillis < item.endAtMillis
             return <div role="button" tabIndex={0} aria-label={`播放${source === 'system' ? '系统' : '豆包'}片段 ${new Date(item.startAtMillis).toLocaleTimeString('zh-CN', { hour12: false })}`} key={item.itemId} data-transcript-time={item.startAtMillis} onDoubleClick={() => { play(item) }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); play(item) } }} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 6, padding: 4, borderRadius: 6, background: active ? colors.active : 'transparent', cursor: 'default', fontSize: 14, lineHeight: '22px' }}>
@@ -113,6 +114,8 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
               <time style={{ flex: 'none', fontSize: 12, color: colors.secondary }}>{new Date(item.startAtMillis).toLocaleTimeString('zh-CN', { hour12: false })} {Math.max(0, Math.floor((item.endAtMillis - item.startAtMillis) / 1000))}秒</time>
             </div>
           })}
+          {(source === 'system' ? primaryPages.error : enhancedPages.error) !== '' && <p role="alert">{source === 'system' ? primaryPages.error : enhancedPages.error}</p>}
+          {data[source].nextCursor !== '' && <RecordingTranscriptButton disabled={source === 'system' ? primaryPages.loading : enhancedPages.loading} onClick={() => { void (source === 'system' ? primaryPages : enhancedPages).next().catch(() => undefined) }}>加载更多</RecordingTranscriptButton>}
           {data[source].items.length === 0 && <p style={{ color: colors.secondary }}>{pending && source === 'doubao' ? '正在转写，请稍候' : data[source].message || '暂无转写'}</p>}
           {source === 'doubao' && data.failedCount > 0 && <p role="status" style={{ color: colors.danger }}>{data.failedCount} 个片段转写失败</p>}
           {source === 'doubao' && data.silentCount > 0 && <p role="status">{data.silentCount} 个片段未识别到人声</p>}

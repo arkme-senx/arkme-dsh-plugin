@@ -157,20 +157,21 @@ export function createArkmeLocalFileHandler(service: ArkmeService, options: Arkm
 export function createArkmeMediaHandler(service: ArkmeService, options: ArkmeRichMediaRouteOptions) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const controller = new AbortController()
-    const timeout = setTimeout(() => { controller.abort(new Error('媒体读取超时')) }, 2_000)
+    const timeout = setTimeout(() => { controller.abort(new Error('媒体读取超时')) }, 35_000)
     const abortOnClose = () => { controller.abort(new Error('媒体请求已取消')) }
     res.once('close', abortOnClose)
     try {
       if (req.method !== 'GET' && req.method !== 'HEAD') throw new ArkmePluginError('method-not-allowed', '只允许 GET 或 HEAD 请求', false, 405)
       assertLocalRequest(req, options)
       const ref = new URL(req.url ?? '/', `http://127.0.0.1:${String(options.expectedPort)}`).searchParams.get('ref') ?? ''
-      const { response, descriptor } = await service.fetchMedia(ref, headerText(req, 'range') || undefined, controller.signal)
+      const { response, descriptor } = await service.fetchMedia(ref, headerText(req, 'range') || undefined, controller.signal, req.method === 'HEAD' ? 'HEAD' : 'GET')
       clearTimeout(timeout)
       const contentType = response.headers.get('content-type') ?? descriptor.mimeType
       const cacheableImage = contentType.toLowerCase().startsWith('image/') && response.status === 200
       const headers: Record<string, string> = {
         'Content-Type': contentType,
-        'Cache-Control': cacheableImage ? 'private, max-age=86400, immutable' : 'private, max-age=60',
+        'Cache-Control': response.headers.get('cache-control')?.includes('no-store')
+          ? 'private, no-store' : cacheableImage ? 'private, max-age=86400, immutable' : 'private, max-age=60',
         'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(descriptor.fileName)}`,
         'X-Content-Type-Options': 'nosniff',
         'Accept-Ranges': response.headers.get('accept-ranges') ?? 'bytes',
@@ -180,7 +181,10 @@ export function createArkmeMediaHandler(service: ArkmeService, options: ArkmeRic
         if (value !== null) headers[name] = value
       }
       res.writeHead(response.status, headers)
-      if (req.method === 'HEAD' || response.body === null) { res.end(); return }
+      if (req.method === 'HEAD' || response.body === null) {
+        await response.body?.cancel()
+        res.end(); return
+      }
       await pipeline(Readable.fromWeb(response.body as never), res)
     } catch (error) {
       const known = error instanceof ArkmePluginError ? error : new ArkmePluginError('media-internal-error', '媒体读取失败', true, 500, { cause: error })

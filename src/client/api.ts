@@ -123,6 +123,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'calendar.records'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'recordings.transcript.page'
   | 'recordings.compare'
   | 'recordings.compare.start'
   | 'recordings.forward.capabilities'

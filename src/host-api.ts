@@ -50,6 +50,7 @@ const MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES = 10 * 1024 * 1024
 const MAX_REQUEST_BYTES = MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
 
 function requestBytesLimit(operation: string): number {
+  if (operation === 'recordings.transcript.page') return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
   if (operation === 'source.related-quick-notes.from-message') return MAX_RELATED_QUICK_NOTE_REQUEST_BYTES
   if (operation === 'message-actions.copy-link' || operation === 'message-actions.forward') {
     return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
@@ -904,7 +905,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['remote.reportCurrentSession', 'source.message-preparing.report', 'source.message-preparing.cancel'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
       }
-      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.import.file', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -1250,6 +1251,15 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'toStamp', Number.NaN),
       requestSignal,
     )
+    case 'recordings.transcript.page': {
+      const source = params.source ?? 'system'
+      if (source !== 'system' && source !== 'doubao' || params.cursor !== undefined && typeof params.cursor !== 'string') {
+        throw new ArkmePluginError('recording-page-input-invalid', '录音分页参数无效', false, 400)
+      }
+      return await service.recordingTranscriptPage(numberParam(params, 'dateStamp', Number.NaN), {
+        source, cursor: stringParam(params, 'cursor'), signal: requestSignal,
+      })
+    }
     case 'recordings.day': return await service.recordingDay(
       numberParam(params, 'dateStamp', Number.NaN),
       requestSignal,
@@ -1283,6 +1293,11 @@ export async function dispatchArkmeHostOperation(
       recordingSummaryModelRouteParam(params, false),
       requestSignal,
     )
+    case 'recordings.import.file': return await service.importRecordingFile({
+      fileRef: stringParam(params, 'fileRef').trim(),
+      startAtMillis: numberParam(params, 'startAtMillis', Number.NaN),
+      ownership: recordingImportOwnershipParam(params),
+    }, requestSignal)
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
       stringListParam(params, 'fileNames'), requestSignal,
     )
@@ -1294,7 +1309,7 @@ export async function dispatchArkmeHostOperation(
     }, requestSignal)
     case 'recordings.import.status': return await service.recordingImportStatus(stringParam(params, 'importRef').trim())
     case 'recordings.import.retry': return await service.retryRecordingImport(
-      stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)),
+      stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)), requestSignal,
     )
     case 'recordings.import.cancel': return await service.cancelRecordingImport(
       stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)),

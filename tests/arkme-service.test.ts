@@ -1,3 +1,4 @@
+import { recordingOwnerResponse } from './fixtures/recording-owner.js'
 import { openRecordTopicAssignmentRef } from '../src/record-topic-assignment-ref.js'
 import { createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -577,8 +578,8 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/audio/get-calender-summary')) {
         return json({ code: 200, data: { duration_ls: [], un_click_session_ids_per_day: [] } })
       }
-      if (url.endsWith('/api/v1/audio/one-day-trans')) {
-        return json({ code: 200, data: { session_ls: [], child_ls: [] } })
+      if (url.endsWith('/api/v1/audio/recordings/query')) {
+        return json({ code: 200, data: { items: [], has_more: false } })
       }
       if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
         return json({ code: 200, data: { spk_ls: [] } })
@@ -591,8 +592,7 @@ describe('ArkmeService', () => {
     await expect(service.recordingTranscript(lowerBound)).resolves.toMatchObject({ state: 'empty', items: [] })
     expect(bodies).toContainEqual({ from_stamp: lowerBound, to_stamp: lowerBound + 24 * 60 * 60 * 1_000 })
     expect(bodies).toContainEqual({
-      start_at: lowerBound,
-      tz_offset: timezoneOffset === 0 ? 0 : timezoneOffset,
+      start_at: Math.max(0, lowerBound), end_at: lowerBound + 24 * 60 * 60 * 1_000, order: 'asc', limit: 50,
     })
   })
 
@@ -785,21 +785,17 @@ describe('ArkmeService', () => {
       const authorization = new Headers(init?.headers).get('Authorization') ?? ''
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ url, authorization, body })
-      if (url === 'https://audio.test/api/v1/audio/one-day-trans' && !rejected) {
+      if (url === 'https://audio.test/api/v1/audio/recordings/query' && !rejected) {
         rejected = true
         return json({}, 401)
       }
       if (url === 'https://auth.test/api/public/v1/auth/new-short') {
         return json({ code: 200, data: { access_token: 'renewed' } })
       }
-      if (url.endsWith('/api/v1/audio/one-day-trans')) {
-        return json({ code: 200, data: {
-          session_ls: [{ id: 'session-1', start_at: dayStamp + 1_000, duration: 6_000, belong_usr: 10001,
-            spk_ls: [{ num: 1, spk_id: 'speaker-1' }] }],
-          child_ls: [{ id: 'child-1', session_id: 'session-1', start_at: 500,
-            asr: [{ s: 100, e: 800, n: 1, t: '今天很顺利', b: 0 }] }],
-        } })
-      }
+      const owner = recordingOwnerResponse(new URL(url).pathname, body, [{ startAt: dayStamp + 1000, duration: 6000,
+        items: [{ text: '今天很顺利', start: 600, end: 1300, speaker: { label: '英梦华', user_id: 20002 } }],
+      }])
+      if (owner !== undefined) return json({ code: 200, data: owner })
       if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
         return json({ code: 200, data: { spk_ls: [{ id: 'speaker-1', ref_usr_id: 20002, nick_name: '英梦华' }] } })
       }
@@ -831,7 +827,7 @@ describe('ArkmeService', () => {
       summary: { state: 'error', items: [] },
     })
     expect(sessions.session?.accessToken).toBe('renewed')
-    expect(requests.filter(item => item.url.endsWith('/one-day-trans')).map(item => item.authorization))
+    expect(requests.filter(item => item.url.endsWith('/recordings/query')).map(item => item.authorization))
       .toEqual(['Bearer expired', 'Bearer renewed'])
     expect(requests.filter(item => item.url.endsWith('/list-timeline-by-range')).map(item => item.body.kind).sort())
       .toEqual([1, 2])
@@ -887,28 +883,27 @@ describe('ArkmeService', () => {
     }
   })
 
-  it('keeps transcript rows readable when the speaker directory fails', async () => {
+  it('reads owner identities without depending on the legacy speaker directory', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
     const dayStamp = new Date(2023, 10, 15).getTime()
-    const service = new ArkmeService(config, sessions, state, async input => {
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
       const url = String(input)
       if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
         return json({ code: 500, message: '说话人服务暂不可用' })
       }
-      return json({ code: 200, data: {
-        session_ls: [{ id: 'session-1', start_at: dayStamp, duration: 2_000,
-          spk_ls: [{ num: 6, spk_id: 'speaker-6' }] }],
-        child_ls: [{ id: 'child-1', session_id: 'session-1', start_at: 0,
-          asr: [{ s: 100, e: 900, n: 6, t: '继续讨论' }] }],
-      } })
+      const owner = recordingOwnerResponse(new URL(url).pathname, JSON.parse(String(init?.body ?? '{}')), [{ startAt: dayStamp, duration: 2000,
+        items: [{ text: '继续讨论', start: 100, end: 900, speaker: { label: '说话人 6', kind: 'anonymous', user_id: 0 } }],
+      }])
+      if (owner === undefined) throw new Error('Unexpected owner route')
+      return json({ code: 200, data: owner })
     })
 
     const transcript = await service.recordingTranscript(dayStamp)
     expect(transcript).toMatchObject({
       state: 'ready',
-      identityCoverage: 'partial',
+      identityCoverage: 'complete',
       items: [{ speakerLabel: '说话人 6', text: '继续讨论' }],
     })
     expect(transcript.items[0]).not.toHaveProperty('speakerIdentity')

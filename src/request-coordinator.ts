@@ -286,6 +286,29 @@ export class ArkmeRequestCoordinator {
     return await this.joinFlight<T>(entry, request.signal).then(clone)
   }
 
+  /** A stream owns admission until EOF/cancel, not merely until headers arrive.
+   * The operation must settle finished on abort even if nobody reads its body.
+   * Streams are neither cached nor coalesced: each consumer owns its reader.
+   */
+  async runStream<T>(request: Pick<ArkmeCoordinatedRequest<T>, 'scope' | 'lane' | 'service' | 'signal'> & {
+    operation(signal: AbortSignal): Promise<{ value: T; finished: Promise<void> }>
+  }): Promise<T> {
+    const response = Promise.withResolvers<T>()
+    const scope = request.scope.trim() || 'public'
+    const epoch = this.epoch(scope)
+    void this.run({
+      ...request,
+      operation: async signal => {
+        const transfer = await request.operation(signal)
+        signal.throwIfAborted()
+        if (this.epoch(scope) !== epoch) throw new ArkmeStaleRequestError()
+        response.resolve(transfer.value)
+        await transfer.finished
+      },
+    }).catch(response.reject)
+    return await response.promise
+  }
+
   /** Hard account/lifecycle invalidation. Old completions cannot populate the new scope. */
   invalidateScope(scopeInput: string): void {
     const scope = scopeInput.trim() || 'public'
