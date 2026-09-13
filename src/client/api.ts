@@ -88,6 +88,8 @@ export async function uploadArkmeRecording(
 }
 
 type ArkmeUiOperation = ArkmePluginOperation
+  | 'emoji.recent.list'
+  | 'emoji.recent.record'
   | 'topic.candidates'
   | 'provider.instance'
   | 'link.metadata'
@@ -142,6 +144,8 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'recordings.import.session.delete'
   | 'recordings.playback.open'
   | 'recordings.speaker.options'
+  | 'recordings.speaker.cached-options'
+  | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
   | 'topic.create'
   | 'topic.rename'

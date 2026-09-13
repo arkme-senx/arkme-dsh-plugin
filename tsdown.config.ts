@@ -79,6 +79,19 @@ export default defineConfig([
     },
   },
   {
+    name: '@senguoyun/dsh-arkme/harness-onboarding',
+    entry: { 'harness-onboarding-client': 'src/client/harness-onboarding-client.tsx' },
+    outDir: 'lib', format: 'cjs', platform: 'browser', inputOptions: { platform: 'browser' }, target: 'es2022',
+    fixedExtension: false, dts: false, clean: false,
+    external: ['react'],
+    outputOptions: {
+      entryFileNames: 'harness-onboarding-client.js',
+      banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme/harness-onboarding", factory: (require) => {',
+      footer: 'return module.exports; } });',
+      intro: 'var module = { exports: {} }; var exports = module.exports;',
+    },
+  },
+  {
     name: '@senguoyun/dsh-arkme/harness-model',
     entry: { 'harness-model-client': 'src/client/harness-model-client.tsx' },
     outDir: 'lib', format: 'cjs', platform: 'browser',

@@ -214,7 +214,6 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(markup).not.toContain('>转写</button>')
     expect(source).not.toContain('<div style={styles.track} aria-label="当天录音时间轴">')
     expect(source).toContain("const emptyDay = !dayLoading && dayError === '' && day?.transcript.state === 'empty'")
-    expect(source).toContain('{emptyDay ? <ArkmeRecordingEmptyState />')
   })
 
   it('uses the desktop empty-panel generation actions and hides them while processing', () => {

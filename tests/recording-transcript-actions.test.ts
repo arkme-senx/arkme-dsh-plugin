@@ -50,9 +50,10 @@ function fixture() {
       ...(offset + page.length < selected.length ? { next_page_cursor: String(offset + page.length) } : {}),
     }
   })
-  const runtime = { config: { maxTextLength: 20000 }, requireSession, authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+  const runtime = { subscribeAccountScope: () => () => {}, config: { maxTextLength: 20000 }, requireSession, authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
   const service = new RecordingService(runtime, { media, forwardGateway: { forward, supportsRecordTargets: async () => true } } as unknown as RecordingServiceDependencies)
   return { data, forward, service, requireSession, post, media }
+
 }
 
 describe('recording transcript owner boundaries', () => {

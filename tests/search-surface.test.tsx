@@ -61,7 +61,7 @@ afterEach(() => {
 })
 
 describe('Arkme search surface', () => {
-  it('starts with quick-note search and exposes image, AI video, and voice quick entries', () => {
+  it('starts with quick-note search and exposes only image, voice, and file quick entries', () => {
     const markup = renderToStaticMarkup(<ArkmeSearchSurface />)
 
     expect(markup).toContain('placeholder="搜索对话、快记或消息"')
@@ -69,15 +69,15 @@ describe('Arkme search surface', () => {
     expect(markup).toContain('fill="#a3a7af"')
     expect(markup).not.toContain('>搜索</button>')
     expect(markup).toContain('/arkme-self/api/call/gallery-linear.svg')
-    expect(markup).toContain('/arkme-self/api/call/arkme-video-linear.svg')
+    expect(markup).not.toContain('/arkme-self/api/call/arkme-video-linear.svg')
     expect(markup).toContain('>图片</span>')
-    expect(markup).toContain('AI 视频')
+    expect(markup).not.toContain('AI 视频')
     expect(markup).toContain('>语音</span>')
     expect(markup).toContain('>文件</span>')
     for (const label of ['图片/视频', '录音', '外部链接', '长文']) expect(markup).not.toContain(label)
   })
 
-  it('keeps the search results and AI video entry in the desktop document flow', async () => {
+  it('keeps search results in the desktop document flow without AI video', async () => {
     const source = await readFile(new URL('../src/client/ArkmeSearchSurface.tsx', import.meta.url), 'utf8')
     const mediaRouteSource = await readFile(new URL('../src/rich-media-routes.ts', import.meta.url), 'utf8')
 
@@ -85,7 +85,7 @@ describe('Arkme search surface', () => {
     expect(source).not.toContain("width: 'min(470px, 100%)'")
     expect(source).toContain("gridTemplateColumns: 'repeat(5, minmax(0, 1fr))'")
     expect(source).toContain("{ key: 'image', label: '图片', tabLabel: '图片库' }")
-    expect(source).toContain("{ key: 'ai_video', label: 'AI 视频', tabLabel: 'AI 视频' }")
+    expect(source).not.toContain("{ key: 'ai_video', label: 'AI 视频', tabLabel: 'AI 视频' }")
     expect(source).toContain("{ key: 'audio', label: '语音', tabLabel: '语音' }")
     expect(source).toContain('if (!active) void loadQuick(entry.key)')
     expect(source).toContain("controller.signal.aborted ? '加载超时，请重试'")
@@ -112,7 +112,7 @@ describe('Arkme search surface', () => {
     expect(markup).toContain('backdrop-filter:blur(3px)')
     expect(markup).not.toContain('blur(12px)')
     expect(markup).toContain('>图片</span>')
-    expect(markup).toContain('AI 视频')
+    expect(markup).not.toContain('AI 视频')
     expect(markup).toContain('>语音</span>')
   })
 
@@ -177,6 +177,28 @@ describe('Arkme search surface', () => {
     act(() => { renderer.unmount() })
   })
 
+  it.each(['page', 'dialog'] as const)('keeps remaining quick entries usable without AI video in %s', async variant => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'search.history') return { items: [], hasMore: false }
+      if (operation === 'images.list') return { items: [], hasMore: false }
+      if (operation === 'search.scene' || operation === 'files.search') return { items: [], hasMore: false }
+      throw new Error(`unexpected Arkme call: ${operation}`)
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeSearchSurface variant={variant} />) })
+    for (const label of ['图片', '语音', '文件']) {
+      const entry = renderer.root.findAllByType('button').find(button => content(button.props.children) === label)
+      expect(entry).toBeDefined()
+      await act(async () => { entry!.props.onClick(); await vi.advanceTimersByTimeAsync(1) })
+      expect(content(renderer.toJSON())).not.toContain('AI 视频')
+      expect(renderer.root.findAllByType('header').flatMap(header => header.findAllByType('button')).map(button => content(button.props.children))).toEqual(['', '图片库', '语音', '文件'])
+      await act(async () => { renderer.root.findByProps({ 'aria-label': '返回搜索' }).props.onClick() })
+      expect(renderer.root.findByProps({ 'aria-label': '搜索' }).props.value).toBe('')
+    }
+    expect(mocks.callArkme.mock.calls.map(([operation]) => operation)).toEqual(['search.history', 'images.list', 'search.scene', 'files.search'])
+    act(() => { renderer.unmount() })
+  })
+
   it('keeps quick-category responses when switching from the unified search view', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'search.history') return { items: [], hasMore: false }
@@ -187,14 +209,6 @@ describe('Arkme search surface', () => {
         }],
         hasMore: false,
         queryGuard: { state: 'ok' },
-      }
-      if (operation === 'ai-video.list') return {
-        items: [{
-          jobId: 'video-1', sessionId: 'session-1', status: 'succeeded', stage: 'succeeded', progress: 100,
-          selectedSegmentCount: 1, title: '周会视频', sourceStartedAtMillis: 1, createdAtMillis: 1,
-          updatedAtMillis: 1, retryable: false,
-        }],
-        hasMore: false,
       }
       if (operation === 'search.scene') return {
         ...arkmeResults(),
@@ -215,10 +229,16 @@ describe('Arkme search surface', () => {
     const imageEntry = renderer.root.findAllByType('button').find(button => content(button.props.children) === '图片')
     await act(async () => { imageEntry?.props.onClick(); await Promise.resolve() })
     expect(renderer.root.findAllByProps({ alt: '产品截图.png' })).toHaveLength(1)
+    await act(async () => { renderer.root.findByProps({ title: '产品截图' }).props.onClick() })
+    const preview = renderer.root.findByProps({ role: 'dialog' })
+    expect(preview.findByType('img').props.alt).toBe('产品截图.png')
+    expect(preview.findAllByType('video')).toHaveLength(0)
+    await act(async () => { preview.findByType('button').props.onClick() })
+    expect(renderer.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)
 
     const videoTab = renderer.root.findAllByType('button').find(button => content(button.props.children) === 'AI 视频')
-    await act(async () => { videoTab?.props.onClick(); await Promise.resolve() })
-    expect(content(renderer.toJSON())).toContain('周会视频')
+    expect(videoTab).toBeUndefined()
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'ai-video.list')).toBe(false)
 
     const audioTab = renderer.root.findAllByType('button').find(button => content(button.props.children) === '语音')
     await act(async () => { audioTab?.props.onClick(); await Promise.resolve(); await Promise.resolve() })
@@ -250,13 +270,6 @@ describe('Arkme search surface', () => {
         })),
         hasMore: false,
       }
-      if (operation === 'ai-video.list') return {
-        items: Array.from({ length: count }, (_, index) => ({
-          jobId: `video-${index}`, title: `视频-${index}`, status: 'running', progress: 50,
-          createdAtMillis: 1,
-        })),
-        hasMore: false,
-      }
       if (operation === 'search.scene') return {
         ...arkmeResults(),
         items: Array.from({ length: count }, (_, index) => ({
@@ -270,7 +283,7 @@ describe('Arkme search surface', () => {
     })
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<ArkmeSearchSurface variant={variant} />) })
-    for (const [label, itemType] of [['图片', 'img'], ['AI 视频', 'article'], ['语音', 'audio']] as const) {
+    for (const [label, itemType] of [['图片', 'img'], ['语音', 'audio']] as const) {
       await act(async () => {
         renderer.root.findAllByType('button').find(button => content(button.props.children) === label)?.props.onClick()
       })

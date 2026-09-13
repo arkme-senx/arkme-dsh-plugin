@@ -31,6 +31,16 @@ async function request(path: string, method = 'GET') {
 }
 
 describe('outgoing call assets', () => {
+  it('serves the playable onboarding utterance as packaged MPEG-4 audio', async () => {
+    const audio = await request('/arkme-self/api/call/call-demo-utterance-v1.m4a')
+    expect(audio.status).toBe(200)
+    expect(audio.headers['Content-Type']).toBe('audio/mp4')
+    expect(audio.body.subarray(4, 8).toString()).toBe('ftyp')
+    expect(audio.body.byteLength).toBeGreaterThan(1000)
+    const head = await request('/arkme-self/api/call/call-demo-utterance-v1.m4a', 'HEAD')
+    expect(head.status).toBe(200)
+    expect(head.body).toHaveLength(0)
+  })
   it.each(['call-outgoing-linear.svg', 'call-incoming-linear.svg', 'video-outgoing-linear.svg', 'video-incoming-linear.svg'])('serves the original desktop detail icon %s', async name => {
     const response = await request(`/arkme-self/api/call/${name}`)
     expect(response.status).toBe(200)

@@ -1,6 +1,8 @@
 import { mergeBotDirectorySnapshots } from '../bot-chat-directory-projection.js'
 import { projectArkmeConversationAttention } from '../conversation-attention.js'
 import type { ArkmeChatPinProjection, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
+import { homeTourDiagnostic } from './home-tour-diagnostics.js'
+import { reconcileArkmeProviderInstance } from './provider-instance-runtime.js'
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import { arkmeBadgeUnreadCount, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { ArkmeClientError, callArkme } from './api.js'
@@ -23,6 +25,7 @@ function clientAccountScopeKey(scope: ArkmeClientAccountScope): string | undefin
 }
 
 interface ArkmeChatDirectoryStoreOptions {
+  prepareLoad?: () => Promise<void>
   loadPage?: (cursor?: string, force?: boolean) => Promise<ArkmeSourceList>
   maxAgeMs?: number
   now?: () => number
@@ -400,6 +403,8 @@ export class ArkmeChatDirectoryStore {
   private readonly loadPage: (cursor?: string, force?: boolean) => Promise<ArkmeSourceList>
   private readonly maxAgeMs: number
   private readonly now: () => number
+  private readonly prepareLoad: (() => Promise<void>) | undefined
+  private preparation: Promise<void> | undefined
   private refreshInFlight: Promise<ArkmeSourceItem[]> | undefined
   private refreshedAtMillis = 0
   private accountScopeKey: string | undefined
@@ -416,6 +421,7 @@ export class ArkmeChatDirectoryStore {
   private readonly sourceKeysByRef = new Map<string, string>()
 
   constructor(options: ArkmeChatDirectoryStoreOptions = {}) {
+    this.prepareLoad = options.prepareLoad
     this.loadPage = options.loadPage ?? (async (cursor, force) => await callArkme<ArkmeSourceList>('sources.list', {
       directory: 'root', limit: ROOT_DIRECTORY_PAGE_LIMIT, localFirst: true,
       ...(cursor === undefined ? {} : { cursor }), ...(force === true ? { refresh: true } : {}),
@@ -449,6 +455,10 @@ export class ArkmeChatDirectoryStore {
   activateAccount(scope: ArkmeClientAccountScope): void {
     const normalized = clientAccountScopeKey(scope)
     if (normalized === this.accountScopeKey) return
+    homeTourDiagnostic('directory-account-reset', {
+      previousAccount: this.accountScopeKey, nextAccount: normalized,
+      generation: this.generation, baselineReady: this.baselineReady, sourceCount: this.snapshot.sources.length,
+    })
     const hadLocalMetadata = this.localBots.length > 0 || this.localVisibility.length > 0
     this.projection = undefined
     this.localBots = []
@@ -457,6 +467,7 @@ export class ArkmeChatDirectoryStore {
     this.conversationSnapshot = undefined
     this.accountScopeKey = normalized
     this.generation += 1
+    this.preparation = undefined
     this.refreshInFlight = undefined
     this.refreshedAtMillis = 0
     this.baselineReady = false
@@ -467,6 +478,23 @@ export class ArkmeChatDirectoryStore {
     this.optimisticUnreadBackups.clear()
     this.sourceKeysByRef.clear()
     if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady || this.snapshot.isRefreshing || hadLocalMetadata) this.commit([])
+  }
+
+  /** Every first read/push in an account generation waits for the same instance check. */
+  async prepareRoot(): Promise<void> {
+    if (this.prepareLoad === undefined) return
+    const pending = this.preparation ??= this.prepareLoad()
+    try { await pending }
+    catch (error) {
+      if (this.preparation === pending) this.preparation = undefined
+      throw error
+    }
+  }
+
+  async receiveHostPage(page: ArkmeSourceList): Promise<void> {
+    const generation = this.generation
+    await this.prepareRoot()
+    if (generation === this.generation) this.applyHostPage(page)
   }
 
   async refreshRoot(options: { force?: boolean; silent?: boolean } = {}): Promise<ArkmeSourceItem[]> {
@@ -481,6 +509,8 @@ export class ArkmeChatDirectoryStore {
     if (options.silent !== true) this.setRefreshing(true)
     const generation = this.generation
     const pending = (async () => {
+      if (this.prepareLoad !== undefined) await this.prepareRoot()
+      if (generation !== this.generation) return [...this.snapshot.sources]
       const loaded: ArkmeSourceItem[] = []
       const seen = new Set<string>()
       let cursor: string | undefined
@@ -661,6 +691,15 @@ export class ArkmeChatDirectoryStore {
   }
 
   private commit(sources: ArkmeSourceItem[]): void {
+    if (this.snapshot.baselineReady !== this.baselineReady || this.snapshot.isRefreshing !== this.isRefreshing
+      || (this.snapshot.sources.length === 0) !== (sources.length === 0)) {
+      homeTourDiagnostic('directory-state-change', {
+        accountKey: this.accountScopeKey, generation: this.generation,
+        previousReady: this.snapshot.baselineReady, baselineReady: this.baselineReady,
+        previousRefreshing: this.snapshot.isRefreshing, isRefreshing: this.isRefreshing,
+        previousCount: this.snapshot.sources.length, sourceCount: sources.length,
+      })
+    }
     const sameSources = sources.length === this.snapshot.sources.length
       && sources.every((source, index) => source === this.snapshot.sources[index])
     if (!sameSources) {
@@ -897,8 +936,10 @@ export class ArkmeChatDirectoryStore {
   }
 
   clear(): void {
+    homeTourDiagnostic('directory-clear', { accountKey: this.accountScopeKey, generation: this.generation, baselineReady: this.baselineReady })
     this.projection = undefined
     this.generation += 1
+    this.preparation = undefined
     this.refreshInFlight = undefined
     this.refreshedAtMillis = 0
     this.baselineReady = false
@@ -965,7 +1006,9 @@ export class ArkmeChatDirectoryStore {
   }
 }
 
-export const arkmeChatDirectory = new ArkmeChatDirectoryStore()
+export const arkmeChatDirectory = new ArkmeChatDirectoryStore({
+  prepareLoad: async () => { await reconcileArkmeProviderInstance() },
+})
 
 export interface ArkmeChatTimelineDeltaSnapshot {
   revision: number

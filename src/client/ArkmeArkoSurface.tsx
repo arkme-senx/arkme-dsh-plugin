@@ -1096,11 +1096,11 @@ export function ArkmeArkoSurface() {
     {messageActions.selecting ? messageActions.selectionBar : <footer ref={composerRef} style={styles.composer}>
       <button
         type="button"
-        aria-label="Arko 能干什么"
+        aria-label={`${displayName} 能干什么`}
         style={{ ...styles.capabilityShortcut, opacity: sendDisabled ? .45 : 1, cursor: sendDisabled ? 'default' : 'pointer' }}
         disabled={sendDisabled}
         onClick={() => { void send('你能帮我干什么') }}
-      ><RobotIcon size={17} aria-hidden /><span>Arko 能干什么</span></button>
+      ><RobotIcon size={17} aria-hidden /><span>{`${displayName} 能干什么`}</span></button>
       <div style={styles.composerInner}>
       <textarea
         ref={textareaRef}

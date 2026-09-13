@@ -50,6 +50,7 @@ beforeEach(async () => {
   })
   mocks.callArkme.mockReset()
   mocks.callArkme.mockImplementation(async (operation: string) => {
+    if (operation === 'provider.instance') return { instanceId: 'pin-ui-test-instance' }
     if (operation === 'sources.list') return { directory: 'root', items: [source], hasMore: false }
     if (operation === 'bots.private-chat.directory') return { items: [] }
     if (operation === 'source.directory.policy.set') {

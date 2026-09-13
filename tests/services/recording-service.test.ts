@@ -8,6 +8,7 @@ import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { LocalRecordingImportSource } from '../../src/recording-import-probe.js'
 import { RecordingService, type RecordingServiceDependencies } from '../../src/services/recording-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
+import { ArkmeLocalDatabase } from '../../src/local-database.js'
 import { ArkmeStateStore } from '../../src/state-store.js'
 import {
   RecordingImportContractError,
@@ -187,6 +188,161 @@ describe('RecordingService', () => {
     runtime.requestCoordinator.dispose()
   })
 
+  async function speakerCacheFixture() {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-speaker-persistence-'))
+    const database = new ArkmeLocalDatabase(root, new ArkmeStateStore(root))
+    let session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const sessions: ArkmeSessionStore = { async read() { return session }, async write(value) { session = value }, async delete() {} }
+    const state = { rows: [{ speaker_id: 'speaker', reference: speakerReference, nick_name: '甲' }], failWrite: false }
+    const calls: string[] = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      calls.push(path)
+      if (state.failWrite && path.endsWith('/recordings/transcript/speaker/assign')) throw new Error('unknown write result')
+      let data: Record<string, unknown> = {}
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: state.rows }
+      if (path.endsWith('/create-speaker')) data = { speaker_id: 'created' }
+      if (path.endsWith('/recordings/transcript/speaker/assign')) data = { changed_items: 1, changed_clusters: 0 }
+      data = recordingOwnerResponse(path, JSON.parse(String(init?.body ?? '{}')), [{ startAt: 3600000, items: [{ text: '内容', start: 1000, end: 2000 }] }]) ?? data
+      return new Response(JSON.stringify({ code: 200, data }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, database, fetchImpl)
+    const service = new RecordingService(runtime, dependencies())
+    return { root, database, runtime, service, state, calls, fetchImpl,
+      async close() { service.dispose(); database.close(); await rm(root, { recursive: true, force: true }) } }
+  }
+
+  it('restores persisted candidates in a new service without calling Audio or recommendations', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+      const options = await fixture.service.recordingSpeakerOptions()
+      const restored = new RecordingService(fixture.runtime, dependencies())
+      fixture.calls.length = 0
+      expect(await restored.cachedRecordingSpeakerOptions()).toEqual(options)
+      expect(fixture.calls).toEqual([])
+      restored.dispose()
+      await fixture.runtime.writeSession({ userId: 43, accessToken: 'new', refreshToken: 'new' })
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+    } finally { await fixture.close() }
+  })
+
+  it('rejects late restoration across an account switch back to the original account', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      const options = await fixture.service.recordingSpeakerOptions()
+      let finish!: (value: typeof options) => void
+      vi.spyOn(fixture.database, 'readRecordingSpeakerCache').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+      const pending = fixture.service.cachedRecordingSpeakerOptions()
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+      await fixture.runtime.writeSession({ userId: 43, accessToken: 'other', refreshToken: 'other' })
+      await fixture.runtime.writeSession({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })
+      finish(options)
+      await expect(pending).rejects.toMatchObject({ code: 'recording-speaker-context-changed' })
+    } finally { await fixture.close() }
+  })
+
+  it('keeps one stable candidate for linked identities without merging namesakes', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      fixture.state.rows = [
+        { speaker_id: 'z', reference: speakerReference, nick_name: '甲' },
+        { speaker_id: 'b', reference: 'speaker:cccccccccccccccc', nick_name: '甲' },
+        { speaker_id: 'a', reference: speakerReference, nick_name: '甲' },
+      ]
+      const first = await fixture.service.recordingSpeakerOptions()
+      expect(first).toHaveLength(2)
+      expect(first[0]!.optionKey).not.toBe(first[1]!.optionKey)
+      fixture.state.rows.reverse()
+      const reordered = await fixture.service.recordingSpeakerOptions()
+      expect(reordered.map(candidate => candidate.optionKey)).toEqual(first.map(candidate => candidate.optionKey))
+      const day = await fixture.service.recordingDay(new Date(1970, 0, 1).getTime())
+      expect(day.transcript.items[0]!.assignedSpeakerOptionKey).toBe(first[0]!.optionKey)
+      await fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef, speakerRef: first[0]!.speakerRef, scope: 'item' })
+      const write = fixture.fetchImpl.mock.calls.find(([, init]) => String(init?.body).includes('target_speaker_uid'))
+      expect(JSON.parse(String(write?.[1]?.body)).target_speaker_uid).toBe('a')
+    } finally { await fixture.close() }
+  })
+
+  it('replaces persistent candidates with the fresh owner result including an empty directory', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      await fixture.service.recordingSpeakerOptions()
+      fixture.state.rows = []
+      await fixture.service.recordingSpeakerOptions()
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toEqual([])
+    } finally { await fixture.close() }
+  })
+
+  it('keeps owner reads usable on disk failures and preserves the old cache on remote failure', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      const options = await fixture.service.recordingSpeakerOptions()
+      const read = vi.spyOn(fixture.database, 'readRecordingSpeakerCache').mockRejectedValueOnce(new Error('disk'))
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+      read.mockRestore()
+      vi.spyOn(fixture.database, 'writeRecordingSpeakerCache').mockRejectedValueOnce(new Error('disk'))
+      expect(await fixture.service.recordingSpeakerOptions()).toHaveLength(1)
+      vi.spyOn(fixture.runtime, 'authenticatedAudioPost').mockRejectedValueOnce(new Error('offline'))
+      await expect(fixture.service.recordingSpeakerOptions()).rejects.toThrow('offline')
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toEqual(options)
+    } finally { await fixture.close() }
+  })
+
+  it('does not overwrite a complete persistent directory when optional user candidates fail', async () => {
+    const fixture = await speakerCacheFixture()
+    const users = vi.fn().mockResolvedValueOnce([{ userId: 77, label: '乙' }]).mockRejectedValueOnce(new Error('contacts offline'))
+    const service = new RecordingService(fixture.runtime, dependencies(gatewayNoop(), { userCandidates: { listRecordingSpeakerUsers: users } }))
+    try {
+      const complete = await service.recordingSpeakerOptions()
+      expect(complete).toHaveLength(2)
+      expect(await service.recordingSpeakerOptions()).toHaveLength(1)
+      expect(await service.cachedRecordingSpeakerOptions()).toEqual(complete)
+    } finally { service.dispose(); await fixture.close() }
+  })
+
+  it('rejects a deleted cached speaker before making any assignment write', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      const [candidate] = await fixture.service.recordingSpeakerOptions()
+      const day = await fixture.service.recordingDay(new Date(1970, 0, 1).getTime())
+      fixture.state.rows = []
+      await expect(fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef,
+        speakerRef: candidate!.speakerRef, scope: 'item' })).rejects.toMatchObject({ code: 'recording-speaker-target-missing' })
+      expect(fixture.calls.some(path => path.endsWith('/recordings/transcript/speaker/assign'))).toBe(false)
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+    } finally { await fixture.close() }
+  })
+
+  it('invalidates persistent data even when creation is followed by an unknown assignment result', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      await fixture.service.recordingSpeakerOptions()
+      const day = await fixture.service.recordingDay(new Date(1970, 0, 1).getTime())
+      fixture.state.failWrite = true
+      await expect(fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef,
+        newSpeakerName: '新说话人', scope: 'item' })).rejects.toThrow()
+      expect(fixture.calls.filter(path => path.endsWith('/create-speaker'))).toHaveLength(1)
+      expect(fixture.calls.filter(path => path.endsWith('/recordings/transcript/speaker/assign'))).toHaveLength(1)
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+    } finally { await fixture.close() }
+  })
+
+  it('does not persist a read started before an intervening mutation', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      let finish!: (value: Record<string, unknown>) => void
+      vi.spyOn(fixture.runtime, 'authenticatedAudioPost').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+      const pending = fixture.service.recordingSpeakerOptions()
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+      await expect(fixture.service.assignRecordingSpeaker({ itemRef: 'invalid', newSpeakerName: '甲', scope: 'item' })).rejects.toThrow()
+      finish({ spk_ls: fixture.state.rows })
+      await expect(pending).rejects.toMatchObject({ code: 'recording-speaker-context-changed' })
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+    } finally { await fixture.close() }
+
+  })
+
   function oneSecondMonoWav(): Buffer {
     const sampleRate = 8_000
     const dataSize = sampleRate * 2
@@ -215,7 +371,7 @@ describe('RecordingService', () => {
         items: [{ text: '完成方案评审', start: 0, end: 5_000, event: '工作' }],
       }]) ?? data
       if (path.endsWith('/get-speaker-ls')) data = {
-        spk_ls: [{ speaker_id: 'speaker-secret', nick_name: '我', ref_usr_id: 42 }],
+        spk_ls: [{ speaker_id: 'speaker-secret', reference: speakerReference, nick_name: '我', ref_usr_id: 42 }],
       }
       if (path.endsWith('/summary/create')) data = { summary_id: 'summary-opaque', flag: 1 }
       if (path.endsWith('/list-timeline-by-range')) data = {
@@ -296,7 +452,7 @@ describe('RecordingService', () => {
         items: [{ text: '已经完成的转写', start: 0, end: 5_000 }], coverage: { processing_count: 1 },
       }]) ?? data
       if (path.endsWith('/get-speaker-ls')) data = {
-        spk_ls: [{ speaker_id: 'speaker', nick_name: '我', ref_usr_id: 42 }],
+        spk_ls: [{ speaker_id: 'speaker', reference: speakerReference, nick_name: '我', ref_usr_id: 42 }],
       }
       if (path.endsWith('/summary/create')) data = { summary_id: 'summary-partial', flag: 1 }
       if (path.endsWith('/list-timeline-by-range')) data = {
@@ -390,7 +546,7 @@ describe('RecordingService', () => {
       data = recordingOwnerResponse(path, JSON.parse(String(init?.body ?? '{}')), [{ startAt: dayStart, duration: 5_000,
         items: [{ text: '完成评审', start: 0, end: 5_000 }],
       }]) ?? data
-      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: 'speaker', nick_name: '我', ref_usr_id: 42 }] }
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: 'speaker', reference: speakerReference, nick_name: '我', ref_usr_id: 42 }] }
       if (path.endsWith('/summary/create')) data = { summary_id: 'accepted-summary', flag: 1 }
       return new Response(JSON.stringify({ code: 200, data }), {
         status: 200, headers: { 'content-type': 'application/json' },
@@ -1436,7 +1592,7 @@ describe('RecordingService', () => {
       if (url.pathname.endsWith('/get-speaker-ls')) data = {
         spk_ls: [{ speaker_id: 'speaker-secret', reference: speakerReference, nick_name: '小林', ref_usr_id: 88 }],
       }
-      if (url.pathname.endsWith('/speaker/suggestion')) data = { speaker_uid: 'speaker-secret' }
+      if (url.pathname.endsWith('/speaker/suggestion')) data = { speaker_uid: 'speaker-secret', speaker_reference: speakerReference }
       if (url.pathname.endsWith('/speaker/assign')) data = { changed_clusters: 0, changed_items: 1 }
       if (url.pathname.endsWith('/speakers/bind')) data = { changed_clusters: 1, changed_items: 1 }
       if (url.pathname.endsWith('/create-speaker')) data = { speaker_id: 'speaker-user' }
@@ -1478,7 +1634,20 @@ describe('RecordingService', () => {
     expect(media.issueRecordingPlaybackMediaRef).toHaveBeenCalledWith({
       viewerUserId: 42, locator: { child_id: childId, source: 'primary', ordinal: 0 },
     }, undefined)
-    const options = await service.recordingSpeakerOptions(item!.itemRef)
+    const options = await service.recordingSpeakerOptions()
+    candidateLabel = '小林'
+    expect(options[0]!.optionKey).toBe(item!.assignedSpeakerOptionKey)
+    expect(options[0]).not.toHaveProperty('currentAssignment')
+    expect(options[0]).not.toHaveProperty('recommended')
+    expect(calls.some(call => call.path.endsWith('/similar-session-speaker'))).toBe(false)
+    await expect(service.recordingSpeakerRecommendation(item!.itemRef)).resolves.toEqual({ optionKey: options[0]!.optionKey })
+    const renewedOptions = await service.recordingSpeakerOptions()
+    expect(renewedOptions.map(option => option.label)).toEqual(['小林', '小林'])
+    candidateLabel = '小王'
+    expect(options[0]!.optionKey).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(renewedOptions.map(option => option.optionKey)).toEqual(options.map(option => option.optionKey))
+    expect(renewedOptions[0]!.speakerRef).not.toBe(options[0]!.speakerRef)
+    expect(options[0]!.optionKey).not.toBe(options[1]!.optionKey)
     expect(calls).toContainEqual({
       path: '/api/v1/audio/recordings/transcript/speaker/suggestion',
       body: { recording_uid: recordingId, revision: recordingRevision, source: 'primary',
@@ -1486,12 +1655,14 @@ describe('RecordingService', () => {
     })
     expect(options).toEqual([
       {
+        optionKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
         speakerRef: expect.stringMatching(/^arkme-recording-speaker-v1\./), label: '小林', kind: 'speaker',
-        currentAssignment: true, isCurrentUser: false, recommended: true,
+        isCurrentUser: false,
       },
       {
+        optionKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
         speakerRef: expect.stringMatching(/^arkme-recording-speaker-v1\./), label: '小王', kind: 'arkme-user',
-        currentAssignment: false, isCurrentUser: false, recommended: false,
+        isCurrentUser: false,
       },
     ])
     // A manually assigned sentence has the same semantic identity; its physical
@@ -1501,7 +1672,7 @@ describe('RecordingService', () => {
     expect(media.issueRecordingPlaybackMediaRef).toHaveBeenLastCalledWith({
       viewerUserId: 42, locator: { child_id: childId, source: 'primary', ordinal: 2 },
     }, undefined)
-    await service.recordingSpeakerOptions(individuallyAssignedItem.itemRef)
+    await service.recordingSpeakerRecommendation(individuallyAssignedItem.itemRef)
     expect(calls).toContainEqual({
       path: '/api/v1/audio/recordings/transcript/speaker/suggestion',
       body: { recording_uid: recordingId, revision: recordingRevision, source: 'primary',
@@ -1672,7 +1843,8 @@ describe('RecordingService', () => {
       data = recordingOwnerResponse(path, body, [{ startAt: new Date(2024, 7, userId === 42 ? 29 : 30).setHours(1, 0, 0, 0),
         items: [{ text: '项目复盘', start: 1000, end: 2000 }],
       }]) ?? data
-      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: `speaker-${String(userId)}`, nick_name: `用户${String(userId)}` }] }
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: 'shared-speaker-id', reference: speakerReference, nick_name: `用户${String(userId)}` }] }
+
       if (path.endsWith('/similar-session-speaker')) data = {}
       if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
       return new Response(JSON.stringify({ code: 200, data }), {
@@ -1684,9 +1856,20 @@ describe('RecordingService', () => {
       dependencies(),
     )
     const account42Day = await service.recordingDay(new Date(2024, 7, 29).setHours(0, 0, 0, 0))
-    const account42Option = (await service.recordingSpeakerOptions(account42Day.transcript.items[0]!.itemRef))[0]!
+    const account42Option = (await service.recordingSpeakerOptions())[0]!
     userId = 43
     const account43Day = await service.recordingDay(new Date(2024, 7, 30).setHours(0, 0, 0, 0))
+    await expect(service.recordingSpeakerRecommendation(account42Day.transcript.items[0]!.itemRef)).rejects.toMatchObject({ code: 'recording-ref-account-mismatch' })
+    const account43Option = (await service.recordingSpeakerOptions())[0]!
+    expect(account43Option.optionKey).not.toBe(account42Option.optionKey)
+    const productionService = new RecordingService(
+      new ServiceRuntime({ ...config, environment: 'prod' }, sessions, new ArkmeStateStore(root), fetchImpl),
+      dependencies(),
+    )
+    const productionDay = await productionService.recordingDay(new Date(2024, 7, 30).setHours(0, 0, 0, 0))
+    const productionOption = (await productionService.recordingSpeakerOptions())[0]!
+    expect(productionOption.optionKey).not.toBe(account43Option.optionKey)
+
 
     await expect(service.assignRecordingSpeaker({
       itemRef: account43Day.transcript.items[0]!.itemRef,

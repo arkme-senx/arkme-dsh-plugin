@@ -1326,7 +1326,9 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.playback.open': return await service.recordingPlayback(
       stringParam(params, 'itemRef').trim(), requestSignal,
     )
-    case 'recordings.speaker.options': return await service.recordingSpeakerOptions(
+    case 'recordings.speaker.cached-options': return await service.cachedRecordingSpeakerOptions(requestSignal)
+    case 'recordings.speaker.options': return await service.recordingSpeakerOptions(requestSignal)
+    case 'recordings.speaker.recommendation': return await service.recordingSpeakerRecommendation(
       stringParam(params, 'itemRef').trim(), requestSignal,
     )
     case 'recordings.speaker.assign-item': return await service.assignRecordingSpeaker({
@@ -2057,6 +2059,8 @@ export async function dispatchArkmeHostOperation(
         },
       )
     }
+    case 'emoji.recent.list': return await service.recentEmojiIds(stringParam(params, 'accountKey'), requestSignal)
+    case 'emoji.recent.record': return await service.recordRecentEmoji(stringParam(params, 'accountKey'), stringParam(params, 'emojiId'), requestSignal)
     case 'favorite-stickers.list': return await service.favoriteStickers()
     case 'favorite-stickers.add': return await service.addFavoriteSticker(favoriteStickerItemParam(params))
     case 'favorite-stickers.send': return await service.sendFavoriteSticker(
