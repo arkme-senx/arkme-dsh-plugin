@@ -1,3 +1,4 @@
+import { recordOwnerId } from './record-owner-id.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readDirectoryPage } from './directory-reader.js'
 import { ArkmePluginError, ArkmeService } from './arkme-service.js'
@@ -48,6 +49,15 @@ const MAX_MESSAGE_WITHDRAWAL_REF_CHARS = 4_096
 const MAX_RELATED_QUICK_NOTE_REQUEST_BYTES = MAX_MESSAGE_ACTION_REF_CHARS + (64 * 1024)
 const MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES = 10 * 1024 * 1024
 const MAX_REQUEST_BYTES = MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
+
+function searchScopeParam(params: Record<string, unknown> | undefined): { searchScope?: 'global' | 'topic' | 'chat_session' } {
+  if (params?.searchScope === undefined) return {}
+  const value = params.searchScope
+  if (value !== 'global' && value !== 'topic' && value !== 'chat_session') {
+    throw new ArkmePluginError('search-source-invalid', '搜索范围无效', false, 400)
+  }
+  return { searchScope: value }
+}
 
 function requestBytesLimit(operation: string): number {
   if (operation === 'recordings.transcript.page') return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
@@ -862,6 +872,7 @@ export interface ArkmeHostApiOptions {
   extensionInstallTasks?: () => ArkmeExtensionInstallTasks | undefined
   ownedExtensionInventory?: () => ArkmeOwnedExtensionInventory | undefined
   remoteHost?: () => DshRemoteHostFacade | undefined
+  remoteUnavailableReason?: () => string
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>
   openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>
   teamService?: TeamServicePort
@@ -905,7 +916,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['remote.reportCurrentSession', 'source.message-preparing.report', 'source.message-preparing.cancel'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
       }
-      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.import.file', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'message-actions.copy-link', 'message-actions.forward', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.forward', 'recordings.import.file', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.speaker.assign-item', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -922,6 +933,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.desktopQuarantine,
         options.openApiMcpController,
         options.teamService,
+        options.remoteUnavailableReason,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -966,6 +978,7 @@ export async function dispatchArkmeHostOperation(
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>,
   openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>,
   teamService?: TeamServicePort,
+  remoteUnavailableReason?: () => string,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': {
@@ -1085,9 +1098,9 @@ export async function dispatchArkmeHostOperation(
       })),
       requestSignal,
     )
-    case 'remote.currentSession': return await requireRemoteHost(remoteHost).currentSession()
+    case 'remote.currentSession': return await requireRemoteHost(remoteHost, remoteUnavailableReason).currentSession()
     case 'remote.reportCurrentSession': {
-      const host = requireRemoteHost(remoteHost)
+      const host = requireRemoteHost(remoteHost, remoteUnavailableReason)
       host.reportCurrentSession({
         accountId: stringParam(params, 'accountId'),
         windowRef: stringParam(params, 'windowRef'),
@@ -1096,8 +1109,8 @@ export async function dispatchArkmeHostOperation(
       })
       return { accepted: true }
     }
-    case 'remote.getStatus': return requireRemoteHost(remoteHost).getStatus()
-    case 'remote.renameDesktop': return await requireRemoteHost(remoteHost).renameDesktop(stringParam(params, 'displayName'))
+    case 'remote.getStatus': return requireRemoteHost(remoteHost, remoteUnavailableReason).getStatus()
+    case 'remote.renameDesktop': return await requireRemoteHost(remoteHost, remoteUnavailableReason).renameDesktop(stringParam(params, 'displayName'))
     case 'billing.quota': return await service.billingQuota()
     case 'billing.products': return await service.billingProducts()
     case 'billing.order.create': return await service.createBillingOrder({
@@ -1339,6 +1352,7 @@ export async function dispatchArkmeHostOperation(
     }, requestSignal)
     case 'calendar.buckets': return await service.calendarBuckets({
       startDate: stringParam(params, 'startDate'),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       endDate: stringParam(params, 'endDate'),
       ...(stringParam(params, 'timezone') === '' ? {} : { timezone: stringParam(params, 'timezone') }),
     })
@@ -1346,6 +1360,7 @@ export async function dispatchArkmeHostOperation(
       const cursor = cursorParam(params)
       return await service.calendarRecords({
         bucketDate: stringParam(params, 'bucketDate'),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
         limit: numberParam(params, 'limit', 20),
         ...(stringParam(params, 'timezone') === '' ? {} : { timezone: stringParam(params, 'timezone') }),
         ...(cursor === undefined ? {} : { cursor }),
@@ -1355,10 +1370,10 @@ export async function dispatchArkmeHostOperation(
       query: stringParam(params, 'query'),
       limit: numberParam(params, 'limit', 20),
       ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
-      ...(['topic', 'chat_session'].includes(stringParam(params, 'searchScope'))
-        ? { searchScope: stringParam(params, 'searchScope') as 'topic' | 'chat_session' }
-        : {}),
+      ...searchScopeParam(params),
       ...(stringParam(params, 'sourceUid') === '' ? {} : { sourceUid: stringParam(params, 'sourceUid') }),
+      ...(params?.sourceRef === undefined ? {} : { sourceRef: stringParam(params, 'sourceRef') }),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
     })
     case 'images.list': return await service.searchImages({
       limit: numberParam(params, 'limit', 20),
@@ -1368,7 +1383,12 @@ export async function dispatchArkmeHostOperation(
       const scene = stringParam(params, 'scene') as ArkmeSearchSceneKind
       const limit = numberParam(params, 'limit', 20)
       const cursor = stringParam(params, 'cursor')
-      return await service.searchScene({ scene, limit, ...(cursor === '' ? {} : { cursor }) })
+      return await service.searchScene({ scene, limit, ...(cursor === '' ? {} : { cursor }),
+        ...searchScopeParam(params),
+        ...(stringParam(params, 'sourceUid') === '' ? {} : { sourceUid: stringParam(params, 'sourceUid') }),
+        ...(params?.sourceRef === undefined ? {} : { sourceRef: stringParam(params, 'sourceRef') }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
     }
     case 'search.recordings': return await service.searchRecordings({
       query: stringParam(params, 'query'),
@@ -1384,7 +1404,7 @@ export async function dispatchArkmeHostOperation(
         ? {}
         : { statuses: stringListParam(params, 'statuses') as ArkmeAiVideoJobStatus[] }),
     })
-    case 'files.assets': return await service.queryFileAssets(stringListParam(params, 'fileAssetUids'))
+    case 'files.assets': return await service.queryFileAssets(stringListParam(params, 'fileAssetUids'), requestSignal)
     case 'arko.profile': return await service.arkoProfile()
     case 'arko.session': return await service.arkoEnsureSession()
     case 'arko.new-session': return await service.arkoCreateSession()
@@ -1606,6 +1626,7 @@ export async function dispatchArkmeHostOperation(
     case 'topic.candidates': return await service.listTopicCandidates(
       stringParam(params, 'keyword'), stringParam(params, 'cursor') || undefined, requestSignal,
     )
+    case 'sources.self-target': return await service.selfTarget(requestSignal)
     case 'sources.list': return await service.listSources(
       stringParam(params, 'directory') as ArkmeSourceDirectory,
       {
@@ -1654,7 +1675,7 @@ export async function dispatchArkmeHostOperation(
     case 'source.timeline-around': return await service.readSourceAround(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'itemUid'),
-      numberParam(params, 'recordOwnerUserId', 0),
+      recordOwnerId(params.recordOwnerUserId),
       {
         beforeLimit: numberParam(params, 'beforeLimit', 20),
         afterLimit: numberParam(params, 'afterLimit', 20),
@@ -1820,6 +1841,13 @@ export async function dispatchArkmeHostOperation(
       )
       return { ok: true }
     }
+    case 'source.record-delete': {
+      const refs = params.deletionRefs
+      if (!Array.isArray(refs) || refs.length < 1 || refs.length > 100 || refs.some(ref => typeof ref !== 'string' || ref.length > 2048)) {
+        throw new ArkmePluginError('record-delete-selection-invalid', '删除选择无效', false, 400)
+      }
+      return await service.deleteSourceRecords(stringParam(params, 'sourceRef'), refs as string[], requestSignal)
+    }
     case 'source.record-topic.assign': {
       if (!Array.isArray(params.assignmentRefs) || params.assignmentRefs.some(ref => typeof ref !== 'string')) {
         throw new ArkmePluginError('record-topic-selection-invalid', '快记归属引用无效', false, 400)
@@ -1943,6 +1971,10 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringListParam(params, 'candidateRefs'),
     )
+    case 'group.self-nickname':
+      return await service.groupSelfNickname(stringParam(params, 'sourceRef').trim(), requestSignal)
+    case 'group.self-nickname.set':
+      return await service.setGroupSelfNickname(stringParam(params, 'sourceRef').trim(), stringParam(params, 'nickname'), requestSignal)
     case 'group.member-remove': {
       if (params.preventRejoin !== undefined && typeof params.preventRejoin !== 'boolean') {
         throw new ArkmePluginError('group-member-remove-invalid', '移除成员参数无效', false, 400)
@@ -2423,8 +2455,8 @@ function requireUpdateManager(
   return updateManager
 }
 
-function requireRemoteHost(host: DshRemoteHostFacade | undefined): DshRemoteHostFacade {
-  if (host === undefined) throw new ArkmePluginError('CAPABILITY_UNSUPPORTED', '当前 DSH 未加载远控 Host', false, 503)
+function requireRemoteHost(host: DshRemoteHostFacade | undefined, reason?: () => string): DshRemoteHostFacade {
+  if (host === undefined) throw new ArkmePluginError('CAPABILITY_UNSUPPORTED', reason?.() ?? '当前 DSH 未加载远控 Host', false, 503)
   return host
 }
 

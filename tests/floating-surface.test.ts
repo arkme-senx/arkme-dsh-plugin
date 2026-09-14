@@ -8,7 +8,8 @@ import {
   aiPolishStatus, ArkmeTimelineAgentSourceBadge, ArkmeTimelineMessageHeader, ArkmeTimelineSelfTopicBadge,
   ArkmeTimelineDetailDrawer,
   arkmeSourceShowsMessageAvatars, arkmeTimelineAvatarRef, arkmeTimelineDetailSenderText, arkmeTimelineSenderName,
-  arkmeArkoSurfaceKey, arkmeAuthenticatedAccountChanged, arkmeAuthView, arkmeTimelineSelfTopicSource,
+  arkmeArkoSurfaceKey, arkmeAuthenticatedAccountChanged, arkmeAuthView,
+  arkmeTimelineSelfTopicPresentation, arkmeTimelineSelfTopicSource,
   arkmeLoginNeedsPhoneBinding, arkmeShouldBeginWechat,
 } from '../src/client/ArkmeSidebar.js'
 import type { ArkmeSourceItem, ArkmeTimelineItem, ArkmeUserProfile } from '../src/types.js'
@@ -173,6 +174,13 @@ describe('Arkme persistent conversation frame', () => {
     expect(arkmeSourceShowsMessageAvatars(undefined)).toBe(false)
   })
 
+  it('labels Bot senders without treating human names as Bot identity', () => {
+    const item: ArkmeTimelineItem = { itemUid: 'bot-record', senderName: '1', senderKind: 'bot',
+      isMe: false, sendAtMillis: 1, title: '', textContent: '', status: 1 }
+    expect(renderToStaticMarkup(createElement(ArkmeTimelineMessageHeader, { item }))).toContain('BOT')
+    expect(renderToStaticMarkup(createElement(ArkmeTimelineMessageHeader, { item: { ...item, senderKind: 'human' } }))).not.toContain('BOT')
+  })
+
   it('puts time before nickname for own messages and keeps nickname before time for received messages', () => {
     const sendAtMillis = new Date(2026, 7, 21, 16, 38).getTime()
     const ownItem: ArkmeTimelineItem = {
@@ -222,15 +230,32 @@ describe('Arkme persistent conversation frame', () => {
     }
     const topic: ArkmeSourceItem = {
       sourceRef: 'opaque-topic-ref', kind: 'topic', displayName: '即我产品思考',
-      topicHierarchyKey: 'topic-key', activeAtMillis: 0, unreadCount: 0,
+      topicHierarchyKey: 'topic-key', parentTopicHierarchyKey: 'parent-key', activeAtMillis: 0, unreadCount: 0,
     }
-    expect(arkmeTimelineSelfTopicSource(item, [topic])).toBe(topic)
+    const parent: ArkmeSourceItem = {
+      sourceRef: 'opaque-parent-ref', kind: 'topic', displayName: '想写/可写的文章',
+      topicHierarchyKey: 'parent-key', activeAtMillis: 0, unreadCount: 0,
+    }
+    const aggregate: ArkmeSourceItem = {
+      sourceRef: 'aggregate-ref', kind: 'send_to_self', displayName: '发给自己', activeAtMillis: 0, unreadCount: 0,
+    }
+    expect(arkmeTimelineSelfTopicSource(item, [parent, topic])).toBe(topic)
+    expect(arkmeTimelineSelfTopicPresentation(item, aggregate, [parent, topic])).toEqual({
+      topic,
+      displayLabel: '想写/可写的文章 / 即我产品思考',
+    })
+    expect(arkmeTimelineSelfTopicPresentation(item, parent, [parent, topic])).toEqual({
+      topic,
+      displayLabel: '想写/可写的文章 / 即我产品思考',
+    })
     const markup = renderToStaticMarkup(createElement(ArkmeTimelineSelfTopicBadge, {
       topic,
+      displayLabel: '想写/可写的文章 / 即我产品思考',
       onSelect: () => {},
     }))
-    expect(markup).toContain('data-arkme-self-topic-badge="即我产品思考"')
-    expect(markup).toContain('查看主题「即我产品思考」')
+    expect(markup).toContain('data-arkme-self-topic-badge="想写/可写的文章 / 即我产品思考"')
+    expect(markup).toContain('查看主题「想写/可写的文章 / 即我产品思考」')
+    expect(markup).toContain('title="想写/可写的文章 / 即我产品思考"')
   })
 
   it('renders timeline detail images with the same rich media content as the message bubble', () => {

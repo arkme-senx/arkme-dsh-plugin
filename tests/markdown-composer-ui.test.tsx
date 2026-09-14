@@ -3,10 +3,9 @@ import { act, createRef, useState, useSyncExternalStore } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Editor } from '@tiptap/core'
-import { ArkmeMarkdownComposerInput } from '../src/client/ArkmeMarkdownComposerInput.js'
+import { ArkmeDocumentComposerInput, type ArkmeDocumentComposerHandle } from '../src/client/ArkmeDocumentComposerInput.js'
 import { ArkmeMarkdownBody } from '../src/client/ArkmeMarkdownBody.js'
 import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
-import type { ArkmeRichComposerHandle } from '../src/client/ArkmeRichComposerInput.js'
 import { arkmeEditorProjection, arkmeSerializeMarkdownEditor } from '../src/client/markdown-editor.js'
 import { ArkmeComposerDraftStore, arkmeComposerCanSend, arkmeSourceComposerDraftKey, type ArkmeComposerDraftSnapshot } from '../src/client/composer-draft-store.js'
 
@@ -18,7 +17,7 @@ let update: (value: ArkmeComposerDraftSnapshot) => void
 let candidates = false
 let inputActivity: string[] = []
 let sent = 0
-const handle = createRef<ArkmeRichComposerHandle>()
+const handle = createRef<ArkmeDocumentComposerHandle>()
 const draftKey = arkmeSourceComposerDraftKey(7, { kind: 'send_to_self', sourceRef: 'test' })!
 let draftStore: ArkmeComposerDraftStore
 let storage: Pick<Storage, 'getItem' | 'setItem'>
@@ -29,7 +28,7 @@ function Harness() {
   const draft = useSyncExternalStore(store.subscribe, () => store.get(draftKey))
   snapshot = draft
   update = value => { store.clear(draftKey); store.restore(draftKey, value) }
-  return <ArkmeMarkdownComposerInput ref={handle} value={draft.text} mentions={draft.mentions} emojis={draft.emojis} markdown={draft.markdown}
+  return <ArkmeDocumentComposerInput format="markdown" ref={handle} value={draft.text} mentions={draft.mentions} emojis={draft.emojis} markdown={draft.markdown}
     maxLength={20000} placeholder="快记" ariaLabel="快记" disabled={false} style={{}}
     onTextChange={text => store.setText(draftKey, text)}
     onInputActivity={text => { inputActivity.push(text) }}
@@ -104,6 +103,17 @@ describe('Markdown composer DOM interaction', () => {
   it('reports Markdown typing to the existing input activity owner', () => {
     type('甲乙')
     expect(inputActivity).toEqual(['甲', '甲乙'])
+  })
+  it('reads the native selection before the delayed selectionchange event reaches the editor', () => {
+    type('甲乙丙')
+    const text = editor().view.dom.querySelector('p')!.firstChild!
+    const range = document.createRange()
+    range.setStart(text, 0)
+    range.setEnd(text, 1)
+    document.getSelection()!.removeAllRanges()
+    document.getSelection()!.addRange(range)
+    expect(handle.current?.selectionStart).toBe(0)
+    expect(handle.current?.selectionEnd).toBe(1)
   })
   it.each([[1, '乙甲丙'], [2, '甲乙丙'], [3, '甲丙乙']])('pastes text inline at position %s', (position, expected) => {
     type('甲丙')

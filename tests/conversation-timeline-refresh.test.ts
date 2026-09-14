@@ -107,3 +107,10 @@ describe('refresh the loaded conversation window', () => {
     expect(read).toHaveBeenCalledTimes(1)
   })
 })
+
+it('accepts a read window without cache, pagination or AI enhancement metadata', async () => {
+  const read = vi.fn().mockResolvedValue(page([record(3), record(2), record(1)], 1))
+  const result = await readConversationTimelineWindow({ items: [record(2)] }, read, new AbortController().signal)
+  expect(result.items.map(item => item.sequence)).toEqual([3, 2])
+  expect(read).toHaveBeenCalledOnce()
+})

@@ -4,6 +4,7 @@ import { isRecordingInstantOnOrAfterUnixEpoch, isRecordingLocalDateOnOrAfterMini
 import type { ArkmeRecordingTranscriptPage, ArkmeRecordingTranscriptPageOptions } from '../types.js'
 export type { ArkmeRecordingTranscriptPage, ArkmeRecordingTranscriptPageOptions, ArkmeRecordingWorkbenchItem } from '../types.js'
 export { appendRecordingTranscriptPage, readCompleteRecordingTranscript } from '../recording-transcript-page.js'
+import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 import type { ArkmeDirectMessageAdmission } from '../direct-message-admission.js'
 export type { ArkmeDirectMessageAdmission, ArkmeDirectMessageAdmissionPort } from '../direct-message-admission.js'
@@ -47,6 +48,7 @@ import type {
   ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddResult,
+  ArkmeGroupSelfNickname,
   ArkmeGroupMemberRemoveResult,
   ArkmeGroupJoinRestrictionMutationResult,
   ArkmeGroupJoinRestrictionPage,
@@ -204,6 +206,7 @@ export type {
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddItemResult,
   ArkmeGroupMemberAddResult,
+  ArkmeGroupSelfNickname,
   ArkmeGroupMemberRemoveResult,
   ArkmeGroupJoinRestrictionMutationResult,
   ArkmeGroupJoinRestrictionPage,
@@ -1481,6 +1484,16 @@ export class ArkmeSdk {
     return await this.call<ArkmeGroupMemberAddResult>('group.members.add', { sourceRef, candidateRefs: refs }, signal)
   }
 
+  async groupSelfNickname(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSelfNickname> {
+    if ((await this.capabilities(signal)).features.groupSelfNickname !== true) throw new Error('当前 Provider 不支持群昵称')
+    return await this.call<ArkmeGroupSelfNickname>('group.self-nickname', { sourceRef: sourceRef.trim() }, signal)
+  }
+
+  async setGroupSelfNickname(sourceRef: string, nickname: string, signal?: AbortSignal): Promise<ArkmeGroupSelfNickname> {
+    if ((await this.capabilities(signal)).features.groupSelfNickname !== true) throw new Error('当前 Provider 不支持群昵称')
+    return await this.call<ArkmeGroupSelfNickname>('group.self-nickname.set', { sourceRef: sourceRef.trim(), nickname }, signal)
+  }
+
   async removeGroupMember(
     sourceRef: string,
     memberRef: string,
@@ -1547,10 +1560,10 @@ export class ArkmeSdk {
   async readSourceAround(
     sourceRef: string,
     itemUid: string,
-    recordOwnerUserId: number,
+    recordOwnerUserId: RecordOwnerId,
     options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeTimelineAroundPage> {
-    if (sourceRef.trim() === '' || itemUid.trim() === '' || !Number.isSafeInteger(recordOwnerUserId) || recordOwnerUserId <= 0) {
+    if (sourceRef.trim() === '' || itemUid.trim() === '' || recordOwnerId(recordOwnerUserId) === 0) {
       throw new TypeError('Arkme timeline around requires a source, record uid, and record owner')
     }
     return await this.call<ArkmeTimelineAroundPage>('source.timeline-around', {
@@ -2046,6 +2059,13 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Search current-account server records, including retained DSH navigation identity. */
+  async searchRemote(query: string, options: { limit?: number; cursor?: string; signal?: AbortSignal } = {}): Promise<ArkmeRecordSearchResult> {
+    const { signal, ...params } = options
+    if ((await this.capabilities(signal)).features.remoteRecordSearch !== true) throw new Error('当前 Provider 不支持远端快记搜索')
+    return await this.call<ArkmeRecordSearchResult>('search.records', { query, ...params }, signal)
+  }
+
   async search(query: string, options: ArkmeSearchOptions & { signal?: AbortSignal } = {}): Promise<ArkmeCachedQueryResult> {
     return await this.call<ArkmeCachedQueryResult>('records.search', {
       query,
@@ -2206,3 +2226,5 @@ export async function callArkme<T>(
   return await defaultSdk.call<T>(operation, params, signal)
 }
 export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem } from '../types.js'
+
+export type { ArkmeDshInputOrigin } from '../types.js'

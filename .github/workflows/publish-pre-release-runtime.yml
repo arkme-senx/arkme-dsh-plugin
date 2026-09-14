@@ -93,6 +93,7 @@ jobs:
           DEBUG: ""
           ARKME_BACKEND_BASE_URL: ${{ secrets.ARKME_BACKEND_BASE_URL }}
           ARKME_CI_TRIGGER_SECRET: ${{ secrets.ARKME_CI_TRIGGER_SECRET }}
+          ARKME_HARNESS_VERSION_CODE_RANGE: ${{ vars.ARKME_HARNESS_VERSION_CODE_RANGE }}
           ARKME_RELEASE_SOURCE_SHA: ${{ github.sha }}
           ARKME_RELEASE_NOTES: Arkme plugin pre-release run ${{ github.run_number }}
           ARKME_RUNTIME_ARTIFACT_DIR: trusted-runtime-artifact

@@ -15,6 +15,19 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('BotService', () => {
+  it('keeps valid avatar handles on account mismatch and clears both indices on expiry', async () => {
+    let now = 1_000
+    const service = new BotService({} as never, {} as never, { now: () => now, ttlMillis: 10 })
+    const { avatarRef } = service.botAvatarProjection({ avatar_url: 'https://images.test/bot.png' }, 42, 'bot')
+    await expect(service.openBotImageRef(avatarRef!, 99)).rejects.toMatchObject({ code: 'bot-image-ref-invalid' })
+    await expect(service.openBotImageRef(avatarRef!, 42)).resolves.toMatchObject({ viewerUserId: 42 })
+    now += 11
+    await expect(service.openBotImageRef(avatarRef!, 42)).rejects.toMatchObject({ code: 'bot-image-ref-invalid' })
+    const indices = service as unknown as { botImageRefs: Map<string, unknown>; botImageRefByKey: Map<string, string> }
+    expect(indices.botImageRefs.size).toBe(0)
+    expect(indices.botImageRefByKey.size).toBe(0)
+  })
+
   it('keeps direct Bot and Chat-backed Bot preference identities semantically separate', async () => {
     const { service, source } = createBotPreferenceFixture([
       {

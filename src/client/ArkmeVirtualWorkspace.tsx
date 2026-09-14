@@ -1,3 +1,4 @@
+import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { nextArkmeUnreadConversation } from '../conversation-attention.js'
 import { ArkmeDirectoryWindow } from './ArkmeDirectoryWindow.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
@@ -17,6 +18,7 @@ import { arkmeBadgeUnreadCount, projectArkmeChatAttentionFromMuted } from '../ch
 import type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 import { callArkme } from './api.js'
 import { ArkmeDirectorySourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { ArkmeChatPreviewDialog, arkmeCanPreviewChat } from './ArkmeChatPreviewDialog.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
@@ -218,13 +220,6 @@ const styles: Record<string, CSSProperties> = {
     background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: 0,
   },
   chatRowActive: { background: colors.active },
-  pinnedCornerClip: {
-    position: 'absolute', inset: 0, borderRadius: 'inherit', overflow: 'hidden', pointerEvents: 'none',
-  },
-  pinnedCorner: {
-    position: 'absolute', top: 0, right: 0, width: 16, height: 16,
-    background: '#65ce8b', clipPath: 'polygon(0 0, 100% 0, 100% 100%)',
-  },
   chatRowRemoving: { background: arkmeTheme.hover, cursor: 'default' },
   chatContent: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 },
   chatTop: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 7 },
@@ -565,7 +560,7 @@ export function DeepSeekHarnessRow({ selected, onClick }: { selected: boolean; o
     <span style={styles.avatar} aria-hidden><img src="/favicon.svg" alt="" width={28} height={28} /></span>
     <span style={styles.chatContent}>
       <span style={styles.chatTop}><span style={styles.entryName}>DeepSeek Harness</span></span>
-      <span style={styles.chatBottom}><span style={styles.preview}>原生 DeepSeek 开发环境</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}>你的 DeepSeek 智能助手</span></span>
     </span>
   </button>
 }
@@ -966,6 +961,7 @@ export function ArkmeNavigation({
   const [directoryContextTarget, setDirectoryContextMenu] = useState<
     { kind: 'source' | 'bot', key: string, x: number, y: number }
   >()
+  const [chatPreview, setChatPreview] = useState<{ accountKey: string; sourceKey: string }>()
   const directoryMutationAbortRef = useRef<AbortController>()
   const [directoryMutation, setDirectoryMutation] = useState<{
     kind: 'source' | 'bot'
@@ -1002,6 +998,7 @@ export function ArkmeNavigation({
   const currentAccountKey = authenticated && auth.userId !== undefined
     ? `${auth.environment}:${String(auth.userId)}`
     : undefined
+  useEffect(() => { setChatPreview(undefined) }, [currentAccountKey, active])
   const [traceNavigation] = useState(createHomeTourTrace)
   useEffect(() => {
     traceNavigation('navigation-mounted')
@@ -1116,6 +1113,13 @@ export function ArkmeNavigation({
       && (row.kind === 'source' ? arkmeSourceIdentityKey(row.source) : conversationBotVisibilityKey(row.bot)) === directoryContextTarget.key)
     return row === undefined ? undefined : { ...row, x: directoryContextTarget.x, y: directoryContextTarget.y }
   }, [directoryContextTarget, rootConversationRows])
+  const previewRow = chatPreview?.accountKey === currentAccountKey
+    ? rootConversationRows.find(row => row.kind === 'source' && arkmeSourceIdentityKey(row.source) === chatPreview?.sourceKey)
+    : undefined
+  const previewSource = previewRow?.kind === 'source' && arkmeCanPreviewChat(previewRow.source) ? previewRow.source : undefined
+  useEffect(() => {
+    if (chatPreview !== undefined && previewSource === undefined) setChatPreview(undefined)
+  }, [chatPreview, previewSource])
   useEffect(() => {
     if (directoryContextTarget !== undefined && directoryContextMenu === undefined) setDirectoryContextMenu(undefined)
   }, [directoryContextMenu, directoryContextTarget])
@@ -1272,7 +1276,7 @@ export function ArkmeNavigation({
         ? reconcileSelectedSource(selected ?? cachedSelected, loaded)
           ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
         : undefined
-      if (restored !== undefined) arkmeUi.selectSource(restored)
+      if (restored !== undefined && !arkmeUi.updateSelectedSourceProjection(restored)) arkmeUi.selectSource(restored)
       persistCache({
         directory: next,
         sources: { [next]: loaded },
@@ -1457,7 +1461,7 @@ export function ArkmeNavigation({
     const restored = activeRef.current && ui.mode === 'source'
       ? reconcileSelectedSource(selected ?? cachedSelected, loaded)
       : undefined
-    if (restored !== undefined) arkmeUi.selectSource(restored)
+    if (restored !== undefined && !arkmeUi.updateSelectedSourceProjection(restored)) arkmeUi.selectSource(restored)
     persistCache({
       directory: 'root',
       sources: { root: loaded },
@@ -2127,9 +2131,7 @@ export function ArkmeNavigation({
                 setDirectoryContextMenu({ kind: 'bot', key: conversationBotVisibilityKey(bot), x: event.clientX, y: event.clientY })
               }}
             >
-              {row.pinned && <span role="img" aria-label="已置顶" style={styles.pinnedCornerClip}>
-                <span aria-hidden style={styles.pinnedCorner} />
-              </span>}
+              {row.pinned && <ArkmePinnedCorner />}
               <span style={styles.sourceAvatarWrap} aria-hidden>
                 <span style={styles.avatar}><RobotIcon size={22} weight="fill" /></span>
                 {unreadPlacement === 'avatar' && <span style={styles.mentionUnread}>{unreadText}</span>}
@@ -2175,9 +2177,7 @@ export function ArkmeNavigation({
               setDirectoryContextMenu({ kind: 'source', key: arkmeSourceIdentityKey(source), x: event.clientX, y: event.clientY })
             }}
           >
-            {row.pinned && <span role="img" aria-label="已置顶" style={styles.pinnedCornerClip}>
-              <span aria-hidden style={styles.pinnedCorner} />
-            </span>}
+            {row.pinned && <ArkmePinnedCorner />}
             <span style={styles.sourceAvatarWrap}>
               <ArkmeDirectorySourceAvatar source={source} size={38} />
               {unreadPlacement === 'avatar' && <span style={styles.mentionUnread}>{unreadText}</span>}
@@ -2258,14 +2258,23 @@ export function ArkmeNavigation({
       onOpenRecord={item => {
         if (item.targetSource === undefined) return
         closeGlobalSearch()
-        arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis)
+        arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis, item.recordOwnerUserId)
       }}
       onOpenDshSession={sessionId => {
+        if (onOpenDshSession === undefined) throw new Error('当前客户端无法打开 DSH 对话')
+        onOpenDshSession(sessionId)
         closeGlobalSearch()
-        onOpenDshSession?.(sessionId)
       }}
       onClose={closeGlobalSearch}
     />, document.body)}
+    {active && chatPreview !== undefined && previewSource !== undefined && <ArkmeChatPreviewDialog
+      key={`${chatPreview.accountKey}:${chatPreview.sourceKey}`}
+      source={previewSource}
+      onClose={() => {
+        rootRowElementsRef.current.get(previewSource.sourceRef)?.focus({ preventScroll: true })
+        setChatPreview(undefined)
+      }}
+    />}
     {active && directoryContextMenu !== undefined && typeof document !== 'undefined' && createPortal(<div
       ref={directoryContextMenuRef}
       role="menu"
@@ -2273,10 +2282,22 @@ export function ArkmeNavigation({
       style={{
         ...styles.directoryContextMenu,
         left: Math.max(8, Math.min(directoryContextMenu.x, window.innerWidth - 154)),
-        top: Math.max(8, Math.min(directoryContextMenu.y, window.innerHeight - 84)),
+        top: Math.max(8, Math.min(directoryContextMenu.y, window.innerHeight - (directoryContextMenu.kind === 'source' && arkmeCanPreviewChat(directoryContextMenu.source) ? 120 : 84))),
       }}
       onContextMenu={event => { event.preventDefault() }}
     >
+      {directoryContextMenu.kind === 'source' && arkmeCanPreviewChat(directoryContextMenu.source) && <>
+        <button type="button" role="menuitem" style={styles.directoryContextMenuItem} disabled={directoryMutation !== undefined}
+          onClick={() => {
+            if (currentAccountKey === undefined || !arkmeCanPreviewChat(directoryContextMenu.source)) return
+            setChatPreview({ accountKey: currentAccountKey, sourceKey: arkmeSourceIdentityKey(directoryContextMenu.source) })
+            setDirectoryContextMenu(undefined)
+          }}
+          onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
+          onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+        >预览</button>
+        <div aria-hidden style={styles.directoryContextMenuDivider} />
+      </>}
       <button
         type="button"
         role="menuitem"

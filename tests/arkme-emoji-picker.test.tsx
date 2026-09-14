@@ -25,6 +25,20 @@ const favoriteList = {
 }
 
 describe('Arkme emoji composer', () => {
+  it('offers text insertion without exposing or loading favorite stickers', async () => {
+    callArkme.mockClear()
+    const onSelect = vi.fn(() => false)
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeEmojiPicker mode="text" disabled={false} scopeKey="text-draft" onSelect={onSelect} />) })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '选择表情' }).props.onClick() })
+    expect(renderer.root.findAllByProps({ 'aria-label': '收藏表情' })).toHaveLength(0)
+    await act(async () => { renderer.root.findByProps({ 'data-arkme-emoji-id': arkmeDefaultEmojis[0]!.id }).props.onClick() })
+    expect(onSelect).toHaveBeenCalledWith(arkmeDefaultEmojis[0])
+    expect(renderer.root.findAllByProps({ 'data-arkme-emoji-grid': 'compact' })).toHaveLength(0)
+    expect(callArkme).not.toHaveBeenCalled()
+    act(() => renderer.unmount())
+  })
+
   it('keeps the desktop catalog order, rich tokens, and custom SVG assets', () => {
     expect(arkmeDefaultEmojis).toHaveLength(56)
     expect(arkmeDefaultEmojis.slice(0, 3)).toMatchObject([

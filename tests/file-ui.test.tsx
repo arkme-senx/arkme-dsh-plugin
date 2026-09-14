@@ -14,6 +14,53 @@ const original = { localRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000001
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); vi.restoreAllMocks(); vi.clearAllMocks() })
 
 describe('file save UI', () => {
+  it('keeps absent resources idle and cancels reception when the resource disappears', async () => {
+    let signal: AbortSignal | undefined
+    const receive = vi.spyOn(ArkmeSdk.prototype, 'receiveFile').mockImplementation(async (_ref, _start, incomingSignal) => {
+      signal = incomingSignal
+      return { state: 'missing', receivedBytes: 0, totalBytes: 3 }
+    })
+    let current!: ReturnType<typeof useArkmeOriginal>
+    function Probe({ present }: { present: boolean }) {
+      current = useArkmeOriginal(present ? { ...block, originalRef: 'original' } : undefined)
+      return null
+    }
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<Probe present={false} />) })
+      await act(async () => current.receive())
+      expect(receive).not.toHaveBeenCalled()
+      expect(current.localRef).toBeUndefined()
+      await act(async () => view.update(<Probe present />))
+      expect(receive).toHaveBeenCalledWith('original', false, expect.any(AbortSignal))
+      await act(async () => current.receive())
+      expect(receive).toHaveBeenLastCalledWith('original', true, expect.any(AbortSignal))
+      const activeSignal = signal!
+      await act(async () => view.update(<Probe present={false} />))
+      expect(activeSignal.aborted).toBe(true)
+      const count = receive.mock.calls.length
+      await act(async () => current.receive())
+      expect(receive).toHaveBeenCalledTimes(count)
+      expect(current.localRef).toBeUndefined()
+    } finally {
+      await act(async () => view.unmount())
+    }
+  })
+
+  it('uses cross-record file navigation without falling back to current-record selection', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    const next = vi.fn(), select = vi.fn()
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={block} navigation={{ next }} onSelect={select} onClose={() => {}} />) })
+    expect(view.root.findByProps({ 'aria-label': '上一个文件' }).props.disabled).toBe(true)
+    const button = view.root.findByProps({ 'aria-label': '下一个文件' })
+    expect(button.props.disabled).toBe(false)
+    await act(async () => button.props.onClick())
+    expect(next).toHaveBeenCalledOnce()
+    expect(select).not.toHaveBeenCalled()
+    await act(async () => view.unmount())
+  })
+
   it('uses the client download icon before reception, and cancelling never starts a download', async () => {
     const receive = vi.spyOn(ArkmeSdk.prototype, 'receiveFile')
     vi.stubGlobal('window', { showSaveFilePicker: async () => { throw new DOMException('cancelled', 'AbortError') } })
@@ -70,16 +117,20 @@ describe('file save UI', () => {
     expect(JSON.stringify(view.toJSON())).not.toContain('保存成功')
     await act(async () => view.unmount())
   })
-  it('offers the desktop image copy action and reports copy feedback without inline status text', async () => {
-    const payloads: Array<Record<string, Blob>> = []
+  it.each(['remote', 'preview', 'local', 'local-failed'] as const)('copies from explicit source %s', async mode => {
+    const originalUnavailable = mode === 'preview' || mode === 'local-failed'
+    const localRef = mode.startsWith('local') ? 'arkme-file-v1.11111111-1111-4111-8111-111111111111' : undefined
+    const payloads: Array<Record<string, Promise<Blob>>> = []
     const notices: unknown[] = []
     class TestClipboardItem {
-      constructor(readonly items: Record<string, Blob>) {
+      constructor(readonly items: Record<string, Promise<Blob>>) {
         payloads.push(items)
       }
     }
-    const write = vi.fn(async () => {})
-    const fetcher = vi.fn(async () => new Response('image-bytes', { headers: { 'Content-Type': 'image/png' } }))
+    const write = vi.fn(async (items: TestClipboardItem[]) => { await items[0]!.items['image/png'] })
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 2, height: 2, close: vi.fn() }))
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => ({ drawImage: vi.fn() }), toBlob: (callback: (blob: Blob) => void) => callback(new Blob(['png'], { type: 'image/png' })) }) })
+    const fetcher = vi.fn(async (url: string) => originalUnavailable && (url.includes('arkme-media-v1.original') || url.includes('/files/local?')) ? new Response('', { status: 404 }) : new Response('image-bytes', { headers: { 'Content-Type': 'image/jpeg' } }))
     vi.stubGlobal('ClipboardItem', TestClipboardItem)
     vi.stubGlobal('navigator', { clipboard: { write } })
     vi.stubGlobal('fetch', fetcher)
@@ -97,7 +148,7 @@ describe('file save UI', () => {
     await act(async () => {
       view = create(<ArkmeFileActions
         block={image}
-        original={{ reception: { state: 'missing', receivedBytes: 0, totalBytes: 11 }, localRef: undefined, receive }}
+        original={{ reception: { state: 'missing', receivedBytes: 0, totalBytes: 11 }, localRef, receive }}
         copySourceUrl="/arkme-self/api/media?ref=image-ref"
         onImageCopyNotice={notice => { notices.push(notice) }}
       />)
@@ -108,7 +159,10 @@ describe('file save UI', () => {
     expect(JSON.stringify(view.toJSON())).toContain('M17.001 7.73273')
     await act(async () => { copy.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
 
-    expect(fetcher).toHaveBeenCalledWith('/arkme-self/api/media?ref=image-ref', { signal: expect.any(AbortSignal) })
+    if (mode !== 'local') expect(fetcher).toHaveBeenCalledWith('/arkme-self/api/media?ref=arkme-media-v1.original', { signal: expect.any(AbortSignal) })
+    if (localRef) expect(fetcher).toHaveBeenNthCalledWith(1, `/arkme-self/api/files/local?ref=${localRef}`, { signal: expect.any(AbortSignal) })
+    expect(fetcher).toHaveBeenCalledTimes(mode === 'local-failed' ? 3 : originalUnavailable ? 2 : 1)
+    if (originalUnavailable) expect(fetcher).toHaveBeenLastCalledWith('/arkme-self/api/media?ref=image-ref', { signal: expect.any(AbortSignal) })
     expect(write).toHaveBeenCalledWith([expect.any(TestClipboardItem)])
     expect(payloads[0]).toHaveProperty('image/png')
     expect(receive).not.toHaveBeenCalled()
@@ -120,9 +174,112 @@ describe('file save UI', () => {
     expect(JSON.stringify(view.toJSON())).not.toContain('复制中')
     await act(async () => view.unmount())
   })
-  it('normalizes clipboard image blobs to a safe image MIME type', () => {
-    expect(arkmeClipboardImageBlob(new Blob(['x']), 'image/jpeg').type).toBe('image/jpeg')
-    expect(arkmeClipboardImageBlob(new Blob(['x'], { type: 'application/octet-stream' }), '').type).toBe('image/png')
+  it('cancels a pending copy on image change and permits the new copy without duplicate writes', async () => {
+    const notices: unknown[] = []
+    class Item { constructor(readonly items: Record<string, Promise<Blob>>) {} }
+    const write = vi.fn(async (items: Item[]) => { await items[0]!.items['image/png'] })
+    const fetcher = vi.fn((url: string, options: { signal: AbortSignal }) => {
+      if (url === '/old') return new Promise<Response>((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')))
+      })
+      return Promise.resolve(new Response('jpeg'))
+    })
+    vi.stubGlobal('ClipboardItem', Item)
+    vi.stubGlobal('navigator', { clipboard: { write } })
+    vi.stubGlobal('fetch', fetcher)
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 2, height: 2, close: vi.fn() }))
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => ({ drawImage: vi.fn() }), toBlob: (callback: (blob: Blob) => void) => callback(new Blob(['png'], { type: 'image/png' })) }) })
+    const render = (ref: string) => <ArkmeFileActions block={{ ...block, kind: 'image', mediaRef: ref }} original={{ reception: { state: 'missing', receivedBytes: 0, totalBytes: 3 }, localRef: undefined, receive: vi.fn() }} copySourceUrl={ref} onImageCopyNotice={notice => notices.push(notice)} />
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(render('/old')) })
+      await act(async () => {
+        const button = view.root.findByProps({ 'aria-label': '复制图片' })
+        button.props.onClick(); button.props.onClick()
+      })
+      expect(write).toHaveBeenCalledOnce()
+      await act(async () => view.update(render('/new')))
+      expect(view.root.findByProps({ 'aria-label': '复制图片' }).props.disabled).toBe(false)
+      await act(async () => { view.root.findByProps({ 'aria-label': '复制图片' }).props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(write).toHaveBeenCalledTimes(2)
+      expect(notices).toEqual([{ message: '复制中...', kind: 'progress' }, { message: '复制中...', kind: 'progress' }, { message: '已复制', kind: 'success' }])
+    } finally { await act(async () => view.unmount()) }
+  })
+  it('finishes the current copy when the same image receives its original and renews its URL', async () => {
+    const notices: unknown[] = []
+    let resolveFetch!: (response: Response) => void
+    let signal!: AbortSignal
+    const fetcher = vi.fn((_url: string, options: { signal: AbortSignal }) => {
+      signal = options.signal
+      return new Promise<Response>(resolve => { resolveFetch = resolve })
+    })
+    class Item { constructor(readonly items: Record<string, Promise<Blob>>) {} }
+    const write = vi.fn(async (items: Item[]) => { await items[0]!.items['image/png'] })
+    vi.stubGlobal('ClipboardItem', Item)
+    vi.stubGlobal('navigator', { clipboard: { write } })
+    vi.stubGlobal('fetch', fetcher)
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 2, height: 2, close: vi.fn() }))
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => ({ drawImage: vi.fn() }), toBlob: (callback: (blob: Blob) => void) => callback(new Blob(['png'], { type: 'image/png' })) }) })
+    const render = (ready: boolean) => <ArkmeFileActions block={{ ...block, kind: 'image', fileAssetUid: 'same-image', mediaRef: ready ? 'renewed-ref' : 'old-ref' }} original={{ reception: { state: 'missing', receivedBytes: 0, totalBytes: 3 }, localRef: ready ? 'arkme-file-v1.11111111-1111-4111-8111-111111111111' : undefined, receive: vi.fn() }} copySourceUrl={ready ? '/renewed' : '/old'} onImageCopyNotice={notice => notices.push(notice)} />
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(render(false)) })
+      await act(async () => view.root.findByProps({ 'aria-label': '复制图片' }).props.onClick())
+      await act(async () => view.update(render(true)))
+      expect(signal.aborted).toBe(false)
+      expect(view.root.findByProps({ 'aria-label': '复制图片' }).props.disabled).toBe(true)
+      await act(async () => { resolveFetch(new Response('jpeg')); await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      expect(fetcher).toHaveBeenCalledWith('/old', { signal: expect.any(AbortSignal) })
+      expect(write).toHaveBeenCalledOnce()
+      expect(view.root.findByProps({ 'aria-label': '复制图片' }).props.disabled).toBe(false)
+      expect(notices).toEqual([{ message: '复制中...', kind: 'progress' }, { message: '已复制', kind: 'success' }])
+    } finally { await act(async () => view.unmount()) }
+  })
+  it('aborts image preparation when clipboard permission is rejected and permits retry', async () => {
+    const notices: unknown[] = []
+    let signal: AbortSignal | undefined
+    const fetcher = vi.fn((_url: string, options: { signal: AbortSignal }) => {
+      signal = options.signal
+      return new Promise<Response>((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError'))))
+    })
+    vi.stubGlobal('ClipboardItem', class { constructor(_items: unknown) {} })
+    const write = vi.fn(async () => { throw new DOMException('denied', 'NotAllowedError') })
+    vi.stubGlobal('navigator', { clipboard: { write } })
+    vi.stubGlobal('fetch', fetcher)
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<ArkmeFileActions block={{ ...block, kind: 'image' }} original={{ reception: { state: 'missing', receivedBytes: 0, totalBytes: 3 }, localRef: undefined, receive: vi.fn() }} copySourceUrl="/image" onImageCopyNotice={notice => notices.push(notice)} />) })
+      await act(async () => view.root.findByProps({ 'aria-label': '复制图片' }).props.onClick())
+      expect(signal?.aborted).toBe(true)
+      expect(view.root.findByProps({ 'aria-label': '复制图片' }).props.disabled).toBe(false)
+      expect(notices).toEqual([{ message: '复制中...', kind: 'progress' }, { message: '复制失败', kind: 'error' }])
+      await act(async () => view.root.findByProps({ 'aria-label': '复制图片' }).props.onClick())
+      expect(write).toHaveBeenCalledTimes(2)
+    } finally { await act(async () => view.unmount()) }
+  })
+  it('releases decoded pixels if PNG encoding fails', async () => {
+    const close = vi.fn()
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 2, height: 2, close }))
+    const canvas = { width: 0, height: 0, getContext: () => ({ drawImage: vi.fn() }), toBlob: (callback: (blob: Blob | null) => void) => callback(null) }
+    vi.stubGlobal('document', { createElement: () => canvas })
+    await expect(arkmeClipboardImageBlob(new Blob(['input']))).rejects.toThrow('图片转换失败')
+    expect(close).toHaveBeenCalledOnce()
+    expect(canvas.width).toBe(0)
+    expect(canvas.height).toBe(0)
+  })
+  it.each(['image/jpeg', 'image/png', 'application/octet-stream'])('encodes %s pixels as PNG and releases the bitmap', async type => {
+    const close = vi.fn(), drawImage = vi.fn()
+    const bitmap = { width: 20, height: 10, close }
+    const encoded = new Blob(['encoded-png'], { type: 'image/png' })
+    const canvas = { width: 0, height: 0, getContext: () => ({ drawImage }), toBlob: vi.fn((callback: (blob: Blob) => void) => callback(encoded)) }
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => bitmap))
+    vi.stubGlobal('document', { createElement: () => canvas })
+    expect(await arkmeClipboardImageBlob(new Blob(['input'], { type }))).toBe(encoded)
+    expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 0)
+    expect(canvas.toBlob).toHaveBeenCalledWith(expect.any(Function), 'image/png')
+    expect(close).toHaveBeenCalledOnce()
+    expect(canvas.width).toBe(0)
   })
   it('aborts an incomplete disk write and never reports success', async () => {
     const writable = { write: vi.fn(async () => { throw new Error('disk full') }), close: vi.fn(), abort: vi.fn(async () => {}) }

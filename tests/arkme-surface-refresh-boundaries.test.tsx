@@ -14,6 +14,7 @@ vi.mock('../src/client/ArkmeWorldSurface.js', () => ({
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
+import { suspendArkmeVisibleReadIntent } from '../src/client/read-intent-visibility.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
 describe('Arkme surface refresh boundaries', () => {
@@ -103,10 +104,11 @@ describe('Arkme surface refresh boundaries', () => {
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} active />) })
     const readCalls = () => state.callArkme.mock.calls.filter(call => call[0] === 'source.mark-read')
 
-    for (const event of ['focus', 'visibilitychange']) {
+    for (const event of ['focus', 'visibilitychange', 'preview']) {
       const previousReads = readCalls().length
-      focused = false
-      doc.visibilityState = event === 'focus' ? 'visible' : 'hidden'
+      const resumePreview = event === 'preview' ? suspendArkmeVisibleReadIntent() : undefined
+      focused = event === 'preview'
+      doc.visibilityState = event === 'visibilitychange' ? 'hidden' : 'visible'
       await act(async () => {
         win.dispatchEvent(new Event('blur'))
         doc.dispatchEvent(new Event('visibilitychange'))
@@ -120,7 +122,8 @@ describe('Arkme surface refresh boundaries', () => {
       focused = true
       doc.visibilityState = 'visible'
       await act(async () => {
-        if (event === 'focus') win.dispatchEvent(new Event(event))
+        if (event === 'preview') resumePreview!()
+        else if (event === 'focus') win.dispatchEvent(new Event(event))
         else doc.dispatchEvent(new Event(event))
       })
       expect(readCalls()).toHaveLength(previousReads + 1)

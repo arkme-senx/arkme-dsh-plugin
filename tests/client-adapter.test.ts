@@ -96,6 +96,9 @@ describe('official DSH client adapter', () => {
       'conversation',
       'details',
       'settings.section',
+      'settings.general.item',
+      'settings.section',
+      'shell.overlay',
       'shell.overlay',
     ])
     expect(registered).toEqual(expect.arrayContaining([
@@ -142,7 +145,8 @@ describe('official DSH client adapter', () => {
     expect(registered).not.toContainEqual(expect.objectContaining({ id: 'arkme-app-update-dialog' }))
     expect(registered.map(item => item.name)).not.toContain('sidebar.footer.action')
     expect(registered.map(item => item.name)).not.toContain('sidebar.settings')
-    expect(registered.map(item => item.name)).not.toContain('settings.general.item')
+    expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.general.item', id: 'arkme-general' }))
+    expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.section', id: 'arkme-about', label: '关于' }))
     expect(registered.find(item => item.name === 'conversation')?.children).toBeUndefined()
     cleanups.forEach(cleanup => { cleanup() })
   })
@@ -321,7 +325,7 @@ describe('official DSH client adapter', () => {
     } as never)
 
     const labels = effect.mock.calls.map(call => call[1])
-    expect(labels).toContain('dsh-arkme: client app update status')
+    expect(labels).toContain('dsh-arkme: client app update bridge')
     expect(labels).not.toContain('dsh-arkme: client plugin update status')
   })
 })

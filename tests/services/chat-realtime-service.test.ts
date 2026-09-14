@@ -469,7 +469,8 @@ describe('ChatRealtimeService', () => {
       async applyBadgeSummary() { return true },
     }
     const service = new ChatRealtimeService(runtime, source, {
-      async chatTimelineItems(_data, _session, chatSessionUid) {
+      async chatTimelineItems(_data, _session, chatSessionUid, _sourceKind, bundle) {
+        expect(bundle).toEqual(bundles.find(item => item.session.chat_session_uid === chatSessionUid))
         return timelineItemsByUid.get(chatSessionUid) ?? []
       },
     }, nativeAttention)

@@ -140,7 +140,7 @@ describe('Arkme conversation composer presentation', () => {
       expect(source).toContain('...arkmeConversationComposerLayout.tools')
       expect(source).not.toMatch(/Math\.min\(textarea\.scrollHeight,\s*(180|336)\)/)
     }
-    expect(arkoSource).toContain('arkmeConversationComposerHeight(textarea.scrollHeight)')
+    expect(arkoSource).toContain('<ArkmeDocumentComposerInput')
     expect(sidebarSource).toContain('<ArkmeRichComposerInput')
     expect(sidebarSource).toContain('onSelectionChange={updateComposerRichTrigger}')
     expect(sidebarSource).toContain("callArkme<ArkmeRecordTagList>('records.tags.list'")

@@ -99,16 +99,16 @@ describe('ArkmeCalendarSurface scoped refresh', () => {
     renderer = undefined
   })
 
-  it('renders day-record emoji through the shared preview without additional requests', async () => {
+  it('renders day-record emoji and links through shared content without per-record detail requests', async () => {
     mocks.pendingRecords = Promise.resolve(recordPage(emojiSample))
     await act(async () => { renderer = create(<ArkmeCalendarSurface onClose={() => {}} />) })
     expect(renderer!.root.findAllByProps({ 'data-arkme-rich-emoji': 'heart_eyes' })).toHaveLength(1)
     expect(renderer!.root.findAllByProps({ 'data-arkme-rich-emoji': 'thumb_up' })).toHaveLength(1)
     expect(textContent(renderer!.toJSON())).toContain('👨‍👩‍👧‍👦 👍🏽 🇨🇳 [jm_emoji:unknown]')
     expect(textContent(renderer!.toJSON())).not.toContain('[jm_emoji:heart_eyes]')
-    expect(renderer!.root.findAllByType('a')).toHaveLength(0)
+    expect(renderer!.root.findAllByType('a').map(link => link.props.href)).toContain('https://example.com')
     expect(mocks.callArkme.mock.calls.map(([operation]) => operation).sort())
-      .toEqual(['calendar.buckets', 'calendar.records', 'user.profile'])
+      .toEqual(['calendar.buckets', 'calendar.records', 'link.metadata', 'user.profile'])
   })
 
   it('requests only resources whose visible date scope was invalidated', async () => {

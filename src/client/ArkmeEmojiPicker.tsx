@@ -29,7 +29,6 @@ function waitForFavoriteStickerRetry(signal: AbortSignal): Promise<void> {
     signal.addEventListener('abort', done, { once: true })
   })
 }
-export const arkmeDefaultEmojiGridColumns = 14
 
 interface ArkmePendingFavoriteSticker {
   id: string
@@ -108,8 +107,9 @@ const styles: Record<string, CSSProperties> = {
   hint: { marginLeft: 'auto', color: 'var(--dsw-alias-label-tertiary, #9097a1)', fontSize: 11, lineHeight: '18px' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, 28px)', gap: 4 },
   defaultGrid: {
-    gridTemplateColumns: `repeat(${arkmeDefaultEmojiGridColumns}, 28px)`,
-    columnGap: 0, rowGap: 4, justifyContent: 'space-between',
+    // Fourteen columns at full panel width; wrap instead of hiding choices in narrow windows.
+    gridTemplateColumns: 'repeat(auto-fit, 28px)',
+    columnGap: 3, rowGap: 4, justifyContent: 'space-between',
   },
   emoji: {
     position: 'relative', width: 28, height: 28, display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 6,
@@ -237,19 +237,32 @@ function EmojiGrid({ emojis, layout = 'compact', onSelect }: {
   </div>
 }
 
-export function ArkmeEmojiPicker({ disabled, accountKey, scopeKey, sourceRef, getCaretGeometry, getEditorGeometry, onBeforeToggle, onSelect, onUploadSticker, onStickerSent, onError }: {
+interface ArkmeEmojiPickerBaseProps {
   disabled: boolean
   accountKey?: string | undefined
   scopeKey: string | undefined
-  sourceRef?: string
   getCaretGeometry?: () => ArkmeComposerCaretGeometry | undefined
   getEditorGeometry?: () => ArkmeComposerCaretGeometry | undefined
   onBeforeToggle?: () => void
-  onSelect(emoji: ArkmeEmoji): void
+  /** Return false when the editor rejects insertion; rejected choices are not recorded as recent. */
+  onSelect(emoji: ArkmeEmoji): boolean | void
+  onError?: (message: string) => void
+}
+
+/** Text insertion cannot accidentally acquire the private/group chat sticker-send contract. */
+export type ArkmeEmojiPickerProps = ArkmeEmojiPickerBaseProps & ({
+  mode: 'text'
+  sourceRef?: never
+  onUploadSticker?: never
+  onStickerSent?: never
+} | {
+  mode?: 'all'
+  sourceRef?: string
   onUploadSticker?: (file: File) => Promise<ArkmeUploadedAsset>
   onStickerSent?: (result: ArkmeSourceSendResult) => void | Promise<void>
-  onError?: (message: string) => void
-}) {
+})
+
+export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey, sourceRef, getCaretGeometry, getEditorGeometry, onBeforeToggle, onSelect, onUploadSticker, onStickerSent, onError }: ArkmeEmojiPickerProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const stickerInputRef = useRef<HTMLInputElement>(null)
@@ -402,7 +415,7 @@ export function ArkmeEmojiPicker({ disabled, accountKey, scopeKey, sourceRef, ge
   }
 
   const select = (emoji: ArkmeEmoji) => {
-    onSelect(emoji)
+    if (disabled || onSelect(emoji) === false) return
     setRecentIds(current => nextArkmeRecentEmojiIds(current, emoji.id))
     recordRecent(emoji.id)
   }
@@ -472,8 +485,8 @@ export function ArkmeEmojiPicker({ disabled, accountKey, scopeKey, sourceRef, ge
   }
 
   useEffect(() => {
-    if (open && tab === 'favorite' && loadPhase === 'idle') void loadStickers()
-  }, [open, tab, loadPhase])
+    if (mode === 'all' && open && tab === 'favorite' && loadPhase === 'idle') void loadStickers()
+  }, [mode, open, tab, loadPhase])
 
   const addFavoriteSticker = async (item: ArkmeFavoriteStickerAddInput) => {
     const result = await callArkme<ArkmeFavoriteStickerList>('favorite-stickers.add', { item })
@@ -604,7 +617,7 @@ export function ArkmeEmojiPicker({ disabled, accountKey, scopeKey, sourceRef, ge
         data-arkme-emoji-panel-shell="true"
         data-placement={panelGeometry?.placement ?? 'above'}
       ><section ref={panelRef} role="dialog" aria-label="表情选择器" style={styles.panel} data-arkme-emoji-panel>
-      {tab === 'emoji' ? <div style={styles.body}>
+      {mode === 'text' || tab === 'emoji' ? <div style={styles.body}>
       {recentSaveError !== undefined && <div role="alert" style={styles.title}>最近表情保存未确认
         <button type="button" aria-label="重试保存最近表情" style={styles.retryButton} onClick={() => { recordRecent(recentSaveError) }}>重试保存</button>
       </div>}
@@ -670,11 +683,11 @@ export function ArkmeEmojiPicker({ disabled, accountKey, scopeKey, sourceRef, ge
         </div>}
         <input ref={stickerInputRef} type="file" accept="image/*,.gif" hidden onChange={addSticker} />
       </div>}
-      <div style={styles.toolbar}>
+      {mode === 'all' && <div style={styles.toolbar}>
         <button type="button" style={{ ...styles.tab, ...(tab === 'emoji' ? { background: '#f3f4f5', color: '#737a84' } : {}) }} aria-label="默认表情" title="默认表情" onClick={() => { setTab('emoji') }}><SmileIcon /></button>
         <button type="button" style={{ ...styles.tab, ...(tab === 'favorite' ? { background: '#f3f4f5', color: '#737a84' } : {}) }} aria-label="收藏表情" title="收藏表情" onClick={() => { setTab('favorite') }}><HeartIcon /></button>
-      </div>
-      {contextMenu !== undefined && <div
+      </div>}
+      {mode === 'all' && contextMenu !== undefined && <div
         role="menu" aria-label="收藏表情操作" data-arkme-favorite-sticker-context-menu="true"
         style={{ ...styles.contextMenu, left: contextMenu.x, top: contextMenu.y }}
         onPointerDown={event => { event.stopPropagation() }}

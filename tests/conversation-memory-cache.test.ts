@@ -299,3 +299,9 @@ describe('ArkmeConversationMemoryCache', () => {
     expect(viewport).toContain('arkmeConversationRestoredScrollTop')
   })
 })
+
+it('invalidates all content snapshots after deletion without changing scroll positions',()=>{
+ const cache=new ArkmeConversationMemoryCache();cache.storeTimeline('a',{...timeline('a'),fetchedAtMillis:100,recordRevision:4});cache.storeTimeline('b',{...timeline('b'),fetchedAtMillis:100,recordRevision:4})
+ cache.storeViewport('a',{scrollTop:120,stickToBottom:false});cache.invalidateTimelines()
+ expect(cache.getTimeline('a')?.fetchedAtMillis).toBe(0);expect(cache.getTimeline('b')?.recordRevision).toBe(-1);expect(cache.getViewport('a')?.scrollTop).toBe(120)
+})

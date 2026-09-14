@@ -15,6 +15,7 @@ import type {
   ArkmeUploadedAsset,
 } from '../types.js'
 import { ProfileService } from './profile-service.js'
+import { isRecordDynamicPhotoMotion, recordDynamicPhotoGroups } from './dynamic-photo.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 export interface ArkmeWorldImageEntry {
@@ -315,6 +316,7 @@ export class MediaService {
       { file_asset_uids: unique },
       session,
       signal,
+      { lane: 'interactive-read' },
     )
     return listValue(data.items).map(raw => {
       const item = objectValue(raw)
@@ -1144,7 +1146,7 @@ export class MediaService {
   /** A current Record version does not imply that every media URL was resolved. */
   recordMediaUnavailable(raw: unknown, blocks: readonly ArkmeContentBlock[]): boolean {
     if (this.runtime.config.richMediaRenderEnabled === false) return false
-    const displayed = new Set(blocks.map(block => block.fileAssetUid))
+    const displayed = new Set(blocks.flatMap(block => [block.fileAssetUid, block.dynamicPhoto?.motion?.fileAssetUid]))
     return this.recordMediaRefs(raw).some(ref => !displayed.has(stringValue(ref.file_asset_uid).trim()))
   }
 
@@ -1171,7 +1173,7 @@ export class MediaService {
     const candidates = mediaRefs.length > 0
       ? mediaRefs.map(ref => ({ ...(displayByAsset.get(stringValue(ref.file_asset_uid).trim()) ?? {}), ...ref }))
       : displayItems
-    return candidates.filter(item => {
+    const projected = candidates.filter(item => {
       // content_file_role=4 is ambient background sound captured while writing a record.
       // It is author-only record metadata, not an attachment that belongs in a chat bubble.
       return Math.trunc(numberValue(item.content_file_role)) !== RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND
@@ -1204,7 +1206,18 @@ export class MediaService {
           ? { renderRole: Math.trunc(numberValue(item.render_role)) as 1 | 3 }
           : {}),
       }]
-    }).sort((left, right) => left.sortOrder - right.sortOrder)
+    })
+    const byAsset = new Map(projected.map(block => [block.fileAssetUid, block]))
+    for (const group of recordDynamicPhotoGroups(candidates)) {
+      const cover = byAsset.get(stringValue(group.cover.file_asset_uid))
+      if (cover?.kind !== 'image') continue
+      const motion = group.motion === undefined ? undefined : byAsset.get(stringValue(group.motion.file_asset_uid))
+      cover.dynamicPhoto = { logicalUid: group.logicalUid,
+        ...(group.motion === undefined ? {} : { motionFileAssetUid: stringValue(group.motion.file_asset_uid) }),
+        ...(motion?.kind === 'video' ? { motion: { ...motion, kind: 'video' } } : {}) }
+    }
+    const motionAssets = new Set(candidates.filter(isRecordDynamicPhotoMotion).map(item => stringValue(item.file_asset_uid)))
+    return projected.filter(block => !motionAssets.has(block.fileAssetUid ?? '')).sort((left, right) => left.sortOrder - right.sortOrder)
   }
 
   private async ossCredentials(

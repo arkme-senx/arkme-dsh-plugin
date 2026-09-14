@@ -1,3 +1,4 @@
+import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
@@ -7,6 +8,7 @@ function sameSelectedSource(left: ArkmeSourceItem | undefined, right: ArkmeSourc
   if (left === undefined || right === undefined) return left === right
   return left.sourceRef === right.sourceRef && left.sourceKey === right.sourceKey
     && left.kind === right.kind && left.displayName === right.displayName
+    && left.peerMemberType === right.peerMemberType
     && left.latestPreview === right.latestPreview && left.activeAtMillis === right.activeAtMillis
     && left.unreadCount === right.unreadCount && left.hasUnreadMention === right.hasUnreadMention
     && left.badgeUnreadCount === right.badgeUnreadCount
@@ -47,7 +49,7 @@ export interface ArkmeUiState {
   /** Forces a real conversation-surface commit for every native notification click, including the current source. */
   notificationActivationRevision?: number
   conversationUnreadJumpRevision?: number
-  conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: number }
+  conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: RecordOwnerId }
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   searchTarget?: { revision: number; query: string }
   extensionShareRef?: string
@@ -55,7 +57,7 @@ export interface ArkmeUiState {
   extensionDetailId?: string
   extensionAuthorFilter?: ArkmeExtensionAuthorFilter
   calendarOpen?: boolean
-  worldTarget?: ArkmeWorldTarget
+  worldTarget?: ArkmeWorldViewTarget
   /** Web-only login is an overlay so a logged-out Harness view remains in place. */
   webLoginDialogOpen?: boolean
 }
@@ -79,15 +81,21 @@ export interface ArkmeWorldTarget {
   avatarFallback?: { kind: 'phone_default'; colorIndex: number; label: string }
 }
 
+export interface ArkmeContactWorldTarget extends ArkmeWorldTarget {
+  contactRef: string
+}
+
+export type ArkmeWorldViewTarget = ArkmeWorldTarget | ArkmeContactWorldTarget
+
 type ArkmeConversationDestination =
   | { kind: 'harness' }
   | { kind: 'send_to_self' }
   | { kind: 'source'; source: ArkmeSourceItem }
   | { kind: 'bot'; bot: ArkmeBotSummary }
 
-function sameWorldTarget(left: ArkmeWorldTarget | undefined, right: ArkmeWorldTarget | undefined): boolean {
+function sameWorldTarget(left: ArkmeWorldViewTarget | undefined, right: ArkmeWorldViewTarget | undefined): boolean {
   if (left === undefined || right === undefined) return left === right
-  return left.userId === right.userId && left.displayName === right.displayName
+  return left.userId === right.userId && ('contactRef' in left ? left.contactRef : undefined) === ('contactRef' in right ? right.contactRef : undefined) && left.displayName === right.displayName
     && left.avatarRef === right.avatarRef && JSON.stringify(left.avatarFallback) === JSON.stringify(right.avatarFallback)
 }
 
@@ -228,6 +236,21 @@ export class ArkmeUiController {
     })
   }
 
+  showContactWorld(target: ArkmeContactWorldTarget): void {
+    if (target.contactRef.trim() === '') throw new TypeError('联系人引用不能为空')
+    this.showUserWorld(target)
+  }
+
+  backFromWorld(): void {
+    const target = this.state.worldTarget
+    if (this.state.mode === 'world' && target !== undefined && 'contactRef' in target) {
+      arkmeContactsTab.select({ kind: 'contact', contactRef: target.contactRef })
+      this.showContacts()
+      return
+    }
+    this.showWorld()
+  }
+
   showRecordingTarget(dateStamp: number, startAtMillis: number): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
@@ -316,7 +339,7 @@ export class ArkmeUiController {
   }
 
   showContacts(): void {
-    const { recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    const { recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, worldTarget: _worldTarget, ...rest } = this.state
     this.publish({ ...rest, mode: 'source', productMode: 'contacts' })
   }
 
@@ -404,7 +427,7 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'bot', selectedBot: bot })
   }
 
-  showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number, recordOwnerUserId?: number): void {
+  showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number, recordOwnerUserId?: RecordOwnerId): void {
     this.leaveContacts()
     const normalizedItemUid = itemUid.trim()
     if (normalizedItemUid === '') throw new TypeError('会话消息定位标识不能为空')
@@ -418,8 +441,8 @@ export class ArkmeUiController {
         revision: ++this.conversationTargetRevision,
         itemUid: normalizedItemUid,
         sendAtMillis: Number.isFinite(sendAtMillis) ? sendAtMillis : 0,
-        ...(recordOwnerUserId !== undefined && Number.isSafeInteger(recordOwnerUserId) && recordOwnerUserId > 0
-          ? { recordOwnerUserId }
+        ...(recordOwnerId(recordOwnerUserId) !== 0
+          ? { recordOwnerUserId: recordOwnerId(recordOwnerUserId) }
           : {}),
       },
     })

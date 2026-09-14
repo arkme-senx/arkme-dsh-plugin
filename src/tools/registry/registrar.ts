@@ -10,6 +10,7 @@ import {
   ArkmeConversationalConfirmation,
   arkmeConfirmationContextHooks,
 } from '../shared/conversational-confirmation.js'
+import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation } from './group-governance-confirmation.js'
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
@@ -28,6 +29,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_extension_review_create',
   'arkme_group_member_add',
   'arkme_group_member_remove',
+  'arkme_group_self_nickname_set',
   'arkme_group_join_restriction_set',
   'arkme_message_withdraw',
   'arkme_contact_add',
@@ -97,6 +99,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
     const count = Array.isArray(args.candidate_refs) ? args.candidate_refs.length : 0
     return `是否确认向这个群聊添加或邀请 ${String(count)} 位成员？成员加入后将可以看到群内后续消息。`
   }
+  if (name === 'arkme_group_self_nickname_set') return '是否确认将你在这个群聊中的昵称修改为“' + cleanArgument(args.nickname, 40) + '”？'
   if (name === 'arkme_group_member_remove') {
     return args.prevent_rejoin === true
       ? '是否确认将这位成员移出群聊，并禁止其再次加入？'
@@ -210,6 +213,7 @@ export function registerArkmeTools(
   ctx: Context,
   ports: ArkmeToolPorts,
   profile: ArkmeToolProfile = 'business',
+  presentation?: GroupGovernancePresentation,
 ): void {
   const prompt = promptForArkmeToolProfile(profile)
   if (prompt !== '') {
@@ -225,6 +229,7 @@ export function registerArkmeTools(
     })
   }
   const coreConversation = new ArkmeConversationalConfirmation()
+  registerGroupGovernanceConfirmation(ctx, coreConversation, presentation)
   for (const definition of createArkmeCoreToolDefinitions(ports, profile)) {
     ctx.tools.register(withCoreConversationalConfirmation(definition, coreConversation))
   }

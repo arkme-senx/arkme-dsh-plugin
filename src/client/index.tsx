@@ -1,4 +1,4 @@
-import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -25,9 +25,10 @@ import {
 } from './notification-activation-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
-import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested } from './DeepSeekHarnessSurface.js'
+import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested, openEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
 import { installArkmeAccountSettingsNavIcon } from './account-settings-nav-icon.js'
+import { DesktopHarnessReadinessCommit } from './desktop-harness-readiness.js'
 import {
   ARKME_LOGIN_LOCALE_NAMESPACE, arkmeLoginEn, arkmeLoginZh,
 } from './arkme-login-locales.js'
@@ -112,7 +113,7 @@ export function apply(ctx: ClientContext): void {
   }), 'dsh-arkme: login dictionaries')
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
 
-  ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update status')
+  ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update bridge')
   ctx.effect(() => {
     let disposed = false
     let resolving: {
@@ -225,11 +226,7 @@ export function apply(ctx: ClientContext): void {
             if (!result.ok) throw new Error(result.error.message)
             return result.value
           },
-          openDshSession: (sessionId: string) => {
-            const dshSessions = (ctx as unknown as { sessions?: ISessions }).sessions
-            if (typeof dshSessions?.open !== 'function') throw new Error('当前 DSH 版本暂不支持打开任务')
-            dshSessions.open(sessionId as SessionId)
-          },
+          openDshSession: openEmbeddedDshSession,
         }),
       }, ArkmePersistentSidebar))
     }
@@ -333,6 +330,19 @@ export function apply(ctx: ClientContext): void {
     label: '我的账户',
   }, ArkmeDshSettingsSection))
 
+  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+    name: 'settings.general.item',
+    id: 'arkme-general',
+    order: 100,
+  }, () => <ArkmeSettingsSurface view="general" />))
+
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section',
+    id: 'arkme-about',
+    order: 100,
+    label: '关于',
+  }, () => <ArkmeSettingsSurface view="about" />))
+
   if (!startupAuthGateEnabled()) {
     ctx.slots.inject('shell.overlay', () => ctx.slots.register({
       name: 'shell.overlay',
@@ -352,6 +362,13 @@ export function apply(ctx: ClientContext): void {
       locale: ARKME_LOGIN_LOCALE_NAMESPACE,
     }, ArkmeStartupAuthGate))
   }
+
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'arkme-desktop-harness-readiness',
+    order: -1_000,
+    label: () => 'Arkme desktop harness readiness',
+  }, DesktopHarnessReadinessCommit))
 }
 
 export { ArkmeFooterAction } from './ArkmeFooterAction.js'
@@ -365,8 +382,6 @@ export {
 } from './DeepSeekHarnessSurface.js'
 export { ArkmeOutgoingCallHost, outgoingCallModalLayout } from './ArkmeOutgoingCallHost.js'
 export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
-export { ArkmeAppUpdateDialog } from './ArkmeAppUpdateDialog.js'
-export { ArkmeUpdateRailSlot, ArkmeUpdateTopCapsule, deriveArkmeUpdatePresentation } from './ArkmeUpdateSurfaces.js'
 export { ArkmeStartupAuthGate } from './ArkmeStartupAuthGate.js'
 export { ArkmeWebLoginOverlay } from './ArkmeWebLoginOverlay.js'
 export {

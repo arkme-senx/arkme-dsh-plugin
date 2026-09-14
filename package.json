@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.53",
+  "version": "0.1.57",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -39,6 +39,7 @@
   "files": [
     "lib",
     "assets/desktop_call",
+    "assets/licenses/MaterialIcons_LICENSE.txt",
     "assets/windows/arkme-credential-helper.exe",
     "assets/windows/manifest.json",
     "cordis.patch.yml",
@@ -65,13 +66,16 @@
     "desktopAccountScope": {
       "version": 1
     },
+    "desktopHarnessReady": {
+      "version": 1
+    },
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.53 更新",
-      "summary": "0911-1800",
-      "publishedAt": "2026-09-11T09:59:40.672Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.53"
+      "title": "Arkme 插件 0.1.57 更新",
+      "summary": "feat(self): 优化发给自己主题体验",
+      "publishedAt": "2026-09-16T06:38:32.888Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.57"
     }
   },
   "scripts": {

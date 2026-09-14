@@ -677,7 +677,7 @@ describe('Arkme SDK', () => {
           return success({ scope: 'self', startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Shanghai', refreshedAtMillis: 1, days: [] })
         }
         if (request.operation === 'calendar.records') {
-          return success({ scope: 'self', bucketDate: '2026-08-21', timezone: 'Asia/Shanghai', refreshedAtMillis: 1, items: [], hasMore: false })
+          return success({ scope: 'self', bucketDate: '2026-08-21', timezone: 'Asia/Shanghai', refreshedAtMillis: 1, items: [{ recordUid: 'calendar-rich', source: { kind: 'group_chat', displayName: '项目群', sourceRef: 'safe' }, content: { itemUid: 'calendar-rich', textFormat: 'markdown', textContent: '**正文**', contentBlocks: [{ kind: 'image', mediaRef: 'opaque-media' }] } }], hasMore: false })
         }
         if (request.operation === 'records.create') return success({ recordUid: request.params?.recordUid, status: 1 })
         throw new Error(`unexpected ${request.operation}`)
@@ -721,7 +721,7 @@ describe('Arkme SDK', () => {
       timezone: 'Asia/Shanghai',
       limit: 10,
       cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
-    })).resolves.toMatchObject({ scope: 'self', hasMore: false })
+    })).resolves.toMatchObject({ scope: 'self', hasMore: false, items: [{ source: { displayName: '项目群' }, content: { textFormat: 'markdown', contentBlocks: [{ mediaRef: 'opaque-media' }] } }] })
     await expect(sdk.createText('保存内容', { recordUid: 'a5d8df82-5b62-5b22-8f76-916a751ad63c' }))
       .resolves.toMatchObject({ status: 1 })
     expect(calls).toMatchObject([
@@ -883,7 +883,7 @@ describe('Arkme SDK', () => {
     ])
   })
 
-  it('requests an exact chat timeline window around a record', async () => {
+  it.each([7, '6690025278483443577'])('requests an exact chat timeline window around a record for %s', async (ownerId) => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
       calls.push(JSON.parse(String(init?.body)))
@@ -894,11 +894,11 @@ describe('Arkme SDK', () => {
       })
     } })
 
-    await expect(sdk.readSourceAround('source-1', 'record-1', 7, { beforeLimit: 20, afterLimit: 30 }))
+    await expect(sdk.readSourceAround('source-1', 'record-1', ownerId, { beforeLimit: 20, afterLimit: 30 }))
       .resolves.toMatchObject({ anchorItemUid: 'record-1' })
     expect(calls).toEqual([{
       operation: 'source.timeline-around',
-      params: { sourceRef: 'source-1', itemUid: 'record-1', recordOwnerUserId: 7, beforeLimit: 20, afterLimit: 30 },
+      params: { sourceRef: 'source-1', itemUid: 'record-1', recordOwnerUserId: ownerId, beforeLimit: 20, afterLimit: 30 },
     }])
   })
 
@@ -1184,4 +1184,13 @@ describe('Arkme SDK', () => {
     })
     await expect(sdk.state()).rejects.toBeInstanceOf(ArkmeClientError)
   })
+})
+
+it('exposes server search with DSH identity and cancellation to external consumers', async () => {
+ const signal = new AbortController().signal
+ const fetchImpl = vi.fn(async (_input: unknown, _init?: RequestInit) => JSON.parse(String(_init?.body)).operation === 'provider.capabilities' ? success({ contractVersion: 1, features: { remoteRecordSearch: true } }) : success({ items: [{ recordUid: 'r', dshOrigin: { sessionId: 's', eventSeq: 7 } }], hasMore: false }))
+ const sdk = createArkmeSdk({ fetchImpl })
+ const result = await sdk.searchRemote('武汉', { limit: 10, signal })
+ expect(result.items[0]?.dshOrigin).toEqual({ sessionId: 's', eventSeq: 7 })
+ expect(JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body))).toEqual({ operation: 'search.records', params: { query: '武汉', limit: 10 } })
 })

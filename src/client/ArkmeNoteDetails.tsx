@@ -1,10 +1,10 @@
+import { ArkmeBotSenderName } from './ArkmeBotIdentity.js'
+import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { arkmeDetailExtensionComposerStyles } from './detail-extension-composer-style.js'
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import type { ArkmeProviderCapabilities } from '../types.js'
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react'
-import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
-import { XIcon as X } from '@phosphor-icons/react/dist/csr/X'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
 import type {
   ArkmeBotList,
@@ -37,7 +37,6 @@ import {
 } from './ArkmeRelatedQuickNotes.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { ARKME_CONVERSATION_HEADER_HEIGHT } from './interwoven-moments.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { ArkmeAttachmentStrip, ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
 import {
@@ -52,7 +51,6 @@ import {
   type ArkmeComposerMention,
 } from './composer-draft-store.js'
 import { localFileBlock } from './file-send-tasks.js'
-import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 import { recordingSpeakerColor } from './recordings/recording-speaker-presentation.js'
 import {
   arkmeComposerMentionTrigger,
@@ -67,27 +65,12 @@ import { ArkmeMentionSuggestionRow, ArkmeMentionSuggestionThemeStyles } from './
 import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'
 
 const styles: Record<string, CSSProperties> = {
-  drawer: { position: 'absolute', top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, zIndex: 10,
-    width: 'min(372px, 100%)', minWidth: 0, boxSizing: 'border-box', display: 'flex', flexDirection: 'column',
-    background: arkmeTheme.base, color: arkmeTheme.text, borderLeft: `1px solid ${arkmeTheme.borderSoft}`,
-    boxShadow: '-12px 0 28px rgba(29,32,40,.055)' },
-  header: { flex: 'none', display: 'flex', alignItems: 'flex-start', gap: 10, padding: '22px 20px 0 22px' },
-  heading: { flex: 1, minWidth: 0 },
-  title: { margin: 0, fontSize: 16, lineHeight: '24px', fontWeight: 600, overflowWrap: 'anywhere' },
-  subtitle: { marginTop: 8, color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '18px' },
-  close: { width: 30, height: 30, marginTop: -3, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
-    border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer' },
-  back: { width: 30, height: 30, marginTop: -3, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
-    border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },
-  body: { flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain', padding: '24px 22px' },
   rows: { display: 'flex', flexDirection: 'column', gap: 23 },
   row: { display: 'flex', gap: 9, alignItems: 'flex-start' },
   content: { flex: 1, minWidth: 0 },
   meta: { display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 6 },
   name: { flex: 1, minWidth: 0, overflowWrap: 'anywhere', color: arkmeTheme.secondary, fontSize: 12, fontWeight: 600 },
   time: { flex: 'none', color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px' },
-  footer: { flex: 'none', textAlign: 'center', padding: '12px 22px 20px', color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px' },
-  extensionFooter: { flex: 'none', padding: 0, color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px' },
   extensionComposer: { display: 'flex', flexDirection: 'column' },
   extensionAttachmentPreview: { padding: '8px 16px' },
   extensionInputBar: arkmeDetailExtensionComposerStyles.bar,
@@ -163,51 +146,6 @@ function offsetLabel(value: number): string {
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 }
 
-/** Non-modal overlay: the conversation retains its width and scroll position. */
-function NoteDetailShell({ title, label, subtitle, footer, onClose, onBack, backLabel, bodyRef, children }: {
-  title: string; label: string; subtitle?: string; footer?: ReactNode; onClose: () => void; children: ReactNode
-  onBack?: () => void; backLabel?: string; bodyRef?: Ref<HTMLDivElement>
-}) {
-  const closeRef = useRef<HTMLButtonElement>(null)
-  const backRef = useRef<HTMLButtonElement>(null)
-  const panelRef = useRef<HTMLElement>(null)
-  const resize = useResizableNoteDetail(panelRef)
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
-  const titleId = useId()
-  useEffect(() => {
-    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-    ;(onBack === undefined ? closeRef.current : backRef.current)?.focus({ preventScroll: true })
-    const onKey = (event: KeyboardEvent) => {
-      // A portal preview owns Escape until it is closed; do not close both layers.
-      if (event.key !== 'Escape' || event.defaultPrevented
-        || document.querySelector('[data-arkme-image-preview-viewport], [aria-modal="true"]') !== null) return
-      event.preventDefault()
-      event.stopPropagation()
-      onCloseRef.current()
-    }
-    const panel = panelRef.current
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('keydown', onKey)
-      const active = document.activeElement
-      if (trigger?.isConnected && (active === document.body || active === null || panel?.contains(active))) trigger.focus({ preventScroll: true })
-    }
-  }, [])
-  return <aside ref={panelRef} role="dialog" aria-label={label} aria-labelledby={titleId} style={{ ...styles.drawer, ...resize.style }} data-arkme-note-detail="true">
-    {resize.handle}
-    <header style={styles.header}>
-      {onBack !== undefined && <button ref={backRef} type="button" style={styles.back}
-        aria-label={backLabel ?? '返回'} onClick={onBack}><ArrowLeft size={18} /></button>}
-      <div style={styles.heading}><h3 id={titleId} style={styles.title}><ArkmeRichText text={title} presentation="preview" /></h3>
-        {subtitle && <div style={styles.subtitle}>{subtitle}</div>}
-      </div>
-      <button ref={closeRef} type="button" style={styles.close} aria-label="关闭详情" onClick={onClose}><X size={18} /></button>
-    </header>
-    <div ref={bodyRef} style={styles.body}>{children}</div>
-    {footer !== undefined && footer !== null && <footer style={typeof footer === 'string' ? styles.footer : styles.extensionFooter}>{footer}</footer>}
-  </aside>
-}
 
 function clipboardFiles(data: Pick<DataTransfer, 'files' | 'items'>): File[] {
   const itemFiles = Array.from(data.items).flatMap(item => {
@@ -836,9 +774,10 @@ function relatedQuickNoteReferenceExpired(error: unknown): boolean {
 }
 
 export function ArkmeTimelineDetailDrawer({
-  item, sourceRef, sourceKind, conversationMembers, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
+  item, sourceBadge, sourceRef, sourceKind, conversationMembers, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
   onOpenPrivateChatMember, messageCreationBlocked = false, messageCreationRestriction = '',
 }: {
+  sourceBadge?: ReactNode
   item: ArkmeTimelineItem
   sourceRef?: string | undefined
   canExtend?: boolean
@@ -873,9 +812,10 @@ export function ArkmeTimelineDetailDrawer({
   })
   const messageActionRef = item.messageActionRef?.trim() ?? ''
   const normalizedSourceRef = sourceRef?.trim() ?? ''
+  const quickNoteDetailsSupported = item.quickNoteDetailsSupported !== false
   const loadRelated = useCallback(() => {
     listAbortRef.current?.abort()
-    if (normalizedSourceRef === '' || messageActionRef === '') {
+    if (!quickNoteDetailsSupported || normalizedSourceRef === '' || messageActionRef === '') {
       setRelatedState({ kind: 'idle' })
       return
     }
@@ -892,10 +832,10 @@ export function ArkmeTimelineDetailDrawer({
       if (controller.signal.aborted || listAbortRef.current !== controller) return
       setRelatedState({ kind: 'error', message: relatedQuickNoteErrorMessage(error, '相关快记加载失败') })
     })
-  }, [messageActionRef, normalizedSourceRef])
+  }, [messageActionRef, normalizedSourceRef, quickNoteDetailsSupported])
   const loadExtensionContext = useCallback(() => {
     extensionAbortRef.current?.abort()
-    if (normalizedSourceRef === '' || messageActionRef === '') {
+    if (!quickNoteDetailsSupported || normalizedSourceRef === '' || messageActionRef === '') {
       setExtensionState({ kind: 'idle' })
       return
     }
@@ -912,7 +852,7 @@ export function ArkmeTimelineDetailDrawer({
       if (controller.signal.aborted || extensionAbortRef.current !== controller) return
       setExtensionState({ kind: 'error', message: relatedQuickNoteErrorMessage(error, '延展加载失败') })
     })
-  }, [messageActionRef, normalizedSourceRef])
+  }, [messageActionRef, normalizedSourceRef, quickNoteDetailsSupported])
   const loadRelatedDetail = useCallback((relatedItem: ArkmeRelatedQuickNoteItem) => {
     detailAbortRef.current?.abort()
     if (normalizedSourceRef === '') return
@@ -994,7 +934,7 @@ export function ArkmeTimelineDetailDrawer({
   const textContent = showOriginal && item.aiPolish?.originalText !== undefined ? item.aiPolish.originalText
     : item.aiPolish?.state === 'polished' && item.aiPolish.polishedText !== undefined ? item.aiPolish.polishedText : item.textContent
   const canToggle = item.aiPolish?.state === 'polished' && item.aiPolish.originalText !== undefined && item.aiPolish.polishedText !== undefined
-  const extensionFooter = !canExtend || normalizedSourceRef === '' || messageActionRef === '' ? undefined : <DetailExtensionComposer
+  const extensionFooter = !quickNoteDetailsSupported || !canExtend || normalizedSourceRef === '' || messageActionRef === '' ? undefined : <DetailExtensionComposer
     sourceRef={normalizedSourceRef}
     sourceKind={sourceKind}
     conversationMembers={conversationMembers}
@@ -1012,7 +952,7 @@ export function ArkmeTimelineDetailDrawer({
   />
   if (relatedView === 'related-list') {
     const total = relatedState.kind === 'success' ? relatedState.list.total : 0
-    return <NoteDetailShell title={`${String(total)} 条相关快记`} label="相关快记列表"
+    return <ArkmeDetailShell title={`${String(total)} 条相关快记`} label="相关快记列表"
       onClose={closeDrawer} onBack={backRelated} backLabel="返回快记详情" bodyRef={bodyRef} footer={extensionFooter}>
       <div>
         <ArkmeRelatedQuickNotesList state={relatedState}
@@ -1022,10 +962,10 @@ export function ArkmeTimelineDetailDrawer({
             loadRelatedDetail(relatedItem)
           }} />
       </div>
-    </NoteDetailShell>
+    </ArkmeDetailShell>
   }
   if (relatedView === 'related-detail') {
-    return <NoteDetailShell title="相关快记详情" label="相关快记详情"
+    return <ArkmeDetailShell title="相关快记详情" label="相关快记详情"
       onClose={closeDrawer} onBack={backRelated} backLabel="返回相关快记列表" bodyRef={bodyRef} footer={extensionFooter}>
       <ArkmeRelatedQuickNoteDetail
         state={relatedDetailState}
@@ -1034,13 +974,13 @@ export function ArkmeTimelineDetailDrawer({
         {...(shareWebsite === undefined ? {} : { shareWebsite })}
         {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
       />
-    </NoteDetailShell>
+    </ArkmeDetailShell>
   }
-  return <NoteDetailShell title="快记详情" label="快记详情" onClose={closeDrawer} bodyRef={bodyRef} footer={extensionFooter}>
-    <div style={{ ...styles.row, alignItems: 'center', marginBottom: 20 }}>
-      <ArkmeUserAvatar {...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef })} size={40} label="作者头像" />
-      <div style={styles.content}><div style={styles.name}>{arkmeTimelineDetailSenderText(item)}</div>
-        <div style={{ ...styles.time, marginTop: 4 }}>{[dateLabel(item.sendAtMillis), timeLabel(item.sendAtMillis)].filter(Boolean).join(' ')}</div>
+  return <ArkmeDetailShell title="快记详情" label="快记详情" onClose={closeDrawer} bodyRef={bodyRef} footer={extensionFooter}>
+    <div style={{ ...styles.row, alignItems: 'center', marginBottom: 20, ...(item.senderKind === 'bot' ? { gap: 10 } : {}) }}>
+      <ArkmeUserAvatar senderKind={item.senderKind} {...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef })} size={40} label="作者头像" />
+      <div style={styles.content}><div style={styles.name}>{item.senderKind === 'bot' ? <ArkmeBotSenderName name={arkmeTimelineDetailSenderText(item)} detail /> : arkmeTimelineDetailSenderText(item)}</div>
+        <div style={{ ...styles.time, marginTop: item.senderKind === 'bot' ? 2 : 4, ...(item.senderKind === 'bot' ? { fontSize: 12 } : {}) }}>{[dateLabel(item.sendAtMillis), timeLabel(item.sendAtMillis)].filter(Boolean).join(' ')}</div>
       </div>
     </div>
     {canToggle && <button type="button" style={styles.toggle} onClick={onToggleOriginal}>{showOriginal ? '显示润色' : '显示原文'}</button>}
@@ -1056,13 +996,14 @@ export function ArkmeTimelineDetailDrawer({
         isMentionClickable={mentionOpensMemberProfile}
       />
     </div>
-    {item.extensionParent !== undefined && <DetailExtensionParent parent={item.extensionParent} />}
-    <ArkmeRelatedQuickNotesCard
+    {sourceBadge}
+    {quickNoteDetailsSupported && item.extensionParent !== undefined && <DetailExtensionParent parent={item.extensionParent} />}
+    {quickNoteDetailsSupported && <ArkmeRelatedQuickNotesCard
       state={relatedState}
       onOpen={() => { navigateRelated('related-list') }}
       onRetry={loadRelated}
-    />
-    <DetailExtensionContext
+    />}
+    {quickNoteDetailsSupported && <DetailExtensionContext
       state={extensionState}
       optimistic={optimisticExtensions}
       {...(selectedExtensionRecordUid === undefined ? {} : { selectedRecordUid: selectedExtensionRecordUid })}
@@ -1073,7 +1014,7 @@ export function ArkmeTimelineDetailDrawer({
       isMentionClickable={mentionOpensMemberProfile}
       onRetry={loadExtensionContext}
       onSelect={extension => { setSelectedExtensionRecordUid(extension.recordUid) }}
-    />
+    />}
     {memberProfile !== undefined && <ArkmeMemberProfileCard
       member={memberProfile}
       showTopicNickname={sourceKind === 'group_chat'}
@@ -1081,7 +1022,7 @@ export function ArkmeTimelineDetailDrawer({
       onClose={() => { setMemberProfile(undefined) }}
       onSend={openPrivateFromProfile}
     />}
-  </NoteDetailShell>
+  </ArkmeDetailShell>
 }
 
 function ForwardDetailRow({ name, time, avatarRef, segment = false, children }: {
@@ -1096,7 +1037,7 @@ function ForwardDetailRow({ name, time, avatarRef, segment = false, children }: 
   </div>
 }
 
-export function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineItem; onClose: () => void }) {
+export function ForwardRecordsDetail({ item, onClose, sourceBadge }: { item: ArkmeTimelineItem; onClose: () => void; sourceBadge?: ReactNode }) {
   const forward = item.forwardRecords
   if (forward === undefined) return null
   const recording = forward.items.length === 1 ? forward.items[0] : undefined
@@ -1105,8 +1046,9 @@ export function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineIte
     const startedAt = recording.sendAtMillis
     const selectedAt = startedAt > 0 ? startedAt + Math.min(...segments.map(segment => segment.startMillis)) : 0
     const selectedDate = selectedAt > 0 ? new Date(selectedAt) : undefined
-    return <NoteDetailShell title={recording.title || forward.title || '录音转写'} label="录音片段详情"
+    return <ArkmeDetailShell title={recording.title || forward.title || '录音转写'} label="录音片段详情"
       subtitle={selectedDate === undefined ? '' : `${selectedDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })} ${selectedDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`} onClose={onClose}>
+      {sourceBadge}
       <div data-arkme-forward-recording-detail>
         {segments.map((segment, index) => {
           const hours = Math.floor(segment.startMillis / 3_600_000)
@@ -1122,7 +1064,7 @@ export function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineIte
         })}
       </div>
       {(forward.truncated || recording.truncated) && <p style={styles.notice}>内容较多，当前展示部分转发记录</p>}
-    </NoteDetailShell>
+    </ArkmeDetailShell>
   }
   const dates = forward.items.map(value => epoch(value.sendAtMillis)).filter(value => value > 0)
   const firstDate = dateLabel(dates.length ? Math.min(...dates) : forward.createdAtMillis)
@@ -1164,11 +1106,12 @@ export function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineIte
     </div>
   }
   const forwardedAt = [dateLabel(forward.createdAtMillis), timeLabel(forward.createdAtMillis)].filter(Boolean).join(' ')
-  return <NoteDetailShell title={forward.title || '转发快记'} label="转发快记详情"
+  return <ArkmeDetailShell title={forward.title || '转发快记'} label="转发快记详情"
     subtitle={firstDate === lastDate ? firstDate : `${firstDate} 至 ${lastDate}`}
     footer={forwardedAt ? `转发于 ${forwardedAt}` : '转发时间未知'} onClose={onClose}>
+    {sourceBadge}
     <div style={styles.rows}>{rows.map(renderRecord)}</div>
     {rows.length === 0 && <p style={styles.notice}>原快记暂不可查看</p>}
     {forward.truncated && <p style={styles.notice}>内容较多，当前展示部分转发记录</p>}
-  </NoteDetailShell>
+  </ArkmeDetailShell>
 }

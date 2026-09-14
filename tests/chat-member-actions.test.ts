@@ -60,6 +60,15 @@ describe('chat member action menu placement', () => {
       .toEqual([second])
   })
 
+  it('keeps every selected message even without an action capability and beyond batch limits', () => {
+    const messages = Array.from({ length: 125 }, (_, index) => ({
+      itemUid: `message-${index}`, timelineItemKey: `occurrence-${index}`,
+      senderName: index % 2 ? '他人' : '本人', isMe: index % 2 === 0,
+      sendAtMillis: index, title: '', textContent: '消息', status: 1,
+    }))
+    expect(arkmeSelectedTimelineItems(messages, new Set(messages.map(arkmeTimelineOccurrenceKey)))).toEqual(messages)
+  })
+
   it('detects a composer @ trigger only at the active caret token', () => {
     expect(arkmeComposerMentionTrigger('@', 1)).toEqual({ startIndex: 0, endIndex: 1, query: '' })
     expect(arkmeComposerMentionTrigger('@小', 2)).toEqual({ startIndex: 0, endIndex: 2, query: '小' })

@@ -78,6 +78,13 @@ describe('group settings menu', () => {
     vi.unstubAllGlobals()
   })
 
+  it('offers own nickname to ordinary active members without group rename permission', async () => {
+    await act(async () => { renderer = create(controls(source)) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    expect(JSON.stringify(renderer!.toJSON())).toContain('修改群昵称')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('修改群名称')
+  })
+
   it('does not reactivate the current source when settings are read', async () => {
     const onSourceProjectionUpdated = vi.fn()
     await act(async () => { renderer = create(controls(source, { onSourceProjectionUpdated })) })
@@ -320,7 +327,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
     })
     expect(renderer!.root.findAllByProps({ role: 'menuitem' }).some(node =>
-      node.findAll(child => child.children.includes('重命名')).length > 0)).toBe(true)
+      node.findAll(child => child.children.includes('修改群名称')).length > 0)).toBe(true)
 
     await act(async () => {
       renderer!.update(controls(rotatedSource))
@@ -328,7 +335,7 @@ describe('group settings menu', () => {
     })
 
     expect(renderer!.root.findAllByProps({ role: 'menuitem' }).some(node =>
-      node.findAll(child => child.children.includes('重命名')).length > 0)).toBe(false)
+      node.findAll(child => child.children.includes('修改群名称')).length > 0)).toBe(false)
     const membershipButton = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
       node.findAll(child => child.children.includes('退出群聊')).length > 0)
     expect(membershipButton?.props.disabled).toBe(true)
@@ -466,7 +473,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
     })
     const renameEntry = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
-      node.findAll(child => child.children.includes('重命名')).length > 0)
+      node.findAll(child => child.children.includes('修改群名称')).length > 0)
     expect(renameEntry).toBeDefined()
     await act(async () => { renameEntry!.props.onClick() })
 
@@ -517,7 +524,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
     })
     expect(renderer!.root.findAllByProps({ role: 'menuitem' }).some(node =>
-      node.findAll(child => child.children.includes('重命名')).length > 0)).toBe(true)
+      node.findAll(child => child.children.includes('修改群名称')).length > 0)).toBe(true)
     expect(renderer!.root.findByProps({ 'aria-label': '消息免打扰' }).props['aria-checked']).toBe(true)
 
     await act(async () => {
@@ -530,7 +537,7 @@ describe('group settings menu', () => {
     })
 
     expect(renderer!.root.findAllByProps({ role: 'menuitem' }).some(node =>
-      node.findAll(child => child.children.includes('重命名')).length > 0)).toBe(false)
+      node.findAll(child => child.children.includes('修改群名称')).length > 0)).toBe(false)
     expect(renderer!.root.findByProps({ 'aria-label': '消息免打扰' }).props['aria-checked']).toBe(false)
     const leaveButton = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
       node.findAll(child => child.children.includes('退出群聊')).length > 0)
@@ -785,7 +792,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
     })
     const dissolveButton = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
-      node.findAll(child => child.children.includes('解散')).length > 0)
+      node.findAll(child => child.children.includes('解散群聊')).length > 0)
     expect(dissolveButton).toBeDefined()
     await act(async () => {
       dissolveButton!.props.onClick()

@@ -27,6 +27,7 @@ export interface ArkmeChatProjectionReader {
     session: ArkmeSessionCredentials,
     chatSessionUid: string,
     sourceKind?: 'private_chat' | 'group_chat',
+    bundle?: Record<string, unknown>,
   ): Promise<ArkmeTimelineItem[]>
 }
 
@@ -1053,6 +1054,7 @@ export class ChatRealtimeService {
             session,
             uid,
             sourceKind,
+            bundle,
           ),
           notificationIdentities: timelineNotificationIdentities(data),
         }] as const

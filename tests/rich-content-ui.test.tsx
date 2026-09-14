@@ -1,3 +1,4 @@
+import { ArkmeSdk } from '../src/sdk/index.js'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { act, create } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
@@ -9,10 +10,160 @@ import {
   arkmeRelatedRecordingItemFromSharedRecording, arkmeSharedRecordingTimeText,
 } from '../src/client/ArkmeRichContent.js'
 import { ArkmeLongArticleDialog } from '../src/client/ArkmeLongArticleDialog.js'
+import { ArkmeLivePhotoBadge } from '../src/client/ArkmeLivePhotoBadge.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from '../src/client/ArkmeNoteDetails.js'
 import { arkmeClipboardImageFiles, arkmeShouldDismissAnchoredMenu, arkmeShouldToggleMessageSelectFromRowClick } from '../src/client/ArkmeSidebar.js'
 
 describe('Arkme rich content presentation', () => {
+  it('uses the Flutter Live ring geometry without an unavailable-state glyph', () => {
+    const compact = renderToStaticMarkup(<ArkmeLivePhotoBadge variant="thumbnail" />)
+    expect(compact).toContain('width="16" height="16"')
+    expect(compact.match(/<circle /g)).toHaveLength(16)
+    expect(compact).not.toContain('<path')
+    expect(compact).not.toContain('LIVE')
+    expect(compact).toContain('rgba(0,0,0,.36)')
+    const extension = renderToStaticMarkup(<ArkmeLivePhotoBadge variant="extension" />)
+    expect(extension).toContain('width:14px;height:14px')
+    expect(extension).toContain('width="12" height="12"')
+    expect(renderToStaticMarkup(<ArkmeLivePhotoBadge />)).toContain('width="22" height="22"')
+  })
+
+  it('positions a Live marker when metadata arrives after the cover and updates it after resize', async () => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const control = { style: {} as Record<string, string> }
+    let resize = () => {}
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback }
+      observe() {}
+      disconnect = disconnect
+    })
+    let width = 400
+    const imageNode = {
+      naturalWidth: 200, naturalHeight: 100,
+      parentElement: { getBoundingClientRect: () => ({ left: 10, top: 20 }) },
+      getBoundingClientRect: () => ({ left: 10, top: 20, width, height: 400 }),
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    }
+    const image = { kind: 'image' as const, mediaRef: 'cover', fileName: 'live.jpg', mimeType: 'image/jpeg', size: 1, sortOrder: 0 }
+    let view: ReturnType<typeof create> | undefined
+    const render = (live: boolean) => <ArkmeMediaPreview blocks={[image]} selected={{ ...image, ...(live ? { dynamicPhoto: { logicalUid: 'live' } } : {}) }} onSelect={() => {}} onClose={() => {}} />
+    try {
+      await act(async () => { view = create(render(false), { createNodeMock: node => node.type === 'img' ? imageNode : node.props['data-arkme-live-photo-overlay'] ? control : null }) })
+      await act(async () => view!.update(render(true)))
+      expect(control.style).toMatchObject({ left: '14px', top: '286px', visibility: 'visible' })
+      width = 200
+      resize()
+      expect(control.style).toMatchObject({ left: '14px', top: '236px' })
+      await act(async () => view!.update(render(false)))
+      expect(disconnect).toHaveBeenCalledOnce()
+      expect(imageNode.removeEventListener).toHaveBeenCalledWith('load', expect.any(Function))
+    } finally {
+      if (view) await act(async () => view!.unmount())
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('shows LIVE on the cover, hides it only while playing and restores it after ending or error', async () => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const motion = { kind: 'video' as const, mediaRef: 'motion', localFileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111', fileName: 'live.mov', mimeType: 'video/quicktime', size: 1, sortOrder: 1 }
+    const image = { kind: 'image' as const, mediaRef: 'cover', fileName: 'live.jpg', mimeType: 'image/jpeg', size: 1, sortOrder: 0, dynamicPhoto: { logicalUid: 'live', motion } }
+    let view: ReturnType<typeof create> | undefined
+    try {
+      await act(async () => { view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />) })
+      const live = () => view!.root.findByProps({ 'data-arkme-live-photo-control': true })
+      expect(view!.root.findByProps({ 'data-arkme-media-preview-actions': 'bottom' }).findAllByProps({ 'data-arkme-live-photo-control': true })).toHaveLength(0)
+      expect(view!.root.findByProps({ 'data-arkme-live-photo-overlay': true }).findAllByProps({ 'data-arkme-live-photo-control': true })).toHaveLength(1)
+      expect(live().props.style.visibility).not.toBe('hidden')
+      await act(async () => live().props.onClick())
+      expect(live().props.disabled).toBe(true)
+      expect(live().props['aria-busy']).toBe(true)
+      expect(live().findAllByProps({ role: 'status' })).toHaveLength(0)
+      expect(live().props.title).toBe('播放实况')
+      expect(view!.root.findByProps({ 'data-arkme-image-preview-viewport': 'true' }).props.style.visibility).toBe('visible')
+      expect(view!.root.findByType('video').props.muted).toBe(true)
+      expect(view!.root.findByType('video').props.loop).not.toBe(true)
+      expect(live().props.style.visibility).not.toBe('hidden')
+      await act(async () => view!.root.findByType('video').props.onPlaying())
+      expect(live().props.style.visibility).toBe('hidden')
+      await act(async () => view!.root.findByType('video').props.onEnded())
+      expect(view!.root.findAllByType('video')).toHaveLength(0)
+      expect(live().props.style.visibility).not.toBe('hidden')
+      await act(async () => live().props.onClick())
+      await act(async () => view!.root.findByType('video').props.onError())
+      expect(view!.root.findAllByType('img')).toHaveLength(1)
+      expect(view!.root.findAllByType('video')).toHaveLength(0)
+      expect(live().props.disabled).toBe(false)
+      expect(JSON.stringify(view!.toJSON())).toContain('动态片段播放失败')
+      expect(view!.root.findByProps({ role: 'alert' }).props.style).toMatchObject({ width: 'max-content', maxWidth: 'min(320px, 70vw)' })
+    } finally {
+      if (view) await act(async () => view!.unmount())
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps the cover and allows retry when the browser rejects play', async () => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const motion = { kind: 'video' as const, mediaRef: 'motion', localFileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111', fileName: 'live.mov', mimeType: 'video/quicktime', size: 1, sortOrder: 0 }
+    const image = { kind: 'image' as const, mediaRef: 'cover', fileName: 'live.jpg', mimeType: 'image/jpeg', size: 1, sortOrder: 0, dynamicPhoto: { logicalUid: 'live', motion } }
+    const video = { play: vi.fn().mockRejectedValue(new Error('NotAllowedError')), pause: vi.fn() }
+    let view: ReturnType<typeof create> | undefined
+    try {
+      await act(async () => { view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, { createNodeMock: node => node.type === 'video' ? video : null }) })
+      const control = () => view!.root.findByProps({ 'data-arkme-live-photo-control': true })
+      await act(async () => control().props.onClick())
+      await act(async () => view!.root.findByType('video').props.onCanPlay({ currentTarget: video }))
+      expect(video.play).toHaveBeenCalledOnce()
+      expect(view!.root.findAllByType('video')).toHaveLength(0)
+      expect(view!.root.findAllByType('img')).toHaveLength(1)
+      expect(control().props.disabled).toBe(false)
+      expect(control().props.style.visibility).toBe('visible')
+      expect(JSON.stringify(view!.toJSON())).toContain('动态片段播放失败')
+    } finally {
+      if (view) await act(async () => view!.unmount())
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('can retry a failed motion reception and stops playback when changing photos', async () => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const localFileRef = 'arkme-file-v1.11111111-1111-4111-8111-111111111111'
+    let attempts = 0
+    const receive = vi.spyOn(ArkmeSdk.prototype, 'receiveFile').mockImplementation(async (_ref, start) => {
+      if (!start) return { state: 'missing', receivedBytes: 0, totalBytes: 1 }
+      if (++attempts === 1) return { state: 'failed', receivedBytes: 0, totalBytes: 1, error: '网络失败' }
+      return { state: 'ready', receivedBytes: 1, totalBytes: 1, file: { fileRef: localFileRef, fileName: 'live.mp4', mimeType: 'video/mp4', fileKind: 3, size: 1 } }
+    })
+    const motion = { kind: 'video' as const, mediaRef: 'motion', originalRef: 'original-motion', fileName: 'live.mp4', mimeType: 'video/mp4', size: 1, sortOrder: 1 }
+    const image = { kind: 'image' as const, mediaRef: 'cover', fileName: 'live.jpg', mimeType: 'image/jpeg', size: 1, sortOrder: 0, dynamicPhoto: { logicalUid: 'live', motion } }
+    const pause = vi.fn()
+    let view: ReturnType<typeof create> | undefined
+    try {
+      await act(async () => { view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, { createNodeMock: node => node.type === 'video' ? { pause } : null }) })
+      const live = () => view!.root.findByProps({ 'data-arkme-live-photo-control': true })
+      await act(async () => live().props.onClick())
+      expect(JSON.stringify(view!.toJSON())).toContain('网络失败')
+      await act(async () => { live().props.onClick(); live().props.onClick() })
+      expect(attempts).toBe(2)
+      expect(view!.root.findAllByType('video')).toHaveLength(1)
+      await act(async () => view!.root.findByType('video').props.onPlaying())
+      await act(async () => view!.update(<ArkmeMediaPreview blocks={[]} selected={{ ...image, mediaRef: 'other', dynamicPhoto: undefined }} onSelect={() => {}} onClose={() => {}} />))
+      expect(view!.root.findAllByType('video')).toHaveLength(0)
+      expect(pause).toHaveBeenCalledOnce()
+      await act(async () => view!.update(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />))
+      expect(view!.root.findAllByType('video')).toHaveLength(0)
+      expect(live().props.disabled).toBe(false)
+
+    } finally {
+      if (view) await act(async () => view!.unmount())
+      receive.mockRestore(); vi.unstubAllGlobals()
+    }
+  })
+
   it('matches the desktop spring with a smooth start and a settled end', () => {
     const { duration, frames } = arkmeImagePreviewSpringFrames()
     expect(duration).toBeGreaterThan(250)
@@ -34,7 +185,7 @@ describe('Arkme rich content presentation', () => {
     try {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, {
-          createNodeMock: element => element.type === 'img'
+          createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
             ? {
               naturalWidth: 1600, naturalHeight: 800, animate,
               getBoundingClientRect: () => {
@@ -74,7 +225,7 @@ describe('Arkme rich content presentation', () => {
     try {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, {
-          createNodeMock: element => element.type === 'img'
+          createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
             ? { naturalWidth: width, naturalHeight: height }
             : { clientWidth: 1000, clientHeight: 800, scrollWidth: coveredWidth, scrollHeight: coveredHeight, scrollLeft: 0, scrollTop: 0 },
         })
@@ -106,7 +257,7 @@ describe('Arkme rich content presentation', () => {
     try {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={onClose} />, {
-          createNodeMock: element => element.type === 'img'
+          createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
             ? { naturalWidth: 400, naturalHeight: 800, getBoundingClientRect: () => ({ left: 10, top: 50, width: 1000, height: 800 }) }
             : null,
         })
@@ -141,7 +292,7 @@ describe('Arkme rich content presentation', () => {
     try {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={onClose} />, {
-          createNodeMock: element => element.type === 'img'
+          createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
             ? { naturalWidth: 400, naturalHeight: 200, getBoundingClientRect: () => ({ left: 300, top: 300, width: 400, height: 200 }) }
             : { clientWidth: 1000, clientHeight: 800, scrollWidth: 1600, scrollHeight: 800, scrollLeft: 0, scrollTop: 0 },
         })
@@ -343,6 +494,14 @@ describe('Arkme rich content presentation', () => {
     expect(html).not.toContain('data-arkme-long-article="preview"')
     expect(html).not.toContain('data-arkme-text-collapsible')
   })
+  it('uses explicit cross-record navigation independently of the current message blocks', () => {
+    const image = { kind: 'image' as const, mediaRef: 'one', fileName: 'one.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
+    const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={[image]} selected={image} navigation={{ next: () => {} }} onSelect={() => {}} onClose={() => {}} />)
+    expect(html).toContain('aria-label="上一个媒体" disabled=""')
+    expect(html).not.toContain('aria-label="下一个媒体" disabled=""')
+
+  })
+
   it('contains the whole image initially and exposes fixed-width zoom without horizontal overflow', () => {
     const image = { kind: 'image' as const, mediaRef: 'long-image-ref', fileName: 'long.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
     const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => undefined} onClose={() => undefined} />)
@@ -380,6 +539,13 @@ describe('Arkme rich content presentation', () => {
     expect(html).not.toContain('right:-54')
     expect(html).toContain('M9.35714 1.14258L1.5 8.99972L9.35714 16.8569')
     expect(html).toContain('M1.64286 1.14258L9.5 8.99972L1.64286 16.8569')
+  })
+
+  it('keeps the safe preview for a Live cover when the downloaded original cannot render inline', () => {
+    const image = { kind: 'image' as const, mediaRef: 'safe-preview', originalRef: 'heic-original', localFileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111', fileName: 'live.heic', mimeType: 'image/heic', size: 1, sortOrder: 0, dynamicPhoto: { logicalUid: 'live' } }
+    const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => undefined} onClose={() => undefined} />)
+    expect(html).toContain('src="/arkme-self/api/media?ref=safe-preview"')
+    expect(html).not.toContain('src="/arkme-self/api/files/local')
   })
 
   it('uses the pasted-file blob when a draft image opens in the in-app preview', () => {

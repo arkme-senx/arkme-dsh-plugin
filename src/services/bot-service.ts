@@ -1,3 +1,4 @@
+import type { BotDisplayProfiles } from '../chat-sender-display.js'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -518,6 +519,21 @@ export class BotService {
     return source
   }
 
+  // 展示读取不构造会话能力或签名引用，也不触发登录刷新。
+  async senderDisplayProfiles(
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<BotDisplayProfiles> {
+    const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/list', {}, session, signal,
+      { refreshOnUnauthorized: false, key: 'bot-sender-display-names' },
+    )
+    return new Map(listValue(data.bots).map(value => {
+      const raw = objectValue(value)
+      return [stringValue(raw.bot_id).trim(), { displayName: stringValue(raw.name).trim(), avatarUrl: stringValue(raw.avatar_url).trim() || stringValue(raw.avatar).trim() }] as const
+    }).filter(([uid]) => uid !== ''))
+  }
+
   async listMentionableGroupBots(
     group: ArkmeSourceRefPayload,
     session: ArkmeSessionCredentials,
@@ -654,7 +670,7 @@ export class BotService {
     }
   }
 
-  private botAvatarProjection(
+  botAvatarProjection(
     raw: Record<string, unknown>,
     userId: number,
     botId: string,
@@ -705,7 +721,7 @@ export class BotService {
     const normalized = imageRef.trim()
     const entry = BOT_IMAGE_REF_PATTERN.test(normalized) ? this.botImageRefs.get(normalized) : undefined
     if (entry === undefined || entry.viewerUserId !== expectedViewerUserId || entry.expiresAtMillis <= this.now()) {
-      if (entry !== undefined) {
+      if (entry !== undefined && entry.expiresAtMillis <= this.now()) {
         this.botImageRefs.delete(normalized)
         if (this.botImageRefByKey.get(entry.key) === normalized) this.botImageRefByKey.delete(entry.key)
       }

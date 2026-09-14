@@ -192,7 +192,7 @@ describe('Arkme WeChat login ownership', () => {
     })
     expect(renderer!.root.findAllByType(ArkmeLogin)).toHaveLength(0)
     const logout = renderer!.root.findAllByType('button')
-      .find(button => button.findAllByType('strong').some(label => label.children.includes('退出登录')))
+      .find(button => button.children.includes('退出登录'))
     expect(logout).toBeDefined()
 
     await act(async () => { logout!.props.onClick() })
@@ -201,5 +201,22 @@ describe('Arkme WeChat login ownership', () => {
     const login = renderer!.root.findByType(ArkmeLogin)
     expect(login.props.t('locale.id')).toBe(locale)
     expect(login.findByType('h3').children).toEqual([title])
+  })
+
+  it.each(['general', 'about'] as const)('isolates account profile failures from the %s view', async view => {
+    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 10001 })
+    await act(async () => { renderer = create(<ArkmeSettingsSurface view={view} />) })
+    expect(testState.calls.filter(method => method === 'user.profile')).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({ className: 'arkme-redesign-settings-error' })).toHaveLength(0)
+
+    await act(async () => { renderer!.update(<ArkmeSettingsSurface view="account" />) })
+    expect(testState.calls.filter(method => method === 'user.profile')).toHaveLength(1)
+    expect(renderer!.root.findByProps({ className: 'arkme-redesign-settings-error' }).children)
+      .toContain('unexpected method user.profile')
+
+    await act(async () => { renderer!.update(<ArkmeSettingsSurface view={view} />) })
+    expect(renderer!.root.findAllByProps({ className: 'arkme-redesign-settings-error' })).toHaveLength(0)
+    await act(async () => { renderer!.update(<ArkmeSettingsSurface view="account" />) })
+    expect(testState.calls.filter(method => method === 'user.profile')).toHaveLength(2)
   })
 })

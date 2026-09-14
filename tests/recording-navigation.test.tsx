@@ -135,7 +135,7 @@ describe('DeepSeek Harness navigation entry', () => {
     expect(markup).toContain('role="treeitem"')
     expect(markup).toContain('aria-selected="true"')
     expect(markup).toContain('DeepSeek Harness')
-    expect(markup).toContain('原生 DeepSeek 开发环境')
+    expect(markup).toContain('你的 DeepSeek 智能助手')
     expect(markup).toContain('src="/favicon.svg"')
     expect(markup).toContain('data-arkme-home-tour-target="harness"')
   })

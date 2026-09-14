@@ -105,7 +105,7 @@ describe('Arkme message read receipt store', () => {
     })
     store.activateAccount(10001)
     const message = target(8)
-    store.register(message); store.setVisible(message, true)
+    store.register(message).setVisible(true)
     await vi.advanceTimersByTimeAsync(180)
     await store.detail(message)
     finish({ sourceRef: message.sourceRef, conversationKind: 'group_chat', items: [{ itemUid: message.itemUid,
@@ -141,8 +141,7 @@ describe('Arkme message read receipt store', () => {
     }))
     const store = new ArkmeMessageReadReceiptStore({ loadSummaries })
     const message = { ...target(8), conversationKind: 'private_chat' as const }
-    store.register(message)
-    store.setVisible(message, true)
+    store.register(message).setVisible(true)
 
     store.activateAccount(10001)
     await vi.advanceTimersByTimeAsync(0)
@@ -164,7 +163,7 @@ describe('Arkme message read receipt store', () => {
     store.activateAccount(10001)
     const targets = Array.from({ length: 51 }, (_value, index) => target(index + 1))
     const unregister = targets.map(item => store.register(item))
-    for (const item of targets) store.setVisible(item, true)
+    for (const registration of unregister) registration.setVisible(true)
 
     await vi.advanceTimersByTimeAsync(180)
 
@@ -173,7 +172,7 @@ describe('Arkme message read receipt store', () => {
     expect(store.get(targets[0]!)).toMatchObject({
       status: 'ready', summary: { readCount: 1, unreadCount: 1, totalMemberCount: 2 },
     })
-    unregister.forEach(dispose => { dispose() })
+    unregister.forEach(registration => { registration.dispose() })
   })
 
   it('invalidates only matching messages at or below the realtime cursor', () => {
@@ -186,15 +185,15 @@ describe('Arkme message read receipt store', () => {
     store.provision(after)
     const unregisterBefore = store.register(before)
     const unregisterAfter = store.register(after)
-    store.setVisible(before, true)
-    store.setVisible(after, true)
+    unregisterBefore.setVisible(true)
+    unregisterAfter.setVisible(true)
 
     store.invalidate('source-key-1', 9)
 
     expect(store.get(before)?.status).toBe('stale')
     expect(store.get(after)?.status).toBe('provisional')
-    unregisterBefore()
-    unregisterAfter()
+    unregisterBefore.dispose()
+    unregisterAfter.dispose()
   })
 
   it('aborts in-flight work and drops cached state when the account changes', async () => {
@@ -213,8 +212,7 @@ describe('Arkme message read receipt store', () => {
     const store = new ArkmeMessageReadReceiptStore({ loadSummaries })
     store.activateAccount(10001)
     const message = target(8)
-    store.register(message)
-    store.setVisible(message, true)
+    store.register(message).setVisible(true)
     await vi.advanceTimersByTimeAsync(180)
     expect(loadSummaries).toHaveBeenCalledOnce()
 
@@ -241,4 +239,54 @@ describe('Arkme message read receipt store', () => {
     await store.detail(message)
     expect(loadDetail).toHaveBeenCalledTimes(2)
   })
+})
+
+it('keeps a message observable when another view hides or disposes its own registration', async () => {
+  vi.useFakeTimers()
+  const loadSummaries = vi.fn(async (sourceRef: string, items: readonly { itemUid: string; sequence: number }[]) => ({
+    sourceRef, conversationKind: 'group_chat' as const,
+    items: items.map(item => ({ ...item, readCount: 0, unreadCount: 1, totalMemberCount: 1, status: 'unread' as const })),
+  }))
+  const store = new ArkmeMessageReadReceiptStore({ loadSummaries })
+  store.activateAccount(42)
+  const message = target(8)
+  const conversation = store.register(message)
+  const preview = store.register(message)
+  conversation.setVisible(true)
+  preview.setVisible(true)
+  await vi.advanceTimersByTimeAsync(180)
+  preview.setVisible(false)
+  preview.dispose()
+  preview.dispose()
+  store.invalidate(message.sourceKey, message.sequence)
+  await vi.advanceTimersByTimeAsync(180)
+  expect(loadSummaries).toHaveBeenCalledTimes(2)
+  conversation.dispose()
+  store.invalidate(message.sourceKey, message.sequence)
+  await vi.advanceTimersByTimeAsync(30_000)
+  expect(loadSummaries).toHaveBeenCalledTimes(2)
+  store.activateAccount(undefined)
+})
+
+it('ignores callbacks and cleanup from registrations belonging to a previous account', async () => {
+  vi.useFakeTimers()
+  const loadSummaries = vi.fn(async (sourceRef: string, items: readonly { itemUid: string; sequence: number }[]) => ({
+    sourceRef, conversationKind: 'group_chat' as const,
+    items: items.map(item => ({ ...item, readCount: 0, unreadCount: 1, totalMemberCount: 1, status: 'unread' as const })),
+  }))
+  const store = new ArkmeMessageReadReceiptStore({ loadSummaries })
+  store.activateAccount(42)
+  const message = target(8)
+  const old = store.register(message)
+  old.setVisible(true)
+  store.activateAccount(43)
+  const current = store.register(message)
+  current.setVisible(true)
+  old.setVisible(false)
+  old.dispose()
+  old.setVisible(true)
+  await vi.advanceTimersByTimeAsync(180)
+  expect(loadSummaries).toHaveBeenCalledOnce()
+  current.dispose()
+  store.activateAccount(undefined)
 })

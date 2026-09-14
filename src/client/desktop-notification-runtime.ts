@@ -22,6 +22,7 @@ export interface ArkmeDesktopNotificationActivationV2 {
 export type ArkmeDesktopNotificationActivationOutcome = 'resolved' | 'not-found' | 'failed' | 'superseded'
 
 export interface ArkmeDesktopNotificationBridge {
+  applyDirectoryBadge?(count: number): Promise<boolean>
   show(request: ArkmeDesktopNotificationRequest): Promise<{ shown: boolean }>
   onActivated(listener: (sourceRef: string) => void): () => void
   onActivation?(listener: (activation: ArkmeDesktopNotificationActivation) => void): () => void

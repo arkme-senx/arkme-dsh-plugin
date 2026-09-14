@@ -177,6 +177,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'source.message-copy-link.extend'
   | 'source.message-extension.context'
   | 'source.message-extension.extend'
+  | 'source.record-delete'
   | 'source.record-topic.assign'
   | 'source.forward-messages'
   | 'message-actions.copy-link'

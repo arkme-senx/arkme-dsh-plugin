@@ -236,6 +236,11 @@ export class ArkmeConversationMemoryCache {
     this.touch(conversationKey)
   }
 
+  /** A Record mutation may affect several cached sources; preserve viewport and require fresh owner reads. */
+  invalidateTimelines(): void {
+    for (const [key, snapshot] of this.timelines) this.timelines.set(key, { ...snapshot, fetchedAtMillis: 0, recordRevision: -1 })
+  }
+
   clear(): void {
     this.timelines.clear()
     this.interwovenMoments.clear()

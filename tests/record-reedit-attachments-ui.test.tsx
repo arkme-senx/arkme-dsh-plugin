@@ -88,6 +88,23 @@ describe('record re-edit attachment UI', () => {
     })
   }
 
+  it.each([1, 3])('pages a topic target with an owner ID beyond the initial page: kind %s', async topicKind => {
+    const self: ArkmeSourceItem = { kind: 'topic', topicKind, sourceRef: 'topic-ref', displayName: '主题', activeAtMillis: 0, unreadCount: 0 }
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params) => operation === 'source.timeline'
+      ? params?.cursor
+        ? { source: self, items: [{ ...item, itemUid: 'old-dsh-input' }], hasMore: false }
+        : { source: self, items: [item], hasMore: true, nextCursor: { sendAtMillis: 123, itemUid: 'newest' } }
+      : operation === 'sources.list' ? { items: [self], hasMore: false } : base(operation, params))
+    await mount()
+    await act(async () => { arkmeUi.showConversationTarget(self, 'old-dsh-input', 1, 42); await flush() })
+    await act(async () => { await flush() })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)); await flush() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', expect.objectContaining({ cursor: { sendAtMillis: 123, itemUid: 'newest' } }), expect.any(AbortSignal))
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'old-dsh-input' })).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.timeline-around')).toBe(false)
+  })
+
   it('routes outer composer whitespace to the current handle and marks only its two bottom regions', async () => {
     const focus = vi.spyOn(composerFocus, 'focusArkmeComposerFromClick').mockReturnValue(false)
     await mount()
@@ -736,6 +753,7 @@ describe('record re-edit attachment UI', () => {
   it('previews the saved content matching the forward action instead of a pending edit', async () => {
     const base = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'sources.self-target') return { ...source, kind: 'send_to_self', sourceRef: 'self-target', displayName: '发给自己' }
       if (operation === 'source.record-reedit.submissions') return [{
         submissionId: 'pending', baseVersion: 3, itemUid: item.itemUid, state: 'pending',
         title: '', textContent: '尚未保存候选', attachments: [],
@@ -747,7 +765,7 @@ describe('record re-edit attachment UI', () => {
     act(() => bubble.props.onContextMenu({ preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180 }))
     const forward = renderer!.root.findByProps({ 'aria-label': '消息操作' }).findAllByProps({ role: 'menuitem' })
       .find(button => button.findAllByType('span').some(span => span.children.includes('转发')))!
-    act(() => forward.props.onClick())
+    await act(async () => { forward.props.onClick(); await flush() })
     const dialog = renderer!.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })
     const target = dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean')[0]!
     act(() => target.props.onClick())

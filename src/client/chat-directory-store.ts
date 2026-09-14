@@ -170,6 +170,10 @@ function retainRealtimeSourceMetadata(
   return {
     ...source,
     ...(source.kind === 'private_chat' && existing.kind === 'private_chat'
+      && source.peerMemberType === undefined
+      && (source.peerUserId === undefined || source.peerUserId === existing.peerUserId)
+      && existing.peerMemberType !== undefined ? { peerMemberType: existing.peerMemberType } : {}),
+    ...(source.kind === 'private_chat' && existing.kind === 'private_chat'
       && source.peerUserId === undefined && existing.peerUserId !== undefined
       ? { peerUserId: existing.peerUserId }
       : {}),
@@ -240,6 +244,7 @@ const DIRECTORY_SOURCE_SCALAR_FIELDS: Record<DirectorySourceScalarField, true> =
   sourceRef: true,
   sourceKey: true,
   peerUserId: true,
+  peerMemberType: true,
   parentSourceRef: true,
   topicHierarchyKey: true,
   parentTopicHierarchyKey: true,

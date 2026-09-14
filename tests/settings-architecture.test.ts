@@ -52,7 +52,7 @@ describe('Arkme settings architecture', () => {
     const directoryDesign = source('../docs/superpowers/specs/2026-08-23-contact-directory-design.md')
 
     expect(consumerContract).toContain('settings.section')
-    expect(consumerContract).not.toContain('settings.general.item')
+    expect(consumerContract).toContain('settings.general.item')
     expect(directoryDesign).not.toContain('ArkmeRootFrame')
   })
 })

@@ -1,3 +1,4 @@
+import type { RecordOwnerId } from './record-owner-id.js'
 export type { ArkmeLinkMetadata } from './link-metadata.js'
 
 export type ArkmeEnvironment = 'test' | 'prod'
@@ -215,6 +216,8 @@ export type ArkmeTeamJoinResult =
 
 export interface ArkmeDirectoryContactProfile {
   contactRef: string
+  /** Public World/catalog identity, matching the marketplace author navigation target. */
+  worldUserId?: number
   displayName: string
   nickname: string
   remark: string
@@ -435,6 +438,10 @@ export interface ArkmeCalendarRecordCursor {
 }
 
 export interface ArkmeCalendarRecordItem {
+  /** Viewer-authorized source presentation shared with conversation navigation. */
+  source?: ArkmeSourceItem
+  /** Authorized rich projection shared by calendar UI, SDK and Tools; no storage URLs. */
+  content?: ArkmeTimelineItem
   recordUid: string
   sendAtMillis: number
   accessState: ArkmeCalendarContentAccessState
@@ -984,8 +991,19 @@ export interface ArkmeImageSearchResult {
   queryGuard: ArkmeSearchQueryGuard
 }
 
+export interface ArkmeDshInputOrigin {
+  sessionId: string
+  eventSeq: number
+}
+
 export interface ArkmeSearchRecordItem {
+  /** DSH input identity resolved from local public session events; never persisted by record sync. */
+  dshOrigin?: ArkmeDshInputOrigin
+  /** Local lookup could not inspect every session; never proof of absence. */
+  dshOriginUnverified?: true
   recordUid: string
+  /** Record owner required by Chat's exact timeline locator; never the current viewer. */
+  recordOwnerUserId?: RecordOwnerId
   sourceKind: number
   sourceUid?: string
   routeTargetKind: string
@@ -1181,6 +1199,8 @@ export interface ArkmeProviderCapabilities {
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
+    groupSelfNickname?: true
+    remoteRecordSearch?: true
     contactDirectoryReads?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
@@ -1398,6 +1418,8 @@ export interface ArkmeSourceItem {
   sourceKey?: string
   /** Private-chat peer identity when this source is a one-to-one chat. */
   peerUserId?: number
+  /** Private-chat counterpart membership from Chat; never the viewer's membership. */
+  peerMemberType?: 'free' | 'vip' | 'svip' | 'unknown'
   /** Opaque reference to this topic's parent when both topic labels are available in the same response. */
   parentSourceRef?: string
   /** Opaque topic identity for reconciling hierarchy across paginated directory responses. */
@@ -1540,7 +1562,7 @@ export interface ArkmeTimelineCursor {
   afterSequence?: number
 }
 
-/** A browser-safe topic projection attached to an item in the aggregate self feed. */
+/** A browser-safe topic projection attached to an item in a personal aggregate or topic-subtree feed. */
 export interface ArkmeTimelineSelfTopic {
   /** Browser-safe stable key for resolving the current topic from the self topic tree. */
   topicHierarchyKey: string
@@ -1621,6 +1643,8 @@ export interface ArkmeTimelineItem {
     summaryText?: string
     summaryStatus?: ArkmeCallSummaryStatus
   }
+  /** Signed Record owner and observed content version for user soft deletion. */
+  recordDeletionRef?: string
   /** Signed observed personal-topic membership; distinct from forwarding snapshots. */
   recordTopicAssignmentRef?: string
   /** Stable topic identity from assignment membership evidence, not the display card. */
@@ -1634,8 +1658,11 @@ export interface ArkmeTimelineItem {
   messageWithdrawalRef?: string
   /** Account- and conversation-bound opaque reference for copy-link and forward actions. */
   messageActionRef?: string
+  /** False when the source actor cannot own related quick notes or chat extensions. Omitted defaults to supported for legacy and user messages. */
+  quickNoteDetailsSupported?: boolean
   /** Account- and conversation-bound opaque reference for actions on the sender. */
   memberRef?: string
+  senderKind?: 'human' | 'bot'
   senderName: string
   agentSource?: ArkmeTimelineAgentSource
   /** Opaque Provider image reference for the concrete message sender. */
@@ -1668,7 +1695,7 @@ export interface ArkmeTimelineItem {
   contentBlocks?: ArkmeContentBlock[]
   /** Record owner reported media refs, but their delivery projection was temporarily unavailable. */
   mediaUnavailable?: boolean
-  /** Present only for a categorized record in the aggregate “发给自己” feed. */
+  /** Present for a categorized record in the aggregate or a topic-subtree “发给自己” feed. */
   selfTopic?: ArkmeTimelineSelfTopic
   /** Browser-safe Chat forward or Record-owned long-recording selection snapshot. */
   forwardRecords?: ArkmeForwardRecordsPreview
@@ -1689,7 +1716,7 @@ export interface ArkmeTimelineExtensionParent {
   textContent: string
   textFormat?: 'plain' | 'markdown'
   /** Authoritative record owner required by Chat's exact around lookup. */
-  recordOwnerUserId?: number
+  recordOwnerUserId?: RecordOwnerId
   sequence?: number
   sendAtMillis?: number
   contentBlocks?: ArkmeContentBlock[]
@@ -1932,6 +1959,8 @@ export interface ArkmeContentBlock {
   originalRef?: string
   localFileRef?: string
   uploadProgress?: import('./file-transfer-contract.js').ArkmeFileProgress
+  /** One logical photo; the companion is not a second visible attachment. */
+  dynamicPhoto?: { logicalUid: string; motionFileAssetUid?: string; motion?: Omit<ArkmeContentBlock, 'dynamicPhoto' | 'renderRole'> & { kind: 'video' } }
 }
 
 export interface ArkmeUploadedAsset {
@@ -2156,7 +2185,7 @@ export type ArkmeMessageCopyLinkPresentationNode =
 export interface ArkmeMessageCopyLinkSourceAnchor {
   relationUid: string
   recordUid: string
-  recordOwnerUserId: number
+  recordOwnerUserId: RecordOwnerId
   sequence: number
 }
 
@@ -2165,7 +2194,7 @@ export interface ArkmeMessageCopyLinkExtensionItem extends ArkmeMessageCopyLinkS
   /** Record this extension directly continues; used to render the desktop two-level tree. */
   parentRecordUid?: string
   /** Owner required by the durable chat extension endpoint when this item becomes the next target. */
-  recordOwnerUserId?: number
+  recordOwnerUserId?: RecordOwnerId
   level: number
 }
 
@@ -2396,6 +2425,12 @@ export interface ArkmeConversationMemberItem {
   joinedAtMillis: number
   recordCount: number
   mentionCount: number
+}
+
+export interface ArkmeGroupSelfNickname {
+  sourceRef: string
+  memberRef: string
+  nickname: string
 }
 
 export interface ArkmeGroupMemberRemoveResult {
@@ -3431,6 +3466,7 @@ export type ArkmePluginOperation =
   | 'records.cache'
   | 'records.refresh'
   | 'records.search'
+  | 'search.records'
   | 'records.list'
   | 'records.tags.list'
   | 'records.tags.query'
@@ -3476,6 +3512,7 @@ export type ArkmePluginOperation =
   | 'extensions.reviews.create'
   | 'extensions.audit.check'
   | 'sources.list'
+  | 'sources.self-target'
   | 'conversation.directory.bot-pin'
   | 'conversation.directory.visibility.query'
   | 'conversation.directory.visibility.set'
@@ -3521,6 +3558,8 @@ export type ArkmePluginOperation =
   | 'group.member-candidates'
   | 'group.invite-preview'
   | 'group.members.add'
+  | 'group.self-nickname'
+  | 'group.self-nickname.set'
   | 'group.member-remove'
   | 'group.join-restrictions'
   | 'group.join-restriction.set'
@@ -3612,6 +3651,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'emoji.recent.list'
   | 'emoji.recent.record'
   | 'topic.candidates'
+  | 'source.record-delete'
   | 'source.record-topic.assign'
   | 'provider.instance'
   | 'link.metadata'
@@ -3657,7 +3697,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
-  | 'search.records'
   | 'search.scene'
   | 'search.recordings'
   | 'search.history'

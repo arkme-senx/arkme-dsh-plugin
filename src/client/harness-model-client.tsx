@@ -13,7 +13,9 @@ function ModelSeat({ sessionId, ...props }: ComponentProps<typeof ArkmeModelSele
   return <ArkmeModelSelect key={sessionId} {...props} />
 }
 
-export const inject = ['slots', 'sessions']
+// modelDirectories owns the rc2 remote.session model-catalog face. Declaring the
+// same service boundary here keeps its lazy directory calls inside an injected scope.
+export const inject = ['slots', 'sessions', 'remote', 'remote.session']
 
 export function apply(ctx: ClientContext): void {
   ctx.inject(['modelDirectories'], scope => {

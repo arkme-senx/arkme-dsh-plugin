@@ -285,6 +285,26 @@ describe('normal timeline related quick note drawer', () => {
     expect(mocks.callArkme).not.toHaveBeenCalled()
   })
 
+  it('does not query related quick notes or extensions for unsupported Bot message details', async () => {
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeTimelineDetailDrawer
+        item={{ ...timelineItem, itemUid: 'bot-daily-statistics', senderName: 'Arkme用户', quickNoteDetailsSupported: false }}
+        sourceRef="opaque-source"
+        showOriginal={false}
+        onClose={vi.fn()}
+        onToggleOriginal={vi.fn()}
+      />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mocks.callArkme).not.toHaveBeenCalled()
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('相关快记')
+    expect(renderer.root.findAllByType(ArkmeRichComposerInput)).toHaveLength(0)
+    act(() => renderer.unmount())
+  })
+
   it('shows the current quick note extension count and desktop-style extension rows', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }

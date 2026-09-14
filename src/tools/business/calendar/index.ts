@@ -50,6 +50,9 @@ function safeCalendarRecords(page: ArkmeCalendarDayRecordPage): Record<string, u
     ...page,
     items: page.items.map(item => ({
       record_uid: item.recordUid,
+      ...(item.source === undefined ? {} : { source: item.source }),
+      ...(item.content === undefined ? {} : { content: item.content }),
+      ...(item.textFormat === undefined ? {} : { text_format: item.textFormat }),
       send_at_millis: item.sendAtMillis,
       access_state: item.accessState,
       title: item.title,

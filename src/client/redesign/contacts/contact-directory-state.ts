@@ -20,6 +20,7 @@ export type ContactDirectoryLoadMode = 'replace' | 'append' | 'count'
 
 export type ArkmeDirectorySelection =
   | { kind: 'none' }
+  | Extract<ArkmeDirectoryItem, { kind: 'group' | 'bot' }>
   | { kind: 'contact'; contactRef: string }
   | { kind: 'team'; teamRef: string }
   | { kind: 'unmarked-speaker'; candidateRef: string }
@@ -174,6 +175,12 @@ function selectionAfterReplacement(
   section: ArkmeDirectorySectionKind,
   items: readonly ArkmeDirectoryItem[],
 ): ArkmeDirectorySelection {
+  if (section === 'groups' && selection.kind === 'group') {
+    return items.find(item => item.kind === 'group' && item.sourceRef === selection.sourceRef) as ArkmeDirectorySelection ?? { kind: 'none' }
+  }
+  if (section === 'bots' && selection.kind === 'bot') {
+    return items.find(item => item.kind === 'bot' && item.bot.botRef === selection.bot.botRef) as ArkmeDirectorySelection ?? { kind: 'none' }
+  }
   if (section === 'contacts' && selection.kind === 'contact') {
     return items.some(item => item.kind === 'contact' && item.contactRef === selection.contactRef)
       ? selection

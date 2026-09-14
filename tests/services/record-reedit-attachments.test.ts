@@ -101,6 +101,23 @@ describe('Record attachment re-edit', () => {
     } finally { x.service.dispose() }
   })
 
+  it.each(['default_category', 'send_to_self', 'group_chat'] as const)('uses current personal source when re-editing through %s', async kind => {
+    const x = await setup({ origin_kind: 4, origin_container_ref: '', source_kind: 1 })
+    vi.spyOn(x.sourceReader, 'openSourceRef').mockResolvedValue({ version: 1, userId: 42, kind, ownerRef: kind === 'group_chat' ? 'old-group' : 'self', displayName: kind } as never)
+    try {
+      if (kind === 'group_chat') {
+        await expect(x.service.recordReeditEditor('source', 'r1')).rejects.toMatchObject({ code: 'record-reedit-source-mismatch' })
+        expect(x.writes).toHaveLength(0)
+      } else {
+        await x.service.recordReeditEditor('source', 'r1')
+        const context = await x.service.prepareRecordReedit({ ...target, expectedVersion: 7, newText: '仍可编辑' })
+        await x.service.commitRecordReedit(context)
+        expect(x.writes).toHaveLength(1)
+        expect(x.writes[0].text_content).toBe('仍可编辑')
+      }
+    } finally { x.service.dispose() }
+  })
+
   it.each(['ui', 'tool'] as const)('preserves Markdown whitespace while %s replaces attachments', async entry => {
     const text = '    code\n'
     const x = await setup({ text_content: text,

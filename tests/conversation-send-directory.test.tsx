@@ -44,7 +44,7 @@ import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
 import { ArkmeSourceBreadcrumb } from '../src/client/ArkmeSourceBreadcrumb.js'
 import { ArkmeTopicCreateDialog } from '../src/client/ArkmeTopicCreateDialog.js'
-import { ArkmeMarkdownComposerInput } from '../src/client/ArkmeMarkdownComposerInput.js'
+import { ArkmeDocumentComposerInput } from '../src/client/ArkmeDocumentComposerInput.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta } from '../src/client/chat-directory-store.js'
@@ -211,6 +211,18 @@ describe('conversation send directory projection', () => {
     expect(body.scrollTop).toBe(900)
     expect(renderer!.root.findAllByProps({ 'aria-label': '回到底部' })).toHaveLength(0)
     await act(async () => { pendingRead.resolve({ effectiveReadSequence: 50, unreadCount: 0 }) })
+  })
+
+  it('does not disable normal drafting or sending while automatic read intent is suspended', async () => {
+    await mountBottomControl()
+    const { suspendArkmeVisibleReadIntent } = await import('../src/client/read-intent-visibility.js')
+    const release = suspendArkmeVisibleReadIntent()
+    try {
+      await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('正常发送') })
+      expect(renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.disabled).toBe(false)
+      await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+      expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.send-text')).toHaveLength(1)
+    } finally { await act(async () => release()) }
   })
 
   it('keeps drafting and sending available while return-to-latest is pending', async () => {
@@ -676,7 +688,7 @@ describe('conversation send directory projection', () => {
     const reedit = renderer!.root.findByProps({ 'aria-label': '消息操作' }).findAllByProps({ role: 'menuitem' })
       .find(button => button.findAllByType('span').some(span => span.children.includes('重新编辑')))!
     await act(async () => { reedit.props.onClick(); await Promise.resolve(); await Promise.resolve() })
-    expect(renderer!.root.findByProps({ 'data-arkme-primary-composer': 'true' }).findAllByType(ArkmeMarkdownComposerInput)).toHaveLength(0)
+    expect(renderer!.root.findByProps({ 'data-arkme-primary-composer': 'true' }).findAllByType(ArkmeDocumentComposerInput)).toHaveLength(0)
     act(() => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange(nextText) })
     await act(async () => {
       renderer!.root.findByProps({ 'aria-label': '关闭重新编辑' }).props.onClick()
@@ -689,7 +701,7 @@ describe('conversation send directory projection', () => {
     })
     expect(renderer!.root.findAllByProps({ 'data-arkme-composer-reedit-target': 'true' })).toHaveLength(0)
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('普通消息草稿')
-    expect(renderer!.root.findByProps({ 'data-arkme-primary-composer': 'true' }).findByType(ArkmeMarkdownComposerInput)).toBeDefined()
+    expect(renderer!.root.findByProps({ 'data-arkme-primary-composer': 'true' }).findByType(ArkmeDocumentComposerInput)).toBeDefined()
     expect(arkmeComposerDraftStore.get(normalDraftKey).markdown).toEqual(normalMarkdown)
   })
 
@@ -1032,7 +1044,7 @@ describe('conversation send directory projection', () => {
     arkmeComposerDraftStore.clearAccount(42)
     arkmeChatDirectory.clear()
     arkmeChatTimelineDelta.publish([])
-    arkmeChatDirectory.activateAccount(42)
+    arkmeChatDirectory.activateAccount('test:42')
     arkmeChatDirectory.publish([other, target])
     arkmeConversationMembers.activateAccount('test:42')
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
@@ -1051,6 +1063,8 @@ describe('conversation send directory projection', () => {
       itemUid?: string
       cursor?: { beforeSequence?: number; afterSequence?: number }
     }) => {
+      if (operation === 'sources.self-target') return sendToSelf
+      if (operation === 'provider.instance') return { instanceId: 'forward-directory-test' }
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
@@ -1842,7 +1856,7 @@ describe('conversation send directory projection', () => {
     }
   })
 
-  async function openForwardPicker(textContent = '待转发快记') {
+  async function openForwardPicker(textContent = '待转发快记', body?: unknown, draft?: string) {
     timeline = [{
       itemUid: 'forward-source', messageActionRef: 'opaque-forward-action',
       senderName: '狗才', isMe: true, sendAtMillis: 1, title: '', textContent, status: 1,
@@ -1851,10 +1865,15 @@ describe('conversation send directory projection', () => {
       renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
         createNodeMock: element => element.props.className === 'arkme-conversation-panel'
           ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
-          : null,
+          : element.props.className === 'arkme-conversation-body' ? body ?? null : null,
       })
       await Promise.resolve()
     })
+    if (draft !== undefined) act(() => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange(draft) })
+    return await openMountedForwardPicker()
+  }
+
+  async function openMountedForwardPicker() {
     const bubble = renderer!.root.findByProps({ 'aria-label': '打开快记详情' })
     act(() => {
       bubble.props.onContextMenu({
@@ -1899,6 +1918,132 @@ describe('conversation send directory projection', () => {
     act(() => { menu.findAllByProps({ role: 'menuitem' }).find(button => button.findAllByType('span')
       .some(span => span.children.includes('多选')))!.props.onClick() })
   }
+
+  it('offers Record deletion only with an authoritative capability and preserves selection on cancel', async () => {
+    await enterMessageSelectMode({ itemUid: 'delete-own', messageActionRef: 'select-ref',
+      recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
+      sendAtMillis: 1, textContent: 'Delete me', status: 1 })
+    const button = renderer!.root.findByProps({ 'aria-label': '删除' })
+    expect(button.props.disabled).toBe(false)
+    act(() => { button.props.onClick() })
+    expect(renderer!.root.findAllByProps({ id: 'arkme-record-delete-title' }).length).toBe(1)
+    const cancel = renderer!.root.findAllByType('button').find(node => node.children.includes('取消'))!
+    act(() => { cancel.props.onClick() })
+    expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' }).length).toBe(1)
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-delete')).toHaveLength(0)
+  })
+
+  it('removes a confirmed Record deletion and exits selection after one owner request', async () => {
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, ...args) => {
+      if (operation === 'source.record-delete') {
+        timeline = []
+        return { items: [{ recordUid: 'delete-success', version: 4, result: 'deleted' }] }
+      }
+      return baseCall(operation, ...args)
+    })
+    await enterMessageSelectMode({ itemUid: 'delete-success', messageActionRef: 'select-ref',
+      recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
+      sendAtMillis: 1, textContent: 'Delete me', status: 1 })
+    act(() => { renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick() })
+    await act(async () => {
+      renderer!.root.findAllByType('button').find(node => node.children.includes('确认删除'))!.props.onClick()
+      await Promise.resolve()
+    })
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-delete')).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'delete-success' })).toHaveLength(0)
+  })
+
+  it('does not resurrect a deleted Record from an older in-flight page', async () => {
+    const item: ArkmeTimelineItem = { itemUid: 'delete-race', messageActionRef: 'select-ref',
+      recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
+      sendAtMillis: 1, textContent: 'Delete me', status: 1 }
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let finishPage!: (value: unknown) => void
+    mocks.callArkme.mockImplementation(async (operation, input, ...args) => {
+      if (operation === 'source.timeline') {
+        if (input.cursor) return new Promise(resolve => { finishPage = resolve })
+        const page = await baseCall(operation, input, ...args)
+        return { ...page, hasMore: true, nextCursor: { beforeSequence: 10 } }
+      }
+      if (operation === 'source.record-delete') return {
+        items: [{ recordUid: item.itemUid, version: 4, result: 'deleted' }] }
+      return baseCall(operation, input, ...args)
+    })
+    await enterMessageSelectMode(item)
+    await act(async () => {
+      renderer!.root.find(node => node.type === 'button' && renderedText(node.props.children) === '继续加载更早消息').props.onClick()
+      await Promise.resolve()
+    })
+    expect(finishPage).toBeDefined()
+    act(() => { renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick() })
+    await act(async () => { renderer!.root.findAllByType('button').find(node => node.children.includes('确认删除'))!.props.onClick() })
+    await act(async () => { finishPage({ source: target, items: [item], hasMore: false }); await Promise.resolve() })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': item.itemUid })).toHaveLength(0)
+  })
+
+  it('handles failed deletion reconciliation without replaying the write or trapping selection', async () => {
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let refreshFails = false
+    mocks.callArkme.mockImplementation(async (operation, ...args) => {
+      if (operation === 'source.record-delete') { refreshFails = true; throw new Error('结果不明') }
+      if (operation === 'source.timeline' && refreshFails) throw new Error('核对读取失败')
+      return baseCall(operation, ...args)
+    })
+    await enterMessageSelectMode({ itemUid: 'delete-unknown', messageActionRef: 'select-ref',
+      recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
+      sendAtMillis: 1, textContent: 'Keep me', status: 1 })
+    act(() => { renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick() })
+    await act(async () => { renderer!.root.findAllByType('button').find(node => node.children.includes('确认删除'))!.props.onClick() })
+    await act(async () => { renderer!.root.findAllByType('button').find(node => node.children.includes('刷新核对'))!.props.onClick() })
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-delete')).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'aria-label': '退出多选' })).toHaveLength(0)
+    expect(renderedText(renderer!.toJSON())).toContain('核对读取失败')
+  })
+
+  it.each(['unknown', 'rejected'] as const)('keeps unresolved selections and shows the %s outcome', async outcome => {
+    const first: ArkmeTimelineItem = { itemUid: 'delete-partial-a', messageActionRef: 'select-a',
+      recordDeletionRef: 'delete-a', recordVersion: 3, senderName: '我', isMe: true,
+      sendAtMillis: 1, textContent: 'First', status: 1 }
+    const second = { ...first, itemUid: 'delete-partial-b', messageActionRef: 'select-b', recordDeletionRef: 'delete-b', textContent: 'Second' }
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, ...args) => operation === 'source.record-delete'
+      ? { items: [{ recordUid: first.itemUid, version: 4, result: 'deleted' },
+          { recordUid: second.itemUid, version: 4, result: outcome, ...(outcome === 'rejected' ? { message: '内容版本已变化，请刷新后重试' } : {}) }] }
+      : baseCall(operation, ...args))
+    await enterMessageSelectMode(first, [second])
+    act(() => renderer!.root.findByProps({ 'data-arkme-message-item-uid': second.itemUid }).findByProps({ role: 'checkbox' }).props.onClick({ stopPropagation: vi.fn() }))
+    act(() => renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick())
+    await act(async () => renderer!.root.findAllByType('button').find(node => node.children.includes('确认删除'))!.props.onClick())
+    if (outcome === 'rejected') expect(renderedText(renderer!.toJSON())).toContain('内容版本已变化，请刷新后重试')
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': first.itemUid })).toHaveLength(0)
+    expect(renderer!.root.findByProps({ 'data-arkme-message-item-uid': second.itemUid }).findByProps({ role: 'checkbox' }).props['aria-checked']).toBe(true)
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-delete')).toHaveLength(1)
+  })
+
+  it('does not apply a late deletion completion to another conversation', async () => {
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let finish!: (value: unknown) => void
+    mocks.callArkme.mockImplementation(async (operation, ...args) => operation === 'source.record-delete'
+      ? new Promise(resolve => { finish = resolve }) : baseCall(operation, ...args))
+    await enterMessageSelectMode({ itemUid: 'delete-switch', messageActionRef: 'select-ref',
+      recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
+      sendAtMillis: 1, textContent: 'Original', status: 1 })
+    act(() => renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick())
+    await act(async () => renderer!.root.findAllByType('button').find(node => node.children.includes('确认删除'))!.props.onClick())
+    await act(async () => { arkmeUi.selectSource(other); await Promise.resolve() })
+    await act(async () => finish({ items: [{ recordUid: 'delete-switch', version: 4, result: 'deleted' }] }))
+    expect(arkmeUi.getSnapshot().selectedSource?.sourceRef).toBe(other.sourceRef)
+    expect(renderedText(renderer!.toJSON())).not.toContain('成功删除')
+    expect(renderer!.root.findAllByProps({ id: 'arkme-record-delete-title' })).toHaveLength(0)
+  })
+
+  it('disables Record deletion when the selected message lacks owner evidence', async () => {
+    await enterMessageSelectMode({ itemUid: 'delete-foreign', messageActionRef: 'select-ref',
+      senderName: 'Peer', isMe: false, sendAtMillis: 1, textContent: 'Foreign', status: 1 })
+    expect(renderer!.root.findByProps({ 'aria-label': '删除' }).props.disabled).toBe(true)
+  })
 
   it.each([500, 1400])('keeps the clicked message at its viewport offset when entering selection from scrollTop %s', async initialTop => {
     const scrollIntoView = vi.fn()
@@ -2301,6 +2446,364 @@ describe('conversation send directory projection', () => {
     expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
   })
 
+  it('hides sender and time metadata for a received private-chat message', async () => {
+    timeline = [{
+      itemUid: 'private-message-without-metadata', senderName: '1D3E', isMe: false,
+      sendAtMillis: 1, title: '', textContent: '那我就不管了', status: 1,
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+
+    const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'private-message-without-metadata' })
+    expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
+  })
+
+  it.each([0, 500])('preserves long drafts while forwarding with distance %s from bottom', async distance => {
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'files.send.tasks') return []
+      return original(operation, params, signal)
+    })
+    const body = {
+      scrollTop: 1400 - distance, scrollHeight: 2000, clientHeight: 600,
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
+      querySelectorAll: () => [], scrollTo: vi.fn(),
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    }
+    const draft = '未发送的长草稿\n'.repeat(500)
+    const dialog = await openForwardPicker('原始消息', body, draft)
+    body.scrollTop = 1400 - distance
+    act(() => { renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll() })
+    const search = renderer!.root.findByProps({ 'aria-label': '搜索转发对象' })
+    for (let length = 1; length <= 150; length++) {
+      act(() => { search.props.onChange({ currentTarget: { value: '1'.repeat(length) } }) })
+    }
+    act(() => { search.props.onChange({ currentTarget: { value: '' } }) })
+    act(() => { dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean')[0]!.props.onClick() })
+    const comment = renderer!.root.findByProps({ 'aria-label': '转发附言' })
+    for (let length = 1; length <= 150; length++) {
+      act(() => { comment.props.onChange({ currentTarget: { value: '1'.repeat(length) } }) })
+    }
+    const note = '1'.repeat(150) + '\n第二行附言'
+    act(() => { comment.props.onChange({ currentTarget: { value: note } }) })
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe(draft)
+    expect(renderer!.root.findByProps({ 'aria-label': '发送转发' }).props.disabled).toBe(false)
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.forward-messages')).toHaveLength(0)
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    const sends = mocks.callArkme.mock.calls.filter(([op]) => op === 'source.forward-messages')
+    expect(sends).toHaveLength(1)
+    expect(sends[0]![1]).toMatchObject({ actionRefs: ['opaque-forward-action'], commentText: note })
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe(draft)
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+    expect(timeline[0]!.textContent).toBe('原始消息')
+  })
+
+  it('opens a selectable self target without browsing personal topics', async () => {
+    const dialog = await openForwardPicker()
+    const row = dialog.findAll(node => node.type === 'button' && renderedText(node).includes('发给自己'))[0]!
+    expect(row).toBeDefined()
+    expect(mocks.callArkme.mock.calls.some(([operation, params]) => operation === 'sources.list' && params?.directory === 'send_to_self')).toBe(false)
+    act(() => { row.props.onClick() })
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.find(([operation]) => operation === 'source.forward-messages')?.[1]).toMatchObject({ targetSourceRef: sendToSelf.sourceRef })
+  })
+
+  it('submits only once when send is activated twice before React commits', async () => {
+    const dialog = await openForwardPicker()
+    act(() => { dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!.props.onClick() })
+    const send = dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick
+    await act(async () => { send(); send() })
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.forward-messages')).toHaveLength(1)
+  })
+
+  it('does not block a new account or close its picker when an old forward completes', async () => {
+    const pending = deferred<unknown>()
+    const nextPending = deferred<unknown>()
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let attempts = 0
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'source.forward-messages') return ++attempts === 1 ? pending.promise : nextPending.promise
+      return baseCall(operation, params)
+    })
+    const first = await openForwardPicker()
+    act(() => { first.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!.props.onClick() })
+    await act(async () => { first.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    await act(async () => {
+      arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 43 })
+      arkmeChatDirectory.activateAccount('test:43')
+      arkmeChatDirectory.publish([target, other])
+      arkmeUi.selectSource(target)
+    })
+    const second = await openMountedForwardPicker()
+    act(() => { second.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!.props.onClick() })
+    await act(async () => { second.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    expect(attempts).toBe(2)
+    await act(async () => { pending.resolve({ status: 1 }) })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(1)
+    expect(second.findByProps({ 'aria-label': '转发中' }).props.disabled).toBe(true)
+    await act(async () => { nextPending.resolve({ status: 1 }) })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+  })
+
+  it('allows retrying after a rejected forward submission', async () => {
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let attempts = 0
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'source.forward-messages' && ++attempts === 1) throw new Error('拒绝发送')
+      return baseCall(operation, params)
+    })
+    const dialog = await openForwardPicker()
+    act(() => { dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!.props.onClick() })
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    expect(renderedText(dialog)).toContain('拒绝发送')
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.forward-messages')).toHaveLength(2)
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+  })
+
+  it('allows forwarding to a cached chat while the personal directory is pending', async () => {
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    const pending = deferred<{ items: ArkmeSourceItem[]; hasMore: boolean }>()
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'sources.self-target') return pending.promise.then(page => page.items[0])
+      return baseCall(operation, params)
+    })
+    const dialog = await openForwardPicker()
+    const recipient = dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!
+    expect(recipient).toBeDefined()
+    act(() => { recipient.props.onClick() })
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.forward-messages')).toHaveLength(1)
+    await act(async () => { pending.resolve({ items: [sendToSelf], hasMore: false }) })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+  })
+
+  it('keeps chat forwarding usable after the personal directory fails', async () => {
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'sources.self-target') throw new Error('个人目录不可用')
+      return baseCall(operation, params)
+    })
+    const dialog = await openForwardPicker()
+    expect(dialog.findAllByProps({ 'aria-label': '发给自己暂不可用' })).toHaveLength(1)
+    act(() => { dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!.props.onClick() })
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    const sends = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.forward-messages')
+    expect(sends).toHaveLength(1)
+    expect(sends[0]?.[1]).toMatchObject({ targetSourceRef: other.sourceRef })
+  })
+
+  it('retains usable forward targets when the root directory refresh fails', async () => {
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'sources.list' && params?.directory === 'root') throw new Error('目录暂时不可用')
+      if (operation === 'sources.self-target') return sendToSelf
+      return baseCall(operation, params)
+    })
+    const dialog = await openForwardPicker()
+    expect(dialog.findAllByProps({ 'aria-label': '转发对象列表' })).toHaveLength(1)
+    const recipient = dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!
+    expect(recipient).toBeDefined()
+    act(() => { recipient.props.onClick() })
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.forward-messages')).toHaveLength(1)
+  })
+
+  it('keeps selected chat identity and submits its latest access reference after a directory update', async () => {
+    const dialog = await openForwardPicker()
+    const recipient = dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!
+    act(() => { recipient.props.onClick() })
+    await act(async () => { arkmeChatDirectory.upsert({ ...other, sourceRef: 'renewed-other-access', activeAtMillis: 100, isPinned: true }) })
+    const refreshed = dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!
+    expect(refreshed.props['aria-pressed']).toBe(true)
+    expect(refreshed.findAllByProps({ 'aria-label': '已置顶' })).toHaveLength(1)
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    const sends = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.forward-messages')
+    expect(sends).toHaveLength(1)
+    expect(sends[0]?.[1]).toMatchObject({ targetSourceRef: 'renewed-other-access' })
+  })
+
+  it('keeps a selected target when new pinned rows move it past the display limit', async () => {
+    const dialog = await openForwardPicker()
+    act(() => { dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!.props.onClick() })
+    await act(async () => {
+      arkmeChatDirectory.upsertMany(Array.from({ length: 90 }, (_, index) => ({
+        ...target, sourceRef: `extra-${index}`, sourceKey: `chat:extra-${index}`,
+        displayName: `新增会话${index}`, isPinned: true, activeAtMillis: 100 + index,
+      })))
+    })
+    const selected = dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!
+    expect(selected.props['aria-pressed']).toBe(true)
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.forward-messages')[0]?.[1])
+      .toMatchObject({ targetSourceRef: other.sourceRef })
+  })
+
+  it('ignores a denied recipient check after closing the picker', async () => {
+    const admission = deferred<{ canSend: boolean; state: 'refused_by_counterpart' }>()
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'chat.direct-message-admission') return admission.promise
+      const value = await baseCall(operation, params)
+      return operation === 'sources.list' && params?.directory === 'root'
+        ? { ...value, items: value.items.map((item: ArkmeSourceItem) => ({ ...item, directMessageAdmissionApplicable: true })) } : value
+    })
+    const dialog = await openForwardPicker()
+    act(() => { dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!.props.onClick() })
+    act(() => { dialog.findByProps({ 'aria-label': '关闭转发对象选择' }).props.onClick() })
+    const before = renderedText(renderer!.root)
+    await act(async () => { admission.resolve({ canSend: false, state: 'refused_by_counterpart' }) })
+    expect(renderedText(renderer!.root)).toBe(before)
+  })
+
+  it('does not select a removed target when its admission check finishes late', async () => {
+    const pending = deferred<{ canSend: boolean }>()
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'chat.direct-message-admission') return pending.promise
+      const result = await baseCall(operation, params)
+      return operation === 'sources.list' && params?.directory === 'root'
+        ? { ...result, items: result.items.map((item: ArkmeSourceItem) => ({ ...item, directMessageAdmissionApplicable: true })) } : result
+    })
+    const dialog = await openForwardPicker()
+    act(() => { dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!.props.onClick() })
+    act(() => { arkmeChatDirectory.publish([target]) })
+    await act(async () => { pending.resolve({ canSend: true }) })
+    expect(dialog.findAllByType('footer')).toHaveLength(0)
+  })
+
+  it('caps same-frame recipient selections at five without blocking their send', async () => {
+    const dialog = await openForwardPicker()
+    act(() => { arkmeChatDirectory.upsertMany(Array.from({ length: 6 }, (_, index) => ({
+      ...other, sourceRef: `limit-ref-${index}`, sourceKey: `chat:limit-${index}`, displayName: `限额会话${index}`,
+    }))) })
+    const candidates = dialog.findAll(node => node.type === 'button' && renderedText(node).includes('限额会话'))
+    act(() => { for (const candidate of candidates) candidate.props.onClick() })
+    expect(dialog.findAllByProps({ 'aria-pressed': true })).toHaveLength(5)
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.forward-messages')).toHaveLength(5)
+  })
+
+  it('keeps a selected recipient when search hides it', async () => {
+    const dialog = await openForwardPicker()
+    act(() => { dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!.props.onClick() })
+    act(() => { dialog.findByProps({ 'aria-label': '搜索转发对象' }).props.onChange({ currentTarget: { value: '不匹配任何会话' } }) })
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.find(([operation]) => operation === 'source.forward-messages')?.[1]).toMatchObject({ targetSourceRef: other.sourceRef })
+  })
+
+  it('keeps a pending recipient selection when directory metadata updates', async () => {
+    const admission = deferred<{ canSend: boolean }>()
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'chat.direct-message-admission') return admission.promise
+      const value = await baseCall(operation, params)
+      return operation === 'sources.list' && params?.directory === 'root'
+        ? { ...value, items: value.items.map((item: ArkmeSourceItem) => ({ ...item, directMessageAdmissionApplicable: true })) } : value
+    })
+    const dialog = await openForwardPicker()
+    act(() => { dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!.props.onClick() })
+    await act(async () => { arkmeChatDirectory.upsert({ ...other, latestPreview: '新预览', activeAtMillis: 101 }) })
+    await act(async () => { admission.resolve({ canSend: true }) })
+    const selected = dialog.findAll(node => node.type === 'button' && renderedText(node).includes('其他会话'))[0]!
+    expect(selected.props['aria-pressed']).toBe(true)
+  })
+
+  it('orders forward targets with self first and pinned chats before recent chats', async () => {
+    const pinned = { ...target, isPinned: true, chatPolicyUpdatedAtMillis: 10 }
+    arkmeChatDirectory.publish([other, pinned])
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'sources.list') return { directory: params?.directory,
+        items: params?.directory === 'send_to_self' ? [sendToSelf] : [other, { ...pinned, isPinned: false, chatPolicyUpdatedAtMillis: 1 }], hasMore: false }
+      return baseCall(operation, params)
+    })
+    const dialog = await openForwardPicker()
+    const rows = dialog.findByProps({ 'aria-label': '转发对象列表' }).findAllByType('li')
+    expect(rows.map(row => renderedText(row))).toEqual([
+      expect.stringContaining('发给自己'), expect.stringContaining('Harness4'), expect.stringContaining('其他会话'),
+    ])
+    expect(rows[1]!.findAllByProps({ 'aria-label': '已置顶' })).toHaveLength(1)
+    expect(renderedText(rows[1]!)).not.toContain('置顶')
+    expect(rows[1]!.findByProps({ 'aria-label': '已置顶' }).props.role).toBe('img')
+  })
+
+  it('keeps self visible while reopening a forward picker with a pending directory read', async () => {
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let selfRead = deferred<{ items: ArkmeSourceItem[]; hasMore: boolean }>()
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'sources.self-target') return selfRead.promise.then(page => page.items[0])
+      return baseCall(operation, params)
+    })
+    const first = await openForwardPicker()
+    // Reserve the self row while keeping the cached chats usable.
+    expect(first.findAllByProps({ 'aria-label': '发给自己暂不可用' })).toHaveLength(1)
+    expect(first.findByProps({ 'aria-label': '转发对象列表' }).findAllByType('li').length).toBeGreaterThan(1)
+    await act(async () => { selfRead.resolve({ items: [sendToSelf], hasMore: false }) })
+    expect(renderedText(first.findByProps({ 'aria-label': '转发对象列表' }).findAllByType('li')[0])).toContain('发给自己')
+    act(() => { first.findByProps({ 'aria-label': '关闭转发对象选择' }).props.onClick() })
+    selfRead = deferred()
+    const second = await openMountedForwardPicker()
+    const before = second.findByProps({ 'aria-label': '转发对象列表' }).findAllByType('li')[0]!
+    expect(renderedText(before)).toContain('发给自己')
+    await act(async () => { selfRead.resolve({ items: [sendToSelf], hasMore: false }) })
+    expect(second.findByProps({ 'aria-label': '转发对象列表' }).findAllByType('li')[0]).toBe(before)
+  })
+
+  it.each([{ environment: 'test' as const, userId: 43 }, { environment: 'prod' as const, userId: 42 }])('does not reuse the previous account self target after switching to $environment:$userId', async ({ environment, userId }) => {
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let pendingSelf: Promise<{ items: ArkmeSourceItem[]; hasMore: boolean }> = Promise.resolve({ items: [sendToSelf], hasMore: false })
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'sources.self-target') return pendingSelf.then(page => page.items[0])
+      return baseCall(operation, params)
+    })
+    const first = await openForwardPicker()
+    expect(renderedText(first)).toContain('发给自己')
+    act(() => { first.findByProps({ 'aria-label': '关闭转发对象选择' }).props.onClick() })
+    const nextRead = deferred<{ items: ArkmeSourceItem[]; hasMore: boolean }>()
+    pendingSelf = nextRead.promise
+    await act(async () => {
+      arkmeAuthStore.setAuth({ status: 'authenticated', environment, userId })
+      arkmeChatDirectory.activateAccount(`${environment}:${userId}`)
+      arkmeChatDirectory.publish([target])
+      arkmeUi.selectSource(target)
+    })
+    const second = await openMountedForwardPicker()
+    expect(second.findAllByProps({ 'aria-label': '发给自己暂不可用' })).toHaveLength(1)
+    await act(async () => { nextRead.resolve({ items: [{ ...sendToSelf, sourceRef: 'new-account-self', displayName: '新账户自己' }], hasMore: false }) })
+    expect(renderedText(second)).toContain('新账户自己')
+    expect(renderedText(second)).not.toContain('发给自己')
+  })
+
+  it.each(['success', 'failure'] as const)('ignores a closed picker personal-directory %s after reopening', async outcome => {
+    const oldRead = deferred<{ items: ArkmeSourceItem[]; hasMore: boolean }>()
+    const newRead = deferred<{ items: ArkmeSourceItem[]; hasMore: boolean }>()
+    let pending = oldRead.promise
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'sources.self-target') return pending.then(page => page.items[0])
+      return baseCall(operation, params)
+    })
+    const first = await openForwardPicker()
+    act(() => { first.findByProps({ 'aria-label': '关闭转发对象选择' }).props.onClick() })
+    pending = newRead.promise
+    const second = await openMountedForwardPicker()
+    await act(async () => {
+      if (outcome === 'success') oldRead.resolve({ items: [{ ...sendToSelf, displayName: '过期对象' }], hasMore: false })
+      else oldRead.reject(new Error('过期请求错误'))
+    })
+    expect(renderedText(second)).not.toContain('过期对象')
+    expect(second.findAllByProps({ role: 'alert' })).toHaveLength(0)
+    await act(async () => { newRead.resolve({ items: [sendToSelf], hasMore: false }) })
+    expect(second.findAllByProps({ 'aria-label': '发给自己暂不可用' })).toHaveLength(0)
+  })
+
   it('keeps the forward picker mounted while rapid comment changes are deferred', async () => {
     const dialog = await openForwardPicker()
     const targetButton = dialog.findAll(node => node.type === 'button'
@@ -2342,6 +2845,131 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toBeDefined()
   })
 
+  it.each(['success', 'empty', 'error'] as const)('keeps one flexible scroll region when forward targets finish loading with %s', async outcome => {
+    arkmeChatDirectory.publish([])
+    const original = mocks.callArkme.getMockImplementation()!
+    const pending = deferred<void>()
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'sources.self-target') { await pending.promise; return sendToSelf }
+      if (operation !== 'sources.list') return original(operation, params, signal)
+      await pending.promise
+      if (outcome === 'error' && params?.directory === 'root') throw new Error('目录暂时不可用')
+      return { directory: params?.directory, items: outcome === 'success' && params?.directory === 'root' ? [other, target] : [], hasMore: false }
+    })
+
+    const dialog = await openForwardPicker()
+    act(() => { dialog.findByProps({ 'aria-label': '搜索转发对象' }).props.onChange({ currentTarget: { value: '其他会话' } }) })
+    const list = dialog.findByProps({ 'aria-label': '转发对象列表' })
+    const loading = dialog.findByProps({ role: 'status' })
+    expect(loading.children).toContain('正在加载转发对象...')
+    expect(loading.parent).toBe(list)
+    const body = list.parent!
+    expect(body.parent).toBe(dialog)
+    expect(body.props.style).toMatchObject({ flex: 1, minHeight: 0, overflowY: 'auto' })
+
+    await act(async () => { pending.resolve(); await pending.promise })
+    expect(dialog.findByProps({ 'aria-label': '转发对象列表' }).parent).toBe(body)
+    if (outcome === 'success') expect(renderedText(list)).toContain('其他会话')
+    else {
+      expect(dialog.findByProps({ role: 'status' }).parent).toBe(list)
+      expect(dialog.findByProps({ role: 'status' }).children).toContain('暂无可转发对象')
+    }
+    if (outcome === 'error') {
+      expect(dialog.findByProps({ role: 'alert' }).parent).toBe(body)
+      expect(renderedText(dialog.findByProps({ role: 'alert' }))).toContain('会话列表刷新失败')
+    } else expect(dialog.findAllByProps({ role: 'alert' })).toHaveLength(0)
+    expect(dialog.findAllByType('footer')).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.forward-messages')).toBe(false)
+  })
+
+  it.each([false, true])('keeps the forward footer outside the scroll region and sends to the selected recipient after an empty search (clear=%s)', async clearSearch => {
+    const dialog = await openForwardPicker()
+    const body = dialog.findByProps({ 'aria-label': '转发对象列表' }).parent!
+    expect(body.parent).toBe(dialog)
+    expect(body.props.style).toMatchObject({ flex: 1, minHeight: 0, overflowY: 'auto' })
+    const targetButton = dialog.findAll(node => node.type === 'button'
+      && typeof node.props['aria-pressed'] === 'boolean' && renderedText(node).includes('其他会话'))[0]!
+    act(() => { targetButton.props.onClick() })
+    const footer = dialog.findByType('footer')
+    expect(footer.parent).toBe(dialog)
+    expect(footer.props.style.flex).toBe('none')
+    act(() => { dialog.findByProps({ 'aria-label': '转发附言' }).props.onChange({ currentTarget: { value: '保留附言' } }) })
+    const search = dialog.findByProps({ 'aria-label': '搜索转发对象' })
+
+    act(() => { search.props.onChange({ currentTarget: { value: 'no-matching-recipient-20260914' } }) })
+    expect(dialog.findByProps({ role: 'status' }).children).toContain('暂无可转发对象')
+    expect(dialog.findByProps({ role: 'status' }).parent).toBe(dialog.findByProps({ 'aria-label': '转发对象列表' }))
+    expect(dialog.findByType('footer')).toBe(footer)
+    expect(dialog.findByProps({ 'aria-label': '转发附言' }).props.value).toBe('保留附言')
+
+    if (clearSearch) {
+      act(() => { search.props.onChange({ currentTarget: { value: '' } }) })
+      expect(dialog.findAllByProps({ 'aria-pressed': true })).toHaveLength(1)
+      expect(dialog.findByProps({ 'aria-label': '转发对象列表' }).parent).toBe(body)
+    }
+    expect(dialog.findByType('footer')).toBe(footer)
+    expect(dialog.findByProps({ 'aria-label': '转发附言' }).props.value).toBe('保留附言')
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.forward-messages')).toBe(false)
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    const sends = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.forward-messages')
+    expect(sends).toHaveLength(1)
+    expect(sends[0]?.[1]).toMatchObject({ targetSourceRef: other.sourceRef, actionRefs: ['opaque-forward-action'], commentText: '保留附言' })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+  })
+
+  it('keeps a failed forward in the footer without replacing the directory and allows an explicit retry', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let fail = true
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'source.forward-messages' && fail) throw new Error('转发被拒绝')
+      return original(operation, params, signal)
+    })
+    const dialog = await openForwardPicker()
+    const body = dialog.findByProps({ 'aria-label': '转发对象列表' }).parent!
+    act(() => {
+      dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean' && renderedText(node).includes('其他会话'))[0]!.props.onClick()
+    })
+    const footer = dialog.findByType('footer')
+    act(() => { dialog.findByProps({ 'aria-label': '转发附言' }).props.onChange({ currentTarget: { value: '失败后保留' } }) })
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+
+    expect(dialog.findByProps({ role: 'alert' }).parent).toBe(footer)
+    expect(dialog.findByProps({ role: 'alert' }).children).toContain('转发被拒绝')
+    expect(dialog.findByProps({ 'aria-label': '转发对象列表' }).parent).toBe(body)
+    expect(dialog.findByProps({ 'aria-label': '转发附言' }).props.value).toBe('失败后保留')
+    expect(dialog.findByProps({ 'aria-label': '发送转发' }).props.disabled).toBe(false)
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.forward-messages')).toHaveLength(1)
+
+    fail = false
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    const sends = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.forward-messages')
+    expect(sends).toHaveLength(2)
+    expect(sends[1]?.[1]).toMatchObject({ targetSourceRef: other.sourceRef, commentText: '失败后保留' })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+  })
+
+  it.each(['close', 'source', 'account'] as const)('does not resurrect the forward picker after %s while the directory is loading', async change => {
+    const pending = deferred<unknown>()
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, params, signal) => operation === 'sources.list' && params?.directory === 'root'
+      ? pending.promise
+      : original(operation, params, signal))
+    const dialog = await openForwardPicker()
+    act(() => {
+      dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean')[0]!.props.onClick()
+    })
+    act(() => { dialog.findByProps({ 'aria-label': '转发附言' }).props.onChange({ currentTarget: { value: '旧弹窗附言' } }) })
+    await act(async () => {
+      if (change === 'close') dialog.findByType('header').findByProps({ 'aria-label': '关闭转发对象选择' }).props.onClick()
+      else if (change === 'source') { activeSource = other; arkmeUi.selectSource(other) }
+      else arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 99 })
+    })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+    await act(async () => { pending.resolve({ directory: 'root', items: [other, target], hasMore: false }) })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.forward-messages')).toBe(false)
+  })
+
   it('renders the forward submit button with primary action contrast', async () => {
     const dialog = await openForwardPicker()
     const targetButton = dialog.findAll(node => node.type === 'button'
@@ -2362,7 +2990,7 @@ describe('conversation send directory projection', () => {
       return { ...value, items: value.items.map((source: ArkmeSourceItem) => ({ ...source, latestPreview: emojiSample })) }
     })
     const dialog = await openForwardPicker(emojiSample)
-    const targetButton = dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean')[0]!
+    const targetButton = dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean' && !renderedText(node).includes('发给自己'))[0]!
     expect(targetButton.findAllByProps({ 'data-arkme-rich-emoji': 'heart_eyes' })).toHaveLength(1)
     act(() => { targetButton.props.onClick() })
     const footer = dialog.findByType('footer')
@@ -2400,7 +3028,7 @@ describe('conversation send directory projection', () => {
     for (let index = 0; index < 2; index += 1) {
       await act(async () => {
         await dialog.findAll(node => node.type === 'button'
-          && typeof node.props['aria-pressed'] === 'boolean')[index]!.props.onClick()
+          && typeof node.props['aria-pressed'] === 'boolean' && !renderedText(node).includes('发给自己'))[index]!.props.onClick()
       })
     }
     refuse = true
@@ -3098,7 +3726,7 @@ describe('conversation send directory projection', () => {
       displayName: '协作群',
     }
     arkmeChatDirectory.clear()
-    arkmeChatDirectory.activateAccount(42)
+    arkmeChatDirectory.activateAccount('test:42')
     arkmeChatDirectory.publish([other, groupTarget])
     arkmeUi.selectSource(groupTarget)
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
@@ -3842,7 +4470,7 @@ describe('conversation send directory projection', () => {
     let resolveGroupA: ((value: unknown) => void) | undefined
     const groupAMembers = new Promise(resolve => { resolveGroupA = resolve })
     arkmeChatDirectory.clear()
-    arkmeChatDirectory.activateAccount(42)
+    arkmeChatDirectory.activateAccount('test:42')
     arkmeChatDirectory.publish([groupA, groupB])
     arkmeUi.selectSource(groupA)
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
@@ -4215,7 +4843,7 @@ describe('conversation send directory projection', () => {
     let pendingPrivateOpen: Promise<unknown> = new Promise(resolve => { resolvePrivateOpen = resolve })
     const privateOpenSignals: AbortSignal[] = []
     arkmeChatDirectory.clear()
-    arkmeChatDirectory.activateAccount(42)
+    arkmeChatDirectory.activateAccount('test:42')
     arkmeChatDirectory.publish([groupA, groupB])
     arkmeUi.selectSource(groupA)
     mocks.callArkme.mockImplementation(async (
@@ -4343,7 +4971,7 @@ describe('conversation send directory projection', () => {
     let resolveGroupABots: ((value: unknown) => void) | undefined
     const groupABots = new Promise(resolve => { resolveGroupABots = resolve })
     arkmeChatDirectory.clear()
-    arkmeChatDirectory.activateAccount(42)
+    arkmeChatDirectory.activateAccount('test:42')
     arkmeChatDirectory.publish([groupA, groupB])
     arkmeUi.selectSource(groupA)
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
@@ -4415,7 +5043,7 @@ describe('conversation send directory projection', () => {
     const accountAMembers = new Promise(resolve => { resolveAccountA = resolve })
     let memberRequestCount = 0
     arkmeChatDirectory.clear()
-    arkmeChatDirectory.activateAccount(42)
+    arkmeChatDirectory.activateAccount('test:42')
     arkmeChatDirectory.publish([accountGroup])
     arkmeUi.selectSource(accountGroup)
     mocks.callArkme.mockImplementation(async (operation: string) => {
@@ -4886,7 +5514,7 @@ describe('conversation send directory projection', () => {
     expect(childLine.findAllByProps({ 'data-arkme-extension-parent-preview': 'extension-parent' })).toHaveLength(0)
   })
 
-  it('aligns a received extension preview with the sender and content column', async () => {
+  it('aligns a received private-chat extension preview with the content column', async () => {
     timeline = [{
       itemUid: 'received-extension-child', senderName: '同事', isMe: false, sendAtMillis: 12,
       title: '', textContent: '补充内容', status: 1,
@@ -4914,7 +5542,61 @@ describe('conversation send directory projection', () => {
     expect(preview.props.title).toContain('😍👍')
     expect(preview.props.title).not.toContain('[jm_emoji:heart_eyes]')
     const childLine = row.findByProps({ 'data-arkme-extension-child-line': 'true' })
-    expect(childLine.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(1)
+    expect(childLine.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
+  })
+
+  it.each(([
+    'plain', 'live', 'cover-only', 'local-live',
+  ] as const).flatMap(kind => [true, false].map(isMe => ({ kind, isMe }))))('renders $kind extension attachments (isMe=$isMe) without changing parent navigation', async ({ kind, isMe }) => {
+    const motion = { kind: 'video' as const, mediaRef: 'motion-ref', fileName: 'motion.mp4', sortOrder: 1 }
+    timeline = [{
+      itemUid: 'extension-child', senderName: isMe ? '我' : '同事', isMe, sendAtMillis: 12,
+      title: '', textContent: '延展内容', status: 1,
+      extensionParent: {
+        itemUid: 'extension-parent', senderName: '同事', title: '', textContent: '原消息',
+        recordOwnerUserId: 7, sendAtMillis: 11,
+        contentBlocks: [{
+          kind: 'image', mediaRef: 'cover-ref', fileName: 'cover.jpg', sortOrder: 0,
+          ...(kind === 'local-live' ? { localFileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111' } : {}),
+          ...(kind === 'plain' ? {} : { dynamicPhoto: {
+            logicalUid: 'live-pair', ...(kind === 'live' || kind === 'local-live' ? { motion } : {}),
+          } }),
+        }],
+      },
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+    const preview = renderer!.root.findByProps({ 'data-arkme-extension-parent-preview': 'extension-parent' })
+    expect(preview.props.role).toBe('button')
+    expect(preview.props.onClick).toBeTypeOf('function')
+    expect(preview.findAllByType('button')).toHaveLength(0)
+    expect(preview.findAllByType('video')).toHaveLength(0)
+    const image = preview.findByType('img')
+    expect(image.props.src).toBe(kind === 'local-live' ? '/arkme-self/api/files/local?ref=arkme-file-v1.11111111-1111-4111-8111-111111111111' : '/arkme-self/api/media?ref=cover-ref')
+    expect(image.props.style).toMatchObject({ width: 32, height: 32 })
+    const badges = preview.findAllByProps({ 'aria-label': '实况照片' })
+    expect(badges).toHaveLength(kind === 'plain' ? 0 : 1)
+    if (kind !== 'plain') {
+      expect(badges[0].parent).toBe(image.parent)
+      expect(image.parent!.props.style).toMatchObject({ position: 'relative', display: 'flex', alignSelf: 'center', flex: 'none' })
+      expect(badges[0].props.style).toMatchObject({ display: 'flex', left: 2, bottom: 2, pointerEvents: 'none' })
+      expect(badges[0].findByProps({ 'data-arkme-live-photo-badge': true }).props.style).toMatchObject({ width: 14, height: 14 })
+      expect(badges[0].findByType('svg').props).toMatchObject({ width: 12, height: 12 })
+      expect(badges[0].findAllByType('path')).toHaveLength(0)
+    }
+    const navigate = vi.spyOn(arkmeUi, 'showConversationTarget').mockImplementation(() => {})
+    preview.props.onClick()
+    for (const key of ['Enter', ' ']) {
+      const preventDefault = vi.fn()
+      preview.props.onKeyDown({ key, preventDefault })
+      expect(preventDefault).toHaveBeenCalledOnce()
+    }
+    preview.props.onKeyDown({ key: 'Escape', preventDefault: vi.fn() })
+    expect(navigate).toHaveBeenCalledTimes(3)
+    expect(navigate).toHaveBeenCalledWith(expect.objectContaining({ sourceRef: 'source-harness' }), 'extension-parent', 11, 7)
+    navigate.mockRestore()
   })
 
   it('uses a pointer cursor for a clickable extension parent preview', async () => {

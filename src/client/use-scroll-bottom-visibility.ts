@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useState, type RefObject } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 
 /** Viewport affordance only; unrelated to auto-follow tolerance or unread state. */
 export function useScrollBottomVisibility(
@@ -8,10 +8,15 @@ export function useScrollBottomVisibility(
   contentRevision: unknown,
 ) {
   const [visible, setVisible] = useState(false)
+  const measuredVisible = useRef(false)
   const measure = useCallback(() => {
     const body = viewport.current
-    setVisible(active && body !== null && body.clientHeight > 0
-      && body.scrollHeight - body.clientHeight - body.scrollTop > 100)
+    const nextVisible = active && body !== null && body.clientHeight > 0
+      && body.scrollHeight - body.clientHeight - body.scrollTop > 100
+    // Do not enqueue same-value updates while other surface updates are pending.
+    if (measuredVisible.current === nextVisible) return
+    measuredVisible.current = nextVisible
+    setVisible(nextVisible)
   }, [active, viewport])
 
   // Parent layout restoration may change scrollTop without changing the rows.

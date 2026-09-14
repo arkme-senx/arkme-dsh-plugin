@@ -5,6 +5,29 @@ import { defineArkmeCoreToolModule } from '../../contract/module.js'
 import type { ArkmeToolModule } from '../../contract/module.js'
 import { taggedJSON, TEXT_OUTPUT } from '../../shared/output.js'
 
+const selfNickname = defineArkmeCoreToolModule({
+  meta: { id: 'business.group.self-nickname.v1', toolName: 'arkme_group_self_nickname', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
+  create(ports) {
+    return defineTool({ name: 'arkme_group_self_nickname', description: 'Read the signed-in user’s own nickname in one group. Use an unchanged group source_ref from Arkme reads.',
+      parameters: { group_source_ref: { type: 'string', required: true, description: 'Account-bound group_chat source_ref.' } },
+      output: TEXT_OUTPUT,
+      async execute(args, exec) { return taggedJSON('Arkme 我的群昵称', await ports.groupSelfNickname(args.group_source_ref, exec.signal)) },
+    })
+  },
+})
+const setSelfNickname = defineArkmeCoreToolModule({
+  meta: { id: 'business.group.self-nickname-set.v1', toolName: 'arkme_group_self_nickname_set', kind: 'business', phase: 'core', effect: 'write', grant: 'explicit-user-write', profiles: ['business', 'hybrid'] },
+  create(ports) {
+    return defineTool({ name: 'arkme_group_self_nickname_set', description: 'Change only the signed-in user’s own nickname in one group after an explicit human request and conversational confirmation. Does not change the group title or global profile name.',
+      parameters: {
+        group_source_ref: { type: 'string', required: true, description: 'Account-bound group_chat source_ref.' },
+        nickname: { type: 'string', required: true, description: 'Nickname, 1-10 Unicode code points after trimming whitespace.' },
+      }, output: TEXT_OUTPUT,
+      async execute(args, exec) { return taggedJSON('Arkme 群昵称保存结果', await ports.setGroupSelfNickname(args.group_source_ref, args.nickname, exec.signal)) },
+    })
+  },
+})
+
 const candidates = defineArkmeCoreToolModule({
   meta: { id: 'business.group.member-candidates.v1', toolName: 'arkme_group_member_candidates', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
   create(ports) {
@@ -121,6 +144,6 @@ const setRestriction = defineArkmeCoreToolModule({
 })
 
 export const groupMemberToolModules: readonly ArkmeToolModule[] = [
-  candidates, add, remove, restrictions, setRestriction,
+  candidates, add, remove, restrictions, setRestriction, selfNickname, setSelfNickname,
 ]
 export const groupToolModules = [createGroupToolModule, renameGroupToolModule] as const

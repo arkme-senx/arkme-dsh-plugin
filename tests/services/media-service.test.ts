@@ -107,6 +107,45 @@ describe('MediaService', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
+  it.each([1, 2])('projects an explicit Live pair for cover render role %s', async (coverRenderRole) => {
+    const media = new MediaService({ config: {} } as ServiceRuntime, {} as never, {} as never, {} as never)
+    const refs = [
+      { file_asset_uid: 'cover', render_role: coverRenderRole, dynamic_photo: { logical_uid: 'live', role: 'cover' }, file_name: 'photo.jpg', mime_type: 'image/jpeg', file_kind: 1, preview_url: 'https://example.test/cover' },
+      { file_asset_uid: 'motion', render_role: 4, dynamic_photo: { logical_uid: 'live', role: 'motion' }, file_name: 'photo.mov', mime_type: 'video/quicktime', file_kind: 3, download_url: 'https://example.test/motion' },
+    ]
+    const raw = { content_payload: { media_refs: refs } }
+    const blocks = media.richContentBlocks(raw, 42)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({ kind: 'image', fileAssetUid: 'cover', dynamicPhoto: { logicalUid: 'live', motion: { kind: 'video', fileAssetUid: 'motion' } } })
+    expect(JSON.stringify(blocks)).not.toContain('https:')
+    expect(media.recordMediaUnavailable(raw, blocks)).toBe(false)
+    const missing = { content_payload: { media_refs: [refs[0], { ...refs[1], download_url: '' }] } }
+    const partial = media.richContentBlocks(missing, 42)
+    expect(partial).toHaveLength(1)
+    expect(partial[0]).toMatchObject({ dynamicPhoto: { logicalUid: 'live' } })
+    expect(partial[0]?.dynamicPhoto?.motion).toBeUndefined()
+    expect(media.recordMediaUnavailable(missing, partial)).toBe(true)
+  })
+
+  it('never pairs by name, sender, background role or ambiguous logical identity', () => {
+    const media = new MediaService({ config: {} } as ServiceRuntime, {} as never, {} as never, {} as never)
+    const cover = { file_asset_uid: 'cover', render_role: 1, dynamic_photo: { logical_uid: 'pair', role: 'cover' }, file_name: 'same.jpg', mime_type: 'image/jpeg', preview_url: 'https://example.test/cover' }
+    const motion = { file_asset_uid: 'motion', render_role: 4, dynamic_photo: { logical_uid: 'pair', role: 'motion' }, file_name: 'same.mov', mime_type: 'video/quicktime', download_url: 'https://example.test/motion' }
+    for (const others of [
+      [{ ...motion, content_file_role: 4 }],
+      [motion, { ...motion, file_asset_uid: 'duplicate-motion' }],
+      [{ ...motion, dynamic_photo: { logical_uid: 'other', role: 'motion' } }],
+    ]) {
+      const blocks = media.richContentBlocks({ content_payload: { media_refs: [cover, ...others] } }, 42)
+      expect(blocks[0]?.dynamicPhoto?.motion).toBeUndefined()
+    }
+    const ordinary = media.richContentBlocks({ content_payload: { media_refs: [
+      { ...cover, dynamic_photo: undefined }, { ...motion, dynamic_photo: undefined, render_role: 1 },
+    ] } }, 42)
+    expect(ordinary.map(block => block.kind)).toEqual(['image', 'video'])
+    expect(ordinary.every(block => block.dynamicPhoto === undefined)).toBe(true)
+  })
+
   it('proxies trusted production COS call audio with ranges and account isolation', async () => {
     let userId = 42
     const sessions: ArkmeSessionStore = {

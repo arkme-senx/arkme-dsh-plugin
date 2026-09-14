@@ -175,6 +175,16 @@ export function arkmeMarkdownExtensions() {
   ]
 }
 
+/** Reuse editor transactions/history without enabling Markdown, tags, links, or mentions. */
+export function arkmeTextExtensions() {
+  return [StarterKit.configure({
+    blockquote: false, bold: false, bulletList: false, code: false, codeBlock: false,
+    hardBreak: false, heading: false, horizontalRule: false, italic: false,
+    listItem: false, listKeymap: false, link: false, orderedList: false,
+    strike: false, underline: false, trailingNode: false,
+  }), Emoji]
+}
+
 /** Shift+Enter is our paragraph break, so it must also complete the opening code fence. */
 export function arkmeCompleteMarkdownCodeFence(editor: Editor): boolean {
   const { $from, empty } = editor.state.selection

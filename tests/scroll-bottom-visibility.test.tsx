@@ -8,6 +8,47 @@ describe('scroll bottom visibility (not auto-follow or unread state)', () => {
   let renderer: ReactTestRenderer | undefined
   afterEach(() => { act(() => renderer?.unmount()); vi.unstubAllGlobals() })
 
+  it('does not schedule another render for an unchanged measurement after visibility changes', () => {
+    const body = { scrollTop: 900, scrollHeight: 1500, clientHeight: 600 }
+    const viewport = { current: body as HTMLElement }
+    const content = { current: null }
+    let renders = 0
+    let measure = () => {}
+    function Harness() {
+      renders += 1
+      measure = useScrollBottomVisibility(viewport, content, true, 0).measure
+      return null
+    }
+    act(() => { renderer = create(<Harness />) })
+    const initial = renders
+    act(() => { body.scrollTop = 100; measure() })
+    expect(renders - initial).toBe(1)
+    const settled = renders
+    act(() => { measure(); measure() })
+    expect(renders).toBe(settled)
+  })
+
+  it('keeps the latest measurement when visibility toggles in one batch', () => {
+    const body = { scrollTop: 900, scrollHeight: 1500, clientHeight: 600 }
+    const viewport = { current: body as HTMLElement }
+    const content = { current: null }
+    let measure = () => {}
+    function Harness() {
+      const control = useScrollBottomVisibility(viewport, content, true, 0)
+      measure = control.measure
+      return <span>{String(control.visible)}</span>
+    }
+    act(() => { renderer = create(<Harness />) })
+    act(() => {
+      body.scrollTop = 100; measure()
+      body.scrollTop = 900; measure()
+      body.scrollTop = 100; measure()
+    })
+    expect(renderer!.root.findByType('span').children).toEqual(['true'])
+    act(() => { body.scrollTop = 900; measure() })
+    expect(renderer!.root.findByType('span').children).toEqual(['false'])
+  })
+
   it('uses the strict 100px boundary without changing scroll position', () => {
     const body = { scrollTop: 800, scrollHeight: 1500, clientHeight: 600 }
     const viewport = { current: body as HTMLElement }

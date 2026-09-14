@@ -47,6 +47,8 @@ type ArkmeDialogProps = {
   children?: ReactNode
   error?: string
   busy: boolean
+  closeWhileBusy?: boolean
+  cancelLabel?: string
   onClose: () => void
 } & ({
   layout: 'picker'
@@ -61,6 +63,7 @@ type ArkmeDialogProps = {
 })
 
 export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
+  const closeDisabled = props.busy && !props.closeWhileBusy
   const dialogRef = useRef<HTMLElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
   const previousFocusRef = useRef<HTMLElement>()
@@ -81,13 +84,13 @@ export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
   useEffect(() => {
     if (typeof document === 'undefined') return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || props.busy) return
+      if (event.key !== 'Escape' || closeDisabled) return
       event.preventDefault()
       props.onClose()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [props.busy, props.onClose])
+  }, [closeDisabled, props.onClose])
 
   const trapFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Tab' || typeof document === 'undefined') return
@@ -111,7 +114,7 @@ export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
   }
 
   const dialog = <div style={styles.backdrop} role="presentation" data-arkme-confirm-dialog-backdrop="true" onMouseDown={event => {
-    if (event.target === event.currentTarget && !props.busy) props.onClose()
+    if (event.target === event.currentTarget && !closeDisabled) props.onClose()
   }}>
     <section
       ref={dialogRef}
@@ -130,7 +133,7 @@ export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
       {props.children}
       {props.error === undefined || props.error === '' ? null : <div role="alert" style={styles.error}>{props.error}</div>}
       {props.layout !== 'picker' && <footer style={styles.footer}>
-        <button ref={cancelRef} type="button" style={{ ...styles.button, ...(props.busy ? styles.disabled : {}) }} disabled={props.busy} onClick={props.onClose}>取消</button>
+        <button ref={cancelRef} type="button" style={{ ...styles.button, ...(closeDisabled ? styles.disabled : {}) }} disabled={closeDisabled} onClick={props.onClose}>{props.cancelLabel ?? '取消'}</button>
         <button
           type="button"
           style={{ ...styles.button, ...styles[props.confirmTone ?? 'primary'], ...(props.busy || props.confirmDisabled ? styles.disabled : {}) }}

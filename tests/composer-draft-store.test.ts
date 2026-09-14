@@ -192,6 +192,21 @@ describe('Arkme composer draft store', () => {
     ])
   })
 
+  it('uses explicit selection ranges to preserve distinct adjacent emoji when replacing any subset', () => {
+    const choices = arkmeDefaultEmojis.slice(0, 3)
+    for (let start = 0; start <= choices.length; start++) {
+      for (let end = start; end <= choices.length; end++) {
+        const store = new ArkmeComposerDraftStore()
+        const key = arkmeArkoComposerDraftKey(1001)
+        store.setRichText(key, '\uFFFC'.repeat(choices.length), choices.map((item, startIndex) => ({ emojiId: item.id, startIndex })))
+        store.insertEmoji(key, arkmeDefaultEmojis[3]!, start, end)
+        expect(serializeArkmeComposerDraft(store.get(key)).text).toBe([
+          ...choices.slice(0, start), arkmeDefaultEmojis[3]!, ...choices.slice(end),
+        ].map(item => item.token).join(''))
+      }
+    }
+  })
+
   it('stores rich emoji as an inline object and serializes desktop tokens with shifted mentions', () => {
     const store = new ArkmeComposerDraftStore()
     const key = arkmeSourceComposerDraftKey(1001, { kind: 'group_chat', sourceRef: 'group:8' })
@@ -211,6 +226,21 @@ describe('Arkme composer draft store', () => {
         length: 3,
       }],
     })
+  })
+
+  it('preserves untouched chat mentions and removes their metadata when emoji insertion edits the label', () => {
+    for (const [start, end, intact] of [[0, 0, true], [2, 2, false], [1, 4, false], [4, 4, true]] as const) {
+      const store = new ArkmeComposerDraftStore()
+      const key = arkmeSourceComposerDraftKey(1001, { kind: 'group_chat', sourceRef: 'group:8' })
+      store.setText(key, '前后')
+      store.insertMention(key, 'mention-ref', '小林', 1)
+      const original = store.get(key).text
+      const chosen = arkmeDefaultEmojis[0]!
+      store.insertEmoji(key, chosen, start, end)
+      const sent = serializeArkmeComposerDraft(store.get(key))
+      expect(sent.text).toBe(original.slice(0, start) + chosen.token + original.slice(end))
+      expect(sent.mentions).toEqual(intact ? [{ mentionRef: 'mention-ref', displayName: '小林', startIndex: sent.text.indexOf('@小林'), length: 3 }] : [])
+    }
   })
 
   it('drops mention metadata when the visible mention token is edited', () => {

@@ -739,13 +739,13 @@ describe('conversation member Host API dispatch', () => {
     }, undefined, undefined, undefined, undefined, signal)
     expect(service.readSource).toHaveBeenCalledWith('source-ref', { limit: 40, signal })
   })
-  it('forwards the exact record identity and bounded around window', async () => {
+  it.each([7, '6690025278483443577'])('forwards the exact record identity and bounded around window for %s', async (ownerId) => {
     const service = fakeService()
     await dispatchArkmeHostOperation(service as never, 'source.timeline-around', {
-      sourceRef: 'source-ref', itemUid: 'record-parent', recordOwnerUserId: 7,
+      sourceRef: 'source-ref', itemUid: 'record-parent', recordOwnerUserId: ownerId,
       beforeLimit: 20, afterLimit: 21, chatSessionUid: 'must-not-forward',
     })
-    expect(service.readSourceAround).toHaveBeenCalledWith('source-ref', 'record-parent', 7, {
+    expect(service.readSourceAround).toHaveBeenCalledWith('source-ref', 'record-parent', ownerId, {
       beforeLimit: 20, afterLimit: 21,
     })
   })
@@ -1515,6 +1515,22 @@ describe('outgoing call Host API dispatch', () => {
     })
   })
 
+  it.each(['search.records', 'search.scene'] as const)('rejects invalid scopes and preserves invalid references in %s', async operation => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, operation, { query: '词', scene: 'file', searchScope: 'unknown' })).rejects.toMatchObject({ code: 'search-source-invalid' })
+    await dispatchArkmeHostOperation(service as never, operation, { query: '词', scene: 'file', sourceRef: '' })
+    expect(operation === 'search.records' ? service.searchRemote : service.searchScene).toHaveBeenCalledWith(expect.objectContaining({ sourceRef: '' }))
+  })
+
+  it('forwards conversation search references and cancellation through both search lanes', async () => {
+    const service = fakeService()
+    const controller = new AbortController()
+    await dispatchArkmeHostOperation(service as never, 'search.records', { query: '复盘', sourceRef: 'signed-chat', userId: 999 }, undefined, undefined, undefined, undefined, controller.signal)
+    await dispatchArkmeHostOperation(service as never, 'search.scene', { scene: 'file', sourceRef: 'signed-chat', cursor: 'next', userId: 999 }, undefined, undefined, undefined, undefined, controller.signal)
+    expect(service.searchRemote).toHaveBeenCalledWith({ query: '复盘', limit: 20, sourceRef: 'signed-chat', signal: controller.signal })
+    expect(service.searchScene).toHaveBeenCalledWith({ scene: 'file', limit: 20, cursor: 'next', sourceRef: 'signed-chat', signal: controller.signal })
+  })
+
   it('keeps AI video list and signed asset resolution in built-in Host operations', async () => {
     const service = fakeService()
 
@@ -1526,7 +1542,7 @@ describe('outgoing call Host API dispatch', () => {
     })
 
     expect(service.aiVideoList).toHaveBeenCalledWith({ limit: 20, statuses: ['succeeded'], cursor: 'next-videos' })
-    expect(service.queryFileAssets).toHaveBeenCalledWith(['video-1', 'cover-1'])
+    expect(service.queryFileAssets).toHaveBeenCalledWith(['video-1', 'cover-1'], undefined)
   })
 
   it('dispatches World voiceprint invites without forwarding browser-owned fields', async () => {
@@ -1640,4 +1656,11 @@ describe('plugin update Host API dispatch', () => {
     await expect(dispatchArkmeHostOperation({} as never, 'plugin.update.status', {}))
       .rejects.toMatchObject({ code: 'plugin-update-unavailable' })
   })
+})
+
+it('resolves the self target from the session without accepting a caller account', async () => {
+  const service = { selfTarget: vi.fn() }
+  const signal = new AbortController().signal
+  await dispatchArkmeHostOperation(service as never, 'sources.self-target', { userId: 999 }, undefined, undefined, undefined, undefined, signal)
+  expect(service.selfTarget).toHaveBeenCalledWith(signal)
 })

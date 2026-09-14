@@ -1,4 +1,5 @@
 import { recordingOwnerResponse } from './fixtures/recording-owner.js'
+import { openRecordDeletionRef } from '../src/record-deletion-ref.js'
 import { openRecordTopicAssignmentRef } from '../src/record-topic-assignment-ref.js'
 import { createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -196,6 +197,30 @@ function sourceRefFor(
 }
 
 describe('ArkmeService', () => {
+  it.each(['success', 'unknown', 'account-switch', 'cache-error'])('invalidates MCP member presentation without replacing the %s outcome', async mode => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const clearConversationMembers = vi.fn(async () => { if (mode === 'cache-error') throw new Error('disk unavailable') })
+    const state = Object.assign(new MemoryStateStore(), { clearConversationMembers })
+    const service = new ArkmeService(config, sessions, state)
+    const events: { type: string }[] = []
+    const unsubscribe = service.subscribeChatRealtime(event => events.push(event))
+    const failure = new Error('acknowledgement lost')
+    const result = { items: [{ status: 'succeeded' }, { status: 'rejected' }] }
+    try {
+      const work = service.withGroupMemberInvalidation(['group-a', 'group-a', 'group-b'], async () => {
+        expect(clearConversationMembers).not.toHaveBeenCalled()
+        if (mode === 'account-switch') sessions.session = { userId: 20002, accessToken: 'next', refreshToken: 'next' }
+        if (mode === 'unknown') throw failure
+        return result
+      })
+      if (mode === 'unknown') await expect(work).rejects.toBe(failure)
+      else await expect(work).resolves.toBe(result)
+      expect(clearConversationMembers.mock.calls).toEqual([[10001, 'group-a'], [10001, 'group-b']])
+      expect(events.filter(event => event.type === 'members-invalidated')).toHaveLength(mode === 'account-switch' || mode === 'cache-error' ? 0 : 2)
+    } finally { unsubscribe(); service.dispose() }
+  })
+
   for (const disabled of [false, true]) {
     it(disabled
       ? 'allows a deployment override to disable production Markdown writes'
@@ -618,6 +643,81 @@ describe('ArkmeService', () => {
     expect(original).toBe('文'.repeat(3995) + '[jm_emoji:heart_eyes]')
   })
 
+  it('projects calendar rich content once per page after privacy filtering and preserves text on media failure', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    for (const failMedia of [false, true]) {
+      const batches: unknown[] = []
+      const service = new ArkmeService({ ...config, richMediaRenderEnabled: true }, sessions, new MemoryStateStore(), async (input, init) => {
+        const url = String(input)
+        if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
+        if (url.endsWith('/api/v1/calendar/records/query')) return json({ code: 0, data: {
+          items: [1, 2, 3].map(id => ({ record_uid: `r${id}`, send_at: 100, record_core: {
+            owner_user_id: 10001, content_access_state: id === 3 ? 2 : 1,
+            title: '', text_content: '**正文**' + '文'.repeat(4100), version: 2,
+            content_payload: { text_format: 'markdown', media_refs: [{ file_asset_uid: `a${id}`, content_file_role: 1 }] },
+          } })), has_more: false,
+        } })
+        if (url.endsWith('/api/v1/records/media/batch-list')) {
+          batches.push(JSON.parse(String(init?.body)))
+          if (failMedia) return json({ code: 500, message: 'media unavailable' })
+          return json({ code: 0, data: { items: [1, 2].map(id => ({ record_uid: `r${id}`, items: [{
+            file_asset_uid: `a${id}`, file_kind: id === 1 ? 1 : 3, file_name: `media${id}`, mime_type: id === 1 ? 'image/png' : 'video/mp4',
+            preview_url: `https://media.test/${id}`, download_url: `https://media.test/${id}`,
+          }] })) } })
+        }
+        throw new Error(`unexpected ${url}`)
+      })
+      const page = await service.calendarRecords({ bucketDate: '2026-08-21' })
+      expect(page.items.map(item => item.recordUid)).toEqual(['r1', 'r2'])
+      expect(batches).toEqual([{ record_uids: ['r1', 'r2'] }])
+      expect(page.items[0]?.content).toMatchObject({ itemUid: 'r1', isMe: true, textContent: '**正文**' + '文'.repeat(4100), recordVersion: 2 })
+      expect(page.items[0]?.textContent).toContain('[已截断]')
+      if (failMedia) expect(page.items.every(item => item.content?.mediaUnavailable)).toBe(true)
+      else expect(page.items.map(item => item.content?.contentBlocks?.[0]?.kind)).toEqual(['image', 'video'])
+      expect(JSON.stringify(page)).not.toContain('https://media.test')
+      expect(JSON.stringify(page)).not.toContain('accessToken')
+    }
+  })
+
+  it('hydrates calendar chat sources from record origin once per page, excluding protected rows', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      if (String(input).endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (String(input).endsWith('/api/v1/calendar/records/query')) return json({ code: 0, data: {
+        items: [1, 2, 3].map(id => ({ record_uid: `r${id}`, send_at: 100, record_core: {
+          content_access_state: id === 3 ? 2 : 1, text_content: '消息', origin_kind: 4,
+          origin_container_ref: id === 3 ? 'hidden' : 'chat-1',
+        } })), has_more: false,
+      } })
+      throw new Error(String(input))
+    })
+    const source = Reflect.get(service, 'source')
+    const resolve = vi.spyOn(source, 'chatSourcesBySessionUids').mockResolvedValue(new Map([
+      ['chat-1', { sourceRef: 'safe-ref', kind: 'group_chat', displayName: '项目群', unreadCount: 0, activeAtMillis: 0 }],
+    ]))
+    const hydrate = vi.spyOn(source, 'hydrateDirectoryPage').mockImplementation(async (items: unknown) =>
+      (items as Array<Record<string, unknown>>).map(item => ({ ...item, avatarRefs: ['opaque-avatar'] })))
+    const page = await service.calendarRecords({ bucketDate: '2026-09-14' })
+    expect(resolve).toHaveBeenCalledExactlyOnceWith(['chat-1'], undefined)
+    expect(page.items).toHaveLength(2)
+    expect(page.items[0]).toMatchObject({ sourceKind: 'chat', source: { displayName: '项目群', avatarRefs: ['opaque-avatar'] } })
+    expect(hydrate).toHaveBeenCalledTimes(1)
+    expect(hydrate.mock.calls[0]?.[0]).toHaveLength(1)
+    expect(JSON.stringify(page)).not.toContain('origin_container_ref')
+    resolve.mockRestore()
+    const list = vi.spyOn(source, 'listSources').mockImplementation(async () => {
+      source.setChatSource(10001, 'chat-1', { sourceRef: 'safe-ref', kind: 'group_chat', displayName: '项目群' })
+      source.setChatSource(10001, 'chat-2', { sourceRef: 'safe-ref-2', kind: 'private_chat', displayName: '同事' })
+      return { items: [], hasMore: false }
+    })
+    const targets = await source.chatSourcesBySessionUids(['chat-1', 'chat-2', 'chat-1'])
+    expect(targets.size).toBe(2)
+    expect(list).toHaveBeenCalledTimes(1)
+
+  })
+
   it('reads record calendar buckets and day records from the Record origin', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -657,7 +757,7 @@ describe('ArkmeService', () => {
               has_manual_edit: false,
               has_polish: true,
             },
-            topic_core: { title: '前端重构' },
+            topic_core: { topic_uid: 'topic-1', title: '前端重构' },
           }],
           has_more: true,
           next_cursor_send_at: 1_787_300_000_000,
@@ -682,7 +782,7 @@ describe('ArkmeService', () => {
       cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
     })).resolves.toMatchObject({
       scope: 'self',
-      items: [{ recordUid: 'record-1', title: '会议纪要', textContent: '讨论日历迁移', topicTitle: '前端重构' }],
+      items: [{ recordUid: 'record-1', title: '会议纪要', textContent: '讨论日历迁移', topicTitle: '前端重构', source: { kind: 'topic', displayName: '前端重构' } }],
       nextCursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
     })
     expect(requests.filter(item => !item.url.endsWith('/api/v1/records/privacy/visibility-snapshot'))).toMatchObject([
@@ -1886,13 +1986,22 @@ describe('ArkmeService', () => {
         topic_core: { topic_uid: 'topic-child', title: '周报', update_at: 98 },
         summary: { record_count: 1, latest_send_at: 97 },
       }, {
+        topic_core: { topic_uid: 'topic-grandchild', title: '日报', update_at: 96 },
+        summary: { record_count: 1, latest_send_at: 95 },
+      }, {
         topic_core: { topic_uid: 'topic-empty', title: '空主题', update_at: 999 },
         summary: { record_count: 0 },
       }] } })
-      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [{
-        rel_uid: 'relation-1', parent_topic_uid: 'topic-1', child_topic_uid: 'topic-child',
-        rel_kind: 1, status: 1, sibling_order: 1,
-      }] } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [
+        {
+          rel_uid: 'relation-1', parent_topic_uid: 'topic-1', child_topic_uid: 'topic-child',
+          rel_kind: 1, status: 1, sibling_order: 1,
+        },
+        {
+          rel_uid: 'relation-2', parent_topic_uid: 'topic-child', child_topic_uid: 'topic-grandchild',
+          rel_kind: 1, status: 1, sibling_order: 1,
+        },
+      ] } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) {
         return json({ code: 0, data: { record_count: 7, words_count: 20, total_sec: 0 } })
       }
@@ -1941,8 +2050,17 @@ describe('ArkmeService', () => {
       }] } })
       if (url.endsWith('/api/v1/topics/display/records/page')) return json({ code: 0, data: {
         topic_uid: body.topic_uid, privacy_state: 1,
-        records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
-        has_more: true, next_cursor_send_at: 79, next_cursor_record_uid: 'record-next',
+        records: [{
+          record_uid: `record-${String(body.topic_uid)}`,
+          creator_user_id: 10001,
+          owner_user_id: 10001,
+          nickname: '我',
+          text_content: body.topic_uid === 'topic-grandchild' ? '孙主题内容'
+            : body.topic_uid === 'topic-child' ? '子主题内容' : '主题内容',
+          send_at: body.topic_uid === 'topic-grandchild' ? 95 : body.topic_uid === 'topic-child' ? 90 : 80,
+          status: 1,
+        }],
+        has_more: false,
       } })
       if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
         topic_core: { topic_uid: body.topic_uid, kind: 1, privacy_state: 1, show_in_home: true },
@@ -1954,7 +2072,7 @@ describe('ArkmeService', () => {
     const sources = await service.listSources('send_to_self', { limit: 20 })
     expect(sources.items.map(item => [item.kind, item.displayName, item.recordCount])).toEqual([
       ['send_to_self', '发给自己', undefined], ['default_category', '未分类', 7],
-      ['topic', '工作', 2], ['topic', '周报', 1], ['topic', '空主题', 0],
+      ['topic', '工作', 2], ['topic', '周报', 1], ['topic', '日报', 1], ['topic', '空主题', 0],
     ])
     expect(sources.items[0]).toMatchObject({
       activeAtMillis: 109,
@@ -1967,6 +2085,7 @@ describe('ArkmeService', () => {
     expect(sources.items[2]?.sourceRef).not.toContain('topic-1')
     expect(sources.items[3]?.parentSourceRef).toBe(sources.items[2]?.sourceRef)
     expect(sources.items[3]?.parentSourceRef).not.toContain('topic-1')
+    expect(sources.items[4]?.parentSourceRef).toBe(sources.items[3]?.sourceRef)
     const aggregateRef = sources.items[0]!.sourceRef
     await expect(service.readSource(aggregateRef, {
       cursor: { sendAtMillis: 111, itemUid: 'aggregate-cursor' },
@@ -1990,10 +2109,15 @@ describe('ArkmeService', () => {
     const topicRef = sources.items[2]!.sourceRef
     await expect(service.readSource(topicRef)).resolves.toMatchObject({
       source: { kind: 'topic', displayName: '工作' },
-      items: [{ textContent: '主题内容', isMe: true }],
-      hasMore: true,
-      nextCursor: { sendAtMillis: 79, itemUid: 'record-next' },
+      items: [
+        { itemUid: 'record-topic-grandchild', textContent: '孙主题内容', isMe: true, selfTopic: { title: '日报' } },
+        { itemUid: 'record-topic-child', textContent: '子主题内容', isMe: true, selfTopic: { title: '周报' } },
+        { itemUid: 'record-topic-1', textContent: '主题内容', isMe: true, selfTopic: { title: '工作' } },
+      ],
+      hasMore: false,
     })
+    expect(new Set(calls.filter(call => call.url.endsWith('/api/v1/topics/display/records/page')).map(call => call.body.topic_uid)))
+      .toEqual(new Set(['topic-1', 'topic-child', 'topic-grandchild']))
     await expect(service.sendSourceText(topicRef, '写进主题', {
       recordUid: 'record-create-1',
       recordDurationMillis: 4_200,
@@ -2010,7 +2134,72 @@ describe('ArkmeService', () => {
       },
     })
     await service.listSources('send_to_self')
-    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/display/list'))).toHaveLength(2)
+    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/display/list'))).toHaveLength(3)
+  })
+
+  it('paginates a parent topic and its descendants as one chronological timeline', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const recordsByTopic = new Map([
+      ['parent', [
+        { record_uid: 'parent-100', owner_user_id: 10001, creator_user_id: 10001, text_content: 'P100', send_at: 100, status: 1 },
+        { record_uid: 'parent-80', owner_user_id: 10001, creator_user_id: 10001, text_content: 'P80', send_at: 80, status: 1 },
+      ]],
+      ['child', [
+        { record_uid: 'child-90', owner_user_id: 10001, creator_user_id: 10001, text_content: 'C90', send_at: 90, status: 1 },
+        { record_uid: 'child-70', owner_user_id: 10001, creator_user_id: 10001, text_content: 'C70', send_at: 70, status: 1 },
+      ]],
+    ])
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
+      if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [
+        { topic_core: { topic_uid: 'parent', title: '父主题', status: 1, privacy_state: 1 }, summary: { record_count: 2 } },
+        { topic_core: { topic_uid: 'child', title: '子主题', status: 1, privacy_state: 1 }, summary: { record_count: 2 } },
+      ], has_more: false } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [{
+        rel_kind: 1, status: 1, parent_topic_uid: 'parent', child_topic_uid: 'child', sibling_order: 1,
+      }] } })
+      if (url.endsWith('/api/v1/records/uncategorized/summary')) {
+        return json({ code: 0, data: { record_count: 0, words_count: 0, total_sec: 0 } })
+      }
+      if (url.endsWith('/api/v1/records/uncategorized/query')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
+      if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
+        topic_core: { topic_uid: body.topic_uid, kind: 1, privacy_state: 1, show_in_home: true },
+      } })
+      if (url.endsWith('/api/v1/topics/display/records/page')) {
+        const cursor = typeof body.cursor_send_at === 'number' ? body.cursor_send_at : Number.POSITIVE_INFINITY
+        const records = (recordsByTopic.get(String(body.topic_uid)) ?? []).filter(record => record.send_at < cursor)
+        return json({ code: 0, data: {
+          topic_uid: body.topic_uid,
+          privacy_state: 1,
+          records: records.slice(0, Number(body.limit)),
+          has_more: records.length > Number(body.limit),
+          ...(records.length > Number(body.limit) ? {
+            next_cursor_send_at: records[Number(body.limit) - 1]!.send_at,
+            next_cursor_record_uid: records[Number(body.limit) - 1]!.record_uid,
+          } : {}),
+        } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const parent = (await service.listSources('send_to_self', { limit: 100 })).items
+      .find(item => item.kind === 'topic' && item.displayName === '父主题')!
+    const first = await service.readSource(parent.sourceRef, { limit: 2 })
+    expect(first.items.map(item => [item.itemUid, item.selfTopic?.title])).toEqual([
+      ['parent-100', '父主题'], ['child-90', '子主题'],
+    ])
+    expect(first).toMatchObject({ hasMore: true, nextCursor: { sendAtMillis: 90, itemUid: 'child-90' } })
+    const second = await service.readSource(parent.sourceRef, { limit: 2, cursor: first.nextCursor })
+    expect(second.items.map(item => [item.itemUid, item.selfTopic?.title])).toEqual([
+      ['parent-80', '父主题'], ['child-70', '子主题'],
+    ])
+    expect(second.hasMore).toBe(false)
   })
 
   it.each([0, 2])('does not grant membership capability to a synced Record with non-active status %s', async status => {
@@ -2089,12 +2278,13 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 1 } })
       if (url.endsWith('/api/v1/records/uncategorized/query')) return json({ code: 0, data: { items: [], has_more: false } })
       if (url.endsWith('/api/v1/home/feed/query')) return json({ code: 0, data: { items: [
-        { record_uid: 'unclassified', source_kind: 1, record_core: { record_uid: 'unclassified', text_content: '正文', owner_user_id: 10001, status: 1 } },
+        { record_uid: 'unclassified', source_kind: 1, record_core: { record_uid: 'unclassified', text_content: '正文', owner_user_id: 10001, status: 1, version: 3 } },
         { record_uid: 'in-topic', source_kind: 2, source_uid: 'old-topic', topic_core: { topic_uid: 'work-topic', title: '展示主题' },
           record_core: { record_uid: 'in-topic', text_content: '正文2', owner_user_id: 10001, status: 1 } },
         { record_uid: 'foreign', source_kind: 1, record_core: { record_uid: 'foreign', text_content: '他人记录', owner_user_id: 999, status: 1 } },
         { record_uid: 'unknown', source_kind: 99, topic_core: { topic_uid: 'unrelated-topic' }, record_core: { record_uid: 'unknown', text_content: '未知来源', owner_user_id: 10001, status: 1 } },
       ], has_more: false } })
+      if (url.endsWith('/api/v1/records/delete')) return json({ code: 0, data: { record_core: { record_uid: 'unclassified', owner_user_id: 10001, status: 2, version: 4 } } })
       if (url.endsWith('/api/v1/topics/records/move-batch')) return json({ code: 0, data: {
         moved_count: body.items.length, projection_refresh_pending: true,
         items: body.items.map((item: { record_uid: string; source_topic_uid?: string }) => ({
@@ -2144,6 +2334,13 @@ describe('ArkmeService', () => {
     expect(topicPage.items.find(item => item.itemUid === 'owned-other-creator')?.recordTopicAssignmentRef).toEqual(expect.any(String))
     expect(topicPage.items.find(item => item.itemUid === 'foreign-self-creator')?.recordTopicAssignmentRef).toBeUndefined()
     expect(topicPage.items.find(item => item.itemUid === 'pending-record')?.recordTopicAssignmentRef).toBeUndefined()
+    const deletable = page.items.find(item => item.itemUid === 'unclassified')!
+    expect(openRecordDeletionRef(deletable.recordDeletionRef!, 'dsh-device-1')).toMatchObject({ recordUid: 'unclassified', recordVersion: 3, userId: 10001 })
+    expect(page.items.find(item => item.itemUid === 'foreign')?.recordDeletionRef).toBeUndefined()
+    expect(page.items.find(item => item.itemUid === 'in-topic')?.recordDeletionRef).toBeUndefined() // missing Record version
+    expect(topicPage.items.find(item => item.itemUid === 'foreign-self-creator')?.recordDeletionRef).toBeUndefined()
+    await expect(service.deleteSourceRecords(self.sourceRef, [deletable.recordDeletionRef!])).resolves.toMatchObject({ items: [{recordUid: 'unclassified', version: 4, result: 'deleted'}] })
+    expect(calls.filter(call => call.url.endsWith('/api/v1/records/delete')).map(call => call.body)).toEqual([{ record_uid: 'unclassified', version: 3 }])
     const abort = new AbortController()
     abort.abort()
     await expect(service.createTopic('已取消', undefined, { contextSourceRef: self.sourceRef, signal: abort.signal })).rejects.toThrow()
@@ -3246,7 +3443,8 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/chats/members/records/page')) return json({ code: 200, data: {
         items: [{
           relation: {
-            record_uid: 'member-record-1', rel_uid: 'member-relation-1', sender_user_id: 2001,
+            record_uid: 'member-record-1', rel_uid: 'member-relation-1', sender_user_id: body.mode === 'mentioned' ? 9001 : 2001,
+            ...(body.mode === 'mentioned' ? { sender_actor_kind: 2, sender_bot_uid: 'mention-bot' } : {}),
             display_name_snapshot: '小林', attach_at: 1700000000200, seq: 8,
           },
           record: { status: 1, payload: { record_uid: 'member-record-1', text_content: '成员快记' } },
@@ -3254,6 +3452,10 @@ describe('ArkmeService', () => {
         has_more: true,
         next_before_seq: 8,
       } })
+      if (url.endsWith('/api/v1/chats/display-snapshots')) return json({ code: 200, data: { items: [{
+        session: { chat_session_uid: 'group-mention' },
+        bot_participants: [{ chat_session_uid: 'group-mention', bot_uid: 'mention-bot', display_name_snapshot: '群助手', extra: { avatar_url: 'https://images.test/mention-bot.png' } }],
+      }] } })
       if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
         record_uid: body.record_uid, rel_uid: body.rel_uid, seq: 18, audit_status: 1,
       } })
@@ -3357,7 +3559,7 @@ describe('ArkmeService', () => {
       .resolves.toMatchObject({
         member: { memberRef, displayName: '我的私有备注' },
         mode: 'mentioned',
-        items: [{ itemUid: 'member-record-1', memberRef, textContent: '成员快记' }],
+        items: [{ itemUid: 'member-record-1', senderName: '群助手', isMe: false, textContent: '成员快记' }],
         hasMore: true,
         nextCursor: { beforeSequence: 8 },
       })
@@ -4023,6 +4225,7 @@ describe('ArkmeService', () => {
       private_counterpart: { user_id: 20002, display_name_snapshot: '联系人' },
       unread_snapshot: { unread_count: 1, session_last_seq: 1 },
     }, session, sourceCache.cachedChatSource(10001, 'private-1'), [])).resolves.toMatchObject({
+      peerUserId: 20002,
       avatarRef: cachedPrivate?.avatarRef,
     })
     await expect(sourceCache.chatSourceFromBundle({
@@ -6231,5 +6434,62 @@ describe('ArkmeService', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+
+describe('chat deletion capabilities from hydrated Record payloads', () => {
+  it.each(['private_chat', 'group_chat'] as const)('preserves authoritative deletion facts across %s projections', async kind => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const variants = [
+      { uid: 'own', allowed: true },
+      { uid: 'other-sender', sender: 20002 },
+      { uid: 'other-owner', owner: 20002 },
+      { uid: 'deleted', status: 2 },
+      { uid: 'missing-status', status: undefined },
+      { uid: 'missing-version', version: undefined },
+      { uid: 'invalid-version', version: 1.5 },
+      { uid: 'missing', hydration: 2 },
+      { uid: 'unavailable', hydration: 3 },
+      { uid: 'protected', hydration: 4 },
+    ]
+    const items = variants.map(v => ({
+      relation: { rel_uid: v.uid, record_uid: v.uid, record_owner_user_id: v.owner ?? 10001,
+        sender_user_id: v.sender ?? 10001, seq: 10, attach_at: 100 },
+      record: { status: v.hydration ?? 1, payload: { record_uid: v.uid, owner_user_id: v.owner ?? 10001,
+        status: 'status' in v ? v.status : 1, version: 'version' in v ? v.version : 7, text_content: v.uid } },
+    }))
+    const deleteBodies: unknown[] = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      if (['/timeline/page', '/timeline/tail', '/timeline/around'].some(path => url.endsWith(path))) {
+        return json({ code: 200, data: { items, has_more: false } })
+      }
+      if (url.endsWith('/api/v1/records/delete')) {
+        deleteBodies.push(JSON.parse(String(init?.body)))
+        return json({ code: 0, data: {
+          record_core: { record_uid: 'own', owner_user_id: 10001, status: 2, version: 8 },
+        } })
+      }
+      return json({ code: 200, data: { items: [] } })
+    })
+    const sourceRef = sourceRefFor(kind, 'chat-delete', 'Delete test')
+    const page = await service.readSource(sourceRef, { limit: 30 })
+    const tail = await service.readSource(sourceRef, { limit: 30, cursor: { afterSequence: 1 } })
+    const around = await service.readSourceAround(sourceRef, 'own', 10001, { beforeLimit: 15, afterLimit: 15 })
+    const realtime = await (service as unknown as { chat: import('../src/services/chat-service.js').ChatService })
+      .chat.chatTimelineItems({ items }, sessions.session, 'chat-delete', kind)
+    for (const projected of [page.items, tail.items, around.items, realtime]) {
+      const own = projected.find(item => item.itemUid === 'own')!
+      expect(own?.recordDeletionRef).toBeDefined()
+      expect(openRecordDeletionRef(own.recordDeletionRef!, 'dsh-device-1')).toMatchObject({
+        recordUid: 'own', recordVersion: 7, userId: 10001, sourceKind: kind, sourceOwnerRef: 'chat-delete',
+      })
+      expect(projected.filter(item => item.recordDeletionRef).map(item => item.itemUid)).toEqual(['own'])
+    }
+    await expect(service.deleteSourceRecords(sourceRef, [page.items.find(item => item.itemUid === 'own')!.recordDeletionRef!]))
+      .resolves.toMatchObject({ items: [{ recordUid: 'own', result: 'deleted', version: 8 }] })
+    expect(deleteBodies).toEqual([{ record_uid: 'own', version: 7 }])
   })
 })

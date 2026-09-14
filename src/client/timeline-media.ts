@@ -10,8 +10,15 @@ export function retainPartialTimelineMedia(previous: ArkmeTimelineItem | undefin
   const assets = new Map(current.filter(block => block.fileAssetUid).map(block => [block.fileAssetUid, block]))
   const retained = (previous.contentBlocks ?? []).flatMap(block => {
     if (!block.fileAssetUid) return current.length === 0 ? [block] : []
-    const replacement = assets.get(block.fileAssetUid)
+    let replacement = assets.get(block.fileAssetUid)
     assets.delete(block.fileAssetUid)
+    if (replacement?.kind === 'image' && replacement.dynamicPhoto !== undefined
+      && replacement.dynamicPhoto.logicalUid === block.dynamicPhoto?.logicalUid
+      && replacement.dynamicPhoto.motion === undefined && block.dynamicPhoto?.motion !== undefined
+      && replacement.dynamicPhoto.motionFileAssetUid !== undefined
+      && replacement.dynamicPhoto.motionFileAssetUid === block.dynamicPhoto.motion.fileAssetUid) {
+      replacement = { ...replacement, dynamicPhoto: { ...replacement.dynamicPhoto, motion: block.dynamicPhoto.motion } }
+    }
     return [replacement ?? block]
   })
   return { ...incoming, contentBlocks: [...retained, ...current.filter(block => !block.fileAssetUid || assets.has(block.fileAssetUid))]

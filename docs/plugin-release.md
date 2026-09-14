@@ -12,7 +12,7 @@ npm 接受发布请求后仍可能异步处理版本。工作流以 15 分钟为
 
 每次普通 PR 发版时，会查询当前 master 版本对应的 `release/v<版本号>` PR 是否已合并。已经合并表示该版本已分配，即使 npm latest 仍落后，新一轮发版也会递增 patch，避免复用可能已经上线的 Runtime 版本。未分配的显式版本递增仍保持原版本；重跑同一次发版时，先复用已有 `release_sha`，并从该提交读取原版本，不重复分配。
 
-npm 失败时，Runtime 可以先完成上线，对应的 Git Tag 和 GitHub Release 可能暂未创建。可重跑 npm 所在工作流的失败 job，继续发布同一提交的 npm 包。两条链路的结果分别查看 npm Action 与生产 Runtime Action；派发成功仅表示事件已发出。
+npm 失败时，Runtime 可以先完成上线，对应的 Git Tag 和 GitHub Release 可能暂未创建。可重跑 npm 所在工作流的失败 job，继续发布同一提交的 npm 包。若版本已经可读且 integrity 一致，则跳过重复发布；若发布返回版本已暂存（staged 409）或已发布的冲突，则继续进入上述回读校验。发布命令最多等待 180 秒，命令超时或网络超时/连接重置同样转入回读，避免服务端已经接受请求、客户端却认为失败。权限、认证及其他错误仍立即失败；冲突或超时本身不算发布成功，必须通过 integrity 与 provenance 校验才能继续后续流程。若 npm 一直没有对外提供该版本，回读仍会超时报错。两条链路的结果分别查看 npm Action 与生产 Runtime Action；派发成功仅表示事件已发出。
 
 `pre-release` 分支的每次 push 会走同一套 Runtime 发布链路，但不会发布 npm。测试版本由稳定基准版本的下一补丁与 GitHub run number 组成，例如 `0.1.34` 在 run `128` 中生成 `0.1.35-pre.128`；版本修改只存在于 Action 临时工作区。
 
@@ -55,6 +55,8 @@ Trusted Publisher 配置完成后，GitHub Actions 通过短期身份凭据发�
 - `ARKME_CI_TRIGGER_SECRET`：对应环境 Backend 的 CI Bearer Secret。
 
 OSS bucket、直传 endpoint、CDN origin 与对象前缀只配置在对应 Backend 中，不进入 GitHub Secrets。测试环境使用 `/app/arkme/test/plugin/`，生产环境使用 `/app/arkme/prod/plugin/`；Backend 会去掉首尾斜杠后生成 OSS Object Key。production 与 pre-release Runtime workflow 都使用全局串行 concurrency，且不会取消正在运行的发布。
+
+Runtime 发布默认不设置兼容范围，Backend 会从当前环境中最高已发布的 Arkme 插件版本继承并持久化范围。需要为首个版本或明确的兼容调整指定范围时，在发布环境设置 `ARKME_HARNESS_VERSION_CODE_RANGE`，值为 JSON，例如 `{"min":1,"max":42}`。发布脚本会在激活前校验 Backend 返回并持久化的范围，并在日志中输出该范围和继承来源。
 
 `pre-release` 分支必须通过 GitHub Ruleset 禁止直接 push，要求 PR 和 CODEOWNERS 审批；`pre-release` Environment 也必须限制为该受保护分支。工作流会在无 Secret 的 job 中构建触发提交，再由持密 job 从受保护的 `master` 检出发布工具和锁定依赖，下载并重新校验制品后发布。
 

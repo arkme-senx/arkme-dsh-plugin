@@ -1,6 +1,8 @@
-import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 
-export const inject = ['sessions']
+import { HARNESS_SESSION_NAVIGATION_KEY, type HarnessSessionWindow } from '../harness-embed-contract.js'
+
+export const inject = ['sessions', 'remote', 'remote.session']
 const REFRESH_MS = 10_000
 
 /** The iframe reads selection through the public DSH store; Arkme owns visibility. */
@@ -9,9 +11,37 @@ export function apply(ctx: ClientContext): void {
     const surface = window.frameElement?.parentElement
     if (surface?.getAttribute('data-arkme-owned') !== 'deepseek-harness-surface') return () => undefined
     const apiPath = document.querySelector<HTMLMetaElement>('meta[name="arkme-session-api"]')?.content
-    if (apiPath === undefined || !/^\/[A-Za-z0-9/_-]+$/.test(apiPath)) return () => undefined
     const sessions = (ctx as unknown as { sessions?: ISessions }).sessions
     if (sessions === undefined) return () => undefined
+    const frameWindow = window as HarnessSessionWindow
+    const navigation = { async has(sessionId: string) {
+      if (!/^[A-Za-z0-9_.:-]{1,256}$/.test(sessionId)) throw new Error('DSH 对话标识无效')
+      const remote = (ctx as unknown as { remote?: { session?: { list?: (request: object) => Promise<{
+        ok: boolean; value?: { items: Array<{ sessionId: string }> }; error?: { message?: string }
+      }> } } }).remote?.session
+      if (typeof remote?.list !== 'function') throw new Error('当前 DSH 版本无法核验本机会话')
+      // refresh() can resolve after a failed pull; only the Remote result proves absence.
+      const result = await remote.list({})
+      if (!result.ok) throw new Error(result.error?.message || '本机会话列表读取失败，请稍后重试')
+      if (!Array.isArray(result.value?.items)) throw new Error('本机会话列表响应不完整')
+      if (!result.value.items.some(item => item.sessionId === sessionId)) return false
+      const refreshable = sessions as ISessions & { refresh?: () => Promise<void> }
+      if (sessions.list.getSnapshot().byId[sessionId as SessionId] === undefined) {
+        if (typeof refreshable.refresh !== 'function') throw new Error('本机会话列表尚未就绪，请稍后重试')
+        await refreshable.refresh()
+      }
+      if (sessions.list.getSnapshot().byId[sessionId as SessionId] === undefined) throw new Error('本机会话列表尚未就绪，请稍后重试')
+      return true
+    }, open(sessionId: string) {
+      if (typeof sessionId !== 'string' || sessionId.trim() === '') throw new Error('DSH 对话标识无效')
+      if (typeof sessions.open !== 'function') throw new Error('当前 DSH 版本暂不支持打开任务')
+      sessions.open(sessionId as SessionId)
+    } }
+    frameWindow[HARNESS_SESSION_NAVIGATION_KEY] = navigation
+    const disposeNavigation = () => {
+      if (frameWindow[HARNESS_SESSION_NAVIGATION_KEY] === navigation) delete frameWindow[HARNESS_SESSION_NAVIGATION_KEY]
+    }
+    if (apiPath === undefined || !/^\/[A-Za-z0-9/_-]+$/.test(apiPath)) return disposeNavigation
     const windowRef = crypto.randomUUID()
     let revision = 0
     let stopped = false
@@ -81,6 +111,7 @@ export function apply(ctx: ClientContext): void {
     window.addEventListener('pageshow', changed)
     void report()
     return () => {
+      disposeNavigation()
       stopped = true
       clearSelection()
       observer.disconnect()

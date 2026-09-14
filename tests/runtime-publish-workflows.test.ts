@@ -8,6 +8,12 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const workflow = (name: string) => readFile(path.join(repositoryRoot, '.github', 'workflows', name), 'utf8')
 
 describe('Arkme runtime publish workflow boundaries', () => {
+  it.each(['publish-pre-release-runtime.yml', 'publish-production-runtime.yml'])('passes the optional persisted range from the publishing Environment in %s', async file => {
+    const definition = parse(await workflow(file))
+    const steps = Object.values(definition.jobs).flatMap((job: any) => job.steps)
+    const publish = steps.find((step: any) => step.run === 'node scripts/publish-runtime-artifact.mjs')
+    expect(publish?.env.ARKME_HARNESS_VERSION_CODE_RANGE).toBe('${{ vars.ARKME_HARNESS_VERSION_CODE_RANGE }}')
+  })
   it.each([
     ['publish-plugin-release.yml', 'prepare'],
     ['publish-plugin-release.yml', 'publish'],

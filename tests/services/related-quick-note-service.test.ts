@@ -86,6 +86,18 @@ function fixture(options: {
 }
 
 describe('RelatedQuickNoteService', () => {
+  it('keeps a synthetic record owner distinct from a human profile identity', async () => {
+    const owner = '6690025278483443577'
+    const test = fixture({
+      relatedResponse: { items: [{ record_uid: 'record-b', record_owner_user_id: owner, author_name: 'Bot 名称', text_preview: '正文' }] },
+      detail: { record_uid: 'record-b', record_owner_user_id: 0, record_core: { record_uid: 'record-b', owner_user_id: owner } },
+    })
+    const page = await test.service.list(locator)
+    expect(page.items).toHaveLength(1)
+    expect(test.profile.publicProfileSummariesByUserIds).toHaveBeenCalledWith([], expect.anything(), undefined)
+    await expect(test.service.detail(locator.sourceRef, page.items[0]!.relatedRef)).resolves.toMatchObject({ senderName: 'Bot 名称', isMe: false })
+  })
+
   it('keeps preview and title limits without splitting emoji tokens', async () => {
     const test = fixture({ relatedResponse: { items: [{
       record_uid: 'record-b', record_owner_user_id: 13,
@@ -309,6 +321,7 @@ describe('RelatedQuickNoteService', () => {
         record_core: { record_uid: 'record-b', owner_user_id: 99, text_content: '越权内容' },
       },
     },
+    { name: 'synthetic owner', detail: { record_uid: 'record-b', record_owner_user_id: 13, record_core: { record_uid: 'record-b', owner_user_id: '6690025278483443577' } } },
   ])('rejects conflicting root and record_core $name identities', async ({ detail }) => {
     const test = fixture({
       relatedResponse: {

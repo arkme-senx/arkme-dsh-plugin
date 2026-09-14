@@ -117,6 +117,8 @@ function fakeService(): ArkmeCoreToolPorts & {
       refreshedAtMillis: 1,
       items: [{
         recordUid: 'calendar-record-1',
+        source: { sourceRef: 'safe', kind: 'group_chat', displayName: '项目群' },
+        content: { itemUid: 'calendar-record-1', senderName: '我', isMe: true, status: 1, sendAtMillis: 1, title: '', textContent: '**正文**', textFormat: 'markdown', contentBlocks: [{ kind: 'image', mediaRef: 'opaque-calendar-media', sortOrder: 0 }] },
         sendAtMillis: 1_787_310_000_000,
         accessState: 'available' as const,
         title: '日历记录',
@@ -493,6 +495,7 @@ describe('Arkme conversation tools', () => {
       timezone: 'Asia/Shanghai',
     }, { signal } as never) as string
 
+    expect(records).toContain('项目群')
     expect(service.calendarBuckets).toHaveBeenCalledWith({
       startDate: '2026-08-01',
       endDate: '2026-08-31',
@@ -511,6 +514,8 @@ describe('Arkme conversation tools', () => {
     expect(days).toContain('"count": 41')
     expect(records).toContain('这个测试服你能配置不')
     expect(records).toContain('"record_uid": "calendar-record-1"')
+    expect(records).toContain('opaque-calendar-media')
+    expect(records).toContain('**正文**')
   })
 
   it('lists authorized image references without exposing storage URLs', async () => {
@@ -740,7 +745,7 @@ describe('Arkme conversation tools', () => {
     }
 
     registerArkmeTools(ctx as never, service as never)
-    expect(ctx.on).not.toHaveBeenCalled()
+    expect(ctx.on).toHaveBeenCalledWith('tools/execute', expect.any(Function))
 
     const events = sessionEvents([
       { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '把即我号改成 Chosen_01' }] } },

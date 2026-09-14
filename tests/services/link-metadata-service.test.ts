@@ -28,6 +28,23 @@ function documentReader(documents: Record<string, {
 }
 
 describe('ArkmeLinkMetadataService', () => {
+  it('preserves a long signed image URL instead of treating it as title text', async () => {
+    const image = `https://cdn.example.com/cover.png?signature=${'a'.repeat(350)}&expires=123`
+    const service = new ArkmeLinkMetadataService(documentReader({
+      'https://example.com/article': { body: `<title>Article</title><meta property="og:image" content="${image.replace('&', '&amp;')}">` },
+    }))
+    expect((await service.resolve('https://example.com/article'))?.imageUrl).toBe(image)
+  })
+
+  it.each(['/cover.png', 'http://example.com/cover.png', 'https://127.0.0.1/cover.png', 'data:image/png;base64,a'])('validates optional preview image %s without discarding title', async candidate => {
+    const service = new ArkmeLinkMetadataService(documentReader({
+      'https://example.com/article': { body: `<title>Article</title><meta property="og:image" content="${candidate}">` },
+    }))
+    const result = await service.resolve('https://example.com/article')
+    expect(result?.title).toBe('Article')
+    expect(result?.imageUrl).toBe(candidate === '/cover.png' ? 'https://example.com/cover.png' : undefined)
+  })
+
   it('uses OpenGraph title before the document title and decodes HTML entities', async () => {
     const reader = documentReader({
       'https://example.com/article': {

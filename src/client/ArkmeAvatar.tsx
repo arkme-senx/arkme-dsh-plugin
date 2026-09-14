@@ -1,3 +1,4 @@
+import { ArkmeBotAvatarFallback } from './ArkmeBotIdentity.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type {
   ArkmeGroupAvatarFallback,
@@ -95,12 +96,14 @@ export function ArkmeUserAvatar({
   fallback,
   size = 44,
   label = '用户头像',
+  senderKind,
 }: {
   lazy?: boolean
   avatarRef?: string
   fallback?: ArkmeGroupAvatarFallback
   size?: number
   label?: string
+  senderKind?: 'human' | 'bot' | undefined
 }) {
   const normalizedRef = avatarRef?.trim() ?? ''
   const container = useRef<HTMLSpanElement>(null)
@@ -112,7 +115,7 @@ export function ArkmeUserAvatar({
       ? <img src={imageUrl} alt="" draggable={false} style={styles.image} />
       : fallback?.kind === 'phone_default'
         ? <PhoneDefaultAvatar fallback={fallback} size={size} />
-        : <DefaultUserAvatar size={size} />}
+        : senderKind === 'bot' ? <ArkmeBotAvatarFallback size={size} /> : <DefaultUserAvatar size={size} />}
   </span>
 }
 

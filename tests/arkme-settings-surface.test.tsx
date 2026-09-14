@@ -126,7 +126,7 @@ describe('ArkmeSettingsSurface', () => {
     const appMarkup = renderToStaticMarkup(<VersionSettingsRow
       title="ArkME 客户端"
       version="v0.1.0"
-      actionLabel="检查更新"
+      actionLabel="打开 APP 更新"
       onAction={() => {}}
     />)
     const harnessMarkup = renderToStaticMarkup(<VersionSettingsRow
@@ -138,24 +138,6 @@ describe('ArkmeSettingsSurface', () => {
     expect(harnessMarkup).toContain('arkme-redesign-version-row is-without-action')
     expect(harnessMarkup).toContain('<span class="arkme-redesign-version-value">v0.1.0-rc.8</span><span class="arkme-redesign-trailing-slot" aria-hidden="true"></span>')
     expect(harnessMarkup).not.toContain('arkme-redesign-version-action-slot')
-  })
-
-  it('shows an accessible spinner while a version check is running', () => {
-    const markup = renderToStaticMarkup(<VersionSettingsRow
-      title="ArkME 客户端"
-      version="v0.1.0"
-      feedback="正在检查更新…"
-      actionLabel="检查中…"
-      loading
-      disabled
-      onAction={() => {}}
-    />)
-
-    expect(markup).toContain('aria-busy="true"')
-    expect(markup).toContain('aria-label="正在检查 ArkME 客户端更新"')
-    expect(markup).toContain('class="arkme-icon-spin"')
-    expect(markup).toContain('disabled=""')
-    expect(markup).toContain('>检查中…</button>')
   })
 
   it('uses the desktop-injected APP version when the update bridge has no status yet', () => {
@@ -170,8 +152,18 @@ describe('ArkmeSettingsSurface', () => {
       configurable: true,
       value: { appVersion: '0.1.0', harnessVersion: '0.1.0-rc.8' },
     })
-    const markup = renderToStaticMarkup(<ArkmeSettingsSurface />)
+    const accountMarkup = renderToStaticMarkup(<ArkmeSettingsSurface />)
+    const generalMarkup = renderToStaticMarkup(<ArkmeSettingsSurface view="general" />)
+    const aboutMarkup = renderToStaticMarkup(<ArkmeSettingsSurface view="about" />)
+    const markup = accountMarkup + generalMarkup + aboutMarkup
     Reflect.deleteProperty(globalThis, 'arkmeDesktop')
+
+    expect(accountMarkup).not.toContain('>通知<')
+    expect(accountMarkup).not.toContain('>更新<')
+    expect(generalMarkup).toContain('>通知<')
+    expect(generalMarkup).not.toContain('>账户<')
+    expect(aboutMarkup).toContain('class="arkme-about-heading">关于')
+    expect(aboutMarkup).not.toContain('>通知<')
 
     expect(markup).toContain('aria-label="Arkme 设置"')
     expect(markup).toContain('>账户<')
@@ -185,7 +177,7 @@ describe('ArkmeSettingsSurface', () => {
     expect(markup).toContain('>ArkME 插件<')
     expect(markup).toContain('>DeepSeek Harness<')
     expect(markup).toMatch(/ArkME 插件[\s\S]*DeepSeek Harness/)
-    expect(markup).toContain('aria-label="检查 ArkME 客户端更新"')
+    expect(markup).toContain('aria-label="打开 APP 更新：ArkME 客户端"')
     expect(markup).toContain('<span class="arkme-redesign-version-value">v0.1.0</span>')
     expect(markup).toContain(`<span class="arkme-redesign-version-value">v${pluginManifest.version}</span>`)
     expect(markup).toContain('<span class="arkme-redesign-version-value">v0.1.0-rc.8</span>')
@@ -216,14 +208,17 @@ describe('ArkmeSettingsSurface', () => {
     try {
       arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 })
       const authenticated = renderToStaticMarkup(<ArkmeSettingsSurface />)
-      expect(authenticated).toMatch(/AI 余额[\s\S]*正在加载余额…[\s\S]*充值/)
+      expect(authenticated).toMatch(/账户余额[\s\S]*正在加载余额…[\s\S]*充值/)
       expect(authenticated).toContain('>退出登录<')
-      expect(authenticated).toContain('>文字背景音<')
-      expect(authenticated).toContain('aria-label="文字背景音"')
-      expect(authenticated).toContain('aria-checked="false"')
-      expect(authenticated).toContain('>账户操作<')
-      expect(authenticated.indexOf('>隐私条款<')).toBeLessThan(authenticated.indexOf('>账户操作<'))
-      expect(authenticated.indexOf('>账户操作<')).toBeLessThan(authenticated.indexOf('>退出登录<'))
+      expect(authenticated).not.toContain('>文字背景音<')
+      expect(authenticated).not.toContain('>账户操作<')
+      expect(authenticated).not.toContain('开放平台 MCP')
+      expect(authenticated).not.toContain('AI 余额')
+      expect(authenticated.indexOf('>账户余额<')).toBeLessThan(authenticated.indexOf('>退出登录<'))
+      const general = renderToStaticMarkup(<ArkmeSettingsSurface view="general" />)
+      expect(general).toContain('aria-label="文字背景音"')
+      expect(general).toContain('aria-checked="false"')
+      expect(general).not.toContain('>退出登录<')
     } finally {
       arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' })
     }

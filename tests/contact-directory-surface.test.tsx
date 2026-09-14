@@ -291,7 +291,7 @@ describe('ContactDirectorySurface content', () => {
     }
   })
 
-  it('routes group, Bot, contact, Team and unmarked-speaker rows to their distinct callbacks', () => {
+  it('selects every directory row without opening a conversation', () => {
     const onOpenGroup = vi.fn()
     const onOpenBot = vi.fn()
     const onSelect = vi.fn()
@@ -309,11 +309,13 @@ describe('ContactDirectorySurface content', () => {
       row.props.onClick?.()
     }
 
-    expect(onOpenGroup).toHaveBeenCalledWith('group-ref')
-    expect(onOpenBot).toHaveBeenCalledWith(botSummary)
-    expect(onSelect).toHaveBeenNthCalledWith(1, { kind: 'contact', contactRef: 'alice' })
-    expect(onSelect).toHaveBeenNthCalledWith(2, { kind: 'team', teamRef: `team_v1_${'a'.repeat(32)}` })
-    expect(onSelect).toHaveBeenNthCalledWith(3, { kind: 'unmarked-speaker', candidateRef: 'candidate-ref' })
+    expect(onOpenGroup).not.toHaveBeenCalled()
+    expect(onSelect).toHaveBeenNthCalledWith(1, items.groups[0])
+    expect(onOpenBot).not.toHaveBeenCalled()
+    expect(onSelect).toHaveBeenNthCalledWith(2, items.bots[0])
+    expect(onSelect).toHaveBeenNthCalledWith(3, { kind: 'contact', contactRef: 'alice' })
+    expect(onSelect).toHaveBeenNthCalledWith(4, { kind: 'team', teamRef: `team_v1_${'a'.repeat(32)}` })
+    expect(onSelect).toHaveBeenNthCalledWith(5, { kind: 'unmarked-speaker', candidateRef: 'candidate-ref' })
   })
 
   it('renders Team rows as selectable buttons using only the opaque Team reference', () => {

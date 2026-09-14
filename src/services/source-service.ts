@@ -1,3 +1,5 @@
+import { SharedReadGroup } from '../shared-read-group.js'
+import { arkmePeerMemberType } from '../peer-membership.js'
 import { patchChatPolicy, type ChatPolicySnapshot } from './chat-policy.js'
 import { readTopicRecordPage } from './topic-record-page.js'
 import { readTopicMetadata } from './topic-metadata.js'
@@ -369,7 +371,7 @@ function cloneSourceList(value: ArkmeSourceList): ArkmeSourceList {
 export class SourceService {
   private readonly chatSourceCache = new Map<string, ArkmeSourceItem>()
   private readonly sourceListCache = new Map<string, CacheEntry<ArkmeSourceList>>()
-  private readonly sourceListInFlight = new Map<string, Promise<ArkmeSourceList>>()
+  private readonly sourceListInFlight = new SharedReadGroup<ArkmeSourceList>()
   private readonly groupAvatarSnapshotCache = new Map<string, CacheEntry<ArkmeGroupAvatarSnapshotProjection | null>>()
   private readonly topicDissolveProgress = new Map<string, {
     userId: number
@@ -514,23 +516,32 @@ export class SourceService {
       })
     }
     if (sourceKind !== 3) return undefined
-    const cacheKey = `${String(session.userId)}:${ownerRef}`
-    const cached = this.chatSourceCache.get(cacheKey)
-    if (cached !== undefined) return cached
+    return (await this.chatSourcesBySessionUids([ownerRef], signal)).get(ownerRef)
+  }
 
+  /** Resolve a bounded set in one directory walk, reusing viewer-scoped source projections. */
+  async chatSourcesBySessionUids(uids: readonly string[], signal?: AbortSignal): Promise<Map<string, ArkmeSourceItem>> {
+    const session = await this.runtime.requireSession()
+    const pending = new Set(uids.filter(uid => uid.trim() !== ''))
+    const result = new Map<string, ArkmeSourceItem>()
+    const collect = () => {
+      for (const uid of pending) {
+        const source = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
+        if (source !== undefined) { result.set(uid, source); pending.delete(uid) }
+      }
+    }
+    collect()
     let cursor: string | undefined
-    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-      const page = await this.listSources('root', {
-        limit: 50,
-        ...(cursor === undefined ? {} : { cursor }),
-        ...(signal === undefined ? {} : { signal }),
+    for (let pageIndex = 0; pending.size > 0 && pageIndex < 20; pageIndex += 1) {
+      if (signal?.aborted) throw signal.reason
+      const page = await this.listSources('root', { limit: 50,
+        ...(cursor === undefined ? {} : { cursor }), ...(signal === undefined ? {} : { signal }),
       })
-      const resolved = this.chatSourceCache.get(cacheKey)
-      if (resolved !== undefined) return resolved
-      if (!page.hasMore || page.nextCursor === undefined) return undefined
+      collect()
+      if (!page.hasMore || page.nextCursor === undefined) break
       cursor = page.nextCursor
     }
-    return undefined
+    return result
   }
 
   setChatSource(userId: number, chatSessionUid: string, source: ArkmeSourceItem): void {
@@ -1202,7 +1213,9 @@ export class SourceService {
     directory: ArkmeSourceDirectory,
     options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean } = {},
   ): Promise<ArkmeSourceList> {
+    options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
+    options.signal?.throwIfAborted()
     // Topic hierarchies require their parent and child to arrive in the same response.
     // The topics endpoint supports up to 100 items, while chat directories stay capped at 50.
     const maxLimit = directory === 'send_to_self' ? 100 : 50
@@ -1212,25 +1225,96 @@ export class SourceService {
     this.pruneSourceListCache()
     const cached = this.sourceListCache.get(cacheKey)
     if (options.refresh !== true && cached !== undefined && cached.expiresAtMillis > Date.now()) return cloneSourceList(cached.value)
-    const existing = this.sourceListInFlight.get(cacheKey)
-    if (existing !== undefined) return cloneSourceList(await existing)
-    const pending = this.listSourcesUncached(session, directory, {
-      ...options,
-      ...(cursor === '' ? {} : { cursor }),
-      isCurrent: () => this.sourceListInFlight.get(cacheKey) === pending,
-    }, limit)
-    this.sourceListInFlight.set(cacheKey, pending)
-    try {
-      const result = await pending
-      if (this.sourceListInFlight.get(cacheKey) === pending) {
+    return cloneSourceList(await this.sourceListInFlight.run(cacheKey, async (signal, isCurrent) => {
+      const result = await this.listSourcesUncached(session, directory, {
+        ...options, signal, ...(cursor === '' ? {} : { cursor }), isCurrent,
+      }, limit)
+      signal.throwIfAborted()
+      if (isCurrent()) {
         this.sourceListCache.delete(cacheKey)
         this.sourceListCache.set(cacheKey, { value: cloneSourceList(result), expiresAtMillis: Date.now() + SOURCE_LIST_CACHE_TTL_MS })
         this.pruneSourceListCache()
       }
-      return cloneSourceList(result)
-    } finally {
-      if (this.sourceListInFlight.get(cacheKey) === pending) this.sourceListInFlight.delete(cacheKey)
+      return result
+    }, options.signal))
+  }
+
+  async selfTarget(signal?: AbortSignal): Promise<ArkmeSourceItem> {
+    signal?.throwIfAborted()
+    const { userId } = await this.runtime.requireSession()
+    const target = await this.selfTargetForAccount(userId)
+    signal?.throwIfAborted()
+    return target
+  }
+
+  /**
+   * Resolve one personal topic and every visible descendant from the same
+   * paginated directory contract used by the topic picker. Keeping this owner
+   * here prevents a timeline read from trusting a partial browser-side tree or
+   * exposing raw topic ids across the Host boundary.
+   */
+  async topicSubtreeSources(sourceRef: string, signal?: AbortSignal): Promise<ArkmeSourceItem[]> {
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    const selected = await this.openSourceRef(sourceRef, session.userId)
+    if (selected.kind !== 'topic') {
+      throw new ArkmePluginError('topic-subtree-source-invalid', '仅主题支持读取下级主题内容', false, 400)
     }
+    const selectedKey = await this.topicHierarchyKey(session.userId, selected.ownerRef)
+    const byHierarchyKey = new Map<string, ArkmeSourceItem>()
+    let cursor: string | undefined
+    const visitedCursors = new Set<string>()
+    for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+      signal?.throwIfAborted()
+      const page = await this.listSources('send_to_self', {
+        limit: 100,
+        ...(cursor === undefined ? {} : { cursor }),
+        ...(signal === undefined ? {} : { signal }),
+      })
+      for (const item of page.items) {
+        if (item.kind !== 'topic' || item.topicHierarchyKey === undefined) continue
+        byHierarchyKey.set(item.topicHierarchyKey, item)
+      }
+      if (!page.hasMore || page.nextCursor === undefined) break
+      if (visitedCursors.has(page.nextCursor)) {
+        throw new ArkmePluginError('topic-subtree-cursor-invalid', '主题层级分页未推进，请重试', true, 502)
+      }
+      visitedCursors.add(page.nextCursor)
+      cursor = page.nextCursor
+      if (pageIndex === 99) {
+        throw new ArkmePluginError('topic-subtree-pagination-limit', '主题层级加载未完成，请重试', true, 502)
+      }
+    }
+    const selectedSource = byHierarchyKey.get(selectedKey) ?? {
+      ...await this.sourceItem(selected),
+      topicHierarchyKey: selectedKey,
+    }
+    byHierarchyKey.set(selectedKey, selectedSource)
+    const childrenByParent = new Map<string, ArkmeSourceItem[]>()
+    for (const item of byHierarchyKey.values()) {
+      const parentKey = item.parentTopicHierarchyKey
+      if (parentKey === undefined || parentKey === item.topicHierarchyKey) continue
+      const children = childrenByParent.get(parentKey) ?? []
+      children.push(item)
+      childrenByParent.set(parentKey, children)
+    }
+    const result: ArkmeSourceItem[] = []
+    const queue = [selectedSource]
+    const visited = new Set<string>()
+    while (queue.length > 0) {
+      const current = queue.shift()!
+      const key = current.topicHierarchyKey ?? current.sourceRef
+      if (visited.has(key)) continue
+      visited.add(key)
+      result.push(current)
+      queue.push(...(childrenByParent.get(key) ?? []))
+    }
+    return result
+  }
+
+  private async selfTargetForAccount(userId: number): Promise<ArkmeSourceItem> {
+    const sourceRef = await this.sealSourceRef(userId, 'send_to_self', 'all', '发给自己')
+    return { sourceRef, kind: 'send_to_self', displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 }
   }
 
   async setChatDirectoryPin(
@@ -1513,9 +1597,7 @@ export class SourceService {
         ? ''
         : latestAggregateItem.latestPreview?.trim() || '非文本内容'
       const aggregateSource: ArkmeSourceItem = {
-        sourceRef: await this.sealSourceRef(session.userId, 'send_to_self', 'all', '发给自己'),
-        kind: 'send_to_self',
-        displayName: '发给自己',
+        ...await this.selfTargetForAccount(session.userId),
         ...(aggregateLatestPreview === '' ? {} : { latestPreview: aggregateLatestPreview }),
         activeAtMillis: latestAggregateItem?.activeAtMillis ?? 0,
         unreadCount: 0,
@@ -1650,6 +1732,7 @@ export class SourceService {
         const counterpartUserId = numberValue(counterpart.user_id)
         if (Number.isSafeInteger(counterpartUserId) && counterpartUserId > 0) {
           item.peerUserId = counterpartUserId
+          item.peerMemberType = arkmePeerMemberType(counterpart.member_type)
           privateUserIdByIndex.set(itemIndex, counterpartUserId)
         }
       } else {
@@ -1699,9 +1782,7 @@ export class SourceService {
     for (const key of this.sourceListCache.keys()) {
       if (matches(key)) this.sourceListCache.delete(key)
     }
-    for (const key of this.sourceListInFlight.keys()) {
-      if (matches(key)) this.sourceListInFlight.delete(key)
-    }
+    this.sourceListInFlight.invalidate(matches)
   }
 
   private pruneSourceListCache(): void {
@@ -2020,6 +2101,7 @@ export class SourceService {
         },
       ),
       ...(sourceKey === undefined ? {} : { sourceKey }),
+      ...(source.kind === 'topic' ? { topicHierarchyKey: await this.topicHierarchyKey(source.userId, source.ownerRef) } : {}),
       kind: source.kind,
       displayName: source.displayName,
       activeAtMillis: source.conversationListActivityAtMillis ?? 0,
@@ -2045,6 +2127,7 @@ export class SourceService {
     const isPinned = numberValue(currentPolicy.pin_state) === 2
     const uid = stringValue(chatSession.chat_session_uid).trim()
     const sessionKind = numberValue(chatSession.session_kind)
+    const peerUserId = numberValue(counterpart.user_id)
     const kind: ArkmeSourceKind | undefined = sessionKind === 2
       ? 'group_chat'
       : sessionKind === 1 || sessionKind === 3 ? 'private_chat' : undefined
@@ -2093,6 +2176,9 @@ export class SourceService {
       kind,
       directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
       displayName,
+      ...(kind === 'private_chat' && Number.isSafeInteger(peerUserId) && peerUserId > 0 ? { peerUserId } : {}),
+      ...(kind === 'private_chat' && Number.isSafeInteger(peerUserId) && peerUserId > 0
+        ? { peerMemberType: arkmePeerMemberType(counterpart.member_type) } : {}),
       ...(cached?.avatarRef === undefined ? {} : { avatarRef: cached.avatarRef }),
       ...(cached?.avatarRefs === undefined ? {} : { avatarRefs: cached.avatarRefs }),
       ...(cached?.groupAvatar === undefined ? {} : { groupAvatar: cached.groupAvatar }),
