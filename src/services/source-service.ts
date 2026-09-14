@@ -515,23 +515,32 @@ export class SourceService {
       })
     }
     if (sourceKind !== 3) return undefined
-    const cacheKey = `${String(session.userId)}:${ownerRef}`
-    const cached = this.chatSourceCache.get(cacheKey)
-    if (cached !== undefined) return cached
+    return (await this.chatSourcesBySessionUids([ownerRef], signal)).get(ownerRef)
+  }
 
+  /** Resolve a bounded set in one directory walk, reusing viewer-scoped source projections. */
+  async chatSourcesBySessionUids(uids: readonly string[], signal?: AbortSignal): Promise<Map<string, ArkmeSourceItem>> {
+    const session = await this.runtime.requireSession()
+    const pending = new Set(uids.filter(uid => uid.trim() !== ''))
+    const result = new Map<string, ArkmeSourceItem>()
+    const collect = () => {
+      for (const uid of pending) {
+        const source = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
+        if (source !== undefined) { result.set(uid, source); pending.delete(uid) }
+      }
+    }
+    collect()
     let cursor: string | undefined
-    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-      const page = await this.listSources('root', {
-        limit: 50,
-        ...(cursor === undefined ? {} : { cursor }),
-        ...(signal === undefined ? {} : { signal }),
+    for (let pageIndex = 0; pending.size > 0 && pageIndex < 20; pageIndex += 1) {
+      if (signal?.aborted) throw signal.reason
+      const page = await this.listSources('root', { limit: 50,
+        ...(cursor === undefined ? {} : { cursor }), ...(signal === undefined ? {} : { signal }),
       })
-      const resolved = this.chatSourceCache.get(cacheKey)
-      if (resolved !== undefined) return resolved
-      if (!page.hasMore || page.nextCursor === undefined) return undefined
+      collect()
+      if (!page.hasMore || page.nextCursor === undefined) break
       cursor = page.nextCursor
     }
-    return undefined
+    return result
   }
 
   setChatSource(userId: number, chatSessionUid: string, source: ArkmeSourceItem): void {
@@ -2050,6 +2059,7 @@ export class SourceService {
     const isPinned = numberValue(currentPolicy.pin_state) === 2
     const uid = stringValue(chatSession.chat_session_uid).trim()
     const sessionKind = numberValue(chatSession.session_kind)
+    const peerUserId = numberValue(counterpart.user_id)
     const kind: ArkmeSourceKind | undefined = sessionKind === 2
       ? 'group_chat'
       : sessionKind === 1 || sessionKind === 3 ? 'private_chat' : undefined
@@ -2098,6 +2108,7 @@ export class SourceService {
       kind,
       directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
       displayName,
+      ...(kind === 'private_chat' && Number.isSafeInteger(peerUserId) && peerUserId > 0 ? { peerUserId } : {}),
       ...(cached?.avatarRef === undefined ? {} : { avatarRef: cached.avatarRef }),
       ...(cached?.avatarRefs === undefined ? {} : { avatarRefs: cached.avatarRefs }),
       ...(cached?.groupAvatar === undefined ? {} : { groupAvatar: cached.groupAvatar }),

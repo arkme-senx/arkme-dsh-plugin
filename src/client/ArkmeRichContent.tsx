@@ -864,7 +864,7 @@ export function arkmeRelatedRecordingItemFromSharedRecording(item: ArkmeTimeline
     : arkmeRelatedRecordingItemFromSharedRecordingPreview(item.sharedRecording, item)
 }
 
-export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen }: {
+export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen }: {
   item: ArkmeTimelineItem
   presentation?: 'bubble' | 'detail'
   sourceRef?: string
@@ -877,6 +877,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
   isMentionClickable?: ArkmeMentionClickPredicate
   mediaSelectionIsExplicit?: boolean
   onCallDetailOpen?: (videoUrl?: string) => void
+  onArticleOpen?: () => void
 }) {
   const lastMedia = useRef<{ sourceRef: string | undefined; item: ArkmeTimelineItem }>()
   const snapshot = lastMedia.current
@@ -996,7 +997,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
   return <>
     <div style={{ ...styles.stack, ...(presentation === 'detail' ? { width: '100%' } : {}) }} data-arkme-message-content={isArticle ? 'article' : 'message'} data-arkme-content-presentation={presentation}>
       {inlineVoice !== undefined ? renderVoice(inlineVoice, true) : <>
-        {isArticle && presentation === 'bubble' ? <ArticleCard title={item.title} text={item.textContent} onOpen={() => { setArticleOpen(true) }} /> : <>
+        {isArticle && presentation === 'bubble' ? <ArticleCard title={item.title} text={item.textContent} onOpen={() => { if (onArticleOpen !== undefined) onArticleOpen(); else setArticleOpen(true) }} /> : <>
           {isArticle && item.title && <h3 style={{ margin: 0, fontSize: 14, lineHeight: 1.7 }}><ArkmeRichText text={item.title} presentation="preview" /></h3>}
           {text !== '' && <LongText
             textFormat={item.textFormat ?? 'plain'}

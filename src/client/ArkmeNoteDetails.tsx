@@ -773,9 +773,10 @@ function relatedQuickNoteReferenceExpired(error: unknown): boolean {
 }
 
 export function ArkmeTimelineDetailDrawer({
-  item, sourceRef, sourceKind, conversationMembers, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
+  item, sourceBadge, sourceRef, sourceKind, conversationMembers, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
   onOpenPrivateChatMember, messageCreationBlocked = false, messageCreationRestriction = '',
 }: {
+  sourceBadge?: ReactNode
   item: ArkmeTimelineItem
   sourceRef?: string | undefined
   canExtend?: boolean
@@ -993,6 +994,7 @@ export function ArkmeTimelineDetailDrawer({
         isMentionClickable={mentionOpensMemberProfile}
       />
     </div>
+    {sourceBadge}
     {item.extensionParent !== undefined && <DetailExtensionParent parent={item.extensionParent} />}
     <ArkmeRelatedQuickNotesCard
       state={relatedState}
@@ -1033,7 +1035,7 @@ function ForwardDetailRow({ name, time, avatarRef, segment = false, children }: 
   </div>
 }
 
-export function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineItem; onClose: () => void }) {
+export function ForwardRecordsDetail({ item, onClose, sourceBadge }: { item: ArkmeTimelineItem; onClose: () => void; sourceBadge?: ReactNode }) {
   const forward = item.forwardRecords
   if (forward === undefined) return null
   const recording = forward.items.length === 1 ? forward.items[0] : undefined
@@ -1044,6 +1046,7 @@ export function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineIte
     const selectedDate = selectedAt > 0 ? new Date(selectedAt) : undefined
     return <ArkmeDetailShell title={recording.title || forward.title || '录音转写'} label="录音片段详情"
       subtitle={selectedDate === undefined ? '' : `${selectedDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })} ${selectedDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`} onClose={onClose}>
+      {sourceBadge}
       <div data-arkme-forward-recording-detail>
         {segments.map((segment, index) => {
           const hours = Math.floor(segment.startMillis / 3_600_000)
@@ -1104,6 +1107,7 @@ export function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineIte
   return <ArkmeDetailShell title={forward.title || '转发快记'} label="转发快记详情"
     subtitle={firstDate === lastDate ? firstDate : `${firstDate} 至 ${lastDate}`}
     footer={forwardedAt ? `转发于 ${forwardedAt}` : '转发时间未知'} onClose={onClose}>
+    {sourceBadge}
     <div style={styles.rows}>{rows.map(renderRecord)}</div>
     {rows.length === 0 && <p style={styles.notice}>原快记暂不可查看</p>}
     {forward.truncated && <p style={styles.notice}>内容较多，当前展示部分转发记录</p>}

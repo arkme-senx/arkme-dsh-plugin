@@ -354,7 +354,6 @@ export class ArkmeService {
     this.privacy = new ArkmePrivacyVisibilityService(this.runtime)
     this.aiVideo = new AiVideoService(this.runtime)
     this.arrangement = new ArrangementService(this.runtime)
-    this.calendar = new CalendarService(this.runtime, this.privacy)
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
     this.callHistory = new CallHistoryService(this.runtime, this.profile, {
@@ -385,6 +384,7 @@ export class ArkmeService {
       uploadRefs: async refs => await this.filesOwner().uploadRefs(refs),
       withReferences: async (refs, userId, persist) => await this.filesOwner().withReferences(refs, userId, persist),
     }, async () => { await this.realtime.invalidateRecordProjection() })
+    this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source)
     this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy)
     this.bot = new BotService(this.runtime, this.source)
     this.messageActions = new MessageActionService(

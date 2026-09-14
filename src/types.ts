@@ -435,6 +435,10 @@ export interface ArkmeCalendarRecordCursor {
 }
 
 export interface ArkmeCalendarRecordItem {
+  /** Viewer-authorized source presentation shared with conversation navigation. */
+  source?: ArkmeSourceItem
+  /** Authorized rich projection shared by calendar UI, SDK and Tools; no storage URLs. */
+  content?: ArkmeTimelineItem
   recordUid: string
   sendAtMillis: number
   accessState: ArkmeCalendarContentAccessState

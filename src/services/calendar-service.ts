@@ -1,9 +1,13 @@
 import type {
+  ArkmeSourceItem,
   ArkmeCalendarBucketDay,
   ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
   ArkmeCalendarRecordItem,
 } from '../types.js'
+import type { SourceService } from './source-service.js'
+import type { MediaService } from './media-service.js'
+import type { RecordService } from './record-service.js'
 import { arkmeEmojiClippedText } from '../arkme-emoji-text.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord } from './privacy-visibility.js'
@@ -72,8 +76,9 @@ function contentAccessState(value: unknown): ArkmeCalendarRecordItem['accessStat
 function sourceKind(raw: Record<string, unknown>): ArkmeCalendarRecordItem['sourceKind'] {
   const topic = objectValue(raw.topic_core)
   const chat = objectValue(raw.chat_core)
+  const core = objectValue(raw.record_core)
   if (stringValue(topic.topic_uid).trim() !== '') return 'topic'
-  if (stringValue(chat.chat_session_uid).trim() !== '') return 'chat'
+  if (stringValue(chat.chat_session_uid).trim() !== '' || [3, 4].includes(numberValue(core.origin_kind))) return 'chat'
   if (booleanValue(raw.is_uncategorized) === true) return 'self'
   return 'unknown'
 }
@@ -81,7 +86,10 @@ function sourceKind(raw: Record<string, unknown>): ArkmeCalendarRecordItem['sour
 export class CalendarService {
   constructor(
     private readonly runtime: ServiceRuntime,
-    private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
+    private readonly privacy: ArkmePrivacyVisibilityService,
+    private readonly media: MediaService,
+    private readonly record: RecordService,
+    private readonly source: SourceService,
   ) {}
 
   async bucketPage(options: {
@@ -168,16 +176,53 @@ export class CalendarService {
     )
     const nextSendAt = Math.trunc(numberValue(data.next_cursor_send_at))
     const nextUid = stringValue(data.next_cursor_record_uid).trim()
+    const rows = listValue(data.items).slice(0, limit).flatMap(raw => {
+      const item = this.dayRecord(raw)
+      return item === undefined || lockedRecordUids.has(item.recordUid) ? [] : [{ raw, item }]
+    })
+    const chatUid = (raw: unknown): string => {
+      const row = objectValue(raw)
+      return stringValue(objectValue(row.chat_core).chat_session_uid).trim()
+        || stringValue(objectValue(row.record_core).origin_container_ref).trim()
+    }
+    const chatUids = [...new Set(rows.filter(row => row.item.sourceKind === 'chat' && row.item.accessState === 'available').map(row => chatUid(row.raw)))]
+    let sources = new Map<string, ArkmeSourceItem>()
+    if (chatUids.length > 0) {
+      try {
+        sources = await this.source.chatSourcesBySessionUids(chatUids, options.signal)
+        const entries = [...sources.entries()]
+        const hydrated = await this.source.hydrateDirectoryPage(entries.map(([, source]) => source), options.signal ?? new AbortController().signal)
+        sources = new Map(entries.map(([uid, source], index) => [uid, hydrated[index] ?? source]))
+      }
+      catch (error) { if (options.signal?.aborted) throw error }
+    }
+    for (const { raw, item } of rows) {
+      const topic = objectValue(objectValue(raw).topic_core)
+      const uid = stringValue(topic.topic_uid).trim()
+      if (item.accessState !== 'available' || uid === '' || !item.topicTitle || sources.has(`topic:${uid}`)) continue
+      const source = await this.source.searchTargetSource(2, uid, item.topicTitle, options.signal)
+      if (source !== undefined) sources.set(`topic:${uid}`, source)
+    }
+    const media = await this.media.hydrateRecordMediaPage(
+      rows.filter(row => row.item.accessState === 'available').map(row => row.raw), session, options.signal,
+    )
     return {
       scope: 'self',
       bucketDate,
       timezone: stringValue(data.timezone).trim() || timezone,
       refreshedAtMillis: Date.now(),
-      items: listValue(data.items).filter(raw => !arkmePrivacyLockedRecord(raw)
-        && !lockedRecordUids.has(stringValue(objectValue(raw).record_uid ?? objectValue(objectValue(raw).record_core).record_uid).trim()))
-        .map(raw => this.dayRecord(raw)).filter(
-        (item): item is ArkmeCalendarRecordItem => item !== undefined,
-      ),
+      items: rows.map(({ raw, item }) => {
+        if (item.accessState !== 'available') return item
+        const content = this.record.recordTimelineItemFromRaw(raw, session.userId, {
+          displayItems: media.displayItemsByRecordUid.get(item.recordUid) ?? [],
+          mediaUnavailable: media.unavailableRecordUids.has(item.recordUid),
+        })
+        const topicUid = stringValue(objectValue(objectValue(raw).topic_core).topic_uid).trim()
+        const source = item.topicTitle ? sources.get(`topic:${topicUid}`) : sources.get(chatUid(raw))
+        return { ...item, ...(source === undefined ? {} : { source }), textFormat: content.textFormat ?? 'plain', content: {
+          ...content, title: item.title, textContent: arkmeEmojiClippedText(content.textContent, 40_000),
+        } }
+      }),
       hasMore: data.has_more === true,
       ...(nextSendAt > 0 && nextUid !== '' ? { nextCursor: { sendAtMillis: nextSendAt, recordUid: nextUid } } : {}),
     }

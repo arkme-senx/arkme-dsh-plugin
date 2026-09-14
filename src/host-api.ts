@@ -1333,6 +1333,7 @@ export async function dispatchArkmeHostOperation(
     }, requestSignal)
     case 'calendar.buckets': return await service.calendarBuckets({
       startDate: stringParam(params, 'startDate'),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       endDate: stringParam(params, 'endDate'),
       ...(stringParam(params, 'timezone') === '' ? {} : { timezone: stringParam(params, 'timezone') }),
     })
@@ -1340,6 +1341,7 @@ export async function dispatchArkmeHostOperation(
       const cursor = cursorParam(params)
       return await service.calendarRecords({
         bucketDate: stringParam(params, 'bucketDate'),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
         limit: numberParam(params, 'limit', 20),
         ...(stringParam(params, 'timezone') === '' ? {} : { timezone: stringParam(params, 'timezone') }),
         ...(cursor === undefined ? {} : { cursor }),

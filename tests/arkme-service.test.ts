@@ -643,6 +643,81 @@ describe('ArkmeService', () => {
     expect(original).toBe('文'.repeat(3995) + '[jm_emoji:heart_eyes]')
   })
 
+  it('projects calendar rich content once per page after privacy filtering and preserves text on media failure', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    for (const failMedia of [false, true]) {
+      const batches: unknown[] = []
+      const service = new ArkmeService({ ...config, richMediaRenderEnabled: true }, sessions, new MemoryStateStore(), async (input, init) => {
+        const url = String(input)
+        if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
+        if (url.endsWith('/api/v1/calendar/records/query')) return json({ code: 0, data: {
+          items: [1, 2, 3].map(id => ({ record_uid: `r${id}`, send_at: 100, record_core: {
+            owner_user_id: 10001, content_access_state: id === 3 ? 2 : 1,
+            title: '', text_content: '**正文**' + '文'.repeat(4100), version: 2,
+            content_payload: { text_format: 'markdown', media_refs: [{ file_asset_uid: `a${id}`, content_file_role: 1 }] },
+          } })), has_more: false,
+        } })
+        if (url.endsWith('/api/v1/records/media/batch-list')) {
+          batches.push(JSON.parse(String(init?.body)))
+          if (failMedia) return json({ code: 500, message: 'media unavailable' })
+          return json({ code: 0, data: { items: [1, 2].map(id => ({ record_uid: `r${id}`, items: [{
+            file_asset_uid: `a${id}`, file_kind: id === 1 ? 1 : 3, file_name: `media${id}`, mime_type: id === 1 ? 'image/png' : 'video/mp4',
+            preview_url: `https://media.test/${id}`, download_url: `https://media.test/${id}`,
+          }] })) } })
+        }
+        throw new Error(`unexpected ${url}`)
+      })
+      const page = await service.calendarRecords({ bucketDate: '2026-08-21' })
+      expect(page.items.map(item => item.recordUid)).toEqual(['r1', 'r2'])
+      expect(batches).toEqual([{ record_uids: ['r1', 'r2'] }])
+      expect(page.items[0]?.content).toMatchObject({ itemUid: 'r1', isMe: true, textContent: '**正文**' + '文'.repeat(4100), recordVersion: 2 })
+      expect(page.items[0]?.textContent).toContain('[已截断]')
+      if (failMedia) expect(page.items.every(item => item.content?.mediaUnavailable)).toBe(true)
+      else expect(page.items.map(item => item.content?.contentBlocks?.[0]?.kind)).toEqual(['image', 'video'])
+      expect(JSON.stringify(page)).not.toContain('https://media.test')
+      expect(JSON.stringify(page)).not.toContain('accessToken')
+    }
+  })
+
+  it('hydrates calendar chat sources from record origin once per page, excluding protected rows', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      if (String(input).endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (String(input).endsWith('/api/v1/calendar/records/query')) return json({ code: 0, data: {
+        items: [1, 2, 3].map(id => ({ record_uid: `r${id}`, send_at: 100, record_core: {
+          content_access_state: id === 3 ? 2 : 1, text_content: '消息', origin_kind: 4,
+          origin_container_ref: id === 3 ? 'hidden' : 'chat-1',
+        } })), has_more: false,
+      } })
+      throw new Error(String(input))
+    })
+    const source = Reflect.get(service, 'source')
+    const resolve = vi.spyOn(source, 'chatSourcesBySessionUids').mockResolvedValue(new Map([
+      ['chat-1', { sourceRef: 'safe-ref', kind: 'group_chat', displayName: '项目群', unreadCount: 0, activeAtMillis: 0 }],
+    ]))
+    const hydrate = vi.spyOn(source, 'hydrateDirectoryPage').mockImplementation(async (items: unknown) =>
+      (items as Array<Record<string, unknown>>).map(item => ({ ...item, avatarRefs: ['opaque-avatar'] })))
+    const page = await service.calendarRecords({ bucketDate: '2026-09-14' })
+    expect(resolve).toHaveBeenCalledExactlyOnceWith(['chat-1'], undefined)
+    expect(page.items).toHaveLength(2)
+    expect(page.items[0]).toMatchObject({ sourceKind: 'chat', source: { displayName: '项目群', avatarRefs: ['opaque-avatar'] } })
+    expect(hydrate).toHaveBeenCalledTimes(1)
+    expect(hydrate.mock.calls[0]?.[0]).toHaveLength(1)
+    expect(JSON.stringify(page)).not.toContain('origin_container_ref')
+    resolve.mockRestore()
+    const list = vi.spyOn(source, 'listSources').mockImplementation(async () => {
+      source.setChatSource(10001, 'chat-1', { sourceRef: 'safe-ref', kind: 'group_chat', displayName: '项目群' })
+      source.setChatSource(10001, 'chat-2', { sourceRef: 'safe-ref-2', kind: 'private_chat', displayName: '同事' })
+      return { items: [], hasMore: false }
+    })
+    const targets = await source.chatSourcesBySessionUids(['chat-1', 'chat-2', 'chat-1'])
+    expect(targets.size).toBe(2)
+    expect(list).toHaveBeenCalledTimes(1)
+
+  })
+
   it('reads record calendar buckets and day records from the Record origin', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -682,7 +757,7 @@ describe('ArkmeService', () => {
               has_manual_edit: false,
               has_polish: true,
             },
-            topic_core: { title: '前端重构' },
+            topic_core: { topic_uid: 'topic-1', title: '前端重构' },
           }],
           has_more: true,
           next_cursor_send_at: 1_787_300_000_000,
@@ -707,7 +782,7 @@ describe('ArkmeService', () => {
       cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
     })).resolves.toMatchObject({
       scope: 'self',
-      items: [{ recordUid: 'record-1', title: '会议纪要', textContent: '讨论日历迁移', topicTitle: '前端重构' }],
+      items: [{ recordUid: 'record-1', title: '会议纪要', textContent: '讨论日历迁移', topicTitle: '前端重构', source: { kind: 'topic', displayName: '前端重构' } }],
       nextCursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
     })
     expect(requests.filter(item => !item.url.endsWith('/api/v1/records/privacy/visibility-snapshot'))).toMatchObject([
@@ -4061,6 +4136,7 @@ describe('ArkmeService', () => {
       private_counterpart: { user_id: 20002, display_name_snapshot: '联系人' },
       unread_snapshot: { unread_count: 1, session_last_seq: 1 },
     }, session, sourceCache.cachedChatSource(10001, 'private-1'), [])).resolves.toMatchObject({
+      peerUserId: 20002,
       avatarRef: cachedPrivate?.avatarRef,
     })
     await expect(sourceCache.chatSourceFromBundle({
