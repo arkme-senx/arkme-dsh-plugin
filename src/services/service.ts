@@ -1,5 +1,6 @@
 import { parseOwnerJson, stringifyOwnerJson } from '../record-owner-id.js'
 import { createHash } from 'node:crypto'
+import { setTimeout as waitForCapacity } from 'node:timers/promises'
 import { retryAfterMillis } from '../http-retry-after.js'
 import {
   ArkmeRequestQueueOverflowError,
@@ -1093,13 +1094,23 @@ export class ServiceRuntime {
     let response: Response | undefined
     const invalid = (): ArkmePluginError => new ArkmePluginError('media-response-invalid', '媒体响应不完整或格式无效', true, 502)
     try {
-      response = await send()
-      if (response.status === 401) {
-        await response.body?.cancel()
-        session = await this.refreshAccessToken(session)
+      let refreshed = false
+      for (;;) {
         response = await send()
+        if (response.status === 401 && !refreshed) {
+          await response.body?.cancel()
+          session = await this.refreshAccessToken(session)
+          refreshed = true
+          continue
+        }
+        await assertAccount()
+        const delay = response.status === 503 ? retryAfterMillis(response.headers.get('retry-after')) : undefined
+        if (delay === undefined) break
+        await response.body?.cancel()
+        // Shares this stream's existing 35s lifetime and account cancellation.
+        // No byte has been published yet; never replay a partly consumed stream.
+        await waitForCapacity(Math.max(1_000, delay), undefined, { signal })
       }
-      await assertAccount()
       if (response.status !== 200 && response.status !== 206) {
         throw new ArkmePluginError('media-fetch-failed', '录音媒体当前不可用', response.status >= 500,
           [401, 403, 404, 416].includes(response.status) ? response.status : 502, { upstreamStatus: response.status })

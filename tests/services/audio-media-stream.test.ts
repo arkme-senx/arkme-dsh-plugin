@@ -12,6 +12,61 @@ function fixture(fetcher: typeof fetch) {
 }
 
 describe('private audio byte delivery', () => {
+  it('rechecks the account after capacity wait before another network read', async () => {
+    const fetcher = vi.fn(async () => new Response(null, { status: 503, headers: { 'retry-after': '1' } }))
+    const { runtime, changeUser } = fixture(fetcher)
+    try {
+      const result = expect(runtime.authenticatedAudioStream(path, { expectedUserId: 42, maxBytes: 64 })).rejects.toMatchObject({ code: 'media-account-changed' })
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce())
+      changeUser()
+      await result
+      expect(fetcher).toHaveBeenCalledOnce()
+    } finally { runtime.requestCoordinator.dispose() }
+  })
+
+  it.each(['caller', 'account', 'deadline'])('cancels capacity waiting on %s and releases admission', async reason => {
+    const fetcher = vi.fn(async () => new Response(null, { status: 503, headers: { 'retry-after': '60' } }))
+    const { runtime } = fixture(fetcher)
+    const controller = new AbortController()
+    const timeout = AbortSignal.timeout.bind(AbortSignal)
+    const deadline = reason === 'deadline' ? vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => {
+      expect(ms).toBe(35_000)
+      return timeout(100)
+    }) : undefined
+    try {
+      const result = expect(runtime.authenticatedAudioStream(path, { expectedUserId: 42, maxBytes: 64, signal: controller.signal })).rejects.toBeDefined()
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce())
+      if (reason === 'caller') controller.abort()
+      if (reason === 'account') runtime.requestCoordinator.invalidateScope('user:42')
+      await result
+      expect(fetcher).toHaveBeenCalledOnce()
+    } finally { deadline?.mockRestore(); runtime.requestCoordinator.dispose() }
+  })
+
+  it.each([[403, '1'], [404, '1'], [503, ''], [503, 'invalid']])('does not retry terminal media responses: %s/%s', async (status, hint) => {
+    const fetcher = vi.fn(async () => new Response(null, { status: Number(status), headers: { 'retry-after': String(hint) } }))
+    const { runtime } = fixture(fetcher)
+    try {
+      await expect(runtime.authenticatedAudioStream(path, { expectedUserId: 42, maxBytes: 64 })).rejects.toMatchObject({ upstreamStatus: status })
+      expect(fetcher).toHaveBeenCalledOnce()
+    } finally { runtime.requestCoordinator.dispose() }
+  })
+
+  it('waits for media capacity without requiring another playback click', async () => {
+    const cancelled = vi.fn()
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(new ReadableStream({ cancel: cancelled }), { status: 503, headers: { 'retry-after': '1' } }))
+      .mockResolvedValueOnce(new Response('abc', { headers: { 'content-length': '3', 'content-type': 'audio/ogg' } }))
+    const { runtime } = fixture(fetcher)
+    try {
+      const work = runtime.authenticatedAudioStream(path, { expectedUserId: 42, maxBytes: 64 })
+      const result = expect(work.then(response => response.text())).resolves.toBe('abc')
+      await result
+      expect(fetcher).toHaveBeenCalledTimes(2)
+      expect(cancelled).toHaveBeenCalledOnce()
+    } finally { runtime.requestCoordinator.dispose() }
+  })
+
   it('holds shared read admission through body lifetime and releases it on cancel', async () => {
     const fetcher = vi.fn(async () => new Response('abc', { headers: { 'content-length': '3', 'content-type': 'audio/ogg' } }))
     const { runtime } = fixture(fetcher)
