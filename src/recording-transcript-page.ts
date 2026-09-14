@@ -14,6 +14,14 @@ export function recordingCaptureNotice(page: ArkmeRecordingTranscriptPage | unde
 }
 
 function invalid(message = '录音内容已变化，请刷新后重试'): never { throw new Error(message) }
+export class RecordingViewChanged extends Error {
+  constructor() { super('录音内容正在更新'); this.name = 'RecordingViewChanged' }
+}
+export function isRecordingViewChanged(error: unknown): boolean {
+  return error instanceof RecordingViewChanged || (typeof error === 'object' && error !== null
+    && 'body' in error && typeof error.body === 'object' && error.body !== null
+    && 'code' in error.body && error.body.code === 'recording-view-changed')
+}
 function validText(item: ArkmeRecordingWorkbenchItem): void {
   if (![item.textStartOffset, item.textEndOffset, item.textTotalLength].every(Number.isSafeInteger)
     || item.textStartOffset < 0 || item.textEndOffset <= item.textStartOffset || item.textTotalLength < item.textEndOffset
@@ -29,8 +37,9 @@ function sameUtterance(a: ArkmeRecordingWorkbenchItem, b: ArkmeRecordingWorkbenc
 /** Appends only to the same owner snapshot. Text offsets count Unicode code
  * points, not JS UTF-16 units; an oversized utterance stays a single UI item. */
 export function appendRecordingTranscriptPage(current: ArkmeRecordingTranscriptPage, next: ArkmeRecordingTranscriptPage): ArkmeRecordingTranscriptPage {
-  if (current.viewRef === '' || current.viewRef !== next.viewRef || current.dateStamp !== next.dateStamp
-    || current.transcriptSource !== next.transcriptSource || current.nextCursor === '' || next.state === 'error'
+  if (current.viewRef === '' || current.dateStamp !== next.dateStamp || current.transcriptSource !== next.transcriptSource) invalid()
+  if (current.viewRef !== next.viewRef) throw new RecordingViewChanged()
+  if (current.nextCursor === '' || next.state === 'error'
     || next.nextCursor === current.nextCursor || next.items.length === 0 && next.nextCursor !== '') invalid()
   const items = [...current.items], seen = new Set(items.map(item => item.itemId))
   for (const item of next.items) {
@@ -54,6 +63,26 @@ export function appendRecordingTranscriptPage(current: ArkmeRecordingTranscriptP
 export function refreshRecordingTranscriptPage(current: ArkmeRecordingTranscriptPage, first: ArkmeRecordingTranscriptPage): ArkmeRecordingTranscriptPage {
   if (current.viewRef === '' || current.viewRef !== first.viewRef || current.dateStamp !== first.dateStamp || current.transcriptSource !== first.transcriptSource) return first
   return { ...first, items: current.items, nextCursor: current.nextCursor }
+}
+
+/** Restore the already-read time range before publishing a new revision. This
+ * is a read operation: speaker edits and selected forwarding commands keep
+ * their original references and must not use this recovery as a write retry. */
+export async function restoreRecordingTranscriptPrefix(previous: ArkmeRecordingTranscriptPage, first: ArkmeRecordingTranscriptPage,
+  read: (cursor: string) => Promise<ArkmeRecordingTranscriptPage>, signal: AbortSignal): Promise<ArkmeRecordingTranscriptPage> {
+  if (previous.dateStamp !== first.dateStamp || previous.transcriptSource !== first.transcriptSource) invalid()
+  let restored = refreshRecordingTranscriptPage(previous, first)
+  if (restored.viewRef === previous.viewRef) return restored
+  const boundary = previous.items.at(-1)?.startAtMillis
+  const cursors = new Set<string>()
+  while (boundary !== undefined && restored.nextCursor !== '' && (restored.items.at(-1)?.startAtMillis ?? -Infinity) <= boundary) {
+    signal.throwIfAborted()
+    if (cursors.has(restored.nextCursor)) invalid('录音分页未前进')
+    cursors.add(restored.nextCursor)
+    restored = appendRecordingTranscriptPage(restored, await read(restored.nextCursor))
+  }
+  signal.throwIfAborted()
+  return restored
 }
 
 export async function readCompleteRecordingTranscript(first: ArkmeRecordingTranscriptPage, read: (cursor: string, signal?: AbortSignal) => Promise<ArkmeRecordingTranscriptPage>, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptPage> {

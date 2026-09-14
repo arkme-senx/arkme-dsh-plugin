@@ -18,7 +18,7 @@ export interface RecordingPlaybackController {
   stop(): void
 }
 
-export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: ArkmeRecordingWorkbenchItem, signal: AbortSignal) => Promise<readonly ArkmeRecordingWorkbenchItem[]>): RecordingPlaybackController {
+export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: ArkmeRecordingWorkbenchItem, signal: AbortSignal) => Promise<readonly ArkmeRecordingWorkbenchItem[]>, currentItems?: readonly ArkmeRecordingWorkbenchItem[]): RecordingPlaybackController {
   const audioRef = useRef<{ audio: HTMLAudioElement; item: ArkmeRecordingWorkbenchItem; playback: ArkmeRecordingPlayback }>()
   const cleanupRef = useRef<() => void>()
   const requestAbortRef = useRef<AbortController>()
@@ -164,6 +164,28 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
     queueRef.current = { ...queue, index: queue.index + 1 }
     await openItem(next, next.startAtMillis)
   }
+
+  useEffect(() => {
+    const queue = queueRef.current
+    if (currentItems === undefined || queue === undefined) return
+    const previous = queue.items[queue.index]
+    const index = currentItems.findIndex(item => item.itemId === previous?.itemId && item.sessionKey === previous.sessionKey
+      && item.transcriptSource === previous.transcriptSource && item.startAtMillis === previous.startAtMillis && item.endAtMillis === previous.endAtMillis)
+    if (index < 0) { stop(); return }
+    const item = currentItems[index]!
+    // Keep the already-open sentence playing when only its text/name changed.
+    // All following opens use current references; removed/resegmented media
+    // must not silently continue as another sentence.
+    queue.items = queue.continuePages ? currentItems : [item]
+    queue.index = queue.continuePages ? index : 0
+    const playing = audioRef.current
+    if (playing !== undefined) {
+      playing.item = item
+      setActiveItemRef(item.itemRef)
+    } else if (requestAbortRef.current !== undefined && previous?.itemRef !== item.itemRef) {
+      void openItem(item, positionAtMillis ?? item.startAtMillis)
+    }
+  }, [currentItems, stop])
 
   const playItem = async (item: ArkmeRecordingWorkbenchItem, seekAtMillis = item.startAtMillis) => {
     queueRef.current = { items: [item], index: 0, continuePages: false }

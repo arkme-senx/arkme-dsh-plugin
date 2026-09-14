@@ -25,6 +25,56 @@ function Harness({ first, scope }: { first: ArkmeRecordingTranscriptPage; scope:
 afterEach(async () => { await act(async () => { renderer?.unmount() }); calls.read.mockReset() })
 
 describe('workbench page lifetime', () => {
+  it('recovers an expired cursor and completes an export using only the new revision', async () => {
+    calls.read.mockRejectedValueOnce({ body: { code: 'recording-view-changed', message: 'changed' } })
+      .mockResolvedValueOnce(page('a', 'new-one', 'new'))
+      .mockResolvedValueOnce(page('b', 'new-two', 'new'))
+      .mockResolvedValueOnce(page('c', '', 'new'))
+    await act(async () => { renderer = create(<Harness first={page('a', 'old-one')} scope="42" />) })
+    await act(async () => { await pager.through() })
+    expect(current.items.map(item => item.text)).toEqual(['a','b','c'])
+    expect(current.viewRef).toBe('new')
+    expect(current.nextCursor).toBe('')
+    expect(pager.error).toBe('')
+    expect(calls.read.mock.calls.map(call => call[1].cursor)).toEqual(['old-one', undefined, 'new-one', 'new-two'])
+  })
+
+  it('keeps the loaded prefix visible until a background revision has caught up', async () => {
+    const pending = Promise.withResolvers<ArkmeRecordingTranscriptPage>()
+    calls.read.mockResolvedValueOnce(page('b', 'old-two')).mockReturnValueOnce(pending.promise).mockResolvedValueOnce(page('c', '', 'new'))
+    await act(async () => { renderer = create(<Harness first={page('a', 'old-one')} scope="42" />) })
+    await act(async () => { await pager.next() })
+    let refreshed!: Promise<unknown>
+    await act(async () => { refreshed = pager.refresh(page('a', 'new-one', 'new')) })
+    expect(current.items.map(item => item.text)).toEqual(['a','b'])
+    expect(current.viewRef).toBe('view')
+    await act(async () => { pending.resolve(page('b', 'new-two', 'new')); await refreshed })
+    expect(current.items.map(item => item.text)).toEqual(['a','b','c'])
+    expect(current.viewRef).toBe('new')
+  })
+
+  it('discards recovery after the account changes, even when the first page arrives late', async () => {
+    const pending = Promise.withResolvers<ArkmeRecordingTranscriptPage>()
+    calls.read.mockRejectedValueOnce({ body: { code: 'recording-view-changed' } }).mockReturnValueOnce(pending.promise)
+    await act(async () => { renderer = create(<Harness first={page('a','one')} scope="42" />) })
+    let read!: Promise<unknown>
+    await act(async () => { read = pager.next().catch(error => error) })
+    const signal = calls.read.mock.calls[1]![2] as AbortSignal
+    await act(async () => { renderer.update(<Harness first={page('z')} scope="43" />) })
+    expect(signal.aborted).toBe(true)
+    await act(async () => { pending.resolve(page('b', '', 'new')); await read })
+    expect(current.items.map(item => item.text)).toEqual(['z'])
+    expect(calls.read).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['recording-speaker-conflict','recording-owner-response-invalid','account-required'])('does not treat %s as an expired page', async code => {
+    calls.read.mockRejectedValueOnce({ body: { code } })
+    await act(async () => { renderer = create(<Harness first={page('a','one')} scope="42" />) })
+    await act(async () => { await pager.next().catch(() => undefined) })
+    expect(calls.read).toHaveBeenCalledTimes(1)
+    expect(current.items.map(item => item.text)).toEqual(['a'])
+  })
+
   it('shares a continuation between scrolling and full reads, preserving the prefix after a failed page', async () => {
     const pending = Promise.withResolvers<ArkmeRecordingTranscriptPage>()
     calls.read.mockReturnValueOnce(pending.promise).mockRejectedValueOnce(new Error('网络暂不可用')).mockResolvedValueOnce(page('c'))

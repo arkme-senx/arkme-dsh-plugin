@@ -1,6 +1,7 @@
-import { refreshRecordingTranscriptPage, recordingDayNeedsRefresh, recordingCaptureNotice } from '../recording-transcript-page.js'
+import { recordingDayNeedsRefresh, recordingCaptureNotice } from '../recording-transcript-page.js'
 import { useRecordingTranscriptPages } from './recordings/useRecordingTranscriptPages.js'
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
+import { captureRecordingScrollAnchor, restoreRecordingScrollAnchor, type RecordingScrollAnchor } from './recordings/recording-scroll-anchor.js'
 import { createPortal } from 'react-dom'
 import { ClockCounterClockwise } from '@phosphor-icons/react/dist/icons/ClockCounterClockwise'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
@@ -351,6 +352,7 @@ export function ArkmeRecordingTranscriptRow({ item, selected, onEditSpeaker, onS
 }) {
   return <li
     data-recording-transcript-item={item.itemId}
+    data-recording-start={item.startAtMillis}
     style={{
       ...styles.transcript,
       ...(readOnly ? { gridTemplateColumns:'64px minmax(0,1fr)', contentVisibility:'visible' as const } : {}),
@@ -635,6 +637,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const [transcriptSearch, setTranscriptSearch] = useState('')
   const [transcriptMatchIndex, setTranscriptMatchIndex] = useState(0)
   const transcriptRootRef = useRef<HTMLDivElement>(null)
+  const readingAnchor = useRef<RecordingScrollAnchor>()
   const [comparison, setComparison] = useState<PreparedRecordingComparison>()
   const [comparisonLoading, setComparisonLoading] = useState(false)
   const comparisonRequest = useRef<AbortController>()
@@ -642,13 +645,19 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const [forwardAttempt, setForwardAttempt] = useState(() => createRecordingForwardAttempt([]))
   const selectedForwardItems = forwardAttempt.items
   const [forwardOpen, setForwardOpen] = useState(false)
-  const pageScope = `${String(auth.auth?.userId)}:${String(auth.auth?.environment)}:${String(selectedDate.getTime())}:${activeTab}`
+  const dayScope = `${String(auth.auth?.userId)}:${String(auth.auth?.environment)}:${String(selectedDate.getTime())}`
+  const loadedDayScope = useRef('')
+  const pageScope = `${dayScope}:${activeTab}`
   const pages = useRecordingTranscriptPages(day?.transcript, pageScope, transcript => {
+    if (day?.transcript.viewRef !== transcript.viewRef) readingAnchor.current = captureRecordingScrollAnchor(transcriptRootRef.current)
     setDay(current => current?.dateStamp === transcript.dateStamp ? { ...current, transcript } : current)
   })
-  const playback = useRecordingPlayback(recordingMediaPath, async (last, signal) => (await pages.through(last.startAtMillis, signal))?.items ?? [])
+  const playback = useRecordingPlayback(recordingMediaPath, async (last, signal) => (await pages.through(last.startAtMillis, signal))?.items ?? [], day?.transcript.items)
   const selectedTimelineMillis = playback.positionAtMillis
-  useEffect(() => { playback.stop() }, [day?.transcript.viewRef, playback.stop])
+  useLayoutEffect(() => {
+    restoreRecordingScrollAnchor(transcriptRootRef.current, readingAnchor.current)
+    readingAnchor.current = undefined
+  }, [day?.transcript])
   const layoutMode = useSyncExternalStore(subscribeRecordingLayout, currentRecordingLayoutMode, () => 'wide')
 
   useEffect(() => {
@@ -723,19 +732,23 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
 
   useEffect(() => {
     const controller = new AbortController()
-    setDay(undefined); setDayLoading(true); setDayError('')
-    setSummaryVersionId(''); setTimelineVersionId('')
+    const sameDay = loadedDayScope.current === dayScope
+    loadedDayScope.current = dayScope
+    if (!sameDay) { setDay(undefined); setSummaryVersionId(''); setTimelineVersionId(''); readingAnchor.current = undefined }
+    setDayLoading(!sameDay); setDayError('')
     void callArkme<ArkmeRecordingDay>('recordings.day', { dateStamp: selectedDate.getTime() }, controller.signal)
-      .then(value => {
+      .then(async value => {
         if (controller.signal.aborted) return
-        setDay(value)
-        setSummaryVersionId(value.summary.items.find(version => version.selectable)?.id ?? '')
-        setTimelineVersionId(value.timeline.items.find(version => version.selectable)?.id ?? '')
+        const transcript = sameDay ? await pages.refresh(value.transcript, controller.signal) : value.transcript
+        if (controller.signal.aborted) return
+        setDay({ ...value, transcript: transcript ?? value.transcript })
+        setSummaryVersionId(current => reconcileRecordingVersionId(current, value.summary.items))
+        setTimelineVersionId(current => reconcileRecordingVersionId(current, value.timeline.items))
       })
       .catch(error => { if (!controller.signal.aborted) setDayError(errorMessage(error)) })
       .finally(() => { if (!controller.signal.aborted) setDayLoading(false) })
     return () => { controller.abort() }
-  }, [selectedDate, recordingRefreshRevision, auth.auth?.userId, auth.auth?.environment])
+  }, [selectedDate, recordingRefreshRevision, dayScope, pages.refresh])
 
   const dayNeedsRefresh = recordingDayNeedsRefresh(day)
   useEffect(() => {
@@ -752,7 +765,9 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
           controller.signal,
         )
         if (controller.signal.aborted) return
-        setDay(current => current === undefined ? next : { ...next, transcript: refreshRecordingTranscriptPage(current.transcript, next.transcript) })
+        const transcript = await pages.refresh(next.transcript, controller.signal)
+        if (controller.signal.aborted) return
+        setDay({ ...next, transcript: transcript ?? next.transcript })
         setSummaryVersionId(current => reconcileRecordingVersionId(current, next.summary.items))
         setTimelineVersionId(current => reconcileRecordingVersionId(current, next.timeline.items))
         if (recordingDayNeedsRefresh(next)) {
@@ -764,7 +779,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     }
     timer = setTimeout(() => { void poll() }, 1_500)
     return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
-  }, [dayNeedsRefresh, selectedDate, auth.auth?.userId, auth.auth?.environment])
+  }, [dayNeedsRefresh, selectedDate, auth.auth?.userId, auth.auth?.environment, pages.refresh])
 
   const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(item => [dateKey(item.dateStamp), item])), [calendar])
   const monthDates = useMemo(() => monthCalendarCells(visibleMonth), [visibleMonth])
@@ -1059,7 +1074,14 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       item={editingSpeaker.item}
       anchor={editingSpeaker.anchor}
       forceBatchUpdate={editingSpeaker.forceBatchUpdate}
-      onUpdated={updated => { playback.stop(); setDay(updated); setForwardAttempt(createRecordingForwardAttempt([])) }}
+      onUpdated={updated => {
+        setForwardAttempt(createRecordingForwardAttempt([]))
+        void pages.refresh(updated.transcript).then(transcript => {
+          if (transcript !== undefined) setDay(current => current?.dateStamp === updated.dateStamp ? { ...updated, transcript } : current)
+        }).catch(error => {
+          if (!(error instanceof DOMException && error.name === 'AbortError')) setDayError(errorMessage(error))
+        })
+      }}
       onClose={() => { setEditingSpeaker(undefined) }}
     />}
     {modelDialogKind !== undefined && modelConfig.state === 'ready' && <RecordingModelDialog

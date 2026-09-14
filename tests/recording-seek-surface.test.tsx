@@ -6,6 +6,7 @@ vi.mock('../src/client/api.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/api.js')>(), callArkme: mocks.callArkme,
 }))
 import { ArkmeRecordingSurface, ArkmeRecordingTranscriptRow } from '../src/client/ArkmeRecordingSurface.js'
+import { ArkmeRecordingSpeakerEditor } from '../src/client/recordings/ArkmeRecordingSpeakerEditor.js'
 import { ArkmeRecordingTimeline } from '../src/client/recordings/ArkmeRecordingTimeline.js'
 
 class FakeAudio extends EventTarget {
@@ -64,6 +65,56 @@ describe('recording surface selection and real playback controller', () => {
     expect(timeline().props.isPlaying).toBe(true)
     expect(audios).toHaveLength(2)
     expect(audios[1]!.currentTime).toBe(7)
+  })
+
+  it('keeps the current sentence playing across a name refresh and opens the next sentence with its new reference', async () => {
+    const items = timeline().props.items
+    await act(async () => { timeline().props.onSelectAtMillis(items[0].startAtMillis); await tick() })
+    await act(async () => { timeline().props.onTogglePlayback(); await tick() })
+    const audio = audios[0]!
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      const value = await original(operation, params, signal)
+      if (operation !== 'recordings.day') return value
+      return { ...value, transcript: { ...value.transcript, viewRef: 'new-view', items: value.transcript.items.map((item: Record<string, unknown>) => ({ ...item, itemRef: `${String(item.itemRef)}-new`, speakerLabel: '张三' })) } }
+    })
+    await act(async () => { renderer.update(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={1} />); await tick() })
+    expect(audios).toHaveLength(1)
+    expect(audio.paused).toBe(false)
+    expect(timeline().props.items[0].speakerLabel).toBe('张三')
+    await act(async () => { audio.dispatchEvent(new Event('ended')); await tick() })
+    expect(audios).toHaveLength(2)
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'recordings.playback.open').at(-1)?.[1]).toEqual({ itemRef: 'ref-2-new' })
+  })
+
+  it('speaker editor completion refreshes the current body without interrupting valid audio', async () => {
+    vi.stubGlobal('document', new EventTarget())
+    const rows = renderer.root.findAllByType(ArkmeRecordingTranscriptRow)
+    await act(async () => { rows[0]!.props.onSelect(); await tick() })
+    await act(async () => { timeline().props.onTogglePlayback(); await tick() })
+    const audio = audios[0]!
+    await act(async () => { rows[0]!.props.onEditSpeaker({ stopPropagation() {}, currentTarget: { getBoundingClientRect: () => ({ left: 0, right: 40, top: 0, bottom: 40 }) } }); await tick() })
+    const original = mocks.callArkme.getMockImplementation()!
+    const day = await original('recordings.day', { dateStamp: timeline().props.items[0].startAtMillis - 20000 })
+    const updated = { ...day, transcript: { ...day.transcript, viewRef: 'assigned', items: day.transcript.items.map((item: Record<string, unknown>) => ({ ...item, itemRef: `${String(item.itemRef)}-assigned`, speakerLabel: '已纠正' })) } }
+    await act(async () => { renderer.root.findByType(ArkmeRecordingSpeakerEditor).props.onUpdated(updated); await tick() })
+    expect(audio.paused).toBe(false)
+    expect(timeline().props.items[0].speakerLabel).toBe('已纠正')
+    expect(audios).toHaveLength(1)
+  })
+
+  it('stops a removed sentence instead of mapping playback to another person or fragment', async () => {
+    await act(async () => { timeline().props.onSelectAtMillis(timeline().props.items[0].startAtMillis); await tick() })
+    await act(async () => { timeline().props.onTogglePlayback(); await tick() })
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      const value = await original(operation, params, signal)
+      return operation === 'recordings.day' ? { ...value, transcript: { ...value.transcript, viewRef: 'removed-view', items: value.transcript.items.slice(1) } } : value
+    })
+    await act(async () => { renderer.update(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={1} />); await tick() })
+    expect(audios).toHaveLength(1)
+    expect(audios[0]!.paused).toBe(true)
+    expect(timeline().props.isPlaying).toBe(false)
   })
 
   it('routes transcript selection through the same playback owner and keeps paused selection silent', async () => {
