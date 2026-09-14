@@ -194,10 +194,11 @@ export type { ArkmeComposerMentionTrigger, ArkmeMentionCandidate } from './menti
 import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
 import { ArkmeMentionSuggestionRow, ArkmeMentionSuggestionThemeStyles } from './ArkmeMentionSuggestionRow.js'
 import {
-  ARKME_CONVERSATION_HEADER_HEIGHT, ArkmeInterwovenDetailAside, ArkmeInterwovenMentionCard,
+  ArkmeInterwovenDetailAside, ArkmeInterwovenMentionCard,
   mergeConversationRows, projectInterwovenWindow, ArkmeInterwovenPrelude, resolveInterwovenGroupTarget,
   type ArkmeConversationRow, type ArkmeInterwovenDetailViewState,
 } from './interwoven-moments.js'
+import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
 import {
   relatedDrawerBackTarget,
   type ArkmeRelatedDrawerView,

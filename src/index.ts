@@ -427,7 +427,10 @@ export function apply(ctx: Context, config: Config): void {
     })
   })
   registerDSHAgentInputRecordSync(ctx, service)
-  registerArkmeTools(ctx, service, config.toolProfile)
+  registerArkmeTools(ctx, service, config.toolProfile, {
+    currentAccount: async () => (await sessionStore.read())?.userId,
+    withGroupMemberInvalidation: (groups, execute) => service.withGroupMemberInvalidation(groups, execute),
+  })
   if (config.openApiMcpEnabled) registerOpenApiMcpLifecycleTools(ctx, openApiMcpController)
   ctx.inject(['dynamicCordisRunner', 'agents'], dynamicCtx => {
     const runner = (dynamicCtx as Context & { dynamicCordisRunner: DynamicCordisRunnerLike }).dynamicCordisRunner

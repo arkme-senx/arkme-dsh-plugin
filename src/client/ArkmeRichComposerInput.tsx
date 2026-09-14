@@ -1,7 +1,7 @@
-import { ArkmeMarkdownComposerInput } from './ArkmeMarkdownComposerInput.js'
+import { ArkmeDocumentComposerInput, type ArkmeDocumentComposerHandle } from './ArkmeDocumentComposerInput.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import {
-  forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState,
+  forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useRef, useState,
   type ClipboardEvent, type CSSProperties, type FocusEvent, type KeyboardEvent,
 } from 'react'
 import type { ArkmeComposerEmoji, ArkmeComposerMention } from './composer-draft-store.js'
@@ -430,8 +430,12 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
 )
 
 export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(function ArkmeRichComposerInput(props, ref) {
+  const attachDocument = useCallback((handle: ArkmeDocumentComposerHandle | null) => {
+    if (typeof ref === 'function') ref(handle)
+    else if (ref !== null) ref.current = handle
+  }, [ref])
   if ((props.markdownEnabled || props.markdown !== undefined) && props.onMarkdownChange !== undefined) {
-    return <ArkmeMarkdownComposerInput {...props} ref={ref} onMarkdownChange={props.onMarkdownChange} />
+    return <ArkmeDocumentComposerInput format="markdown" {...props} ref={attachDocument} onMarkdownChange={props.onMarkdownChange} />
   }
   return <ArkmePlainComposerInput {...props} ref={ref} />
 })

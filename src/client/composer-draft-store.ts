@@ -321,6 +321,12 @@ export class ArkmeComposerDraftStore {
     })
   }
 
+  /** Atomic text-editor projection, including emoji restored by undo/redo. */
+  setRichText(key: string | undefined, text: string, emojis: readonly ArkmeComposerEmoji[]): void {
+    if (key === undefined) return
+    this.storeOrDelete(key, { text, emojis, mentions: [], attachments: this.get(key).attachments })
+  }
+
   insertEmoji(
     key: string | undefined,
     emoji: Pick<ArkmeEmoji, 'id' | 'token'>,
@@ -333,17 +339,24 @@ export class ArkmeComposerDraftStore {
     const start = Math.max(0, Math.min(current.text.length, Math.trunc(selectionStart)))
     const end = Math.max(start, Math.min(current.text.length, Math.trunc(selectionEnd)))
     const textWithoutSelection = current.text.slice(0, start) + current.text.slice(end)
-    const mentions = reconcileArkmeComposerMentions(current.text, textWithoutSelection, current.mentions)
-    const emojis = reconcileArkmeComposerEmojis(current.text, textWithoutSelection, current.emojis)
-      .map(item => item.startIndex >= start ? { ...item, startIndex: item.startIndex + 1 } : item)
+    const delta = 1 - (end - start)
+    const mentions = current.mentions.flatMap(item => {
+      if (item.startIndex + item.length <= start) return [item]
+      if (item.startIndex >= end) return [{ ...item, startIndex: item.startIndex + delta }]
+      return []
+    })
+    // The caller supplies the exact replacement range; repeated placeholders cannot identify it.
+    const emojis = current.emojis.flatMap(item => {
+      if (item.startIndex < start) return [item]
+      if (item.startIndex >= end) return [{ ...item, startIndex: item.startIndex + delta }]
+      return []
+    })
     emojis.push({ emojiId: emoji.id, startIndex: start })
     emojis.sort((left, right) => left.startIndex - right.startIndex)
     const next: ArkmeComposerDraftSnapshot = {
       text: textWithoutSelection.slice(0, start) + ARKME_COMPOSER_EMOJI_PLACEHOLDER + textWithoutSelection.slice(start),
       attachments: current.attachments,
-      mentions: mentions.map(mention => mention.startIndex >= start
-        ? { ...mention, startIndex: mention.startIndex + 1 }
-        : mention),
+      mentions,
       emojis,
     }
     if (serializeArkmeComposerDraft(next).text.length > maxSerializedLength) return undefined

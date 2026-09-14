@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useResizableNoteDetail } from './use-resizable-note-detail.js'
+import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
 import { X } from '@phosphor-icons/react/dist/icons/X'
@@ -14,9 +15,6 @@ import {
   type ArkmeRelatedQuickNotesLoadState,
 } from './ArkmeRelatedQuickNotes.js'
 import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
-
-/** Shared vertical anchor: detail begins below the conversation tab/header. */
-export const ARKME_CONVERSATION_HEADER_HEIGHT = 68
 
 export type ArkmeConversationRow =
   | { kind: 'message'; id: string; occurredAtMillis: number; item: ArkmeTimelineItem }

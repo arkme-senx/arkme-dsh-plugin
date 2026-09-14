@@ -10,6 +10,7 @@ import {
   ArkmeConversationalConfirmation,
   arkmeConfirmationContextHooks,
 } from '../shared/conversational-confirmation.js'
+import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation } from './group-governance-confirmation.js'
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
@@ -212,6 +213,7 @@ export function registerArkmeTools(
   ctx: Context,
   ports: ArkmeToolPorts,
   profile: ArkmeToolProfile = 'business',
+  presentation?: GroupGovernancePresentation,
 ): void {
   const prompt = promptForArkmeToolProfile(profile)
   if (prompt !== '') {
@@ -227,6 +229,7 @@ export function registerArkmeTools(
     })
   }
   const coreConversation = new ArkmeConversationalConfirmation()
+  registerGroupGovernanceConfirmation(ctx, coreConversation, presentation)
   for (const definition of createArkmeCoreToolDefinitions(ports, profile)) {
     ctx.tools.register(withCoreConversationalConfirmation(definition, coreConversation))
   }

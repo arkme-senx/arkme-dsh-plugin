@@ -1,5 +1,6 @@
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { act, create, type ReactTestRenderer, type ReactTestInstance } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ArkmeDocumentComposerInput } from '../src/client/ArkmeDocumentComposerInput.js'
 import { ArkmeArkoSurface } from '../src/client/ArkmeArkoSurface.js'
 import { ArkmeClientError, callArkme } from '../src/client/api.js'
 import { readArkoPendingTurn } from '../src/client/arko-pending-turn-store.js'
@@ -12,6 +13,12 @@ vi.mock('../src/client/api.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/api.js')>(), callArkme: vi.fn(),
 }))
 
+// These tests exercise Arko orchestration; the real editor is covered in arko-emoji-dom and browser tests.
+vi.mock('../src/client/ArkmeDocumentComposerInput.js', async () => {
+  const { forwardRef } = await import('react')
+  return { ArkmeDocumentComposerInput: forwardRef(() => null) }
+})
+
 const draftKey = arkmeArkoComposerDraftKey(10001)
 const result = { sessionId: 88, userMsgId: 1, assistantMsgId: 2, status: 'completed', text: '可以帮你记录', reasoning: '', createdRecordUids: [] }
 let renderer: ReactTestRenderer
@@ -22,6 +29,7 @@ let history: ArkmeArkoHistoryItem[]
 async function mount() {
   await act(async () => { renderer = create(<ArkmeArkoSurface />) })
 }
+function visibleText(node: ReactTestInstance): string { return node.children.map(child => typeof child === 'string' ? child : visibleText(child)).join('') }
 function shortcut() { return renderer.root.findByProps({ 'aria-label': 'Arko 能干什么' }) }
 
 beforeEach(() => {
@@ -63,8 +71,8 @@ describe('Arko capability shortcut', () => {
       status: 1, runUid: 'existing-run', runStatus, createdRecordUids: [] }]
     await mount()
     const message = renderer.root.findAllByType('li')[0]!
-    const answer = message.findAllByType('p').find(node => node.children.includes('历史回答'))!
-    expect(answer.children).toEqual(['历史回答'])
+    const answer = message.findAllByType('p').find(node => visibleText(node) === '历史回答')!
+    expect(visibleText(answer)).toBe('历史回答')
     // The message body ends at the answer bubble, with no trailing status line.
     const bubble = answer.parent!
     expect(bubble.parent!.children.at(-1)).toBe(bubble)
@@ -75,7 +83,7 @@ describe('Arko capability shortcut', () => {
     await mount()
     await act(async () => { shortcut().props.onClick() })
     const answer = renderer.root.findAllByType('li').at(-1)!.findByType('p')
-    expect(answer.children).toEqual(['已完成'])
+    expect(visibleText(answer)).toBe('已完成')
     expect(answer.parent!.parent!.children.at(-1)).toBe(answer.parent)
     expect(shortcut().props.disabled).toBe(false)
   })
@@ -85,7 +93,7 @@ describe('Arko capability shortcut', () => {
     await mount()
     await act(async () => { shortcut().props.onClick() })
     const message = renderer.root.findAllByType('li').at(-1)!
-    expect(message.findAllByType('p').map(node => node.children.join(''))).toEqual(['已检查访问权限', '无法访问指定内容'])
+    expect(message.findAllByType('p').map(node => visibleText(node))).toEqual(['已检查访问权限', '无法访问指定内容'])
     expect(shortcut().props.disabled).toBe(false)
     expect(readArkoPendingTurn(10001)).toBeUndefined()
   })
@@ -96,7 +104,7 @@ describe('Arko capability shortcut', () => {
     await act(async () => { shortcut().props.onClick() })
     const message = renderer.root.findAllByType('li').at(-1)!
     const bubble = message.findByType('p').parent!
-    expect(bubble.findByType('p').children).toEqual(['可以帮你记录'])
+    expect(visibleText(bubble.findByType('p'))).toBe('可以帮你记录')
     expect(bubble.parent!.children.at(-1)).toBe(bubble)
     expect(shortcut().props.disabled).toBe(false)
     expect(readArkoPendingTurn(10001)).toBeUndefined()
@@ -165,7 +173,7 @@ describe('Arko capability shortcut', () => {
     const retry = renderer.root.findAllByType('button').find(button => button.children.includes('重新加载'))!
     await act(async () => { retry.props.onClick() })
     expect(JSON.stringify(renderer.toJSON())).not.toContain('history unavailable')
-    expect(renderer.root.findAllByType('li')[0]!.findByType('p').children).toEqual(['恢复的回答'])
+    expect(visibleText(renderer.root.findAllByType('li')[0]!.findByType('p'))).toBe('恢复的回答')
     expect(shortcut().props.disabled).toBe(false)
   })
 
@@ -260,8 +268,8 @@ describe('Arko capability shortcut', () => {
     expect(renamed.findByType('span').children.join('')).toBe('小助 能干什么')
     expect(renamed.props.disabled).toBe(false)
     expect(arkmeComposerDraftStore.get(draftKey).text).toBe('继续正常聊天')
-    const textarea = renderer.root.findByType('textarea')
-    expect(textarea.props['aria-label']).toBe('发送给 小助')
+    const textarea = renderer.root.findByType(ArkmeDocumentComposerInput)
+    expect(textarea.props.ariaLabel).toBe('发送给 小助')
     await act(async () => {
       textarea.props.onKeyDown({ key: 'Enter', shiftKey: false, nativeEvent: { isComposing: false }, preventDefault: vi.fn() })
     })
@@ -376,27 +384,6 @@ describe('Arko capability shortcut', () => {
     expect(ask).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 99 }))
   })
 
-  it('restores input focus after using the shortcut without stealing focus outside the composer', async () => {
-    const buttonNode = {}
-    const inputNode = { style: {}, scrollHeight: 38, disabled: false, value: '草稿', focus: vi.fn(), setSelectionRange: vi.fn() }
-    vi.stubGlobal('document', { activeElement: buttonNode, body: {} })
-    vi.stubGlobal('requestAnimationFrame', (callback: () => void) => { callback(); return 1 })
-    vi.stubGlobal('cancelAnimationFrame', vi.fn())
-    await act(async () => {
-      renderer = create(<ArkmeArkoSurface />, { createNodeMock: element => {
-        if (element.type === 'textarea') return inputNode
-        if (element.type === 'footer') return { contains: (node: unknown) => node === buttonNode }
-        return { contains: () => false, scrollHeight: 0, scrollTop: 0 }
-      } })
-    })
-    await act(async () => { shortcut().props.onClick() })
-    expect(inputNode.focus).toHaveBeenCalledTimes(1)
-    inputNode.focus.mockClear()
-    vi.stubGlobal('document', { activeElement: {}, body: {} })
-    await act(async () => { shortcut().props.onClick() })
-    expect(inputNode.focus).not.toHaveBeenCalled()
-  })
-
   it('recovers from a definitive failure without losing the draft or keeping a pending lock', async () => {
     ask.mockRejectedValueOnce(new ArkmeClientError({ code: 'invalid_request', message: '无法处理请求', retryable: false }))
     arkmeComposerDraftStore.setText(draftKey, '未发送草稿')
@@ -413,7 +400,7 @@ describe('Arko capability shortcut', () => {
   it('does not turn IME confirmation or Shift Enter into a normal send', async () => {
     arkmeComposerDraftStore.setText(draftKey, '输入中')
     await mount()
-    const keyDown = renderer.root.findByType('textarea').props.onKeyDown
+    const keyDown = renderer.root.findByType(ArkmeDocumentComposerInput).props.onKeyDown
     const preventDefault = vi.fn()
     await act(async () => {
       keyDown({ key: 'Enter', shiftKey: false, nativeEvent: { isComposing: true }, preventDefault })
@@ -473,10 +460,10 @@ describe('Arko capability shortcut', () => {
     act(() => bubble.props.onContextMenu({ preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 40, clientY: 40 }))
     act(() => renderer.root.findByProps({ 'aria-label': '多选' }).props.onClick())
     expect(renderer.root.findAllByProps({ 'aria-label': 'Arko 能干什么' })).toHaveLength(0)
-    expect(renderer.root.findAllByType('textarea')).toHaveLength(0)
+    expect(renderer.root.findAllByType(ArkmeDocumentComposerInput)).toHaveLength(0)
     act(() => renderer.root.findByProps({ 'aria-label': '退出多选' }).props.onClick())
     expect(shortcut().props.disabled).toBe(false)
-    expect(renderer.root.findByType('textarea').props.value).toBe('多选前草稿')
+    expect(renderer.root.findByType(ArkmeDocumentComposerInput).props.value).toBe('多选前草稿')
     expect(ask).not.toHaveBeenCalled()
   })
 

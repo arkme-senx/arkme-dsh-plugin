@@ -71,6 +71,7 @@ const BUSINESS_PROMPT_SUFFIX =
   + 'arkme_source_read and the requested category.'
   + ' When an active group owner explicitly asks to withdraw another member\'s concrete message, use the unchanged message_withdrawal_ref with arkme_message_withdraw; do not remove or restrict the sender unless the human separately requests that action. '
   + 'For member governance, use member_ref values from arkme_source_members. Removal and future join restriction are independent: default prevent_rejoin to false, list restrictions before choosing a restricted user, and never claim one action performed the other.'
+  + ' When the connected OpenAPI MCP catalog provides group governance tools, use its batch capabilities for explicit multiple targets. Keep its user_ref and chat coordinates unchanged; local member_ref and message_withdrawal_ref belong to their original tools and must never be translated or guessed. Existing local governance tools remain available independently of MCP connection readiness.'
   + ' For owned OpenClaw and webhook Bots, use arkme_bots_list to obtain account-bound bot_ref and provider values. Use arkme_bot_create only after an '
   + 'explicit human request in the current conversation, and always select openclaw or webhook explicitly without guessing. Never automatically retry Bot creation when its outcome is unknown; '
   + 'refresh arkme_bots_list and ask the human to reconcile instead. Use arkme_group_bots_list with an unchanged group source_ref '

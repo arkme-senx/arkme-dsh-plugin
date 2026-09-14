@@ -7,7 +7,7 @@ import { arkmeTheme } from './arkme-theme.js'
 import { arkmeUi } from './ui-controller.js'
 import { RecordRow } from './ArkmeSearchSurface.js'
 import { ArkmeMediaPreview, ArkmeMessageContent } from './ArkmeRichContent.js'
-import { ARKME_CONVERSATION_HEADER_HEIGHT } from './interwoven-moments.js'
+import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
 import { useConversationSearch, useConversationSearchDetail } from './use-conversation-search.js'
 import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 
@@ -53,7 +53,7 @@ export function ArkmeConversationSearchPanel({ source, scene, global, onScene, o
 }) {
   const panel = useRef<HTMLElement>(null)
   const queryInput = useRef<HTMLInputElement>(null)
-  const resize = useResizableNoteDetail(panel, 'arkme-conversation-search-width', '聊天搜索')
+  const resize = useResizableNoteDetail(panel, 'arkme-conversation-search-width', '调整聊天搜索宽度')
   const [query, setQuery] = useState('')
   const [composing, setComposing] = useState(false)
   const [selected, setSelected] = useState<ArkmeSearchRecordItem>()
