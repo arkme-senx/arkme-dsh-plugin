@@ -178,6 +178,13 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
       viewport: { width: 1680, height: 1000 },
       acceptDownloads: true,
     });
+    await context.addInitScript(() => {
+      const play = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = async function () {
+        await play.call(this);
+        window.__recordingE2EAudio = this;
+      };
+    });
     page = await context.newPage();
     await page.goto(scaffold.authenticatedUrl, { waitUntil: "load" });
     await page.getByRole("button", { name: "录音", exact: true }).click();
@@ -208,6 +215,7 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
     await page.locator("[data-recording-transcript-item]").first().dblclick();
     await page.getByRole("button", { name: "播放录音", exact: true }).click();
     await page.getByRole("button", { name: "暂停录音", exact: true }).waitFor();
+    await page.waitForFunction(() => window.__recordingE2EAudio?.currentTime > 0 && !window.__recordingE2EAudio.paused);
     await page.getByRole("button", { name: "暂停录音", exact: true }).click();
     await page
       .locator("[data-recording-transcript-item]")
