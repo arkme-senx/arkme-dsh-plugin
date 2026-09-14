@@ -120,6 +120,8 @@ import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 import { ArkmeVoiceprintSurface } from './ArkmeVoiceprintSurface.js'
 import { ArkmeNavigation, type ArkmeNavigationProps } from './ArkmeVirtualWorkspace.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { betaCommunityWelcomeStore, welcomeDraft, welcomeMatchesSource } from './beta-community-welcome.js'
+import { ArkmeBetaCommunityWelcome } from './ArkmeBetaCommunityWelcome.js'
 import { arkmeConversationMembers } from './conversation-members-store.js'
 import { useConversationMembers } from './use-conversation-members.js'
 import { arkmeMessageReadReceipts } from './message-read-receipt-store.js'
@@ -2233,6 +2235,20 @@ export function ArkmeSurface({
   const auth = authStoreSnapshot.auth ?? initialAuth
   const authenticatedUserId = auth?.status === 'authenticated' ? auth.userId : undefined
   const authenticatedAccountKey = arkmeAuthenticatedAccountKey(auth)
+  const communityWelcome = useSyncExternalStore(betaCommunityWelcomeStore.subscribe,
+    betaCommunityWelcomeStore.getSnapshot, betaCommunityWelcomeStore.getSnapshot)
+  // Resolve the one legacy local welcome through the existing read API. New joins
+  // already retain sourceKey; no polling, extra full-history load or server write.
+  useEffect(() => {
+    if (!communityWelcome || communityWelcome.sourceKey || communityWelcome.accountKey !== authenticatedAccountKey) return
+    const controller = new AbortController()
+    void callArkme<ArkmeTimelinePage>('source.timeline', { sourceRef: communityWelcome.sourceRef, limit: 1 }, controller.signal)
+      .then(page => {
+        if (!controller.signal.aborted) betaCommunityWelcomeStore.resolveLegacySource(communityWelcome, page.source)
+      }).catch(() => { /* Leave the record intact; a later mount may resolve it. */ })
+    return () => controller.abort()
+  }, [communityWelcome, authenticatedAccountKey])
+  const welcomeSuggestionRef = useRef<{ key: string; text: string }>()
   const recordingImportDialogRef = useRef<ArkmeRecordingImportDialogHandle>(null)
   const [recordingImportFeedback, setRecordingImportFeedback] = useState<{ accountKey: string | undefined; status: RecordingImportButtonStatus }>()
   const updateRecordingImportStatus = useCallback((status: RecordingImportButtonStatus) => {
@@ -5670,6 +5686,8 @@ export function ArkmeSurface({
     [displayItems, interwovenMoments, hasMore],
   )
   const displayRows = useMemo<Array<ArkmeConversationRow | {
+    kind: 'community-welcome'; id: string; occurredAtMillis: number; title: string
+  } | {
     kind: 'notice'; id: string; occurredAtMillis: number; item: ArkmeGroupAiPolishNotice
   } | {
     kind: 'member-join'; id: string; occurredAtMillis: number; item: ArkmeConversationMemberJoinEvent
@@ -5677,6 +5695,10 @@ export function ArkmeSurface({
     kind:'member-event-gap'; id:string; occurredAtMillis:number; gapId:string
   }>>(
     () => [
+      ...(communityWelcome !== undefined && source !== undefined && welcomeMatchesSource(communityWelcome, authenticatedAccountKey, source)
+        && timelineMode !== 'around'
+        ? [{ kind: 'community-welcome' as const, id: `community-welcome:${communityWelcome.occurredAtMillis}`,
+          occurredAtMillis: communityWelcome.occurredAtMillis, title: source.displayName }] : []),
       ...mergeConversationRows(displayItems, interwovenWindow.inline, memberEventTimeline.events),
       ...memberEventTimeline.gaps.map(gap => ({kind:'member-event-gap' as const,id:`member-event-gap:${gap.id}`,occurredAtMillis:gap.at,gapId:gap.id})),
       ...aiPolishNotices.map(notice => ({
@@ -5692,7 +5714,8 @@ export function ArkmeSurface({
         item: event,
       })),
     ].sort((left, right) => left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id)),
-    [aiPolishNotices, displayItems, interwovenWindow, visibleConversationJoinEvents,memberEventTimeline.events,memberEventTimeline.gaps],
+    [aiPolishNotices, displayItems, interwovenWindow, visibleConversationJoinEvents,memberEventTimeline.events,memberEventTimeline.gaps,
+      communityWelcome, authenticatedAccountKey, source?.sourceRef, source?.sourceKey, source?.kind, source?.displayName, timelineMode],
   )
   useLayoutEffect(() => {
     const pending = pendingConversationTargetLocateRef.current
@@ -7026,6 +7049,34 @@ export function ArkmeSurface({
                 const previous = index === 0 ? undefined : displayRows[index - 1]
                 const startsDay = previous === undefined
                   || dayKey(previous.occurredAtMillis) !== dayKey(row.occurredAtMillis)
+                if (row.kind === 'community-welcome') return <Fragment key={row.id}>
+                  {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
+                  <li data-arkme-conversation-row={row.id}>
+                  <ArkmeBetaCommunityWelcome title={row.title}
+                    disabled={composerFilesDisabled || activeRecordReeditComposer !== undefined || archiveReadOnly}
+                    onChoose={text => {
+                      if (!composerDraftKey || composerFilesDisabled || activeRecordReeditComposer !== undefined || archiveReadOnly) return
+                      const current = arkmeComposerDraftStore.get(composerDraftKey)
+                      const previous = welcomeSuggestionRef.current
+                      const suggestionKey = `${authenticatedAccountKey}:${composerDraftKey}`
+                      const next = welcomeDraft(current.text, previous?.key === suggestionKey ? previous.text : undefined, text)
+                      if (current.attachments.length === 0 && next !== current.text) {
+                        updateComposerText(next)
+                        welcomeSuggestionRef.current = { key: suggestionKey, text: next }
+                      }
+                      textareaRef.current?.focus()
+                      const focusedEditor = document.activeElement
+                      // The controlled editor renders the new draft after this click.
+                      // Position the caret after that render, without stealing focus
+                      // if the user has switched conversations or focused elsewhere.
+                      requestAnimationFrame(() => {
+                        const editor = textareaRef.current
+                        if (!focusedEditor?.isConnected || document.activeElement !== focusedEditor || !editor || editor.disabled) return
+                        editor.setSelectionRange(editor.value.length, editor.value.length)
+                      })
+                    }} />
+                  </li>
+                </Fragment>
                 if (row.kind === 'member-event-gap') return <li key={row.id} data-arkme-member-event-gap={row.gapId} aria-hidden style={{height:1,width:'100%'}}/>
                 if (row.kind === 'member-event') return <ArkmeMemberLeaveNotice key={row.id} rowId={row.id} event={row.item} onOpen={openMemberEventProfile}/>
                 if (row.kind === 'member-join') return <ArkmeMemberJoinNotice

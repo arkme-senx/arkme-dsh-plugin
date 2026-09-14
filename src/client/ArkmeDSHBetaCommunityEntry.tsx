@@ -6,6 +6,8 @@ import type {
 } from '../dsh-beta-community.js'
 import type { ArkmeGroupAvatarPresentation, ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
+import { arkmeAuthStore } from './auth-store.js'
+import { betaCommunityWelcomeStore, welcomeAccountKey } from './beta-community-welcome.js'
 import { ArkmeAvatarMosaic, ArkmeSourceAvatar } from './ArkmeAvatar.js'
 
 type EntryPhase = 'hidden' | 'ready' | 'joining'
@@ -213,9 +215,13 @@ export function ArkmeDSHBetaCommunityEntry({ onJoined }: ArkmeDSHBetaCommunityEn
     setPhase('joining')
     const epoch = epochRef.current
     let pending: Promise<void>
+    const accountKey = welcomeAccountKey(arkmeAuthStore.getSnapshot().auth)
     pending = callArkme<ArkmeDSHBetaCommunityJoinResult>('dsh-beta-community.join')
       .then(async result => {
         if (epochRef.current !== epoch) return
+        const currentAccountKey = welcomeAccountKey(arkmeAuthStore.getSnapshot().auth)
+        if (accountKey !== currentAccountKey) return
+        betaCommunityWelcomeStore.joined(result, accountKey, currentAccountKey)
         setPhase('hidden')
         setReady(undefined)
         try {
