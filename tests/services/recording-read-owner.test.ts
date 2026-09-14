@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RecordingReadOwner, type RecordingReadSource } from '../../src/services/recording-read-owner.js'
-import type { ServiceRuntime } from '../../src/services/service.js'
+import { ArkmeUpstreamResponseError, type ServiceRuntime } from '../../src/services/service.js'
 
 const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
 const start = 1_780_000_000_000
@@ -59,6 +59,15 @@ function fixture(rows: Row[][]) {
 const rows = (count: number, phase = 0): Row[] => Array.from({ length: count }, (_, i) => ({ body: `原文-${phase}-${i}`, offset: 2 * i + phase, child: phase + 100, ordinal: i }))
 
 describe('RecordingReadOwner', () => {
+  it('maps only the Audio owner revision marker to recoverable read expiration', async () => {
+    const f = fixture([rows(2)])
+    const expired = new ArkmeUpstreamResponseError('arkme-code-1001', '参数错误', false, 502, { error_code: 'recording_view_changed' })
+    vi.mocked(f.runtime.authenticatedAudioPost).mockRejectedValueOnce(expired)
+    await expect(f.owner.transcript(objectId(1), 'primary', window, session, { cursor: 'old' })).rejects.toMatchObject({ code: 'recording-view-changed' })
+    const malformed = new ArkmeUpstreamResponseError('arkme-code-1001', '参数错误', false, 502, {})
+    vi.mocked(f.runtime.authenticatedAudioPost).mockRejectedValueOnce(malformed)
+    await expect(f.owner.transcript(objectId(1), 'primary', window, session, { cursor: 'bad' })).rejects.toBe(malformed)
+  })
   it('keeps receiving and incomplete captures separate from transcript work throughout pagination', async () => {
     const f = fixture([rows(101), rows(101, 1)])
     f.captureStates[0] = 'receiving'; f.captureStates[1] = 'interrupted'

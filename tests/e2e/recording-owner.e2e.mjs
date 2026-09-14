@@ -189,9 +189,22 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
     });
     const initial = await sdk.recordingTranscriptPage(fixture.start_at);
     const first = initial.items[0];
+    // Another client edits and restores one sentence while this UI still holds
+    // the old first page. The next scroll must recover through the real wire.
+    const owner = scaffold.ctx.get("arkmeData");
+    const options = await owner.recordingSpeakerOptions();
+    const target = options.find(item => item.label === "验收乙");
+    const original = options.find(item => item.label === "验收甲");
+    const edited = await owner.assignRecordingSpeaker({ itemRef: first.itemRef, speakerRef: target.speakerRef, scope: "item" });
+    await owner.assignRecordingSpeaker({ itemRef: edited.day.transcript.items[0].itemRef, speakerRef: original.speakerRef, scope: "item" });
+    await page.locator("[data-recording-transcript-item]").nth(99).scrollIntoViewIfNeeded();
+    await expect.poll(() => page.locator("[data-recording-transcript-item]").count()).toBeGreaterThanOrEqual(200);
+    expect(await page.getByRole("alert").allTextContents()).not.toContain("录音内容正在更新");
+    await page.locator("[data-recording-transcript-item]").first().scrollIntoViewIfNeeded();
+    const loadedBeforeEdit = await page.locator("[data-recording-transcript-item]").count();
     const originalPlayback = await scaffold.ctx
       .get("arkmeData")
-      .recordingPlayback(first.itemRef);
+      .recordingPlayback((await sdk.recordingTranscriptPage(fixture.start_at)).items[0].itemRef);
     await page.locator("[data-recording-transcript-item]").first().dblclick();
     await page.getByRole("button", { name: "播放录音", exact: true }).click();
     await page.getByRole("button", { name: "暂停录音", exact: true }).waitFor();
@@ -236,6 +249,7 @@ it("runs browser, packed Host and SDK through Go JWT, Mongo and S3 pack reads", 
         .nth(1)
         .textContent(),
     ).toContain("验收甲");
+    await expect.poll(() => page.locator("[data-recording-transcript-item]").count()).toBeGreaterThanOrEqual(loadedBeforeEdit);
     const current = await sdk.recordingTranscriptPage(fixture.start_at);
     expect(current.items[0].speakerLabel).toBe("验收乙");
     const nextPlayback = await scaffold.ctx

@@ -1,6 +1,6 @@
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import { recordingPlaybackLocator, type RecordingPlaybackLocator } from '../recording-playback-ref.js'
-import { ArkmePluginError, type ServiceRuntime } from './service.js'
+import { ArkmePluginError, ArkmeUpstreamResponseError, type ServiceRuntime } from './service.js'
 
 export type RecordingReadSource = 'primary' | 'enhanced'
 export interface RecordingReadWindow { startAt: number; endAt: number }
@@ -124,7 +124,13 @@ export class RecordingReadOwner {
   private async read(path: string, body: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<unknown> {
     signal?.throwIfAborted()
     if ((await this.runtime.requireSession()).userId !== session.userId) return stale()
-    const result = await this.runtime.authenticatedAudioPost(path, body, session, signal, { bypassCache: true })
+    let result: unknown
+    try { result = await this.runtime.authenticatedAudioPost(path, body, session, signal, { bypassCache: true }) }
+    catch (error) {
+      if (error instanceof ArkmeUpstreamResponseError && typeof error.responseData === 'object' && error.responseData !== null
+        && 'error_code' in error.responseData && error.responseData.error_code === 'recording_view_changed') return stale()
+      throw error
+    }
     signal?.throwIfAborted()
     if ((await this.runtime.requireSession()).userId !== session.userId) return stale()
     return result
