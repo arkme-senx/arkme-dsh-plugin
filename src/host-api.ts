@@ -1942,6 +1942,10 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringListParam(params, 'candidateRefs'),
     )
+    case 'group.self-nickname':
+      return await service.groupSelfNickname(stringParam(params, 'sourceRef').trim(), requestSignal)
+    case 'group.self-nickname.set':
+      return await service.setGroupSelfNickname(stringParam(params, 'sourceRef').trim(), stringParam(params, 'nickname'), requestSignal)
     case 'group.member-remove': {
       if (params.preventRejoin !== undefined && typeof params.preventRejoin !== 'boolean') {
         throw new ArkmePluginError('group-member-remove-invalid', '移除成员参数无效', false, 400)

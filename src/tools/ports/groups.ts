@@ -1,7 +1,7 @@
 import type {
   ArkmeGroupJoinRestrictionMutationResult, ArkmeGroupJoinRestrictionPage,
   ArkmeGroupMemberAddResult, ArkmeGroupMemberCandidateList, ArkmeGroupMemberRemoveResult,
-  ArkmeGroupProjectionResult, ArkmeSourceItem,
+  ArkmeGroupProjectionResult, ArkmeSourceItem, ArkmeGroupSelfNickname,
 } from '../../types.js'
 
 export interface ArkmeGroupToolPort {
@@ -24,6 +24,8 @@ export interface ArkmeGroupToolPort {
     candidateRefs: readonly string[],
     signal?: AbortSignal,
   ): Promise<ArkmeGroupMemberAddResult>
+  groupSelfNickname(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSelfNickname>
+  setGroupSelfNickname(sourceRef: string, nickname: string, signal?: AbortSignal): Promise<ArkmeGroupSelfNickname>
   removeGroupMember(
     sourceRef: string,
     memberRef: string,

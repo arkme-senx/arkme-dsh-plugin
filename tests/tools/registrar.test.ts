@@ -209,6 +209,8 @@ describe('registerArkmeTools', () => {
       'arkme_group_member_remove',
       'arkme_group_join_restrictions',
       'arkme_group_join_restriction_set',
+      'arkme_group_self_nickname',
+      'arkme_group_self_nickname_set',
       'arkme_source_read',
       'arkme_copy_link_extend',
       'arkme_source_members',

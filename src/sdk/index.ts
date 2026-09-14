@@ -41,6 +41,7 @@ import type {
   ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddResult,
+  ArkmeGroupSelfNickname,
   ArkmeGroupMemberRemoveResult,
   ArkmeGroupJoinRestrictionMutationResult,
   ArkmeGroupJoinRestrictionPage,
@@ -198,6 +199,7 @@ export type {
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddItemResult,
   ArkmeGroupMemberAddResult,
+  ArkmeGroupSelfNickname,
   ArkmeGroupMemberRemoveResult,
   ArkmeGroupJoinRestrictionMutationResult,
   ArkmeGroupJoinRestrictionPage,
@@ -1473,6 +1475,16 @@ export class ArkmeSdk {
       throw new TypeError('Arkme group source and candidate references must not be empty')
     }
     return await this.call<ArkmeGroupMemberAddResult>('group.members.add', { sourceRef, candidateRefs: refs }, signal)
+  }
+
+  async groupSelfNickname(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSelfNickname> {
+    if ((await this.capabilities(signal)).features.groupSelfNickname !== true) throw new Error('当前 Provider 不支持群昵称')
+    return await this.call<ArkmeGroupSelfNickname>('group.self-nickname', { sourceRef: sourceRef.trim() }, signal)
+  }
+
+  async setGroupSelfNickname(sourceRef: string, nickname: string, signal?: AbortSignal): Promise<ArkmeGroupSelfNickname> {
+    if ((await this.capabilities(signal)).features.groupSelfNickname !== true) throw new Error('当前 Provider 不支持群昵称')
+    return await this.call<ArkmeGroupSelfNickname>('group.self-nickname.set', { sourceRef: sourceRef.trim(), nickname }, signal)
   }
 
   async removeGroupMember(

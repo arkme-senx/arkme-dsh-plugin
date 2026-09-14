@@ -1183,6 +1183,7 @@ export interface ArkmeProviderCapabilities {
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
+    groupSelfNickname?: true
     contactDirectoryReads?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
@@ -2397,6 +2398,12 @@ export interface ArkmeConversationMemberItem {
   mentionCount: number
 }
 
+export interface ArkmeGroupSelfNickname {
+  sourceRef: string
+  memberRef: string
+  nickname: string
+}
+
 export interface ArkmeGroupMemberRemoveResult {
   sourceRef: string
   memberRef: string
@@ -3497,6 +3504,8 @@ export type ArkmePluginOperation =
   | 'group.member-candidates'
   | 'group.invite-preview'
   | 'group.members.add'
+  | 'group.self-nickname'
+  | 'group.self-nickname.set'
   | 'group.member-remove'
   | 'group.join-restrictions'
   | 'group.join-restriction.set'

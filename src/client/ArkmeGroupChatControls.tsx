@@ -36,6 +36,7 @@ import type {
 import { arkmeConversationMembers } from './conversation-members-store.js'
 import { useConversationMembers } from './use-conversation-members.js'
 import { callArkme } from './api.js'
+import { ArkmeGroupSelfNicknameDialog } from './ArkmeGroupSelfNicknameDialog.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { isArkmeRequestAbort, retryArkmeRead } from './read-retry.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
@@ -93,6 +94,8 @@ export const ARKME_CONVERSATION_SETTINGS_MENU_STATUS_STYLE: CSSProperties = {
 const asset = (value: string) => `data:image/svg+xml;base64,${value}`
 // These are the production desktop-client assets, embedded so the published plugin remains self-contained.
 const icons = {
+  // Same asset as the mobile group settings nickname action (record_func_edit.svg).
+  selfNickname: asset('PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgdmlld0JveD0iMCAwIDIwIDIwIiBmaWxsPSJub25lIj4KPHBhdGggZD0iTTIgMThIMTgiIHN0cm9rZT0iI0QyRDJEMiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8cGF0aCBkPSJNMTEuODk5MyAyLjcwNzExQzEyLjI4OTkgMi4zMTY1OCAxMi45MjMgMi4zMTY1OCAxMy4zMTM2IDIuNzA3MTFMMTYuMTQyIDUuNTM1NTNDMTYuNTMyNSA1LjkyNjA2IDE2LjUzMjUgNi41NTkyMiAxNi4xNDIgNi45NDk3NUw4Ljk1Mzk0IDE0LjEzNzhDOC43ODM4MSAxNC4zMDc5IDguNTU4MDYgMTQuNDExIDguMzE4MDggMTQuNDI4MUw1LjI3MjA4IDE0LjY0NTdDNC42NjQ3OSAxNC42ODkxIDQuMTU5OTkgMTQuMTg0MyA0LjIwMzM3IDEzLjU3N0w0LjQyMDk0IDEwLjUzMUM0LjQzODA5IDEwLjI5MSA0LjU0MTE3IDEwLjA2NTMgNC43MTEzIDkuODk1MTVMMTEuODk5MyAyLjcwNzExWiIgc3Ryb2tlPSIjRDJEMkQyIiBzdHJva2Utd2lkdGg9IjEuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPg=='),
   rename: asset('PHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTguODAwNzggMS42MDAxSDEwLjAwMDhNMTAuMDAwOCAxLjYwMDFIMTEuMjAwOE0xMC4wMDA4IDEuNjAwMVYxNC40MDAxTTguODAwNzggMTQuNDAwMUgxMS4yMDA4IiBzdHJva2U9IiNEMkQyRDIiIHN0cm9rZS13aWR0aD0iMS4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPHBhdGggZD0iTTcuODk5NjEgNEgzLjE5OTYxQzIuMzE1OTUgNCAxLjU5OTYxIDQuNzE2MzQgMS41OTk2MSA1LjZWMTAuNEMxLjU5OTYxIDExLjI4MzcgMi4zMTU5NSAxMiAzLjE5OTYxIDEySDcuODk5NjFNMTEuOTk5NiA0SDEyLjc5OTZDMTMuNjgzMyA0IDE0LjM5OTYgNC43MTYzNCAxNC4zOTk2IDUuNlYxMC40QzE0LjM5OTYgMTEuMjgzNyAxMy42ODMzIDEyIDEyLjc5OTYgMTJIMTEuOTk5NiIgc3Ryb2tlPSIjRDJEMkQyIiBzdHJva2Utd2lkdGg9IjEuMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CjxwYXRoIGQ9Ik00LjgwMDc4IDhMNi40MDA3OCA4IiBzdHJva2U9IiNEMkQyRDIiIHN0cm9rZS13aWR0aD0iMS4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg=='),
   exit: asset('PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMSIgaGVpZ2h0PSIyMCIgdmlld0JveD0iMCAwIDIxIDIwIiBmaWxsPSJub25lIj4KPHBhdGggZD0iTTMuNSA3VjRDMy41IDMuNDQ3NzIgMy45NDc3MiAzIDQuNSAzSDcuNSIgc3Ryb2tlPSIjRDJEMkQyIiBzdHJva2Utd2lkdGg9IjEuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CjxwYXRoIGQ9Ik0zLjUgMTNWMTZDMy41IDE2LjU1MjMgMy45NDc3MiAxNyA0LjUgMTdINy41IiBzdHJva2U9IiNEMkQyRDIiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPHBhdGggZD0iTTE3LjUgN1Y0QzE3LjUgMy40NDc3MiAxNy4wNTIzIDMgMTYuNSAzSDEzLjUiIHN0cm9rZT0iI0QyRDJEMiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8cGF0aCBkPSJNMTcuNSAxM0wxNS41IDE1TDEzLjUgMTciIHN0cm9rZT0iI0QyRDJEMiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8cGF0aCBkPSJNMTMuNSAxM0wxNS41IDE1TDE3LjUgMTciIHN0cm9rZT0iI0QyRDJEMiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4='),
   notice: asset('PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgdmlld0JveD0iMCAwIDIwIDIwIiBmaWxsPSJub25lIj4KPHBhdGggZD0iTTEwLjAxNzUgMi40MjQ4QzcuMjU5MTQgMi40MjQ4IDUuMDE3NDcgNC42NjY0NyA1LjAxNzQ3IDcuNDI0OFY5LjgzMzE0QzUuMDE3NDcgMTAuMzQxNSA0LjgwMDgxIDExLjExNjUgNC41NDI0NyAxMS41NDk4TDMuNTg0MTQgMTMuMTQxNUMyLjk5MjQ3IDE0LjEyNDggMy40MDA4MSAxNS4yMTY1IDQuNDg0MTQgMTUuNTgzMUM4LjA3NTgxIDE2Ljc4MzEgMTEuOTUwOCAxNi43ODMxIDE1LjU0MjUgMTUuNTgzMUMxNi41NTA4IDE1LjI0OTggMTYuOTkyNSAxNC4wNTgxIDE2LjQ0MjUgMTMuMTQxNUwxNS40ODQxIDExLjU0OThDMTUuMjM0MSAxMS4xMTY1IDE1LjAxNzUgMTAuMzQxNSAxNS4wMTc1IDkuODMzMTRWNy40MjQ4QzE1LjAxNzUgNC42NzQ4IDEyLjc2NzUgMi40MjQ4IDEwLjAxNzUgMi40MjQ4WiIgc3Ryb2tlPSIjRDJEMkQyIiBzdHJva2Utd2lkdGg9IjEuNCIgc3Ryb2tlLW1pdGVybGltaXQ9IjEwIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPHBhdGggZD0iTTExLjU1OTkgMi42NjcxOUMxMS4zMDE2IDIuNTkyMTkgMTEuMDM0OSAyLjUzMzg1IDEwLjc1OTkgMi41MDA1MkM5Ljk1OTkgMi40MDA1MiA5LjE5MzIzIDIuNDU4ODUgOC40NzY1NiAyLjY2NzE5QzguNzE4MjMgMi4wNTA1MiA5LjMxODIzIDEuNjE3MTkgMTAuMDE4MiAxLjYxNzE5QzEwLjcxODIgMS42MTcxOSAxMS4zMTgyIDIuMDUwNTIgMTEuNTU5OSAyLjY2NzE5WiIgc3Ryb2tlPSIjRDJEMkQyIiBzdHJva2Utd2lkdGg9IjEuMjUiIHN0cm9rZS1taXRlcmxpbWl0PSIxMCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CjxwYXRoIGQ9Ik0xMi41MTU2IDE1Ljg4MjhDMTIuNTE1NiAxNy4yNTc4IDExLjM5MDYgMTguMzgyOCAxMC4wMTU2IDE4LjM4MjhDOS4zMzIyOSAxOC4zODI4IDguNjk4OTYgMTguMDk5NSA4LjI0ODk2IDE3LjY0OTVDNy43OTg5NiAxNy4xOTk1IDcuNTE1NjIgMTYuNTY2MSA3LjUxNTYyIDE1Ljg4MjgiIHN0cm9rZT0iI0QyRDJEMiIgc3Ryb2tlLXdpZHRoPSIxLjI1IiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiLz4KPC9zdmc+'),
@@ -1143,6 +1146,7 @@ function GroupSettingsMenu(props: {
   position: { left: number; top: number }
   onClose: () => void
   onRename: (target: ArkmeGroupActionTarget) => void
+  onSelfNickname: () => void
   aiPolishSettings?: ArkmeGroupAiPolishSnapshot | undefined
   onAiPolishSettingsChanged: (settings: ArkmeGroupAiPolishSnapshot) => void
   onAiPolishOpen: () => void
@@ -1274,40 +1278,18 @@ function GroupSettingsMenu(props: {
     if (event.target === event.currentTarget) props.onClose()
   }}>
     <div
-      style={{ ...styles.popover, left: props.position.left, top: props.position.top }}
+      style={{ ...styles.popover, left: props.position.left, top: props.position.top, maxHeight: 'calc(100% - 24px)', overflowY: 'auto' }}
       role="menu"
       aria-label="群聊设置"
       onMouseDown={event => { event.stopPropagation() }}
     >
-      {effective.canRename && <button
-        type="button"
-        role="menuitem"
-        style={styles.menuRow}
+      <div role="presentation" style={{ padding: '8px 8px 4px', fontSize: 12, lineHeight: '18px', color: colors.secondary }}>个人设置</div>
+      {effective.selfStatus === 'active' && <button type="button" role="menuitem" style={styles.menuRow}
         onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
         onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-        onClick={() => {
-          props.onRename(actionTarget)
-          props.onClose()
-        }}
-      ><ClientIcon src={icons.rename} /><span>重命名</span></button>}
-      {effective.selfRole === 'owner' && effective.selfStatus === 'active' && <button
-        type="button"
-        role="menuitem"
-        style={{ ...styles.menuRow, marginTop: 6 }}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-        onClick={props.onRestrictionsOpen}
-      ><span aria-hidden style={{ width: 20, display: 'grid', placeItems: 'center' }}><Prohibit size={18} /></span><span>禁止加入名单</span><span aria-hidden style={{ marginLeft: 'auto', color: colors.secondary }}>›</span></button>}
-      <button
-        type="button"
-        role="menuitem"
-        style={{ ...styles.menuRow, ...(effective.canRename ? { marginTop: 6 } : {}) }}
-        disabled={busy || (!effective.canLeave && !effective.canDissolve)}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-        onClick={() => { void leaveOrDissolve() }}
-      ><ClientIcon src={icons.exit} /><span>{effective.canDissolve ? '解散' : '退出群聊'}</span></button>
-      <div style={{ ...styles.menuRow, marginTop: 6 }} role="none">
+        onClick={() => { props.onSelfNickname(); props.onClose() }}
+      ><ClientIcon src={icons.selfNickname} /><span>修改群昵称</span></button>}
+      <div style={styles.menuRow} role="none">
         <ClientIcon src={icons.notice} />
         <span>消息免打扰</span>
         <MessageDndSwitch
@@ -1333,7 +1315,7 @@ function GroupSettingsMenu(props: {
         type="button"
         role="menuitem"
         data-arkme-group-ai-polish-entry="true"
-        style={{ ...styles.menuRow, marginTop: 6 }}
+        style={styles.menuRow}
         onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
         onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
         onClick={props.onAiPolishOpen}
@@ -1347,6 +1329,39 @@ function GroupSettingsMenu(props: {
         </span>
         <span aria-hidden style={{ flex: 'none', color: colors.secondary, fontSize: 16 }}>›</span>
       </button>
+      {(effective.canRename || (effective.selfRole === 'owner' && effective.selfStatus === 'active')) && <>
+      <div role="separator" style={{ height: 1, background: colors.border, margin: '8px 0' }} />
+      <div role="presentation" style={{ padding: '8px 8px 4px', fontSize: 12, lineHeight: '18px', color: colors.secondary }}>群管理</div>
+      {effective.canRename && <button
+        type="button"
+        role="menuitem"
+        style={styles.menuRow}
+        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
+        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+        onClick={() => {
+          props.onRename(actionTarget)
+          props.onClose()
+        }}
+      ><ClientIcon src={icons.rename} /><span>修改群名称</span></button>}
+      {effective.selfRole === 'owner' && effective.selfStatus === 'active' && <button
+        type="button"
+        role="menuitem"
+        style={styles.menuRow}
+        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
+        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+        onClick={props.onRestrictionsOpen}
+      ><span aria-hidden style={{ width: 20, display: 'grid', placeItems: 'center' }}><Prohibit size={18} /></span><span>禁止加入名单</span><span aria-hidden style={{ marginLeft: 'auto', color: colors.secondary }}>›</span></button>}
+      </>}
+      <div role="separator" style={{ height: 1, background: colors.border, margin: '8px 0' }} />
+      <button
+        type="button"
+        role="menuitem"
+        style={{ ...styles.menuRow, color: arkmeTheme.danger }}
+        disabled={busy || (!effective.canLeave && !effective.canDissolve)}
+        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
+        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+        onClick={() => { void leaveOrDissolve() }}
+      ><ClientIcon src={icons.exit} /><span>{effective.canDissolve ? '解散群聊' : '退出群聊'}</span></button>
     </div>
   </div>
 }
@@ -1622,6 +1637,7 @@ export function ArkmeGroupChatControls(props: {
   const [settingsPosition, setSettingsPosition] = useState({ left: 12, top: 54 })
   const [aiPolishOpen, setAiPolishOpen] = useState(false)
   const [restrictionsOpen, setRestrictionsOpen] = useState(false)
+  const [selfNicknameOpen, setSelfNicknameOpen] = useState(false)
   const [renameSource, setRenameSource] = useState<ArkmeGroupActionTarget>()
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
   const mountedRef = useRef(true)
@@ -1631,7 +1647,8 @@ export function ArkmeGroupChatControls(props: {
   }, [])
   useEffect(() => {
     setRestrictionsOpen(false)
-  }, [props.source.sourceRef])
+    setSelfNicknameOpen(false)
+  }, [props.source.sourceRef, props.accountScope])
   const reportError = useCallback((message: string) => {
     if (mountedRef.current) props.onError(message)
   }, [props.onError])
@@ -1654,7 +1671,7 @@ export function ArkmeGroupChatControls(props: {
       const hostRect = host.getBoundingClientRect()
       const buttonRect = button.getBoundingClientRect()
       const menuWidth = GROUP_SETTINGS_MENU_WIDTH
-      const menuHeight = 280
+      const menuHeight = 360
       setSettingsPosition({
         left: Math.max(12, Math.min(hostRect.width - menuWidth - 12, buttonRect.right - hostRect.left - menuWidth)),
         top: Math.max(8, Math.min(hostRect.height - menuHeight - 12, buttonRect.bottom - hostRect.top + 8)),
@@ -1695,6 +1712,7 @@ export function ArkmeGroupChatControls(props: {
         onAiPolishSettingsChanged={settings => { props.onAiPolishSettingsChanged?.(settings) }}
         onClose={() => { setSettingsOpen(false) }}
         onRename={setRenameSource}
+        onSelfNickname={() => { setSelfNicknameOpen(true) }}
         onAiPolishOpen={openAiPolish}
         onRestrictionsOpen={openRestrictions}
         onSourceProjectionUpdated={props.onSourceProjectionUpdated}
@@ -1742,6 +1760,12 @@ export function ArkmeGroupChatControls(props: {
         }}
         onError={reportError}
       />
+      {selfNicknameOpen && <ArkmeGroupSelfNicknameDialog
+        key={JSON.stringify([props.accountScope, props.source.sourceRef])}
+        source={props.source} accountScope={props.accountScope}
+        onClose={() => { setSelfNicknameOpen(false); settingsButtonRef.current?.focus({ preventScroll: true }) }}
+        onSaved={() => { props.onStatus?.('群昵称已修改') }}
+      />}
       <RenameDialog
         source={renameSource}
         open={renameSource !== undefined}

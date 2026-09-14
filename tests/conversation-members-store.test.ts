@@ -32,6 +32,26 @@ function createStore(load: (ref: string, signal: AbortSignal) => Promise<ArkmeCo
 afterEach(() => { vi.useRealTimers() })
 
 describe('shared conversation members', () => {
+  it('patches only self and rejects stale in-flight hydration after nickname acceptance', async () => {
+    const original = { ...member('self', '旧昵称'), isSelf: true, avatarRef: 'avatar' }
+    const deferredRead = deferred<ArkmeConversationMemberList>()
+    let pending = false
+    const store = createStore(async () => pending ? await deferredRead.promise : result([original, member('other')]))
+    const unsubscribe = store.subscribe(account, source, vi.fn())
+    await store.ensure(account, source)
+    pending = true
+    const oldRead = store.ensure(account, source, true)
+    await Promise.resolve()
+    store.patchSelfNickname(account, source, 'self', '新昵称')
+    deferredRead.resolve(result([original, member('other')]))
+    await oldRead
+    expect(store.get(account, source).items.find(item => item.isSelf)).toMatchObject({ displayName: '新昵称', memberName: '新昵称', avatarRef: 'avatar' })
+    store.patchSelfNickname('other-account', source, 'self', '错误')
+    store.patchSelfNickname(account, source, 'other', '错误')
+    expect(store.get(account, source).items.map(item => item.displayName)).toEqual(['新昵称', 'other'])
+    unsubscribe(); store.activateAccount(undefined)
+  })
+
   it('joins conversation and drawer loads and reuses the snapshot when reopened', async () => {
     const pending = deferred<ArkmeConversationMemberList>()
     const load = vi.fn(() => pending.promise)

@@ -38,6 +38,7 @@ import type {
   ArkmeGroupAiPolishSnapshot,
   ArkmeGroupJoinRestrictionMutationResult,
   ArkmeGroupJoinRestrictionPage,
+  ArkmeGroupSelfNickname,
   ArkmeGroupMemberRemoveResult,
   ArkmeGroupMemberRole,
   ArkmeGroupMemberStatus,
@@ -2392,6 +2393,51 @@ export class ChatService {
       withdrawnAtMillis,
       alreadyWithdrawn: data.already_withdrawn,
     }
+  }
+
+  async groupSelfNickname(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSelfNickname> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持群聊昵称', false, 400)
+    const data = await this.memberRead(session, source.ownerRef, '/api/v1/chats/members/by-user-ids', {
+      chat_session_uid: source.ownerRef, user_ids: [session.userId], active_only: true, include_stats: false,
+    }, signal)
+    const items = listValue(data.items).map(objectValue)
+    if (stringValue(data.chat_session_uid) !== source.ownerRef || items.length !== 1
+      || numberValue(items[0]!.user_id) !== session.userId || numberValue(items[0]!.status) !== 1) {
+      throw new ArkmePluginError('group-self-nickname-unavailable', '当前群成员信息不可用', false, 403)
+    }
+    return { sourceRef: sourceRef.trim(), memberRef: await this.sealChatMemberRef(session.userId, source.ownerRef, session.userId),
+      nickname: stringValue(items[0]!.display_name_snapshot).trim() }
+  }
+
+  async setGroupSelfNickname(sourceRef: string, nickname: string, signal?: AbortSignal): Promise<ArkmeGroupSelfNickname> {
+    const value = nickname.trim()
+    if (!value || [...value].length > 10) throw new ArkmePluginError('group-self-nickname-invalid', '昵称不能为空，且不能超过10个字', false, 400)
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持群聊昵称', false, 400)
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/members/update', {
+      chat_session_uid: source.ownerRef, target_user_id: session.userId, action: 4, display_name_snapshot: value,
+    }, session, signal)
+    const item = objectValue(data.item)
+    const accepted = stringValue(item.display_name_snapshot).trim()
+    if (stringValue(data.chat_session_uid) !== source.ownerRef || numberValue(item.user_id) !== session.userId
+      || numberValue(item.status) !== 1 || !accepted || [...accepted].length > 10) {
+      throw new ArkmePluginError('group-self-nickname-invalid-response', '群昵称保存响应无效，请重新读取后重试', true, 502)
+    }
+    this.runtime.invalidateMemberCache?.()
+    const memberRef = await this.sealChatMemberRef(session.userId, source.ownerRef, session.userId)
+    const cached = await this.runtime.stateStore.cachedConversationMembers?.(session.userId, source.ownerRef).catch(() => undefined)
+    const previous = cached?.items.find(member => member.memberRef === memberRef)
+    if (previous !== undefined) {
+      await this.runtime.stateStore.mergeConversationMembers?.(session.userId, source.ownerRef, {
+        kind: 'presentation', source: await this.source.sourceItem(source),
+        items: [{ ...previous, memberName: accepted, displayName: accepted }],
+        removedMemberRefs: [], unavailableProfileMemberRefs: [],
+      }).catch(async () => { await this.runtime.stateStore.forgetCachedMembers?.(session.userId, source.ownerRef, [memberRef]) })
+    }
+    return { sourceRef: sourceRef.trim(), memberRef, nickname: accepted }
   }
 
   async removeGroupMember(
