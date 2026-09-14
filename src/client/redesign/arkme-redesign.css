@@ -1950,3 +1950,5 @@ body[data-ds-dark-theme] .arkme-detail-extension-input-shell {
 .arkme-home-tour-placement-left .arkme-home-tour-arrow { right: 0; transform: translateX(50%) translateY(-50%); }
 .arkme-home-tour-placement-bottom .arkme-home-tour-arrow { top: 0; transform: translateX(-50%) translateY(-50%); }
 .arkme-home-tour-placement-top .arkme-home-tour-arrow { bottom: 0; transform: translateX(-50%) translateY(50%); }
+
+.arkme-conversation-profile-actions { grid-template-columns: minmax(0, 1fr); }

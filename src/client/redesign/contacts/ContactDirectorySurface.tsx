@@ -69,7 +69,9 @@ function sectionItems<K extends ArkmeDirectoryItem['kind']>(
 }
 
 function itemIsSelected(item: ArkmeDirectoryItem, selection: ArkmeDirectorySelection): boolean {
-  return (item.kind === 'contact' && selection.kind === 'contact' && item.contactRef === selection.contactRef)
+  return (item.kind === 'group' && selection.kind === 'group' && item.sourceRef === selection.sourceRef)
+    || (item.kind === 'bot' && selection.kind === 'bot' && item.bot.botRef === selection.bot.botRef)
+    || (item.kind === 'contact' && selection.kind === 'contact' && item.contactRef === selection.contactRef)
     || (item.kind === 'team' && selection.kind === 'team' && item.teamRef === selection.teamRef)
     || (item.kind === 'unmarked-speaker'
       && selection.kind === 'unmarked-speaker'
@@ -319,7 +321,11 @@ export function ContactDirectorySurface({
     for (const kind of CONTACT_DIRECTORY_SECTION_ORDER) {
       const section = state.sections[kind]
       const selected = state.selection
-      const resolvingSelection = (kind === 'contacts' && selected.kind === 'contact'
+      const resolvingSelection = (kind === 'groups' && selected.kind === 'group'
+        && !section.items.some(item => item.kind === 'group' && item.sourceRef === selected.sourceRef))
+        || (kind === 'bots' && selected.kind === 'bot'
+        && !section.items.some(item => item.kind === 'bot' && item.bot.botRef === selected.bot.botRef))
+        || (kind === 'contacts' && selected.kind === 'contact'
         && !section.items.some(item => item.kind === 'contact' && item.contactRef === selected.contactRef))
         || (kind === 'teams' && selected.kind === 'team'
           && !section.items.some(item => item.kind === 'team' && item.teamRef === selected.teamRef))
@@ -370,7 +376,9 @@ export function ContactDirectorySurface({
     for (const section of sections) load(section, 'replace', true)
   }, [active, cacheFresh, load, contactsAddedRevision])
 
-  const controlledSelectionKey = selection?.kind === 'contact'
+  const controlledSelectionKey = selection?.kind === 'group' ? `group:${selection.sourceRef}`
+    : selection?.kind === 'bot' ? `bot:${selection.bot.botRef}`
+    : selection?.kind === 'contact'
     ? `contact:${selection.contactRef}`
     : selection?.kind === 'team'
       ? `team:${selection.teamRef}`
@@ -382,6 +390,8 @@ export function ContactDirectorySurface({
     const current = stateRef.current.selection
     const matches = current.kind === selection.kind
       && (current.kind === 'none'
+        || (current.kind === 'group' && selection.kind === 'group' && current.sourceRef === selection.sourceRef)
+        || (current.kind === 'bot' && selection.kind === 'bot' && current.bot.botRef === selection.bot.botRef)
         || (current.kind === 'contact' && selection.kind === 'contact' && current.contactRef === selection.contactRef)
         || (current.kind === 'team' && selection.kind === 'team' && current.teamRef === selection.teamRef)
         || (current.kind === 'unmarked-speaker' && selection.kind === 'unmarked-speaker'

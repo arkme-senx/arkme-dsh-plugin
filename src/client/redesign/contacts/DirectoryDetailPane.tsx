@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
-import type { ArkmeDirectoryContactProfile, ArkmeSourceItem } from '../../../types.js'
+import type { ArkmeBotSummary, ArkmeDirectoryContactProfile, ArkmeSourceItem } from '../../../types.js'
 import arkmeNavigationLogoBase64 from '../../../../assets/branding/arkme-navigation-logo.png'
 import arkmeNavigationLogoDarkBase64 from '../../../../assets/branding/arkme-navigation-logo-dark.png'
 import type { ArkmeDirectorySelection } from './contact-directory-state.js'
 import { ContactProfileDetail } from './ContactProfileDetail.js'
+import { ConversationProfileDetail } from './ConversationProfileDetail.js'
 import { TeamDetailPane } from './TeamDetailPane.js'
 
 export interface DirectoryDetailPaneProps {
@@ -11,6 +12,7 @@ export interface DirectoryDetailPaneProps {
   selection: ArkmeDirectorySelection
   onSelectionChange(selection: ArkmeDirectorySelection): void
   onSourceActivated(source: ArkmeSourceItem): void
+  onBotActivated?(bot: ArkmeBotSummary): void
   onProfileUpdated?(profile: ArkmeDirectoryContactProfile): void
   renderUnmarkedSpeakerDetail?(candidateRef: string): ReactNode
 }
@@ -23,6 +25,7 @@ export function DirectoryDetailPane({
   onSourceActivated,
   renderUnmarkedSpeakerDetail,
   onProfileUpdated,
+  onBotActivated,
 }: DirectoryDetailPaneProps) {
   if (selection.kind === 'none') {
     return <div className="arkme-directory-detail-empty">
@@ -46,6 +49,9 @@ export function DirectoryDetailPane({
     return <div className="arkme-directory-unmarked-speaker-detail" data-candidate-ref={selection.candidateRef}>
       {renderUnmarkedSpeakerDetail?.(selection.candidateRef)}
     </div>
+  }
+  if (selection.kind === 'group' || selection.kind === 'bot') {
+    return <ConversationProfileDetail key={`${accountKey}:${selection.kind}:${selection.kind === 'group' ? selection.sourceRef : selection.bot.botRef}`} item={selection} onSourceActivated={onSourceActivated} {...(onBotActivated === undefined ? {} : { onBotActivated })} />
   }
   if (selection.kind === 'team') {
     return <TeamDetailPane key={`${accountKey}:${selection.teamRef}`} accountKey={accountKey} teamRef={selection.teamRef} />
