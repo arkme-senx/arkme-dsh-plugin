@@ -15,6 +15,17 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it.each(['vip', 'svip', 'free', undefined])('projects counterpart membership %s and clears stale paid snapshots', async memberType => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    const cached: ArkmeSourceItem = { sourceRef: 'old', kind: 'private_chat', displayName: '同事', activeAtMillis: 0, unreadCount: 0, peerUserId: 17, peerMemberType: 'svip' }
+    const bundle = { session: { chat_session_uid: 'private-1', session_kind: 1 }, private_counterpart: { user_id: 17, member_type: memberType } }
+    const result = await service.chatSourceFromBundle(bundle, session, cached, [])
+    expect(result.peerMemberType).toBe(memberType ?? 'unknown')
+    expect((await service.chatSourceFromBundle({ ...bundle, session: { chat_session_uid: 'group-1', session_kind: 2 } }, session, undefined, [])).peerMemberType).toBeUndefined()
+  })
+
   it('keeps counterpart identity through realtime cache replacement so calendar avatar hydration can resolve it', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime

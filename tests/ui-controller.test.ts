@@ -2,6 +2,15 @@ import { describe, expect, it, vi } from 'vitest'
 import { ArkmeUiController } from '../src/client/ui-controller.js'
 
 describe('ArkmeUiController', () => {
+  it('updates the private-chat header when only the peer membership changes', () => {
+    const controller = new ArkmeUiController()
+    const source = { sourceRef: 'private-1', kind: 'private_chat' as const, displayName: '同事', activeAtMillis: 0, unreadCount: 0, peerMemberType: 'svip' as const }
+    controller.selectSource(source)
+    expect(controller.updateSelectedSourceProjection({ ...source, peerMemberType: 'free' })).toBe(true)
+    expect(controller.getViewSnapshot().selectedSource?.peerMemberType).toBe('free')
+    expect(controller.updateSelectedSourceProjection({ ...source, sourceRef: 'other-peer', peerMemberType: 'vip' })).toBe(false)
+  })
+
   it('keeps the view snapshot stable across projection-only invalidations', () => {
     const controller = new ArkmeUiController()
     const initial = controller.getViewSnapshot()

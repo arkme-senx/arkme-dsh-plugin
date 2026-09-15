@@ -1,4 +1,5 @@
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
+import { ArkmeMembershipBadge } from './ArkmeMembershipBadge.js'
 import { useForwardTargetDirectory } from './forward-target-directory.js'
 import { ArkmeRecordDeletionDialog } from './ArkmeRecordDeletionDialog.js'
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
@@ -6900,6 +6901,8 @@ export function ArkmeSurface({
               : <div style={styles.titleBlock}>
                 <span style={styles.titleLine}>
                   <h2 style={styles.title}>{surfaceTitle}</h2>
+                  {authenticated && conversationBackdropVisible && source?.kind === 'private_chat'
+                    && <ArkmeMembershipBadge memberType={source.peerMemberType} />}
                   {isArkmeOfficialAuthor(source) && <ArkmeTopicTagBadge label="官方" />}
                   {source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon size={16} /></span>}
                 </span>

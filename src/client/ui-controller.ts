@@ -7,6 +7,7 @@ function sameSelectedSource(left: ArkmeSourceItem | undefined, right: ArkmeSourc
   if (left === undefined || right === undefined) return left === right
   return left.sourceRef === right.sourceRef && left.sourceKey === right.sourceKey
     && left.kind === right.kind && left.displayName === right.displayName
+    && left.peerMemberType === right.peerMemberType
     && left.latestPreview === right.latestPreview && left.activeAtMillis === right.activeAtMillis
     && left.unreadCount === right.unreadCount && left.hasUnreadMention === right.hasUnreadMention
     && left.badgeUnreadCount === right.badgeUnreadCount

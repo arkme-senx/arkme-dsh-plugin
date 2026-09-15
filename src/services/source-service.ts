@@ -1,4 +1,5 @@
 import { SharedReadGroup } from '../shared-read-group.js'
+import { arkmePeerMemberType } from '../peer-membership.js'
 import { patchChatPolicy, type ChatPolicySnapshot } from './chat-policy.js'
 import { readTopicRecordPage } from './topic-record-page.js'
 import { readTopicMetadata } from './topic-metadata.js'
@@ -1666,6 +1667,7 @@ export class SourceService {
         const counterpartUserId = numberValue(counterpart.user_id)
         if (Number.isSafeInteger(counterpartUserId) && counterpartUserId > 0) {
           item.peerUserId = counterpartUserId
+          item.peerMemberType = arkmePeerMemberType(counterpart.member_type)
           privateUserIdByIndex.set(itemIndex, counterpartUserId)
         }
       } else {
@@ -2109,6 +2111,8 @@ export class SourceService {
       directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
       displayName,
       ...(kind === 'private_chat' && Number.isSafeInteger(peerUserId) && peerUserId > 0 ? { peerUserId } : {}),
+      ...(kind === 'private_chat' && Number.isSafeInteger(peerUserId) && peerUserId > 0
+        ? { peerMemberType: arkmePeerMemberType(counterpart.member_type) } : {}),
       ...(cached?.avatarRef === undefined ? {} : { avatarRef: cached.avatarRef }),
       ...(cached?.avatarRefs === undefined ? {} : { avatarRefs: cached.avatarRefs }),
       ...(cached?.groupAvatar === undefined ? {} : { groupAvatar: cached.groupAvatar }),
