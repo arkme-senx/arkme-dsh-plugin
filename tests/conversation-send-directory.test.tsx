@@ -2446,6 +2446,24 @@ describe('conversation send directory projection', () => {
     expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
   })
 
+  it('hides sender and time metadata for a received private-chat message', async () => {
+    timeline = [{
+      itemUid: 'private-message-without-metadata', senderName: '1D3E', isMe: false,
+      sendAtMillis: 1, title: '', textContent: '那我就不管了', status: 1,
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+
+    const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'private-message-without-metadata' })
+    expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
+  })
+
   it.each([0, 500])('preserves long drafts while forwarding with distance %s from bottom', async distance => {
     const original = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, params, signal) => {
@@ -5496,7 +5514,7 @@ describe('conversation send directory projection', () => {
     expect(childLine.findAllByProps({ 'data-arkme-extension-parent-preview': 'extension-parent' })).toHaveLength(0)
   })
 
-  it('aligns a received extension preview with the sender and content column', async () => {
+  it('aligns a received private-chat extension preview with the content column', async () => {
     timeline = [{
       itemUid: 'received-extension-child', senderName: '同事', isMe: false, sendAtMillis: 12,
       title: '', textContent: '补充内容', status: 1,
@@ -5524,7 +5542,7 @@ describe('conversation send directory projection', () => {
     expect(preview.props.title).toContain('😍👍')
     expect(preview.props.title).not.toContain('[jm_emoji:heart_eyes]')
     const childLine = row.findByProps({ 'data-arkme-extension-child-line': 'true' })
-    expect(childLine.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(1)
+    expect(childLine.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
   })
 
   it('uses a pointer cursor for a clickable extension parent preview', async () => {

@@ -11,7 +11,8 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import type { ArkmeTimelineItem } from '../src/types.js'
 
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: vi.fn() }))
-const source: ArkmeChatPreviewSource = { sourceRef: 'signed-chat', sourceKey: 'stable-chat', kind: 'group_chat', displayName: '测试群', activeAtMillis: 1, unreadCount: 8, latestSequence: 8 }
+const groupSource: ArkmeChatPreviewSource = { sourceRef: 'signed-chat', sourceKey: 'stable-chat', kind: 'group_chat', displayName: '测试群', activeAtMillis: 1, unreadCount: 8, latestSequence: 8 }
+let source: ArkmeChatPreviewSource
 const message: ArkmeTimelineItem = { itemUid: 'record', sequence: 8, senderName: '作者', isMe: false, textContent: '预览正文', title: '长文标题', templateKind: 1, sendAtMillis: 1, status: 1 }
 let host: HTMLDivElement, root: Root, opener: HTMLButtonElement
 let messages: ArkmeTimelineItem[]
@@ -22,7 +23,7 @@ const render = async () => { await act(async () => root.render(<ArkmeChatPreview
 beforeEach(() => {
   vi.mocked(callArkme).mockReset()
   vi.useFakeTimers(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-  messages = [message]; onClose.mockClear()
+  source = groupSource; messages = [message]; onClose.mockClear()
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   opener = document.createElement('button'); document.body.append(opener); opener.focus()
   arkmeChatDirectory.activateAccount('test:preview')
@@ -122,7 +123,35 @@ it('groups timestamps using the Flutter first-message and greater-than-30-minute
   }))
   await render()
   expect(document.querySelectorAll('[data-arkme-preview-time-marker]')).toHaveLength(2)
-  expect([...document.querySelectorAll('article')].every(row => !row.textContent?.includes('2026/'))).toBe(true)
+  const rows = [...document.querySelectorAll('article')]
+  expect(rows.every(row => !row.textContent?.includes('2026/'))).toBe(true)
+  expect(rows[0]?.textContent).toContain('作者')
+  expect(rows[0]?.querySelector('[aria-label="作者"]')).not.toBeNull()
+})
+
+it('hides the other party nickname but keeps the viewer nickname in a private preview', async () => {
+  source = { ...groupSource, kind: 'private_chat', displayName: '测试私聊' }
+  messages = [
+    { ...message, itemUid: 'other', senderName: '对方昵称', isMe: false },
+    { ...message, itemUid: 'self', senderName: '我', isMe: true },
+  ]
+  await render()
+  const rows = document.querySelectorAll('article')
+  expect(rows[0]?.textContent).not.toContain('对方昵称')
+  expect(rows[0]?.querySelector('[aria-label="对方昵称"]')).toBeNull()
+  expect(rows[0]?.querySelector('[aria-label="消息头像"]')).not.toBeNull()
+  expect(rows[1]?.textContent).toContain('我')
+  expect(rows[1]?.querySelector('[aria-label="我"]')).not.toBeNull()
+})
+
+it('hides timestamp markers in a private preview', async () => {
+  source = { ...groupSource, kind: 'private_chat', displayName: '测试私聊' }
+  const start = Date.UTC(2026, 8, 14, 10)
+  messages = [0, 31 * 60_000].map((offset, index) => ({
+    ...message, itemUid: String(index), sequence: index + 1, sendAtMillis: start + offset,
+  }))
+  await render()
+  expect(document.querySelectorAll('[data-arkme-preview-time-marker]')).toHaveLength(0)
 })
 
 it('queries other members receipts without submitting the viewer read cursor', async () => {

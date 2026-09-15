@@ -7125,7 +7125,7 @@ export function ArkmeSurface({
                 const messageMember = item.memberRef === undefined
                   ? (item.isMe ? selfConversationMember : undefined)
                   : conversationMemberByRef.get(item.memberRef)
-                const messageHeader = item.isMe ? null : <ArkmeTimelineMessageHeader
+                const messageHeader = item.isMe || source.kind === 'private_chat' ? null : <ArkmeTimelineMessageHeader
                   item={item}
                   {...(selfProfile === undefined ? {} : { profile: selfProfile })}
                   {...(source.kind === 'group_chat' && messageMember !== undefined ? { member: messageMember } : {})}
