@@ -28,6 +28,7 @@ import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
 import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
 import { installArkmeAccountSettingsNavIcon } from './account-settings-nav-icon.js'
+import { DesktopHarnessReadinessCommit } from './desktop-harness-readiness.js'
 import {
   ARKME_LOGIN_LOCALE_NAMESPACE, arkmeLoginEn, arkmeLoginZh,
 } from './arkme-login-locales.js'
@@ -112,7 +113,7 @@ export function apply(ctx: ClientContext): void {
   }), 'dsh-arkme: login dictionaries')
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
 
-  ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update status')
+  ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update bridge')
   ctx.effect(() => {
     let disposed = false
     let resolving: {
@@ -352,6 +353,13 @@ export function apply(ctx: ClientContext): void {
       locale: ARKME_LOGIN_LOCALE_NAMESPACE,
     }, ArkmeStartupAuthGate))
   }
+
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'arkme-desktop-harness-readiness',
+    order: -1_000,
+    label: () => 'Arkme desktop harness readiness',
+  }, DesktopHarnessReadinessCommit))
 }
 
 export { ArkmeFooterAction } from './ArkmeFooterAction.js'
@@ -365,8 +373,6 @@ export {
 } from './DeepSeekHarnessSurface.js'
 export { ArkmeOutgoingCallHost, outgoingCallModalLayout } from './ArkmeOutgoingCallHost.js'
 export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
-export { ArkmeAppUpdateDialog } from './ArkmeAppUpdateDialog.js'
-export { ArkmeUpdateRailSlot, ArkmeUpdateTopCapsule, deriveArkmeUpdatePresentation } from './ArkmeUpdateSurfaces.js'
 export { ArkmeStartupAuthGate } from './ArkmeStartupAuthGate.js'
 export { ArkmeWebLoginOverlay } from './ArkmeWebLoginOverlay.js'
 export {

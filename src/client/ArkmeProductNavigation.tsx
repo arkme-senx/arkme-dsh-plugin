@@ -18,7 +18,6 @@ import arkmeNavigationLogoDarkBase64 from '../../assets/branding/arkme-navigatio
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
-import { ArkmeUpdateRailSlot } from './ArkmeUpdateSurfaces.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
@@ -289,7 +288,6 @@ export function ArkmeProductNavigation({
         onClose={() => { arkmeUi.hideCalendar() }}
       />, document.body)}
       {!compact && !locked && <div className="arkme-redesign-rail-footer">
-        <ArkmeUpdateRailSlot />
         {authState.auth?.status === 'authenticated' && <>
         {profileOpen && typeof document !== 'undefined' && createPortal(<div
           ref={profilePopoverRef}

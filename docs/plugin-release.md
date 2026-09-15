@@ -56,6 +56,8 @@ Trusted Publisher 配置完成后，GitHub Actions 通过短期身份凭据发�
 
 OSS bucket、直传 endpoint、CDN origin 与对象前缀只配置在对应 Backend 中，不进入 GitHub Secrets。测试环境使用 `/app/arkme/test/plugin/`，生产环境使用 `/app/arkme/prod/plugin/`；Backend 会去掉首尾斜杠后生成 OSS Object Key。production 与 pre-release Runtime workflow 都使用全局串行 concurrency，且不会取消正在运行的发布。
 
+Runtime 发布默认不设置兼容范围，Backend 会从当前环境中最高已发布的 Arkme 插件版本继承并持久化范围。需要为首个版本或明确的兼容调整指定范围时，在发布环境设置 `ARKME_HARNESS_VERSION_CODE_RANGE`，值为 JSON，例如 `{"min":1,"max":42}`。发布脚本会在激活前校验 Backend 返回并持久化的范围，并在日志中输出该范围和继承来源。
+
 `pre-release` 分支必须通过 GitHub Ruleset 禁止直接 push，要求 PR 和 CODEOWNERS 审批；`pre-release` Environment 也必须限制为该受保护分支。工作流会在无 Secret 的 job 中构建触发提交，再由持密 job 从受保护的 `master` 检出发布工具和锁定依赖，下载并重新校验制品后发布。
 
 对应 OSS bucket 必须为各环境规范化后的 `object-prefix` 启用 Bucket 级覆盖保护规则：测试环境为 `app/arkme/test/plugin/`，生产环境为 `app/arkme/prod/plugin/`。GitHub Actions 上传时也会发送 `x-oss-forbid-overwrite: true`，但 Bucket 级规则才是对临时 STS 凭据的服务端强制约束；未完成该配置前不得启用 `arkme-plugin-ci`。

@@ -21,51 +21,34 @@ describe('Arkme settings policy', () => {
     expect(updateVersionText('v…', 'v…')).toBe('当前版本读取中…')
   })
 
-  it('projects an available APP update through the existing desktop update flow', () => {
+  it('projects an available APP update from the shell-owned state', () => {
     expect(buildArkmeAppUpdateRow({
       app: { status: 'available', currentVersion: '1.2.0', latestVersion: '1.3.0' },
     })).toEqual({
       label: 'APP', current: 'v1.2.0', latest: 'v1.3.0',
-      action: 'download', feedback: '发现新版本，可以下载更新包',
+      feedback: '发现新版本 v1.3.0',
     })
   })
 
-  it('opens a downloaded APP package from its existing local path', () => {
+  it('keeps downloaded APP state read-only in settings', () => {
     expect(buildArkmeAppUpdateRow({
       app: {
         status: 'downloaded',
         currentVersion: '1.2.0',
         latestVersion: '1.3.0',
-        downloadedFilePath: '/Users/example/Downloads/arkme-1.3.0-darwin-arm64.zip',
       },
     })).toEqual({
-      label: 'APP', current: 'v1.2.0', latest: 'v1.3.0', action: 'open',
-      feedback: '下载完成，可打开所在文件夹定位安装包',
-      downloadedFilePath: '/Users/example/Downloads/arkme-1.3.0-darwin-arm64.zip',
+      label: 'APP', current: 'v1.2.0', latest: 'v1.3.0',
+      feedback: '更新已下载，前往 APP 更新继续',
     })
   })
 
-  it('installs a downloaded verified package in app instead of exposing its cache path', () => {
+  it('shows the required client-upgrade message when the shell bridge is unavailable', () => {
     expect(buildArkmeAppUpdateRow({
-      app: {
-        status: 'downloaded',
-        currentVersion: '1.2.0',
-        latestVersion: '1.1.0',
-        installMode: 'in-app',
-        downloadedFilePath: '/private/cache/verified-update.zip',
-      },
+      appError: '请升级 Arkme 客户端',
     })).toEqual({
-      label: 'APP', current: 'v1.2.0', latest: 'v1.1.0', action: 'install',
-      feedback: '下载完成，可重启并安装新版本',
-    })
-  })
-
-  it('disables the APP row when the desktop update bridge is unavailable', () => {
-    expect(buildArkmeAppUpdateRow({
-      appError: 'APP 更新只在 Arkme 桌面端可用',
-    })).toMatchObject({
-      action: 'busy',
-      feedback: '检查失败：APP 更新只在 Arkme 桌面端可用',
+      label: 'APP', current: 'v…', latest: 'v…',
+      feedback: '请升级 Arkme 客户端',
     })
   })
 
@@ -86,13 +69,16 @@ describe('Arkme settings policy', () => {
     expect(source).not.toContain("arkmeUpdateUi.open('plugin')")
   })
 
-  it('restores the APP entry without restoring the legacy copy-command path', () => {
+  it('keeps one shell-owned APP update entry without restoring plugin actions', () => {
     const source = readFileSync(new URL('../src/client/ArkmeSettingsSurface.tsx', import.meta.url), 'utf8')
     expect(source).not.toContain('复制更新命令')
     expect(source).toContain('arkmeAppUpdateStore')
     expect(source).toContain('ArkmeAppUpdateSnapshot')
-    expect(source).toContain("arkmeUpdateUi.open('app')")
-    expect(source).toContain('arkmeAppUpdateStore.showDownloadedFile()')
-    expect(source).toContain('arkmeAppUpdateStore.refresh(true)')
+    expect(source).toContain('actionLabel="打开 APP 更新"')
+    expect(source).toContain('arkmeAppUpdateStore.open()')
+    expect(source).not.toContain('arkmeUpdateUi')
+    expect(source).not.toContain('arkmeAppUpdateStore.download')
+    expect(source).not.toContain('arkmeAppUpdateStore.install')
+    expect(source).not.toContain('arkmeAppUpdateStore.retry')
   })
 })

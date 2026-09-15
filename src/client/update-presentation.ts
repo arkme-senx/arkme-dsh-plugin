@@ -1,9 +1,7 @@
 import semverGt from 'semver/functions/gt.js'
 import semverValid from 'semver/functions/valid.js'
 import type { ArkmePluginUpdateInstallPhase, ArkmePluginUpdateStatus } from '../types.js'
-import type { ArkmeAppUpdateStoreSnapshot } from './app-update-store.js'
 import type { ArkmePluginUpdateStoreSnapshot } from './plugin-update-store.js'
-import type { ArkmeUpdateTarget } from './update-ui-controller.js'
 
 const ACTIVE_PLUGIN_PHASES = new Set<ArkmePluginUpdateInstallPhase>([
   'preparing', 'downloading', 'verifying', 'installing', 'restarting',
@@ -15,7 +13,7 @@ export interface ArkmeUpdateNote {
 }
 
 export interface ArkmeUpdateItem {
-  target: ArkmeUpdateTarget | 'plugin'
+  target: 'plugin'
   instanceKey: string
   productLabel: string
   title: string
@@ -32,7 +30,7 @@ export interface ArkmeUpdateItem {
   checkingStatus?: boolean
   blockedReason?: string
   error?: string
-  phase?: ArkmePluginUpdateInstallPhase | 'app-downloading' | 'app-downloaded' | 'app-failed'
+  phase?: ArkmePluginUpdateInstallPhase
   phaseMessage?: string
   progress?: number
 }
@@ -44,18 +42,6 @@ export interface ArkmeUpdatePresentation {
 
 function versionLabel(version: string | undefined): string {
   return version?.trim() || '…'
-}
-
-function formatBytes(value: number | undefined): string | undefined {
-  if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined
-  if (value < 1024) return `${Math.round(value)} B`
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`
-}
-
-export function appUpdateProgress(downloaded: number | undefined, total: number | undefined): number | undefined {
-  if (total === undefined || total <= 0) return undefined
-  return Math.max(0, Math.min(100, Math.round((downloaded ?? 0) / total * 100)))
 }
 
 function pluginProgress(phase: ArkmePluginUpdateInstallPhase | undefined, busy: boolean): number | undefined {
@@ -102,36 +88,6 @@ function updateNotes(summary: string | undefined): ArkmeUpdateNote[] {
       detail: line.slice(separator + 1).trim(),
     }
   })
-}
-
-function appItem(snapshot: ArkmeAppUpdateStoreSnapshot): ArkmeUpdateItem | undefined {
-  const status = snapshot.status
-  if (status === undefined || !['available', 'downloading', 'downloaded', 'failed'].includes(status.status)) return undefined
-  const latestVersion = versionLabel(status.latestVersion)
-  const progress = appUpdateProgress(status.downloadedBytes, status.totalBytes)
-  const packageSize = formatBytes(status.totalBytes)
-  const failed = status.status === 'failed'
-  const ready = status.status === 'downloaded'
-  return {
-    target: 'app',
-    instanceKey: `app:${latestVersion}`,
-    productLabel: 'Arkme APP',
-    title: failed ? '更新未完成' : ready ? '安装包已下载' : '发现新版本',
-    currentVersion: versionLabel(status.currentVersion),
-    latestVersion,
-    ...(packageSize === undefined ? {} : { packageSize }),
-    notes: updateNotes(status.releaseNotes),
-    available: status.status === 'available',
-    active: status.status === 'downloading',
-    ready,
-    restarting: false,
-    failed,
-    ...(status.status === 'downloading' ? { phase: 'app-downloading' as const, phaseMessage: '可继续使用' } : {}),
-    ...(ready ? { phase: 'app-downloaded' as const, phaseMessage: `已下载 ${latestVersion}` } : {}),
-    ...(failed ? { phase: 'app-failed' as const, phaseMessage: '请重新尝试下载' } : {}),
-    ...(status.error?.trim() || snapshot.error.trim() ? { error: status.error?.trim() || snapshot.error.trim() } : {}),
-    ...(progress === undefined ? {} : { progress }),
-  }
 }
 
 export function derivePluginUpdateItem(snapshot: ArkmePluginUpdateStoreSnapshot): ArkmeUpdateItem | undefined {
@@ -192,12 +148,11 @@ export function derivePluginUpdateItem(snapshot: ArkmePluginUpdateStoreSnapshot)
   }
 }
 
-/** Pure UI projection over the existing APP and plugin update stores. */
+/** Pure UI projection over the plugin update store. APP update UI is owned by the desktop shell. */
 export function deriveArkmeUpdatePresentation(input: {
-  app: ArkmeAppUpdateStoreSnapshot
   plugin: ArkmePluginUpdateStoreSnapshot
 }): ArkmeUpdatePresentation {
-  const items = [derivePluginUpdateItem(input.plugin), appItem(input.app)].filter((item): item is ArkmeUpdateItem => item !== undefined)
+  const items = [derivePluginUpdateItem(input.plugin)].filter((item): item is ArkmeUpdateItem => item !== undefined)
   const primary = items.find(item => item.active)
     ?? items.find(item => item.ready || item.failed || item.uncertain)
     ?? items.find(item => item.available)

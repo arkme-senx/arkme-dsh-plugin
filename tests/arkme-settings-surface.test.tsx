@@ -126,7 +126,7 @@ describe('ArkmeSettingsSurface', () => {
     const appMarkup = renderToStaticMarkup(<VersionSettingsRow
       title="ArkME 客户端"
       version="v0.1.0"
-      actionLabel="检查更新"
+      actionLabel="打开 APP 更新"
       onAction={() => {}}
     />)
     const harnessMarkup = renderToStaticMarkup(<VersionSettingsRow
@@ -138,24 +138,6 @@ describe('ArkmeSettingsSurface', () => {
     expect(harnessMarkup).toContain('arkme-redesign-version-row is-without-action')
     expect(harnessMarkup).toContain('<span class="arkme-redesign-version-value">v0.1.0-rc.8</span><span class="arkme-redesign-trailing-slot" aria-hidden="true"></span>')
     expect(harnessMarkup).not.toContain('arkme-redesign-version-action-slot')
-  })
-
-  it('shows an accessible spinner while a version check is running', () => {
-    const markup = renderToStaticMarkup(<VersionSettingsRow
-      title="ArkME 客户端"
-      version="v0.1.0"
-      feedback="正在检查更新…"
-      actionLabel="检查中…"
-      loading
-      disabled
-      onAction={() => {}}
-    />)
-
-    expect(markup).toContain('aria-busy="true"')
-    expect(markup).toContain('aria-label="正在检查 ArkME 客户端更新"')
-    expect(markup).toContain('class="arkme-icon-spin"')
-    expect(markup).toContain('disabled=""')
-    expect(markup).toContain('>检查中…</button>')
   })
 
   it('uses the desktop-injected APP version when the update bridge has no status yet', () => {
@@ -185,7 +167,7 @@ describe('ArkmeSettingsSurface', () => {
     expect(markup).toContain('>ArkME 插件<')
     expect(markup).toContain('>DeepSeek Harness<')
     expect(markup).toMatch(/ArkME 插件[\s\S]*DeepSeek Harness/)
-    expect(markup).toContain('aria-label="检查 ArkME 客户端更新"')
+    expect(markup).toContain('aria-label="打开 APP 更新：ArkME 客户端"')
     expect(markup).toContain('<span class="arkme-redesign-version-value">v0.1.0</span>')
     expect(markup).toContain(`<span class="arkme-redesign-version-value">v${pluginManifest.version}</span>`)
     expect(markup).toContain('<span class="arkme-redesign-version-value">v0.1.0-rc.8</span>')

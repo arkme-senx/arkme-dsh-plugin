@@ -1,6 +1,8 @@
 import { Context } from '@deepseek-ai/cordis'
 import * as cordisModule from '@deepseek-ai/cordis'
 import * as slotsModule from '@deepseek-ai/dsh-client-ui-slots'
+import { createElement } from 'react'
+import { act, create } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/client/index.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
@@ -53,7 +55,46 @@ async function loadSlotRegistry(): Promise<RuntimeModule['SlotRegistry']> {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.unstubAllGlobals()
   arkmeUi.showConversations()
+})
+
+describe('desktop harness startup lifecycle', () => {
+  it('signals readiness after local plugin services register without waiting for account auth', () => {
+    const notifyHarnessReady = vi.fn()
+    vi.stubGlobal('window', { arkmeDesktop: { notifyHarnessReady } })
+    const registrations: string[] = []
+    let readinessSurface: (() => null) | undefined
+
+    apply({
+      slots: {
+        inject: (name: string, register?: () => unknown) => {
+          registrations.push(name)
+          if (name === 'shell.overlay') register?.()
+          return () => undefined
+        },
+        register: vi.fn((options: { id?: string }, component: () => null) => {
+          if (options.id === 'arkme-desktop-harness-readiness') readinessSurface = component
+          return () => undefined
+        }),
+      },
+      layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
+      locale: createClientLocaleStub(),
+      effect: (factory: () => unknown, label: string) => {
+        registrations.push(label)
+        if (label.includes('login dictionaries') || label.includes('conversation seats')) factory()
+        return () => undefined
+      },
+    } as never)
+
+    expect(notifyHarnessReady).not.toHaveBeenCalled()
+    expect(registrations).toContain('conversation')
+    expect(registrations).toContain('main.conversation')
+    expect(registrations).toContain('settings.section')
+    expect(readinessSurface).toBeTypeOf('function')
+    act(() => { create(createElement(readinessSurface!)) })
+    expect(notifyHarnessReady).toHaveBeenCalledOnce()
+  })
 })
 
 describe('Arkme directory slot lifecycle', () => {

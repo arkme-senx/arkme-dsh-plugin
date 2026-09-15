@@ -65,6 +65,9 @@
     "desktopAccountScope": {
       "version": 1
     },
+    "desktopHarnessReady": {
+      "version": 1
+    },
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
