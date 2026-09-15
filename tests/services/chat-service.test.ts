@@ -1485,7 +1485,49 @@ describe('ChatService', () => {
         recordUid: 'record-b',
         recordOwnerUserId: 13,
         chatSessionUid: 'chat-1',
-    })
+      })
+  })
+
+  it('marks Bot and ownerless generic chat messages as unsupported quick-note detail sources', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      stateStore: { uniqueCode: vi.fn(async () => 'bot-detail-signing-key') },
+    }
+    const media = {
+      recordContentPayload: vi.fn(() => ({})),
+      recordMediaUnavailable: vi.fn(() => false),
+      richContentBlocks: vi.fn(() => []),
+    }
+    const chat = new ChatService(
+      runtime as never,
+      { chatTimelineItemKey: vi.fn(async () => 'timeline-item-key') } as never,
+      { sealProfileImageRef: vi.fn(async () => 'opaque-avatar') } as never,
+      media as never,
+      {} as never,
+      {} as never,
+      { currentUserAgentSourceFallback: vi.fn(() => undefined) } as never,
+      { timelineAiPolish: vi.fn(() => undefined) } as never,
+      {} as never,
+    )
+
+    const items = await chat.chatTimelineItems({ items: [{
+      relation: {
+        rel_uid: 'relation-bot', record_uid: 'record-bot', record_owner_user_id: 9001,
+        sender_user_id: 9001, sender_actor_kind: 2, sender_bot_uid: 'daily-statistics-bot', seq: 1, attach_at: 100,
+      },
+      record: { status: 1, payload: { record_uid: 'record-bot', text_content: '每日统计' } },
+    }, {
+      relation: {
+        rel_uid: 'relation-ownerless', record_uid: 'record-ownerless', sender_user_id: 0, seq: 2, attach_at: 200,
+      },
+      record: { status: 1, payload: { record_uid: 'record-ownerless', text_content: '无作者定位的系统消息' } },
+    }] }, session, 'chat-1', 'group_chat')
+
+    expect(items).toMatchObject([
+      { itemUid: 'record-bot', quickNoteDetailsSupported: false },
+      { itemUid: 'record-ownerless', quickNoteDetailsSupported: false },
+    ])
   })
 
   it('loads quick-note extensions from the durable chat tree identity without creating a copy link', async () => {

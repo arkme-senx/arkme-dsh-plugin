@@ -376,21 +376,22 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
 .arkme-redesign-task-conversation textarea { font-size: 14px !important; }
 /* Keep both Arkme navigation columns visible at every viewport width. DSH may
    report its sidebar as collapsed at 1024px; the plugin still owns a 72px rail
-   and at least a 64px avatar directory (plus the 4px divider budget). */
-[data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"][data-arkme-directory-visible="true"] [data-arkme-directory-mode="conversations"]) {
+   and at least a 72px avatar directory (plus the 4px divider budget). */
+/* Harness 0.1.5 renamed the collapsed third-column marker from details to rightbar. */
+[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"][data-arkme-directory-visible="true"] [data-arkme-directory-mode="conversations"]) {
   grid-template-columns: var(--arkme-persistent-sidebar-width, 356px) minmax(0, 1fr) 0 !important;
 }
-[data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-web-locked] [data-arkme-directory-mode="web-locked"]) {
+[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-web-locked] [data-arkme-directory-mode="web-locked"]) {
   grid-template-columns: var(--arkme-persistent-sidebar-width, 356px) minmax(0, 1fr) 0 !important;
 }
-[data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"][data-arkme-directory-visible="false"]) {
+[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"][data-arkme-directory-visible="false"]) {
   grid-template-columns: 72px minmax(0, 1fr) 0 !important;
 }
 @media (min-width: 1100px) {
-  [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"] [data-arkme-directory-mode="contacts"]) {
+  [data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"] [data-arkme-directory-mode="contacts"]) {
     grid-template-columns: var(--arkme-persistent-sidebar-width, 356px) minmax(0, 1fr) 0 !important;
   }
-  [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="true"]:not([data-arkme-web-locked])) {
+  [data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="true"]:not([data-arkme-web-locked])) {
     grid-template-columns: 0 minmax(0, 1fr) 0 !important;
   }
 }
@@ -400,7 +401,7 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
   min-width: 72px !important;
   flex: 0 0 72px !important;
 }
-[data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 64px !important; }
+[data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 72px !important; }
 [data-arkme-directory-compact="true"] > :not([role="tree"]) { display: none !important; }
 [data-arkme-directory-compact="true"] [role="tree"] { padding: 8px 6px 18px !important; }
 

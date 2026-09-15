@@ -713,6 +713,15 @@ function chatRecordOwnerUserId(
   return 0
 }
 
+function chatTimelineItemSupportsQuickNoteDetails(
+  relation: Record<string, unknown>,
+  recordOwnerUserId: number,
+): boolean {
+  const senderActorKind = integerLikeValue(relation.sender_actor_kind ?? relation.senderActorKind)
+  const senderBotUid = stringValue(relation.sender_bot_uid ?? relation.senderBotUid).trim()
+  return senderActorKind !== 2 && senderBotUid === '' && recordOwnerUserId > 0
+}
+
 function epochMillisValue(value: unknown): number {
   const timestamp = integerLikeValue(value)
   return timestamp > 0 && timestamp < 100_000_000_000 ? timestamp * 1000 : timestamp
@@ -4808,6 +4817,7 @@ export class ChatService {
         const senderUserId = integerLikeValue(relation.sender_user_id)
         const relationUid = stringValue(relation.rel_uid ?? relation.relUid).trim()
         const recordOwnerUserId = chatRecordOwnerUserId(relation, record, payload, senderUserId)
+        const quickNoteDetailsSupported = chatTimelineItemSupportsQuickNoteDetails(relation, recordOwnerUserId)
         const aiPolish = this.aiPolish.timelineAiPolish(record, payload)
         const sendAtMillis = numberValue(relation.attach_at ?? payload.send_at)
         const forwardRecords = await this.chatForwardRecordsPreview(item, session.userId, sendAtMillis)
@@ -4868,6 +4878,7 @@ export class ChatService {
               contentBlocks,
             }), signingKey),
           }),
+          ...(quickNoteDetailsSupported ? {} : { quickNoteDetailsSupported: false }),
           ...(senderUserId > 0 ? { memberRef: await this.sealChatMemberRef(session.userId, chatSessionUid, senderUserId) } : {}),
           senderName,
           ...(agentSource === undefined ? {} : { agentSource }),
