@@ -560,7 +560,7 @@ export function DeepSeekHarnessRow({ selected, onClick }: { selected: boolean; o
     <span style={styles.avatar} aria-hidden><img src="/favicon.svg" alt="" width={28} height={28} /></span>
     <span style={styles.chatContent}>
       <span style={styles.chatTop}><span style={styles.entryName}>DeepSeek Harness</span></span>
-      <span style={styles.chatBottom}><span style={styles.preview}>原生 DeepSeek 开发环境</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}>你的 DeepSeek 智能助手</span></span>
     </span>
   </button>
 }

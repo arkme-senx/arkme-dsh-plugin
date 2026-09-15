@@ -155,7 +155,7 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('登录解锁更多功能')
     expect(markup).toContain('加入 DSH 内测群')
     expect(markup).toContain('联系作者')
-    expect(markup).toContain('原生 DeepSeek 开发环境')
+    expect(markup).toContain('你的 DeepSeek 智能助手')
     expect(markup).toContain('width:72px')
     expect(markup).toContain('data-arkme-owned="product-navigation"')
     expect(markup).toContain('data-arkme-plugin-version=')
