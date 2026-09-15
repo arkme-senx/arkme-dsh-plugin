@@ -298,10 +298,10 @@ export function ArkmeProductNavigation({
           role="menu"
           aria-label="个人菜单"
         >
-          <div className="arkme-redesign-profile-head">
+          <button type="button" role="menuitem" className="arkme-redesign-profile-head" aria-label="我的账户" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}>
             <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={40} label="当前用户头像" />
             <span><strong>{profile?.displayName || profile?.nickname || 'Arkme 用户'}</strong><small>{profile?.arkmeId ? `@${profile.arkmeId}` : 'Arkme 账号'}</small></span>
-          </div>
+          </button>
           <div className="arkme-redesign-profile-menu">
             <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.showWorld() }}><GlobeHemisphereWest size={19} /><span><strong>我的世界</strong><small>管理你的个人内容</small></span><CaretRight size={15} /></button>
             <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.showVoiceprint() }}><Fingerprint size={19} /><span><strong>声纹管理</strong><small>设置声音识别</small></span><CaretRight size={15} /></button>

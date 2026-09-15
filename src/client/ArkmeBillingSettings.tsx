@@ -68,10 +68,8 @@ export function ArkmeBalanceSettingsRowView(props: ArkmeBalanceSettingsRowViewPr
     && BigInt(reservedNanoCny) > 0n
 
   return <div className={`arkme-redesign-setting-row arkme-redesign-balance-row${showReserved ? '' : ' is-without-reserved'}`}>
-    <button type="button" className="arkme-redesign-balance-main" onClick={props.onOpen}>
-      <strong>AI 余额</strong>
+    <button type="button" className="arkme-redesign-balance-main" aria-label={`账户余额 ${description}`} onClick={props.onOpen}>
       <small>{description}</small>
-      <span className="arkme-redesign-balance-usage">可用于在 DSH 会话中通过 Arkme 调用 AI 模型</span>
     </button>
     {showReserved && <div className="arkme-redesign-reserved-balance">
       <span className="arkme-redesign-reserved-title">

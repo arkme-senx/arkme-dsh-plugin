@@ -89,9 +89,13 @@ describe('official DSH client adapter', () => {
     } as never)
 
     expect(registered.map(item => item.name)).toEqual([
+      'arkme.topic.actions',
+      'arkme.send-to-self.entry',
       'sidebar',
       'conversation',
       'details',
+      'settings.section',
+      'settings.general.item',
       'settings.section',
       'shell.overlay',
     ])
@@ -101,6 +105,8 @@ describe('official DSH client adapter', () => {
         priority: -100,
         children: {
           'arkme.directory.entry': { kind: 'list', scope: 'root' },
+          'arkme.topic.actions': { kind: 'single', scope: 'root' },
+          'arkme.send-to-self.entry': { kind: 'single', scope: 'root' },
         },
       }),
       expect.objectContaining({
@@ -137,7 +143,8 @@ describe('official DSH client adapter', () => {
     expect(registered).not.toContainEqual(expect.objectContaining({ id: 'arkme-app-update-dialog' }))
     expect(registered.map(item => item.name)).not.toContain('sidebar.footer.action')
     expect(registered.map(item => item.name)).not.toContain('sidebar.settings')
-    expect(registered.map(item => item.name)).not.toContain('settings.general.item')
+    expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.general.item', id: 'arkme-general' }))
+    expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.section', id: 'arkme-about', label: '关于' }))
     expect(registered.find(item => item.name === 'conversation')?.children).toBeUndefined()
     cleanups.forEach(cleanup => { cleanup() })
   })

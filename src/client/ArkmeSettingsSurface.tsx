@@ -22,7 +22,6 @@ import type {
 } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
-import { OpenApiMcpSettings } from './OpenApiMcpSettings.js'
 import { arkmeAppUpdateStore, type ArkmeAppUpdateSnapshot } from './app-update-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -230,11 +229,28 @@ function AccountInfoRow({ icon, title, value, action, disabled = false, onClick 
       <strong>{title}</strong>
       <small>{value}</small>
     </span>
-    {action === undefined ? null : <span className="arkme-account-info-action">{action}</span>}
+    <span className="arkme-account-info-action">{action}</span>
     {onClick === undefined ? <span className="arkme-redesign-trailing-slot" aria-hidden /> : <CaretRight size={15} aria-hidden />}
   </>
   if (onClick === undefined) return <div className="arkme-account-info-row">{content}</div>
   return <button type="button" className="arkme-account-info-row" disabled={disabled} onClick={onClick}>{content}</button>
+}
+
+export function WechatBindingSettingsRow({ bound, onBind, busy = false }: {
+  bound: boolean | undefined
+  // Only an actual authorization adapter may supply this capability.
+  onBind?: (() => void) | undefined
+  busy?: boolean
+}) {
+  const canBind = bound === false && onBind !== undefined
+  return <AccountInfoRow
+    icon={<WechatLogo size={18} />}
+    title="微信号"
+    value={bound === undefined ? '正在读取…' : bound ? '已绑定' : '未绑定'}
+    {...(canBind ? { action: busy ? '绑定中…' : '绑定' } : {})}
+    disabled={busy}
+    onClick={canBind && !busy ? onBind : undefined}
+  />
 }
 
 function WorldShareQrIcon({ size = 20 }: { size?: number }) {
@@ -338,12 +354,12 @@ function ProfileQrDialog({
       <strong>{profile.displayName || '即我用户'}</strong>
       <span>即我号：{profile.arkmeId || '-'}</span>
       <img src={qrDataUrl} alt="我的即我二维码" />
-      <small>扫描二维码，进入我的世界</small>
+      <small>扫码查看我的主页</small>
     </div>
     <div className="arkme-account-dialog-actions">
       <button type="button" onClick={() => {
-        void copyText(shareUrl).then(() => { setStatus('链接已复制') }).catch(() => { setStatus('复制失败，请稍后重试') })
-      }}><Copy size={16} aria-hidden />复制链接</button>
+        void copyText(shareUrl).then(() => { setStatus('主页链接已复制') }).catch(() => { setStatus('复制失败，请稍后重试') })
+      }}><Copy size={16} aria-hidden />复制主页链接</button>
     </div>
     {status !== '' ? <p className="arkme-account-dialog-status" role="status">{status}</p> : null}
   </SettingsDialog>
@@ -633,7 +649,7 @@ export function arkmeNotificationPermissionLabel(permission: ArkmeDesktopNotific
         : permission === 'system-managed' ? '由系统管理' : '不可用'
 }
 
-export function ArkmeSettingsSurface() {
+export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 'general' | 'about' } = {}) {
   const surfaceRef = useRef<HTMLDivElement>(null)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const appUpdateState = useSyncExternalStore(arkmeAppUpdateStore.subscribe, arkmeAppUpdateStore.getSnapshot, arkmeAppUpdateStore.getSnapshot)
@@ -694,10 +710,14 @@ export function ArkmeSettingsSurface() {
   }, [])
 
   useEffect(() => {
+    if (view !== 'account') {
+      setError('')
+      return
+    }
     const controller = new AbortController()
     loadProfile(controller.signal)
     return () => { controller.abort() }
-  }, [loadProfile])
+  }, [loadProfile, view])
 
   useEffect(() => {
     const refresh = () => { void arkmeDesktopNotifications.refreshPermission() }
@@ -878,13 +898,6 @@ export function ArkmeSettingsSurface() {
 
   const currentArkmeId = profile?.arkmeId.trim() ?? ''
   const phoneMasked = profile?.contact.phoneMasked
-  const wechatName = profile?.bindingNames?.wechat?.trim()
-  const accountActionUnavailable = (message: string) => {
-    setAccountFeedback(message)
-    window.setTimeout(() => {
-      setAccountFeedback(current => current === message ? '' : current)
-    }, 3600)
-  }
   const changeBackgroundSound = async (enabled: boolean) => {
     if (authenticatedUserId === undefined || authenticatedAccountKey === undefined || backgroundSoundCapability !== 'supported'
       || backgroundSoundEligibility !== 'eligible' || backgroundSoundBusyRef.current) return
@@ -939,14 +952,15 @@ export function ArkmeSettingsSurface() {
     }
   }
 
-  return <div ref={surfaceRef} className="arkme-redesign-settings-surface" data-arkme-settings-surface aria-label="Arkme 设置">
+  return <div ref={surfaceRef} className="arkme-redesign-settings-surface" data-arkme-settings-surface data-arkme-settings-view={view} aria-label="Arkme 设置">
     <div className="arkme-redesign-settings-shell">
+      {view === 'account' && <>
       <div className="arkme-redesign-settings-profile">
         <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={56} label="当前用户头像" />
         <div>
           <h1>{displayName}</h1>
-          <p>
-            <span>{accountDescription}</span>
+          {!authenticated && <p><span>{accountDescription}</span></p>}
+        </div>
             {authenticated ? <button
               type="button"
               className="arkme-account-profile-qr"
@@ -956,8 +970,6 @@ export function ArkmeSettingsSurface() {
             >
               <WorldShareQrIcon />
             </button> : null}
-          </p>
-        </div>
       </div>
 
       {!authenticated && <SettingsGroup title="账户">
@@ -965,11 +977,6 @@ export function ArkmeSettingsSurface() {
           title={bindingRequired ? '待完成登录' : authState.checked ? '当前未登录' : '正在读取登录状态…'}
           description={bindingRequired ? '完成手机号绑定后即可登录' : '登录 Arkme 后可管理账户'}
         />
-      </SettingsGroup>}
-
-      {authenticated && <SettingsGroup title="账户">
-        <ArkmeBillingSettings />
-        <OpenApiMcpSettings />
       </SettingsGroup>}
 
       {authenticated && <SettingsGroup title="账号信息">
@@ -989,19 +996,19 @@ export function ArkmeSettingsSurface() {
           disabled={profile === undefined}
           onClick={profile !== undefined ? () => { setActiveAccountDialog('phone'); setAccountFeedback('') } : undefined}
         />
-        <AccountInfoRow
-          icon={<WechatLogo size={18} />}
-          title="微信"
-          value={profile?.bindings?.wechat === true ? (wechatName || '已绑定') : '未绑定'}
-          action={profile?.bindings?.wechat === true ? '换绑' : '绑定'}
-          disabled={profile === undefined}
-          onClick={profile !== undefined ? () => {
-            accountActionUnavailable('Flutter 客户端通过本机微信授权完成微信绑定；当前 DSH 插件暂不具备微信 AppBridge，不能在插件内换绑。')
-          } : undefined}
-        />
+        {/* DSH currently has no WeChat authorization adapter. Never substitute an explanatory dialog. */}
+        <WechatBindingSettingsRow bound={profile === undefined ? undefined : profile.bindings?.wechat === true} />
         {accountFeedback !== '' ? <p className="arkme-account-feedback" role="status"><WarningCircle size={14} aria-hidden />{accountFeedback}</p> : null}
       </SettingsGroup>}
+      {authenticated && <SettingsGroup title="账户余额">
+        <ArkmeBillingSettings />
+      </SettingsGroup>}
+      {authenticated && <div className="arkme-account-logout">
+        <button type="button" disabled={logoutBusy} onClick={() => { void logout() }}>{logoutBusy ? '正在退出…' : '退出登录'}</button>
+      </div>}
+      </>}
 
+      {view === 'general' && <>
       <SettingsGroup title="通用">
         <SettingsRow
           title="通知"
@@ -1025,7 +1032,10 @@ export function ArkmeSettingsSurface() {
           onChange={enabled => { void changeBackgroundSound(enabled) }}
         />
       </SettingsGroup> : null}
+      </>}
 
+      {view === 'about' && <>
+      <h1 className="arkme-about-heading">关于</h1>
       <SettingsGroup title="更新" id="arkme-settings-about">
         <VersionSettingsRow
           title="ArkME 客户端"
@@ -1042,10 +1052,7 @@ export function ArkmeSettingsSurface() {
         <SettingsRow title="用户协议" description="查看 Arkme 用户协议" href="https://www.arkme.ai/article/user-aggrement-v1.html" />
         <SettingsRow title="隐私条款" description="查看 Arkme 隐私条款" href="https://www.arkme.ai/article/privacy-aggrement-v1.html" />
       </SettingsGroup>
-
-      {authenticated && <SettingsGroup title="账户操作">
-        <SettingsRow danger title={logoutBusy ? '正在退出…' : '退出登录'} description="退出当前 Arkme 账户" disabled={logoutBusy} onClick={() => { void logout() }} />
-      </SettingsGroup>}
+      </>}
 
       {error !== '' && <div className="arkme-redesign-settings-error" role="alert">{error}</div>}
     </div>

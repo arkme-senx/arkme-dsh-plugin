@@ -74,7 +74,7 @@ describe('Arkme settings policy', () => {
 
     expect(source).toContain('const [logoutBusy, setLogoutBusy] = useState(false)')
     expect(source).toContain('const [notificationBusy, setNotificationBusy] = useState(false)')
-    expect(source).toContain("title={logoutBusy ? '正在退出…' : '退出登录'}")
+    expect(source).toContain("{logoutBusy ? '正在退出…' : '退出登录'}</button>")
     expect(source).toContain('disabled={notificationBusy}')
     expect(source).not.toContain('const [busy, setBusy] = useState(false)')
   })

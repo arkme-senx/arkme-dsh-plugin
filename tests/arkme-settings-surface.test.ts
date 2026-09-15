@@ -32,7 +32,7 @@ describe('ArkmeSettingsSurface', () => {
     expect(source).toContain('title="即我号"')
     expect(source).not.toMatch(/<AccountInfoRow\s+icon=\{<QrCode size=\{18\}/)
     expect(source).toContain('title="手机号"')
-    expect(source).toContain('title="微信"')
+    expect(source).toContain('title="微信号"')
     expect(source).toContain("callArkme<ArkmeIdAvailabilitySnapshot>('user.arkme-id.check'")
     expect(source).toContain("callArkme<ArkmeIdMutationResult>('user.arkme-id.set'")
     expect(source).toContain("callArkme('auth.phone.send'")

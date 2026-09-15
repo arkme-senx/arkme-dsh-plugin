@@ -333,6 +333,19 @@ export function apply(ctx: ClientContext): void {
     label: '我的账户',
   }, ArkmeDshSettingsSection))
 
+  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+    name: 'settings.general.item',
+    id: 'arkme-general',
+    order: 100,
+  }, () => <ArkmeSettingsSurface view="general" />))
+
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section',
+    id: 'arkme-about',
+    order: 100,
+    label: '关于',
+  }, () => <ArkmeSettingsSurface view="about" />))
+
   if (!startupAuthGateEnabled()) {
     ctx.slots.inject('shell.overlay', () => ctx.slots.register({
       name: 'shell.overlay',

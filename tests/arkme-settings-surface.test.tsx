@@ -170,8 +170,18 @@ describe('ArkmeSettingsSurface', () => {
       configurable: true,
       value: { appVersion: '0.1.0', harnessVersion: '0.1.0-rc.8' },
     })
-    const markup = renderToStaticMarkup(<ArkmeSettingsSurface />)
+    const accountMarkup = renderToStaticMarkup(<ArkmeSettingsSurface />)
+    const generalMarkup = renderToStaticMarkup(<ArkmeSettingsSurface view="general" />)
+    const aboutMarkup = renderToStaticMarkup(<ArkmeSettingsSurface view="about" />)
+    const markup = accountMarkup + generalMarkup + aboutMarkup
     Reflect.deleteProperty(globalThis, 'arkmeDesktop')
+
+    expect(accountMarkup).not.toContain('>通知<')
+    expect(accountMarkup).not.toContain('>更新<')
+    expect(generalMarkup).toContain('>通知<')
+    expect(generalMarkup).not.toContain('>账户<')
+    expect(aboutMarkup).toContain('class="arkme-about-heading">关于')
+    expect(aboutMarkup).not.toContain('>通知<')
 
     expect(markup).toContain('aria-label="Arkme 设置"')
     expect(markup).toContain('>账户<')
@@ -216,14 +226,17 @@ describe('ArkmeSettingsSurface', () => {
     try {
       arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 })
       const authenticated = renderToStaticMarkup(<ArkmeSettingsSurface />)
-      expect(authenticated).toMatch(/AI 余额[\s\S]*正在加载余额…[\s\S]*充值/)
+      expect(authenticated).toMatch(/账户余额[\s\S]*正在加载余额…[\s\S]*充值/)
       expect(authenticated).toContain('>退出登录<')
-      expect(authenticated).toContain('>文字背景音<')
-      expect(authenticated).toContain('aria-label="文字背景音"')
-      expect(authenticated).toContain('aria-checked="false"')
-      expect(authenticated).toContain('>账户操作<')
-      expect(authenticated.indexOf('>隐私条款<')).toBeLessThan(authenticated.indexOf('>账户操作<'))
-      expect(authenticated.indexOf('>账户操作<')).toBeLessThan(authenticated.indexOf('>退出登录<'))
+      expect(authenticated).not.toContain('>文字背景音<')
+      expect(authenticated).not.toContain('>账户操作<')
+      expect(authenticated).not.toContain('开放平台 MCP')
+      expect(authenticated).not.toContain('AI 余额')
+      expect(authenticated.indexOf('>账户余额<')).toBeLessThan(authenticated.indexOf('>退出登录<'))
+      const general = renderToStaticMarkup(<ArkmeSettingsSurface view="general" />)
+      expect(general).toContain('aria-label="文字背景音"')
+      expect(general).toContain('aria-checked="false"')
+      expect(general).not.toContain('>退出登录<')
     } finally {
       arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' })
     }

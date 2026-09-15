@@ -220,6 +220,7 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
 .arkme-redesign-profile > span { width: 32px !important; height: 32px !important; }
 .arkme-redesign-profile-popover { position: fixed; z-index: 10000; left: 64px; bottom: 14px; width: 264px; padding: 10px; border: 1px solid rgba(216,217,221,.9); border-radius: 18px; background: rgba(255,255,255,.96); box-shadow: 0 20px 50px rgba(26,28,35,.15), 0 2px 8px rgba(26,28,35,.05); backdrop-filter: blur(20px); }
 .arkme-redesign-profile-head { padding: 9px 9px 13px; display: flex; align-items: center; gap: 11px; }
+button.arkme-redesign-profile-head { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .arkme-redesign-profile-head > span { min-width: 0; display: grid; gap: 4px; text-align: left; }
 .arkme-redesign-profile-head strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 14px; font-weight: 600; }
 .arkme-redesign-profile-head small { color: #8b8f98; font-size: 11px; font-weight: 400; }
@@ -612,6 +613,22 @@ button.arkme-account-info-row { cursor: pointer; }
 .arkme-account-info-copy > small { overflow: hidden; color: #858992; font-size: 12px; line-height: 18px; white-space: nowrap; text-overflow: ellipsis; }
 .arkme-account-info-action { color: #858992; font-size: 12px; line-height: 18px; white-space: nowrap; }
 .arkme-account-info-row > svg { color: #8d929b; }
+
+/* Confirmed account layout; native DSH settings controls retain their own styles. */
+[data-arkme-settings-view="account"] .arkme-redesign-settings-profile > div:nth-child(2) { flex: 1; }
+[data-arkme-settings-view="account"] .arkme-redesign-settings-profile h1 { margin: 0; }
+[data-arkme-settings-view="account"] .arkme-redesign-settings-group { border-bottom: 0; }
+[data-arkme-settings-view="account"] .arkme-account-info-row { grid-template-columns: 26px minmax(0, 1fr) 48px 18px; min-height: 54px; border-bottom: 0; }
+[data-arkme-settings-view="account"] .arkme-account-info-copy { grid-template-columns: minmax(70px, 1fr) minmax(0, auto); align-items: center; gap: 16px; }
+[data-arkme-settings-view="account"] .arkme-account-info-copy > small { text-align: right; }
+[data-arkme-settings-view="account"] .arkme-account-info-action { text-align: center; }
+[data-arkme-settings-view="account"] .arkme-redesign-settings-group:has(.arkme-redesign-balance-row) { margin-top: 16px; }
+[data-arkme-settings-view="account"] .arkme-redesign-balance-main > small { color: inherit; font-size: 28px; line-height: 38px; font-weight: 600; }
+.arkme-account-logout { display: flex; justify-content: center; padding-top: 32px; }
+.arkme-account-logout > button { min-width: 128px; min-height: 40px; padding: 8px 24px; border: 1px solid #e1e2e5; border-radius: 8px; background: transparent; color: #dc4d43; font: inherit; cursor: pointer; }
+.arkme-account-logout > button:disabled { cursor: default; opacity: .6; }
+[data-arkme-settings-view="general"] .arkme-redesign-settings-group:last-child { border-bottom: 0; }
+.arkme-about-heading { margin: 0 0 20px; color: inherit; font: inherit; font-size: 18px; font-weight: 600; line-height: 1.5; }
 .arkme-account-feedback {
   margin: 8px 0 14px;
   display: flex;
@@ -672,7 +689,7 @@ button.arkme-account-info-row { cursor: pointer; }
   border-radius: 14px;
   background: #fff;
 }
-.arkme-account-qr-card strong { margin-top: 4px; font-size: 17px; line-height: 23px; font-weight: 650; }
+.arkme-account-qr-card strong { max-width: 100%; min-width: 0; margin-top: 4px; font-size: 17px; line-height: 23px; font-weight: 650; text-align: center; overflow-wrap: anywhere; }
 .arkme-account-qr-card span, .arkme-account-qr-card small { color: #858992; font-size: 12px; line-height: 18px; }
 .arkme-account-qr-card img { width: 180px; height: 180px; margin-top: 8px; }
 .arkme-account-form { padding: 18px 20px 20px; display: grid; gap: 12px; }
@@ -707,6 +724,11 @@ button.arkme-account-info-row { cursor: pointer; }
   gap: 10px;
   padding-top: 6px;
 }
+.arkme-account-dialog > .arkme-account-dialog-actions { padding: 6px 20px 20px; }
+.arkme-account-dialog > .arkme-account-dialog-status { margin: 0 20px 16px; }
+.arkme-account-dialog > .arkme-account-qr-card + .arkme-account-dialog-actions { justify-content: center; padding: 6px 20px 24px; }
+.arkme-account-dialog > .arkme-account-qr-card ~ .arkme-account-dialog-status { margin: -8px 20px 20px; text-align: center; }
+.arkme-account-dialog > .arkme-account-qr-card ~ .arkme-account-dialog-status:empty { display: none; }
 .arkme-account-dialog-actions button {
   min-width: 78px;
   height: 36px;
