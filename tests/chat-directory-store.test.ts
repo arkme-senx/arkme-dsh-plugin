@@ -12,6 +12,76 @@ import {
 } from '../src/client/chat-directory-store.js'
 
 describe('ArkmeChatDirectoryStore', () => {
+  it('waits for instance preparation before loading the first directory and coalesces concurrent reads', async () => {
+    const prepared = Promise.withResolvers<void>()
+    const prepareLoad = vi.fn(() => prepared.promise)
+    const loadPage = vi.fn(async () => ({ directory: 'root' as const, items: [], hasMore: false }))
+    const store = new ArkmeChatDirectoryStore({ prepareLoad, loadPage })
+    store.activateAccount('test:1')
+    const readiness: boolean[] = []
+    store.subscribe(() => { readiness.push(store.getSnapshot().baselineReady) })
+    const first = store.refreshRoot()
+    const second = store.refreshRoot()
+    await Promise.resolve()
+    expect(loadPage).not.toHaveBeenCalled()
+    expect(store.getSnapshot().baselineReady).toBe(false)
+    prepared.resolve()
+    await Promise.all([first, second])
+    expect(prepareLoad).toHaveBeenCalledTimes(1)
+    expect(loadPage).toHaveBeenCalledTimes(1)
+    expect(store.getSnapshot().baselineReady).toBe(true)
+    expect(readiness.slice(readiness.indexOf(true))).not.toContain(false)
+  })
+
+  it('retries failed preparation without reading a directory and ignores an old account preparation', async () => {
+    const prepared = Promise.withResolvers<void>()
+    const prepareLoad = vi.fn().mockRejectedValueOnce(new Error('instance unavailable')).mockImplementation(() => prepared.promise)
+    const loadPage = vi.fn(async () => ({ directory: 'root' as const, items: [], hasMore: false }))
+    const store = new ArkmeChatDirectoryStore({ prepareLoad, loadPage })
+    store.activateAccount('test:1')
+    await expect(store.refreshRoot()).rejects.toThrow('instance unavailable')
+    expect(loadPage).not.toHaveBeenCalled()
+    const pending = store.refreshRoot()
+    store.activateAccount('test:2')
+    prepared.resolve()
+    await pending
+    expect(loadPage).not.toHaveBeenCalled()
+    expect(store.getSnapshot().baselineReady).toBe(false)
+    await store.refreshRoot()
+    expect(store.getSnapshot().baselineReady).toBe(true)
+  })
+
+  it('retains a private peer across partial message updates and rotated refs', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'author-before', sourceKey: 'chat:author', kind: 'private_chat' as const,
+      displayName: '作者昵称', peerUserId: 11, activeAtMillis: 1, unreadCount: 0, latestSequence: 0,
+    }
+    store.publish([source])
+    const { peerUserId: _peer, ...partial } = source
+    for (const latestSequence of [1, 1, 0]) {
+      store.upsert({ ...partial, sourceRef: 'author-after', latestSequence, latestPreview: 'hi' })
+      expect(store.getSnapshot().sources).toHaveLength(1)
+      expect(store.getSnapshot().sources[0]).toMatchObject({ peerUserId: 11, latestPreview: 'hi' })
+    }
+    store.upsert({ ...partial, sourceRef: 'other', sourceKey: 'chat:other' })
+    expect(store.getSnapshot().sources.find(item => item.sourceKey === 'chat:other')).not.toHaveProperty('peerUserId')
+    store.upsert({ ...partial, peerUserId: 12 })
+    expect(store.getSnapshot().sources.find(item => item.sourceKey === 'chat:author')?.peerUserId).toBe(12)
+    store.publish([partial])
+    expect(store.getSnapshot().sources[0]).not.toHaveProperty('peerUserId')
+    store.publish([source])
+    store.upsert({ ...partial, kind: 'group_chat' })
+    expect(store.getSnapshot().sources[0]).not.toHaveProperty('peerUserId')
+    store.activateAccount('test:1')
+    store.publish([source])
+    store.activateAccount('test:2')
+    expect(store.getSnapshot().sources).toEqual([])
+    store.publish([partial])
+    store.upsert(partial)
+    expect(store.getSnapshot().sources[0]).not.toHaveProperty('peerUserId')
+  })
+
   afterEach(() => { vi.useRealTimers() })
 
   it('recovers a transient policy read in the shared silent refresh without losing visible rows', async () => {

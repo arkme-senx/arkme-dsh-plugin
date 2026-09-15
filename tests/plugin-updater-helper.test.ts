@@ -786,10 +786,18 @@ if (args[0] === 'plugin') {
 }
 if (args[0] === 'web') {
   const port = Number(args[args.indexOf('--port') + 1])
+  let rootProbeCount = 0
   writeFileSync(process.env.FAKE_PID_PATH, String(process.pid))
   createServer((req, res) => {
     req.resume()
     req.on('end', () => {
+      if (req.url === '/') {
+        const status = rootProbeCount++ === 0 ? 404 : 401
+        appendFileSync(process.env.FAKE_TRACE_PATH, JSON.stringify(['root-probe', String(status)]) + '\\n')
+        res.writeHead(status)
+        res.end()
+        return
+      }
       const version = readFileSync(process.env.FAKE_VERSION_PATH, 'utf8').trim()
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ ok: true, value: { installedVersion: version } }))
@@ -868,6 +876,10 @@ if (args[0] === 'web') {
       ])
       expect(trace.some(args => args.includes(`file:${targetArtifactPath}`))).toBe(true)
       expect(trace.flat()).not.toContain('@senguoyun/dsh-arkme@0.1.4')
+      expect(trace).toEqual(expect.arrayContaining([
+        ['root-probe', '404'],
+        ['root-probe', '401'],
+      ]))
       const converged = JSON.parse(await readFile(join(profileDirectory, 'package.json'), 'utf8')) as {
         dsh: { profile: { bundles: string[] } }
       }

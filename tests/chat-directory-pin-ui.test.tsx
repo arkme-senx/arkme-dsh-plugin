@@ -29,7 +29,7 @@ let rejectPin: (reason: unknown) => void
 function row() {
   return renderer!.root.findAllByProps({ role: 'treeitem' }).find(node => node.props['aria-label'] === source.displayName)!
 }
-function menu() { return renderer!.root.findAllByProps({ role: 'menuitem' })[0]! }
+function menu() { return renderer!.root.findAllByProps({ role: 'menuitem' }).find(node => node.children[0] === '置顶对话' || node.children[0] === '取消置顶')! }
 function pinCalls() { return mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.directory.policy.set') }
 async function openMenu() {
   await act(async () => { row().props.onContextMenu({ preventDefault() {}, clientX: 20, clientY: 20 }) })
@@ -50,6 +50,7 @@ beforeEach(async () => {
   })
   mocks.callArkme.mockReset()
   mocks.callArkme.mockImplementation(async (operation: string) => {
+    if (operation === 'provider.instance') return { instanceId: 'pin-ui-test-instance' }
     if (operation === 'sources.list') return { directory: 'root', items: [source], hasMore: false }
     if (operation === 'bots.private-chat.directory') return { items: [] }
     if (operation === 'source.directory.policy.set') {
@@ -227,7 +228,7 @@ describe('conversation pin interaction', () => {
     mocks.callArkme.mockImplementation(async (...args) => args[0] === 'conversation.directory.visibility.set'
       ? await new Promise<void>((resolve, reject) => { resolveRemove = resolve; rejectRemove = reject }) : fallback(...args))
     await openMenu()
-    await act(async () => { renderer!.root.findAllByProps({ role: 'menuitem' })[1]!.props.onClick() })
+    await act(async () => { renderer!.root.findAllByProps({ role: 'menuitem' }).find(node => node.children[0] === '移除')!.props.onClick() })
     expect(row().props.disabled).toBe(true)
     expect(pinCalls()).toHaveLength(0)
     await act(async () => {

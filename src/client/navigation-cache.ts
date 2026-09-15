@@ -6,6 +6,7 @@ import type {
   ArkmeSourceKind,
 } from '../types.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
+import { homeTourDiagnostic } from './home-tour-diagnostics.js'
 import { arkmeTopicDisplayName } from '../topic-policy.js'
 
 const POINTER_KEY = 'dsh-arkme:navigation:v1:last-user'
@@ -193,7 +194,12 @@ export function reconcileNavigationProviderInstance(instanceId: string, storage?
   const target = storageOrUndefined(storage)
   if (normalized === '' || target === undefined) return false
   try {
-    if (target.getItem(PROVIDER_INSTANCE_KEY) === normalized) return false
+    const previousInstance = target.getItem(PROVIDER_INSTANCE_KEY)
+    homeTourDiagnostic('provider-cache-check', {
+      hadStoredInstance: previousInstance !== null,
+      matches: previousInstance === normalized,
+    })
+    if (previousInstance === normalized) return false
     const staleKeys: string[] = []
     for (let index = 0; index < target.length; index += 1) {
       const key = target.key(index)

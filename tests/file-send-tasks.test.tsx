@@ -21,6 +21,81 @@ afterEach(() => {
 })
 
 describe('file send task polling', () => {
+  it('keeps empty tasks stable across draft renders and source switches', async () => {
+    api.call.mockResolvedValue([])
+    let tasks: readonly ArkmeFileSendTask[] = []
+    function Harness({ source = 'source-1' }: { source?: string }) {
+      tasks = useArkmeFileSendTasks(source, 7).tasks
+      return null
+    }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    const empty = tasks
+    try {
+      await act(async () => { renderer.update(<Harness />) })
+      expect(tasks).toBe(empty)
+      await act(async () => { renderer.update(<Harness source="source-2" />) })
+      expect(tasks).toBe(empty)
+    } finally { act(() => renderer.unmount()) }
+  })
+
+  it('prevents a shared empty fallback from being contaminated', async () => {
+    api.call.mockResolvedValue([])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness() { value = useArkmeFileSendTasks('source-1', 7); return null }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    try {
+      expect(Object.isFrozen(value.tasks)).toBe(true)
+      expect(() => (value.tasks as ArkmeFileSendTask[]).push(task('sent'))).toThrow(TypeError)
+      expect(value.tasks).toHaveLength(0)
+    } finally { act(() => renderer.unmount()) }
+  })
+
+  it('accepts a new task and hides old tasks immediately on account or source changes', async () => {
+    api.call.mockResolvedValue([])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness({ source = 'source-1', user = 7 }: { source?: string; user?: number }) {
+      value = useArkmeFileSendTasks(source, user)
+      return null
+    }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    try {
+      const empty = value.tasks
+      act(() => { value.accept(task('sent')) })
+      expect(value.tasks.map(item => item.taskRef)).toEqual(['task-1'])
+      act(() => { renderer.update(<Harness user={8} />) })
+      expect(value.tasks).toBe(empty)
+      act(() => { renderer.update(<Harness source="source-2" user={8} />) })
+      expect(value.tasks).toBe(empty)
+      act(() => { value.accept(task('sent')) })
+      expect(value.tasks).toHaveLength(0)
+    } finally { act(() => renderer.unmount()) }
+  })
+
+  it('ignores a late response from the previous source', async () => {
+    let resolveOld!: (tasks: ArkmeFileSendTask[]) => void
+    api.call.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+      .mockResolvedValue([])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness({ source }: { source: string }) {
+      value = useArkmeFileSendTasks(source, 7)
+      return null
+    }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness source="source-1" />) })
+    try {
+      const oldSignal = api.call.mock.calls.at(-1)![2] as AbortSignal
+      await act(async () => { renderer.update(<Harness source="source-2" />) })
+      expect(oldSignal.aborted).toBe(true)
+      const currentEmpty = value.tasks
+      await act(async () => { resolveOld([task('sent')]) })
+      expect(value.tasks).toBe(currentEmpty)
+      expect(value.tasks).toHaveLength(0)
+    } finally { act(() => renderer.unmount()) }
+  })
+
   it('stops after the initial read when the source has no active tasks', async () => {
     vi.useFakeTimers()
     api.call.mockResolvedValue([])

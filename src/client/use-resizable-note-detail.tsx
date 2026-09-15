@@ -13,10 +13,10 @@ export function clampNoteDetailWidth(width: number, available: number) {
 }
 
 /** Shared local-only layout preference for right-hand quick-note drawers. */
-export function useResizableNoteDetail(panel: RefObject<HTMLElement>) {
+export function useResizableNoteDetail(panel: RefObject<HTMLElement>, preferenceKey = NOTE_DETAIL_WIDTH_KEY, label = '调整快记详情宽度') {
   const [preferred, setPreferred] = useState(() => {
     try {
-      const stored = window.localStorage.getItem(NOTE_DETAIL_WIDTH_KEY)
+      const stored = window.localStorage.getItem(preferenceKey)
       const width = Number(stored)
       return stored !== null && Number.isFinite(width) && width > 0 ? width : DEFAULT_NOTE_DETAIL_WIDTH
     } catch { return DEFAULT_NOTE_DETAIL_WIDTH }
@@ -30,7 +30,7 @@ export function useResizableNoteDetail(panel: RefObject<HTMLElement>) {
   const bounds = noteDetailWidthBounds(available)
   const width = clampNoteDetailWidth(preferred, available)
   const save = () => {
-    try { window.localStorage.setItem(NOTE_DETAIL_WIDTH_KEY, String(latest.current)) } catch { /* optional storage */ }
+    try { window.localStorage.setItem(preferenceKey, String(latest.current)) } catch { /* optional storage */ }
   }
   const update = (next: number) => {
     latest.current = clampNoteDetailWidth(next, available)
@@ -62,7 +62,7 @@ export function useResizableNoteDetail(panel: RefObject<HTMLElement>) {
   const highlighted = dragging || hovered || focused
   return {
     style: { width, maxWidth: '100%' },
-    handle: <div role="separator" aria-label="调整快记详情宽度" aria-orientation="vertical"
+    handle: <div role="separator" aria-label={label} aria-orientation="vertical"
       aria-valuemin={Math.round(bounds.min)} aria-valuemax={Math.round(bounds.max)} aria-valuenow={Math.round(width)}
       tabIndex={0} title="左右拖动调整详情宽度，双击恢复默认宽度"
       style={{ position: 'absolute', left: -5, top: 0, bottom: 0, width: 10, zIndex: 20, cursor: 'ew-resize', touchAction: 'none' }}

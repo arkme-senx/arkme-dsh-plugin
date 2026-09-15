@@ -215,6 +215,133 @@ describe('ArkmeCallSurface interactions', () => {
     vi.useRealTimers()
   })
 
+  it('renders only the two static sample contacts with their matching avatars when recent contacts are empty', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return { items: [], recentContacts: [], hasMore: false }
+      if (operation === 'sources.list') return { directory: 'root', items: [], hasMore: false }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeCallSurface />)
+      await tick()
+      await tick()
+    })
+
+    const rail = renderer.root.findByProps({ 'data-arkme-call-recent-contacts': 'rail' })
+    const contacts = rail.findAllByType('button')
+    expect(contacts.map(contact => contact.props['aria-label'])).toEqual([
+      '林小满示例联系人',
+      '妈妈示例联系人',
+    ])
+    expect(rail.findAllByType('img').map(image => image.props.src)).toEqual([
+      '/arkme-self/api/call/avatar-lin-xiaoman.jpeg',
+      '/arkme-self/api/call/avatar-mother.jpg',
+    ])
+  })
+
+  it('renders sample picker contacts with their static avatars and example labels', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return { items: [], recentContacts: [], hasMore: false }
+      if (operation === 'sources.list') return { directory: 'root', items: [], hasMore: false }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeCallSurface initialPickerOpen />)
+      await tick()
+      await tick()
+    })
+
+    const pickerList = renderer.root.findByProps({ 'data-arkme-call-picker-list': 'true' })
+    expect(textContent(pickerList)).toContain('林小满示例')
+    expect(textContent(pickerList)).toContain('妈妈示例')
+    expect(pickerList.findAllByType('img').map(image => image.props.src)).toEqual([
+      '/arkme-self/api/call/avatar-lin-xiaoman.jpeg',
+      '/arkme-self/api/call/avatar-mother.jpg',
+    ])
+  })
+
+  it('disables sample picker rows and their audio and video call actions', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return { items: [], recentContacts: [], hasMore: false }
+      if (operation === 'sources.list') return { directory: 'root', items: [], hasMore: false }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeCallSurface initialPickerOpen />)
+      await tick()
+      await tick()
+    })
+
+    for (const displayName of ['林小满', '妈妈']) {
+      const row = buttonByLabel(renderer, `${displayName}示例联系人，暂不可发起通话`)
+      const audio = buttonByLabel(renderer, `${displayName}示例联系人，语音通话不可用`)
+      const video = buttonByLabel(renderer, `${displayName}示例联系人，视频通话不可用`)
+      expect(row.props.disabled).toBe(true)
+      expect(audio.props.disabled).toBe(true)
+      expect(video.props.disabled).toBe(true)
+
+      await act(async () => {
+        row.props.onClick?.()
+        audio.props.onClick?.()
+        video.props.onClick?.()
+        await tick()
+      })
+    }
+
+    expect(renderer.root.findAllByProps({ 'aria-label': '选择和林小满的通话方式' })).toHaveLength(0)
+    expect(outgoingCallUi.request).not.toHaveBeenCalled()
+  })
+
+  it('keeps sample picker contact rows fully opaque', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return { items: [], recentContacts: [], hasMore: false }
+      if (operation === 'sources.list') return { directory: 'root', items: [], hasMore: false }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeCallSurface initialPickerOpen />)
+      await tick()
+      await tick()
+    })
+
+    for (const displayName of ['林小满', '妈妈']) {
+      const row = buttonByLabel(renderer, `${displayName}示例联系人，暂不可发起通话`)
+      expect(row.props.style.opacity).toBeUndefined()
+    }
+  })
+
+  it('does not open a call interaction when a static sample contact is clicked', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return { items: [], recentContacts: [], hasMore: false }
+      if (operation === 'sources.list') return { directory: 'root', items: [], hasMore: false }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeCallSurface />)
+      await tick()
+      await tick()
+    })
+
+    const rail = renderer.root.findByProps({ 'data-arkme-call-recent-contacts': 'rail' })
+    await act(async () => {
+      rail.findByProps({ 'aria-label': '林小满示例联系人' }).props.onClick?.()
+      await tick()
+    })
+
+    expect(renderer.root.findAllByProps({ 'aria-label': '选择和林小满的通话方式' })).toHaveLength(0)
+    expect(outgoingCallUi.request).not.toHaveBeenCalled()
+  })
+
   it('resolves recent call contacts by peer user id before opening outgoing call UI', async () => {
     let renderer!: ReactTestRenderer
     await act(async () => {

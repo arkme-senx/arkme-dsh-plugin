@@ -160,6 +160,7 @@ describe('shared owner message action UI', () => {
     })
     await act(async () => { button(renderer!, '多选')?.props.onClick() })
     expect(renderer!.root.findAllByProps({ role: 'toolbar' })).toHaveLength(1)
+    expect(button(renderer!, '删除')).toBeUndefined()
 
     await act(async () => { renderer!.update(<Harness conversationRef="conversation-two" />) })
 

@@ -309,6 +309,7 @@ export class MediaService {
       { file_asset_uids: unique },
       session,
       signal,
+      { lane: 'interactive-read' },
     )
     return listValue(data.items).map(raw => {
       const item = objectValue(raw)

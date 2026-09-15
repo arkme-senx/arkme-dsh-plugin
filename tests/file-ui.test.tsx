@@ -14,6 +14,20 @@ const original = { localRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000001
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); vi.restoreAllMocks(); vi.clearAllMocks() })
 
 describe('file save UI', () => {
+  it('uses cross-record file navigation without falling back to current-record selection', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    const next = vi.fn(), select = vi.fn()
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={block} navigation={{ next }} onSelect={select} onClose={() => {}} />) })
+    expect(view.root.findByProps({ 'aria-label': '上一个文件' }).props.disabled).toBe(true)
+    const button = view.root.findByProps({ 'aria-label': '下一个文件' })
+    expect(button.props.disabled).toBe(false)
+    await act(async () => button.props.onClick())
+    expect(next).toHaveBeenCalledOnce()
+    expect(select).not.toHaveBeenCalled()
+    await act(async () => view.unmount())
+  })
+
   it('uses the client download icon before reception, and cancelling never starts a download', async () => {
     const receive = vi.spyOn(ArkmeSdk.prototype, 'receiveFile')
     vi.stubGlobal('window', { showSaveFilePicker: async () => { throw new DOMException('cancelled', 'AbortError') } })

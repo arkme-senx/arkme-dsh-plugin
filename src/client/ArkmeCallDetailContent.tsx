@@ -74,10 +74,11 @@ export interface ArkmeCallDetailContentProps {
   avatarRefForName?: ((name: string) => string | undefined) | undefined
   compact?: boolean
   initialVideoUrl?: string | undefined
+  tourSample?: boolean
 }
 
 /** The selected-call pane, shared by the call browser and conversation drawer. */
-export function ArkmeCallDetailContent({ selectedItem, detail, detailState, detailError, avatarRefForName = () => undefined, compact = false, initialVideoUrl }: ArkmeCallDetailContentProps) {
+export function ArkmeCallDetailContent({ selectedItem, detail, detailState, detailError, avatarRefForName = () => undefined, compact = false, initialVideoUrl, tourSample = false }: ArkmeCallDetailContentProps) {
   const selectedIsSample = selectedItem.callRef.startsWith('sample-')
   const [samplePerspective, setSamplePerspective] = useState<SamplePerspective>('primary')
   const [playingVideoKey, setPlayingVideoKey] = useState('')
@@ -243,7 +244,7 @@ export function ArkmeCallDetailContent({ selectedItem, detail, detailState, deta
     const accepted = detail?.acceptedAtMillis ?? selectedItem.acceptedAtMillis
     if (!selectedIsSample && detailState !== 'ready') return null
     if (!hasRenderableVideo && accepted <= 0) return null
-    return <section ref={videoSection} style={styles.sampleMedia} aria-label="视频记录">
+    return <section ref={videoSection} style={styles.sampleMedia} aria-label="视频记录" data-arkme-call-tour-target={tourSample ? 'video' : undefined}>
       <header style={styles.videoTitleRow} data-arkme-call-video-title-row="aligned">
         <span style={styles.videoTitleText}>
           <h3 style={styles.videoTitle}>视频记录</h3>
@@ -325,7 +326,7 @@ export function ArkmeCallDetailContent({ selectedItem, detail, detailState, deta
   }
 
   return <div data-arkme-call-detail-content="true" style={{ ...styles.detailBody, ...(compact ? { padding: '8px 16px 24px' } : {}) }}>
-          <section style={styles.card}>
+          <section style={styles.card} data-arkme-call-tour-target={tourSample ? 'summary' : undefined}>
             <h3 style={styles.cardTitle}>AI 摘要</h3>
             <p style={styles.cardText}>
               {detailState === 'loading' ? '正在读取通话详情...'
@@ -358,6 +359,7 @@ export function ArkmeCallDetailContent({ selectedItem, detail, detailState, deta
                 <span style={{ ...styles.segmentStack, ...(mine ? styles.segmentStackMine : {}) }}>
                   <small style={styles.segmentMeta}>{segment.speakerDisplayName}{segmentTime === '' ? '' : ` · ${segmentTime}`}</small>
                   {segment.audioUrl ? <button type="button"
+                    data-arkme-call-tour-target={tourSample && segment.segmentId === 'sample-video-1' ? 'utterance' : undefined}
                     aria-label={`${highlighted ? '停止' : playback === 'failed' ? '重试播放' : '播放'}${segment.speakerDisplayName}的录音片段：${segment.text}`}
                     aria-pressed={highlighted}
                     aria-busy={playback === 'loading'}

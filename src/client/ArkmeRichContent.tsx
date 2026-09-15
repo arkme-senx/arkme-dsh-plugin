@@ -517,7 +517,8 @@ export function arkmeContainedImageRect(viewportWidth: number, viewportHeight: n
   }
 }
 
-export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, previewUrl, openLocalFile = true, forceDownload = false }: {
+export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, previewUrl, openLocalFile = true, forceDownload = false, navigation }: {
+  navigation?: import('./ArkmeFileViewer.js').ArkmePreviewNavigation | undefined
   blocks: ArkmeContentBlock[]
   selected: ArkmeContentBlock
   onSelect: (block: ArkmeContentBlock) => void
@@ -527,6 +528,8 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
   forceDownload?: boolean
 }) {
   const index = Math.max(0, blocks.findIndex(block => block.mediaRef === selected.mediaRef))
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const filePreview = selected.kind === 'file' || forceDownload
   const viewportRef = useRef<HTMLDivElement>(null)
   const previewImageRef = useRef<HTMLImageElement>(null)
   const zoomAnimationRef = useRef<Animation>()
@@ -543,8 +546,8 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
   const original = useArkmeOriginal(selected, selected.kind === 'image')
   const originalUrl = previewUrl ?? (original.localRef === undefined ? arkmeContentMediaUrl(selected) : arkmeLocalFileUrl(original.localRef))
   const { notice: actionNotice, showNotice: showActionNotice, clearNotice: clearActionNotice } = useArkmeFileActionNotice()
-  const previousDisabled = index <= 0
-  const nextDisabled = index >= blocks.length - 1
+  const previousDisabled = navigation === undefined ? index <= 0 : navigation.previous === undefined
+  const nextDisabled = navigation === undefined ? index >= blocks.length - 1 : navigation.next === undefined
 
   useEffect(() => cancelBlankClick, [selected.mediaRef, onClose])
   useEffect(() => () => {
@@ -601,6 +604,16 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
       document.body.style.overflow = previousOverflow
     }
   }, [onClose])
+
+  useEffect(() => {
+    if (filePreview) return
+    const dialog = dialogRef.current
+    const previous = document.activeElement as HTMLElement | null
+    dialog?.focus()
+    return () => {
+      if (document.activeElement === document.body || dialog?.contains(document.activeElement)) previous?.focus()
+    }
+  }, [filePreview])
 
   const toggleImageScale = () => {
     cancelBlankClick()
@@ -689,9 +702,19 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
     }, 500)
   }
 
-  if (selected.kind === 'file' || forceDownload) return <ArkmeFileViewer block={selected} blocks={blocks} onSelect={onSelect} onClose={onClose} openLocalFile={openLocalFile} forceDownload={forceDownload} />
+  if (filePreview) return <ArkmeFileViewer block={selected} blocks={blocks} onSelect={onSelect} onClose={onClose} openLocalFile={openLocalFile} forceDownload={forceDownload} navigation={navigation} />
 
-  return <div style={styles.previewOverlay} role="dialog" aria-modal="true" aria-label={selected.fileName} onClick={onClose}>
+  return <div ref={dialogRef} tabIndex={-1} style={styles.previewOverlay} role="dialog" aria-modal="true" aria-label={selected.fileName} onClick={onClose}
+    onKeyDown={event => {
+      event.stopPropagation()
+      if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); onClose() }
+      if (event.key === 'Tab') {
+        const controls = dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],video[controls],audio[controls]')
+        const first = controls?.[0], last = controls?.[controls.length - 1]
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) { event.preventDefault(); last?.focus() }
+        else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialogRef.current)) { event.preventDefault(); first?.focus() }
+      }
+    }}>
     <div style={styles.previewBody} onClick={closeOnBlankClick}>
       <style>{`
         [data-arkme-preview-close]:hover { background: rgba(20,22,24,.4) !important; }
@@ -741,9 +764,9 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
           : <video src={originalUrl} controls autoPlay playsInline style={styles.previewMedia} aria-label={selected.fileName} />}
       </div>
       <div style={styles.previewActions} data-arkme-media-preview-actions="bottom">
-        <ArkmeFileActionNavButton label="上一个媒体" direction="left" disabled={previousDisabled} onClick={() => { if (!previousDisabled) selectMedia(blocks[index - 1]!) }} />
+        <ArkmeFileActionNavButton label="上一个媒体" direction="left" disabled={previousDisabled} onClick={() => { if (!previousDisabled) { if (navigation) navigation.previous?.(); else selectMedia(blocks[index - 1]!) } }} />
         <span aria-hidden style={styles.previewActionWideGap} />
-        <ArkmeFileActionNavButton label="下一个媒体" direction="right" disabled={nextDisabled} onClick={() => { if (!nextDisabled) selectMedia(blocks[index + 1]!) }} />
+        <ArkmeFileActionNavButton label="下一个媒体" direction="right" disabled={nextDisabled} onClick={() => { if (!nextDisabled) { if (navigation) navigation.next?.(); else selectMedia(blocks[index + 1]!) } }} />
         <span aria-hidden style={styles.previewActionWideGap} />
         <ArkmeFileActions block={selected} original={original} copySourceUrl={originalUrl} onImageCopyNotice={showActionNotice} showDownloadStatus={false} hideDownloadAfterSave={false} style={styles.previewActionPair} />
       </div>
@@ -841,7 +864,7 @@ export function arkmeRelatedRecordingItemFromSharedRecording(item: ArkmeTimeline
     : arkmeRelatedRecordingItemFromSharedRecordingPreview(item.sharedRecording, item)
 }
 
-export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen }: {
+export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen }: {
   item: ArkmeTimelineItem
   presentation?: 'bubble' | 'detail'
   sourceRef?: string
@@ -854,6 +877,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
   isMentionClickable?: ArkmeMentionClickPredicate
   mediaSelectionIsExplicit?: boolean
   onCallDetailOpen?: (videoUrl?: string) => void
+  onArticleOpen?: () => void
 }) {
   const lastMedia = useRef<{ sourceRef: string | undefined; item: ArkmeTimelineItem }>()
   const snapshot = lastMedia.current
@@ -973,7 +997,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
   return <>
     <div style={{ ...styles.stack, ...(presentation === 'detail' ? { width: '100%' } : {}) }} data-arkme-message-content={isArticle ? 'article' : 'message'} data-arkme-content-presentation={presentation}>
       {inlineVoice !== undefined ? renderVoice(inlineVoice, true) : <>
-        {isArticle && presentation === 'bubble' ? <ArticleCard title={item.title} text={item.textContent} onOpen={() => { setArticleOpen(true) }} /> : <>
+        {isArticle && presentation === 'bubble' ? <ArticleCard title={item.title} text={item.textContent} onOpen={() => { if (onArticleOpen !== undefined) onArticleOpen(); else setArticleOpen(true) }} /> : <>
           {isArticle && item.title && <h3 style={{ margin: 0, fontSize: 14, lineHeight: 1.7 }}><ArkmeRichText text={item.title} presentation="preview" /></h3>}
           {text !== '' && <LongText
             textFormat={item.textFormat ?? 'plain'}

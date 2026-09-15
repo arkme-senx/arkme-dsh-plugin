@@ -662,7 +662,7 @@ describe('Arkme SDK', () => {
           return success({ scope: 'self', startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Shanghai', refreshedAtMillis: 1, days: [] })
         }
         if (request.operation === 'calendar.records') {
-          return success({ scope: 'self', bucketDate: '2026-08-21', timezone: 'Asia/Shanghai', refreshedAtMillis: 1, items: [], hasMore: false })
+          return success({ scope: 'self', bucketDate: '2026-08-21', timezone: 'Asia/Shanghai', refreshedAtMillis: 1, items: [{ recordUid: 'calendar-rich', source: { kind: 'group_chat', displayName: '项目群', sourceRef: 'safe' }, content: { itemUid: 'calendar-rich', textFormat: 'markdown', textContent: '**正文**', contentBlocks: [{ kind: 'image', mediaRef: 'opaque-media' }] } }], hasMore: false })
         }
         if (request.operation === 'records.create') return success({ recordUid: request.params?.recordUid, status: 1 })
         throw new Error(`unexpected ${request.operation}`)
@@ -706,7 +706,7 @@ describe('Arkme SDK', () => {
       timezone: 'Asia/Shanghai',
       limit: 10,
       cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
-    })).resolves.toMatchObject({ scope: 'self', hasMore: false })
+    })).resolves.toMatchObject({ scope: 'self', hasMore: false, items: [{ source: { displayName: '项目群' }, content: { textFormat: 'markdown', contentBlocks: [{ mediaRef: 'opaque-media' }] } }] })
     await expect(sdk.createText('保存内容', { recordUid: 'a5d8df82-5b62-5b22-8f76-916a751ad63c' }))
       .resolves.toMatchObject({ status: 1 })
     expect(calls).toMatchObject([

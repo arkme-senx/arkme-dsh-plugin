@@ -1,9 +1,15 @@
-import type { ArkmeTimelineCursor, ArkmeTimelinePage } from '../types.js'
-import type { ArkmeConversationTimelineSnapshot } from './conversation-memory-cache.js'
+import type { ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage } from '../types.js'
+
+/** The loaded read window, independent of cache storage and message enhancement state. */
+export interface ConversationTimelineReadWindow {
+  readonly items: readonly ArkmeTimelineItem[]
+  readonly mode?: 'latest' | 'around'
+  readonly aroundSequenceRange?: { readonly minimumSequence: number; readonly maximumSequence: number }
+}
 
 /** Refresh the loaded records, not the navigation window. Apply only after all reads succeed. */
 export async function readConversationTimelineWindow(
-  snapshot: ArkmeConversationTimelineSnapshot,
+  snapshot: ConversationTimelineReadWindow,
   readPage: (cursor?: ArkmeTimelineCursor) => Promise<ArkmeTimelinePage>,
   signal: AbortSignal,
 ): Promise<ArkmeTimelinePage> {

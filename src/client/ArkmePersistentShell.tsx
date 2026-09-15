@@ -8,6 +8,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from './slots-contract.js'
 import type { ArkmeAuthSnapshot, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
+import { ArkmeHomeTour } from './ArkmeHomeTour.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 import { ArkmeQuickAddButton } from './ArkmeQuickAdd.js'
 import { arkmePrependSourceByIdentity } from './source-identity.js'
@@ -117,6 +118,10 @@ export function ArkmePersistentClientRuntime() {
   const avatarScopeKey = auth?.status === 'authenticated'
     ? `${auth.environment}:${String(auth.userId)}`
     : undefined
+  const homeTourRouteActive = ui.calendarOpen !== true && (
+    ui.mode === 'harness' || ui.mode === 'arko' || ui.mode === 'bot'
+    || (ui.mode === 'source' && ui.productMode !== 'contacts')
+  )
 
   useLayoutEffect(() => { arkmeAvatarImages.activateScope(avatarScopeKey) }, [avatarScopeKey])
   useEffect(() => {
@@ -131,7 +136,13 @@ export function ArkmePersistentClientRuntime() {
     arkmeUi.authChanged(true, true)
   }, [auth, ui.mode])
 
-  return <ArkmeOutgoingCallHost />
+  return <>
+    <ArkmeOutgoingCallHost />
+    <ArkmeHomeTour auth={auth}
+      blocked={ui.mode === 'login' || ui.webLoginDialogOpen === true}
+      routeActive={homeTourRouteActive}
+      notificationRevision={ui.notificationActivationRevision ?? 0} />
+  </>
 }
 
 /** The persistent shell remains mounted even when a transient Web login dialog has already unmounted. */
@@ -186,7 +197,6 @@ export function ArkmePersistentSidebar({
   const scopedContacts = arkmeContactsTab.getSnapshotForAccount(contactsAccountKey)
   const contactsDirectoryCache = arkmeContactsTab.getDirectoryCache(contactsAccountKey)
   const contactsMode = ui.mode === 'source' && ui.productMode === 'contacts'
-  const handoffControllerRef = useRef<AbortController>()
   const contactsContextRef = useRef({ accountKey: contactsAccountKey, contactsMode })
   contactsContextRef.current = { accountKey: contactsAccountKey, contactsMode }
   const [contactAddSession, setContactAddSession] = useState<{ accountKey: string | undefined }>()
@@ -259,12 +269,7 @@ export function ArkmePersistentSidebar({
     if (!collapsed) setCompactSidebarWidthOverride(undefined)
   }, [collapsed])
   useLayoutEffect(() => { arkmeContactsTab.activateAccount(contactsAccountKey) }, [contactsAccountKey])
-  useEffect(() => arkmeContactsTab.bindAborter(() => { handoffControllerRef.current?.abort() }), [])
-  useEffect(() => {
-    if (!contactsMode) handoffControllerRef.current?.abort()
-  }, [contactsMode, contactsAccountKey, contacts.generation])
   useEffect(() => () => {
-    handoffControllerRef.current?.abort()
     contactsContextRef.current = { ...contactsContextRef.current, contactsMode: false }
   }, [])
 
@@ -434,34 +439,8 @@ export function ArkmePersistentSidebar({
         onStateChange={(state, refreshed, acknowledgedProfiles) => { arkmeContactsTab.cacheDirectoryState(state, refreshed, acknowledgedProfiles) }}
         onSelectionChange={selection => { arkmeContactsTab.activateAccount(contactsAccountKey); arkmeContactsTab.select(selection) }}
         onExpandedChange={(section, expanded) => { arkmeContactsTab.setSectionExpanded(section, expanded) }}
-        onOpenGroup={sourceRef => {
-          arkmeContactsTab.activateAccount(contactsAccountKey)
-          handoffControllerRef.current?.abort()
-          const controller = new AbortController()
-          handoffControllerRef.current = controller
-          const generation = arkmeContactsTab.getSnapshot().generation
-          const accountKey = contactsAccountKey
-          void callArkme<ArkmeSourceItem>('directory.group.open-chat', { sourceRef }, controller.signal)
-            .then(source => {
-              const current = arkmeContactsTab.getSnapshot()
-              const currentUi = arkmeUi.getSnapshot()
-              const context = contactsContextRef.current
-              if (controller.signal.aborted || current.generation !== generation || current.accountKey !== accountKey
-                || context.accountKey !== accountKey || !context.contactsMode
-                || currentUi.mode !== 'source' || currentUi.productMode !== 'contacts') return
-              arkmeContactsTab.clear(); arkmeUi.selectSource(source)
-            })
-            .catch(() => undefined)
-        }}
-        onOpenBot={bot => {
-          arkmeContactsTab.activateAccount(contactsAccountKey)
-          handoffControllerRef.current?.abort()
-          handoffControllerRef.current = undefined
-          void callArkme('conversation.directory.visibility.set', {
-            entryKind: 'bot', entryRef: bot.botRef, hidden: false,
-          }).catch(() => undefined)
-          arkmeUi.openBotConversation(bot)
-        }}
+        onOpenGroup={() => undefined}
+        onOpenBot={() => undefined}
       />
     </PersistentDirectoryPanel>
     <PersistentDirectoryPanel key={`${contactsAccountKey}:conversations`} active={directoryVisible && !contactsMode} mode="conversations">
@@ -536,6 +515,7 @@ export function ArkmePersistentWorkspace({
     <ArkmePersistentClientRuntime />
     <ArkmeExtensionRecoveryNotice />
     <DeepSeekHarnessSurface
+      key={contactsAccountKey ?? 'guest'}
       visible={harnessVisible}
       nativeSettings={webLockedHarness}
       accountId={authenticatedUserId}
@@ -564,6 +544,16 @@ export function ArkmePersistentWorkspace({
     {contactsMode && <div className="arkme-directory-detail-pane" data-arkme-contacts-workspace style={styles.contactsLayer}>
       {scopedContacts.selection.kind !== 'none' && <button type="button" className="arkme-directory-mobile-back" onClick={() => { arkmeContactsTab.clear() }}>返回联系人目录</button>}
       <DirectoryDetailPane
+        onBotActivated={bot => {
+          const current = arkmeContactsTab.getSnapshot()
+          const context = contactsContextRef.current
+          const currentUi = arkmeUi.getSnapshot()
+          if (current.accountKey !== contactsAccountKey || context.accountKey !== contactsAccountKey || !context.contactsMode
+            || currentUi.mode !== 'source' || currentUi.productMode !== 'contacts'
+            || current.selection.kind !== 'bot' || current.selection.bot.botRef !== bot.botRef) return
+          arkmeContactsTab.clear()
+          arkmeUi.openBotConversation(bot)
+        }}
         accountKey={contactsAccountKey ?? ''} selection={scopedContacts.selection}
         onProfileUpdated={profile => { if (contactsAccountKey !== undefined) arkmeContactsTab.updateContactProfile(contactsAccountKey, profile) }}
         onSelectionChange={selection => { arkmeContactsTab.activateAccount(contactsAccountKey); arkmeContactsTab.select(selection) }}

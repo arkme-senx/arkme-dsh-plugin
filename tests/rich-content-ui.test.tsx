@@ -34,7 +34,7 @@ describe('Arkme rich content presentation', () => {
     try {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, {
-          createNodeMock: element => element.type === 'img'
+          createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
             ? {
               naturalWidth: 1600, naturalHeight: 800, animate,
               getBoundingClientRect: () => {
@@ -74,7 +74,7 @@ describe('Arkme rich content presentation', () => {
     try {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, {
-          createNodeMock: element => element.type === 'img'
+          createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
             ? { naturalWidth: width, naturalHeight: height }
             : { clientWidth: 1000, clientHeight: 800, scrollWidth: coveredWidth, scrollHeight: coveredHeight, scrollLeft: 0, scrollTop: 0 },
         })
@@ -106,7 +106,7 @@ describe('Arkme rich content presentation', () => {
     try {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={onClose} />, {
-          createNodeMock: element => element.type === 'img'
+          createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
             ? { naturalWidth: 400, naturalHeight: 800, getBoundingClientRect: () => ({ left: 10, top: 50, width: 1000, height: 800 }) }
             : null,
         })
@@ -141,7 +141,7 @@ describe('Arkme rich content presentation', () => {
     try {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={onClose} />, {
-          createNodeMock: element => element.type === 'img'
+          createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
             ? { naturalWidth: 400, naturalHeight: 200, getBoundingClientRect: () => ({ left: 300, top: 300, width: 400, height: 200 }) }
             : { clientWidth: 1000, clientHeight: 800, scrollWidth: 1600, scrollHeight: 800, scrollLeft: 0, scrollTop: 0 },
         })
@@ -343,6 +343,14 @@ describe('Arkme rich content presentation', () => {
     expect(html).not.toContain('data-arkme-long-article="preview"')
     expect(html).not.toContain('data-arkme-text-collapsible')
   })
+  it('uses explicit cross-record navigation independently of the current message blocks', () => {
+    const image = { kind: 'image' as const, mediaRef: 'one', fileName: 'one.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
+    const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={[image]} selected={image} navigation={{ next: () => {} }} onSelect={() => {}} onClose={() => {}} />)
+    expect(html).toContain('aria-label="上一个媒体" disabled=""')
+    expect(html).not.toContain('aria-label="下一个媒体" disabled=""')
+
+  })
+
   it('contains the whole image initially and exposes fixed-width zoom without horizontal overflow', () => {
     const image = { kind: 'image' as const, mediaRef: 'long-image-ref', fileName: 'long.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
     const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => undefined} onClose={() => undefined} />)

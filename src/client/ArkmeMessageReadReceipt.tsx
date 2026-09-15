@@ -391,24 +391,22 @@ export function ArkmeMessageReadReceipt(props: {
 
   useEffect(() => {
     if (target === undefined) return
-    const unregister = arkmeMessageReadReceipts.register(target)
+    const registration = arkmeMessageReadReceipts.register(target)
     const element = hostRef.current
     if (element === null || typeof IntersectionObserver === 'undefined') {
-      arkmeMessageReadReceipts.setVisible(target, true)
+      registration.setVisible(true)
       return () => {
-        arkmeMessageReadReceipts.setVisible(target, false)
-        unregister()
+        registration.dispose()
       }
     }
     const observer = new IntersectionObserver(entries => {
       const visible = entries.some(entry => entry.target === element && entry.isIntersecting)
-      arkmeMessageReadReceipts.setVisible(target, visible)
+      registration.setVisible(visible)
     }, { rootMargin: '120px 0px' })
     observer.observe(element)
     return () => {
       observer.disconnect()
-      arkmeMessageReadReceipts.setVisible(target, false)
-      unregister()
+      registration.dispose()
     }
   }, [target])
 
@@ -444,6 +442,12 @@ export function ArkmeMessageReadReceipt(props: {
         type="button"
         style={{ ...styles.status, ...styles.interactive }}
         aria-label={canOpen ? `${label}，查看成员已读详情` : label}
+        onKeyDown={event => {
+          if (detailOpen && event.key === 'Escape' && !event.nativeEvent.isComposing) {
+            event.stopPropagation()
+            setDetailOpen(false)
+          }
+        }}
         onClick={() => {
           if (isFailure) {
             arkmeMessageReadReceipts.retry(target)

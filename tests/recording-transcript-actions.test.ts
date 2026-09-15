@@ -26,7 +26,7 @@ function fixture() {
   const forward = vi.fn(async () => ({ recordUid: 'sent' }))
   const requireSession = vi.fn(async () => session)
   const post = vi.fn(async (path: string) => path.endsWith('one-day-trans') ? data : { spk_ls: [{ id: 'speaker', nick_name: '本人' }] })
-  const runtime = { config: { maxTextLength: 20000 }, requireSession, authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+  const runtime = { subscribeAccountScope: () => () => {}, config: { maxTextLength: 20000 }, requireSession, authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
   const service = new RecordingService(runtime, { forwardGateway: { forward, supportsRecordTargets: async () => true } } as unknown as RecordingServiceDependencies)
   return { data, forward, service, requireSession, post }
 }

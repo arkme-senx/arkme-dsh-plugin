@@ -1,7 +1,9 @@
+import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { nextArkmeUnreadConversation } from '../conversation-attention.js'
 import { ArkmeDirectoryWindow } from './ArkmeDirectoryWindow.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { createHomeTourTrace } from './home-tour-diagnostics.js'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
@@ -16,6 +18,7 @@ import { arkmeBadgeUnreadCount, projectArkmeChatAttentionFromMuted } from '../ch
 import type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 import { callArkme } from './api.js'
 import { ArkmeDirectorySourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { ArkmeChatPreviewDialog, arkmeCanPreviewChat } from './ArkmeChatPreviewDialog.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
@@ -24,6 +27,7 @@ import { ArkmeSendToSelfIcon } from './ArkmeSendToSelfIcon.js'
 import { ArkmeDSHBetaCommunityEntry, ArkmeDSHBetaCommunityEntryContent } from './ArkmeDSHBetaCommunityEntry.js'
 import { ARKME_EXTENSION_BRAND_GREEN } from './ArkmeMarketplace.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
+import { isArkmeOfficialAuthor, OFFICIAL_AUTHOR_PREVIEW, OFFICIAL_AUTHOR_USER_ID } from './ArkmeOfficialAuthorGuide.js'
 import { ArkmeGlobalSearchDialog, type ArkmeDshMessageSearchResult } from './ArkmeSearchSurface.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
@@ -124,6 +128,27 @@ export function arkmeRootDirectoryLoadState({
   return hasSources ? 'updating' : 'loading'
 }
 
+export function arkmeHomeTourDirectoryAttributes({
+  directory, accountKey, accountScopeMatches, authenticated, active, embeddedProductShell, baselineReady,
+}: {
+  directory: ArkmeSourceDirectory
+  accountKey: string | undefined
+  accountScopeMatches: boolean
+  authenticated: boolean
+  active: boolean
+  embeddedProductShell: boolean
+  baselineReady: boolean
+}): Record<string, string> {
+  if (directory !== 'root') return {}
+  return {
+    'data-arkme-home-tour-directory': 'root',
+    ...(accountKey === undefined ? {} : { 'data-arkme-home-tour-account': accountKey }),
+    'data-arkme-home-tour-ready': String(
+      accountKey !== undefined && accountScopeMatches && authenticated && active && embeddedProductShell && baselineReady,
+    ),
+  }
+}
+
 const colors = {
   panel: '#fff',
   text: arkmeTheme.text,
@@ -195,13 +220,6 @@ const styles: Record<string, CSSProperties> = {
     background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: 0,
   },
   chatRowActive: { background: colors.active },
-  pinnedCornerClip: {
-    position: 'absolute', inset: 0, borderRadius: 'inherit', overflow: 'hidden', pointerEvents: 'none',
-  },
-  pinnedCorner: {
-    position: 'absolute', top: 0, right: 0, width: 16, height: 16,
-    background: '#65ce8b', clipPath: 'polygon(0 0, 100% 0, 100% 100%)',
-  },
   chatRowRemoving: { background: arkmeTheme.hover, cursor: 'default' },
   chatContent: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 },
   chatTop: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 7 },
@@ -375,8 +393,8 @@ function SelfAvatar() {
 
 /** Arkme-owned visual shell for every consumer contributed directory entry. */
 export function ArkmeDirectoryRow({
-  avatar, title, preview, selected, disabled = false, ariaLabel, onClick,
-}: ArkmeDirectoryRowProps) {
+  avatar, title, preview, selected, disabled = false, ariaLabel, onClick, homeTourTarget, titleBadge,
+}: ArkmeDirectoryRowProps & { homeTourTarget?: 'official-author'; titleBadge?: ReactNode }) {
   return <button
     type="button"
     role="treeitem"
@@ -384,12 +402,13 @@ export function ArkmeDirectoryRow({
     aria-selected={selected}
     disabled={disabled}
     title={title}
+    data-arkme-home-tour-target={homeTourTarget}
     style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
     onClick={onClick}
   >
     <span style={styles.avatar} aria-hidden>{avatar}</span>
     <span style={styles.chatContent}>
-      <span style={styles.chatTop}><span style={styles.entryName}>{title}</span></span>
+      <span style={styles.chatTop}><span style={styles.entryName}>{title}</span>{titleBadge}</span>
       <span style={styles.chatBottom}><span style={styles.preview}>{preview}</span></span>
     </span>
   </button>
@@ -507,6 +526,7 @@ export function ArkmeArkoRow({
     : new Date(latestAtMillis).toISOString()
   return <button
     type="button"
+    data-arkme-home-tour-target="arko"
     role="treeitem"
     aria-selected={selected}
     style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
@@ -531,6 +551,7 @@ export function ArkmeArkoRow({
 export function DeepSeekHarnessRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
   return <button
     type="button"
+    data-arkme-home-tour-target="harness"
     role="treeitem"
     aria-selected={selected}
     style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
@@ -545,7 +566,6 @@ export function DeepSeekHarnessRow({ selected, onClick }: { selected: boolean; o
 }
 
 /** The Host owns the official author identity; this fallback only avoids a transient duplicate entry while it loads. */
-const OFFICIAL_AUTHOR_USER_ID = 11
 
 export function arkmeOfficialAuthorSource(
   sources: readonly ArkmeSourceItem[],
@@ -573,10 +593,12 @@ export function ArkmeOfficialAuthorRow({
           {...(profile.avatarRef === undefined ? {} : { avatarRef: profile.avatarRef })}
         />}
     title="联系作者"
-    preview={busy ? '正在打开私聊…' : '问题反馈与使用建议'}
+    titleBadge={<ArkmeTopicTagBadge label="官方" />}
+    preview={busy ? '正在打开私聊…' : OFFICIAL_AUTHOR_PREVIEW}
     selected={false}
     disabled={busy}
     ariaLabel="联系作者"
+    homeTourTarget="official-author"
     onClick={onClick}
   />
 }
@@ -603,6 +625,7 @@ export function arkmeRootChatPreview(source: ArkmeSourceItem): string {
 export function arkmeRootChatPreviewParts(source: ArkmeSourceItem): { mentionPrefix: string; preview: string } {
   const preview = (source.latestPreview ?? (source.kind === 'group_chat' ? '群聊' : ''))
     .replace(/\s+/g, ' ').trim()
+    || (isArkmeOfficialAuthor(source) ? OFFICIAL_AUTHOR_PREVIEW : '')
   const mentionPrefix = source.kind === 'group_chat' && source.hasUnreadMention === true && preview !== ''
     ? '[有人@我] '
     : ''
@@ -899,6 +922,7 @@ export function ArkmeNavigation({
   const [initialCache] = useState(readLastNavigationCache)
   const cacheRef = useRef<ArkmeNavigationCache | undefined>(initialCache)
   const authenticatedUserIdRef = useRef<number | undefined>(initialCache?.userId)
+  const [directoryAccountKey, setDirectoryAccountKey] = useState<string>()
   const directoryRequestAbortRef = useRef<AbortController>()
   const topicCreateRequestRef = useRef(false)
   const rootRowElementsRef = useRef(new Map<string, HTMLButtonElement>())
@@ -937,6 +961,7 @@ export function ArkmeNavigation({
   const [directoryContextTarget, setDirectoryContextMenu] = useState<
     { kind: 'source' | 'bot', key: string, x: number, y: number }
   >()
+  const [chatPreview, setChatPreview] = useState<{ accountKey: string; sourceKey: string }>()
   const directoryMutationAbortRef = useRef<AbortController>()
   const [directoryMutation, setDirectoryMutation] = useState<{
     kind: 'source' | 'bot'
@@ -970,6 +995,22 @@ export function ArkmeNavigation({
   const activateDirectoryEntry = useCallback((entryId?: string) => { setActiveDirectoryEntryId(entryId) }, [])
   const activateNativeEntry = useCallback(() => { setActiveDirectoryEntryId(undefined) }, [])
   const authenticated = auth?.status === 'authenticated'
+  const currentAccountKey = authenticated && auth.userId !== undefined
+    ? `${auth.environment}:${String(auth.userId)}`
+    : undefined
+  useEffect(() => { setChatPreview(undefined) }, [currentAccountKey, active])
+  const [traceNavigation] = useState(createHomeTourTrace)
+  useEffect(() => {
+    traceNavigation('navigation-mounted')
+    return () => { traceNavigation('navigation-unmounted') }
+  }, [traceNavigation])
+  useEffect(() => {
+    traceNavigation('navigation-readiness-inputs', {
+      accountKey: currentAccountKey, directoryAccountKey, authenticated, directory,
+      accountScopeMatches: directoryAccountKey === currentAccountKey,
+      active, embeddedProductShell, baselineReady: chatDirectory.baselineReady,
+    })
+  }, [traceNavigation, currentAccountKey, directoryAccountKey, authenticated, directory, active, embeddedProductShell, chatDirectory.baselineReady])
   const closeGlobalSearch = useCallback(() => {
     setGlobalSearchOpen(false)
     const revision = arkmeUi.getSnapshot().searchTarget?.revision
@@ -1072,6 +1113,13 @@ export function ArkmeNavigation({
       && (row.kind === 'source' ? arkmeSourceIdentityKey(row.source) : conversationBotVisibilityKey(row.bot)) === directoryContextTarget.key)
     return row === undefined ? undefined : { ...row, x: directoryContextTarget.x, y: directoryContextTarget.y }
   }, [directoryContextTarget, rootConversationRows])
+  const previewRow = chatPreview?.accountKey === currentAccountKey
+    ? rootConversationRows.find(row => row.kind === 'source' && arkmeSourceIdentityKey(row.source) === chatPreview?.sourceKey)
+    : undefined
+  const previewSource = previewRow?.kind === 'source' && arkmeCanPreviewChat(previewRow.source) ? previewRow.source : undefined
+  useEffect(() => {
+    if (chatPreview !== undefined && previewSource === undefined) setChatPreview(undefined)
+  }, [chatPreview, previewSource])
   useEffect(() => {
     if (directoryContextTarget !== undefined && directoryContextMenu === undefined) setDirectoryContextMenu(undefined)
   }, [directoryContextMenu, directoryContextTarget])
@@ -1165,6 +1213,7 @@ export function ArkmeNavigation({
 
   const reconcileAuth = useCallback((status: ArkmeAuthSnapshot['status'] | undefined, environment: ArkmeAuthSnapshot['environment'] | undefined, userId: number | undefined) => {
     if (status !== 'authenticated' || userId === undefined) {
+      setDirectoryAccountKey(undefined)
       authenticatedUserIdRef.current = undefined
       cacheRef.current = undefined
       clearLastNavigationCache()
@@ -1172,7 +1221,9 @@ export function ArkmeNavigation({
       setDirectory('root'); setSources([])
       return
     }
-    arkmeChatDirectory.activateAccount(`${environment}:${String(userId)}`)
+    const accountKey = `${environment}:${String(userId)}`
+    arkmeChatDirectory.activateAccount(accountKey)
+    setDirectoryAccountKey(accountKey)
     authenticatedUserIdRef.current = userId
     const cached = readNavigationCache(userId) ?? {
       version: 1, userId: userId, directory: 'root', sources: {}, updatedAtMillis: 0,
@@ -1898,6 +1949,7 @@ export function ArkmeNavigation({
 
   const renderSelfEntry = (onClick?: () => void) => (<button
           type="button" role="treeitem"
+          data-arkme-home-tour-target="send-to-self"
           aria-selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource)}
           style={{ ...styles.chatRow, ...(activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
           onClick={onClick ?? (() => {
@@ -1992,6 +2044,16 @@ export function ArkmeNavigation({
     {directory === 'root' && embeddedProductShell && directoryLead}
     <div
       ref={directoryScrollRef}
+      {...arkmeHomeTourDirectoryAttributes({
+        directory,
+        accountKey: currentAccountKey,
+        accountScopeMatches: directoryAccountKey === currentAccountKey,
+        authenticated,
+        active,
+        embeddedProductShell,
+        baselineReady: chatDirectory.baselineReady,
+      })}
+      data-arkme-home-tour-scroll-container="directory"
       onScroll={event => { if (activeRef.current && event.currentTarget.getClientRects().length > 0) directoryScrollTopRef.current = event.currentTarget.scrollTop }}
       style={{
         ...styles.list,
@@ -2069,9 +2131,7 @@ export function ArkmeNavigation({
                 setDirectoryContextMenu({ kind: 'bot', key: conversationBotVisibilityKey(bot), x: event.clientX, y: event.clientY })
               }}
             >
-              {row.pinned && <span role="img" aria-label="已置顶" style={styles.pinnedCornerClip}>
-                <span aria-hidden style={styles.pinnedCorner} />
-              </span>}
+              {row.pinned && <ArkmePinnedCorner />}
               <span style={styles.sourceAvatarWrap} aria-hidden>
                 <span style={styles.avatar}><RobotIcon size={22} weight="fill" /></span>
                 {unreadPlacement === 'avatar' && <span style={styles.mentionUnread}>{unreadText}</span>}
@@ -2117,9 +2177,7 @@ export function ArkmeNavigation({
               setDirectoryContextMenu({ kind: 'source', key: arkmeSourceIdentityKey(source), x: event.clientX, y: event.clientY })
             }}
           >
-            {row.pinned && <span role="img" aria-label="已置顶" style={styles.pinnedCornerClip}>
-              <span aria-hidden style={styles.pinnedCorner} />
-            </span>}
+            {row.pinned && <ArkmePinnedCorner />}
             <span style={styles.sourceAvatarWrap}>
               <ArkmeDirectorySourceAvatar source={source} size={38} />
               {unreadPlacement === 'avatar' && <span style={styles.mentionUnread}>{unreadText}</span>}
@@ -2127,7 +2185,11 @@ export function ArkmeNavigation({
             </span>
             <span style={styles.chatContent}>
               <span style={styles.chatTop}>
-                <span style={styles.chatName}>{source.displayName}</span>
+                <span style={isArkmeOfficialAuthor(source) ? styles.entryName : styles.chatName}>{source.displayName}</span>
+                {isArkmeOfficialAuthor(source) && <>
+                  <ArkmeTopicTagBadge label="官方" selected={selected} />
+                  <span aria-hidden style={{ flex: 1 }} />
+                </>}
                 <span style={styles.chatTime}>{timeLabel(source.activeAtMillis)}</span>
               </span>
               <span style={styles.chatBottom}>
@@ -2204,6 +2266,14 @@ export function ArkmeNavigation({
       }}
       onClose={closeGlobalSearch}
     />, document.body)}
+    {active && chatPreview !== undefined && previewSource !== undefined && <ArkmeChatPreviewDialog
+      key={`${chatPreview.accountKey}:${chatPreview.sourceKey}`}
+      source={previewSource}
+      onClose={() => {
+        rootRowElementsRef.current.get(previewSource.sourceRef)?.focus({ preventScroll: true })
+        setChatPreview(undefined)
+      }}
+    />}
     {active && directoryContextMenu !== undefined && typeof document !== 'undefined' && createPortal(<div
       ref={directoryContextMenuRef}
       role="menu"
@@ -2211,10 +2281,22 @@ export function ArkmeNavigation({
       style={{
         ...styles.directoryContextMenu,
         left: Math.max(8, Math.min(directoryContextMenu.x, window.innerWidth - 154)),
-        top: Math.max(8, Math.min(directoryContextMenu.y, window.innerHeight - 84)),
+        top: Math.max(8, Math.min(directoryContextMenu.y, window.innerHeight - (directoryContextMenu.kind === 'source' && arkmeCanPreviewChat(directoryContextMenu.source) ? 120 : 84))),
       }}
       onContextMenu={event => { event.preventDefault() }}
     >
+      {directoryContextMenu.kind === 'source' && arkmeCanPreviewChat(directoryContextMenu.source) && <>
+        <button type="button" role="menuitem" style={styles.directoryContextMenuItem} disabled={directoryMutation !== undefined}
+          onClick={() => {
+            if (currentAccountKey === undefined || !arkmeCanPreviewChat(directoryContextMenu.source)) return
+            setChatPreview({ accountKey: currentAccountKey, sourceKey: arkmeSourceIdentityKey(directoryContextMenu.source) })
+            setDirectoryContextMenu(undefined)
+          }}
+          onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
+          onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+        >预览</button>
+        <div aria-hidden style={styles.directoryContextMenuDivider} />
+      </>}
       <button
         type="button"
         role="menuitem"

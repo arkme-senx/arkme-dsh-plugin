@@ -34,6 +34,16 @@ import {
 
 export const inject = ['slots', 'layout', 'locale', 'sessions']
 
+function closeLayoutDetails(layout: ClientContext['layout']): void {
+  const compatible = layout as typeof layout & {
+    closeDetails?: () => void
+    closeRightbar?: () => void
+  }
+  if (typeof compatible.closeRightbar === 'function') return compatible.closeRightbar()
+  if (typeof compatible.closeDetails === 'function') return compatible.closeDetails()
+  throw new Error('当前 DSH 版本不支持关闭详情面板')
+}
+
 function ArkmeDshSettingsSection() {
   return <ArkmeSettingsSurface />
 }
@@ -207,7 +217,7 @@ export function apply(ctx: ClientContext): void {
         },
         inject: () => ({
           collapseSidebar: () => { ctx.layout.toggleSidebar() },
-          closeDetails: () => { ctx.layout.closeDetails() },
+          closeDetails: () => { closeLayoutDetails(ctx.layout) },
           searchDshMessages: async (query: string, signal: AbortSignal) => {
             const dshSessions = (ctx as unknown as { sessions?: ISessions }).sessions
             if (typeof dshSessions?.search !== 'function') throw new Error('当前 DSH 版本暂不支持任务消息搜索')
@@ -297,32 +307,22 @@ export function apply(ctx: ClientContext): void {
   )
 
   ctx.effect(() => {
-    let disposeConversation: (() => void) | undefined
-    let disposeDetails: (() => void) | undefined
-
-    const mountArkmeSeats = () => {
-      if (disposeConversation === undefined) {
-        disposeConversation = ctx.slots.inject('conversation', () => ctx.slots.register({
-          name: 'conversation',
-          priority: -100,
-          locale: ARKME_LOGIN_LOCALE_NAMESPACE,
-          inject: () => ({ closeDetails: () => { ctx.layout.closeDetails() } }),
-        }, ArkmePersistentWorkspace))
-      }
-      if (disposeDetails === undefined) {
-        disposeDetails = ctx.slots.inject('details', () => ctx.slots.register({
-          name: 'details',
-          priority: -100,
-          inject: () => ({ closeDetails: () => { ctx.layout.closeDetails() } }),
-        }, ArkmePersistentDetails))
-      }
-    }
-    mountArkmeSeats()
+    const disposeConversations = ['conversation', 'main.conversation'].map(name =>
+      ctx.slots.inject(name as 'conversation', () => ctx.slots.register({
+        name: name as 'conversation',
+        priority: -100,
+        locale: ARKME_LOGIN_LOCALE_NAMESPACE,
+        inject: () => ({ closeDetails: () => { closeLayoutDetails(ctx.layout) } }),
+      }, ArkmePersistentWorkspace)),
+    )
+    const disposeDetails = ctx.slots.inject('details', () => ctx.slots.register({
+      name: 'details',
+      priority: -100,
+      inject: () => ({ closeDetails: () => { closeLayoutDetails(ctx.layout) } }),
+    }, ArkmePersistentDetails))
     return () => {
-      disposeConversation?.()
-      disposeConversation = undefined
-      disposeDetails?.()
-      disposeDetails = undefined
+      disposeConversations.forEach(dispose => { dispose() })
+      disposeDetails()
     }
   }, 'dsh-arkme: keep Arkme conversation seats around the embedded DeepSeek Harness')
 

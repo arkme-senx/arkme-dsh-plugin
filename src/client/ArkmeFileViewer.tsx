@@ -352,7 +352,10 @@ export function ArkmeFileActions({ block, original, copySourceUrl, onImageCopyNo
   </div>
 }
 
-export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, openLocalFile = false, forceDownload = false }: {
+export interface ArkmePreviewNavigation { previous?: () => void; next?: () => void }
+
+export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, openLocalFile = false, forceDownload = false, navigation }: {
+  navigation?: ArkmePreviewNavigation | undefined
   block: ArkmeContentBlock; onClose: () => void; blocks?: ArkmeContentBlock[]; onSelect?: (block: ArkmeContentBlock) => void; openLocalFile?: boolean; forceDownload?: boolean
 }) {
   const original = useArkmeOriginal(block, block.kind === 'image')
@@ -373,8 +376,8 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
   const showContent = url !== undefined && browserPreview && (openRequested || block.kind === 'image' || block.kind === 'video')
   const systemFile = !browserPreview
   const index = Math.max(0, blocks.findIndex(value => value.mediaRef === block.mediaRef))
-  const previousDisabled = onSelect === undefined || index <= 0
-  const nextDisabled = onSelect === undefined || index >= blocks.length - 1
+  const previousDisabled = navigation === undefined ? onSelect === undefined || index <= 0 : navigation.previous === undefined
+  const nextDisabled = navigation === undefined ? onSelect === undefined || index >= blocks.length - 1 : navigation.next === undefined
   useEffect(() => { setOpenRequested(openLocalFile); setError('') }, [block.mediaRef, openLocalFile])
   useEffect(() => { clearActionNotice() }, [block.mediaRef, clearActionNotice])
   useEffect(() => {
@@ -431,9 +434,9 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
       {error && <p role="alert">{error}</p>}
       <ArkmeFileActionToast notice={actionNotice} style={{ position: 'absolute', left: 74, right: 74, bottom: -8 }} />
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: -56, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <ArkmeFileActionNavButton label="上一个文件" direction="left" disabled={previousDisabled} onClick={() => { if (!previousDisabled) onSelect?.(blocks[index - 1]!) }} />
+        <ArkmeFileActionNavButton label="上一个文件" direction="left" disabled={previousDisabled} onClick={() => { if (!previousDisabled) { if (navigation) navigation.previous?.(); else onSelect?.(blocks[index - 1]!) } }} />
         <span aria-hidden style={fileActionWideGapStyle} />
-        <ArkmeFileActionNavButton label="下一个文件" direction="right" disabled={nextDisabled} onClick={() => { if (!nextDisabled) onSelect?.(blocks[index + 1]!) }} />
+        <ArkmeFileActionNavButton label="下一个文件" direction="right" disabled={nextDisabled} onClick={() => { if (!nextDisabled) { if (navigation) navigation.next?.(); else onSelect?.(blocks[index + 1]!) } }} />
         <span aria-hidden style={fileActionWideGapStyle} />
         <ImageCopyAction block={block} sourceUrl={url} onNotice={showActionNotice} />
         <span aria-hidden style={{ width: 12, flex: 'none' }} />

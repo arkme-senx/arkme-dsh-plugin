@@ -20,7 +20,7 @@ import { registerDSHAgentInputRecordSync } from './dsh-agent-input-sync.js'
 import { createArkmeHostApi } from './host-api.js'
 import { readDirectoryPage } from './directory-reader.js'
 import { openDshHostPath } from './dsh-host-capabilities.js'
-import { ARKME_HARNESS_EMBED_PATH, ARKME_HARNESS_MODEL_CLIENT_PATH } from './harness-embed-contract.js'
+import { ARKME_HARNESS_EMBED_PATH, ARKME_HARNESS_MODEL_CLIENT_PATH, ARKME_HARNESS_ONBOARDING_CLIENT_PATH } from './harness-embed-contract.js'
 import {
   createHarnessEmbedRouteHandler,
   dshRootDocumentHeaders,
@@ -427,7 +427,10 @@ export function apply(ctx: Context, config: Config): void {
     })
   })
   registerDSHAgentInputRecordSync(ctx, service)
-  registerArkmeTools(ctx, service, config.toolProfile)
+  registerArkmeTools(ctx, service, config.toolProfile, {
+    currentAccount: async () => (await sessionStore.read())?.userId,
+    withGroupMemberInvalidation: (groups, execute) => service.withGroupMemberInvalidation(groups, execute),
+  })
   if (config.openApiMcpEnabled) registerOpenApiMcpLifecycleTools(ctx, openApiMcpController)
   ctx.inject(['dynamicCordisRunner', 'agents'], dynamicCtx => {
     const runner = (dynamicCtx as Context & { dynamicCordisRunner: DynamicCordisRunnerLike }).dynamicCordisRunner
@@ -673,7 +676,20 @@ export function apply(ctx: Context, config: Config): void {
     }), 'arkme: Harness session observer asset')
   }
   const harnessModelClient = readFileSync(new URL('../lib/harness-model-client.js', import.meta.url))
+  const harnessOnboardingClient = readFileSync(new URL('../lib/harness-onboarding-client.js', import.meta.url))
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact', path: ARKME_HARNESS_ONBOARDING_CLIENT_PATH,
+    handler: (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' })
+      response.end(harnessOnboardingClient)
+    },
+  }), 'arkme: Harness onboarding bridge asset')
   const harnessEmbedHandler = createHarnessEmbedRouteHandler({
+    onboardingClient: {
+      id: '@senguoyun/dsh-arkme/harness-onboarding', url: ARKME_HARNESS_ONBOARDING_CLIENT_PATH,
+      rev: createHash('sha256').update(harnessOnboardingClient).digest('hex'),
+      external: ['react'],
+    },
     ...(sessionClient === undefined ? {} : { sessionClient: {
       revision: createHash('sha256').update(sessionClient.source).digest('hex').slice(0, 12),
       apiPath: sessionClient.apiPath,

@@ -74,6 +74,9 @@ export function arkmeFileSendTasksEqual(
   return left === right || JSON.stringify(left) === JSON.stringify(right)
 }
 
+// Reuse the fallback until a snapshot exists; consumers memoize by task identity.
+const EMPTY_FILE_SEND_TASKS: readonly ArkmeFileSendTask[] = Object.freeze([])
+
 export function useArkmeFileSendTasks(
   sourceRef: string | undefined,
   userId: number | undefined,
@@ -136,7 +139,7 @@ export function useArkmeFileSendTasks(
     }
   }, [enabled, sourceRef, userId, revision])
   return {
-    tasks: snapshot?.sourceRef === sourceRef && snapshot?.userId === userId ? snapshot?.tasks ?? [] : [],
+    tasks: snapshot?.sourceRef === sourceRef && snapshot?.userId === userId ? snapshot?.tasks ?? EMPTY_FILE_SEND_TASKS : EMPTY_FILE_SEND_TASKS,
     refresh: () => setRevision(value => value + 1),
     accept: (task: ArkmeFileSendTask) => {
       if (sourceRef === undefined || userId === undefined || task.sourceRef !== sourceRef) return

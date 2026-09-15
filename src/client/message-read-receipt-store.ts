@@ -37,7 +37,8 @@ export interface ArkmeMessageReadReceiptEntry {
 
 interface TrackedTarget {
   target: ArkmeMessageReadReceiptTarget
-  registrations: number
+  registrations: Set<symbol>
+  visibleRegistrations: Set<symbol>
 }
 
 interface DetailCacheEntry {
@@ -161,8 +162,8 @@ export class ArkmeMessageReadReceiptStore {
     if (preserveMountedTargets) this.scheduleFlush(0)
   }
 
-  register(target: ArkmeMessageReadReceiptTarget): () => void {
-    if (!validTarget(target)) return () => undefined
+  register(target: ArkmeMessageReadReceiptTarget): { setVisible(visible: boolean): void; dispose(): void } {
+    if (!validTarget(target)) return { setVisible: () => undefined, dispose: () => undefined }
     const normalized = {
       ...target,
       sourceRef: target.sourceRef.trim(),
@@ -170,38 +171,33 @@ export class ArkmeMessageReadReceiptStore {
       itemUid: target.itemUid.trim(),
     }
     const key = targetKey(normalized)
-    const current = this.tracked.get(key)
-    this.tracked.set(key, {
-      target: normalized,
-      registrations: (current?.registrations ?? 0) + 1,
-    })
+    const tracked = this.tracked.get(key) ?? { target: normalized, registrations: new Set<symbol>(), visibleRegistrations: new Set<symbol>() }
+    const token = Symbol()
+    tracked.target = normalized
+    tracked.registrations.add(token)
+    this.tracked.set(key, tracked)
     const entry = this.entries.get(key)
     if (entry === undefined) this.entries.set(key, { target: normalized, status: 'unknown' })
     else if (entry.target.sourceRef !== normalized.sourceRef) this.entries.set(key, { ...entry, target: normalized, status: 'stale' })
-    return () => {
-      const registered = this.tracked.get(key)
-      if (registered === undefined) return
-      if (registered.registrations > 1) {
-        this.tracked.set(key, { ...registered, registrations: registered.registrations - 1 })
-        return
-      }
-      this.tracked.delete(key)
-      this.visible.delete(key)
-      this.trimCache()
+    const setVisible = (visible: boolean) => {
+      // Visibility belongs to a mounted consumer, while cached truth belongs to the message.
+      if (this.tracked.get(key) !== tracked || !tracked.registrations.has(token)) return
+      if (visible) tracked.visibleRegistrations.add(token)
+      else tracked.visibleRegistrations.delete(token)
+      if (tracked.visibleRegistrations.size > 0) {
+        this.visible.add(key)
+        if (needsRefresh(this.entries.get(key))) this.scheduleFlush()
+      } else this.visible.delete(key)
       this.schedulePoll()
     }
-  }
-
-  setVisible(target: ArkmeMessageReadReceiptTarget, visible: boolean): void {
-    const key = targetKey(target)
-    if (!this.tracked.has(key)) return
-    if (visible) {
-      this.visible.add(key)
-      if (needsRefresh(this.entries.get(key))) this.scheduleFlush()
-    } else {
-      this.visible.delete(key)
-    }
-    this.schedulePoll()
+    return { setVisible, dispose: () => {
+      if (this.tracked.get(key) !== tracked || !tracked.registrations.has(token)) return
+      setVisible(false)
+      tracked.registrations.delete(token)
+      if (tracked.registrations.size > 0) return
+      this.tracked.delete(key)
+      this.trimCache()
+    } }
   }
 
   get(target: ArkmeMessageReadReceiptTarget): ArkmeMessageReadReceiptEntry | undefined {

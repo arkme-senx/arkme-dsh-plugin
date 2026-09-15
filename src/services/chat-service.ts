@@ -1,3 +1,4 @@
+import { recordDeletionCapability } from '../record-deletion-ref.js'
 import { sealRecordTopicAssignmentRef } from '../record-topic-assignment-ref.js'
 import { arkmeTopicDisplayName } from '../topic-policy.js'
 import { CallHistoryService } from './call-history-service.js'
@@ -38,6 +39,7 @@ import type {
   ArkmeGroupAiPolishSnapshot,
   ArkmeGroupJoinRestrictionMutationResult,
   ArkmeGroupJoinRestrictionPage,
+  ArkmeGroupSelfNickname,
   ArkmeGroupMemberRemoveResult,
   ArkmeGroupMemberRole,
   ArkmeGroupMemberStatus,
@@ -2134,7 +2136,7 @@ export class ChatService {
           const core = objectValue(entry.record_core)
           const sourceTopicUid = entry.source_kind === 1 ? ''
             : entry.source_kind === 2 ? stringValue(entry.source_uid).trim() || undefined : undefined
-          const assignable = this.withRecordTopicAssignmentRef(source, item, session.userId, signingKey,
+          const assignable = this.withPersonalRecordCapabilities(source, item, session.userId, signingKey,
             numberValue(core.owner_user_id), sourceTopicUid)
           if (!assignable.recordTopicAssignmentRef || !sourceTopicUid) return assignable
           return { ...assignable, recordTopicAssignmentTopicKey: await this.source.topicHierarchyKey(session.userId, sourceTopicUid) }
@@ -2161,7 +2163,7 @@ export class ChatService {
           source: await this.source.sourceItem(source),
           items: page.items.map(item => this.withRecordMessageActionRef(
             source,
-            this.withRecordTopicAssignmentRef(source, this.record.recordTimelineItem(item), session.userId, signingKey, session.userId, ''),
+            this.withPersonalRecordCapabilities(source, this.record.recordTimelineItem(item), session.userId, signingKey, session.userId, ''),
             session.userId,
             signingKey,
           )),
@@ -2192,7 +2194,7 @@ export class ChatService {
             ...(displayItems === undefined ? {} : { displayItems }),
             mediaUnavailable: media.unavailableRecordUids.has(recordUid),
           })
-          return this.withRecordTopicAssignmentRef(source, item, session.userId, signingKey,
+          return this.withPersonalRecordCapabilities(source, item, session.userId, signingKey,
             numberValue(objectValue(raw).owner_user_id), source.ownerRef)
         })
         return {
@@ -2299,8 +2301,8 @@ export class ChatService {
       options.signal,
       {
         lane: 'interactive-read',
-        key: `timeline-around:${source.ownerRef}:${String(normalizedOwnerUserId)}:${normalizedItemUid}`,
-        failureCooldownMs: 2_000,
+        key: `timeline-around:${source.ownerRef}:${String(normalizedOwnerUserId)}:${normalizedItemUid}:${beforeLimit}:${afterLimit}`,
+        cancelWhenUnobserved: true,
       },
     )
     const responseSessionUid = stringValue(data.chat_session_uid).trim()
@@ -2392,6 +2394,51 @@ export class ChatService {
       withdrawnAtMillis,
       alreadyWithdrawn: data.already_withdrawn,
     }
+  }
+
+  async groupSelfNickname(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSelfNickname> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持群聊昵称', false, 400)
+    const data = await this.memberRead(session, source.ownerRef, '/api/v1/chats/members/by-user-ids', {
+      chat_session_uid: source.ownerRef, user_ids: [session.userId], active_only: true, include_stats: false,
+    }, signal)
+    const items = listValue(data.items).map(objectValue)
+    if (stringValue(data.chat_session_uid) !== source.ownerRef || items.length !== 1
+      || numberValue(items[0]!.user_id) !== session.userId || numberValue(items[0]!.status) !== 1) {
+      throw new ArkmePluginError('group-self-nickname-unavailable', '当前群成员信息不可用', false, 403)
+    }
+    return { sourceRef: sourceRef.trim(), memberRef: await this.sealChatMemberRef(session.userId, source.ownerRef, session.userId),
+      nickname: stringValue(items[0]!.display_name_snapshot).trim() }
+  }
+
+  async setGroupSelfNickname(sourceRef: string, nickname: string, signal?: AbortSignal): Promise<ArkmeGroupSelfNickname> {
+    const value = nickname.trim()
+    if (!value || [...value].length > 10) throw new ArkmePluginError('group-self-nickname-invalid', '昵称不能为空，且不能超过10个字', false, 400)
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持群聊昵称', false, 400)
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/members/update', {
+      chat_session_uid: source.ownerRef, target_user_id: session.userId, action: 4, display_name_snapshot: value,
+    }, session, signal)
+    const item = objectValue(data.item)
+    const accepted = stringValue(item.display_name_snapshot).trim()
+    if (stringValue(data.chat_session_uid) !== source.ownerRef || numberValue(item.user_id) !== session.userId
+      || numberValue(item.status) !== 1 || !accepted || [...accepted].length > 10) {
+      throw new ArkmePluginError('group-self-nickname-invalid-response', '群昵称保存响应无效，请重新读取后重试', true, 502)
+    }
+    this.runtime.invalidateMemberCache?.()
+    const memberRef = await this.sealChatMemberRef(session.userId, source.ownerRef, session.userId)
+    const cached = await this.runtime.stateStore.cachedConversationMembers?.(session.userId, source.ownerRef).catch(() => undefined)
+    const previous = cached?.items.find(member => member.memberRef === memberRef)
+    if (previous !== undefined) {
+      await this.runtime.stateStore.mergeConversationMembers?.(session.userId, source.ownerRef, {
+        kind: 'presentation', source: await this.source.sourceItem(source),
+        items: [{ ...previous, memberName: accepted, displayName: accepted }],
+        removedMemberRefs: [], unavailableProfileMemberRefs: [],
+      }).catch(async () => { await this.runtime.stateStore.forgetCachedMembers?.(session.userId, source.ownerRef, [memberRef]) })
+    }
+    return { sourceRef: sourceRef.trim(), memberRef, nickname: accepted }
   }
 
   async removeGroupMember(
@@ -4787,6 +4834,9 @@ export class ChatService {
         const mentionsViewer = senderUserId !== session.userId
           && arkmeMentionMetadataMentionsViewer(record, payload, session.userId)
         items.push({
+          ...(numberValue(record.status) === 1 ? recordDeletionCapability({ userId: session.userId, sourceKind: sourceKind ?? '', sourceOwnerRef: chatSessionUid,
+            recordUid: uid, recordVersion: numberValue(payload.version), recordOwnerUserId: numberValue(payload.owner_user_id),
+            isMe: senderUserId === session.userId, status: numberValue(payload.status) }, signingKey) : {}),
           itemUid: uid,
           ...(relationUid === '' ? {} : {
             timelineItemKey: await this.source.chatTimelineItemKey(session.userId, chatSessionUid, relationUid),
@@ -5660,6 +5710,9 @@ export class ChatService {
       )
       const callRecord = await this.callHistory.timelineCallRecord(item, session.userId)
       const itemIndex = items.push({
+        ...recordDeletionCapability({ userId: session.userId, sourceKind: source.kind, sourceOwnerRef: source.ownerRef,
+          recordUid: uid, recordVersion: numberValue(payload.version), recordOwnerUserId: numberValue(payload.owner_user_id),
+          isMe: senderUserId === session.userId, status: numberValue(payload.status) }, signingKey),
         itemUid: uid,
         ...(relationUid === '' ? {} : {
           timelineItemKey: await this.source.chatTimelineItemKey(session.userId, source.ownerRef, relationUid),
@@ -6010,10 +6063,13 @@ export class ChatService {
     }
   }
 
-  private withRecordTopicAssignmentRef(
+  private withPersonalRecordCapabilities(
     source: ArkmeSourceRefPayload, item: ArkmeTimelineItem, userId: number, signingKey: string,
     recordOwnerUserId: number, sourceTopicUid: string | undefined,
   ): ArkmeTimelineItem {
+    item = { ...item, ...recordDeletionCapability({ userId, sourceKind: source.kind, sourceOwnerRef: source.ownerRef,
+      recordUid: item.itemUid, recordVersion: item.recordVersion ?? 0, recordOwnerUserId,
+      isMe: item.isMe === true, status: item.status }, signingKey) }
     if ((source.kind !== 'send_to_self' && source.kind !== 'default_category' && source.kind !== 'topic')
       || recordOwnerUserId !== userId || item.status !== 1 || item.itemUid.trim() === '' || sourceTopicUid === undefined) return item
     return { ...item, recordTopicAssignmentRef: sealRecordTopicAssignmentRef({

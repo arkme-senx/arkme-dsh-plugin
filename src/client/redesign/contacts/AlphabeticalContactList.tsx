@@ -12,10 +12,10 @@ export interface DirectoryItemRowProps {
   onSelect(selection: ArkmeDirectorySelection): void
 }
 
-function ArkmeDirectoryBotGlyph() {
+export function ArkmeDirectoryBotGlyph({ size = 38 }: { size?: number }) {
   return <svg
-    width={38 * .68}
-    height={38 * .68}
+    width={size * .68}
+    height={size * .68}
     viewBox="0 0 24 24"
     fill="none"
     aria-hidden
@@ -109,8 +109,6 @@ function rowContent(item: ArkmeDirectoryItem) {
 export function DirectoryItemRow({
   item,
   selected,
-  onOpenGroup,
-  onOpenBot,
   onSelect,
 }: DirectoryItemRowProps) {
   const selection = item.kind === 'contact'
@@ -119,7 +117,7 @@ export function DirectoryItemRow({
       ? { kind: 'unmarked-speaker', candidateRef: item.candidateRef } as const
       : item.kind === 'team'
         ? { kind: 'team', teamRef: item.teamRef } as const
-      : undefined
+      : item
   return <button
     type="button"
     className={`arkme-contact-directory-row${selected ? ' is-selected' : ''}`}
@@ -127,9 +125,7 @@ export function DirectoryItemRow({
     data-directory-row-ref={item.kind === 'group' ? item.sourceRef : item.kind === 'bot' ? item.bot.botRef : selection === undefined ? '' : item.kind === 'contact' ? item.contactRef : item.kind === 'team' ? item.teamRef : item.candidateRef}
     {...(selection === undefined ? {} : { 'aria-current': selected as true | false })}
     onClick={() => {
-      if (item.kind === 'group') onOpenGroup(item.sourceRef)
-      else if (item.kind === 'bot') onOpenBot(item.bot)
-      else onSelect(selection ?? { kind: 'none' })
+      onSelect(selection)
     }}
   >{rowContent(item)}</button>
 }

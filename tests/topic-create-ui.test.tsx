@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
+import ts from 'typescript'
 import {
   ARKME_TOPIC_CREATE_ACTION_COLOR, ArkmeTopicCreateDialog,
 } from '../src/client/ArkmeTopicCreateDialog.js'
@@ -63,7 +64,23 @@ describe('topic create UI', () => {
 
     expect(arkmeConversationComposerLayout.tools.justifyContent).toBe('space-between')
     expect(source).toContain('tools: { ...arkmeConversationComposerLayout.tools }')
-    expect(source.indexOf('aria-label="添加内容"')).toBeLessThan(source.indexOf('<ArkmeComposerSendButton'))
+    const file = ts.createSourceFile('ArkmeSidebar.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    const toolbars: ts.JsxElement[] = []
+    function visit(node: ts.Node): void {
+      if (ts.isJsxElement(node) && node.openingElement.attributes.properties.some(attribute =>
+        ts.isJsxAttribute(attribute) && attribute.name.getText(file) === 'data-arkme-composer-footer'
+        && attribute.initializer !== undefined && ts.isStringLiteral(attribute.initializer)
+        && attribute.initializer.text === 'tools')) toolbars.push(node)
+      ts.forEachChild(node, visit)
+    }
+    visit(file)
+    expect(toolbars).toHaveLength(1)
+    const toolbar = toolbars[0]!.getText(file)
+    const addIndex = toolbar.indexOf('aria-label="添加内容"')
+    const sendIndex = toolbar.indexOf('<ArkmeComposerSendButton')
+    expect(addIndex).toBeGreaterThanOrEqual(0)
+    expect(sendIndex).toBeGreaterThanOrEqual(0)
+    expect(addIndex).toBeLessThan(sendIndex)
   })
 
   it('uses a compact trigger and a rounded floating sort menu', () => {

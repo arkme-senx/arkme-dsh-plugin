@@ -435,6 +435,10 @@ export interface ArkmeCalendarRecordCursor {
 }
 
 export interface ArkmeCalendarRecordItem {
+  /** Viewer-authorized source presentation shared with conversation navigation. */
+  source?: ArkmeSourceItem
+  /** Authorized rich projection shared by calendar UI, SDK and Tools; no storage URLs. */
+  content?: ArkmeTimelineItem
   recordUid: string
   sendAtMillis: number
   accessState: ArkmeCalendarContentAccessState
@@ -986,6 +990,8 @@ export interface ArkmeImageSearchResult {
 
 export interface ArkmeSearchRecordItem {
   recordUid: string
+  /** Record owner required by Chat's exact timeline locator; never the current viewer. */
+  recordOwnerUserId?: number
   sourceKind: number
   sourceUid?: string
   routeTargetKind: string
@@ -1181,6 +1187,7 @@ export interface ArkmeProviderCapabilities {
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
+    groupSelfNickname?: true
     contactDirectoryReads?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
@@ -1618,6 +1625,8 @@ export interface ArkmeTimelineItem {
     summaryText?: string
     summaryStatus?: ArkmeCallSummaryStatus
   }
+  /** Signed Record owner and observed content version for user soft deletion. */
+  recordDeletionRef?: string
   /** Signed observed personal-topic membership; distinct from forwarding snapshots. */
   recordTopicAssignmentRef?: string
   /** Stable topic identity from assignment membership evidence, not the display card. */
@@ -2395,6 +2404,12 @@ export interface ArkmeConversationMemberItem {
   mentionCount: number
 }
 
+export interface ArkmeGroupSelfNickname {
+  sourceRef: string
+  memberRef: string
+  nickname: string
+}
+
 export interface ArkmeGroupMemberRemoveResult {
   sourceRef: string
   memberRef: string
@@ -2701,6 +2716,8 @@ export interface ArkmeRecordingWorkbenchItem {
   endAtMillis: number
   speakerNumber: number
   speakerKey: string
+  /** Candidate identity of the assignment in this transcript snapshot. */
+  assignedSpeakerOptionKey?: string
   speakerColorIndex: number
   speakerLabel: string
   speakerAvatarRef?: string
@@ -2717,13 +2734,22 @@ export interface ArkmeRecordingPlayback {
   endOffsetMillis: number
 }
 
-export interface ArkmeRecordingSpeakerOption {
+export interface ArkmeRecordingSpeakerCandidate {
+  /** Stable candidate identity; never an authorization or mutation reference. */
+  optionKey: string
   speakerRef: string
   label: string
   avatarRef?: string
   kind: 'arkme-user' | 'speaker'
-  currentAssignment: boolean
   isCurrentUser: boolean
+}
+
+export interface ArkmeRecordingSpeakerRecommendation {
+  optionKey?: string
+}
+
+export interface ArkmeRecordingSpeakerOption extends ArkmeRecordingSpeakerCandidate {
+  currentAssignment: boolean
   recommended: boolean
 }
 
@@ -3439,6 +3465,7 @@ export type ArkmePluginOperation =
   | 'extensions.reviews.create'
   | 'extensions.audit.check'
   | 'sources.list'
+  | 'sources.self-target'
   | 'conversation.directory.bot-pin'
   | 'conversation.directory.visibility.query'
   | 'conversation.directory.visibility.set'
@@ -3484,6 +3511,8 @@ export type ArkmePluginOperation =
   | 'group.member-candidates'
   | 'group.invite-preview'
   | 'group.members.add'
+  | 'group.self-nickname'
+  | 'group.self-nickname.set'
   | 'group.member-remove'
   | 'group.join-restrictions'
   | 'group.join-restriction.set'
@@ -3568,7 +3597,10 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.active'
 
 export type ArkmeHostOperation = ArkmePluginOperation
+  | 'emoji.recent.list'
+  | 'emoji.recent.record'
   | 'topic.candidates'
+  | 'source.record-delete'
   | 'source.record-topic.assign'
   | 'provider.instance'
   | 'link.metadata'
@@ -3613,6 +3645,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.import.session.delete'
   | 'recordings.playback.open'
   | 'recordings.speaker.options'
+  | 'recordings.speaker.cached-options'
+  | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
   | 'search.records'
   | 'search.scene'

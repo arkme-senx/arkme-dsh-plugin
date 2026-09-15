@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs'
 import { useState } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ArkmeArkoSurface } from '../src/client/ArkmeArkoSurface.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { useMessagePreparing } from '../src/client/use-message-preparing.js'
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
@@ -109,21 +108,6 @@ describe('composer draft UI projection', () => {
       expect(markup).toContain('记录此刻想法...')
       expect(arkmeSourceComposerDraftKey(10001, source)).toContain(`:${source.kind}:`)
     }
-  })
-
-  it('keeps Arko draft separate from ordinary conversations across remounts', () => {
-    arkmeAuthStore.setAuth(account)
-    const arkoKey = arkmeArkoComposerDraftKey(10001)
-    const sourceKey = arkmeSourceComposerDraftKey(10001, sourceA)
-    arkmeComposerDraftStore.setText(arkoKey, 'Arko 未发送问题')
-    arkmeComposerDraftStore.setText(sourceKey, '普通会话草稿')
-
-    const firstMount = renderToStaticMarkup(<ArkmeArkoSurface />)
-    const secondMount = renderToStaticMarkup(<ArkmeArkoSurface />)
-
-    expect(firstMount).toContain('Arko 未发送问题')
-    expect(firstMount).not.toContain('普通会话草稿')
-    expect(secondMount).toContain('Arko 未发送问题')
   })
 
   it('clears every draft owned by the account when authentication logs out', () => {

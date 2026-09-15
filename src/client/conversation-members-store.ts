@@ -257,6 +257,21 @@ export class ConversationMembersStore {
     this.schedule(entry)
   }
 
+  patchSelfNickname(account: string | undefined, source: Source, memberRef: string, nickname: string): void {
+    if (account === undefined || account !== this.account) return
+    const entry = this.entries.get(entryKey(account, source))
+    if (entry === undefined) return
+    entry.revision += 1
+    this.cancel(entry)
+    const previous = entry.members.get(memberRef)
+    if (previous?.isSelf) {
+      entry.members.set(memberRef, { ...previous, displayName: nickname, memberName: nickname })
+      this.publish(entry, { items: [...entry.members.values()] })
+    }
+    entry.stale = true
+    this.schedule(entry)
+  }
+
   remove(account: string | undefined, source: Source, memberRef: string): void {
     if (account === undefined || account !== this.account) return
     const entry = this.entries.get(entryKey(account, source))

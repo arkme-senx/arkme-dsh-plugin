@@ -1,3 +1,4 @@
+import { ArkmeMessageSelectionControl } from './message-selection-presentation.js'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { GearSix } from '@phosphor-icons/react/dist/icons/GearSix'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
@@ -15,7 +16,6 @@ import { arkmeUi } from './ui-controller.js'
 import { ArkmeLinkText } from './ArkmeLinkText.js'
 import { arkmeConversationComposerHeight, arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
 import {
-  ArkmeMessageActionSelectCheck,
   useArkmeMessageActions,
   type ArkmeMessageActionViewItem,
 } from './ArkmeMessageActions.js'
@@ -250,9 +250,9 @@ export function ArkmeBotConversationSurface({
               if (event.target instanceof Element && event.target.closest('button,a,input,textarea,[role=link]')) return
               messageActions.toggle(actionItem)
             }}
-          >{messageActions.selecting && actionItem !== undefined && <ArkmeMessageActionSelectCheck
-            selected={selectedForAction}
-            onClick={event => { event.stopPropagation(); messageActions.toggle(actionItem) }}
+          >{messageActions.selecting && actionItem !== undefined && <ArkmeMessageSelectionControl anchor="avatar"
+            checked={selectedForAction}
+            disabled={false} onToggle={() => { messageActions.toggle(actionItem) }}
           />}<div
             onContextMenu={event => { if (actionItem !== undefined) messageActions.openMenu(actionItem, event) }}
             style={{ ...styles.bubble, ...(message.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant) }}

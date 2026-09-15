@@ -42,6 +42,40 @@ function remote(recordUid: string, textContent: string): ArkmeSelfRecordItem {
 }
 
 describe('ArkmeLocalDatabase', () => {
+  it('persists speaker candidates across database reopen and isolates environment, account and signing identity', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'arkme-speaker-cache-'))
+    let database = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    const rows = [{ optionKey: 'key', speakerRef: 'ref', label: '甲', kind: 'speaker' as const, isCurrentUser: false }]
+    await database.writeRecordingSpeakerCache('test:key-v1', 42, rows)
+    await database.recordRecentEmoji('test:42', 'joy_face')
+    database.close()
+    database = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    try {
+      expect(await database.readRecordingSpeakerCache('test:key-v1', 42)).toEqual(rows)
+      expect(await database.recentEmojiIds('test:42')).toEqual(['joy_face'])
+      expect(await database.readRecordingSpeakerCache('production:key-v1', 42)).toBeUndefined()
+      expect(await database.readRecordingSpeakerCache('test:key-v2', 42)).toBeUndefined()
+      expect(await database.readRecordingSpeakerCache('test:key-v1', 43)).toBeUndefined()
+      await database.writeRecordingSpeakerCache('test:key-v1', 42, [])
+      expect(await database.readRecordingSpeakerCache('test:key-v1', 42)).toEqual([])
+      await database.clearRecordingSpeakerCache('test:key-v1', 42)
+      expect(await database.recentEmojiIds('test:42')).toEqual(['joy_face'])
+      expect(await database.readRecordingSpeakerCache('test:key-v1', 42)).toBeUndefined()
+    } finally { database.close() }
+  })
+
+  it('treats corrupted or structurally invalid persisted candidates as a cache miss', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'arkme-speaker-corrupt-'))
+    const database = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    const raw = new DatabaseSync(join(directory, 'records.sqlite3'))
+    try {
+      for (const payload of ['{', '{}', '[null]', '[{"optionKey":"key"}]']) {
+        raw.prepare('INSERT OR REPLACE INTO recording_speaker_cache VALUES (?, ?, ?)').run('test:key', 42, payload)
+        expect(await database.readRecordingSpeakerCache('test:key', 42)).toBeUndefined()
+      }
+    } finally { raw.close(); database.close() }
+  })
+
   it('adds Arkme ID change availability to an existing profile cache without dropping data', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'dsh-arkme-db-'))
     const legacyDatabase = new DatabaseSync(join(directory, 'records.sqlite3'))

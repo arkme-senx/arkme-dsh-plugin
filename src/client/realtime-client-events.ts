@@ -1,4 +1,5 @@
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
+import { homeTourDiagnostic } from './home-tour-diagnostics.js'
 import { arkmeConversationMembers } from './conversation-members-store.js'
 import { useEffect } from 'react'
 import { publishMemberEventHint } from './member-event-hints.js'
@@ -96,6 +97,8 @@ export function useArkmeRealtimeClientEvents(
     if (ownsMessagePreparing) arkmeMessagePreparing.activateAccount(authenticatedAccountScope)
     let stopped = false
     let observedRevision: number | undefined
+    let connectedOnce = false
+    let initialConnection: Promise<void> | undefined
     let providerInstanceId: string | undefined
     let awaitingBaseline = false
     let connectionGeneration = 0
@@ -131,6 +134,7 @@ export function useArkmeRealtimeClientEvents(
     if (refreshDirectoryBaseline) void refreshUnread().catch(() => undefined)
     const handleOpen = () => {
       if (stopped) return
+      homeTourDiagnostic('realtime-open', { accountKey: authenticatedAccountScope, ownsMessagePreparing, refreshDirectoryBaseline })
       const generation = ++connectionGeneration
       localReconnectGap = observedRevision !== undefined
       recoveryController?.abort()
@@ -141,8 +145,20 @@ export function useArkmeRealtimeClientEvents(
       reconcileReceipts()
       arkmeConversationMembers.refreshActive()
       invalidateDirectMessageAdmission()
+      // The first generation already checks the instance before any directory read.
+      // Joining it avoids treating its initial check as a later invalidation.
+      if (!connectedOnce) {
+        if (initialConnection !== undefined) return
+        initialConnection = arkmeChatDirectory.prepareRoot().then(async () => {
+          if (stopped) return
+          if (refreshDirectoryBaseline) await refreshUnread()
+          connectedOnce = true
+        }).catch(() => { connectedOnce = false }).finally(() => { initialConnection = undefined })
+        return
+      }
       void reconcileArkmeProviderInstance()
         .then(async changed => {
+          homeTourDiagnostic('realtime-provider-result', { accountKey: authenticatedAccountScope, changed, stopped })
           if (!changed || stopped || generation !== connectionGeneration || recovery.signal.aborted) return
           if (handledInstanceGeneration === generation) return
           if (providerInstanceId !== undefined && !awaitingBaseline) {
@@ -199,7 +215,7 @@ export function useArkmeRealtimeClientEvents(
         observedRevision = update.revision
         diagnoseAttention('accepted', update)
         if (update.type === 'directory-update') {
-          arkmeChatDirectory.applyHostPage(update.page)
+          void arkmeChatDirectory.receiveHostPage(update.page).catch(() => undefined)
           if (update.page.projection?.avatarRefs !== undefined) void arkmeAvatarImages.revalidateActive(update.page.projection.avatarRefs)
           return
         }

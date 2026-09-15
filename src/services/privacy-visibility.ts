@@ -76,6 +76,7 @@ export class ArkmePrivacyVisibilityService {
         },
         session,
         signal,
+        { lane: 'interactive-read' },
       )
       for (const raw of Array.isArray(data.items) ? data.items : []) {
         const item = objectValue(raw)
