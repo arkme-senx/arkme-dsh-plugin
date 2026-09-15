@@ -9,6 +9,7 @@ import type {} from './slots-contract.js'
 import type { ArkmeAuthSnapshot, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { ArkmeHomeTour } from './ArkmeHomeTour.js'
+import { startArkmeDirectoryBadge } from './directory-badge-runtime.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 import { ArkmeQuickAddButton } from './ArkmeQuickAdd.js'
 import { arkmePrependSourceByIdentity } from './source-identity.js'
@@ -130,6 +131,13 @@ export function ArkmePersistentClientRuntime() {
   }, [avatarScopeKey])
 
   useArkmeRealtimeClientEvents(auth, ui.authRevision, true, { ownsMessagePreparing: true })
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || window.top !== window) return
+    const bridge = window.arkmeDesktopNotifications
+    if (bridge?.applyDirectoryBadge === undefined) return
+    return startArkmeDirectoryBadge(count => bridge.applyDirectoryBadge!(count), avatarScopeKey)
+  }, [avatarScopeKey])
 
   useEffect(() => {
     if (!shouldRestoreWebAuthenticatedWorkspace(auth, ui.mode)) return

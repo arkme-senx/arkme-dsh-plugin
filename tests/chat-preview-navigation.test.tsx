@@ -11,6 +11,8 @@ vi.mock('../src/client/ArkmeDSHBetaCommunityEntry.js', () => ({ ArkmeDSHBetaComm
 vi.mock('../src/client/arko-conversation-preview-sync.js', () => ({ ArkmeArkoConversationPreviewSync: class { start() { return () => undefined } } }))
 
 import { ArkmeNavigation } from '../src/client/ArkmeVirtualWorkspace.js'
+import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
+import { startArkmeDirectoryBadge } from '../src/client/directory-badge-runtime.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeVisibleReadIntentAllowed } from '../src/client/read-intent-visibility.js'
@@ -77,6 +79,27 @@ it('opens preview from the actual menu without optimistic read or navigation; a 
   expect(mark).toHaveBeenCalledOnce()
   expect(arkmeUi.getSnapshot().selectedSource?.sourceRef).toBe(source.sourceRef)
 })
+
+it('keeps the actual navigation badge and native count equal to the row after a click and delayed Host replay', async () => {
+  await act(async () => root.render(<><ArkmeProductNavigation compact={false} /><ArkmeNavigation /></>))
+  const apply = vi.fn(async () => true)
+  const stop = startArkmeDirectoryBadge(apply, 'test:7001')
+  try {
+    await act(async () => { await Promise.resolve() })
+    expect(document.querySelector('[data-arkme-unread-count="5"]')).not.toBeNull()
+    expect(row()).not.toBeNull()
+    expect(apply).toHaveBeenLastCalledWith(5)
+    await act(async () => row().click())
+    expect(document.querySelector('[data-arkme-unread-count]')).toBeNull()
+    expect(row()).toBeNull()
+    expect(apply).toHaveBeenLastCalledWith(0)
+    await act(async () => arkmeChatDirectory.upsert(source))
+    expect(document.querySelector('[data-arkme-unread-count]')).toBeNull()
+    expect(row()).toBeNull()
+    expect(apply).toHaveBeenLastCalledWith(0)
+  } finally { stop() }
+})
+
 
 it.each(['account', 'environment', 'logout', 'inactive'] as const)('discards the preview and cancels its pending read on %s change', async change => {
   let resolve!: (value: unknown) => void
