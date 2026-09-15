@@ -1215,6 +1215,7 @@ export function ArkmeArkoSurface() {
           scopeKey={composerDraftKey}
           getCaretGeometry={() => textareaRef.current?.getCaretGeometry()}
           getEditorGeometry={() => textareaRef.current?.getEditorGeometry()}
+          onBeforeToggle={() => { textareaRef.current?.captureSelection() }}
           onSelect={insertEmoji}
         />
         <span style={styles.hint}>{hint}</span>
