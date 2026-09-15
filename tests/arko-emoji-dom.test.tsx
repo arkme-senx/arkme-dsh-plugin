@@ -257,6 +257,36 @@ describe('Arko emoji input and send boundary', () => {
     expect(host.querySelectorAll('[data-arkme-rich-emoji]')).toHaveLength(2)
   })
 
+  it('keeps a pending native selection after opening the emoji picker', async () => {
+    arkmeComposerDraftStore.setText(draftKey, '前替换后')
+    await mount()
+    select(1, 3)
+    expect(documentEditor().state.selection).toMatchObject({ from: 1, to: 1 })
+    act(() => {
+      button('选择表情').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+      button('选择表情').click()
+    })
+    document.getSelection()!.removeAllRanges()
+    await chooseEmoji()
+    await chooseEmoji()
+    expect(serialized()).toBe(`前${emoji.token}${emoji.token}后`)
+  })
+
+  it('discards a pending emoji selection after the draft changes', async () => {
+    arkmeComposerDraftStore.setText(draftKey, '前替换后')
+    await mount()
+    select(3)
+    expect(documentEditor().state.selection).toMatchObject({ from: 1, to: 1 })
+    act(() => {
+      button('选择表情').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+      button('选择表情').click()
+    })
+    act(() => { documentEditor().commands.setContent('短', { emitUpdate: false }) })
+    document.getSelection()!.removeAllRanges()
+    await chooseEmoji()
+    expect(serialized()).toBe(`短${emoji.token}`)
+  })
+
   it('sends an emoji-only question and retains the existing shortcut draft behavior', async () => {
     await mount()
     await chooseEmoji()

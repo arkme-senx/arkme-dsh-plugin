@@ -11,11 +11,12 @@ import {
 } from './markdown-editor.js'
 import { serializeArkmeComposerDraft, type ArkmeComposerEmoji, type ArkmeComposerMention } from './composer-draft-store.js'
 import { closeHistory } from '@tiptap/pm/history'
-import { Slice } from '@tiptap/pm/model'
+import { Slice, type Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
 
 export interface ArkmeDocumentComposerHandle extends ArkmeRichComposerHandle {
   insertEmoji(emoji: ArkmeEmoji): 'inserted' | 'length-limit' | 'unavailable'
+  captureSelection(): void
 }
 
 export type ArkmeDocumentComposerInputProps = Omit<ArkmeRichComposerInputProps, 'onTextChange' | 'mentions'> & ({
@@ -40,6 +41,7 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
   latest.current = props
   const host = useRef<HTMLDivElement>(null)
   const editorRef = useRef<Editor | null>(null)
+  const pendingEmojiSelection = useRef<{ anchor: number; head: number; doc: ProseMirrorNode }>()
   const publishSelection = () => {
     if (!editor) return
     const projected = arkmeEditorProjection(editor.state.doc)
@@ -160,8 +162,8 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
     editor.commands.insertContentAt({ from: previous.positions[start] ?? 1, to: previous.positions[end] ?? editor.state.doc.content.size - 1 }, content)
   }, [editor, props.value, props.mentions, props.emojis, props.markdown])
 
-  const currentSelection = () => {
-    if (!editor) return { from: 0, to: 0, anchor: 0, head: 0 }
+  const nativeSelection = () => {
+    if (!editor) return undefined
     const view = editor.view
     const native = view.dom.ownerDocument.getSelection()
     // Browser selectionchange is asynchronous; a picker click must consume the visible selection now.
@@ -170,8 +172,9 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
       const head = view.posAtDOM(native.focusNode, native.focusOffset)
       return { from: Math.min(anchor, head), to: Math.max(anchor, head), anchor, head }
     }
-    return editor.state.selection
   }
+
+  const currentSelection = () => nativeSelection() ?? editor?.state.selection ?? { from: 0, to: 0, anchor: 0, head: 0 }
 
   const syncNativeTextSelection = () => {
     if (props.format !== 'text' || !editor) return
@@ -184,15 +187,25 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
   useImperativeHandle(forwardedRef, () => ({
     insertEmoji(emoji) {
       if (!editor || latest.current.disabled || arkmeEmojiById[emoji.id] === undefined) return 'unavailable'
-      const selection = currentSelection()
+      const native = nativeSelection()
+      const pending = pendingEmojiSelection.current
+      pendingEmojiSelection.current = undefined
+      const selection = native ?? (pending?.doc === editor.state.doc ? pending : editor.state.selection)
+      const anchor = Math.max(0, Math.min(editor.state.doc.content.size, selection.anchor))
+      const head = Math.max(0, Math.min(editor.state.doc.content.size, selection.head))
       const previousState = editor.state
       const transaction = previousState.tr
-        .setSelection(TextSelection.between(editor.state.doc.resolve(selection.anchor), editor.state.doc.resolve(selection.head)))
+        .setSelection(TextSelection.between(editor.state.doc.resolve(anchor), editor.state.doc.resolve(head)))
         .replaceSelectionWith(editor.schema.nodes.arkmeEmoji!.create({ emojiId: emoji.id }))
       editor.view.dispatch(transaction)
       if (editor.state === previousState) return 'length-limit'
       editor.view.dom.focus({ preventScroll: true })
       return 'inserted'
+    },
+    captureSelection() {
+      if (!editor) return
+      const selection = currentSelection()
+      pendingEmojiSelection.current = { anchor: selection.anchor, head: selection.head, doc: editor.state.doc }
     },
     get disabled() { return latest.current.disabled },
     get value() { return editor ? arkmeEditorProjection(editor.state.doc).text : latest.current.value },
