@@ -1530,6 +1530,64 @@ describe('ChatService', () => {
     ])
   })
 
+  it.each([
+    { label: 'explicit Bot', owner: 9001, actorKind: 2, botUid: 'daily-statistics-bot', supported: false },
+    { label: 'legacy Bot with unsafe numeric owner', owner: 6349264209489892000, actorKind: 1, botUid: '', supported: false },
+    { label: 'legacy Bot with unsafe string owner', owner: '6349264209489892000', actorKind: 1, botUid: '', supported: false },
+    { label: 'human', owner: 9001, actorKind: 1, botUid: '', supported: true },
+  ])('preserves quick-note eligibility for $label in paged and pushed messages', async ({ owner, actorKind, botUid, supported }) => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      stateStore: { uniqueCode: vi.fn(async () => 'bot-page-signing-key') },
+      requireSession: vi.fn(async () => session),
+      authenticatedChatPost: vi.fn(async () => ({
+        items: [{
+          relation: {
+            rel_uid: 'relation-bot-page', record_uid: 'record-bot-page', record_owner_user_id: owner,
+            sender_user_id: owner, sender_actor_kind: actorKind, sender_bot_uid: botUid, seq: 1, attach_at: 100,
+          },
+          record: { status: 1, payload: { record_uid: 'record-bot-page', text_content: '每日统计' } },
+        }],
+        has_more: false,
+      })),
+    }
+    const chat = new ChatService(
+      runtime as never,
+      {
+        openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1', displayName: '测试群' })),
+        sourceItem: vi.fn(async () => ({ kind: 'group_chat' })),
+        chatTimelineItemKey: vi.fn(async () => 'timeline-item-key'),
+      } as never,
+      {
+        publicProfilesByUserIds: vi.fn(async () => new Map()),
+        sealProfileImageRef: vi.fn(async () => 'opaque-avatar'),
+      } as never,
+      {
+        recordContentPayload: vi.fn(() => ({})),
+        recordMediaUnavailable: vi.fn(() => false),
+        richContentBlocks: vi.fn(() => []),
+      } as never,
+      {} as never,
+      {} as never,
+      { currentUserAgentSourceFallback: vi.fn(() => undefined) } as never,
+      {
+        timelineAiPolish: vi.fn(() => undefined),
+        queryGroupAiPolishConfig: vi.fn(async () => { throw new Error('optional decoration unavailable') }),
+        queryGroupAiPolishNotices: vi.fn(async () => { throw new Error('optional decoration unavailable') }),
+      } as never,
+      {} as never,
+    )
+
+    const page = await chat.readSource('source', { limit: 30 })
+
+    const pushed = await chat.chatTimelineItems(await runtime.authenticatedChatPost(), session, 'chat-1', 'group_chat')
+    for (const items of [page.items, pushed]) {
+      expect(items).toHaveLength(1)
+      expect(items[0]?.quickNoteDetailsSupported !== false).toBe(supported)
+    }
+  })
+
   it('loads quick-note extensions from the durable chat tree identity without creating a copy link', async () => {
     const worldPost = vi.fn(async () => { throw new Error('chat detail must not use the public-record extension list') })
     const chatPost = vi.fn(async (path: string, body: Record<string, unknown>) => {
