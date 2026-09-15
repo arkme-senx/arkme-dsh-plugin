@@ -49,7 +49,10 @@ export function useArkmeOriginal(block: ArkmeContentBlock, autoReceive = false, 
     }
   }, [identity, block.originalRef, block.localFileRef, block.size, autoReceive, requested, revision, refreshKey])
   const localRef = block.localFileRef ?? reception.file?.fileRef
-  return { reception, localRef, receive: () => { setRequested(identity); setRevision(value => value + 1) } }
+  return { reception, localRef, receive: () => {
+    setSnapshot({ identity, value: { state: 'missing', receivedBytes: 0, totalBytes: block.size } })
+    setRequested(identity); setRevision(value => value + 1)
+  } }
 }
 
 type SavePickerWindow = Window & { showSaveFilePicker?: (options: { suggestedName: string }) => Promise<{ createWritable(): Promise<{ write(data: Blob): Promise<void>; close(): Promise<void>; abort(): Promise<void> }> }> }

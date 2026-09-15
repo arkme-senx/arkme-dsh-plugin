@@ -1,3 +1,4 @@
+import { useArkmeLivePhotoPlayback } from './live-photo-playback.js'
 import { arkmeMarkdownPlainText } from '../markdown.js'
 import { preserveTextTogglePosition } from './preserve-text-toggle-position.js'
 import { ArkmeMarkdownBody } from './ArkmeMarkdownBody.js'
@@ -393,6 +394,7 @@ function MediaGallery({ blocks, failures, retryVersions, onOpen, onFailure, onRe
             <video src={src} muted playsInline preload="metadata" style={styles.videoPreview} aria-hidden onError={event => { onFailure(block, event.currentTarget.error?.code === 4 || !arkmeCanInlineLocalFile(block.mimeType, block.fileName) ? 'unsupported' : 'retryable') }} />
             <span style={styles.videoBadge} aria-hidden>▶ {durationLabel(block.durationSec)}</span>
           </>}
+        {block.kind === 'image' && block.dynamicPhoto !== undefined && <span style={styles.videoBadge} aria-label="实况照片">LIVE</span>}
         <UploadProgress block={block} />
       </button>
     })}
@@ -543,8 +545,12 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
   const dragOriginRef = useRef<(ImagePreviewDragOrigin & { pointerId: number; clientX: number; scrollLeft: number }) | undefined>(undefined)
   const [imageMode, setImageMode] = useState<ImagePreviewMode>('contained')
   const [zoomSize, setZoomSize] = useState<{ width: number; height: number }>()
+  const livePhoto = useArkmeLivePhotoPlayback(selected)
   const original = useArkmeOriginal(selected, selected.kind === 'image')
-  const originalUrl = previewUrl ?? (original.localRef === undefined ? arkmeContentMediaUrl(selected) : arkmeLocalFileUrl(original.localRef))
+  const keepLiveCoverPreview = selected.kind === 'image' && selected.dynamicPhoto !== undefined
+    && !arkmeCanInlineLocalFile(selected.mimeType, selected.fileName) && selected.mediaRef !== selected.localFileRef
+  const originalUrl = previewUrl ?? (keepLiveCoverPreview ? `${mediaRoute}?ref=${encodeURIComponent(selected.mediaRef)}`
+    : original.localRef === undefined ? arkmeContentMediaUrl(selected) : arkmeLocalFileUrl(original.localRef))
   const { notice: actionNotice, showNotice: showActionNotice, clearNotice: clearActionNotice } = useArkmeFileActionNotice()
   const previousDisabled = navigation === undefined ? index <= 0 : navigation.previous === undefined
   const nextDisabled = navigation === undefined ? index >= blocks.length - 1 : navigation.next === undefined
@@ -734,6 +740,7 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
             style={{
               ...styles.previewViewport,
               overflow: 'hidden',
+              visibility: livePhoto.playing ? 'hidden' : 'visible',
               cursor: 'default',
             }}
             data-arkme-image-preview-viewport="true"
@@ -763,7 +770,9 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
           </div>
           : <video src={originalUrl} controls autoPlay playsInline style={styles.previewMedia} aria-label={selected.fileName} />}
       </div>
+      {livePhoto.video !== null && <div style={styles.previewStage}>{livePhoto.video}</div>}
       <div style={styles.previewActions} data-arkme-media-preview-actions="bottom">
+        {livePhoto.control}
         <ArkmeFileActionNavButton label="上一个媒体" direction="left" disabled={previousDisabled} onClick={() => { if (!previousDisabled) { if (navigation) navigation.previous?.(); else selectMedia(blocks[index - 1]!) } }} />
         <span aria-hidden style={styles.previewActionWideGap} />
         <ArkmeFileActionNavButton label="下一个媒体" direction="right" disabled={nextDisabled} onClick={() => { if (!nextDisabled) { if (navigation) navigation.next?.(); else selectMedia(blocks[index + 1]!) } }} />

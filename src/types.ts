@@ -1938,6 +1938,8 @@ export interface ArkmeContentBlock {
   originalRef?: string
   localFileRef?: string
   uploadProgress?: import('./file-transfer-contract.js').ArkmeFileProgress
+  /** One logical photo; the companion is not a second visible attachment. */
+  dynamicPhoto?: { logicalUid: string; motionFileAssetUid?: string; motion?: Omit<ArkmeContentBlock, 'dynamicPhoto' | 'renderRole'> & { kind: 'video' } }
 }
 
 export interface ArkmeUploadedAsset {
