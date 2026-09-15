@@ -4,6 +4,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeGlobalSearchDialog, ArkmeSearchSurface, RecordRow } from '../src/client/ArkmeSearchSurface.js'
 import type { ArkmeSearchRecordItem } from '../src/types.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 
@@ -61,6 +62,49 @@ afterEach(() => {
 })
 
 describe('Arkme search surface', () => {
+  it.each(['double-click', 'Enter', 'uncached', 'unavailable'] as const)('opens the matching source from topic results: %s', async mode => {
+    const target = arkmeResults().items[0]!.targetSource
+    const selectSource = vi.spyOn(arkmeUi, 'selectSource').mockImplementation(() => {})
+    const onClose = vi.fn()
+    mocks.callArkme.mockImplementation(async (operation: string, params?: { sourceUid?: string }) => {
+      if (operation === 'search.records') return {
+        ...arkmeResults(),
+        items: mode === 'unavailable' || (mode === 'uncached' && params?.sourceUid === undefined) ? [] : arkmeResults().items,
+        sourceAggregates: [{ ...arkmeResults().sourceAggregates[0]!, sourceKind: 3 }],
+      }
+      if (operation === 'search.history' || operation === 'search.recordings') return { items: [], hasMore: false }
+      if (operation === 'search.history.create') return { created: true }
+      throw new Error(`unexpected Arkme call: ${operation}`)
+    })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeSearchSurface initialQuery="发布会" onClose={onClose} />) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === '主题')!.props.onClick() })
+      const row = () => renderer.root.findByProps({ title: '单击查看关联快记，双击打开会话' })
+      if (mode === 'double-click') {
+        await act(async () => { row().props.onClick(); row().props.onClick() })
+        expect(selectSource).not.toHaveBeenCalled()
+        expect(onClose).not.toHaveBeenCalled()
+      }
+      await act(async () => {
+        if (mode === 'Enter') row().props.onKeyDown({ key: 'Enter', preventDefault: vi.fn() })
+        else row().props.onDoubleClick()
+      })
+      if (mode === 'unavailable') {
+        expect(selectSource).not.toHaveBeenCalled()
+        expect(onClose).not.toHaveBeenCalled()
+        expect(content(renderer.toJSON())).toContain('暂时无法打开该会话，请重试')
+      } else {
+        expect(selectSource).toHaveBeenCalledExactlyOnceWith(target)
+        expect(onClose).toHaveBeenCalledOnce()
+      }
+    } finally {
+      act(() => { renderer?.unmount() })
+      selectSource.mockRestore()
+    }
+  })
+
   it('starts with quick-note search and exposes only image, voice, and file quick entries', () => {
     const markup = renderToStaticMarkup(<ArkmeSearchSurface />)
 

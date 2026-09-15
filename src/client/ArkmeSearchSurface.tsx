@@ -372,7 +372,10 @@ export function ArkmeSearchSurface({
       const result = await callArkme<ArkmeRecordSearchResult>('search.records', {
         query: keyword, limit: 50, sourceUid, searchScope: sourceKind === 2 ? 'topic' : 'chat_session',
       }, controller.signal)
-      if (!controller.signal.aborted && revision === sourceSearchRevision.current) setSourceRecords(result.items)
+      if (!controller.signal.aborted && revision === sourceSearchRevision.current) {
+        setSourceRecords(result.items)
+        return result.items
+      }
     } catch (caught) {
       if (!controller.signal.aborted && revision === sourceSearchRevision.current) setRecordError(errorMessage(caught))
     } finally {
@@ -380,6 +383,27 @@ export function ArkmeSearchSurface({
       if (revision === sourceSearchRevision.current) setSourceLoading(false)
     }
   }, [query, records])
+
+  const openSource = useCallback(async (sourceUid: string, sourceKind: number) => {
+    const findTarget = (items: ArkmeSearchRecordItem[]) => items.find(item =>
+      item.sourceKind === sourceKind && (item.sourceUid ?? item.routeTargetUid) === sourceUid
+      && item.targetSource !== undefined)?.targetSource
+    let target = findTarget([...(records?.items ?? []), ...sourceRecords])
+    if (target === undefined) {
+      const items = await chooseSource(sourceUid, sourceKind)
+      if (items === undefined) return
+      target = findTarget(items)
+    }
+    if (target === undefined) {
+      setRecordError('暂时无法打开该会话，请重试')
+      return
+    }
+    sourceSearchAbort.current?.abort()
+    sourceSearchRevision.current += 1
+    setSourceLoading(false)
+    arkmeUi.selectSource(target)
+    onClose?.()
+  }, [chooseSource, onClose, records, sourceRecords])
 
   useEffect(() => {
     if (quickRef.current === 'file') return
@@ -538,7 +562,9 @@ export function ArkmeSearchSurface({
           {recordError !== '' && <div style={styles.error}>主题暂不可用：{recordError}</div>}
           {sourceItems.length === 0 ? !searchLoading.records && <Status loading={false} empty /> : sourceItems.map(item => {
             const active = selectedSourceUid === item.sourceUid
-            return <button key={`${String(item.sourceKind)}:${item.sourceUid}`} type="button" style={{ ...styles.sourceRow, ...(active ? styles.sourceRowActive : {}) }} onClick={() => { void chooseSource(item.sourceUid, item.sourceKind) }}>
+            return <button key={`${String(item.sourceKind)}:${item.sourceUid}`} type="button" style={{ ...styles.sourceRow, ...(active ? styles.sourceRowActive : {}) }} title="单击查看关联快记，双击打开会话" onClick={() => { void chooseSource(item.sourceUid, item.sourceKind) }} onDoubleClick={() => { void openSource(item.sourceUid, item.sourceKind) }} onKeyDown={event => {
+              if (event.key === 'Enter') { event.preventDefault(); void openSource(item.sourceUid, item.sourceKind) }
+            }}>
               {active && <span style={styles.sourceMarker} />}
               <p style={styles.title}>{item.title}</p>
               <span style={styles.meta}>{item.matchedRecordCountExact ? item.matchedRecordCount : `约 ${String(item.matchedRecordCount)}`}条关联快记</span>
