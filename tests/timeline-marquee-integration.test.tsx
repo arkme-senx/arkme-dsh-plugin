@@ -1,4 +1,4 @@
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({ callArkme: vi.fn() }))
@@ -12,6 +12,8 @@ import { arkmeUi } from '../src/client/ui-controller.js'
 
 const source = { sourceRef: 'marquee-source', sourceKey: 'chat:marquee', kind: 'private_chat' as const,
   displayName: '框选会话', activeAtMillis: 1, unreadCount: 0, latestSequence: 1 }
+const selfTarget = { ...source, sourceRef: 'marquee-self', sourceKey: 'self:9981',
+  kind: 'send_to_self' as const, displayName: '发给自己' }
 const messages = Array.from({ length: 105 }, (_, index) => ({
   itemUid: `record-${index}`, timelineItemKey: `occurrence-${index}`,
   senderName: index % 2 ? '他人' : '我', isMe: index % 2 === 0, sendAtMillis: index + 1,
@@ -27,20 +29,25 @@ const toolbar = () => renderer.root.findAll(node => node.props.role === 'toolbar
 function action(text: string) {
   return toolbar()!.findAllByType('button').find(button => button.findAll(node => node.type === 'span' && node.children.includes(text)).length > 0)!
 }
+function renderedText(node: ReactTestInstance): string {
+  return node.children.map(child => typeof child === 'string' ? child : renderedText(child)).join('')
+}
 beforeEach(() => {
   state.callArkme.mockReset()
   state.callArkme.mockImplementation(async (operation: string) => {
     if (operation === 'source.timeline') return { source, items: messages, hasMore: false }
     if (operation === 'source.members') return { source, items: [], total: 0, activeCount: 0 }
     if (operation === 'files.send.tasks') return []
-    if (operation === 'sources.list') return { items: [], hasMore: false }
+    if (operation === 'provider.instance') return { instanceId: 'marquee-test-provider' }
+    if (operation === 'sources.list') return { items: [source], hasMore: false }
+    if (operation === 'sources.self-target') return selfTarget
     if (operation === 'source.interwoven-moments') return { state: 'disabled', moments: [], preparedAtMillis: 1 }
     if (operation === 'user.profile' || operation === 'user.profile.refresh') return { profile: null, cachedAtMillis: 1, revision: 1 }
     if (operation === 'source.long-article.draft.get') return undefined
     throw new Error(`unexpected operation ${operation}`)
   })
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 9981 })
-  arkmeChatDirectory.activateAccount(9981); arkmeChatTimelineDelta.activateAccount(9981); arkmeInterwovenInvalidation.activateAccount(9981)
+  arkmeChatDirectory.activateAccount('test:9981'); arkmeChatTimelineDelta.activateAccount(9981); arkmeInterwovenInvalidation.activateAccount(9981)
   arkmeUi.selectSource(source)
 })
 afterEach(() => {
@@ -128,12 +135,19 @@ it('keeps the 100-item action boundary separate from selecting 101 eligible mess
 it('opens the existing forward picker and suspends marquee until the picker closes', async () => {
   await render(); await select('occurrence-0', 'occurrence-1')
   await act(async () => action('转发').props.onClick())
-  expect(state.callArkme.mock.calls.filter(call => call[0] === 'sources.list')).toHaveLength(2)
+  const dialog = renderer.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })
+  const targets = dialog.findByProps({ 'aria-label': '转发对象列表' }).findAllByType('button')
+  expect(targets).toHaveLength(2)
+  expect(targets.some(button => renderedText(button).includes('发给自己'))).toBe(true)
+  expect(targets.some(button => renderedText(button).includes('框选会话'))).toBe(true)
+  expect(targets.every(button => button.props.disabled !== true)).toBe(true)
+  expect(dialog.findAllByProps({ role: 'alert' })).toHaveLength(0)
   expect(renderer.root.findByType(RegionMarquee).props.enabled).toBe(false)
   expect(toolbar()!.props['aria-label']).toBe('已选择 2 条消息')
   const backdrop = renderer.root.findAll(node => node.props['data-arkme-notification-blocking-overlay'] === 'true' && node.props.onMouseDown)[0]!
   const target = {}
   await act(async () => backdrop.props.onMouseDown({ target, currentTarget: target }))
+  expect(renderer.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
   expect(renderer.root.findByType(RegionMarquee).props.enabled).toBe(true)
   expect(toolbar()!.props['aria-label']).toBe('已选择 2 条消息')
 })

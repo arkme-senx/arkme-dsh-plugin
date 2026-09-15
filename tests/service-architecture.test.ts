@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const expectedPublicMethods = [
   'recentEmojiIds', 'recordRecentEmoji',
   'withGroupMemberInvalidation', // composition-only MCP presentation seam; no SDK/Host route
-  'directMessageAdmission', 'setDirectMessageRefusal', 'assignRecordTopic', 'listTopicCandidates',
+  'directMessageAdmission', 'setDirectMessageRefusal', 'assignRecordTopic', 'listTopicCandidates', 'deleteSourceRecords', 'selfTarget',
   'fileCapabilities', 'fileSearch', 'fileSessionUser', 'fileStage', 'fileList', 'fileReadLocal', 'attachLocalFileOpener', 'fileOpenLocal', 'fileRemove', 'fileSend',
   'fileSendTasks', 'fileSendRetry', 'fileStageBytes', 'fileSendDiscard', 'fileSendReconcile', 'fileReceive',
   'startChatRealtime', 'chatRealtimeState', 'subscribeChatRealtime', 'chatRealtimeInitialEvent',
@@ -84,6 +84,7 @@ const expectedServiceFiles = [
   'chat-policy.ts',
   'direct-message-admission-service.ts',
   'record-topic-assignment-service.ts',
+  'record-deletion-service.ts',
   'topic-metadata.ts',
   'topic-record-page.ts',
   'background-sound-preference-service.ts',
