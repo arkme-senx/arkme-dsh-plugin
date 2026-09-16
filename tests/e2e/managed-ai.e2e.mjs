@@ -62,8 +62,10 @@ describe('Managed AI complete browser-to-ledger chain', () => {
       scaffold = await launchWebScaffold({ extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'package.json')], compareReplaySession: false })
       expect(await scaffold.ctx.get('arkmeData').testLogin(42)).toMatchObject({ status: 'authenticated', userId: 42 })
       const models = await scaffold.ctx.get('llm').listModels('arkme-managed')
-      expect(models.map(model => model.id)).toEqual(['arkme-flash-e2e'])
+      const live = process.env.JOTMO_MANAGED_AI_BROWSER_LIVE === '1'
+      expect(models.map(model => model.id)).toEqual(live ? ['arkme-flash-e2e'] : ['arkme-flash-e2e', 'bailian-v41-e2e'])
       expect(models[0].description).toBe('基础价（CNY/百万 Token）：缓存命中 0.04，未命中 2，输出 8；平台服务费 3.75%')
+      if (!live) expect(models[1].description).toBe('基础价（CNY/百万 Token）：缓存命中 0.2，未命中 2，输出 8；平台服务费 7.25%')
       const saved = await scaffold.ctx.get('llm').resolveModelInfo('arkme-managed', 'deepseek-v4-flash')
       expect(saved.id).toBe('deepseek-v4-flash')
       expect(saved.description).toBe(models[0].description)
@@ -81,14 +83,21 @@ describe('Managed AI complete browser-to-ledger chain', () => {
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT.replace(/\.png$/, '-menu.png') })
       await trigger.click()
       const input = frame.locator('[data-composer-input]').first()
-      const cases = process.env.JOTMO_MANAGED_AI_BROWSER_LIVE === '1'
+      const cases = live
         ? [['live', 'Reply with exactly MODEL_PROXY_E2E_OK and stop.']]
-        : [['saved', 'E2E_SUCCESS'], ['success', 'E2E_SUCCESS'], ['wrong-model', 'E2E_REJECT_MODEL'], ['missing-usage', 'E2E_MISSING_USAGE'], ['recovery', 'E2E_RECOVERY']]
+        : [['saved', 'E2E_SUCCESS'], ['success', 'E2E_SUCCESS'], ['wrong-model', 'E2E_REJECT_MODEL'], ['missing-usage', 'E2E_MISSING_USAGE'], ['recovery', 'E2E_RECOVERY'], ['bailian', 'E2E_SUCCESS'], ['bailian-wrong-model', 'E2E_REJECT_MODEL'], ['bailian-recovery', 'E2E_RECOVERY']]
+      let failures = 0
       for (const [label, prompt] of cases) {
         if (label === 'success' || label === 'live') {
           await trigger.click()
           await frame.getByRole('menuitemradio', { name: /^Managed Alias E2E/ }).click()
           await expect.poll(() => trigger.getAttribute('aria-label')).toContain('Managed Alias E2E')
+        }
+        if (label === 'bailian') {
+          await trigger.click()
+          await frame.getByText(models[1].description, { exact: true }).waitFor()
+          await frame.getByRole('menuitemradio', { name: /^Bailian V4.1 E2E/ }).click()
+          await expect.poll(() => trigger.getAttribute('aria-label')).toContain('Bailian V4.1 E2E')
         }
         scenario = label
         const before = results.length
@@ -97,20 +106,23 @@ describe('Managed AI complete browser-to-ledger chain', () => {
         await input.press('Enter')
         await settled
         await expect.poll(() => results.length).toBe(before + 1)
-        expect(results.at(-1).status).toBe(label === 'wrong-model' ? 502 : 200)
+        const wrongModel = label.endsWith('wrong-model')
+        expect(results.at(-1).status).toBe(wrongModel ? 502 : 200)
         expect(results.at(-1).request_uid).toMatch(/^[0-9a-f-]{36}$/)
-        if (label === 'saved' || label === 'success' || label === 'recovery' || label === 'live') await frame.getByText('MODEL_PROXY_E2E_OK', { exact: true }).last().waitFor()
-        if (label === 'wrong-model') {
-          await frame.getByText('SERVER', { exact: true }).waitFor()
-          await frame.getByText('Arkme AI 服务暂不可用，请稍后重试', { exact: true }).waitFor()
+        if (!wrongModel && label !== 'missing-usage') await frame.getByText('MODEL_PROXY_E2E_OK', { exact: true }).last().waitFor()
+        if (wrongModel) {
+          failures++
+          await frame.getByText('SERVER', { exact: true }).last().waitFor()
+          await frame.getByText('Arkme AI 服务暂不可用，请稍后重试', { exact: true }).last().waitFor()
         }
         if (label === 'missing-usage') {
+          failures++
           await frame.getByText('PARTIAL_E2E', { exact: true }).waitFor()
           await frame.getByText('STREAM_CLOSED', { exact: true }).waitFor()
           await frame.getByText('Arkme AI 返回异常，请重新发送消息', { exact: true }).waitFor()
         }
         await expect.poll(() => frame.getByText('This turn failed', { exact: true }).count())
-          .toBe(label === 'wrong-model' ? 1 : label === 'missing-usage' || label === 'recovery' ? 2 : 0)
+          .toBe(failures)
       }
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
       await writeFile(process.env.ARKME_MANAGED_AI_RESULT, JSON.stringify(results))
