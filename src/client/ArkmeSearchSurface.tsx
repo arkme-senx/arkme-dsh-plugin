@@ -630,7 +630,7 @@ export function ArkmeSearchSurface({
             onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); openDshSession(item.sessionId) } }}
           >
             {selectedDshSessionId === item.sessionId && <span style={styles.sourceMarker} />}
-            <span style={styles.rowTop}><strong style={{ ...styles.title, minWidth: 0 }}>{item.title}</strong><span style={styles.dshBadge}>DSH</span></span>
+            <span style={styles.rowTop}><strong style={{ ...styles.title, minWidth: 0 }}>{item.title}</strong>{!syncedDshRecords.some(record => record.dshOrigin === undefined && syncedDshKey(record) === item.sessionId) && <span style={styles.dshBadge}>DSH</span>}</span>
             <span style={styles.meta}>{dateTimeLabel(item.updatedAtMillis)}</span>
           </button>)}
         </div>
