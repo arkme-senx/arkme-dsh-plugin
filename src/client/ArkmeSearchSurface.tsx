@@ -270,7 +270,14 @@ export function ArkmeSearchSurface({
   const [resolvedAssetUids, setResolvedAssetUids] = useState<Set<string>>(() => new Set())
   const [preview, setPreview] = useState<Preview>()
   const [loading, setLoading] = useState(false)
-  const [searchLoading, setSearchLoading] = useState({ records: false, recordings: false, dsh: false })
+  const [requestedQuery, setRequestedQuery] = useState('')
+  const [activeSearchLoading, setSearchLoading] = useState({ records: false, recordings: false, dsh: false })
+  const waitingForSearch = query.trim() !== '' && query.trim() !== requestedQuery
+  const searchLoading = {
+    records: waitingForSearch || activeSearchLoading.records,
+    recordings: (waitingForSearch && quick === undefined) || activeSearchLoading.recordings,
+    dsh: (waitingForSearch && quick === undefined && searchDshMessages !== undefined) || activeSearchLoading.dsh,
+  }
   const [sourceLoading, setSourceLoading] = useState(false)
   const [recordError, setRecordError] = useState('')
   const [recordingError, setRecordingError] = useState('')
@@ -300,11 +307,12 @@ export function ArkmeSearchSurface({
   }, [initialQuery, initialQueryRevision])
 
   useEffect(() => { void callArkme<ArkmeSearchHistoryResult>('search.history', { limit: 10 }).then(value => setHistory(value.items.map(item => item.keyword))).catch(() => undefined) }, [])
-  const resetResults = useCallback(() => { searchAbort.current?.abort(); searchAbort.current = undefined; sourceSearchAbort.current?.abort(); sourceSearchAbort.current = undefined; sourceSearchRevision.current += 1; requestId.current += 1; setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSelectedDshSessionId(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setSearchLoading({ records: false, recordings: false, dsh: false }); setSourceLoading(false) }, [])
+  const resetResults = useCallback(() => { setRequestedQuery(''); searchAbort.current?.abort(); searchAbort.current = undefined; sourceSearchAbort.current?.abort(); sourceSearchAbort.current = undefined; sourceSearchRevision.current += 1; requestId.current += 1; setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSelectedDshSessionId(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setSearchLoading({ records: false, recordings: false, dsh: false }); setSourceLoading(false) }, [])
 
   const runSearch = useCallback(async (raw: string) => {
     const keyword = raw.trim()
     if (keyword === '') { resetResults(); return }
+    setRequestedQuery(keyword)
     const id = ++requestId.current
     searchAbort.current?.abort()
     sourceSearchAbort.current?.abort()
@@ -491,7 +499,7 @@ export function ArkmeSearchSurface({
     return () => observer.disconnect()
   }, [imageCursor, imageHasMore, loadMoreImages, loading, query, quick, recordError, variant])
 
-  const leaveQuick = useCallback(() => { quickRequestAbort.current?.abort(); quickRequestAbort.current = undefined; searchAbort.current?.abort(); searchAbort.current = undefined; sourceSearchAbort.current?.abort(); sourceSearchAbort.current = undefined; sourceSearchRevision.current += 1; requestId.current += 1; quickRef.current = undefined; setQuick(undefined); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSelectedDshSessionId(''); setSourceRecords([]); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setAudioRecords(undefined); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setSearchLoading({ records: false, recordings: false, dsh: false }); setLoadingMore(false) }, [])
+  const leaveQuick = useCallback(() => { setRequestedQuery(''); quickRequestAbort.current?.abort(); quickRequestAbort.current = undefined; searchAbort.current?.abort(); searchAbort.current = undefined; sourceSearchAbort.current?.abort(); sourceSearchAbort.current = undefined; sourceSearchRevision.current += 1; requestId.current += 1; quickRef.current = undefined; setQuick(undefined); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSelectedDshSessionId(''); setSourceRecords([]); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setAudioRecords(undefined); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setSearchLoading({ records: false, recordings: false, dsh: false }); setLoadingMore(false) }, [])
   useEffect(() => () => { requestId.current += 1; quickRequestAbort.current?.abort(); searchAbort.current?.abort(); sourceSearchAbort.current?.abort() }, [])
   useEffect(() => {
     const videoAssets = (videos ?? []).flatMap(item => [item.coverAssetUid, item.videoAssetUid]).filter((value): value is string => value !== undefined)

@@ -65,6 +65,42 @@ afterEach(() => {
 })
 
 describe('Arkme search surface', () => {
+  it.each(['快记', '主题', '录音·转写'])('never shows an empty result during the debounce window: %s', async tab => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let finish!: () => void
+    const pending = new Promise<void>(resolve => { finish = resolve })
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'search.records' || operation === 'search.recordings') {
+        await pending
+        return { items: [], sourceAggregates: [], hasMore: false, queryGuard: { state: 'ok' } }
+      }
+      return original(operation, params, signal)
+    })
+    const initial = renderToStaticMarkup(<ArkmeSearchSurface initialQuery="武汉" />)
+    expect(initial).toContain('搜索中')
+    expect(initial).not.toContain('暂无相关内容')
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeSearchSurface />) })
+      act(() => {
+        renderer.root.findByProps({ 'aria-label': '搜索' }).props.onChange({ target: { value: '武汉' } })
+      })
+      act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === tab)!.props.onClick() })
+      expect(content(renderer.toJSON())).toContain('搜索中')
+      expect(content(renderer.toJSON())).not.toContain('暂无相关内容')
+      await act(async () => { await vi.advanceTimersByTimeAsync(299) })
+      expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'search.records')).toBe(false)
+      expect(content(renderer.toJSON())).not.toContain('暂无相关内容')
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(content(renderer.toJSON())).toContain('搜索中')
+      await act(async () => { finish(); await pending })
+      expect(content(renderer.toJSON())).toContain('暂无相关内容')
+      act(() => { renderer.root.findByProps({ 'aria-label': '搜索' }).props.onChange({ target: { value: '北京' } }) })
+      expect(content(renderer.toJSON())).toContain('搜索中')
+      expect(content(renderer.toJSON())).not.toContain('暂无相关内容')
+    } finally { act(() => { renderer?.unmount() }) }
+  })
+
   it.each(['double-click', 'Enter', 'uncached', 'unavailable'] as const)('opens the matching source from topic results: %s', async mode => {
     const target = arkmeResults().items[0]!.targetSource
     const selectSource = vi.spyOn(arkmeUi, 'selectSource').mockImplementation(() => {})
