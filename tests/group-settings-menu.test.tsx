@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { arkmeConversationMembers } from '../src/client/conversation-members-store.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -34,6 +35,9 @@ function controls(currentSource: ArkmeSourceItem, options: {
   onMessageDndUpdated?: (target: ArkmeGroupActionTarget, result: { messageDnd: boolean; chatNotificationPolicyUpdatedAtMillis: number }) => boolean
   onStatus?: (message: string) => void
   onError?: (message: string) => void
+  onExport?: () => void
+  exportBusy?: boolean
+  exportProcessed?: number
 } = {}) {
   return <ArkmeGroupChatControls
     key={options.componentKey ?? arkmeSourceIdentityKey(currentSource)}
@@ -49,6 +53,9 @@ function controls(currentSource: ArkmeSourceItem, options: {
     onMemberContextMenu={() => {}}
     onStatus={options.onStatus}
     onError={options.onError ?? (() => {})}
+    onExport={options.onExport}
+    {...(options.exportBusy === undefined ? {} : { exportBusy: options.exportBusy })}
+    {...(options.exportProcessed === undefined ? {} : { exportProcessed: options.exportProcessed })}
   />
 }
 
@@ -83,6 +90,28 @@ describe('group settings menu', () => {
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
     expect(JSON.stringify(renderer!.toJSON())).toContain('修改群昵称')
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('修改群名称')
+  })
+
+  it('exports the current group from the shared three-dot menu', async () => {
+    const onExport = vi.fn()
+    await act(async () => { renderer = create(controls(source, { onExport })) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    const exportButton = renderer!.root.findAllByProps({ role: 'menuitem' })
+      .find(button => button.props.children?.[1]?.props?.children === '导出')
+    expect(exportButton).toBeDefined()
+    await act(async () => { exportButton!.props.onClick() })
+    expect(onExport).toHaveBeenCalledOnce()
+  })
+
+  it('shows live export progress without allowing a duplicate group export', async () => {
+    const onExport = vi.fn()
+    await act(async () => { renderer = create(controls(source, { onExport, exportBusy: true, exportProcessed: 238 })) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    const exportButton = renderer!.root.findAllByProps({ role: 'menuitem' })
+      .find(button => button.props.children?.[1]?.props?.children === '正在导出 · 238 条')
+    expect(exportButton).toBeDefined()
+    expect(exportButton!.props.disabled).toBe(true)
+    expect(onExport).not.toHaveBeenCalled()
   })
 
   it('does not reactivate the current source when settings are read', async () => {
@@ -277,7 +306,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(renderer!.root.findByProps({ role: 'menu', 'aria-label': '群聊设置' })).toBeDefined()
+    expect(renderer!.root.findByProps({ role: 'menu' })).toBeDefined()
 
     await act(async () => {
       renderer!.update(controls(rotatedSource))
@@ -285,7 +314,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
     })
 
-    expect(renderer!.root.findByProps({ role: 'menu', 'aria-label': '群聊设置' })).toBeDefined()
+    expect(renderer!.root.findByProps({ role: 'menu' })).toBeDefined()
     expect(mocks.callArkme).toHaveBeenCalledWith('group.settings', {
       sourceRef: rotatedSource.sourceRef,
     }, expect.any(AbortSignal))
@@ -832,6 +861,6 @@ describe('group settings menu', () => {
 
     expect(onError).toHaveBeenCalledWith('群设置读取失败')
     expect(onSourceProjectionUpdated).not.toHaveBeenCalled()
-    expect(renderer!.root.findByProps({ role: 'menu', 'aria-label': '群聊设置' })).toBeDefined()
+    expect(renderer!.root.findByProps({ role: 'menu' })).toBeDefined()
   })
 })

@@ -1876,3 +1876,55 @@ body[data-ds-dark-theme] .arkme-detail-extension-input-shell {
 .arkme-conversation-profile-actions { grid-template-columns: minmax(0, 1fr); }
 
 body[data-ds-dark-theme] .arkme-peer-membership-disc { fill: #171717; stroke: #343434; }
+
+/* Match DSH's solid selector footer and its native New Session / View Options controls. */
+[data-arkme-workspace] .arkme-self-topic-create-button {
+  min-width: 0;
+  flex: 1;
+  height: 36px;
+  border: 1px solid var(--dsw-alias-border-l2, #dfe1e5);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-base, #fff);
+  white-space: nowrap;
+}
+[data-arkme-workspace] .arkme-self-topic-create-button:hover:not(:disabled) {
+  background: var(--dsw-alias-button-floating-hover, #f3f4f7);
+  border-color: var(--dsw-alias-border-l2, #d9dade);
+}
+[data-arkme-workspace] .arkme-dsh-view-options-button {
+  corner-shape: round;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-base, #fff);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+[data-arkme-workspace] .arkme-dsh-view-options-button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.arkme-self-topic-sort-option {
+  display: flex;
+  min-width: 176px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  white-space: nowrap;
+}
+.arkme-self-topic-sort-option-title {
+  color: var(--dsw-alias-label-primary, #17191c);
+  line-height: 20px;
+}
+.arkme-self-topic-sort-option-description {
+  color: var(--dsw-alias-label-secondary, #68707c);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+}

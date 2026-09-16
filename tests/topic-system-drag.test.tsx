@@ -6,9 +6,6 @@ import type { ArkmeSourceItem } from '../src/types.js'
 
 async function openCustomTopics(renderer: ReactTestRenderer) {
   await act(async () => { renderer.root.findByProps({ 'aria-label': '选择主题' }).props.onClick() })
-  await act(async () => {
-    renderer.root.findAllByType('button').find(button => button.children.includes('自定义'))!.props.onClick()
-  })
 }
 
 const dragDataTransfer = () => ({ effectAllowed: '', dropEffect: '', setData: vi.fn() })

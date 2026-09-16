@@ -1,4 +1,5 @@
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
+import { Button, IconPlusOutline16, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeSourceItem, ArkmeTopicDissolveProgress, ArkmeTopicDissolveTask } from '../types.js'
 import { arkmeSelfDirectorySources } from './source-list.js'
@@ -11,6 +12,7 @@ import {
   readSelfTopicSortPreference, writeSelfTopicSortPreference, type ArkmeSelfTopicSort,
 } from './self-topic-sort-preference.js'
 import { ARKME_TOPIC_HIERARCHY_MAX_LEVEL, toggleTopicCollapsedState } from './ArkmeVirtualWorkspace.js'
+import { ArkmeDshViewOptionsMenu } from './ArkmeDshMenu.js'
 
 export interface ArkmeSourceBreadcrumbSegment {
   key: string
@@ -85,6 +87,8 @@ const colors = {
   selected: '#eef1f8',
 }
 
+const dshSidebarSurface = 'var(--dsw-specific-sidebar-fill, #f9fafb)'
+
 const styles: Record<string, CSSProperties> = {
   breadcrumb: { position: 'relative', minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 10 },
   fixedTitle: { flex: 'none', color: colors.text, fontSize: 15, lineHeight: '24px', fontWeight: 600, whiteSpace: 'nowrap' },
@@ -103,9 +107,9 @@ const styles: Record<string, CSSProperties> = {
   menu: {
     position: 'absolute', zIndex: 100, top: 36, left: 0, width: 260, maxHeight: 'min(680px, calc(100vh - 116px))',
     display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 5, boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 10,
-    background: colors.surface, boxShadow: '0 14px 32px rgba(23,25,35,.12)',
+    background: dshSidebarSurface, boxShadow: '0 14px 32px rgba(23,25,35,.12)',
   },
-  menuList: { minHeight: 0, overflowY: 'auto', paddingBottom: 44 },
+  menuList: { minHeight: 0, overflowY: 'auto' },
   option: {
     width: '100%', minHeight: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 9px', border: 0,
     borderRadius: 7, background: 'transparent', color: colors.text, font: 'inherit', fontSize: 12, textAlign: 'left', cursor: 'pointer',
@@ -162,18 +166,10 @@ const styles: Record<string, CSSProperties> = {
   },
   topicManageActionHover: { background: '#f3f4f7' },
   topicManageDanger: { color: '#d74646' },
-  sortGroup: { display: 'flex', alignItems: 'center', gap: 3, padding: '3px 4px 6px', borderBottom: `1px solid ${colors.border}` },
-  sortButton: {
-    minWidth: 0, height: 24, flex: 1, padding: '0 6px', border: 0, borderRadius: 6, background: 'transparent',
-    color: colors.secondary, font: 'inherit', fontSize: 11, cursor: 'pointer',
-  },
-  sortButtonActive: { background: '#eef1f8', color: '#38466f', fontWeight: 600 },
   currentPath: { padding: '5px 8px 6px', borderBottom: `1px solid ${colors.border}`, color: colors.secondary, fontSize: 11, lineHeight: '16px', overflowWrap: 'anywhere' },
-  createFooter: { position: 'absolute', right: 0, bottom: 9, left: 0, zIndex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center' },
-  createButton: {
-    width: 'auto', height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-    padding: '0 10px', border: `1px solid ${colors.border}`, borderRadius: 14, background: 'rgba(255,255,255,.94)',
-    boxShadow: '0 4px 12px rgba(23,25,35,.12)', color: '#4b62c6', font: 'inherit', fontSize: 12, whiteSpace: 'nowrap', cursor: 'pointer',
+  createFooter: {
+    flex: 'none', display: 'flex', alignItems: 'center', gap: 6, padding: '8px 4px 2px',
+    background: dshSidebarSurface,
   },
   dissolveProgressTrigger: {
     marginLeft: 'auto', minWidth: 0, height: 28, display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -335,6 +331,7 @@ export function ArkmeSourceBreadcrumb({
   const open = tourOpen ?? manualOpen
   const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
   const [sort, setSort] = useState<ArkmeSelfTopicSort>(() => readSelfTopicSortPreference(userId))
+  const [sortMenuOpen, setSortMenuOpen] = useState(false)
   const [draggingSourceRef, setDraggingSourceRef] = useState<string>()
   const [hoveredSourceRef, setHoveredSourceRef] = useState<string>()
   const [topicMenuSource, setTopicMenuSource] = useState<ArkmeSourceItem>()
@@ -404,7 +401,11 @@ export function ArkmeSourceBreadcrumb({
   }
   useEffect(() => {
     setSort(readSelfTopicSortPreference(userId))
+    setSortMenuOpen(false)
   }, [userId])
+  useEffect(() => {
+    if (!open) setSortMenuOpen(false)
+  }, [open])
   useEffect(() => {
     if (activeDissolveRunning && activeDissolve !== undefined) {
       observedActiveDissolveRef.current = true
@@ -583,13 +584,16 @@ export function ArkmeSourceBreadcrumb({
       if (tourOpen !== undefined) return
       if (!(event.target instanceof Node)) return
       if (selectorRef.current?.contains(event.target) || menuRef.current?.contains(event.target)) return
+      if (sortMenuOpen && event.target instanceof Element && event.target.closest('[role="menu"]') !== null) return
       setOpen(false)
+      setSortMenuOpen(false)
       setTopicMenuSource(undefined)
     }
     const closeEscape = (event: KeyboardEvent) => {
       if (tourOpen !== undefined) return
       if (event.key !== 'Escape') return
       if (topicMenuSource !== undefined) setTopicMenuSource(undefined)
+      else if (sortMenuOpen) setSortMenuOpen(false)
       else setOpen(false)
     }
     document.addEventListener('pointerdown', closeOutside, true)
@@ -598,7 +602,7 @@ export function ArkmeSourceBreadcrumb({
       document.removeEventListener('pointerdown', closeOutside, true)
       document.removeEventListener('keydown', closeEscape, true)
     }
-  }, [open, topicMenuSource, tourOpen])
+  }, [open, sortMenuOpen, topicMenuSource, tourOpen])
 
   useEffect(() => {
     if (!open || !pendingSelectedFocusRef.current) return
@@ -688,21 +692,6 @@ export function ArkmeSourceBreadcrumb({
     {open && <div ref={menuRef} role="tree" aria-label="主题" data-arkme-self-topic-menu style={{ ...styles.menu,
       ...(tourOpen ? { maxHeight: 'min(680px, calc(100vh - 116px), var(--arkme-self-tour-menu-max-height, 680px))' } : {}),
     }}>
-      <div role="group" aria-label="主题排序" style={styles.sortGroup}>
-        {([
-          ['latest', '最新'],
-          ['most', '最多'],
-          ['custom', '自定义'],
-        ] as const).map(([value, label]) => <button
-          key={value} type="button" aria-pressed={sort === value}
-          style={{ ...styles.sortButton, ...(sort === value ? styles.sortButtonActive : {}) }}
-          onClick={() => {
-            setSort(value)
-            writeSelfTopicSortPreference(userId, value)
-            revealSelectedTopic()
-          }}
-        >{label}</button>)}
-      </div>
       {selectedPath.length > 0 && <div aria-label="当前主题路径" title={label} style={styles.currentPath}>当前：{label}</div>}
       <div ref={menuListRef} style={styles.menuList}
         onDragOver={event => {
@@ -893,12 +882,43 @@ export function ArkmeSourceBreadcrumb({
         {onRetry !== undefined && <button type="button" style={styles.retry} onClick={onRetry}>重试</button>}
       </div>}
       </div>
-      {onCreateTopic !== undefined && <div style={styles.createFooter}>
-        <button type="button" aria-label="创建主题" style={styles.createButton} onClick={() => {
+      <div data-arkme-self-topic-footer="true" style={styles.createFooter}>
+        {onCreateTopic !== undefined && <Button type="button" variant="outline" size="md" aria-label="创建主题"
+          className="arkme-self-topic-create-button" icon={<IconPlusOutline16 size={14} />} onClick={() => {
           setOpen(false)
           onCreateTopic()
-        }}><span aria-hidden style={{ fontSize: 16, lineHeight: 1 }}>＋</span>创建主题</button>
-      </div>}
+        }}>创建主题</Button>}
+        <ArkmeDshViewOptionsMenu
+          open={sortMenuOpen}
+          items={([
+            { type: 'label', id: 'sort-label', text: '排序方式' },
+            { id: 'latest', label: <span className="arkme-self-topic-sort-option" aria-label="最新">
+              <span className="arkme-self-topic-sort-option-title">最新</span>
+              <span className="arkme-self-topic-sort-option-description">有最新内容的主题靠前</span>
+            </span> },
+            { id: 'most', label: <span className="arkme-self-topic-sort-option" aria-label="最多">
+              <span className="arkme-self-topic-sort-option-title">最多</span>
+              <span className="arkme-self-topic-sort-option-description">最多内容的主题靠前</span>
+            </span> },
+            { id: 'custom', label: <span className="arkme-self-topic-sort-option" aria-label="自定义">
+              <span className="arkme-self-topic-sort-option-title">自定义</span>
+              <span className="arkme-self-topic-sort-option-description">可按住主题拖动排序</span>
+            </span> },
+          ] satisfies MenuEntry[])}
+          selectedIds={[sort]}
+          onOpen={() => { setSortMenuOpen(true) }}
+          onClose={() => { setSortMenuOpen(false) }}
+          onSelect={id => {
+            if (id !== 'latest' && id !== 'most' && id !== 'custom') return
+            setSort(id)
+            writeSelfTopicSortPreference(userId, id)
+            setSortMenuOpen(false)
+            revealSelectedTopic()
+          }}
+          ariaLabel={`主题排序方式：${sort === 'latest' ? '最新' : sort === 'most' ? '最多' : '自定义'}`}
+          dataArkmeSelfTopicSortTrigger="true"
+        />
+      </div>
     </div>}
     {renameTopic !== undefined && <ArkmeTopicRenameDialog
       topic={renameTopic} submitting={topicMutationSubmitting} error={topicMutationError}

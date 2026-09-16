@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
 import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
@@ -211,6 +212,70 @@ function sameMonth(left: Date, right: Date): boolean {
   return left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth()
 }
 
+export function ArkmeCalendarMonthView({
+  visibleMonth, selectedDate, today, days, loading, error, onVisibleMonthChange, onSelectDate,
+}: {
+  visibleMonth: Date
+  selectedDate: Date
+  today: Date
+  days: readonly ArkmeCalendarBucketDay[]
+  loading: boolean
+  error: string
+  onVisibleMonthChange(month: Date): void
+  onSelectDate(date: Date): void
+}) {
+  const calendarByDay = useMemo(() => new Map(days.map(day => [day.bucketDate, day])), [days])
+  const canGoNext = !sameMonth(visibleMonth, today) && visibleMonth < monthStart(today)
+  const canJumpToday = !sameDay(selectedDate, today) || !sameMonth(visibleMonth, today)
+  const chooseDate = (date: Date) => {
+    const normalized = startOfLocalDay(date)
+    onSelectDate(normalized)
+    if (!sameMonth(normalized, visibleMonth)) onVisibleMonthChange(monthStart(normalized))
+  }
+
+  return <>
+    <header style={styles.header}>
+      <div style={styles.navCluster}>
+        <button type="button" aria-label="上个月" title="上个月" style={styles.iconButton}
+          onClick={() => onVisibleMonthChange(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))}>
+          <CaretRight size={16} style={styles.caretLeft} aria-hidden />
+        </button>
+        <button type="button" aria-label="下个月" title="下个月" disabled={!canGoNext}
+          style={{ ...styles.iconButton, ...(!canGoNext ? styles.navDisabled : {}) }}
+          onClick={() => { if (canGoNext) onVisibleMonthChange(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1)) }}>
+          <CaretRight size={16} aria-hidden />
+        </button>
+      </div>
+      <h2 style={styles.monthTitle}>{monthLabel(visibleMonth)}</h2>
+      <button type="button" disabled={!canJumpToday}
+        style={{ ...styles.todayButton, ...(!canJumpToday ? styles.todayDisabled : {}) }}
+        onClick={() => { onVisibleMonthChange(monthStart(today)); chooseDate(today) }}>
+        回到今日
+      </button>
+    </header>
+    <div style={styles.week}>{['一', '二', '三', '四', '五', '六', '日'].map(label => <span key={label} style={styles.weekDay}>{label}</span>)}</div>
+    <div style={{ ...styles.days, opacity: loading ? .55 : 1 }}>
+      {calendarCells(visibleMonth).map((date, index) => {
+        if (date === undefined) return <span key={`blank:${String(index)}`} style={styles.blank} />
+        const key = dateKey(date)
+        const disabled = date > today
+        const meta = calendarByDay.get(key)
+        return <ArkmeCalendarCell
+          key={key}
+          date={date}
+          {...(meta === undefined ? {} : { meta })}
+          selected={key === dateKey(selectedDate)}
+          disabled={disabled}
+          onClick={() => { if (!disabled) chooseDate(date) }}
+        />
+      })}
+    </div>
+    {(error !== '' || loading) && <div style={{ ...styles.status, ...(error !== '' ? styles.error : {}) }} role={error !== '' ? 'alert' : 'status'}>
+      {error || (days.length === 0 ? '正在加载…' : '正在更新…')}
+    </div>}
+  </>
+}
+
 function useCalendarDateInvalidation(date: string): number {
   const [revision, setRevision] = useState(0)
   useEffect(() => arkmeCalendarInvalidations.subscribeDate(date, () => {
@@ -230,6 +295,140 @@ function useCalendarMonthInvalidation(month: string): number {
 interface ScopedResource<T> {
   scope: string
   value?: T
+}
+
+export function ArkmeSelfCalendarPopover({
+  open, anchor, onClose, onSelectRecord,
+}: {
+  open: boolean
+  anchor: RefObject<HTMLButtonElement>
+  onClose(): void
+  onSelectRecord(item: ArkmeCalendarRecordItem): void
+}) {
+  const today = useMemo(() => startOfLocalDay(new Date()), [])
+  const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local', [])
+  const [visibleMonth, setVisibleMonth] = useState(() => monthStart(today))
+  const [selectedDate, setSelectedDate] = useState(today)
+  const [position, setPosition] = useState({ top: 52, left: 12 })
+  const [selectionStatus, setSelectionStatus] = useState('')
+  const visibleMonthStartKey = dateKey(monthStart(visibleMonth))
+  const visibleMonthEndKey = dateKey(monthEnd(visibleMonth))
+  const visibleMonthKey = visibleMonthStartKey.slice(0, 7)
+  const calendarScope = `${timezone}:${visibleMonthKey}`
+  const monthInvalidationRevision = useCalendarMonthInvalidation(visibleMonthKey)
+  const [calendarResource, setCalendarResource] = useState<ScopedResource<ArkmeCalendarBucketPage>>(() => ({ scope: calendarScope }))
+  const [calendarLoading, setCalendarLoading] = useState(false)
+  const [calendarError, setCalendarError] = useState('')
+  const selectionControllerRef = useRef<AbortController>()
+  const calendar = calendarResource.scope === calendarScope ? calendarResource.value : undefined
+
+  useLayoutEffect(() => {
+    if (!open || typeof window === 'undefined') return
+    const updatePosition = () => {
+      const rect = anchor.current?.getBoundingClientRect()
+      if (rect === undefined) return
+      const width = 354
+      const estimatedHeight = 392
+      const viewportPadding = 12
+      const left = Math.max(viewportPadding, Math.min(window.innerWidth - width - viewportPadding, rect.right - width))
+      const below = rect.bottom + 8
+      const top = below + estimatedHeight <= window.innerHeight - viewportPadding
+        ? below
+        : Math.max(viewportPadding, rect.top - estimatedHeight - 8)
+      setPosition({ top, left })
+    }
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [anchor, open])
+
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    const controller = new AbortController()
+    setCalendarResource(current => current.scope === calendarScope ? current : { scope: calendarScope })
+    setCalendarLoading(true)
+    setCalendarError('')
+    void callArkme<ArkmeCalendarBucketPage>('calendar.buckets', {
+      startDate: visibleMonthStartKey,
+      endDate: visibleMonthEndKey,
+      timezone,
+    }, controller.signal)
+      .then(value => { if (active) setCalendarResource({ scope: calendarScope, value }) })
+      .catch(caught => { if (active && !controller.signal.aborted) setCalendarError(errorMessage(caught)) })
+      .finally(() => { if (active) setCalendarLoading(false) })
+    return () => { active = false; controller.abort() }
+  }, [calendarScope, monthInvalidationRevision, open, timezone, visibleMonthEndKey, visibleMonthStartKey])
+
+  useEffect(() => {
+    if (open) return
+    selectionControllerRef.current?.abort()
+    selectionControllerRef.current = undefined
+    setSelectionStatus('')
+  }, [open])
+  useEffect(() => () => { selectionControllerRef.current?.abort() }, [])
+
+  const selectDate = async (date: Date) => {
+    const normalized = startOfLocalDay(date)
+    const key = dateKey(normalized)
+    setSelectedDate(normalized)
+    selectionControllerRef.current?.abort()
+    if ((calendar?.days.find(day => day.bucketDate === key)?.count ?? 0) <= 0) {
+      setSelectionStatus('这一天没有发给自己的记录')
+      return
+    }
+    const controller = new AbortController()
+    selectionControllerRef.current = controller
+    setSelectionStatus('正在定位这一天的记录…')
+    try {
+      const page = await callArkme<ArkmeCalendarDayRecordPage>('calendar.records', {
+        bucketDate: key,
+        timezone,
+        limit: 1,
+      }, controller.signal)
+      if (controller.signal.aborted) return
+      const item = page.items[0]
+      if (item === undefined) {
+        setSelectionStatus('这一天没有可查看的记录')
+        return
+      }
+      setSelectionStatus('')
+      onClose()
+      onSelectRecord(item)
+    } catch (caught) {
+      if (!controller.signal.aborted) setSelectionStatus(errorMessage(caught) || '暂时无法定位这一天的记录')
+    } finally {
+      if (selectionControllerRef.current === controller) selectionControllerRef.current = undefined
+    }
+  }
+
+  if (!open || typeof document === 'undefined') return null
+  return createPortal(<>
+    <button type="button" aria-label="关闭发给自己日历" onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 299, width: '100%', height: '100%', padding: 0,
+      border: 0, background: 'transparent', cursor: 'default',
+    }} />
+    <section aria-label="发给自己日历" style={{
+      ...styles.calendarCard,
+      position: 'fixed', top: position.top, left: position.left, zIndex: 300,
+    }}>
+      <ArkmeCalendarMonthView
+        visibleMonth={visibleMonth}
+        selectedDate={selectedDate}
+        today={today}
+        days={calendar?.days ?? []}
+        loading={calendarLoading}
+        error={calendarError}
+        onVisibleMonthChange={month => { setVisibleMonth(month); setSelectionStatus('') }}
+        onSelectDate={date => { void selectDate(date) }}
+      />
+      {selectionStatus !== '' && <div role="status" style={{ ...styles.status, marginBottom: -6 }}>{selectionStatus}</div>}
+    </section>
+  </>, document.body)
 }
 
 export function arkmeCalendarRecordSourceLabel(item: ArkmeCalendarRecordItem): string {
@@ -408,9 +607,6 @@ export function ArkmeCalendarSurface({
     controller?.abort()
   }, [])
 
-  const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(day => [day.bucketDate, day])), [calendar])
-  const canGoNext = !sameMonth(visibleMonth, today) && visibleMonth < monthStart(today)
-  const canJumpToday = !sameDay(selectedDate, today) || !sameMonth(visibleMonth, today)
   const recordItems = records?.items ?? []
   const selectedItem = selectedRecord?.scope === recordsScope && detailsOpen
     ? recordItems.find(item => item.recordUid === selectedRecord.uid) : undefined
@@ -500,34 +696,16 @@ export function ArkmeCalendarSurface({
         ...(anchor === 'product-rail' ? styles.productRailCalendarCard : {}),
       }} aria-label="客户端日历">
         <span style={styles.calendarPointer} aria-hidden />
-        <header style={styles.header}>
-          <div style={styles.navCluster}>
-            <button type="button" aria-label="上个月" title="上个月" style={styles.iconButton} onClick={() => setVisibleMonth(value => new Date(value.getFullYear(), value.getMonth() - 1, 1))}><CaretRight size={16} style={styles.caretLeft} aria-hidden /></button>
-            <button type="button" aria-label="下个月" title="下个月" disabled={!canGoNext} style={{ ...styles.iconButton, ...(!canGoNext ? styles.navDisabled : {}) }} onClick={() => { if (canGoNext) setVisibleMonth(value => new Date(value.getFullYear(), value.getMonth() + 1, 1)) }}><CaretRight size={16} aria-hidden /></button>
-          </div>
-          <h2 style={styles.monthTitle}>{monthLabel(visibleMonth)}</h2>
-          <button type="button" disabled={!canJumpToday} style={{ ...styles.todayButton, ...(!canJumpToday ? styles.todayDisabled : {}) }} onClick={() => { setVisibleMonth(monthStart(today)); chooseDate(today) }}>回到今日</button>
-        </header>
-        <div style={styles.week}>{['一', '二', '三', '四', '五', '六', '日'].map(label => <span key={label} style={styles.weekDay}>{label}</span>)}</div>
-        <div style={{ ...styles.days, opacity: calendarLoading ? .55 : 1 }}>
-          {calendarCells(visibleMonth).map((date, index) => {
-            if (date === undefined) return <span key={`blank:${String(index)}`} style={styles.blank} />
-            const key = dateKey(date)
-            const disabled = date > today
-            const meta = calendarByDay.get(key)
-            return <ArkmeCalendarCell
-              key={key}
-              date={date}
-              {...(meta === undefined ? {} : { meta })}
-              selected={key === dateKey(selectedDate)}
-              disabled={disabled}
-              onClick={() => { if (!disabled) chooseDate(date) }}
-            />
-          })}
-        </div>
-        {(calendarError !== '' || calendarLoading) && <div style={{ ...styles.status, ...(calendarError !== '' ? styles.error : {}) }} role={calendarError !== '' ? 'alert' : 'status'}>
-          {calendarError || (calendar === undefined ? '正在加载…' : '正在更新…')}
-        </div>}
+        <ArkmeCalendarMonthView
+          visibleMonth={visibleMonth}
+          selectedDate={selectedDate}
+          today={today}
+          days={calendar?.days ?? []}
+          loading={calendarLoading}
+          error={calendarError}
+          onVisibleMonthChange={setVisibleMonth}
+          onSelectDate={chooseDate}
+        />
       </section>
       {detailsOpen && <section style={styles.recordsPanel} aria-label="当天内容">
         <header style={styles.recordsHeader}>

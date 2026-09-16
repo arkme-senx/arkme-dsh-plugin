@@ -14,6 +14,11 @@ class MemoryStorage implements Storage {
 }
 
 describe('send-to-self topic sort preference', () => {
+  it('defaults new users to the mobile-compatible custom order', () => {
+    expect(DEFAULT_SELF_TOPIC_SORT).toBe('custom')
+    expect(readSelfTopicSortPreference(10000, new MemoryStorage())).toBe('custom')
+  })
+
   it('restores the last choice independently for each signed-in user', () => {
     const storage = new MemoryStorage()
 
