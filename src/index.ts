@@ -20,7 +20,7 @@ import { registerDSHAgentInputRecordSync } from './dsh-agent-input-sync.js'
 import { createArkmeHostApi } from './host-api.js'
 import { readDirectoryPage } from './directory-reader.js'
 import { openDshHostPath } from './dsh-host-capabilities.js'
-import { ARKME_HARNESS_EMBED_PATH, ARKME_HARNESS_MODEL_CLIENT_PATH, ARKME_HARNESS_ONBOARDING_CLIENT_PATH } from './harness-embed-contract.js'
+import { ARKME_HARNESS_EMBED_PATH, ARKME_HARNESS_MODEL_CLIENT_PATH, ARKME_HARNESS_ONBOARDING_CLIENT_PATH, ARKME_HARNESS_TRAJECTORY_CLIENT_PATH, ARKME_HARNESS_SIDEBAR_CLIENT_PATH } from './harness-embed-contract.js'
 import {
   createHarnessEmbedRouteHandler,
   dshRootDocumentHeaders,
@@ -701,6 +701,22 @@ export function apply(ctx: Context, config: Config): void {
   }
   const harnessModelClient = readFileSync(new URL('../lib/harness-model-client.js', import.meta.url))
   const harnessOnboardingClient = readFileSync(new URL('../lib/harness-onboarding-client.js', import.meta.url))
+  const harnessTrajectoryClient = readFileSync(new URL('../lib/harness-trajectory-client.js', import.meta.url))
+  const harnessSidebarClient = readFileSync(new URL('../lib/harness-sidebar-client.js', import.meta.url))
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact', path: ARKME_HARNESS_SIDEBAR_CLIENT_PATH,
+    handler: (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' })
+      response.end(harnessSidebarClient)
+    },
+  }), 'arkme: Harness sidebar settings asset')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact', path: ARKME_HARNESS_TRAJECTORY_CLIENT_PATH,
+    handler: (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' })
+      response.end(harnessTrajectoryClient)
+    },
+  }), 'arkme: Harness trajectory navigation asset')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact', path: ARKME_HARNESS_ONBOARDING_CLIENT_PATH,
     handler: (_request, response) => {
@@ -709,6 +725,14 @@ export function apply(ctx: Context, config: Config): void {
     },
   }), 'arkme: Harness onboarding bridge asset')
   const harnessEmbedHandler = createHarnessEmbedRouteHandler({
+    sidebarClient: {
+      id: '@senguoyun/dsh-arkme/harness-sidebar', url: ARKME_HARNESS_SIDEBAR_CLIENT_PATH,
+      rev: createHash('sha256').update(harnessSidebarClient).digest('hex'),
+    },
+    trajectoryClient: {
+      id: '@senguoyun/dsh-arkme/harness-trajectory', url: ARKME_HARNESS_TRAJECTORY_CLIENT_PATH,
+      rev: createHash('sha256').update(harnessTrajectoryClient).digest('hex'),
+    },
     onboardingClient: {
       id: '@senguoyun/dsh-arkme/harness-onboarding', url: ARKME_HARNESS_ONBOARDING_CLIENT_PATH,
       rev: createHash('sha256').update(harnessOnboardingClient).digest('hex'),

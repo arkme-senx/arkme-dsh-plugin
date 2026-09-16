@@ -527,6 +527,7 @@ export function ArkmePersistentWorkspace({
       visible={harnessVisible}
       nativeSettings={webLockedHarness}
       accountId={authenticatedUserId}
+      accountScope={contactsAccountKey}
       followSession={ui.mode === 'harness'}
     />
     {!webLockedHarness && <div

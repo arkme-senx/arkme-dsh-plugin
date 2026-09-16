@@ -44,6 +44,8 @@ export interface DshWebBootGraph {
 
 interface HarnessEmbedRouteOptions {
   modelClient?: DshWebBootEntry
+  trajectoryClient?: DshWebBootEntry
+  sidebarClient?: DshWebBootEntry
   onboardingClient?: DshWebBootEntry
   getGraph(): DshWebBootGraph
   installedPackageNames(): readonly string[]
@@ -171,6 +173,8 @@ export function projectHarnessBootGraph(
   graph: DshWebBootGraph,
   installedPackageNames: readonly string[],
   modelClient?: DshWebBootEntry,
+  trajectoryClient?: DshWebBootEntry,
+  sidebarClient?: DshWebBootEntry,
 ): DshWebBootGraph {
   const requiredPackageNames = requiredBootPackages(graph.entries)
   const removedPackageNames = new Set([
@@ -191,6 +195,23 @@ export function projectHarnessBootGraph(
   if (modelClient && entries.some(entry => entry.id === '@deepseek-ai/dsh-client-ui-model-selection')) {
     entries.push(modelClient)
     batches?.push({ phase: 'application', url: modelClient.url, rev: modelClient.rev, entries: [modelClient.id] })
+  }
+
+  const trajectoryPackages = [
+    '@deepseek-ai/dsh-client-ui-conversation',
+    '@deepseek-ai/dsh-client-ui-trajectory',
+    '@deepseek-ai/dsh-session-log-export',
+  ]
+  if (trajectoryClient && trajectoryPackages.every(id => entries.some(entry => entry.id === id))) {
+    const entry = { ...trajectoryClient, inject: trajectoryPackages }
+    entries.push(entry)
+    batches?.push({ phase: 'application', url: entry.url, rev: entry.rev, entries: [entry.id] })
+  }
+
+  if (sidebarClient && entries.some(entry => entry.id === '@deepseek-ai/dsh-client-ui-sidebar')) {
+    const entry = { ...sidebarClient, inject: ['@deepseek-ai/dsh-client-ui-sidebar'] }
+    entries.push(entry)
+    batches?.push({ phase: 'application', url: entry.url, rev: entry.rev, entries: [entry.id] })
   }
 
   return {
@@ -238,7 +259,7 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
 
     try {
       const fullGraph = options.getGraph()
-      const projectedGraph = projectHarnessBootGraph(fullGraph, options.installedPackageNames(), options.modelClient)
+      const projectedGraph = projectHarnessBootGraph(fullGraph, options.installedPackageNames(), options.modelClient, options.trajectoryClient, options.sidebarClient)
       if (options.onboardingClient !== undefined) {
         const entry = {
           ...options.onboardingClient,
