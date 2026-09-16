@@ -90,11 +90,10 @@ export function registerDSHAgentInputRecordSync(
     text: string,
     sendAtMillis: number,
     attempt: number,
-    origin: { sessionId: string; eventSeq: number },
   ) => {
     inFlight.add(key)
     let retrying = false
-    void service.createDSHAgentInputText(recordUid, text, sendAtMillis, origin)
+    void service.createDSHAgentInputText(recordUid, text, sendAtMillis)
       .then(() => {
         if (disposed) return
         synced.add(key)
@@ -109,7 +108,7 @@ export function registerDSHAgentInputRecordSync(
               inFlight.delete(key)
               return
             }
-            sync(key, recordUid, text, sendAtMillis, attempt + 1, origin)
+            sync(key, recordUid, text, sendAtMillis, attempt + 1)
           }, retryDelayMillis)
           timers.add(timer)
           return
@@ -132,7 +131,7 @@ export function registerDSHAgentInputRecordSync(
     if (text === undefined) return
     const key = `${sessionId}\0${String(eventSeq)}`
     if (inFlight.has(key) || synced.has(key)) return
-    sync(key, dshAgentInputRecordUid(sessionId, eventSeq), text, numberValue(event.time), 1, { sessionId, eventSeq })
+    sync(key, dshAgentInputRecordUid(sessionId, eventSeq), text, numberValue(event.time), 1)
   }
   ctx.effect(() => {
     const source = sessionEventSource(ctx)

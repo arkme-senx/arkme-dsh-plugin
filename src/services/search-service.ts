@@ -1,5 +1,4 @@
 import { resolveDshSearchOrigins } from '../dsh-search-origins.js'
-import { dshAgentInputRecordUid } from '../dsh-agent-input-sync.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type {
@@ -493,13 +492,6 @@ export class SearchService {
     const sourceTitle = stringValue(topic.title ?? chat.title).trim()
     const creationSource = Math.trunc(numberValue(core.creation_source ?? item.creation_source))
     const recordOwnerUserId = recordOwnerId(core.owner_user_id)
-    const origin = objectValue(core.dsh_origin)
-    const sessionId = stringValue(origin.session_id).trim()
-    const eventSeq = origin.event_seq
-    const dshOrigin = creationSource === 3 && /^[A-Za-z0-9_.:-]{1,256}$/.test(sessionId)
-      && typeof eventSeq === 'number' && Number.isSafeInteger(eventSeq) && eventSeq >= 0
-      && dshAgentInputRecordUid(sessionId, eventSeq) === recordUid
-      ? { sessionId, eventSeq } : undefined
     return {
       recordUid,
       ...(recordOwnerUserId !== 0 ? { recordOwnerUserId } : {}),
@@ -515,7 +507,6 @@ export class SearchService {
       ...(numberValue(core.template_kind) <= 0 ? {} : { templateKind: Math.trunc(numberValue(core.template_kind)) }),
       ...(numberValue(core.display_kind) <= 0 ? {} : { displayKind: Math.trunc(numberValue(core.display_kind)) }),
       ...(creationSource <= 0 ? {} : { creationSource: creationSource }),
-      ...(dshOrigin === undefined ? {} : { dshOrigin }),
       ...(sourceTitle === '' ? {} : { sourceTitle }),
       media,
       files,

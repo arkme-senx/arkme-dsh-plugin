@@ -15,7 +15,7 @@ vi.mock('../src/client/api.js', () => ({ callArkme: bridge.call, ArkmeClientErro
 vi.mock('../src/client/DeepSeekHarnessSurface.js', () => ({ hasEmbeddedDshSession: bridge.has }))
 
 // Run only against the disposable record E2E stack, never a user's account or archive.
-it.skipIf(!process.env.ARKME_RECORD_E2E_URL)('search UI and SDK cross the real Host and record HTTP boundaries', async () => {
+it.skipIf(!process.env.ARKME_RECORD_E2E_URL).each([false, true])('search UI and SDK cross real HTTP without persisted origins: local=%s', async local => {
   const base = new URL(process.env.ARKME_RECORD_E2E_URL!)
   if (base.hostname !== '127.0.0.1' || base.protocol !== 'http:') throw new Error('isolated loopback backend required')
   const userId = 99101
@@ -28,8 +28,7 @@ it.skipIf(!process.env.ARKME_RECORD_E2E_URL)('search UI and SDK cross the real H
   const query = `review${randomUUID().replaceAll('-', '')}`
   const result = await fetch(new URL('/api/v1/records/dsh-agent-input/create', base), {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({ record_uid: recordUid, template_kind: 1, text_content: query, send_at: Date.now(),
-      extra: { dsh_origin: { session_id: sessionId, event_seq: 7 } } }),
+    body: JSON.stringify({ record_uid: recordUid, template_kind: 1, text_content: query, send_at: Date.now() }),
   }).then(response => response.json())
   expect(result.code).toBe(0)
   const config = { environment: 'test', recordBaseUrl: base.origin, routePath: '/arkme-self/api',
@@ -38,7 +37,9 @@ it.skipIf(!process.env.ARKME_RECORD_E2E_URL)('search UI and SDK cross the real H
     intelligentBaseUrl: base.origin, audioBaseUrl: base.origin, requestTimeoutMs: 5000, maxTextLength: 20000,
     geetestCaptchaId: 'fixture' } satisfies ArkmeServiceConfig
   const service = new ArkmeService(config, { read: async () => session, write: async () => {}, delete: async () => {} },
-    { uniqueCode: async () => 'isolated-search-e2e', cachedSnapshot: async () => undefined } as never)
+    { uniqueCode: async () => 'isolated-search-e2e', cachedSnapshot: async () => undefined } as never, undefined, undefined, undefined, undefined, undefined,
+    () => ({ listSessions: async () => local ? [{ header: { id: sessionId, cwd: '/fixture' } }] : [],
+      filterEvents: async () => [{ sessionId, seq: 7, type: 'user/message', surface: 'current' }] }))
   const server = createServer(createArkmeHostApi(service, { expectedPort: 0 }))
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
   const address = server.address() as { port: number }
@@ -47,19 +48,21 @@ it.skipIf(!process.env.ARKME_RECORD_E2E_URL)('search UI and SDK cross the real H
   let renderer: ReactTestRenderer | undefined
   try {
     const hits = await sdk.searchRemote(query, { limit: 20 })
-    expect(hits.items[0]?.dshOrigin).toEqual({ sessionId, eventSeq: 7 })
+    if (local) expect(hits.items[0]?.dshOrigin).toEqual({ sessionId, eventSeq: 7 })
+    else expect(hits.items[0]).not.toHaveProperty('dshOrigin')
     expect(hits.items[0]?.targetSource?.kind).toBe('topic')
     const directory = await service.listSources('send_to_self', { limit: 100 })
     const target = hits.items[0]!.targetSource!
     expect(target.topicHierarchyKey).toBeTruthy()
     expect(directory.items.some(item => item.kind === 'topic' && arkmeSourceIdentityKey(item) === arkmeSourceIdentityKey(target))).toBe(true)
-    bridge.has.mockResolvedValue(false)
+    bridge.has.mockResolvedValue(local)
     bridge.call.mockImplementation(async (operation, params, signal) => {
       const response = await fetchHost('/arkme-self/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation, params }), signal })
       const envelope = await response.json()
       if (!envelope.ok) throw new Error(envelope.error.message)
       return envelope.value
     })
+    const openDsh = vi.fn()
     const opened = vi.fn(async (item) => {
       const page = await bridge.call('source.timeline', { sourceRef: item.targetSource.sourceRef, limit: 100 })
       expect(page.source.kind).toBe('topic')
@@ -68,14 +71,14 @@ it.skipIf(!process.env.ARKME_RECORD_E2E_URL)('search UI and SDK cross the real H
     })
     vi.stubGlobal('window', { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
       addEventListener: vi.fn(), removeEventListener: vi.fn() })
-    await act(async () => { renderer = create(<ArkmeSearchSurface variant="dialog" initialQuery={query} onOpenRecord={opened} onClose={() => {}} />) })
+    await act(async () => { renderer = create(<ArkmeSearchSurface variant="dialog" initialQuery={query} onOpenRecord={opened} onOpenDshSession={openDsh} onClose={() => {}} />) })
     await act(async () => { renderer!.root.findByProps({ "aria-label": "搜索" }).props.onChange({ target: { value: query } }) })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 1000)) })
     const row = renderer!.root.findAllByType(RecordRow).find(node => node.props.item.recordUid === recordUid)
     expect(row).toBeDefined()
     await act(async () => { await row!.props.onClick(); await new Promise(resolve => setTimeout(resolve, 300)) })
-    expect(opened).toHaveBeenCalledOnce()
-    await opened.mock.results[0]!.value
+    if (local) { expect(openDsh).toHaveBeenCalledWith(sessionId); expect(opened).not.toHaveBeenCalled() }
+    else { expect(opened).toHaveBeenCalledOnce(); await opened.mock.results[0]!.value }
   } finally {
     if (renderer) await act(async () => { renderer!.unmount() })
     vi.unstubAllGlobals()

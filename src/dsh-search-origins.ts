@@ -7,7 +7,7 @@ type Provider = {
   filterEvents(sessionId: string, filters: object[]): Promise<Hit[]>
 }
 
-/** Recover old sync identity using the public index and exact deterministic record IDs. */
+/** Resolve sync identity using the public index and exact deterministic record IDs. */
 export async function resolveDshSearchOrigins(provider: unknown, items: ArkmeSearchRecordItem[], signal?: AbortSignal): Promise<ArkmeSearchRecordItem[]> {
   const pending = new Set(items.filter(item => item.creationSource === 3 && item.dshOrigin === undefined).map(item => item.recordUid))
   if (pending.size === 0) return items

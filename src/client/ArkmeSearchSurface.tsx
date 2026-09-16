@@ -527,7 +527,7 @@ export function ArkmeSearchSurface({
           }
           notice = '本机没有此 DSH 对话，改为定位所属主题中的同步快记。'
         } else {
-          notice = item.dshOriginUnverified ? '暂未能完整核验本机会话，改为定位所属主题中的同步快记。' : '这条历史记录缺少原会话关联，改为定位所属主题中的同步快记。'
+          notice = item.dshOriginUnverified ? '暂未能完整核验本机会话，改为定位所属主题中的同步快记。' : '本机未找到此快记对应的 DSH 会话，改为定位所属主题中的同步快记。'
         }
       }
       if (item.targetSource === undefined) throw new Error('未找到对应的同步消息入口，请重试')

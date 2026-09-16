@@ -2057,8 +2057,8 @@ export class ArkmeService {
     if (result.localState !== 'failed') await this.realtime.invalidateRecordProjection(); return result
   }
 
-  async createDSHAgentInputText(recordUid: string, textContent: string, sendAtMillis: number, origin?: import('./types.js').ArkmeDshInputOrigin): Promise<ArkmeCreateTextResult> {
-    const result = await this.record.createDSHAgentInputText(recordUid, textContent, sendAtMillis, origin)
+  async createDSHAgentInputText(recordUid: string, textContent: string, sendAtMillis: number): Promise<ArkmeCreateTextResult> {
+    const result = await this.record.createDSHAgentInputText(recordUid, textContent, sendAtMillis)
     await this.realtime.invalidateRecordProjection()
     return result
   }

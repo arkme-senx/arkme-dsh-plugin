@@ -86,7 +86,6 @@ describe('DSH Agent input sync', () => {
       dshAgentInputRecordUid('session-1', 7),
       '记下来',
       1713830400000,
-      { sessionId: 'session-1', eventSeq: 7 },
     )
     expect(harness.listenerOptions()).toEqual({ global: true })
     expect(harness.warnings).toEqual([])

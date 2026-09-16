@@ -1053,12 +1053,10 @@ describe('RecordService', () => {
       'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
       '用户在 DSH 的输入',
       1713830400000,
-      { sessionId: 'session-1', eventSeq: 7 },
     )).resolves.toEqual({ recordUid: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b', status: 1 })
     expect(requestPath).toBe('https://record.test/api/v1/records/dsh-agent-input/create')
     expect(requestBody).toEqual({
       record_uid: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
-      extra: { dsh_origin: { session_id: 'session-1', event_seq: 7 } },
       template_kind: 1,
       title: '',
       text_content: '用户在 DSH 的输入',

@@ -995,9 +995,9 @@ export interface ArkmeDshInputOrigin {
 }
 
 export interface ArkmeSearchRecordItem {
-  /** Original DSH user input identity, when retained by the sync producer. */
+  /** DSH input identity resolved from local public session events; never persisted by record sync. */
   dshOrigin?: ArkmeDshInputOrigin
-  /** Legacy lookup could not inspect every local session; never proof of absence. */
+  /** Local lookup could not inspect every session; never proof of absence. */
   dshOriginUnverified?: true
   recordUid: string
   /** Record owner required by Chat's exact timeline locator; never the current viewer. */
