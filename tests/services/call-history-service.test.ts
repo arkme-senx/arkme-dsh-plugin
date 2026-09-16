@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { CallHistoryService } from '../../src/services/call-history-service.js'
+import { SourceService } from '../../src/services/source-service.js'
 import { ProfileService } from '../../src/services/profile-service.js'
 import { MediaService } from '../../src/services/media-service.js'
 import { ArkmePluginError, ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
@@ -47,10 +48,45 @@ function service(fetchImpl: typeof fetch, override: Partial<ArkmeServiceConfig> 
     fetchImpl,
   )
   const profile = new ProfileService(runtime)
-  return new CallHistoryService(runtime, profile, new MediaService(runtime, profile, {} as never, {} as never))
+  return new CallHistoryService(runtime, profile, new MediaService(runtime, profile, {} as never, {} as never),
+    new SourceService(runtime, profile, {} as never))
 }
 
 describe('CallHistoryService', () => {
+  it.each([undefined, 'page2'])('prefers viewer remarks on history page %s by user ID', async cursor => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/call/history-aggregate')) return envelope({
+        items: [77, 88].map(id => ({ stable_id: `trtc:room-${id}`, trtc: {
+          room_id: `room-${id}`, caller_user_id: 42, callee_user_ids: [id], peer_display_name: '同名用户',
+        } })), has_more: false,
+      })
+      if (url.endsWith('/api/v1/chats/contacts/list')) return envelope({ items: [
+        { user_id: 77, remark: '  张总（客户）  ' }, { user_id: 88, remark: '   ' },
+      ], has_more: false })
+      if (url.endsWith('/api/v1/chats/list')) return envelope({ items: [], has_more: false })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({ items: [
+        { user_id: 77, nick_name: '同名用户' }, { user_id: 88, nick_name: '同名用户' },
+      ] })
+      throw new Error(`unexpected ${url}`)
+    })
+    const page = await service(fetchImpl).listCallHistory({ includeRecentContacts: false, ...(cursor ? { cursor } : {}) })
+    expect(page.items.map(item => item.peerDisplayName)).toEqual(['张总（客户）', '同名用户'])
+  })
+
+  it('falls back to a nickname without an avatar when remark lookup fails', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/call/history-aggregate')) return envelope({ items: [{
+        stable_id: 'trtc:room', trtc: { room_id: 'room', caller_user_id: 42, callee_user_ids: [77] },
+      }], has_more: false })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({ items: [{ user_id: 77, nick_name: '张三' }] })
+      throw new Error('contact service unavailable')
+    })
+    const page = await service(fetchImpl).listCallHistory({ includeRecentContacts: false })
+    expect(page.items[0]?.peerDisplayName).toBe('张三')
+  })
+
   it('projects real COS room transcript audio through the local media proxy', async () => {
     const owner = service(vi.fn<typeof fetch>(async () => envelope({ room_transcript_segments: [
       { start_ms: 2000, end_ms: 3000, text: '录音片段', speaker_user_id: 42,

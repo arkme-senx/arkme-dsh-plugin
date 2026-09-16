@@ -17,6 +17,7 @@ import type {
 import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue } from './service.js'
 import { ProfileService } from './profile-service.js'
 import type { MediaService } from './media-service.js'
+import type { SourceService } from './source-service.js'
 import { callRecordRoomId, callRecordSource, projectCallRecord, renderCallRecordSummary } from '../call-record-presentation.js'
 import type { ArkmeTimelineItem } from '../types.js'
 
@@ -296,6 +297,7 @@ export class CallHistoryService {
     private readonly runtime: ServiceRuntime,
     private readonly profile: ProfileService,
     private readonly media?: Pick<MediaService, 'forwardContentBlocks'>,
+    private readonly source?: Pick<SourceService, 'privateRemarksByUserIds'>,
   ) {}
 
   async listCallHistory(options: ArkmeCallHistoryOptions = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> {
@@ -320,7 +322,7 @@ export class CallHistoryService {
     const items = await Promise.all(this.historyItems(raw)
       .map(async item => await this.normalizeHistoryItem(item, session.userId)))
     const validItems = items.filter((item): item is ArkmeCallHistoryItem => item !== undefined)
-    await this.attachPeerAvatars(validItems, session, signal)
+    await this.attachPeerPresentation(validItems, session, signal)
     const hasMore = booleanValue(raw.has_more ?? raw.hasMore)
     const nextCursor = firstString(raw, ['next_cursor', 'nextCursor', 'cursor'])
     const includeRecentContacts = options.includeRecentContacts !== false && cursor === ''
@@ -504,20 +506,27 @@ export class CallHistoryService {
     }
   }
 
-  private async attachPeerAvatars(
+  private async attachPeerPresentation(
     items: ArkmeCallHistoryItem[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<void> {
     const ids = [...new Set(items.flatMap(item => item.peerUserId === undefined ? [] : [item.peerUserId]))]
     if (ids.length === 0) return
-    const profiles = await this.profile.publicProfilesByUserIds(ids, session, signal).catch(() => new Map())
+    const [profiles, remarks] = await Promise.all([
+      this.profile.publicProfileSummariesByUserIds(ids, session, signal).catch(() => new Map()),
+      this.source?.privateRemarksByUserIds(ids, signal === undefined ? {} : { signal })
+        .catch(() => new Map<number, string>()) ?? Promise.resolve(new Map<number, string>()),
+    ])
     await Promise.all(items.map(async item => {
       const peerUserId = item.peerUserId
       if (peerUserId === undefined) return
       const profile = profiles.get(peerUserId)
       const displayName = profile?.displayName?.trim() ?? ''
-      if (displayName !== '' && /^Arkme 用户 \d+$/.test(item.peerDisplayName.trim())) {
+      const remark = remarks.get(peerUserId)?.trim() ?? ''
+      if (remark !== '') {
+        item.peerDisplayName = remark
+      } else if (displayName !== '' && /^Arkme 用户 \d+$/.test(item.peerDisplayName.trim())) {
         item.peerDisplayName = displayName
       }
       if (profile?.avatarUrl === undefined) return

@@ -359,6 +359,8 @@ export class ArkmeService {
     this.profile = new ProfileService(this.runtime)
     this.callHistory = new CallHistoryService(this.runtime, this.profile, {
       forwardContentBlocks: (files, viewerUserId) => this.media.forwardContentBlocks(files, viewerUserId),
+    }, {
+      privateRemarksByUserIds: (userIds, options) => this.source.privateRemarksByUserIds(userIds, options),
     })
     this.extensionReview = new ExtensionReviewService(this.runtime, this.profile, {
       createTextForConversation: async (recordUid, textContent) => {

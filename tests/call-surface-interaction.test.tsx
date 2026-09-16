@@ -118,6 +118,132 @@ describe('ArkmeCallSurface interactions', () => {
     vi.unstubAllGlobals()
   })
 
+  it('loads the next page on scroll once, shows progress and deduplicates records', async () => {
+    const next = deferred<unknown>()
+    const item = (id: string) => ({ callRef: id, stableId: id, peerDisplayName: id,
+      mediaType: 'audio', startedAtMillis: 1, acceptedAtMillis: 1, endedAtMillis: 2,
+      durationSeconds: 1, callResult: 'NormalEnd', resultLabel: '已结束',
+      summaryStatus: 'done', canOpenDetail: false, canRedial: false })
+    mocks.callArkme.mockImplementation(async (operation: string, args: { cursor?: string }) => {
+      if (operation === 'calls.history.list') return args.cursor ? next.promise
+        : { items: [item('first')], hasMore: true, nextCursor: 'page2' }
+      if (operation === 'sources.list') return { items: [], hasMore: false }
+      return {}
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
+    const sampleRows = () => renderer.root.findByProps({ 'aria-label': '通话记录列表' }).findAllByType('em')
+    expect(sampleRows()).toHaveLength(0)
+    const scroll = () => renderer.root.findByProps({ 'aria-label': '通话记录列表' }).props.onScroll({
+      currentTarget: { scrollHeight: 1000, scrollTop: 750, clientHeight: 200 },
+    })
+    await act(async () => { scroll(); scroll(); await tick() })
+    expect(textContent(renderer.toJSON())).toContain('加载更多')
+    expect(sampleRows()).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.filter(([op, args]) => op === 'calls.history.list' && args.cursor === 'page2')).toHaveLength(1)
+    await act(async () => { next.resolve({ items: [item('first'), item('second')], hasMore: false }); await tick() })
+    expect(textContent(renderer.toJSON())).toContain('second')
+    expect(sampleRows()).toHaveLength(2)
+    expect(renderer.root.findByProps({ 'aria-label': '通话记录列表' }).findAllByType('li')
+      .filter(row => textContent(row).includes('first'))).toHaveLength(1)
+    expect(textContent(renderer.toJSON())).toContain('没有更多了')
+    await act(async () => { scroll(); await tick() })
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'calls.history.list')).toHaveLength(2)
+    act(() => renderer.unmount())
+  })
+
+  it.each([undefined, 'page2'])('does not treat invalid next cursor %s as a terminal page', async nextCursor => {
+    let attempts = 0
+    mocks.callArkme.mockImplementation(async (op: string, args: { cursor?: string }) => {
+      if (op !== 'calls.history.list') return { items: [], hasMore: false }
+      if (!args.cursor) return { items: [], hasMore: true, nextCursor: 'page2' }
+      if (++attempts === 1) return { items: [], hasMore: true, nextCursor }
+      return { items: [], hasMore: false }
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
+    const list = () => renderer.root.findByProps({ 'aria-label': '通话记录列表' })
+    await act(async () => { list().props.onScroll({ currentTarget: { scrollHeight: 1000, scrollTop: 750, clientHeight: 200 } }); await tick() })
+    expect(list().findAllByType('em')).toHaveLength(0)
+    expect(textContent(list())).toContain('加载失败')
+    expect(textContent(list())).not.toContain('没有更多了')
+    await act(async () => { buttonByText(renderer, '点击重试').props.onClick(); await tick() })
+    expect(list().findAllByType('em')).toHaveLength(2)
+    act(() => renderer.unmount())
+  })
+
+  it('fills a short list automatically when another page exists', async () => {
+    let requests = 0
+    mocks.callArkme.mockImplementation(async (op: string) => {
+      if (op !== 'calls.history.list') return { items: [], hasMore: false }
+      requests++
+      return { items: [], hasMore: requests === 1, nextCursor: requests === 1 ? 'page2' : '' }
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeCallSurface />, { createNodeMock: element => element.type === 'ul'
+        ? { scrollHeight: 100, clientHeight: 300 } : null })
+      await tick()
+      await tick()
+    })
+    expect(requests).toBe(2)
+    act(() => renderer.unmount())
+  })
+
+  it('keeps existing records on page failure and retries the same cursor', async () => {
+    const first = { callRef: 'first', stableId: 'first', peerDisplayName: 'First record',
+      mediaType: 'audio', startedAtMillis: 1, acceptedAtMillis: 1, endedAtMillis: 2,
+      durationSeconds: 1, callResult: 'NormalEnd', resultLabel: '已结束',
+      summaryStatus: 'done', canOpenDetail: false, canRedial: false }
+    let attempts = 0
+    mocks.callArkme.mockImplementation(async (op: string, args: { cursor?: string }) => {
+      if (op !== 'calls.history.list') return { items: [], hasMore: false }
+      if (!args.cursor) return { items: [first], hasMore: true, nextCursor: 'page2' }
+      if (++attempts === 1) throw new Error('timeout')
+      return { items: [{ ...first, callRef: 'second', stableId: 'second', peerDisplayName: 'Second record' }], hasMore: false }
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
+    const scroll = () => renderer.root.findByProps({ 'aria-label': '通话记录列表' }).props.onScroll({ currentTarget: { scrollHeight: 1000, scrollTop: 750, clientHeight: 200 } })
+    await act(async () => { scroll(); await tick() })
+    expect(textContent(renderer.toJSON())).toContain('First record')
+    expect(textContent(renderer.toJSON())).toContain('加载失败')
+    expect(renderer.root.findByProps({ 'aria-label': '通话记录列表' }).findAllByType('em')).toHaveLength(0)
+    await act(async () => { scroll(); await tick() })
+    expect(attempts).toBe(1)
+    await act(async () => { buttonByText(renderer, '点击重试').props.onClick(); await tick() })
+    expect(textContent(renderer.toJSON())).toContain('Second record')
+    expect(textContent(renderer.toJSON())).not.toContain('加载失败')
+    act(() => renderer.unmount())
+  })
+
+  it('ignores stale pagination and blocks loading more during a silent refresh', async () => {
+    const next = deferred<unknown>()
+    const refreshed = deferred<unknown>()
+    let initialLoads = 0
+    const item = (id: string) => ({ callRef: id, stableId: id, peerDisplayName: id,
+      mediaType: 'audio', startedAtMillis: 1, acceptedAtMillis: 1, endedAtMillis: 2,
+      durationSeconds: 1, callResult: 'NormalEnd', resultLabel: '已结束',
+      summaryStatus: 'done', canOpenDetail: false, canRedial: false })
+    mocks.callArkme.mockImplementation(async (op: string, args: { cursor?: string }) => {
+      if (op !== 'calls.history.list') return { items: [], hasMore: false }
+      if (args.cursor) return next.promise
+      return ++initialLoads === 1 ? { items: [item('first')], hasMore: true, nextCursor: 'page2' } : refreshed.promise
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
+    const scroll = () => renderer.root.findByProps({ 'aria-label': '通话记录列表' }).props.onScroll({ currentTarget: { scrollHeight: 1000, scrollTop: 750, clientHeight: 200 } })
+    await act(async () => { scroll(); await tick() })
+    await act(async () => { mocks.outgoingCallSettledListeners[0]({ callRequestId: 'ended', displayName: 'Peer', mediaType: 'audio', status: 'ended' }); await tick() })
+    await act(async () => { scroll(); await tick() })
+    expect(mocks.callArkme.mock.calls.filter(([op, args]) => op === 'calls.history.list' && args.cursor)).toHaveLength(1)
+    await act(async () => { refreshed.resolve({ items: [item('fresh')], hasMore: false }); await tick() })
+    await act(async () => { next.resolve({ items: [item('stale')], hasMore: false }); await tick() })
+    expect(textContent(renderer.toJSON())).toContain('fresh')
+    expect(textContent(renderer.toJSON())).not.toContain('stale')
+    act(() => renderer.unmount())
+  })
+
   it('uses DSH semantic tokens without maintaining a second theme state', async () => {
     let renderer!: ReactTestRenderer
     await act(async () => {
