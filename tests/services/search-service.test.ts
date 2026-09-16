@@ -1,3 +1,4 @@
+import { dshAgentInputRecordUid } from '../../src/dsh-agent-input-sync.js'
 import { stringifyOwnerJson } from '../../src/record-owner-id.js'
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
@@ -268,4 +269,30 @@ describe('SearchService', () => {
     })
     expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
+})
+
+it('retains only verified DSH identities and uses the self-message fallback target', async () => {
+ const id = dshAgentInputRecordUid('session-1', 7)
+ const runtime = new ServiceRuntime(config, { async read() { return { userId: 42, accessToken: 'a', refreshToken: 'r' } }, async write() {}, async delete() {} }, {} as StateStore,
+   async () => new Response(JSON.stringify({ code: 0, data: { items: [id, 'forged'].map(record_uid => ({ record_uid, source_kind: 2, source_uid: 'system:dsh', record_core: { creation_source: 3, text_content: '武汉', dsh_origin: { session_id: 'session-1', event_seq: 7 } } })), source_aggregates: [] } })))
+ const targetSource = { sourceRef: 'self', kind: 'send_to_self', displayName: '发给自己' }
+ const selfTarget = vi.fn(async () => targetSource)
+ const service = new SearchService(runtime, {} as never, {} as never, { searchTargetSource: async () => undefined, selfTarget } as unknown as SourceService, { lockedRecordUids: async () => new Set() } as never)
+ const result = await service.searchRemote({ query: '武汉', limit: 20 })
+ expect(result.items[0]).toMatchObject({ recordUid: id, dshOrigin: { sessionId: 'session-1', eventSeq: 7 }, targetSource })
+ expect(result.items[1]).not.toHaveProperty('dshOrigin')
+ expect(selfTarget).toHaveBeenCalledTimes(1)
+ expect(selfTarget).toHaveBeenCalledWith(undefined, true)
+})
+
+it('enriches legacy remote results through the shared local DSH query owner', async () => {
+ const id = dshAgentInputRecordUid('local-session', 7)
+ const runtime = new ServiceRuntime(config, { async read() { return { userId: 42, accessToken: 'a', refreshToken: 'r' } }, async write() {}, async delete() {} }, {} as StateStore,
+   async () => new Response(JSON.stringify({ code: 0, data: { items: [{ record_uid: id, source_kind: 2, source_uid: 'system:dsh', record_core: { creation_source: 3, text_content: '武汉' } }], source_aggregates: [] } })))
+ const service = new SearchService(runtime, {} as never, {} as never, undefined, { lockedRecordUids: async () => new Set() } as never)
+ const filterEvents = vi.fn(async () => [{ sessionId: 'local-session', seq: 7, type: 'user/message', surface: 'current' }])
+ service.localDshQuery = () => ({ listSessions: async () => [{ header: { id: 'local-session', cwd: '/workspace' } }], filterEvents })
+ const result = await service.searchRemote({ query: '武汉', limit: 20 })
+ expect(result.items[0]?.dshOrigin).toEqual({ sessionId: 'local-session', eventSeq: 7 })
+ expect(filterEvents).toHaveBeenCalledWith('local-session', expect.arrayContaining([{ kind: 'text', text: '武汉' }]))
 })

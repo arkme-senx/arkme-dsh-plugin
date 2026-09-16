@@ -1,3 +1,4 @@
+import { hasEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
@@ -53,7 +54,8 @@ const styles: Record<string, CSSProperties> = {
   resultTabActive: { color: colors.text, fontWeight: 600 },
   resultIndicator: { position: 'absolute', left: '50%', bottom: 5, width: 16, height: 2, marginLeft: -8, borderRadius: 22, background: colors.text },
   resultFrame: { minHeight: 0, flex: 1, marginTop: 2, overflow: 'hidden', border: '1px solid rgba(60, 60, 67, .10)', borderRadius: 14, background: '#fbfbfc' },
-  resultHeader: { margin: 0, padding: '14px 16px 8px', color: colors.tertiary, fontSize: 13, lineHeight: '20px', fontWeight: 500 },
+  resultHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 20, margin: 0, padding: '14px 16px 8px', color: colors.tertiary, fontSize: 13, lineHeight: '20px', fontWeight: 500 },
+  searchProgress: { flex: 'none', fontSize: 12, fontWeight: 400, color: colors.tertiary, whiteSpace: 'nowrap' },
   status: { padding: '54px 12px', textAlign: 'center', color: colors.secondary, fontSize: 13 },
   error: { margin: '14px 0 0', padding: '10px 12px', borderRadius: 8, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 13 },
   list: { display: 'flex', flexDirection: 'column', gap: 4, padding: '0 7px 7px' }, row: { width: '100%', minWidth: 0, padding: '13px 12px', border: 0, borderRadius: 10, background: colors.panel, boxShadow: '0 1px 3px rgba(60,60,67,.035)', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit', boxSizing: 'border-box' },
@@ -98,7 +100,7 @@ const quickEntries: Array<{ key: QuickKey; label: string; tabLabel: string }> = 
 ]
 type QuickKey = 'image' | 'ai_video' | 'audio' | 'file'
 type Preview = { kind: 'image' | 'video'; url: string; name: string; subtitle?: string }
-type SearchResultTab = 'records' | 'topics' | 'recordings' | 'dsh'
+type SearchResultTab = 'records' | 'topics' | 'recordings'
 
 export interface ArkmeDshMessageSearchItem {
   sessionId: string
@@ -118,10 +120,11 @@ export interface ArkmeSearchSurfaceProps {
   initialQueryRevision?: number
   searchDshMessages?: (query: string, signal: AbortSignal) => Promise<ArkmeDshMessageSearchResult>
   onOpenDshSession?: (sessionId: string) => void
-  onOpenRecord?: (item: ArkmeSearchRecordItem) => void
+  onOpenRecord?: (item: ArkmeSearchRecordItem, notice?: string) => void
   onClose?: () => void
 }
 
+function syncedDshKey(item: ArkmeSearchRecordItem): string { return item.dshOrigin?.sessionId ?? `legacy:${item.sourceUid ?? ''}` }
 function errorMessage(error: unknown): string { return error instanceof ArkmeClientError ? error.body.message : error instanceof Error ? error.message : String(error) }
 function dateTimeLabel(value: number): string { return Number.isFinite(value) && value > 0 ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) : '' }
 function displayUrl(item: ArkmeFileAssetDisplayItem | undefined): string { return item?.previewUrl || item?.downloadUrl || '' }
@@ -165,13 +168,6 @@ export function RecordRow({ item, onClick, onTagClick }: {
     <p style={styles.title}>{arkmeHashTagRanges(title).length === 0 ? title : <ArkmeRichText text={title} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>
     {summary !== '' && <p style={styles.text}>{arkmeHashTagRanges(summary).length === 0 ? summary : <ArkmeRichText text={summary} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>}
     <RecordMeta item={item} />
-  </button>
-}
-function DshMessageRow({ item, onClick }: { item: ArkmeDshMessageSearchItem; onClick(): void }) {
-  return <button type="button" style={styles.row} onClick={onClick}>
-    <span style={styles.rowTop}><span style={styles.dshBadge}>DSH 任务</span><strong style={styles.title}>{item.title}</strong></span>
-    <p style={styles.text}>{item.snippet}</p>
-    <span style={styles.meta}>{dateTimeLabel(item.updatedAtMillis)}</span>
   </button>
 }
 function RecordingRow({ item }: { item: ArkmeRecordingSearchResult['items'][number] }) {
@@ -261,6 +257,7 @@ export function ArkmeSearchSurface({
   const [dshMessages, setDshMessages] = useState<ArkmeDshMessageSearchResult>()
   const [resultTab, setResultTab] = useState<SearchResultTab>('records')
   const [selectedSourceUid, setSelectedSourceUid] = useState('')
+  const [selectedDshSessionId, setSelectedDshSessionId] = useState('')
   const [sourceRecords, setSourceRecords] = useState<ArkmeSearchRecordItem[]>([])
   const [quick, setQuick] = useState<QuickKey>()
   const [images, setImages] = useState<ArkmeImageSearchItem[]>()
@@ -303,7 +300,7 @@ export function ArkmeSearchSurface({
   }, [initialQuery, initialQueryRevision])
 
   useEffect(() => { void callArkme<ArkmeSearchHistoryResult>('search.history', { limit: 10 }).then(value => setHistory(value.items.map(item => item.keyword))).catch(() => undefined) }, [])
-  const resetResults = useCallback(() => { searchAbort.current?.abort(); searchAbort.current = undefined; sourceSearchAbort.current?.abort(); sourceSearchAbort.current = undefined; sourceSearchRevision.current += 1; requestId.current += 1; setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setSearchLoading({ records: false, recordings: false, dsh: false }); setSourceLoading(false) }, [])
+  const resetResults = useCallback(() => { searchAbort.current?.abort(); searchAbort.current = undefined; sourceSearchAbort.current?.abort(); sourceSearchAbort.current = undefined; sourceSearchRevision.current += 1; requestId.current += 1; setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSelectedDshSessionId(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setSearchLoading({ records: false, recordings: false, dsh: false }); setSourceLoading(false) }, [])
 
   const runSearch = useCallback(async (raw: string) => {
     const keyword = raw.trim()
@@ -322,6 +319,7 @@ export function ArkmeSearchSurface({
       if (!active()) return
       setSearchLoading(current => current[domain] ? { ...current, [domain]: false } : current)
     }
+    setSelectedDshSessionId('')
     setSearchLoading({ records: true, recordings: includeCompanionDomains, dsh: includeDsh })
     setRecordError(''); setRecordingError(''); setDshError('')
     const recordRequest = callArkme<ArkmeRecordSearchResult>(
@@ -332,7 +330,9 @@ export function ArkmeSearchSurface({
       if (!active()) return
       setRecords(nextRecords)
       const firstSource = nextRecords.sourceAggregates[0]
-      setSelectedSourceUid(firstSource?.sourceUid ?? '')
+      const firstDsh = nextRecords.items.find(item => isDshAgentInputRecord(item) && item.sourceUid === firstSource?.sourceUid)
+      setSelectedSourceUid(firstDsh === undefined ? firstSource?.sourceUid ?? '' : '')
+      setSelectedDshSessionId(firstDsh === undefined ? '' : syncedDshKey(firstDsh))
       setSourceRecords(firstSource === undefined ? [] : nextRecords.items.filter(item => item.sourceUid === firstSource.sourceUid))
     }).catch(caught => {
       if (active()) setRecordError(errorMessage(caught))
@@ -360,6 +360,7 @@ export function ArkmeSearchSurface({
   const chooseSource = useCallback(async (sourceUid: string, sourceKind: number) => {
     const keyword = query.trim()
     if (keyword === '') return
+    setSelectedDshSessionId('')
     setSelectedSourceUid(sourceUid)
     const cached = (records?.items ?? []).filter(item => item.sourceUid === sourceUid)
     setSourceRecords(cached)
@@ -405,6 +406,23 @@ export function ArkmeSearchSurface({
     onClose?.()
   }, [chooseSource, onClose, records, sourceRecords])
 
+  const chooseDshSession = (sessionId: string) => {
+    sourceSearchAbort.current?.abort()
+    sourceSearchRevision.current += 1
+    setSourceLoading(false)
+    setSelectedSourceUid('')
+    setSelectedDshSessionId(sessionId)
+  }
+  const openDshSession = (sessionId: string) => {
+    try {
+      const synced = (records?.items ?? []).find(item => isDshAgentInputRecord(item) && syncedDshKey(item) === sessionId)
+      if (synced !== undefined) { void openRecord(synced); return }
+      if (onOpenDshSession === undefined) throw new Error('当前 DSH 版本暂不支持打开任务')
+      onOpenDshSession(sessionId)
+      onClose?.()
+    } catch (error) { setDshError(errorMessage(error)) }
+  }
+
   useEffect(() => {
     if (quickRef.current === 'file') return
     if (query.trim() === '') { resetResults(); return }
@@ -421,7 +439,7 @@ export function ArkmeSearchSurface({
     const hasCachedPage = value === 'image' ? images !== undefined : value === 'ai_video' ? videos !== undefined : audioRecords !== undefined
     const id = ++requestId.current
     quickRef.current = value
-    setQuick(value); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setSearchLoading({ records: false, recordings: false, dsh: false })
+    setQuick(value); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSelectedDshSessionId(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setSearchLoading({ records: false, recordings: false, dsh: false })
     if (value === 'file' || hasCachedPage) { setLoading(false); return }
     const controller = new AbortController()
     quickRequestAbort.current = controller
@@ -473,8 +491,8 @@ export function ArkmeSearchSurface({
     return () => observer.disconnect()
   }, [imageCursor, imageHasMore, loadMoreImages, loading, query, quick, recordError, variant])
 
-  const leaveQuick = useCallback(() => { quickRequestAbort.current?.abort(); quickRequestAbort.current = undefined; searchAbort.current?.abort(); searchAbort.current = undefined; sourceSearchAbort.current?.abort(); sourceSearchAbort.current = undefined; sourceSearchRevision.current += 1; requestId.current += 1; quickRef.current = undefined; setQuick(undefined); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setAudioRecords(undefined); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setSearchLoading({ records: false, recordings: false, dsh: false }); setLoadingMore(false) }, [])
-  useEffect(() => () => { quickRequestAbort.current?.abort(); searchAbort.current?.abort(); sourceSearchAbort.current?.abort() }, [])
+  const leaveQuick = useCallback(() => { quickRequestAbort.current?.abort(); quickRequestAbort.current = undefined; searchAbort.current?.abort(); searchAbort.current = undefined; sourceSearchAbort.current?.abort(); sourceSearchAbort.current = undefined; sourceSearchRevision.current += 1; requestId.current += 1; quickRef.current = undefined; setQuick(undefined); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSelectedDshSessionId(''); setSourceRecords([]); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setAudioRecords(undefined); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setSearchLoading({ records: false, recordings: false, dsh: false }); setLoadingMore(false) }, [])
+  useEffect(() => () => { requestId.current += 1; quickRequestAbort.current?.abort(); searchAbort.current?.abort(); sourceSearchAbort.current?.abort() }, [])
   useEffect(() => {
     const videoAssets = (videos ?? []).flatMap(item => [item.coverAssetUid, item.videoAssetUid]).filter((value): value is string => value !== undefined)
     const audioAssets = (audioRecords ?? []).flatMap(item => item.voice === undefined || item.voice.mediaRef !== undefined ? [] : [item.voice.fileAssetUid])
@@ -485,10 +503,30 @@ export function ArkmeSearchSurface({
     return () => { active = false }
   }, [audioRecords, resolvedAssetUids, videos])
 
-  const openRecord = useCallback((item: ArkmeSearchRecordItem) => {
-    if (onOpenRecord !== undefined) { onOpenRecord(item); return }
-    if (item.targetSource !== undefined) arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis, item.recordOwnerUserId)
-  }, [onOpenRecord])
+  const openRecord = useCallback(async (item: ArkmeSearchRecordItem) => {
+    const revision = requestId.current
+    try {
+      let notice: string | undefined
+      if (isDshAgentInputRecord(item)) {
+        if (item.dshOrigin !== undefined) {
+          const local = await hasEmbeddedDshSession(item.dshOrigin.sessionId)
+          if (revision !== requestId.current) return
+          if (local) {
+            if (onOpenDshSession === undefined) throw new Error('当前客户端无法打开 DSH 对话')
+            onOpenDshSession(item.dshOrigin.sessionId)
+            onClose?.()
+            return
+          }
+          notice = '本机没有此 DSH 对话，改为定位“发给自己”的同步消息。'
+        } else {
+          notice = '这条历史记录缺少原会话关联，改为定位“发给自己”的同步消息。'
+        }
+      }
+      if (item.targetSource === undefined) throw new Error('未找到对应的同步消息入口，请重试')
+      if (onOpenRecord !== undefined) { if (notice === undefined) onOpenRecord(item); else onOpenRecord(item, notice); return }
+      arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis, item.recordOwnerUserId)
+    } catch (error) { if (revision === requestId.current) setRecordError(errorMessage(error)) }
+  }, [onOpenRecord, onOpenDshSession, onClose])
 
   const selectTag = useCallback((tagText: string) => {
     const nextQuery = arkmeHashTagSearchQuery(tagText)
@@ -535,11 +573,19 @@ export function ArkmeSearchSurface({
   const hasQuery = query.trim() !== ''
   const recordItems = records?.items ?? []
   const recordingItems = recordings?.items ?? []
-  const sourceItems = records?.sourceAggregates ?? []
-  const dshItems = dshMessages?.items ?? []
+  const syncedDshRecords = recordItems.filter(isDshAgentInputRecord)
+  const dshSourceUids = new Set(syncedDshRecords.map(item => item.sourceUid))
+  const sourceItems = (records?.sourceAggregates ?? []).filter(item => !dshSourceUids.has(item.sourceUid))
+  const dshById = new Map((dshMessages?.items ?? []).map(item => [item.sessionId, item]))
+  for (const item of syncedDshRecords) {
+    const sessionId = syncedDshKey(item)
+    if (!dshById.has(sessionId)) dshById.set(sessionId, { sessionId, title: item.dshOrigin === undefined ? 'DSH 历史同步消息' : item.title || item.textContent.slice(0, 60) || 'DSH 同步输入', snippet: item.snippet, updatedAtMillis: item.sendAtMillis })
+  }
+  const dshItems = [...dshById.values()]
+  const selectedDshRecords = syncedDshRecords.filter(item => (syncedDshKey(item)) === selectedDshSessionId)
+  const selectedDsh = dshItems.find(item => item.sessionId === selectedDshSessionId)
   const resultTabs: Array<[SearchResultTab, string]> = [
     ['records', '快记'], ['topics', '主题'], ['recordings', '录音·转写'],
-    ...(searchDshMessages === undefined ? [] : [['dsh', 'DSH'] as [SearchResultTab, string]]),
   ]
   const searchResults = <>
     <nav style={styles.resultTabs} aria-label="全局搜索结果类型">
@@ -550,18 +596,17 @@ export function ArkmeSearchSurface({
     </nav>
     <div style={{ ...styles.resultFrame, ...(variant === 'dialog' ? { flex: 1 } : {}) }}>
       {resultTab === 'records' ? <div style={{ height: '100%', overflowY: 'auto' }} aria-label="快记搜索结果">
-        {searchLoading.records && <div style={styles.status} role="status" aria-label="正在搜索快记">正在更新快记结果…</div>}
-        <h3 style={styles.resultHeader}>{String(records?.itemCount ?? recordItems.length)}个关联快记</h3>
+        <h3 style={styles.resultHeader}><span>{records === undefined ? '关联快记' : `${String(records.itemCount ?? recordItems.length)}个关联快记`}</span>{searchLoading.records && <span style={styles.searchProgress} role="status" aria-label="正在搜索快记">搜索中…</span>}</h3>
         {recordError !== '' && <div style={styles.error}>快记暂不可用：{recordError}</div>}
         {recordItems.length > 0 ? <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>
           : !searchLoading.records && <Status loading={false} empty />}
       </div> : resultTab === 'topics' ? <div style={styles.sourceLayout} aria-label="主题搜索结果">
         <div style={styles.sourceList}>
-          {searchLoading.records && <div style={styles.status} role="status" aria-label="正在搜索主题">正在更新主题结果…</div>}
-          <h3 style={styles.resultHeader}>{String(sourceItems.length)}个关联主题</h3>
+          <h3 style={styles.resultHeader}><span>{records === undefined && dshMessages === undefined ? '关联主题' : `${String(sourceItems.length + dshItems.length)}个关联主题`}</span>{(searchLoading.records || searchLoading.dsh) && <span style={styles.searchProgress} role="status" aria-label="正在搜索主题">搜索中…</span>}</h3>
           {recordError !== '' && <div style={styles.error}>主题暂不可用：{recordError}</div>}
-          {sourceItems.length === 0 ? !searchLoading.records && <Status loading={false} empty /> : sourceItems.map(item => {
-            const active = selectedSourceUid === item.sourceUid
+          {sourceItems.length === 0 && dshItems.length === 0 && !searchLoading.records && !searchLoading.dsh && <Status loading={false} empty />}
+          {sourceItems.map(item => {
+            const active = selectedDshSessionId === '' && selectedSourceUid === item.sourceUid
             return <button key={`${String(item.sourceKind)}:${item.sourceUid}`} type="button" style={{ ...styles.sourceRow, ...(active ? styles.sourceRowActive : {}) }} title="单击查看关联快记，双击打开会话" onClick={() => { void chooseSource(item.sourceUid, item.sourceKind) }} onDoubleClick={() => { void openSource(item.sourceUid, item.sourceKind) }} onKeyDown={event => {
               if (event.key === 'Enter') { event.preventDefault(); void openSource(item.sourceUid, item.sourceKind) }
             }}>
@@ -570,26 +615,40 @@ export function ArkmeSearchSurface({
               <span style={styles.meta}>{item.matchedRecordCountExact ? item.matchedRecordCount : `约 ${String(item.matchedRecordCount)}`}条关联快记</span>
             </button>
           })}
+          {dshError !== '' && <div style={styles.error}>DSH 任务暂不可用：{dshError}</div>}
+          {dshItems.map(item => <button
+            key={`dsh:${item.sessionId}`} type="button"
+            style={{ ...styles.sourceRow, ...(selectedDshSessionId === item.sessionId ? styles.sourceRowActive : {}) }}
+            title="单击查看匹配摘要，双击打开 DSH 对话"
+            onClick={() => chooseDshSession(item.sessionId)}
+            onDoubleClick={() => openDshSession(item.sessionId)}
+            onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); openDshSession(item.sessionId) } }}
+          >
+            {selectedDshSessionId === item.sessionId && <span style={styles.sourceMarker} />}
+            <span style={styles.rowTop}><strong style={{ ...styles.title, minWidth: 0 }}>{item.title}</strong><span style={styles.dshBadge}>DSH</span></span>
+            <span style={styles.meta}>{dateTimeLabel(item.updatedAtMillis)}</span>
+          </button>)}
         </div>
         <div style={styles.sourceResults}>
           <h3 style={styles.resultHeader}>记录详情</h3>
-          {selectedSourceUid === '' ? <div style={styles.sourcePrompt}>选择一个主题查看关联快记</div>
+          {selectedDsh !== undefined ? <div style={styles.list}>
+            {selectedDshRecords.length > 0 ? <>
+              {selectedDshRecords.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { void openRecord(item) }} onTagClick={selectTag} />)}
+              {records?.hasMore && <span style={styles.meta}>当前仅显示本页匹配记录。</span>}
+            </> : <>
+              <button type="button" style={styles.row} onClick={() => openDshSession(selectedDsh.sessionId)}>{selectedDsh.snippet}</button>
+              <span style={styles.meta}>当前 DSH 暂不支持从搜索结果定位具体消息，点击摘要可打开对话。</span>
+            </>}
+          </div> : selectedSourceUid === '' ? <div style={styles.sourcePrompt}>选择一个主题查看关联快记</div>
             : sourceLoading ? <Status loading />
               : sourceRecords.length > 0 ? <div style={styles.list}>{sourceRecords.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>
                 : <Status loading={false} empty />}
         </div>
-      </div> : resultTab === 'recordings' ? <div style={{ height: '100%', overflowY: 'auto' }} aria-label="录音转写搜索结果">
-        {searchLoading.recordings && <div style={styles.status} role="status" aria-label="正在搜索录音·转写">正在更新录音·转写结果…</div>}
-        <h3 style={styles.resultHeader}>{String(recordingItems.length)}个关联录音</h3>
+      </div> : <div style={{ height: '100%', overflowY: 'auto' }} aria-label="录音转写搜索结果">
+        <h3 style={styles.resultHeader}><span>{recordings === undefined ? '关联录音' : `${String(recordingItems.length)}个关联录音`}</span>{searchLoading.recordings && <span style={styles.searchProgress} role="status" aria-label="正在搜索录音·转写">搜索中…</span>}</h3>
         {recordingError !== '' && <div style={styles.error}>录音·转写暂不可用：{recordingError}</div>}
         {recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingRow key={`${item.sessionId}:${String(item.startAtMillis)}`} item={item} />)}</div>
           : !searchLoading.recordings && <Status loading={false} empty />}
-      </div> : <div style={{ height: '100%', overflowY: 'auto' }} aria-label="DSH 搜索结果">
-        {searchLoading.dsh && <div style={styles.status} role="status" aria-label="正在搜索 DSH">正在更新 DSH 结果…</div>}
-        <h3 style={styles.resultHeader}>{String(dshItems.length)}个关联DSH任务</h3>
-        {dshError !== '' && <div style={styles.error}>DSH 任务暂不可用：{dshError}</div>}
-        {dshItems.length > 0 ? <div style={styles.list}>{dshItems.map(item => <DshMessageRow key={item.sessionId} item={item} onClick={() => onOpenDshSession?.(item.sessionId)} />)}</div>
-          : !searchLoading.dsh && <Status loading={false} empty />}
       </div>}
     </div>
   </>

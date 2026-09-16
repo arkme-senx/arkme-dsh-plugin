@@ -1170,3 +1170,12 @@ describe('Arkme SDK', () => {
     await expect(sdk.state()).rejects.toBeInstanceOf(ArkmeClientError)
   })
 })
+
+it('exposes server search with DSH identity and cancellation to external consumers', async () => {
+ const signal = new AbortController().signal
+ const fetchImpl = vi.fn(async (_input: unknown, _init?: RequestInit) => JSON.parse(String(_init?.body)).operation === 'provider.capabilities' ? success({ contractVersion: 1, features: { remoteRecordSearch: true } }) : success({ items: [{ recordUid: 'r', dshOrigin: { sessionId: 's', eventSeq: 7 } }], hasMore: false }))
+ const sdk = createArkmeSdk({ fetchImpl })
+ const result = await sdk.searchRemote('武汉', { limit: 10, signal })
+ expect(result.items[0]?.dshOrigin).toEqual({ sessionId: 's', eventSeq: 7 })
+ expect(JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body))).toEqual({ operation: 'search.records', params: { query: '武汉', limit: 10 } })
+})

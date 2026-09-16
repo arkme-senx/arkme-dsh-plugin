@@ -1,6 +1,12 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import { apply } from '../src/client/harness-session-client.js'
+import { openEmbeddedDshSession } from '../src/client/DeepSeekHarnessSurface.js'
+import { HARNESS_SESSION_NAVIGATION_KEY, type HarnessSessionWindow } from '../src/harness-embed-contract.js'
+import { apply, inject } from '../src/client/harness-session-client.js'
+
+it('declares both public remote services required by Cordis property access', () => {
+  expect(inject).toEqual(expect.arrayContaining(['remote', 'remote.session']))
+})
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
@@ -33,9 +39,10 @@ it('reports the iframe public selection, coalesces list events, clears on hide a
     return { ok: true }
   })
   vi.stubGlobal('fetch', fetcher)
+  const open = vi.fn()
   apply({
     effect: (effect: () => () => undefined) => { stop = effect() },
-    sessions: { list: {
+    sessions: { open, list: {
       getSnapshot: () => ({ current }),
       subscribe: (callback: () => undefined) => { changed = callback; return unsubscribe },
     } },
@@ -76,8 +83,51 @@ it('reports the iframe public selection, coalesces list events, clears on hide a
   lifecycle.dispatchEvent(new Event('pageshow'))
   await vi.advanceTimersByTimeAsync(0)
   expect(JSON.parse(fetcher.mock.calls.at(-1)![1]!.body as string).params.sessionRef).toBe('session-B')
+  const querySelector = document.querySelector
+  document.querySelector = () => ({ contentWindow: window }) as unknown as ReturnType<typeof querySelector>
+  openEmbeddedDshSession('session-target')
+  expect(open).toHaveBeenCalledExactlyOnceWith('session-target')
+  expect(() => openEmbeddedDshSession('')).toThrow('DSH 对话标识无效')
+  open.mockImplementationOnce(() => { throw new Error('unknown session') })
+  expect(() => openEmbeddedDshSession('missing')).toThrow('unknown session')
   stop()
+  expect((window as HarnessSessionWindow)[HARNESS_SESSION_NAVIGATION_KEY]).toBeUndefined()
+  expect(() => openEmbeddedDshSession('session-target')).toThrow('DSH 对话尚未就绪')
   await vi.advanceTimersByTimeAsync(0)
   expect(unsubscribe).toHaveBeenCalledOnce(); expect(disconnect).toHaveBeenCalledOnce()
   expect(vi.getTimerCount()).toBe(0)
+})
+
+it('mounts local navigation without remote reporting and removes it on dispose', () => {
+  const open = vi.fn()
+  let stop!: () => void
+  vi.stubGlobal('window', { frameElement: { parentElement: { getAttribute: () => 'deepseek-harness-surface' } } })
+  vi.stubGlobal('document', { querySelector: () => null })
+  const fetcher = vi.fn()
+  vi.stubGlobal('fetch', fetcher)
+  apply({ effect: (effect: () => () => void) => { stop = effect() }, sessions: { open } } as unknown as ClientContext)
+  const navigation = (window as HarnessSessionWindow)[HARNESS_SESSION_NAVIGATION_KEY]!
+  navigation.open('local-task')
+  expect(open).toHaveBeenCalledExactlyOnceWith('local-task')
+  expect(fetcher).not.toHaveBeenCalled()
+  stop()
+  expect((window as HarnessSessionWindow)[HARNESS_SESSION_NAVIGATION_KEY]).toBeUndefined()
+})
+
+it('distinguishes missing local sessions from failed Remote lists and silent refresh failures', async () => {
+  let byId: Record<string, object> = { local: {} }
+  const refresh = vi.fn(async () => {})
+  const list = vi.fn(async () => ({ ok: true, value: { items: [{ sessionId: 'local' }] } }))
+  vi.stubGlobal('window', { frameElement: { parentElement: { getAttribute: () => 'deepseek-harness-surface' } } })
+  vi.stubGlobal('document', { querySelector: () => null })
+  apply({ effect: (fn: () => unknown) => fn(), remote: { session: { list } }, sessions: { refresh, list: { getSnapshot: () => ({ phase: 'ready', byId }) } } } as unknown as ClientContext)
+  const bridge = (window as HarnessSessionWindow)[HARNESS_SESSION_NAVIGATION_KEY]!
+  await expect(bridge.has('local')).resolves.toBe(true)
+  await expect(bridge.has('other-machine')).resolves.toBe(false)
+  byId = {}
+  await expect(bridge.has('local')).rejects.toThrow('尚未就绪')
+  list.mockResolvedValueOnce({ ok: false, error: { message: '读取失败' } } as never)
+  await expect(bridge.has('other-machine')).rejects.toThrow('读取失败')
+  list.mockRejectedValueOnce(new Error('offline'))
+  await expect(bridge.has('other-machine')).rejects.toThrow('offline')
 })

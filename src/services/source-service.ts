@@ -1239,10 +1239,12 @@ export class SourceService {
     }, options.signal))
   }
 
-  async selfTarget(signal?: AbortSignal): Promise<ArkmeSourceItem> {
+  async selfTarget(signal?: AbortSignal, includeDshInput = false): Promise<ArkmeSourceItem> {
     signal?.throwIfAborted()
     const { userId } = await this.runtime.requireSession()
-    const target = await this.selfTargetForAccount(userId)
+    const target = includeDshInput
+      ? { sourceRef: await this.sealSourceRef(userId, 'send_to_self', 'all:dsh-input', '发给自己'), kind: 'send_to_self' as const, displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 }
+      : await this.selfTargetForAccount(userId)
     signal?.throwIfAborted()
     return target
   }

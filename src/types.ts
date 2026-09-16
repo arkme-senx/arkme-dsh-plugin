@@ -989,7 +989,14 @@ export interface ArkmeImageSearchResult {
   queryGuard: ArkmeSearchQueryGuard
 }
 
+export interface ArkmeDshInputOrigin {
+  sessionId: string
+  eventSeq: number
+}
+
 export interface ArkmeSearchRecordItem {
+  /** Original DSH user input identity, when retained by the sync producer. */
+  dshOrigin?: ArkmeDshInputOrigin
   recordUid: string
   /** Record owner required by Chat's exact timeline locator; never the current viewer. */
   recordOwnerUserId?: RecordOwnerId
@@ -1189,6 +1196,7 @@ export interface ArkmeProviderCapabilities {
     topicHomeVisibility?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     groupSelfNickname?: true
+    remoteRecordSearch?: true
     contactDirectoryReads?: true
     sourceTimeline: true
     /** Forward snapshots include typed transcripts and account-bound attachment references. */
@@ -3428,6 +3436,7 @@ export type ArkmePluginOperation =
   | 'records.cache'
   | 'records.refresh'
   | 'records.search'
+  | 'search.records'
   | 'records.list'
   | 'records.tags.list'
   | 'records.tags.query'
@@ -3656,7 +3665,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
   | 'recordings.speaker.assign-item'
-  | 'search.records'
   | 'search.scene'
   | 'search.recordings'
   | 'search.history'

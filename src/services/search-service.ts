@@ -1,3 +1,5 @@
+import { resolveDshSearchOrigins } from '../dsh-search-origins.js'
+import { dshAgentInputRecordUid } from '../dsh-agent-input-sync.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type {
@@ -28,6 +30,8 @@ function booleanValue(value: unknown): boolean { return value === true }
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 
 export class SearchService {
+  localDshQuery?: () => unknown
+
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly record: RecordService,
@@ -81,7 +85,9 @@ export class SearchService {
       options.signal,
       { lane: 'interactive-read' },
     )
-    return await this.withNavigationTargets(this.recordSearchResult(data, lockedRecordUids), options.signal, options.sourceRef)
+    const result = this.recordSearchResult(data, lockedRecordUids)
+    result.items = await resolveDshSearchOrigins(this.localDshQuery?.(), query, result.items, options.signal)
+    return await this.withNavigationTargets(result, options.signal, options.sourceRef)
   }
 
   /** Query the canonical record-tag projection used by Flutter's tag search. */
@@ -309,9 +315,11 @@ export class SearchService {
         sourceByKey.set(key, undefined)
       }
     }
+    const dshTarget = result.items.some(item => item.creationSource === 3) ? await this.source.selfTarget(signal, true) : undefined
     return {
       ...result,
       items: result.items.map(item => {
+        if (item.creationSource === 3 && dshTarget !== undefined) return { ...item, targetSource: dshTarget }
         const sourceUid = item.sourceUid ?? item.routeTargetUid ?? ''
         const targetSource = sourceByKey.get(`${String(item.sourceKind)}:${sourceUid}`)
         return targetSource === undefined ? item : { ...item, targetSource }
@@ -487,6 +495,13 @@ export class SearchService {
     const sourceTitle = stringValue(topic.title ?? chat.title).trim()
     const creationSource = Math.trunc(numberValue(core.creation_source ?? item.creation_source))
     const recordOwnerUserId = recordOwnerId(core.owner_user_id)
+    const origin = objectValue(core.dsh_origin)
+    const sessionId = stringValue(origin.session_id).trim()
+    const eventSeq = origin.event_seq
+    const dshOrigin = creationSource === 3 && /^[A-Za-z0-9_.:-]{1,256}$/.test(sessionId)
+      && typeof eventSeq === 'number' && Number.isSafeInteger(eventSeq) && eventSeq >= 0
+      && dshAgentInputRecordUid(sessionId, eventSeq) === recordUid
+      ? { sessionId, eventSeq } : undefined
     return {
       recordUid,
       ...(recordOwnerUserId !== 0 ? { recordOwnerUserId } : {}),
@@ -502,6 +517,7 @@ export class SearchService {
       ...(numberValue(core.template_kind) <= 0 ? {} : { templateKind: Math.trunc(numberValue(core.template_kind)) }),
       ...(numberValue(core.display_kind) <= 0 ? {} : { displayKind: Math.trunc(numberValue(core.display_kind)) }),
       ...(creationSource <= 0 ? {} : { creationSource: creationSource }),
+      ...(dshOrigin === undefined ? {} : { dshOrigin }),
       ...(sourceTitle === '' ? {} : { sourceTitle }),
       media,
       files,

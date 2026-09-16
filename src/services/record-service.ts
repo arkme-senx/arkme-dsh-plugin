@@ -1410,6 +1410,7 @@ export class RecordService {
     recordUid: string,
     textContent: string,
     sendAtMillis: number,
+    origin?: import('../types.js').ArkmeDshInputOrigin,
   ): Promise<ArkmeCreateTextResult> {
     const session = await this.runtime.requireSession()
     const normalizedUid = recordUid.trim()
@@ -1431,6 +1432,7 @@ export class RecordService {
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/dsh-agent-input/create',
       {
+        ...(origin === undefined ? {} : { extra: { dsh_origin: { session_id: origin.sessionId, event_seq: origin.eventSeq } } }),
         record_uid: normalizedUid,
         template_kind: 1,
         title: '',
