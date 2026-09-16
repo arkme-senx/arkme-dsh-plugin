@@ -541,7 +541,7 @@ describe('ContactDirectoryService', () => {
 
     setSession(session)
     await expect(service.contactProfile(contactRef)).resolves.toEqual({
-      contactRef, displayName: '同事', nickname: '林林', remark: '同事', accountName: 'lin-lin', avatarRef: 'avatar-ref-88',
+      contactRef, worldUserId: 88, displayName: '同事', nickname: '林林', remark: '同事', accountName: 'lin-lin', avatarRef: 'avatar-ref-88',
     })
     await service.contactWorld(contactRef, { limit: 10, offset: 5 })
     expect(world.listUserWorldFeed).toHaveBeenCalledWith(88, { limit: 10, offset: 5 })

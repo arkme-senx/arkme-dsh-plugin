@@ -1,7 +1,39 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmeUiController } from '../src/client/ui-controller.js'
+import { arkmeContactsTab } from '../src/client/redesign/contacts/contacts-tab-store.js'
 
 describe('ArkmeUiController', () => {
+  it('returns from a contact personal World to that contact, while other personal Worlds return to World', () => {
+    const controller = new ArkmeUiController()
+    arkmeContactsTab.activateAccount('return-world-test')
+    try {
+      controller.showContacts()
+      arkmeContactsTab.select({ kind: 'contact', contactRef: 'contact-a' })
+      controller.showContactWorld({ userId: 88, contactRef: 'contact-a', displayName: 'Lucis' })
+      controller.backFromWorld()
+      expect(controller.getViewSnapshot()).toMatchObject({ mode: 'source', productMode: 'contacts' })
+      expect(controller.getViewSnapshot().worldTarget).toBeUndefined()
+      expect(arkmeContactsTab.getSnapshot().selection).toEqual({ kind: 'contact', contactRef: 'contact-a' })
+      controller.showUserWorld({ userId: 12, displayName: 'Other' })
+      controller.backFromWorld()
+      expect(controller.getViewSnapshot().mode).toBe('world')
+      expect(controller.getViewSnapshot().productMode).toBeUndefined()
+      expect(controller.getViewSnapshot().worldTarget).toBeUndefined()
+    } finally {
+      arkmeContactsTab.activateAccount(undefined)
+    }
+  })
+  it('navigates from contacts to a personal World using an opaque contact reference', () => {
+    const controller = new ArkmeUiController()
+    controller.showContacts()
+    controller.showContactWorld({ userId: 88, contactRef: 'contact-a', displayName: 'Lucis' })
+    expect(controller.getViewSnapshot()).toMatchObject({ mode: 'world', worldTarget: { contactRef: 'contact-a', displayName: 'Lucis' } })
+    expect(controller.getViewSnapshot().productMode).toBeUndefined()
+    controller.showContactWorld({ userId: 88, contactRef: 'contact-b', displayName: 'Lucis' })
+    expect(controller.getViewSnapshot().worldTarget).toMatchObject({ contactRef: 'contact-b' })
+    controller.showWorld()
+    expect(controller.getViewSnapshot().worldTarget).toBeUndefined()
+  })
   it('updates the private-chat header when only the peer membership changes', () => {
     const controller = new ArkmeUiController()
     const source = { sourceRef: 'private-1', kind: 'private_chat' as const, displayName: '同事', activeAtMillis: 0, unreadCount: 0, peerMemberType: 'svip' as const }

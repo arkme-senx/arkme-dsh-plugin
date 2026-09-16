@@ -9,6 +9,7 @@ import type {
   ArkmeWorldFeedPage,
 } from '../src/types.js'
 import { DirectoryDetailPane } from '../src/client/redesign/contacts/DirectoryDetailPane.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 import {
   ContactDetailCoordinator,
   ContactProfileDetail,
@@ -36,6 +37,7 @@ const identityA: ContactDetailIdentity = { accountKey: 'account-a', contactRef: 
 const identityB: ContactDetailIdentity = { accountKey: 'account-a', contactRef: 'contact-b', generation: 2 }
 
 const profile: ArkmeDirectoryContactProfile = {
+  worldUserId: 88,
   contactRef: 'contact-a', displayName: '周小满', nickname: '小满', remark: '项目伙伴', avatarRef: 'avatar-ref',
 }
 
@@ -277,6 +279,42 @@ describe('contact detail presentation', () => {
 })
 
 describe('ContactDetailCoordinator', () => {
+  it('does not offer a personal World entry without a loaded public quick note', () => {
+    for (const items of [[], [{ ...worldItem('article'), templateKind: 8 }]]) {
+      const state = contactWorldReducer(createContactWorldState(identityA), {
+        type: 'world-success', identity: identityA, mode: 'replace', page: page(items),
+      })
+      const markup = renderToStaticMarkup(<ContactWorldList state={state} onRetry={() => undefined} onLoadMore={() => undefined} onOpenWorld={() => undefined} />)
+      expect(markup).toContain('暂无公开快记')
+      expect(markup).not.toContain('查看个人世界')
+    }
+    const state = { ...createContactWorldState(identityA), status: 'loading' as const, loadingMode: 'replace' as const, items: [worldItem('note')] }
+    expect(renderToStaticMarkup(<ContactWorldList state={state} onRetry={() => undefined} onLoadMore={() => undefined} onOpenWorld={() => undefined} />)).not.toContain('查看个人世界')
+  })
+
+  it('opens the selected contact personal World from the summary row without expanding an inline list', async () => {
+    const openWorld = vi.spyOn(arkmeUi, 'showContactWorld').mockImplementation(() => {})
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => {
+        renderer = create(<ContactProfileDetail accountKey="account-a" contactRef="contact-a"
+          onSelectionCleared={() => undefined} onSourceActivated={() => undefined}
+          loadProfile={async () => profile}
+          loadWorld={async () => page([worldItem('note-a'), worldItem('note-b')])}
+        />)
+        await tick()
+      })
+      await act(async () => { renderer.root.findByProps({ 'aria-label': '查看个人世界' }).props.onClick() })
+      expect(openWorld).toHaveBeenCalledWith({ contactRef: 'contact-a', userId: 88, displayName: profile.displayName, avatarRef: profile.avatarRef })
+      expect(renderer.root.findAllByType('article')).toHaveLength(1)
+      expect(rendererText(renderer)).not.toContain('查看全部世界')
+      expect(rendererText(renderer)).not.toContain('加载更多')
+    } finally {
+      await act(async () => { renderer?.unmount() })
+      openWorld.mockRestore()
+    }
+  })
+
   it('starts profile and first World requests in parallel with only contactRef payload identity', async () => {
     const profileResult = deferred<ArkmeDirectoryContactProfile>()
     const worldResult = deferred<ArkmeWorldFeedPage>()

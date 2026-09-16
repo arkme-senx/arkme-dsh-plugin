@@ -175,6 +175,7 @@ export class ContactDirectoryService {
     this.contactRefs.set(contactRef.trim(), updated)
     return {
       contactRef: contactRef.trim(),
+      worldUserId: entry.targetUserId,
       displayName: updated.displayName,
       nickname: updated.nickname,
       remark: updated.remark,
@@ -218,6 +219,7 @@ export class ContactDirectoryService {
     const current = this.contactRefs.get(contactRef.trim()) ?? entry
     return {
       contactRef: contactRef.trim(), remark: savedRemark,
+      worldUserId: entry.targetUserId,
       displayName: savedRemark || current.nickname || current.accountName || current.displayNameSnapshot || '联系人',
       nickname: current.nickname,
       ...(current.accountName === undefined ? {} : { accountName: current.accountName }),

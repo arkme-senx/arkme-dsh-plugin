@@ -216,6 +216,8 @@ export type ArkmeTeamJoinResult =
 
 export interface ArkmeDirectoryContactProfile {
   contactRef: string
+  /** Public World/catalog identity, matching the marketplace author navigation target. */
+  worldUserId?: number
   displayName: string
   nickname: string
   remark: string

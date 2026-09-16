@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import type { ArkmeWorldFeedItem, ArkmeWorldFeedPage } from '../../../types.js'
 import { loadWorldImageDataUrl } from '../../ArkmeWorldSurface.js'
 import { ArkmeRichText } from '../../ArkmeRichText.js'
@@ -138,10 +139,12 @@ export function ContactWorldList({
   state,
   onRetry,
   onLoadMore,
+  onOpenWorld,
 }: {
   state: ContactWorldState
   onRetry(): void
   onLoadMore(): void
+  onOpenWorld?(): void
 }) {
   const initialLoading = state.status === 'loading' && state.loadingMode === 'replace'
   const latest = state.items.filter(isContactQuickNote).reduce<ArkmeWorldFeedItem | undefined>((current, item) => (
@@ -149,6 +152,9 @@ export function ContactWorldList({
   ), undefined)
   const imageRef = latest?.imageRefs[0]
   return <section className="arkme-contact-world" aria-label="联系人世界">
+    {onOpenWorld !== undefined && latest !== undefined && !initialLoading && <button type="button" className="arkme-contact-world-open" aria-label="查看个人世界" onClick={onOpenWorld}>
+      <CaretRight size={18} aria-hidden />
+    </button>}
     <h2 className="arkme-contact-world-title">世界</h2>
     <div className="arkme-contact-world-content">
       {initialLoading && <div role="status" className="arkme-contact-world-status">正在加载 TA 的世界…</div>}
