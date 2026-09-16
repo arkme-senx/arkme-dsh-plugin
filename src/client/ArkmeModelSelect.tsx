@@ -29,6 +29,8 @@ export function ArkmeModelSelect({ directory, locked, available }: {
   const id = useId()
   const group = state.groups.find(item => item.id === state.current?.provider)
   const model = group?.models.find(item => item.id === state.current?.model)
+  // Catalog membership is advisory: a saved exact route can remain usable after delisting.
+  const modelName = model?.name ?? (state.current ? `${group?.name ?? state.current.provider} / ${state.current.model}` : '选择模型')
   const reasoning = model?.reasoning
   const effort = state.current?.reasoningEffort ?? reasoning?.defaultEffort
   const effortLabel = reasoning?.efforts.find(item => item.id === effort)?.name ?? effort ?? '默认'
@@ -70,10 +72,10 @@ export function ArkmeModelSelect({ directory, locked, available }: {
       onBlur={event => { if (event.relatedTarget instanceof Node && !root.current?.contains(event.relatedTarget)) close() }}>
       <style>{css}</style>
       <button ref={trigger} type="button" className="arkme-model-trigger" disabled={locked}
-        aria-label={`选择模型：${model?.name ?? '选择模型'}`} aria-haspopup="menu" aria-expanded={pane !== null}
+        aria-label={`选择模型：${modelName}`} aria-haspopup="menu" aria-expanded={pane !== null}
         aria-controls={pane === null ? undefined : id}
         onClick={() => { if (pane !== null) close(); else { setPane('model'); reload() } }}>
-        <span>{model?.name ?? '选择模型'}</span>{reasoning && <small> · {effortLabel}</small>}<span aria-hidden>⌄</span>
+        <span>{modelName}</span>{(reasoning || effort) && <small> · {effortLabel}</small>}<span aria-hidden>⌄</span>
       </button>
       {pane !== null && <div id={id} className="arkme-model-menu" role="menu" aria-label="模型选择" aria-busy={state.status === 'loading' || busy}>
         {pane === 'effort' ? <>

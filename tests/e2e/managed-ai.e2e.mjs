@@ -27,7 +27,7 @@ describe('Managed AI complete browser-to-ledger chain', () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme managed ai '))
     const results = []
     let scenario = ''
-    let scaffold, browser
+    let scaffold, browser, page
     const proxy = createServer({ key: await readFile(process.env.ARKME_E2E_TLS_KEY), cert: await readFile(process.env.NODE_EXTRA_CA_CERTS) }, async (req, res) => {
       try {
         const chunks = []
@@ -61,22 +61,35 @@ describe('Managed AI complete browser-to-ledger chain', () => {
       await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'arkme-model-e2e', name: '@senguoyun/dsh-arkme', config }] }]))
       scaffold = await launchWebScaffold({ extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'package.json')], compareReplaySession: false })
       expect(await scaffold.ctx.get('arkmeData').testLogin(42)).toMatchObject({ status: 'authenticated', userId: 42 })
+      const models = await scaffold.ctx.get('llm').listModels('arkme-managed')
+      expect(models.map(model => model.id)).toEqual(['arkme-flash-e2e'])
+      expect(models[0].description).toBe('基础价（CNY/百万 Token）：缓存命中 0.04，未命中 2，输出 8；平台服务费 3.75%')
+      const saved = await scaffold.ctx.get('llm').resolveModelInfo('arkme-managed', 'deepseek-v4-flash')
+      expect(saved.id).toBe('deepseek-v4-flash')
+      expect(saved.description).toBe(models[0].description)
+      await scaffold.ctx.get('agentDefaultModel').saveSelection({ provider: 'arkme-managed', model: saved.id, reasoningEffort: 'high' })
       browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
-      const page = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: 'en-US' })
+      page = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: 'en-US' })
       await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
       const frameElement = await page.waitForSelector('iframe[title="DeepSeek Harness"]')
       const frame = await frameElement.contentFrame()
       await connectFreshWorkspace(frame, scaffold.workspaceCwd)
-      const trigger = frame.getByRole('button', { name: /^Select model, current/ })
+      const trigger = frame.getByRole('button', { name: /^选择模型：/ })
+      await expect.poll(() => trigger.getAttribute('aria-label')).toContain('deepseek-v4-flash')
       await trigger.click()
-      await frame.getByRole('menuitem', { name: /^Model\b/ }).click()
-      await frame.getByRole('menuitemradio', { name: 'Managed Alias E2E' }).click()
-      await expect.poll(() => trigger.getAttribute('aria-label')).toContain('Managed Alias E2E')
+      await frame.getByText(models[0].description, { exact: true }).waitFor()
+      if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT.replace(/\.png$/, '-menu.png') })
+      await trigger.click()
       const input = frame.locator('[data-composer-input]').first()
       const cases = process.env.JOTMO_MANAGED_AI_BROWSER_LIVE === '1'
         ? [['live', 'Reply with exactly MODEL_PROXY_E2E_OK and stop.']]
-        : [['success', 'E2E_SUCCESS'], ['wrong-model', 'E2E_REJECT_MODEL'], ['missing-usage', 'E2E_MISSING_USAGE'], ['recovery', 'E2E_RECOVERY']]
+        : [['saved', 'E2E_SUCCESS'], ['success', 'E2E_SUCCESS'], ['wrong-model', 'E2E_REJECT_MODEL'], ['missing-usage', 'E2E_MISSING_USAGE'], ['recovery', 'E2E_RECOVERY']]
       for (const [label, prompt] of cases) {
+        if (label === 'success' || label === 'live') {
+          await trigger.click()
+          await frame.getByRole('menuitemradio', { name: /^Managed Alias E2E/ }).click()
+          await expect.poll(() => trigger.getAttribute('aria-label')).toContain('Managed Alias E2E')
+        }
         scenario = label
         const before = results.length
         await input.fill(prompt)
@@ -86,7 +99,7 @@ describe('Managed AI complete browser-to-ledger chain', () => {
         await expect.poll(() => results.length).toBe(before + 1)
         expect(results.at(-1).status).toBe(label === 'wrong-model' ? 502 : 200)
         expect(results.at(-1).request_uid).toMatch(/^[0-9a-f-]{36}$/)
-        if (label === 'success' || label === 'recovery' || label === 'live') await frame.getByText('MODEL_PROXY_E2E_OK', { exact: true }).last().waitFor()
+        if (label === 'saved' || label === 'success' || label === 'recovery' || label === 'live') await frame.getByText('MODEL_PROXY_E2E_OK', { exact: true }).last().waitFor()
         if (label === 'wrong-model') {
           await frame.getByText('SERVER', { exact: true }).waitFor()
           await frame.getByText('Arkme AI 服务暂不可用，请稍后重试', { exact: true }).waitFor()
@@ -101,6 +114,10 @@ describe('Managed AI complete browser-to-ledger chain', () => {
       }
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
       await writeFile(process.env.ARKME_MANAGED_AI_RESULT, JSON.stringify(results))
+    } catch (error) {
+      if (page && process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
+      if (page) for (const frame of page.frames()) console.info('Failure UI:', (await frame.locator('body').innerText().catch(() => '')).slice(0, 8000))
+      throw error
     } finally {
       await browser?.close()
       await scaffold?.ctx.get('arkmeData')?.logout().catch(() => {})

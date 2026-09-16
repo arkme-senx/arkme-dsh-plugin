@@ -80,6 +80,58 @@ function managedCatalogResponse(items: unknown = MANAGED_CATALOG_ITEMS): Respons
 }
 
 describe('Arkme managed model adapter', () => {
+  it('keeps hidden historical IDs callable through the public DSH runtime', async () => {
+    const official = {
+      ...MANAGED_CATALOG_ITEMS[0], listed: true, display_name: 'DeepSeek V4.1 Flash（官方）',
+      pricing: { cache_hit_input_nano_per_token: '40', cache_miss_input_nano_per_token: '2000', output_nano_per_token: '8000' },
+      charge_policy: { service_fee_basis_points: 375 },
+    }
+    const hidden = { ...official, listed: false, public_model_code: 'saved-vision-id' }
+    const bailian = { ...MANAGED_CATALOG_ITEMS[3], public_model_code: 'deepseek-v4.1-flash-bailian',
+      display_name: 'DeepSeek V4.1 Flash（百炼）', listed: true,
+      pricing: { ...official.pricing, cache_hit_input_nano_per_token: '200' }, charge_policy: { service_fee_basis_points: 0 } }
+    const ctx = new Context()
+    const llm = await ctx.plugin(LlmRuntime)
+    try {
+      registerManagedAiProvider(ctx, {
+        intelligentBaseUrl: 'https://intelligent.test',
+        credentialOwner: { resolveManagedAccessCredential: async () => new SecretValue('arkme-access') },
+        fetchImpl: async () => managedCatalogResponse([official, hidden, MANAGED_CATALOG_ITEMS[3], bailian]),
+      })
+      const models = await ctx.llm.listModels(ARKME_MANAGED_PROVIDER)
+      expect(models.map(model => model.id)).toEqual(['deepseek-v4-flash', 'deepseek-v4-flash-bailian', 'deepseek-v4.1-flash-bailian'])
+      expect(models[0].description).toBe('基础价（CNY/百万 Token）：缓存命中 0.04，未命中 2，输出 8；平台服务费 3.75%')
+      expect(models[2].description).toBe('基础价（CNY/百万 Token）：缓存命中 0.2，未命中 2，输出 8；平台服务费 0%')
+      const historical = await ctx.llm.resolveModelInfo(ARKME_MANAGED_PROVIDER, 'saved-vision-id')
+      expect(historical.id).toBe('saved-vision-id')
+      expect(historical.description).toBe(models[0].description)
+      expect(historical.reasoning?.efforts.map(effort => String(effort.id))).toEqual(['off', 'low', 'high', 'max'])
+    } finally { await llm.dispose() }
+  })
+
+  it.each([
+    { pricing: undefined, charge_policy: undefined },
+    { pricing: { cache_hit_input_nano_per_token: '0.04' }, charge_policy: { service_fee_basis_points: 500 } },
+    { pricing: { cache_hit_input_nano_per_token: '40', cache_miss_input_nano_per_token: '2000', output_nano_per_token: '8000' }, charge_policy: { service_fee_basis_points: -1 } },
+  ])('does not invent prices or block saved routes for incomplete presentation metadata', async metadata => {
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: { resolveManagedAccessCredential: async () => new SecretValue('arkme-access') },
+      fetchImpl: async () => managedCatalogResponse([{ ...MANAGED_CATALOG_ITEMS[0], ...metadata }]),
+    })
+    expect((await adapter.listModels(ARKME_MANAGED_PROVIDER))[0].description).toBeUndefined()
+    expect((await adapter.resolveModel(ARKME_MANAGED_PROVIDER, ARKME_MANAGED_MODEL)).id).toBe(ARKME_MANAGED_MODEL)
+  })
+
+  it('rejects malformed listing semantics instead of treating strings as booleans', async () => {
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: { resolveManagedAccessCredential: async () => new SecretValue('arkme-access') },
+      fetchImpl: async () => managedCatalogResponse([{ ...MANAGED_CATALOG_ITEMS[0], listed: 'false' }]),
+    })
+    await expect(adapter.listModels(ARKME_MANAGED_PROVIDER)).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+  })
+
   it.each(MANAGED_CATALOG_ITEMS)('exposes exact route reasoning for $public_model_code', async item => {
     const adapter = createManagedAiLlmAdapter({
       intelligentBaseUrl: 'https://intelligent.test',
