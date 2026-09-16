@@ -617,8 +617,17 @@ function snapshotDetailFromChatRaw(raw: Record<string, unknown>, fallback: { ite
   ])
   const captureContext = timelineCaptureContext(values)
   const locationCapture = snapshotLocationCapture({ ...location, ...position, ...objectValue(values.position) })
+  // Match Flutter PositionDetail's city/county names and its road + POI suffix.
+  const areaLabel = [
+    firstSnapshotText(position.city)?.replace(/市$/, ''),
+    firstSnapshotText(position.county)?.replace(/(区|县|市)$/, ''),
+  ].filter(Boolean).join('·')
+  const positionLabel = [
+    areaLabel,
+    firstSnapshotText(position.road), firstSnapshotText(position.poi, position.poi_name, position.poiName),
+  ].join('')
   const locationLabel = firstSnapshotText(
-    position.poi, position.poi_name, position.poiName, position.address, position.road,
+    positionLabel, position.address,
     location.poi_name, location.poiName, location.address, location.name,
   )
   const weather = snapshotWeatherText(position.weather, position.weatherText, location.weather, values.weather)

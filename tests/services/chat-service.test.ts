@@ -1044,6 +1044,36 @@ describe('ChatService', () => {
     )
   })
 
+  it.each([
+    [{ city: '杭州市', county: '西湖区', road: '文一西路', poi: '某某大厦' }, {}, '杭州·西湖文一西路某某大厦'],
+    [{ city: ' 杭州市 ', county: '西湖区', road: ' ', poi_name: '某某大厦' }, {}, '杭州·西湖某某大厦'],
+    [{ road: '文一西路', poiName: '某某大厦' }, {}, '文一西路某某大厦'],
+    [{ city: '杭州市', county: '西湖区' }, {}, '杭州·西湖'],
+    [{ city: '杭州市', county: '桐庐县' }, {}, '杭州·桐庐'],
+    [{ city: '杭州市', county: '建德市' }, {}, '杭州·建德'],
+    [{ city: '北京市' }, {}, '北京'],
+    [{ county: '西湖区', road: '文一西路' }, {}, '西湖文一西路'],
+    [{ city: 'Hong Kong', county: 'Central' }, {}, 'Hong Kong·Central'],
+    [{ address: '完整地址' }, {}, '完整地址'],
+    [{ city: ' ', poi: '' }, { name: '记录位置' }, '记录位置'],
+    [{}, {}, undefined],
+  ])('preserves Flutter location detail and legacy fallbacks: %j', async (position, location, expected) => {
+    const runtime = {
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async () => ({ item: {
+        relation: { record_uid: 'record-snapshot-1' }, record: { record_uid: 'record-snapshot-1' },
+      } })),
+      authenticatedPost: vi.fn(async (path: string) => path.endsWith('/context/get')
+        ? { position_detail: position }
+        : { record_core: { record_uid: 'record-snapshot-1', text_content: '快记' }, location }),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+    const detail = await chat.messageSnapshotDetail('opaque-source', snapshotActionRef())
+    expect(detail.locationLabel).toBe(expected)
+  })
+
   it('uses the signed chat relation to load the complete mounted record snapshot', async () => {
     const runtime = {
       config: { maxTextLength: 20_000 },
