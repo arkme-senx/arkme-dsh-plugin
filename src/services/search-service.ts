@@ -315,11 +315,9 @@ export class SearchService {
         sourceByKey.set(key, undefined)
       }
     }
-    const dshTarget = result.items.some(item => item.creationSource === 3) ? await this.source.selfTarget(signal, true) : undefined
     return {
       ...result,
       items: result.items.map(item => {
-        if (item.creationSource === 3 && dshTarget !== undefined) return { ...item, targetSource: dshTarget }
         const sourceUid = item.sourceUid ?? item.routeTargetUid ?? ''
         const targetSource = sourceByKey.get(`${String(item.sourceKind)}:${sourceUid}`)
         return targetSource === undefined ? item : { ...item, targetSource }

@@ -6842,6 +6842,7 @@ export function ArkmeSurface({
               selectedSource={selectedSource}
               trigger="none"
               onSelect={activateSelfSource}
+              onSelectionRefreshed={updateSourceProjection}
               onSelectionInvalidated={invalidateTopicSelection}
               onSelfSourcesResolution={acceptSelfSourcesResolution}
               onCreateWarning={message => { showMessageActionStatus(message, false) }}

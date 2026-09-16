@@ -88,14 +88,14 @@ describe('record re-edit attachment UI', () => {
     })
   }
 
-  it('pages a self-message target with an owner ID beyond the initial page', async () => {
-    const self: ArkmeSourceItem = { kind: 'send_to_self', sourceRef: 'self-dsh-ref', displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 }
+  it.each([1, 3])('pages a topic target with an owner ID beyond the initial page: kind %s', async topicKind => {
+    const self: ArkmeSourceItem = { kind: 'topic', topicKind, sourceRef: 'topic-ref', displayName: '主题', activeAtMillis: 0, unreadCount: 0 }
     const base = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, params) => operation === 'source.timeline'
       ? params?.cursor
         ? { source: self, items: [{ ...item, itemUid: 'old-dsh-input' }], hasMore: false }
         : { source: self, items: [item], hasMore: true, nextCursor: { sendAtMillis: 123, itemUid: 'newest' } }
-      : operation === 'sources.list' ? { items: [{ ...self, sourceRef: 'ordinary-self' }], hasMore: false } : base(operation, params))
+      : operation === 'sources.list' ? { items: [self], hasMore: false } : base(operation, params))
     await mount()
     await act(async () => { arkmeUi.showConversationTarget(self, 'old-dsh-input', 1, 42); await flush() })
     await act(async () => { await flush() })

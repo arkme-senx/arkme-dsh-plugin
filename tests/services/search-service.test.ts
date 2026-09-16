@@ -271,18 +271,18 @@ describe('SearchService', () => {
   })
 })
 
-it('retains only verified DSH identities and uses the self-message fallback target', async () => {
+it('retains only verified DSH identities and preserves the ordinary topic target', async () => {
  const id = dshAgentInputRecordUid('session-1', 7)
  const runtime = new ServiceRuntime(config, { async read() { return { userId: 42, accessToken: 'a', refreshToken: 'r' } }, async write() {}, async delete() {} }, {} as StateStore,
    async () => new Response(JSON.stringify({ code: 0, data: { items: [id, 'forged'].map(record_uid => ({ record_uid, source_kind: 2, source_uid: 'system:dsh', record_core: { creation_source: 3, text_content: '武汉', dsh_origin: { session_id: 'session-1', event_seq: 7 } } })), source_aggregates: [] } })))
- const targetSource = { sourceRef: 'self', kind: 'send_to_self', displayName: '发给自己' }
- const selfTarget = vi.fn(async () => targetSource)
- const service = new SearchService(runtime, {} as never, {} as never, { searchTargetSource: async () => undefined, selfTarget } as unknown as SourceService, { lockedRecordUids: async () => new Set() } as never)
+ const targetSource = { sourceRef: 'topic', kind: 'topic', displayName: 'DSH Agent Input' }
+ const searchTargetSource = vi.fn(async () => targetSource)
+ const service = new SearchService(runtime, {} as never, {} as never, { searchTargetSource } as unknown as SourceService, { lockedRecordUids: async () => new Set() } as never)
  const result = await service.searchRemote({ query: '武汉', limit: 20 })
  expect(result.items[0]).toMatchObject({ recordUid: id, dshOrigin: { sessionId: 'session-1', eventSeq: 7 }, targetSource })
  expect(result.items[1]).not.toHaveProperty('dshOrigin')
- expect(selfTarget).toHaveBeenCalledTimes(1)
- expect(selfTarget).toHaveBeenCalledWith(undefined, true)
+ expect(searchTargetSource).toHaveBeenCalledTimes(1)
+ expect(searchTargetSource).toHaveBeenCalledWith(2, 'system:dsh', '', undefined)
 })
 
 it('enriches legacy remote results through the shared local DSH query owner', async () => {

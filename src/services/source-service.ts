@@ -1239,12 +1239,10 @@ export class SourceService {
     }, options.signal))
   }
 
-  async selfTarget(signal?: AbortSignal, includeDshInput = false): Promise<ArkmeSourceItem> {
+  async selfTarget(signal?: AbortSignal): Promise<ArkmeSourceItem> {
     signal?.throwIfAborted()
     const { userId } = await this.runtime.requireSession()
-    const target = includeDshInput
-      ? { sourceRef: await this.sealSourceRef(userId, 'send_to_self', 'all:dsh-input', '发给自己'), kind: 'send_to_self' as const, displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 }
-      : await this.selfTargetForAccount(userId)
+    const target = await this.selfTargetForAccount(userId)
     signal?.throwIfAborted()
     return target
   }
@@ -2038,6 +2036,7 @@ export class SourceService {
         },
       ),
       ...(sourceKey === undefined ? {} : { sourceKey }),
+      ...(source.kind === 'topic' ? { topicHierarchyKey: await this.topicHierarchyKey(source.userId, source.ownerRef) } : {}),
       kind: source.kind,
       displayName: source.displayName,
       activeAtMillis: source.conversationListActivityAtMillis ?? 0,

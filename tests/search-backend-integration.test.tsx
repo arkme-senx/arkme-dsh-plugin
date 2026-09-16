@@ -8,6 +8,7 @@ import { createArkmeHostApi } from '../src/host-api.js'
 import { dshAgentInputRecordUid } from '../src/dsh-agent-input-sync.js'
 import { ArkmeSearchSurface, RecordRow } from '../src/client/ArkmeSearchSurface.js'
 import { ArkmeSdk } from '../src/sdk/index.js'
+import { arkmeSourceIdentityKey } from '../src/client/source-identity.js'
 
 const bridge = vi.hoisted(() => ({ call: vi.fn(), has: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: bridge.call, ArkmeClientError: class extends Error {} }))
@@ -37,7 +38,7 @@ it.skipIf(!process.env.ARKME_RECORD_E2E_URL)('search UI and SDK cross the real H
     intelligentBaseUrl: base.origin, audioBaseUrl: base.origin, requestTimeoutMs: 5000, maxTextLength: 20000,
     geetestCaptchaId: 'fixture' } satisfies ArkmeServiceConfig
   const service = new ArkmeService(config, { read: async () => session, write: async () => {}, delete: async () => {} },
-    { uniqueCode: async () => 'isolated-search-e2e' } as never)
+    { uniqueCode: async () => 'isolated-search-e2e', cachedSnapshot: async () => undefined } as never)
   const server = createServer(createArkmeHostApi(service, { expectedPort: 0 }))
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
   const address = server.address() as { port: number }
@@ -47,7 +48,11 @@ it.skipIf(!process.env.ARKME_RECORD_E2E_URL)('search UI and SDK cross the real H
   try {
     const hits = await sdk.searchRemote(query, { limit: 20 })
     expect(hits.items[0]?.dshOrigin).toEqual({ sessionId, eventSeq: 7 })
-    expect(hits.items[0]?.targetSource?.kind).toBe('send_to_self')
+    expect(hits.items[0]?.targetSource?.kind).toBe('topic')
+    const directory = await service.listSources('send_to_self', { limit: 100 })
+    const target = hits.items[0]!.targetSource!
+    expect(target.topicHierarchyKey).toBeTruthy()
+    expect(directory.items.some(item => item.kind === 'topic' && arkmeSourceIdentityKey(item) === arkmeSourceIdentityKey(target))).toBe(true)
     bridge.has.mockResolvedValue(false)
     bridge.call.mockImplementation(async (operation, params, signal) => {
       const response = await fetchHost('/arkme-self/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation, params }), signal })
@@ -57,6 +62,8 @@ it.skipIf(!process.env.ARKME_RECORD_E2E_URL)('search UI and SDK cross the real H
     })
     const opened = vi.fn(async (item) => {
       const page = await bridge.call('source.timeline', { sourceRef: item.targetSource.sourceRef, limit: 100 })
+      expect(page.source.kind).toBe('topic')
+      expect(page.source.topicKind).toBe(3)
       expect(page.items.some((row: { itemUid: string }) => row.itemUid === recordUid)).toBe(true)
     })
     vi.stubGlobal('window', { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,

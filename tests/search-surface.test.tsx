@@ -919,7 +919,7 @@ describe('Arkme search surface', () => {
 it.each(['local', 'remote', 'legacy', 'error'] as const)('opens the local DSH conversation from a synced record: %s', async mode => {
  const record = { ...arkmeResults().items[0]!, creationSource: 3, sourceKind: 2, sourceUid: 'system:dsh',
    ...(mode === 'legacy' ? {} : { dshOrigin: { sessionId: 'native-session', eventSeq: 7 } }),
-   targetSource: { sourceRef: 'self-target', kind: 'send_to_self', displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 } }
+   targetSource: { sourceRef: 'topic-target', kind: 'topic', displayName: 'DSH Agent Input', activeAtMillis: 0, unreadCount: 0 } }
  mocks.hasDsh.mockImplementation(async () => { if (mode === 'error') throw new Error('列表读取失败'); return mode === 'local' })
  mocks.callArkme.mockImplementation(async (operation: string) => operation === 'search.records'
    ? { ...arkmeResults(), items: [record], sourceAggregates: [{ ...arkmeResults().sourceAggregates[0], sourceKind: 2, sourceUid: 'system:dsh', title: 'DSH Agent Input' }] }

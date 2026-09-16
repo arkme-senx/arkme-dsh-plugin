@@ -2148,7 +2148,6 @@ export class ChatService {
         const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/home/feed/query',
           {
-            ...(source.ownerRef === 'all:dsh-input' ? { include_dsh_agent_input: true } : {}),
             limit,
             source_kinds: [1, 2],
             ...(options.cursor?.sendAtMillis === undefined ? {} : { cursor_send_at: options.cursor.sendAtMillis }),

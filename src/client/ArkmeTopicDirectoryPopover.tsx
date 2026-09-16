@@ -29,6 +29,7 @@ export interface ArkmeTopicDirectoryPopoverProps {
   selectedSource: ArkmeSourceItem | undefined
   trigger?: 'button' | 'none'
   onSelect(source: ArkmeSourceItem): void
+  onSelectionRefreshed?(source: ArkmeSourceItem): void
   onSelectionInvalidated(): void
   onCreateWarning(message: string): void
   onSelfSourcesResolution(userId: number, resolution: ArkmeSelfSourcesResolution): void
@@ -59,9 +60,7 @@ export function reconcileArkmeTopicSelection(
   selectedSource: ArkmeSourceItem | undefined,
   loaded: ArkmeSourceItem[],
 ): ArkmeTopicSelectionReconciliation {
-  // Aggregate sources can carry a narrower signed query scope (for example DSH fallback).
-  // Refreshing the topic directory must not replace that scope or clear its pending target.
-  if (selectedSource === undefined || selectedSource.kind === 'send_to_self') return { status: 'aggregate' }
+  if (selectedSource === undefined) return { status: 'aggregate' }
   const source = reconcileSelectedSource(selectedSource, loaded)
   return source === undefined ? { status: 'invalid' } : { status: 'selected', source }
 }
@@ -187,7 +186,7 @@ function cacheWithTopics(
 }
 
 export function ArkmeTopicDirectoryPopover({
-  userId, selectedSource, trigger = 'button', onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateWarning, onCreateTopicReady, retryRevision,
+  userId, selectedSource, trigger = 'button', onSelect, onSelectionRefreshed = onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateWarning, onCreateTopicReady, retryRevision,
 }: ArkmeTopicDirectoryPopoverProps) {
   const initialCache = useMemo(() => readNavigationCache(userId), [userId])
   const requestRef = useRef<AbortController>()
@@ -259,7 +258,7 @@ export function ArkmeTopicDirectoryPopover({
       const reconciliation = reconcileArkmeTopicSelection(currentSelected, loaded)
       if (reconciliation.status === 'selected') {
         selectedSourceRef.current = reconciliation.source
-        onSelect(reconciliation.source)
+        onSelectionRefreshed(reconciliation.source)
         persist(loaded, reconciliation.source.sourceRef)
       } else if (reconciliation.status === 'invalid') {
         selectedSourceRef.current = undefined
@@ -288,7 +287,7 @@ export function ArkmeTopicDirectoryPopover({
       if (!controller.signal.aborted) setBusy(false)
       if (requestRef.current === controller) requestRef.current = undefined
     }
-  }, [onSelfSourcesResolution, onSelect, onSelectionInvalidated, persist, userId])
+  }, [onSelfSourcesResolution, onSelectionRefreshed, onSelectionInvalidated, persist, userId])
 
   useEffect(() => {
     void load()

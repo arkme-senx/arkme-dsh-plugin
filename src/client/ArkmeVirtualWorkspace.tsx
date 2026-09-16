@@ -1282,7 +1282,7 @@ export function ArkmeNavigation({
         ? reconcileSelectedSource(selected ?? cachedSelected, loaded)
           ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
         : undefined
-      if (restored !== undefined) arkmeUi.selectSource(restored)
+      if (restored !== undefined && !arkmeUi.updateSelectedSourceProjection(restored)) arkmeUi.selectSource(restored)
       persistCache({
         directory: next,
         sources: { [next]: loaded },
@@ -1467,7 +1467,7 @@ export function ArkmeNavigation({
     const restored = activeRef.current && ui.mode === 'source'
       ? reconcileSelectedSource(selected ?? cachedSelected, loaded)
       : undefined
-    if (restored !== undefined) arkmeUi.selectSource(restored)
+    if (restored !== undefined && !arkmeUi.updateSelectedSourceProjection(restored)) arkmeUi.selectSource(restored)
     persistCache({
       directory: 'root',
       sources: { root: loaded },
