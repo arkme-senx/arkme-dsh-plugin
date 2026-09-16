@@ -32,6 +32,18 @@ afterEach(async () => {
 })
 
 describe('login-only DSH remote Host API and SDK', () => {
+  it('reports the missing runtime dependency only when remote Host is unavailable', async () => {
+    const reason = vi.fn(() => 'DSH 远控缺少服务：typertGateway')
+    await expect(dispatchArkmeHostOperation(service, 'remote.getStatus', {},
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, reason))
+      .rejects.toMatchObject({ code: 'CAPABILITY_UNSUPPORTED', message: 'DSH 远控缺少服务：typertGateway' })
+    reason.mockClear()
+    await expect(dispatchArkmeHostOperation(service, 'remote.getStatus', {},
+      undefined, undefined, undefined, undefined, undefined, remoteHost(), undefined, undefined, undefined, reason))
+      .resolves.toEqual(status)
+    expect(reason).not.toHaveBeenCalled()
+  })
+
   it('exposes status and desktop rename but no pairing/authorization operations', async () => {
     const host = remoteHost()
     await expect(dispatchArkmeHostOperation(service, 'remote.getStatus', {}, undefined, undefined, undefined, undefined, undefined, host))

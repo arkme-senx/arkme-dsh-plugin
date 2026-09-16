@@ -871,6 +871,7 @@ export interface ArkmeHostApiOptions {
   extensionInstallTasks?: () => ArkmeExtensionInstallTasks | undefined
   ownedExtensionInventory?: () => ArkmeOwnedExtensionInventory | undefined
   remoteHost?: () => DshRemoteHostFacade | undefined
+  remoteUnavailableReason?: () => string
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>
   openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>
   teamService?: TeamServicePort
@@ -931,6 +932,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.desktopQuarantine,
         options.openApiMcpController,
         options.teamService,
+        options.remoteUnavailableReason,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -975,6 +977,7 @@ export async function dispatchArkmeHostOperation(
   desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>,
   openApiMcpController?: Pick<ManagedOpenApiMcpController, 'status' | 'retry'>,
   teamService?: TeamServicePort,
+  remoteUnavailableReason?: () => string,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': {
@@ -1094,9 +1097,9 @@ export async function dispatchArkmeHostOperation(
       })),
       requestSignal,
     )
-    case 'remote.currentSession': return await requireRemoteHost(remoteHost).currentSession()
+    case 'remote.currentSession': return await requireRemoteHost(remoteHost, remoteUnavailableReason).currentSession()
     case 'remote.reportCurrentSession': {
-      const host = requireRemoteHost(remoteHost)
+      const host = requireRemoteHost(remoteHost, remoteUnavailableReason)
       host.reportCurrentSession({
         accountId: stringParam(params, 'accountId'),
         windowRef: stringParam(params, 'windowRef'),
@@ -1105,8 +1108,8 @@ export async function dispatchArkmeHostOperation(
       })
       return { accepted: true }
     }
-    case 'remote.getStatus': return requireRemoteHost(remoteHost).getStatus()
-    case 'remote.renameDesktop': return await requireRemoteHost(remoteHost).renameDesktop(stringParam(params, 'displayName'))
+    case 'remote.getStatus': return requireRemoteHost(remoteHost, remoteUnavailableReason).getStatus()
+    case 'remote.renameDesktop': return await requireRemoteHost(remoteHost, remoteUnavailableReason).renameDesktop(stringParam(params, 'displayName'))
     case 'billing.quota': return await service.billingQuota()
     case 'billing.products': return await service.billingProducts()
     case 'billing.order.create': return await service.createBillingOrder({
@@ -2437,8 +2440,8 @@ function requireUpdateManager(
   return updateManager
 }
 
-function requireRemoteHost(host: DshRemoteHostFacade | undefined): DshRemoteHostFacade {
-  if (host === undefined) throw new ArkmePluginError('CAPABILITY_UNSUPPORTED', '当前 DSH 未加载远控 Host', false, 503)
+function requireRemoteHost(host: DshRemoteHostFacade | undefined, reason?: () => string): DshRemoteHostFacade {
+  if (host === undefined) throw new ArkmePluginError('CAPABILITY_UNSUPPORTED', reason?.() ?? '当前 DSH 未加载远控 Host', false, 503)
   return host
 }
 

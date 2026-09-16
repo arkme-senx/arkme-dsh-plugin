@@ -75,6 +75,7 @@ import { registerArkmeExtensionTools } from './tools/extensions/index.js'
 import { registerArkmeTools } from './tools/index.js'
 import type { ArkmeToolProfile } from './tools/index.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE, type ArkmeEnvironment } from './types.js'
+import { createDshGatewayApi, type DshGatewayLike, type DshConnectionLike } from './dsh-remote/gateway-api.js'
 import { DshApiProxyAdapter, type DshPublicApiProxyLike } from './dsh-remote/api-proxy-adapter.js'
 import { DshRemoteCommandLedger } from './dsh-remote/command-ledger.js'
 import { DshRemoteHttpControlPlane } from './dsh-remote/control-plane.js'
@@ -498,13 +499,14 @@ export function apply(ctx: Context, config: Config): void {
       tasks.dispose()
     }, 'dsh-arkme: marketplace dynamic runner bridge')
   })
-  ctx.inject(['apiProxy'], apiCtx => {
+  const attachRemoteApi = (apiCtx: Context, publicApi: DshPublicApiProxyLike) => {
+    if (remoteHost !== undefined) return
     const agentDefaultModel = apiCtx.get('agentDefaultModel') as {
       currentSelection?: () => unknown
     } | undefined
     const sessionPersistence = apiCtx.get('sessionPersistence') as DshRemoteSessionPersistenceLike | undefined
     const apiProxy = new DshApiProxyAdapter(
-      apiCtx.apiProxy as unknown as DshPublicApiProxyLike,
+      publicApi,
       {
         ...(typeof agentDefaultModel?.currentSelection !== 'function'
           ? {}
@@ -616,6 +618,20 @@ export function apply(ctx: Context, config: Config): void {
         await diagnostics.close()
       }
     }, 'dsh-arkme: DSH remote Host lifecycle')
+  }
+  ctx.inject(['apiProxy'], apiCtx => {
+    attachRemoteApi(apiCtx, apiCtx.apiProxy)
+  })
+  ctx.inject(['typertGateway', 'sessionController', 'workspaceController', 'connection'], apiCtx => {
+    if (apiCtx.get('apiProxy') !== undefined) return
+    const lifetime = new AbortController()
+    apiCtx.effect(() => () => { lifetime.abort() }, 'arkme: DSH Gateway API lifetime')
+    attachRemoteApi(apiCtx, createDshGatewayApi(
+      apiCtx,
+      apiCtx.get('typertGateway') as DshGatewayLike,
+      apiCtx.get('connection') as DshConnectionLike,
+      lifetime.signal,
+    ))
   })
   const handler = createArkmeHostApi(service, {
     expectedPort: ctx.webServer.port,
@@ -625,6 +641,14 @@ export function apply(ctx: Context, config: Config): void {
     extensionInstallTasks: () => extensionInstallTasks,
     ownedExtensionInventory: () => ownedExtensionInventory,
     remoteHost: () => remoteHost,
+    remoteUnavailableReason: () => {
+      if (!config.dshRemoteFeatureEnabled) return 'DSH 远控功能未启用'
+      const missing = ['typertGateway', 'sessionController', 'workspaceController', 'connection']
+        .filter(name => ctx.get(name) === undefined)
+      return ctx.get('apiProxy') === undefined && missing.length > 0
+        ? `DSH 远控缺少服务：${missing.join(', ')}（旧版 apiProxy 也不可用）`
+        : 'DSH 远控 Host 正在初始化或初始化失败，请检查 Host 日志'
+    },
     desktopQuarantine,
     openApiMcpController,
     teamService,
