@@ -6,7 +6,7 @@ DSH 原生搜索结果并入“主题”，不再提供独立 Tab。单击查看
 
 同步接口不写 extra.dsh_origin，后端不存储、解析或返回该来源字段。插件也不消费旧服务可能返回的字段。DSH 同步仍使用既有确定性记录 UID，写入协议保持原样。
 
-同步快记搜索由共享 SearchService 使用官方 sessionQuery.listSessions/filterEvents 读取本地 user/message 事件，用 session ID 与事件序号重算 record UID，精确匹配后仅在当前结果中附带 dshOrigin。不会按文本相似度猜测，不重写历史数据。本机能确认会话存在则打开原对话；无法关联或本机不存在时，使用记录原 topic 目标定位同步快记，并提示实际原因。
+同步快记搜索由共享 SearchService 使用官方 sessionQuery.listSessions/filterEvents 读取本地 user/message 事件，用 session ID 与事件序号重算 record UID，精确匹配后仅在当前结果中附带 dshOrigin。不会按文本相似度猜测，不重写历史数据。本机能确认会话存在则打开原对话；无法关联或本机不存在时，使用记录原 topic 目标定位同步快记。
 
 局部本地查询失败不阻断远端搜索；未完整核验标记 dshOriginUnverified，不冒充不存在。按时间倒序串行读取，5 秒期限后不再发起下一次扫描；官方单次 filterEvents 无中途取消能力。调用者取消继续向上传递。
 
@@ -18,7 +18,7 @@ DSH 原生搜索结果并入“主题”，不再提供独立 Tab。单击查看
 
 ## 展示与公开能力
 
-防抖等待期即显示加载提示，提示覆盖在结果区域正中央，不占布局；保留已有结果。DSH badge 在标题后。已移除底部静态提示。
+防抖等待期即显示加载提示，提示覆盖在结果区域正中央，不占布局；保留已有结果。DSH badge 在标题后。已移除跳转说明 toast 与消息定位能力说明；实际失败仍显示错误。
 
 官方 dsh-v0.1.5-rc.2 的 sessions.open 只能打开对话，未提供按消息序号加载、滚动、高亮的公开接口；本机只打开原对话，不访问私有组件或 DOM。
 

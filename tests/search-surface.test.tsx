@@ -600,7 +600,7 @@ describe('Arkme search surface', () => {
     act(() => { dshRow?.props.onClick() })
     expect(openDshSession).not.toHaveBeenCalled()
     expect(content(renderer.toJSON())).toContain('请整理发布会讲稿')
-    expect(content(renderer.toJSON())).toContain('当前 DSH 暂不支持从搜索结果定位具体消息')
+    expect(content(renderer.toJSON())).not.toContain('当前 DSH 暂不支持从搜索结果定位具体消息')
     const preventDefault = vi.fn()
     act(() => {
       if (mode === 'Enter') dshRow?.props.onKeyDown({ key: 'Enter', preventDefault })
@@ -931,6 +931,6 @@ it.each(['local', 'remote', 'legacy', 'error'] as const)('opens the local DSH co
  await act(async () => { renderer.root.findAllByType('button').find(button => content(button.props.children).includes('发布会快记'))?.props.onClick(); await Promise.resolve() })
  if (mode === 'local') { expect(onOpenDshSession).toHaveBeenCalledWith('native-session'); expect(onOpenRecord).not.toHaveBeenCalled() }
  else if (mode === 'error') { expect(onOpenRecord).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled(); expect(content(renderer.toJSON())).toContain('列表读取失败') }
- else { expect(onOpenRecord).toHaveBeenCalledWith(record, expect.stringContaining(mode === 'legacy' ? '本机未找到' : '本机没有')); expect(onOpenDshSession).not.toHaveBeenCalled() }
+ else { expect(onOpenRecord).toHaveBeenCalledWith(record); expect(onOpenDshSession).not.toHaveBeenCalled() }
  act(() => renderer.unmount())
 })

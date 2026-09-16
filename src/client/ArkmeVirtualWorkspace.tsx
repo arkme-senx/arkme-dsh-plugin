@@ -896,12 +896,6 @@ export function ArkmeNavigation({
   active = true, wide = true, compactDirectory = false, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
   lockedDirectory = false, sendToSelfSource, directoryLead, onCreateTask, searchDshMessages, onOpenDshSession, renderSlot,
 }: ArkmeNavigationProps) {
-  const [searchNavigationNotice, setSearchNavigationNotice] = useState('')
-  useEffect(() => {
-    if (searchNavigationNotice === '') return
-    const timer = window.setTimeout(() => setSearchNavigationNotice(''), 8000)
-    return () => window.clearTimeout(timer)
-  }, [searchNavigationNotice])
   const activeRef = useRef(active)
   activeRef.current = active
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
@@ -2255,16 +2249,14 @@ export function ArkmeNavigation({
       submitting={topicCreateSubmitting} error={topicCreateError}
       onCancel={cancelTopicCreate} onConfirm={title => { void submitTopicCreate(title) }}
     />}
-    {active && searchNavigationNotice !== '' && <div role="status" style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 11000, padding: '12px 20px', borderRadius: 10, background: '#25272b', color: '#fff' }}>{searchNavigationNotice}</div>}
     {active && globalSearchOpen && typeof document !== 'undefined' && createPortal(<ArkmeGlobalSearchDialog
       {...(ui.searchTarget === undefined ? {} : {
         initialQuery: ui.searchTarget.query,
         initialQueryRevision: ui.searchTarget.revision,
       })}
       {...(searchDshMessages === undefined ? {} : { searchDshMessages })}
-      onOpenRecord={(item, notice) => {
+      onOpenRecord={item => {
         if (item.targetSource === undefined) return
-        setSearchNavigationNotice(notice ?? '')
         closeGlobalSearch()
         arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis, item.recordOwnerUserId)
       }}

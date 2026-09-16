@@ -120,7 +120,7 @@ export interface ArkmeSearchSurfaceProps {
   initialQueryRevision?: number
   searchDshMessages?: (query: string, signal: AbortSignal) => Promise<ArkmeDshMessageSearchResult>
   onOpenDshSession?: (sessionId: string) => void
-  onOpenRecord?: (item: ArkmeSearchRecordItem, notice?: string) => void
+  onOpenRecord?: (item: ArkmeSearchRecordItem) => void
   onClose?: () => void
 }
 
@@ -514,7 +514,6 @@ export function ArkmeSearchSurface({
   const openRecord = useCallback(async (item: ArkmeSearchRecordItem) => {
     const revision = requestId.current
     try {
-      let notice: string | undefined
       if (isDshAgentInputRecord(item)) {
         if (item.dshOrigin !== undefined) {
           const local = await hasEmbeddedDshSession(item.dshOrigin.sessionId)
@@ -525,13 +524,10 @@ export function ArkmeSearchSurface({
             onClose?.()
             return
           }
-          notice = '本机没有此 DSH 对话，改为定位所属主题中的同步快记。'
-        } else {
-          notice = item.dshOriginUnverified ? '暂未能完整核验本机会话，改为定位所属主题中的同步快记。' : '本机未找到此快记对应的 DSH 会话，改为定位所属主题中的同步快记。'
         }
       }
       if (item.targetSource === undefined) throw new Error('未找到对应的同步消息入口，请重试')
-      if (onOpenRecord !== undefined) { if (notice === undefined) onOpenRecord(item); else onOpenRecord(item, notice); return }
+      if (onOpenRecord !== undefined) { onOpenRecord(item); return }
       arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis, item.recordOwnerUserId)
     } catch (error) { if (revision === requestId.current) setRecordError(errorMessage(error)) }
   }, [onOpenRecord, onOpenDshSession, onClose])
@@ -646,7 +642,6 @@ export function ArkmeSearchSurface({
               {records?.hasMore && <span style={styles.meta}>当前仅显示本页匹配记录。</span>}
             </> : <>
               <button type="button" style={styles.row} onClick={() => openDshSession(selectedDsh.sessionId)}>{selectedDsh.snippet}</button>
-              <span style={styles.meta}>当前 DSH 暂不支持从搜索结果定位具体消息，点击摘要可打开对话。</span>
             </>}
           </div> : selectedSourceUid === '' ? <div style={styles.sourcePrompt}>选择一个主题查看关联快记</div>
             : sourceLoading ? <Status loading />
