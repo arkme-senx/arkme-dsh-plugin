@@ -1,3 +1,4 @@
+import { adaptSessionPersistence } from './dsh-remote/session-persistence.js'
 import { currentDesktopSessionTool } from './dsh-remote/current-session-tool.js'
 import { HARNESS_SESSION_CLIENT_PATH } from './harness-embed-contract.js'
 import { readInstalledPluginVersion } from './plugin-update.js'
@@ -80,7 +81,7 @@ import { DshApiProxyAdapter, type DshPublicApiProxyLike } from './dsh-remote/api
 import { DshRemoteCommandLedger } from './dsh-remote/command-ledger.js'
 import { DshRemoteHttpControlPlane } from './dsh-remote/control-plane.js'
 import { createDefaultDshRemoteSocket } from './dsh-remote/default-socket-factory.js'
-import { ArkmeRemoteRealtimeHost, type DshRemoteSessionPersistenceLike } from './dsh-remote/host.js'
+import { ArkmeRemoteRealtimeHost } from './dsh-remote/host.js'
 import { ArkmeRemoteRealtimeTransport, type DshRemoteSocketLike } from './dsh-remote/realtime-transport.js'
 import { DshRemoteRuntimeStore } from './dsh-remote/runtime-store.js'
 import { DshRemoteRuntimeSecretBroker } from './dsh-remote/runtime-secret-broker.js'
@@ -504,7 +505,7 @@ export function apply(ctx: Context, config: Config): void {
     const agentDefaultModel = apiCtx.get('agentDefaultModel') as {
       currentSelection?: () => unknown
     } | undefined
-    const sessionPersistence = apiCtx.get('sessionPersistence') as DshRemoteSessionPersistenceLike | undefined
+    const sessionPersistence = adaptSessionPersistence(apiCtx.get('sessionPersistence'))
     const apiProxy = new DshApiProxyAdapter(
       publicApi,
       {

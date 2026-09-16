@@ -1,3 +1,4 @@
+import { adaptSessionPersistence } from '../src/dsh-remote/session-persistence.js'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -614,9 +615,9 @@ describe('Host login-only registration lifecycle', () => {
     await host.stop()
   })
 
-  it('requeues only Backend-known cold sessions and checkpoints the stable DSH revision', async () => {
+  it.each(['legacy', 'handles'])('requeues only Backend-known cold sessions and checkpoints the stable DSH revision (%s)', async api => {
     const outbox = historyOutbox()
-    const readFrom = vi.fn(async (sessionRef: string) => ({
+    const readFrom = vi.fn(async (sessionRef: string, _offset: number, _signal: AbortSignal) => ({
       meta: { id: sessionRef },
       events: [
         historyEvent('session/start', 0),
@@ -624,6 +625,20 @@ describe('Host login-only registration lifecycle', () => {
         historyEvent('turn/start', 4), historyEvent('turn/end', 5),
       ],
     }))
+    const snapshots = [
+      { header: { id: 'session-01' }, revision: 'revision-1' },
+      { header: { id: 'session-from-another-account' }, revision: 'revision-x' },
+    ]
+    const close = vi.fn(async () => {})
+    const persistence = api === 'legacy' ? { listSnapshots: async () => snapshots, readFrom } : {
+      list: async () => snapshots,
+      open: async (id: string) => ({
+        header: { id },
+        read: async (offset: number, _length: unknown, options: { signal: AbortSignal }) =>
+          readFrom(id, offset, options.signal),
+        close,
+      }),
+    }
     const knownHistorySessions = vi.fn(async () => ({ session_refs: ['session-01'] }))
     const { host } = await fixture({
       turnUploadForAccount: () => outbox as unknown as DshRemoteTurnUploadOutbox,
@@ -632,13 +647,7 @@ describe('Host login-only registration lifecycle', () => {
         backfill_mode: 'local_persistence_v1', content_encoding: 'gzip', max_object_bytes: 1024,
       }),
       knownHistorySessions,
-      sessionPersistence: {
-        listSnapshots: async () => [
-          { header: { id: 'session-01' }, revision: 'revision-1' },
-          { header: { id: 'session-from-another-account' }, revision: 'revision-x' },
-        ],
-        readFrom,
-      },
+      sessionPersistence: adaptSessionPersistence(persistence)!,
       yieldToEventLoop: async () => undefined,
     })
     await host.start()
@@ -663,6 +672,7 @@ describe('Host login-only registration lifecycle', () => {
     await expect(internal.backfillOneHistorySession('42', internal.runtime, new AbortController().signal))
       .resolves.toBe(false)
     expect(readFrom).toHaveBeenCalledOnce()
+    if (api === 'handles') expect(close).toHaveBeenCalledOnce()
     await host.stop()
   })
 

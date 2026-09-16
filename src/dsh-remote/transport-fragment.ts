@@ -23,15 +23,24 @@ export function dshRemoteOutboundPayloads(
   envelope: unknown,
   transferSeed: string,
 ): DshRemoteOutboundPlaintext[] {
-  const encoded = Buffer.from(JSON.stringify(envelope))
-  if (encoded.length <= DIRECT_PLAINTEXT_BYTES) return [{ value: envelope }]
+  // Older Realtime Redis relays re-encode empty arrays as objects. Keep their
+  // JSON bytes opaque using the existing fragment protocol, even for small payloads.
+  let hasEmptyArray = false
+  const encoded = Buffer.from(JSON.stringify(envelope, (_key, value: unknown) => {
+    if (Array.isArray(value) && value.length === 0) hasEmptyArray = true
+    return value
+  }))
+  if (encoded.length <= DIRECT_PLAINTEXT_BYTES && !hasEmptyArray) return [{ value: envelope }]
   if (encoded.length > DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES) {
     throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '完整 DSH 事件超过 64MiB 安全上限', false, {
       logicalTooLarge: true,
       payloadBytes: encoded.length,
     })
   }
-  const fragmentCount = Math.ceil(encoded.length / FRAGMENT_CHUNK_BYTES)
+  // Existing receivers require at least two non-empty fragments.
+  const chunkBytes = encoded.length <= DIRECT_PLAINTEXT_BYTES
+    ? Math.ceil(encoded.length / 2) : FRAGMENT_CHUNK_BYTES
+  const fragmentCount = Math.ceil(encoded.length / chunkBytes)
   if (fragmentCount > MAX_FRAGMENT_COUNT) {
     throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '完整 DSH 事件需要过多远控分片', false, {
       logicalTooLarge: true,
@@ -53,8 +62,8 @@ export function dshRemoteOutboundPayloads(
       payload_bytes: encoded.length,
       payload_sha256: digest,
       chunk: encoded.subarray(
-        fragmentIndex * FRAGMENT_CHUNK_BYTES,
-        Math.min(encoded.length, (fragmentIndex + 1) * FRAGMENT_CHUNK_BYTES),
+        fragmentIndex * chunkBytes,
+        Math.min(encoded.length, (fragmentIndex + 1) * chunkBytes),
       ).toString('base64url'),
     },
   }))
