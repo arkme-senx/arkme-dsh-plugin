@@ -44,6 +44,7 @@ import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
 import { ArkmeSourceBreadcrumb } from '../src/client/ArkmeSourceBreadcrumb.js'
 import { ArkmeTopicCreateDialog } from '../src/client/ArkmeTopicCreateDialog.js'
+import { ArkmeTopicDirectoryPopover } from '../src/client/ArkmeTopicDirectoryPopover.js'
 import { ArkmeDocumentComposerInput } from '../src/client/ArkmeDocumentComposerInput.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
@@ -52,6 +53,7 @@ import { arkmeComposerDraftStore, arkmeSourceComposerDraftKey } from '../src/cli
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { resetSelfTopicDirectories } from '../src/client/self-topic-directory-cache.js'
 import { ArkmeConversationMemoryCache } from '../src/client/conversation-memory-cache.js'
 
 const target: ArkmeSourceItem = {
@@ -993,6 +995,7 @@ describe('conversation send directory projection', () => {
   })
 
   beforeEach(() => {
+    resetSelfTopicDirectories()
     timeline = []
     aroundTimeline = undefined
     aroundOlderHasMore = false
@@ -1327,6 +1330,21 @@ describe('conversation send directory projection', () => {
     arkmeMessagePreparing.activateAccount(undefined)
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it.each([target, sendToSelf])('keeps only the shared menu owner while the conversation surface is suspended ($kind)', async previousSource => {
+    arkmeUi.selectSource(previousSource)
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} active={false} />)
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-surface-suspended': 'true' })).toHaveLength(1)
+    const menus = renderer!.root.findAllByType(ArkmeSourceBreadcrumb)
+    expect(menus).toHaveLength(1)
+    expect(menus[0]!.props.trigger).toBe('none')
+    for (const directory of renderer!.root.findAllByType(ArkmeTopicDirectoryPopover)) {
+      expect(directory.props.selectedSource).toBeUndefined()
+    }
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(0)
   })
 
   it.each([false, true])('creates and sends into the new topic without losing the previous draft (child=%s)', async child => {

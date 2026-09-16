@@ -1,4 +1,5 @@
 import { ArkmeLivePhotoBadge } from './ArkmeLivePhotoBadge.js'
+import { selfTopicDirectory } from './self-topic-directory-cache.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import { ArkmeBotIdentityStyles, ArkmeBotSenderName } from './ArkmeBotIdentity.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
@@ -129,6 +130,7 @@ import { ArkmeMarketplace } from './ArkmeMarketplace.js'
 import {
   ArkmeSourceBreadcrumb,
 } from './ArkmeSourceBreadcrumb.js'
+import { SELF_TOPIC_MENU_OPEN } from './self-topic-menu-bridge.js'
 import { useSendToSelfTour } from './ArkmeSendToSelfTour.js'
 import {
   ArkmeTopicDirectoryPopover, type ArkmeSelfSourcesResolution, type ArkmeTopicCreateOpener,
@@ -2253,6 +2255,23 @@ export function ArkmeSurface({
   const selectedSource = conversationBackdropVisible ? ui.selectedSource : undefined
   const [selfSourcesResolution, setSelfSourcesResolution] = useState<ArkmeAccountSelfSourcesResolution>()
   const [selfSourcesRetryRevision, setSelfSourcesRetryRevision] = useState(0)
+  useEffect(() => {
+    if (auth?.status !== 'authenticated' || auth.userId === undefined) return
+    const directory = selfTopicDirectory(auth.userId, auth.environment)
+    let revision = arkmeUi.getRecordRevision()
+    return arkmeUi.subscribe(() => {
+      const next = arkmeUi.getRecordRevision()
+      if (next !== revision) { revision = next; directory.invalidate() }
+    })
+  }, [auth?.status, auth?.userId, auth?.environment])
+  const [selfTopicPreviewRequested, setSelfTopicPreviewRequested] = useState(false)
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const requestTopics = () => { setSelfTopicPreviewRequested(true) }
+    document.addEventListener(SELF_TOPIC_MENU_OPEN, requestTopics)
+    return () => { document.removeEventListener(SELF_TOPIC_MENU_OPEN, requestTopics) }
+  }, [])
+  useEffect(() => { setSelfTopicPreviewRequested(false) }, [authenticatedAccountKey])
   const activeSelfSourcesResolution = selfSourcesResolution === undefined
     || selfSourcesResolution.userId !== authenticatedUserId
     ? undefined
@@ -6847,6 +6866,90 @@ export function ArkmeSurface({
     notificationActivation.source, notificationActivation.surfaceCommitted,
   ])
 
+  const selfWorkspaceSelected = conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
+  const selfTopicDirectoryOwner = authenticated && auth?.userId !== undefined
+    && (selfWorkspaceSelected || selfTopicPreviewRequested)
+    ? <ArkmeTopicDirectoryPopover
+      key={`self-topic-directory:${auth.environment}:${String(auth.userId)}`}
+      userId={auth.userId}
+      environment={auth.environment}
+      selectedSource={active && selfWorkspaceSelected ? selectedSource : undefined}
+      trigger="none"
+      onSelect={activateSelfSource}
+      onSelectionInvalidated={invalidateTopicSelection}
+      onSelfSourcesResolution={acceptSelfSourcesResolution}
+      onCreateWarning={message => { showMessageActionStatus(message, false) }}
+      onCreateTopicReady={open => { selfTopicCreateRef.current = open }}
+      retryRevision={selfSourcesRetryRevision}
+    />
+    : null
+  const selfTopicMenuOwner = authenticated && auth?.userId !== undefined
+    ? <ArkmeSourceBreadcrumb
+      key={`source-breadcrumb:${auth.environment}:${String(auth.userId)}`}
+      userId={auth.userId}
+      environment={auth.environment}
+      selectedSource={selfWorkspaceSelected ? selectedSource : undefined}
+      sources={selfSources}
+      trigger={active && selfWorkspaceSelected ? 'visible' : 'none'}
+      tourOpen={active && selfWorkspaceSelected ? selfTour.topicMenuOpen : undefined}
+      loading={selfSourcesLoading || (selfTopicPreviewRequested && activeSelfSourcesResolution === undefined)}
+      countsReady={activeSelfSourcesResolution?.status === 'ready' ? activeSelfSourcesResolution.complete : false}
+      {...(selfSourcesError === undefined ? {} : { error: selfSourcesError })}
+      onSelect={activateSelfSource}
+      onSelectAggregate={activateSendToSelf}
+      onOpen={() => { if (auth.userId !== undefined) void selfTopicDirectory(auth.userId, auth.environment).ensure() }}
+      onCreateTopic={() => { selfTopicCreateRef.current?.() }}
+      onCreateChildTopic={(parent, parentLevel) => { selfTopicCreateRef.current?.(parent, parentLevel) }}
+      onRenameTopic={async (topic, title) => {
+        const result = await callArkme<{ sourceRef: string; displayName: string }>('topic.rename', {
+          sourceRef: topic.sourceRef,
+          title,
+        })
+        if (auth.userId !== undefined) selfTopicDirectory(auth.userId, auth.environment).upsert({ ...topic, sourceRef: result.sourceRef, displayName: result.displayName })
+        setSelfSourcesRetryRevision(value => value + 1)
+        return { ...topic, sourceRef: result.sourceRef, displayName: result.displayName }
+      }}
+      onDissolveTopic={async (topic, parent, children, onProgress) => {
+        const requestId = globalThis.crypto?.randomUUID?.() ?? `topic-dissolve-${String(Date.now())}`
+        let polling = true
+        const reportProgress = async () => {
+          if (!polling) return
+          const progress = await callArkme<ArkmeTopicDissolveTask | null>('topic.dissolve.status', { requestId })
+          if (progress !== null) {
+            onProgress(progress)
+            publishActiveTopicDissolve(progress)
+          }
+        }
+        const timer = globalThis.setInterval(() => { void reportProgress().catch(() => undefined) }, 250)
+        try {
+          await callArkme('topic.dissolve', {
+            sourceRef: topic.sourceRef,
+            ...(parent === undefined ? {} : { parentSourceRef: parent.sourceRef }),
+            childSourceRefs: children.map(child => child.sourceRef),
+            requestId,
+            expectedRecordCount: Math.max(0, topic.recordCount ?? 0),
+          })
+          await reportProgress()
+          setSelfSourcesRetryRevision(value => value + 1)
+        } finally {
+          polling = false
+          globalThis.clearInterval(timer)
+        }
+      }}
+      {...(activeTopicDissolve === undefined ? {} : { activeDissolve: activeTopicDissolve })}
+      onRetry={() => { setSelfSourcesRetryRevision(value => value + 1) }}
+      onMoveTopic={async (topic, currentParent, nextParent, insertBefore) => {
+        await callArkme<ArkmeTopicHierarchyMoveResult>('topic.hierarchy.move', {
+          sourceRef: topic.sourceRef,
+          ...(currentParent === undefined ? {} : { currentParentSourceRef: currentParent.sourceRef }),
+          ...(nextParent === undefined ? {} : { nextParentSourceRef: nextParent.sourceRef }),
+          ...(insertBefore === undefined ? {} : { insertBeforeSourceRef: insertBefore.sourceRef }),
+        })
+        setSelfSourcesRetryRevision(value => value + 1)
+      }}
+    />
+    : null
+
   const recordingImportOwner = authView === 'content' && authenticatedUserId !== undefined
     && authStoreSnapshot.config?.recordingWorkbenchEnabled !== false
     ? <ArkmeRecordingImportDialog
@@ -6874,6 +6977,8 @@ export function ArkmeSurface({
       }}
       aria-hidden
     />
+    {selfTopicDirectoryOwner}
+    {selfTopicMenuOwner}
     {recordingImportOwner}
   </>
 
@@ -6978,84 +7083,15 @@ export function ArkmeSurface({
         role="region"
         aria-label={surfaceTitle}
       >
+        {selfTopicDirectoryOwner}
+        {!selfWorkspaceSelected && selfTopicMenuOwner}
         {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header className="arkme-conversation-header" style={styles.header}>
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
             <ArkmeDirectorySourceAvatar source={source} size={34} />
           </span>}
-          {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
-            && auth?.userId !== undefined && <ArkmeTopicDirectoryPopover
-              key={`${String(auth.userId)}:${conversationOverlayKey}`}
-              userId={auth.userId}
-              selectedSource={selectedSource}
-              trigger="none"
-              onSelect={activateSelfSource}
-              onSelectionInvalidated={invalidateTopicSelection}
-              onSelfSourcesResolution={acceptSelfSourcesResolution}
-              onCreateWarning={message => { showMessageActionStatus(message, false) }}
-              onCreateTopicReady={open => { selfTopicCreateRef.current = open }}
-              retryRevision={selfSourcesRetryRevision}
-            />}
           <div style={styles.titleGroup}>
-            {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
-              ? <ArkmeSourceBreadcrumb
-                key={`source-breadcrumb:${conversationOverlayKey}`}
-                userId={auth?.userId}
-                selectedSource={selectedSource}
-                sources={selfSources}
-                tourOpen={selfTour.topicMenuOpen}
-                loading={selfSourcesLoading}
-                {...(selfSourcesError === undefined ? {} : { error: selfSourcesError })}
-                onSelect={activateSelfSource}
-                onSelectAggregate={activateSendToSelf}
-                onCreateTopic={() => { selfTopicCreateRef.current?.() }}
-                onCreateChildTopic={(parent, parentLevel) => { selfTopicCreateRef.current?.(parent, parentLevel) }}
-                onRenameTopic={async (topic, title) => {
-                  const result = await callArkme<{ sourceRef: string; displayName: string }>('topic.rename', {
-                    sourceRef: topic.sourceRef,
-                    title,
-                  })
-                  setSelfSourcesRetryRevision(value => value + 1)
-                  return { ...topic, sourceRef: result.sourceRef, displayName: result.displayName }
-                }}
-                onDissolveTopic={async (topic, parent, children, onProgress) => {
-                  const requestId = globalThis.crypto?.randomUUID?.() ?? `topic-dissolve-${String(Date.now())}`
-                  let polling = true
-                  const reportProgress = async () => {
-                    if (!polling) return
-                    const progress = await callArkme<ArkmeTopicDissolveTask | null>('topic.dissolve.status', { requestId })
-                    if (progress !== null) {
-                      onProgress(progress)
-                      publishActiveTopicDissolve(progress)
-                    }
-                  }
-                  const timer = globalThis.setInterval(() => { void reportProgress().catch(() => undefined) }, 250)
-                  try {
-                  await callArkme('topic.dissolve', {
-                    sourceRef: topic.sourceRef,
-                    ...(parent === undefined ? {} : { parentSourceRef: parent.sourceRef }),
-                    childSourceRefs: children.map(child => child.sourceRef),
-                    requestId,
-                    expectedRecordCount: Math.max(0, topic.recordCount ?? 0),
-                  })
-                  await reportProgress()
-                  setSelfSourcesRetryRevision(value => value + 1)
-                  } finally {
-                    polling = false
-                    globalThis.clearInterval(timer)
-                  }
-                }}
-                {...(activeTopicDissolve === undefined ? {} : { activeDissolve: activeTopicDissolve })}
-                onRetry={() => { setSelfSourcesRetryRevision(value => value + 1) }}
-                onMoveTopic={async (topic, currentParent, nextParent, insertBefore) => {
-                  await callArkme<ArkmeTopicHierarchyMoveResult>('topic.hierarchy.move', {
-                    sourceRef: topic.sourceRef,
-                    ...(currentParent === undefined ? {} : { currentParentSourceRef: currentParent.sourceRef }),
-                    ...(nextParent === undefined ? {} : { nextParentSourceRef: nextParent.sourceRef }),
-                    ...(insertBefore === undefined ? {} : { insertBeforeSourceRef: insertBefore.sourceRef }),
-                  })
-                  setSelfSourcesRetryRevision(value => value + 1)
-                }}
-              />
+            {selfWorkspaceSelected
+              ? selfTopicMenuOwner
               : <div style={styles.titleBlock}>
                 <span style={styles.titleLine}>
                   <h2 style={styles.title}>{surfaceTitle}</h2>
@@ -7068,7 +7104,7 @@ export function ArkmeSurface({
                   && aiPolishSettings?.enabled === true
                   && <span style={styles.headerSubtitle}>AI润色已开启{aiPolishSettings.activeRuleName.trim() === '' ? '' : ` · ${aiPolishSettings.activeRuleName}`}</span>}
               </div>}
-            {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
+            {authenticated && selfWorkspaceSelected
               && source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon size={16} /></span>}
           </div>
           {authenticated && activeConversation && sourceIsChat && source !== undefined && <ArkmeConversationSearch
@@ -7112,15 +7148,15 @@ export function ArkmeSurface({
               }}
             ><CalendarBlank size={16} aria-hidden /></ArkmeConversationHeaderIconButton>
             <ArkmeSelfCalendarPopover
+              key={`self-calendar:${authenticatedAccountKey}:${conversationKey}`}
+              accountScope={authenticatedAccountKey}
+              scopeKey={source.kind === 'topic' ? conversationKey : source.kind}
+              sourceRef={source.sourceRef}
               open={selfCalendarOpen}
               anchor={selfCalendarButtonRef}
               onClose={() => { setSelfCalendarOpen(false) }}
               onSelectRecord={(item: ArkmeCalendarRecordItem) => {
-                if (aggregateSource === undefined) {
-                  setError('暂时无法打开全部发给自己')
-                  return
-                }
-                arkmeUi.showConversationTarget(aggregateSource, item.recordUid, item.sendAtMillis)
+                arkmeUi.showConversationTarget(source, item.recordUid, item.sendAtMillis)
               }}
             />
             <ConversationActionsMenu

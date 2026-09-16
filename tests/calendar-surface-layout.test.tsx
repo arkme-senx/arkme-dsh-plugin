@@ -62,6 +62,7 @@ describe('ArkmeCalendarSurface layout', () => {
     const selectedCount = renderCount(true)
 
     for (const count of [unselectedCount, selectedCount]) {
+      expect(count.get('background')).toBe('transparent')
       expect(count.get('min-width')).toBe('15px')
       expect(count.get('padding')).toBe('0 4px')
       expect(count.get('transition')).toBe('background 120ms ease, color 120ms ease')
@@ -159,7 +160,7 @@ describe('ArkmeCalendarSurface layout', () => {
     expect(surfaceSource).not.toContain('useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)')
     expect(surfaceSource).not.toContain('ui.chatRevision')
     expect(surfaceSource).not.toContain('ui.recordRevision')
-    expect(surfaceSource).toContain('arkmeCalendarInvalidations.subscribeMonth')
+    expect(surfaceSource).toContain('useCalendarMonth(')
     expect(surfaceSource).toContain('arkmeCalendarInvalidations.subscribeDate')
   })
 })

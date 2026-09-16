@@ -483,7 +483,7 @@ export class ChatRealtimeService {
     }
   }
 
-  async invalidateRecordProjection(): Promise<void> {
+  async invalidateRecordProjection(options: { contentOnly?: boolean } = {}): Promise<void> {
     try {
       const session = await this.runtime.sessionStore.read()
       if (session === undefined) return
@@ -493,6 +493,7 @@ export class ChatRealtimeService {
         type: 'projection-invalidated',
         revision: this.nextChatClientRevision(),
         projection: 'record',
+        ...(options.contentOnly ? { retainTopicCounts: true } : {}),
       })
     } catch (error) {
       console.warn('dsh-arkme: Record projection invalidation failed:', safeFailureMessage(error))
@@ -1184,7 +1185,9 @@ export class ChatRealtimeService {
     if (ownerGeneration !== this.attentionOwnerGeneration) return []
     if (updates.length > 0) {
       this.source.invalidateSourceListCache(session.userId, 'root')
-      this.runtime.invalidateKey(this.runtime.requestScope(session.userId), 'calendar:')
+      this.runtime.invalidateCalendarDates(this.runtime.requestScope(session.userId), updates.flatMap(update => [
+        update.source.activeAtMillis, ...update.timelineItems.map(item => item.sendAtMillis),
+      ]))
       this.emitChatClientEvent({
         type: 'sessions-delta',
         revision: this.nextChatClientRevision(),

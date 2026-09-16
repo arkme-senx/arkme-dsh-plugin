@@ -2,6 +2,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { watchHarnessSessionHover } from '../src/client/harness-session-hover.js'
 import { installHarnessSessionDropdown } from '../src/client/harness-session-dropdown.js'
+import { CONVERSATION_MENU_LAYOUT } from '../src/client/conversation-selector-style.js'
 
 const cleanups: Array<() => void> = []
 afterEach(() => {
@@ -43,12 +44,30 @@ it('waits for intentional hover and preserves the current chat, focus, draft and
   expect(column.inert).toBe(true)
   vi.advanceTimersByTime(1)
   expect(column.inert).toBe(false)
-  expect(surface.hasAttribute('data-arkme-harness-menu-preview')).toBe(true)
+  expect(surface.hasAttribute('data-arkme-harness-menu-offset')).toBe(false)
   expect(surface.getAttribute('data-arkme-visible')).toBe('false')
   expect(surface.getAttribute('data-arkme-follow-session')).toBe('false')
   expect(document.activeElement).toBe(chat)
   expect(chat.value).toBe('私聊草稿')
   expect(activate).not.toHaveBeenCalled()
+})
+
+it('positions only the native menu and never resizes or shifts the iframe or conversation grid', () => {
+  const { card, surface, iframe, native, column, enter } = fixture(true)
+  const cardRect = { left: 20, right: 300, top: 140, bottom: 204, width: 280, height: 64, x: 20, y: 140, toJSON() {} }
+  const frameRect = { left: 0, right: 1024, top: 0, bottom: 700, width: 1024, height: 700, x: 0, y: 0, toJSON() {} }
+  vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(cardRect)
+  vi.spyOn(iframe, 'getBoundingClientRect').mockReturnValue(frameRect)
+  const grid = native.querySelector<HTMLElement>('[data-arkme-session-frame]')!
+  const before = [surface.style.cssText, iframe.style.cssText, grid.style.cssText]
+  enter()
+  expect(column.style.getPropertyValue('--arkme-session-left')).toBe(`${cardRect.right + CONVERSATION_MENU_LAYOUT.hoverGap}px`)
+  expect([surface.style.cssText, iframe.style.cssText, grid.style.cssText]).toEqual(before)
+  expect(getComputedStyle(grid).transition).toBe('none')
+  card.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+  expect(surface.style.getPropertyValue('--arkme-session-hover-overflow')).toBe('')
+  expect(surface.hasAttribute('data-arkme-harness-menu-offset')).toBe(false)
+  expect([surface.style.cssText, iframe.style.cssText, grid.style.cssText]).toEqual(before)
 })
 
 it('cancels brief pass-throughs and bridges the card/menu gap before closing after a full leave', () => {

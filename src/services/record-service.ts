@@ -1,4 +1,5 @@
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
+import { isDshAgentInputRawRecord } from '../dsh-agent-input-source.js'
 import { projectCallRecord } from '../call-record-presentation.js'
 import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges } from '../markdown.js'
 import { createHash, createHmac } from 'node:crypto'
@@ -60,7 +61,6 @@ function listValue(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
 }
 
-const DSH_AGENT_INPUT_CREATION_SOURCE = 3
 const MAX_DEFAULT_CATEGORY_FILTER_BACKFILL_PAGES = 5
 const RECORD_REEDIT_SUPPORTED_TEMPLATE_KINDS = new Set([1, 2, 3, 4])
 
@@ -80,7 +80,7 @@ function recordCreationSource(raw: unknown): number {
 }
 
 function isDSHAgentInputRecord(raw: unknown): boolean {
-  return recordCreationSource(raw) === DSH_AGENT_INPUT_CREATION_SOURCE
+  return isDshAgentInputRawRecord(raw)
 }
 
 function safeFailureMessage(error: unknown): string {

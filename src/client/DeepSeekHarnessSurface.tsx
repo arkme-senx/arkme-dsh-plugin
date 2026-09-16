@@ -1,5 +1,8 @@
-import type { CSSProperties } from 'react'
+import { useLayoutEffect, useRef, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import { ARKME_HARNESS_EMBED_PATH } from '../harness-embed-contract.js'
+import { conversationMenuLayer } from './conversation-menu-layer.js'
+import { watchHarnessSurfaceViewport } from './harness-surface-viewport.js'
 
 export const DEEPSEEK_HARNESS_EMBED_QUERY = 'arkme-harness-embed'
 export const DEEPSEEK_HARNESS_NATIVE_SETTINGS_QUERY = 'arkme-harness-native-settings'
@@ -35,7 +38,17 @@ export function deepSeekHarnessEmbedUrl(nativeSettings = false): string {
  * finish its own core boot independently of the Arkme directory request lifecycle.
  */
 export function DeepSeekHarnessSurface({ visible = true, nativeSettings = false, accountId, accountScope, followSession = true }: { visible?: boolean; nativeSettings?: boolean; accountId?: number | undefined; accountScope?: string | undefined; followSession?: boolean }) {
-  return <section
+  const seatRef = useRef<HTMLSpanElement>(null)
+  const surfaceRef = useRef<HTMLElement>(null)
+  const frameRef = useRef<HTMLIFrameElement>(null)
+  const floating = typeof document !== 'undefined' && accountId !== undefined
+  useLayoutEffect(() => {
+    if (floating && seatRef.current && surfaceRef.current && frameRef.current) {
+      return watchHarnessSurfaceViewport(surfaceRef.current, frameRef.current, seatRef.current)
+    }
+  }, [floating])
+  const content = <section
+    ref={surfaceRef}
     data-arkme-owned="deepseek-harness-surface"
     data-arkme-preload="true"
     data-arkme-account-id={accountId}
@@ -44,6 +57,7 @@ export function DeepSeekHarnessSurface({ visible = true, nativeSettings = false,
     data-arkme-visible={visible ? 'true' : 'false'}
     style={{
       ...styles.root,
+      ...(floating ? { position: 'fixed' as const, background: 'transparent', clipPath: 'inset(100%)' } : {}),
       visibility: visible ? 'visible' : 'hidden',
       pointerEvents: visible ? 'auto' : 'none',
       zIndex: visible ? 1 : 0,
@@ -52,11 +66,16 @@ export function DeepSeekHarnessSurface({ visible = true, nativeSettings = false,
     aria-label="DeepSeek Harness"
   >
     <iframe
+      ref={frameRef}
       title="DeepSeek Harness"
       src={deepSeekHarnessEmbedUrl(nativeSettings)}
-      style={styles.frame}
+      style={{ ...styles.frame, ...(floating ? { background: 'transparent' } : {}) }}
       loading="eager"
       allow="clipboard-read; clipboard-write; microphone"
     />
   </section>
+  return floating ? <>
+    <span ref={seatRef} data-arkme-harness-seat aria-hidden style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
+    {createPortal(content, conversationMenuLayer(document))}
+  </> : content
 }

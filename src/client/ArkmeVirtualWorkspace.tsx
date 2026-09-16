@@ -80,6 +80,7 @@ import {
 import {
   arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree, type ArkmeSourceTreeRow,
 } from './source-tree.js'
+import { watchSelfTopicMenuHover } from './self-topic-menu-hover.js'
 import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
 
 export interface ArkmeNavigationProps {
@@ -962,6 +963,7 @@ export function ArkmeNavigation({
   const directoryScrollTopRef = useRef(0)
   const directoryContextMenuRef = useRef<HTMLDivElement>(null)
   const directoryContextRequestRef = useRef(0)
+  const selfEntryRef = useRef<HTMLButtonElement>(null)
   const topicRowElementsRef = useRef(new Map<string, HTMLDivElement>())
   const createdHighlightTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const createdHighlightFramesRef = useRef<number[]>([])
@@ -1026,6 +1028,14 @@ export function ArkmeNavigation({
   const currentAccountKey = authenticated && auth.userId !== undefined
     ? `${auth.environment}:${String(auth.userId)}`
     : undefined
+  useEffect(() => {
+    const anchor = selfEntryRef.current
+    if (anchor === null || !active || !authenticated || directory !== 'root') return
+    return watchSelfTopicMenuHover(anchor, () => {
+      activateNativeEntry()
+      onActivateSurface?.()
+    })
+  }, [activateNativeEntry, active, authenticated, directory, onActivateSurface])
   useEffect(() => { setChatPreview(undefined) }, [currentAccountKey, active])
   const [traceNavigation] = useState(createHomeTourTrace)
   useEffect(() => {
@@ -1976,8 +1986,11 @@ export function ArkmeNavigation({
   }
 
   const renderSelfEntry = (onClick?: () => void) => (<button
+          ref={selfEntryRef}
           type="button" role="treeitem"
           data-arkme-home-tour-target="send-to-self"
+          aria-haspopup="tree"
+          aria-expanded="false"
           aria-selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource)}
           style={{ ...styles.chatRow, ...(activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
           onClick={onClick ?? (() => {

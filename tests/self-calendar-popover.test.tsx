@@ -63,6 +63,7 @@ it('reuses the counted month calendar and resolves a populated day before naviga
   await act(async () => {
     root.render(<ArkmeSelfCalendarPopover
       open
+      sourceRef="selected-topic"
       anchor={{ current: anchor }}
       onClose={close}
       onSelectRecord={select}
@@ -75,9 +76,28 @@ it('reuses the counted month calendar and resolves a populated day before naviga
   await act(async () => { day?.click() })
 
   expect(api.call.mock.calls.map(([operation]) => operation)).toEqual(['calendar.buckets', 'calendar.records'])
-  expect(api.call.mock.calls[1]?.[1]).toMatchObject({ bucketDate: todayKey, limit: 1 })
+  expect(api.call.mock.calls[0]?.[1]).toMatchObject({ sourceRef: 'selected-topic' })
+  expect(api.call.mock.calls[1]?.[1]).toMatchObject({ bucketDate: todayKey, limit: 1, sourceRef: 'selected-topic' })
   expect(close).toHaveBeenCalledOnce()
   expect(select).toHaveBeenCalledWith(record)
+})
+
+it('discards old counts when the topic changes while a month request is pending', async () => {
+  const todayKey = localDateKey(new Date())
+  let resolveOld!: (value: unknown) => void
+  api.call.mockImplementation((_operation: string, params: { sourceRef: string }) => params.sourceRef === 'old'
+    ? new Promise(resolve => { resolveOld = resolve })
+    : Promise.resolve({ days: [{ bucketDate: todayKey, count: 2, hasRecords: true }] }))
+  const render = (sourceRef: string) => root.render(<ArkmeSelfCalendarPopover
+    open sourceRef={sourceRef} anchor={{ current: anchor }} onClose={() => {}} onSelectRecord={() => {}}
+  />)
+  await act(async () => render('old'))
+  const oldSignal = api.call.mock.calls[0]?.[2] as AbortSignal
+  await act(async () => render('new'))
+  expect(oldSignal.aborted).toBe(true)
+  await act(async () => resolveOld({ days: [{ bucketDate: todayKey, count: 99, hasRecords: true }] }))
+  expect(document.querySelector(`[aria-label="${todayKey} 2 条记录"]`)).not.toBeNull()
+  expect(document.querySelector(`[aria-label="${todayKey} 99 条记录"]`)).toBeNull()
 })
 
 it('keeps an empty date in the calendar and reports it without requesting records', async () => {

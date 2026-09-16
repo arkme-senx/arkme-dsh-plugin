@@ -1294,6 +1294,18 @@ describe('outgoing call Host API dispatch', () => {
     })
   })
 
+  it('forwards the signed calendar source reference for both month and day reads', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'calendar.buckets', {
+      startDate: '2026-09-01', endDate: '2026-09-30', sourceRef: 'signed-topic', bucket_scope_uid: 'not-forwarded',
+    })
+    await dispatchArkmeHostOperation(service as never, 'calendar.records', {
+      bucketDate: '2026-09-16', sourceRef: 'signed-topic', bucket_scope_kind: 1,
+    })
+    expect(service.calendarBuckets).toHaveBeenCalledWith({ startDate: '2026-09-01', endDate: '2026-09-30', sourceRef: 'signed-topic' })
+    expect(service.calendarRecords).toHaveBeenCalledWith({ bucketDate: '2026-09-16', sourceRef: 'signed-topic', limit: 20 })
+  })
+
   it('rejects missing or oversized interwoven references', async () => {
     const service = fakeService()
 

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
 import { installHarnessSessionDropdown } from '../src/client/harness-session-dropdown.js'
+import { CONVERSATION_MENU_LAYOUT } from '../src/client/conversation-selector-style.js'
 
 let cleanup: (() => void) | undefined
 afterEach(() => { cleanup?.(); cleanup = undefined; document.body.replaceChildren(); vi.restoreAllMocks() })
@@ -46,6 +47,21 @@ it('keeps native components, actions and draft identity; closes after native ses
   expect(document.querySelectorAll('[role="treeitem"]')[1]).toBe(rows[1])
 })
 
+it('shares its menu dimensions and inner padding with the topic selector', () => {
+  const { trigger, column } = mount()
+  trigger.click()
+  expect(column.style.getPropertyValue('--arkme-session-width')).toBe(`${CONVERSATION_MENU_LAYOUT.width}px`)
+  expect(column.style.getPropertyValue('--arkme-session-height')).toBe(`${CONVERSATION_MENU_LAYOUT.maxHeight}px`)
+  const menu = column.querySelector<HTMLElement>('[data-arkme-session-root]')!
+  expect(getComputedStyle(menu).padding).toBe(`${CONVERSATION_MENU_LAYOUT.paddingY}px ${CONVERSATION_MENU_LAYOUT.paddingX}px`)
+  expect(menu.hasAttribute('data-arkme-menu-scrollbars')).toBe(true)
+  expect(menu.querySelector('[role="tree"]')?.hasAttribute('data-arkme-menu-scroll')).toBe(true)
+  expect(getComputedStyle(menu.querySelector('[data-arkme-session-tools-actions] button')!).backgroundColor).toBe('rgba(0, 0, 0, 0)')
+  cleanup!(); cleanup = undefined
+  expect(menu.hasAttribute('data-arkme-menu-scrollbars')).toBe(false)
+  expect(menu.querySelector('[data-arkme-menu-scroll]')).toBeNull()
+})
+
 it('preserves session actions and portalled menus, then allows outside and Escape dismissal', () => {
   const { trigger, column, rows } = mount()
   trigger.click()
@@ -72,6 +88,7 @@ it('provides a blank-session entry and follows native right-panel geometry and h
   expect(newSession).toHaveBeenCalledOnce()
   expect(trigger.textContent).toContain('新会话')
   expect(trigger.closest('[data-arkme-session-fallback]')).not.toBeNull()
+  expect(getComputedStyle(trigger.closest('[data-arkme-session-fallback]')!).left).toBe('20px')
   frame.style.gridTemplateColumns = '280px minmax(0px, 1fr) 420px'
   await flush()
   expect(frame.style.getPropertyValue('--arkme-session-rightbar')).toBe('420px')

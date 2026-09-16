@@ -37,7 +37,7 @@ import { arkmeMediaKind } from '../file-transfer-contract.js'
 import { projectArkmeChatAttention, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import { arkmeEmojiTokenSafePrefix, arkmeHasKnownEmojiToken } from '../arkme-emoji-text.js'
-import { arkmeSourceAllowsUserWrite, arkmeTopicDisplayName } from '../topic-policy.js'
+import { ARKME_DSH_INPUT_TOPIC_KIND, arkmeSourceAllowsUserWrite, arkmeTopicDisplayName } from '../topic-policy.js'
 
 export interface ArkmeSourceRefPayload {
   version: 1
@@ -75,6 +75,11 @@ export interface ArkmePrivateChatViewerLabel {
 }
 
 interface CacheEntry<T> { value: T; expiresAtMillis: number }
+interface SelfDirectoryContext {
+  hierarchyData: Record<string, unknown> | undefined
+  summaryResult: PromiseSettledResult<ArkmeSelfSummary>
+  latestRecordsResult: PromiseSettledResult<Record<string, unknown>>
+}
 
 export interface ArkmeSourceRecordReader {
   summary(): Promise<ArkmeSelfSummary>
@@ -372,6 +377,8 @@ export class SourceService {
   private readonly chatSourceCache = new Map<string, ArkmeSourceItem>()
   private readonly sourceListCache = new Map<string, CacheEntry<ArkmeSourceList>>()
   private readonly sourceListInFlight = new SharedReadGroup<ArkmeSourceList>()
+  private readonly selfDirectoryContexts = new Map<number, CacheEntry<SelfDirectoryContext>>()
+  private readonly selfDirectoryContextReads = new SharedReadGroup<SelfDirectoryContext>()
   private readonly groupAvatarSnapshotCache = new Map<string, CacheEntry<ArkmeGroupAvatarSnapshotProjection | null>>()
   private readonly topicDissolveProgress = new Map<string, {
     userId: number
@@ -705,6 +712,8 @@ export class SourceService {
     this.chatSourceCache.clear()
     this.sourceListCache.clear()
     this.sourceListInFlight.clear()
+    this.selfDirectoryContexts.clear()
+    this.selfDirectoryContextReads.clear()
     this.groupAvatarSnapshotCache.clear()
     this.topicDissolveProgress.clear()
   }
@@ -1161,7 +1170,7 @@ export class SourceService {
     if (movedTopicUid !== topic.ownerRef || movedParentUid !== (nextParentUid ?? '') || siblingOrder <= 0) {
       throw new ArkmePluginError('topic-hierarchy-move-contract-invalid', '主题移动响应不完整，请刷新后重试', true, 502)
     }
-    this.sourceListCache.clear()
+    this.invalidateSourceListCache(session.userId, 'send_to_self')
     return {
       sourceRef,
       ...(nextParentSourceRef === undefined ? {} : { parentSourceRef: nextParentSourceRef }),
@@ -1221,6 +1230,10 @@ export class SourceService {
     const maxLimit = directory === 'send_to_self' ? 100 : 50
     const limit = Math.min(maxLimit, Math.max(1, Math.trunc(options.limit ?? 30)))
     const cursor = options.cursor?.trim() ?? ''
+    if (directory === 'send_to_self' && options.refresh === true && cursor === '') {
+      this.selfDirectoryContexts.delete(session.userId)
+      this.selfDirectoryContextReads.invalidate(key => key === String(session.userId))
+    }
     const cacheKey = `${String(session.userId)}:${directory}:${String(limit)}:${cursor}:${options.firstPaint === true ? "first" : "full"}`
     this.pruneSourceListCache()
     const cached = this.sourceListCache.get(cacheKey)
@@ -1409,6 +1422,25 @@ export class SourceService {
     throw new ArkmePluginError('directory-groups-pagination-limit', '群聊列表超过安全分页上限', false, 502)
   }
 
+  private async selfDirectoryContext(session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<SelfDirectoryContext> {
+    const cached = this.selfDirectoryContexts.get(session.userId)
+    if (cached && cached.expiresAtMillis > Date.now()) return cached.value
+    return this.selfDirectoryContextReads.run(String(session.userId), async (inner, isCurrent) => {
+      const [hierarchyData, [summaryResult, latestRecordsResult]] = await Promise.all([
+        this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/topics/hierarchy/relations/list', {}, session, inner).catch(() => undefined),
+        Promise.allSettled([
+          this.recordReader.summary(),
+          this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/uncategorized/query', { limit: 10 }, session, inner),
+        ]),
+      ])
+      const value = { hierarchyData, summaryResult, latestRecordsResult }
+      if (isCurrent()) {
+        this.selfDirectoryContexts.set(session.userId, { value, expiresAtMillis: Date.now() + SOURCE_LIST_CACHE_TTL_MS })
+      }
+      return value
+    }, signal)
+  }
+
   private async listSourcesUncached(
     session: ArkmeSessionCredentials,
     directory: ArkmeSourceDirectory,
@@ -1421,7 +1453,7 @@ export class SourceService {
       const topicPage = options.cursor === undefined || options.cursor.trim() === ''
         ? undefined
         : this.decodeTopicDirectoryCursor(options.cursor)
-      const [data, hierarchyData] = await Promise.all([
+      const [data, { hierarchyData, summaryResult, latestRecordsResult }] = await Promise.all([
         this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/topics/display/list',
           {
@@ -1435,22 +1467,7 @@ export class SourceService {
           session,
           options.signal,
         ),
-        this.runtime.authenticatedPost<Record<string, unknown>>(
-          '/api/v1/topics/hierarchy/relations/list',
-          {},
-          session,
-          options.signal,
-        ).catch(() => undefined),
-      ])
-      options.signal?.throwIfAborted()
-      const [summaryResult, latestRecordsResult] = await Promise.allSettled([
-        this.recordReader.summary(),
-        this.runtime.authenticatedPost<Record<string, unknown>>(
-          '/api/v1/records/uncategorized/query',
-          { limit: 10 },
-          session,
-          options.signal,
-        ),
+        this.selfDirectoryContext(session, options.signal),
       ])
       options.signal?.throwIfAborted()
       const cached = summaryResult.status === 'rejected' || latestRecordsResult.status === 'rejected'
@@ -1517,6 +1534,9 @@ export class SourceService {
         const item = objectValue(raw)
         if (arkmePrivacyLockedTopic(item)) continue
         const core = objectValue(item.topic_core)
+        // Archives remain readable through calendar/search, but are not
+        // personal topics and must not contribute to this directory's preview/counts.
+        if (numberValue(core.kind) === ARKME_DSH_INPUT_TOPIC_KIND) continue
         const status = core.status ?? item.status
         // A dissolved topic remains in some list responses briefly (or in an
         // older cache), but it must never be selectable by the plugin.
@@ -1771,6 +1791,10 @@ export class SourceService {
   }
 
   invalidateSourceListCache(userId: number, directory?: ArkmeSourceDirectory): void {
+    if (directory === undefined || directory === 'send_to_self') {
+      this.selfDirectoryContexts.delete(userId)
+      this.selfDirectoryContextReads.invalidate(key => key === String(userId))
+    }
     if (directory === undefined || directory === 'root') {
       this.runtime.invalidateKey(this.runtime.requestScope(userId), 'directory:root:')
     }

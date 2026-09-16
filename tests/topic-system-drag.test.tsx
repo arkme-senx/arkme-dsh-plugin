@@ -2,6 +2,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { expect, it, vi } from 'vitest'
 import { ArkmeSourceBreadcrumb } from '../src/client/ArkmeSourceBreadcrumb.js'
+import { CONVERSATION_MENU_COLORS } from '../src/client/conversation-selector-style.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 
 async function openCustomTopics(renderer: ReactTestRenderer) {
@@ -154,10 +155,10 @@ it('uses the same indented row for hover, selection, clicking and dragging', asy
     expect(childRow().findAllByType('button').some(button => button.props.draggable === true)).toBe(false)
 
     await act(async () => { childRow().props.onMouseEnter() })
-    expect(childRow().props.style.background).toBe('#f3f4f7')
+    expect(childRow().props.style.background).toBe(CONVERSATION_MENU_COLORS.hover)
 
     await act(async () => { renderer.update(<ArkmeSourceBreadcrumb selectedSource={child} {...props} />) })
-    expect(childRow().props.style.background).toBe('#eef1f8')
+    expect(childRow().props.style.background).toBe(CONVERSATION_MENU_COLORS.selected)
     expect(childRow().props.style.marginLeft).toBe(16)
     expect(childRow().props.style.width).toBe('calc(100% - 16px)')
 

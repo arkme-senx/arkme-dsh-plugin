@@ -6,6 +6,7 @@ import type { ArkmeClientAccountScope } from './chat-directory-store.js'
 import { reconcileNavigationProviderInstance } from './navigation-cache.js'
 import { resetRecordingSpeakerCaches } from './recordings/recording-speaker-options-store.js'
 import { privateChatActions } from './private-chat-actions-store.js'
+import { invalidateSelfTopicDirectories } from './self-topic-directory-cache.js'
 
 interface ArkmeProviderInstanceGuardOptions {
   loadInstance(): Promise<string>
@@ -65,6 +66,7 @@ export const reconcileArkmeProviderInstance = createArkmeProviderInstanceGuard({
     return instance.instanceId
   },
   onInvalidate: () => {
+    invalidateSelfTopicDirectories(true)
     privateChatActions.reset()
     resetRecordingSpeakerCaches()
     revalidateArkmeProviderAvatarImages(arkmeAvatarImages)

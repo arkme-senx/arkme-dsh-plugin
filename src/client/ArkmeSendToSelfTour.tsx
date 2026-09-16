@@ -8,7 +8,7 @@ import { useTourAccount } from './use-tour-account.js'
 const Tour = TourModule.default ?? TourModule
 const steps = [
   { id: 'composer', title: '随手记录，发给自己', description: '在这里记下想法、灵感和待办。点击「＋」添加照片和文件，也可以写长文，保存完整思路。' },
-  { id: 'topics', title: '用主题整理内容', description: '在这里随时切换主题，查看不同主题下的记录。点击「创建主题」，为工作、生活或灵感分类。' },
+  { id: 'topics', title: '用主题整理内容', description: '在这里随时切换主题，查看不同主题下的记录。点击「新主题」，为工作、生活或灵感分类。' },
 ] as const
 const overflow = { adjustX: true, adjustY: true, shiftX: 12, shiftY: 12 }
 const placements: TourProps['builtinPlacements'] = {

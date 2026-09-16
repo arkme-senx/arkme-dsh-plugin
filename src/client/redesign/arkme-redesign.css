@@ -9,8 +9,10 @@
 }
 
 [data-arkme-workspace], [data-arkme-workspace] * { box-sizing: border-box; }
-[data-arkme-workspace] button, [data-arkme-workspace] input, [data-arkme-workspace] textarea { font: inherit; }
-[data-arkme-workspace] button { border: 0; background: none; color: inherit; cursor: pointer; }
+/* Shared DSH selectors and topic-footer controls own their styles in both the
+   workspace and body portal. Do not strip their native fill/border/typography. */
+[data-arkme-workspace] button:not([data-arkme-conversation-selector], .arkme-self-topic-create-button, .arkme-dsh-view-options-button), [data-arkme-workspace] input, [data-arkme-workspace] textarea { font: inherit; }
+[data-arkme-workspace] button:not([data-arkme-conversation-selector], .arkme-self-topic-create-button, .arkme-dsh-view-options-button) { border: 0; background: none; color: inherit; cursor: pointer; }
 [data-arkme-workspace] [data-arkme-theme-image="dark"] { display: none !important; }
 
 .arkme-redesign-root {
@@ -1080,7 +1082,7 @@ body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label=
 }
 body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
   section[aria-label="客户端日历"] button[data-selected="false"][aria-label*="条记录"] > span:last-child {
-  background: var(--dsw-alias-bg-layer-2) !important;
+  background: transparent !important;
   color: var(--dsw-alias-label-secondary) !important;
 }
 body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
@@ -1877,39 +1879,7 @@ body[data-ds-dark-theme] .arkme-detail-extension-input-shell {
 
 body[data-ds-dark-theme] .arkme-peer-membership-disc { fill: #171717; stroke: #343434; }
 
-/* Match DSH's solid selector footer and its native New Session / View Options controls. */
-[data-arkme-workspace] .arkme-self-topic-create-button {
-  min-width: 0;
-  flex: 1;
-  height: 36px;
-  border: 1px solid var(--dsw-alias-border-l2, #dfe1e5);
-  border-radius: 12px;
-  background: var(--dsw-alias-bg-base, #fff);
-  white-space: nowrap;
-}
-[data-arkme-workspace] .arkme-self-topic-create-button:hover:not(:disabled) {
-  background: var(--dsw-alias-button-floating-hover, #f3f4f7);
-  border-color: var(--dsw-alias-border-l2, #d9dade);
-}
-[data-arkme-workspace] .arkme-dsh-view-options-button {
-  corner-shape: round;
-  box-sizing: border-box;
-  width: 28px;
-  height: 28px;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: var(--dsw-alias-bg-base, #fff);
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
-[data-arkme-workspace] .arkme-dsh-view-options-button:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
+/* Match DSH\'s solid selector footer: shared rules live in conversation-selector-style.ts. */
 .arkme-self-topic-sort-option {
   display: flex;
   min-width: 176px;

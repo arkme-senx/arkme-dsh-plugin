@@ -1,4 +1,7 @@
 import { HARNESS_MENU_OPEN, HARNESS_MENU_CLOSE, HARNESS_MENU_POSITION, type HarnessSessionMenuRequest } from './harness-session-menu-bridge.js'
+import { CONVERSATION_MENU_COLORS, CONVERSATION_MENU_LAYOUT, CONVERSATION_MENU_SURFACE, CONVERSATION_SELECTOR_CSS } from './conversation-selector-style.js'
+import { conversationMenuPosition } from './conversation-menu-layer.js'
+import { watchConversationMenuScrollbars } from './conversation-menu-scrollbars.js'
 
 const PREFIX = 'data-arkme-session-'
 const HEADER = '[data-slot="conversation.session.header"] > header'
@@ -87,6 +90,8 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   const rowFocusCleanups = new Map<HTMLElement, () => void>()
   let toolbarMarks: Array<[HTMLElement, string]> = []
   let summaryMarks: Array<[HTMLElement, string]> = []
+  let scrollList: HTMLElement | undefined
+  let stopScrollbars: (() => void) | undefined
   let initiallyCollapsed = false
   let expandedByUs = false
   let columnBefore = { role: null as string | null, label: null as string | null, inert: false }
@@ -96,6 +101,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   trigger.type = 'button'
   trigger.setAttribute('aria-haspopup', 'dialog')
   trigger.setAttribute('aria-expanded', 'false')
+  trigger.setAttribute('data-arkme-conversation-selector', '')
   mark(trigger, 'trigger')
   const label = doc.createElement('span')
   const arrow = doc.createElement('span')
@@ -122,26 +128,27 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     html[${PREFIX}preview] body { visibility: hidden !important; }
     html[${PREFIX}preview] [${PREFIX}column], html[${PREFIX}preview] [role="menu"],
     html[${PREFIX}preview] [role="dialog"], html[${PREFIX}preview] [role="alertdialog"] { visibility: visible !important; }
-    [${PREFIX}frame] { grid-template-columns: 0px minmax(0, 1fr) var(--arkme-session-rightbar) !important; }
+    [${PREFIX}frame] { grid-template-columns: 0px minmax(0, 1fr) var(--arkme-session-rightbar) !important; transition: none !important; }
     [${PREFIX}frame] > :nth-child(2) { grid-column: 2; }
     [${PREFIX}frame] > [data-rightbar-col] { grid-column: 3; }
     [${PREFIX}frame] > [data-side="sidebar"] { display: none !important; }
     [${PREFIX}column] {
       position: fixed !important; left: var(--arkme-session-left); top: var(--arkme-session-top);
       width: var(--arkme-session-width); height: auto; max-height: var(--arkme-session-height); z-index: 80;
-      border: 1px solid var(--dsw-alias-border-l3, #e5e7eb); border-radius: 10px;
-      box-shadow: 0 10px 32px #0000001f; box-sizing: border-box; overflow: visible !important;
+      border: ${CONVERSATION_MENU_SURFACE.border}; border-radius: ${CONVERSATION_MENU_SURFACE.borderRadius}px;
+      background: ${CONVERSATION_MENU_SURFACE.background}; box-shadow: ${CONVERSATION_MENU_SURFACE.boxShadow}; box-sizing: border-box; overflow: visible !important;
       display: none !important; pointer-events: none;
     }
     [${PREFIX}column][${PREFIX}open] { display: block !important; pointer-events: auto; }
-    [${PREFIX}root] { width: 100% !important; height: auto; max-height: var(--arkme-session-height); border-radius: 9px; padding: 8px 10px !important; position: relative; }
+    html[data-arkme-harness-viewport] [${PREFIX}column] { box-shadow: none; }
+    [${PREFIX}root] { width: 100% !important; height: auto; max-height: var(--arkme-session-height); border-radius: 9px; padding: ${CONVERSATION_MENU_LAYOUT.paddingY}px ${CONVERSATION_MENU_LAYOUT.paddingX}px !important; position: relative; }
     [${PREFIX}brand], [${PREFIX}native-title] { display: none !important; }
     [${PREFIX}create] { order: 10; flex-shrink: 0; margin: 8px 0 0 !important; }
     [${PREFIX}root][${PREFIX}compact-tools] [${PREFIX}create] { width: calc(100% - var(--arkme-session-tools-width) - 8px); }
     [${PREFIX}tools-header] { display: contents !important; }
     [${PREFIX}tools-label], [${PREFIX}tools-search] { display: none !important; }
     [${PREFIX}tools-actions] {
-      position: absolute !important; bottom: 8px; right: 10px; height: 38px;
+      position: absolute !important; bottom: ${CONVERSATION_MENU_LAYOUT.paddingY}px; right: ${CONVERSATION_MENU_LAYOUT.paddingX}px; height: ${CONVERSATION_MENU_LAYOUT.createHeight}px;
       display: flex !important; align-items: center; gap: 4px; max-width: none !important;
       opacity: 1 !important; visibility: visible !important; transform: none !important;
     }
@@ -153,21 +160,15 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     [${PREFIX}summary] [data-slot="conversation.session.header.actions"] > * { font-size: inherit; line-height: inherit; }
     [${PREFIX}turn-count] { display: inline-flex; align-items: center; white-space: nowrap; }
     [${PREFIX}summary] [data-slot="conversation.session.header.actions"] > * + [${PREFIX}turn-count]::before { content: '·'; margin: 0 7px; }
-    [${PREFIX}anchor][${PREFIX}fallback] { width: max-content; position: absolute; top: 10px; left: 20px; z-index: 10; max-width: calc(100% - 40px); }
-    [${PREFIX}trigger] {
-      display: inline-flex; align-items: stretch; gap: 0; min-width: 0; max-width: 100%; height: 30px;
-      border: 1px solid var(--dsw-alias-border-l3, #d4d6da); border-radius: 10px; padding: 0; margin-left: 0; box-sizing: border-box;
-      color: var(--dsw-alias-label-primary, inherit); background: var(--dsw-alias-button-elevated-fill, #fff); font: inherit;
-      font-size: 16px; font-weight: 600; line-height: 28px; overflow: hidden; cursor: pointer;
+    [${PREFIX}anchor][${PREFIX}fallback] {
+      width: max-content; position: absolute; top: 10px;
+      left: 20px; z-index: 10; max-width: calc(100% - 40px);
     }
-    [${PREFIX}trigger] > span:first-child { padding: 0 10px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    [${PREFIX}trigger] > span:last-child {
-      color: var(--dsw-alias-label-secondary, #626872); flex: none; width: 28px;
-      border-left: 1px solid var(--dsw-alias-border-l3, #d4d6da); display: flex; align-items: center; justify-content: center;
-    }
-    [${PREFIX}trigger][aria-expanded="true"] svg { transform: rotate(180deg); }
-    [${PREFIX}trigger]:hover, [${PREFIX}trigger][aria-expanded="true"] { background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); }
-    [${PREFIX}trigger]:focus-visible, [${PREFIX}column] [role="treeitem"]:focus-visible { outline: 2px solid #4c70ef; outline-offset: -2px; }
+    ${CONVERSATION_SELECTOR_CSS}
+    [${PREFIX}column] [role="treeitem"][aria-selected]:hover { background: ${CONVERSATION_MENU_COLORS.hover}; }
+    [${PREFIX}column] [role="treeitem"][aria-selected="true"],
+    [${PREFIX}column] [role="treeitem"][aria-selected="true"]:hover { background: ${CONVERSATION_MENU_COLORS.selected}; }
+    [${PREFIX}column] [role="treeitem"]:focus-visible { outline: 2px solid #4c70ef; outline-offset: -2px; }
   `
   doc.head.append(style)
 
@@ -184,6 +185,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   }
   function restore() {
     close()
+    stopScrollbars?.(); stopScrollbars = undefined; scrollList = undefined
     for (const cleanup of rowFocusCleanups.values()) cleanup()
     for (const [node, key] of toolbarMarks) node.removeAttribute(PREFIX + key)
     toolbarMarks = []
@@ -212,15 +214,14 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   function position() {
     if (!current) return
     const rect = trigger.getBoundingClientRect()
-    const width = Math.min(320, win!.innerWidth - 24)
+    const width = Math.min(CONVERSATION_MENU_LAYOUT.width, win!.innerWidth - 24)
     const anchor = external?.anchor()
-    const top = anchor
-      ? Math.max(12, Math.min(anchor.top, win!.innerHeight - Math.min(560, win!.innerHeight - 24) - 12))
-      : Math.max(8, Math.min(rect.bottom + 7, win!.innerHeight - 100))
-    variable(current.column, '--arkme-session-left', `${Math.max(12, Math.min(anchor?.left ?? rect.left, win!.innerWidth - width - 12))}px`)
+    const hoverPosition = anchor && conversationMenuPosition(anchor, width, Math.min(CONVERSATION_MENU_LAYOUT.maxHeight, win!.innerHeight - 24), { width: win!.innerWidth, height: win!.innerHeight })
+    const top = hoverPosition?.top ?? Math.max(8, Math.min(rect.bottom + 7, win!.innerHeight - 100))
+    variable(current.column, '--arkme-session-left', `${hoverPosition?.left ?? Math.max(CONVERSATION_MENU_LAYOUT.viewportInset, Math.min(rect.left, win!.innerWidth - width - CONVERSATION_MENU_LAYOUT.viewportInset))}px`)
     variable(current.column, '--arkme-session-top', `${top}px`)
     variable(current.column, '--arkme-session-width', `${width}px`)
-    variable(current.column, '--arkme-session-height', `${Math.min(560, win!.innerHeight - top - 12)}px`)
+    variable(current.column, '--arkme-session-height', `${Math.min(CONVERSATION_MENU_LAYOUT.maxHeight, win!.innerHeight - top - CONVERSATION_MENU_LAYOUT.viewportInset)}px`)
     external?.onLayout()
   }
   function sync() {
@@ -242,6 +243,17 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     mark(next.root, 'root')
     mark(next.brand, 'brand')
     mark(next.create, 'create')
+    const tree = next.root.querySelector<HTMLElement>('[data-slot="sidebar.workspaces"] [role="tree"]')
+    let list = tree ?? undefined
+    // Grouped and flat views can place the tree inside different scroll wrappers.
+    for (let node = tree; node && node !== next.root; node = node.parentElement) {
+      if (win!.getComputedStyle(node).overflowY === 'auto') { list = node; break }
+    }
+    if (list !== scrollList) {
+      stopScrollbars?.()
+      scrollList = list
+      stopScrollbars = list ? watchConversationMenuScrollbars(next.root, list) : undefined
+    }
     const nextTools = compactTools(next)
     for (const [node, key] of toolbarMarks) {
       if (!nextTools.some(([nextNode, nextKey]) => node === nextNode && key === nextKey)) node.removeAttribute(PREFIX + key)

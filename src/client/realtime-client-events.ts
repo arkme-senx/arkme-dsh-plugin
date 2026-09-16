@@ -9,6 +9,8 @@ import { privateChatActions } from './private-chat-actions-store.js'
 import type { ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeChatClientEvent } from '../types.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeCalendarInvalidations } from './calendar-invalidation-store.js'
+import { arkmeCalendarMonths } from './calendar-month-cache.js'
+import { activateSelfTopicDirectoryAccount, invalidateSelfTopicDirectories, resetSelfTopicDirectories } from './self-topic-directory-cache.js'
 import { arkmeAttentionSummary } from './attention-summary-store.js'
 import {
   arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation,
@@ -72,6 +74,8 @@ export function useArkmeRealtimeClientEvents(
 
   useEffect(() => {
     if (auth?.status !== 'authenticated' || auth.userId === undefined) {
+      resetSelfTopicDirectories()
+      arkmeCalendarMonths.activateAccount(undefined)
       privateChatActions.activateAccount(undefined)
       arkmeConversationMembers.activateAccount(undefined)
       arkmeMemberEvents.activateAccount(undefined)
@@ -85,6 +89,8 @@ export function useArkmeRealtimeClientEvents(
     }
     const authenticatedUserId = auth.userId
     const authenticatedAccountScope = `${auth.environment}:${String(authenticatedUserId)}`
+    activateSelfTopicDirectoryAccount(authenticatedAccountScope)
+    arkmeCalendarMonths.activateAccount(authenticatedAccountScope)
     privateChatActions.activateAccount(authenticatedAccountScope)
     arkmeConversationMembers.activateAccount(authenticatedAccountScope)
     arkmeMemberEvents.activateAccount(authenticatedAccountScope)
@@ -279,8 +285,10 @@ export function useArkmeRealtimeClientEvents(
         if (update.type === 'projection-invalidated') {
           if (update.projection === 'chat.direct_message_admission') { invalidateDirectMessageAdmission(); return }
           if (update.projection !== 'record') return
+          invalidateSelfTopicDirectories(update.retainTopicCounts !== true)
           arkmeInterwovenInvalidation.invalidate()
-          arkmeCalendarInvalidations.publishAll()
+          // Includes privacy/hierarchy changes: never retain an old visible count.
+          arkmeCalendarInvalidations.publishAll({ hard: true })
           arkmeUi.recordChanged()
           return
         }

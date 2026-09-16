@@ -6,7 +6,6 @@ import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeCalendarBucketDay,
-  ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
   ArkmeCalendarRecordItem,
   ArkmeTimelineItem,
@@ -25,6 +24,7 @@ import {
   isDshAgentInputCreationSource,
 } from './ArkmeDshAgentInputMarker.js'
 import { arkmeCalendarInvalidations } from './calendar-invalidation-store.js'
+import { useCalendarMonth } from './use-calendar-month.js'
 import { arkmeUi } from './ui-controller.js'
 
 const colors = {
@@ -112,7 +112,7 @@ const styles: Record<string, CSSProperties> = {
   dayNumber: { fontSize: 12, lineHeight: '16px', fontWeight: 500 },
   dayCount: { height: 9, color: '#8b91a1', fontSize: 9, lineHeight: '9px', fontWeight: 400 },
   dayCountPopulated: {
-    minWidth: 15, padding: '0 4px', borderRadius: 8, background: '#f0f1f5', color: '#626878',
+    minWidth: 15, padding: '0 4px', background: 'transparent', color: 'var(--dsw-alias-label-secondary, #626878)',
     transition: 'background 120ms ease, color 120ms ease',
   },
   selectedDayCount: { background: 'transparent', color: colors.selectedText, opacity: 1 },
@@ -254,7 +254,7 @@ export function ArkmeCalendarMonthView({
       </button>
     </header>
     <div style={styles.week}>{['一', '二', '三', '四', '五', '六', '日'].map(label => <span key={label} style={styles.weekDay}>{label}</span>)}</div>
-    <div style={{ ...styles.days, opacity: loading ? .55 : 1 }}>
+    <div style={{ ...styles.days, opacity: loading && days.length === 0 ? .55 : 1 }}>
       {calendarCells(visibleMonth).map((date, index) => {
         if (date === undefined) return <span key={`blank:${String(index)}`} style={styles.blank} />
         const key = dateKey(date)
@@ -284,24 +284,19 @@ function useCalendarDateInvalidation(date: string): number {
   return revision
 }
 
-function useCalendarMonthInvalidation(month: string): number {
-  const [revision, setRevision] = useState(0)
-  useEffect(() => arkmeCalendarInvalidations.subscribeMonth(month, () => {
-    setRevision(value => value + 1)
-  }), [month])
-  return revision
-}
-
 interface ScopedResource<T> {
   scope: string
   value?: T
 }
 
 export function ArkmeSelfCalendarPopover({
-  open, anchor, onClose, onSelectRecord,
+  open, anchor, sourceRef, scopeKey, accountScope, onClose, onSelectRecord,
 }: {
   open: boolean
   anchor: RefObject<HTMLButtonElement>
+  sourceRef?: string
+  scopeKey?: string
+  accountScope?: string | undefined
   onClose(): void
   onSelectRecord(item: ArkmeCalendarRecordItem): void
 }) {
@@ -313,14 +308,12 @@ export function ArkmeSelfCalendarPopover({
   const [selectionStatus, setSelectionStatus] = useState('')
   const visibleMonthStartKey = dateKey(monthStart(visibleMonth))
   const visibleMonthEndKey = dateKey(monthEnd(visibleMonth))
-  const visibleMonthKey = visibleMonthStartKey.slice(0, 7)
-  const calendarScope = `${timezone}:${visibleMonthKey}`
-  const monthInvalidationRevision = useCalendarMonthInvalidation(visibleMonthKey)
-  const [calendarResource, setCalendarResource] = useState<ScopedResource<ArkmeCalendarBucketPage>>(() => ({ scope: calendarScope }))
-  const [calendarLoading, setCalendarLoading] = useState(false)
-  const [calendarError, setCalendarError] = useState('')
+  const month = useCalendarMonth({ scopeKey: scopeKey ?? sourceRef ?? 'global',
+    ...(sourceRef ? { sourceRef } : {}), timezone, startDate: visibleMonthStartKey, endDate: visibleMonthEndKey }, open, accountScope)
+  const calendar = month.value
+  const calendarLoading = month.loading
+  const calendarError = month.error
   const selectionControllerRef = useRef<AbortController>()
-  const calendar = calendarResource.scope === calendarScope ? calendarResource.value : undefined
 
   useLayoutEffect(() => {
     if (!open || typeof window === 'undefined') return
@@ -346,23 +339,6 @@ export function ArkmeSelfCalendarPopover({
     }
   }, [anchor, open])
 
-  useEffect(() => {
-    if (!open) return
-    let active = true
-    const controller = new AbortController()
-    setCalendarResource(current => current.scope === calendarScope ? current : { scope: calendarScope })
-    setCalendarLoading(true)
-    setCalendarError('')
-    void callArkme<ArkmeCalendarBucketPage>('calendar.buckets', {
-      startDate: visibleMonthStartKey,
-      endDate: visibleMonthEndKey,
-      timezone,
-    }, controller.signal)
-      .then(value => { if (active) setCalendarResource({ scope: calendarScope, value }) })
-      .catch(caught => { if (active && !controller.signal.aborted) setCalendarError(errorMessage(caught)) })
-      .finally(() => { if (active) setCalendarLoading(false) })
-    return () => { active = false; controller.abort() }
-  }, [calendarScope, monthInvalidationRevision, open, timezone, visibleMonthEndKey, visibleMonthStartKey])
 
   useEffect(() => {
     if (open) return
@@ -370,7 +346,7 @@ export function ArkmeSelfCalendarPopover({
     selectionControllerRef.current = undefined
     setSelectionStatus('')
   }, [open])
-  useEffect(() => () => { selectionControllerRef.current?.abort() }, [])
+  useEffect(() => () => { selectionControllerRef.current?.abort() }, [sourceRef])
 
   const selectDate = async (date: Date) => {
     const normalized = startOfLocalDay(date)
@@ -386,6 +362,7 @@ export function ArkmeSelfCalendarPopover({
     setSelectionStatus('正在定位这一天的记录…')
     try {
       const page = await callArkme<ArkmeCalendarDayRecordPage>('calendar.records', {
+        ...(sourceRef === undefined ? {} : { sourceRef }),
         bucketDate: key,
         timezone,
         limit: 1,
@@ -450,6 +427,8 @@ function calendarTimelineItem(item: ArkmeCalendarRecordItem, avatarRef?: string)
 }
 
 function CalendarSourceBadge({ item, onSelect }: { item: ArkmeCalendarRecordItem; onSelect(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
+  // DSH inputs use the shared origin marker, not a personal-topic navigation.
+  if (isDshAgentInputCreationSource(item)) return null
   const title = item.topicTitle?.trim() || item.source?.displayName.trim() || (item.sourceKind === 'chat' ? '会话来源暂不可用' : '')
   if (title === '') return null
   return <button type="button" style={{ ...styles.topicBadge, background: 'transparent', cursor: item.source ? 'pointer' : 'default', textAlign: 'left' }}
@@ -521,8 +500,8 @@ export function ArkmeCalendarCell({
 }
 
 export function ArkmeCalendarSurface({
-  onClose, anchor = 'directory',
-}: { onClose?: () => void; anchor?: 'directory' | 'product-rail' } = {}) {
+  onClose, anchor = 'directory', accountScope,
+}: { onClose?: () => void; anchor?: 'directory' | 'product-rail'; accountScope?: string | undefined } = {}) {
   const today = useMemo(() => startOfLocalDay(new Date()), [])
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local', [])
   const [visibleMonth, setVisibleMonth] = useState(() => monthStart(today))
@@ -532,25 +511,23 @@ export function ArkmeCalendarSurface({
   const [showOriginal, setShowOriginal] = useState(false)
   const visibleMonthStartKey = dateKey(monthStart(visibleMonth))
   const visibleMonthEndKey = dateKey(monthEnd(visibleMonth))
-  const visibleMonthKey = visibleMonthStartKey.slice(0, 7)
   const selectedDateKey = dateKey(selectedDate)
-  const calendarScope = `${timezone}:${visibleMonthKey}`
   const recordsScope = `${timezone}:${selectedDateKey}`
-  const monthInvalidationRevision = useCalendarMonthInvalidation(visibleMonthKey)
   const dateInvalidationRevision = useCalendarDateInvalidation(selectedDateKey)
-  const [calendarResource, setCalendarResource] = useState<ScopedResource<ArkmeCalendarBucketPage>>(() => ({ scope: calendarScope }))
+  const month = useCalendarMonth({ scopeKey: 'global', timezone,
+    startDate: visibleMonthStartKey, endDate: visibleMonthEndKey }, true, accountScope)
   const [recordsResource, setRecordsResource] = useState<ScopedResource<ArkmeCalendarDayRecordPage>>(() => ({ scope: recordsScope }))
-  const [calendarLoading, setCalendarLoading] = useState(true)
+  const calendarLoading = month.loading
   const [recordsLoading, setRecordsLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [calendarError, setCalendarError] = useState('')
+  const calendarError = month.error
   const [recordsError, setRecordsError] = useState('')
   const [userProfile, setUserProfile] = useState<ArkmeUserProfile | null>(null)
   const loadMoreController = useRef<AbortController>()
   const listRef = useRef<HTMLDivElement>(null)
   const loadMoreSentinel = useRef<HTMLDivElement>(null)
   const loadMoreArmed = useRef(true)
-  const calendar = calendarResource.scope === calendarScope ? calendarResource.value : undefined
+  const calendar = month.value
   const records = recordsResource.scope === recordsScope ? recordsResource.value : undefined
 
   useEffect(() => {
@@ -565,21 +542,6 @@ export function ArkmeCalendarSurface({
     return () => { active = false; controller.abort() }
   }, [])
 
-  useEffect(() => {
-    let active = true
-    const controller = new AbortController()
-    setCalendarResource(current => current.scope === calendarScope ? current : { scope: calendarScope })
-    setCalendarLoading(true); setCalendarError('')
-    void callArkme<ArkmeCalendarBucketPage>('calendar.buckets', {
-      startDate: visibleMonthStartKey,
-      endDate: visibleMonthEndKey,
-      timezone,
-    }, controller.signal)
-      .then(value => { if (active) setCalendarResource({ scope: calendarScope, value }) })
-      .catch(caught => { if (active && !controller.signal.aborted) setCalendarError(errorMessage(caught)) })
-      .finally(() => { if (active) setCalendarLoading(false) })
-    return () => { active = false; controller.abort() }
-  }, [calendarScope, monthInvalidationRevision, timezone, visibleMonthEndKey, visibleMonthStartKey])
 
   useEffect(() => {
     let active = true

@@ -1,4 +1,5 @@
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
+import { isDshAgentInputRawRecord } from '../dsh-agent-input-source.js'
 import { identifyTimelineSender, botDisplayName, type BotDisplayProfiles, type BotDisplayProfilesReader } from '../chat-sender-display.js'
 import { RuntimeBotDisplayProfilesReader, botDisplaySnapshot } from './chat-sender-display-reader.js'
 import { recordDeletionCapability } from '../record-deletion-ref.js'
@@ -263,7 +264,7 @@ export interface ArkmeChatRealtimePort {
   emitChatClientEvent(event: Parameters<import('./chat-realtime-service.js').ChatRealtimeService['emitChatClientEvent']>[0]): void
   nextChatClientRevision(): number
   scheduleChatSessionProjection(chatSessionUid: string, latestSequence: number): void
-  invalidateRecordProjection(): Promise<void>
+  invalidateRecordProjection(options?: { contentOnly?: boolean }): Promise<void>
   refreshAttentionSummary(): Promise<void>
 }
 
@@ -2160,9 +2161,13 @@ export class ChatService {
       throw new ArkmePluginError('topic-subtree-source-invalid', '下级主题信息无效，请刷新后重试', true, 409)
     }
     const records: unknown[] = []
+    const visited = new Set<string>()
     let pageCursor = cursor
     for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
       signal?.throwIfAborted()
+      const key = JSON.stringify(pageCursor ?? {})
+      if (visited.has(key)) throw new ArkmePluginError('topic-record-page-invalid', '主题快记分页未推进，请重试', true, 502)
+      visited.add(key)
       const page = await readTopicRecordPage(this.runtime, session, opened.ownerRef, {
         limit,
         ...(pageCursor === undefined ? {} : { cursor: pageCursor }),
@@ -2172,11 +2177,15 @@ export class ChatService {
         if (required) throw new ArkmePluginError('topic-privacy-locked', '隐私锁主题不能在 Arkme 插件中查看', false, 403)
         return { topic, topicUid: opened.ownerRef, records: [], hasMore: false }
       }
+      let filtered = false
       for (const raw of page.records) {
-        if (arkmePrivacyLockedRecord(raw) || lockedRecordUids.has(this.record.recordUid(raw))) continue
+        if (isDshAgentInputRawRecord(raw) || arkmePrivacyLockedRecord(raw) || lockedRecordUids.has(this.record.recordUid(raw))) {
+          filtered = true
+          continue
+        }
         records.push(raw)
       }
-      if (!merged) {
+      if (!merged && !filtered && records.length <= limit) {
         return {
           topic,
           topicUid: opened.ownerRef,
@@ -2186,12 +2195,16 @@ export class ChatService {
         }
       }
       if (records.length >= limit) {
+        const last = objectValue(records[limit - 1])
+        const nextCursor = records.length > limit
+          ? { sendAtMillis: numberValue(last.send_at ?? objectValue(last.record_core).send_at), itemUid: this.record.recordUid(last) }
+          : page.nextCursor
         return {
           topic,
           topicUid: opened.ownerRef,
           records: records.slice(0, limit),
           hasMore: records.length > limit || page.hasMore,
-          ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+          ...(nextCursor === undefined ? {} : { nextCursor }),
         }
       }
       if (!page.hasMore) return { topic, topicUid: opened.ownerRef, records, hasMore: false }
@@ -2246,19 +2259,54 @@ export class ChatService {
       const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 30)))
       if (source.kind === 'send_to_self') {
         const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
-        const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-          '/api/v1/home/feed/query',
-          {
-            limit,
-            source_kinds: [1, 2],
-            ...(options.cursor?.sendAtMillis === undefined ? {} : { cursor_send_at: options.cursor.sendAtMillis }),
-            ...(options.cursor?.itemUid === undefined ? {} : { cursor_record_uid: options.cursor.itemUid }),
-          },
-          session,
-          options.signal,
-        )
-        const rawRecords = listValue(data.items).filter(raw => !arkmePrivacyLockedRecord(raw)
-          && !lockedRecordUids.has(this.record.recordUid(raw)))
+        const rawRecords: unknown[] = []
+        const seen = new Set<string>()
+        const visited = new Set<string>()
+        let cursor = options.cursor
+        let hasMore = false
+        let nextCursor: ArkmeTimelineCursor | undefined
+        for (let pageIndex = 0; pageIndex < 100; pageIndex++) {
+          options.signal?.throwIfAborted()
+          const key = `${cursor?.sendAtMillis ?? 0}:${cursor?.itemUid ?? ''}`
+          if (visited.has(key)) throw new ArkmePluginError('self-feed-cursor-invalid', '发给自己分页未推进，请重试', true, 502)
+          visited.add(key)
+          const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+            '/api/v1/home/feed/query',
+            {
+              limit,
+              source_kinds: [1, 2],
+              ...(cursor?.sendAtMillis === undefined ? {} : { cursor_send_at: cursor.sendAtMillis }),
+              ...(cursor?.itemUid === undefined ? {} : { cursor_record_uid: cursor.itemUid }),
+            },
+            session,
+            options.signal,
+          )
+          const rows = listValue(data.items)
+          let filtered = false
+          for (const raw of rows) {
+            const uid = this.record.recordUid(raw)
+            if (isDshAgentInputRawRecord(raw) || arkmePrivacyLockedRecord(raw) || lockedRecordUids.has(uid) || seen.has(uid)) {
+              filtered = true
+              continue
+            }
+            seen.add(uid)
+            rawRecords.push(raw)
+          }
+          hasMore = data.has_more === true
+          const nextSendAt = numberValue(data.next_cursor_send_at)
+          const nextUid = stringValue(data.next_cursor_record_uid).trim()
+          nextCursor = nextSendAt > 0 && nextUid !== '' ? { sendAtMillis: nextSendAt, itemUid: nextUid } : undefined
+          if (rawRecords.length >= limit || !hasMore || !filtered) break
+          if (!nextCursor) throw new ArkmePluginError('self-feed-cursor-invalid', '发给自己分页信息缺失，请重试', true, 502)
+          cursor = nextCursor
+          if (pageIndex === 99) throw new ArkmePluginError('self-feed-pagination-limit', '发给自己加载未完成，请重试', true, 502)
+        }
+        if (rawRecords.length > limit) {
+          rawRecords.length = limit
+          const last = objectValue(rawRecords.at(-1))
+          nextCursor = { sendAtMillis: numberValue(last.send_at ?? objectValue(last.record_core).send_at), itemUid: this.record.recordUid(last) }
+          hasMore = true
+        }
         const media = await this.media.hydrateRecordMediaPage(rawRecords, session, options.signal)
         const signingKey = await this.runtime.stateStore.uniqueCode()
         const items = (await Promise.all(rawRecords.map(async raw => {
@@ -2288,15 +2336,11 @@ export class ChatService {
         }))).filter(item => item.itemUid !== '')
         this.hydrateTimelineExtensionParents(items)
         const projectedItems = items.map(item => this.withRecordMessageActionRef(source, item, session.userId, signingKey))
-        const nextSendAt = numberValue(data.next_cursor_send_at)
-        const nextUid = stringValue(data.next_cursor_record_uid).trim()
         return {
           source: await this.source.sourceItem(source),
           items: projectedItems,
-          hasMore: data.has_more === true,
-          ...(nextSendAt > 0 && nextUid !== '' ? {
-            nextCursor: { sendAtMillis: nextSendAt, itemUid: nextUid },
-          } : {}),
+          hasMore,
+          ...(nextCursor === undefined ? {} : { nextCursor }),
         }
       }
       if (source.kind === 'default_category') {
@@ -3715,7 +3759,7 @@ export class ChatService {
       const publishedRecordUid = stringValue(data.record_uid).trim() || createdRecordUid
       const senderDisplayName = profile.nickname.trim() || profile.displayName.trim() || '我'
       const senderAvatarUrl = profile.avatarRef.trim()
-      await this.realtime.invalidateRecordProjection()
+      await this.realtime.invalidateRecordProjection({ contentOnly: true })
       return {
         sid: detail.sid,
         recordUid: publishedRecordUid,
@@ -3836,7 +3880,7 @@ export class ChatService {
           session,
           options.signal,
         )
-        await this.realtime.invalidateRecordProjection()
+        await this.realtime.invalidateRecordProjection({ contentOnly: true })
         return await appendCommentWarning({ sourceRef: targetSourceRef, itemUid: stringValue(data.record_uid).trim() || recordUid, status: numberValue(data.status), localState: 'synced' })
       }
       const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
@@ -3852,7 +3896,7 @@ export class ChatService {
         session,
         options.signal,
       )
-      await this.realtime.invalidateRecordProjection()
+      await this.realtime.invalidateRecordProjection({ contentOnly: true })
       return await appendCommentWarning({ sourceRef: targetSourceRef, itemUid: stringValue(data.record_uid).trim() || recordUid, status: numberValue(data.status), localState: 'synced' })
     }
   
@@ -3890,7 +3934,7 @@ export class ChatService {
           ...(options.recordDurationMillis === undefined ? {} : { recordDurationMillis: options.recordDurationMillis }),
           ...(options.captureContext === undefined ? {} : { captureContext: options.captureContext }),
         })
-        if (result.localState !== 'failed') await this.realtime.invalidateRecordProjection()
+        if (result.localState !== 'failed') await this.realtime.invalidateRecordProjection({ contentOnly: true })
         return await this.withConfirmedSendReferences({
           sourceRef,
           itemUid: result.recordUid,
@@ -3933,7 +3977,7 @@ export class ChatService {
           text,
           session.userId,
         )
-        await this.realtime.invalidateRecordProjection()
+        await this.realtime.invalidateRecordProjection({ contentOnly: true })
         return await this.withConfirmedSendReferences({
           sourceRef,
           itemUid: stringValue(result.record_uid).trim() || recordUid,
@@ -4486,7 +4530,7 @@ export class ChatService {
           textContent,
           session.userId, options.signal, input.textFormat,
         )
-        await this.realtime.invalidateRecordProjection()
+        await this.realtime.invalidateRecordProjection({ contentOnly: true })
         return await this.withConfirmedSendReferences({
           sourceRef,
           itemUid: stringValue(result.record_uid).trim() || recordUid,
@@ -4515,7 +4559,7 @@ export class ChatService {
           textContent,
           session.userId, options.signal, input.textFormat,
         )
-        await this.realtime.invalidateRecordProjection()
+        await this.realtime.invalidateRecordProjection({ contentOnly: true })
         return await this.withConfirmedSendReferences({
           sourceRef,
           itemUid: stringValue(result.record_uid).trim() || recordUid,

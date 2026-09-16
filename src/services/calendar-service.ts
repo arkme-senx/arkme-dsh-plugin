@@ -1,19 +1,42 @@
 import type {
+  ArkmeCalendarScopeKind,
   ArkmeSourceItem,
   ArkmeCalendarBucketDay,
   ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
   ArkmeCalendarRecordItem,
 } from '../types.js'
+import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { SourceService } from './source-service.js'
 import type { MediaService } from './media-service.js'
 import type { RecordService } from './record-service.js'
 import { arkmeEmojiClippedText } from '../arkme-emoji-text.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord } from './privacy-visibility.js'
+import { readTopicMetadata } from './topic-metadata.js'
+import { isDshAgentInputRawRecord } from '../dsh-agent-input-source.js'
+import { ARKME_DSH_INPUT_TOPIC_KIND } from '../topic-policy.js'
+import { SharedReadGroup } from '../shared-read-group.js'
 
 const MAX_CALENDAR_RANGE_DAYS = 62
 const MAX_DAY_RECORD_LIMIT = 50
+
+interface CalendarScope {
+  kind: ArkmeCalendarScopeKind
+  buckets: Array<{ kind: 1 | 2; uid: string }>
+}
+
+async function mapBounded<T, R>(items: T[], project: (item: T) => Promise<R>): Promise<R[]> {
+  const result = new Array<R>(items.length)
+  let index = 0
+  await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => {
+    while (index < items.length) {
+      const current = index++
+      result[current] = await project(items[current]!)
+    }
+  }))
+  return result
+}
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -84,6 +107,9 @@ function sourceKind(raw: Record<string, unknown>): ArkmeCalendarRecordItem['sour
 }
 
 export class CalendarService {
+  private readonly months = new Map<string, { revision: string; expires: number; value: ArkmeCalendarBucketPage }>()
+  private readonly monthReads = new SharedReadGroup<ArkmeCalendarBucketPage>()
+  dispose(): void { this.months.clear(); this.monthReads.clear() }
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly privacy: ArkmePrivacyVisibilityService,
@@ -95,8 +121,36 @@ export class CalendarService {
   async bucketPage(options: {
     startDate: string
     endDate: string
+    sourceRef?: string
     timezone?: string
+    background?: boolean
     signal?: AbortSignal
+  }): Promise<ArkmeCalendarBucketPage> {
+    options.signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    const timezone = readTimezone(options.timezone)
+    const key = JSON.stringify([session.userId, options.sourceRef ?? 'global', options.startDate, options.endDate, timezone])
+    const revision = () => this.runtime.calendarReadRevision?.(`user:${session.userId}`, options.startDate, options.endDate, timezone) ?? '0'
+    const version = revision()
+    const cached = this.months.get(key)
+    if (cached && cached.revision === version && cached.expires > Date.now()) {
+      this.months.delete(key); this.months.set(key, cached)
+      return structuredClone(cached.value)
+    }
+    return structuredClone(await this.monthReads.run(`${key}:${version}`, async (signal, isCurrent) => {
+      const value = await this.bucketPageUncached({ ...options, timezone, signal })
+      signal.throwIfAborted()
+      if (isCurrent() && revision() === version) {
+        this.months.delete(key)
+        this.months.set(key, { revision: version, expires: Date.now() + 60_000, value })
+        while (this.months.size > 48) this.months.delete(this.months.keys().next().value!)
+      }
+      return value
+    }, options.signal))
+  }
+
+  private async bucketPageUncached(options: {
+    startDate: string; endDate: string; sourceRef?: string; timezone?: string; background?: boolean; signal?: AbortSignal
   }): Promise<ArkmeCalendarBucketPage> {
     const startDate = readCalendarDate(options.startDate, 'start_date')
     const endDate = readCalendarDate(options.endDate, 'end_date')
@@ -110,38 +164,65 @@ export class CalendarService {
     }
     const timezone = readTimezone(options.timezone)
     const session = await this.runtime.requireSession()
-    await this.privacy.lockedRecordUids(session, options.signal)
-    const data = await this.runtime.authenticatedCalendarPost<Record<string, unknown>>(
-      '/api/v1/calendar/buckets/query',
-      {
-        bucket_scope_kind: 1,
-        bucket_scope_uid: '',
-        start_date: startDate,
-        end_date: endDate,
-        timezone,
-      },
-      session,
-      options.signal,
-      {
-        key: `calendar:buckets:self:${startDate}:${endDate}:${timezone}`,
-        cacheMs: 30_000,
-        failureCooldownMs: 2_000,
-      },
-    )
+    const locked = await this.privacy.lockedRecordUids(session, options.signal)
+    const scope = await this.resolveScope(options.sourceRef, session, options.signal)
+    const pages = await mapBounded(scope.buckets, async bucket => {
+      const data = await this.runtime.authenticatedCalendarPost<Record<string, unknown>>(
+        '/api/v1/calendar/buckets/query',
+        {
+          bucket_scope_kind: bucket.kind,
+          bucket_scope_uid: bucket.uid,
+          start_date: startDate,
+          end_date: endDate,
+          timezone,
+        },
+        session,
+        options.signal,
+        {
+          key: `calendar:buckets:${bucket.kind === 1 ? 'self' : `topic:${bucket.uid}`}:${startDate}:${endDate}:${timezone}`,
+          cacheMs: 30_000,
+          lane: options.background ? 'background-read' : 'interactive-read',
+          failureCooldownMs: 2_000,
+        },
+      )
+      return { bucket, days: listValue(data.daily_data).map(raw => this.bucketDay(raw)).filter(
+        (day): day is ArkmeCalendarBucketDay => day !== undefined,
+      ) }
+    })
+    const dates = [...new Set(pages.flatMap(page => page.days.map(day => day.bucketDate)))].sort()
+    const days = await mapBounded(dates, async bucketDate => {
+      const contributors = pages.flatMap(page => {
+        const day = page.days.find(day => day.bucketDate === bucketDate)
+        return day?.hasRecords ? [{ bucket: page.bucket, day }] : []
+      })
+      // Only the account-wide calendar can use the unfiltered server count.
+      // Personal calendars exclude DSH; count the same visible records as the
+      // day query, deduplicating subtree memberships without loading media.
+      if (scope.kind === 'self') {
+        return contributors[0]?.day ?? { bucketDate, count: 0, protectedCount: 0, hasRecords: false }
+      }
+      const records = new Map<string, ArkmeCalendarRecordItem>()
+      for (const { bucket } of contributors) {
+        const rows = await this.scopedDayRows(bucket, scope.kind, bucketDate, timezone, Infinity, undefined, session, locked, options.signal, options.background)
+        for (const { item } of rows) records.set(item.recordUid, item)
+      }
+      const first = Math.min(...[...records.values()].map(item => item.sendAtMillis))
+      return { bucketDate, count: records.size, protectedCount: 0, hasRecords: records.size > 0,
+        ...(Number.isFinite(first) ? { firstSendAtMillis: first } : {}) }
+    })
     return {
-      scope: 'self',
+      scope: scope.kind,
       startDate,
       endDate,
-      timezone: stringValue(data.timezone).trim() || timezone,
+      timezone,
       refreshedAtMillis: Date.now(),
-      days: listValue(data.daily_data).map(raw => this.bucketDay(raw)).filter(
-        (day): day is ArkmeCalendarBucketDay => day !== undefined,
-      ),
+      days,
     }
   }
 
   async dayRecords(options: {
     bucketDate: string
+    sourceRef?: string
     timezone?: string
     limit?: number
     cursor?: { sendAtMillis: number; recordUid: string }
@@ -154,7 +235,20 @@ export class CalendarService {
     const cursorRecordUid = options.cursor?.recordUid.trim() ?? ''
     const session = await this.runtime.requireSession()
     const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
-    const data = await this.runtime.authenticatedCalendarPost<Record<string, unknown>>(
+    const scope = await this.resolveScope(options.sourceRef, session, options.signal)
+    let data: Record<string, unknown>
+    if (scope.kind !== 'self') {
+      const streams = await mapBounded(scope.buckets, bucket => this.scopedDayRows(
+        bucket, scope.kind, bucketDate, timezone, limit + 1, options.cursor, session, lockedRecordUids, options.signal,
+      ))
+      const unique = new Map(streams.flat().map(row => [row.item.recordUid, row]))
+      const sorted = [...unique.values()].sort((a, b) => b.item.sendAtMillis - a.item.sendAtMillis
+        || b.item.recordUid.localeCompare(a.item.recordUid))
+      const last = sorted[Math.min(limit, sorted.length) - 1]?.item
+      data = { items: sorted.slice(0, limit).map(row => row.raw), has_more: sorted.length > limit,
+        ...(sorted.length > limit && last ? { next_cursor_send_at: last.sendAtMillis, next_cursor_record_uid: last.recordUid } : {}) }
+    }
+    else data = await this.runtime.authenticatedCalendarPost<Record<string, unknown>>(
       '/api/v1/calendar/records/query',
       {
         bucket_scope_kind: 1,
@@ -207,7 +301,7 @@ export class CalendarService {
       rows.filter(row => row.item.accessState === 'available').map(row => row.raw), session, options.signal,
     )
     return {
-      scope: 'self',
+      scope: scope.kind,
       bucketDate,
       timezone: stringValue(data.timezone).trim() || timezone,
       refreshedAtMillis: Date.now(),
@@ -226,6 +320,65 @@ export class CalendarService {
       hasMore: data.has_more === true,
       ...(nextSendAt > 0 && nextUid !== '' ? { nextCursor: { sendAtMillis: nextSendAt, recordUid: nextUid } } : {}),
     }
+  }
+
+  private async resolveScope(sourceRef: string | undefined, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<CalendarScope> {
+    if (sourceRef === undefined) return { kind: 'self', buckets: [{ kind: 1, uid: '' }] }
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind === 'send_to_self') return { kind: 'send_to_self', buckets: [{ kind: 1, uid: '' }] }
+    if (source.kind === 'default_category') return { kind: 'uncategorized', buckets: [{ kind: 1, uid: '' }] }
+    if (source.kind !== 'topic') throw new ArkmePluginError('calendar-source-invalid', '此日历仅支持发给自己和主题', false, 400)
+    const metadata = await readTopicMetadata(this.runtime, session, source.ownerRef, signal)
+    if (metadata.privacyState === 2) throw new ArkmePluginError('topic-privacy-locked', '隐私锁主题不能在 Arkme 插件中查看', false, 403)
+    if (metadata.topicKind === ARKME_DSH_INPUT_TOPIC_KIND) return { kind: 'topic', buckets: [] }
+    const topics = await this.source.topicSubtreeSources(sourceRef, signal)
+    const buckets = await mapBounded(topics, async topic => {
+      const opened = await this.source.openSourceRef(topic.sourceRef, session.userId)
+      const meta = opened.ownerRef === source.ownerRef ? metadata : await readTopicMetadata(this.runtime, session, opened.ownerRef, signal)
+      return meta.privacyState === 2 || meta.topicKind === ARKME_DSH_INPUT_TOPIC_KIND ? [] : [{ kind: 2 as const, uid: opened.ownerRef }]
+    })
+    return { kind: 'topic', buckets: buckets.flat() }
+  }
+
+  /** Read only one calendar day; backfill filtered rows and reject stalled cursors. */
+  private async scopedDayRows(
+    bucket: CalendarScope['buckets'][number], scope: ArkmeCalendarScopeKind,
+    bucketDate: string, timezone: string, count: number,
+    cursor: { sendAtMillis: number; recordUid: string } | undefined,
+    session: ArkmeSessionCredentials, locked: ReadonlySet<string>, signal?: AbortSignal, background = false,
+  ): Promise<Array<{ raw: unknown; item: ArkmeCalendarRecordItem }>> {
+    const rows = new Map<string, { raw: unknown; item: ArkmeCalendarRecordItem }>()
+    const visited = new Set<string>()
+    for (let page = 0; page < 1000; page++) {
+      signal?.throwIfAborted()
+      const key = `${cursor?.sendAtMillis ?? 0}:${cursor?.recordUid ?? ''}`
+      if (visited.has(key)) throw new ArkmePluginError('calendar-cursor-invalid', '日历分页未推进，请重试', true, 502)
+      visited.add(key)
+      const data = await this.runtime.authenticatedCalendarPost<Record<string, unknown>>('/api/v1/calendar/records/query', {
+        bucket_scope_kind: bucket.kind, bucket_scope_uid: bucket.uid, bucket_date: bucketDate, timezone,
+        limit: MAX_DAY_RECORD_LIMIT,
+        ...(cursor ? { cursor_send_at: cursor.sendAtMillis, cursor_record_uid: cursor.recordUid } : {}),
+      }, session, signal, {
+        key: `calendar:records:${bucket.kind === 1 ? 'self' : `topic:${bucket.uid}`}:${bucketDate}:${timezone}:50:${key}`,
+        cacheMs: 10_000, failureCooldownMs: 2_000,
+        lane: background ? 'background-read' : 'interactive-read',
+      })
+      for (const raw of listValue(data.items)) {
+        const item = this.dayRecord(raw)
+        if (!item || locked.has(item.recordUid)) continue
+        if (isDshAgentInputRawRecord(raw)) continue
+        if (scope === 'uncategorized' && item.isUncategorized !== true) continue
+        if (scope === 'send_to_self' && item.sourceKind !== 'self' && item.sourceKind !== 'topic') continue
+        rows.set(item.recordUid, { raw, item })
+        if (rows.size >= count) return [...rows.values()]
+      }
+      if (data.has_more !== true) return [...rows.values()]
+      const sendAtMillis = Math.trunc(numberValue(data.next_cursor_send_at))
+      const recordUid = stringValue(data.next_cursor_record_uid).trim()
+      if (sendAtMillis <= 0 || recordUid === '') throw new ArkmePluginError('calendar-cursor-invalid', '日历分页信息缺失，请重试', true, 502)
+      cursor = { sendAtMillis, recordUid }
+    }
+    throw new ArkmePluginError('calendar-pagination-limit', '日历当日记录尚未加载完整，请重试', true, 502)
   }
 
   private bucketDay(raw: unknown): ArkmeCalendarBucketDay | undefined {
@@ -272,7 +425,7 @@ export class CalendarService {
       preview,
       ...(stringValue(topic.title).trim() === '' ? {} : { topicTitle: stringValue(topic.title).trim() }),
       sourceKind: sourceKind(item),
-      creationSource: Math.trunc(numberValue(core.creation_source)),
+      creationSource: isDshAgentInputRawRecord(raw) ? 3 : Math.trunc(numberValue(core.creation_source)),
       templateKind: Math.trunc(numberValue(core.template_kind)),
       displayKind: Math.trunc(numberValue(core.display_kind)),
       protected: false,

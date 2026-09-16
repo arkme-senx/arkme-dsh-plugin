@@ -5,6 +5,7 @@ export type ArkmeCalendarInvalidationHint =
   | { dateStamp: number; dateKey?: never }
 
 type Listener = () => void
+export interface CalendarInvalidation { dates?: string[]; hard: boolean }
 
 function localDateKey(date: Date): string {
   return [
@@ -57,6 +58,12 @@ function addListener(
 
 /** Browser-local owner for coalesced, date-scoped Calendar invalidation hints. */
 export class ArkmeCalendarInvalidationStore {
+  private readonly observers = new Set<(event: CalendarInvalidation) => void>()
+  private hard = false
+  subscribe(listener: (event: CalendarInvalidation) => void): () => void {
+    this.observers.add(listener)
+    return () => { this.observers.delete(listener) }
+  }
   private readonly dateListeners = new Map<string, Set<Listener>>()
   private readonly monthListeners = new Map<string, Set<Listener>>()
   private readonly pendingDateKeys = new Set<string>()
@@ -89,7 +96,8 @@ export class ArkmeCalendarInvalidationStore {
     this.scheduleFlush()
   }
 
-  publishAll(): void {
+  publishAll(options: { hard?: boolean } = {}): void {
+    this.hard ||= options.hard === true
     this.pendingDateKeys.clear()
     this.pendingAllDates = true
     this.scheduleFlush()
@@ -112,9 +120,12 @@ export class ArkmeCalendarInvalidationStore {
     this.flushScheduled = false
     const pendingAllDates = this.pendingAllDates
     const dateKeys = [...this.pendingDateKeys]
+    const hard = this.hard
+    this.hard = false
     this.pendingAllDates = false
     this.pendingDateKeys.clear()
     const listeners = new Set<Listener>()
+    for (const observer of this.observers) observer({ ...(pendingAllDates ? {} : { dates: dateKeys }), hard })
     if (pendingAllDates) {
       for (const scoped of this.dateListeners.values()) for (const listener of scoped) listeners.add(listener)
       for (const scoped of this.monthListeners.values()) for (const listener of scoped) listeners.add(listener)
