@@ -1991,13 +1991,22 @@ describe('ArkmeService', () => {
         topic_core: { topic_uid: 'topic-child', title: '周报', update_at: 98 },
         summary: { record_count: 1, latest_send_at: 97 },
       }, {
+        topic_core: { topic_uid: 'topic-grandchild', title: '日报', update_at: 96 },
+        summary: { record_count: 1, latest_send_at: 95 },
+      }, {
         topic_core: { topic_uid: 'topic-empty', title: '空主题', update_at: 999 },
         summary: { record_count: 0 },
       }] } })
-      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [{
-        rel_uid: 'relation-1', parent_topic_uid: 'topic-1', child_topic_uid: 'topic-child',
-        rel_kind: 1, status: 1, sibling_order: 1,
-      }] } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [
+        {
+          rel_uid: 'relation-1', parent_topic_uid: 'topic-1', child_topic_uid: 'topic-child',
+          rel_kind: 1, status: 1, sibling_order: 1,
+        },
+        {
+          rel_uid: 'relation-2', parent_topic_uid: 'topic-child', child_topic_uid: 'topic-grandchild',
+          rel_kind: 1, status: 1, sibling_order: 1,
+        },
+      ] } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) {
         return json({ code: 0, data: { record_count: 7, words_count: 20, total_sec: 0 } })
       }
@@ -2046,8 +2055,17 @@ describe('ArkmeService', () => {
       }] } })
       if (url.endsWith('/api/v1/topics/display/records/page')) return json({ code: 0, data: {
         topic_uid: body.topic_uid, privacy_state: 1,
-        records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
-        has_more: true, next_cursor_send_at: 79, next_cursor_record_uid: 'record-next',
+        records: [{
+          record_uid: `record-${String(body.topic_uid)}`,
+          creator_user_id: 10001,
+          owner_user_id: 10001,
+          nickname: '我',
+          text_content: body.topic_uid === 'topic-grandchild' ? '孙主题内容'
+            : body.topic_uid === 'topic-child' ? '子主题内容' : '主题内容',
+          send_at: body.topic_uid === 'topic-grandchild' ? 95 : body.topic_uid === 'topic-child' ? 90 : 80,
+          status: 1,
+        }],
+        has_more: false,
       } })
       if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
         topic_core: { topic_uid: body.topic_uid, kind: 1, privacy_state: 1, show_in_home: true },
@@ -2059,7 +2077,7 @@ describe('ArkmeService', () => {
     const sources = await service.listSources('send_to_self', { limit: 20 })
     expect(sources.items.map(item => [item.kind, item.displayName, item.recordCount])).toEqual([
       ['send_to_self', '发给自己', undefined], ['default_category', '未分类', 7],
-      ['topic', '工作', 2], ['topic', '周报', 1], ['topic', '空主题', 0],
+      ['topic', '工作', 2], ['topic', '周报', 1], ['topic', '日报', 1], ['topic', '空主题', 0],
     ])
     expect(sources.items[0]).toMatchObject({
       activeAtMillis: 109,
@@ -2072,6 +2090,7 @@ describe('ArkmeService', () => {
     expect(sources.items[2]?.sourceRef).not.toContain('topic-1')
     expect(sources.items[3]?.parentSourceRef).toBe(sources.items[2]?.sourceRef)
     expect(sources.items[3]?.parentSourceRef).not.toContain('topic-1')
+    expect(sources.items[4]?.parentSourceRef).toBe(sources.items[3]?.sourceRef)
     const aggregateRef = sources.items[0]!.sourceRef
     await expect(service.readSource(aggregateRef, {
       cursor: { sendAtMillis: 111, itemUid: 'aggregate-cursor' },
@@ -2095,10 +2114,15 @@ describe('ArkmeService', () => {
     const topicRef = sources.items[2]!.sourceRef
     await expect(service.readSource(topicRef)).resolves.toMatchObject({
       source: { kind: 'topic', displayName: '工作' },
-      items: [{ textContent: '主题内容', isMe: true }],
-      hasMore: true,
-      nextCursor: { sendAtMillis: 79, itemUid: 'record-next' },
+      items: [
+        { itemUid: 'record-topic-grandchild', textContent: '孙主题内容', isMe: true, selfTopic: { title: '日报' } },
+        { itemUid: 'record-topic-child', textContent: '子主题内容', isMe: true, selfTopic: { title: '周报' } },
+        { itemUid: 'record-topic-1', textContent: '主题内容', isMe: true, selfTopic: { title: '工作' } },
+      ],
+      hasMore: false,
     })
+    expect(new Set(calls.filter(call => call.url.endsWith('/api/v1/topics/display/records/page')).map(call => call.body.topic_uid)))
+      .toEqual(new Set(['topic-1', 'topic-child', 'topic-grandchild']))
     await expect(service.sendSourceText(topicRef, '写进主题', {
       recordUid: 'record-create-1',
       recordDurationMillis: 4_200,
@@ -2115,7 +2139,72 @@ describe('ArkmeService', () => {
       },
     })
     await service.listSources('send_to_self')
-    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/display/list'))).toHaveLength(2)
+    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/display/list'))).toHaveLength(3)
+  })
+
+  it('paginates a parent topic and its descendants as one chronological timeline', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const recordsByTopic = new Map([
+      ['parent', [
+        { record_uid: 'parent-100', owner_user_id: 10001, creator_user_id: 10001, text_content: 'P100', send_at: 100, status: 1 },
+        { record_uid: 'parent-80', owner_user_id: 10001, creator_user_id: 10001, text_content: 'P80', send_at: 80, status: 1 },
+      ]],
+      ['child', [
+        { record_uid: 'child-90', owner_user_id: 10001, creator_user_id: 10001, text_content: 'C90', send_at: 90, status: 1 },
+        { record_uid: 'child-70', owner_user_id: 10001, creator_user_id: 10001, text_content: 'C70', send_at: 70, status: 1 },
+      ]],
+    ])
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
+      if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [
+        { topic_core: { topic_uid: 'parent', title: '父主题', status: 1, privacy_state: 1 }, summary: { record_count: 2 } },
+        { topic_core: { topic_uid: 'child', title: '子主题', status: 1, privacy_state: 1 }, summary: { record_count: 2 } },
+      ], has_more: false } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [{
+        rel_kind: 1, status: 1, parent_topic_uid: 'parent', child_topic_uid: 'child', sibling_order: 1,
+      }] } })
+      if (url.endsWith('/api/v1/records/uncategorized/summary')) {
+        return json({ code: 0, data: { record_count: 0, words_count: 0, total_sec: 0 } })
+      }
+      if (url.endsWith('/api/v1/records/uncategorized/query')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
+      if (url.endsWith('/api/v1/topics/display/metadata')) return json({ code: 0, data: {
+        topic_core: { topic_uid: body.topic_uid, kind: 1, privacy_state: 1, show_in_home: true },
+      } })
+      if (url.endsWith('/api/v1/topics/display/records/page')) {
+        const cursor = typeof body.cursor_send_at === 'number' ? body.cursor_send_at : Number.POSITIVE_INFINITY
+        const records = (recordsByTopic.get(String(body.topic_uid)) ?? []).filter(record => record.send_at < cursor)
+        return json({ code: 0, data: {
+          topic_uid: body.topic_uid,
+          privacy_state: 1,
+          records: records.slice(0, Number(body.limit)),
+          has_more: records.length > Number(body.limit),
+          ...(records.length > Number(body.limit) ? {
+            next_cursor_send_at: records[Number(body.limit) - 1]!.send_at,
+            next_cursor_record_uid: records[Number(body.limit) - 1]!.record_uid,
+          } : {}),
+        } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const parent = (await service.listSources('send_to_self', { limit: 100 })).items
+      .find(item => item.kind === 'topic' && item.displayName === '父主题')!
+    const first = await service.readSource(parent.sourceRef, { limit: 2 })
+    expect(first.items.map(item => [item.itemUid, item.selfTopic?.title])).toEqual([
+      ['parent-100', '父主题'], ['child-90', '子主题'],
+    ])
+    expect(first).toMatchObject({ hasMore: true, nextCursor: { sendAtMillis: 90, itemUid: 'child-90' } })
+    const second = await service.readSource(parent.sourceRef, { limit: 2, cursor: first.nextCursor })
+    expect(second.items.map(item => [item.itemUid, item.selfTopic?.title])).toEqual([
+      ['parent-80', '父主题'], ['child-70', '子主题'],
+    ])
+    expect(second.hasMore).toBe(false)
   })
 
   it.each([0, 2])('does not grant membership capability to a synced Record with non-active status %s', async status => {

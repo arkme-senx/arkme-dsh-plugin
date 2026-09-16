@@ -1247,6 +1247,71 @@ export class SourceService {
     return target
   }
 
+  /**
+   * Resolve one personal topic and every visible descendant from the same
+   * paginated directory contract used by the topic picker. Keeping this owner
+   * here prevents a timeline read from trusting a partial browser-side tree or
+   * exposing raw topic ids across the Host boundary.
+   */
+  async topicSubtreeSources(sourceRef: string, signal?: AbortSignal): Promise<ArkmeSourceItem[]> {
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    const selected = await this.openSourceRef(sourceRef, session.userId)
+    if (selected.kind !== 'topic') {
+      throw new ArkmePluginError('topic-subtree-source-invalid', '仅主题支持读取下级主题内容', false, 400)
+    }
+    const selectedKey = await this.topicHierarchyKey(session.userId, selected.ownerRef)
+    const byHierarchyKey = new Map<string, ArkmeSourceItem>()
+    let cursor: string | undefined
+    const visitedCursors = new Set<string>()
+    for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+      signal?.throwIfAborted()
+      const page = await this.listSources('send_to_self', {
+        limit: 100,
+        ...(cursor === undefined ? {} : { cursor }),
+        ...(signal === undefined ? {} : { signal }),
+      })
+      for (const item of page.items) {
+        if (item.kind !== 'topic' || item.topicHierarchyKey === undefined) continue
+        byHierarchyKey.set(item.topicHierarchyKey, item)
+      }
+      if (!page.hasMore || page.nextCursor === undefined) break
+      if (visitedCursors.has(page.nextCursor)) {
+        throw new ArkmePluginError('topic-subtree-cursor-invalid', '主题层级分页未推进，请重试', true, 502)
+      }
+      visitedCursors.add(page.nextCursor)
+      cursor = page.nextCursor
+      if (pageIndex === 99) {
+        throw new ArkmePluginError('topic-subtree-pagination-limit', '主题层级加载未完成，请重试', true, 502)
+      }
+    }
+    const selectedSource = byHierarchyKey.get(selectedKey) ?? {
+      ...await this.sourceItem(selected),
+      topicHierarchyKey: selectedKey,
+    }
+    byHierarchyKey.set(selectedKey, selectedSource)
+    const childrenByParent = new Map<string, ArkmeSourceItem[]>()
+    for (const item of byHierarchyKey.values()) {
+      const parentKey = item.parentTopicHierarchyKey
+      if (parentKey === undefined || parentKey === item.topicHierarchyKey) continue
+      const children = childrenByParent.get(parentKey) ?? []
+      children.push(item)
+      childrenByParent.set(parentKey, children)
+    }
+    const result: ArkmeSourceItem[] = []
+    const queue = [selectedSource]
+    const visited = new Set<string>()
+    while (queue.length > 0) {
+      const current = queue.shift()!
+      const key = current.topicHierarchyKey ?? current.sourceRef
+      if (visited.has(key)) continue
+      visited.add(key)
+      result.push(current)
+      queue.push(...(childrenByParent.get(key) ?? []))
+    }
+    return result
+  }
+
   private async selfTargetForAccount(userId: number): Promise<ArkmeSourceItem> {
     const sourceRef = await this.sealSourceRef(userId, 'send_to_self', 'all', '发给自己')
     return { sourceRef, kind: 'send_to_self', displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 }

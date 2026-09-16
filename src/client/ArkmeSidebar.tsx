@@ -16,6 +16,7 @@ import { arkmeMarkdownPlainText } from '../markdown.js'
 import { arkmeCallRecordBubbleStyle } from './ArkmeCallRecordContent.js'
 import { arkmeSourceAllowsUserWrite, isArkmeDSHInputTopic, arkmeTopicDisplayName } from '../topic-policy.js'
 import { ArkmeTopicReadOnlyNotice } from './ArkmeTopicReadOnlyNotice.js'
+import { arkmeTopicPathNames } from './source-tree.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { ArkmeCallDetailDrawer } from './ArkmeCallDetailDrawer.js'
 import {
@@ -899,17 +900,33 @@ export function arkmeTimelineSelfTopicSource(
   }
 }
 
+export function arkmeTimelineSelfTopicPresentation(
+  item: ArkmeTimelineItem,
+  currentSource: ArkmeSourceItem | undefined,
+  sources: readonly ArkmeSourceItem[],
+): { topic: ArkmeSourceItem; displayLabel?: string } | undefined {
+  if (currentSource?.kind !== 'send_to_self' && currentSource?.kind !== 'topic') return undefined
+  const topic = arkmeTimelineSelfTopicSource(item, sources)
+  if (topic === undefined) return undefined
+  const displayLabel = arkmeTopicPathNames(topic, sources).join(' / ') || topic.displayName
+  return { topic, displayLabel }
+}
+
 export function ArkmeTimelineSelfTopicBadge({
   topic,
+  displayLabel,
   onSelect,
 }: {
   topic: ArkmeSourceItem
+  displayLabel?: string
   onSelect: (source: ArkmeSourceItem) => void
 }) {
+  const label = displayLabel?.trim() || topic.displayName
   return <button
     type="button"
-    data-arkme-self-topic-badge={topic.displayName}
-    aria-label={`查看主题「${topic.displayName}」`}
+    data-arkme-self-topic-badge={label}
+    aria-label={`查看主题「${label}」`}
+    title={label}
     style={styles.selfTopicBadge}
     onClick={event => {
       event.stopPropagation()
@@ -917,7 +934,7 @@ export function ArkmeTimelineSelfTopicBadge({
     }}
   ><svg aria-hidden viewBox="0 0 16 16" style={styles.selfTopicBadgeIcon}>
       <path d="M3.25 2.75h9.5v10.5h-9.5zM5.25 5.25h5.5M5.25 7.9h3.8" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg><span style={styles.selfTopicBadgeText}>{topic.displayName}</span><span aria-hidden style={styles.selfTopicBadgeChevron}>›</span>
+    </svg><span style={styles.selfTopicBadgeText}>{label}</span><span aria-hidden style={styles.selfTopicBadgeChevron}>›</span>
   </button>
 }
 
@@ -6851,6 +6868,7 @@ export function ArkmeSurface({
             {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
               ? <ArkmeSourceBreadcrumb
                 key={`source-breadcrumb:${conversationOverlayKey}`}
+                userId={auth?.userId}
                 selectedSource={selectedSource}
                 sources={selfSources}
                 tourOpen={selfTour.topicMenuOpen}
@@ -7130,9 +7148,7 @@ export function ArkmeSurface({
                   </Fragment>
                 }
                 const item = row.item
-                const selfTopicSource = source?.kind === 'send_to_self'
-                  ? arkmeTimelineSelfTopicSource(item, selfSources)
-                  : undefined
+                const selfTopicPresentation = arkmeTimelineSelfTopicPresentation(item, source, selfSources)
                 const avatarRef = arkmeTimelineAvatarRef(item, selfProfile)
                 const messageMember = item.memberRef === undefined
                   ? (item.isMe ? selfConversationMember : undefined)
@@ -7297,9 +7313,13 @@ export function ArkmeSurface({
                             >
                               {messageBubble}
                             </ArkmeMessageReadReceiptLine>
-                          const topicBadge = selfTopicSource === undefined
+                          const topicBadge = selfTopicPresentation === undefined
                             ? null
-                            : <ArkmeTimelineSelfTopicBadge topic={selfTopicSource} onSelect={activateSelfSource} />
+                            : <ArkmeTimelineSelfTopicBadge
+                                topic={selfTopicPresentation.topic}
+                                {...(selfTopicPresentation.displayLabel === undefined ? {} : { displayLabel: selfTopicPresentation.displayLabel })}
+                                onSelect={activateSelfSource}
+                              />
                           if (!isExtensionMessage || item.extensionParent === undefined) return <>
                             {messageContentLine}
                             {topicBadge}

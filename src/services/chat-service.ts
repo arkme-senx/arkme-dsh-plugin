@@ -244,11 +244,20 @@ const OFFICIAL_AUTHOR_FALLBACK_DISPLAY_NAME = '即' + '我作者'
 const RESERVED_ASEN_BOT_UID = 'asen'
 const RESERVED_ASEN_DISPLAY_NAME = '阿森'
 const MAX_MESSAGE_COPY_LINK_ITEMS = 100
+const TOPIC_SUBTREE_READ_CONCURRENCY = 6
 const RECORD_UID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const CHAT_MEMBER_REF_PREFIX = 'arkme-chat-member-v1'
 const MESSAGE_WITHDRAWAL_REF_PREFIX = 'arkme-message-withdrawal-v1'
 const JOIN_RESTRICTION_CURSOR_PREFIX = 'arkme-join-restriction-cursor-v1'
 const CHAT_HUMAN_MENTION_REF_PREFIX = 'arkme-chat-human-mention-v1'
+
+interface ArkmeTopicTimelineRawStream {
+  topic: ArkmeSourceItem
+  topicUid: string
+  records: unknown[]
+  hasMore: boolean
+  nextCursor?: ArkmeTimelineCursor
+}
 
 export interface ArkmeChatRealtimePort {
   emitChatClientEvent(event: Parameters<import('./chat-realtime-service.js').ChatRealtimeService['emitChatClientEvent']>[0]): void
@@ -2127,6 +2136,98 @@ export class ChatService {
     }
   }
 
+  private async readTopicTimelineRawStream(
+    topic: ArkmeSourceItem,
+    session: ArkmeSessionCredentials,
+    limit: number,
+    cursor: ArkmeTimelineCursor | undefined,
+    lockedRecordUids: ReadonlySet<string>,
+    required: boolean,
+    merged: boolean,
+    signal?: AbortSignal,
+  ): Promise<ArkmeTopicTimelineRawStream> {
+    const opened = await this.source.openSourceRef(topic.sourceRef, session.userId)
+    if (opened.kind !== 'topic') {
+      throw new ArkmePluginError('topic-subtree-source-invalid', '下级主题信息无效，请刷新后重试', true, 409)
+    }
+    const records: unknown[] = []
+    let pageCursor = cursor
+    for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+      signal?.throwIfAborted()
+      const page = await readTopicRecordPage(this.runtime, session, opened.ownerRef, {
+        limit,
+        ...(pageCursor === undefined ? {} : { cursor: pageCursor }),
+        ...(signal === undefined ? {} : { signal }),
+      })
+      if (page.privacyState === 2) {
+        if (required) throw new ArkmePluginError('topic-privacy-locked', '隐私锁主题不能在 Arkme 插件中查看', false, 403)
+        return { topic, topicUid: opened.ownerRef, records: [], hasMore: false }
+      }
+      for (const raw of page.records) {
+        if (arkmePrivacyLockedRecord(raw) || lockedRecordUids.has(this.record.recordUid(raw))) continue
+        records.push(raw)
+      }
+      if (!merged) {
+        return {
+          topic,
+          topicUid: opened.ownerRef,
+          records,
+          hasMore: page.hasMore,
+          ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+        }
+      }
+      if (records.length >= limit) {
+        return {
+          topic,
+          topicUid: opened.ownerRef,
+          records: records.slice(0, limit),
+          hasMore: records.length > limit || page.hasMore,
+          ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+        }
+      }
+      if (!page.hasMore) return { topic, topicUid: opened.ownerRef, records, hasMore: false }
+      if (page.nextCursor === undefined) {
+        throw new ArkmePluginError('topic-record-page-invalid', '主题快记分页信息不完整，请重试', true, 502)
+      }
+      pageCursor = page.nextCursor
+    }
+    throw new ArkmePluginError('topic-record-pagination-limit', '主题快记加载页数过多，请稍后重试', true, 502)
+  }
+
+  private async readTopicTimelineRawStreams(
+    topics: readonly ArkmeSourceItem[],
+    session: ArkmeSessionCredentials,
+    limit: number,
+    cursor: ArkmeTimelineCursor | undefined,
+    lockedRecordUids: ReadonlySet<string>,
+    signal?: AbortSignal,
+  ): Promise<ArkmeTopicTimelineRawStream[]> {
+    const results = new Array<ArkmeTopicTimelineRawStream>(topics.length)
+    let nextIndex = 0
+    let failure: unknown
+    const worker = async () => {
+      while (failure === undefined) {
+        const index = nextIndex
+        nextIndex += 1
+        if (index >= topics.length) return
+        try {
+          results[index] = await this.readTopicTimelineRawStream(
+            topics[index]!, session, limit, cursor, lockedRecordUids, index === 0, topics.length > 1, signal,
+          )
+        } catch (cause) {
+          failure = cause
+          return
+        }
+      }
+    }
+    await Promise.all(Array.from(
+      { length: Math.min(TOPIC_SUBTREE_READ_CONCURRENCY, topics.length) },
+      () => worker(),
+    ))
+    if (failure !== undefined) throw failure
+    return results
+  }
+
   async readSource(
       sourceRef: string,
       options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},
@@ -2209,35 +2310,96 @@ export class ChatService {
         }
       }
       if (source.kind === 'topic') {
-        const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
-        const [page, metadata] = await Promise.all([
-          readTopicRecordPage(this.runtime, session, source.ownerRef, { ...options, limit }),
-          readTopicMetadata(this.runtime, session, source.ownerRef, options.signal),
-        ])
-        if (arkmePrivacyLockedTopic({ privacy_state: page.privacyState }) || metadata.privacyState === 2) {
+        const metadata = await readTopicMetadata(this.runtime, session, source.ownerRef, options.signal)
+        if (metadata.privacyState === 2) {
           throw new ArkmePluginError('topic-privacy-locked', '隐私锁主题不能在 Arkme 插件中查看', false, 403)
         }
-        const topicKind = metadata.topicKind
-        const rawRecords = page.records.filter(raw => !arkmePrivacyLockedRecord(raw)
-          && !lockedRecordUids.has(this.record.recordUid(raw)))
+        const exactTopicSource = async (): Promise<ArkmeSourceItem[]> => [{
+          ...await this.source.sourceItem(source),
+          topicHierarchyKey: typeof this.source.topicHierarchyKey === 'function'
+            ? await this.source.topicHierarchyKey(session.userId, source.ownerRef)
+            : sourceRef,
+        }]
+        const subtreeSourcesPromise = typeof this.source.topicSubtreeSources === 'function'
+          ? this.source.topicSubtreeSources(sourceRef, options.signal).catch(async cause => {
+            if (options.signal?.aborted === true) throw cause
+            return await exactTopicSource()
+          })
+          : exactTopicSource()
+        const [lockedRecordUids, subtreeSources] = await Promise.all([
+          this.privacy.lockedRecordUids(session, options.signal),
+          subtreeSourcesPromise,
+        ])
+        const streams = await this.readTopicTimelineRawStreams(
+          subtreeSources, session, limit, options.cursor, lockedRecordUids, options.signal,
+        )
+        const candidates: Array<{
+          raw: unknown
+          topic: ArkmeSourceItem
+          topicUid: string
+          item: ArkmeTimelineItem
+        }> = []
+        const seenRecordUids = new Set<string>()
+        for (const stream of streams) {
+          const topicHierarchyKey = stream.topic.topicHierarchyKey
+          if (topicHierarchyKey === undefined) continue
+          for (const raw of stream.records) {
+            const item = this.record.recordTimelineItemFromRaw(raw, session.userId, {
+              isMe: true,
+              selfTopic: {
+                topicHierarchyKey,
+                sourceRef: stream.topic.sourceRef,
+                title: stream.topic.displayName,
+              },
+            })
+            if (item.itemUid === '' || seenRecordUids.has(item.itemUid)) continue
+            seenRecordUids.add(item.itemUid)
+            candidates.push({ raw, topic: stream.topic, topicUid: stream.topicUid, item })
+          }
+        }
+        candidates.sort((left, right) => right.item.sendAtMillis - left.item.sendAtMillis
+          || right.item.itemUid.localeCompare(left.item.itemUid))
+        const selected = candidates.slice(0, limit)
+        const rawRecords = selected.map(candidate => candidate.raw)
         const media = await this.media.hydrateRecordMediaPage(rawRecords, session, options.signal)
         const signingKey = await this.runtime.stateStore.uniqueCode()
-        const records = rawRecords.map(raw => {
+        const records = selected.map(({ raw, topic, topicUid }) => {
           const recordUid = this.record.recordUid(raw)
           const displayItems = media.displayItemsByRecordUid.get(recordUid)
+          const topicHierarchyKey = topic.topicHierarchyKey!
           const item = this.record.recordTimelineItemFromRaw(raw, session.userId, {
             ...(displayItems === undefined ? {} : { displayItems }),
+            isMe: true,
+            selfTopic: {
+              topicHierarchyKey,
+              sourceRef: topic.sourceRef,
+              title: topic.displayName,
+            },
             mediaUnavailable: media.unavailableRecordUids.has(recordUid),
           })
-          return this.withPersonalRecordCapabilities(source, item, session.userId, signingKey,
-            numberValue(objectValue(raw).owner_user_id), source.ownerRef)
+          const assignable = this.withPersonalRecordCapabilities(source, item, session.userId, signingKey,
+            numberValue(objectValue(raw).owner_user_id), topicUid)
+          return assignable.recordTopicAssignmentRef === undefined
+            ? assignable
+            : { ...assignable, recordTopicAssignmentTopicKey: topicHierarchyKey }
         })
+        const hasMore = candidates.length > limit || streams.some(stream => stream.hasMore)
+        const lastItem = selected.at(-1)?.item
+        if (hasMore && lastItem === undefined) {
+          throw new ArkmePluginError('topic-subtree-page-invalid', '下级主题快记分页未推进，请重试', true, 502)
+        }
+        const currentSource = subtreeSources[0] ?? await this.source.sourceItem(source)
         return {
-          source: { ...await this.source.sourceItem(source),
-            topicKind, displayName: arkmeTopicDisplayName(source.displayName, topicKind) },
+          source: { ...currentSource,
+            topicKind: metadata.topicKind,
+            displayName: arkmeTopicDisplayName(currentSource.displayName, metadata.topicKind) },
           items: records.map(item => this.withRecordMessageActionRef(source, item, session.userId, signingKey)),
-          hasMore: page.hasMore,
-          ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+          hasMore,
+          ...(hasMore ? subtreeSources.length === 1 && streams[0]?.nextCursor !== undefined
+            ? { nextCursor: streams[0].nextCursor }
+            : lastItem === undefined ? {} : {
+              nextCursor: { sendAtMillis: lastItem.sendAtMillis, itemUid: lastItem.itemUid },
+            } : {}),
         }
       }
       const aiPolishDecorations = source.kind === 'group_chat' && options.cursor === undefined
