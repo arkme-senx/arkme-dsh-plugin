@@ -58,3 +58,5 @@
 - 验证：插件全量 556 个文件 / 6650 项通过（7 文件、9 项原有跳过），类型检查、构建和 tgz 官方 Profile 安装通过。真实 MongoDB replica set + Redis + record HTTP 服务验证创建、重复同步、隐藏首页、专用兜底、跨账户隔离、全局/主题搜索 origin、编辑保留 origin、删除不复活；搜索引擎使用仓库 fakesearch，不代表真实 OpenSearch 集群验收。
 - 可重跑联合检查：在隔离后端 E2E 栈运行时，设置 `ARKME_RECORD_E2E_URL=http://127.0.0.1:<record-port>`，执行 `vitest run tests/search-backend-integration.test.tsx`。测试使用独立 fixture 账号，经 UI/SDK → Host HTTP → 后端 HTTP 检索并读回同步消息；只允许 loopback，不使用真实账号。
 - 打包产物的仓外 SDK Consumer 已完成公开导出的类型编译与真实 Host 调用；官方 DSH 0.1.5-rc.2 创建的会话通过正式 tools schema / execute 管线成功执行 `arkme_records_search`，返回正确 origin。读取型工具无写入 grant，未调用真实 LLM。
+- 浏览器复验：同一打包产物运行在未修改的官方 DSH，原会话存在时点击详情后原生对话显示对应测试正文；原会话不存在时，“发给自己”页面出现与搜索结果 UID 完全一致的消息。辅助账号资料/目录接口为隔离 fixture；搜索、消息读取、会话存在判断和会话打开均走真实 owner。
+- 最新 `dev` 基线 `acf427f` 临时合并无冲突，158 项相关测试通过。后端审核修复 `e130672` 已合入测试分支 `c5e367a`，Jenkins `TEST_jotmo-record-backend` #485 SUCCESS。正式生产发布未执行。
