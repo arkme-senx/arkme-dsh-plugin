@@ -53,9 +53,9 @@ const styles: Record<string, CSSProperties> = {
   resultTab: { position: 'relative', minHeight: 42, display: 'inline-flex', alignItems: 'center', padding: '0 0 12px', border: 0, outline: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 14, whiteSpace: 'nowrap' },
   resultTabActive: { color: colors.text, fontWeight: 600 },
   resultIndicator: { position: 'absolute', left: '50%', bottom: 5, width: 16, height: 2, marginLeft: -8, borderRadius: 22, background: colors.text },
-  resultFrame: { minHeight: 0, flex: 1, marginTop: 2, overflow: 'hidden', border: '1px solid rgba(60, 60, 67, .10)', borderRadius: 14, background: '#fbfbfc' },
+  resultFrame: { display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1, marginTop: 2, overflow: 'hidden', border: '1px solid rgba(60, 60, 67, .10)', borderRadius: 14, background: '#fbfbfc' },
   resultHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 20, margin: 0, padding: '14px 16px 8px', color: colors.tertiary, fontSize: 13, lineHeight: '20px', fontWeight: 500 },
-  searchProgress: { flex: 'none', fontSize: 12, fontWeight: 400, color: colors.tertiary, whiteSpace: 'nowrap' },
+  searchProgress: { flex: 'none', height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 400, color: colors.tertiary, whiteSpace: 'nowrap' },
   status: { padding: '54px 12px', textAlign: 'center', color: colors.secondary, fontSize: 13 },
   error: { margin: '14px 0 0', padding: '10px 12px', borderRadius: 8, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 13 },
   list: { display: 'flex', flexDirection: 'column', gap: 4, padding: '0 7px 7px' }, row: { width: '100%', minWidth: 0, padding: '13px 12px', border: 0, borderRadius: 10, background: colors.panel, boxShadow: '0 1px 3px rgba(60,60,67,.035)', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit', boxSizing: 'border-box' },
@@ -603,14 +603,15 @@ export function ArkmeSearchSurface({
       >{label}{resultTab === key && <span style={styles.resultIndicator} />}</button>)}
     </nav>
     <div style={{ ...styles.resultFrame, ...(variant === 'dialog' ? { flex: 1 } : {}) }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
       {resultTab === 'records' ? <div style={{ height: '100%', overflowY: 'auto' }} aria-label="快记搜索结果">
-        <h3 style={styles.resultHeader}><span>{records === undefined ? '关联快记' : `${String(records.itemCount ?? recordItems.length)}个关联快记`}</span>{searchLoading.records && <span style={styles.searchProgress} role="status" aria-label="正在搜索快记">搜索中…</span>}</h3>
+        <h3 style={styles.resultHeader}><span>{records === undefined ? '关联快记' : `${String(records.itemCount ?? recordItems.length)}个关联快记`}</span></h3>
         {recordError !== '' && <div style={styles.error}>快记暂不可用：{recordError}</div>}
         {recordItems.length > 0 ? <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>
           : !searchLoading.records && <Status loading={false} empty />}
       </div> : resultTab === 'topics' ? <div style={styles.sourceLayout} aria-label="主题搜索结果">
         <div style={styles.sourceList}>
-          <h3 style={styles.resultHeader}><span>{records === undefined && dshMessages === undefined ? '关联主题' : `${String(sourceItems.length + dshItems.length)}个关联主题`}</span>{(searchLoading.records || searchLoading.dsh) && <span style={styles.searchProgress} role="status" aria-label="正在搜索主题">搜索中…</span>}</h3>
+          <h3 style={styles.resultHeader}><span>{records === undefined && dshMessages === undefined ? '关联主题' : `${String(sourceItems.length + dshItems.length)}个关联主题`}</span></h3>
           {recordError !== '' && <div style={styles.error}>主题暂不可用：{recordError}</div>}
           {sourceItems.length === 0 && dshItems.length === 0 && !searchLoading.records && !searchLoading.dsh && <Status loading={false} empty />}
           {sourceItems.map(item => {
@@ -653,11 +654,15 @@ export function ArkmeSearchSurface({
                 : <Status loading={false} empty />}
         </div>
       </div> : <div style={{ height: '100%', overflowY: 'auto' }} aria-label="录音转写搜索结果">
-        <h3 style={styles.resultHeader}><span>{recordings === undefined ? '关联录音' : `${String(recordingItems.length)}个关联录音`}</span>{searchLoading.recordings && <span style={styles.searchProgress} role="status" aria-label="正在搜索录音·转写">搜索中…</span>}</h3>
+        <h3 style={styles.resultHeader}><span>{recordings === undefined ? '关联录音' : `${String(recordingItems.length)}个关联录音`}</span></h3>
         {recordingError !== '' && <div style={styles.error}>录音·转写暂不可用：{recordingError}</div>}
         {recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingRow key={`${item.sessionId}:${String(item.startAtMillis)}`} item={item} />)}</div>
           : !searchLoading.recordings && <Status loading={false} empty />}
       </div>}
+      </div>
+      <div style={styles.searchProgress} role="status" aria-live="polite">
+        {(resultTab === 'topics' ? searchLoading.records || searchLoading.dsh : searchLoading[resultTab]) && <span aria-label={`正在搜索${resultTabs.find(([key]) => key === resultTab)![1]}`}>搜索中…</span>}
+      </div>
     </div>
   </>
 
