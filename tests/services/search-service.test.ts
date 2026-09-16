@@ -294,5 +294,5 @@ it('enriches legacy remote results through the shared local DSH query owner', as
  service.localDshQuery = () => ({ listSessions: async () => [{ header: { id: 'local-session', cwd: '/workspace' } }], filterEvents })
  const result = await service.searchRemote({ query: '武汉', limit: 20 })
  expect(result.items[0]?.dshOrigin).toEqual({ sessionId: 'local-session', eventSeq: 7 })
- expect(filterEvents).toHaveBeenCalledWith('local-session', expect.arrayContaining([{ kind: 'text', text: '武汉' }]))
+ expect(filterEvents).toHaveBeenCalledWith('local-session', [{ kind: 'type', values: ['user/message'] }])
 })

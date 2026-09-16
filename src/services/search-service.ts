@@ -86,7 +86,7 @@ export class SearchService {
       { lane: 'interactive-read' },
     )
     const result = this.recordSearchResult(data, lockedRecordUids)
-    result.items = await resolveDshSearchOrigins(this.localDshQuery?.(), query, result.items, options.signal)
+    result.items = await resolveDshSearchOrigins(this.localDshQuery?.(), result.items, options.signal)
     return await this.withNavigationTargets(result, options.signal, options.sourceRef)
   }
 

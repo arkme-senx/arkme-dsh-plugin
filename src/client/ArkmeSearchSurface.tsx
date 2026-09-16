@@ -519,7 +519,7 @@ export function ArkmeSearchSurface({
           }
           notice = '本机没有此 DSH 对话，改为定位“发给自己”的同步消息。'
         } else {
-          notice = '这条历史记录缺少原会话关联，改为定位“发给自己”的同步消息。'
+          notice = item.dshOriginUnverified ? '暂未能完整核验本机会话，改为定位“发给自己”的同步消息。' : '这条历史记录缺少原会话关联，改为定位“发给自己”的同步消息。'
         }
       }
       if (item.targetSource === undefined) throw new Error('未找到对应的同步消息入口，请重试')

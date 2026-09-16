@@ -34,7 +34,7 @@
 - 打开同步结果前，通过可见 iframe 的公开 `remote.session.list({})` 的成功响应核实本机；必要时刷新 UI 会话列表。查询成功且不存在才转“发给自己”，同时显示说明；加载失败保留搜索错误。本机存在则复用原生打开入口。
 - 精确 DSH 消息定位仍无公开接口。原生摘要点击打开对话；同步输入可在本机不存在时走已有 Arkme 消息定位链。
 - Record 后端新增可选 `include_dsh_agent_input`，仅搜索兜底签名来源请求使用；仅允许当前用户自己的、活跃且公开的 DSH 系统主题。普通首页、默认分类和旧客户端缺省行为保持不变。
-- 历史同步数据缺少会话关联时，SearchService 通过公开 sessionQuery.listSessions/filterEvents 对本地 user/message 做字面检索（绕过 unicode61 对中文子串的漏查），重算确定性 record UID 并严格比对后补齐本次查询结果。不会按文字匹配或重写历史数据。一次最多扫描最近 20 个本地会话，在串行扫描间检查 5 秒期限；官方 filterEvents 不支持取消单次读取；已全部关联立即停止。未匹配仍是关联未知，不代表本机不存在；查询失败不冒充无匹配。该行为由 UI、Tool、SDK 共用。
+- 历史同步数据缺少会话关联时，SearchService 通过公开 sessionQuery.listSessions/filterEvents 读取本地 user/message 事件，重算确定性 record UID 并严格比对后补齐本次查询结果。不会按文字匹配或重写历史数据。按时间倒序扫描本地会话，在串行扫描间检查 5 秒期限；官方 filterEvents 不支持取消单次读取；已全部关联立即停止。未匹配仍是关联未知，不代表本机不存在；查询失败或超时保留远端结果并标记未完整核验，不冒充无匹配。该行为由 UI、Tool、SDK 共用。
 - 部署顺序：Record 后端先部署，再让插件完整消费；旧服务会忽略输入 extra 中的关联，无法提供完整跨机兜底。当前任务不包含生产部署。
 
 能力面：Host 的既有 SearchService 统一解析查询结果和账号绑定跳转目标；`arkme_records_search` Tool 继承相同输出；SDK 增加 `searchRemote()`，通过 `remoteRecordSearch` 能力位探测，保留旧缓存 `search()` 语义。浏览器导航检查为 UI 能力，不向模型开放桌面操作。客户端源码未修改。
@@ -48,3 +48,13 @@
 ## 搜索展示
 
 加载状态在结果标题同一固定高度行内展示，保留已有列表；首次加载不显示尚未确定的零计数。DSH 徽标位于标题后，长标题可截断，徽标不收缩。
+
+## 合并前审查修复与验证
+
+- 历史恢复：取消最近 20 会话的硬截断，按确定性 UID 匹配原始事件，不依赖已编辑的正文；局部索引失败保留服务端结果并标记未完整核验。
+- 同步消息定位：仅聊天来源使用 owner ID 的 around 查询分支；个人来源等待首屏事实后继续历史分页。主题目录刷新不再替换聚合来源的签名范围或清除待定位目标。
+- 导航缺失：未安装会话打开能力时明确报错，不以可选空调用冒充成功。
+- 后端修复：DSH origin 采用与 MongoDB 解码一致的嵌套 BSON 表示，重复创建保持幂等；关键词和场景搜索 HTTP DTO 均透传业务层已授权的 origin。
+- 验证：插件全量 556 个文件 / 6650 项通过（7 文件、9 项原有跳过），类型检查、构建和 tgz 官方 Profile 安装通过。真实 MongoDB replica set + Redis + record HTTP 服务验证创建、重复同步、隐藏首页、专用兜底、跨账户隔离、全局/主题搜索 origin、编辑保留 origin、删除不复活；搜索引擎使用仓库 fakesearch，不代表真实 OpenSearch 集群验收。
+- 可重跑联合检查：在隔离后端 E2E 栈运行时，设置 `ARKME_RECORD_E2E_URL=http://127.0.0.1:<record-port>`，执行 `vitest run tests/search-backend-integration.test.tsx`。测试使用独立 fixture 账号，经 UI/SDK → Host HTTP → 后端 HTTP 检索并读回同步消息；只允许 loopback，不使用真实账号。
+- 打包产物的仓外 SDK Consumer 已完成公开导出的类型编译与真实 Host 调用；官方 DSH 0.1.5-rc.2 创建的会话通过正式 tools schema / execute 管线成功执行 `arkme_records_search`，返回正确 origin。读取型工具无写入 grant，未调用真实 LLM。

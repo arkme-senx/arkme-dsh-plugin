@@ -59,7 +59,9 @@ export function reconcileArkmeTopicSelection(
   selectedSource: ArkmeSourceItem | undefined,
   loaded: ArkmeSourceItem[],
 ): ArkmeTopicSelectionReconciliation {
-  if (selectedSource === undefined) return { status: 'aggregate' }
+  // Aggregate sources can carry a narrower signed query scope (for example DSH fallback).
+  // Refreshing the topic directory must not replace that scope or clear its pending target.
+  if (selectedSource === undefined || selectedSource.kind === 'send_to_self') return { status: 'aggregate' }
   const source = reconcileSelectedSource(selectedSource, loaded)
   return source === undefined ? { status: 'invalid' } : { status: 'selected', source }
 }

@@ -2269,7 +2269,8 @@ export function ArkmeNavigation({
         arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis, item.recordOwnerUserId)
       }}
       onOpenDshSession={sessionId => {
-        onOpenDshSession?.(sessionId)
+        if (onOpenDshSession === undefined) throw new Error('当前客户端无法打开 DSH 对话')
+        onOpenDshSession(sessionId)
         closeGlobalSearch()
       }}
       onClose={closeGlobalSearch}
