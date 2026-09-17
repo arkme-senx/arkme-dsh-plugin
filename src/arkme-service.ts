@@ -1218,7 +1218,7 @@ export class ArkmeService {
   }
   async setArchiveState(input: ArkmeArchiveSetInput, signal?: AbortSignal): Promise<ArkmeArchiveSetResult> {
     const result = await this.archives.set(input, signal)
-    if (result.stateChanged) await this.realtime.invalidateRecordProjection()
+    if (result.stateChanged) await this.realtime.invalidateTopicDirectoryProjection()
     return result
   }
 

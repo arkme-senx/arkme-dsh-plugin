@@ -105,7 +105,14 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       })
       page = await browserContext.newPage()
       const uiPolicyRequests = []
+      let archiveWriteObserved = false
+      const postArchiveContentReads = []
       page.on('request', request => {
+        if (request.url().endsWith('/arkme-self/api') && request.method() === 'POST') {
+          const operation = request.postDataJSON()?.operation
+          if (operation === 'archives.set') archiveWriteObserved = true
+          if (operation === 'source.timeline' && archiveWriteObserved) postArchiveContentReads.push(operation)
+        }
         if (request.url().endsWith('/arkme-self/api') && request.method() === 'POST'
           && request.postDataJSON()?.operation === 'topic.home-visibility') uiPolicyRequests.push(request.url())
       })
@@ -136,6 +143,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       }
       await page.getByRole('button', {name: '对话', exact: true}).click()
       await page.getByRole('treeitem', {name: /发给自己/}).click()
+      let selectedTitleBeforeArchive
       const archiveFromMenu = async source => {
         const selector = page.getByRole('button', {name: '选择主题', exact: true})
         // The initial cached self-source is reconciled to its owner identity;
@@ -150,12 +158,27 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
           if (await expand.count()) await expand.click()
         }
         const row = page.locator('[data-arkme-self-topic-tree-row]').filter({has: page.getByText(source.displayName, {exact: true})})
+        if (source === B) {
+          await row.click()
+          const message = page.locator('[data-arkme-message-item-uid]').filter({hasText: '归档前已有内容'})
+          await message.waitFor()
+          selectedTitleBeforeArchive = await selector.getAttribute('title')
+          expect(selectedTitleBeforeArchive).toContain(B.displayName)
+          await message.evaluate(node => {
+            const scene = {node, detached: false}
+            scene.observer = new MutationObserver(() => { if (!node.isConnected) scene.detached = true })
+            scene.observer.observe(document.body, {childList: true, subtree: true})
+            globalThis.__archiveScene = scene
+          })
+          await selector.click()
+        }
         await row.hover()
         await row.getByRole('button', {name: `${source.displayName}主题操作`, exact: true}).click()
         const archiveAction = row.getByRole('menuitem', {name: '归档', exact: true})
         const renameAction = row.getByRole('menuitem', {name: '重命名', exact: true})
         await renameAction.hover()
         const hoverBackground = await renameAction.evaluate(node => getComputedStyle(node).backgroundColor)
+        await expect.poll(() => archiveAction.isEnabled()).toBe(true)
         await archiveAction.hover()
         expect(await archiveAction.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(hoverBackground)
         await archiveAction.click()
@@ -168,7 +191,17 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         }).toBe(0)
       }
       await archiveFromMenu(B)
+      expect(postArchiveContentReads).toEqual([])
+      expect(await page.getByRole('button', {name: '选择主题', exact: true}).getAttribute('title')).toBe(selectedTitleBeforeArchive)
       await archiveFromMenu(A)
+      expect(postArchiveContentReads).toEqual([])
+      // Hidden ancestors no longer contribute directory breadcrumb segments;
+      // the selected topic itself and its mounted content must remain.
+      expect((await page.getByRole('button', {name: '选择主题', exact: true}).getAttribute('title')).split(' / ').at(-1)).toBe(B.displayName)
+      expect(await page.evaluate(() => {
+        globalThis.__archiveScene.observer.disconnect()
+        return globalThis.__archiveScene.detached || !globalThis.__archiveScene.node.isConnected
+      })).toBe(false)
       let states = await sdk.getArchiveStates([A.sourceRef, B.sourceRef, C.sourceRef, D.sourceRef])
       expect(states.map(item => item.effectiveArchived)).toEqual([true, true, true, true])
       // Archive affects directory membership, not direct access or writing to
@@ -180,7 +213,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       await page.getByRole('button', {name: '个人资料', exact: true}).click()
       await page.getByRole('menuitem', {name: /设置.*打开 DSH 应用设置/}).click()
       await page.getByRole('button', {name: '数据管理', exact: true}).click()
-      await page.getByRole('heading', {name: '已归档', exact: true}).waitFor()
+      await page.getByRole('heading', {name: '已归档主题', exact: true}).waitFor()
       const nav = page.locator('[role=dialog] > nav')
       const labels = await nav.getByRole('button').allTextContents()
       expect(labels.indexOf('数据管理')).toBe(labels.indexOf('我的账户') + 1)
@@ -209,7 +242,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({path: process.env.ARKME_E2E_SCREENSHOT})
       await child.getByRole('button', {name: '取消归档', exact: true}).click()
       await page.getByRole('img', {name: '暂无已归档主题', exact: true}).waitFor()
-      expect(await page.locator('[data-arkme-archive-management]').innerText()).toBe('数据管理\n已归档')
+      expect(await page.locator('[data-arkme-archive-management]').innerText()).toBe('数据管理\n已归档主题')
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({path: `${process.env.ARKME_E2E_SCREENSHOT}.empty.png`})
       states = await sdk.getArchiveStates([B.sourceRef, D.sourceRef])
       expect(states.map(item => item.effectiveArchived)).toEqual([false, false])

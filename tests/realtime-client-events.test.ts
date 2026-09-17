@@ -1,3 +1,6 @@
+import { arkmeUi } from '../src/client/ui-controller.js'
+import * as topicDirectories from '../src/client/self-topic-directory-cache.js'
+import { arkmeCalendarInvalidations } from '../src/client/calendar-invalidation-store.js'
 import { arkmeAttentionSummary } from '../src/client/attention-summary-store.js'
 import { createElement, useSyncExternalStore } from 'react'
 import * as clientApi from '../src/client/api.js'
@@ -41,6 +44,33 @@ afterEach(() => {
   arkmeMemberEvents.activateAccount(undefined)
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+it('revalidates archive membership without clearing directory rows or refreshing content', async () => {
+  let socket!: FakeWebSocket
+  class FakeWebSocket {
+    onopen: (() => void) | null = null
+    onmessage: ((event: MessageEvent<string>) => void) | null = null
+    constructor() { socket = this }
+    close() {}
+  }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  const directory = vi.spyOn(topicDirectories, 'invalidateSelfTopicDirectories').mockImplementation(() => {})
+  const interwoven = vi.spyOn(arkmeInterwovenInvalidation, 'invalidate')
+  const calendar = vi.spyOn(arkmeCalendarInvalidations, 'publishAll')
+  function Harness() { useArkmeRealtimeClientEvents({status: 'authenticated', userId: 42, environment: 'test'}, 1, false); return null }
+  let renderer!: ReactTestRenderer
+  await act(async () => { renderer = create(createElement(Harness)) })
+  const contentRevision = arkmeUi.getRecordRevision()
+  const directoryRevision = arkmeUi.getTopicDirectoryRevision()
+  await act(async () => { socket.onmessage?.({data: JSON.stringify({type: 'projection-invalidated', projection: 'topic-directory', revision: 1})} as MessageEvent<string>) })
+  expect(directory).toHaveBeenCalledExactlyOnceWith()
+  expect(arkmeUi.getTopicDirectoryRevision()).toBe(directoryRevision + 1)
+  expect(arkmeUi.getRecordRevision()).toBe(contentRevision)
+  expect(interwoven).not.toHaveBeenCalled()
+  expect(calendar).not.toHaveBeenCalled()
+  await act(async () => { renderer.unmount() })
 })
 
 describe('Chat-owned Bot realtime invalidation', () => {

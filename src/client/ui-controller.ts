@@ -41,6 +41,7 @@ export interface ArkmeUiState {
   authRevision: number
   chatRevision: number
   recordRevision: number
+  topicDirectoryRevision: number
   mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'world' | 'search' | 'extensions' | 'voiceprint' | 'contact-add' | 'arko'
     | 'harness'
   productMode?: 'conversations' | 'contacts'
@@ -64,10 +65,10 @@ export interface ArkmeUiState {
   webLoginDialogOpen?: boolean
 }
 
-export type ArkmeUiViewState = Omit<ArkmeUiState, 'chatRevision' | 'recordRevision'>
+export type ArkmeUiViewState = Omit<ArkmeUiState, 'chatRevision' | 'recordRevision' | 'topicDirectoryRevision'>
 
 function viewStateOf(state: ArkmeUiState): ArkmeUiViewState {
-  const { chatRevision: _chatRevision, recordRevision: _recordRevision, ...view } = state
+  const { chatRevision: _chatRevision, recordRevision: _recordRevision, topicDirectoryRevision: _topicDirectoryRevision, ...view } = state
   return view
 }
 
@@ -102,7 +103,7 @@ function sameWorldTarget(left: ArkmeWorldViewTarget | undefined, right: ArkmeWor
 }
 
 export class ArkmeUiController {
-  private state: ArkmeUiState = { authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'login' }
+  private state: ArkmeUiState = { authRevision: 0, chatRevision: 0, recordRevision: 0, topicDirectoryRevision: 0, mode: 'login' }
   private viewState: ArkmeUiViewState = viewStateOf(this.state)
   /** Runtime-only conversation memory. A fresh client always starts in Harness. */
   private lastConversationDestination: ArkmeConversationDestination | undefined
@@ -116,6 +117,7 @@ export class ArkmeUiController {
   /** Navigation and presentation state, stable across projection-only invalidations. */
   readonly getViewSnapshot = (): ArkmeUiViewState => this.viewState
   readonly getChatRevision = (): number => this.state.chatRevision
+  readonly getTopicDirectoryRevision = (): number => this.state.topicDirectoryRevision
   readonly getRecordRevision = (): number => this.state.recordRevision
 
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -168,6 +170,10 @@ export class ArkmeUiController {
 
   chatChanged(): void {
     this.publish({ ...this.state, chatRevision: this.state.chatRevision + 1 })
+  }
+
+  topicDirectoryChanged(): void {
+    this.publish({ ...this.state, topicDirectoryRevision: this.state.topicDirectoryRevision + 1 })
   }
 
   recordChanged(): void {
@@ -489,7 +495,8 @@ export class ArkmeUiController {
       && sameBot(next.selectedBot, this.state.selectedBot)
     if (sameView
       && next.chatRevision === this.state.chatRevision
-      && next.recordRevision === this.state.recordRevision) return
+      && next.recordRevision === this.state.recordRevision
+      && next.topicDirectoryRevision === this.state.topicDirectoryRevision) return
     this.state = next
     if (!sameView) this.viewState = viewStateOf(next)
     for (const listener of this.listeners) listener()

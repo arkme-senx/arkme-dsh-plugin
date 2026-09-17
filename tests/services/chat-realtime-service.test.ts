@@ -20,6 +20,28 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ChatRealtimeService', () => {
+  it('publishes directory-only archive changes without invalidating content or calendar', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return {userId: 42, accessToken: 'access', refreshToken: 'refresh'} },
+      async write() {}, async delete() {},
+    }
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore)
+    const source = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return {recordCount: 0, wordsCount: 0, totalSec: 0} }, recordItem() { return undefined },
+    })
+    const directory = vi.spyOn(source, 'invalidateSourceListCache')
+    const cacheInvalidation = vi.spyOn(runtime, 'invalidateKey')
+    const service = new ChatRealtimeService(runtime, source, {chatTimelineItems: vi.fn(async () => [])})
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+    await service.invalidateTopicDirectoryProjection()
+    expect(directory).toHaveBeenCalledWith(42, 'send_to_self')
+    expect(events).toEqual([expect.objectContaining({type: 'projection-invalidated', projection: 'topic-directory'})])
+    expect(cacheInvalidation.mock.calls.some(([, key]) => key === 'calendar:')).toBe(false)
+    service.dispose()
+    runtime.dispose()
+  })
+
   it('invalidates computed calendar months by date and timezone, with a full privacy fallback', () => {
     const runtime = new ServiceRuntime(config, {} as ArkmeSessionStore, {} as StateStore)
     const version = (start: string, end: string, zone = 'Asia/Shanghai') => runtime.calendarReadRevision('user:42', start, end, zone)

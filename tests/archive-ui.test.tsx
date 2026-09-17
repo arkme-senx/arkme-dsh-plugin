@@ -175,8 +175,8 @@ it('aborts writes and clears previous items when the same user switches environm
   await act(async () => { arkmeAuthStore.setAuth({status: 'authenticated', environment: 'production', userId: 42}) })
   expect(signal.aborted).toBe(true)
   expect(host.textContent).not.toContain('长主题')
-  const revision = arkmeUi.getSnapshot().recordRevision
+  const revision = arkmeUi.getTopicDirectoryRevision()
   await act(async () => { reply({...inherited, selfArchived: true}) })
-  expect(arkmeUi.getSnapshot().recordRevision).toBe(revision)
+  expect(arkmeUi.getTopicDirectoryRevision()).toBe(revision)
   expect(host.querySelector('[role=alert]')).toBeNull()
 })

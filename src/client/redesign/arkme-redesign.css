@@ -593,9 +593,10 @@ button.arkme-account-info-row { cursor: pointer; }
 .arkme-account-logout > button:disabled { cursor: default; opacity: .6; }
 [data-arkme-settings-view="general"] .arkme-redesign-settings-group:last-child { border-bottom: 0; }
 .arkme-about-heading, .arkme-archive-heading { margin: 0 0 20px; color: inherit; font: inherit; font-size: 18px; font-weight: 600; line-height: 1.5; }
+.arkme-archive-group > h2 { border-bottom: 0; padding: 0 0 8px; color: var(--dsw-alias-label-primary, #272a34); font-size: 14px; font-weight: 500; }
 .arkme-archive-list { list-style: none; margin: 0; padding: 0; }
-.arkme-archive-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 56px; padding: 10px 0; border-bottom: 1px solid var(--dsw-alias-border-standard, #ededee); }
-.arkme-archive-row:last-child { border-bottom: 0; }
+.arkme-archive-row { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 48px; padding: 8px 0; }
+.arkme-archive-row + .arkme-archive-row::before { content: ""; position: absolute; top: 0; left: 28px; right: 0; height: 1px; background: var(--dsw-alias-border-standard, #ededee); }
 .arkme-archive-topic { display: flex; align-items: center; gap: 10px; flex: 1 1 160px; min-width: 0; padding: 6px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .arkme-archive-topic > svg { flex: none; color: var(--dsw-alias-label-secondary, #858992); }
 .arkme-archive-topic > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

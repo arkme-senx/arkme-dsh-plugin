@@ -168,6 +168,8 @@ export function ArkmeTopicDirectoryPopover({
   userId, environment = 'prod', selectedSource, trigger = 'button', onSelect, onSelectionRefreshed = onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateWarning, onCreateTopicReady, retryRevision,
 }: ArkmeTopicDirectoryPopoverProps) {
   useArkmeLocale()
+  const topicDirectoryRevision = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getTopicDirectoryRevision, arkmeUi.getTopicDirectoryRevision)
+  const recordRevision = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getRecordRevision, arkmeUi.getRecordRevision)
   const directory = useMemo(() => selfTopicDirectory(userId, environment), [userId, environment])
   const snapshot = useSyncExternalStore(directory.subscribe, directory.getSnapshot, directory.getSnapshot)
   const resolvedRoots = useRef<{ directory: typeof directory; aggregateSource: ArkmeSourceItem; defaultCategorySource: ArkmeSourceItem }>()
@@ -198,14 +200,16 @@ export function ArkmeTopicDirectoryPopover({
   const firstLoad = useRef(true)
   useEffect(() => {
     let disposed = false
+    const controller = new AbortController()
     const force = !firstLoad.current
     firstLoad.current = false
-    void directory.ensure(force).then(() => {
+    void directory.ensure(force).then(async () => {
       if (disposed) return
       const result = directory.getSnapshot()
       if (!result.complete || result.error) return
       const loaded = result.sources
-      const reconciliation = reconcileArkmeTopicSelection(selectedSourceRef.current, loaded)
+      const currentSelected = selectedSourceRef.current
+      const reconciliation = reconcileArkmeTopicSelection(currentSelected, loaded)
       if (reconciliation.status === 'selected') {
         selectedSourceRef.current = reconciliation.source
         onSelectionRefreshed(reconciliation.source)
@@ -228,8 +232,8 @@ export function ArkmeTopicDirectoryPopover({
         persist(loaded, null)
       }
     })
-    return () => { disposed = true }
-  }, [directory, retryRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
+    return () => { disposed = true; controller.abort() }
+  }, [directory, retryRevision, recordRevision, topicDirectoryRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
