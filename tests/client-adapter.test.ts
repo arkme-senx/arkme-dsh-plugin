@@ -96,12 +96,14 @@ describe('official DSH client adapter', () => {
       'conversation',
       'details',
       'settings.section',
+      'settings.section',
       'settings.general.item',
       'settings.section',
       'shell.overlay',
       'shell.overlay',
     ])
     expect(registered).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'settings.section', id: 'arkme-data-management', order: 10, label: '数据管理' }),
       expect.objectContaining({
         name: 'sidebar',
         priority: -100,

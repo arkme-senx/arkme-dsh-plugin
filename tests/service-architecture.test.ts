@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'listArchives', 'getArchiveStates', 'setArchiveState',
   'recentEmojiIds', 'recordRecentEmoji',
   'withGroupMemberInvalidation', // composition-only MCP presentation seam; no SDK/Host route
   'directMessageAdmission', 'setDirectMessageRefusal', 'assignRecordTopic', 'listTopicCandidates', 'deleteSourceRecords', 'selfTarget',
@@ -81,6 +82,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'archive-service.ts',
   'chat-policy.ts',
   'direct-message-admission-service.ts',
   'record-topic-assignment-service.ts',

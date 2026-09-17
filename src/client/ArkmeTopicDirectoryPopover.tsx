@@ -1,13 +1,14 @@
 import type { ArkmeArchiveState } from '../archive-contract.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import {
-  useCallback, useEffect, useMemo, useRef, useState, type CSSProperties,
+  useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties,
 } from 'react'
 import { ListBullets } from '@phosphor-icons/react/dist/icons/ListBullets'
 import type {
   ArkmeSourceItem, ArkmeSourceList, ArkmeTopicCreateResult,
 } from '../types.js'
 import { callArkme } from './api.js'
+import { arkmeUi } from './ui-controller.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import {
   ArkmeSourceSortControl, ArkmeTopicCard, ArkmeTopicCreateFooter, ArkmeTopicTreeRow,
@@ -189,6 +190,7 @@ function cacheWithTopics(
 export function ArkmeTopicDirectoryPopover({
   userId, selectedSource, trigger = 'button', onSelect, onSelectionRefreshed = onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateWarning, onCreateTopicReady, retryRevision,
 }: ArkmeTopicDirectoryPopoverProps) {
+  const recordRevision = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getRecordRevision, arkmeUi.getRecordRevision)
   const initialCache = useMemo(() => readNavigationCache(userId), [userId])
   const requestRef = useRef<AbortController>()
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -303,7 +305,7 @@ export function ArkmeTopicDirectoryPopover({
   useEffect(() => {
     void load()
     return () => { requestRef.current?.abort() }
-  }, [load, retryRevision, userId])
+  }, [load, retryRevision, userId, recordRevision])
 
   useEffect(() => {
     const aggregateSource = sources.find(source => source.kind === 'send_to_self')

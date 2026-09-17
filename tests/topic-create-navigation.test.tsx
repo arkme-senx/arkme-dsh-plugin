@@ -7,6 +7,7 @@ import { ArkmeTopicDirectoryPopover, type ArkmeTopicCreateOpener } from '../src/
 import { ArkmeTopicCreateDialog } from '../src/client/ArkmeTopicCreateDialog.js'
 import { readNavigationCache } from '../src/client/navigation-cache.js'
 import { callArkme } from '../src/client/api.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 import type { ArkmeSourceItem, ArkmeTopicCreateResult } from '../src/types.js'
 
 vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
@@ -52,6 +53,28 @@ function submit() {
 }
 
 describe('navigate to a newly created self topic', () => {
+  it('refreshes directory membership on record invalidation without clearing an archived scene', async () => {
+    const onSelect = vi.fn()
+    const onInvalidated = vi.fn()
+    const onResolution = vi.fn()
+    await act(async () => {
+      renderer = create(<ArkmeTopicDirectoryPopover userId={10001} selectedSource={parent} trigger="none"
+        onSelect={onSelect} onSelectionInvalidated={onInvalidated} onSelfSourcesResolution={onResolution}
+        onCreateWarning={vi.fn()} />)
+    })
+    vi.mocked(callArkme).mockImplementation(async method => {
+      if (method === 'sources.list') return {items: [self, uncategorized], hasMore: false}
+      if (method === 'archives.state') return [{ownerAvailable: true, effectiveArchived: true}]
+      throw new Error(`Unexpected API: ${method}`)
+    })
+    onSelect.mockClear()
+    await act(async () => { arkmeUi.recordChanged() })
+    expect(onResolution).toHaveBeenLastCalledWith(10001, expect.objectContaining({sources: [self, uncategorized], loading: false}))
+    expect(onInvalidated).not.toHaveBeenCalled()
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(readNavigationCache(10001)?.selectedSourceRef).toBe(parent.sourceRef)
+    expect(readNavigationCache(10001)?.sources.send_to_self).toEqual([self, uncategorized])
+  })
   it.each([false, true])('opens the acknowledged topic and preserves it in the navigation cache (child=%s)', async child => {
     const onSelect = await openCreate(child)
     await act(async () => { submit() })

@@ -1,6 +1,7 @@
-import { ArkmeArchiveAction, ArkmeArchiveStatus } from './ArkmeArchive.js'
+import { ArkmeArchiveAction, ArkmeArchiveDialog, ArkmeArchiveStatus } from './ArkmeArchive.js'
+import type { ArkmeArchiveState } from '../archive-contract.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeSourceItem, ArkmeTopicDissolveProgress, ArkmeTopicDissolveTask } from '../types.js'
 import { arkmeSelfDirectorySources } from './source-list.js'
 import { ArkmeTopicDissolveDialog, ArkmeTopicRenameDialog } from './ArkmeTopicManagementDialog.js'
@@ -339,6 +340,10 @@ export function ArkmeSourceBreadcrumb({
   const [draggingSourceRef, setDraggingSourceRef] = useState<string>()
   const [hoveredSourceRef, setHoveredSourceRef] = useState<string>()
   const [topicMenuSource, setTopicMenuSource] = useState<ArkmeSourceItem>()
+  // The directory row disappears after archive; its confirmation belongs to
+  // the stable surface so an early projection refresh cannot abort the write.
+  const [archiveConfirmation, setArchiveConfirmation] = useState<{ state: ArkmeArchiveState; title: string }>()
+  const closeArchiveConfirmation = useCallback(() => { setArchiveConfirmation(undefined) }, [])
   const [hoveredTopicMenuAction, setHoveredTopicMenuAction] = useState<string>()
   const [renameTopic, setRenameTopic] = useState<ArkmeSourceItem>()
   const [dissolveTopic, setDissolveTopic] = useState<ArkmeSourceItem>()
@@ -405,6 +410,7 @@ export function ArkmeSourceBreadcrumb({
   }
   useEffect(() => {
     setSort(readSelfTopicSortPreference(userId))
+    setArchiveConfirmation(undefined)
   }, [userId])
   useEffect(() => {
     if (activeDissolveRunning && activeDissolve !== undefined) {
@@ -855,7 +861,11 @@ export function ArkmeSourceBreadcrumb({
               setTopicMutationError('')
               setRenameTopic(row.source)
             }}>重命名</button>}
-            <ArkmeArchiveAction source={row.source} menu style={styles.topicManageAction} />
+            <ArkmeArchiveAction source={row.source} menu style={styles.topicManageAction} onConfirm={state => {
+              setArchiveConfirmation({state, title: row.source.displayName})
+              setTopicMenuSource(undefined)
+              setOpen(false)
+            }} />
             {onDissolveTopic !== undefined && <button type="button" role="menuitem"
               style={{ ...styles.topicManageAction, ...styles.topicManageDanger, ...(hoveredTopicMenuAction === `${row.source.sourceRef}:dissolve` ? styles.topicManageActionHover : {}) }}
               onMouseEnter={() => { setHoveredTopicMenuAction(`${row.source.sourceRef}:dissolve`) }}
@@ -903,6 +913,7 @@ export function ArkmeSourceBreadcrumb({
         }}><span aria-hidden style={{ fontSize: 16, lineHeight: 1 }}>＋</span>创建主题</button>
       </div>}
     </div>}
+    {archiveConfirmation !== undefined && <ArkmeArchiveDialog state={archiveConfirmation.state} title={archiveConfirmation.title} onClose={closeArchiveConfirmation} />}
     {renameTopic !== undefined && <ArkmeTopicRenameDialog
       topic={renameTopic} submitting={topicMutationSubmitting} error={topicMutationError}
       onCancel={closeTopicDialog} onConfirm={submitTopicRename}

@@ -17,6 +17,7 @@ function useArchiveRefresh(): { userId: number | undefined; revision: string; re
   const [foreground, setForeground] = useState(0)
   const refresh = useCallback(() => { setForeground(value => value + 1) }, [])
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return
     const visible = () => { if (document.visibilityState === 'visible') refresh() }
     window.addEventListener('focus', refresh)
     window.addEventListener('online', refresh)
@@ -102,17 +103,14 @@ export function ArkmeArchiveDialog({ state, title, onClose }: { state: ArkmeArch
   </ArkmeTopicDialogFrame>
 }
 
-export function ArkmeArchiveAction({ source, style, menu = false }: { source: ArkmeSourceItem; style?: CSSProperties | undefined; menu?: boolean }) {
+export function ArkmeArchiveAction({ source, style, menu = false, onConfirm }: { source: ArkmeSourceItem; style?: CSSProperties | undefined; menu?: boolean; onConfirm(state: ArkmeArchiveState): void }) {
   const { state, error, refresh } = useArchiveState(source.sourceRef)
-  const [open, setOpen] = useState(false)
-  const close = useCallback(() => { setOpen(false); refresh() }, [refresh])
   return <>
     <button type="button" role={menu ? 'menuitem' : undefined} style={style ?? button}
-      disabled={state?.ownerAvailable !== true || error !== ''} onClick={() => { setOpen(true) }}>
+      disabled={state?.ownerAvailable !== true || error !== ''} onClick={() => { if (state !== undefined) onConfirm(state) }}>
       {state?.selfArchived ? '取消归档' : state?.effectiveArchived ? '单独归档' : '归档'}
     </button>
     {error !== '' && <button type="button" style={button} title={error} onClick={refresh}>重试归档状态</button>}
-    {open && state !== undefined && <ArkmeArchiveDialog state={state} title={source.displayName} onClose={close} />}
   </>
 }
 
@@ -142,7 +140,7 @@ export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: 
     try {
       const page = await callArkme<ArkmeArchivePage>('archives.list', next === undefined ? {} : { cursor: next }, controller.signal)
       if (controller.signal.aborted) return
-      setItems(previous => next === undefined ? page.items : [...new Map([...previous, ...page.items].map(item => [item.sourceRef, item])).values()])
+      setItems(previous => [...new Map([...(next === undefined ? [] : previous), ...page.items].map(item => [item.source.topicHierarchyKey, item])).values()])
       setCursor(page.nextCursor)
     } catch (caught) { if (!controller.signal.aborted) setError(message(caught)) }
     finally { if (!controller.signal.aborted) setBusy(false) }
@@ -150,14 +148,19 @@ export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: 
   useEffect(() => {
     setItems([])
     setCursor(undefined)
-    setDialog(undefined)
     if (userId !== undefined) void load()
+    else setBusy(false)
     return () => { request.current?.abort() }
   }, [userId, revision, load])
+  // Projection refreshes must not abort a write or dismiss its failure. Keep
+  // the captured CAS confirmation until the user closes it or changes account.
+  useEffect(() => { setDialog(undefined) }, [userId])
   const showSource = async (source: NonNullable<ArkmeArchiveState['inheritedFrom']>) => {
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
+    setBusy(true)
+    setError('')
     try {
       let cursor: string | undefined
       do {
@@ -173,6 +176,7 @@ export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: 
       refresh()
 
     } catch (caught) { if (!controller.signal.aborted) setError(message(caught)) }
+    finally { if (!controller.signal.aborted) setBusy(false) }
   }
   return <section style={{ padding: 24, color: arkmeTheme.text, maxWidth: 900, boxSizing: 'border-box' }}>
     <h2>数据管理</h2><h3>已归档</h3>
@@ -182,13 +186,13 @@ export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: 
     {error !== '' && <p role="alert">{error}</p>}
     {!busy && error === '' && userId !== undefined && items.length === 0 && <p>暂无已归档主题</p>}
     <ul style={{ listStyle: 'none', padding: 0 }}>
-      {items.map(item => <li key={item.sourceRef} style={{ padding: '16px 0', borderBottom: `1px solid ${arkmeTheme.borderSoft}`, overflowWrap: 'anywhere' }}>
+      {items.map(item => <li key={item.source.topicHierarchyKey} style={{ padding: '16px 0', borderBottom: `1px solid ${arkmeTheme.borderSoft}`, overflowWrap: 'anywhere' }}>
         <strong>{item.privacyLocked ? '隐私主题' : item.source.displayName}</strong>
         <p>{item.selfArchived ? '单独归档' : '随父级归档'}{item.selfArchived && item.inheritedFrom !== undefined ? ' · 同时随父级归档' : ''}</p>
         <div style={actions}>
           <button type="button" style={button} disabled={item.privacyLocked} onClick={() => { arkmeUi.selectSource(item.source); closeSettings?.() }}>打开主题</button>
           <button type="button" style={button} onClick={() => { setDialog({ state: item, title: item.source.displayName }) }}>{item.selfArchived ? '取消归档' : '单独归档'}</button>
-          {item.inheritedFrom !== undefined && <button type="button" style={button} onClick={() => { void showSource(item.inheritedFrom!) }}>查看归档来源</button>}
+          {item.inheritedFrom !== undefined && <button type="button" style={button} disabled={busy} onClick={() => { void showSource(item.inheritedFrom!) }}>查看归档来源</button>}
         </div>
       </li>)}
     </ul>
