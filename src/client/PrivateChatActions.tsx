@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react'
-import { IconDownloadOutline16, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple'
 import { Prohibit } from '@phosphor-icons/react/dist/csr/Prohibit'
 import { UserMinus } from '@phosphor-icons/react/dist/csr/UserMinus'
 import { UserPlus } from '@phosphor-icons/react/dist/csr/UserPlus'
@@ -76,7 +77,7 @@ export function conversationExportActionItem(action: ConversationExportAction): 
     label: action.busy
       ? `正在导出${action.processed > 0 ? ` · ${String(action.processed)} 条` : ''}`
       : '导出',
-    icon: <IconDownloadOutline16 />,
+    icon: <DownloadSimple size={20} weight="regular" aria-hidden />,
     busy: action.busy,
     invoke: action.invoke,
   }
@@ -86,7 +87,7 @@ export function conversationExportActionItem(action: ConversationExportAction): 
 export function privateChatActionItems(actions: ReturnType<typeof usePrivateChatActions>,
   admission: ReturnType<typeof useDirectMessageAdmission>, openRelated: () => void,
   exportAction?: ConversationExportAction): ConversationActionItem[] {
-  const items: ConversationActionItem[] = exportAction === undefined ? [] : [conversationExportActionItem(exportAction)]
+  const items: ConversationActionItem[] = []
   if (actions.relatedAllowed) items.push({ id: 'related', label: '相关录音', icon: <Waveform size={20} aria-hidden />, invoke: openRelated,
     error: actions.relatedError === undefined ? '' : '暂时无法更新相关录音资格' })
   else if (actions.relatedError !== undefined) items.push({ id: 'related', label: '重新检查相关录音', icon: <Waveform size={20} aria-hidden />, invoke: actions.refreshRelated })
@@ -106,6 +107,7 @@ export function privateChatActionItems(actions: ReturnType<typeof usePrivateChat
       invoke: () => { void actions.changeBan(desired) },
     })
   }
+  if (exportAction !== undefined) items.push(conversationExportActionItem(exportAction))
   return items
 }
 
@@ -126,6 +128,9 @@ export function ConversationActionsMenu({ items, anchor, onClose, label = '更�
   }, [anchor, open])
   const menuItems: MenuEntry[] = []
   for (const item of items) {
+    if (item.id === 'export') {
+      if (menuItems.length > 0) menuItems.push({ type: 'separator', id: 'export-separator' })
+    }
     const disabled = item.disabled === true || item.busy === true
     menuItems.push({ id: item.id, label: item.label, icon: item.icon, ...(disabled ? { disabled: true } : {}) })
     if (item.error) menuItems.push({ id: `${item.id}:error`, label: <span role="status">{item.error}</span>, disabled: true })
@@ -136,6 +141,7 @@ export function ConversationActionsMenu({ items, anchor, onClose, label = '更�
     onClose()
   }
   return <ArkmeDshMenu
+    conversationAppearance
     open={open}
     label={label}
     align="end"

@@ -4,11 +4,12 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  IconDownloadOutline16, IconEllipsisOutline16, type MenuEntry,
+  IconEllipsisOutline16, type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ArrowUp } from '@phosphor-icons/react/dist/icons/ArrowUp'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
+import { DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { Prohibit } from '@phosphor-icons/react/dist/icons/Prohibit'
 import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
@@ -1295,10 +1296,6 @@ function GroupSettingsMenu(props: {
       .finally(() => { setBusy(false) })
   }
   const entries: MenuEntry[] = [
-    { id: 'export', label: props.exportBusy
-      ? `正在导出${props.exportProcessed > 0 ? ` · ${String(props.exportProcessed)} 条` : ''}`
-      : '导出', icon: <IconDownloadOutline16 />, disabled: props.exportBusy },
-    { type: 'separator', id: 'personal-separator' },
     { type: 'label', id: 'personal-label', text: '个人设置' },
   ]
   if (effective.selfStatus === 'active') entries.push({ id: 'self-nickname', label: '修改群昵称', icon: <ClientIcon src={icons.selfNickname} size={16} /> })
@@ -1318,22 +1315,28 @@ function GroupSettingsMenu(props: {
     id: 'ai-polish',
     label: <span
       data-arkme-group-ai-polish-entry="true"
+      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
       onClick={(event?: { stopPropagation(): void }) => {
         event?.stopPropagation()
         close()
         props.onAiPolishOpen()
       }}
-    >AI 表达润色 · {polishStatus}</span>,
+    ><span>AI 表达润色</span><span style={{ marginLeft: 'auto', color: colors.secondary, fontSize: 13 }}>{polishStatus}</span><CaretRight size={12} color={colors.secondary} aria-hidden /></span>,
     icon: <MagicWandIcon />,
   })
   if (effective.canRename || (effective.selfRole === 'owner' && effective.selfStatus === 'active')) {
     entries.push({ type: 'separator', id: 'management-separator' }, { type: 'label', id: 'management-label', text: '群管理' })
     if (effective.canRename) entries.push({ id: 'rename', label: '修改群名称', icon: <ClientIcon src={icons.rename} size={16} /> })
     if (effective.selfRole === 'owner' && effective.selfStatus === 'active') {
-      entries.push({ id: 'restrictions', label: '禁止加入名单', icon: <Prohibit size={16} aria-hidden /> })
+      entries.push({ id: 'restrictions', label: <span style={{ display: 'flex', alignItems: 'center' }}>禁止加入名单<CaretRight size={12} color={colors.secondary} style={{ marginLeft: 'auto' }} aria-hidden /></span>, icon: <Prohibit size={16} aria-hidden /> })
     }
   }
   entries.push(
+    { type: 'separator', id: 'export-separator' },
+    { type: 'label', id: 'export-label', text: '聊天记录' },
+    { id: 'export', label: props.exportBusy
+      ? `正在导出${props.exportProcessed > 0 ? ` · ${String(props.exportProcessed)} 条` : ''}`
+      : '导出', icon: <DownloadSimple size={20} weight="regular" aria-hidden />, disabled: props.exportBusy },
     { type: 'separator', id: 'leave-separator' },
     {
       id: 'leave',
@@ -1350,6 +1353,7 @@ function GroupSettingsMenu(props: {
   return <ArkmeDshMenu
     open={props.open}
     label="群聊设置"
+    conversationAppearance
     align="end"
     dense
     items={entries}
