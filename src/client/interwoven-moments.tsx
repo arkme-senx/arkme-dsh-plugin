@@ -190,7 +190,7 @@ const styles: Record<string, CSSProperties> = {
 
 function OpaqueAvatar({ avatarRef, size = 18 }: { avatarRef?: string; size?: number }) {
   const src = useArkmeAvatarImage(avatarRef) ?? ''
-  return <span style={{ ...styles.avatar, width: size, height: size, minWidth: size }} aria-hidden>
+  return <span data-arkme-avatar style={{ ...styles.avatar, width: size, height: size, minWidth: size }} aria-hidden>
     {src === '' ? <ArkmeMark size={size} /> : <img src={src} alt="" draggable={false} style={styles.avatarImage} />}
   </span>
 }

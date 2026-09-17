@@ -1107,10 +1107,10 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
   return <article style={styles.card} data-world-record-ref={item.recordRef}>
     <header style={styles.cardHeader}>
       {item.authorRef === undefined
-        ? <span style={styles.avatar}>{item.avatarRef === undefined
+        ? <span data-arkme-avatar style={styles.avatar}>{item.avatarRef === undefined
         ? item.avatarFallback?.label ?? item.authorName.slice(0, 1)
         : <WorldImage imageRef={item.avatarRef} alt={`${item.authorName}的头像`} avatar />}</span>
-        : <button type="button" style={styles.avatarButton} aria-label={`查看${item.authorName}的用户卡片`} onClick={() => { onOpenAuthor?.(item) }}><span style={styles.avatar}>{item.avatarRef === undefined
+        : <button type="button" style={styles.avatarButton} aria-label={`查看${item.authorName}的用户卡片`} onClick={() => { onOpenAuthor?.(item) }}><span data-arkme-avatar style={styles.avatar}>{item.avatarRef === undefined
           ? item.avatarFallback?.label ?? item.authorName.slice(0, 1)
           : <WorldImage imageRef={item.avatarRef} alt={`${item.authorName}的头像`} avatar />}</span></button>}
       <span style={styles.authorMeta}>
