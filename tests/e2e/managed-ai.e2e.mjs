@@ -103,6 +103,8 @@ describe('Managed AI complete browser-to-ledger chain', () => {
         }
         scenario = label
         const before = results.length
+        const answer = frame.getByText('MODEL_PROXY_E2E_OK', { exact: true })
+        const previousAnswers = await answer.count()
         await input.fill(prompt)
         const settled = scaffold.whenTurnSettled(60_000)
         await input.press('Enter')
@@ -111,7 +113,7 @@ describe('Managed AI complete browser-to-ledger chain', () => {
         const wrongModel = label.endsWith('wrong-model')
         expect(results.at(-1).status).toBe(wrongModel ? 502 : 200)
         expect(results.at(-1).request_uid).toMatch(/^[0-9a-f-]{36}$/)
-        if (!wrongModel && label !== 'missing-usage') await frame.getByText('MODEL_PROXY_E2E_OK', { exact: true }).last().waitFor()
+        if (!wrongModel && label !== 'missing-usage') await expect.poll(() => answer.count()).toBe(previousAnswers + 1)
         if (wrongModel) {
           failures++
           await frame.getByText('SERVER', { exact: true }).last().waitFor()

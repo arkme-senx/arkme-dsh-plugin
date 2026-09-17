@@ -251,17 +251,23 @@ func TestManagedAIToolImagesBrowserChain(t *testing.T) {
 			}
 			delta = map[string]any{"tool_calls": calls, "reasoning_content": "Read the local fixture twice."}
 			reason = "tool_calls"
-		} else if index == 1 || index == 2 {
+		} else if index != 5 {
 			if count != 2 || len(toolIDs) != 2 || toolIDs[0] != "read_first" || toolIDs[1] != "read_second" {
 				t.Errorf("images=%d toolIDs=%v", count, toolIDs)
 			}
-		} else if index == 3 {
+		} else {
 			if count != 0 {
 				t.Error("text model received image")
 			}
 			delta = map[string]any{"content": "TEXT_ONLY_OK"}
 		}
-		chunk := map[string]any{"id": "fixture", "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": body.Model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": reason}}, "usage": map[string]int{"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6, "prompt_cache_hit_tokens": 2, "prompt_cache_miss_tokens": 3}}
+		// A mismatched supplier response must fail without settling, even when
+		// the request successfully uploaded and materialized historical images.
+		responseModel := body.Model
+		if index == 3 {
+			responseModel = "unexpected-fixture-model"
+		}
+		chunk := map[string]any{"id": fmt.Sprintf("fixture-%d", index), "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": responseModel, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": reason}}, "usage": map[string]int{"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6, "prompt_cache_hit_tokens": 2, "prompt_cache_miss_tokens": 3}}
 		encoded, _ := json.Marshal(chunk)
 		fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", encoded)
 	}))
@@ -292,7 +298,8 @@ func TestManagedAIToolImagesBrowserChain(t *testing.T) {
 	mu.Lock()
 	actual := fmt.Sprint(positions)
 	mu.Unlock()
-	if actual != "[0 2 2 0]" {
+	expectedPositions := []int{0, 2, 2, 2, 2, 0, 2}
+	if actual != fmt.Sprint(expectedPositions) {
 		t.Fatalf("provider image positions %s", actual)
 	}
 	var requests []struct {
@@ -305,16 +312,25 @@ func TestManagedAIToolImagesBrowserChain(t *testing.T) {
 	if e = db.SelectContext(ctx, &requests, "SELECT request_uid,status,pricing_base_nano_cny,service_fee_nano_cny,charged_nano_cny FROM managed_ai_request WHERE user_id=42 ORDER BY id"); e != nil {
 		t.Fatal(e)
 	}
-	if len(requests) != 4 {
+	if len(requests) != len(expectedPositions) {
 		t.Fatalf("requests=%d", len(requests))
 	}
 	for i, row := range requests {
-		if row.Status != "succeeded" || row.Base != 14080 || row.Fee != 1408 || row.Charge != 15488 {
-			t.Fatalf("request=%+v", row)
+		expectedSettlements, expectedReleases := 1, 0
+		if i == 3 {
+			expectedSettlements, expectedReleases = 0, 1
+			if row.Status != "failed" || row.Base != 0 || row.Fee != 0 || row.Charge != 0 {
+				t.Fatalf("failed image request=%+v", row)
+			}
+		} else if row.Status != "succeeded" || row.Base != 14080 || row.Fee != 1408 || row.Charge != 15488 {
+			t.Fatalf("successful image request=%+v", row)
 		}
 		var count int
-		if e = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM managed_ai_ledger WHERE request_uid=? AND entry_type='settle'", row.UID); e != nil || count != 1 {
+		if e = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM managed_ai_ledger WHERE request_uid=? AND entry_type='settle'", row.UID); e != nil || count != expectedSettlements {
 			t.Fatalf("settlements=%d error=%v", count, e)
+		}
+		if e = db.GetContext(ctx, &count, "SELECT COUNT(*) FROM managed_ai_ledger WHERE request_uid=? AND entry_type='release'", row.UID); e != nil || count != expectedReleases {
+			t.Fatalf("releases=%d error=%v", count, e)
 		}
 		var fact struct {
 			Count  int `db:"input_image_count"`
@@ -323,10 +339,7 @@ func TestManagedAIToolImagesBrowserChain(t *testing.T) {
 		if e = db.GetContext(ctx, &fact, "SELECT input_image_count,unique_input_image_count FROM managed_ai_request_execution_fact WHERE request_uid=?", row.UID); e != nil {
 			t.Fatal(e)
 		}
-		expected := 0
-		if i == 1 || i == 2 {
-			expected = 2
-		}
+		expected := expectedPositions[i]
 		unique := 0
 		if expected > 0 {
 			unique = 1
@@ -334,10 +347,10 @@ func TestManagedAIToolImagesBrowserChain(t *testing.T) {
 		if fact.Count != expected || fact.Unique != unique {
 			t.Fatalf("request %d image facts %+v", i, fact)
 		}
-		t.Logf("step=%d images=%d unique=%d base=%d fee=%d charge=%d settlements=1", i+1, fact.Count, fact.Unique, row.Base, row.Fee, row.Charge)
+		t.Logf("step=%d images=%d unique=%d base=%d fee=%d charge=%d settlements=%d releases=%d", i+1, fact.Count, fact.Unique, row.Base, row.Fee, row.Charge, expectedSettlements, expectedReleases)
 	}
 	balance, e := store.Balance(ctx, 42)
-	if e != nil || balance.ReservedNanoCNY != 0 || balance.AvailableNanoCNY != 10_000_000_000-4*15488 {
+	if e != nil || balance.ReservedNanoCNY != 0 || balance.AvailableNanoCNY != 10_000_000_000-6*15488 {
 		t.Fatalf("balance=%+v error=%v", balance, e)
 	}
 }

@@ -23,7 +23,7 @@ const tokenParts = [{ alg: 'HS256', typ: 'JWT' }, { user_id: 42, client_id: 7, e
 const token = `${tokenParts}.${createHmac('sha256', 'managed-ai-live-access-secret').update(tokenParts).digest('base64url')}`
 
 describe('packed managed tool-image browser chain', () => {
-  it('reads an image through the real tool, replays it, then switches to a text model', async () => {
+  it('reads and replays tool images, recovers from failure, and preserves them across model switches', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme tool images '))
     const chats = []
     let scaffold, browser, page
@@ -71,29 +71,48 @@ describe('packed managed tool-image browser chain', () => {
       const trigger = frame.getByRole('button', { name: /^选择模型：/ })
       await expect.poll(() => trigger.getAttribute('aria-label')).toContain('Tool Images Vision')
       const input = frame.locator('[data-composer-input]').first()
-      for (const [prompt, count] of [[`E2E_READ_TOOL_IMAGES ${file}`, 2], ['E2E_REPLAY_TOOL_IMAGES', 3], ['E2E_TEXT_ONLY', 4]]) {
-        if (count === 4) {
+      const cases = [
+        { prompt: `E2E_READ_TOOL_IMAGES ${file}`, count: 2 },
+        { prompt: 'E2E_REPLAY_TOOL_IMAGES', count: 3 },
+        { prompt: 'E2E_IMAGE_FAILURE', count: 4, failed: true },
+        { prompt: 'E2E_IMAGE_RECOVERY', count: 5 },
+        { prompt: 'E2E_TEXT_ONLY', count: 6, model: 'Tool Images Text' },
+        { prompt: 'E2E_BACK_TO_VISION', count: 7, model: 'Tool Images Vision' },
+      ]
+      let failures = 0
+      for (const { prompt, count, model, failed } of cases) {
+        if (model) {
           await trigger.click()
-          await frame.getByRole('menuitemradio', { name: 'Tool Images Text', exact: true }).click()
-          await expect.poll(() => trigger.getAttribute('aria-label')).toContain('Tool Images Text')
+          await frame.getByRole('menuitemradio', { name: model, exact: true }).click()
+          await expect.poll(() => trigger.getAttribute('aria-label')).toContain(model)
         }
+        const answer = frame.getByText(model === 'Tool Images Text' ? 'TEXT_ONLY_OK' : 'TOOL_IMAGES_OK', { exact: true })
+        const previousAnswers = await answer.count()
         await input.fill(prompt)
         const settled = scaffold.whenTurnSettled(60_000)
         await input.press('Enter')
         await settled
         await expect.poll(() => chats.length).toBe(count)
-        await frame.getByText(count === 4 ? 'TEXT_ONLY_OK' : 'TOOL_IMAGES_OK', { exact: true }).last().waitFor()
+        if (failed) {
+          failures++
+          await frame.getByText('SERVER', { exact: true }).last().waitFor()
+          await frame.getByText('Arkme AI 服务暂不可用，请稍后重试', { exact: true }).last().waitFor()
+        } else {
+          await expect.poll(() => answer.count()).toBe(previousAnswers + 1)
+        }
+        await expect.poll(() => frame.getByText('This turn failed', { exact: true }).count()).toBe(failures)
         expect(await frame.getByText('UNSUPPORTED_CONTENT', { exact: true }).count()).toBe(0)
       }
-      expect(chats.map(chat => chat.status)).toEqual([200, 200, 200, 200])
+      expect(chats.map(chat => chat.status)).toEqual([200, 200, 200, 502, 200, 200, 200])
       const imageParts = body => body.messages.flatMap(message => Array.isArray(message.content) ? message.content.filter(part => part.type === 'image_asset') : [])
-      expect(chats.map(chat => imageParts(chat.body).length)).toEqual([0, 2, 2, 0])
+      expect(chats.map(chat => imageParts(chat.body).length)).toEqual([0, 2, 2, 2, 2, 0, 2])
       expect(new Set(imageParts(chats[1].body).map(part => part.asset_ref)).size).toBe(1)
+      expect(imageParts(chats[6].body)).toEqual(imageParts(chats[1].body))
       const wire = chats[1].body.messages
       const firstTool = wire.findIndex(message => message.role === 'tool')
       expect(wire.slice(firstTool, firstTool + 3).map(message => message.role)).toEqual(['tool', 'tool', 'user'])
       expect(wire.slice(firstTool, firstTool + 2).map(message => message.tool_call_id)).toEqual(['read_first', 'read_second'])
-      console.info('Packed browser passed: read_image x2, history replay, text-model switch; image positions [0,2,2,0]')
+      console.info('Packed browser passed: read_image x2, history replay, failed image request/recovery, text/vision round trip; image positions [0,2,2,2,2,0,2]')
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
     } catch (error) {
       if (page && process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
