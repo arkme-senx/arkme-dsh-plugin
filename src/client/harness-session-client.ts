@@ -1,6 +1,7 @@
 import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 
 import { HARNESS_SESSION_NAVIGATION_KEY, type HarnessSessionWindow } from '../harness-embed-contract.js'
+import { observeHarnessSessionSelection, type DesktopSessionSelectionBridge } from './harness-session-selection.js'
 
 export const inject = ['sessions', 'remote', 'remote.session']
 const REFRESH_MS = 10_000
@@ -13,6 +14,10 @@ export function apply(ctx: ClientContext): void {
     const apiPath = document.querySelector<HTMLMetaElement>('meta[name="arkme-session-api"]')?.content
     const sessions = (ctx as unknown as { sessions?: ISessions }).sessions
     if (sessions === undefined) return () => undefined
+    // The same-origin parent preload owns the account-scoped IPC lease. The native
+    // iframe has no Node access and must not select a storage path or account itself.
+    const parent = window.parent as (Window & { arkmeDesktop?: { sessionSelection?: DesktopSessionSelectionBridge } }) | undefined
+    const stopPersistence = observeHarnessSessionSelection(sessions, parent?.arkmeDesktop?.sessionSelection)
     const frameWindow = window as HarnessSessionWindow
     const navigation = { async has(sessionId: string) {
       if (!/^[A-Za-z0-9_.:-]{1,256}$/.test(sessionId)) throw new Error('DSH 对话标识无效')
@@ -39,6 +44,7 @@ export function apply(ctx: ClientContext): void {
     } }
     frameWindow[HARNESS_SESSION_NAVIGATION_KEY] = navigation
     const disposeNavigation = () => {
+      stopPersistence()
       if (frameWindow[HARNESS_SESSION_NAVIGATION_KEY] === navigation) delete frameWindow[HARNESS_SESSION_NAVIGATION_KEY]
     }
     if (apiPath === undefined || !/^\/[A-Za-z0-9/_-]+$/.test(apiPath)) return disposeNavigation
