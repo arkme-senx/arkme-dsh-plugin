@@ -18,7 +18,7 @@ import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeVoiceContent, arkmeVoiceMediaUrl } from './ArkmeVoiceContent.js'
 import {
   ArkmeFileActionNavButton, ArkmeFileActionToast, ArkmeFileViewer, ArkmeFileActions,
-  arkmeLocalFileUrl, arkmeFileSize, useArkmeFileActionNotice, useArkmeOriginal,
+  arkmeLocalFileUrl, arkmeFileSize, arkmeCanPreviewFile, useArkmeFileActionNotice, useArkmeOriginal,
 } from './ArkmeFileViewer.js'
 import { arkmeCanInlineLocalFile, arkmeVisibleUploadFraction } from '../file-transfer-contract.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -416,7 +416,7 @@ export function ArkmeFileCard({ block, fallback = false, onOpen, previewOpen = f
   const showReception = () => { if (onOpen !== undefined) onOpen(block); else setOpen(true) }
   const activate = async () => {
     if (opening) return
-    if (original.localRef === undefined) { showReception(); return }
+    if (original.localRef === undefined || arkmeCanPreviewFile(block)) { showReception(); return }
     const request = new AbortController(); controller.current = request
     setOpening(true)
     try { await fileSdk.openLocalFile(original.localRef, request.signal) }

@@ -1,3 +1,4 @@
+import { compareTimelineMessages } from './timeline-message-order.js'
 import { ArkmeLivePhotoBadge } from './ArkmeLivePhotoBadge.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import { ArkmeBotIdentityStyles, ArkmeBotSenderName } from './ArkmeBotIdentity.js'
@@ -1274,7 +1275,7 @@ function mergeItems(current: ArkmeTimelineItem[], incoming: ArkmeTimelineItem[])
         ? { mentions: previous.mentions } : {}),
     })
   }
-  return [...map.values()].sort((a, b) => a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid))
+  return [...map.values()].sort(compareTimelineMessages)
 }
 
 function reconcileTimelinePage(
@@ -5587,7 +5588,7 @@ export function ArkmeSurface({
       return projected
     })
     const displayItems = [...remoteItems, ...fileTasks.tasks.filter(task => !remoteIds.has(task.result?.itemUid ?? task.recordUid)).map(fileTaskTimelineItem)]
-      .sort((a, b) => a.sendAtMillis - b.sendAtMillis)
+      .sort(compareTimelineMessages)
     return { displayItems, reeditItems }
   }, [items, fileTasks.tasks, reeditSubmissions.jobs])
   useEffect(() => {
@@ -5672,7 +5673,9 @@ export function ArkmeSurface({
         occurredAtMillis: event.occurredAtMillis,
         item: event,
       })),
-    ].sort((left, right) => left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id)),
+    ].sort((left, right) => left.kind === 'message' && right.kind === 'message'
+      ? compareTimelineMessages(left.item, right.item)
+      : left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id)),
     [aiPolishNotices, displayItems, interwovenWindow, visibleConversationJoinEvents,memberEventTimeline.events,memberEventTimeline.gaps,
       communityWelcome, authenticatedAccountKey, source?.sourceRef, source?.sourceKey, source?.kind, source?.displayName, timelineMode],
   )

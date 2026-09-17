@@ -1329,6 +1329,59 @@ describe('conversation send directory projection', () => {
     vi.unstubAllGlobals()
   })
 
+  it.each([target, group])('renders forward cards before same-time comments on load and live updates ($kind)', async source => {
+    activeSource = source
+    arkmeUi.selectSource(source)
+    const card: ArkmeTimelineItem = {
+      itemUid: 'forward_record_example', sequence: 7, sendAtMillis: 40,
+      senderName: '我', isMe: true, textContent: '转发卡片', status: 1,
+    }
+    const comment = { ...card, itemUid: 'forward_comment_record_example', sequence: 8, textContent: '附言' }
+    timeline = [comment, card]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+    })
+    const messageIds = () => renderer!.root.findAll(node => typeof node.type === 'string'
+      && node.props['data-arkme-message-item-uid'] !== undefined)
+      .map(node => node.props['data-arkme-message-item-uid'])
+    expect(messageIds()).toEqual([card.itemUid, comment.itemUid])
+    const nextCard = { ...card, itemUid: 'forward_record_next', sequence: 9, sendAtMillis: 41 }
+    const nextComment = { ...comment, itemUid: 'forward_comment_record_next', sequence: 10, sendAtMillis: 41 }
+    await act(async () => {
+      arkmeChatTimelineDelta.publish([{ source: { ...source, latestSequence: 10 }, items: [nextComment, nextCard] }])
+    })
+    expect(messageIds()).toEqual([card.itemUid, comment.itemUid, nextCard.itemUid, nextComment.itemUid])
+  })
+
+  it.each([target, group])('keeps same-time forwarding order across older paging and conversation re-entry ($kind)', async source => {
+    const card: ArkmeTimelineItem = { itemUid: 'forward_record_page', sendAtMillis: 40, sequence: 7,
+      senderName: '我', isMe: true, textContent: '转发卡片', status: 1 }
+    const comment = { ...card, itemUid: 'forward_comment_record_page', sequence: 8, textContent: '附言' }
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'source.timeline' && params?.sourceRef === source.sourceRef) {
+        return { source, items: params.cursor === undefined ? [comment] : [card],
+          hasMore: params.cursor === undefined, ...(params.cursor === undefined ? { nextCursor: { beforeSequence: 8 } } : {}) }
+      }
+      return baseCall(operation, params, signal)
+    })
+    arkmeChatDirectory.publish([source, other])
+    arkmeUi.selectSource(source)
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    await act(async () => {
+      renderer!.root.find(node => node.type === 'button' && renderedText(node.props.children) === '继续加载更早消息').props.onClick()
+    })
+    const messageIds = () => renderer!.root.findAll(node => typeof node.type === 'string'
+      && node.props['data-arkme-message-item-uid'] !== undefined).map(node => node.props['data-arkme-message-item-uid'])
+    expect(messageIds()).toEqual([card.itemUid, comment.itemUid])
+    await act(async () => { arkmeUi.selectSource(other) })
+    await act(async () => { arkmeUi.selectSource(source) })
+    expect(messageIds()).toEqual([card.itemUid, comment.itemUid])
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', {
+      sourceRef: source.sourceRef, limit: 40, cursor: { beforeSequence: 8 },
+    }, expect.any(AbortSignal))
+  })
+
   it.each([false, true])('creates and sends into the new topic without losing the previous draft (child=%s)', async child => {
     vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
     const uncategorized: ArkmeSourceItem = { ...sendToSelf, sourceRef: 'default', kind: 'default_category', displayName: '未分类' }

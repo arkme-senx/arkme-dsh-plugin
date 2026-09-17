@@ -118,6 +118,9 @@ function managedAiLocalizedFailure(facts: ManagedAiFailureFacts): { code: string
   if (facts.code === 'ATTACHMENT_READ_FAILED') {
     return { code: facts.code, message: '无法读取历史图片，请检查本地附件存储后重试' }
   }
+  if (facts.code === 'UNSUPPORTED_CONTENT') {
+    return { code: facts.code, message: '当前模型或图片服务不支持这类内容，请检查模型选择和附件后重试' }
+  }
   if (facts.code === 'CONTEXT_WINDOW_EXCEEDED') {
     return { code: facts.code, message: '对话内容过长，请新建对话或减少上下文后重试' }
   }

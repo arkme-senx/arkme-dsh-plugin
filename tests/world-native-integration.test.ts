@@ -28,7 +28,7 @@ describe('native World integration', () => {
     expect(sidebar).toContain("ui.mode === 'world'")
     expect(sidebar).toContain('<ArkmeWorldSurface')
     expect(sidebar).toContain('ui.worldTarget === undefined ? {} : { target: ui.worldTarget }')
-    expect(sidebar).toContain('onBackToWorld={() => { arkmeUi.showWorld() }}')
+    expect(sidebar).toContain('onBackToWorld={() => { arkmeUi.backFromWorld() }}')
     expect(clientIndex).toContain("export { ArkmeWorldSurface } from './ArkmeWorldSurface.js'")
   })
 

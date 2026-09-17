@@ -80,6 +80,40 @@ function managedCatalogResponse(items: unknown = MANAGED_CATALOG_ITEMS): Respons
 }
 
 describe('Arkme managed model adapter', () => {
+  it('discovers V4.1 through the existing catalog while preserving historical IDs without price descriptions', async () => {
+    const official = {
+      ...MANAGED_CATALOG_ITEMS[0], display_name: 'DeepSeek V4.1 Flash（官方）',
+      pricing: { cache_hit_input_nano_per_token: '40', cache_miss_input_nano_per_token: '2000', output_nano_per_token: '8000' },
+      charge_policy: { service_fee_basis_points: 375 },
+    }
+    const historical = { ...official, public_model_code: 'saved-vision-id' }
+    const bailian = { ...MANAGED_CATALOG_ITEMS[3], public_model_code: 'deepseek-v4.1-flash-bailian',
+      display_name: 'DeepSeek V4.1 Flash（百炼）',
+      pricing: { ...official.pricing, cache_hit_input_nano_per_token: '200' }, charge_policy: { service_fee_basis_points: 725 } }
+    const ctx = new Context()
+    const llm = await ctx.plugin(LlmRuntime)
+    try {
+      registerManagedAiProvider(ctx, {
+        intelligentBaseUrl: 'https://intelligent.test',
+        credentialOwner: { resolveManagedAccessCredential: async () => new SecretValue('arkme-access') },
+        fetchImpl: async () => managedCatalogResponse([official, historical, MANAGED_CATALOG_ITEMS[3], bailian]),
+      })
+      const models = await ctx.llm.listModels(ARKME_MANAGED_PROVIDER)
+      expect(models.map(model => model.id)).toEqual(['deepseek-v4-flash', 'saved-vision-id', 'deepseek-v4-flash-bailian', 'deepseek-v4.1-flash-bailian'])
+      for (const model of models) {
+        expect(model.description).toBeUndefined()
+        const resolved = await ctx.llm.resolveModelInfo(ARKME_MANAGED_PROVIDER, model.id)
+        expect(resolved.id).toBe(model.id)
+        expect(resolved.name).toBe(model.name)
+        expect(resolved.description).toBeUndefined()
+      }
+      const saved = await ctx.llm.resolveModelInfo(ARKME_MANAGED_PROVIDER, 'saved-vision-id')
+      expect(saved.reasoning?.efforts.map(effort => String(effort.id))).toEqual(['off', 'low', 'high', 'max'])
+      const added = await ctx.llm.resolveModelInfo(ARKME_MANAGED_PROVIDER, bailian.public_model_code)
+      expect(added.reasoning?.efforts.map(effort => String(effort.id))).toEqual(['off', 'high', 'max'])
+    } finally { await llm.dispose() }
+  })
+
   it.each(MANAGED_CATALOG_ITEMS)('exposes exact route reasoning for $public_model_code', async item => {
     const adapter = createManagedAiLlmAdapter({
       intelligentBaseUrl: 'https://intelligent.test',
