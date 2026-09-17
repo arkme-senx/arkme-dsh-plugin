@@ -13,6 +13,7 @@ const expectedPublicMethods = [
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
   'recentEmojiIds', 'recordRecentEmoji', 'publishLongArticle', 'stageLongArticleImage',
+  'listArchives', 'getArchiveStates', 'setArchiveState',
   'withGroupMemberInvalidation', // composition-only MCP presentation seam; no SDK/Host route
   'directMessageAdmission', 'setDirectMessageRefusal', 'assignRecordTopic', 'listTopicCandidates', 'deleteSourceRecords', 'selfTarget',
   'fileCapabilities', 'fileSearch', 'fileSessionUser', 'fileStage', 'fileList', 'fileReadLocal', 'attachLocalFileOpener', 'fileOpenLocal', 'fileOpenLocalFolder', 'fileRemove', 'fileSend',
@@ -89,6 +90,7 @@ const expectedPublicMethods = [
 
 const expectedServiceFiles = [
   'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',
+  'archive-service.ts',
   'chat-policy.ts',
   'direct-message-admission-service.ts',
   'record-topic-assignment-service.ts',

@@ -39,6 +39,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
     const root = await mkdtemp(join(tmpdir(), 'arkme input contract '))
     let scaffold
     let browser
+    let page
     const archived = []
     const failures = []
     const proxy = createServer(tls, async (req, res) => {
@@ -102,7 +103,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
           })
         })
       })
-      const page = await browserContext.newPage()
+      page = await browserContext.newPage()
       const uiPolicyRequests = []
       page.on('request', request => {
         if (request.url().endsWith('/arkme-self/api') && request.method() === 'POST'
@@ -127,16 +128,58 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       const B = (await service.createTopic('单独归档子主题', A.sourceRef)).source
       const C = (await service.createTopic('随父级恢复的子主题', A.sourceRef)).source
       const D = (await service.createTopic('随子级归档的孙主题', B.sourceRef)).source
+      const existingRecord = await service.sendSourceText(B.sourceRef, '归档前已有内容', {recordUid: randomUUID()})
+      expect(existingRecord.localState).toBe('synced')
       const set = async (source, archived) => {
         const [state] = await sdk.getArchiveStates([source.sourceRef])
         return sdk.setArchiveState({sourceRef: source.sourceRef, selfArchived: archived, expectedRevision: state.revision})
       }
-      await set(B, true)
-      await set(A, true)
+      await page.getByRole('button', {name: '对话', exact: true}).click()
+      await page.getByRole('treeitem', {name: /发给自己/}).click()
+      const archiveFromMenu = async source => {
+        const selector = page.getByRole('button', {name: '选择主题', exact: true})
+        // The initial cached self-source is reconciled to its owner identity;
+        // wait for the current header and its directory to be ready to operate.
+        await expect.poll(async () => {
+          if (await selector.getAttribute('aria-expanded') !== 'true') await selector.click()
+          return page.locator('[data-arkme-self-topic-tree-row]').filter({has: page.getByText(A.displayName, {exact: true})}).count()
+        }, {timeout: 10000}).toBe(1)
+        if (source === B) {
+          await page.locator('[data-arkme-self-topic-tree-row]').filter({has: page.getByText(A.displayName, {exact: true})}).waitFor()
+          const expand = page.getByRole('button', {name: `展开${A.displayName}`, exact: true})
+          if (await expand.count()) await expand.click()
+        }
+        const row = page.locator('[data-arkme-self-topic-tree-row]').filter({has: page.getByText(source.displayName, {exact: true})})
+        await row.hover()
+        await row.getByRole('button', {name: `${source.displayName}主题操作`, exact: true}).click()
+        await row.getByRole('menuitem', {name: '归档', exact: true}).click()
+        await page.getByRole('dialog', {name: '归档主题', exact: true}).getByRole('button', {name: '确认归档', exact: true}).click()
+        await expect.poll(async () => (await sdk.getArchiveStates([source.sourceRef]))[0].selfArchived).toBe(true)
+        await page.getByRole('dialog', {name: '归档主题', exact: true}).waitFor({state: 'detached'})
+        await expect.poll(async () => {
+          if (await selector.getAttribute('aria-expanded') !== 'true') await selector.click()
+          await page.locator('[data-arkme-self-topic-menu]').waitFor()
+          return row.count()
+        }).toBe(0)
+      }
+      await archiveFromMenu(B)
+      await archiveFromMenu(A)
       let states = await sdk.getArchiveStates([A.sourceRef, B.sourceRef, C.sourceRef, D.sourceRef])
       expect(states.map(item => item.effectiveArchived)).toEqual([true, true, true, true])
-      const restored = await set(A, false)
-      expect(restored.effectiveChangedCount).toBe(2)
+      // Archive affects directory membership, not direct access or writing to
+      // an already-open topic. Use the real Record owner for both operations.
+      expect((await service.readSource(B.sourceRef)).items.map(item => item.itemUid)).toContain(existingRecord.itemUid)
+      const laterRecord = await service.sendSourceText(B.sourceRef, '归档后继续记录', {recordUid: randomUUID()})
+      expect(laterRecord.localState).toBe('synced')
+      expect((await service.readSource(B.sourceRef)).items.map(item => item.itemUid)).toEqual(expect.arrayContaining([existingRecord.itemUid, laterRecord.itemUid]))
+      await page.getByRole('button', {name: '个人资料', exact: true}).click()
+      await page.getByRole('menuitem', {name: /设置.*打开 DSH 应用设置/}).click()
+      await page.getByRole('button', {name: '数据管理', exact: true}).click()
+      await page.getByRole('heading', {name: '已归档', exact: true}).waitFor()
+      const parent = page.locator('li').filter({has: page.getByText(A.displayName, {exact: true})})
+      await parent.getByRole('button', {name: '取消归档', exact: true}).click()
+      await page.getByRole('dialog', {name: '取消归档', exact: true}).getByRole('button', {name: '确认取消归档', exact: true}).click()
+      await parent.waitFor({state: 'detached'})
       states = await sdk.getArchiveStates([A.sourceRef, B.sourceRef, C.sourceRef, D.sourceRef])
       expect(states.map(item => item.effectiveArchived)).toEqual([false, true, false, true])
       const directory = await service.listSources('send_to_self', {refresh: true, limit: 100})
@@ -149,12 +192,6 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       expect(JSON.stringify(toolResult)).toContain('effectiveArchived')
       // The Arkme account button opens the official settings shell through its
       // public bridge. The archive section is a registered settings.section.
-      await page.getByRole('button', {name: '对话', exact: true}).click()
-      await page.getByRole('treeitem', {name: /发给自己/}).click()
-      await page.getByRole('button', {name: '个人资料', exact: true}).click()
-      await page.getByRole('menuitem', {name: /设置.*打开 DSH 应用设置/}).click()
-      await page.getByRole('button', {name: '数据管理', exact: true}).click()
-      await page.getByRole('heading', {name: '已归档', exact: true}).waitFor()
       const child = page.locator('li').filter({has: page.getByText(B.displayName, {exact: true})})
       const descendant = page.locator('li').filter({has: page.getByText(D.displayName, {exact: true})})
       await child.getByRole('button', {name: '取消归档', exact: true}).waitFor()
@@ -173,6 +210,10 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       expect((await sdk.getArchiveStates([B.sourceRef]))[0].selfArchived).toBe(true)
       await expect(sdk.setArchiveState({sourceRef: B.sourceRef, selfArchived: false, expectedRevision: 0})).rejects.toThrow()
     } catch (error) {
+      if (page && process.env.ARKME_E2E_SCREENSHOT) {
+        await page.screenshot({path: `${process.env.ARKME_E2E_SCREENSHOT}.failure.png`}).catch(() => {})
+        console.error('Archive scenario UI:', await page.locator('body').innerText().catch(() => 'unavailable'))
+      }
       failures.push(error)
     } finally {
       const cleanup = async action => { try { await action() } catch (error) { failures.push(error) } }

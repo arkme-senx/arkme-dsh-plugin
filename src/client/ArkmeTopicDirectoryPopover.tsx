@@ -9,6 +9,7 @@ import type {
   ArkmeEnvironment, ArkmeSourceItem, ArkmeTopicCreateResult,
 } from '../types.js'
 import { callArkme } from './api.js'
+import { arkmeUi } from './ui-controller.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import {
   ArkmeSourceSortControl, ArkmeTopicCard, ArkmeTopicCreateFooter, ArkmeTopicTreeRow,

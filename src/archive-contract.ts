@@ -13,7 +13,7 @@ export interface ArkmeArchiveState {
 }
 
 export interface ArkmeArchiveEntry extends ArkmeArchiveState {
-  source: ArkmeSourceItem
+  source: ArkmeSourceItem & { kind: 'topic'; topicHierarchyKey: string }
   privacyLocked: boolean
 }
 
