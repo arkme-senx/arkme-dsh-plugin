@@ -1886,6 +1886,13 @@ body[data-ds-dark-theme] .arkme-detail-extension-input-shell {
 
 body[data-ds-dark-theme] .arkme-peer-membership-disc { fill: #171717; stroke: #343434; }
 
+/* Native hover also updates when an async action becomes enabled beneath a
+   stationary pointer. Scope to the menu so workspace and body portals agree. */
+[data-arkme-self-topic-menu] button.arkme-self-topic-manage-action { background: transparent; }
+[data-arkme-self-topic-menu] button.arkme-self-topic-manage-action:not(:disabled):is(:hover, :focus-visible) {
+  background: var(--dsw-alias-interactive-bg-hover, #f3f4f7);
+}
+
 /* Match DSH\'s solid selector footer: shared rules live in conversation-selector-style.ts. */
 .arkme-self-topic-sort-option {
   display: flex;

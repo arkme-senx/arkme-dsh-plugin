@@ -172,14 +172,43 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
           })
           await selector.click()
         }
+        // A user can reach Archive before its state read completes. Hold the
+        // real Host response so hovering a disabled action is deterministic.
+        let releaseArchiveState
+        const archiveStateGate = new Promise(resolve => { releaseArchiveState = resolve })
+        const holdArchiveState = async route => {
+          if (route.request().postDataJSON()?.operation !== 'archives.state') return route.fallback()
+          const response = await route.fetch()
+          await archiveStateGate
+          await route.fulfill({response})
+        }
+        await page.route('**/arkme-self/api', holdArchiveState)
         await row.hover()
         await row.getByRole('button', {name: `${source.displayName}主题操作`, exact: true}).click()
         const archiveAction = row.getByRole('menuitem', {name: '归档', exact: true})
         const renameAction = row.getByRole('menuitem', {name: '重命名', exact: true})
         await renameAction.hover()
         const hoverBackground = await renameAction.evaluate(node => getComputedStyle(node).backgroundColor)
-        await expect.poll(() => archiveAction.isEnabled()).toBe(true)
+        expect(hoverBackground).not.toBe('rgba(0, 0, 0, 0)')
+        expect(await archiveAction.isDisabled()).toBe(true)
         await archiveAction.hover()
+        releaseArchiveState()
+        await expect.poll(() => archiveAction.isEnabled()).toBe(true)
+        await page.unroute('**/arkme-self/api', holdArchiveState)
+        // Do not move the pointer after the action becomes enabled.
+        expect(await archiveAction.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(hoverBackground)
+        if (source === B && process.env.ARKME_E2E_SCREENSHOT) {
+          await page.locator('[data-arkme-self-topic-menu]').screenshot({path: `${process.env.ARKME_E2E_SCREENSHOT}.hover.png`})
+        }
+        for (const action of await row.getByRole('menuitem').all()) {
+          await action.hover()
+          expect(await action.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(hoverBackground)
+        }
+        await renameAction.hover()
+        expect(await archiveAction.evaluate(node => getComputedStyle(node).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+        await renameAction.focus()
+        await page.keyboard.press('Tab')
+        expect(await archiveAction.evaluate(node => node.matches(':focus-visible'))).toBe(true)
         expect(await archiveAction.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(hoverBackground)
         await expect.poll(() => page.locator('[data-arkme-self-topic-loading]').count()).toBe(0)
         await page.locator('[data-arkme-self-topic-menu]').evaluate(menu => {

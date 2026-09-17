@@ -95,15 +95,13 @@ export function useArchiveMutation() {
   return { set, busy, error }
 }
 
-export function ArkmeArchiveAction({ source, style, disabled = false, onAction, onMouseEnter, onMouseLeave }: {
-  source: ArkmeSourceItem; style: CSSProperties; disabled?: boolean;
-  onAction(state: ArkmeArchiveState): void; onMouseEnter(): void; onMouseLeave(): void;
+export function ArkmeArchiveAction({ source, style, className, disabled = false, onAction }: {
+  source: ArkmeSourceItem; style: CSSProperties; className: string; disabled?: boolean;
+  onAction(state: ArkmeArchiveState): void;
 }) {
   const { state, error, refresh } = useArchiveState(source.sourceRef)
-  return <button type="button" role="menuitem" style={style}
+  return <button type="button" role="menuitem" className={className} style={style}
     disabled={disabled || (error === '' && state?.ownerAvailable !== true)}
-    onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}
-    onFocus={onMouseEnter} onBlur={onMouseLeave}
     onClick={() => { if (error !== '') refresh(); else if (state !== undefined) onAction(state) }}>
     {error !== '' ? '重试归档状态' : state?.selfArchived ? '取消归档' : state?.effectiveArchived ? '单独归档' : '归档'}
   </button>

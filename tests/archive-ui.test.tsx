@@ -137,12 +137,6 @@ it('keeps a direct menu write and captured revision after its archived directory
   const row = host.querySelector('[data-arkme-self-topic-tree-row]')!
   await act(async () => { row.dispatchEvent(new MouseEvent('mouseover', {bubbles: true})) })
   await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="主题主题操作"]')!.click() })
-  const archiveAction = [...row.querySelectorAll('button')].find(button => button.textContent === '归档')!
-  const renameAction = [...row.querySelectorAll('button')].find(button => button.textContent === '重命名')!
-  await act(async () => { renameAction.dispatchEvent(new MouseEvent('mouseover', {bubbles: true})) })
-  const hoverBackground = renameAction.style.background
-  await act(async () => { archiveAction.dispatchEvent(new MouseEvent('mouseover', {bubbles: true})) })
-  expect(archiveAction.style.background).toBe(hoverBackground)
   await click('归档')
   expect(host.querySelector('[role=dialog]')).toBeNull()
   const write = mock.call.mock.calls.find(call => call[0] === 'archives.set')!
@@ -155,6 +149,28 @@ it('keeps a direct menu write and captured revision after its archived directory
   expect(host.querySelector('[role=dialog]')).toBeNull()
 })
 
+
+it('keeps archive inert until the owner state arrives, then submits its captured revision', async () => {
+  const source: ArkmeSourceItem = {sourceRef: 'topic', kind: 'topic', displayName: '主题'}
+  let reply: (value: unknown) => void = () => {}
+  mock.call.mockImplementation((operation: string) => operation === 'archives.state'
+    ? new Promise(resolve => { reply = resolve }) : new Promise(() => {}))
+  await act(async () => { root.render(<ArkmeSourceBreadcrumb userId={42} selectedSource={source}
+    sources={[source]} onSelect={vi.fn()} onSelectAggregate={vi.fn()} onRenameTopic={vi.fn()} />) })
+  await click('选择主题')
+  const row = host.querySelector('[data-arkme-self-topic-tree-row]')!
+  await act(async () => { row.dispatchEvent(new MouseEvent('mouseover', {bubbles: true})) })
+  await click('主题主题操作')
+  const action = [...row.querySelectorAll('button')].find(button => button.textContent === '归档')!
+  expect(action.disabled).toBe(true)
+  await act(async () => { action.click() })
+  expect(mock.call.mock.calls.some(call => call[0] === 'archives.set')).toBe(false)
+  await act(async () => { reply([{...inherited, sourceRef: source.sourceRef, effectiveArchived: false, revision: 7}]) })
+  expect(action.disabled).toBe(false)
+  await act(async () => { action.click() })
+  expect(mock.call).toHaveBeenCalledWith('archives.set',
+    {sourceRef: 'topic', selfArchived: true, expectedRevision: 7}, expect.any(AbortSignal))
+})
 
 it('prevents repeated clicks from duplicating a pending write', async () => {
   mock.call.mockImplementation(async (operation: string) => operation === 'archives.set' ? new Promise(() => {}) : page)
