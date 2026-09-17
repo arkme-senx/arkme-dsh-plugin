@@ -427,6 +427,9 @@ export function ArkmeSourceBreadcrumb({
   const label = arkmeSelfTopicSelectionLabel(selectedSource, sources)
   const selectedRef = selectedSource?.kind === 'send_to_self' || selectedSource === undefined ? undefined : selectedSource.sourceRef
   const countsComplete = countsReady ?? (!loading && error === undefined)
+  // A full snapshot remains usable while the owner revalidates membership.
+  // Loading rows are only for an incomplete directory, never background refresh.
+  const showDirectoryLoading = loading && !countsComplete
   const allTopicsCount = countsComplete
     ? arkmeSelfDirectorySources(sources).reduce((total, source) => total + topicDirectRecordCount(source), 0)
     : undefined
@@ -1036,7 +1039,7 @@ export function ArkmeSourceBreadcrumb({
             }}
           /></span>}
         </div>
-        {loading && row.source.hasPendingChildren === true && <div role="status" data-arkme-self-topic-children-loading="true"
+        {showDirectoryLoading && row.source.hasPendingChildren === true && <div role="status" data-arkme-self-topic-children-loading="true"
           style={{ ...styles.childLoadingRow, paddingLeft: 34 + row.depth * 16 }}
         ><ArkmeTopicLoadingIcon />{tr("加载子主题")}</div>}
       </div>
@@ -1058,7 +1061,7 @@ export function ArkmeSourceBreadcrumb({
       >{tr("拖到这里，变为一级主题")}</div>}
       {moveError !== '' && <div role="alert" style={styles.loadingRow}>{moveError}</div>}
       {archiveMutation.error !== '' && <div role="alert" style={styles.loadingRow}>{archiveMutation.error}</div>}
-      {loading && <div role="status" data-arkme-self-topic-loading="true" style={styles.loadingRow}><ArkmeTopicLoadingIcon />{searching ? '仍在查找主题…' : '加载更多主题'}</div>}
+      {showDirectoryLoading && <div role="status" data-arkme-self-topic-loading="true" style={styles.loadingRow}><ArkmeTopicLoadingIcon />{searching ? '仍在查找主题…' : '加载更多主题'}</div>}
       {!loading && !error && rows.length === 0 && (searching || assignment) && <div role="status" style={styles.loadingRow}>{searching ? '没有匹配的主题' : '暂无主题'}</div>}
       {!loading && error !== undefined && <div role="alert" style={styles.loadingRow}>{tr("加载失败")}{onRetry !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={onRetry}>{tr("重试")}</button>}
       </div>}
