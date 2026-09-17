@@ -230,9 +230,9 @@ export function ArkmeBotConversationSurface({
   }
 
   return <section style={styles.shell} aria-label={`${bot.name} Bot 对话`}>
-    <header style={styles.header}>
+    <header data-arkme-window-drag-region="conversation" style={styles.header}>
       <span style={styles.avatar} aria-hidden><RobotIcon size={20} weight="fill" /></span>
-      <span style={styles.title}><span>{bot.name}</span><span style={styles.badge}>BOT</span></span>
+      <span data-arkme-window-drag-region="conversation" style={styles.title}><span>{bot.name}</span><span style={styles.badge}>BOT</span></span>
       <button type="button" aria-label="Bot 设置" title="Bot 设置" style={styles.settings} onClick={() => { setSettingsOpen(true) }}><GearSix size={20} /></button>
     </header>
     <div ref={bodyRef} style={styles.body}>

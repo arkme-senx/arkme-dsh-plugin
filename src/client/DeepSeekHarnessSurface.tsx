@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { ARKME_HARNESS_EMBED_PATH, HARNESS_SESSION_NAVIGATION_KEY, type HarnessSessionWindow } from '../harness-embed-contract.js'
 import { conversationMenuLayer } from './conversation-menu-layer.js'
 import { watchHarnessSurfaceViewport } from './harness-surface-viewport.js'
+import { watchHarnessWindowDrag } from './harness-window-drag.js'
 
 export const DEEPSEEK_HARNESS_EMBED_QUERY = 'arkme-harness-embed'
 export const DEEPSEEK_HARNESS_NATIVE_SETTINGS_QUERY = 'arkme-harness-native-settings'
@@ -42,6 +43,9 @@ export function DeepSeekHarnessSurface({ visible = true, nativeSettings = false,
   const surfaceRef = useRef<HTMLElement>(null)
   const frameRef = useRef<HTMLIFrameElement>(null)
   const floating = typeof document !== 'undefined' && accountId !== undefined
+  useLayoutEffect(() => {
+    if (surfaceRef.current && frameRef.current) return watchHarnessWindowDrag(surfaceRef.current, frameRef.current)
+  }, [floating])
   useLayoutEffect(() => {
     if (floating && seatRef.current && surfaceRef.current && frameRef.current) {
       return watchHarnessSurfaceViewport(surfaceRef.current, frameRef.current, seatRef.current)

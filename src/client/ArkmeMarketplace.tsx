@@ -2643,7 +2643,7 @@ export function ArkmeMarketplace({
     style={inline ? styles.marketPageTabs : styles.tabs}
     role="tablist"
     aria-label="市集页面导航"
-    {...(inline ? { 'data-market-page-tabs': 'inline' } : {})}
+    {...(inline ? { 'data-market-page-tabs': 'inline', 'data-arkme-window-drag-region': 'marketplace' } : {})}
   >
     {(Object.keys(TAB_LABELS) as Tab[]).map(value => <button
       key={value} type="button" role="tab" aria-selected={tab === value}
@@ -2697,7 +2697,7 @@ export function ArkmeMarketplace({
         onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
       ><CloseIcon /></button>
     </header>}
-    {displayMode === 'page' && <header style={styles.marketPageHeader} data-market-header-layer="primary">
+    {displayMode === 'page' && <header data-arkme-window-drag-region="marketplace" style={styles.marketPageHeader} data-market-header-layer="primary">
       <h2 id="arkme-marketplace-title" style={styles.marketPageTitle}>市集</h2>
       {renderTabNavigation(true)}
     </header>}

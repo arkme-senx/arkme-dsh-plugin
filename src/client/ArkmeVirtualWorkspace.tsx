@@ -2025,7 +2025,7 @@ export function ArkmeNavigation({
     data-arkme-layout={embeddedProductShell ? 'product-directory' : undefined}
     data-arkme-directory-compact={compactDirectory ? 'true' : undefined}
   >
-    {directory === 'send_to_self' && <header style={styles.header}>
+    {directory === 'send_to_self' && <header data-arkme-window-drag-region="conversation" style={styles.header}>
       <button
         type="button" style={styles.headerButton} aria-label="返回 Arkme 会话列表" title="返回"
         onClick={() => { changeDirectory('root') }}
@@ -2037,7 +2037,7 @@ export function ArkmeNavigation({
       }} />
       {onClose !== undefined && <button type="button" style={styles.headerButton} aria-label="关闭 Arkme" title="关闭 Arkme" onClick={onClose}>×</button>}
     </header>}
-    {directory === 'root' && embeddedProductShell && <div style={styles.conversationToolbar}>
+    {directory === 'root' && embeddedProductShell && <div data-arkme-window-drag-region="conversation" data-arkme-window-drag-directory="" style={styles.conversationToolbar}>
       <label style={{ ...styles.searchField, ...styles.embeddedSearchField }}>
         <MagnifyingGlass size={16} aria-hidden />
         <input

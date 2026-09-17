@@ -185,6 +185,12 @@ export function ArkmeProductNavigation({
     : ui.mode === 'calls' ? 'calls'
     : ui.mode === 'recordings' ? 'recordings'
       : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
+  // Utility pages also highlight Conversations, but hide its directory/header.
+  // Only relinquish the native fallback when the adapted conversation UI is active.
+  const conversationDragActive = !hidden && !locked && activeId === 'conversations'
+    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || ui.mode === 'harness')
+  const windowDragMode = conversationDragActive ? 'conversation'
+    : !hidden && !locked && activeId === 'extensions' ? 'marketplace' : 'fallback'
   const conversationUnreadCount = authState.auth?.status === 'authenticated'
     && directory.accountScope === `${authState.auth.environment}:${String(authState.auth.userId)}`
     ? directory.badgeCount
@@ -212,6 +218,7 @@ export function ArkmeProductNavigation({
 
   return <nav
       data-arkme-owned="product-navigation"
+      data-arkme-window-drag-mode={windowDragMode}
       aria-label="Arkme 功能导航"
       aria-hidden={hidden ? true : undefined}
       style={{

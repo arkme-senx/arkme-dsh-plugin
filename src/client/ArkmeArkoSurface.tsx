@@ -970,9 +970,9 @@ export function ArkmeArkoSurface() {
         : continuation === undefined ? selectedModel : '继续当前任务'
 
   return <div style={styles.shell}>
-    <header style={styles.header}>
+    <header data-arkme-window-drag-region="conversation" style={styles.header}>
       <span style={styles.headerAvatar}><ArkmeArkoAvatar size={34} /></span>
-      <span style={styles.headerCopy}>
+      <span data-arkme-window-drag-region="conversation" data-arkme-window-drag-copy="" style={styles.headerCopy}>
         <h2 style={styles.headerTitle}>{displayName}</h2>
         <span style={styles.aiDisclaimer}>Agent · 内容由 AI 生成，仅供参考</span>
       </span>

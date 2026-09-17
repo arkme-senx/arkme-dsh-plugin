@@ -7090,11 +7090,11 @@ export function ArkmeSurface({
       >
         {selfTopicDirectoryOwner}
         {!selfWorkspaceSelected && selfTopicMenuOwner}
-        {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header className="arkme-conversation-header" style={styles.header}>
+        {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header data-arkme-window-drag-region="conversation" className="arkme-conversation-header" style={styles.header}>
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
             <ArkmeDirectorySourceAvatar source={source} size={34} />
           </span>}
-          <div style={styles.titleGroup}>
+          <div data-arkme-window-drag-region="conversation" style={styles.titleGroup}>
             {selfWorkspaceSelected
               ? selfTopicMenuOwner
               : <div style={styles.titleBlock}>

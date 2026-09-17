@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { JSDOM } from 'jsdom'
 import { describe, expect, it } from 'vitest'
 import {
   ArkmeArkoSurface, arkoHistoryHasTerminalRun, arkoPreservedScrollTop,
@@ -21,6 +22,20 @@ function historyItem(overrides: Partial<ArkmeArkoHistoryItem>): ArkmeArkoHistory
 }
 
 describe('Arko surface', () => {
+  it('exposes header whitespace for native dragging without marking its action toolbar', () => {
+    const dom = new JSDOM(renderToStaticMarkup(<ArkmeArkoSurface />))
+    try {
+      const header = dom.window.document.querySelector('header')!
+      expect(header.getAttribute('data-arkme-window-drag-region')).toBe('conversation')
+      const copy = header.querySelector('[data-arkme-window-drag-copy]')!
+      expect(copy?.getAttribute('data-arkme-window-drag-region')).toBe('conversation')
+      expect(copy?.querySelector('h2')?.textContent).toBe('Arko')
+      expect(header.querySelector('[role="toolbar"]')?.hasAttribute('data-arkme-window-drag-region')).toBe(false)
+    } finally {
+      dom.window.close()
+    }
+  })
+
   it('renders an Arko chat panel with loading and send controls', () => {
     const markup = renderToStaticMarkup(<ArkmeArkoSurface />)
 

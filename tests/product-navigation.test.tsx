@@ -32,6 +32,41 @@ const redesignCss = readFileSync(
 )
 
 describe('Arkme product navigation', () => {
+  it('publishes drag mode from the active tab and clears it for hidden or locked navigation', () => {
+    let renderer!: ReactTestRenderer
+    act(() => {
+      arkmeUi.showConversations()
+      renderer = create(<ArkmeProductNavigation compact={false} />)
+    })
+    const mode = () => renderer.root.findByType('nav').props['data-arkme-window-drag-mode']
+    try {
+      expect(mode()).toBe('conversation')
+      for (const activate of [() => arkmeUi.showContacts(), () => arkmeUi.showCalls(),
+        () => arkmeUi.showRecordings(), () => arkmeUi.showWorld(),
+        () => arkmeUi.showCalendar(),
+        () => arkmeUi.showSearch(), () => arkmeUi.showVoiceprint(), () => arkmeUi.showContactAdd()]) {
+        act(activate)
+        expect(mode()).toBe('fallback')
+        act(() => arkmeUi.showConversations())
+        expect(mode()).toBe('conversation')
+      }
+      act(() => arkmeUi.showHarness())
+      expect(mode()).toBe('conversation')
+      act(() => arkmeUi.showArko())
+      expect(mode()).toBe('conversation')
+      act(() => arkmeUi.showExtensions())
+      expect(mode()).toBe('marketplace')
+      act(() => arkmeUi.showConversations())
+      expect(mode()).toBe('conversation')
+      act(() => renderer.update(<ArkmeProductNavigation compact={false} hidden />))
+      expect(mode()).toBe('fallback')
+      act(() => renderer.update(<ArkmeProductNavigation compact={false} locked />))
+      expect(mode()).toBe('fallback')
+    } finally {
+      act(() => renderer.unmount())
+    }
+  })
+
   it('uses the same conversation directory total for product navigation and the legacy footer seat', () => {
     expect(productNavigationSource).toContain('arkmeChatDirectory.subscribe')
     expect(footerDropdownSource).toContain('arkmeChatDirectory.subscribe')

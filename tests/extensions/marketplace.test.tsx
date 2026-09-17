@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { JSDOM } from 'jsdom'
 import type { ComponentType } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import * as marketplaceModule from '../../src/client/ArkmeMarketplace.js'
@@ -70,6 +71,22 @@ describe('Arkme marketplace UI', () => {
       runtime: { dsh: '' }, halves: { host: false, client: false }, permissions: null,
     }} />)
     expect(html).toBe('')
+  })
+
+  it('marks only the page tab header for dragging, excluding search and modal navigation', () => {
+    const page = new JSDOM(renderToStaticMarkup(<ArkmeMarketplace displayMode="page" />))
+    const modal = new JSDOM(renderToStaticMarkup(<ArkmeMarketplace />))
+    try {
+      const document = page.window.document
+      expect(document.querySelector('[data-market-header-layer="primary"]')?.getAttribute('data-arkme-window-drag-region')).toBe('marketplace')
+      expect(document.querySelector('[role="tablist"]')?.getAttribute('data-arkme-window-drag-region')).toBe('marketplace')
+      expect(document.querySelector('[data-market-header-layer="secondary"]')?.closest('[data-arkme-window-drag-region]')).toBeNull()
+      expect(document.querySelector('input[type="search"]')?.closest('[data-arkme-window-drag-region]')).toBeNull()
+      expect(modal.window.document.querySelector('[data-arkme-window-drag-region]')).toBeNull()
+    } finally {
+      page.window.close()
+      modal.window.close()
+    }
   })
 
   it('uses a large modal with text-only navigation, no search entry, and a guided empty state', () => {
