@@ -1275,6 +1275,7 @@ export interface ArkmeProviderCapabilities {
     localFirstDirectory?: true
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
+    entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     groupSelfNickname?: true
     dshAccountSessions?: true
@@ -3841,6 +3842,9 @@ export type ArkmePluginOperation =
   | 'topic.hierarchy.move'
   | 'topic.rename'
   | 'topic.home-visibility'
+  | 'archives.list'
+  | 'archives.state'
+  | 'archives.set'
   | 'topic.dissolve'
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'

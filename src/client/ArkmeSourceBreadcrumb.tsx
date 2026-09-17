@@ -1,4 +1,5 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
+import { ArkmeArchiveAction, ArkmeArchiveStatus } from './ArkmeArchive.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { Button, IconEditOutline16, IconNewChatOutline16, IconTrashOutline16, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -846,6 +847,7 @@ export function ArkmeSourceBreadcrumb({
   return <nav aria-label={tr("发给自己主题")} style={trigger === 'visible' ? styles.breadcrumb : {
     ...styles.breadcrumb, position: 'absolute', width: 0, height: 0, minWidth: 0, overflow: 'visible',
   }}>
+    {selectedSource?.kind === 'topic' && <ArkmeArchiveStatus source={selectedSource} />}
     <style>{CONVERSATION_SELECTOR_CSS}</style>
     {trigger === 'visible' && <>{showRootTitle && <span data-arkme-self-topic-root="true" style={styles.fixedTitle}>{tr("发给自己")}</span>}
     <button
