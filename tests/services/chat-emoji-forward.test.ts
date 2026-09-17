@@ -2,6 +2,17 @@ import { describe, expect, it, vi } from 'vitest'
 import { ChatService } from '../../src/services/chat-service.js'
 
 describe('Record forwarding emoji boundaries', () => {
+  it.each([{ template_kind: 1, display_kind: 1 }, { templateKind: 8, displayKind: 0 }])('preserves forwarded article classification from %o', async kind => {
+    const media = { recordContentPayload: (raw: unknown) => raw, forwardContentBlocks: () => [] }
+    const chat = new ChatService({} as never, {} as never, {} as never, media as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never)
+    const result = await chat.chatForwardRecordsPreview({ render_kind: 'forward_records', items: [{
+      owner_name: '作者', title: '标题', text: '正文', ...kind,
+    }] }, 42, 1)
+    expect(result?.items[0]).toMatchObject({ title: '标题', textContent: '正文',
+      templateKind: 'template_kind' in kind ? 1 : 8, displayKind: 'display_kind' in kind ? 1 : 0 })
+  })
+
   it('bounds signed snapshots and stored previews without splitting tokens or rewriting the source', async () => {
     const token = '[jm_emoji:heart_eyes]'
     const textContent = '文'.repeat(495) + token + '文'.repeat(500 - token.length) + '[im_emoji:thumb_up]'

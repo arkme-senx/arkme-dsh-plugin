@@ -1837,6 +1837,8 @@ export interface ArkmeForwardTranscriptSegment {
 }
 
 export interface ArkmeForwardRecordPreviewItem {
+  templateKind?: number
+  displayKind?: number
   senderName: string
   /** Opaque Provider image reference for the snapshotted sender. */
   avatarRef?: string

@@ -49,6 +49,32 @@ export interface ArkmeLongArticleDialogProps {
   onUpdated?: (detail: ArkmeLongArticleDetail) => void
 }
 
+/** Forwarded content is a read-only snapshot, not an editable source record. */
+export function ArkmeLongArticleSnapshotDialog({ item, onClose }: { item: ArkmeTimelineItem; onClose: () => void }) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); onClose() } }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => { window.removeEventListener('keydown', onKeyDown, true) }
+  }, [onClose])
+  return <div style={styles.overlay} role="dialog" aria-modal="true" aria-label="转发长文详情" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <article style={styles.dialog} data-arkme-long-article-dialog="snapshot">
+      <header style={styles.header}>
+        <h2 style={styles.titleRead}><ArkmeRichText text={item.title || '无标题长文'} presentation="preview" /></h2>
+        <button autoFocus type="button" style={styles.close} aria-label="关闭长文" onClick={onClose}>×</button>
+      </header>
+      <div style={styles.metaRow}>
+        {item.sendAtMillis > 0 && <span style={styles.meta}>▦ {formatDate(item.sendAtMillis)}</span>}
+        <span style={styles.meta}>▤ {String(item.textContent.length)}字</span>
+      </div>
+      <div style={styles.body}>
+        {item.textFormat === 'markdown'
+          ? <ArkmeMarkdownBody text={item.textContent} textStyle={{ fontSize: styles.bodyRead?.fontSize, lineHeight: styles.bodyRead?.lineHeight }} />
+          : <p style={styles.bodyRead}><ArkmeRichText text={item.textContent} linkLabelMode="raw" /></p>}
+      </div>
+    </article>
+  </div>
+}
+
 export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, onUpdated }: ArkmeLongArticleDialogProps) {
   const creating = item === undefined
   const [detail, setDetail] = useState<ArkmeLongArticleDetail>()

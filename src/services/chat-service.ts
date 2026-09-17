@@ -5282,6 +5282,8 @@ export class ChatService {
             textContent,
             textFormat,
             sourceType,
+            templateKind: numberValue(item.template_kind ?? item.templateKind),
+            displayKind: numberValue(item.display_kind ?? item.displayKind),
             ...(contentBlocks.length === 0 ? {} : { contentBlocks }),
             ...(files.length > contentBlocks.length ? { mediaUnavailable: true } : {}),
             ...(segments.length === 0 ? {} : { segments }),

@@ -26,7 +26,7 @@ import type {
   ArkmeTimelineMentionTarget,
 } from '../types.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
-import { ArkmeMediaPreview, ArkmeMessageContent } from './ArkmeRichContent.js'
+import { ArkmeForwardArticleContent, ArkmeMediaPreview, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import {
   ArkmeRelatedQuickNoteDetail,
@@ -1100,6 +1100,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge }: { item: Ark
   }))
   const renderRecord = (value: ArkmeForwardRecordPreviewItem, index: number) => {
     const segments = value.segments ?? []
+    const isArticle = value.templateKind === 8 || value.displayKind === 1
     const joinedTranscript = segments.map(segment => segment.textContent).join('').replace(/\s/gu, '')
     const hasDistinctText = value.textContent.trim() !== '' && value.textContent.replace(/\s/gu, '') !== joinedTranscript
     const snapshot: ArkmeTimelineItem = {
@@ -1114,7 +1115,10 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge }: { item: Ark
     return <div key={index} style={styles.rows}>
       {hasRecordBody && <ForwardDetailRow name={value.senderName} avatarRef={value.avatarRef}
         time={`${firstDate !== lastDate ? `${dateLabel(value.sendAtMillis)} ` : ''}${timeLabel(value.sendAtMillis)}`}>
-        {segments.length === 0 ? <ArkmeMessageContent item={snapshot} presentation="detail" highlightMentions /> : <>
+        {!isArticle && value.title.trim() !== '' && (snapshot.textContent !== '' || (value.contentBlocks?.length ?? 0) > 0) && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7, overflowWrap: 'anywhere' }}>
+          <ArkmeRichText text={value.title} presentation="preview" />
+        </h3>}
+        {isArticle && segments.length === 0 ? <ArkmeForwardArticleContent item={snapshot} /> : segments.length === 0 ? <ArkmeMessageContent item={snapshot} presentation="detail" highlightMentions /> : <>
           {hasDistinctText && <div style={{ marginBottom: 18 }}><ArkmeMessageContent item={{ ...snapshot, contentBlocks: [], mediaUnavailable: false }} presentation="detail" highlightMentions /></div>}
           {(value.contentBlocks?.length ?? 0) > 0 && <ArkmeMessageContent item={{ ...snapshot, title: '', textContent: '', mediaUnavailable: false }} presentation="detail" highlightMentions />}
         </>}

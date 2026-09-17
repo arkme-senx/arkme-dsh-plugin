@@ -9,7 +9,7 @@ import {
   arkmeImagePreviewDragTop, arkmeMessageCopyLinkSidFromUrl, arkmeNextImagePreviewMode,
   arkmeRelatedRecordingItemFromSharedRecording, arkmeSharedRecordingTimeText,
 } from '../src/client/ArkmeRichContent.js'
-import { ArkmeLongArticleDialog } from '../src/client/ArkmeLongArticleDialog.js'
+import { ArkmeLongArticleDialog, ArkmeLongArticleSnapshotDialog } from '../src/client/ArkmeLongArticleDialog.js'
 import { ArkmeLivePhotoBadge } from '../src/client/ArkmeLivePhotoBadge.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from '../src/client/ArkmeNoteDetails.js'
 import { arkmeClipboardImageFiles, arkmeShouldDismissAnchoredMenu, arkmeShouldToggleMessageSelectFromRowClick } from '../src/client/ArkmeSidebar.js'
@@ -1135,6 +1135,39 @@ describe('Arkme rich content presentation', () => {
   })
 })
 describe('forward detail summary content', () => {
+  it.each([{ displayKind: 1 }, { templateKind: 8 }])('uses the original article card for forwarded articles with %o', kind => {
+    const textContent = '长文正文'.repeat(80)
+    const forwarded = { senderName: '作者', sendAtMillis: 1, title: '原文标题', textContent, ...kind }
+    const item = { itemUid: 'forward-card', senderName: '转发者', isMe: false, sendAtMillis: 1, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '转发快记', createdAtMillis: 1, summaryLines: [], items: [forwarded] } }
+    const detail = renderToStaticMarkup(<ForwardRecordsDetail item={item} onClose={() => {}} />)
+    const original = renderToStaticMarkup(<ArkmeMessageContent item={{ ...item, forwardRecords: undefined, ...forwarded }} />)
+    expect(detail).toContain('data-arkme-long-article="preview"')
+    expect(detail).toContain('-webkit-line-clamp:2')
+    expect(detail).toContain('320字')
+    expect(detail).toContain(original.match(/<button\b[\s\S]*?<\/button>/u)![0])
+    const snapshot = renderToStaticMarkup(<ArkmeLongArticleSnapshotDialog item={{ ...item, ...forwarded }} onClose={() => {}} />)
+    expect(snapshot).toContain(textContent)
+    expect(snapshot).toContain('原文标题')
+    expect(snapshot).not.toContain('编辑')
+  })
+
+  it.each(['plain', 'markdown'] as const)('preserves an article title alongside its %s body without article metadata', textFormat => {
+    const item = {
+      itemUid: 'forward-article', senderName: '转发者', isMe: false, sendAtMillis: 1, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '转发快记', createdAtMillis: 1, summaryLines: [], items: [{
+        senderName: '作者', sendAtMillis: 1, title: '原文标题', textContent: '完整正文', textFormat,
+      }] },
+    }
+    const detail = renderToStaticMarkup(<ForwardRecordsDetail item={item} onClose={() => {}} />)
+    expect(detail).toContain('原文标题')
+    expect(detail).toContain('完整正文')
+    expect(detail.indexOf('原文标题')).toBeLessThan(detail.indexOf('完整正文'))
+    expect(detail.match(/原文标题/gu)).toHaveLength(1)
+    const preview = renderToStaticMarkup(<ArkmeMessageContent item={item} />)
+    expect(preview).toContain('作者：原文标题')
+  })
+
   it('does not interpret a colon inside a token or URL as sender metadata', () => {
     const summaryLines = ['[jm_emoji:heart_eyes][im_emoji:thumb_up]', 'https://example.com/path', '09:30 开会', '小林：完整摘要']
     const markup = renderToStaticMarkup(<ForwardRecordsDetail item={{
