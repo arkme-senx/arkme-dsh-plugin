@@ -213,6 +213,9 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       if (page && process.env.ARKME_E2E_SCREENSHOT) {
         await page.screenshot({path: `${process.env.ARKME_E2E_SCREENSHOT}.failure.png`}).catch(() => {})
         console.error('Archive scenario UI:', await page.locator('body').innerText().catch(() => 'unavailable'))
+        for (const frame of page.frames().filter(frame => frame !== page.mainFrame())) {
+          console.error('Archive scenario embedded UI:', await frame.locator('body').innerText().catch(() => 'unavailable'))
+        }
       }
       failures.push(error)
     } finally {
