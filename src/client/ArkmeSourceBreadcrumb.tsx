@@ -1,4 +1,4 @@
-import { ArkmeArchiveAction, ArkmeArchiveStatus, useArchiveMutation } from './ArkmeArchive.js'
+import { ArkmeArchiveStatus, useArchiveMutation } from './ArkmeArchive.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { Button, IconNewChatOutline16, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -960,12 +960,12 @@ export function ArkmeSourceBreadcrumb({
               setTopicMutationError('')
               setRenameTopic(row.source)
             }}>重命名</button>}
-            <ArkmeArchiveAction source={row.source} disabled={archiveMutation.busy}
-              className="arkme-self-topic-manage-action" style={{ ...styles.topicManageAction }}
-              onAction={state => {
+            <button type="button" role="menuitem" disabled={archiveMutation.busy}
+              className="arkme-self-topic-manage-action" style={styles.topicManageAction}
+              onClick={() => {
               setTopicMenuSource(undefined)
-              void archiveMutation.set(state)
-            }} />
+              void archiveMutation.archive(row.source.sourceRef)
+            }}>归档</button>
             {onDissolveTopic !== undefined && <button type="button" role="menuitem"
               className="arkme-self-topic-manage-action" style={{ ...styles.topicManageAction, ...styles.topicManageDanger }}
               onClick={() => {

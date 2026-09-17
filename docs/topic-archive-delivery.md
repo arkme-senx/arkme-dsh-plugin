@@ -91,3 +91,17 @@ review9 的真实浏览器复现了此前遗漏的顺序：打开菜单后归档
 最终验证：3 个聚焦文件 21 项通过；受支持的 Node 24.19.0 下全量 604 文件通过/8 跳过、7099 项通过/11 跳过；typecheck/build/pack 通过。新包 review10 经官方 CLI 安装至全新临时 Profile，官方 DSH `fb2c4b9` 上实际浏览器 → Host → Record 完整场景 86 秒通过。已查看 `review-archive-hover-e2e.png.hover.png`，归档高亮与相邻项一致。日志为 `review-archive-hover-focused.log`、`review-archive-hover-node24-tests.log`、`review-archive-hover-typecheck.log`、`review-archive-hover-build.log`、`review-archive-hover-pack.log`、`review-archive-hover-install10.log`、`review-archive-hover-cross-e2e.log`。
 
 不可变包为 `senguoyun-dsh-arkme-review10-0.1.60.tgz`，SHA-256 `61069d028fd0868d999b2f9a7400fdaa6311b2bab1467de38f43c3e8a1c05360`。清单未包含意外路径，client 产物及 source map 无本机用户绝对路径。仍在原任务分支、以已同步的 dev `d7daef1` 为开发基线；本轮读取的最新 dev `ae9c02e` 未改动这三个 UI 文件，没有为局部修复引入其他业务集成。官方 DSH tracked 状态干净，3081 常驻进程/真实 Profile、Flutter 和后端代码保持原状。运行证据为 macOS Chrome，未新增其他系统的运行结论。
+
+## 2026-09-17 删除普通目录菜单的前置归档查询
+
+用户再次指出刷新后首次打开菜单仍有禁用阶段。上节修复只解决了异步启用后的 hover，没有消除菜单展示对网络的依赖。本轮用 review10 包执行浏览器 reload 后打开操作菜单，明确复现按钮未立即可用，见 `review-archive-demand-before-e2e.log`。
+
+普通目录由 Record owner 过滤归档成员，因此这里的用户意图固定为「归档」，无需为了显示按钮读取自身/继承状态。已删除独立 `ArkmeArchiveAction` 状态读取组件，改为与相邻项相同的普通菜单按钮；打开、悬停、重开或刷新后重新挂载均不为该动作发出状态请求。原生 hover/focus 样式保留，仅已有归档操作执行中禁止重复提交。
+
+目录结构没有自身标记 revision；正常可见的主题可能曾取消过归档，不能假设 revision=0，也不能移除既有 CAS 保护。因此只在明确点击后由稳定页面的 mutation owner 执行「读取一次版本 → 明确设置 selfArchived=true」。读和写共用账号作用域、AbortController 与在途锁；管理页已有状态及 revision 的取消/独立归档继续直接提交，不增加一次读取。读取失败、不可用实体或账号/环境变化不会继续写入；冲突不重新读取并自动重放。过期目录中的主题即使已经归档，也只提交幂等的归档意图，绝不反转成取消。选中归档主题的状态提示读取属于独立展示场景，保留原语义。
+
+这次只调整 UI 现有查询/命令的调用时机，无新 Host/Tools/SDK 接口、目录字段、集合、索引或缓存。聚焦 31 项、Node 24.19.0 全量 7109 项通过（604 文件通过/8 跳过，11 项跳过），typecheck/build/pack 通过。测试覆盖冷挂载零前置查询、点击后读取、在途重复点击、通知早于读取回执、过期行仍保留归档意图、读取失败/不可用/错实体、CAS 不重放、账号与环境变化。日志为 `review-archive-demand-focused.log`、`review-archive-demand-full-tests.log`、`review-archive-demand-typecheck.log`、`review-archive-demand-build.log`、`review-archive-demand-pack.log`。
+
+review11 不可变包 SHA-256 `af54429bd2f491f9c696506bd6c10bfd2ba4f0afc1023eed4deb4ff787e7f986`，官方 CLI 安装到全新临时 Profile 后，真实 Chrome reload → 菜单立即可用/零动作前置查询 → 点击后读取一次版本 → 提交一次归档 → 父子恢复完整链路 32 秒通过。直接内容读写、CAS、SDK 和 Session Tool 验证继续通过。日志为 `review-archive-demand-install11.log`、`review-archive-demand-cross-e2e-final.log`；`review-archive-demand-e2e.png.hover.png` 已核验。首次链路的业务断言通过但测试拦截器延迟了后续可取消的状态展示请求，出现重复响应处理错误；拦截范围收敛为首次写入前置读取后重跑通过，未屏蔽错误，业务包未改变，失败日志保留为 `review-archive-demand-cross-e2e.log`。
+
+本轮只提交原插件任务分支。版本、根 README、锁文件、官方 DSH 源码与用户 3081/Profile 均未修改；没有新增 Flutter/后端改动或生产写入。新截图来自隔离官方 DSH 0.1.5-rc.2 和真实 Record 测试服务。

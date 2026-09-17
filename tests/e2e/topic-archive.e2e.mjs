@@ -141,6 +141,8 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         const [state] = await sdk.getArchiveStates([source.sourceRef])
         return sdk.setArchiveState({sourceRef: source.sourceRef, selfArchived: archived, expectedRevision: state.revision})
       }
+      // Exercise the user's cold browser-refresh path, without an action cache.
+      await page.reload({waitUntil: 'load'})
       await page.getByRole('button', {name: '对话', exact: true}).click()
       await page.getByRole('treeitem', {name: /发给自己/}).click()
       let selectedTitleBeforeArchive
@@ -172,12 +174,20 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
           })
           await selector.click()
         }
-        // A user can reach Archive before its state read completes. Hold the
-        // real Host response so hovering a disabled action is deterministic.
+        // Opening a directory action must not read archive state. Hold the
+        // real precondition response after click to verify the command boundary.
         let releaseArchiveState
+        let archiveStateReads = 0
+        let archiveCommands = 0
         const archiveStateGate = new Promise(resolve => { releaseArchiveState = resolve })
         const holdArchiveState = async route => {
-          if (route.request().postDataJSON()?.operation !== 'archives.state') return route.fallback()
+          const payload = route.request().postDataJSON()
+          if (payload?.operation === 'archives.set' && payload.params.sourceRef === source.sourceRef) archiveCommands++
+          if (payload?.operation !== 'archives.state' || !payload.params.sourceRefs.includes(source.sourceRef)) return route.fallback()
+          archiveStateReads++
+          // Only delay the operation's precondition. Later status projections
+          // can be aborted by normal directory invalidation and run unmodified.
+          if (archiveStateReads > 1) return route.fallback()
           const response = await route.fetch()
           await archiveStateGate
           await route.fulfill({response})
@@ -190,12 +200,9 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         await renameAction.hover()
         const hoverBackground = await renameAction.evaluate(node => getComputedStyle(node).backgroundColor)
         expect(hoverBackground).not.toBe('rgba(0, 0, 0, 0)')
-        expect(await archiveAction.isDisabled()).toBe(true)
+        expect(await archiveAction.isEnabled()).toBe(true)
         await archiveAction.hover()
-        releaseArchiveState()
-        await expect.poll(() => archiveAction.isEnabled()).toBe(true)
-        await page.unroute('**/arkme-self/api', holdArchiveState)
-        // Do not move the pointer after the action becomes enabled.
+        expect(archiveStateReads).toBe(0)
         expect(await archiveAction.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(hoverBackground)
         if (source === B && process.env.ARKME_E2E_SCREENSHOT) {
           await page.locator('[data-arkme-self-topic-menu]').screenshot({path: `${process.env.ARKME_E2E_SCREENSHOT}.hover.png`})
@@ -227,8 +234,13 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
           globalThis.__archiveMenuScene = scene
         })
         await archiveAction.click()
+        await expect.poll(() => archiveStateReads).toBe(1)
+        expect(archiveCommands).toBe(0)
+        releaseArchiveState()
         expect(await page.getByRole('dialog', {name: '归档主题', exact: true}).count()).toBe(0)
         await expect.poll(async () => (await sdk.getArchiveStates([source.sourceRef]))[0].selfArchived).toBe(true)
+        expect(archiveCommands).toBe(1)
+        await page.unroute('**/arkme-self/api', holdArchiveState)
         await expect.poll(async () => {
           if (await selector.getAttribute('aria-expanded') !== 'true') await selector.click()
           await page.locator('[data-arkme-self-topic-menu]').waitFor()
