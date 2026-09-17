@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeTopicDirectoryPopover, type ArkmeTopicCreateOpener } from '../src/client/ArkmeTopicDirectoryPopover.js'
 import { ArkmeTopicCreateDialog } from '../src/client/ArkmeTopicCreateDialog.js'
 import { readNavigationCache } from '../src/client/navigation-cache.js'
+import { resetSelfTopicDirectories, selfTopicDirectory } from '../src/client/self-topic-directory-cache.js'
 import { callArkme } from '../src/client/api.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import type { ArkmeSourceItem, ArkmeTopicCreateResult } from '../src/types.js'
@@ -20,6 +21,7 @@ let resolveCreate: (value: ArkmeTopicCreateResult) => void
 let rejectCreate: (error: Error) => void
 
 beforeEach(() => {
+  resetSelfTopicDirectories()
   localStorage.clear()
   vi.mocked(callArkme).mockReset()
   vi.mocked(callArkme).mockImplementation(async method => {
@@ -53,6 +55,21 @@ function submit() {
 }
 
 describe('navigate to a newly created self topic', () => {
+  it('revalidates a created topic directory membership when an ancestor was archived before its reply', async () => {
+    const onSelect = await openCreate(true)
+    const inherited = {...created, parentSourceRef: parent.sourceRef}
+    vi.mocked(callArkme).mockImplementation(async method => {
+      if (method === 'sources.list') return {items: [self, uncategorized], hasMore: false}
+      if (method === 'archives.state') return [{ownerAvailable: true, effectiveArchived: true}]
+      if (method === 'topic.create') return new Promise(resolve => { resolveCreate = resolve })
+      throw new Error(`Unexpected API: ${method}`)
+    })
+    await act(async () => { submit(); resolveCreate({source: inherited}) })
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(inherited)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
+    expect(selfTopicDirectory(10001, 'prod').getSnapshot().sources).toEqual([self, uncategorized])
+    expect(readNavigationCache(10001)?.selectedSourceRef).toBe(created.sourceRef)
+  })
   it('refreshes directory membership on record invalidation without clearing an archived scene', async () => {
     const onSelect = vi.fn()
     const onInvalidated = vi.fn()
@@ -142,6 +159,7 @@ describe('navigate to a newly created self topic', () => {
     const props = renderer!.root.findByType(ArkmeTopicDirectoryPopover).props
     await act(async () => renderer!.unmount())
     const refreshed = { ...created, sourceRef: 'created-current-ref', displayName: '新主题改名' }
+    selfTopicDirectory(10001, 'prod').invalidate()
     vi.mocked(callArkme).mockResolvedValueOnce({ items: [self, uncategorized, parent, refreshed], hasMore: false })
     onSelect.mockClear()
     await act(async () => { renderer = create(<ArkmeTopicDirectoryPopover {...props} selectedSource={created} />) })
@@ -150,11 +168,12 @@ describe('navigate to a newly created self topic', () => {
     expect(readNavigationCache(10001)?.selectedSourceRef).toBe(refreshed.sourceRef)
   })
 
-  it('keeps the selected destination while the original per-page cache loads later topics', async () => {
+  it('keeps the selected destination and full cached list while refresh pages load later topics', async () => {
     const onSelect = await openCreate()
     await act(async () => { submit(); resolveCreate({ source: created }) })
     const props = renderer!.root.findByType(ArkmeTopicDirectoryPopover).props
     await act(async () => renderer!.unmount())
+    selfTopicDirectory(10001, 'prod').invalidate()
     let finishPage!: (value: unknown) => void
     vi.mocked(callArkme).mockResolvedValueOnce({ items: [self, uncategorized, parent], hasMore: true, nextCursor: 'page-2' })
       .mockImplementationOnce(async () => await new Promise(resolve => { finishPage = resolve }))
@@ -163,7 +182,7 @@ describe('navigate to a newly created self topic', () => {
     expect(props.onSelectionInvalidated).not.toHaveBeenCalled()
     expect(onSelect).not.toHaveBeenCalled()
     expect(readNavigationCache(10001)?.selectedSourceRef).toBe(created.sourceRef)
-    expect(readNavigationCache(10001)?.sources.send_to_self?.map(source => source.sourceRef)).toEqual(['self', 'default', 'parent'])
+    expect(readNavigationCache(10001)?.sources.send_to_self?.map(source => source.sourceRef)).toEqual(['self', 'default', 'parent', 'created'])
     await act(async () => { finishPage({ items: [created], hasMore: false }) })
     expect(onSelect).toHaveBeenCalledExactlyOnceWith(created)
     expect(readNavigationCache(10001)?.selectedSourceRef).toBe(created.sourceRef)

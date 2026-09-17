@@ -95,7 +95,7 @@ it('spotlights the input and menu while keeping keyboard focus in the guide', as
   expect(document.querySelector('[data-arkme-self-tour-spotlight="composer"]')?.getAttribute('height')).toBe('172')
   await click('下一步')
   expect(panel()?.textContent).toContain('2 / 2')
-  expect(menu()?.textContent).toContain('创建主题')
+  expect(menu()?.textContent).toContain('新主题')
   expect(document.activeElement).toBe(panel()?.querySelector('.arkme-home-tour-primary'))
   expect(document.querySelector('[data-arkme-self-tour-spotlight="topics"]')?.getAttribute('height')).toBe('382')
   await click('上一步')
@@ -115,7 +115,7 @@ it.each(['开始使用', '跳过引导', '关闭发给自己引导'])('persists 
 
 it('blocks topic selection and creation until the two-step guide is completed', async () => {
   await render(); await click('下一步')
-  for (const label of ['工作', '创建主题', '选择主题']) {
+  for (const label of ['工作', '新主题', '选择主题']) {
     await click(label)
     expect(panel()?.textContent).toContain('2 / 2')
     expect(menu()).not.toBeNull()
@@ -126,7 +126,7 @@ it('blocks topic selection and creation until the two-step guide is completed', 
   await click('开始使用')
   await click('选择主题'); await click('工作')
   expect(host.querySelector('output')?.textContent).toBe('工作')
-  await click('选择主题'); await click('创建主题')
+  await click('选择主题'); await click('新主题')
   expect(document.activeElement?.getAttribute('aria-label')).toBe('新主题名称')
 })
 

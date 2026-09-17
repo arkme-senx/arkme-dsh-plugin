@@ -859,7 +859,7 @@ describe('SourceService', () => {
     ]))
   })
 
-  it('skips DSH Agent input records when decorating the default category preview', async () => {
+  it('excludes DSH input records and system topics from personal directory counts and previews', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
@@ -871,7 +871,12 @@ describe('SourceService', () => {
         return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: false } }), { status: 200 })
       }
       if (url.endsWith('/api/v1/topics/display/list')) {
-        return new Response(JSON.stringify({ code: 0, data: { items: [] } }), { status: 200 })
+        return new Response(JSON.stringify({ code: 0, data: { items: [
+          { topic_core: { topic_uid: 'archive', kind: 3, title: '归档', status: 1 },
+            summary: { record_count: 100, latest_send_at: 900 }, latest_record_core: { text_content: 'DSH消息', send_at: 900 } },
+          { topic_core: { topic_uid: 'ordinary', kind: 1, title: 'DSH Agent Input', status: 1 },
+            summary: { record_count: 1, latest_send_at: 100 }, latest_record_core: { text_content: '普通主题', send_at: 100 } },
+        ] } }), { status: 200 })
       }
       if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) {
         return new Response(JSON.stringify({ code: 0, data: { relations: [] } }), { status: 200 })
@@ -924,6 +929,9 @@ describe('SourceService', () => {
 
     const result = await service.listSources('send_to_self', { refresh: true })
     const defaultCategory = result.items.find(item => item.kind === 'default_category')
+    expect(result.items.some(item => item.topicKind === 3)).toBe(false)
+    expect(result.items.filter(item => item.kind === 'topic')).toMatchObject([{ displayName: 'DSH Agent Input', recordCount: 1 }])
+    expect(result.items[0]).toMatchObject({ latestPreview: '普通发给自己', activeAtMillis: 190 })
 
     expect(defaultCategory).toMatchObject({
       displayName: '未分类',
@@ -1033,8 +1041,17 @@ describe('SourceService', () => {
     const second = await service.listSources('send_to_self', { limit: 100, cursor: first.nextCursor, refresh: true })
     const parent = second.items.find(item => item.displayName === '一级主题')
 
+    const requestsFor = (path: string) => vi.mocked(fetchImpl).mock.calls.filter(([url]) => new URL(String(url)).pathname === path)
+    expect(requestsFor('/api/v1/topics/hierarchy/relations/list')).toHaveLength(1)
+    expect(requestsFor('/api/v1/records/uncategorized/query')).toHaveLength(1)
+    service.invalidateSourceListCache(42, 'send_to_self')
+    await service.listSources('send_to_self', { limit: 100, cursor: first.nextCursor })
+    expect(requestsFor('/api/v1/topics/hierarchy/relations/list')).toHaveLength(2)
+    expect(requestsFor('/api/v1/records/uncategorized/query')).toHaveLength(2)
+
     expect(displayListBodies).toEqual([
       { limit: 100, keyword: '', privacy_state: 1 },
+      { limit: 100, keyword: '', privacy_state: 1, offset: 100 },
       { limit: 100, keyword: '', privacy_state: 1, offset: 100 },
     ])
     expect(first.hasMore).toBe(true)

@@ -17,7 +17,7 @@ class MemoryStorage implements Storage {
 }
 
 describe('Arkme navigation cache', () => {
-  it('retains system topic kind and presents its name without renaming ordinary topics', () => {
+  it('removes cached DSH topic and its selection without renaming same-name ordinary topics', () => {
     const storage = new MemoryStorage()
     const sources = [3, 1, 2].map(topicKind => ({
       sourceRef: 'topic-' + String(topicKind), kind: 'topic' as const, topicKind,
@@ -29,9 +29,10 @@ describe('Arkme navigation cache', () => {
     }, storage)
     const restored = readNavigationCache(42, storage)!
     expect(restored.sources.send_to_self?.map(source => [source.topicKind, source.displayName])).toEqual([
-      [3, '发给 DSH 的消息'], [1, 'DSH Agent Input'], [2, 'DSH Agent Input'],
+      [1, 'DSH Agent Input'], [2, 'DSH Agent Input'],
     ])
-    expect(cachedSelectedSource(restored)?.sourceRef).toBe('topic-3')
+    expect(restored.selectedSourceRef).toBeUndefined()
+    expect(cachedSelectedSource(restored)?.sourceRef).not.toBe('topic-3')
     expect(sources[0]?.displayName).toBe('DSH Agent Input')
   })
   it('replaces a rotated chat projection by stable identity when prepending it', () => {

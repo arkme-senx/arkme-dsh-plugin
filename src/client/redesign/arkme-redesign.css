@@ -9,8 +9,10 @@
 }
 
 [data-arkme-workspace], [data-arkme-workspace] * { box-sizing: border-box; }
-[data-arkme-workspace] button, [data-arkme-workspace] input, [data-arkme-workspace] textarea { font: inherit; }
-[data-arkme-workspace] button { border: 0; background: none; color: inherit; cursor: pointer; }
+/* Shared DSH selectors and topic-footer controls own their styles in both the
+   workspace and body portal. Do not strip their native fill/border/typography. */
+[data-arkme-workspace] button:not([data-arkme-conversation-selector], .arkme-self-topic-create-button, .arkme-dsh-view-options-button), [data-arkme-workspace] input, [data-arkme-workspace] textarea { font: inherit; }
+[data-arkme-workspace] button:not([data-arkme-conversation-selector], .arkme-self-topic-create-button, .arkme-dsh-view-options-button) { border: 0; background: none; color: inherit; cursor: pointer; }
 [data-arkme-workspace] [data-arkme-theme-image="dark"] { display: none !important; }
 
 .arkme-redesign-root {
@@ -140,6 +142,35 @@ button.arkme-redesign-profile-head { width: 100%; border: 0; background: transpa
 .arkme-redesign-chat-directory { min-height: 0; flex: 1; margin: 0; overflow: hidden; }
 .arkme-redesign-chat-directory > section {
   background: transparent !important;
+}
+
+/* Conversation cards share feedback across native entries, extensions and virtualized rows. */
+[aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] {
+  --arkme-directory-card-hover: var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, .06));
+  --arkme-directory-card-selected-hover: color-mix(in srgb, #f1f2f6 94%, var(--dsw-alias-label-primary, #17191c));
+}
+body[data-ds-dark-theme] [aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] {
+  --arkme-directory-card-selected-hover: color-mix(in srgb, var(--dsw-alias-interactive-bg-active, rgba(255, 255, 255, .1)) 94%, var(--dsw-alias-label-primary, #eee));
+}
+[aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] button[role="treeitem"] {
+  transition: background-color .12s ease;
+}
+@media (hover: hover) {
+  [aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] button[role="treeitem"]:not(:disabled):not([aria-disabled="true"]):not([aria-selected="true"]):hover {
+    background-color: var(--arkme-directory-card-hover) !important;
+  }
+  [aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] button[role="treeitem"][aria-selected="true"]:not(:disabled):not([aria-disabled="true"]):hover {
+    background-color: var(--arkme-directory-card-selected-hover) !important;
+  }
+}
+[aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] button[data-arkme-home-tour-target="harness"][aria-expanded="true"]:not([aria-selected="true"]) {
+  background-color: var(--arkme-directory-card-hover) !important;
+}
+[aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] button[data-arkme-home-tour-target="harness"][aria-expanded="true"][aria-selected="true"] {
+  background-color: var(--arkme-directory-card-selected-hover) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  [aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] button[role="treeitem"] { transition: none; }
 }
 .arkme-redesign-task-section { position: relative; z-index: 3; height: 158px; margin: 0 6px 12px; outline: none; border-bottom: 1px solid #ececef; }
 .arkme-redesign-task-section-title { height: 28px; padding: 0 7px; display: flex; align-items: center; justify-content: space-between; color: #767b85; }
@@ -281,6 +312,24 @@ button.arkme-redesign-profile-head { width: 100%; border: 0; background: transpa
 [data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 72px !important; }
 [data-arkme-directory-compact="true"] > :not([role="tree"]) { display: none !important; }
 [data-arkme-directory-compact="true"] [role="tree"] { padding: 8px 6px 18px !important; }
+
+[data-arkme-harness-summary] { min-width: 0; display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 11px; line-height: 16px; }
+[data-arkme-harness-status] { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+[data-arkme-harness-status="running"] { color: #4279d4; }
+[data-arkme-harness-status="unread"] { color: #278557; }
+[data-arkme-harness-status="pending"] { color: #a96b0a; }
+[data-arkme-harness-status] > i { width: 5px; height: 5px; flex: none; border-radius: 50%; background: currentColor; }
+[data-arkme-harness-status="running"] > i { width: 7px; height: 7px; background: transparent; border: 1.5px solid currentColor; border-right-color: transparent; box-sizing: border-box; animation: arkme-harness-running 1.1s linear infinite; }
+[data-arkme-harness-badge] { display: none; position: absolute; right: -3px; top: -3px; min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box; border: 1px solid #fff; border-radius: 9px; color: #fff; font-size: 9px; line-height: 13px; font-weight: 600; justify-content: center; align-items: center; }
+[data-arkme-harness-badge][data-kind="running"] { background: #4279d4; }
+[data-arkme-harness-badge][data-kind="unread"] { background: #278557; }
+[data-arkme-harness-badge][data-kind="pending"] { background: #a96b0a; }
+[data-arkme-harness-badge][data-idle="true"] { display: inline-flex; }
+[data-arkme-directory-compact="true"] [data-arkme-home-tour-target="harness"] { justify-content: center; gap: 0 !important; padding: 7px 6px !important; }
+[data-arkme-directory-compact="true"] [data-arkme-harness-label] { display: none !important; }
+[data-arkme-directory-compact="true"] [data-arkme-harness-badge] { display: inline-flex; }
+@keyframes arkme-harness-running { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { [data-arkme-harness-status="running"] > i { animation: none; } }
 
 .arkme-redesign-feature-page {
   width: 100%;
@@ -1033,7 +1082,7 @@ body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label=
 }
 body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
   section[aria-label="客户端日历"] button[data-selected="false"][aria-label*="条记录"] > span:last-child {
-  background: var(--dsw-alias-bg-layer-2) !important;
+  background: transparent !important;
   color: var(--dsw-alias-label-secondary) !important;
 }
 body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
@@ -1834,3 +1883,23 @@ body[data-ds-dark-theme] .arkme-detail-extension-input-shell {
 .arkme-conversation-profile-actions { grid-template-columns: minmax(0, 1fr); }
 
 body[data-ds-dark-theme] .arkme-peer-membership-disc { fill: #171717; stroke: #343434; }
+
+/* Match DSH\'s solid selector footer: shared rules live in conversation-selector-style.ts. */
+.arkme-self-topic-sort-option {
+  display: flex;
+  min-width: 176px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  white-space: nowrap;
+}
+.arkme-self-topic-sort-option-title {
+  color: var(--dsw-alias-label-primary, #17191c);
+  line-height: 20px;
+}
+.arkme-self-topic-sort-option-description {
+  color: var(--dsw-alias-label-secondary, #68707c);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+}

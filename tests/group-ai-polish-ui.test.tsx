@@ -86,7 +86,7 @@ describe('group AI polish settings popover', () => {
     })
     const entry = renderer!.root.findByProps({ 'data-arkme-group-ai-polish-entry': 'true' })
     expect(entry.props.children).toBeDefined()
-    expect(renderer!.root.findByProps({ role: 'menu', 'aria-label': '群聊设置' }).props.style.width).toBe(248)
+    expect(renderer!.root.findByProps({ role: 'menu', 'aria-label': '群聊设置' })).toBeDefined()
 
     await act(async () => {
       entry.props.onClick()

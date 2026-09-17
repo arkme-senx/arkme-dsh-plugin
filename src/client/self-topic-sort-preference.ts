@@ -1,6 +1,6 @@
 export type ArkmeSelfTopicSort = 'latest' | 'most' | 'custom'
 
-export const DEFAULT_SELF_TOPIC_SORT: ArkmeSelfTopicSort = 'latest'
+export const DEFAULT_SELF_TOPIC_SORT: ArkmeSelfTopicSort = 'custom'
 
 const STORAGE_KEY_PREFIX = 'dsh-arkme:self-topic-sort:v1:user:'
 

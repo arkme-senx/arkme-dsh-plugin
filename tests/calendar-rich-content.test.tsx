@@ -172,6 +172,20 @@ it('renders chat source badges even when topicTitle is absent', async () => {
   expect(host.querySelector('[aria-label="来源：项目群"]')).not.toBeNull()
 })
 
+it('shows DSH provenance without a link back to the hidden personal topic', async () => {
+  api.call.mockImplementation(async (op: string) => op === 'user.profile' ? { profile: {} }
+    : op === 'calendar.buckets' ? { days: [] }
+      : { items: [{ ...record, creationSource: 3, topicTitle: 'DSH Agent Input',
+        source: { kind: 'topic', displayName: '发给 DSH 的消息', sourceRef: 'system-topic' } }], hasMore: false })
+  await render()
+  expect(host.querySelector('[data-arkme-dsh-agent-input-marker]')).not.toBeNull()
+  expect(host.querySelector('[aria-label^="来源："]')).toBeNull()
+  expect(host.textContent).not.toContain('DSH Agent Input')
+  await click('strong')
+  expect(host.querySelector('[aria-label="快记详情"]')).not.toBeNull()
+  expect(host.querySelector('[aria-label="快记详情"] [aria-label^="来源："]')).toBeNull()
+})
+
 
 it('renders private and group avatars inside source badges through the shared avatar renderer', async () => {
   arkmeAvatarImages.activateScope('calendar-badge-avatars')

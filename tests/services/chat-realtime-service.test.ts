@@ -20,6 +20,21 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ChatRealtimeService', () => {
+  it('invalidates computed calendar months by date and timezone, with a full privacy fallback', () => {
+    const runtime = new ServiceRuntime(config, {} as ArkmeSessionStore, {} as StateStore)
+    const version = (start: string, end: string, zone = 'Asia/Shanghai') => runtime.calendarReadRevision('user:42', start, end, zone)
+    const september = version('2026-09-01', '2026-09-30')
+    const august = version('2026-08-01', '2026-08-31')
+    runtime.invalidateCalendarDates('user:42', [Date.parse('2026-08-31T18:00:00Z')])
+    expect(version('2026-09-01', '2026-09-30')).not.toBe(september)
+    expect(version('2026-08-01', '2026-08-31')).toBe(august)
+    expect(version('2026-08-01', '2026-08-31', 'UTC')).not.toBe(august)
+    expect(runtime.calendarReadRevision('user:43', '2026-09-01', '2026-09-30', 'UTC')).toBe('0:0')
+    runtime.invalidateKey('user:42', 'calendar:')
+    expect(version('2026-08-01', '2026-08-31')).not.toBe(august)
+    runtime.dispose()
+  })
+
   it.each(['current', 'account-change', 'new-connection', 'final-connection-change', 'disconnected', 'disposed'] as const)(
     'recovers pin projections from the existing reconnect read: %s', async scenario => {
       let account = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }

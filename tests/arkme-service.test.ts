@@ -196,6 +196,34 @@ function sourceRefFor(
 }
 
 describe('ArkmeService', () => {
+  it('reads revision snapshots through signed chat references and rejects mismatched account/source before HTTP', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const fetcher = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => json({ code: 200, data: { items: [{
+      revision_uid: 'rev-old', record_uid: 'record-1', revision_type: 1, edit_at: 1712990001000, text_content: 'old text',
+      content_payload: { media_refs: [{ file_asset_uid: 'old-image', sort_order: 0 }] },
+      media_display_items: [{ file_asset_uid: 'old-image', file_kind: 1, file_name: 'old.png', preview_url: 'https://media.test/old.png' }],
+    }], has_more: false } }))
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetcher)
+    const payload = Buffer.from(JSON.stringify({ version: 1, sourceKind: 'chat_relation', userId: 10001,
+      sourceOwnerRef: 'chat-1', chatSessionUid: 'chat-1', relationUid: 'rel-1', recordUid: 'record-1',
+      recordOwnerUserId: 20002, senderUserId: 20002, senderName: 'someone',
+    })).toString('base64url')
+    const action = `arkme-message-action-v1.${payload}.${createHmac('sha256', 'dsh-device-1').update(payload).digest('base64url')}`
+    try {
+      const result = await service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), action)
+      expect(result.items[0]).toMatchObject({ revisionUid: 'rev-old', content: { textContent: 'old text', contentBlocks: [{ fileAssetUid: 'old-image' }] } })
+      expect(JSON.stringify(result)).not.toContain('https://media.test')
+      expect(fetcher.mock.calls[0]?.[0]).toContain('/api/v1/chats/records/revisions/query')
+      const count = fetcher.mock.calls.length
+      await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-2', 'other'), action)).rejects.toMatchObject({ code: 'message-action-ref-invalid' })
+      await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), action + 'x')).rejects.toMatchObject({ code: 'message-action-ref-invalid' })
+      sessions.session = { userId: 20002, accessToken: 'other', refreshToken: 'other' }
+      await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group', 20002), action)).rejects.toMatchObject({ code: 'message-action-ref-invalid' })
+      expect(fetcher).toHaveBeenCalledTimes(count)
+    } finally { service.dispose() }
+  })
+
   it.each(['success', 'unknown', 'account-switch', 'cache-error'])('invalidates MCP member presentation without replacing the %s outcome', async mode => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

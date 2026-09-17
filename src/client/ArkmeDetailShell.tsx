@@ -11,6 +11,8 @@ export interface ArkmeDetailShellProps {
   label: string
   subtitle?: string
   footer?: ReactNode
+  /** Hide a subview's editor without discarding its draft or staged attachments. */
+  footerHidden?: boolean
   onClose: () => void
   children: ReactNode
   onBack?: () => void
@@ -39,7 +41,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 /** Non-modal overlay: the conversation retains its width and scroll position. */
-export function ArkmeDetailShell({ title, label, subtitle, footer, onClose, onBack, backLabel, bodyRef, children, resizeLabel, returnFocusRef }: ArkmeDetailShellProps) {
+export function ArkmeDetailShell({ title, label, subtitle, footer, footerHidden = false, onClose, onBack, backLabel, bodyRef, children, resizeLabel, returnFocusRef }: ArkmeDetailShellProps) {
   const closeRef = useRef<HTMLButtonElement>(null)
   const backRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLElement>(null)
@@ -67,6 +69,11 @@ export function ArkmeDetailShell({ title, label, subtitle, footer, onClose, onBa
       if (target?.isConnected && (active === document.body || active === null || panel?.contains(active))) target.focus({ preventScroll: true })
     }
   }, [])
+  const hasBack = onBack !== undefined
+  useEffect(() => {
+    if (hasBack) backRef.current?.focus({ preventScroll: true })
+    else if (document.activeElement === document.body) closeRef.current?.focus({ preventScroll: true })
+  }, [hasBack])
   return <aside ref={panelRef} role="dialog" aria-label={label} aria-labelledby={titleId} style={{ ...styles.drawer, ...resize.style }} data-arkme-note-detail="true">
     {resize.handle}
     <header style={styles.header}>
@@ -78,6 +85,6 @@ export function ArkmeDetailShell({ title, label, subtitle, footer, onClose, onBa
       <button ref={closeRef} type="button" style={styles.close} aria-label="关闭详情" onClick={onClose}><X size={18} /></button>
     </header>
     <div ref={bodyRef} style={styles.body}>{children}</div>
-    {footer !== undefined && footer !== null && <footer style={typeof footer === 'string' ? styles.footer : styles.extensionFooter}>{footer}</footer>}
+    {footer !== undefined && footer !== null && <footer hidden={footerHidden} style={typeof footer === 'string' ? styles.footer : styles.extensionFooter}>{footer}</footer>}
   </aside>
 }

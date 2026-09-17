@@ -61,6 +61,13 @@ describe('compact conversation directory styles', () => {
         // prioritize stylesheet !important over React's inline declarations.
         const rules = Array.from(document.styleSheets[0]!.cssRules) as CSSStyleRule[]
         for (const element of [row, content, ...Array.from(content.querySelectorAll('*'))]) {
+          // The DSH compact entry intentionally keeps its avatar/status badge only.
+          // Other cards retain their own text layout within the available width.
+          if (compactDirectory && element.closest('[data-arkme-harness-label]')) {
+            if (element === content) expect(rules.filter(rule => element.matches(rule.selectorText))
+              .some(rule => rule.style.getPropertyValue('display') === 'none')).toBe(true)
+            continue
+          }
           expect(dom.window.getComputedStyle(element).display).not.toBe('none')
           expect(rules.filter(rule => element.matches(rule.selectorText))
             .some(rule => rule.style.getPropertyValue('display') === 'none')).toBe(false)

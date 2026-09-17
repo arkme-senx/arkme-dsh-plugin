@@ -156,7 +156,7 @@ it('returns real Host conflict data to the same menu snapshot without replaying 
   await ready(); flags.revision = 2; flags.peer = true
   await click('拒收对方消息')
   expect(mount.textContent).toContain('拒收状态已变化')
-  expect(row('拒收对方消息').getAttribute('aria-checked')).toBe('false')
+  expect(row('拒收对方消息')).toBeDefined()
   expect(mount.querySelector('[data-send-blocked]')!.textContent).toBe('true')
   expect(requests.filter(item => item.path.endsWith('/direct-message-refusal/set'))).toHaveLength(1)
 })

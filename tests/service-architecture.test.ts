@@ -8,6 +8,7 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
   'listArchives', 'getArchiveStates', 'setArchiveState',
+  'recordEditHistoryPage',
   'recentEmojiIds', 'recordRecentEmoji',
   'withGroupMemberInvalidation', // composition-only MCP presentation seam; no SDK/Host route
   'directMessageAdmission', 'setDirectMessageRefusal', 'assignRecordTopic', 'listTopicCandidates', 'deleteSourceRecords', 'selfTarget',
@@ -83,6 +84,7 @@ const expectedPublicMethods = [
 
 const expectedServiceFiles = [
   'archive-service.ts',
+  'record-edit-history-service.ts',
   'chat-policy.ts',
   'direct-message-admission-service.ts',
   'record-topic-assignment-service.ts',

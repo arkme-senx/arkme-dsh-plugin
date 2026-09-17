@@ -1336,7 +1336,9 @@ export async function dispatchArkmeHostOperation(
       scope: recordingSpeakerScopeParam(params),
     }, requestSignal)
     case 'calendar.buckets': return await service.calendarBuckets({
+      ...(params?.background === true ? { background: true } : {}),
       startDate: stringParam(params, 'startDate'),
+      ...(params?.sourceRef === undefined ? {} : { sourceRef: stringParam(params, 'sourceRef') }),
       ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       endDate: stringParam(params, 'endDate'),
       ...(stringParam(params, 'timezone') === '' ? {} : { timezone: stringParam(params, 'timezone') }),
@@ -1345,6 +1347,7 @@ export async function dispatchArkmeHostOperation(
       const cursor = cursorParam(params)
       return await service.calendarRecords({
         bucketDate: stringParam(params, 'bucketDate'),
+        ...(params?.sourceRef === undefined ? {} : { sourceRef: stringParam(params, 'sourceRef') }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
         limit: numberParam(params, 'limit', 20),
         ...(stringParam(params, 'timezone') === '' ? {} : { timezone: stringParam(params, 'timezone') }),
@@ -1723,6 +1726,9 @@ export async function dispatchArkmeHostOperation(
       requiredRelatedQuickNoteParam(params, 'sourceRef'),
       requiredRelatedQuickNoteParam(params, 'momentRef'),
       requestSignal,
+    )
+    case 'source.record-edit-history': return await service.recordEditHistoryPage(
+      stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), numberParam(params, 'cursorEditAt', 0), requestSignal,
     )
     case 'source.related-quick-note.detail': return await service.relatedQuickNoteDetail(
       requiredRelatedQuickNoteParam(params, 'sourceRef'),

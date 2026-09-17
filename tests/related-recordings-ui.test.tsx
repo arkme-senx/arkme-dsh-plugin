@@ -216,22 +216,20 @@ describe('related recordings UI', () => {
     expect(source).not.toContain('>⌄<')
   })
 
-  it('reuses the group-chat header menu chrome for the private related-recordings entry', () => {
+  it('reuses the native DSH menu chrome for the private related-recordings entry', () => {
     const source = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
     const privateStart = source.indexOf('shouldShowPrivateChatActions(authenticated, source?.kind) && <div')
     const privateBlock = source.slice(privateStart, source.indexOf('</header>', privateStart))
 
     expect(privateStart).toBeGreaterThan(-1)
     expect(privateBlock).toContain('ARKME_CONVERSATION_HEADER_ACTIONS_STYLE')
-    expect(privateBlock).toContain('ArkmeConversationHeaderIconButton')
-    expect(privateBlock).toContain('ArkmeConversationMoreIcon')
-    expect(privateBlock).toContain('buttonRef={relatedMenuButtonRef}')
-    expect(privateBlock).toContain('createPortal(')
     expect(privateBlock).toContain('ConversationActionsMenu')
+    expect(privateBlock).toContain('anchor={relatedMenuButtonRef}')
+    expect(privateBlock).toContain('trigger={{')
     const menu = readFileSync(new URL('../src/client/PrivateChatActions.tsx', import.meta.url), 'utf8')
-    expect(menu).toContain('ARKME_CONVERSATION_SETTINGS_MENU_SCRIM_STYLE')
-    expect(menu).toContain('ARKME_CONVERSATION_SETTINGS_POPOVER_STYLE')
-    expect(menu).toContain('ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE')
+    expect(menu).toContain('ArkmeDshMenu')
+    expect(menu).toContain('ArkmeConversationHeaderIconButton')
+    expect(menu).toContain('ArkmeConversationMoreIcon')
     expect(privateBlock).not.toContain('•••')
     expect(source).not.toContain('moreButton:')
     expect(source).not.toContain('menuItem:')

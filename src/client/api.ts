@@ -171,6 +171,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'source.related-quick-notes.from-message'
   | 'source.related-quick-notes.from-moment'
   | 'source.related-quick-note.detail'
+  | 'source.record-edit-history'
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'

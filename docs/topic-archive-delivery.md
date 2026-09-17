@@ -13,7 +13,7 @@
 
 ## 可复现验证
 
-测试目标：未修改的官方 DSH `d347e703908d0406b7a7ef80e3a0e594d86b2215`，版本 `0.1.3-alpha.1`；Node `24.19.0`。插件最初基于用户指定的 dev `e9ac7f135769d0569417d8c7dd13ff8cf040036a`，审查时已合入 dev `21ceaed083b3dc22f099981eb28bd5b10283b31b`。
+测试目标：未修改的官方 DSH `d347e703908d0406b7a7ef80e3a0e594d86b2215`，版本 `0.1.3-alpha.1`；Node `24.19.0`。插件最初基于用户指定的 dev `e9ac7f135769d0569417d8c7dd13ff8cf040036a`，审查收口合入 dev `d5cc136bede1f4e1c70d20bfed990168d8880a38`。当前 0.1.60 版本及元数据全部来自 dev 的同步提交，归档差异不修改版本。
 
 先运行仓库 typecheck、build，再用 `pnpm pack` 生成产物。使用官方 `dsh plugin --profile web add <artifact.tgz> --ignore-scripts --ignore-workspace` 装入独立的 `DSH_HOME`，避免接触用户 Profile。
 
@@ -33,7 +33,8 @@ runner 创建隔离 Record / Mongo / Redis / search 测试服务，并在结束�
 - 主题菜单的确认框由稳定的 breadcrumb surface 持有，不随目录行消失而卸载；管理页也不因普通投影通知关闭确认框。失败可查看，CAS 不自动改用新 revision 重试。
 - 分页按账号内稳定的 topicHierarchyKey 去重；带显示名的 sourceRef 更新不会生成重复条目。
 - 列表分页和归档来源查询共用页面加载状态，避免交叉取消后一直显示加载中；切换账号取消旧请求。
-- 完整 `pnpm test`：570 个文件通过、8 个跳过，6780 项通过、11 项跳过；typecheck、build、pack 通过。
+- 同步新的共享主题目录 owner 与外置菜单机制；归档确认仍由稳定 surface 持有。新建子主题回执早于/晚于父归档时，创建后重新核对目录归属，已打开主题保持可访问，继承归档节点不能被创建缓存重新显示。
+- 最终完整 `pnpm test`：593 个文件通过、8 个跳过，6951 项通过、11 项跳过；typecheck、build、pack 通过。
 - 最终不可变 tgz 通过官方 CLI 装入新的临时 Profile。真实 Chrome 从主题操作菜单归档 B/A，再从设置的数据管理恢复 A/B；确认目录及时更新、父恢复保留子标记、继承条目无误导性恢复入口。另验证归档前记录仍可读、归档后仍可写入/读取、CAS 冲突，以及真实会话 Tool 和仓外 SDK Consumer。
 
-复验日志：`review-dsh-full-tests.log`、`review-dsh-typecheck.log`、`review-dsh-build.log`、`review-dsh-install3.log`、`review-dsh-cross-e2e.log`、`review-dsh-consumer.log`。运行证据为 macOS 官方 DSH + Chrome，不代表 Windows/Linux 已进行真实平台验收。
+复验日志：`review-dsh-full-tests.log`、`review-dsh-typecheck.log`、`review-dsh-build.log`、`review-dsh-install4.log`、`review-dsh-cross-e2e.log`、`review-dsh-consumer.log`。运行证据为 macOS 官方 DSH + Chrome，不代表 Windows/Linux 已进行真实平台验收。

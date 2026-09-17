@@ -1,5 +1,6 @@
 import { compareTimelineMessages } from './timeline-message-order.js'
 import { ArkmeLivePhotoBadge } from './ArkmeLivePhotoBadge.js'
+import { selfTopicDirectory } from './self-topic-directory-cache.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import { ArkmeBotIdentityStyles, ArkmeBotSenderName } from './ArkmeBotIdentity.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
@@ -7,6 +8,7 @@ import { ArkmeMembershipBadge } from './ArkmeMembershipBadge.js'
 import { useForwardTargetDirectory } from './forward-target-directory.js'
 import { ArkmeRecordDeletionDialog } from './ArkmeRecordDeletionDialog.js'
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
+import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
 import { messageSelectionStyles, ArkmeMessageSelectionControl, ArkmeSelectActionIcon } from './message-selection-presentation.js'
 import { RegionMarquee } from './selection/RegionMarquee.js'
 import { arkmeDetailExtensionComposerStyles } from './detail-extension-composer-style.js'
@@ -25,8 +27,13 @@ import {
   type CSSProperties, type ReactNode, type SetStateAction,
 } from 'react'
 import { createPortal } from 'react-dom'
+import {
+  IconCheckOutline16, IconLoadingOutline16, IconWarningOutline16, Toast,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { invalidateDirectMessageAdmission, requireDirectMessageSendAllowed, useDirectMessageAdmission } from './direct-message-admission.js'
-import { ConversationActionsMenu, privateChatActionItems, usePrivateChatActions } from './PrivateChatActions.js'
+import {
+  ConversationActionsMenu, conversationExportActionItem, privateChatActionItems, usePrivateChatActions,
+} from './PrivateChatActions.js'
 import qrcode from 'qrcode-generator'
 import { retainPartialTimelineMedia } from './timeline-media.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -48,6 +55,7 @@ import type {
   ArkmeSharedRecordingPreview,
   ArkmeBackgroundSoundPreference, ArkmeBackgroundSoundEligibilityReason, ArkmeProviderCapabilities,
   ArkmeRecordTagItem, ArkmeRecordTagList,
+  ArkmeCalendarRecordItem,
 } from '../types.js'
 import {
   arkmeHashTagMatches, arkmeHashTagTrigger, arkmeMergeHashTagSuggestions,
@@ -79,7 +87,6 @@ import { ArkmeDirectorySourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import {
   ARKME_CONVERSATION_HEADER_ACTIONS_STYLE,
   ArkmeConversationHeaderIconButton,
-  ArkmeConversationMoreIcon,
   ArkmeGroupChatControls,
 } from './ArkmeGroupChatControls.js'
 import {
@@ -99,6 +106,7 @@ import { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
+import { ArkmeSelfCalendarPopover } from './ArkmeCalendarSurface.js'
 import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle, type RecordingImportButtonStatus } from './recordings/ArkmeRecordingImportDialog.js'
 import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
@@ -123,12 +131,18 @@ import { ArkmeMarketplace } from './ArkmeMarketplace.js'
 import {
   ArkmeSourceBreadcrumb,
 } from './ArkmeSourceBreadcrumb.js'
+import { SELF_TOPIC_MENU_OPEN } from './self-topic-menu-bridge.js'
 import { useSendToSelfTour } from './ArkmeSendToSelfTour.js'
 import {
   ArkmeTopicDirectoryPopover, type ArkmeSelfSourcesResolution, type ArkmeTopicCreateOpener,
 } from './ArkmeTopicDirectoryPopover.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
+import {
+  arkmeConversationExportFileName, arkmeConversationExportMarkdown,
+  collectArkmeConversationExportItems, collectArkmeConversationExportTopics,
+  downloadArkmeConversationMarkdown,
+} from './conversation-export.js'
 import { ArkmeVoiceprintSurface } from './ArkmeVoiceprintSurface.js'
 import { ArkmeNavigation, type ArkmeNavigationProps } from './ArkmeVirtualWorkspace.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -444,6 +458,20 @@ const styles: Record<string, CSSProperties> = {
     borderRight: 0, borderBottom: `1px solid ${colors.border}`,
   },
   panel: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' },
+  conversationExportProgress: {
+    position: 'absolute', zIndex: 72, top: 76, right: 16, maxWidth: 'calc(100% - 32px)', minHeight: 36,
+    boxSizing: 'border-box', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8,
+    border: '1px solid var(--dsw-alias-border-l1, rgba(31, 35, 41, 0.12))', borderRadius: 12,
+    background: 'var(--dsw-alias-bg-elevated, #fff)', color: 'var(--dsw-alias-label-primary, #1f2329)',
+    boxShadow: '0 8px 24px rgba(31, 35, 41, 0.12)', pointerEvents: 'none',
+    fontSize: 13, lineHeight: '18px',
+  },
+  conversationExportProgressName: {
+    minWidth: 0, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600,
+  },
+  conversationExportProgressCount: {
+    flex: 'none', color: 'var(--dsw-alias-label-secondary, #646a73)', fontVariantNumeric: 'tabular-nums',
+  },
   contactBackdrop: {
     position: 'fixed', inset: 0, zIndex: 1000, padding: 16, boxSizing: 'border-box',
     display: 'grid', placeItems: 'center',
@@ -2228,6 +2256,23 @@ export function ArkmeSurface({
   const selectedSource = conversationBackdropVisible ? ui.selectedSource : undefined
   const [selfSourcesResolution, setSelfSourcesResolution] = useState<ArkmeAccountSelfSourcesResolution>()
   const [selfSourcesRetryRevision, setSelfSourcesRetryRevision] = useState(0)
+  useEffect(() => {
+    if (auth?.status !== 'authenticated' || auth.userId === undefined) return
+    const directory = selfTopicDirectory(auth.userId, auth.environment)
+    let revision = arkmeUi.getRecordRevision()
+    return arkmeUi.subscribe(() => {
+      const next = arkmeUi.getRecordRevision()
+      if (next !== revision) { revision = next; directory.invalidate() }
+    })
+  }, [auth?.status, auth?.userId, auth?.environment])
+  const [selfTopicPreviewRequested, setSelfTopicPreviewRequested] = useState(false)
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const requestTopics = () => { setSelfTopicPreviewRequested(true) }
+    document.addEventListener(SELF_TOPIC_MENU_OPEN, requestTopics)
+    return () => { document.removeEventListener(SELF_TOPIC_MENU_OPEN, requestTopics) }
+  }, [])
+  useEffect(() => { setSelfTopicPreviewRequested(false) }, [authenticatedAccountKey])
   const activeSelfSourcesResolution = selfSourcesResolution === undefined
     || selfSourcesResolution.userId !== authenticatedUserId
     ? undefined
@@ -3186,6 +3231,23 @@ export function ArkmeSurface({
     if (authView === 'login') setError('')
   }, [authView, localeId])
   const [relatedMenuOpen, setRelatedMenuOpen] = useState(false)
+  const [selfMenuOpen, setSelfMenuOpen] = useState(false)
+  const [selfCalendarOpen, setSelfCalendarOpen] = useState(false)
+  const [conversationExport, setConversationExport] = useState<{
+    sourceKey: string
+    sourceName: string
+    processed: number
+    status: 'downloading' | 'success' | 'error'
+    itemCount?: number
+    error?: string
+  }>()
+  const [conversationExportToast, setConversationExportToast] = useState<{
+    sequence: number
+    kind: 'success' | 'error'
+    text: string
+  }>()
+  const conversationExportAbortRef = useRef<AbortController>()
+  const conversationExportToastSequenceRef = useRef(0)
   const privateActions = usePrivateChatActions(authenticatedAccountKey, authenticatedUserId, source, activeConversation, relatedMenuOpen)
   useEffect(() => { if (relatedMenuOpen) directAdmission.refresh() }, [relatedMenuOpen, directAdmission.refresh])
   const [relatedPanelOpen, setRelatedPanelOpen] = useState(false)
@@ -3204,17 +3266,32 @@ export function ArkmeSurface({
   const relatedLoadingMoreRef = useRef(false)
   const activeRelatedSourceKeyRef = useRef('')
   const relatedMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const selfMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const selfCalendarButtonRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
-    if (!relatedMenuOpen || typeof document === 'undefined') return
+    if ((!relatedMenuOpen && !selfMenuOpen && !selfCalendarOpen) || typeof document === 'undefined') return
     const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') setRelatedMenuOpen(false)
+      if (event.key !== 'Escape') return
+      setRelatedMenuOpen(false)
+      setSelfMenuOpen(false)
+      setSelfCalendarOpen(false)
     }
     document.addEventListener('keydown', closeFromKeyboard)
     return () => {
       document.removeEventListener('keydown', closeFromKeyboard)
     }
-  }, [relatedMenuOpen])
+  }, [relatedMenuOpen, selfMenuOpen, selfCalendarOpen])
+
+  useEffect(() => { setSelfCalendarOpen(false) }, [conversationKey])
+
+  useEffect(() => () => { conversationExportAbortRef.current?.abort() }, [])
+  useEffect(() => {
+    conversationExportAbortRef.current?.abort()
+    conversationExportAbortRef.current = undefined
+    setConversationExport(undefined)
+    setConversationExportToast(undefined)
+  }, [authenticatedAccountKey])
 
   useEffect(() => {
     if (timelineLoadingKey === '') return
@@ -3455,6 +3532,7 @@ export function ArkmeSurface({
   const openRelatedPanel = useCallback(() => {
     if (!privateActions.relatedAllowed) return
     setRelatedMenuOpen(false)
+    setSelfMenuOpen(false)
     activateContextPanel('related')
     setRelatedPanelOpen(true)
     reloadRelated('')
@@ -3481,6 +3559,7 @@ export function ArkmeSurface({
     activeRelatedSourceKeyRef.current = conversationKey
     relatedLoadingMoreRef.current = false
     setRelatedMenuOpen(false)
+    setSelfMenuOpen(false)
     setRelatedPanelOpen(false)
     setRelatedDetail(undefined)
     setRelatedItems([])
@@ -3493,7 +3572,10 @@ export function ArkmeSurface({
   }, [authenticated, conversationKey, source?.kind, ui.authRevision])
 
   const toggleRelatedMenu = useCallback(() => {
-    if (!relatedPanelOpen) setRelatedMenuOpen(current => !current)
+    if (!relatedPanelOpen) {
+      setSelfMenuOpen(false)
+      setRelatedMenuOpen(current => !current)
+    }
   }, [relatedPanelOpen])
 
   const acknowledgeRead = useCallback(async (nextItems: ArkmeTimelineItem[]) => {
@@ -5816,6 +5898,74 @@ export function ArkmeSurface({
       messageActionStatusTimerRef.current = undefined
     }, MESSAGE_ACTION_NOTICE_MS)
   }, [])
+  const startConversationExport = useCallback((target: ArkmeSourceItem | undefined) => {
+    if (target === undefined) return
+    if (conversationExportAbortRef.current !== undefined) return
+    const controller = new AbortController()
+    const targetKey = arkmeSourceIdentityKey(target)
+    const targetName = target.displayName.trim() || '当前对话'
+    const exportedAt = new Date()
+    conversationExportAbortRef.current = controller
+    setConversationExportToast(undefined)
+    setConversationExport({ sourceKey: targetKey, sourceName: targetName, processed: 0, status: 'downloading' })
+    setRelatedMenuOpen(false)
+    setSelfMenuOpen(false)
+    void Promise.all([
+      collectArkmeConversationExportItems(cursor => callArkme<ArkmeTimelinePage>('source.timeline', {
+        sourceRef: target.sourceRef,
+        limit: 100,
+        ...(cursor === undefined ? {} : { cursor }),
+      }, controller.signal), controller.signal, progress => {
+        if (conversationExportAbortRef.current !== controller) return
+        setConversationExport(current => current?.status === 'downloading'
+          ? { ...current, sourceKey: targetKey, sourceName: targetName, processed: progress.itemCount }
+          : current)
+      }),
+      isArkmeSelfWorkspaceSource(target)
+        ? collectArkmeConversationExportTopics(cursor => callArkme<ArkmeSourceList>('sources.list', {
+          directory: 'send_to_self', limit: 100,
+          ...(cursor === undefined ? {} : { cursor }),
+        }, controller.signal), controller.signal)
+        : Promise.resolve([] as ArkmeSourceItem[]),
+    ]).then(([exportItems, topics]) => {
+      if (controller.signal.aborted || conversationExportAbortRef.current !== controller) return
+      const markdown = arkmeConversationExportMarkdown({ source: target, items: exportItems, topics, exportedAt })
+      downloadArkmeConversationMarkdown(arkmeConversationExportFileName(target, exportedAt, topics), markdown)
+      setConversationExport({
+        sourceKey: targetKey,
+        sourceName: targetName,
+        processed: exportItems.length,
+        itemCount: exportItems.length,
+        status: 'success',
+      })
+      conversationExportToastSequenceRef.current += 1
+      setConversationExportToast({
+        sequence: conversationExportToastSequenceRef.current,
+        kind: 'success',
+        text: `已导出 ${String(exportItems.length)} 条内容，Markdown 文件已开始下载`,
+      })
+    }).catch(caught => {
+      if (!isArkmeRequestAbort(caught, controller.signal)) {
+        const failureMessage = errorMessage(caught) || '导出失败，请重试'
+        setConversationExport({
+          sourceKey: targetKey,
+          sourceName: targetName,
+          processed: 0,
+          status: 'error',
+          error: failureMessage,
+        })
+        conversationExportToastSequenceRef.current += 1
+        setConversationExportToast({
+          sequence: conversationExportToastSequenceRef.current,
+          kind: 'error',
+          text: failureMessage,
+        })
+      }
+    }).finally(() => {
+      if (conversationExportAbortRef.current !== controller) return
+      conversationExportAbortRef.current = undefined
+    })
+  }, [])
   const showForwardSuccessFeedback = useCallback((targets: readonly ArkmeSourceItem[], successCount: number, failureCount: number) => {
     if (forwardSuccessTimerRef.current !== undefined) {
       window.clearTimeout(forwardSuccessTimerRef.current)
@@ -6612,7 +6762,6 @@ export function ArkmeSurface({
   const utilityContentVisible = authView === 'content'
     && (ui.mode === 'recordings' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions'
       || ui.mode === 'voiceprint' || ui.mode === 'calls')
-  const conversationOverlayHost = panelRef.current
   const composerPlaceholder = arkmeComposerPlaceholderText(
     arkmeComposerPlaceholderTargetForSource(selectedSource, conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined ? conversationMembers.length : 0),
   )
@@ -6654,6 +6803,7 @@ export function ArkmeSurface({
     || drawer !== undefined
     || selectedMoment !== undefined
     || relatedMenuOpen
+    || selfMenuOpen
     || relatedPanelOpen
     || relatedDetail !== undefined
     || memberMenu !== undefined
@@ -6720,6 +6870,91 @@ export function ArkmeSurface({
     notificationActivation.source, notificationActivation.surfaceCommitted,
   ])
 
+  const selfWorkspaceSelected = conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
+  const selfTopicDirectoryOwner = authenticated && auth?.userId !== undefined
+    && (selfWorkspaceSelected || selfTopicPreviewRequested)
+    ? <ArkmeTopicDirectoryPopover
+      key={`self-topic-directory:${auth.environment}:${String(auth.userId)}`}
+      userId={auth.userId}
+      environment={auth.environment}
+      selectedSource={active && selfWorkspaceSelected ? selectedSource : undefined}
+      trigger="none"
+      onSelect={activateSelfSource}
+      onSelectionRefreshed={updateSourceProjection}
+      onSelectionInvalidated={invalidateTopicSelection}
+      onSelfSourcesResolution={acceptSelfSourcesResolution}
+      onCreateWarning={message => { showMessageActionStatus(message, false) }}
+      onCreateTopicReady={open => { selfTopicCreateRef.current = open }}
+      retryRevision={selfSourcesRetryRevision}
+    />
+    : null
+  const selfTopicMenuOwner = authenticated && auth?.userId !== undefined
+    ? <ArkmeSourceBreadcrumb
+      key={`source-breadcrumb:${auth.environment}:${String(auth.userId)}`}
+      userId={auth.userId}
+      environment={auth.environment}
+      selectedSource={selfWorkspaceSelected ? selectedSource : undefined}
+      sources={selfSources}
+      trigger={active && selfWorkspaceSelected ? 'visible' : 'none'}
+      tourOpen={active && selfWorkspaceSelected ? selfTour.topicMenuOpen : undefined}
+      loading={selfSourcesLoading || (selfTopicPreviewRequested && activeSelfSourcesResolution === undefined)}
+      countsReady={activeSelfSourcesResolution?.status === 'ready' ? activeSelfSourcesResolution.complete : false}
+      {...(selfSourcesError === undefined ? {} : { error: selfSourcesError })}
+      onSelect={activateSelfSource}
+      onSelectAggregate={activateSendToSelf}
+      onOpen={() => { if (auth.userId !== undefined) void selfTopicDirectory(auth.userId, auth.environment).ensure() }}
+      onCreateTopic={() => { selfTopicCreateRef.current?.() }}
+      onCreateChildTopic={(parent, parentLevel) => { selfTopicCreateRef.current?.(parent, parentLevel) }}
+      onRenameTopic={async (topic, title) => {
+        const result = await callArkme<{ sourceRef: string; displayName: string }>('topic.rename', {
+          sourceRef: topic.sourceRef,
+          title,
+        })
+        if (auth.userId !== undefined) selfTopicDirectory(auth.userId, auth.environment).upsert({ ...topic, sourceRef: result.sourceRef, displayName: result.displayName })
+        setSelfSourcesRetryRevision(value => value + 1)
+        return { ...topic, sourceRef: result.sourceRef, displayName: result.displayName }
+      }}
+      onDissolveTopic={async (topic, parent, children, onProgress) => {
+        const requestId = globalThis.crypto?.randomUUID?.() ?? `topic-dissolve-${String(Date.now())}`
+        let polling = true
+        const reportProgress = async () => {
+          if (!polling) return
+          const progress = await callArkme<ArkmeTopicDissolveTask | null>('topic.dissolve.status', { requestId })
+          if (progress !== null) {
+            onProgress(progress)
+            publishActiveTopicDissolve(progress)
+          }
+        }
+        const timer = globalThis.setInterval(() => { void reportProgress().catch(() => undefined) }, 250)
+        try {
+          await callArkme('topic.dissolve', {
+            sourceRef: topic.sourceRef,
+            ...(parent === undefined ? {} : { parentSourceRef: parent.sourceRef }),
+            childSourceRefs: children.map(child => child.sourceRef),
+            requestId,
+            expectedRecordCount: Math.max(0, topic.recordCount ?? 0),
+          })
+          await reportProgress()
+          setSelfSourcesRetryRevision(value => value + 1)
+        } finally {
+          polling = false
+          globalThis.clearInterval(timer)
+        }
+      }}
+      {...(activeTopicDissolve === undefined ? {} : { activeDissolve: activeTopicDissolve })}
+      onRetry={() => { setSelfSourcesRetryRevision(value => value + 1) }}
+      onMoveTopic={async (topic, currentParent, nextParent, insertBefore) => {
+        await callArkme<ArkmeTopicHierarchyMoveResult>('topic.hierarchy.move', {
+          sourceRef: topic.sourceRef,
+          ...(currentParent === undefined ? {} : { currentParentSourceRef: currentParent.sourceRef }),
+          ...(nextParent === undefined ? {} : { nextParentSourceRef: nextParent.sourceRef }),
+          ...(insertBefore === undefined ? {} : { insertBeforeSourceRef: insertBefore.sourceRef }),
+        })
+        setSelfSourcesRetryRevision(value => value + 1)
+      }}
+    />
+    : null
+
   const recordingImportOwner = authView === 'content' && authenticatedUserId !== undefined
     && authStoreSnapshot.config?.recordingWorkbenchEnabled !== false
     ? <ArkmeRecordingImportDialog
@@ -6747,6 +6982,8 @@ export function ArkmeSurface({
       }}
       aria-hidden
     />
+    {selfTopicDirectoryOwner}
+    {selfTopicMenuOwner}
     {recordingImportOwner}
   </>
 
@@ -6851,85 +7088,15 @@ export function ArkmeSurface({
         role="region"
         aria-label={surfaceTitle}
       >
+        {selfTopicDirectoryOwner}
+        {!selfWorkspaceSelected && selfTopicMenuOwner}
         {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header className="arkme-conversation-header" style={styles.header}>
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
             <ArkmeDirectorySourceAvatar source={source} size={34} />
           </span>}
-          {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
-            && auth?.userId !== undefined && <ArkmeTopicDirectoryPopover
-              key={`${String(auth.userId)}:${conversationOverlayKey}`}
-              userId={auth.userId}
-              selectedSource={selectedSource}
-              trigger="none"
-              onSelect={activateSelfSource}
-              onSelectionRefreshed={updateSourceProjection}
-              onSelectionInvalidated={invalidateTopicSelection}
-              onSelfSourcesResolution={acceptSelfSourcesResolution}
-              onCreateWarning={message => { showMessageActionStatus(message, false) }}
-              onCreateTopicReady={open => { selfTopicCreateRef.current = open }}
-              retryRevision={selfSourcesRetryRevision}
-            />}
           <div style={styles.titleGroup}>
-            {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
-              ? <ArkmeSourceBreadcrumb
-                key={`source-breadcrumb:${conversationOverlayKey}`}
-                userId={auth?.userId}
-                selectedSource={selectedSource}
-                sources={selfSources}
-                tourOpen={selfTour.topicMenuOpen}
-                loading={selfSourcesLoading}
-                {...(selfSourcesError === undefined ? {} : { error: selfSourcesError })}
-                onSelect={activateSelfSource}
-                onSelectAggregate={activateSendToSelf}
-                onCreateTopic={() => { selfTopicCreateRef.current?.() }}
-                onCreateChildTopic={(parent, parentLevel) => { selfTopicCreateRef.current?.(parent, parentLevel) }}
-                onRenameTopic={async (topic, title) => {
-                  const result = await callArkme<{ sourceRef: string; displayName: string }>('topic.rename', {
-                    sourceRef: topic.sourceRef,
-                    title,
-                  })
-                  setSelfSourcesRetryRevision(value => value + 1)
-                  return { ...topic, sourceRef: result.sourceRef, displayName: result.displayName }
-                }}
-                onDissolveTopic={async (topic, parent, children, onProgress) => {
-                  const requestId = globalThis.crypto?.randomUUID?.() ?? `topic-dissolve-${String(Date.now())}`
-                  let polling = true
-                  const reportProgress = async () => {
-                    if (!polling) return
-                    const progress = await callArkme<ArkmeTopicDissolveTask | null>('topic.dissolve.status', { requestId })
-                    if (progress !== null) {
-                      onProgress(progress)
-                      publishActiveTopicDissolve(progress)
-                    }
-                  }
-                  const timer = globalThis.setInterval(() => { void reportProgress().catch(() => undefined) }, 250)
-                  try {
-                  await callArkme('topic.dissolve', {
-                    sourceRef: topic.sourceRef,
-                    ...(parent === undefined ? {} : { parentSourceRef: parent.sourceRef }),
-                    childSourceRefs: children.map(child => child.sourceRef),
-                    requestId,
-                    expectedRecordCount: Math.max(0, topic.recordCount ?? 0),
-                  })
-                  await reportProgress()
-                  setSelfSourcesRetryRevision(value => value + 1)
-                  } finally {
-                    polling = false
-                    globalThis.clearInterval(timer)
-                  }
-                }}
-                {...(activeTopicDissolve === undefined ? {} : { activeDissolve: activeTopicDissolve })}
-                onRetry={() => { setSelfSourcesRetryRevision(value => value + 1) }}
-                onMoveTopic={async (topic, currentParent, nextParent, insertBefore) => {
-                  await callArkme<ArkmeTopicHierarchyMoveResult>('topic.hierarchy.move', {
-                    sourceRef: topic.sourceRef,
-                    ...(currentParent === undefined ? {} : { currentParentSourceRef: currentParent.sourceRef }),
-                    ...(nextParent === undefined ? {} : { nextParentSourceRef: nextParent.sourceRef }),
-                    ...(insertBefore === undefined ? {} : { insertBeforeSourceRef: insertBefore.sourceRef }),
-                  })
-                  setSelfSourcesRetryRevision(value => value + 1)
-                }}
-              />
+            {selfWorkspaceSelected
+              ? selfTopicMenuOwner
               : <div style={styles.titleBlock}>
                 <span style={styles.titleLine}>
                   <h2 style={styles.title}>{surfaceTitle}</h2>
@@ -6942,7 +7109,7 @@ export function ArkmeSurface({
                   && aiPolishSettings?.enabled === true
                   && <span style={styles.headerSubtitle}>AI润色已开启{aiPolishSettings.activeRuleName.trim() === '' ? '' : ` · ${aiPolishSettings.activeRuleName}`}</span>}
               </div>}
-            {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
+            {authenticated && selfWorkspaceSelected
               && source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon size={16} /></span>}
           </div>
           {authenticated && activeConversation && sourceIsChat && source !== undefined && <ArkmeConversationSearch
@@ -6969,25 +7136,102 @@ export function ArkmeSurface({
             onMemberContextMenu={openMemberMenu}
             onStatus={showMessageActionStatus}
             onError={setError}
+            onExport={() => { startConversationExport(source) }}
+            exportBusy={conversationExport?.status === 'downloading'}
+            exportProcessed={conversationExport?.processed ?? 0}
           />}
+          {authenticated && activeConversation && isArkmeSelfWorkspaceSource(source) && <div style={ARKME_CONVERSATION_HEADER_ACTIONS_STYLE}>
+            <ArkmeConversationHeaderIconButton
+              label="按日期查看发给自己"
+              buttonRef={selfCalendarButtonRef}
+              hasPopup
+              expanded={selfCalendarOpen}
+              onClick={() => {
+                setRelatedMenuOpen(false)
+                setSelfMenuOpen(false)
+                setSelfCalendarOpen(value => !value)
+              }}
+            ><CalendarBlank size={16} aria-hidden /></ArkmeConversationHeaderIconButton>
+            <ArkmeSelfCalendarPopover
+              key={`self-calendar:${authenticatedAccountKey}:${conversationKey}`}
+              accountScope={authenticatedAccountKey}
+              scopeKey={source.kind === 'topic' ? conversationKey : source.kind}
+              sourceRef={source.sourceRef}
+              open={selfCalendarOpen}
+              anchor={selfCalendarButtonRef}
+              onClose={() => { setSelfCalendarOpen(false) }}
+              onSelectRecord={(item: ArkmeCalendarRecordItem) => {
+                arkmeUi.showConversationTarget(source, item.recordUid, item.sendAtMillis)
+              }}
+            />
+            <ConversationActionsMenu
+              items={[conversationExportActionItem({
+                busy: conversationExport?.status === 'downloading',
+                processed: conversationExport?.processed ?? 0,
+                invoke: () => { startConversationExport(source) },
+              })]}
+              anchor={selfMenuButtonRef}
+              label="更多发给自己操作"
+              onClose={() => { setSelfMenuOpen(false) }}
+              trigger={{
+                open: selfMenuOpen,
+                busy: conversationExport?.status === 'downloading',
+                onOpenChange: open => {
+                  setRelatedMenuOpen(false)
+                  setSelfCalendarOpen(false)
+                  setSelfMenuOpen(open)
+                },
+              }}
+            />
+          </div>}
           {shouldShowPrivateChatActions(authenticated, source?.kind) && <div style={{
             ...ARKME_CONVERSATION_HEADER_ACTIONS_STYLE,
             visibility: relatedPanelOpen ? 'hidden' : 'visible',
           }}>
-            <ArkmeConversationHeaderIconButton
-              label="更多私聊操作"
-              buttonRef={relatedMenuButtonRef}
-              hasPopup
-              expanded={relatedMenuOpen}
-              onClick={toggleRelatedMenu}
-            ><ArkmeConversationMoreIcon /></ArkmeConversationHeaderIconButton>
+            <ConversationActionsMenu items={privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
+              busy: conversationExport?.status === 'downloading',
+              processed: conversationExport?.processed ?? 0,
+              invoke: () => { startConversationExport(source) },
+            })}
+              anchor={relatedMenuButtonRef}
+              onClose={() => { setRelatedMenuOpen(false) }}
+              trigger={{
+                open: relatedMenuOpen,
+                busy: conversationExport?.status === 'downloading',
+                onOpenChange: open => {
+                  setSelfMenuOpen(false)
+                  setSelfCalendarOpen(false)
+                  if (open === relatedMenuOpen) return
+                  if (open) toggleRelatedMenu()
+                  else setRelatedMenuOpen(false)
+                },
+              }}
+            />
           </div>}
-          {activeConversation && shouldShowPrivateChatActions(authenticated, source?.kind) && relatedMenuOpen && conversationOverlayHost !== null && createPortal(
-            <ConversationActionsMenu items={privateChatActionItems(privateActions, directAdmission, openRelatedPanel)}
-              anchor={relatedMenuButtonRef} host={conversationOverlayHost} onClose={() => { setRelatedMenuOpen(false) }} />,
-            conversationOverlayHost,
-          )}
         </header>}
+        {conversationExport?.status === 'downloading' && <div
+          role="status"
+          aria-live="polite"
+          data-arkme-conversation-export-progress="true"
+          style={styles.conversationExportProgress}
+        >
+          <IconLoadingOutline16 className="arkme-icon-spin" />
+          <span style={styles.conversationExportProgressName}>{conversationExport.sourceName}</span>
+          <span style={styles.conversationExportProgressCount}>{conversationExport.processed > 0
+            ? `已处理 ${String(conversationExport.processed)} 条`
+            : '正在准备'}</span>
+        </div>}
+        {conversationExportToast !== undefined && <Toast
+          key={conversationExportToast.sequence}
+          text={conversationExportToast.text}
+          anchor={panelRef.current}
+          icon={conversationExportToast.kind === 'success'
+            ? <span style={{ color: 'var(--dsw-alias-state-success-primary, #16a34a)' }}><IconCheckOutline16 /></span>
+            : <span style={{ color: 'var(--dsw-alias-state-error-primary, #ef4444)' }}><IconWarningOutline16 /></span>}
+          onDone={() => {
+            setConversationExportToast(current => current?.sequence === conversationExportToast.sequence ? undefined : current)
+          }}
+        />}
         {authView === 'login' ? <div style={styles.loginBody}><ArkmeLogin
           t={t}
           mode={loginMode}

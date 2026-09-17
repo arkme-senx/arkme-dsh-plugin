@@ -293,6 +293,7 @@ export function ArkmeProductNavigation({
       </div>
       {ui.calendarOpen === true && typeof document !== 'undefined' && createPortal(<ArkmeCalendarSurface
         anchor="product-rail"
+        accountScope={authState.auth?.status === 'authenticated' ? `${authState.auth.environment}:${authState.auth.userId}` : undefined}
         onClose={() => { arkmeUi.hideCalendar() }}
       />, document.body)}
       {!compact && !locked && <div className="arkme-redesign-rail-footer">

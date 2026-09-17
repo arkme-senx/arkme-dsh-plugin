@@ -3,6 +3,9 @@ import {
   type CSSProperties, type ReactNode, type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
+import {
+  IconDownloadOutline16, IconEllipsisOutline16, type MenuEntry,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ArrowUp } from '@phosphor-icons/react/dist/icons/ArrowUp'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
@@ -43,6 +46,7 @@ import { arkmeSourceIdentityKey } from './source-identity.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
+import { ArkmeDshMenu } from './ArkmeDshMenu.js'
 
 const colors = {
   panel: arkmeTheme.layer2,
@@ -64,8 +68,9 @@ export const ARKME_CONVERSATION_HEADER_ACTIONS_STYLE: CSSProperties = {
 }
 
 export const ARKME_CONVERSATION_HEADER_BUTTON_STYLE: CSSProperties = {
-  width: 32, height: 32, padding: 4, border: 0, borderRadius: 4, background: 'transparent',
-  color: ARKME_GROUP_HEADER_ICON_COLOR, display: 'grid', placeItems: 'center', cursor: 'pointer',
+  width: 28, height: 28, padding: 6, border: 0, borderRadius: 28, background: 'transparent',
+  color: 'var(--dsw-alias-label-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  flex: 'none', cursor: 'pointer',
 }
 
 export const ARKME_CONVERSATION_SETTINGS_MENU_WIDTH = GROUP_SETTINGS_MENU_WIDTH
@@ -307,11 +312,7 @@ function ClientIcon({ src, size = 20 }: { src: string; size?: number }) {
 }
 
 export function ArkmeConversationMoreIcon() {
-  return <svg aria-hidden width="24" height="24" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}>
-    <circle cx="5" cy="12" r="1.8" fill="currentColor" />
-    <circle cx="12" cy="12" r="1.8" fill="currentColor" />
-    <circle cx="19" cy="12" r="1.8" fill="currentColor" />
-  </svg>
+  return <IconEllipsisOutline16 size={15} />
 }
 
 function MagicWandIcon() {
@@ -328,6 +329,7 @@ export function ArkmeConversationHeaderIconButton(props: {
   buttonRef?: RefObject<HTMLButtonElement>
   hasPopup?: boolean
   expanded?: boolean
+  busy?: boolean
   onClick: () => void
 }) {
   return <button
@@ -336,9 +338,10 @@ export function ArkmeConversationHeaderIconButton(props: {
     aria-label={props.label}
     aria-haspopup={props.hasPopup ? 'menu' : undefined}
     aria-expanded={props.expanded}
+    aria-busy={props.busy || undefined}
     title={props.label}
     style={styles.headerButton}
-    onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
+    onMouseEnter={event => { event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover)' }}
     onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
     onClick={props.onClick}
   >{props.children}</button>
@@ -860,22 +863,24 @@ function InviteCollaboratorsDialog(props: {
 }
 
 function MessageDndSwitch(props: { checked: boolean; busy: boolean; onChange: (checked: boolean) => void }) {
-  return <button
-    type="button"
+  return <span
     role="switch"
     aria-label="消息免打扰"
     aria-checked={props.checked}
-    disabled={props.busy}
+    aria-disabled={props.busy || undefined}
     style={{
       ...styles.switch,
       background: props.checked ? colors.primary : arkmeTheme.active,
       opacity: props.busy ? .55 : 1,
       justifyContent: 'flex-start',
     }}
-    onClick={event => { event.stopPropagation(); props.onChange(!props.checked) }}
+    onClick={(event?: { stopPropagation(): void }) => {
+      event?.stopPropagation()
+      if (!props.busy) props.onChange(!props.checked)
+    }}
   >
     <span style={{ ...styles.switchThumb, transform: props.checked ? 'translateX(18px)' : 'translateX(0)' }} />
-  </button>
+  </span>
 }
 
 const initialAiPolishMessage: ArkmeGroupAiPolishThreadMessage = {
@@ -1143,7 +1148,8 @@ function GroupAiPolishPanel(props: {
 function GroupSettingsMenu(props: {
   source: ArkmeSourceItem
   open: boolean
-  position: { left: number; top: number }
+  buttonRef: RefObject<HTMLButtonElement>
+  onOpenChange: (open: boolean) => void
   onClose: () => void
   onRename: (target: ArkmeGroupActionTarget) => void
   onSelfNickname: () => void
@@ -1155,6 +1161,9 @@ function GroupSettingsMenu(props: {
   onMembershipChanged: (target: ArkmeGroupActionTarget) => void
   onMessageDndUpdated: (target: ArkmeGroupActionTarget, result: ArkmeGroupNotificationResult) => boolean
   onError: (message: string) => void
+  onExport: () => void
+  exportBusy: boolean
+  exportProcessed: number
 }) {
   const [snapshot, setSnapshot] = useState<ArkmeGroupSettingsSnapshot>()
   const [notification, setNotification] = useState<ArkmeGroupNotificationResult>({
@@ -1273,97 +1282,100 @@ function GroupSettingsMenu(props: {
     }
   }, [actionTarget.sourceRef, effective.canDissolve, props.onClose, props.onError, props.onMembershipChanged])
 
-  if (!props.open) return null
-  return <div style={styles.menuScrim} role="presentation" onMouseDown={event => {
-    if (event.target === event.currentTarget) props.onClose()
-  }}>
-    <div
-      style={{ ...styles.popover, left: props.position.left, top: props.position.top, maxHeight: 'calc(100% - 24px)', overflowY: 'auto' }}
-      role="menu"
-      aria-label="群聊设置"
-      onMouseDown={event => { event.stopPropagation() }}
-    >
-      <div role="presentation" style={{ padding: '8px 8px 4px', fontSize: 12, lineHeight: '18px', color: colors.secondary }}>个人设置</div>
-      {effective.selfStatus === 'active' && <button type="button" role="menuitem" style={styles.menuRow}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-        onClick={() => { props.onSelfNickname(); props.onClose() }}
-      ><ClientIcon src={icons.selfNickname} /><span>修改群昵称</span></button>}
-      <div style={styles.menuRow} role="none">
-        <ClientIcon src={icons.notice} />
-        <span>消息免打扰</span>
-        <MessageDndSwitch
-          checked={messageDnd}
-          busy={busy}
-          onChange={next => {
-            setBusy(true)
-            void callArkme<ArkmeGroupNotificationResult>('group.notification.set', {
-              sourceRef: actionTarget.sourceRef,
-              enabled: next,
-            })
-              .then(result => {
-                const accepted = props.onMessageDndUpdated(actionTarget, result)
-                setNotification(current => current.chatNotificationPolicyUpdatedAtMillis > result.chatNotificationPolicyUpdatedAtMillis
-                  ? current : { ...result, messageDnd: accepted })
-              })
-              .catch(caught => { props.onError(errorMessage(caught)) })
-              .finally(() => { setBusy(false) })
-          }}
-        />
-      </div>
-      <button
-        type="button"
-        role="menuitem"
-        data-arkme-group-ai-polish-entry="true"
-        style={styles.menuRow}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-        onClick={props.onAiPolishOpen}
-      >
-        <MagicWandIcon />
-        <span style={{ flex: 'none' }}>AI 表达润色</span>
-        <span style={{ minWidth: 0, marginLeft: 'auto', color: colors.secondary, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {localAiPolishSettings === undefined
-            ? aiPolishLoadState === 'error' ? '加载失败' : '读取中'
-            : localAiPolishSettings.enabled ? localAiPolishSettings.activeRuleName || '已开启' : '不润色'}
-        </span>
-        <span aria-hidden style={{ flex: 'none', color: colors.secondary, fontSize: 16 }}>›</span>
-      </button>
-      {(effective.canRename || (effective.selfRole === 'owner' && effective.selfStatus === 'active')) && <>
-      <div role="separator" style={{ height: 1, background: colors.border, margin: '8px 0' }} />
-      <div role="presentation" style={{ padding: '8px 8px 4px', fontSize: 12, lineHeight: '18px', color: colors.secondary }}>群管理</div>
-      {effective.canRename && <button
-        type="button"
-        role="menuitem"
-        style={styles.menuRow}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-        onClick={() => {
-          props.onRename(actionTarget)
-          props.onClose()
-        }}
-      ><ClientIcon src={icons.rename} /><span>修改群名称</span></button>}
-      {effective.selfRole === 'owner' && effective.selfStatus === 'active' && <button
-        type="button"
-        role="menuitem"
-        style={styles.menuRow}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-        onClick={props.onRestrictionsOpen}
-      ><span aria-hidden style={{ width: 20, display: 'grid', placeItems: 'center' }}><Prohibit size={18} /></span><span>禁止加入名单</span><span aria-hidden style={{ marginLeft: 'auto', color: colors.secondary }}>›</span></button>}
-      </>}
-      <div role="separator" style={{ height: 1, background: colors.border, margin: '8px 0' }} />
-      <button
-        type="button"
-        role="menuitem"
-        style={{ ...styles.menuRow, color: arkmeTheme.danger }}
-        disabled={busy || (!effective.canLeave && !effective.canDissolve)}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-        onClick={() => { void leaveOrDissolve() }}
-      ><ClientIcon src={icons.exit} /><span>{effective.canDissolve ? '解散群聊' : '退出群聊'}</span></button>
-    </div>
-  </div>
+  const changeMessageDnd = (next: boolean) => {
+    setBusy(true)
+    void callArkme<ArkmeGroupNotificationResult>('group.notification.set', {
+      sourceRef: actionTarget.sourceRef,
+      enabled: next,
+    }).then(result => {
+      const accepted = props.onMessageDndUpdated(actionTarget, result)
+      setNotification(current => current.chatNotificationPolicyUpdatedAtMillis > result.chatNotificationPolicyUpdatedAtMillis
+        ? current : { ...result, messageDnd: accepted })
+    }).catch(caught => { props.onError(errorMessage(caught)) })
+      .finally(() => { setBusy(false) })
+  }
+  const entries: MenuEntry[] = [
+    { id: 'export', label: props.exportBusy
+      ? `正在导出${props.exportProcessed > 0 ? ` · ${String(props.exportProcessed)} 条` : ''}`
+      : '导出', icon: <IconDownloadOutline16 />, disabled: props.exportBusy },
+    { type: 'separator', id: 'personal-separator' },
+    { type: 'label', id: 'personal-label', text: '个人设置' },
+  ]
+  if (effective.selfStatus === 'active') entries.push({ id: 'self-nickname', label: '修改群昵称', icon: <ClientIcon src={icons.selfNickname} size={16} /> })
+  entries.push({
+    id: 'message-dnd',
+    label: <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <span style={{ flex: 1 }}>消息免打扰</span>
+      <MessageDndSwitch checked={messageDnd} busy={busy} onChange={changeMessageDnd} />
+    </span>,
+    icon: <ClientIcon src={icons.notice} size={16} />,
+    disabled: busy,
+  })
+  const polishStatus = localAiPolishSettings === undefined
+    ? aiPolishLoadState === 'error' ? '加载失败' : '读取中'
+    : localAiPolishSettings.enabled ? localAiPolishSettings.activeRuleName || '已开启' : '不润色'
+  entries.push({
+    id: 'ai-polish',
+    label: <span
+      data-arkme-group-ai-polish-entry="true"
+      onClick={(event?: { stopPropagation(): void }) => {
+        event?.stopPropagation()
+        close()
+        props.onAiPolishOpen()
+      }}
+    >AI 表达润色 · {polishStatus}</span>,
+    icon: <MagicWandIcon />,
+  })
+  if (effective.canRename || (effective.selfRole === 'owner' && effective.selfStatus === 'active')) {
+    entries.push({ type: 'separator', id: 'management-separator' }, { type: 'label', id: 'management-label', text: '群管理' })
+    if (effective.canRename) entries.push({ id: 'rename', label: '修改群名称', icon: <ClientIcon src={icons.rename} size={16} /> })
+    if (effective.selfRole === 'owner' && effective.selfStatus === 'active') {
+      entries.push({ id: 'restrictions', label: '禁止加入名单', icon: <Prohibit size={16} aria-hidden /> })
+    }
+  }
+  entries.push(
+    { type: 'separator', id: 'leave-separator' },
+    {
+      id: 'leave',
+      label: <span style={{ color: arkmeTheme.danger }}>{effective.canDissolve ? '解散群聊' : '退出群聊'}</span>,
+      icon: <span style={{ color: arkmeTheme.danger }}><ClientIcon src={icons.exit} size={16} /></span>,
+      disabled: busy || (!effective.canLeave && !effective.canDissolve),
+    },
+  )
+
+  const close = () => {
+    props.onOpenChange(false)
+    props.onClose()
+  }
+  return <ArkmeDshMenu
+    open={props.open}
+    label="群聊设置"
+    align="end"
+    dense
+    items={entries}
+    onClose={close}
+    onSelect={id => {
+      if (id === 'export') { close(); props.onExport(); return }
+      if (id === 'self-nickname') { close(); props.onSelfNickname(); return }
+      if (id === 'message-dnd') {
+        close()
+        changeMessageDnd(!messageDnd)
+        return
+      }
+      if (id === 'ai-polish') { close(); props.onAiPolishOpen(); return }
+      if (id === 'rename') { close(); props.onRename(actionTarget); return }
+      if (id === 'restrictions') { close(); props.onRestrictionsOpen(); return }
+      if (id === 'leave') { close(); void leaveOrDissolve() }
+    }}
+    anchor={<ArkmeConversationHeaderIconButton
+      label="群聊设置"
+      buttonRef={props.buttonRef}
+      hasPopup
+      expanded={props.open}
+      busy={props.exportBusy}
+      onClick={() => { props.onOpenChange(!props.open) }}
+    ><ArkmeConversationMoreIcon /></ArkmeConversationHeaderIconButton>}
+  />
 }
 
 function GroupJoinRestrictionsPanel(props: {
@@ -1624,6 +1636,9 @@ export function ArkmeGroupChatControls(props: {
   onAiPolishSettingsChanged?: (settings: ArkmeGroupAiPolishSnapshot) => void
   onStatus?: (message: string) => void
   onError: (message: string) => void
+  onExport?: () => void
+  exportBusy?: boolean
+  exportProcessed?: number
 }) {
   const [localMembersOpen, setLocalMembersOpen] = useState(false)
   const membersOpen = props.membersOpen ?? localMembersOpen
@@ -1634,7 +1649,6 @@ export function ArkmeGroupChatControls(props: {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [addMembersOpen, setAddMembersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [settingsPosition, setSettingsPosition] = useState({ left: 12, top: 54 })
   const [aiPolishOpen, setAiPolishOpen] = useState(false)
   const [restrictionsOpen, setRestrictionsOpen] = useState(false)
   const [selfNicknameOpen, setSelfNicknameOpen] = useState(false)
@@ -1665,18 +1679,6 @@ export function ArkmeGroupChatControls(props: {
       setSettingsOpen(false)
       return
     }
-    const host = props.overlayHostRef.current
-    const button = settingsButtonRef.current
-    if (host !== null && button !== null) {
-      const hostRect = host.getBoundingClientRect()
-      const buttonRect = button.getBoundingClientRect()
-      const menuWidth = GROUP_SETTINGS_MENU_WIDTH
-      const menuHeight = 360
-      setSettingsPosition({
-        left: Math.max(12, Math.min(hostRect.width - menuWidth - 12, buttonRect.right - hostRect.left - menuWidth)),
-        top: Math.max(8, Math.min(hostRect.height - menuHeight - 12, buttonRect.bottom - hostRect.top + 8)),
-      })
-    }
     setMembersOpen(false)
     setAiPolishOpen(false)
     setRestrictionsOpen(false)
@@ -1701,13 +1703,14 @@ export function ArkmeGroupChatControls(props: {
   return <>
     <div style={styles.headerActions}>
       <ArkmeConversationHeaderIconButton label="查看群成员" onClick={openMembers}><ClientIcon src={icons.members} size={24} /></ArkmeConversationHeaderIconButton>
-      <ArkmeConversationHeaderIconButton label="群聊设置" buttonRef={settingsButtonRef} hasPopup expanded={settingsOpen} onClick={toggleSettings}><ArkmeConversationMoreIcon /></ArkmeConversationHeaderIconButton>
-    </div>
-    {overlayHost !== null && createPortal(<>
       <GroupSettingsMenu
         source={props.source}
         open={settingsOpen}
-        position={settingsPosition}
+        buttonRef={settingsButtonRef}
+        onOpenChange={open => {
+          if (open) toggleSettings()
+          else setSettingsOpen(false)
+        }}
         aiPolishSettings={props.aiPolishSettings}
         onAiPolishSettingsChanged={settings => { props.onAiPolishSettingsChanged?.(settings) }}
         onClose={() => { setSettingsOpen(false) }}
@@ -1719,7 +1722,12 @@ export function ArkmeGroupChatControls(props: {
         onMembershipChanged={props.onMembershipChanged}
         onMessageDndUpdated={props.onMessageDndUpdated}
         onError={reportError}
+        onExport={() => { props.onExport?.() }}
+        exportBusy={props.exportBusy === true}
+        exportProcessed={props.exportProcessed ?? 0}
       />
+    </div>
+    {overlayHost !== null && createPortal(<>
       <GroupAiPolishPanel
         source={props.source}
         open={aiPolishOpen}
