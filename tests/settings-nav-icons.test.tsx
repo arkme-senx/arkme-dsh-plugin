@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
-import { installArkmeAccountSettingsNavIcon } from '../src/client/account-settings-nav-icon.js'
+import { installArkmeSettingsNavIcons } from '../src/client/settings-nav-icons.js'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   IconUserOutline16: ({ size = 16, className }: { size?: number; className?: string }) => (
@@ -34,7 +34,7 @@ class FakeHost implements FakeElement {
   }
 
   matches(selector: string): boolean {
-    return selector === '[data-arkme-account-nav-icon]'
+    return selector === '[data-arkme-account-nav-icon], [data-arkme-data-nav-icon]'
   }
 
   closest(selector: string): FakeElement | null {
@@ -102,7 +102,7 @@ class FakeButton implements FakeElement {
   }
 
   querySelector(selector: string): FakeHost | FakeIcon | null {
-    if (selector === '[data-arkme-account-nav-icon]') return this.host ?? null
+    if (selector === '[data-arkme-account-nav-icon], [data-arkme-data-nav-icon]') return this.host ?? null
     if (selector === ':scope > svg') return this.icon ?? null
     return null
   }
@@ -131,7 +131,7 @@ class FakeDialog implements FakeElement {
   }
 
   querySelector(selector: string): FakeElement | null {
-    return selector === '[role="dialog"], [role="dialog"] nav button, [data-arkme-account-nav-icon]'
+    return selector === '[role="dialog"], [role="dialog"] nav button, [data-arkme-account-nav-icon], [data-arkme-data-nav-icon]'
       ? this
       : null
   }
@@ -246,19 +246,20 @@ describe('Arkme account settings navigation icon', () => {
     const document = new FakeDocument()
     const account = new FakeButton('我的账户')
     const general = new FakeButton('通用设置')
+    const data = new FakeButton('数据管理')
     const duplicateA = new FakeButton('我的账户')
     const duplicateB = new FakeButton('我的账户')
     const wrongLocale = new FakeButton('My account')
     const missingIcon = new FakeButton('我的账户', false)
     document.dialogs = [
-      new FakeDialog([account, general]),
+      new FakeDialog([account, data, general]),
       new FakeDialog([duplicateA, duplicateB]),
       new FakeDialog([wrongLocale]),
       new FakeDialog([missingIcon]),
     ]
     const harness = createRuntime(document)
 
-    const dispose = installArkmeAccountSettingsNavIcon(harness.runtime as never)
+    const dispose = installArkmeSettingsNavIcons(harness.runtime as never)
 
     expect(account.icon!.style.display).toBe('none')
     expect(account.host?.dataset.arkmeAccountNavIcon).toBe('true')
@@ -269,7 +270,9 @@ describe('Arkme account settings navigation icon', () => {
     expect(duplicateB.host).toBeUndefined()
     expect(wrongLocale.host).toBeUndefined()
     expect(missingIcon.host).toBeUndefined()
-    expect(harness.rendered).toHaveLength(1)
+    expect(harness.rendered).toHaveLength(2)
+    expect(data.host?.dataset.arkmeDataNavIcon).toBe('true')
+    expect(renderToStaticMarkup(harness.rendered[1])).not.toContain('user-shoulders')
     expect(renderToStaticMarkup(harness.rendered[0])).toContain('user-shoulders')
     dispose()
   })
@@ -277,7 +280,7 @@ describe('Arkme account settings navigation icon', () => {
   it('ignores unrelated application mutations and rescans only settings mutations', () => {
     const document = new FakeDocument()
     const harness = createRuntime(document)
-    const dispose = installArkmeAccountSettingsNavIcon(harness.runtime as never)
+    const dispose = installArkmeSettingsNavIcons(harness.runtime as never)
 
     expect(document.querySelectorAll).toHaveBeenCalledOnce()
     FakeMutationObserver.latest!.emit({
@@ -301,7 +304,7 @@ describe('Arkme account settings navigation icon', () => {
     const firstDialog = new FakeDialog([first])
     document.dialogs = [firstDialog]
     const harness = createRuntime(document)
-    const dispose = installArkmeAccountSettingsNavIcon(harness.runtime as never)
+    const dispose = installArkmeSettingsNavIcons(harness.runtime as never)
     const firstHost = first.host!
     const firstRoot = harness.roots.get(firstHost)!
 
@@ -340,7 +343,7 @@ describe('Arkme account settings navigation icon', () => {
       document.dialogs = [new FakeDialog([account])]
       const harness = createRuntime(document, failure)
 
-      expect(() => installArkmeAccountSettingsNavIcon(harness.runtime as never)).not.toThrow()
+      expect(() => installArkmeSettingsNavIcons(harness.runtime as never)).not.toThrow()
       expect(account.icon!.style.display).toBe('inline-block')
       expect(account.host).toBeUndefined()
     },
@@ -350,7 +353,7 @@ describe('Arkme account settings navigation icon', () => {
     const document = new FakeDocument()
     document.dialogs = [new FakeDialog([new FakeButton('我的账户')])]
     const harness = createRuntime(document)
-    const dispose = installArkmeAccountSettingsNavIcon({
+    const dispose = installArkmeSettingsNavIcons({
       ...harness.runtime,
       MutationObserver: undefined,
     } as never)

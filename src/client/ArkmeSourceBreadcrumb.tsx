@@ -1,5 +1,4 @@
-import { ArkmeArchiveAction, ArkmeArchiveDialog, ArkmeArchiveStatus } from './ArkmeArchive.js'
-import type { ArkmeArchiveState } from '../archive-contract.js'
+import { ArkmeArchiveAction, ArkmeArchiveStatus, useArchiveMutation } from './ArkmeArchive.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { Button, IconNewChatOutline16, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -368,10 +367,7 @@ export function ArkmeSourceBreadcrumb({
   const [draggingSourceRef, setDraggingSourceRef] = useState<string>()
   const [hoveredSourceRef, setHoveredSourceRef] = useState<string>()
   const [topicMenuSource, setTopicMenuSource] = useState<ArkmeSourceItem>()
-  // The directory row disappears after archive; its confirmation belongs to
-  // the stable surface so an early projection refresh cannot abort the write.
-  const [archiveConfirmation, setArchiveConfirmation] = useState<{ state: ArkmeArchiveState; title: string }>()
-  const closeArchiveConfirmation = useCallback(() => { setArchiveConfirmation(undefined) }, [])
+  const archiveMutation = useArchiveMutation()
   const [hoveredTopicMenuAction, setHoveredTopicMenuAction] = useState<string>()
   const [renameTopic, setRenameTopic] = useState<ArkmeSourceItem>()
   const [dissolveTopic, setDissolveTopic] = useState<ArkmeSourceItem>()
@@ -444,7 +440,6 @@ export function ArkmeSourceBreadcrumb({
   }
   useEffect(() => {
     setSort(readSelfTopicSortPreference(userId))
-    setArchiveConfirmation(undefined)
     setSortMenuOpen(false)
   }, [userId])
   useEffect(() => {
@@ -971,10 +966,14 @@ export function ArkmeSourceBreadcrumb({
               setTopicMutationError('')
               setRenameTopic(row.source)
             }}>重命名</button>}
-            <ArkmeArchiveAction source={row.source} menu style={styles.topicManageAction} onConfirm={state => {
-              setArchiveConfirmation({state, title: row.source.displayName})
+            <ArkmeArchiveAction source={row.source} disabled={archiveMutation.busy}
+              style={{ ...styles.topicManageAction, ...(hoveredTopicMenuAction === `${row.source.sourceRef}:archive` ? styles.topicManageActionHover : {}) }}
+              onMouseEnter={() => { setHoveredTopicMenuAction(`${row.source.sourceRef}:archive`) }}
+              onMouseLeave={() => { setHoveredTopicMenuAction(current => current === `${row.source.sourceRef}:archive` ? undefined : current) }}
+              onAction={state => {
               setTopicMenuSource(undefined)
-              closeMenu()
+              setHoveredTopicMenuAction(undefined)
+              void archiveMutation.set(state)
             }} />
             {onDissolveTopic !== undefined && <button type="button" role="menuitem"
               style={{ ...styles.topicManageAction, ...styles.topicManageDanger, ...(hoveredTopicMenuAction === `${row.source.sourceRef}:dissolve` ? styles.topicManageActionHover : {}) }}
@@ -1010,6 +1009,7 @@ export function ArkmeSourceBreadcrumb({
         }}
       >拖到这里，变为一级主题</div>}
       {moveError !== '' && <div role="alert" style={styles.loadingRow}>{moveError}</div>}
+      {archiveMutation.error !== '' && <div role="alert" style={styles.loadingRow}>{archiveMutation.error}</div>}
       {loading && <div role="status" data-arkme-self-topic-loading="true" style={styles.loadingRow}><ArkmeTopicLoadingIcon />加载更多主题</div>}
       {!loading && error !== undefined && <div role="alert" style={styles.loadingRow}>
         加载失败
@@ -1057,7 +1057,6 @@ export function ArkmeSourceBreadcrumb({
         />
       </div>
     </div></ArkmeSelfTopicMenuPortal>}
-    {archiveConfirmation !== undefined && <ArkmeArchiveDialog state={archiveConfirmation.state} title={archiveConfirmation.title} onClose={closeArchiveConfirmation} />}
     {renameTopic !== undefined && <ArkmeTopicRenameDialog
       topic={renameTopic} submitting={topicMutationSubmitting} error={topicMutationError}
       onCancel={closeTopicDialog} onConfirm={submitTopicRename}

@@ -554,7 +554,27 @@ button.arkme-account-info-row { cursor: pointer; }
 .arkme-account-logout > button { min-width: 128px; min-height: 40px; padding: 8px 24px; border: 1px solid #e1e2e5; border-radius: 8px; background: transparent; color: #dc4d43; font: inherit; cursor: pointer; }
 .arkme-account-logout > button:disabled { cursor: default; opacity: .6; }
 [data-arkme-settings-view="general"] .arkme-redesign-settings-group:last-child { border-bottom: 0; }
-.arkme-about-heading { margin: 0 0 20px; color: inherit; font: inherit; font-size: 18px; font-weight: 600; line-height: 1.5; }
+.arkme-about-heading, .arkme-archive-heading { margin: 0 0 20px; color: inherit; font: inherit; font-size: 18px; font-weight: 600; line-height: 1.5; }
+.arkme-archive-list { list-style: none; margin: 0; padding: 0; }
+.arkme-archive-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 56px; padding: 10px 0; border-bottom: 1px solid var(--dsw-alias-border-standard, #ededee); }
+.arkme-archive-row:last-child { border-bottom: 0; }
+.arkme-archive-topic { display: flex; align-items: center; gap: 10px; flex: 1 1 160px; min-width: 0; padding: 6px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.arkme-archive-topic > svg { flex: none; color: var(--dsw-alias-label-secondary, #858992); }
+.arkme-archive-topic > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arkme-archive-inherited { color: var(--dsw-alias-label-secondary, #858992); font-size: 12px; }
+.arkme-archive-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-left: auto; }
+.arkme-archive-action, .arkme-archive-source-name { border: 0; border-radius: 6px; padding: 6px 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+.arkme-archive-action:hover, .arkme-archive-action:focus-visible, .arkme-archive-source-name:hover { background: var(--dsw-alias-bg-hover, #f3f4f7); }
+.arkme-archive-action:disabled, .arkme-archive-topic:disabled, .arkme-archive-source-name:disabled { opacity: .5; cursor: default; }
+.arkme-archive-empty { min-height: 220px; display: grid; place-items: center; color: var(--dsw-alias-label-tertiary, #b8bdc6); }
+.arkme-archive-loading { display: flex; justify-content: center; padding: 20px; color: var(--dsw-alias-label-secondary, #858992); }
+.arkme-archive-loading > svg { animation: arkme-archive-spin 1s linear infinite; }
+.arkme-archive-feedback { padding: 12px 0; color: var(--dsw-alias-label-secondary, #858992); font-size: 12px; }
+.arkme-archive-source { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px; border-radius: 8px; background: var(--dsw-alias-bg-subtle, #f6f6f7); font-size: 12px; }
+.arkme-archive-source-name { flex: 1; min-width: 0; overflow-wrap: anywhere; text-align: left; }
+.arkme-archive-more { display: block; margin: 12px auto 0; }
+@keyframes arkme-archive-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .arkme-archive-loading > svg { animation: none; } }
 .arkme-account-feedback {
   margin: 8px 0 14px;
   display: flex;
