@@ -190,6 +190,7 @@ export function ArkmeTopicDirectoryPopover({
 }: ArkmeTopicDirectoryPopoverProps) {
   const directory = useMemo(() => selfTopicDirectory(userId, environment), [userId, environment])
   const snapshot = useSyncExternalStore(directory.subscribe, directory.getSnapshot, directory.getSnapshot)
+  const resolvedRoots = useRef<{ directory: typeof directory; aggregateSource: ArkmeSourceItem; defaultCategorySource: ArkmeSourceItem }>()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const createRequestRef = useRef<symbol>()
@@ -249,17 +250,21 @@ export function ArkmeTopicDirectoryPopover({
   }, [directory])
 
   useEffect(() => {
-    const aggregateSource = sources.find(source => source.kind === 'send_to_self')
-    const defaultCategorySource = sources.find(source => source.kind === 'default_category')
+    // Directory invalidation clears visible topics/counts, not the mounted conversation's route.
+    const previous = error === '' && resolvedRoots.current?.directory === directory ? resolvedRoots.current : undefined
+    const aggregateSource = sources.find(source => source.kind === 'send_to_self') ?? previous?.aggregateSource
+    const defaultCategorySource = sources.find(source => source.kind === 'default_category') ?? previous?.defaultCategorySource
     if (aggregateSource === undefined || defaultCategorySource === undefined) {
+      resolvedRoots.current = undefined
       onSelfSourcesResolution(userId, error ? { status: 'error', message: error } : { status: 'loading' })
       return
     }
+    resolvedRoots.current = { directory, aggregateSource, defaultCategorySource }
     onSelfSourcesResolution(userId, {
       status: 'ready', aggregateSource, defaultCategorySource, sources, loading: busy, complete,
       ...(error === '' ? {} : { error }),
     })
-  }, [busy, complete, error, onSelfSourcesResolution, sources, userId])
+  }, [busy, complete, directory, error, onSelfSourcesResolution, sources, userId])
 
   useEffect(() => {
     if (!open && topicCreateParent === undefined) return
