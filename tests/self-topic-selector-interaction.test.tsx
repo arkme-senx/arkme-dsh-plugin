@@ -61,15 +61,36 @@ it('uses an animated loading icon instead of dots, and retains complete counts d
   const counts = () => [...document.querySelectorAll('[data-arkme-topic-count]')]
   expect(counts().map(el => el.textContent)).toEqual(['', '', '3'])
   expect(document.querySelectorAll('[data-arkme-topic-count] animateTransform')).toHaveLength(2)
+  expect(document.querySelector('[data-arkme-self-topic-loading]')).not.toBeNull()
   expect(document.querySelectorAll('[data-arkme-topic-count] [role="status"]')).toHaveLength(2)
   await act(async () => root.render(<ArkmeSourceBreadcrumb {...props} countsReady />))
   expect(counts().map(el => el.textContent)).toEqual(['5', '5', '3'])
+  expect(document.querySelector('[data-arkme-self-topic-loading]')).toBeNull()
   expect(document.querySelectorAll('[data-arkme-topic-count] animateTransform')).toHaveLength(0)
   await act(async () => root.render(<ArkmeSourceBreadcrumb {...props} countsReady error="offline" />))
   expect(counts().map(el => el.textContent)).toEqual(['5', '5', '3'])
   await act(async () => root.render(<ArkmeSourceBreadcrumb {...props} countsReady={false} loading={false} error="offline" />))
   expect(counts().map(el => el.textContent)).toEqual(['—', '—', '3'])
   expect(document.querySelectorAll('[data-arkme-topic-count] animateTransform')).toHaveLength(0)
+})
+
+it('removes only the archived row while a complete menu revalidates in place', async () => {
+  const keep: ArkmeSourceItem = { sourceRef: 'keep', kind: 'topic', displayName: '保留主题', recordCount: 5 }
+  const archived: ArkmeSourceItem = { sourceRef: 'archive', kind: 'topic', displayName: '归档主题', recordCount: 3 }
+  const props = { selectedSource: undefined, countsReady: true, onSelect() {}, onSelectAggregate() {} }
+  await act(async () => root.render(<ArkmeSourceBreadcrumb {...props} sources={[keep, archived]} />))
+  await clickButton('选择主题')
+  const menu = document.querySelector('[data-arkme-self-topic-menu]')
+  const keptRow = document.querySelector('[data-arkme-self-topic-tree-row-ref="keep"]')
+  await act(async () => root.render(<ArkmeSourceBreadcrumb {...props} sources={[keep, archived]} loading />))
+  expect(document.querySelector('[data-arkme-self-topic-menu]')).toBe(menu)
+  expect(document.querySelector('[data-arkme-self-topic-tree-row-ref="keep"]')).toBe(keptRow)
+  expect(document.querySelector('[data-arkme-self-topic-loading]')).toBeNull()
+  await act(async () => root.render(<ArkmeSourceBreadcrumb {...props} sources={[keep]} />))
+  expect(document.querySelector('[data-arkme-self-topic-menu]')).toBe(menu)
+  expect(document.querySelector('[data-arkme-self-topic-tree-row-ref="keep"]')).toBe(keptRow)
+  expect(document.querySelector('[data-arkme-self-topic-tree-row-ref="archive"]')).toBeNull()
+  expect(document.querySelector('[data-arkme-self-topic-loading]')).toBeNull()
 })
 
 it('closes the topic menu when the header blank area outside the trigger and menu is clicked', async () => {

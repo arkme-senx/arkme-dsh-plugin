@@ -181,6 +181,22 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
         await expect.poll(() => archiveAction.isEnabled()).toBe(true)
         await archiveAction.hover()
         expect(await archiveAction.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(hoverBackground)
+        await expect.poll(() => page.locator('[data-arkme-self-topic-loading]').count()).toBe(0)
+        await page.locator('[data-arkme-self-topic-menu]').evaluate(menu => {
+          const retained = [...menu.querySelectorAll('[data-arkme-self-topic-tree-row]')].find(node => node.textContent.includes('未分类'))
+          if (!retained) throw new Error('The complete menu must contain the uncategorized row')
+          const loading = '[data-arkme-self-topic-loading], [data-arkme-self-topic-children-loading]'
+          const scene = {menu, retained, detached: false, loadingSeen: false}
+          scene.observer = new MutationObserver(records => {
+            if (!menu.isConnected || !retained.isConnected) scene.detached = true
+            if (menu.querySelector(loading)) scene.loadingSeen = true
+            for (const record of records) for (const node of record.addedNodes) {
+              if (node instanceof Element && (node.matches(loading) || node.querySelector(loading))) scene.loadingSeen = true
+            }
+          })
+          scene.observer.observe(document.body, {childList: true, subtree: true})
+          globalThis.__archiveMenuScene = scene
+        })
         await archiveAction.click()
         expect(await page.getByRole('dialog', {name: '归档主题', exact: true}).count()).toBe(0)
         await expect.poll(async () => (await sdk.getArchiveStates([source.sourceRef]))[0].selfArchived).toBe(true)
@@ -189,6 +205,11 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
           await page.locator('[data-arkme-self-topic-menu]').waitFor()
           return row.count()
         }).toBe(0)
+        expect(await page.evaluate(() => {
+          const scene = globalThis.__archiveMenuScene
+          scene.observer.disconnect()
+          return {detached: scene.detached || !scene.menu.isConnected || !scene.retained.isConnected, loadingSeen: scene.loadingSeen}
+        })).toEqual({detached: false, loadingSeen: false})
       }
       await archiveFromMenu(B)
       expect(postArchiveContentReads).toEqual([])

@@ -69,3 +69,13 @@ runner 创建隔离 Record / Mongo / Redis / search 测试服务，并在结束�
 最终继续同步 dev `437fda1c4af2280539fea51b2df27328d327cd59`，逐项核对重叠 facade/Host/SDK/types 中的文件接口与归档接口互不覆盖。补齐基线新增 `fileOpenLocalFolder` 的公共方法测试清单，未更改文件业务。默认并发下两条发布测试超过原 5 秒限制，最终使用命令级 `pnpm test --maxWorkers=4`（未改超时或仓库配置）完整通过：603 文件通过/8 跳过，7096 项通过/11 跳过。typecheck/build/pack 与仓外 Consumer 再次通过。
 
 最终包为 `senguoyun-dsh-arkme-review8-0.1.60.tgz`，SHA-256 `d94ac8e9a78a6676cc504862d1df03be6cfcd970508ffe03f97e94dbba10f435`。官方 CLI 安装到全新 review8 Profile 后，真实浏览器完整归档场景 32 秒通过；最终列表/空态截图 `review-dsh-integrated-e2e.png`、`review-dsh-integrated-e2e.png.empty.png` 已查看。日志为 `review-dsh-integrated-tests-final.log`、`review-dsh-integrated-typecheck.log`、`review-dsh-integrated-build.log`、`review-dsh-integrated-pack.log`、`review-dsh-integrated-install8.log`、`review-dsh-integrated-cross-e2e.log`、`review-dsh-integrated-consumer.log`。打包后仅补充验收文档，无业务代码改动。用户 3081 服务与真实 Profile 未替换，官方 DSH tracked 状态干净。
+
+## 2026-09-17 主题窗口后台更新闪动
+
+上一轮已消除归档触发的内容读取，但完整目录后台重读时，菜单仍按 `loading` 插入「加载更多主题」行，改变窗口高度。本轮用 review8 包和实际浏览器 MutationObserver 复现：菜单及保留行没有卸载，但加载行确实被插入。证据为 `review-quiet-directory-before-e2e.log`；新增单测在修复前有两项失败，见 `review-quiet-directory-before.log`。
+
+现在使用已有 `countsReady` 完整快照状态控制加载展示：只有不完整目录才显示加载行，完整目录后台校准期间保留原有菜单，owner 返回后仅更新实际成员。子主题加载行遵循同一条件；首次加载和失败重试仍可见。不新增本地归档状态，不在回执前猜测后代删除，不改变 Host/Tools/SDK、CAS 或账号隔离语义。
+
+同步 dev `d7daef1` 后，5 个聚焦文件 52 项通过；完整 `pnpm test --maxWorkers=4` 为 604 文件通过/8 跳过，7098 项通过/11 跳过。typecheck、build、pack、仓外 SDK Consumer 通过。日志为 `review-quiet-directory-{tests,full-tests,typecheck,build,pack,consumer}.log`。
+
+新不可变包 `senguoyun-dsh-arkme-review9-0.1.60.tgz`，SHA-256 `5912886940dd67e2a1fae7861e6573f0bb262bd788a992705c0cbe180d0b0abc`。经官方 DSH 0.1.5-rc.2 CLI 装入全新 review9 Profile，完整浏览器 UI → Host → Record 链路 37 秒通过。归档当前 B 和父 A 的全过程均断言菜单/保留行持续连接、无加载行插入、无额外内容读取；父恢复保留独立子标记、子恢复、内容读写、CAS 和真实 Session Tool 验证继续通过。证据为 `review-quiet-directory-install9.log`、`review-quiet-directory-cross-e2e.log`。列表及空态截图 `review-quiet-directory-e2e.png`、`.empty.png` 已核验。用户 3081 服务、真实 Profile 和官方 DSH 源码未修改。
