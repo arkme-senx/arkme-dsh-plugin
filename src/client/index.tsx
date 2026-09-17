@@ -43,7 +43,7 @@ import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
 import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested, openEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
 import { installHarnessConversationLayoutLoader } from './harness-conversation-layout.js'
-import { installArkmeAccountSettingsNavIcon } from './account-settings-nav-icon.js'
+import { installArkmeSettingsNavIcons } from './settings-nav-icons.js'
 import { DesktopHarnessReadinessCommit } from './desktop-harness-readiness.js'
 import {
   ARKME_LOGIN_LOCALE_NAMESPACE, arkmeLoginEn, arkmeLoginZh,
@@ -358,8 +358,8 @@ export function apply(ctx: ClientContext): void {
   }, 'dsh-arkme: install redesign visual system')
 
   ctx.effect(
-    () => installArkmeAccountSettingsNavIcon(),
-    'dsh-arkme: render account settings navigation icon',
+    () => installArkmeSettingsNavIcons(),
+    'dsh-arkme: render Arkme settings navigation icons',
   )
 
   ctx.effect(() => {

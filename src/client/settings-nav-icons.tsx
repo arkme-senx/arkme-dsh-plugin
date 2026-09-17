@@ -1,22 +1,27 @@
 import { IconUserOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
+import type { ComponentType } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-const ACCOUNT_LABELS = new Set(['我的账户', 'My account'])
-const ACCOUNT_ICON_SELECTOR = '[data-arkme-account-nav-icon]'
+const NAV_ICONS: { label: string; marker: string; Icon: ComponentType<{ size: number; className?: string | undefined }> }[] = [
+  { label: '我的账户', marker: 'arkmeAccountNavIcon', Icon: IconUserOutline16 },
+  { label: '数据管理', marker: 'arkmeDataNavIcon', Icon: Archive },
+]
+const NAV_ICON_SELECTOR = '[data-arkme-account-nav-icon], [data-arkme-data-nav-icon]'
 const SETTINGS_DIALOG_SELECTOR = '[role="dialog"]'
 const SETTINGS_UI_SELECTOR = [
   SETTINGS_DIALOG_SELECTOR,
   `${SETTINGS_DIALOG_SELECTOR} nav button`,
-  ACCOUNT_ICON_SELECTOR,
+  NAV_ICON_SELECTOR,
 ].join(', ')
 
-interface AccountSettingsNavIconRuntime {
+interface SettingsNavIconRuntime {
   document: Document
   MutationObserver: typeof MutationObserver | undefined
   createRoot: typeof createRoot
 }
 
-interface AccountIconMount {
+interface SettingsIconMount {
   host: HTMLElement
   original: SVGElement
   originalDisplay: string
@@ -31,7 +36,7 @@ function unmountRoot(root: Root): void {
   }
 }
 
-function browserRuntime(): AccountSettingsNavIconRuntime | undefined {
+function browserRuntime(): SettingsNavIconRuntime | undefined {
   if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return undefined
   return { document, MutationObserver, createRoot }
 }
@@ -49,14 +54,14 @@ function mutationTouchesSettingsUi(record: MutationRecord): boolean {
   return [...record.addedNodes, ...record.removedNodes].some(touchesSettingsUi)
 }
 
-/** Install the Arkme account navigation icon and return its lifecycle cleanup. */
-export function installArkmeAccountSettingsNavIcon(
-  suppliedRuntime?: AccountSettingsNavIconRuntime,
+/** The public settings slot has no icon field; adapt only Arkme-owned rows. */
+export function installArkmeSettingsNavIcons(
+  suppliedRuntime?: SettingsNavIconRuntime,
 ): () => void {
   const runtime = suppliedRuntime ?? browserRuntime()
   if (runtime?.MutationObserver === undefined) return () => {}
 
-  const mounts = new Map<HTMLElement, AccountIconMount>()
+  const mounts = new Map<HTMLElement, SettingsIconMount>()
   let disposed = false
 
   const cleanDisconnected = () => {
@@ -67,13 +72,14 @@ export function installArkmeAccountSettingsNavIcon(
     }
   }
 
-  const mountIcon = (button: HTMLButtonElement) => {
-    if (button.querySelector(ACCOUNT_ICON_SELECTOR) !== null) return
+  const mountIcon = (button: HTMLButtonElement, definition: typeof NAV_ICONS[number]) => {
+    if (button.querySelector(NAV_ICON_SELECTOR) !== null) return
     const original = button.querySelector<SVGElement>(':scope > svg')
     if (original === null) return
 
     const host = runtime.document.createElement('span')
-    host.dataset.arkmeAccountNavIcon = 'true'
+    host.dataset[definition.marker] = 'true'
+    const Icon = definition.Icon
     host.style.display = 'inline-flex'
     host.style.flex = 'none'
     host.setAttribute('aria-hidden', 'true')
@@ -83,7 +89,7 @@ export function installArkmeAccountSettingsNavIcon(
     try {
       root = runtime.createRoot(host)
       root.render(
-        <IconUserOutline16
+        <Icon
           size={16}
           className={original.getAttribute('class') ?? undefined}
         />,
@@ -99,22 +105,23 @@ export function installArkmeAccountSettingsNavIcon(
     mounts.set(host, { host, original, originalDisplay, root })
   }
 
-  const renderAccountIcons = () => {
+  const renderNavIcons = () => {
     cleanDisconnected()
     const dialogs = runtime.document.querySelectorAll<HTMLElement>(SETTINGS_DIALOG_SELECTOR)
     for (const dialog of dialogs) {
-      const accountButtons = [...dialog.querySelectorAll<HTMLButtonElement>(':scope > nav button')]
-        .filter(button => ACCOUNT_LABELS.has(button.textContent?.trim() ?? ''))
-      if (accountButtons.length !== 1) continue
-      mountIcon(accountButtons[0]!)
+      const buttons = [...dialog.querySelectorAll<HTMLButtonElement>(':scope > nav button')]
+      for (const definition of NAV_ICONS) {
+        const matches = buttons.filter(button => button.textContent?.trim() === definition.label)
+        if (matches.length === 1) mountIcon(matches[0]!, definition)
+      }
     }
   }
 
   const observer = new runtime.MutationObserver((records) => {
-    if (!disposed && records.some(mutationTouchesSettingsUi)) renderAccountIcons()
+    if (!disposed && records.some(mutationTouchesSettingsUi)) renderNavIcons()
   })
   observer.observe(runtime.document.body, { childList: true, subtree: true, characterData: true })
-  renderAccountIcons()
+  renderNavIcons()
 
   return () => {
     if (disposed) return

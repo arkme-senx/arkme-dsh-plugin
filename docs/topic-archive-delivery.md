@@ -31,12 +31,24 @@ runner 创建隔离 Record / Mongo / Redis / search 测试服务，并在结束�
 ## 合并前审查与修复复验
 
 - 目录订阅现有 Record 刷新通知，归档成功后立即隐藏；直接打开的主题和草稿保持原 owner。
-- 主题菜单的确认框由稳定的 breadcrumb surface 持有，不随目录行消失而卸载；管理页也不因普通投影通知关闭确认框。失败可查看，CAS 不自动改用新 revision 重试。
+- 按用户反馈，归档/取消归档改为单击直接提交，不显示二次确认弹窗。写请求仍由稳定 breadcrumb / 管理页持有，不随目录行消失或普通投影通知取消；在途禁止重复写，失败重读事实并显示简短提示，CAS 不自动改用新 revision 重试。
 - 分页按账号内稳定的 topicHierarchyKey 去重；带显示名的 sourceRef 更新不会生成重复条目。
 - 列表分页和归档来源查询共用页面加载状态，避免交叉取消后一直显示加载中；切换账号取消旧请求。
-- 完整 `pnpm test`：570 个文件通过、8 个跳过，6780 项通过、11 项跳过；typecheck、build、pack 通过。
+- 同步新的共享主题目录 owner 与外置菜单机制；归档写入仍由稳定 surface 持有。新建子主题回执早于/晚于父归档时，创建后重新核对目录归属，已打开主题保持可访问，继承归档节点不能被创建缓存重新显示。
+- 最终完整 `pnpm test`：593 个文件通过、8 个跳过，6953 项通过、11 项跳过；typecheck、build、pack 通过。
 - 最终不可变 tgz 通过官方 CLI 装入新的临时 Profile。真实 Chrome 从主题操作菜单归档 B/A，再从设置的数据管理恢复 A/B；确认目录及时更新、父恢复保留子标记、继承条目无误导性恢复入口。另验证归档前记录仍可读、归档后仍可写入/读取、CAS 冲突，以及真实会话 Tool 和仓外 SDK Consumer。
 
-复验日志：`review-dsh-full-tests.log`、`review-dsh-typecheck.log`、`review-dsh-build.log`、`review-dsh-install5.log`、`review-dsh-cross-e2e.log`、`review-dsh-consumer.log`。最终实际链路在官方 0.1.5-rc.2 上通过，截图为 `review-dsh-archive-e2e.png`。运行证据为 macOS 官方 DSH + Chrome，不代表 Windows/Linux 已进行真实平台验收。
+复验日志：`review-dsh-ux-full-tests.log`、`review-dsh-ux-typecheck.log`、`review-dsh-ux-build.log`。最终打包链路和截图见下方本轮反馈验收。运行证据为 macOS 官方 DSH + Chrome，不代表 Windows/Linux 已进行真实平台验收。
 
 同步最新 dev 后，曾用旧官方 0.1.3-alpha.1 重跑；其页面缺少当前 dev 使用的会话视口结构，浏览器在业务操作前超时。最终改用与 dev 已验收基线匹配的官方 0.1.5-rc.2，没有为旧宿主添加兼容分支，也没有修改 DSH 源码。runner 允许指定官方目标 ref，并继续要求 checkout 的 tracked 状态干净。官方依赖安装与构建分别记录在 `review-dsh-official-install.log`、`review-dsh-official-build.log`。
+
+
+## 本轮体验修复
+
+- 数据管理位于我的账户下方；通过既有生命周期可清理的设置导航图标适配器显示 Archive 图标。公开 settings.section 尚无 icon 参数，因此复用单一导航适配器，不伪造公共接口、不修改官方 DSH、不复用其他业务 section id。
+- 页面使用既有 settings surface、shell、group 与标题间距；长标题省略、隐私标题受保护、操作区可换行。空状态仅显示归档图形，保留屏幕阅读器名称；移除常驻刷新按钮和业务实现说明。失败时提供重试读取，聚焦、联网及 Record 通知自动刷新。
+- 主题菜单归档项与相邻操作复用同一 hover 样式。点击后直接提交并通过目录 owner 刷新移除，不出现确认弹窗；恢复操作也直接提交。查看来源是行内信息，必须点击该来源的取消按钮才会撤销其独立标记。
+- 新增重复点击、切换同用户环境、旧响应隔离回归；菜单行被移除、通知先于回执、CAS 失败不重放、分页重命名去重等异步回归保留。
+- 本轮修改仅为现有能力的 UI/客户端状态修复；Host、Tools、SDK 协议不变。仍以真实 Record + 打包插件浏览器验收核对跨层语义，并复跑公开 SDK Consumer。
+
+本轮不可变验收包为 `senguoyun-dsh-arkme-review6-0.1.60.tgz`，SHA-256 `bca5651a455e02b68bb6c993b1aa046e0b88fdcc251aa1cdd8e86a0e9a125b93`。官方 CLI 安装成功，真实浏览器跨仓链路 31 秒通过，公开 SDK Consumer 通过。日志为 `review-dsh-ux-install6.log`、`review-dsh-ux-cross-e2e.log`、`review-dsh-ux-consumer.log`；列表与空状态截图为 `review-dsh-ux-e2e.png`、`review-dsh-ux-e2e.png.empty.png`，已人工查看布局。包后只调整验收文档与测试说明，无运行代码差异。用户已有 3081 服务和真实 Profile 保持不变，本轮未替换常驻服务。

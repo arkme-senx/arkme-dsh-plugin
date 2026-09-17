@@ -1,5 +1,5 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { ArkmeArchiveAction, ArkmeArchiveStatus } from './ArkmeArchive.js'
+import { ArkmeArchiveAction, ArkmeArchiveStatus, useArchiveMutation } from './ArkmeArchive.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { Button, IconEditOutline16, IconNewChatOutline16, IconTrashOutline16, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -382,6 +382,7 @@ export function ArkmeSourceBreadcrumb({
   const [draggingSourceRef, setDraggingSourceRef] = useState<string>()
   const [hoveredSourceRef, setHoveredSourceRef] = useState<string>()
   const [topicMenuSource, setTopicMenuSource] = useState<ArkmeSourceItem>()
+  const archiveMutation = useArchiveMutation()
   const [renameTopic, setRenameTopic] = useState<ArkmeSourceItem>()
   const [dissolveTopic, setDissolveTopic] = useState<ArkmeSourceItem>()
   const [dissolveDialogOpen, setDissolveDialogOpen] = useState(false)
@@ -1056,6 +1057,7 @@ export function ArkmeSourceBreadcrumb({
         }}
       >{tr("拖到这里，变为一级主题")}</div>}
       {moveError !== '' && <div role="alert" style={styles.loadingRow}>{moveError}</div>}
+      {archiveMutation.error !== '' && <div role="alert" style={styles.loadingRow}>{archiveMutation.error}</div>}
       {loading && <div role="status" data-arkme-self-topic-loading="true" style={styles.loadingRow}><ArkmeTopicLoadingIcon />{searching ? '仍在查找主题…' : '加载更多主题'}</div>}
       {!loading && !error && rows.length === 0 && (searching || assignment) && <div role="status" style={styles.loadingRow}>{searching ? '没有匹配的主题' : '暂无主题'}</div>}
       {!loading && error !== undefined && <div role="alert" style={styles.loadingRow}>{tr("加载失败")}{onRetry !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={onRetry}>{tr("重试")}</button>}
