@@ -5996,6 +5996,48 @@ export function ArkmeSurface({
     setDrawer(undefined)
     requestAnimationFrame(() => { textareaRef.current?.focus() })
   }, [activeRecordReeditComposer, closeMessageMenu, showMessageActionStatus, source])
+  const defaultExtensionMentionTargetRef = useRef<typeof composerExtensionTarget>()
+  const defaultExtensionMentionCaretRef = useRef<{ draftKey: string; text: string }>()
+  useLayoutEffect(() => {
+    const pending = defaultExtensionMentionCaretRef.current
+    if (pending === undefined) return
+    if (pending.draftKey !== composerDraftKey) {
+      defaultExtensionMentionCaretRef.current = undefined
+      return
+    }
+    if (composerDraft.text !== pending.text) return
+    defaultExtensionMentionCaretRef.current = undefined
+    // Wait for the controlled editor to render the mention before placing the caret.
+    focusEditedComposer(pending.text.length)
+  }, [composerDraft.text, composerDraftKey, focusEditedComposer])
+  useEffect(() => {
+    if (composerExtensionTarget === undefined) {
+      defaultExtensionMentionTargetRef.current = undefined
+      return
+    }
+    if (defaultExtensionMentionTargetRef.current === composerExtensionTarget
+      || source?.kind !== 'group_chat' || source.sourceRef !== composerExtensionTarget.sourceRef
+      || !activeConversation || activeRecordReeditComposer !== undefined) return
+    const item = composerExtensionTarget.item
+    const member = item.memberRef === undefined ? undefined : conversationMemberByRef.get(item.memberRef)
+    if (member === undefined && !conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined) return
+    defaultExtensionMentionTargetRef.current = composerExtensionTarget
+    if (item.isMe || member === undefined || member.isSelf || member.status !== 'active'
+      || member.mentionRef === undefined || member.mentionDisplayName === undefined) return
+    const current = arkmeComposerDraftStore.get(composerDraftKey)
+    if (current.attachments.length > 0 || current.emojis.length > 0) return
+    const mention = current.mentions.length === 1 ? current.mentions[0] : undefined
+    const onlyMention = mention !== undefined && mention.all !== true
+      && current.text.trim() === current.text.slice(mention.startIndex, mention.startIndex + mention.length).trim()
+    if (current.text.trim() !== '' && !onlyMention) return
+    insertMemberMentionAt(member, 0, current.text.length)
+    if (composerDraftKey !== undefined) defaultExtensionMentionCaretRef.current = {
+      draftKey: composerDraftKey,
+      text: arkmeComposerDraftStore.get(composerDraftKey).text,
+    }
+  }, [activeConversation, activeRecordReeditComposer, composerDraftKey, composerExtensionTarget,
+    conversationMemberByRef, conversationMemberSnapshot.complete, conversationMemberSnapshot.error,
+    insertMemberMentionAt, source])
   const closeRecordReedit = useCallback(async () => {
     const target = recordReeditComposerRef.current
     if (target === undefined || target.busy || preparationJobs.current.has(arkmeRecordReeditPreparationKey(target))) return

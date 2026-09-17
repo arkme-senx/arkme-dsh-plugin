@@ -6900,6 +6900,67 @@ describe('conversation send directory projection', () => {
     }).findAllByProps({ 'data-arkme-highlight-backdrop': 'true' })).toHaveLength(0)
   })
 
+  it.each(['empty', 'existing-text', 'attachment', 'single-mention', 'self', 'private', 'unavailable'] as const)(
+    'defaults a group extension mention without overwriting user input (%s)', async scenario => {
+      activeSource = scenario === 'private' ? target : group
+      arkmeChatDirectory.publish([other, activeSource])
+      arkmeUi.selectSource(activeSource)
+      timeline = [{
+        itemUid: 'mention-parent', messageActionRef: 'mention-parent-action', memberRef: 'reply-member',
+        senderName: '私有备注', isMe: scenario === 'self', sendAtMillis: 1, title: '', textContent: '原消息', status: 1,
+      }]
+      const baseCall = mocks.callArkme.getMockImplementation()!
+      mocks.callArkme.mockImplementation((operation, ...args) => operation === 'source.members'
+        ? Promise.resolve({ source: activeSource, items: scenario === 'unavailable' ? [] : [{
+          memberRef: 'reply-member', mentionRef: 'reply-mention', mentionDisplayName: '群昵称', displayName: '私有备注',
+          role: 'member', status: 'active', isSelf: scenario === 'self', isOwner: false,
+          joinedAtMillis: 1, recordCount: 0, mentionCount: 0,
+        }], total: 1, activeCount: 1 }) : baseCall(operation, ...args))
+      await act(async () => {
+        renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+          createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+            ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) } : null,
+        })
+      })
+      const draftKey = arkmeSourceComposerDraftKey(42, activeSource)!
+      act(() => {
+        if (scenario === 'existing-text') arkmeComposerDraftStore.setText(draftKey, '已写好的正文')
+        if (scenario === 'single-mention') arkmeComposerDraftStore.insertMention(draftKey, 'old-mention', '旧成员', 0)
+        if (scenario === 'attachment') arkmeComposerDraftStore.appendAttachments(draftKey, [{ localFile: {
+          fileRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000001',
+          fileName: '说明.md', mimeType: 'text/markdown', size: 8, fileKind: 4,
+        } }])
+      })
+      const extend = async () => {
+        const bubble = renderer!.root.findAllByProps({ 'aria-label': '打开快记详情' })[0]!
+        act(() => bubble.props.onContextMenu({ preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180 }))
+        const menu = renderer!.root.findByProps({ 'aria-label': '消息操作' })
+        await act(async () => { menu.findAll(node => node.props.role === 'menuitem'
+          && node.findAll(child => child.children.includes('延展')).length > 0)[0]!.props.onClick() })
+      }
+      await extend()
+      await extend()
+      const draft = arkmeComposerDraftStore.get(draftKey)
+      if (scenario === 'empty' || scenario === 'single-mention') {
+        expect(draft.text).toBe('@群昵称 ')
+        expect(draft.mentions).toEqual([{ mentionRef: 'reply-mention', displayName: '群昵称', startIndex: 0, length: 4 }])
+        if (scenario === 'empty') {
+          act(() => arkmeComposerDraftStore.setText(draftKey, `${draft.text}补充内容`))
+          await act(async () => { renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick() })
+          expect(mocks.callArkme).toHaveBeenCalledWith('source.message-extension.extend', expect.objectContaining({
+            textContent: '@群昵称 补充内容',
+            humanMentions: [{ mentionRef: 'reply-mention', startIndex: 0, length: 4 }],
+          }))
+        }
+        act(() => arkmeComposerDraftStore.setText(draftKey, ''))
+        expect(arkmeComposerDraftStore.get(draftKey).mentions).toHaveLength(0)
+      } else {
+        expect(draft.text).toBe(scenario === 'existing-text' ? '已写好的正文' : '')
+        expect(draft.mentions).toHaveLength(0)
+      }
+    },
+  )
+
   it('projects a detail-drawer extension into the current conversation and retains it through the immediate refresh', async () => {
     timeline = [{
       itemUid: 'parent-record', messageActionRef: 'opaque-detail-extension-action',

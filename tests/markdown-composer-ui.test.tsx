@@ -66,6 +66,19 @@ beforeEach(async () => {
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals() })
 
 describe('Markdown composer DOM interaction', () => {
+  it('continues typing after an externally inserted reply mention', () => {
+    act(() => { handle.current!.focus(); handle.current!.setSelectionRange(0, 0) })
+    act(() => { draftStore.insertMention(draftKey, 'reply-member', '群昵称', 0) })
+    act(() => {
+      handle.current!.focus()
+      handle.current!.setSelectionRange(snapshot.text.length, snapshot.text.length)
+    })
+    expect(handle.current!.selectionStart).toBe(5)
+    type('补充')
+    expect(snapshot.text).toBe('@群昵称 补充')
+    expect(snapshot.mentions[0]).toMatchObject({ mentionRef: 'reply-member', startIndex: 0, length: 4 })
+  })
+
   it.each(['native DOMRect', 'plain rectangle'])('opens the emoji picker with %s caret coordinates and keeps navigation usable', async kind => {
     const coordinates = new DOMRect(120, 500, 0, 21)
     const rect = kind === 'native DOMRect' ? coordinates : {
