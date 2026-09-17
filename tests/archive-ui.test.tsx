@@ -150,26 +150,93 @@ it('keeps a direct menu write and captured revision after its archived directory
 })
 
 
-it('keeps archive inert until the owner state arrives, then submits its captured revision', async () => {
-  const source: ArkmeSourceItem = {sourceRef: 'topic', kind: 'topic', displayName: '主题'}
-  let reply: (value: unknown) => void = () => {}
-  mock.call.mockImplementation((operation: string) => operation === 'archives.state'
-    ? new Promise(resolve => { reply = resolve }) : new Promise(() => {}))
-  await act(async () => { root.render(<ArkmeSourceBreadcrumb userId={42} selectedSource={source}
-    sources={[source]} onSelect={vi.fn()} onSelectAggregate={vi.fn()} onRenameTopic={vi.fn()} />) })
+const directorySource: ArkmeSourceItem = {sourceRef: 'topic', kind: 'topic', displayName: '主题', activeAtMillis: 1, unreadCount: 0}
+async function openDirectoryArchive(key = 'initial') {
+  await act(async () => { root.render(<ArkmeSourceBreadcrumb key={key} userId={42} selectedSource={undefined}
+    sources={[directorySource]} onSelect={vi.fn()} onSelectAggregate={vi.fn()} onRenameTopic={vi.fn()} />) })
   await click('选择主题')
   const row = host.querySelector('[data-arkme-self-topic-tree-row]')!
   await act(async () => { row.dispatchEvent(new MouseEvent('mouseover', {bubbles: true})) })
   await click('主题主题操作')
-  const action = [...row.querySelectorAll('button')].find(button => button.textContent === '归档')!
-  expect(action.disabled).toBe(true)
+  return [...row.querySelectorAll('button')].find(button => button.textContent === '归档')!
+}
+
+it('opens a ready Archive action without a state read, including a fresh mount after refresh', async () => {
+  for (const key of ['initial', 'after-refresh']) {
+    const action = await openDirectoryArchive(key)
+    expect(action.disabled).toBe(false)
+    expect(action.textContent).toBe('归档')
+    await act(async () => { window.dispatchEvent(new Event('focus')); arkmeUi.topicDirectoryChanged() })
+    expect(mock.call).not.toHaveBeenCalled()
+  }
+})
+
+it('reads the precondition only after click and keeps one operation alive after the menu closes', async () => {
+  let reply: (value: unknown) => void = () => {}
+  mock.call.mockImplementation((operation: string) => operation === 'archives.state'
+    ? new Promise(resolve => { reply = resolve }) : new Promise(() => {}))
+  const action = await openDirectoryArchive()
   await act(async () => { action.click() })
+  expect(mock.call.mock.calls.map(call => call[0])).toEqual(['archives.state'])
+  const signal = mock.call.mock.calls[0]![2] as AbortSignal
+  await click('主题主题操作')
+  const duplicate = [...host.querySelectorAll('button')].find(button => button.textContent === '归档')!
+  expect(duplicate.disabled).toBe(true)
+  await act(async () => { duplicate.click(); arkmeUi.topicDirectoryChanged() })
+  expect(signal.aborted).toBe(false)
+  expect(mock.call.mock.calls.filter(call => call[0] === 'archives.state')).toHaveLength(1)
   expect(mock.call.mock.calls.some(call => call[0] === 'archives.set')).toBe(false)
-  await act(async () => { reply([{...inherited, sourceRef: source.sourceRef, effectiveArchived: false, revision: 7}]) })
-  expect(action.disabled).toBe(false)
+  await act(async () => { reply([{...inherited, sourceRef: 'topic', effectiveArchived: false, revision: 7}]) })
+  expect(mock.call).toHaveBeenCalledWith('archives.set',
+    {sourceRef: 'topic', selfArchived: true, expectedRevision: 7}, signal)
+})
+
+it.each([false, true])('keeps Archive intent when a stale row is already archived (self=%s)', async selfArchived => {
+  mock.call.mockImplementation(async (operation: string) => operation === 'archives.state'
+    ? [{...inherited, sourceRef: 'topic', selfArchived, revision: 9}] : {})
+  const action = await openDirectoryArchive()
+  expect(action.textContent).toBe('归档')
   await act(async () => { action.click() })
   expect(mock.call).toHaveBeenCalledWith('archives.set',
-    {sourceRef: 'topic', selfArchived: true, expectedRevision: 7}, expect.any(AbortSignal))
+    {sourceRef: 'topic', selfArchived: true, expectedRevision: 9}, expect.any(AbortSignal))
+})
+
+it.each(['read-failure', 'unavailable', 'missing', 'wrong-source'])('does not write after an invalid precondition read: %s', async failure => {
+  mock.call.mockImplementation(async () => {
+    if (failure === 'read-failure') throw new Error('offline')
+    if (failure === 'missing') return []
+    return [{...inherited, sourceRef: failure === 'wrong-source' ? 'other' : 'topic', ownerAvailable: failure !== 'unavailable'}]
+  })
+  const action = await openDirectoryArchive()
+  await act(async () => { action.click() })
+  expect(mock.call.mock.calls.map(call => call[0])).toEqual(['archives.state'])
+  expect(host.textContent).toContain('归档未完成，请稍后重试')
+})
+
+it('reports a conflict without re-reading and replaying the Archive command', async () => {
+  mock.call.mockImplementation(async (operation: string) => {
+    if (operation === 'archives.state') return [{...inherited, sourceRef: 'topic', revision: 11}]
+    throw new Error('ARCHIVE_REVISION_CONFLICT')
+  })
+  const action = await openDirectoryArchive()
+  await act(async () => { action.click() })
+  expect(mock.call.mock.calls.map(call => call[0])).toEqual(['archives.state', 'archives.set'])
+  expect(host.textContent).toContain('归档未完成，请稍后重试')
+})
+
+it.each(['account', 'environment'])('rejects a late precondition reply after changing %s', async change => {
+  let reply: (value: unknown) => void = () => {}
+  mock.call.mockImplementation(() => new Promise(resolve => { reply = resolve }))
+  const action = await openDirectoryArchive()
+  await act(async () => { action.click() })
+  const signal = mock.call.mock.calls[0]![2] as AbortSignal
+  await act(async () => { arkmeAuthStore.setAuth({status: 'authenticated', environment: change === 'environment' ? 'production' : 'test', userId: change === 'account' ? 99 : 42}) })
+  const revision = arkmeUi.getTopicDirectoryRevision()
+  await act(async () => { reply([{...inherited, sourceRef: 'topic', revision: 7}]) })
+  expect(signal.aborted).toBe(true)
+  expect(mock.call.mock.calls.map(call => call[0])).toEqual(['archives.state'])
+  expect(arkmeUi.getTopicDirectoryRevision()).toBe(revision)
+  expect(host.querySelector('[role=alert]')).toBeNull()
 })
 
 it('prevents repeated clicks from duplicating a pending write', async () => {

@@ -1,5 +1,6 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { ArkmeArchiveAction, ArkmeArchiveStatus, useArchiveMutation } from './ArkmeArchive.js'
+import { ArkmeArchiveStatus, useArchiveMutation } from './ArkmeArchive.js'
+import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { Button, IconEditOutline16, IconNewChatOutline16, IconTrashOutline16, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -1027,11 +1028,17 @@ export function ArkmeSourceBreadcrumb({
             items={[
               ...(canCreateChild ? [{ id: 'create', label: '新建子主题', icon: <IconNewChatOutline16 /> }] : []),
               ...(onRenameTopic ? [{ id: 'rename', label: '重命名', icon: <IconEditOutline16 /> }] : []),
+              { id: 'archive', label: tr('归档'), icon: <Archive size={16} />, disabled: archiveMutation.busy },
               ...(onDissolveTopic ? [{ id: 'dissolve', label: '解散主题', icon: <IconTrashOutline16 />, danger: true }] : []),
             ]}
             onToggle={() => { setSortMenuOpen(false); setTopicMenuSource(current => current?.sourceRef === row.source.sourceRef ? undefined : row.source) }}
             onClose={() => { setTopicMenuSource(current => current?.sourceRef === row.source.sourceRef ? undefined : current) }}
             onSelect={action => {
+              if (action === 'archive') {
+                setTopicMenuSource(undefined)
+                void archiveMutation.archive(row.source.sourceRef)
+                return
+              }
               closeMenu()
               if (action === 'create' && canCreateChild) onCreateChildTopic?.(row.source, row.depth + 1)
               if (action === 'rename') { setTopicMutationError(''); setRenameTopic(row.source) }

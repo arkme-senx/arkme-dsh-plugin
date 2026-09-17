@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
 import { CircleNotch } from '@phosphor-icons/react/dist/icons/CircleNotch'
 import { LockSimple } from '@phosphor-icons/react/dist/icons/LockSimple'
@@ -67,20 +67,32 @@ export function useArchiveMutation() {
     setError('')
     return () => { request.current?.abort() }
   }, [scope])
-  const set = async (state: ArkmeArchiveState): Promise<boolean> => {
+  const submit = async (input: { sourceRef: string; selfArchived: boolean; expectedRevision?: number }): Promise<boolean> => {
     if (request.current !== undefined || auth.auth?.status !== 'authenticated') return false
     const controller = new AbortController()
     request.current = controller
     setBusy(true)
     setError('')
     try {
+      // The normal directory already defines the action as Archive. Only an
+      // actual click needs the write precondition; opening a menu never does.
+      let expectedRevision = input.expectedRevision
+      if (expectedRevision === undefined) {
+        const states = await callArkme<ArkmeArchiveState[]>('archives.state', { sourceRefs: [input.sourceRef] }, controller.signal)
+        if (controller.signal.aborted || currentScope.current !== scope) return false
+        const state = states[0]
+        if (states.length !== 1 || state?.sourceRef !== input.sourceRef || !state.ownerAvailable) {
+          throw new Error('Archive target unavailable')
+        }
+        expectedRevision = state.revision
+      }
       await callArkme<ArkmeArchiveSetResult>('archives.set', {
-        sourceRef: state.sourceRef, selfArchived: !state.selfArchived, expectedRevision: state.revision,
+        sourceRef: input.sourceRef, selfArchived: input.selfArchived, expectedRevision,
       }, controller.signal)
       return !controller.signal.aborted && currentScope.current === scope
     } catch {
       if (!controller.signal.aborted && currentScope.current === scope) {
-        setError(state.selfArchived ? '取消归档未完成，请稍后重试' : '归档未完成，请稍后重试')
+        setError(input.selfArchived ? '归档未完成，请稍后重试' : '取消归档未完成，请稍后重试')
       }
       return false
     } finally {
@@ -92,19 +104,11 @@ export function useArchiveMutation() {
       }
     }
   }
-  return { set, busy, error }
-}
-
-export function ArkmeArchiveAction({ source, style, className, disabled = false, onAction }: {
-  source: ArkmeSourceItem; style: CSSProperties; className: string; disabled?: boolean;
-  onAction(state: ArkmeArchiveState): void;
-}) {
-  const { state, error, refresh } = useArchiveState(source.sourceRef)
-  return <button type="button" role="menuitem" className={className} style={style}
-    disabled={disabled || (error === '' && state?.ownerAvailable !== true)}
-    onClick={() => { if (error !== '') refresh(); else if (state !== undefined) onAction(state) }}>
-    {error !== '' ? '重试归档状态' : state?.selfArchived ? '取消归档' : state?.effectiveArchived ? '单独归档' : '归档'}
-  </button>
+  return {
+    set: (state: ArkmeArchiveState) => submit({ sourceRef: state.sourceRef, selfArchived: !state.selfArchived, expectedRevision: state.revision }),
+    archive: (sourceRef: string) => submit({ sourceRef, selfArchived: true }),
+    busy, error,
+  }
 }
 
 export function ArkmeArchiveStatus({ source }: { source: ArkmeSourceItem }) {
