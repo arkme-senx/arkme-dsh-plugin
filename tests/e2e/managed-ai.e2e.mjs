@@ -63,9 +63,8 @@ describe('Managed AI complete browser-to-ledger chain', () => {
       expect(await scaffold.ctx.get('arkmeData').testLogin(42)).toMatchObject({ status: 'authenticated', userId: 42 })
       const models = await scaffold.ctx.get('llm').listModels('arkme-managed')
       const live = process.env.JOTMO_MANAGED_AI_BROWSER_LIVE === '1'
-      expect(models.map(model => model.id)).toEqual(live ? ['arkme-flash-e2e'] : ['arkme-flash-e2e', 'bailian-v41-e2e'])
-      expect(models[0].description).toBe('基础价（CNY/百万 Token）：缓存命中 0.04，未命中 2，输出 8；平台服务费 3.75%')
-      if (!live) expect(models[1].description).toBe('基础价（CNY/百万 Token）：缓存命中 0.2，未命中 2，输出 8；平台服务费 7.25%')
+      expect(models.map(model => model.id)).toEqual(live ? ['arkme-flash-e2e', 'deepseek-v4-flash'] : ['arkme-flash-e2e', 'deepseek-v4-flash', 'bailian-v41-e2e'])
+      for (const model of models) expect(model.description).toBeUndefined()
       const saved = await scaffold.ctx.get('llm').resolveModelInfo('arkme-managed', 'deepseek-v4-flash')
       expect(saved.id).toBe('deepseek-v4-flash')
       expect(saved.description).toBe(models[0].description)
@@ -73,13 +72,16 @@ describe('Managed AI complete browser-to-ledger chain', () => {
       browser = await chromium.launch({ channel: process.env.DSH_WEB_TEST_BROWSER_CHANNEL || 'chrome' })
       page = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: 'en-US' })
       await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
-      const frameElement = await page.waitForSelector('iframe[title="DeepSeek Harness"]')
-      const frame = await frameElement.contentFrame()
+      // FrameLocator waits for the iframe document and follows its replacement
+      // during the initial client mount, unlike a nullable contentFrame snapshot.
+      const frame = page.frameLocator('iframe[title="DeepSeek Harness"]')
       await connectFreshWorkspace(frame, scaffold.workspaceCwd)
       const trigger = frame.getByRole('button', { name: /^选择模型：/ })
-      await expect.poll(() => trigger.getAttribute('aria-label')).toContain('deepseek-v4-flash')
+      await expect.poll(() => trigger.getAttribute('aria-label')).toContain(saved.name)
       await trigger.click()
-      await frame.getByText(models[0].description, { exact: true }).waitFor()
+      await frame.getByRole('menuitemradio', { name: /^Managed Alias E2E/ }).waitFor()
+      await frame.getByRole('menuitemradio', { name: saved.name, exact: true }).waitFor()
+      expect(await frame.getByRole('menu', { name: '模型选择', exact: true }).innerText()).not.toMatch(/基础价|平台服务费|CNY\/百万 Token/)
       if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT.replace(/\.png$/, '-menu.png') })
       await trigger.click()
       const input = frame.locator('[data-composer-input]').first()
@@ -95,7 +97,7 @@ describe('Managed AI complete browser-to-ledger chain', () => {
         }
         if (label === 'bailian') {
           await trigger.click()
-          await frame.getByText(models[1].description, { exact: true }).waitFor()
+          expect(await frame.getByRole('menu', { name: '模型选择', exact: true }).innerText()).not.toMatch(/基础价|平台服务费|CNY\/百万 Token/)
           await frame.getByRole('menuitemradio', { name: /^Bailian V4.1 E2E/ }).click()
           await expect.poll(() => trigger.getAttribute('aria-label')).toContain('Bailian V4.1 E2E')
         }

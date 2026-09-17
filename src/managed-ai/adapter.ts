@@ -512,33 +512,8 @@ function parseCapability(value: unknown): ManagedModelCapability {
   }
 }
 
-interface ManagedModelPresentation {
-  listed: boolean
-  description?: string
-}
-
-// Pricing is explanatory metadata. Missing/invalid presentation data must not
-// invent a price or prevent an otherwise valid saved model from resolving.
-function priceDescription(item: Record<string, unknown>): string | undefined {
-  const pricing = asRecord(item.pricing)
-  const chargePolicy = asRecord(item.charge_policy)
-  const fee = chargePolicy?.service_fee_basis_points
-  const rates = ['cache_hit_input_nano_per_token', 'cache_miss_input_nano_per_token', 'output_nano_per_token']
-    .map(key => pricing?.[key])
-  if (rates.some(rate => typeof rate !== 'string' || !/^[0-9]{1,19}$/u.test(rate) || BigInt(rate) <= 0n || BigInt(rate) > 9223372036854775807n)
-    || typeof fee !== 'number' || !Number.isInteger(fee) || fee < 0 || fee > 10_000) return undefined
-  const decimal = (value: bigint, places: number): string => {
-    const digits = value.toString().padStart(places + 1, '0')
-    const fraction = digits.slice(-places).replace(/0+$/u, '')
-    return `${digits.slice(0, -places)}${fraction ? `.${fraction}` : ''}`
-  }
-  const [hit, miss, output] = rates.map(rate => decimal(BigInt(rate as string), 3))
-  return `基础价（CNY/百万 Token）：缓存命中 ${hit}，未命中 ${miss}，输出 ${output}；平台服务费 ${decimal(BigInt(fee), 2)}%`
-}
-
 interface ManagedCatalogSnapshot {
   models: DeepSeekCatalogModel[]
-  presentation: Map<string, ManagedModelPresentation>
   capabilities: Map<string, ManagedModelCapability>
   reasoning: Map<string, LlmModelReasoningInfo>
 }
@@ -575,7 +550,6 @@ function parseManagedCatalog(payload: unknown): ManagedCatalogSnapshot {
   }
 
   const seen = new Set<string>()
-  const presentation = new Map<string, ManagedModelPresentation>()
   const capabilities = new Map<string, ManagedModelCapability>()
   const reasoning = new Map<string, LlmModelReasoningInfo>()
   const models = items.map((value) => {
@@ -588,11 +562,6 @@ function parseManagedCatalog(payload: unknown): ManagedCatalogSnapshot {
       throw new LlmError(`Arkme 模型目录包含重复模型“${id}”`, 'MALFORMED_RESPONSE')
     }
     seen.add(id)
-    if (item.listed !== undefined && typeof item.listed !== 'boolean') {
-      throw new LlmError('Arkme 模型目录中的展示信息无效', 'MALFORMED_RESPONSE')
-    }
-    const description = priceDescription(item)
-    presentation.set(id, { listed: item.listed !== false, ...(description === undefined ? {} : { description }) })
     const contextWindow = requiredCatalogTokens(item, 'context_window_tokens', '上下文窗口')
     const defaultMaxTokens = requiredCatalogTokens(item, 'default_max_output_tokens', '默认输出上限')
     const maximumMaxTokens = requiredCatalogTokens(item, 'maximum_max_output_tokens', '最大输出上限')
@@ -608,7 +577,7 @@ function parseManagedCatalog(payload: unknown): ManagedCatalogSnapshot {
       maxTokens: defaultMaxTokens,
     }
   })
-  return { models, capabilities, reasoning, presentation }
+  return { models, capabilities, reasoning }
 }
 
 function waitForSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -637,7 +606,6 @@ class ManagedModelCatalog {
   private readonly fetchImpl: typeof fetch
   private connectionSnapshot: DeepSeekConnectionOptions
   private modelIds = new Set<string>()
-  private presentationSnapshot = new Map<string, ManagedModelPresentation>()
   private capabilitySnapshot = new Map<string, ManagedModelCapability>()
   private reasoningSnapshot = new Map<string, LlmModelReasoningInfo>()
   private hasRemoteSnapshot = false
@@ -656,11 +624,6 @@ class ManagedModelCatalog {
 
   connection(): DeepSeekConnectionOptions {
     return this.connectionSnapshot
-  }
-
-  presentation(model: string): ManagedModelPresentation {
-    this.assertModel(model)
-    return this.presentationSnapshot.get(model)!
   }
 
   capability(model: string): ManagedModelCapability {
@@ -727,7 +690,6 @@ class ManagedModelCatalog {
       const snapshot = parseManagedCatalog(payload)
       this.connectionSnapshot = managedConnection(this.baseUrl, snapshot.models)
       this.modelIds = new Set(snapshot.models.map(model => model.id))
-      this.presentationSnapshot = snapshot.presentation
       this.capabilitySnapshot = snapshot.capabilities
       this.reasoningSnapshot = snapshot.reasoning
       this.hasRemoteSnapshot = true
@@ -804,9 +766,8 @@ class ManagedAiLlmAdapter extends LlmAdapter {
     assertManagedProvider(provider)
     await this.catalog.refreshForListing()
     const models = await this.delegate.listModels(provider)
-    return models.filter(model => this.catalog.presentation(model.id).listed).map(model => ({
+    return models.map(model => ({
       ...model,
-      ...this.modelDescription(model.id),
       inputModalities: this.catalog.capability(model.id).inputModalities,
     }))
   }
@@ -820,12 +781,7 @@ class ManagedAiLlmAdapter extends LlmAdapter {
     await this.catalog.ensureModel(model, signal)
     this.catalog.assertModel(model)
     const resolved = await this.delegate.resolveModel(provider, model, signal)
-    return { ...resolved, ...this.modelDescription(model), inputModalities: this.catalog.capability(model).inputModalities, reasoning: this.catalog.reasoning(model) }
-  }
-
-  private modelDescription(model: string): { description?: string } {
-    const description = this.catalog.presentation(model).description
-    return description === undefined ? {} : { description }
+    return { ...resolved, inputModalities: this.catalog.capability(model).inputModalities, reasoning: this.catalog.reasoning(model) }
   }
 
   async prepareCall(

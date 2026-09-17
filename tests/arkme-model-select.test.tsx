@@ -87,19 +87,6 @@ it('keeps recharge usable on quota failure, retries quota, and retains the selec
   expect(state.current?.provider).toBe('deepseek')
 })
 
-it('preserves and identifies a saved route outside the advisory catalog without guessing its capabilities', async () => {
-  state.current = { provider: 'arkme-managed', model: 'saved-flash', reasoningEffort: 'max' }
-  await render()
-  expect(host.querySelector('.arkme-model-trigger')?.getAttribute('aria-label')).toBe('选择模型：Arkme / saved-flash')
-  expect(host.textContent).toContain('max')
-  await click('saved-flash')
-  expect(host.textContent).not.toContain('思考强度')
-  expect(directory.select).not.toHaveBeenCalled()
-  expect(state.current).toEqual({ provider: 'arkme-managed', model: 'saved-flash', reasoningEffort: 'max' })
-  await click('DeepSeek V4 Pro')
-  expect(directory.select).toHaveBeenCalledWith({ provider: 'arkme-managed', model: 'pro' })
-})
-
 it('does not load unavailable sessions, honors locked state, and cancels quota work on unmount', async () => {
   await render(false); expect(directory.load).not.toHaveBeenCalled(); expect(host.querySelector('button')).toBeNull()
   await render(true, true); expect(button('DeepSeek-V4-Flash').disabled).toBe(true)
