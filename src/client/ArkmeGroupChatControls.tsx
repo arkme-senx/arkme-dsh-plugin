@@ -68,7 +68,7 @@ export const ARKME_CONVERSATION_HEADER_ACTIONS_STYLE: CSSProperties = {
 }
 
 export const ARKME_CONVERSATION_HEADER_BUTTON_STYLE: CSSProperties = {
-  width: 28, height: 28, padding: 6, border: 0, borderRadius: 28, background: 'transparent',
+  width: 28, height: 28, padding: 2, boxSizing: 'border-box', border: 0, borderRadius: 28, background: 'transparent',
   color: 'var(--dsw-alias-label-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   flex: 'none', cursor: 'pointer',
 }
@@ -312,7 +312,7 @@ function ClientIcon({ src, size = 20 }: { src: string; size?: number }) {
 }
 
 export function ArkmeConversationMoreIcon() {
-  return <IconEllipsisOutline16 size={15} />
+  return <IconEllipsisOutline16 size={24} />
 }
 
 function MagicWandIcon() {

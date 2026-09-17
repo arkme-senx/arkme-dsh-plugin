@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ARKME_CONVERSATION_HEADER_BUTTON_STYLE } from './ArkmeGroupChatControls.js'
 
 export interface ArkmePrivateCallMenuProps {
   sourceRef: string
@@ -103,9 +104,7 @@ export function arkmePrivateCallMenuPlacement(
 const styles: Record<string, CSSProperties> = {
   root: { position: 'relative', flex: 'none' },
   trigger: {
-    width: 24, height: 24, padding: 2, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    border: 0, borderRadius: 6, background: 'transparent', color: arkmeTheme.secondary,
-    cursor: 'pointer', appearance: 'none',
+    ...ARKME_CONVERSATION_HEADER_BUTTON_STYLE, appearance: 'none',
   },
   triggerIcon: {
     width: 20, height: 20, display: 'block', backgroundColor: 'currentColor',

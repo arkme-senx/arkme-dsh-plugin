@@ -4,6 +4,7 @@ import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlas
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeSearchRecordItem, ArkmeSearchSceneKind, ArkmeSourceItem } from '../types.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ARKME_CONVERSATION_HEADER_BUTTON_STYLE } from './ArkmeGroupChatControls.js'
 import { arkmeUi } from './ui-controller.js'
 import { SearchFileRow, SearchLinkRows, SearchMediaTile } from './ArkmeSearchCategories.js'
 import { RecordRow } from './ArkmeSearchSurface.js'
@@ -42,7 +43,7 @@ export function ArkmeConversationSearch({ source, host, accountKey }: { source: 
   }, [preferenceKey, preferences])
   const close = () => { setOpen(false); trigger.current?.focus() }
   return <>
-    <button ref={trigger} type="button" aria-label="搜索聊天记录" title="搜索聊天记录" aria-expanded={open} style={button} onClick={() => setOpen(value => !value)}><MagnifyingGlass size={22} /></button>
+    <button ref={trigger} type="button" aria-label="搜索聊天记录" title="搜索聊天记录" aria-expanded={open} style={ARKME_CONVERSATION_HEADER_BUTTON_STYLE} onClick={() => setOpen(value => !value)}><MagnifyingGlass size={22} /></button>
     {open && host.current !== null && createPortal(<ArkmeConversationSearchPanel source={source} scene={preferences.scene} global={preferences.global}
       onScene={scene => setPreferences(value => ({ ...value, scene }))} onGlobal={global => setPreferences(value => ({ ...value, global }))} onClose={close} />, host.current)}
   </>

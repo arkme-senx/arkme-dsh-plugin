@@ -495,7 +495,7 @@ const styles: Record<string, CSSProperties> = {
   contactDialogBody: { flex: 1, minHeight: 0, overflow: 'hidden' },
   header: {
     flex: 'none', height: 68, display: 'flex', alignItems: 'center', padding: '12px 16px 12px 20px',
-    boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, position: 'relative', gap: 2,
+    boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, position: 'relative', gap: 4,
   },
   titleGroup: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' },
   headerAvatar: { flex: 'none', display: 'grid', placeItems: 'center', marginRight: 6 },
