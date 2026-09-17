@@ -13,19 +13,20 @@
 
 ## 可复现验证
 
-测试目标：未修改的官方 DSH `d347e703908d0406b7a7ef80e3a0e594d86b2215`，版本 `0.1.3-alpha.1`；Node `24.19.0`。插件最初基于用户指定的 dev `e9ac7f135769d0569417d8c7dd13ff8cf040036a`，审查时已合入 dev `21ceaed083b3dc22f099981eb28bd5b10283b31b`。
+测试目标：未修改的官方 DSH `fb2c4b9e698e30edb738bca4cf0618587db7d203`，版本 `0.1.5-rc.2`；Node `24.19.0`。插件最初基于用户指定的 dev `e9ac7f135769d0569417d8c7dd13ff8cf040036a`，审查收口合入 dev `d5cc136bede1f4e1c70d20bfed990168d8880a38`。当前 0.1.60 版本及元数据全部来自 dev 的同步提交，归档差异不修改版本。
 
 先运行仓库 typecheck、build，再用 `pnpm pack` 生成产物。使用官方 `dsh plugin --profile web add <artifact.tgz> --ignore-scripts --ignore-workspace` 装入独立的 `DSH_HOME`，避免接触用户 Profile。
 
 ```bash
 ARKME_DSH_CHECKOUT=<official-unmodified-checkout> \
+ARKME_DSH_REF=refs/tags/dsh-v0.1.5-rc.2 \
 ARKME_PACKED_PROFILE=<fresh-profile-with-packed-plugin> \
 bash scripts/run-topic-archive-e2e.sh
 ```
 
 runner 创建隔离 Record / Mongo / Redis / search 测试服务，并在结束时清理。本地真实链路通过；不代表修改或发布了 DSH。仓外 SDK 验证入口为 `scripts/verify-archive-consumer.mjs`，Consumer 源文件为 `tests/consumers/archive-consumer.mts`。
 
-本轮原始日志在任务父目录：`dsh-archive-regression-final.log`、`dsh-archive-build.log`、`dsh-profile-install-v2.log`、`dsh-archive-consumer.log`、`topic-archive-cross-e2e.log`。页面截图为 `dsh-archive-e2e.png`。没有修改版本、根 README 或依赖锁文件，没有发布。
+初次实现日志在任务父目录：`dsh-archive-regression-final.log`、`dsh-archive-build.log`、`dsh-profile-install-v2.log`、`dsh-archive-consumer.log`、`topic-archive-cross-e2e.log`，对应早期 dev 与 DSH 0.1.3-alpha.1；最终基线证据以下方复验为准。没有修改版本、根 README 或依赖锁文件，没有发布。
 
 ## 合并前审查与修复复验
 
@@ -36,4 +37,6 @@ runner 创建隔离 Record / Mongo / Redis / search 测试服务，并在结束�
 - 完整 `pnpm test`：570 个文件通过、8 个跳过，6780 项通过、11 项跳过；typecheck、build、pack 通过。
 - 最终不可变 tgz 通过官方 CLI 装入新的临时 Profile。真实 Chrome 从主题操作菜单归档 B/A，再从设置的数据管理恢复 A/B；确认目录及时更新、父恢复保留子标记、继承条目无误导性恢复入口。另验证归档前记录仍可读、归档后仍可写入/读取、CAS 冲突，以及真实会话 Tool 和仓外 SDK Consumer。
 
-复验日志：`review-dsh-full-tests.log`、`review-dsh-typecheck.log`、`review-dsh-build.log`、`review-dsh-install3.log`、`review-dsh-cross-e2e.log`、`review-dsh-consumer.log`。运行证据为 macOS 官方 DSH + Chrome，不代表 Windows/Linux 已进行真实平台验收。
+复验日志：`review-dsh-full-tests.log`、`review-dsh-typecheck.log`、`review-dsh-build.log`、`review-dsh-install5.log`、`review-dsh-cross-e2e.log`、`review-dsh-consumer.log`。最终实际链路在官方 0.1.5-rc.2 上通过，截图为 `review-dsh-archive-e2e.png`。运行证据为 macOS 官方 DSH + Chrome，不代表 Windows/Linux 已进行真实平台验收。
+
+同步最新 dev 后，曾用旧官方 0.1.3-alpha.1 重跑；其页面缺少当前 dev 使用的会话视口结构，浏览器在业务操作前超时。最终改用与 dev 已验收基线匹配的官方 0.1.5-rc.2，没有为旧宿主添加兼容分支，也没有修改 DSH 源码。runner 允许指定官方目标 ref，并继续要求 checkout 的 tracked 状态干净。官方依赖安装与构建分别记录在 `review-dsh-official-install.log`、`review-dsh-official-build.log`。
