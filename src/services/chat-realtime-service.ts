@@ -483,6 +483,21 @@ export class ChatRealtimeService {
     }
   }
 
+  /** Archive changes directory membership, not record content, privacy or calendar. */
+  async invalidateTopicDirectoryProjection(): Promise<void> {
+    try {
+      const session = await this.runtime.sessionStore.read()
+      if (session === undefined) return
+      this.source.invalidateSourceListCache(session.userId, 'send_to_self')
+      this.emitChatClientEvent({
+        type: 'projection-invalidated', projection: 'topic-directory',
+        revision: this.nextChatClientRevision(),
+      })
+    } catch (error) {
+      console.warn('dsh-arkme: Topic directory invalidation failed:', safeFailureMessage(error))
+    }
+  }
+
   async invalidateRecordProjection(options: { contentOnly?: boolean } = {}): Promise<void> {
     try {
       const session = await this.runtime.sessionStore.read()

@@ -28,7 +28,7 @@ function useArchiveRefresh(): { userId: number | undefined; scope: string; revis
   }, [refresh])
   return { userId: auth.auth?.status === 'authenticated' ? auth.auth.userId : undefined,
     scope: `${auth.auth?.status}:${auth.auth?.environment}:${auth.auth?.userId}:${ui.authRevision}`,
-    revision: `${ui.authRevision}:${ui.recordRevision}:${foreground}`, refresh }
+    revision: `${ui.authRevision}:${ui.recordRevision}:${ui.topicDirectoryRevision}:${foreground}`, refresh }
 }
 
 /** Reads effective state from the Host; no client-side hierarchy inference. */
@@ -88,7 +88,7 @@ export function useArchiveMutation() {
       if (!controller.signal.aborted && currentScope.current === scope) {
         setBusy(false)
         // An uncertain reply must be re-read, never silently replayed with a new revision.
-        arkmeUi.recordChanged()
+        arkmeUi.topicDirectoryChanged()
       }
     }
   }
@@ -170,8 +170,8 @@ export function ArkmeArchiveManagementPanel({ close: closeSettings }: { close?: 
   return <div className="arkme-redesign-settings-surface" data-arkme-archive-management>
     <div className="arkme-redesign-settings-shell">
       <h1 className="arkme-archive-heading">数据管理</h1>
-      <section className="arkme-redesign-settings-group">
-        <h2>已归档</h2>
+      <section className="arkme-redesign-settings-group arkme-archive-group">
+        <h2>已归档主题</h2>
         <div>
           {userId === undefined && <p className="arkme-archive-feedback">请先登录</p>}
           {error !== '' && <div className="arkme-archive-feedback" role="alert">{error} <button type="button" className="arkme-archive-action" onClick={refresh}>重试</button></div>}

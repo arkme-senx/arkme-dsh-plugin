@@ -191,6 +191,7 @@ function cacheWithTopics(
 export function ArkmeTopicDirectoryPopover({
   userId, environment = 'prod', selectedSource, trigger = 'button', onSelect, onSelectionRefreshed = onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateWarning, onCreateTopicReady, retryRevision,
 }: ArkmeTopicDirectoryPopoverProps) {
+  const topicDirectoryRevision = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getTopicDirectoryRevision, arkmeUi.getTopicDirectoryRevision)
   const recordRevision = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getRecordRevision, arkmeUi.getRecordRevision)
   const directory = useMemo(() => selfTopicDirectory(userId, environment), [userId, environment])
   const snapshot = useSyncExternalStore(directory.subscribe, directory.getSnapshot, directory.getSnapshot)
@@ -257,7 +258,7 @@ export function ArkmeTopicDirectoryPopover({
       // The next directory refresh retries this owner check.
     })
     return () => { disposed = true; controller.abort() }
-  }, [directory, retryRevision, recordRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
+  }, [directory, retryRevision, recordRevision, topicDirectoryRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
