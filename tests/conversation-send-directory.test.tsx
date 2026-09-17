@@ -44,6 +44,7 @@ import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
 import { ArkmeSourceBreadcrumb } from '../src/client/ArkmeSourceBreadcrumb.js'
 import { ArkmeTopicCreateDialog } from '../src/client/ArkmeTopicCreateDialog.js'
+import { ArkmeTopicDirectoryPopover } from '../src/client/ArkmeTopicDirectoryPopover.js'
 import { ArkmeDocumentComposerInput } from '../src/client/ArkmeDocumentComposerInput.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
@@ -52,6 +53,7 @@ import { arkmeComposerDraftStore, arkmeSourceComposerDraftKey } from '../src/cli
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { resetSelfTopicDirectories } from '../src/client/self-topic-directory-cache.js'
 import { ArkmeConversationMemoryCache } from '../src/client/conversation-memory-cache.js'
 
 const target: ArkmeSourceItem = {
@@ -993,6 +995,7 @@ describe('conversation send directory projection', () => {
   })
 
   beforeEach(() => {
+    resetSelfTopicDirectories()
     timeline = []
     aroundTimeline = undefined
     aroundOlderHasMore = false
@@ -1327,6 +1330,21 @@ describe('conversation send directory projection', () => {
     arkmeMessagePreparing.activateAccount(undefined)
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it.each([target, sendToSelf])('keeps only the shared menu owner while the conversation surface is suspended ($kind)', async previousSource => {
+    arkmeUi.selectSource(previousSource)
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} active={false} />)
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-surface-suspended': 'true' })).toHaveLength(1)
+    const menus = renderer!.root.findAllByType(ArkmeSourceBreadcrumb)
+    expect(menus).toHaveLength(1)
+    expect(menus[0]!.props.trigger).toBe('none')
+    for (const directory of renderer!.root.findAllByType(ArkmeTopicDirectoryPopover)) {
+      expect(directory.props.selectedSource).toBeUndefined()
+    }
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(0)
   })
 
   it.each([target, group])('renders forward cards before same-time comments on load and live updates ($kind)', async source => {
@@ -1832,13 +1850,11 @@ describe('conversation send directory projection', () => {
       renderer!.root.findAllByProps({ 'aria-label': '更多私聊操作' })[0]!.props.onClick()
     })
     const menu = renderer!.root.findByProps({ role: 'menu', 'aria-label': '更多私聊操作' })
-    const refusal = menu.findByProps({ role: 'menuitemcheckbox' })
+    const refusal = menu.findAllByProps({ role: 'menuitem' })
+      .find(node => node.findAll(child => child.children.includes('拒收对方消息')).length > 0)!
     expect(refusal).toBeDefined()
-    expect(refusal.props['aria-checked']).toBe(true)
-    expect(refusal.findByType('span').children).toEqual(['拒收对方消息'])
     await act(async () => { refusal.props.onClick({ detail: 0 }) })
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
-    expect(renderer!.root.findByProps({ role: 'menuitemcheckbox' }).props['aria-checked']).toBe(false)
     expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'chat.direct-message-refusal.set')).toHaveLength(1)
     expect(mocks.callArkme.mock.calls.some(call => call[0] === 'source.send-text')).toBe(false)
   })

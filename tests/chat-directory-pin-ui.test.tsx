@@ -47,6 +47,7 @@ beforeEach(async () => {
   })
   vi.stubGlobal('document', {
     body: {}, visibilityState: 'visible', addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    querySelector: vi.fn(() => null),
   })
   mocks.callArkme.mockReset()
   mocks.callArkme.mockImplementation(async (operation: string) => {

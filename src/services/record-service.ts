@@ -1,4 +1,6 @@
+import { recordManualEditFact } from '../record-edit-history.js'
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
+import { isDshAgentInputRawRecord } from '../dsh-agent-input-source.js'
 import { projectCallRecord } from '../call-record-presentation.js'
 import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges } from '../markdown.js'
 import { createHash, createHmac } from 'node:crypto'
@@ -60,7 +62,6 @@ function listValue(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
 }
 
-const DSH_AGENT_INPUT_CREATION_SOURCE = 3
 const MAX_DEFAULT_CATEGORY_FILTER_BACKFILL_PAGES = 5
 const RECORD_REEDIT_SUPPORTED_TEMPLATE_KINDS = new Set([1, 2, 3, 4])
 
@@ -80,7 +81,7 @@ function recordCreationSource(raw: unknown): number {
 }
 
 function isDSHAgentInputRecord(raw: unknown): boolean {
-  return recordCreationSource(raw) === DSH_AGENT_INPUT_CREATION_SOURCE
+  return isDshAgentInputRawRecord(raw)
 }
 
 function safeFailureMessage(error: unknown): string {
@@ -1643,6 +1644,7 @@ export class RecordService {
   recordTimelineItem(item: ArkmeSelfRecordItem): ArkmeTimelineItem {
     return {
       itemUid: item.recordUid,
+      ...(item.hasManualEdit === undefined ? {} : { hasManualEdit: item.hasManualEdit }),
       senderName: '我',
       isMe: true,
       sendAtMillis: item.sendAtMillis,
@@ -1732,6 +1734,7 @@ export class RecordService {
       displayKind: numberValue(item.display_kind ?? core.display_kind),
       version: numberValue(item.version ?? core.version),
       recordVersion: numberValue(item.record_core === undefined ? item.version : core.version),
+      ...(recordManualEditFact(raw) === undefined ? {} : { hasManualEdit: recordManualEditFact(raw) }),
       updateAtMillis: numberValue(item.update_at ?? core.update_at),
       recordDurationMillis: numberValue(item.record_duration_millis ?? core.record_duration_millis),
       editDurationMillis: numberValue(item.edit_duration_millis ?? core.edit_duration_millis),
@@ -1765,6 +1768,7 @@ export class RecordService {
       status: numberValue(core.status),
       version: numberValue(core.version),
       creationSource: recordCreationSource(raw),
+      ...(recordManualEditFact(raw) === undefined ? {} : { hasManualEdit: recordManualEditFact(raw) }),
       displayKind: numberValue(item.display_kind ?? core.display_kind),
       ...(forwardRecords === undefined ? {} : { forwardRecords }),
       ...(contentBlocks === undefined ? {} : { contentBlocks }),

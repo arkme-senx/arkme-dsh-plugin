@@ -8,6 +8,7 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
   'recentEmojiIds', 'recordRecentEmoji',
+  'recordEditHistoryPage',
   'withGroupMemberInvalidation', // composition-only MCP presentation seam; no SDK/Host route
   'directMessageAdmission', 'setDirectMessageRefusal', 'assignRecordTopic', 'listTopicCandidates', 'deleteSourceRecords', 'selfTarget',
   'fileCapabilities', 'fileSearch', 'fileSessionUser', 'fileStage', 'fileList', 'fileReadLocal', 'attachLocalFileOpener', 'fileOpenLocal', 'fileRemove', 'fileSend',
@@ -93,6 +94,7 @@ const expectedServiceFiles = [
   'file-transfers.ts',
   'record-reedit-attachments.ts',
   'record-reedit-submissions.ts',
+  'record-edit-history-service.ts',
   'service.ts', 'auth-service.ts', 'profile-service.ts', 'bot-service.ts', 'bot-conversation-service.ts', 'source-service.ts',
   'conversation-directory-service.ts', 'conversation-list-preference-service.ts', 'conversation-directory-visibility-service.ts',
   'chat-sender-display-reader.ts', 'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',

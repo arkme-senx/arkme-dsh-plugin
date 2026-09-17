@@ -1,3 +1,4 @@
+import { ArkmeRecordEditHistory } from './ArkmeRecordEditHistory.js'
 import { ArkmeBotSenderName } from './ArkmeBotIdentity.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { arkmeDetailExtensionComposerStyles } from './detail-extension-composer-style.js'
@@ -5,6 +6,7 @@ import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRic
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import type { ArkmeProviderCapabilities } from '../types.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
 import type {
   ArkmeBotList,
@@ -794,6 +796,7 @@ export function ArkmeTimelineDetailDrawer({
   messageCreationBlocked?: boolean
   messageCreationRestriction?: string
 }) {
+  const [editHistoryTarget, setEditHistoryTarget] = useState<string>()
   const [relatedView, setRelatedView] = useState<ArkmeRelatedDrawerView>('source-detail')
   const [relatedState, setRelatedState] = useState<ArkmeRelatedQuickNotesLoadState>({ kind: 'idle' })
   const [relatedDetailState, setRelatedDetailState] = useState<ArkmeRelatedQuickNoteDetailState>({ kind: 'idle' })
@@ -812,6 +815,8 @@ export function ArkmeTimelineDetailDrawer({
   })
   const messageActionRef = item.messageActionRef?.trim() ?? ''
   const normalizedSourceRef = sourceRef?.trim() ?? ''
+  const historyTarget = `${normalizedSourceRef}:${item.itemUid}`
+  const historyOpen = editHistoryTarget === historyTarget && messageActionRef !== ''
   const quickNoteDetailsSupported = item.quickNoteDetailsSupported !== false
   const loadRelated = useCallback(() => {
     listAbortRef.current?.abort()
@@ -883,6 +888,7 @@ export function ArkmeTimelineDetailDrawer({
     listAbortRef.current?.abort()
     detailAbortRef.current?.abort()
     extensionAbortRef.current?.abort()
+    setEditHistoryTarget(undefined)
     setRelatedView('source-detail')
     setRelatedState({ kind: 'idle' })
     setRelatedDetailState({ kind: 'idle' })
@@ -900,8 +906,8 @@ export function ArkmeTimelineDetailDrawer({
     }
   }, [item.itemUid, loadExtensionContext, loadRelated])
   useEffect(() => {
-    if (bodyRef.current !== null) bodyRef.current.scrollTop = scrollTopByViewRef.current[relatedView]
-  }, [relatedView])
+    if (bodyRef.current !== null) bodyRef.current.scrollTop = historyOpen ? 0 : scrollTopByViewRef.current[relatedView]
+  }, [relatedView, historyOpen])
   const navigateRelated = (nextView: ArkmeRelatedDrawerView) => {
     if (bodyRef.current !== null) scrollTopByViewRef.current[relatedView] = bodyRef.current.scrollTop
     setRelatedView(nextView)
@@ -976,7 +982,10 @@ export function ArkmeTimelineDetailDrawer({
       />
     </ArkmeDetailShell>
   }
-  return <ArkmeDetailShell title="快记详情" label="快记详情" onClose={closeDrawer} bodyRef={bodyRef} footer={extensionFooter}>
+  return <ArkmeDetailShell title={historyOpen ? "编辑记录" : "快记详情"} label={historyOpen ? "编辑记录" : "快记详情"}
+    onClose={closeDrawer} bodyRef={bodyRef} footer={extensionFooter} footerHidden={historyOpen}
+    {...(historyOpen ? { onBack: () => { setEditHistoryTarget(undefined) }, backLabel: '返回快记详情' } : {})}>
+    {historyOpen ? <ArkmeRecordEditHistory key={historyTarget} sourceRef={normalizedSourceRef} messageActionRef={messageActionRef} author={item} /> : <>
     <div style={{ ...styles.row, alignItems: 'center', marginBottom: 20, ...(item.senderKind === 'bot' ? { gap: 10 } : {}) }}>
       <ArkmeUserAvatar senderKind={item.senderKind} {...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef })} size={40} label="作者头像" />
       <div style={styles.content}><div style={styles.name}>{item.senderKind === 'bot' ? <ArkmeBotSenderName name={arkmeTimelineDetailSenderText(item)} detail /> : arkmeTimelineDetailSenderText(item)}</div>
@@ -997,6 +1006,13 @@ export function ArkmeTimelineDetailDrawer({
       />
     </div>
     {sourceBadge}
+    <style>{`.arkme-edit-history-entry { background: transparent; } .arkme-edit-history-entry:hover { background: ${arkmeTheme.hover}; }`}</style>
+    {item.hasManualEdit === true && normalizedSourceRef !== '' && messageActionRef !== '' && <button
+      type="button" aria-label="已编辑" className="arkme-edit-history-entry" style={{ display: 'flex', alignItems: 'center', gap: 2, height: 32, marginTop: 5, padding: 0, border: 0, borderRadius: 4, color: arkmeTheme.tertiary, font: 'inherit', fontSize: 12, cursor: 'pointer' }}
+      onClick={() => {
+        if (bodyRef.current !== null) scrollTopByViewRef.current['source-detail'] = bodyRef.current.scrollTop
+        setEditHistoryTarget(historyTarget)
+      }}>已编辑<CaretRight size={12} style={{ flex: 'none' }} aria-hidden /></button>}
     {quickNoteDetailsSupported && item.extensionParent !== undefined && <DetailExtensionParent parent={item.extensionParent} />}
     {quickNoteDetailsSupported && <ArkmeRelatedQuickNotesCard
       state={relatedState}
@@ -1022,6 +1038,7 @@ export function ArkmeTimelineDetailDrawer({
       onClose={() => { setMemberProfile(undefined) }}
       onSend={openPrivateFromProfile}
     />}
+    </>}
   </ArkmeDetailShell>
 }
 

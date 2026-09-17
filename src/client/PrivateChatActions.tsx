@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { Check } from '@phosphor-icons/react/dist/csr/Check'
+import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react'
+import { IconDownloadOutline16, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Prohibit } from '@phosphor-icons/react/dist/csr/Prohibit'
 import { UserMinus } from '@phosphor-icons/react/dist/csr/UserMinus'
 import { UserPlus } from '@phosphor-icons/react/dist/csr/UserPlus'
@@ -8,12 +8,10 @@ import type { ArkmeSourceItem } from '../types.js'
 import type { useDirectMessageAdmission } from './direct-message-admission.js'
 import { banAuthorizationRejected, chatActionKey, privateChatActions, UnconfirmedBanError } from './private-chat-actions-store.js'
 import { useResource } from './use-resource.js'
-import { arkmeTheme } from './arkme-theme.js'
 import {
-  ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE, ARKME_CONVERSATION_SETTINGS_MENU_SCRIM_STYLE,
-  ARKME_CONVERSATION_SETTINGS_MENU_STATUS_STYLE, ARKME_CONVERSATION_SETTINGS_MENU_WIDTH,
-  ARKME_CONVERSATION_SETTINGS_POPOVER_STYLE,
+  ArkmeConversationHeaderIconButton, ArkmeConversationMoreIcon,
 } from './ArkmeGroupChatControls.js'
+import { ArkmeDshMenu } from './ArkmeDshMenu.js'
 
 export function usePrivateChatActions(account: string | undefined, userId: number | undefined,
   source: ArkmeSourceItem | undefined, active: boolean, open: boolean) {
@@ -66,10 +64,29 @@ export interface ConversationActionItem {
   invoke(): void
 }
 
+export interface ConversationExportAction {
+  busy: boolean
+  processed: number
+  invoke(): void
+}
+
+export function conversationExportActionItem(action: ConversationExportAction): ConversationActionItem {
+  return {
+    id: 'export',
+    label: action.busy
+      ? `正在导出${action.processed > 0 ? ` · ${String(action.processed)} 条` : ''}`
+      : '导出',
+    icon: <IconDownloadOutline16 />,
+    busy: action.busy,
+    invoke: action.invoke,
+  }
+}
+
 /** Ordered business declarations; adding an item never changes the menu's cache or event machinery. */
 export function privateChatActionItems(actions: ReturnType<typeof usePrivateChatActions>,
-  admission: ReturnType<typeof useDirectMessageAdmission>, openRelated: () => void): ConversationActionItem[] {
-  const items: ConversationActionItem[] = []
+  admission: ReturnType<typeof useDirectMessageAdmission>, openRelated: () => void,
+  exportAction?: ConversationExportAction): ConversationActionItem[] {
+  const items: ConversationActionItem[] = exportAction === undefined ? [] : [conversationExportActionItem(exportAction)]
   if (actions.relatedAllowed) items.push({ id: 'related', label: '相关录音', icon: <Waveform size={20} aria-hidden />, invoke: openRelated,
     error: actions.relatedError === undefined ? '' : '暂时无法更新相关录音资格' })
   else if (actions.relatedError !== undefined) items.push({ id: 'related', label: '重新检查相关录音', icon: <Waveform size={20} aria-hidden />, invoke: actions.refreshRelated })
@@ -92,77 +109,55 @@ export function privateChatActionItems(actions: ReturnType<typeof usePrivateChat
   return items
 }
 
-export function ConversationActionsMenu({ items, anchor, host, onClose }: {
-  items: readonly ConversationActionItem[]; anchor: RefObject<HTMLButtonElement>; host: HTMLElement; onClose(): void
+export function ConversationActionsMenu({ items, anchor, onClose, label = '更多私聊操作', trigger }: {
+  items: readonly ConversationActionItem[]
+  anchor: RefObject<HTMLButtonElement>
+  host?: HTMLElement
+  onClose(): void
+  label?: string
+  trigger?: { open: boolean; onOpenChange(open: boolean): void; busy?: boolean }
 }) {
-  const menuRef = useRef<HTMLDivElement>(null)
-  const gesture = useRef<{ id: string; invoke(): void }>()
-  const [position, setPosition] = useState({ left: 12, top: 54 })
-  const structure = items.map(item => item.id).join('|')
-  useLayoutEffect(() => {
-    gesture.current = undefined
-    const positionMenu = () => {
-      const button = anchor.current; const menu = menuRef.current
-      if (button === null || menu === null) return
-      const parent = host.getBoundingClientRect(); const trigger = button.getBoundingClientRect()
-      setPosition({ left: Math.max(12, Math.min(parent.width - ARKME_CONVERSATION_SETTINGS_MENU_WIDTH - 12,
-        trigger.right - parent.left - ARKME_CONVERSATION_SETTINGS_MENU_WIDTH)),
-      top: Math.max(8, Math.min(parent.height - menu.getBoundingClientRect().height - 12, trigger.bottom - parent.top + 8)) })
-    }
-    positionMenu()
-    if (typeof document !== 'undefined' && document.activeElement === document.body) {
-      menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
-    }
-    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(positionMenu)
-    if (menuRef.current !== null) observer?.observe(menuRef.current)
-    observer?.observe(host)
-    return () => { observer?.disconnect() }
-  }, [anchor, host, structure])
+  const open = trigger?.open ?? true
   useEffect(() => {
-    const menu = menuRef.current; const button = anchor.current
-    menu?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+    if (!open) return
     return () => {
-      if (typeof document !== 'undefined' && (document.activeElement === document.body || menu?.contains(document.activeElement))) button?.focus()
+      if (typeof anchor.current?.focus === 'function') anchor.current.focus()
     }
-  }, [anchor])
-  return <div style={ARKME_CONVERSATION_SETTINGS_MENU_SCRIM_STYLE} role="presentation" onMouseDown={event => {
-    if (event.target === event.currentTarget) onClose()
-  }}>
-    <div ref={menuRef} style={{ ...ARKME_CONVERSATION_SETTINGS_POPOVER_STYLE, ...position, maxHeight: 'calc(100% - 20px)', overflowY: 'auto' }}
-      role="menu" aria-label="更多私聊操作" onKeyDown={event => {
-        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
-        if (event.key === 'Tab') { onClose(); return }
-        const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
-        const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
-        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-          event.preventDefault()
-          const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
-            : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
-          buttons[next]?.focus()
-        }
-      }}>
-      {items.length === 0 && <div style={ARKME_CONVERSATION_SETTINGS_MENU_STATUS_STYLE}>当前没有可用操作</div>}
-      {items.map(item => <div key={item.id}>
-        <button type="button" role={item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
-          aria-checked={item.checked} aria-busy={item.busy || undefined} disabled={item.disabled || item.busy}
-          style={ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE}
-          onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
-          onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-          onPointerDown={() => { gesture.current = { id: item.id, invoke: item.invoke } }}
-          onKeyDown={event => {
-            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!event.repeat && !event.nativeEvent.isComposing) item.invoke() }
-          }}
-          onClick={event => {
-            const captured = gesture.current; gesture.current = undefined
-            if (event.detail === 0) item.invoke()
-            else if (captured?.id === item.id) captured.invoke()
-          }}>
-          {item.icon}<span>{item.label}</span>
-          {item.busy ? <span aria-hidden style={{ marginLeft: 'auto', fontSize: 12, color: arkmeTheme.secondary }}>处理中…</span>
-            : item.checked === true && <Check size={16} style={{ marginLeft: 'auto' }} aria-hidden />}
-        </button>
-        {item.error && <div role="status" style={ARKME_CONVERSATION_SETTINGS_MENU_STATUS_STYLE}>{item.error}</div>}
-      </div>)}
-    </div>
-  </div>
+  }, [anchor, open])
+  const menuItems: MenuEntry[] = []
+  for (const item of items) {
+    const disabled = item.disabled === true || item.busy === true
+    menuItems.push({ id: item.id, label: item.label, icon: item.icon, ...(disabled ? { disabled: true } : {}) })
+    if (item.error) menuItems.push({ id: `${item.id}:error`, label: <span role="status">{item.error}</span>, disabled: true })
+  }
+  if (menuItems.length === 0) menuItems.push({ id: 'empty', label: '当前没有可用操作', disabled: true })
+  const close = () => {
+    trigger?.onOpenChange(false)
+    onClose()
+  }
+  return <ArkmeDshMenu
+    open={open}
+    label={label}
+    align="end"
+    dense
+    items={menuItems}
+    selectedIds={items.filter(item => item.checked === true).map(item => item.id)}
+    onClose={close}
+    onSelect={id => {
+      const item = items.find(value => value.id === id)
+      if (item === undefined) return
+      close()
+      item.invoke()
+    }}
+    anchor={trigger === undefined
+      ? <span aria-hidden />
+      : <ArkmeConversationHeaderIconButton
+        label={label}
+        buttonRef={anchor}
+        hasPopup
+        expanded={open}
+        {...(trigger.busy === undefined ? {} : { busy: trigger.busy })}
+        onClick={() => { trigger.onOpenChange(!open) }}
+      ><ArkmeConversationMoreIcon /></ArkmeConversationHeaderIconButton>}
+  />
 }

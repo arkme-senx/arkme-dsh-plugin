@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import arkmeBotIconBase64 from '../../assets/icons/cpu-linear.svg'
 import arkmeGroupIconBase64 from '../../assets/icons/profile-2user-linear.svg'
@@ -6,6 +6,7 @@ import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
 import { callArkme } from './api.js'
 import { ArkmeBotCreateDialog } from './ArkmeBotCreateDialog.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { watchFrameMenuDismissal } from './frame-menu-dismissal.js'
 
 type QuickAddDialogKind = 'group' | 'bot'
 
@@ -77,7 +78,7 @@ function maskIcon(base64: string, iconStyle: CSSProperties): CSSProperties {
 }
 
 function ArkmeQuickAddMenuItem({ icon, label, onClick }: {
-  icon: string
+  icon: string | ReactNode
   label: string
   onClick(): void
 }) {
@@ -86,22 +87,29 @@ function ArkmeQuickAddMenuItem({ icon, label, onClick }: {
     onMouseEnter={event => { event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, #f4f4f6)' }}
     onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
   >
-    <span aria-hidden style={maskIcon(icon, style.menuIcon!)} />
+    {typeof icon === 'string' ? <span aria-hidden style={maskIcon(icon, style.menuIcon!)} /> : <span aria-hidden style={style.menuIcon}>{icon}</span>}
     <span>{label}</span>
   </button>
 }
 
-export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onAddBot }: {
+export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onAddBot, onNewDshSession, error }: {
   onContactAdd(): void
   onCreateGroup(): void
   onAddBot(): void
+  onNewDshSession?: (() => void) | undefined
+  error?: string
 }) {
   return <div data-arkme-notification-blocking-overlay="true" role="menu" aria-label="添加" style={style.menu}>
+    {onNewDshSession && <>
+      <ArkmeQuickAddMenuItem icon={<svg width={19} height={19} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M7 20.5 3 22l1.5-4A9 9 0 1 1 7 20.5Z" /><path d="M12 8v8m-4-4h8" /></svg>} label="新建 DSH 会话" onClick={onNewDshSession} />
+      <div aria-hidden style={style.divider} />
+    </>}
     <ArkmeQuickAddMenuItem icon={arkmeUserAddIconBase64} label="添加联系人" onClick={onContactAdd} />
     <div aria-hidden style={style.divider} />
     <ArkmeQuickAddMenuItem icon={arkmeGroupIconBase64} label="创建群聊" onClick={onCreateGroup} />
     <div aria-hidden style={style.divider} />
     <ArkmeQuickAddMenuItem icon={arkmeBotIconBase64} label="添加 Bot" onClick={onAddBot} />
+    {error && <p role="alert" style={style.error}>{error}</p>}
   </div>
 }
 
@@ -109,16 +117,19 @@ export function ArkmeQuickAddButton({
   onContactAdd,
   onSourceCreated,
   onBotCreated,
+  onNewDshSession,
   notificationActivationRevision = 0,
   onBlockingOverlayChange,
 }: {
   onContactAdd(): void
   onSourceCreated(source: ArkmeSourceItem): void | Promise<void>
   onBotCreated?(bot: ArkmeBotSummary): void | Promise<void>
+  onNewDshSession?: (() => void) | undefined
   notificationActivationRevision?: number
   onBlockingOverlayChange?(open: boolean): void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [menuError, setMenuError] = useState('')
   const [dialogKind, setDialogKind] = useState<QuickAddDialogKind>()
   const [dialogBusy, setDialogBusy] = useState(false)
   const anchorRef = useRef<HTMLDivElement>(null)
@@ -154,17 +165,21 @@ export function ArkmeQuickAddButton({
     }
     const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
         setMenuOpen(false)
         triggerRef.current?.focus()
       }
     }
     document.addEventListener('pointerdown', closeFromOutside, true)
     document.addEventListener('mousedown', closeFromOutside, true)
-    document.addEventListener('keydown', closeFromKeyboard)
+    document.addEventListener('keydown', closeFromKeyboard, true)
+    const stopFrames = watchFrameMenuDismissal(document, () => setMenuOpen(false), closeFromKeyboard)
     return () => {
+      stopFrames()
       document.removeEventListener('pointerdown', closeFromOutside, true)
       document.removeEventListener('mousedown', closeFromOutside, true)
-      document.removeEventListener('keydown', closeFromKeyboard)
+      document.removeEventListener('keydown', closeFromKeyboard, true)
     }
   }, [menuOpen])
 
@@ -176,12 +191,17 @@ export function ArkmeQuickAddButton({
 
   return <div ref={anchorRef} style={style.anchor}>
     <button
-      ref={triggerRef} type="button" aria-label="添加联系人、群聊或 Bot" title="添加"
+      ref={triggerRef} type="button" aria-label={onNewDshSession ? '新建 DSH 会话、添加联系人、群聊或 Bot' : '添加联系人、群聊或 Bot'} title="添加"
       aria-haspopup="menu" aria-expanded={menuOpen}
       style={style.trigger}
-      onClick={() => { setMenuOpen(open => !open) }}
+      onClick={() => { setMenuError(''); setMenuOpen(open => !open) }}
     >＋</button>
     {menuOpen && <ArkmeQuickAddMenu
+      error={menuError}
+      onNewDshSession={onNewDshSession === undefined ? undefined : () => {
+        try { onNewDshSession(); setMenuError(''); setMenuOpen(false) }
+        catch (error) { setMenuError(error instanceof Error ? error.message : '暂时无法新建 DSH 会话，请稍后再试') }
+      }}
       onContactAdd={() => {
         setMenuOpen(false)
         onContactAdd()

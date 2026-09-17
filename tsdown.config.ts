@@ -108,6 +108,31 @@ export default defineConfig([
     },
   },
   {
+    name: '@senguoyun/dsh-arkme/harness-trajectory',
+    entry: { 'harness-trajectory-client': 'src/client/harness-trajectory-client.ts' },
+    outDir: 'lib', format: 'cjs', platform: 'browser', inputOptions: { platform: 'browser' }, target: 'es2022',
+    fixedExtension: false, dts: false, clean: false,
+    outputOptions: {
+      entryFileNames: 'harness-trajectory-client.js',
+      banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme/harness-trajectory", factory: (require) => {',
+      footer: 'return module.exports; } });',
+      intro: 'var module = { exports: {} }; var exports = module.exports;',
+    },
+  },
+  {
+    name: '@senguoyun/dsh-arkme/harness-sidebar',
+    entry: { 'harness-sidebar-client': 'src/client/harness-sidebar-client.ts' },
+    outDir: 'lib', format: 'cjs', platform: 'browser', inputOptions: { platform: 'browser' }, target: 'es2022',
+    fixedExtension: false, dts: false, clean: false,
+    external: ['react'],
+    outputOptions: {
+      entryFileNames: 'harness-sidebar-client.js',
+      banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme/harness-sidebar", factory: (require) => {',
+      footer: 'return module.exports; } });',
+      intro: 'var module = { exports: {} }; var exports = module.exports;',
+    },
+  },
+  {
     name: '@senguoyun/dsh-arkme/sdk',
     entry: { sdk: 'src/sdk/index.ts' },
     outDir: 'lib',

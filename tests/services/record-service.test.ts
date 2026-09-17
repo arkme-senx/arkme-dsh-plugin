@@ -20,6 +20,14 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordService', () => {
+  it.each([true, false])('preserves manual edit fact %s through both self record projections', fact => {
+    const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
+    const service = new RecordService({} as ServiceRuntime, media, {} as never)
+    const raw = { record_uid: 'r', record_core: { record_uid: 'r', has_manual_edit: fact, edit_status: 4 } }
+    expect(service.recordTimelineItemFromRaw(raw, 42).hasManualEdit).toBe(fact)
+    expect(service.recordTimelineItem(service.recordItem(raw, 42)!).hasManualEdit).toBe(fact)
+  })
+
   it.each(['timeline', 'record-list'] as const)('carries partial media evidence through the %s projection', path => {
     const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
     const service = new RecordService({} as ServiceRuntime, media, {} as never)

@@ -31,7 +31,7 @@ const tokenParts = [
 const token = `${tokenParts}.${createHmac('sha256', 'record-e2e-access-token-secret').update(tokenParts).digest('base64url')}`
 
 describe('packed Arkme on the target Harness with the real record owner', () => {
-  it('exposes a settings-free read-only topic while preserving SDK and Tool home policies', async () => {
+  it('keeps DSH inputs in the global calendar and outside personal notes without rewriting home policies', async () => {
     const tls = {
       key: await readFile(process.env.ARKME_E2E_TLS_KEY),
       cert: await readFile(process.env.NODE_EXTRA_CA_CERTS),
@@ -51,7 +51,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
           response = { code: 200, data: { access_token: token, refresh_token: 'isolated-fixture-refresh' } }
         } else if (req.url === '/api/v1/auth/get-user-info') {
           response = { code: 200, data: { user_id: 10001, nick_name: 'Isolated test', phone: '13800000000' } }
-        } else if (/^\/api\/v1\/(?:records|topics|home)\//.test(req.url)) {
+        } else if (/^\/api\/v1\/(?:records|topics|home|calendar)\//.test(req.url)) {
           const upstream = await fetch(`${recordOrigin}${req.url}`, {
             method: req.method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body,
           })
@@ -122,7 +122,13 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       expect(archived[0]).toMatchObject({ request: { text_content: prompt }, response: { code: 0 } })
       expect(archived[0].request).toMatchObject({ template_kind: 1, title: '' })
       const sources = await service.listSources('send_to_self', { refresh: true })
-      const archive = sources.items.find(item => item.kind === 'topic' && item.topicKind === 3)
+      expect(sources.items.some(item => item.topicKind === 3)).toBe(false)
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+      const bucketDate = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+      const calendar = await service.calendarRecords({ bucketDate, timezone, limit: 50 })
+      const archivedRecord = calendar.items.find(item => item.textContent === prompt && item.creationSource === 3)
+      expect(archivedRecord).toBeDefined()
+      const archive = archivedRecord.source
       expect(archive).toBeDefined()
       const sdk = createArkmeSdk({
         fetchImpl: (url, init) => fetch(new URL(url, scaffold.authenticatedUrl), init),
@@ -138,6 +144,11 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       expect(result.isError).toBe(false)
       expect(JSON.stringify(result)).toContain('showInHome')
       expect(JSON.stringify(result)).toContain('true')
+      const self = await service.selfTarget()
+      expect((await service.readSource(self.sourceRef)).items.some(item => item.textContent === prompt)).toBe(false)
+      expect((await service.calendarRecords({ bucketDate, timezone, sourceRef: self.sourceRef })).items
+        .some(item => item.recordUid === archivedRecord.recordUid)).toBe(false)
+      expect((await service.listSources('send_to_self', { refresh: true })).items.some(item => item.topicKind === 3)).toBe(false)
       // Keep an existing non-default preference while exercising the UI.
       // Same browser context/origin: before the transport fix, three pages
       // held six SSE connections and starved normal topic reads.
@@ -155,67 +166,32 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       await page.getByText('Enter发送 / Shift+Enter换行', { exact: true }).waitFor({ state: 'visible' })
       await page.getByRole('button', { name: '选择主题', exact: true }).click()
       const topicTree = page.getByRole('tree', { name: '主题', exact: true })
-      let releaseTimeline
-      let failTimelineReads = true
-      const timelineGate = new Promise(resolve => { releaseTimeline = resolve })
+      expect(await topicTree.getByRole('button', { name: /发给 DSH 的消息/ }).count()).toBe(0)
+      await page.getByRole('button', { name: '选择主题', exact: true }).click()
+      expect(await page.getByText(prompt, { exact: true }).count()).toBe(0)
+      let failCalendarReads = true
       await page.route('**/arkme-self/api', async route => {
         const body = route.request().postDataJSON()
-        if (body?.operation === 'source.timeline' && body.params?.sourceRef === archive.sourceRef) {
-          await timelineGate
-          if (failTimelineReads) { await route.abort('failed'); return }
+        if (body?.operation === 'calendar.records' && !body.params?.sourceRef && failCalendarReads) {
+          await route.abort('failed'); return
         }
         await route.continue()
       })
-      await topicTree.getByRole('button', { name: /发给 DSH 的消息/ }).click()
-      expect(await page.getByRole('checkbox', { name: '在首页展示' }).count()).toBe(0)
-      expect(await page.getByRole('button', { name: '发送消息', exact: true }).count()).toBe(0)
-      await page.getByRole('status', { name: '正在加载会话内容' }).waitFor()
-      const footer = page.locator('footer[aria-label="系统主题说明"]')
-      await footer.waitFor({ state: 'visible' })
-      const footerBox = await footer.boundingBox()
-      expect(footerBox.height).toBeGreaterThanOrEqual(72)
-      expect(footerBox.width).toBeGreaterThan(400)
-      expect(await footer.textContent()).toContain('不支持在此新增快记')
-      expect(await footer.locator('input, button').count()).toBe(0)
-      if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
-      releaseTimeline()
-      const reload = page.getByRole('button', { name: '重新加载', exact: true })
-      await reload.waitFor()
-      failTimelineReads = false
-      await reload.click()
-      await page.getByRole('button', { name: '打开快记详情', exact: true }).filter({ hasText: prompt }).waitFor()
-      await page.unroute('**/arkme-self/api')
-      await page.getByRole('status', { name: '正在加载会话内容' }).waitFor({ state: 'hidden' })
-      // Browsing never rewrites an existing preference, including after a retry.
-      expect(await sdk.topicHomeVisibility(archive.sourceRef)).toEqual({ showInHome: true })
-      expect(uiPolicyRequests).toEqual([])
+      await page.getByRole('button', { name: '日历', exact: true }).click()
+      const calendarSurface = page.locator('section[aria-label="客户端日历"]')
+      await calendarSurface.getByRole('alert').waitFor()
+      failCalendarReads = false
+      await calendarSurface.getByRole('button', { name: '刷新当天快记', exact: true }).click()
       const record = page.getByRole('button', { name: '打开快记详情', exact: true }).filter({ hasText: prompt })
-      await record.click({ button: 'right' })
-      const messageMenu = page.getByRole('menu', { name: '消息操作' })
-      expect(await messageMenu.getByRole('menuitem', { name: '延展', exact: true }).count()).toBe(0)
-      await messageMenu.getByRole('menuitem', { name: '重新编辑', exact: true }).click()
-      const editor = page.getByRole('textbox', { name: '重新编辑快记', exact: true })
-      await editor.fill('系统主题中的既有快记仍可重新编辑')
-      await page.getByRole('button', { name: '保存重新编辑', exact: true }).click()
-      await editor.waitFor({ state: 'hidden' })
-      await page.getByRole('button', { name: '打开快记详情', exact: true })
-        .filter({ hasText: '系统主题中的既有快记仍可重新编辑' }).waitFor({ state: 'visible' })
-      expect(await page.getByRole('button', { name: '发送消息', exact: true }).count()).toBe(0)
-      // A system archive has no editor to keep mounted. Its read-only notice
-      // supplies the same stable slot for the baseline's selection overlay.
-      const editedRecord = page.getByRole('button', { name: '打开快记详情', exact: true })
-        .filter({ hasText: '系统主题中的既有快记仍可重新编辑' })
-      const slot = page.locator('.arkme-conversation-input-slot')
-      const beforeSelection = await slot.boundingBox()
-      await editedRecord.click({ button: 'right' })
-      await page.getByRole('menu', { name: '消息操作' }).getByRole('menuitem', { name: '多选', exact: true }).click()
-      await page.getByRole('button', { name: '退出多选', exact: true }).waitFor()
-      expect(await page.getByRole('checkbox', { name: '在首页展示' }).count()).toBe(0)
-      expect(await page.locator('.arkme-conversation-composer').count()).toBe(0)
-      expect((await slot.boundingBox()).height).toBe(beforeSelection.height)
-      await page.getByRole('button', { name: '退出多选', exact: true }).click()
-      await footer.waitFor({ state: 'visible' })
-      expect(await page.locator('.arkme-conversation-composer').count()).toBe(0)
+      await record.waitFor()
+      await page.unroute('**/arkme-self/api')
+      expect(await record.locator('[data-arkme-dsh-agent-input-marker]').count()).toBe(1)
+      expect(await record.locator('[aria-label^="来源："]').count()).toBe(0)
+      await record.click()
+      await page.getByRole('dialog', { name: '快记详情', exact: true }).waitFor()
+      if (process.env.ARKME_E2E_SCREENSHOT) await page.screenshot({ path: process.env.ARKME_E2E_SCREENSHOT })
+      await page.getByRole('button', { name: '关闭详情', exact: true }).click()
+      // Browsing and retrying never rewrite the cross-client preference.
       expect(uiPolicyRequests).toEqual([])
       expect(await sdk.topicHomeVisibility(archive.sourceRef)).toEqual({ showInHome: true })
       expect(await sdk.topicHomeVisibility(archive.sourceRef, false)).toEqual({ showInHome: false })

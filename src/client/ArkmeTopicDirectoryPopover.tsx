@@ -1,10 +1,9 @@
-import { withArkmeReadDeadline } from './read-deadline.js'
 import {
-  useCallback, useEffect, useMemo, useRef, useState, type CSSProperties,
+  useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties,
 } from 'react'
 import { ListBullets } from '@phosphor-icons/react/dist/icons/ListBullets'
 import type {
-  ArkmeSourceItem, ArkmeSourceList, ArkmeTopicCreateResult,
+  ArkmeEnvironment, ArkmeSourceItem, ArkmeTopicCreateResult,
 } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
@@ -23,9 +22,12 @@ import {
 } from './source-tree.js'
 import { arkmeSelfDirectorySources, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { useSelfTopicExpansion } from './self-topic-expansion-preference.js'
+import { mergeSelfTopicSources, selfTopicDirectory } from './self-topic-directory-cache.js'
 
 export interface ArkmeTopicDirectoryPopoverProps {
   userId: number
+  environment?: ArkmeEnvironment
   selectedSource: ArkmeSourceItem | undefined
   trigger?: 'button' | 'none'
   onSelect(source: ArkmeSourceItem): void
@@ -47,6 +49,7 @@ export type ArkmeSelfSourcesResolution =
     defaultCategorySource: ArkmeSourceItem
     sources: ArkmeSourceItem[]
     loading: boolean
+    complete?: boolean
     error?: string
   }
   | { status: 'error'; message: string }
@@ -69,10 +72,7 @@ export function reconcileArkmeTopicSelection(
 export function mergeArkmeTopicSourcePages(
   current: readonly ArkmeSourceItem[], incoming: readonly ArkmeSourceItem[],
 ): ArkmeSourceItem[] {
-  const incomingByRef = new Map(incoming.map(source => [source.sourceRef, source]))
-  const retained = current.map(source => incomingByRef.get(source.sourceRef) ?? source)
-  const known = new Set(retained.map(source => source.sourceRef))
-  return [...retained, ...incoming.filter(source => !known.has(source.sourceRef))]
+  return mergeSelfTopicSources(current, incoming)
 }
 
 const colors = {
@@ -186,10 +186,10 @@ function cacheWithTopics(
 }
 
 export function ArkmeTopicDirectoryPopover({
-  userId, selectedSource, trigger = 'button', onSelect, onSelectionRefreshed = onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateWarning, onCreateTopicReady, retryRevision,
+  userId, environment = 'prod', selectedSource, trigger = 'button', onSelect, onSelectionRefreshed = onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateWarning, onCreateTopicReady, retryRevision,
 }: ArkmeTopicDirectoryPopoverProps) {
-  const initialCache = useMemo(() => readNavigationCache(userId), [userId])
-  const requestRef = useRef<AbortController>()
+  const directory = useMemo(() => selfTopicDirectory(userId, environment), [userId, environment])
+  const snapshot = useSyncExternalStore(directory.subscribe, directory.getSnapshot, directory.getSnapshot)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const createRequestRef = useRef<symbol>()
@@ -197,10 +197,8 @@ export function ArkmeTopicDirectoryPopover({
   selectedSourceRef.current = selectedSource
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [sources, setSources] = useState<ArkmeSourceItem[]>(initialCache?.sources.send_to_self ?? [])
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
+  const { sources, loading: busy, error, complete } = snapshot
+  const [collapsedSourceRefs, setCollapsedSourceRefs] = useSelfTopicExpansion(userId, environment, sources)
   const [sourceSort, setSourceSort] = useState<ArkmeSourceSort>('default')
   const [hoveredSourceRef, setHoveredSourceRef] = useState<string>()
   const [topicCreateParent, setTopicCreateParent] = useState<ArkmeSourceItem | null>()
@@ -216,46 +214,17 @@ export function ArkmeTopicDirectoryPopover({
     writeNavigationCache(cacheWithTopics(userId, nextSources, selectedRef))
   }, [userId])
 
-  const load = useCallback(async () => {
-    const controller = new AbortController()
-    requestRef.current?.abort()
-    requestRef.current = controller
-    setBusy(true)
-    setError('')
-    if (!sourcesRef.current.some(source => source.kind === 'send_to_self')
-      || !sourcesRef.current.some(source => source.kind === 'default_category')) {
-      onSelfSourcesResolution(userId, { status: 'loading' })
-    }
-    try {
-      let loaded: ArkmeSourceItem[] = []
-      let cursor: string | undefined
-      let hasNextPage = false
-      const visitedCursors = new Set<string>()
-      for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
-        const page = await withArkmeReadDeadline(signal => callArkme<ArkmeSourceList>('sources.list', {
-          directory: 'send_to_self', limit: 100,
-          ...(cursor === undefined ? {} : { cursor }),
-        }, signal), controller.signal)
-        if (controller.signal.aborted) return
-        loaded = mergeArkmeTopicSourcePages(loaded, page.items)
-        sourcesRef.current = loaded
-        setSources(loaded)
-        persist(loaded)
-        const nextCursor = page.nextCursor
-        hasNextPage = page.hasMore && nextCursor !== undefined
-        if (!hasNextPage || nextCursor === undefined) break
-        cursor = nextCursor
-        if (visitedCursors.has(cursor)) {
-          throw new Error('主题分页未推进，请重试')
-        }
-        visitedCursors.add(cursor)
-        if (pageIndex === 99) {
-          throw new Error('主题加载未完成，请重试')
-        }
-      }
-      if (controller.signal.aborted) return
-      const currentSelected = selectedSourceRef.current
-      const reconciliation = reconcileArkmeTopicSelection(currentSelected, loaded)
+  const firstLoad = useRef(true)
+  useEffect(() => {
+    let disposed = false
+    const force = !firstLoad.current
+    firstLoad.current = false
+    void directory.ensure(force).then(() => {
+      if (disposed) return
+      const result = directory.getSnapshot()
+      if (!result.complete || result.error) return
+      const loaded = result.sources
+      const reconciliation = reconcileArkmeTopicSelection(selectedSourceRef.current, loaded)
       if (reconciliation.status === 'selected') {
         selectedSourceRef.current = reconciliation.source
         onSelectionRefreshed(reconciliation.source)
@@ -267,42 +236,30 @@ export function ArkmeTopicDirectoryPopover({
       } else {
         persist(loaded, null)
       }
-      const aggregateSource = loaded.find(source => source.kind === 'send_to_self')
-      const defaultCategorySource = loaded.find(source => source.kind === 'default_category')
-      if (aggregateSource === undefined || defaultCategorySource === undefined) {
-        const message = '未找到发给自己或未分类，请重试'
-        setError(message)
-        onSelfSourcesResolution(userId, { status: 'error', message })
-      }
-    } catch (caught) {
-      if (!controller.signal.aborted) {
-        const message = caught instanceof Error ? caught.message : String(caught)
-        setError(message)
-        if (!sourcesRef.current.some(source => source.kind === 'send_to_self')
-          || !sourcesRef.current.some(source => source.kind === 'default_category')) {
-          onSelfSourcesResolution(userId, { status: 'error', message })
-        }
-      }
-    } finally {
-      if (!controller.signal.aborted) setBusy(false)
-      if (requestRef.current === controller) requestRef.current = undefined
-    }
-  }, [onSelfSourcesResolution, onSelectionRefreshed, onSelectionInvalidated, persist, userId])
+    })
+    return () => { disposed = true }
+  }, [directory, retryRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
 
   useEffect(() => {
-    void load()
-    return () => { requestRef.current?.abort() }
-  }, [load, retryRevision, userId])
+    if (typeof window === 'undefined' || typeof document === 'undefined') return
+    const refresh = () => { if (document.visibilityState !== 'hidden') void directory.ensure() }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => { window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh) }
+  }, [directory])
 
   useEffect(() => {
     const aggregateSource = sources.find(source => source.kind === 'send_to_self')
     const defaultCategorySource = sources.find(source => source.kind === 'default_category')
-    if (aggregateSource === undefined || defaultCategorySource === undefined) return
+    if (aggregateSource === undefined || defaultCategorySource === undefined) {
+      onSelfSourcesResolution(userId, error ? { status: 'error', message: error } : { status: 'loading' })
+      return
+    }
     onSelfSourcesResolution(userId, {
-      status: 'ready', aggregateSource, defaultCategorySource, sources, loading: busy,
+      status: 'ready', aggregateSource, defaultCategorySource, sources, loading: busy, complete,
       ...(error === '' ? {} : { error }),
     })
-  }, [busy, error, onSelfSourcesResolution, sources, userId])
+  }, [busy, complete, error, onSelfSourcesResolution, sources, userId])
 
   useEffect(() => {
     if (!open && topicCreateParent === undefined) return
@@ -358,7 +315,7 @@ export function ArkmeTopicDirectoryPopover({
     onSelect(nextSource)
   }
   const selectRow = (row: (typeof rows)[number]) => {
-    setCollapsedSourceRefs(current => expandTopicFromRowClick(row, current))
+    setCollapsedSourceRefs(current => expandTopicFromRowClick(row, new Set(current)))
     selectSource(row.source)
   }
   const openCreate = useCallback((parent: ArkmeSourceItem | null, parentLevel?: number) => {
@@ -403,8 +360,8 @@ export function ArkmeTopicDirectoryPopover({
       if (createRequestRef.current !== request) return
       const nextSources = mergeCreatedTopicSource(sourcesRef.current, result.source)
       sourcesRef.current = nextSources
-      setSources(nextSources)
-      setCollapsedSourceRefs(current => expandAncestorsForReveal(nextSources, result.source.sourceRef, current))
+      directory.upsert(result.source)
+      setCollapsedSourceRefs(current => expandAncestorsForReveal(nextSources, result.source.sourceRef, current), nextSources)
       setTopicCreateParent(undefined)
       setTopicCreateParentLevel(undefined)
       setQuery('')
@@ -478,7 +435,7 @@ export function ArkmeTopicDirectoryPopover({
         {error !== '' && <div role="alert" style={{ ...styles.status, ...styles.error }}>
           <div>{error}</div>
           <button type="button" style={{ ...styles.close, width: 'auto', margin: '8px auto 0', padding: '0 10px', fontSize: 12 }}
-            onClick={() => { void load() }}>重试</button>
+            onClick={() => { void directory.ensure(true) }}>重试</button>
         </div>}
       </div>
       <ArkmeTopicCreateFooter onCreate={() => { openCreate(null) }} />

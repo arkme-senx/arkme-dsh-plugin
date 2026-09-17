@@ -8,7 +8,7 @@ export default {
   ...harnessConfig,
   test: {
     ...harnessConfig.test,
-    include: [resolve(import.meta.dirname, 'tests/e2e/managed-ai.e2e.mjs')],
+    include: [resolve(import.meta.dirname, process.env.ARKME_MANAGED_AI_TOOL_IMAGES === '1' ? 'tests/e2e/managed-ai-tool-images.e2e.mjs' : 'tests/e2e/managed-ai.e2e.mjs')],
     fileParallelism: false,
     testTimeout: 180_000,
   },

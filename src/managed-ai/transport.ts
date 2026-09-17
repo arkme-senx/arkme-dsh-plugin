@@ -323,10 +323,16 @@ async function parseHttpError(response: Response): Promise<LlmError> {
 
 function requestImageAttachments(options: GenerateOptions): ImageAttachmentRef[] {
   const result: ImageAttachmentRef[] = []
+  // Validate every role before credentials, attachment reads or uploads.
   for (const message of options.messages) {
-    if (message.role !== 'user') continue
-    for (const block of message.content) {
-      if (block.type === 'image') result.push(block.attachment)
+    if (message.role === 'system') {
+      assertTextOnly(message.content, '系统消息')
+    } else if (message.role === 'assistant') {
+      assertAssistantBlocks(message.content)
+    } else {
+      for (const block of userContentLeaves(message.content)) {
+        if (block.type === 'image') result.push(block.attachment)
+      }
     }
   }
   return result
@@ -405,14 +411,18 @@ function assertAssistantBlocks(blocks: readonly ContentBlock[]): void {
   }
 }
 
-function assertUserBlocks(blocks: readonly ContentBlock[]): void {
+/** One traversal for validation, image accounting and tool-result serialization. */
+function* userContentLeaves(
+  blocks: readonly ContentBlock[],
+): Generator<Extract<ContentBlock, { type: 'text' | 'image' }>> {
   for (const block of blocks) {
-    if (block.type === 'text' || block.type === 'image') continue
-    if (block.type === 'tool-result') {
-      assertTextOnly(block.content, '工具结果')
-      continue
+    if (block.type === 'text' || block.type === 'image') {
+      yield block
+    } else if (block.type === 'tool-result') {
+      yield* userContentLeaves(block.content)
+    } else {
+      throw new LlmError(`用户或工具结果不支持内容类型“${block.type}”`, 'UNSUPPORTED_CONTENT')
     }
-    throw new LlmError(`用户消息不支持内容类型“${block.type}”`, 'UNSUPPORTED_CONTENT')
   }
 }
 
@@ -491,49 +501,69 @@ async function serializeMessages(
   resolveImage: (attachment: ImageAttachmentRef) => Promise<string>,
   signal: AbortSignal,
 ): Promise<WireMessage[]> {
-  // Validate the entire request before beginning any direct-to-OSS work.
-  for (const message of messages) {
-    if (message.role === 'system') assertTextOnly(message.content, '系统消息')
-    else if (message.role === 'assistant') assertAssistantBlocks(message.content)
-    else assertUserBlocks(message.content)
-  }
   const resolveImageLimited = limitConcurrency(MAX_CONCURRENT_INPUT_ASSET_UPLOADS, resolveImage, signal)
-  const groups = await Promise.all(messages.map(async (message): Promise<WireMessage[]> => {
+  const contentParts = async (blocks: readonly ContentBlock[]): Promise<WireContentPart[]> => (
+    await Promise.all(Array.from(userContentLeaves(blocks), async (block): Promise<WireContentPart> => (
+      block.type === 'text'
+        ? { type: 'text', text: block.text }
+        : { type: 'image_asset', asset_ref: await resolveImageLimited(block.attachment) }
+    )))
+  ).filter(part => part.type !== 'text' || part.text.length > 0)
+  // Resolve concurrently, assemble in history order. A user/image message must
+  // never interrupt the consecutive tool replies for a parallel assistant call.
+  const groups = await Promise.all(messages.map(async (message): Promise<{
+    regular?: WireMessage
+    tools: WireMessage[]
+    toolImages: WireContentPart[]
+  }> => {
     if (message.role === 'system') {
-      return [{ role: 'system', content: flattenText(message.content) }]
+      return { regular: { role: 'system', content: flattenText(message.content) }, tools: [], toolImages: [] }
     }
     if (message.role === 'assistant') {
-      return [serializeAssistant(message)]
+      return { regular: serializeAssistant(message), tools: [], toolImages: [] }
     }
     const toolResults = message.content.filter(block => block.type === 'tool-result')
-    const parts = (await Promise.all(message.content.map(async (block): Promise<WireContentPart | undefined> => {
-      if (block.type === 'text') {
-        return block.text.length === 0 ? undefined : { type: 'text', text: block.text }
-      }
-      if (block.type === 'image') {
-        return { type: 'image_asset', asset_ref: await resolveImageLimited(block.attachment) }
-      }
-      return undefined
-    }))).filter((part): part is WireContentPart => part !== undefined)
-    const wire: WireMessage[] = []
+    const [parts, results] = await Promise.all([
+      contentParts(message.content.filter(block => block.type !== 'tool-result')),
+      Promise.all(toolResults.map(async result => ({ result, parts: await contentParts(result.content) }))),
+    ])
+    let regular: WireMessage | undefined
     if (parts.length > 0 || toolResults.length === 0) {
-      if (parts.length === 0) wire.push({ role: 'user', content: '' })
-      else if (parts.every(part => part.type === 'text')) {
-        wire.push({ role: 'user', content: parts.map(part => part.type === 'text' ? part.text : '').join('') })
-      } else {
-        wire.push({ role: 'user', content: parts })
-      }
+      regular = { role: 'user', content: parts.every(part => part.type === 'text')
+        ? parts.map(part => part.type === 'text' ? part.text : '').join('') : parts }
     }
-    for (const result of toolResults) {
-      wire.push({
+    const tools: WireMessage[] = []
+    const toolImages: WireContentPart[] = []
+    for (const { result, parts: resultParts } of results) {
+      tools.push({
         role: 'tool',
         tool_call_id: String(result.toolCallId),
-        content: flattenText(result.content) || '(no output)',
+        content: resultParts.map(part => part.type === 'text' ? part.text : '').join('') || '(no output)',
       })
+      const images = resultParts.filter(part => part.type === 'image_asset')
+      if (images.length > 0) {
+        toolImages.push({ type: 'text', text: `Images from tool call ${String(result.toolCallId)}:` }, ...images)
+      }
     }
-    return wire
+    return { ...(regular === undefined ? {} : { regular }), tools, toolImages }
   }))
-  return groups.flat()
+  const wire: WireMessage[] = []
+  let pendingToolImages: WireContentPart[] = []
+  const flushToolImages = () => {
+    if (pendingToolImages.length === 0) return
+    wire.push({ role: 'user', content: pendingToolImages })
+    pendingToolImages = []
+  }
+  for (const group of groups) {
+    if (group.regular !== undefined) {
+      flushToolImages()
+      wire.push(group.regular)
+    }
+    wire.push(...group.tools)
+    pendingToolImages.push(...group.toolImages)
+  }
+  flushToolImages()
+  return wire
 }
 
 async function serializeRequest(

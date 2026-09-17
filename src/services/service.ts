@@ -309,6 +309,35 @@ export class ServiceRuntime {
   private readonly readRevisions = new Map<string, number>()
   readRevision(scope: string): number { return this.readRevisions.get(scope) ?? 0 }
 
+  private readonly calendarRevisions = new Map<string, { epoch: number; revision: number; dates: Map<number, number> }>()
+  private calendarVersion(scope: string) {
+    let value = this.calendarRevisions.get(scope)
+    if (!value) { value = { epoch: 0, revision: 0, dates: new Map() }; this.calendarRevisions.set(scope, value) }
+    return value
+  }
+  calendarReadRevision(scope: string, start: string, end: string, timezone: string): string {
+    const value = this.calendarVersion(scope)
+    const format = new Intl.DateTimeFormat('en-CA', { timeZone: timezone === 'local' ? undefined : timezone,
+      year: 'numeric', month: '2-digit', day: '2-digit' })
+    let revision = 0
+    for (const [stamp, changed] of value.dates) {
+      const day = format.format(new Date(stamp))
+      if (day >= start && day <= end) revision = Math.max(revision, changed)
+    }
+    return `${value.epoch}:${revision}`
+  }
+  /** Chat deltas invalidate only affected composite month results (in any timezone). */
+  invalidateCalendarDates(scope: string, stamps: number[]): void {
+    const dates = [...new Set(stamps.filter(stamp => Number.isFinite(stamp) && stamp > 0))]
+    if (!dates.length) { this.invalidateKey(scope, 'calendar:'); return }
+    const value = this.calendarVersion(scope)
+    if (value.dates.size + dates.length > 256) { value.epoch++; value.dates.clear() }
+    for (const stamp of dates) value.dates.set(stamp, ++value.revision)
+    this.readRevisions.set(scope, this.readRevision(scope) + 1)
+    this.requestCoordinator.invalidateKey(scope, 'calendar:')
+    this.requestCoordinator.invalidateKey(scope, 'owner-read:')
+  }
+
   async withOwnerReadInvalidation<T>(route: string, operation: () => Promise<T>): Promise<T> {
     const session = await this.requireSession()
     try {
@@ -346,11 +375,17 @@ export class ServiceRuntime {
   }
 
   invalidateScope(scope: string): void {
+    const calendar = this.calendarVersion(scope)
+    calendar.epoch++; calendar.dates.clear()
     this.readRevisions.set(scope, this.readRevision(scope) + 1)
     this.requestCoordinator.invalidateScope(scope)
   }
 
   invalidateKey(scope: string, key: string): void {
+    if (key.startsWith('calendar:')) {
+      const calendar = this.calendarVersion(scope)
+      calendar.epoch++; calendar.dates.clear()
+    }
     this.readRevisions.set(scope, this.readRevision(scope) + 1)
     this.requestCoordinator.invalidateKey(scope, key)
     // 既有业务 owner 的写后失效同样作用于统一原始读取；旧调用者仍可结束，新读不加入旧 flight。
@@ -359,6 +394,7 @@ export class ServiceRuntime {
 
   dispose(): void {
     this.refreshInFlightByUserId.clear()
+    this.calendarRevisions.clear()
     this.requestCoordinator.dispose()
   }
 
