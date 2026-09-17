@@ -1,3 +1,4 @@
+import { ArkmeArchiveAction, ArkmeArchiveStatus } from './ArkmeArchive.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeSourceItem, ArkmeTopicDissolveProgress, ArkmeTopicDissolveTask } from '../types.js'
@@ -658,6 +659,7 @@ export function ArkmeSourceBreadcrumb({
   }
 
   return <nav aria-label="发给自己主题" style={styles.breadcrumb}>
+    {selectedSource?.kind === 'topic' && <ArkmeArchiveStatus source={selectedSource} />}
     <span data-arkme-self-topic-root="true" style={styles.fixedTitle}>发给自己</span>
     <button
       ref={selectorRef}
@@ -853,6 +855,7 @@ export function ArkmeSourceBreadcrumb({
               setTopicMutationError('')
               setRenameTopic(row.source)
             }}>重命名</button>}
+            <ArkmeArchiveAction source={row.source} menu style={styles.topicManageAction} />
             {onDissolveTopic !== undefined && <button type="button" role="menuitem"
               style={{ ...styles.topicManageAction, ...styles.topicManageDanger, ...(hoveredTopicMenuAction === `${row.source.sourceRef}:dissolve` ? styles.topicManageActionHover : {}) }}
               onMouseEnter={() => { setHoveredTopicMenuAction(`${row.source.sourceRef}:dissolve`) }}

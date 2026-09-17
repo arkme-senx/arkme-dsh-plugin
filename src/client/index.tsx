@@ -1,3 +1,4 @@
+import { ArkmeArchiveManagementPanel } from './ArkmeArchive.js'
 import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -329,6 +330,10 @@ export function apply(ctx: ClientContext): void {
     order: -1,
     label: '我的账户',
   }, ArkmeDshSettingsSection))
+
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section', id: 'arkme-data-management', order: 10, label: '数据管理',
+  }, ArkmeArchiveManagementPanel))
 
   ctx.slots.inject('settings.general.item', () => ctx.slots.register({
     name: 'settings.general.item',

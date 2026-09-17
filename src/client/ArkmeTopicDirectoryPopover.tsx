@@ -1,3 +1,4 @@
+import type { ArkmeArchiveState } from '../archive-contract.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import {
   useCallback, useEffect, useMemo, useRef, useState, type CSSProperties,
@@ -261,9 +262,19 @@ export function ArkmeTopicDirectoryPopover({
         onSelectionRefreshed(reconciliation.source)
         persist(loaded, reconciliation.source.sourceRef)
       } else if (reconciliation.status === 'invalid') {
-        selectedSourceRef.current = undefined
-        onSelectionInvalidated()
-        persist(loaded, null)
+        // Directory absence is not deletion: an archived UID remains a valid
+        // content destination, and must not clear the open scene or its draft.
+        const states = currentSelected?.kind === 'topic'
+          ? await callArkme<ArkmeArchiveState[]>('archives.state', { sourceRefs: [currentSelected.sourceRef] }, controller.signal)
+          : []
+        if (controller.signal.aborted || selectedSourceRef.current?.sourceRef !== currentSelected?.sourceRef) return
+        if (states[0]?.ownerAvailable === true && states[0].effectiveArchived) {
+          persist(loaded, currentSelected!.sourceRef)
+        } else {
+          selectedSourceRef.current = undefined
+          onSelectionInvalidated()
+          persist(loaded, null)
+        }
       } else {
         persist(loaded, null)
       }
