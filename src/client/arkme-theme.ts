@@ -36,7 +36,7 @@ export const arkmeTheme = {
   danger: 'var(--dsw-alias-state-error-primary, #c2413b)',
   dangerSoft: 'var(--dsw-alias-interactive-bg-hover-danger, rgba(194, 65, 59, 0.10))',
   warning: 'var(--dsw-alias-state-warn-label, #a16207)',
-  // Flutter JotmoTheme.tipColorYellowSolid; the edit-history latest marker is shared across themes.
+  // Flutter theme tipColorYellowSolid; the edit-history latest marker is shared across themes.
   recordHistoryLatest: '#edbe09',
   warningSoft: 'var(--dsw-alias-state-warn-tertiary, #fff8e6)',
   shadow: 'var(--dsw-shadow-lv2, 0 4px 16px rgba(0, 0, 0, 0.12))',
