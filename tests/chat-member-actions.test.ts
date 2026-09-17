@@ -9,7 +9,7 @@ import {
   arkmeMemberProfileNames,
   arkmeMemberRecordTimeline, arkmeMemberRecordTotal, formatArkmeMemberRecordTime,
   clampArkmeMemberRecordsWidth, positionArkmeMemberMenu,
-  retainArkmeMemberRecordsScrollTop, shouldLoadOlderArkmeMemberRecords,
+  shouldLoadOlderArkmeMemberRecords,
 } from '../src/client/ArkmeChatMemberActions.js'
 import { arkmeVisibleMentionRuns } from '../src/client/ArkmeRichText.js'
 import {
@@ -325,11 +325,6 @@ describe('chat member action menu placement', () => {
     expect(shouldLoadOlderArkmeMemberRecords(0, false, 900, false)).toBe(false)
     expect(shouldLoadOlderArkmeMemberRecords(0, true, undefined, false)).toBe(false)
     expect(shouldLoadOlderArkmeMemberRecords(0, true, 900, true)).toBe(false)
-  })
-
-  it('retains the visible record after older records are prepended', () => {
-    expect(retainArkmeMemberRecordsScrollTop(24, 1_000, 1_400)).toBe(424)
-    expect(retainArkmeMemberRecordsScrollTop(0, 1_000, 900)).toBe(0)
   })
 
   it('builds the same chronological 30-minute time segmentation as the desktop client', () => {

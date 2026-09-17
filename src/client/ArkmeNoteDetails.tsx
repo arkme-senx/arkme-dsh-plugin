@@ -705,12 +705,13 @@ function DetailExtensionParent({ parent }: { parent: NonNullable<ArkmeTimelineIt
 }
 
 function DetailExtensionContext({
-  state, optimistic, selectedRecordUid, sourceRef, shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, onRetry, onSelect,
+  state, optimistic, selectedRecordUid, sourceRef, sourceIdentityKey, shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, onRetry, onSelect,
 }: {
   state: ArkmeDetailExtensionLoadState
   optimistic: readonly ArkmeMessageCopyLinkExtensionItem[]
   selectedRecordUid?: string | undefined
   sourceRef?: string | undefined
+  sourceIdentityKey?: string | undefined
   shareWebsite?: string | undefined
   onMessageCopyLinkOpen?: ((sid: string) => void) | undefined
   onMentionClick?: (mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget) => void
@@ -756,6 +757,7 @@ function DetailExtensionContext({
             item={timelineItem}
             highlightMentions
             {...(sourceRef === undefined ? {} : { sourceRef })}
+            {...(sourceIdentityKey === undefined ? {} : { sourceIdentityKey })}
             {...(shareWebsite === undefined ? {} : { shareWebsite })}
             {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
             {...(onMentionClick === undefined ? {} : { onMentionClick })}
@@ -776,12 +778,13 @@ function relatedQuickNoteReferenceExpired(error: unknown): boolean {
 }
 
 export function ArkmeTimelineDetailDrawer({
-  item, sourceBadge, sourceRef, sourceKind, conversationMembers, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
+  item, sourceBadge, sourceRef, sourceIdentityKey, sourceKind, conversationMembers, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
   onOpenPrivateChatMember, messageCreationBlocked = false, messageCreationRestriction = '',
 }: {
   sourceBadge?: ReactNode
   item: ArkmeTimelineItem
   sourceRef?: string | undefined
+  sourceIdentityKey?: string | undefined
   canExtend?: boolean
   sourceKind?: ArkmeSourceKind | undefined
   conversationMembers?: readonly ArkmeConversationMemberItem[] | undefined
@@ -897,14 +900,17 @@ export function ArkmeTimelineDetailDrawer({
     setSelectedExtensionRecordUid(undefined)
     setMemberProfile(undefined)
     scrollTopByViewRef.current = { 'source-detail': 0, 'related-list': 0, 'related-detail': 0 }
-    loadRelated()
-    loadExtensionContext()
     return () => {
       listAbortRef.current?.abort()
       detailAbortRef.current?.abort()
       extensionAbortRef.current?.abort()
     }
-  }, [item.itemUid, loadExtensionContext, loadRelated])
+  }, [item.itemUid, sourceIdentityKey ?? normalizedSourceRef, quickNoteDetailsSupported])
+  useEffect(() => {
+    // Refresh owner data with current access refs without resetting the open detail view.
+    loadRelated()
+    loadExtensionContext()
+  }, [item.itemUid, sourceIdentityKey, loadExtensionContext, loadRelated])
   useEffect(() => {
     if (bodyRef.current !== null) bodyRef.current.scrollTop = historyOpen ? 0 : scrollTopByViewRef.current[relatedView]
   }, [relatedView, historyOpen])
@@ -999,6 +1005,7 @@ export function ArkmeTimelineDetailDrawer({
         item={{ ...item, textContent }}
         highlightMentions
         {...(sourceRef === undefined ? {} : { sourceRef })}
+        {...(sourceIdentityKey === undefined ? {} : { sourceIdentityKey })}
         {...(shareWebsite === undefined ? {} : { shareWebsite })}
         {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
         onMentionClick={openMentionMemberProfile}
@@ -1024,6 +1031,7 @@ export function ArkmeTimelineDetailDrawer({
       optimistic={optimisticExtensions}
       {...(selectedExtensionRecordUid === undefined ? {} : { selectedRecordUid: selectedExtensionRecordUid })}
       {...(sourceRef === undefined ? {} : { sourceRef })}
+      {...(sourceIdentityKey === undefined ? {} : { sourceIdentityKey })}
       {...(shareWebsite === undefined ? {} : { shareWebsite })}
       {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
       onMentionClick={openMentionMemberProfile}

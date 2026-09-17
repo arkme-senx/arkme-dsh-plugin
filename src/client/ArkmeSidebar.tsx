@@ -7510,6 +7510,7 @@ export function ArkmeSurface({
                               mediaSelectionIsExplicit={reeditItems.has(item)}
                               onCallDetailOpen={videoUrl => { openNoteDetail(item, videoUrl) }}
                               sourceRef={source.sourceRef}
+                              sourceIdentityKey={conversationKey}
                               highlightMentions
                               shareWebsite={shareWebsite}
                               onMessageCopyLinkOpen={openMessageCopyLinkDetail}
@@ -8335,6 +8336,7 @@ export function ArkmeSurface({
           />}
         {activeConversation && source !== undefined && memberRecords !== undefined && <ArkmeMemberRecordsPanel
           sourceRef={source.sourceRef}
+          sourceIdentityKey={conversationKey}
           member={memberRecords.member}
           mode={memberRecords.mode}
           onClose={() => { setMemberRecords(undefined) }}
@@ -8377,6 +8379,7 @@ export function ArkmeSurface({
           key={detailItem.itemUid}
           item={detailItem}
           sourceRef={source?.sourceRef}
+          sourceIdentityKey={conversationKey}
           canExtend={!archiveReadOnly}
           sourceKind={source?.kind}
           conversationMembers={conversationMembers}

@@ -899,10 +899,11 @@ export function arkmeRelatedRecordingItemFromSharedRecording(item: ArkmeTimeline
     : arkmeRelatedRecordingItemFromSharedRecordingPreview(item.sharedRecording, item)
 }
 
-export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen }: {
+export function ArkmeMessageContent({ item, sourceRef, sourceIdentityKey, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen }: {
   item: ArkmeTimelineItem
   presentation?: 'bubble' | 'detail'
   sourceRef?: string
+  sourceIdentityKey?: string
   onLongArticleUpdated?: (detail: ArkmeLongArticleDetail) => void
   highlightMentions?: boolean
   collapseText?: boolean
@@ -914,18 +915,20 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
   onCallDetailOpen?: (videoUrl?: string) => void
   onArticleOpen?: () => void
 }) {
-  const lastMedia = useRef<{ sourceRef: string | undefined; item: ArkmeTimelineItem }>()
+  // Access references rotate on new messages; only a different conversation ends this media scope.
+  const mediaSourceKey = sourceIdentityKey ?? sourceRef
+  const lastMedia = useRef<{ sourceKey: string | undefined; item: ArkmeTimelineItem }>()
   const snapshot = lastMedia.current
-  const previous = snapshot !== undefined && snapshot.sourceRef === sourceRef ? snapshot.item : undefined
+  const previous = snapshot !== undefined && snapshot.sourceKey === mediaSourceKey ? snapshot.item : undefined
   const version = item.recordVersion ?? item.version
   const display = mediaSelectionIsExplicit ? item : retainPartialTimelineMedia(previous, item)
   useEffect(() => {
-    lastMedia.current = { sourceRef, item: display }
-  }, [display, sourceRef])
+    lastMedia.current = { sourceKey: mediaSourceKey, item: display }
+  }, [display, mediaSourceKey])
   const blocks = [...(display.contentBlocks ?? [])].sort((left, right) => left.sortOrder - right.sortOrder)
   const visualBlocks = blocks.filter(block => block.kind !== 'audio')
-  const [preview, setPreview] = useState<{ sourceRef?: string | undefined; itemUid: string; fileAssetUid?: string | undefined; mediaRef: string; forceDownload?: boolean }>()
-  const previewBlock = preview !== undefined && preview.sourceRef === sourceRef && preview.itemUid === item.itemUid && item.status === 1
+  const [preview, setPreview] = useState<{ sourceKey?: string | undefined; itemUid: string; fileAssetUid?: string | undefined; mediaRef: string; forceDownload?: boolean }>()
+  const previewBlock = preview !== undefined && preview.sourceKey === mediaSourceKey && preview.itemUid === item.itemUid && item.status === 1
     ? visualBlocks.find(block => preview.fileAssetUid !== undefined ? block.fileAssetUid === preview.fileAssetUid : block.mediaRef === preview.mediaRef)
     : undefined
   useEffect(() => {
@@ -984,8 +987,8 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
       return next
     })
   }
-  const openPreview = (block: ArkmeContentBlock) => { setPreview({ sourceRef, itemUid: item.itemUid, fileAssetUid: block.fileAssetUid, mediaRef: block.mediaRef }) }
-  const openAsFile = (block: ArkmeContentBlock) => { setPreview({ sourceRef, itemUid: item.itemUid, fileAssetUid: block.fileAssetUid, mediaRef: block.mediaRef, forceDownload: true }) }
+  const openPreview = (block: ArkmeContentBlock) => { setPreview({ sourceKey: mediaSourceKey, itemUid: item.itemUid, fileAssetUid: block.fileAssetUid, mediaRef: block.mediaRef }) }
+  const openAsFile = (block: ArkmeContentBlock) => { setPreview({ sourceKey: mediaSourceKey, itemUid: item.itemUid, fileAssetUid: block.fileAssetUid, mediaRef: block.mediaRef, forceDownload: true }) }
   const isArticle = item.templateKind === 8 || item.displayKind === 1
   const bodyTextFormat = item.senderKind === 'bot' && item.textContent.trim() !== ''
     ? 'markdown' : item.textFormat ?? 'plain'
