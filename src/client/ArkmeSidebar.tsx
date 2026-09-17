@@ -2422,6 +2422,7 @@ export function ArkmeSurface({
     }
   }
   const captureComposerAsyncScope = (): ArkmeComposerAsyncScope => ({ ...composerAsyncScopeRef.current })
+  const renderedComposerAsyncScope = captureComposerAsyncScope()
   const sameComposerAsyncScope = (expected: ArkmeComposerAsyncScope): boolean => {
     const current = composerAsyncScopeRef.current
     return activeConversationRef.current
@@ -7963,7 +7964,10 @@ export function ArkmeSurface({
                 if (composerDraftKey === undefined) throw new Error('请先选择聊天')
                 return await uploadFavoriteSticker(file)
               }}
-              onStickerSent={async () => { await loadTimeline() }}
+              onStickerSent={async () => {
+                if (!sameComposerAsyncScope(renderedComposerAsyncScope)) return
+                await loadTimeline(undefined, false, 40, 'return-to-latest')
+              }}
               onError={message => { setError(message) }}
             /></div><div style={styles.composerSendArea}>
               <ArkmeComposerInputStats

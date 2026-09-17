@@ -160,6 +160,27 @@ describe('conversation send directory projection', () => {
     return body
   }
 
+  it.each([false, true])('returns to the latest messages after sending a sticker while reading history (around=%s)', async history => {
+    const body = await mountBottomControl(history)
+    expect(body.scrollTop).toBe(200)
+    await act(async () => { await renderer!.root.findByType(ArkmeEmojiPicker).props.onStickerSent() })
+    expect(body.scrollTop).toBe(900)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'bottom-history' })).toHaveLength(0)
+    expect(renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'bottom-latest' })).toBeDefined()
+    expect(renderer!.root.findAllByProps({ 'aria-label': '回到底部' })).toHaveLength(0)
+  })
+
+  it('ignores a sticker send completion from a previous conversation', async () => {
+    const body = await mountBottomControl()
+    const onStickerSent = renderer!.root.findByType(ArkmeEmojiPicker).props.onStickerSent
+    await act(async () => { arkmeUi.selectSource(other) })
+    act(() => { body.scrollTop = 300 })
+    mocks.callArkme.mockClear()
+    await act(async () => { await onStickerSent() })
+    expect(body.scrollTop).toBe(300)
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(0)
+  })
+
   it('returns to the loaded bottom without new messages or another timeline request', async () => {
     const body = await mountBottomControl()
     const readCount = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline').length
