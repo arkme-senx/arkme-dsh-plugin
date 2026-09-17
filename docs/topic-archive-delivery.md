@@ -79,3 +79,15 @@ runner 创建隔离 Record / Mongo / Redis / search 测试服务，并在结束�
 同步 dev `d7daef1` 后，5 个聚焦文件 52 项通过；完整 `pnpm test --maxWorkers=4` 为 604 文件通过/8 跳过，7098 项通过/11 跳过。typecheck、build、pack、仓外 SDK Consumer 通过。日志为 `review-quiet-directory-{tests,full-tests,typecheck,build,pack,consumer}.log`。
 
 新不可变包 `senguoyun-dsh-arkme-review9-0.1.60.tgz`，SHA-256 `5912886940dd67e2a1fae7861e6573f0bb262bd788a992705c0cbe180d0b0abc`。经官方 DSH 0.1.5-rc.2 CLI 装入全新 review9 Profile，完整浏览器 UI → Host → Record 链路 37 秒通过。归档当前 B 和父 A 的全过程均断言菜单/保留行持续连接、无加载行插入、无额外内容读取；父恢复保留独立子标记、子恢复、内容读写、CAS 和真实 Session Tool 验证继续通过。证据为 `review-quiet-directory-install9.log`、`review-quiet-directory-cross-e2e.log`。列表及空态截图 `review-quiet-directory-e2e.png`、`.empty.png` 已核验。用户 3081 服务、真实 Profile 和官方 DSH 源码未修改。
+
+## 2026-09-17 异步状态返回后的归档 hover
+
+review9 的真实浏览器复现了此前遗漏的顺序：打开菜单后归档按钮等待 owner 状态而禁用，鼠标先停在该按钮，状态返回后按钮已启用但背景仍透明；相邻重命名按钮为 `rgb(243, 244, 247)`。旧测试先等启用再移入鼠标，因此未覆盖此顺序。新测试仅延迟真实 Host 响应，不替换归档结果，失败证据为 `review-archive-hover-before-e2e.log`。
+
+根因是手动悬停状态依赖 React mouse-enter 事件，禁用按钮期间不会按可用按钮方式更新；启用也不会自动重放移入事件。现删除这组菜单的悬停状态及事件回调，四个操作共用菜单作用域内的 CSS `:hover` / `:focus-visible`，按 `:disabled` 排除不可用动作。浏览器在状态变化后自动计算高亮，工作区及 body portal 使用同一规则，颜色消费现有主题 token。原生禁用、owner 状态读取、点击时 revision 和稳定页面写入 owner 保留。
+
+本轮仅修改 UI 展示：Host 路由、SDK、Tools 和持久化能力没有变化，后面三者无需新增适配；既有跨仓测试仍验证其调用链。组件回归补充状态返回前不能写入、返回后使用实际 revision；浏览器回归覆盖提前悬停后启用、四项一致高亮、移出清除、键盘 Tab 聚焦，同时保留归档后不闪动及父子恢复闭环。
+
+最终验证：3 个聚焦文件 21 项通过；受支持的 Node 24.19.0 下全量 604 文件通过/8 跳过、7099 项通过/11 跳过；typecheck/build/pack 通过。新包 review10 经官方 CLI 安装至全新临时 Profile，官方 DSH `fb2c4b9` 上实际浏览器 → Host → Record 完整场景 86 秒通过。已查看 `review-archive-hover-e2e.png.hover.png`，归档高亮与相邻项一致。日志为 `review-archive-hover-focused.log`、`review-archive-hover-node24-tests.log`、`review-archive-hover-typecheck.log`、`review-archive-hover-build.log`、`review-archive-hover-pack.log`、`review-archive-hover-install10.log`、`review-archive-hover-cross-e2e.log`。
+
+不可变包为 `senguoyun-dsh-arkme-review10-0.1.60.tgz`，SHA-256 `61069d028fd0868d999b2f9a7400fdaa6311b2bab1467de38f43c3e8a1c05360`。清单未包含意外路径，client 产物及 source map 无本机用户绝对路径。仍在原任务分支、以已同步的 dev `d7daef1` 为开发基线；本轮读取的最新 dev `ae9c02e` 未改动这三个 UI 文件，没有为局部修复引入其他业务集成。官方 DSH tracked 状态干净，3081 常驻进程/真实 Profile、Flutter 和后端代码保持原状。运行证据为 macOS Chrome，未新增其他系统的运行结论。

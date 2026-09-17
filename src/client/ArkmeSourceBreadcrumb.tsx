@@ -176,9 +176,8 @@ const styles: Record<string, CSSProperties> = {
   },
   topicManageAction: {
     width: '100%', height: 30, display: 'flex', alignItems: 'center', padding: '0 8px', border: 0, borderRadius: 5,
-    background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 12, textAlign: 'left',
+    color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 12, textAlign: 'left',
   },
-  topicManageActionHover: { background: '#f3f4f7' },
   topicManageDanger: { color: '#d74646' },
   currentPath: { flex: 'none', padding: '5px 8px 6px', borderBottom: `1px solid ${colors.border}`, color: 'var(--dsw-alias-label-secondary, #6f747d)', fontSize: menuLayout.secondaryFontSize, lineHeight: menuLayout.lineHeight, overflowWrap: 'anywhere' },
   createFooter: {
@@ -368,7 +367,6 @@ export function ArkmeSourceBreadcrumb({
   const [hoveredSourceRef, setHoveredSourceRef] = useState<string>()
   const [topicMenuSource, setTopicMenuSource] = useState<ArkmeSourceItem>()
   const archiveMutation = useArchiveMutation()
-  const [hoveredTopicMenuAction, setHoveredTopicMenuAction] = useState<string>()
   const [renameTopic, setRenameTopic] = useState<ArkmeSourceItem>()
   const [dissolveTopic, setDissolveTopic] = useState<ArkmeSourceItem>()
   const [dissolveDialogOpen, setDissolveDialogOpen] = useState(false)
@@ -877,7 +875,6 @@ export function ArkmeSourceBreadcrumb({
           onMouseLeave={() => {
             setHoveredSourceRef(current => current === row.source.sourceRef ? undefined : current)
             setTopicMenuSource(current => current?.sourceRef === row.source.sourceRef ? undefined : current)
-            setHoveredTopicMenuAction(current => current?.startsWith(`${row.source.sourceRef}:`) ? undefined : current)
           }}
           onDragOver={event => {
             const plan = planMoveAtRow(row, event.clientX, event.clientY, event.currentTarget.getBoundingClientRect())
@@ -951,40 +948,28 @@ export function ArkmeSourceBreadcrumb({
           </svg></button>}
           {isHovered && manageMenuOpen && <div role="menu" aria-label={`${row.source.displayName}主题操作`} style={styles.topicManageMenu} onClick={event => { event.stopPropagation() }}>
             {canCreateChild && onCreateChildTopic !== undefined && <button type="button" role="menuitem"
-              style={{ ...styles.topicManageAction, ...(hoveredTopicMenuAction === `${row.source.sourceRef}:create` ? styles.topicManageActionHover : {}) }}
-              onMouseEnter={() => { setHoveredTopicMenuAction(`${row.source.sourceRef}:create`) }}
-              onMouseLeave={() => { setHoveredTopicMenuAction(current => current === `${row.source.sourceRef}:create` ? undefined : current) }}
+              className="arkme-self-topic-manage-action" style={styles.topicManageAction}
               onClick={() => {
               setTopicMenuSource(undefined)
-              setHoveredTopicMenuAction(undefined)
               onCreateChildTopic(row.source, row.depth + 1)
             }}>新建子主题</button>}
             {onRenameTopic !== undefined && <button type="button" role="menuitem"
-              style={{ ...styles.topicManageAction, ...(hoveredTopicMenuAction === `${row.source.sourceRef}:rename` ? styles.topicManageActionHover : {}) }}
-              onMouseEnter={() => { setHoveredTopicMenuAction(`${row.source.sourceRef}:rename`) }}
-              onMouseLeave={() => { setHoveredTopicMenuAction(current => current === `${row.source.sourceRef}:rename` ? undefined : current) }}
+              className="arkme-self-topic-manage-action" style={styles.topicManageAction}
               onClick={() => {
               setTopicMenuSource(undefined)
-              setHoveredTopicMenuAction(undefined)
               setTopicMutationError('')
               setRenameTopic(row.source)
             }}>重命名</button>}
             <ArkmeArchiveAction source={row.source} disabled={archiveMutation.busy}
-              style={{ ...styles.topicManageAction, ...(hoveredTopicMenuAction === `${row.source.sourceRef}:archive` ? styles.topicManageActionHover : {}) }}
-              onMouseEnter={() => { setHoveredTopicMenuAction(`${row.source.sourceRef}:archive`) }}
-              onMouseLeave={() => { setHoveredTopicMenuAction(current => current === `${row.source.sourceRef}:archive` ? undefined : current) }}
+              className="arkme-self-topic-manage-action" style={{ ...styles.topicManageAction }}
               onAction={state => {
               setTopicMenuSource(undefined)
-              setHoveredTopicMenuAction(undefined)
               void archiveMutation.set(state)
             }} />
             {onDissolveTopic !== undefined && <button type="button" role="menuitem"
-              style={{ ...styles.topicManageAction, ...styles.topicManageDanger, ...(hoveredTopicMenuAction === `${row.source.sourceRef}:dissolve` ? styles.topicManageActionHover : {}) }}
-              onMouseEnter={() => { setHoveredTopicMenuAction(`${row.source.sourceRef}:dissolve`) }}
-              onMouseLeave={() => { setHoveredTopicMenuAction(current => current === `${row.source.sourceRef}:dissolve` ? undefined : current) }}
+              className="arkme-self-topic-manage-action" style={{ ...styles.topicManageAction, ...styles.topicManageDanger }}
               onClick={() => {
               setTopicMenuSource(undefined)
-              setHoveredTopicMenuAction(undefined)
               setTopicMutationError('')
               setDissolveTopic(row.source)
               setDissolveDialogOpen(true)
