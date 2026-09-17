@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { chmod, copyFile, link, mkdir, open, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { constants, createReadStream } from 'node:fs'
+import { chmod, copyFile, lstat, mkdir, open, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { arkmeNormalizedFileMimeType, arkmePickedFileKind, type ArkmeFileOpenResult, type ArkmeFilePolicy, type ArkmeFileProgress, type ArkmeFileReception, type ArkmeFileSendInput, type ArkmeFileSendTask, type ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { ArkmeUploadedAsset, ArkmeSourceSendResult } from '../types.js'
 import { ArkmePluginError } from './service.js'
@@ -86,17 +86,20 @@ export class FileTransfers {
     const directory = this.openDirectory(userId, ref)
     const target = join(directory, nativeOpenFileName(file.fileName))
     await mkdir(directory, { recursive: true, mode: 0o700 })
+    const sourceInfo = await stat(source)
+    const targetInfo = await lstat(target).catch(error => {
+      if (error.code === 'ENOENT') return undefined
+      throw error
+    })
+    if (targetInfo !== undefined && !targetInfo.isFile()) throw fail('file-open-target-invalid', '本地打开副本不是普通文件')
+    // Editable copies must never share the attachment's bytes; independent user edits are retained.
+    if (targetInfo !== undefined && (targetInfo.dev !== sourceInfo.dev || targetInfo.ino !== sourceInfo.ino)) return target
+    const temporary = join(directory, `${randomUUID()}.tmp`)
     try {
-      await link(source, target)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      const info = await stat(target).catch(() => undefined)
-      if (!info?.isFile() || info.size !== file.size) {
-        await unlink(target).catch(() => {})
-        await link(source, target)
-      }
-    }
-    await chmod(target, 0o600)
+      await copyFile(source, temporary, constants.COPYFILE_FICLONE)
+      await chmod(temporary, 0o600)
+      await rename(temporary, target)
+    } finally { await unlink(temporary).catch(() => {}) }
     return target
   }
   private async assertUser(userId: number, signal?: AbortSignal): Promise<void> {
@@ -228,22 +231,36 @@ export class FileTransfers {
     await this.assertUser(userId)
     return { path, file: publicFile(file) }
   }
-  async openLocal(ref: string): Promise<ArkmeFileOpenResult> {
-    if (this.ports.openPath === undefined) throw fail('file-open-unavailable', '当前宿主不能使用本机应用打开文件')
+  async openLocal(ref: string, signal?: AbortSignal): Promise<ArkmeFileOpenResult> {
+    return { opened: true, file: await this.openLocalTarget(ref, 'file', signal) }
+  }
+  async openLocalFolder(ref: string, signal?: AbortSignal): Promise<{ folderOpened: true }> {
+    await this.openLocalTarget(ref, 'folder', signal)
+    return { folderOpened: true }
+  }
+  private async openLocalTarget(ref: string, target: 'file' | 'folder', signal?: AbortSignal): Promise<ArkmeLocalFile> {
+    if (this.ports.openPath === undefined) throw fail('file-open-unavailable', target === 'folder' ? '当前宿主不能打开本机文件夹' : '当前宿主不能使用本机应用打开文件')
     const controller = new AbortController()
     this.controllers.add(controller)
+    const operationSignal = signal === undefined ? controller.signal : AbortSignal.any([signal, controller.signal])
     try {
+      operationSignal.throwIfAborted()
       const userId = await this.ports.currentUser()
-      const { file } = await this.readLocal(ref)
-      await this.assertUser(userId, controller.signal)
-      const path = await this.nativeOpenPath(userId, ref, file)
-      await this.assertUser(userId, controller.signal)
-      await this.ports.openPath(path, controller.signal)
-      await this.assertUser(userId, controller.signal)
-      return { opened: true, file }
+      const { file, path } = await this.exclusive(async () => {
+        await this.assertUser(userId, operationSignal)
+        const { file } = await this.readLocal(ref)
+        await this.assertUser(userId, operationSignal)
+        return { file, path: await this.nativeOpenPath(userId, ref, file) }
+      })
+      await this.assertUser(userId, operationSignal)
+      await this.ports.openPath(target === 'folder' ? dirname(path) : path, operationSignal)
+      await this.assertUser(userId, operationSignal)
+      return file
     } catch (error) {
       if (error instanceof ArkmePluginError) throw error
-      throw fail('file-open-failed', '文件打开失败，请重试')
+      throw target === 'folder'
+        ? fail('file-folder-open-failed', '文件夹打开失败，请重试')
+        : fail('file-open-failed', '文件打开失败，请重试')
     } finally {
       this.controllers.delete(controller)
     }

@@ -541,7 +541,8 @@ export class ArkmeService {
   async fileList() { return await this.filesOwner().files() }
   async fileReadLocal(ref: string) { return await this.filesOwner().readLocal(ref) }
   attachLocalFileOpener(openPath: (path: string, signal: AbortSignal) => Promise<void>) { this.localFileOpener = openPath }
-  async fileOpenLocal(ref: string) { return await this.filesOwner().openLocal(ref) }
+  async fileOpenLocal(ref: string, signal?: AbortSignal) { return await this.filesOwner().openLocal(ref, signal) }
+  async fileOpenLocalFolder(ref: string, signal?: AbortSignal) { return await this.filesOwner().openLocalFolder(ref, signal) }
   async fileRemove(ref: string) { await this.filesOwner().remove(ref) }
   async fileSend(input: ArkmeFileSendInput) {
     if (input.content.textFormat === 'markdown' && this.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)

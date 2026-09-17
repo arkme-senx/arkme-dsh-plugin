@@ -69,6 +69,7 @@ export function useArkmeOriginal(block: ArkmeContentBlock | undefined, autoRecei
 
 type SavePickerWindow = Window & { showSaveFilePicker?: (options: { suggestedName: string }) => Promise<{ createWritable(): Promise<{ write(data: Blob): Promise<void>; close(): Promise<void>; abort(): Promise<void> }> }> }
 
+const filePanelActionStyle: CSSProperties = { flex: '1 1 auto', padding: '10px 16px', border: 0, borderRadius: 999, background: 'var(--dsw-alias-interactive-bg-hover)', color: 'var(--dsw-alias-label-primary)', fontSize: 14, whiteSpace: 'nowrap', cursor: 'pointer' }
 const primaryActionStyle: CSSProperties = { padding: '10px 24px', border: 0, borderRadius: 8, background: 'var(--dsw-alias-state-business-primary, #3964fe)', color: 'white', fontSize: 14, cursor: 'pointer' }
 const fileActionEnabledBackground = 'rgba(20,22,24,.38)'
 const fileActionDisabledBackground = 'rgba(20,22,24,.20)'
@@ -178,10 +179,11 @@ function useArkmeFileDownload(block: ArkmeContentBlock, original: ReturnType<typ
   const [saved, setSaved] = useState(false)
   const saveController = useRef<AbortController>()
   const { localRef } = original
-  useEffect(() => () => { saveController.current?.abort() }, [block.mediaRef, block.localFileRef])
-  useEffect(() => { setNotice(''); setSaved(false) }, [block.mediaRef, block.localFileRef])
+  const identity = block.fileAssetUid ?? block.localFileRef ?? block.originalRef ?? block.mediaRef
+  useEffect(() => () => { saveController.current?.abort() }, [identity])
+  useEffect(() => { setNotice(''); setSaved(false); setSaving(false) }, [identity])
   const save = async () => {
-    if ((localRef === undefined && block.originalRef === undefined) || saving) return
+    if ((localRef === undefined && block.originalRef === undefined) || (saveController.current !== undefined && !saveController.current.signal.aborted)) return
     const controller = new AbortController(); saveController.current = controller
     setSaving(true); setNotice('')
     try {
@@ -212,10 +214,18 @@ function useArkmeFileDownload(block: ArkmeContentBlock, original: ReturnType<typ
       if (handle !== undefined) {
         const response = await fetch(arkmeLocalFileUrl(saveRef), { signal: controller.signal })
         if (!response.ok) throw new Error('原文件已不可用，请重新接收')
+        controller.signal.throwIfAborted()
         const writable = await handle.createWritable()
-        try { const data = await response.blob(); controller.signal.throwIfAborted(); await writable.write(data); await writable.close() }
+        try {
+          controller.signal.throwIfAborted()
+          const data = await response.blob()
+          controller.signal.throwIfAborted()
+          await writable.write(data)
+          controller.signal.throwIfAborted()
+          await writable.close()
+        }
         catch (error) { await writable.abort().catch(() => {}); throw error }
-        setNotice('保存成功'); setSaved(true)
+        if (!controller.signal.aborted) { setNotice('保存成功'); setSaved(true) }
       } else {
         const link = document.createElement('a')
         link.href = arkmeLocalFileUrl(saveRef, true); link.download = block.fileName
@@ -224,7 +234,9 @@ function useArkmeFileDownload(block: ArkmeContentBlock, original: ReturnType<typ
       }
     } catch (error) {
       if (!controller.signal.aborted && !(error instanceof DOMException && error.name === 'AbortError')) setNotice(error instanceof Error ? error.message : '保存失败，请重试')
-    } finally { setSaving(false) }
+    } finally {
+      if (saveController.current === controller) { saveController.current = undefined; setSaving(false) }
+    }
   }
   return { notice, saving, saved, save }
 }
@@ -299,46 +311,50 @@ function useArkmeNativeFileOpen(
   original: ReturnType<typeof useArkmeOriginal>,
   onOpened: () => void,
 ) {
-  const [waitingForReception, setWaitingForReception] = useState(false)
+  const [pendingOpenIdentity, setPendingOpenIdentity] = useState<string>()
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState('')
   const openController = useRef<AbortController>()
-  const identity = block.localFileRef ?? block.originalRef ?? block.mediaRef
+  const identity = block.fileAssetUid ?? block.localFileRef ?? block.originalRef ?? block.mediaRef
   useEffect(() => {
-    setWaitingForReception(false); setOpening(false); setError('')
+    setPendingOpenIdentity(undefined); setOpening(false); setError('')
     return () => openController.current?.abort()
   }, [identity])
-  const openLocal = async (fileRef: string) => {
-    if (opening) return
+  const openLocal = async (fileRef: string, target: 'file' | 'folder' = 'file') => {
+    if (openController.current !== undefined && !openController.current.signal.aborted) return
     const controller = new AbortController(); openController.current = controller
     setOpening(true); setError('')
     try {
-      await sdk.openLocalFile(fileRef, controller.signal)
-      if (!controller.signal.aborted) onOpened()
+      if (target === 'folder') await sdk.openLocalFileFolder(fileRef, controller.signal)
+      else await sdk.openLocalFile(fileRef, controller.signal)
+      if (!controller.signal.aborted && target === 'file') onOpened()
     } catch (reason) {
-      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : '文件打开失败，请重试')
+      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : target === 'folder' ? '文件夹打开失败，请重试' : '文件打开失败，请重试')
     } finally {
-      if (!controller.signal.aborted) setOpening(false)
+      if (openController.current === controller) {
+        openController.current = undefined
+        if (!controller.signal.aborted) setOpening(false)
+      }
     }
   }
   useEffect(() => {
-    if (!waitingForReception || original.localRef === undefined) return
-    setWaitingForReception(false)
+    if (pendingOpenIdentity !== identity || original.localRef === undefined) return
+    setPendingOpenIdentity(undefined)
     void openLocal(original.localRef)
-  }, [waitingForReception, original.localRef])
+  }, [pendingOpenIdentity, identity, original.localRef])
   useEffect(() => {
-    if (!waitingForReception || original.reception.state !== 'failed') return
-    setWaitingForReception(false)
+    if (pendingOpenIdentity !== identity || original.reception.state !== 'failed') return
+    setPendingOpenIdentity(undefined)
     setError(original.reception.error ?? '文件接收失败，请重试')
-  }, [waitingForReception, original.reception.state, original.reception.error])
+  }, [pendingOpenIdentity, identity, original.reception.state, original.reception.error])
   const open = () => {
     setError('')
     if (original.localRef !== undefined) { void openLocal(original.localRef); return }
     if (block.originalRef === undefined) { setError('原文件不可用'); return }
-    setWaitingForReception(true)
+    setPendingOpenIdentity(identity)
     original.receive()
   }
-  return { opening, error, open }
+  return { opening, error, open, openFolder: () => { if (original.localRef !== undefined) void openLocal(original.localRef, 'folder') } }
 }
 
 function FileDownloadAction({ block, original, download, showStatus = true, hideAfterSave = true }: {
@@ -425,9 +441,10 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
   const nativeOpen = useArkmeNativeFileOpen(block, original, onClose)
   const { notice: actionNotice, showNotice: showActionNotice, clearNotice: clearActionNotice } = useArkmeFileActionNotice()
   const panel = useRef<HTMLDivElement>(null)
-  const [text, setText] = useState('')
+  const [text, setText] = useState<string>()
   const [error, setError] = useState('')
-  const [openRequested, setOpenRequested] = useState(openLocalFile)
+  const [openRequested, setOpenRequested] = useState(openLocalFile ? 1 : 0)
+  const fileIdentity = block.fileAssetUid ?? block.localFileRef ?? block.originalRef ?? block.mediaRef
   const url = original.localRef === undefined ? undefined : arkmeLocalFileUrl(original.localRef)
   const textFile = canPreviewTextFile(block)
   const visualKind = arkmeBrowserVisualKind(block.mimeType, block.fileName)
@@ -435,12 +452,16 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
   const receptionNoun = forceDownload && (block.kind === 'image' || block.kind === 'video')
     ? block.kind === 'image' ? '图片' : '视频'
     : '文件'
-  const showContent = url !== undefined && browserPreview && (openRequested || block.kind === 'image' || block.kind === 'video')
+  const showContent = url !== undefined && browserPreview && (openRequested > 0 || block.kind === 'image' || block.kind === 'video')
   const systemFile = !browserPreview
+  const filePanel = block.kind === 'file'
+  const receiving = original.reception.state === 'receiving' && original.localRef === undefined
+  const openBusy = receiving || (systemFile && nativeOpen.opening)
+  const unavailable = original.localRef === undefined && block.originalRef === undefined
   const index = Math.max(0, blocks.findIndex(value => value.mediaRef === block.mediaRef))
   const previousDisabled = navigation === undefined ? onSelect === undefined || index <= 0 : navigation.previous === undefined
   const nextDisabled = navigation === undefined ? onSelect === undefined || index >= blocks.length - 1 : navigation.next === undefined
-  useEffect(() => { setOpenRequested(openLocalFile); setError('') }, [block.mediaRef, openLocalFile])
+  useEffect(() => { setOpenRequested(openLocalFile ? 1 : 0); setError('') }, [fileIdentity, openLocalFile])
   useEffect(() => { clearActionNotice() }, [block.mediaRef, clearActionNotice])
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null
@@ -448,21 +469,22 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
     return () => { previous?.focus() }
   }, [])
   useEffect(() => {
-    setText(''); setError('')
+    setText(undefined); setError('')
     if (url === undefined || !textFile || !showContent) return
     const controller = new AbortController()
     void fetch(url, { signal: controller.signal }).then(async response => {
       if (!response.ok) throw new Error('文件预览失败')
       const value = await response.text()
       if (!controller.signal.aborted) setText(value)
-    }).catch(() => { if (!controller.signal.aborted) setError('文件预览失败，请下载后打开') })
+    }).catch(() => { if (!controller.signal.aborted) setError('文件预览失败，请重试或另存为后打开') })
     return () => controller.abort()
-  }, [url, textFile, showContent])
+  }, [url, textFile, showContent, openRequested])
   const preview = () => {
-    setOpenRequested(browserPreview); setError('')
+    setOpenRequested(value => browserPreview ? value + 1 : 0); setError('')
     if (original.localRef === undefined) original.receive()
   }
-  const mediaStyle = { width: '100%', maxHeight: '65vh', objectFit: 'contain' as const }
+  const contentMaxHeight = filePanel ? 'calc(65vh - 56px)' : '65vh'
+  const mediaStyle = { width: '100%', maxHeight: contentMaxHeight, objectFit: 'contain' as const }
   return createPortal(<div style={{ position: 'fixed', inset: 0, zIndex: 11000, background: 'rgba(0,0,0,.72)', display: 'grid', placeItems: 'center', padding: 24 }} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`文件预览 ${block.fileName}`} style={{ position: 'relative', width: showContent ? 'min(860px, 90vw)' : 'min(420px, 90vw)', maxHeight: '80vh', borderRadius: 16, padding: showContent ? '56px 20px 20px' : '48px 40px 32px', color: 'var(--dsw-alias-label-primary, #17191c)', background: 'var(--dsw-alias-bg-elevated, white)' }} onKeyDown={event => {
       if (event.key === 'Escape') { event.stopPropagation(); onClose() }
@@ -480,7 +502,7 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
         <div style={{ fontSize: 14, color: 'var(--dsw-alias-label-tertiary, #9097a1)' }}>文件大小：{arkmeFileSize(block.size)}</div>
         {original.reception.state === 'receiving' && original.localRef === undefined
           ? <FileReceptionProgress reception={original.reception} fileName={block.fileName} noun={receptionNoun} />
-          : <button type="button" onClick={systemFile ? nativeOpen.open : preview} disabled={nativeOpen.opening || (original.localRef === undefined && block.originalRef === undefined)} style={{ ...primaryActionStyle, cursor: nativeOpen.opening ? 'progress' : 'pointer' }}>
+          : !filePanel && <button type="button" onClick={systemFile ? nativeOpen.open : preview} disabled={nativeOpen.opening || (original.localRef === undefined && block.originalRef === undefined)} style={{ ...primaryActionStyle, cursor: nativeOpen.opening ? 'progress' : 'pointer' }}>
             {systemFile
               ? nativeOpen.opening ? '正在打开…' : original.localRef === undefined ? '接收文件' : '打开'
               : original.localRef === undefined ? `接收${receptionNoun}` : '预览'}
@@ -491,18 +513,35 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
         : visualKind === 'image' ? <img src={url} alt={block.fileName} style={mediaStyle} />
           : visualKind === 'video' ? <video src={url} controls style={mediaStyle} />
             : block.mimeType.trim().toLowerCase().startsWith('audio/') && arkmeCanInlineLocalFile(block.mimeType, block.fileName) ? <audio src={url} controls />
-              : textFile ? <div style={{ maxHeight: '65vh', overflow: 'auto', overflowWrap: 'anywhere' }}>{/\.(md|markdown)$/i.test(block.fileName) ? <MarkdownText text={text} {...markdownLabelProps} /> : <pre style={{ whiteSpace: 'pre-wrap' }}>{text}</pre>}</div>
+              : textFile ? <div style={{ maxHeight: contentMaxHeight, overflow: 'auto', overflowWrap: 'anywhere' }}>{text === undefined ? !error && <p role="status">正在加载文件...</p> : /\.(md|markdown)$/i.test(block.fileName) ? <MarkdownText text={text} {...markdownLabelProps} /> : <pre style={{ whiteSpace: 'pre-wrap' }}>{text}</pre>}</div>
                 : null}
-      {error && <p role="alert">{error}</p>}
+      {filePanel && <div style={{ marginTop: 16 }}>
+        <div role="group" aria-label="文件操作" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {!showContent && <button type="button" aria-label="打开文件" disabled={openBusy || unavailable} onClick={systemFile ? nativeOpen.open : preview}
+            style={{ ...filePanelActionStyle, opacity: openBusy || unavailable ? .5 : 1, cursor: openBusy ? 'progress' : unavailable ? 'default' : 'pointer' }}>打开</button>}
+          <button type="button" aria-label="另存为文件" disabled={download.saving || unavailable} onClick={() => { void download.save() }}
+            style={{ ...filePanelActionStyle, opacity: download.saving || unavailable ? .5 : 1, cursor: download.saving ? 'progress' : unavailable ? 'default' : 'pointer' }}>另存为</button>
+          <button type="button" aria-label="打开文件夹" disabled={nativeOpen.opening || original.localRef === undefined} onClick={nativeOpen.openFolder}
+            title={original.localRef === undefined ? '请先打开或另存为文件' : '打开 Arkme 已接收文件所在的文件夹'}
+            style={{ ...filePanelActionStyle, opacity: nativeOpen.opening || original.localRef === undefined ? .5 : 1, cursor: nativeOpen.opening ? 'progress' : original.localRef === undefined ? 'default' : 'pointer' }}>打开文件夹</button>
+        </div>
+        {nativeOpen.opening && <p role="status">正在打开…</p>}
+        {showContent && nativeOpen.error && <p role="alert">{nativeOpen.error}</p>}
+        {download.saving && <p role="status">正在保存...</p>}
+        {download.notice && <p role="status">{download.notice}</p>}
+      </div>}
+      {error && <div><p role="alert">{error}</p><button type="button" onClick={preview} style={filePanelActionStyle}>重试预览</button></div>}
       <ArkmeFileActionToast notice={actionNotice} style={{ position: 'absolute', left: 74, right: 74, bottom: -8 }} />
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: -56, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <ArkmeFileActionNavButton label="上一个文件" direction="left" disabled={previousDisabled} onClick={() => { if (!previousDisabled) { if (navigation) navigation.previous?.(); else onSelect?.(blocks[index - 1]!) } }} />
         <span aria-hidden style={fileActionWideGapStyle} />
         <ArkmeFileActionNavButton label="下一个文件" direction="right" disabled={nextDisabled} onClick={() => { if (!nextDisabled) { if (navigation) navigation.next?.(); else onSelect?.(blocks[index + 1]!) } }} />
-        <span aria-hidden style={fileActionWideGapStyle} />
-        <ImageCopyAction block={block} sources={{ localOriginalRef: original.localRef ?? block.localFileRef, remoteOriginalRef: block.originalRef, previewUrl: block.mediaRef === '' || block.mediaRef === block.localFileRef ? undefined : `/arkme-self/api/media?ref=${encodeURIComponent(block.mediaRef)}` }} onNotice={showActionNotice} />
-        <span aria-hidden style={{ width: 12, flex: 'none' }} />
-        <FileDownloadAction block={block} original={original} download={download} />
+        {!filePanel && <>
+          <span aria-hidden style={fileActionWideGapStyle} />
+          <ImageCopyAction block={block} sources={{ localOriginalRef: original.localRef ?? block.localFileRef, remoteOriginalRef: block.originalRef, previewUrl: block.mediaRef === '' || block.mediaRef === block.localFileRef ? undefined : `/arkme-self/api/media?ref=${encodeURIComponent(block.mediaRef)}` }} onNotice={showActionNotice} />
+          <span aria-hidden style={{ width: 12, flex: 'none' }} />
+          <FileDownloadAction block={block} original={original} download={download} />
+        </>}
       </div>
     </div>
   </div>, document.body)

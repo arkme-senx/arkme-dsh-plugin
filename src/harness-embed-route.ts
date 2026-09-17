@@ -47,6 +47,7 @@ interface HarnessEmbedRouteOptions {
   trajectoryClient?: DshWebBootEntry
   sidebarClient?: DshWebBootEntry
   onboardingClient?: DshWebBootEntry
+  selectionClientRevision?: string
   getGraph(): DshWebBootGraph
   installedPackageNames(): readonly string[]
   readRootHtml(request: IncomingMessage): Promise<string>
@@ -283,6 +284,9 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
         projectedGraph.rev = shortHash(`${projectedGraph.rev}:${rev}`)
       }
       let html = replaceHarnessBootGraph(await options.readRootHtml(request), fullGraph, projectedGraph)
+      if (options.selectionClientRevision && /^[a-f0-9]+$/.test(options.selectionClientRevision)) {
+        html = html.replace('</head>', `<meta name="arkme-native-selection" content="/arkme-self/harness-native-selection-client.js?rev=${options.selectionClientRevision}"></head>`)
+      }
       if (options.sessionClient?.apiPath !== undefined) {
         const apiPath = options.sessionClient.apiPath
         if (!/^\/[A-Za-z0-9/_-]+$/.test(apiPath) || !html.includes('</head>')) {

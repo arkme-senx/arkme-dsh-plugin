@@ -2,15 +2,13 @@ import type { ClientContext, UseProjection } from '@deepseek-ai/dsh-client-runti
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { createElement } from 'react'
+import type {} from './harness-slots-contract.js'
 
 const SLOT = 'conversation.session.header.actions'
 const LOCALE = 'arkme.harness.sessionSummary'
 
 // Public slot available in the supported host, without bundling its UI package.
 declare module '@deepseek-ai/dsh-client-ui-slots' {
-  interface SlotMap {
-    'conversation.session.header.actions': { kind: 'list'; scope: 'session'; owner: Record<never, never> }
-  }
   interface LocaleNamespaceMap {
     'arkme.harness.sessionSummary': 'count'
   }

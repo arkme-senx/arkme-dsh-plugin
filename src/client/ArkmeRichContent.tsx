@@ -14,7 +14,7 @@ import type {
 } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeCallRecordContent } from './ArkmeCallRecordContent.js'
-import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
+import { ArkmeLongArticleDialog, ArkmeLongArticleSnapshotDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeVoiceContent, arkmeVoiceMediaUrl } from './ArkmeVoiceContent.js'
 import {
   ArkmeFileActionNavButton, ArkmeFileActionToast, ArkmeFileViewer, ArkmeFileActions,
@@ -412,17 +412,23 @@ export function ArkmeFileCard({ block, fallback = false, onOpen, previewOpen = f
   const downloading = original.reception.state === 'receiving'
   const percent = original.reception.totalBytes > 0 ? Math.min(99, Math.floor(original.reception.receivedBytes / original.reception.totalBytes * 100)) : undefined
   const downloadLabel = original.localRef !== undefined ? '' : downloading ? `下载中${percent === undefined ? '' : ` ${percent}%`}` : original.reception.state === 'failed' ? '下载失败' : '未下载'
-  useEffect(() => () => { controller.current?.abort() }, [block.mediaRef, block.localFileRef])
+  const identity = block.fileAssetUid ?? block.localFileRef ?? block.originalRef ?? block.mediaRef
+  useEffect(() => {
+    setOpening(false)
+    return () => controller.current?.abort()
+  }, [identity])
   const showReception = () => { if (onOpen !== undefined) onOpen(block); else setOpen(true) }
   const activate = async () => {
-    if (opening) return
+    if (controller.current !== undefined && !controller.current.signal.aborted) return
     if (original.localRef === undefined || arkmeCanPreviewFile(block)) { showReception(); return }
     const request = new AbortController(); controller.current = request
     setOpening(true)
     try { await fileSdk.openLocalFile(original.localRef, request.signal) }
     catch {
       if (!request.signal.aborted) showReception()
-    } finally { if (!request.signal.aborted) setOpening(false) }
+    } finally {
+      if (controller.current === request) { controller.current = undefined; setOpening(false) }
+    }
   }
   return <><button type="button" aria-busy={opening} disabled={opening} onClick={event => { event.stopPropagation(); void activate() }} style={{ ...styles.file, border: 0, textAlign: 'left', cursor: opening ? 'progress' : 'pointer', position: 'relative' }} data-arkme-file-card={fallback ? 'fallback' : 'file'}>
     <span style={{ ...styles.fileIconBox, position: 'relative' }}><ArkmeFileIcon fileName={block.fileName} mimeType={block.mimeType} /><UploadProgress block={block} /></span>
@@ -436,6 +442,16 @@ function LongArticleWordCountIcon() {
     <path d="M8.75 1.75H4.083c-.738 0-1.166 0-1.5.167a1.5 1.5 0 0 0-.666.666c-.167.334-.167.762-.167 1.5v5.834c0 .738 0 1.166.167 1.5.146.292.374.52.666.666.334.167.762.167 1.5.167h5.834c.738 0 1.166 0 1.5-.167.292-.146.52-.374.666-.666.167-.334.167-.762.167-1.5V5.25l-3.5-3.5Z" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
     <path d="M8.75 1.75v2.333c0 .37 0 .584.083.75.073.146.188.261.334.334.166.083.38.083.75.083h2.333M4.667 7.583h4.666M4.667 9.625h2.916" stroke="currentColor" strokeWidth=".875" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
+}
+
+export function ArkmeForwardArticleContent({ item }: { item: ArkmeTimelineItem }) {
+  const [open, setOpen] = useState(false)
+  return <>
+    <div style={{ maxWidth: '100%', minWidth: 0, padding: '10px 13px', overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', boxSizing: 'border-box', borderRadius: '16px 5px 16px 16px', background: arkmeTheme.messageOwn, border: '1px solid rgba(83,97,145,.045)' }}>
+      <ArticleCard title={item.title} text={item.textContent} onOpen={() => { setOpen(true) }} />
+    </div>
+    {open && typeof document !== 'undefined' && createPortal(<ArkmeLongArticleSnapshotDialog item={item} onClose={() => { setOpen(false) }} />, document.body)}
+  </>
 }
 
 function ArticleCard({ title, text, onOpen }: { title: string; text: string; onOpen: () => void }) {
@@ -899,10 +915,11 @@ export function arkmeRelatedRecordingItemFromSharedRecording(item: ArkmeTimeline
     : arkmeRelatedRecordingItemFromSharedRecordingPreview(item.sharedRecording, item)
 }
 
-export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen }: {
+export function ArkmeMessageContent({ item, sourceRef, sourceIdentityKey, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen }: {
   item: ArkmeTimelineItem
   presentation?: 'bubble' | 'detail'
   sourceRef?: string
+  sourceIdentityKey?: string
   onLongArticleUpdated?: (detail: ArkmeLongArticleDetail) => void
   highlightMentions?: boolean
   collapseText?: boolean
@@ -914,18 +931,20 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
   onCallDetailOpen?: (videoUrl?: string) => void
   onArticleOpen?: () => void
 }) {
-  const lastMedia = useRef<{ sourceRef: string | undefined; item: ArkmeTimelineItem }>()
+  // Access references rotate on new messages; only a different conversation ends this media scope.
+  const mediaSourceKey = sourceIdentityKey ?? sourceRef
+  const lastMedia = useRef<{ sourceKey: string | undefined; item: ArkmeTimelineItem }>()
   const snapshot = lastMedia.current
-  const previous = snapshot !== undefined && snapshot.sourceRef === sourceRef ? snapshot.item : undefined
+  const previous = snapshot !== undefined && snapshot.sourceKey === mediaSourceKey ? snapshot.item : undefined
   const version = item.recordVersion ?? item.version
   const display = mediaSelectionIsExplicit ? item : retainPartialTimelineMedia(previous, item)
   useEffect(() => {
-    lastMedia.current = { sourceRef, item: display }
-  }, [display, sourceRef])
+    lastMedia.current = { sourceKey: mediaSourceKey, item: display }
+  }, [display, mediaSourceKey])
   const blocks = [...(display.contentBlocks ?? [])].sort((left, right) => left.sortOrder - right.sortOrder)
   const visualBlocks = blocks.filter(block => block.kind !== 'audio')
-  const [preview, setPreview] = useState<{ sourceRef?: string | undefined; itemUid: string; fileAssetUid?: string | undefined; mediaRef: string; forceDownload?: boolean }>()
-  const previewBlock = preview !== undefined && preview.sourceRef === sourceRef && preview.itemUid === item.itemUid && item.status === 1
+  const [preview, setPreview] = useState<{ sourceKey?: string | undefined; itemUid: string; fileAssetUid?: string | undefined; mediaRef: string; forceDownload?: boolean }>()
+  const previewBlock = preview !== undefined && preview.sourceKey === mediaSourceKey && preview.itemUid === item.itemUid && item.status === 1
     ? visualBlocks.find(block => preview.fileAssetUid !== undefined ? block.fileAssetUid === preview.fileAssetUid : block.mediaRef === preview.mediaRef)
     : undefined
   useEffect(() => {
@@ -943,7 +962,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
   if (item.forwardRecords !== undefined) {
     const itemLines = item.forwardRecords.items.flatMap(value => {
       if (value.segments?.length) return value.segments.map(segment => `${segment.speakerName}：${segment.textContent || '语音片段'}`)
-      const summary = (value.textFormat === 'markdown' ? arkmeMarkdownPlainText(value.textContent) : value.textContent) || value.title || value.contentLabel || value.contentBlocks?.[0]?.fileName || '非文本内容'
+      const summary = value.title.trim() || (value.textFormat === 'markdown' ? arkmeMarkdownPlainText(value.textContent) : value.textContent) || value.contentLabel || value.contentBlocks?.[0]?.fileName || '非文本内容'
       return [`${value.senderName}：${summary}`]
     })
     const previewLines = (itemLines.length > 0 ? itemLines : item.forwardRecords.summaryLines).slice(0, 3)
@@ -984,8 +1003,8 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
       return next
     })
   }
-  const openPreview = (block: ArkmeContentBlock) => { setPreview({ sourceRef, itemUid: item.itemUid, fileAssetUid: block.fileAssetUid, mediaRef: block.mediaRef }) }
-  const openAsFile = (block: ArkmeContentBlock) => { setPreview({ sourceRef, itemUid: item.itemUid, fileAssetUid: block.fileAssetUid, mediaRef: block.mediaRef, forceDownload: true }) }
+  const openPreview = (block: ArkmeContentBlock) => { setPreview({ sourceKey: mediaSourceKey, itemUid: item.itemUid, fileAssetUid: block.fileAssetUid, mediaRef: block.mediaRef }) }
+  const openAsFile = (block: ArkmeContentBlock) => { setPreview({ sourceKey: mediaSourceKey, itemUid: item.itemUid, fileAssetUid: block.fileAssetUid, mediaRef: block.mediaRef, forceDownload: true }) }
   const isArticle = item.templateKind === 8 || item.displayKind === 1
   const bodyTextFormat = item.senderKind === 'bot' && item.textContent.trim() !== ''
     ? 'markdown' : item.textFormat ?? 'plain'

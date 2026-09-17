@@ -1932,6 +1932,7 @@ export class ArkmeSdk {
     return this.call('files.search', params, signal)
   }
   async localFiles(signal?: AbortSignal): Promise<ArkmeLocalFile[]> { return this.call('files.local.list', undefined, signal) }
+  async openLocalFileFolder(fileRef: string, signal?: AbortSignal): Promise<{ folderOpened: true }> { return this.call('files.local.open-folder', { fileRef }, signal) }
   async openLocalFile(fileRef: string, signal?: AbortSignal): Promise<import('../file-transfer-contract.js').ArkmeFileOpenResult> { return this.call('files.local.open', { fileRef }, signal) }
   async removeLocalFile(fileRef: string): Promise<void> { return this.call('files.local.remove', { fileRef }) }
   async sendFiles(input: ArkmeFileSendInput): Promise<ArkmeFileSendTask> { return this.call('files.send', { ...input.content, ...input }) }

@@ -7,6 +7,35 @@ import { apply } from '../src/client/harness-onboarding-client.js'
 
 afterEach(() => { document.body.replaceChildren(); delete document.body.dataset.arkmeHarnessOnboarding; vi.unstubAllGlobals() })
 
+it('defers optional selection until readiness and cleans a pending resource on disposal', async () => {
+  vi.useFakeTimers()
+  const meta = document.createElement('meta'); meta.name = 'arkme-native-selection'; meta.content = '/arkme-self/harness-native-selection-client.js?rev=abcd'
+  document.head.append(meta)
+  let snapshot = { phase: 'loading', current: 'existing', byId: { existing: { blank: false } } }
+  let changed = () => {}; let dispose = () => {}
+  const importModule = vi.fn()
+  try {
+    apply({
+      modules: { import: importModule },
+      sessions: { list: { getSnapshot: () => snapshot, subscribe: (cb: () => void) => { changed = cb; return () => {} } } },
+      effect: (start: () => () => void) => { dispose = start() },
+      slots: { inject: () => {} },
+    } as unknown as ClientContext)
+    await vi.runAllTimersAsync()
+    expect(document.querySelector('script')).toBeNull()
+    snapshot = { ...snapshot, phase: 'ready' }; changed()
+    expect(document.body.dataset.arkmeHarnessOnboarding).toBe('ready')
+    expect(document.querySelector('script')).toBeNull()
+    await vi.runAllTimersAsync()
+    expect(document.querySelector('script')?.getAttribute('src')).toBe(meta.content)
+    expect(importModule).not.toHaveBeenCalled()
+    changed(); await vi.runAllTimersAsync()
+    expect(document.querySelectorAll('script')).toHaveLength(1)
+    dispose()
+    expect(document.querySelector('script')).toBeNull()
+  } finally { dispose(); meta.remove(); vi.useRealTimers() }
+})
+
 it('stays pending through native startup and signals ready only when the final native step mounts', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   let snapshot = { phase: 'loading', current: undefined as string | undefined, byId: {} as Record<string, { blank: boolean }> }

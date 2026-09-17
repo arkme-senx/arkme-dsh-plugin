@@ -108,6 +108,21 @@ export default defineConfig([
     },
   },
   {
+    name: '@senguoyun/dsh-arkme/harness-native-selection',
+    entry: { 'harness-native-selection-client': 'src/client/harness-native-selection-client.tsx' },
+    outDir: 'lib', format: 'cjs', platform: 'browser', inputOptions: { platform: 'browser' }, target: 'es2022',
+    fixedExtension: false, dts: false, clean: false,
+    external: CLIENT_EXTERNALS,
+    noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
+    define: { 'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production') },
+    outputOptions: {
+      entryFileNames: 'harness-native-selection-client.js',
+      banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme/harness-native-selection", factory: (require) => {',
+      footer: 'return module.exports; } });',
+      intro: 'var module = { exports: {} }; var exports = module.exports;',
+    },
+  },
+  {
     name: '@senguoyun/dsh-arkme/harness-trajectory',
     entry: { 'harness-trajectory-client': 'src/client/harness-trajectory-client.ts' },
     outDir: 'lib', format: 'cjs', platform: 'browser', inputOptions: { platform: 'browser' }, target: 'es2022',

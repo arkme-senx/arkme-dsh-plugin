@@ -112,6 +112,7 @@ it('uses the common left selection rail for both message roles and the labeled e
 it('copies selected emoji messages as visible text using the same projection as menu actions', async () => {
   const writeText = vi.fn(async () => {})
   vi.stubGlobal('navigator', { clipboard: { writeText } })
+  vi.stubGlobal('document', { activeElement: null, body: {}, defaultView: { navigator } })
   vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout: vi.fn() }))
   history = [item(1, { text: '你好[jm_emoji:smiling_face]', messageActionRef: undefined })]
   await mount(); await select('history:1')

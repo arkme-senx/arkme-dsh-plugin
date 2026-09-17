@@ -332,7 +332,7 @@ describe('client file preview interaction', () => {
     try {
       await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, fileName: 'received.md', mimeType: 'text/markdown', originalRef: 'arkme-media-v1.markdown', size }} onClose={() => {}} />) })
       await act(async () => {
-        view.root.findAllByType('button').find(button => button.props.children === '接收文件')!.props.onClick()
+        view.root.findAllByType('button').find(button => button.props.children === '打开')!.props.onClick()
         await new Promise(resolve => setTimeout(resolve, 0))
       })
       expect(receive).toHaveBeenCalledWith('arkme-media-v1.markdown', true, expect.any(AbortSignal))
@@ -385,7 +385,7 @@ describe('client file preview interaction', () => {
     let view!: ReactTestRenderer
     try {
       await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, fileName: 'retry.md', mimeType: 'text/markdown', originalRef: 'arkme-media-v1.retry' }} onClose={() => {}} />) })
-      const receiveButton = () => view.root.findAllByType('button').find(button => button.props.children === '接收文件')!
+      const receiveButton = () => view.root.findAllByType('button').find(button => button.props.children === '打开')!
       await act(async () => receiveButton().props.onClick())
       expect(JSON.stringify(view.toJSON())).toContain('接收失败，请重试')
       expect(fetcher).not.toHaveBeenCalled()
@@ -406,8 +406,8 @@ describe('client file preview interaction', () => {
     let view!: ReactTestRenderer
     try {
       await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, fileName: 'missing.md', localFileRef: original.localRef }} openLocalFile onClose={onClose} />) })
-      expect(JSON.stringify(view.toJSON())).toContain('文件预览失败，请下载后打开')
-      expect(view.root.findByProps({ 'aria-label': '下载文件' }).props.disabled).toBe(false)
+      expect(JSON.stringify(view.toJSON())).toContain('文件预览失败，请重试或另存为后打开')
+      expect(view.root.findByProps({ 'aria-label': '另存为文件' }).props.disabled).toBe(false)
       await act(async () => view.root.findByProps({ 'aria-label': '关闭文件预览' }).props.onClick())
       expect(onClose).toHaveBeenCalledOnce()
     } finally { if (view) await act(async () => view.unmount()) }
@@ -464,7 +464,7 @@ describe('client file preview interaction', () => {
       await act(async () => { view = create(<ArkmeFileCard block={{ ...block, fileName: file.fileName, mimeType: file.mimeType, size: 7, originalRef: 'arkme-media-v1.reopen' }} />) })
       const clickCard = async () => { await act(async () => view.root.findByProps({ 'data-arkme-file-card': 'file' }).props.onClick({ stopPropagation: vi.fn() })) }
       await clickCard()
-      await act(async () => view.root.findAllByType('button').find(button => button.props.children === '接收文件')!.props.onClick())
+      await act(async () => view.root.findAllByType('button').find(button => button.props.children === '打开')!.props.onClick())
       expect(view.root.findByType('h1').props.children).toBe('Again')
       await act(async () => view.root.findByProps({ 'aria-label': '关闭文件预览' }).props.onClick())
       expect(view.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)
@@ -514,6 +514,27 @@ describe('client file preview interaction', () => {
     expect(JSON.stringify(view.toJSON())).not.toContain('未下载')
     await act(async () => view.unmount())
   })
+  it.each(['refresh', 'switch'] as const)('keeps the card usable after an in-flight native-open %s', async mode => {
+    let finish!: () => void
+    const open = vi.spyOn(ArkmeSdk.prototype, 'openLocalFile').mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ opened: true } as never) })).mockResolvedValue({ opened: true } as never)
+    const onOpen = vi.fn()
+    const first = { ...block, localFileRef: original.localRef, fileAssetUid: 'asset-a', mediaRef: 'old' }
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<ArkmeFileCard block={first} onOpen={onOpen} />) })
+      await act(async () => view.root.findByProps({ 'data-arkme-file-card': 'file' }).props.onClick({ stopPropagation: vi.fn() }))
+      const signal = open.mock.calls[0]![1]!
+      await act(async () => view.update(<ArkmeFileCard block={{ ...first, mediaRef: 'new', fileAssetUid: mode === 'switch' ? 'asset-b' : 'asset-a' }} onOpen={onOpen} />))
+      expect(signal.aborted).toBe(mode === 'switch')
+      if (mode === 'switch') expect(view.root.findByProps({ 'data-arkme-file-card': 'file' }).props.disabled).toBe(false)
+      await act(async () => finish())
+      expect(view.root.findByProps({ 'data-arkme-file-card': 'file' }).props.disabled).toBe(false)
+      await act(async () => view.root.findByProps({ 'data-arkme-file-card': 'file' }).props.onClick({ stopPropagation: vi.fn() }))
+      expect(open).toHaveBeenCalledTimes(2)
+      expect(onOpen).not.toHaveBeenCalled()
+    } finally { await act(async () => view.unmount()) }
+  })
+
   it('keeps the reception dialog entry for a file that has not been received yet', async () => {
     vi.spyOn(ArkmeSdk.prototype, 'receiveFile').mockResolvedValue({ state: 'missing', receivedBytes: 0, totalBytes: 3 })
     const onOpen = vi.fn()
@@ -548,7 +569,7 @@ describe('client file preview interaction', () => {
     const buttons = view.root.findAllByType('button')
     const openButton = buttons.find(button => button.props.children === '打开')
     expect(openButton).toBeDefined()
-    expect(view.root.findByProps({ 'aria-label': '下载文件' }).findByType('svg')).toBeDefined()
+    expect(view.root.findByProps({ 'aria-label': '另存为文件' }).props.children).toBe('另存为')
     await act(async () => { openButton!.props.onClick(); await Promise.resolve() })
     expect(open).toHaveBeenCalledWith(original.localRef, expect.any(AbortSignal))
     expect(onClose).toHaveBeenCalledOnce()
@@ -577,7 +598,7 @@ describe('client file preview interaction', () => {
     vi.stubGlobal('document', { body: {}, activeElement: null })
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, fileName, mimeType, localFileRef: original.localRef }} onClose={() => {}} />) })
-    const preview = view.root.findAllByType('button').find(button => button.props.children === '预览')
+    const preview = view.root.findAllByType('button').find(button => button.props.children === '打开')
     expect(preview).toBeDefined()
     await act(async () => preview!.props.onClick())
     expect(view.root.findAllByType(element)).toHaveLength(1)
@@ -592,7 +613,7 @@ describe('client file preview interaction', () => {
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, fileName: 'a.xml', mimeType: 'application/xml', originalRef: 'arkme-media-v1.document' }} onClose={onClose} />) })
     receive.mockResolvedValue({ state: 'receiving', receivedBytes: 1, totalBytes: 3 })
-    await act(async () => { view.root.findAllByType('button').find(button => button.props.children === '接收文件')!.props.onClick(); await Promise.resolve() })
+    await act(async () => { view.root.findAllByType('button').find(button => button.props.children === '打开')!.props.onClick(); await Promise.resolve() })
     expect(receive).toHaveBeenCalledWith('arkme-media-v1.document', true, expect.any(AbortSignal))
     expect(view.root.findByProps({ role: 'progressbar' }).props['aria-valuenow']).toBe(33)
     receive.mockResolvedValue({ state: 'ready', receivedBytes: 3, totalBytes: 3, file: { fileRef: original.localRef, fileName: 'a.xml', mimeType: 'application/xml', size: 3, fileKind: 4 } })
@@ -623,7 +644,25 @@ describe('client file preview interaction', () => {
     if (expected === undefined) expect(view.root.findByProps({ role: 'status' }).props.children).toBe('正在接收文件')
     await act(async () => view.unmount())
   })
-  it('keeps the separate toolbar download working without replacing the central receive/open flow', async () => {
+  it('does not carry a pending native-open intent into a different received file', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    vi.spyOn(ArkmeSdk.prototype, 'receiveFile').mockImplementation(async (_ref, start) => ({ state: start ? 'receiving' : 'missing', receivedBytes: 0, totalBytes: 3 }))
+    const open = vi.spyOn(ArkmeSdk.prototype, 'openLocalFile').mockResolvedValue({ opened: true } as never)
+    const close = vi.fn()
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, originalRef: 'pending-a' }} onClose={close} />) })
+      // Start an open while reception is not yet ready.
+      await act(async () => view.root.findByProps({ 'aria-label': '打开文件' }).props.onClick())
+      await act(async () => view.update(<ArkmeFileViewer block={{ ...block, localFileRef: original.localRef, mediaRef: 'b' }} onClose={close} />))
+      expect(open).not.toHaveBeenCalled()
+      expect(close).not.toHaveBeenCalled()
+      await act(async () => view.root.findByProps({ 'aria-label': '打开文件' }).props.onClick())
+      expect(open).toHaveBeenCalledWith(original.localRef, expect.any(AbortSignal))
+    } finally { await act(async () => view.unmount()) }
+  })
+
+  it('keeps panel download working independently of the open flow', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('document', { body: {}, activeElement: null })
     const writable = { write: vi.fn(async () => {}), close: vi.fn(async () => {}), abort: vi.fn(async () => {}) }
@@ -633,14 +672,14 @@ describe('client file preview interaction', () => {
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, fileName: 'a.dmg', mimeType: 'application/octet-stream', originalRef: 'arkme-media-v1.toolbar-switch' }} onClose={() => {}} />) })
     receive.mockResolvedValue({ state: 'receiving', receivedBytes: 1, totalBytes: 3 })
-    await act(async () => { view.root.findByProps({ 'aria-label': '下载文件' }).props.onClick(); await Promise.resolve() })
+    await act(async () => { view.root.findByProps({ 'aria-label': '另存为文件' }).props.onClick(); await Promise.resolve() })
     expect(view.root.findByProps({ role: 'progressbar' }).props['aria-valuenow']).toBe(33)
     receive.mockResolvedValue({ state: 'ready', receivedBytes: 3, totalBytes: 3, file: { fileRef: original.localRef, fileName: 'a.dmg', mimeType: 'application/octet-stream', size: 3, fileKind: 4 } })
     await act(async () => { await vi.advanceTimersByTimeAsync(750) })
     expect(writable.write).toHaveBeenCalledOnce()
     expect(writable.close).toHaveBeenCalledOnce()
     expect(writable.abort).not.toHaveBeenCalled()
-    expect(view.root.findAllByProps({ 'aria-label': '下载文件' })).toHaveLength(0)
+    expect(view.root.findAllByProps({ 'aria-label': '另存为文件' })).toHaveLength(1)
     expect(JSON.stringify(view.toJSON())).toContain('保存成功')
     await act(async () => view.unmount())
   })
@@ -662,19 +701,236 @@ describe('client file preview interaction', () => {
     expect(onClose).toHaveBeenCalledTimes(2)
     await act(async () => view.unmount())
   })
-  it('shows Receive in the file panel, with a separate download icon and no invented Save As button', async () => {
+  it('keeps folder opening distinct from preview and download and prevents duplicate dispatch', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    const onClose = vi.fn()
+    const open = vi.spyOn(ArkmeSdk.prototype, 'openLocalFile')
+    let finish!: () => void
+    const folder = vi.spyOn(ArkmeSdk.prototype, 'openLocalFileFolder').mockImplementation(() => new Promise(resolve => { finish = () => resolve({ folderOpened: true }) }))
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, localFileRef: original.localRef }} onClose={onClose} />) })
+    const button = view.root.findByProps({ 'aria-label': '打开文件夹' })
+    await act(async () => { button.props.onClick(); button.props.onClick() })
+    expect(folder).toHaveBeenCalledOnce()
+    expect(folder).toHaveBeenCalledWith(original.localRef, expect.any(AbortSignal))
+    expect(button.props.disabled).toBe(true)
+    await act(async () => finish())
+    expect(onClose).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
+    expect(button.props.disabled).toBe(false)
+    await act(async () => view.unmount())
+  })
+  it('retries folder failures and clears errors after a successful retry', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    const folder = vi.spyOn(ArkmeSdk.prototype, 'openLocalFileFolder')
+      .mockRejectedValueOnce(new Error('文件夹打开失败，请重试')).mockResolvedValue({ folderOpened: true })
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, localFileRef: original.localRef }} onClose={() => {}} />) })
+    const button = () => view.root.findByProps({ 'aria-label': '打开文件夹' })
+    await act(async () => button().props.onClick())
+    expect(view.root.findByProps({ role: 'alert' }).props.children).toBe('文件夹打开失败，请重试')
+    expect(button().props.disabled).toBe(false)
+    await act(async () => button().props.onClick())
+    expect(folder).toHaveBeenCalledTimes(2)
+    expect(view.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+    await act(async () => view.unmount())
+  })
+  it('aborts folder requests on file change and close and ignores stale failures', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    const pending: { signal: AbortSignal; reject: (error: Error) => void }[] = []
+    vi.spyOn(ArkmeSdk.prototype, 'openLocalFileFolder').mockImplementation((_ref, signal) => new Promise((_resolve, reject) => { pending.push({ signal: signal!, reject }) }))
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, localFileRef: original.localRef }} onClose={() => {}} />) })
+    await act(async () => view.root.findByProps({ 'aria-label': '打开文件夹' }).props.onClick())
+    await act(async () => view.update(<ArkmeFileViewer block={{ ...block, localFileRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000002' }} onClose={() => {}} />))
+    expect(pending[0]!.signal.aborted).toBe(true)
+    await act(async () => view.root.findByProps({ 'aria-label': '打开文件夹' }).props.onClick())
+    await act(async () => pending[0]!.reject(new Error('stale error')))
+    expect(JSON.stringify(view.toJSON())).not.toContain('stale error')
+    expect(view.root.findByProps({ 'aria-label': '打开文件夹' }).props.disabled).toBe(true)
+    await act(async () => view.unmount())
+    expect(pending[1]!.signal.aborted).toBe(true)
+    await act(async () => pending[1]!.reject(new Error('closed')))
+  })
+  it('does not open two save pickers for synchronous duplicate clicks', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    let cancel!: (error: Error) => void
+    const picker = vi.fn(() => new Promise((_resolve, reject) => { cancel = reject }))
+    vi.stubGlobal('window', { showSaveFilePicker: picker })
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, localFileRef: original.localRef }} onClose={() => {}} />) })
+    const button = view.root.findByProps({ 'aria-label': '另存为文件' })
+    await act(async () => { button.props.onClick(); button.props.onClick() })
+    expect(picker).toHaveBeenCalledOnce()
+    await act(async () => cancel(new DOMException('cancelled', 'AbortError')))
+    expect(button.props.disabled).toBe(false)
+    expect(JSON.stringify(view.toJSON())).not.toContain('保存成功')
+    await act(async () => view.unmount())
+  })
+  it.each(['local', 'remote'] as const)('resets download busy state on %s file change without an old picker clearing a new save', async source => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    vi.spyOn(ArkmeSdk.prototype, 'receiveFile').mockResolvedValue({ state: 'missing', receivedBytes: 0, totalBytes: 3 })
+    const selected = (ref: string) => ({ ...block, ...(source === 'local' ? { localFileRef: ref } : { originalRef: ref }) })
+    const pending: ((error: Error) => void)[] = []
+    vi.stubGlobal('window', { showSaveFilePicker: () => new Promise((_resolve, reject) => pending.push(reject)) })
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={selected(original.localRef)} onClose={() => {}} />) })
+    await act(async () => view.root.findByProps({ 'aria-label': '另存为文件' }).props.onClick())
+    await act(async () => view.update(<ArkmeFileViewer block={selected('arkme-file-v1.00000000-0000-4000-8000-000000000002')} onClose={() => {}} />))
+    expect(view.root.findByProps({ 'aria-label': '打开文件' }).props.disabled).toBe(false)
+    await act(async () => view.root.findByProps({ 'aria-label': '另存为文件' }).props.onClick())
+    await act(async () => pending[0]!(new DOMException('cancelled', 'AbortError')))
+    expect(view.root.findByProps({ 'aria-label': '另存为文件' }).props.disabled).toBe(true)
+    await act(async () => pending[1]!(new DOMException('cancelled', 'AbortError')))
+    expect(view.root.findByProps({ 'aria-label': '另存为文件' }).props.disabled).toBe(false)
+    await act(async () => view.unmount())
+  })
+  it.each(['image', 'video'] as const)('preserves the %s toolbar download', async kind => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, kind, fileName: kind === 'image' ? 'photo.jpg' : 'clip.mp4', mimeType: kind === 'image' ? 'image/jpeg' : 'video/mp4', localFileRef: original.localRef }} onClose={() => {}} />) })
+    expect(view.root.findAllByProps({ 'aria-label': '文件操作' })).toHaveLength(0)
+    expect(view.root.findByProps({ 'aria-label': kind === 'image' ? '下载图片' : '下载视频' }).findAllByType('svg')).toHaveLength(1)
+    await act(async () => view.unmount())
+  })
+  it('keeps preview and folder access available during an independent save', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    let cancel!: (error: Error) => void
+    vi.stubGlobal('window', { showSaveFilePicker: () => new Promise((_resolve, reject) => { cancel = reject }) })
+    vi.stubGlobal('fetch', async () => new Response('# independent preview'))
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, fileName: 'a.md', localFileRef: original.localRef }} onClose={() => {}} />) })
+    await act(async () => view.root.findByProps({ 'aria-label': '另存为文件' }).props.onClick())
+    expect(view.root.findByProps({ 'aria-label': '打开文件' }).props.disabled).toBe(false)
+    expect(view.root.findByProps({ 'aria-label': '打开文件夹' }).props.disabled).toBe(false)
+    await act(async () => view.root.findByProps({ 'aria-label': '打开文件' }).props.onClick())
+    expect(view.root.findByType('h1').props.children).toBe('independent preview')
+    await act(async () => cancel(new DOMException('cancelled', 'AbortError')))
+    await act(async () => view.unmount())
+  })
+  it('retains an opened preview when the same asset renews its access reference', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    const fetcher = vi.fn(async () => new Response('# retained'))
+    vi.stubGlobal('fetch', fetcher)
+    const file = { ...block, fileAssetUid: 'asset-md', fileName: 'a.md', localFileRef: original.localRef, mediaRef: 'old' }
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<ArkmeFileViewer block={file} onClose={() => {}} />) })
+      await act(async () => view.root.findByProps({ 'aria-label': '打开文件' }).props.onClick())
+      await act(async () => view.update(<ArkmeFileViewer block={{ ...file, mediaRef: 'renewed' }} onClose={() => {}} />))
+      expect(view.root.findAllByProps({ 'aria-label': '打开文件' })).toHaveLength(0)
+      expect(view.root.findByType('h1').props.children).toBe('retained')
+      expect(fetcher).toHaveBeenCalledOnce()
+      await act(async () => view.update(<ArkmeFileViewer block={{ ...file, fileAssetUid: 'different', localFileRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000002' }} onClose={() => {}} />))
+      expect(view.root.findByProps({ 'aria-label': '打开文件' })).toBeDefined()
+    } finally { await act(async () => view.unmount()) }
+  })
+
+  it('hides Open while previewing and keeps download and folder actions', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    vi.stubGlobal('fetch', async () => new Response('# preview'))
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, fileName: 'a.md', localFileRef: original.localRef }} openLocalFile onClose={() => {}} />) })
+      expect(view.root.findAllByProps({ 'aria-label': '打开文件' })).toHaveLength(0)
+      expect(view.root.findByProps({ 'aria-label': '另存为文件' })).toBeDefined()
+      expect(view.root.findByProps({ 'aria-label': '打开文件夹' })).toBeDefined()
+    } finally { await act(async () => view.unmount()) }
+  })
+
+  it('reloads failed Markdown through the explicit preview retry action', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    const fetcher = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(new Response('# recovered'))
+    vi.stubGlobal('fetch', fetcher)
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, fileName: 'a.md', localFileRef: original.localRef }} onClose={() => {}} />) })
+    await act(async () => view.root.findByProps({ 'aria-label': '打开文件' }).props.onClick())
+    expect(view.root.findByProps({ role: 'alert' })).toBeDefined()
+    expect(view.root.findAllByProps({ 'aria-label': '打开文件' })).toHaveLength(0)
+    await act(async () => view.root.findAllByType('button').find(button => button.props.children === '重试预览')!.props.onClick())
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(view.root.findByType('h1').props.children).toBe('recovered')
+    await act(async () => view.unmount())
+  })
+  it('aborts rather than committing a stale save after switching files during write', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    let finish!: () => void
+    const writable = { write: vi.fn(() => new Promise<void>(resolve => { finish = resolve })), close: vi.fn(), abort: vi.fn(async () => {}) }
+    vi.stubGlobal('window', { showSaveFilePicker: async () => ({ createWritable: async () => writable }) })
+    vi.stubGlobal('fetch', async () => new Response('abc'))
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, localFileRef: original.localRef }} onClose={() => {}} />) })
+    await act(async () => view.root.findByProps({ 'aria-label': '另存为文件' }).props.onClick())
+    expect(writable.write).toHaveBeenCalledOnce()
+    await act(async () => view.update(<ArkmeFileViewer block={{ ...block, localFileRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000002' }} onClose={() => {}} />))
+    await act(async () => finish())
+    expect(writable.close).not.toHaveBeenCalled()
+    expect(writable.abort).toHaveBeenCalledOnce()
+    expect(JSON.stringify(view.toJSON())).not.toContain('保存成功')
+    await act(async () => view.unmount())
+  })
+  it('does not publish a completed old save into the next file', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    let finish!: () => void
+    const writable = { write: vi.fn(async () => {}), close: vi.fn(() => new Promise<void>(resolve => { finish = resolve })), abort: vi.fn(async () => {}) }
+    vi.stubGlobal('window', { showSaveFilePicker: async () => ({ createWritable: async () => writable }) })
+    vi.stubGlobal('fetch', async () => new Response('abc'))
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, localFileRef: original.localRef }} onClose={() => {}} />) })
+    await act(async () => view.root.findByProps({ 'aria-label': '另存为文件' }).props.onClick())
+    expect(writable.close).toHaveBeenCalledOnce()
+    await act(async () => view.update(<ArkmeFileViewer block={{ ...block, localFileRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000002' }} onClose={() => {}} />))
+    await act(async () => finish())
+    expect(JSON.stringify(view.toJSON())).not.toContain('保存成功')
+    await act(async () => view.unmount())
+  })
+  it('keeps an in-flight save on the same asset when only access references refresh', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    let choose!: (handle: unknown) => void
+    const writable = { write: vi.fn(async () => {}), close: vi.fn(async () => {}), abort: vi.fn(async () => {}) }
+    vi.stubGlobal('window', { showSaveFilePicker: () => new Promise(resolve => { choose = resolve }) })
+    vi.stubGlobal('fetch', async () => new Response('abc'))
+    let view!: ReactTestRenderer
+    const stable = { ...block, fileAssetUid: 'asset-one', localFileRef: original.localRef }
+    await act(async () => { view = create(<ArkmeFileViewer block={{ ...stable, mediaRef: 'old-url', originalRef: 'old-access' }} onClose={() => {}} />) })
+    await act(async () => view.root.findByProps({ 'aria-label': '另存为文件' }).props.onClick())
+    await act(async () => view.update(<ArkmeFileViewer block={{ ...stable, mediaRef: 'new-url', originalRef: 'new-access' }} onClose={() => {}} />))
+    expect(view.root.findByProps({ 'aria-label': '另存为文件' }).props.disabled).toBe(true)
+    await act(async () => choose({ createWritable: async () => writable }))
+    expect(writable.close).toHaveBeenCalledOnce()
+    await act(async () => view.unmount())
+  })
+  it('shows a loading state for a pending Markdown read without blocking download', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    let finish!: (response: Response) => void
+    vi.stubGlobal('fetch', () => new Promise(resolve => { finish = resolve }))
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, fileName: 'a.md', localFileRef: original.localRef }} onClose={() => {}} />) })
+    await act(async () => view.root.findByProps({ 'aria-label': '打开文件' }).props.onClick())
+    expect(view.root.findByProps({ role: 'status' }).props.children).toBe('正在加载文件...')
+    expect(view.root.findByProps({ 'aria-label': '另存为文件' }).props.disabled).toBe(false)
+    await act(async () => finish(new Response('')))
+    expect(view.root.findAllByProps({ role: 'status' })).toHaveLength(0)
+    await act(async () => view.unmount())
+  })
+  it('shows three panel actions and no duplicate toolbar download', async () => {
     vi.stubGlobal('document', { body: {}, activeElement: null })
     const receive = vi.spyOn(ArkmeSdk.prototype, 'receiveFile').mockResolvedValue({ state: 'missing', receivedBytes: 0, totalBytes: 3 })
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, originalRef: 'arkme-media-v1.panel' }} onClose={() => {}} />) })
-    expect(view.root.findAllByType('button').some(button => button.props.children === '接收文件')).toBe(true)
-    expect(view.root.findByProps({ 'aria-label': '下载文件' })).toBeDefined()
+    expect(view.root.findAllByType('button').some(button => button.props.children === '打开')).toBe(true)
+    expect(view.root.findByProps({ 'aria-label': '另存为文件' })).toBeDefined()
+    const actions = view.root.findByProps({ role: 'group', 'aria-label': '文件操作' })
+    expect(actions.findAllByType('button').map(button => button.props.children)).toEqual(['打开', '另存为', '打开文件夹'])
+    expect(view.root.findAllByProps({ 'aria-label': '另存为文件' })).toHaveLength(1)
+    expect(actions.findByProps({ 'aria-label': '打开文件夹' }).props.disabled).toBe(true)
+    expect(actions.findByProps({ 'aria-label': '打开文件夹' }).props.title).toBe('请先打开或另存为文件')
     const fileIcon = view.root.findByType('img')
     expect(fileIcon.props['data-arkme-file-icon-set']).toBe('untitled-solid')
     expect(fileIcon.props.width).toBe(64)
     expect(fileIcon.props.height).toBe(64)
     expect(fileIcon.props.style).toMatchObject({ width: 64, height: 64, objectFit: 'contain' })
-    expect(JSON.stringify(view.toJSON())).not.toContain('另存为')
+    expect(actions.findAllByType('button').some(button => button.props.children === '下载')).toBe(false)
     expect(receive).toHaveBeenCalledWith('arkme-media-v1.panel', false, expect.any(AbortSignal))
     await act(async () => view.unmount())
   })
@@ -684,7 +940,7 @@ describe('client file preview interaction', () => {
     vi.stubGlobal('fetch', async () => new Response('# 标题\n\n**重点**\n\n<script>unsafe()</script>'))
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, fileName: 'a.md', mimeType: 'text/markdown', localFileRef: original.localRef }} onClose={() => {}} />) })
-    await act(async () => { view.root.findAllByType('button').find(button => button.props.children === '预览')!.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
+    await act(async () => { view.root.findAllByType('button').find(button => button.props.children === '打开')!.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
     expect(view.root.findByType('h1').props.children).toBe('标题')
     expect(view.root.findByType('strong').props.children).toEqual(['重点'])
     expect(view.root.findByProps({ role: 'dialog' }).props.style.padding).toBe('56px 20px 20px')

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -393,6 +393,82 @@ describe('account-bound file lifecycle', () => {
     expect(JSON.stringify(await f.owner.openLocal(file.fileRef))).not.toContain(f.directory)
     f.setUser(43)
     await expect(f.owner.openLocal(file.fileRef)).rejects.toMatchObject({ code: 'file-ref-invalid' })
+  })
+  it('opens the containing directory through the host without opening the file or exposing paths', async () => {
+    const f = await fixture(); const file = await f.stage('report.pdf')
+    await expect(f.owner.openLocalFolder(file.fileRef)).resolves.toEqual({ folderOpened: true })
+    const path = f.openPath.mock.calls[0]![0]
+    expect(path).toBe(join(f.directory, '42', '.open', file.fileRef))
+    expect(await readFile(join(path, 'report.pdf'), 'utf8')).toBe('report.pdf')
+    expect(f.upload).not.toHaveBeenCalled()
+    expect(f.send).not.toHaveBeenCalled()
+    f.setUser(43)
+    await expect(f.owner.openLocalFolder(file.fileRef)).rejects.toMatchObject({ code: 'file-ref-invalid' })
+    await expect(f.owner.openLocalFolder('../escape')).rejects.toMatchObject({ code: 'file-ref-invalid' })
+    expect(f.openPath).toHaveBeenCalledOnce()
+  })
+  it('rejects missing files and allows retry after host folder failure', async () => {
+    const f = await fixture(); const file = await f.stage('report.pdf')
+    f.openPath.mockRejectedValueOnce(new Error('host unavailable'))
+    await expect(f.owner.openLocalFolder(file.fileRef)).rejects.toMatchObject({ code: 'file-folder-open-failed' })
+    await expect(f.owner.openLocalFolder(file.fileRef)).resolves.toEqual({ folderOpened: true })
+    await rm((await f.owner.readLocal(file.fileRef)).path)
+    await expect(f.owner.openLocalFolder(file.fileRef)).rejects.toMatchObject({ code: 'file-local-missing' })
+    expect(f.openPath).toHaveBeenCalledTimes(2)
+  })
+  it('keeps edits in the opened file separate from the canonical attachment', async () => {
+    const f = await fixture(); const file = await f.stage('report.pdf')
+    const canonical = (await f.owner.readLocal(file.fileRef)).path
+    await f.owner.openLocalFolder(file.fileRef)
+    const editable = join(f.openPath.mock.calls[0]![0], 'report.pdf')
+    await writeFile(editable, 'USER EDIT!')
+    expect(await readFile(canonical, 'utf8')).toBe('report.pdf')
+    await f.owner.openLocalFolder(file.fileRef)
+    expect(await readFile(editable, 'utf8')).toBe('USER EDIT!')
+  })
+  it('does not dispatch a folder operation that was already cancelled', async () => {
+    const f = await fixture(); const file = await f.stage('report.pdf')
+    const controller = new AbortController(); controller.abort()
+    await expect(f.owner.openLocalFolder(file.fileRef, controller.signal)).rejects.toBeDefined()
+    expect(f.openPath).not.toHaveBeenCalled()
+  })
+  it('detaches any shared-inode open file and retains independent edits of a different size', async () => {
+    const f = await fixture(); const file = await f.stage('report.pdf')
+    const canonical = (await f.owner.readLocal(file.fileRef)).path
+    const directory = join(f.directory, '42', '.open', file.fileRef)
+    const editable = join(directory, file.fileName)
+    await mkdir(directory, { recursive: true }); await link(canonical, editable)
+    await f.owner.openLocalFolder(file.fileRef)
+    expect((await stat(editable)).ino).not.toBe((await stat(canonical)).ino)
+    await writeFile(editable, 'longer user-edited document')
+    await f.owner.openLocal(file.fileRef)
+    expect(await readFile(editable, 'utf8')).toBe('longer user-edited document')
+    expect(await readFile(canonical, 'utf8')).toBe('report.pdf')
+    await f.owner.uploadRefs([file.fileRef])
+    expect(f.upload.mock.calls[0]![0]).toBe(canonical)
+    expect(await readdir(directory)).toEqual(['report.pdf'])
+    await f.owner.remove(file.fileRef)
+    await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+  it.each(['request', 'account'] as const)('propagates %s cancellation to the host without holding the local file lock', async reason => {
+    const f = await fixture(); const file = await f.stage('report.pdf')
+    let started!: () => void
+    const entered = new Promise<void>(resolve => { started = resolve })
+    let hostSignal!: AbortSignal
+    f.openPath.mockImplementation((_path, signal) => new Promise((_resolve, reject) => {
+      hostSignal = signal; started()
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    }))
+    const controller = new AbortController()
+    const opening = f.owner.openLocalFolder(file.fileRef, controller.signal)
+    const rejected = expect(opening).rejects.toMatchObject({ code: 'file-folder-open-failed' })
+    await entered
+    const other = await f.stage('another.pdf')
+    expect(other.fileRef).not.toBe(file.fileRef)
+    if (reason === 'request') controller.abort()
+    else f.owner.cancelActive()
+    await rejected
+    expect(hostSignal.aborted).toBe(true)
   })
   it('preserves the original extension for native ZIP opening and sanitizes unsafe path characters', async () => {
     const f = await fixture()

@@ -12,3 +12,5 @@ export const HARNESS_SESSION_NAVIGATION_KEY = '__arkmeHarnessSessionNavigation'
 export type HarnessSessionWindow = Window & {
   [HARNESS_SESSION_NAVIGATION_KEY]?: { open(sessionId: string): void; has(sessionId: string): Promise<boolean> }
 }
+export const ARKME_NATIVE_SELECTION_CLIENT_ID = '@senguoyun/dsh-arkme/harness-native-selection'
+export const ARKME_NATIVE_SELECTION_CLIENT_PATH = '/arkme-self/harness-native-selection-client.js'

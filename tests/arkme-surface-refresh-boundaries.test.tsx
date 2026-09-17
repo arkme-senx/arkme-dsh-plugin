@@ -11,6 +11,7 @@ vi.mock('../src/client/ArkmeWorldSurface.js', () => ({
   ArkmeWorldSurface: () => { state.worldRenders += 1; return <div>世界</div> },
 }))
 
+import { ArkmeTimelineDetailDrawer } from '../src/client/ArkmeNoteDetails.js'
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
@@ -185,9 +186,13 @@ describe('Arkme surface refresh boundaries', () => {
     expect(timelineSignal?.aborted).toBe(true)
   })
 
-  it('dismisses conversation body portals and drops a late snapshot detail across inactive transitions', async () => {
+  it.each((['private_chat', 'group_chat'] as const).flatMap(kind =>
+    (['reference-first', 'message-first'] as const).map(order => ({ kind, order })),
+  ))('keeps $kind image previews through $order refresh and dismisses portals across inactive transitions', async ({ kind, order }) => {
+    arkmeChatTimelineDelta.activateAccount(undefined)
+    arkmeChatTimelineDelta.activateAccount(42)
     const source = {
-      sourceRef: 'source-overlay', sourceKey: 'chat:overlay', kind: 'private_chat' as const,
+      sourceRef: 'source-overlay', sourceKey: 'chat:overlay', kind,
       displayName: '会话弹层', activeAtMillis: 1, unreadCount: 0, latestSequence: 1,
     }
     const item = {
@@ -209,6 +214,16 @@ describe('Arkme surface refresh boundaries', () => {
       if (operation === 'user.profile') return { profile: null, cachedAtMillis: 1, revision: 1 }
       if (operation === 'user.profile.refresh') return { profile: null, cachedAtMillis: 1, revision: 1 }
       if (operation === 'source.long-article.draft.get') return undefined
+      if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
+      if (operation === 'source.message-extension.context') {
+        if ((_params as { sourceRef?: string })?.sourceRef === 'source-extension-refresh') return await new Promise(() => {})
+        return { parentRecordUid: item.itemUid, extensionCount: 1, extensions: [{
+          recordUid: 'extension-image', parentRecordUid: item.itemUid, level: 1,
+          senderDisplayName: '成员', senderAvatarUrl: '', sourceKind: 'chat', sendAtMillis: 2,
+          title: '', textContent: '', templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [],
+          contentBlocks: [{ ...item.contentBlocks[0], fileName: 'extension.png', mediaRef: 'extension-image-ref' }],
+        }] }
+      }
       if (operation === 'source.message-snapshot.detail') {
         snapshotSignal = signal
         return await snapshotDetail
@@ -255,6 +270,38 @@ describe('Arkme surface refresh boundaries', () => {
 
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '预览图片 overlay.png' }).props.onClick() })
     expect(renderer.root.findAll(node => node.props.role === 'dialog' && node.props['aria-label'] === 'overlay.png')).toHaveLength(1)
+    const updateReference = () => arkmeUi.updateSelectedSourceProjection({ ...source, sourceRef: 'source-overlay-new', latestSequence: 2, activeAtMillis: 2 })
+    const appendMessage = () => arkmeChatTimelineDelta.publish([{ source: { ...source, sourceRef: 'source-overlay-new', latestSequence: 2 },
+      items: [{ ...item, itemUid: 'new-message', sequence: 2, isMe: false, contentBlocks: [], textContent: 'new message' }] }])
+    for (const update of order === 'reference-first' ? [updateReference, appendMessage] : [appendMessage, updateReference]) {
+      await act(async () => { update(); await Promise.resolve() })
+      expect(renderer.root.findAll(node => node.props.role === 'dialog' && node.props['aria-label'] === 'overlay.png')).toHaveLength(1)
+    }
+    expect(renderer.root.findAllByProps({ 'data-arkme-message-item-uid': 'new-message' })).toHaveLength(1)
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '关闭预览' }).props.onClick() })
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-arkme-message-direction': 'self' }).props.onClick({ target: new TestElement(), currentTarget: new TestElement() })
+      await Promise.resolve()
+    })
+    const detail = renderer.root.findByType(ArkmeTimelineDetailDrawer)
+    await act(async () => { detail.findByProps({ 'aria-label': '预览图片 overlay.png' }).props.onClick() })
+    expect(detail.findAll(node => node.props.role === 'dialog' && node.props['aria-label'] === 'overlay.png')).toHaveLength(1)
+    const detailReadCount = () => state.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-extension.context' || operation === 'source.related-quick-notes.from-message').length
+    const readsBeforeReferenceUpdate = detailReadCount()
+    await act(async () => {
+      arkmeUi.updateSelectedSourceProjection({ ...source, sourceRef: 'source-overlay-detail-new', latestSequence: 3, activeAtMillis: 3 })
+      await Promise.resolve()
+    })
+    expect(detail.findAll(node => node.props.role === 'dialog' && node.props['aria-label'] === 'overlay.png')).toHaveLength(1)
+    expect(detailReadCount()).toBeGreaterThan(readsBeforeReferenceUpdate)
+    await act(async () => { detail.findByProps({ 'aria-label': '关闭预览' }).props.onClick() })
+    await act(async () => { detail.findByProps({ 'aria-label': '预览图片 extension.png' }).props.onClick() })
+    await act(async () => {
+      arkmeChatTimelineDelta.publish([{ source, items: [{ ...item, messageActionRef: 'action-updated', textContent: 'updated text' }] }])
+      arkmeUi.updateSelectedSourceProjection({ ...source, sourceRef: 'source-extension-refresh', latestSequence: 4, activeAtMillis: 4 })
+      await Promise.resolve()
+    })
+    expect(detail.findAll(node => node.props.role === 'dialog' && node.props['aria-label'] === 'extension.png')).toHaveLength(1)
     await act(async () => { renderer!.update(<ArkmeSurface productChrome={false} active={false} />); await Promise.resolve() })
     expect(renderer.root.findAll(node => node.props.role === 'dialog' && node.props['aria-label'] === 'overlay.png')).toHaveLength(0)
     await act(async () => { renderer!.update(<ArkmeSurface productChrome={false} active />); await Promise.resolve() })

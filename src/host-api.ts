@@ -2055,7 +2055,8 @@ export async function dispatchArkmeHostOperation(
     )
     case 'files.capabilities': return service.fileCapabilities()
     case 'files.local.list': return await service.fileList()
-    case 'files.local.open': return await service.fileOpenLocal(stringParam(params, 'fileRef'))
+    case 'files.local.open-folder': return await service.fileOpenLocalFolder(stringParam(params, 'fileRef'), requestSignal)
+    case 'files.local.open': return await service.fileOpenLocal(stringParam(params, 'fileRef'), requestSignal)
     case 'files.local.remove': await service.fileRemove(stringParam(params, 'fileRef')); return { removed: true }
     case 'files.search': return await service.fileSearch({ query: stringParam(params, 'query'), limit: numberParam(params, 'limit', 30), cursor: stringParam(params, 'cursor') })
     case 'files.send.tasks': return await service.fileSendTasks(stringParam(params, 'sourceRef') || undefined)
