@@ -13,6 +13,7 @@ import type {
   ArkmeWorldFeedPage,
 } from '../../../types.js'
 import { callArkme } from '../../api.js'
+import { arkmeUi } from '../../ui-controller.js'
 import { ArkmeUserAvatar } from '../../ArkmeAvatar.js'
 import {
   ContactWorldList,
@@ -428,6 +429,15 @@ export function ContactProfileDetail({
     >
       <ContactWorldList
         state={visibleWorld}
+        {...(visibleProfile.profile?.worldUserId === undefined ? {} : { onOpenWorld: () => {
+          const profile = visibleProfile.profile!
+          arkmeUi.showContactWorld({
+            contactRef,
+            userId: profile.worldUserId!,
+            displayName: profile.displayName,
+            ...(profile.avatarRef === undefined ? {} : { avatarRef: profile.avatarRef }),
+          })
+        } })}
         onRetry={() => { coordinatorRef.current?.retryWorld() }}
         onLoadMore={() => {
           coordinatorRef.current?.loadMore(visibleWorld.nextOffset ?? visibleWorld.items.length)

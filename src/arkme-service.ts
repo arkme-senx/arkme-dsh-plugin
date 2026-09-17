@@ -348,6 +348,7 @@ export class ArkmeService {
     outgoingCallBroker = new ArkmeOutgoingCallBroker(),
     billingGateway?: ArkmeBillingGateway,
     linkDocumentReader?: ArkmeLinkDocumentReader,
+    localDshQuery?: () => unknown,
   ) {
     this.accountScope = createArkmeAccountSessionOwner(sessionStore, fetchImpl)
     this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore, this.accountScope)
@@ -389,6 +390,7 @@ export class ArkmeService {
     }, async () => { await this.realtime.invalidateRecordProjection() })
     this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source)
     this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy)
+    if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
     this.bot = new BotService(this.runtime, this.source)
     this.messageActions = new MessageActionService(
       new ArkmeMessageActionGateway(
@@ -756,6 +758,7 @@ export class ArkmeService {
         localFirstDirectory: true,
         topicHomeVisibility: true,
         groupSelfNickname: true,
+        remoteRecordSearch: true,
         contactDirectoryReads: true,
         sourceTimeline: true,
         forwardContent: true,

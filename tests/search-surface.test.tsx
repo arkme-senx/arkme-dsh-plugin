@@ -6,7 +6,9 @@ import { ArkmeGlobalSearchDialog, ArkmeSearchSurface, RecordRow } from '../src/c
 import type { ArkmeSearchRecordItem } from '../src/types.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
-const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
+const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), hasDsh: vi.fn() }))
+
+vi.mock('../src/client/DeepSeekHarnessSurface.js', () => ({ hasEmbeddedDshSession: mocks.hasDsh }))
 
 vi.mock('../src/client/api.js', () => ({
   callArkme: mocks.callArkme,
@@ -47,6 +49,7 @@ beforeEach(() => {
     clearTimeout: (timer: ReturnType<typeof setTimeout>) => clearTimeout(timer),
   })
   mocks.callArkme.mockReset()
+  mocks.hasDsh.mockReset()
   mocks.callArkme.mockImplementation(async (operation: string) => {
     if (operation === 'search.history') return { items: [], hasMore: false }
     if (operation === 'search.records') return arkmeResults()
@@ -62,6 +65,42 @@ afterEach(() => {
 })
 
 describe('Arkme search surface', () => {
+  it.each(['快记', '主题', '录音·转写'])('never shows an empty result during the debounce window: %s', async tab => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let finish!: () => void
+    const pending = new Promise<void>(resolve => { finish = resolve })
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'search.records' || operation === 'search.recordings') {
+        await pending
+        return { items: [], sourceAggregates: [], hasMore: false, queryGuard: { state: 'ok' } }
+      }
+      return original(operation, params, signal)
+    })
+    const initial = renderToStaticMarkup(<ArkmeSearchSurface initialQuery="武汉" />)
+    expect(initial).toContain('搜索中')
+    expect(initial).not.toContain('暂无相关内容')
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeSearchSurface />) })
+      act(() => {
+        renderer.root.findByProps({ 'aria-label': '搜索' }).props.onChange({ target: { value: '武汉' } })
+      })
+      act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === tab)!.props.onClick() })
+      expect(content(renderer.toJSON())).toContain('搜索中')
+      expect(content(renderer.toJSON())).not.toContain('暂无相关内容')
+      await act(async () => { await vi.advanceTimersByTimeAsync(299) })
+      expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'search.records')).toBe(false)
+      expect(content(renderer.toJSON())).not.toContain('暂无相关内容')
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(content(renderer.toJSON())).toContain('搜索中')
+      await act(async () => { finish(); await pending })
+      expect(content(renderer.toJSON())).toContain('暂无相关内容')
+      act(() => { renderer.root.findByProps({ 'aria-label': '搜索' }).props.onChange({ target: { value: '北京' } }) })
+      expect(content(renderer.toJSON())).toContain('搜索中')
+      expect(content(renderer.toJSON())).not.toContain('暂无相关内容')
+    } finally { act(() => { renderer?.unmount() }) }
+  })
+
   it.each(['double-click', 'Enter', 'uncached', 'unavailable'] as const)('opens the matching source from topic results: %s', async mode => {
     const target = arkmeResults().items[0]!.targetSource
     const selectSource = vi.spyOn(arkmeUi, 'selectSource').mockImplementation(() => {})
@@ -523,8 +562,9 @@ describe('Arkme search surface', () => {
     act(() => { renderer.unmount() })
   })
 
-  it('restores the client search categories and opens the selected DSH task from its own result structure', async () => {
-    const openDshSession = vi.fn()
+  it.each(['double-click', 'Enter', 'unavailable'] as const)('opens DSH tasks from topics and keeps message navigation explicit: %s', async mode => {
+    const openDshSession = vi.fn(() => { if (mode === 'unavailable') throw new Error('任务已移除') })
+    const onClose = vi.fn()
     const searchDshMessages = vi.fn(async () => ({
       items: [{ sessionId: 'session-7', title: '发布会方案', snippet: '请整理发布会讲稿', updatedAtMillis: 2 }],
       hasMore: false,
@@ -535,7 +575,7 @@ describe('Arkme search surface', () => {
         variant="dialog"
         searchDshMessages={searchDshMessages}
         onOpenDshSession={openDshSession}
-        onClose={vi.fn()}
+        onClose={onClose}
       />)
       await Promise.resolve()
     })
@@ -549,16 +589,54 @@ describe('Arkme search surface', () => {
     expect(searchDshMessages).toHaveBeenCalledWith('发布会', expect.any(AbortSignal))
     const resultNav = renderer.root.findByProps({ 'aria-label': '全局搜索结果类型' })
     expect(resultNav.props.style).not.toHaveProperty('borderBottom')
-    expect(resultNav.findAllByType('button').map(button => content(button.props.children))).toEqual(['快记', '主题', '录音·转写', 'DSH'])
+    expect(resultNav.findAllByType('button').map(button => content(button.props.children))).toEqual(['快记', '主题', '录音·转写'])
     expect(content(renderer.toJSON())).toContain('发布会快记')
-    const dshTab = resultNav.findAllByType('button').find(button => content(button.props.children) === 'DSH')
+    const dshTab = resultNav.findAllByType('button').find(button => content(button.props.children) === '主题')
     act(() => { dshTab?.props.onClick() })
-    expect(content(renderer.toJSON())).toContain('1个关联DSH任务')
+    expect(content(renderer.toJSON())).toContain('2个关联主题')
     expect(content(renderer.toJSON())).toContain('发布会方案')
     const dshRow = renderer.root.findAllByType('button').find(button => content(button.props.children).includes('发布会方案'))
     expect(dshRow).toBeDefined()
     act(() => { dshRow?.props.onClick() })
-    expect(openDshSession).toHaveBeenCalledWith('session-7')
+    expect(openDshSession).not.toHaveBeenCalled()
+    expect(content(renderer.toJSON())).toContain('请整理发布会讲稿')
+    expect(content(renderer.toJSON())).not.toContain('当前 DSH 暂不支持从搜索结果定位具体消息')
+    const preventDefault = vi.fn()
+    act(() => {
+      if (mode === 'Enter') dshRow?.props.onKeyDown({ key: 'Enter', preventDefault })
+      else dshRow?.props.onDoubleClick()
+    })
+    expect(openDshSession).toHaveBeenCalledExactlyOnceWith('session-7')
+    if (mode === 'unavailable') {
+      expect(onClose).not.toHaveBeenCalled()
+      expect(content(renderer.toJSON())).toContain('任务已移除')
+    } else expect(onClose).toHaveBeenCalledOnce()
+    if (mode === 'Enter') expect(preventDefault).toHaveBeenCalledOnce()
+    act(() => { renderer.unmount() })
+  })
+
+  it('keeps the DSH selection when an older Arkme source request settles', async () => {
+    let resolveSource!: (value: ReturnType<typeof arkmeResults>) => void
+    let sourceSignal!: AbortSignal
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation: string, params: { sourceUid?: string }, signal: AbortSignal) => {
+      if (operation === 'search.records' && params.sourceUid !== undefined) {
+        sourceSignal = signal
+        return new Promise(resolve => { resolveSource = resolve })
+      }
+      return original(operation, params, signal)
+    })
+    const searchDshMessages = async () => ({ items: [{ sessionId: 'source-1', title: '原生任务', snippet: 'DSH 命中摘要', updatedAtMillis: 2 }], hasMore: false })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeSearchSurface initialQuery="发布会" searchDshMessages={searchDshMessages} />) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+    act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === '主题')!.props.onClick() })
+    act(() => { renderer.root.findByProps({ title: '单击查看关联快记，双击打开会话' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ title: '单击查看匹配摘要，双击打开 DSH 对话' }).props.onClick() })
+    expect(sourceSignal.aborted).toBe(true)
+    await act(async () => { resolveSource(arkmeResults()) })
+    expect(content(renderer.toJSON())).toContain('DSH 命中摘要')
+    expect(content(renderer.toJSON())).not.toContain('Arkme 中的发布会记录')
     act(() => { renderer.unmount() })
   })
 
@@ -581,7 +659,7 @@ describe('Arkme search surface', () => {
 
     const allText = content(renderer.toJSON())
     expect(allText).toContain('发布会快记')
-    const dshTab = renderer.root.findAllByType('button').find(button => content(button.props.children) === 'DSH')
+    const dshTab = renderer.root.findAllByType('button').find(button => content(button.props.children) === '主题')
     act(() => { dshTab?.props.onClick() })
     expect(content(renderer.toJSON())).toContain('DSH 任务暂不可用：DSH 离线')
     act(() => { renderer.unmount() })
@@ -836,4 +914,23 @@ describe('Arkme search surface', () => {
     expect(legacyMarkup).not.toContain('DSH Agent 输入')
     expect(legacyMarkup).toContain('DSH Agent Input')
   })
+})
+
+it.each(['local', 'remote', 'legacy', 'error'] as const)('opens the local DSH conversation from a synced record: %s', async mode => {
+ const record = { ...arkmeResults().items[0]!, creationSource: 3, sourceKind: 2, sourceUid: 'system:dsh',
+   ...(mode === 'legacy' ? {} : { dshOrigin: { sessionId: 'native-session', eventSeq: 7 } }),
+   targetSource: { sourceRef: 'topic-target', kind: 'topic', displayName: 'DSH Agent Input', activeAtMillis: 0, unreadCount: 0 } }
+ mocks.hasDsh.mockImplementation(async () => { if (mode === 'error') throw new Error('列表读取失败'); return mode === 'local' })
+ mocks.callArkme.mockImplementation(async (operation: string) => operation === 'search.records'
+   ? { ...arkmeResults(), items: [record], sourceAggregates: [{ ...arkmeResults().sourceAggregates[0], sourceKind: 2, sourceUid: 'system:dsh', title: 'DSH Agent Input' }] }
+   : { items: [], hasMore: false })
+ const onOpenRecord = vi.fn(), onOpenDshSession = vi.fn(), onClose = vi.fn()
+ let renderer!: ReactTestRenderer
+ await act(async () => { renderer = create(<ArkmeSearchSurface initialQuery="武汉" onOpenRecord={onOpenRecord} onOpenDshSession={onOpenDshSession} onClose={onClose} />) })
+ await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+ await act(async () => { renderer.root.findAllByType('button').find(button => content(button.props.children).includes('发布会快记'))?.props.onClick(); await Promise.resolve() })
+ if (mode === 'local') { expect(onOpenDshSession).toHaveBeenCalledWith('native-session'); expect(onOpenRecord).not.toHaveBeenCalled() }
+ else if (mode === 'error') { expect(onOpenRecord).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled(); expect(content(renderer.toJSON())).toContain('列表读取失败') }
+ else { expect(onOpenRecord).toHaveBeenCalledWith(record); expect(onOpenDshSession).not.toHaveBeenCalled() }
+ act(() => renderer.unmount())
 })

@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { ARKME_HARNESS_EMBED_PATH } from '../harness-embed-contract.js'
+import { ARKME_HARNESS_EMBED_PATH, HARNESS_SESSION_NAVIGATION_KEY, type HarnessSessionWindow } from '../harness-embed-contract.js'
 import { conversationMenuLayer } from './conversation-menu-layer.js'
 import { watchHarnessSurfaceViewport } from './harness-surface-viewport.js'
 
@@ -78,4 +78,20 @@ export function DeepSeekHarnessSurface({ visible = true, nativeSettings = false,
     <span ref={seatRef} data-arkme-harness-seat aria-hidden style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
     {createPortal(content, conversationMenuLayer(document))}
   </> : content
+}
+
+/** Open in the visible native client's session owner, preserving errors for search. */
+export function openEmbeddedDshSession(sessionId: string): void {
+  const frame = document.querySelector<HTMLIFrameElement>('[data-arkme-owned="deepseek-harness-surface"] iframe')
+  const navigation = (frame?.contentWindow as HarnessSessionWindow | null)?.[HARNESS_SESSION_NAVIGATION_KEY]
+  if (typeof navigation?.open !== 'function') throw new Error('DSH 对话尚未就绪，请稍后重试')
+  navigation.open(sessionId)
+}
+
+/** Missing is reported only after a successful authoritative list refresh. */
+export async function hasEmbeddedDshSession(sessionId: string): Promise<boolean> {
+  const frame = document.querySelector<HTMLIFrameElement>('[data-arkme-owned="deepseek-harness-surface"] iframe')
+  const navigation = (frame?.contentWindow as HarnessSessionWindow | null)?.[HARNESS_SESSION_NAVIGATION_KEY]
+  if (typeof navigation?.has !== 'function') throw new Error('DSH 对话尚未就绪，请稍后重试')
+  return await navigation.has(sessionId)
 }

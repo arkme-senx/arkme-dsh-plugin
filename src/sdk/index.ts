@@ -2010,6 +2010,13 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Search current-account server records, including retained DSH navigation identity. */
+  async searchRemote(query: string, options: { limit?: number; cursor?: string; signal?: AbortSignal } = {}): Promise<ArkmeRecordSearchResult> {
+    const { signal, ...params } = options
+    if ((await this.capabilities(signal)).features.remoteRecordSearch !== true) throw new Error('当前 Provider 不支持远端快记搜索')
+    return await this.call<ArkmeRecordSearchResult>('search.records', { query, ...params }, signal)
+  }
+
   async search(query: string, options: ArkmeSearchOptions & { signal?: AbortSignal } = {}): Promise<ArkmeCachedQueryResult> {
     return await this.call<ArkmeCachedQueryResult>('records.search', {
       query,
@@ -2170,3 +2177,5 @@ export async function callArkme<T>(
   return await defaultSdk.call<T>(operation, params, signal)
 }
 export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem } from '../types.js'
+
+export type { ArkmeDshInputOrigin } from '../types.js'

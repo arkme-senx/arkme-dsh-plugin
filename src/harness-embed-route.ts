@@ -50,7 +50,7 @@ interface HarnessEmbedRouteOptions {
   getGraph(): DshWebBootGraph
   installedPackageNames(): readonly string[]
   readRootHtml(request: IncomingMessage): Promise<string>
-  sessionClient?: { revision: string; apiPath: string }
+  sessionClient?: { revision: string; apiPath?: string }
   onError?(error: unknown): void
 }
 
@@ -283,7 +283,7 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
         projectedGraph.rev = shortHash(`${projectedGraph.rev}:${rev}`)
       }
       let html = replaceHarnessBootGraph(await options.readRootHtml(request), fullGraph, projectedGraph)
-      if (options.sessionClient !== undefined) {
+      if (options.sessionClient?.apiPath !== undefined) {
         const apiPath = options.sessionClient.apiPath
         if (!/^\/[A-Za-z0-9/_-]+$/.test(apiPath) || !html.includes('</head>')) {
           throw new Error('harness session observer configuration is invalid')

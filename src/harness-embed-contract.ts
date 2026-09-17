@@ -6,3 +6,9 @@ export const ARKME_HARNESS_MODEL_CLIENT_PATH = '/arkme-self/harness-model-client
 export const ARKME_HARNESS_ONBOARDING_CLIENT_PATH = '/arkme-self/harness-onboarding-client.js'
 export const ARKME_HARNESS_TRAJECTORY_CLIENT_PATH = '/arkme-self/harness-trajectory-client.js'
 export const ARKME_HARNESS_SIDEBAR_CLIENT_PATH = '/arkme-self/harness-sidebar-client.js'
+
+/** Same-origin bridge owned and disposed by the embedded session client. */
+export const HARNESS_SESSION_NAVIGATION_KEY = '__arkmeHarnessSessionNavigation'
+export type HarnessSessionWindow = Window & {
+  [HARNESS_SESSION_NAVIGATION_KEY]?: { open(sessionId: string): void; has(sessionId: string): Promise<boolean> }
+}

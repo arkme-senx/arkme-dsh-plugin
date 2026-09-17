@@ -1314,7 +1314,7 @@ export function ArkmeNavigation({
         ? reconcileSelectedSource(selected ?? cachedSelected, loaded)
           ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
         : undefined
-      if (restored !== undefined) arkmeUi.selectSource(restored)
+      if (restored !== undefined && !arkmeUi.updateSelectedSourceProjection(restored)) arkmeUi.selectSource(restored)
       persistCache({
         directory: next,
         sources: { [next]: loaded },
@@ -1499,7 +1499,7 @@ export function ArkmeNavigation({
     const restored = activeRef.current && ui.mode === 'source'
       ? reconcileSelectedSource(selected ?? cachedSelected, loaded)
       : undefined
-    if (restored !== undefined) arkmeUi.selectSource(restored)
+    if (restored !== undefined && !arkmeUi.updateSelectedSourceProjection(restored)) arkmeUi.selectSource(restored)
     persistCache({
       directory: 'root',
       sources: { root: loaded },
@@ -2306,11 +2306,12 @@ export function ArkmeNavigation({
       onOpenRecord={item => {
         if (item.targetSource === undefined) return
         closeGlobalSearch()
-        arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis)
+        arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis, item.recordOwnerUserId)
       }}
       onOpenDshSession={sessionId => {
+        if (onOpenDshSession === undefined) throw new Error('当前客户端无法打开 DSH 对话')
+        onOpenDshSession(sessionId)
         closeGlobalSearch()
-        onOpenDshSession?.(sessionId)
       }}
       onClose={closeGlobalSearch}
     />, document.body)}

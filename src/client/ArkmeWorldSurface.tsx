@@ -35,7 +35,7 @@ import { ArkmeMemberProfileCard, type ArkmeMemberProfileIdentity } from './Arkme
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { arkmeUi, type ArkmeWorldTarget } from './ui-controller.js'
+import { arkmeUi, type ArkmeWorldViewTarget } from './ui-controller.js'
 import { resolveWorldVoiceprintExpectationCopy } from './world-voiceprint-expectation-copy.js'
 import { downloadWorldVoiceprintAudio, playPreparedWorldVoiceprintAudio, playWorldVoiceprintChunkQueue } from './world-voiceprint-playback.js'
 
@@ -1247,7 +1247,7 @@ export function WorldInfiniteScrollTrigger({ scrollRootRef, loading, error, onLo
 export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, catalogOwnerName, voiceprintPlayableRefs, voiceprintRecordRef, voiceprintLoadingRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenExtension, onOpenAllExtensions, onLoadMore }: {
   state: ArkmeWorldViewState
   scope: WorldScope
-  target?: ArkmeWorldTarget
+  target?: ArkmeWorldViewTarget
   catalogOwnerUserId?: number
   catalogOwnerName?: string
   voiceprintPlayableRefs: ReadonlySet<string>
@@ -1312,7 +1312,7 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
       {target === undefined
         ? <div><h1 style={styles.heading}>世界</h1><p style={styles.subtitle}>看看大家此刻正在记录什么</p></div>
         : <div style={styles.targetHeading}>
-          <button type="button" style={styles.backButton} aria-label="返回世界" onClick={onBackToWorld}><ArrowLeft size={18} weight="bold" /></button>
+          <button type="button" style={styles.backButton} aria-label={'contactRef' in target ? '返回联系人' : '返回世界'} onClick={onBackToWorld}><ArrowLeft size={18} weight="bold" /></button>
           <ArkmeUserAvatar
             {...(target.avatarRef === undefined ? {} : { avatarRef: target.avatarRef })}
             {...(target.avatarFallback === undefined ? {} : { fallback: target.avatarFallback })}
@@ -1660,7 +1660,7 @@ function worldAuthorCardMember(item: ArkmeWorldFeedItem): ArkmeMemberProfileIden
 }
 
 export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSourceActivated }: {
-  target?: ArkmeWorldTarget
+  target?: ArkmeWorldViewTarget
   currentUserId?: number
   onBackToWorld?(): void
   onSourceActivated?(source: ArkmeOpenPrivateChatResult['source']): void
@@ -1781,7 +1781,7 @@ export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSour
     })
   }, [hydrateViewerAuthorLabels])
 
-  const loadUser = useCallback((profile: ArkmeWorldTarget, offset = 0, preserveItems = false) => {
+  const loadUser = useCallback((profile: ArkmeWorldViewTarget, offset = 0, preserveItems = false) => {
     loadControllers.current.target?.abort()
     const controller = new AbortController()
     loadControllers.current.target = controller
@@ -1822,7 +1822,8 @@ export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSour
     setInteractionRecordRef(undefined)
     setActionMessage(undefined)
     loadUser(target)
-  }, [loadUser, target?.userId])
+    return () => { loadControllers.current.target?.abort() }
+  }, [loadUser, target?.userId, target !== undefined && 'contactRef' in target ? target.contactRef : undefined])
   useEffect(() => () => {
     for (const controller of Object.values(loadControllers.current)) controller?.abort()
     loadControllers.current = {}
@@ -2013,7 +2014,7 @@ export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSour
 
   return <main style={styles.root} data-arkme-owned="world-surface" aria-label="世界">
     <ArkmeWorldContent state={state} scope={scope} {...(target === undefined ? {} : { target })}
-      {...(target?.userId !== undefined ? { catalogOwnerUserId: target.userId } : scope === 'mine' && currentUserId !== undefined ? { catalogOwnerUserId: currentUserId } : {})}
+      {...(target?.userId !== undefined ? { catalogOwnerUserId: target.userId } : target === undefined && scope === 'mine' && currentUserId !== undefined ? { catalogOwnerUserId: currentUserId } : {})}
       {...(target?.displayName !== undefined ? { catalogOwnerName: target.displayName } : scope === 'mine' ? { catalogOwnerName: '我' } : {})}
       voiceprintPlayableRefs={playableRefs} voiceprintRecordRef={voiceprintRecordRef}
       {...(voiceprintLoadingRecordRef === undefined ? {} : { voiceprintLoadingRecordRef })}

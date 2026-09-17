@@ -1,3 +1,4 @@
+import { compareTimelineMessages } from './timeline-message-order.js'
 import { ArkmeLivePhotoBadge } from './ArkmeLivePhotoBadge.js'
 import { selfTopicDirectory } from './self-topic-directory-cache.js'
 import { recordOwnerId } from '../record-owner-id.js'
@@ -1302,7 +1303,7 @@ function mergeItems(current: ArkmeTimelineItem[], incoming: ArkmeTimelineItem[])
         ? { mentions: previous.mentions } : {}),
     })
   }
-  return [...map.values()].sort((a, b) => a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid))
+  return [...map.values()].sort(compareTimelineMessages)
 }
 
 function reconcileTimelinePage(
@@ -3984,7 +3985,8 @@ export function ArkmeSurface({
       })
       return
     }
-    if (recordOwnerId(target.recordOwnerUserId) !== 0) return
+    if (sourceIsChat && recordOwnerId(target.recordOwnerUserId) !== 0) return
+    if (conversationCacheRef.current.getTimeline(conversationKey) === undefined) return
     if (loadingOlder) return
     if (!hasMore || nextCursor === undefined || conversationTargetPagingRef.current.pages >= 80) {
       setError('已打开对应会话，但暂未能在当前历史中定位该条消息')
@@ -5668,7 +5670,7 @@ export function ArkmeSurface({
       return projected
     })
     const displayItems = [...remoteItems, ...fileTasks.tasks.filter(task => !remoteIds.has(task.result?.itemUid ?? task.recordUid)).map(fileTaskTimelineItem)]
-      .sort((a, b) => a.sendAtMillis - b.sendAtMillis)
+      .sort(compareTimelineMessages)
     return { displayItems, reeditItems }
   }, [items, fileTasks.tasks, reeditSubmissions.jobs])
   useEffect(() => {
@@ -5753,7 +5755,9 @@ export function ArkmeSurface({
         occurredAtMillis: event.occurredAtMillis,
         item: event,
       })),
-    ].sort((left, right) => left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id)),
+    ].sort((left, right) => left.kind === 'message' && right.kind === 'message'
+      ? compareTimelineMessages(left.item, right.item)
+      : left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id)),
     [aiPolishNotices, displayItems, interwovenWindow, visibleConversationJoinEvents,memberEventTimeline.events,memberEventTimeline.gaps,
       communityWelcome, authenticatedAccountKey, source?.sourceRef, source?.sourceKey, source?.kind, source?.displayName, timelineMode],
   )
@@ -6876,6 +6880,7 @@ export function ArkmeSurface({
       selectedSource={active && selfWorkspaceSelected ? selectedSource : undefined}
       trigger="none"
       onSelect={activateSelfSource}
+      onSelectionRefreshed={updateSourceProjection}
       onSelectionInvalidated={invalidateTopicSelection}
       onSelfSourcesResolution={acceptSelfSourcesResolution}
       onCreateWarning={message => { showMessageActionStatus(message, false) }}
@@ -7264,7 +7269,7 @@ export function ArkmeSurface({
           : ui.mode === 'world' ? <ArkmeWorldSurface
             {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}
             {...(auth?.status !== 'authenticated' ? {} : { currentUserId: auth.userId })}
-            onBackToWorld={() => { arkmeUi.showWorld() }}
+            onBackToWorld={() => { arkmeUi.backFromWorld() }}
             onSourceActivated={activateSource}
           />
           : ui.mode === 'search' ? <div style={styles.utilityBody}><ArkmeSearchSurface

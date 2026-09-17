@@ -1,4 +1,4 @@
-import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -25,7 +25,7 @@ import {
 } from './notification-activation-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
-import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested } from './DeepSeekHarnessSurface.js'
+import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested, openEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
 import { installArkmeAccountSettingsNavIcon } from './account-settings-nav-icon.js'
 import { DesktopHarnessReadinessCommit } from './desktop-harness-readiness.js'
@@ -226,11 +226,7 @@ export function apply(ctx: ClientContext): void {
             if (!result.ok) throw new Error(result.error.message)
             return result.value
           },
-          openDshSession: (sessionId: string) => {
-            const dshSessions = (ctx as unknown as { sessions?: ISessions }).sessions
-            if (typeof dshSessions?.open !== 'function') throw new Error('当前 DSH 版本暂不支持打开任务')
-            dshSessions.open(sessionId as SessionId)
-          },
+          openDshSession: openEmbeddedDshSession,
         }),
       }, ArkmePersistentSidebar))
     }

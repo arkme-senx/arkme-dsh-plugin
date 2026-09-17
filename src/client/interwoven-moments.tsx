@@ -1,3 +1,4 @@
+import { compareTimelineMessages } from './timeline-message-order.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
@@ -44,8 +45,9 @@ export function mergeConversationRows(
       occurredAtMillis: item.occurredAtMillis, item,
     })),
   ]
-  return rows.sort((left, right) => left.occurredAtMillis - right.occurredAtMillis
-    || left.id.localeCompare(right.id))
+  return rows.sort((left, right) => left.kind === 'message' && right.kind === 'message'
+    ? compareTimelineMessages(left.item, right.item)
+    : left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id))
 }
 
 /** Match the desktop prelude policy while preserving each card's identity. */

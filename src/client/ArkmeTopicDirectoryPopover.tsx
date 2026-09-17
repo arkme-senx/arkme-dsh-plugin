@@ -31,6 +31,7 @@ export interface ArkmeTopicDirectoryPopoverProps {
   selectedSource: ArkmeSourceItem | undefined
   trigger?: 'button' | 'none'
   onSelect(source: ArkmeSourceItem): void
+  onSelectionRefreshed?(source: ArkmeSourceItem): void
   onSelectionInvalidated(): void
   onCreateWarning(message: string): void
   onSelfSourcesResolution(userId: number, resolution: ArkmeSelfSourcesResolution): void
@@ -185,7 +186,7 @@ function cacheWithTopics(
 }
 
 export function ArkmeTopicDirectoryPopover({
-  userId, environment = 'prod', selectedSource, trigger = 'button', onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateWarning, onCreateTopicReady, retryRevision,
+  userId, environment = 'prod', selectedSource, trigger = 'button', onSelect, onSelectionRefreshed = onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateWarning, onCreateTopicReady, retryRevision,
 }: ArkmeTopicDirectoryPopoverProps) {
   const directory = useMemo(() => selfTopicDirectory(userId, environment), [userId, environment])
   const snapshot = useSyncExternalStore(directory.subscribe, directory.getSnapshot, directory.getSnapshot)
@@ -226,7 +227,7 @@ export function ArkmeTopicDirectoryPopover({
       const reconciliation = reconcileArkmeTopicSelection(selectedSourceRef.current, loaded)
       if (reconciliation.status === 'selected') {
         selectedSourceRef.current = reconciliation.source
-        onSelect(reconciliation.source)
+        onSelectionRefreshed(reconciliation.source)
         persist(loaded, reconciliation.source.sourceRef)
       } else if (reconciliation.status === 'invalid') {
         selectedSourceRef.current = undefined
@@ -237,7 +238,7 @@ export function ArkmeTopicDirectoryPopover({
       }
     })
     return () => { disposed = true }
-  }, [directory, retryRevision, onSelect, onSelectionInvalidated, persist])
+  }, [directory, retryRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return

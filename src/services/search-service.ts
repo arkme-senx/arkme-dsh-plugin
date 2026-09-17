@@ -1,3 +1,4 @@
+import { resolveDshSearchOrigins } from '../dsh-search-origins.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type {
@@ -28,6 +29,8 @@ function booleanValue(value: unknown): boolean { return value === true }
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 
 export class SearchService {
+  localDshQuery?: () => unknown
+
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly record: RecordService,
@@ -81,7 +84,9 @@ export class SearchService {
       options.signal,
       { lane: 'interactive-read' },
     )
-    return await this.withNavigationTargets(this.recordSearchResult(data, lockedRecordUids), options.signal, options.sourceRef)
+    const result = this.recordSearchResult(data, lockedRecordUids)
+    result.items = await resolveDshSearchOrigins(this.localDshQuery?.(), result.items, options.signal)
+    return await this.withNavigationTargets(result, options.signal, options.sourceRef)
   }
 
   /** Query the canonical record-tag projection used by Flutter's tag search. */

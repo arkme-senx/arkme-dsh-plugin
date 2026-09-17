@@ -7,6 +7,9 @@ import { arkmeBrowserVisualKind, arkmeCanInlineLocalFile, type ArkmeFileReceptio
 import { createArkmeSdk } from '../sdk/index.js'
 
 const sdk = createArkmeSdk()
+const markdownLabels = { code: { copyLabel: '复制', copiedLabel: '复制成功' }, footnotes: '脚注' }
+// Newer hosts require labels; older hosts read codeLabels instead.
+const markdownLabelProps = { labels: markdownLabels, codeLabels: markdownLabels.code }
 const receptionListeners = new Map<string, Set<(value: ArkmeFileReception) => void>>()
 function publishReception(identity: string, value: ArkmeFileReception) {
   for (const listener of receptionListeners.get(identity) ?? []) listener(value)
@@ -14,6 +17,14 @@ function publishReception(identity: string, value: ArkmeFileReception) {
 export const arkmeLocalFileUrl = (ref: string, download = false): string => sdk.localFileUrl(ref, download)
 export function arkmeFileSize(size: number): string {
   return size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : size >= 1024 ? `${(size / 1024).toFixed(1)} KB` : `${size} B`
+}
+
+function canPreviewTextFile(block: ArkmeContentBlock): boolean {
+  return /\.(md|markdown|txt|csv|log)$/i.test(block.fileName) && block.size <= 2 * 1024 * 1024
+}
+
+export function arkmeCanPreviewFile(block: ArkmeContentBlock): boolean {
+  return canPreviewTextFile(block) || arkmeCanInlineLocalFile(block.mimeType, block.fileName)
 }
 
 export function useArkmeOriginal(block: ArkmeContentBlock | undefined, autoReceive = false, refreshKey?: unknown) {
@@ -418,9 +429,9 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
   const [error, setError] = useState('')
   const [openRequested, setOpenRequested] = useState(openLocalFile)
   const url = original.localRef === undefined ? undefined : arkmeLocalFileUrl(original.localRef)
-  const textFile = /\.(md|markdown|txt|csv|log)$/i.test(block.fileName) && block.size <= 2 * 1024 * 1024
+  const textFile = canPreviewTextFile(block)
   const visualKind = arkmeBrowserVisualKind(block.mimeType, block.fileName)
-  const browserPreview = !forceDownload && (textFile || arkmeCanInlineLocalFile(block.mimeType, block.fileName))
+  const browserPreview = !forceDownload && arkmeCanPreviewFile(block)
   const receptionNoun = forceDownload && (block.kind === 'image' || block.kind === 'video')
     ? block.kind === 'image' ? '图片' : '视频'
     : '文件'
@@ -479,8 +490,8 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
       </div>
         : visualKind === 'image' ? <img src={url} alt={block.fileName} style={mediaStyle} />
           : visualKind === 'video' ? <video src={url} controls style={mediaStyle} />
-            : block.mimeType.startsWith('audio/') && arkmeCanInlineLocalFile(block.mimeType, block.fileName) ? <audio src={url} controls />
-              : textFile ? <div style={{ maxHeight: '65vh', overflow: 'auto', overflowWrap: 'anywhere' }}>{/\.(md|markdown)$/i.test(block.fileName) ? <MarkdownText text={text} /> : <pre style={{ whiteSpace: 'pre-wrap' }}>{text}</pre>}</div>
+            : block.mimeType.trim().toLowerCase().startsWith('audio/') && arkmeCanInlineLocalFile(block.mimeType, block.fileName) ? <audio src={url} controls />
+              : textFile ? <div style={{ maxHeight: '65vh', overflow: 'auto', overflowWrap: 'anywhere' }}>{/\.(md|markdown)$/i.test(block.fileName) ? <MarkdownText text={text} {...markdownLabelProps} /> : <pre style={{ whiteSpace: 'pre-wrap' }}>{text}</pre>}</div>
                 : null}
       {error && <p role="alert">{error}</p>}
       <ArkmeFileActionToast notice={actionNotice} style={{ position: 'absolute', left: 74, right: 74, bottom: -8 }} />

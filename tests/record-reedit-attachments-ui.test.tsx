@@ -88,6 +88,23 @@ describe('record re-edit attachment UI', () => {
     })
   }
 
+  it.each([1, 3])('pages a topic target with an owner ID beyond the initial page: kind %s', async topicKind => {
+    const self: ArkmeSourceItem = { kind: 'topic', topicKind, sourceRef: 'topic-ref', displayName: '主题', activeAtMillis: 0, unreadCount: 0 }
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params) => operation === 'source.timeline'
+      ? params?.cursor
+        ? { source: self, items: [{ ...item, itemUid: 'old-dsh-input' }], hasMore: false }
+        : { source: self, items: [item], hasMore: true, nextCursor: { sendAtMillis: 123, itemUid: 'newest' } }
+      : operation === 'sources.list' ? { items: [self], hasMore: false } : base(operation, params))
+    await mount()
+    await act(async () => { arkmeUi.showConversationTarget(self, 'old-dsh-input', 1, 42); await flush() })
+    await act(async () => { await flush() })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)); await flush() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', expect.objectContaining({ cursor: { sendAtMillis: 123, itemUid: 'newest' } }), expect.any(AbortSignal))
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'old-dsh-input' })).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.timeline-around')).toBe(false)
+  })
+
   it('routes outer composer whitespace to the current handle and marks only its two bottom regions', async () => {
     const focus = vi.spyOn(composerFocus, 'focusArkmeComposerFromClick').mockReturnValue(false)
     await mount()
