@@ -1,3 +1,4 @@
+import type { ArkmeRecordingCoverage } from '../types.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import { recordingPlaybackLocator, type RecordingPlaybackLocator } from '../recording-playback-ref.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, type ServiceRuntime } from './service.js'
@@ -9,11 +10,14 @@ export interface RecordingOwnerCoverage {
   ready_count: number; processing_count: number; failed_count: number; silent_count: number; candidate_count: number
 }
 export interface RecordingOwnerFact {
+  memoryOwnerUserId?: number
   recording_uid: string; start_at: number; end_at: number; duration_ms: number; owner_version: number
   capture_state: '' | 'receiving' | 'complete' | 'interrupted'
 }
 export interface RecordingOwnerSpeaker { reference: string; userId?: number; label: string; kind: string }
 export interface RecordingOwnerFragment {
+  searchVersion?: string
+  recordingBelongsToViewer?: boolean
   recordingId: string
   revision: string
   locator: RecordingPlaybackLocator
@@ -149,7 +153,7 @@ export class RecordingReadOwner {
       for (const value of row.items) {
         const item = record(value)
         if (item.status !== 'available') return invalid()
-        const fact = { recording_uid: id(item.recording_uid), start_at: integer(item.start_at), end_at: integer(item.end_at ?? 0), duration_ms: integer(item.duration_ms ?? 0), owner_version: integer(item.owner_version, 1), capture_state: captureState(item.capture_state) }
+        const fact = { ...(item.memory_owner_user_id === undefined ? {} : { memoryOwnerUserId: integer(item.memory_owner_user_id) }), recording_uid: id(item.recording_uid), start_at: integer(item.start_at), end_at: integer(item.end_at ?? 0), duration_ms: integer(item.duration_ms ?? 0), owner_version: integer(item.owner_version, 1), capture_state: captureState(item.capture_state) }
         if (seen.has(fact.recording_uid)) return invalid()
         seen.add(fact.recording_uid); facts.push(fact)
       }
@@ -160,6 +164,35 @@ export class RecordingReadOwner {
       cursors.add(cursor)
     } while (cursor !== '')
     return facts
+  }
+
+  /** Physical coverage is independent of transcript paging: silence and gaps remain visible. */
+  async physicalCoverage(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeRecordingCoverage> {
+    validateWindow(window)
+    const intervals: ArkmeRecordingCoverage['intervals'] = []
+    const cursors = new Set<string>()
+    let cursor = '', version = ''
+    do {
+      const page = record(await this.read('/api/v1/audio/coverage/query', {
+        start_at: window.startAt, end_at: window.endAt, direction: 'asc', limit: 200,
+        ...(cursor === '' ? {} : { cursor }),
+      }, session, signal))
+      const current = text(page.source_version)
+      if (version !== '' && version !== current) return stale()
+      version = current
+      if (!Array.isArray(page.items) || page.items.length > 200 || typeof page.has_more !== 'boolean') return invalid()
+      for (const raw of page.items) {
+        const item = record(raw)
+        if (integer(item.memory_owner_user_id) !== session.userId) continue
+        const start = integer(item.clipped_start_at), end = integer(item.clipped_end_at, start + 1)
+        if (start < window.startAt || end > window.endAt || typeof item.processing !== 'boolean') return invalid()
+        intervals.push({ startAtMillis: start, endAtMillis: end, sourceLabel: text(item.source_label) || '已同步录音', status: item.processing ? 'processing' : 'saved' })
+      }
+      cursor = page.next_cursor === undefined ? '' : text(page.next_cursor)
+      if (page.has_more !== (cursor !== '') || cursor !== '' && cursors.has(cursor)) return invalid()
+      cursors.add(cursor)
+    } while (cursor !== '')
+    return { state: 'ready', intervals }
   }
 
   async transcript(recordingId: string, source: RecordingReadSource, window: RecordingReadWindow, session: ArkmeSessionCredentials, options: { cursor?: string; limit?: number; revision?: string } = {}, signal?: AbortSignal): Promise<RecordingOwnerTranscriptPage> {
@@ -190,7 +223,7 @@ export class RecordingReadOwner {
       if (Array.from(body).length !== finish - begin || finish - begin > 4_000 || (item.text_truncated === true) !== (begin > 0 || finish < total)
         || start >= window.endAt || end <= window.startAt) return invalid()
       if (item.is_background !== undefined && typeof item.is_background !== 'boolean') return invalid()
-      return { recordingId, revision: version, locator, index: integer(item.utterance_index), startAt: start, endAt: end, text: body, event: item.event === undefined ? '' : text(item.event), isBackground: item.is_background === true, textStart: begin, textEnd: finish, textTotal: total, speaker: identity }
+      return { ...(item.search_version === undefined ? {} : { searchVersion: revision(item.search_version) }), recordingId, revision: version, locator, index: integer(item.utterance_index), startAt: start, endAt: end, text: body, event: item.event === undefined ? '' : text(item.event), isBackground: item.is_background === true, textStart: begin, textEnd: finish, textTotal: total, speaker: identity }
     })
     if (items.reduce((sum, item) => sum + item.textEnd - item.textStart, 0) > 20_000) return invalid()
     for (let index = 1; index < items.length; index++) follows(items[index - 1]!, items[index]!)
@@ -254,7 +287,7 @@ export class RecordingReadOwner {
       if (selected === undefined || fragment === undefined) break
       const length = fragment.textEnd - fragment.textStart
       if (characters + length > 20_000) break
-      items.push(fragment); characters += length
+      items.push({ ...fragment, recordingBelongsToViewer: selected.fact.memoryOwnerUserId === session.userId }); characters += length
       const { text: _text, ...last } = fragment
       selected.last = last; selected.skip++
     }

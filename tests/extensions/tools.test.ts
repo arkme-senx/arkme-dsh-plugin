@@ -55,7 +55,7 @@ describe('Arkme extension tools', () => {
       extension_id: 'ext-1', installed: true, enabled: false, active: false,
       restart_required: true, message: '已关闭',
     }))
-    const listInstalled = vi.fn(() => [{
+    const listInstalled = vi.fn(async () => [{
       extensionId: 'ext-broken', installedVersion: '1.0.0', manifest: { name: '故障扩展' },
       enabled: false, active: false, permissionSnapshot: [], updateChannel: 'stable',
       installedAtMillis: 1, lastCheckedAtMillis: 1,

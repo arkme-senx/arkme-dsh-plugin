@@ -1,5 +1,7 @@
+import { measureReaction } from '../reaction-host-diagnostics.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
+import { currentProfileRecordSnapshot } from '../record-sender-snapshot.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeEnvironment,
@@ -10,6 +12,8 @@ import type {
   ArkmeUserCardSnapshot,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
+  ArkmeProfileUpdate,
+  ArkmeInvitationRewards,
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
@@ -181,6 +185,8 @@ export class ProfileService {
   private readonly profileInFlight = new Map<number, Promise<ArkmeUserProfileSnapshot>>()
   private readonly publicProfileCache = new Map<string, CacheEntry<ArkmePublicProfile | null>>()
   private readonly publicProfileAvatarCache = new Map<string, { avatarUrl: string; expiresAtMillis: number }>()
+  private readonly avatarRevisions = new Map<number, number>()
+  private readonly mutations = new Set<number>()
 
   constructor(private readonly runtime: ServiceRuntime) {}
 
@@ -323,7 +329,7 @@ export class ProfileService {
     if (!Number.isSafeInteger(userId) || userId <= 0) {
       throw new ArkmePluginError('user-card-target-invalid', '用户信息参数无效', false)
     }
-    const profile = (await this.publicProfileSummariesByUserIds([userId], session, signal)).get(userId)
+    const profile = (await this.publicProfileSummariesByUserIds([userId], session, signal, 0)).get(userId)
     const displayName = profile?.displayName ?? '群成员'
     return {
       displayName,
@@ -345,6 +351,12 @@ export class ProfileService {
       return persisted
     }
     return await this.refreshProfileForSession(session)
+  }
+
+  /** Capture the author's presentation at creation time; never persist a mutable signed profile ref. */
+  async recordSenderSnapshot(session: ArkmeSessionCredentials): Promise<{ avatar?: string; nickname?: string } | undefined> {
+    const profile = (await this.profileForSession(session).catch(() => undefined))?.profile
+    return currentProfileRecordSnapshot(profile)
   }
 
   async refreshProfileForSession(session: ArkmeSessionCredentials): Promise<ArkmeUserProfileSnapshot> {
@@ -375,14 +387,26 @@ export class ProfileService {
       const publicAvatarUrl = await this.publicProfilesByUserIds([session.userId], session)
         .then(profiles => profiles.get(session.userId)?.avatarUrl)
         .catch(() => undefined)
-      const avatarUrl = publicAvatarUrl ?? (/^https?:\/\//i.test(rawAvatarRef) ? rawAvatarRef : undefined)
+      const avatarUrl = this.avatarRevisions.has(session.userId)
+        ? (/^https?:\/\//i.test(rawAvatarRef) ? rawAvatarRef : undefined)
+        : publicAvatarUrl ?? (/^https?:\/\//i.test(rawAvatarRef) ? rawAvatarRef : undefined)
       const avatarRef = avatarUrl !== undefined || avatarAssetRef !== undefined
         ? await this.sealProfileImageRef(session.userId, session.userId)
         : rawAvatarRef
       const phone = maskedPhone(stringValue(data.phone))
       const email = maskedEmail(stringValue(data.email))
       const wechatName = stringValue(data.wechat_nick_name).trim()
+      const appleName = stringValue(data.apple_nick_name).trim()
+      const googleName = stringValue(data.google_given_name).trim()
+      const huaweiBound = optionalBooleanValue(data.has_bind_huawei)
+      const bindingNames = {
+        ...(wechatName === '' ? {} : { wechat: wechatName }),
+        ...(appleName === '' ? {} : { apple: appleName }),
+        ...(googleName === '' ? {} : { google: googleName }),
+      }
       const canUpdateArkmeId = optionalBooleanValue(data.can_update_jotmo_id)
+      const phoneBindingRequired = typeof data.phone === 'string'
+        ? phoneBindingRequirement(data.phone_binding_policy) : undefined
       const profile: ArkmeUserProfile = {
         userId,
         displayName,
@@ -392,20 +416,27 @@ export class ProfileService {
         ...(avatarUrl === undefined ? {} : { avatarUrl }),
         arkmeId: stringValue(data.jotmo_id).trim() || stringValue(data.name_slug).trim(),
         ...(canUpdateArkmeId === undefined ? {} : { canUpdateArkmeId }),
+        ...(phoneBindingRequired === undefined ? {} : { phoneBindingRequired }),
         accountType: numberValue(data.type),
         createdAt: numberValue(data.create_at),
         bindings: {
           apple: booleanValue(data.has_bind_apple),
           wechat: booleanValue(data.has_bind_wechat),
           google: booleanValue(data.has_bind_google),
+          ...(huaweiBound === undefined ? {} : { huawei: huaweiBound }),
         },
-        ...(wechatName === '' ? {} : { bindingNames: { wechat: wechatName } }),
+        ...(Object.keys(bindingNames).length === 0 ? {} : { bindingNames }),
         contact: {
           ...(phone === undefined ? {} : { phoneMasked: phone }),
           ...(email === undefined ? {} : { emailMasked: email }),
         },
       }
-      const snapshot = await this.runtime.stateStore.cacheProfile(userId, profile)
+      const persisted = await this.runtime.stateStore.cacheProfile(userId, profile)
+      // Login policy is a fresh owner decision, not a local database column.
+      // Keep it with the existing short-lived profile cache after persistence.
+      const snapshot: ArkmeUserProfileSnapshot = phoneBindingRequired === undefined || persisted.profile === null
+        ? persisted
+        : { ...persisted, profile: { ...persisted.profile, phoneBindingRequired } }
       this.profileCache.set(userId, { value: snapshot, expiresAtMillis: Date.now() + PROFILE_CACHE_TTL_MS })
       return snapshot
     })()
@@ -415,6 +446,64 @@ export class ProfileService {
     } finally {
       if (this.profileInFlight.get(session.userId) === pending) this.profileInFlight.delete(session.userId)
     }
+  }
+
+  async updateProfile(input: ArkmeProfileUpdate, signal?: AbortSignal): Promise<ArkmeUserProfileSnapshot> {
+    const session = await this.runtime.requireSession()
+    const assertOwner = async () => {
+      const current = await this.runtime.requireSession()
+      if (current.userId !== session.userId || input.expectedAccountScope !== `${this.runtime.config.environment}:${session.userId}`) {
+        throw new ArkmePluginError('profile-account-changed', '账号已切换，请重新打开我的账户', false, 409)
+      }
+      if (signal?.aborted) throw new ArkmePluginError('profile-update-cancelled', '修改已取消', false, 409)
+    }
+    await assertOwner()
+    const value = input.value.trim()
+    if (input.field === 'nickname') {
+      if (!value || [...value].length > 64 || /[\u0000-\u001f\u007f]/.test(value)) throw new ArkmePluginError('profile-nickname-invalid', '昵称需为 1–64 个字符', false)
+    } else if (input.field !== 'avatar' || fileAssetAvatarRef(value) === undefined) {
+      throw new ArkmePluginError('profile-avatar-invalid', '请选择并上传有效头像', false)
+    }
+    if (this.mutations.has(session.userId)) throw new ArkmePluginError('profile-update-busy', '资料正在保存，请稍后重试', true, 409)
+    this.mutations.add(session.userId)
+    try {
+      // Mobile uses this same read/merge/write contract. The endpoint replaces
+      // all fields: never reconstruct a full payload from the masked UI profile.
+      const raw = await this.runtime.authenticatedAuthGet<Record<string, unknown>>('/api/v1/auth/get-user-info', session, signal)
+      const fields = ['nick_name', 'real_name', 'head_img', 'phone', 'email'] as const
+      if (raw.user_id !== session.userId || fields.some(key => typeof raw[key] !== 'string')) {
+        throw new ArkmePluginError('profile-contract-invalid', '资料响应不完整，已取消修改以保护原资料', false, 502)
+      }
+      const body = Object.fromEntries(fields.map(key => [key, raw[key]]))
+      body[input.field === 'nickname' ? 'nick_name' : 'head_img'] = value
+      await assertOwner()
+      await this.runtime.authenticatedAuthPost('/api/v1/auth/update-user-info', body, session, signal)
+      await assertOwner()
+      // A pre-mutation read must finish before the final authoritative refresh.
+      await this.profileInFlight.get(session.userId)?.catch(() => undefined)
+      this.invalidate(session.userId)
+      this.runtime.requestCoordinator.invalidateKey(this.runtime.requestScope(session.userId), 'profile:self')
+      if (input.field === 'avatar') this.avatarRevisions.set(session.userId, Date.now())
+      const snapshot = await this.refreshProfileForSession(session)
+      await assertOwner()
+      return snapshot
+    } finally { this.mutations.delete(session.userId) }
+  }
+
+  async invitationRewards(scope: string, signal?: AbortSignal): Promise<ArkmeInvitationRewards> {
+    const owner = async () => {
+      const session = await this.runtime.requireSession()
+      if (scope !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('profile-account-changed', '账号已切换，请重新打开我的账户', false, 409)
+      return session
+    }
+    const session = await owner()
+    const data = await this.runtime.authenticatedAuthReadPost<Record<string, unknown>>('/api/v1/premium/get/invite-code-data', {}, session, signal)
+    await owner()
+    if (typeof data.self_code !== 'string' || !data.self_code.trim() || typeof data.self_invited_count !== 'number'
+      || !Number.isSafeInteger(data.self_invited_count) || data.self_invited_count < 0 || typeof data.had_fill !== 'boolean' || typeof data.over_7_days !== 'boolean') {
+      throw new ArkmePluginError('invitation-contract-invalid', '邀请信息暂时无法读取', true, 502)
+    }
+    return { accountScope: scope, code: data.self_code, invitedCount: data.self_invited_count, alreadyClaimed: data.had_fill, registrationExpired: data.over_7_days }
   }
 
   private profileNeedsAvatarRefresh(snapshot: ArkmeUserProfileSnapshot, userId: number): boolean {
@@ -428,6 +517,7 @@ export class ProfileService {
     userIds: readonly number[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    maxAgeMillis = PUBLIC_PROFILE_CACHE_TTL_MS,
   ): Promise<Map<number, ArkmePublicProfile>> {
     const normalized = [...new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0))]
       .sort((left, right) => left - right)
@@ -439,12 +529,14 @@ export class ProfileService {
     }
     for (const userId of normalized) {
       const cached = this.publicProfileCache.get(`${String(session.userId)}:${String(userId)}`)
-      if (cached === undefined || cached.expiresAtMillis <= now) {
+      if (cached === undefined || cached.expiresAtMillis <= now
+        || cached.expiresAtMillis - (cached.value === null ? PUBLIC_PROFILE_NEGATIVE_CACHE_TTL_MS : PUBLIC_PROFILE_CACHE_TTL_MS) + maxAgeMillis <= now) {
         missing.push(userId)
         continue
       }
       if (cached.value !== null) profiles.set(userId, cached.value)
     }
+    await measureReaction('profile-cache', { requested: normalized.length, hits: normalized.length - missing.length, misses: missing.length }, async () => undefined)
     for (const batch of chunksOf(missing, 50)) {
       if (batch.length === 0) continue
       const startedAtMillis = Date.now()
@@ -634,7 +726,9 @@ export class ProfileService {
   }
 
   async sealProfileImageRef(viewerUserId: number, targetUserId: number): Promise<string> {
-    const payload = encodeOpaqueJson({ version: 1, viewerUserId, targetUserId } satisfies ArkmeProfileImageRefPayload)
+    const reference: ArkmeProfileImageRefPayload = { version: 1, viewerUserId, targetUserId }
+    const revision = this.avatarRevisions.get(targetUserId)
+    const payload = encodeOpaqueJson({ ...reference, ...(revision === undefined ? {} : { revision }) })
     const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest('base64url')
     return `arkme-profile-image-v1.${payload}.${signature}`
   }
@@ -709,4 +803,12 @@ export class ProfileService {
       revision: snapshot.revision,
     }
   }
+}
+
+// Dates and account age are evaluated by the account service, never by the plugin.
+export function phoneBindingRequirement(value: unknown): boolean | undefined {
+  const mode = value !== null && typeof value === 'object' && 'mode' in value ? value.mode : undefined
+  if (mode === 'none' || mode === 'remind') return false
+  if (mode === 'required') return true
+  return undefined
 }

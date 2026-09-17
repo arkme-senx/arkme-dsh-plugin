@@ -1,8 +1,11 @@
+import type { TeamMessageIntent } from './team-messaging-events.js'
+import type { ArkmeRecordingSearchIdentity, ArkmeRecordingTarget } from '../types.js'
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
 import type { ArkmeExtensionShareAction } from './extension-share-deeplink.js'
+import type { CodexConversationTarget } from './redesign/contacts/codex-conversation-target.js'
 
 function sameSelectedSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | undefined): boolean {
   if (left === undefined || right === undefined) return left === right
@@ -41,16 +44,20 @@ export interface ArkmeUiState {
   authRevision: number
   chatRevision: number
   recordRevision: number
-  mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'world' | 'search' | 'extensions' | 'voiceprint' | 'contact-add' | 'arko'
-    | 'harness'
+  topicDirectoryRevision: number
+  mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'notifications' | 'voiceprint' | 'contact-add' | 'arko'
+    | 'harness' | 'codex' | 'team'
+  codexTarget?: CodexConversationTarget
   productMode?: 'conversations' | 'contacts'
   selectedSource?: ArkmeSourceItem
   selectedBot?: ArkmeBotSummary
+  teamIntent?: TeamMessageIntent
   /** Forces a real conversation-surface commit for every native notification click, including the current source. */
   notificationActivationRevision?: number
   conversationUnreadJumpRevision?: number
-  conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: RecordOwnerId }
-  recordingTarget?: { dateStamp: number; startAtMillis: number }
+  conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: RecordOwnerId; momentId?: string; transientHighlight?: boolean; openDetail?: boolean }
+  recordingTarget?: ArkmeRecordingTarget
+  recordingReturnDateStamp?: number
   searchTarget?: { revision: number; query: string }
   extensionShareRef?: string
   extensionShareAction?: ArkmeExtensionShareAction
@@ -58,14 +65,16 @@ export interface ArkmeUiState {
   extensionAuthorFilter?: ArkmeExtensionAuthorFilter
   calendarOpen?: boolean
   worldTarget?: ArkmeWorldViewTarget
+  worldInitialScope?: 'all' | 'mine'
+  worldNavigationRevision?: number
   /** Web-only login is an overlay so a logged-out Harness view remains in place. */
   webLoginDialogOpen?: boolean
 }
 
-export type ArkmeUiViewState = Omit<ArkmeUiState, 'chatRevision' | 'recordRevision'>
+export type ArkmeUiViewState = Omit<ArkmeUiState, 'chatRevision' | 'recordRevision' | 'topicDirectoryRevision'>
 
 function viewStateOf(state: ArkmeUiState): ArkmeUiViewState {
-  const { chatRevision: _chatRevision, recordRevision: _recordRevision, ...view } = state
+  const { chatRevision: _chatRevision, recordRevision: _recordRevision, topicDirectoryRevision: _topicDirectoryRevision, ...view } = state
   return view
 }
 
@@ -88,7 +97,11 @@ export interface ArkmeContactWorldTarget extends ArkmeWorldTarget {
 export type ArkmeWorldViewTarget = ArkmeWorldTarget | ArkmeContactWorldTarget
 
 type ArkmeConversationDestination =
+  | { kind: 'team'; intent: TeamMessageIntent }
   | { kind: 'harness' }
+  | { kind: 'codex' }
+  | { kind: 'notifications' }
+  | { kind: 'arko' }
   | { kind: 'send_to_self' }
   | { kind: 'source'; source: ArkmeSourceItem }
   | { kind: 'bot'; bot: ArkmeBotSummary }
@@ -100,12 +113,12 @@ function sameWorldTarget(left: ArkmeWorldViewTarget | undefined, right: ArkmeWor
 }
 
 export class ArkmeUiController {
-  private state: ArkmeUiState = { authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'login' }
+  private state: ArkmeUiState = { authRevision: 0, chatRevision: 0, recordRevision: 0, topicDirectoryRevision: 0, mode: 'login' }
   private viewState: ArkmeUiViewState = viewStateOf(this.state)
   /** Runtime-only conversation memory. A fresh client always starts in Harness. */
   private lastConversationDestination: ArkmeConversationDestination | undefined
   private readonly listeners = new Set<() => void>()
-  private settingsOpener: (() => void) | undefined
+  private settingsOpener: ((section?: ArkmeSettingsSection) => void) | undefined
   private conversationTargetRevision = 0
   private notificationActivationRevision = 0
   private searchTargetRevision = 0
@@ -114,6 +127,7 @@ export class ArkmeUiController {
   /** Navigation and presentation state, stable across projection-only invalidations. */
   readonly getViewSnapshot = (): ArkmeUiViewState => this.viewState
   readonly getChatRevision = (): number => this.state.chatRevision
+  readonly getTopicDirectoryRevision = (): number => this.state.topicDirectoryRevision
   readonly getRecordRevision = (): number => this.state.recordRevision
 
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -121,13 +135,13 @@ export class ArkmeUiController {
     return () => { this.listeners.delete(listener) }
   }
 
-  bindSettingsOpener(opener: () => void): () => void {
+  bindSettingsOpener(opener: (section?: ArkmeSettingsSection) => void): () => void {
     this.settingsOpener = opener
     return () => { if (this.settingsOpener === opener) this.settingsOpener = undefined }
   }
 
-  openDshSettings(): void {
-    this.settingsOpener?.()
+  openDshSettings(section?: ArkmeSettingsSection): void {
+    this.settingsOpener?.(section)
   }
 
   focusSendToSelf(): void {
@@ -141,21 +155,21 @@ export class ArkmeUiController {
     this.leaveContacts()
     if (authenticated) {
       if (resetSelection) this.lastConversationDestination = undefined
-      const { selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _dialogFromSelection, ...stateWithoutSelection } = this.state
+      const { codexTarget: _codexTarget, selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _dialogFromSelection, ...stateWithoutSelection } = this.state
       const { calendarOpen: _activeCalendar, productMode: _activeProductMode, webLoginDialogOpen: _dialogFromCalendar, ...stateWithoutCalendar } = this.state
       const state = resetSelection ? stateWithoutSelection : stateWithoutCalendar
       const startsClientConversation = state.mode === 'login'
       if (startsClientConversation) this.lastConversationDestination = { kind: 'harness' }
       this.publish({
         ...state,
-        mode: startsClientConversation ? 'harness' : resetSelection && state.mode === 'bot' ? 'source' : state.mode,
+        mode: startsClientConversation || (resetSelection && state.mode === 'team') ? 'harness' : resetSelection && state.mode === 'bot' ? 'source' : state.mode,
         authRevision: this.state.authRevision + 1,
         conversationUnreadJumpRevision: 0,
       })
       return
     }
     this.lastConversationDestination = undefined
-    const { selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
+    const { codexTarget: _codexTarget, selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget, searchTarget: _searchTarget, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
     this.publish({
       ...rest,
       mode: 'login',
@@ -166,6 +180,10 @@ export class ArkmeUiController {
 
   chatChanged(): void {
     this.publish({ ...this.state, chatRevision: this.state.chatRevision + 1 })
+  }
+
+  topicDirectoryChanged(): void {
+    this.publish({ ...this.state, topicDirectoryRevision: this.state.topicDirectoryRevision + 1 })
   }
 
   recordChanged(): void {
@@ -191,7 +209,7 @@ export class ArkmeUiController {
 
   showRecordings(): void {
     this.leaveContacts()
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'recordings' })
   }
 
@@ -217,10 +235,10 @@ export class ArkmeUiController {
     this.publish(rest)
   }
 
-  showWorld(): void {
+  showWorld(scope: 'all' | 'mine' = 'all'): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, worldTarget: _worldTarget, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'world' })
+    this.publish({ ...rest, mode: 'world', worldInitialScope: scope, worldNavigationRevision: (this.state.worldNavigationRevision ?? 0) + 1 })
   }
 
   showUserWorld(target: ArkmeWorldTarget): void {
@@ -251,10 +269,10 @@ export class ArkmeUiController {
     this.showWorld()
   }
 
-  showRecordingTarget(dateStamp: number, startAtMillis: number): void {
+  showRecordingTarget(dateStamp: number, startAtMillis: number, segment?: ArkmeRecordingSearchIdentity): void {
     this.leaveContacts()
-    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis } })
+    const { selectedSource: _selectedSource, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis, ...(segment === undefined ? {} : { segment }) } })
   }
 
   showSearch(): void {
@@ -282,6 +300,12 @@ export class ArkmeUiController {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'voiceprint' })
+  }
+
+  showRecognizedSpeakers(returnDateStamp?: number): void {
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'recognized-speakers', ...(returnDateStamp === undefined ? {} : { recordingReturnDateStamp: returnDateStamp }) })
   }
 
   showExtensions(): void {
@@ -321,16 +345,35 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'extensions', extensionDetailId: normalized })
   }
 
+  showTeamConversation(intent: TeamMessageIntent): void {
+    this.leaveContacts()
+    this.lastConversationDestination = { kind: 'team', intent }
+    const { selectedSource: _source, selectedBot: _bot, calendarOpen: _calendar, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'team', teamIntent: intent })
+  }
+
   showConversations(): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     const destination = this.lastConversationDestination
     this.publish({
       ...rest,
-      mode: destination?.kind === 'harness' ? 'harness' : destination?.kind === 'bot' ? 'bot' : 'source',
+      mode: destination === undefined || destination.kind === 'send_to_self' ? 'source' : destination.kind,
+      ...(destination?.kind === 'team' ? { teamIntent: destination.intent } : {}),
       ...(destination?.kind === 'source' ? { selectedSource: destination.source } : {}),
       ...(destination?.kind === 'bot' ? { selectedBot: destination.bot } : {}),
     })
+  }
+
+  showNotifications(): void {
+    this.leaveContacts()
+    this.lastConversationDestination = { kind: 'notifications' }
+    const { selectedSource: _selectedSource, selectedBot: _selectedBot, recordingTarget: _recordingTarget,
+      calendarOpen: _calendarOpen, productMode: _productMode, conversationTarget: _conversationTarget,
+      extensionShareRef: _extensionShareRef, extensionShareAction: _extensionShareAction,
+      extensionDetailId: _extensionDetailId, extensionAuthorFilter: _extensionAuthorFilter,
+      webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'notifications' })
   }
 
   locateNextUnreadConversation(): void {
@@ -351,6 +394,7 @@ export class ArkmeUiController {
 
   showArko(): void {
     this.leaveContacts()
+    this.lastConversationDestination = { kind: 'arko' }
     const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'arko' })
   }
@@ -360,6 +404,15 @@ export class ArkmeUiController {
     this.lastConversationDestination = { kind: 'harness' }
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
     this.publish({ ...rest, mode: 'harness' })
+  }
+
+  showCodex(target?: CodexConversationTarget | null): void {
+    this.leaveContacts()
+    this.lastConversationDestination = { kind: 'codex' }
+    const { selectedSource: _source, calendarOpen: _calendar, productMode: _product, ...rest } = this.state
+    const { codexTarget: previousTarget, ...withoutTarget } = rest
+    const nextTarget = target === undefined ? previousTarget : target
+    this.publish({ ...withoutTarget, mode: 'codex', ...(nextTarget ? { codexTarget: nextTarget } : {}) })
   }
 
   openExtensionShare(shareRef: string, action?: ArkmeExtensionShareAction): void {
@@ -427,7 +480,7 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'bot', selectedBot: bot })
   }
 
-  showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number, recordOwnerUserId?: RecordOwnerId): void {
+  showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number, recordOwnerUserId?: RecordOwnerId, momentId?: string, transientHighlight = false, openDetail = false): void {
     this.leaveContacts()
     const normalizedItemUid = itemUid.trim()
     if (normalizedItemUid === '') throw new TypeError('会话消息定位标识不能为空')
@@ -439,7 +492,10 @@ export class ArkmeUiController {
       selectedSource: source,
       conversationTarget: {
         revision: ++this.conversationTargetRevision,
+        transientHighlight,
+        ...(openDetail ? { openDetail: true } : {}),
         itemUid: normalizedItemUid,
+        ...(momentId ? { momentId } : {}),
         sendAtMillis: Number.isFinite(sendAtMillis) ? sendAtMillis : 0,
         ...(recordOwnerId(recordOwnerUserId) !== 0
           ? { recordOwnerUserId: recordOwnerId(recordOwnerUserId) }
@@ -455,8 +511,15 @@ export class ArkmeUiController {
   }
 
   private publish(next: ArkmeUiState): void {
+    if (next.mode !== 'team') { const { teamIntent: _intent, ...rest } = next; next = rest }
+    if (next.mode !== 'world') {
+      const { worldInitialScope: _scope, worldNavigationRevision: _revision, ...rest } = next
+      next = rest
+    }
     const sameView = next.authRevision === this.state.authRevision
       && next.mode === this.state.mode
+      && next.codexTarget === this.state.codexTarget
+      && next.teamIntent === this.state.teamIntent
       && next.productMode === this.state.productMode
       && next.calendarOpen === this.state.calendarOpen
       && next.notificationActivationRevision === this.state.notificationActivationRevision
@@ -467,6 +530,7 @@ export class ArkmeUiController {
       && next.conversationTarget?.recordOwnerUserId === this.state.conversationTarget?.recordOwnerUserId
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
+      && JSON.stringify(next.recordingTarget?.segment) === JSON.stringify(this.state.recordingTarget?.segment)
       && next.searchTarget?.revision === this.state.searchTarget?.revision
       && next.searchTarget?.query === this.state.searchTarget?.query
       && next.extensionShareRef === this.state.extensionShareRef
@@ -476,11 +540,14 @@ export class ArkmeUiController {
       && next.extensionAuthorFilter?.ownerName === this.state.extensionAuthorFilter?.ownerName
       && next.webLoginDialogOpen === this.state.webLoginDialogOpen
       && sameWorldTarget(next.worldTarget, this.state.worldTarget)
+      && next.worldInitialScope === this.state.worldInitialScope
+      && next.worldNavigationRevision === this.state.worldNavigationRevision
       && sameSelectedSource(next.selectedSource, this.state.selectedSource)
       && sameBot(next.selectedBot, this.state.selectedBot)
     if (sameView
       && next.chatRevision === this.state.chatRevision
-      && next.recordRevision === this.state.recordRevision) return
+      && next.recordRevision === this.state.recordRevision
+      && next.topicDirectoryRevision === this.state.topicDirectoryRevision) return
     this.state = next
     if (!sameView) this.viewState = viewStateOf(next)
     for (const listener of this.listeners) listener()
@@ -492,3 +559,4 @@ export class ArkmeUiController {
 }
 
 export const arkmeUi = new ArkmeUiController()
+export type ArkmeSettingsSection = 'arkme-account' | 'arkme-usage' | 'arkme-data'

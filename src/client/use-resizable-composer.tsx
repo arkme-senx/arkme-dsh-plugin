@@ -1,3 +1,4 @@
+import { tr } from './locale.js'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 
 export const COMPOSER_HEIGHT_KEY = 'arkme:composer-editor-height:v1'
@@ -74,9 +75,9 @@ export function useResizableComposer(container: RefObject<HTMLDivElement>, scope
   return {
     editorStyle: visibleHeight === undefined ? {} : { height: visibleHeight, minHeight: 38, maxHeight: maximum },
     highlighted: active || hovered || focused,
-    handle: <div role="separator" aria-label="调整输入框高度" aria-orientation="horizontal"
+    handle: <div role="separator" aria-label={tr("调整输入框高度")} aria-orientation="horizontal"
       aria-valuemin={38} aria-valuemax={Math.round(maximum)} aria-valuenow={Math.round(visibleHeight ?? 38)} tabIndex={0}
-      title="上下拖动调整输入框高度，双击恢复自动高度"
+      title={tr("上下拖动调整输入框高度，双击恢复自动高度")}
       style={{ position: 'absolute', top: -3, left: 0, right: 0, height: 6, zIndex: 5, cursor: 'ns-resize', touchAction: 'none' }}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
       onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}

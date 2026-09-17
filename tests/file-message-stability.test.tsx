@@ -171,3 +171,47 @@ describe('open preview follows current message media', () => {
     }
   })
 })
+
+
+describe('stable conversation media identity', () => {
+  it.each(['refresh', 'local-original', 'partial-media', 'new-version', 'unknown-version', 'explicit-removal', 'other-conversation', 'other-message', 'deleted', 'removed'] as const)(
+    'keeps access-reference rotation separate from %s', async boundary => {
+      vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+      vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+      const cover = { kind: 'image' as const, mediaRef: 'cover', fileAssetUid: 'asset',
+        fileName: 'photo.jpg', mimeType: 'image/jpeg', size: 1, sortOrder: 0 }
+      const item = { ...complete, title: '', contentBlocks: [cover] }
+      let view: ReactTestRenderer | undefined
+      try {
+        await act(async () => { view = create(<ArkmeMessageContent sourceRef="old-ref" sourceIdentityKey="chat-a" item={item} />) })
+        await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.jpg' }).props.onClick())
+        expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(1)
+        const next = { ...item,
+          ...(boundary === 'refresh' ? { contentBlocks: [{ ...cover, mediaRef: 'fresh-cover' }] } : {}),
+          ...(boundary === 'local-original' ? { contentBlocks: [{ ...cover, localFileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111' }] } : {}),
+          ...(['partial-media', 'new-version', 'unknown-version', 'explicit-removal'].includes(boundary) ? { contentBlocks: [], mediaUnavailable: true } : {}),
+          ...(boundary === 'new-version' ? { version: 8 } : {}),
+          ...(boundary === 'unknown-version' ? { version: undefined } : {}),
+          ...(boundary === 'other-message' ? { itemUid: 'other' } : {}),
+          ...(boundary === 'deleted' ? { status: 2 } : {}),
+          ...(boundary === 'removed' ? { contentBlocks: [] } : {}),
+        }
+        await act(async () => view!.update(<ArkmeMessageContent sourceRef="new-ref"
+          sourceIdentityKey={boundary === 'other-conversation' ? 'chat-b' : 'chat-a'}
+          mediaSelectionIsExplicit={boundary === 'explicit-removal'} item={next} />))
+        const remainsOpen = boundary === 'refresh' || boundary === 'partial-media' || boundary === 'local-original'
+        expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(remainsOpen ? 1 : 0)
+        if (remainsOpen) {
+          expect(view!.root.findByType(ArkmeMediaPreview).props.selected.mediaRef)
+            .toBe(boundary === 'refresh' ? 'fresh-cover' : 'cover')
+          await act(async () => view!.root.findByType(ArkmeMediaPreview).props.onClose())
+        }
+        await act(async () => view!.update(<ArkmeMessageContent sourceRef="latest-ref" sourceIdentityKey="chat-a" item={item} />))
+        expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(0)
+      } finally {
+        if (view) await act(async () => view!.unmount())
+        vi.unstubAllGlobals()
+      }
+    },
+  )
+})

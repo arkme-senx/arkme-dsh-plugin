@@ -1,9 +1,11 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArkmeClientConfig } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { OutgoingCallRuntime } from './outgoing-call-runtime.js'
+import { arkmeAuthStore } from './auth-store.js'
 
 export function outgoingCallModalLayout(compact: boolean, fullscreen: boolean): CSSProperties {
   if (fullscreen) return { width: '100vw', height: '100vh', borderRadius: 0 }
@@ -31,16 +33,21 @@ const retainedOverlayStyle: CSSProperties = {
 const frameStyle: CSSProperties = { width: '100%', height: '100%', display: 'block', border: 0, background: 'transparent' }
 
 export function ArkmeOutgoingCallHost() {
+  useArkmeLocale()
   const runtimeRef = useRef<OutgoingCallRuntime>()
   if (runtimeRef.current === undefined) {
     runtimeRef.current = new OutgoingCallRuntime({ loadAvatar: imageRef => arkmeAvatarImages.load(imageRef) })
   }
   const runtime = runtimeRef.current
+  const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
+  const userId = authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined
+  const scope = userId === undefined ? undefined : `${authState.auth?.environment}:${userId}`
   const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot)
   const attachCallFrame = useCallback((node: HTMLIFrameElement | null) => { runtime.attachFrame(node) }, [runtime])
   const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.callRequestId || 'idle')}`
 
   useEffect(() => {
+    runtime.configureReceiver(userId, scope)
     runtime.mount()
     const onMessage = (event: MessageEvent) => { runtime.handleWindowMessage(event) }
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && runtime.getSnapshot().visible) runtime.cancel() }
@@ -54,7 +61,7 @@ export function ArkmeOutgoingCallHost() {
       window.removeEventListener('keydown', onKeyDown)
       runtime.dispose()
     }
-  }, [runtime])
+  }, [runtime, userId, scope])
 
   if ((!snapshot.visible && !snapshot.retainFrame) || typeof document === 'undefined') return null
   const compact = snapshot.compact && !snapshot.fullscreen
@@ -71,7 +78,7 @@ export function ArkmeOutgoingCallHost() {
   const overlay = retainedFrame ? retainedOverlayStyle : compact ? compactOverlayStyle : overlayStyle
   const sectionProps = retainedFrame
     ? { 'aria-hidden': true }
-    : { role: 'dialog', 'aria-modal': !compact, 'aria-label': `与${snapshot.displayName}通话` }
+    : { role: 'dialog', 'aria-modal': !compact, 'aria-label': tr("与{v0}通话", { v0: snapshot.displayName }) }
 
   return createPortal(<div
     style={overlay}
@@ -86,12 +93,13 @@ export function ArkmeOutgoingCallHost() {
           type="button" onClick={() => { runtime.cancel() }} style={{
             height: 36, padding: '0 18px', border: 0, borderRadius: 18, background: '#fff', color: '#17191c', cursor: 'pointer',
           }}
-        >关闭</button></div>
+        >{tr("关闭")}</button></div>
       </div> : <iframe
+        key={snapshot.callRequestId}
         ref={attachCallFrame}
         src={callFrameUrl}
         name={JSON.stringify({ callRequestId: snapshot.callRequestId })}
-        title={`与${snapshot.displayName}通话`}
+        title={tr("与{v0}通话", { v0: snapshot.displayName })}
         allow="camera; microphone; autoplay"
         sandbox="allow-scripts allow-same-origin"
         referrerPolicy="no-referrer"

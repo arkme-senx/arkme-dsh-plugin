@@ -10,6 +10,7 @@ export interface OwnerTestUtterance {
   speaker?: { reference?: string; kind?: string; label?: string; user_id?: number }
 }
 export interface OwnerTestRecording {
+  memoryOwnerUserId?: number
   captureState?: 'receiving' | 'complete' | 'interrupted'
   startAt: number; duration?: number; id?: string; revision?: string
   items: OwnerTestUtterance[]; enhanced?: OwnerTestUtterance[]
@@ -19,10 +20,18 @@ export function recordingOwnerResponse(path: string, body: Record<string, unknow
   if (path.endsWith('/recordings/query')) {
     const offset = Number(body.page_cursor ?? 0), limit = Number(body.limit ?? 50)
     const selected = recordings.slice(offset, offset + limit)
-    return { items: selected.map(row => ({ status: 'available', recording_uid: row.id ?? recordingId, start_at: row.startAt,
+    return { items: selected.map(row => ({ memory_owner_user_id: row.memoryOwnerUserId ?? 42, status: 'available', recording_uid: row.id ?? recordingId, start_at: row.startAt,
       end_at: row.startAt + (row.duration ?? 10_000), duration_ms: row.duration ?? 10_000, owner_version: 1, capture_state: row.captureState,
     })), has_more: offset + limit < recordings.length,
     ...(offset + limit < recordings.length ? { next_page_cursor: String(offset + limit) } : {}) }
+  }
+  if (path.endsWith('/coverage/query')) {
+    const offset = Number(body.cursor ?? 0), limit = Number(body.limit ?? 200)
+    const selected = recordings.slice(offset, offset + limit)
+    return { source_version: 'coverage-v1', items: selected.map(row => ({
+      memory_owner_user_id: row.memoryOwnerUserId ?? 42, source_label: '已同步录音', processing: (row.coverage?.processing_count ?? 0) > 0,
+      clipped_start_at: Math.max(Number(body.start_at), row.startAt), clipped_end_at: Math.min(Number(body.end_at), row.startAt + (row.duration ?? 10_000)),
+    })), has_more: offset + limit < recordings.length, ...(offset + limit < recordings.length ? {next_cursor: String(offset + limit)} : {}) }
   }
   if (!path.endsWith('/recordings/transcript/query')) return undefined
   const row = recordings.find(value => (value.id ?? recordingId) === body.recording_uid)

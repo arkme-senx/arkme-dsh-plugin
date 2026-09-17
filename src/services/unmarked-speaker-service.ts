@@ -1,5 +1,5 @@
 import { recordingPlaybackRef, type RecordingPlaybackRef } from '../recording-playback-ref.js'
-import { randomUUID } from 'node:crypto'
+import { createHmac, randomUUID } from 'node:crypto'
 
 import { unmarkedSpeakerDisplayName } from '../contact-directory-presentation.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -153,7 +153,7 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
   }
 
   async list(
-    options: { limit?: number; cursor?: string; countOnly?: boolean; signal?: AbortSignal } = {},
+    options: { limit?: number; cursor?: string; countOnly?: boolean; refresh?: boolean; signal?: AbortSignal } = {},
   ): Promise<ArkmeDirectoryPage> {
     const session = await this.runtime.requireSession()
     const limit = options.countOnly === true ? 0 : boundedLimit(options.limit)
@@ -165,7 +165,7 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
       options.signal,
       {
         lane: 'interactive-read', key: `unmarked-speakers:list:${String(limit)}:${upstreamCursor}`,
-        cacheMs: 10_000, failureCooldownMs: 2_000,
+        cacheMs: 10_000, failureCooldownMs: 2_000, bypassCache: options.refresh === true,
       },
     )
     const crossDayCount = boundedInteger(data.cross_day_count)
@@ -182,6 +182,9 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
       throw new ArkmePluginError('unmarked-list-contract-invalid', '未标记说话人列表投影状态无效', true, 502)
     }
     const items: ArkmeDirectoryItem[] = []
+    // This identity survives reference expiry/restarts, but is scoped to this host and account.
+    // It cannot be used by any mutation endpoint in place of a candidateRef.
+    const identitySecret = await this.runtime.stateStore.uniqueCode()
     for (const value of listValue(data.items).slice(0, LIST_CAP)) {
       const raw = objectValue(value)
       const candidateId = stringValue(raw.candidate_id).trim()
@@ -202,7 +205,9 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
         segmentCount, firstSeenAtMillis, latestAtMillis,
       })
       items.push({
-        kind: 'unmarked-speaker', candidateRef, speakerToken,
+        kind: 'unmarked-speaker', candidateRef, speakerToken, appearanceDays, latestAtMillis,
+        identityKey: createHmac('sha256', identitySecret)
+          .update(JSON.stringify(['unmarked-speaker-identity-v1', this.runtime.config.environment, session.userId, candidateId])).digest('base64url'),
         displayName: unmarkedSpeakerDisplayName({
           speakerToken,
           firstSeenDate: localDate(status === 'single_day' ? latestAtMillis : firstSeenAtMillis),
@@ -227,6 +232,31 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
         : {}),
       ...(typeof data.cursor_stale === 'boolean' ? { cursorStale: data.cursor_stale } : {}),
     }
+  }
+
+  /** Hydrate on selection, so paginating a large directory never evicts selected references. */
+  async directoryCandidateRef(candidateId: string, signal?: AbortSignal): Promise<string> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/unmarked-speakers/detail', { candidate_id: candidateId }, session, signal,
+    )
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('unmarked-candidate-ref-account-mismatch', '账号已切换', false, 403)
+    if (data.outcome === 'candidate_not_found') throw new ArkmePluginError('unmarked-candidate-not-found', '该人物已变化，请刷新目录', false, 404)
+    const raw = objectValue(data.candidate)
+    if (stringValue(raw.candidate_id) !== candidateId || !['cross_day', 'single_day'].includes(String(raw.status))) {
+      throw new ArkmePluginError('unmarked-detail-contract-invalid', '人物详情暂不可用', true, 502)
+    }
+    this.pruneRefs()
+    const ref = this.sealCandidateRef(session.userId, {
+      candidateId, status: raw.status as CandidateStatus,
+      speakerToken: boundedInteger(raw.speaker_display_number) > 0 ? String(raw.speaker_display_number) : stringValue(raw.label),
+      appearanceDays: boundedInteger(raw.day_count), validAudioDurationMillis: boundedInteger(raw.total_speech_duration_ms),
+      segmentCount: boundedInteger(raw.segment_count), firstSeenAtMillis: positiveTimestamp(raw.first_seen_at),
+      latestAtMillis: positiveTimestamp(raw.last_seen_at),
+    })
+    return ref
   }
 
   async markOptions(candidateRef: string, signal?: AbortSignal): Promise<ArkmeUnmarkedSpeakerOptions> {

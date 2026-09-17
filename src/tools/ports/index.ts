@@ -1,3 +1,6 @@
+import type { ArkmeOfficialNotificationPort } from '../../official-notification-contract.js'
+import type { ArkmeSelfRolePort } from '../../self-role-contract.js'
+import type { ArkmeArchivePort } from '../../archive-contract.js'
 import type { ArkmeAiVideoToolPort } from './ai-video.js'
 import type { ArkmeArkoToolPort } from './arko.js'
 import type { ArkmeBotToolPort } from './bots.js'
@@ -21,6 +24,9 @@ import type { ArkmeUserBanToolPort } from './user-ban.js'
 import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
 export interface ArkmeCoreToolPorts extends
+  ArkmeOfficialNotificationPort,
+  ArkmeSelfRolePort,
+  ArkmeArchivePort,
   ArkmeDirectMessageAdmissionPort,
   ArkmeFileToolPort,
   ArkmeAiVideoToolPort,

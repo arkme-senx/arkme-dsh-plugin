@@ -17,6 +17,7 @@ it('reports the iframe public selection, coalesces list events, clears on hide a
   let mutate = () => undefined
   let stop = () => undefined
   let visible = true
+  let remoteSelected = false
   const unsubscribe = vi.fn()
   const disconnect = vi.fn()
   const document = Object.assign(new EventTarget(), { hidden: false, querySelector: () => ({ content: '/custom/api' }) })
@@ -25,6 +26,7 @@ it('reports the iframe public selection, coalesces list events, clears on hide a
   vi.stubGlobal('window', Object.assign(lifecycle, { frameElement: { parentElement: { getAttribute: (key: string) => ({
     'data-arkme-owned': 'deepseek-harness-surface', 'data-arkme-account-id': '42',
     'data-arkme-follow-session': visible ? 'true' : 'false',
+    'data-arkme-remote-session': remoteSelected ? 'runtime:session' : undefined,
   })[key] } } }))
   vi.stubGlobal('MutationObserver', class {
     constructor(callback: () => undefined) { mutate = callback }
@@ -84,28 +86,37 @@ it('reports the iframe public selection, coalesces list events, clears on hide a
   await vi.advanceTimersByTimeAsync(0)
   expect(JSON.parse(fetcher.mock.calls.at(-1)![1]!.body as string).params.sessionRef).toBe('session-B')
   const querySelector = document.querySelector
-  document.querySelector = () => ({ contentWindow: window }) as unknown as ReturnType<typeof querySelector>
+  document.querySelector = () => ({ contentWindow: window, parentElement: window.frameElement!.parentElement }) as unknown as ReturnType<typeof querySelector>
   openEmbeddedDshSession('session-target')
   expect(open).toHaveBeenCalledExactlyOnceWith('session-target')
   expect(() => openEmbeddedDshSession('')).toThrow('DSH 对话标识无效')
   open.mockImplementationOnce(() => { throw new Error('unknown session') })
   expect(() => openEmbeddedDshSession('missing')).toThrow('unknown session')
+  lifecycle.dispatchEvent(new Event('focus'))
+  await vi.advanceTimersByTimeAsync(0)
+  expect(JSON.parse(fetcher.mock.calls.at(-1)![1]!.body as string).params.focused).toBe(true)
+  await vi.advanceTimersByTimeAsync(10_000)
+  expect(JSON.parse(fetcher.mock.calls.at(-1)![1]!.body as string).params.focused).toBe(false)
+  remoteSelected = true; mutate()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(JSON.parse(fetcher.mock.calls.at(-1)![1]!.body as string).params.sessionRef).toBeNull()
   stop()
   expect((window as HarnessSessionWindow)[HARNESS_SESSION_NAVIGATION_KEY]).toBeUndefined()
   expect(() => openEmbeddedDshSession('session-target')).toThrow('DSH 对话尚未就绪')
   await vi.advanceTimersByTimeAsync(0)
-  expect(unsubscribe).toHaveBeenCalledOnce(); expect(disconnect).toHaveBeenCalledOnce()
+  expect(unsubscribe).toHaveBeenCalledTimes(2); expect(disconnect).toHaveBeenCalledTimes(2)
   expect(vi.getTimerCount()).toBe(0)
 })
 
 it('mounts local navigation without remote reporting and removes it on dispose', () => {
+  vi.stubGlobal('MutationObserver', class { observe() {} disconnect() {} })
   const open = vi.fn()
   let stop!: () => void
-  vi.stubGlobal('window', { frameElement: { parentElement: { getAttribute: () => 'deepseek-harness-surface' } } })
-  vi.stubGlobal('document', { querySelector: () => null })
+  vi.stubGlobal('window', { frameElement: { parentElement: { getAttribute: (key: string) => key === 'data-arkme-owned' ? 'deepseek-harness-surface' : null } } })
+  vi.stubGlobal('document', Object.assign(new EventTarget(), { querySelector: () => null }))
   const fetcher = vi.fn()
   vi.stubGlobal('fetch', fetcher)
-  apply({ effect: (effect: () => () => void) => { stop = effect() }, sessions: { open } } as unknown as ClientContext)
+  apply({ effect: (effect: () => () => void) => { stop = effect() }, sessions: { open, list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } } } as unknown as ClientContext)
   const navigation = (window as HarnessSessionWindow)[HARNESS_SESSION_NAVIGATION_KEY]!
   navigation.open('local-task')
   expect(open).toHaveBeenCalledExactlyOnceWith('local-task')
@@ -115,12 +126,13 @@ it('mounts local navigation without remote reporting and removes it on dispose',
 })
 
 it('distinguishes missing local sessions from failed Remote lists and silent refresh failures', async () => {
+  vi.stubGlobal('MutationObserver', class { observe() {} disconnect() {} })
   let byId: Record<string, object> = { local: {} }
   const refresh = vi.fn(async () => {})
   const list = vi.fn(async () => ({ ok: true, value: { items: [{ sessionId: 'local' }] } }))
-  vi.stubGlobal('window', { frameElement: { parentElement: { getAttribute: () => 'deepseek-harness-surface' } } })
-  vi.stubGlobal('document', { querySelector: () => null })
-  apply({ effect: (fn: () => unknown) => fn(), remote: { session: { list } }, sessions: { refresh, list: { getSnapshot: () => ({ phase: 'ready', byId }) } } } as unknown as ClientContext)
+  vi.stubGlobal('window', { frameElement: { parentElement: { getAttribute: (key: string) => key === 'data-arkme-owned' ? 'deepseek-harness-surface' : null } } })
+  vi.stubGlobal('document', Object.assign(new EventTarget(), { querySelector: () => null }))
+  apply({ effect: (fn: () => unknown) => fn(), remote: { session: { list } }, sessions: { refresh, list: { subscribe: () => () => {}, getSnapshot: () => ({ phase: 'ready', byId }) } } } as unknown as ClientContext)
   const bridge = (window as HarnessSessionWindow)[HARNESS_SESSION_NAVIGATION_KEY]!
   await expect(bridge.has('local')).resolves.toBe(true)
   await expect(bridge.has('other-machine')).resolves.toBe(false)
@@ -130,4 +142,52 @@ it('distinguishes missing local sessions from failed Remote lists and silent ref
   await expect(bridge.has('other-machine')).rejects.toThrow('读取失败')
   list.mockRejectedValueOnce(new Error('offline'))
   await expect(bridge.has('other-machine')).rejects.toThrow('offline')
+})
+
+
+it('registers the configured default workspace before creating an attachment conversation', async () => {
+  vi.stubGlobal('MutationObserver', class { observe() {} disconnect() {} })
+  let stop!: () => void
+  vi.stubGlobal('window', { frameElement: { parentElement: { isConnected: true, getAttribute: (key: string) => key === 'data-arkme-owned' ? 'deepseek-harness-surface' : null } } })
+  vi.stubGlobal('document', Object.assign(new EventTarget(), { querySelector: (selector: string) => selector.includes('arkme-default-workspace') ? { content: encodeURIComponent('/默认 workspace') } : null }))
+  const createWorkspace = vi.fn(async () => ({ workspaceId: 'default-id' }))
+  const createSession = vi.fn(async () => { throw new Error('stop after create') })
+  apply({ effect: (effect: () => () => void) => { stop = effect() }, get: (key: string) => key === 'workspaces' ? { create: createWorkspace } : undefined,
+    sessions: { create: createSession, scope: () => undefined, binding: () => undefined, list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {}, current: undefined }) } },
+  } as unknown as ClientContext)
+  const bridge = (window as unknown as import('../src/client/harness-attachment-draft.js').HarnessDraftWindow).__arkmeHarnessAttachmentDraft!
+  await expect(bridge.prepare({ operationId: 'default-workspace', files: [], signal: new AbortController().signal })).rejects.toThrow('stop after create')
+  expect(createWorkspace).toHaveBeenCalledWith({ path: '/默认 workspace' })
+  expect(createSession).toHaveBeenCalledWith({ sessionId: expect.any(String), workspaceId: 'default-id' })
+  stop()
+})
+
+it.each(['stale', 'ready', 'missing'] as const)('confirms composer workspace membership (%s)', async state => {
+  vi.stubGlobal('MutationObserver', class { observe() {} disconnect() {} })
+  let stop!: () => void
+  vi.stubGlobal('window', { frameElement: { parentElement: { isConnected: true, getAttribute: (key: string) => key === 'data-arkme-owned' ? 'deepseek-harness-surface' : null } } })
+  vi.stubGlobal('document', Object.assign(new EventTarget(), { querySelector: () => ({ content: encodeURIComponent('/default') }) }))
+  let id: string | undefined
+  let items = [{ workspaceId: 'default', sessionIds: [] as string[] }]
+  const createWorkspace = vi.fn(async () => {
+    items = [{ workspaceId: 'default', sessionIds: id && state !== 'missing' ? [id] : [] }]
+    return items[0]!
+  })
+  apply({ effect: (effect: () => () => void) => { stop = effect() },
+    get: () => ({ create: createWorkspace, list: { getSnapshot: () => ({ items }) } }),
+    sessions: {
+      create: async (options: { sessionId: string }) => {
+        id = options.sessionId
+        if (state === 'ready') items = [{ workspaceId: 'default', sessionIds: [id] }]
+        return id
+      },
+      scope: () => { throw new Error('workspace confirmed before draft access') }, binding: () => undefined,
+      list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) },
+    },
+  } as unknown as ClientContext)
+  const bridge = (window as unknown as import('../src/client/harness-attachment-draft.js').HarnessDraftWindow).__arkmeHarnessAttachmentDraft!
+  await expect(bridge.prepare({ operationId: state, files: [], signal: new AbortController().signal }))
+    .rejects.toThrow(state === 'missing' ? '默认工作区尚未同步' : 'workspace confirmed before draft access')
+  expect(createWorkspace).toHaveBeenCalledTimes(state === 'ready' ? 1 : 2)
+  stop()
 })

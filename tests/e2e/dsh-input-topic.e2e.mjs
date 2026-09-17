@@ -163,7 +163,7 @@ describe('packed Arkme on the target Harness with the real record owner', () => 
       await page.getByRole('treeitem', { name: /发给自己/ }).click()
       // Wait for the aggregate selection to resolve before opening its menu;
       // the initial undefined-source shell is replaced when the directory loads.
-      await page.getByText('Enter发送 / Shift+Enter换行', { exact: true }).waitFor({ state: 'visible' })
+      await page.getByRole('button', { name: /当前发言角色/ }).waitFor({ state: 'visible' })
       await page.getByRole('button', { name: '选择主题', exact: true }).click()
       const topicTree = page.getByRole('tree', { name: '主题', exact: true })
       expect(await topicTree.getByRole('button', { name: /发给 DSH 的消息/ }).count()).toBe(0)

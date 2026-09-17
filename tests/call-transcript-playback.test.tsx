@@ -37,6 +37,45 @@ beforeEach(() => { FakeAudio.instances = []; vi.stubGlobal('Audio', FakeAudio); 
 afterEach(() => { act(() => { view?.unmount() }); vi.unstubAllGlobals() })
 
 describe('shared call transcript playback', () => {
+  it('pauses a retained video on leaving without restarting it on return', async () => {
+    const video = { pause: vi.fn(), play: vi.fn(async () => {}), currentTime: 0 }
+    await act(async () => { view = create(<ArkmeCallDetailContent selectedItem={selected} detail={detail} detailState="ready" />, { createNodeMock: node => node.type === 'video' ? video : null }) })
+    act(() => { view.root.findByProps({ 'aria-label': '播放视频记录' }).props.onClick() })
+    const plays = video.play.mock.calls.length, pauses = video.pause.mock.calls.length
+    await act(async () => { view.update(<ArkmeCallDetailContent active={false} selectedItem={selected} detail={detail} detailState="ready" />) })
+    expect(video.pause.mock.calls.length).toBeGreaterThan(pauses)
+    await act(async () => { view.update(<ArkmeCallDetailContent active selectedItem={selected} detail={detail} detailState="ready" />) })
+    expect(video.play).toHaveBeenCalledTimes(plays)
+  })
+  it('stops audio on leaving the retained page and does not autoplay on return', async () => {
+    await act(async () => { view = create(<ArkmeCallDetailContent selectedItem={selected} detail={detail} detailState="ready" />) })
+    act(() => { clickSegment('第一段') })
+    const audio = FakeAudio.instances[0]!
+    await act(async () => { view.update(<ArkmeCallDetailContent active={false} selectedItem={selected} detail={detail} detailState="ready" />) })
+    expect(audio.pause).toHaveBeenCalledOnce()
+    await act(async () => { audio.resolve(); view.update(<ArkmeCallDetailContent active selectedItem={selected} detail={detail} detailState="ready" />) })
+    expect(JSON.stringify(view.toJSON())).not.toContain('正在播放')
+    expect(FakeAudio.instances).toHaveLength(1)
+    expect(view.root.findAllByType('article')).toHaveLength(3)
+  })
+  it.each(['pane', 'drawer'])('shows avatars without a nickname row and reserves inline time space in the %s', async mode => {
+    await act(async () => { view = create(mode === 'drawer' ? <ArkmeCallDetailDrawer item={item} onClose={() => {}} /> : <ArkmeCallDetailContent selectedItem={selected} detail={detail} detailState="ready" />) })
+    const rows = view.root.findAllByType('article')
+    expect(rows).toHaveLength(3)
+    for (const row of rows) {
+      expect(row.findAllByType('small')).toHaveLength(0)
+      const time = row.findByType('time')
+      expect(time.props.style).toMatchObject({ position: 'absolute', bottom: 0, right: 0, fontSize: 10 })
+      expect(time.children.join('')).toMatch(/^\d{2}:\d{2}$/)
+      expect(row.findAll(node => node.props['aria-hidden'] === 'true' && node.props.style?.width === 40)).toHaveLength(1)
+      expect(row.findAll(node => node.props.style?.borderRadius === '50%' || node.props.style?.borderRadius === 999).length).toBeGreaterThan(0)
+    }
+    expect(FakeAudio.instances).toHaveLength(0)
+    act(() => { clickSegment('第一段') })
+    expect(rows[0]!.findByProps({ role: 'status' }).findAll(node => node.props.style?.width === 40)).toHaveLength(1)
+    expect(rows[0]!.findAllByType('time')).toHaveLength(1)
+  })
+
   it.each(['pane', 'drawer'])('plays a whole utterance and toggles stop in the %s', async mode => {
     await act(async () => { view = create(mode === 'drawer' ? <ArkmeCallDetailDrawer item={item} onClose={() => {}} /> : <ArkmeCallDetailContent selectedItem={selected} detail={detail} detailState="ready" />) })
     expect(FakeAudio.instances).toHaveLength(0)

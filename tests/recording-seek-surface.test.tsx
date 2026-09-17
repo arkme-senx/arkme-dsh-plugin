@@ -23,6 +23,9 @@ describe('recording surface selection and real playback controller', () => {
   const audios: FakeAudio[] = []
   const timeline = () => renderer.root.findByType(ArkmeRecordingTimeline)
   beforeEach(async () => {
+    // Keep another past day selectable in the current month, even when run on the 1st.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 15, 12))
     audios.length = 0
     vi.stubGlobal('Audio', class extends FakeAudio {
       constructor(src: string) { super(src); audios.push(this) }
@@ -49,6 +52,7 @@ describe('recording surface selection and real playback controller', () => {
   afterEach(async () => {
     await act(async () => { renderer.unmount(); await tick() })
     vi.unstubAllGlobals(); vi.restoreAllMocks()
+    vi.useRealTimers()
   })
 
   it('keeps the new selected time after the old audio reports progress', async () => {

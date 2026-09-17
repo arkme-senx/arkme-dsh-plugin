@@ -16,8 +16,8 @@ const topic: ArkmeSourceItem = {
   sourceRef: 'topic:a', kind: 'topic', displayName: '主题 A', recordCount: 3,
 }
 
-function pointer(type: string, pointerType = 'mouse') {
-  const event = new Event(type, { bubbles: true })
+function pointer(type: string, pointerType = 'mouse', x = 0, y = 0) {
+  const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y })
   Object.defineProperty(event, 'pointerType', { value: pointerType })
   return event
 }
@@ -97,7 +97,7 @@ it('opens the one existing breadcrumb menu on hover and keeps its complete foote
   expect(anchor.getAttribute('aria-expanded')).toBe('false')
 })
 
-it('bridges the row/menu gap and closes only after leaving both for the tolerance window', async () => {
+it('bridges the narrow row/menu gap but closes immediately after leaving both', async () => {
   await act(async () => {
     root.render(<ArkmeSourceBreadcrumb trigger="none" selectedSource={undefined} sources={[topic]}
       onSelect={() => {}} onSelectAggregate={() => {}} />)
@@ -106,21 +106,24 @@ it('bridges the row/menu gap and closes only after leaving both for the toleranc
   await act(async () => {
     anchor.dispatchEvent(pointer('pointerenter'))
     vi.advanceTimersByTime(200)
-    anchor.dispatchEvent(pointer('pointerleave'))
-    vi.advanceTimersByTime(200)
   })
   const menu = document.querySelector<HTMLElement>('[data-arkme-self-topic-menu]')!
+  const rect = { left: 308, right: 628, top: 100, bottom: 660 } as DOMRect
+  vi.spyOn(menu, 'getClientRects').mockReturnValue([rect] as unknown as DOMRectList)
+  vi.spyOn(menu, 'getBoundingClientRect').mockReturnValue(rect)
   await act(async () => {
-    menu.dispatchEvent(pointer('pointerover'))
+    anchor.dispatchEvent(pointer('pointerleave', 'mouse', 304, 130))
     vi.advanceTimersByTime(500)
   })
   expect(document.querySelector('[data-arkme-self-topic-menu]')).toBe(menu)
   await act(async () => {
-    menu.dispatchEvent(pointer('pointerout'))
-    vi.advanceTimersByTime(299)
+    menu.dispatchEvent(pointer('pointerover', 'mouse', 320, 130))
+    vi.advanceTimersByTime(500)
   })
   expect(document.querySelector('[data-arkme-self-topic-menu]')).toBe(menu)
-  await act(async () => { vi.advanceTimersByTime(1) })
+  await act(async () => {
+    menu.dispatchEvent(pointer('pointerout', 'mouse', 700, 200))
+  })
   expect(document.querySelector('[data-arkme-self-topic-menu]')).toBeNull()
 })
 

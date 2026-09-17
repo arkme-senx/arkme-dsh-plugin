@@ -67,7 +67,7 @@ interface ArkmeDesktopExtensionQuarantineOptions {
   installStore: Pick<ArkmeExtensionInstallStore, 'list' | 'get' | 'put'> | InstallStoreLike
   setProfileEnabled(packageName: string, enabled: boolean): Promise<void>
   requestRestart(input: { packageName: string; previousProfileIncluded: false }): Promise<void>
-  isPackageActive(packageName: string): boolean
+  isPackageActive(packageName: string): boolean | Promise<boolean>
   now?: () => number
 }
 
@@ -164,7 +164,7 @@ export class ArkmeDesktopExtensionQuarantine {
       let changed = false
       for (const entry of stored.receipt.entries) {
         if (entry.resolvedAtMillis !== undefined) continue
-        if (entry.reenableRequestedAtMillis !== undefined && this.options.isPackageActive(entry.packageName)) {
+        if (entry.reenableRequestedAtMillis !== undefined && await this.options.isPackageActive(entry.packageName)) {
           entry.resolvedAtMillis = this.now()
           delete entry.reenableRequestedAtMillis
           const installed = this.installedByPackage(entry.packageName)
@@ -200,7 +200,7 @@ export class ArkmeDesktopExtensionQuarantine {
       throw new Error('该扩展尚未请求重新启用')
     }
     const profileEnabled = await this.profileContains(packageName)
-    const active = this.options.isPackageActive(packageName)
+    const active = await this.options.isPackageActive(packageName)
     if (profileEnabled && active) await this.resolveActive()
     return { profileEnabled, active }
   }

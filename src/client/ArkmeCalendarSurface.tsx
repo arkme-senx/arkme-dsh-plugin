@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
+import { tr, useArkmeLocale, arkmeIntlLocale, calendarWeekdays, getArkmeLocale } from './locale.js'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
@@ -12,12 +14,14 @@ import type {
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
 } from '../types.js'
+import { arkmeSelfRoleAvatarFallback } from './self-role-presentation.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDetails.js'
 import { ArkmeDirectoryWindow } from './ArkmeDirectoryWindow.js'
 import { ArkmeDirectorySourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ARKME_NAVIGATION_WIDTH } from './arkme-layout.js'
 import {
   ARKME_DSH_AGENT_INPUT_LABEL,
   ArkmeDshAgentInputMarker,
@@ -26,6 +30,11 @@ import {
 import { arkmeCalendarInvalidations } from './calendar-invalidation-store.js'
 import { useCalendarMonth } from './use-calendar-month.js'
 import { arkmeUi } from './ui-controller.js'
+import type { SelfCalendarDateSelection } from './use-self-calendar-navigation.js'
+import type { CalendarMonthSnapshot } from './calendar-month-cache.js'
+import { CALENDAR_MIN_HEIGHT, useCalendarPopoverLayout } from './use-calendar-popover-layout.js'
+import { ArkmeCalendarDateTooltip } from './ArkmeCalendarDateTooltip.js'
+import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
 
 const colors = {
   text: arkmeTheme.text,
@@ -35,7 +44,7 @@ const colors = {
   border: arkmeTheme.border,
   borderSoft: arkmeTheme.borderSoft,
   panel: arkmeTheme.base,
-  bubble: '#eef1f8',
+  bubble: arkmeTheme.accentSoft,
   selected: arkmeTheme.primaryAction,
   selectedText: arkmeTheme.onPrimaryAction,
   danger: arkmeTheme.danger,
@@ -47,7 +56,7 @@ const styles: Record<string, CSSProperties> = {
     overflow: 'hidden', color: colors.text, pointerEvents: 'none',
   },
   productRailRoot: {
-    position: 'fixed', top: 0, right: 0, bottom: 0, left: 72, zIndex: 60,
+    position: 'fixed', top: 0, right: 0, bottom: 0, left: ARKME_NAVIGATION_WIDTH, zIndex: 60,
   },
   backdrop: {
     position: 'absolute', inset: 0, zIndex: 1, width: '100%', height: '100%', padding: 0,
@@ -62,21 +71,21 @@ const styles: Record<string, CSSProperties> = {
   },
   calendarCard: {
     position: 'absolute', top: 191, left: 105, width: 354, padding: '16px 17px 18px',
-    boxSizing: 'border-box', pointerEvents: 'auto', border: '1px solid rgba(216,217,221,.9)',
-    borderRadius: 18, background: 'rgba(255,255,255,.98)',
-    boxShadow: '0 22px 52px rgba(27,29,37,.14), 0 2px 8px rgba(27,29,37,.055)',
+    boxSizing: 'border-box', pointerEvents: 'auto', border: `1px solid ${colors.border}`,
+    borderRadius: 18, background: arkmeTheme.menu, color: colors.text,
+    boxShadow: arkmeTheme.shadow,
   },
   productRailCalendarCard: { top: 88, left: 12 },
   calendarPointer: {
     position: 'absolute', top: 124, left: -7, width: 13, height: 13,
-    transform: 'rotate(45deg)', background: '#fff',
-    borderBottom: '1px solid #dfe0e3', borderLeft: '1px solid #dfe0e3',
+    transform: 'rotate(45deg)', background: arkmeTheme.menu,
+    borderBottom: `1px solid ${colors.border}`, borderLeft: `1px solid ${colors.border}`,
   },
   header: { height: 30, display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   navCluster: { display: 'flex', alignItems: 'center', gap: 3 },
   iconButton: {
     width: 27, height: 27, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
-    border: 0, borderRadius: 8, background: 'transparent', color: '#777b84',
+    border: 0, borderRadius: 8, background: 'transparent', color: colors.secondary,
     cursor: 'pointer', font: 'inherit', lineHeight: 1,
   },
   navDisabled: { opacity: .32, cursor: 'default' },
@@ -84,7 +93,7 @@ const styles: Record<string, CSSProperties> = {
   monthTitle: { margin: '0 0 0 9px', fontSize: 13, lineHeight: '20px', fontWeight: 500 },
   todayButton: {
     width: 'auto', height: 27, flex: 'none', padding: '0 7px', border: 0,
-    borderRadius: 8, background: 'transparent', color: '#747984', cursor: 'pointer',
+    borderRadius: 8, background: 'transparent', color: colors.secondary, cursor: 'pointer',
     font: 'inherit', fontSize: 11, fontWeight: 400,
   },
   todayDisabled: { color: colors.caption, opacity: .45, cursor: 'default' },
@@ -93,39 +102,41 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center',
   },
   weekDay: {
-    textAlign: 'center', color: '#9a9da5', fontSize: 10, lineHeight: '16px', fontWeight: 400,
+    textAlign: 'center', color: colors.secondary, fontSize: 10, lineHeight: '16px', fontWeight: 400,
   },
   days: {
     display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4,
   },
   blank: { height: 45 },
   dayButton: {
+    position: 'relative',
     height: 45, minWidth: 0, display: 'grid', alignContent: 'center', justifyItems: 'center', gap: 3,
     padding: 0, borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent', borderRadius: 11,
-    background: 'transparent', color: '#50545d', cursor: 'pointer', font: 'inherit',
+    background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit',
     boxSizing: 'border-box', transition: 'background 120ms ease, border-color 120ms ease, color 120ms ease',
   },
-  dayDisabled: { color: colors.caption, opacity: .4, cursor: 'default' },
+  dayDisabled: { color: colors.tertiary, cursor: 'default' },
   daySelected: {
     borderColor: colors.selected, background: colors.selected, color: colors.selectedText,
   },
   dayNumber: { fontSize: 12, lineHeight: '16px', fontWeight: 500 },
-  dayCount: { height: 9, color: '#8b91a1', fontSize: 9, lineHeight: '9px', fontWeight: 400 },
+  dayCount: { height: 9, color: colors.secondary, fontSize: 9, lineHeight: '9px', fontWeight: 400 },
   dayCountPopulated: {
-    minWidth: 15, padding: '0 4px', background: 'transparent', color: 'var(--dsw-alias-label-secondary, #626878)',
+    minWidth: 15, padding: '0 4px', background: 'transparent', color: colors.secondary,
     transition: 'background 120ms ease, color 120ms ease',
   },
   selectedDayCount: { background: 'transparent', color: colors.selectedText, opacity: 1 },
   status: { marginTop: 10, minHeight: 18, color: colors.secondary, fontSize: 12, lineHeight: '18px' },
+  retryButton: { marginLeft: 8, padding: '4px 8px', border: 0, borderRadius: 6,
+    background: 'transparent', color: colors.text, font: 'inherit', cursor: 'pointer' },
   error: { color: colors.danger },
   loadingStatus: { display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.secondary, fontSize: 12, lineHeight: '18px', padding: '12px 0' },
   initialLoading: { minHeight: '100%', boxSizing: 'border-box' },
-  topicBadge: { display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%', marginTop: 10, padding: '2px 6px', minHeight: 24, boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 8, color: colors.tertiary, fontSize: 12, lineHeight: '18px' },
   recordsPanel: {
     position: 'absolute', top: 0, right: 0, bottom: 0, width: 394, minWidth: 0, minHeight: 0,
     display: 'flex', flexDirection: 'column', padding: '28px 22px', boxSizing: 'border-box',
-    overflow: 'hidden', pointerEvents: 'auto', borderLeft: '1px solid rgba(225,225,228,.9)',
-    background: 'rgba(255,255,255,.98)', boxShadow: '-18px 0 52px rgba(28,30,37,.09)',
+    overflow: 'hidden', pointerEvents: 'auto', borderLeft: `1px solid ${colors.border}`,
+    background: arkmeTheme.menu, boxShadow: arkmeTheme.shadow,
   },
   recordsHeader: {
     flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -139,19 +150,19 @@ const styles: Record<string, CSSProperties> = {
   recordStack: { width: 'auto', minWidth: 0, maxWidth: 282, flex: '0 1 auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' },
   recordHeader: { width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 7, marginBottom: 5 },
   recordTitle: {
-    margin: 0, color: '#4f535c', fontSize: 12, lineHeight: '18px', fontWeight: 500,
+    margin: 0, color: colors.text, fontSize: 12, lineHeight: '18px', fontWeight: 500,
   },
-  recordTime: { flex: 'none', color: '#a0a3aa', fontSize: 11, lineHeight: '18px' },
-  recordBubble: { maxWidth: '100%', padding: '11px 12px 9px', border: '1px solid rgba(83,97,145,.045)', borderRadius: '16px 5px 16px 16px', background: colors.bubble, color: '#292c34', boxShadow: '0 1px 1px rgba(20,22,28,.015)' },
+  recordTime: { flex: 'none', color: colors.secondary, fontSize: 11, lineHeight: '18px' },
+  recordBubble: { maxWidth: '100%', padding: '11px 12px 9px', border: `1px solid ${colors.borderSoft}`, borderRadius: '16px 5px 16px 16px', background: colors.bubble, color: colors.text, boxShadow: '0 1px 1px rgba(20,22,28,.015)' },
   recordSource: {
     display: 'flex', maxWidth: '100%', marginTop: 8, alignItems: 'center',
-    justifyContent: 'flex-end', gap: 4, color: '#858b99',
+    justifyContent: 'flex-end', gap: 4, color: colors.secondary,
     fontSize: 9, lineHeight: '14px', textAlign: 'right',
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
   recordSourceIcon: { width: 10, height: 10, flex: 'none', opacity: .72 },
-  emptyDay: { marginTop: 92, display: 'grid', justifyItems: 'center', textAlign: 'center', color: '#6d727b' },
-  emptyIcon: { marginBottom: 14, color: '#747b8a' },
+  emptyDay: { marginTop: 92, display: 'grid', justifyItems: 'center', textAlign: 'center', color: colors.secondary },
+  emptyIcon: { marginBottom: 14, color: colors.secondary },
 
 }
 
@@ -180,6 +191,7 @@ function dateKey(date: Date): string {
 }
 
 function monthLabel(date: Date): string {
+  if (getArkmeLocale() === 'en') return new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric' }).format(date)
   return `${String(date.getFullYear())}年${String(date.getMonth() + 1)}月`
 }
 
@@ -188,13 +200,14 @@ function sameDay(left: Date, right: Date): boolean {
 }
 
 function selectedDayLabel(date: Date, today: Date): string {
+  if (getArkmeLocale() === 'en') return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(date) + (sameDay(date, today) ? ' · Today' : '')
   const suffix = sameDay(date, today) ? ' · 今天' : ''
   return `${monthLabel(date)}${String(date.getDate())}日${suffix}`
 }
 
 function timeLabel(value: number): string {
   return Number.isFinite(value) && value > 0
-    ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
+    ? new Intl.DateTimeFormat(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
     : ''
 }
 
@@ -213,7 +226,7 @@ function sameMonth(left: Date, right: Date): boolean {
 }
 
 export function ArkmeCalendarMonthView({
-  visibleMonth, selectedDate, today, days, loading, error, onVisibleMonthChange, onSelectDate,
+  visibleMonth, selectedDate, today, days, loading, error, onVisibleMonthChange, onSelectDate, recordingDates,
 }: {
   visibleMonth: Date
   selectedDate: Date
@@ -223,7 +236,9 @@ export function ArkmeCalendarMonthView({
   error: string
   onVisibleMonthChange(month: Date): void
   onSelectDate(date: Date): void
+  recordingDates?: ReadonlySet<string>
 }) {
+  useArkmeLocale()
   const calendarByDay = useMemo(() => new Map(days.map(day => [day.bucketDate, day])), [days])
   const canGoNext = !sameMonth(visibleMonth, today) && visibleMonth < monthStart(today)
   const canJumpToday = !sameDay(selectedDate, today) || !sameMonth(visibleMonth, today)
@@ -236,24 +251,22 @@ export function ArkmeCalendarMonthView({
   return <>
     <header style={styles.header}>
       <div style={styles.navCluster}>
-        <button type="button" aria-label="上个月" title="上个月" style={styles.iconButton}
+        <button data-arkme-feedback="neutral" type="button" aria-label={tr("上个月")} title={tr("上个月")} style={styles.iconButton}
           onClick={() => onVisibleMonthChange(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))}>
           <CaretRight size={16} style={styles.caretLeft} aria-hidden />
         </button>
-        <button type="button" aria-label="下个月" title="下个月" disabled={!canGoNext}
+        <button data-arkme-feedback="neutral" type="button" aria-label={tr("下个月")} title={tr("下个月")} disabled={!canGoNext}
           style={{ ...styles.iconButton, ...(!canGoNext ? styles.navDisabled : {}) }}
           onClick={() => { if (canGoNext) onVisibleMonthChange(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1)) }}>
           <CaretRight size={16} aria-hidden />
         </button>
       </div>
       <h2 style={styles.monthTitle}>{monthLabel(visibleMonth)}</h2>
-      <button type="button" disabled={!canJumpToday}
+      <button data-arkme-feedback="neutral" type="button" disabled={!canJumpToday}
         style={{ ...styles.todayButton, ...(!canJumpToday ? styles.todayDisabled : {}) }}
-        onClick={() => { onVisibleMonthChange(monthStart(today)); chooseDate(today) }}>
-        回到今日
-      </button>
+        onClick={() => { onVisibleMonthChange(monthStart(today)); chooseDate(today) }}>{tr("回到今日")}</button>
     </header>
-    <div style={styles.week}>{['一', '二', '三', '四', '五', '六', '日'].map(label => <span key={label} style={styles.weekDay}>{label}</span>)}</div>
+    <div style={styles.week}>{calendarWeekdays().map(label => <span key={label} style={styles.weekDay}>{label}</span>)}</div>
     <div style={{ ...styles.days, opacity: loading && days.length === 0 ? .55 : 1 }}>
       {calendarCells(visibleMonth).map((date, index) => {
         if (date === undefined) return <span key={`blank:${String(index)}`} style={styles.blank} />
@@ -266,12 +279,13 @@ export function ArkmeCalendarMonthView({
           {...(meta === undefined ? {} : { meta })}
           selected={key === dateKey(selectedDate)}
           disabled={disabled}
+          hasRecordingIndex={recordingDates?.has(key) === true}
           onClick={() => { if (!disabled) chooseDate(date) }}
         />
       })}
     </div>
     {(error !== '' || loading) && <div style={{ ...styles.status, ...(error !== '' ? styles.error : {}) }} role={error !== '' ? 'alert' : 'status'}>
-      {error || (days.length === 0 ? '正在加载…' : '正在更新…')}
+      {error || (days.length === 0 ? tr("正在加载…") : tr("正在更新…"))}
     </div>}
   </>
 }
@@ -289,8 +303,210 @@ interface ScopedResource<T> {
   value?: T
 }
 
+type CalendarIndex = CalendarMonthSnapshot & { retry(): void; notice?: string; incomplete?: boolean; retryNotice?: (() => void) | undefined }
+
+/** A single month in the shared scrolling calendar; self/topic months load only near the viewport. */
+function ScrollingCalendarMonth({ month, today, selectedDate, sourceRef, scopeKey, accountScope, timezone, index, initial, scrollRoot, onSelect, onNavigate, firstMonth }: {
+  month: Date; today: Date; selectedDate: Date; sourceRef?: string | undefined; scopeKey?: string | undefined; accountScope?: string | undefined
+  timezone: string; index?: CalendarIndex | undefined; initial: boolean; scrollRoot: RefObject<HTMLDivElement>
+  onSelect(date: Date, day?: ArkmeCalendarBucketDay): void
+  onNavigate(month: Date): void; firstMonth: string
+}) {
+  useArkmeLocale()
+  const element = useRef<HTMLElement>(null)
+  const [editingMonth, setEditingMonth] = useState(false)
+  const [visible, setVisible] = useState(initial)
+  useEffect(() => { if (initial) setVisible(true) }, [initial])
+  useEffect(() => {
+    if (index || visible || !element.current || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) { setVisible(true); observer.disconnect() }
+    }, { root: scrollRoot.current, rootMargin: '60px' })
+    observer.observe(element.current)
+    return () => observer.disconnect()
+  }, [index, visible, scrollRoot])
+  const loaded = useCalendarMonth({ scopeKey: scopeKey ?? sourceRef ?? 'global', ...(sourceRef ? { sourceRef } : {}),
+    startDate: dateKey(monthStart(month)), endDate: dateKey(monthEnd(month)), timezone }, !index && visible, accountScope)
+  const resource = index ?? loaded
+  const byDay = new Map(resource.value?.days.map(day => [day.bucketDate, day]))
+  const known = resource.value !== undefined
+  return <section ref={element} aria-label={monthLabel(month)} data-calendar-month={dateKey(month).slice(0, 7)} style={{ paddingBottom: 12 }}>
+    <h3 style={{ ...styles.monthTitle, margin: '8px 2px', height: 24, color: colors.secondary }}>
+      {editingMonth ? <input autoFocus aria-label={tr("跳转月份")} type="month" min={firstMonth} max={dateKey(today).slice(0, 7)}
+        defaultValue={dateKey(month).slice(0, 7)} style={{ height: 24, boxSizing: 'border-box', border: 0, padding: 0,
+          background: 'transparent', color: 'inherit', font: 'inherit', maxWidth: '100%' }}
+        onBlur={() => setEditingMonth(false)} onKeyDown={event => {
+          if (event.key === 'Escape') { event.stopPropagation(); setEditingMonth(false) }
+        }} onChange={event => {
+          if (/^\d{4}-\d{2}$/.test(event.target.value)) {
+            onNavigate(new Date(`${event.target.value}-01T00:00:00`)); setEditingMonth(false)
+          }
+        }} /> : <button type="button" data-arkme-feedback="neutral" aria-label={tr("跳转月份：{v0}", { v0: monthLabel(month) })}
+        title={tr("跳转年月")} onClick={() => setEditingMonth(true)} style={{ height: 24, padding: '0 3px', marginLeft: -3,
+          border: 0, borderRadius: 5, background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' }}>
+        {monthLabel(month)}
+      </button>}
+    </h3>
+    <div style={styles.days}>{calendarCells(month).map((date, i) => {
+      if (!date) return <span key={i} style={styles.blank} />
+      const day = byDay.get(dateKey(date))
+      return <ArkmeCalendarCell key={dateKey(date)} date={date} {...(day ? { meta: day } : {})}
+        selected={sameDay(date, selectedDate)} disabled={date > today || !known || (index !== undefined && !day?.hasRecords)}
+        today={sameDay(date, today)} showCountLabel unknown={!known} incomplete={index?.incomplete}
+        onClick={() => onSelect(date, day)} />
+    })}</div>
+    {!index && (resource.loading || resource.error) && <div style={styles.status} role={resource.error ? 'alert' : 'status'}>
+      {resource.error || (known ? tr("正在更新…") : tr("正在加载…"))}
+      {resource.error && <button type="button" style={styles.retryButton} data-arkme-feedback="neutral" onClick={resource.retry}>{tr("重试")}</button>}
+    </div>}
+  </section>
+}
+
+export function ArkmeCalendarMultiMonthView({ today, selectedDate, sourceRef, scopeKey, accountScope, timezone, index, onSelect }: {
+  today: Date; selectedDate: Date; sourceRef?: string | undefined; scopeKey?: string | undefined; accountScope?: string | undefined
+  timezone: string; index?: CalendarIndex | undefined; onSelect(date: Date, day?: ArkmeCalendarBucketDay): void
+}) {
+  useArkmeLocale()
+  const selectedKey = dateKey(selectedDate)
+  const monthNumber = (date: Date) => date.getFullYear() * 12 + date.getMonth()
+  const monthDate = (month: number) => new Date(Math.floor(month / 12), month % 12, 1)
+  const firstDate = index?.value?.days[0]?.bucketDate
+  const earliest = firstDate ? monthNumber(new Date(`${firstDate.slice(0, 7)}-01T00:00:00`)) : 1970 * 12
+  const latest = monthNumber(today)
+  const clampMonth = (month: number) => Math.max(earliest, Math.min(latest, month))
+  const readingMonth = clampMonth(monthNumber(selectedDate))
+  // Reading position, visible heading and mounted range are deliberately independent.
+  // Keep a newer neighbour even when opening old history; both ends grow on demand.
+  const [range, setRange] = useState(() => ({ start: readingMonth - 1, end: readingMonth + 1 }))
+  const [visibleMonth, setVisibleMonth] = useState(readingMonth)
+  const [positionTarget, setPositionTarget] = useState<{ month: number; day?: string }>({ month: readingMonth, day: selectedKey })
+  const positionedTarget = useRef<typeof positionTarget>()
+  const scrollRoot = useRef<HTMLDivElement>(null)
+  const prependPosition = useRef<{ height: number; top: number }>()
+  const programmedTop = useRef<number>()
+  const extending = useRef(false)
+  const initialized = useRef(false)
+  const browsedMonths = useRef(false)
+  useLayoutEffect(() => {
+    // An asynchronously loaded index may supply a fallback date, but must not interrupt manual browsing.
+    if (!browsedMonths.current) {
+      setRange({ start: readingMonth - 1, end: readingMonth + 1 })
+      setVisibleMonth(readingMonth)
+      setPositionTarget({ month: readingMonth, day: selectedKey })
+    }
+  }, [selectedKey, readingMonth])
+  const start = clampMonth(range.start), end = clampMonth(range.end)
+  const months = Array.from({ length: end - start + 1 }, (_, i) => monthDate(start + i))
+  useLayoutEffect(() => {
+    const root = scrollRoot.current
+    if (!root) return
+    if (prependPosition.current !== undefined) {
+      root.scrollTop = prependPosition.current.top + root.scrollHeight - prependPosition.current.height
+      prependPosition.current = undefined
+      programmedTop.current = root.scrollTop
+    } else if (positionedTarget.current !== positionTarget) {
+      const selected = positionTarget.day && root.querySelector<HTMLElement>(`[data-calendar-date="${positionTarget.day}"]`)
+      const target = selected || root.querySelector<HTMLElement>(`[data-calendar-month="${dateKey(monthDate(positionTarget.month)).slice(0, 7)}"]`)
+      if (target) {
+        root.scrollTop += target.getBoundingClientRect().top - root.getBoundingClientRect().top
+          - (selected ? (root.clientHeight - target.getBoundingClientRect().height) / 2 : 0)
+        programmedTop.current = root.scrollTop
+        positionedTarget.current = positionTarget
+      }
+    }
+    extending.current = false
+    initialized.current = true
+  }, [start, end, positionTarget, firstDate])
+  const older = () => {
+    const root = scrollRoot.current
+    if (!root || start <= earliest || extending.current) return
+    extending.current = true
+    prependPosition.current = { height: root.scrollHeight, top: root.scrollTop }
+    setRange({ start: Math.max(earliest, start - 3), end })
+  }
+  const move = (value: Date) => {
+    const month = clampMonth(monthNumber(value))
+    browsedMonths.current = true
+    prependPosition.current = undefined
+    setVisibleMonth(month)
+    setPositionTarget({ month })
+    // Nearby navigation preserves mounted months; distant jumps use a small window and cached data.
+    setRange(month >= start - 1 && month <= end + 1
+      ? { start: Math.min(start, month - 1), end: Math.max(end, month + 1) }
+      : { start: month - 1, end: month + 1 })
+  }
+  const scroll = (root: HTMLDivElement) => {
+    if (!initialized.current || extending.current || root.clientHeight <= 0) return
+    if (programmedTop.current === root.scrollTop) { programmedTop.current = undefined; return }
+    programmedTop.current = undefined
+    browsedMonths.current = true
+    const viewport = root.getBoundingClientRect()
+    let mostVisible = 0, month = visibleMonth
+    for (const section of root.querySelectorAll<HTMLElement>('[data-calendar-month]')) {
+      const rect = section.getBoundingClientRect()
+      const visible = Math.max(0, Math.min(rect.bottom, viewport.bottom) - Math.max(rect.top, viewport.top))
+      if (visible > mostVisible) {
+        mostVisible = visible
+        month = monthNumber(new Date(`${section.dataset.calendarMonth}-01T00:00:00`))
+      }
+    }
+    if (mostVisible > 0) setVisibleMonth(month)
+    if (root.scrollTop < 120 && start > earliest) older()
+    else if (root.scrollHeight - root.scrollTop - root.clientHeight < 120 && end < latest) {
+      extending.current = true
+      setRange({ start, end: Math.min(latest, end + 3) })
+    }
+  }
+  useEffect(() => {
+    const root = scrollRoot.current
+    if (!root) return
+    // A taller viewport can expose more than the initial month window. Fill it without a full history scan.
+    const fill = () => {
+      if (root.clientHeight > 0 && root.scrollHeight <= root.clientHeight + 60 && start > earliest) older()
+    }
+    fill()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(fill)
+    observer.observe(root)
+    return () => observer.disconnect()
+  }, [start, end, earliest])
+  return <>
+    <div style={{ ...styles.week, marginTop: 0, flexShrink: 0 }}>{calendarWeekdays().map(label => <span key={label} style={styles.weekDay}>{label}</span>)}</div>
+    {index && (index.loading || index.error) && <div role={index.error ? 'alert' : 'status'} style={styles.status}>
+      {index.error || (index.value ? tr("正在更新…") : '正在加载日历…')}
+      {index.error && <button type="button" style={styles.retryButton} data-arkme-feedback="neutral" onClick={index.retry}>{tr("重试")}</button>}
+    </div>}
+    {index?.notice && <div role="status" style={styles.status}>{index.notice}
+      {index.retryNotice && <button type="button" style={styles.retryButton} data-arkme-feedback="neutral" onClick={index.retryNotice}>{tr("重试互动")}</button>}
+    </div>}
+    {index?.value && !index.value.days.length && !index.incomplete ? <div style={styles.status}>{tr("暂无聊天记录")}</div> : <div ref={scrollRoot}
+      data-arkme-calendar-months data-visible-month={dateKey(monthDate(clampMonth(visibleMonth))).slice(0, 7)}
+      style={{ flex: 1, overflowY: 'auto', overflowAnchor: 'none', minHeight: 0, overscrollBehavior: 'contain' }}
+      onWheel={() => { programmedTop.current = undefined; browsedMonths.current = true }}
+      onPointerDown={() => { programmedTop.current = undefined; browsedMonths.current = true }}
+      onKeyDown={() => { programmedTop.current = undefined; browsedMonths.current = true }}
+      onScroll={event => scroll(event.currentTarget)}>
+      {start > earliest && <button type="button" data-arkme-feedback="neutral" style={{ ...styles.todayButton, width: '100%' }} onClick={older}>{tr("更早月份")}</button>}
+      {months.map(month => <ScrollingCalendarMonth key={dateKey(month)} month={month} today={today} selectedDate={selectedDate}
+        sourceRef={sourceRef} scopeKey={scopeKey} accountScope={accountScope} timezone={timezone} index={index}
+        initial={monthNumber(month) === visibleMonth} scrollRoot={scrollRoot} onSelect={onSelect}
+        firstMonth={dateKey(monthDate(earliest)).slice(0, 7)} onNavigate={move} />)}
+    </div>}
+  </>
+}
+
+/** Mounted for each opening: the conversation's actual position, never an uncompleted date click, owns selection. */
+function ConversationCalendarMonths({ getReadingDate, ...props }: Omit<Parameters<typeof ArkmeCalendarMultiMonthView>[0], 'selectedDate'> & {
+  getReadingDate?: (() => string | undefined) | undefined
+}) {
+  useArkmeLocale()
+  const [readingDate] = useState(() => getReadingDate?.())
+  const date = readingDate ?? props.index?.value?.days.at(-1)?.bucketDate ?? dateKey(props.today)
+  return <ArkmeCalendarMultiMonthView {...props} selectedDate={new Date(`${date}T00:00:00`)} />
+}
+
 export function ArkmeSelfCalendarPopover({
-  open, anchor, sourceRef, scopeKey, accountScope, onClose, onSelectRecord,
+  open, anchor, sourceRef, scopeKey, accountScope, onClose, onSelectRecord, onSelectDate, index, getReadingDate,
 }: {
   open: boolean
   anchor: RefObject<HTMLButtonElement>
@@ -299,46 +515,17 @@ export function ArkmeSelfCalendarPopover({
   accountScope?: string | undefined
   onClose(): void
   onSelectRecord(item: ArkmeCalendarRecordItem): void
+  onSelectDate?(selection: SelfCalendarDateSelection): void
+  index?: CalendarIndex
+  getReadingDate?: (() => string | undefined) | undefined
 }) {
+  useArkmeLocale()
   const today = useMemo(() => startOfLocalDay(new Date()), [])
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local', [])
-  const [visibleMonth, setVisibleMonth] = useState(() => monthStart(today))
-  const [selectedDate, setSelectedDate] = useState(today)
-  const [position, setPosition] = useState({ top: 52, left: 12 })
+  const panel = useRef<HTMLElement>(null)
+  const { layout, resizing, resizeProps } = useCalendarPopoverLayout(open, anchor, panel, accountScope)
   const [selectionStatus, setSelectionStatus] = useState('')
-  const visibleMonthStartKey = dateKey(monthStart(visibleMonth))
-  const visibleMonthEndKey = dateKey(monthEnd(visibleMonth))
-  const month = useCalendarMonth({ scopeKey: scopeKey ?? sourceRef ?? 'global',
-    ...(sourceRef ? { sourceRef } : {}), timezone, startDate: visibleMonthStartKey, endDate: visibleMonthEndKey }, open, accountScope)
-  const calendar = month.value
-  const calendarLoading = month.loading
-  const calendarError = month.error
   const selectionControllerRef = useRef<AbortController>()
-
-  useLayoutEffect(() => {
-    if (!open || typeof window === 'undefined') return
-    const updatePosition = () => {
-      const rect = anchor.current?.getBoundingClientRect()
-      if (rect === undefined) return
-      const width = 354
-      const estimatedHeight = 392
-      const viewportPadding = 12
-      const left = Math.max(viewportPadding, Math.min(window.innerWidth - width - viewportPadding, rect.right - width))
-      const below = rect.bottom + 8
-      const top = below + estimatedHeight <= window.innerHeight - viewportPadding
-        ? below
-        : Math.max(viewportPadding, rect.top - estimatedHeight - 8)
-      setPosition({ top, left })
-    }
-    updatePosition()
-    window.addEventListener('resize', updatePosition)
-    window.addEventListener('scroll', updatePosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePosition)
-      window.removeEventListener('scroll', updatePosition, true)
-    }
-  }, [anchor, open])
-
 
   useEffect(() => {
     if (open) return
@@ -348,13 +535,26 @@ export function ArkmeSelfCalendarPopover({
   }, [open])
   useEffect(() => () => { selectionControllerRef.current?.abort() }, [sourceRef])
 
-  const selectDate = async (date: Date) => {
+  useEffect(() => {
+    if (!open) return
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    document.addEventListener('keydown', close)
+    return () => document.removeEventListener('keydown', close)
+  }, [open, onClose])
+
+  const selectDate = async (date: Date, day?: ArkmeCalendarBucketDay) => {
     const normalized = startOfLocalDay(date)
     const key = dateKey(normalized)
-    setSelectedDate(normalized)
     selectionControllerRef.current?.abort()
-    if ((calendar?.days.find(day => day.bucketDate === key)?.count ?? 0) <= 0) {
+    if ((day?.count ?? 0) <= 0) {
       setSelectionStatus('这一天没有发给自己的记录')
+      return
+    }
+    if (index && !day?.anchor && !day?.momentAnchor) { setSelectionStatus('当天定位信息暂不可用，请刷新日历后重试'); return }
+    if (onSelectDate !== undefined) {
+      onSelectDate({ bucketDate: key, timezone, ...(day?.anchor ? { anchor: day.anchor } : {}),
+        ...(day?.momentAnchor ? { momentAnchor: day.momentAnchor } : {}) })
+      onClose()
       return
     }
     const controller = new AbortController()
@@ -363,6 +563,7 @@ export function ArkmeSelfCalendarPopover({
     try {
       const page = await callArkme<ArkmeCalendarDayRecordPage>('calendar.records', {
         ...(sourceRef === undefined ? {} : { sourceRef }),
+        ...(sourceRef === undefined ? {} : { oldestFirst: true }),
         bucketDate: key,
         timezone,
         limit: 1,
@@ -385,25 +586,32 @@ export function ArkmeSelfCalendarPopover({
 
   if (!open || typeof document === 'undefined') return null
   return createPortal(<>
-    <button type="button" aria-label="关闭发给自己日历" onClick={onClose} style={{
+    <button data-arkme-hover="none" type="button" aria-label={index ? '关闭会话日历' : '关闭发给自己日历'} onClick={onClose} style={{
       position: 'fixed', inset: 0, zIndex: 299, width: '100%', height: '100%', padding: 0,
       border: 0, background: 'transparent', cursor: 'default',
     }} />
-    <section aria-label="发给自己日历" style={{
+    <section ref={panel} role="dialog" aria-label={index ? '会话日历' : '发给自己日历'} style={{
       ...styles.calendarCard,
-      position: 'fixed', top: position.top, left: position.left, zIndex: 300,
+      position: 'fixed', top: layout.top, left: layout.left, height: layout.height, zIndex: 300,
+      display: 'flex', flexDirection: 'column', paddingBottom: 20,
+      maxWidth: 'calc(100vw - 24px)', maxHeight: 'calc(100vh - 24px)', overflow: 'hidden',
     }}>
-      <ArkmeCalendarMonthView
-        visibleMonth={visibleMonth}
-        selectedDate={selectedDate}
+      <ConversationCalendarMonths
+        key={`${accountScope ?? ''}:${scopeKey ?? sourceRef ?? ''}`}
+        getReadingDate={getReadingDate}
         today={today}
-        days={calendar?.days ?? []}
-        loading={calendarLoading}
-        error={calendarError}
-        onVisibleMonthChange={month => { setVisibleMonth(month); setSelectionStatus('') }}
-        onSelectDate={date => { void selectDate(date) }}
+        sourceRef={sourceRef} scopeKey={scopeKey} accountScope={accountScope} timezone={timezone} index={index}
+        onSelect={(date, day) => { void selectDate(date, day) }}
       />
       {selectionStatus !== '' && <div role="status" style={{ ...styles.status, marginBottom: -6 }}>{selectionStatus}</div>}
+      <div role="separator" aria-label={tr("调整日历高度")} aria-orientation="horizontal" tabIndex={0}
+        aria-valuemin={Math.min(CALENDAR_MIN_HEIGHT, layout.maxHeight)} aria-valuemax={layout.maxHeight}
+        aria-valuenow={layout.height} aria-valuetext={tr("{v0} 像素", { v0: Math.round(layout.height) })}
+        title={tr("拖动调整高度，方向键也可调整")} data-arkme-calendar-resize data-resizing={resizing || undefined}
+        {...resizeProps} style={{ position: 'absolute', bottom: 0, left: 12, right: 12, height: 18,
+          display: 'grid', placeItems: 'center', borderRadius: 8, cursor: 'ns-resize', touchAction: 'none', userSelect: 'none' }}>
+        <span aria-hidden style={{ width: 28, height: 3, borderRadius: 3, background: colors.tertiary, opacity: resizing ? .8 : .35 }} />
+      </div>
     </section>
   </>, document.body)
 }
@@ -426,30 +634,32 @@ function calendarTimelineItem(item: ArkmeCalendarRecordItem, avatarRef?: string)
   }), ...(avatarRef === undefined ? {} : { avatarRef }) }
 }
 
-function CalendarSourceBadge({ item, onSelect }: { item: ArkmeCalendarRecordItem; onSelect(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
+function CalendarSourceBadge({ item, onSelect, onTeamOpened }: { item: ArkmeCalendarRecordItem; onSelect(source: NonNullable<ArkmeCalendarRecordItem['source']>): void; onTeamOpened?: (() => void) | undefined }) {
   // DSH inputs use the shared origin marker, not a personal-topic navigation.
   if (isDshAgentInputCreationSource(item)) return null
+  if (item.sourceKind === 'team') return <TeamRecordSource conversationUid={item.teamConversationUid} navigable onOpened={onTeamOpened} />
   const title = item.topicTitle?.trim() || item.source?.displayName.trim() || (item.sourceKind === 'chat' ? '会话来源暂不可用' : '')
   if (title === '') return null
-  return <button type="button" style={{ ...styles.topicBadge, background: 'transparent', cursor: item.source ? 'pointer' : 'default', textAlign: 'left' }}
-    aria-label={`来源：${title}`} disabled={item.source === undefined}
+  return <button data-arkme-feedback="neutral" type="button" style={{ ...arkmeDetailSourceBadgeStyle, cursor: item.source ? 'pointer' : 'default' }}
+    aria-label={tr("来源：{v0}", { v0: title })} disabled={item.source === undefined}
     onClick={event => { event.stopPropagation(); if (item.source !== undefined) onSelect(item.source) }}>
     {item.source !== undefined && item.source.kind !== 'topic' ? <ArkmeDirectorySourceAvatar source={item.source} size={16} />
-      : item.sourceKind === 'chat' && !item.topicTitle ? <ChatCircle size={14} aria-hidden /> : <NotePencil size={14} aria-hidden />}
+      : item.sourceKind === 'chat' && !item.topicTitle ? <ChatCircle size={14} aria-hidden /> : <ArkmeTopicSourceIcon />}
     <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
     {item.source !== undefined && <CaretRight size={12} aria-hidden style={{ flex: 'none' }} />}
   </button>
 }
 
-function RecordRow({ item, avatarRef, onOpen, onSelectSource }: { item: ArkmeCalendarRecordItem; avatarRef?: string; onOpen(): void; onSelectSource(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
+function RecordRow({ item, avatarRef, onOpen, onSelectSource, onTeamOpened }: { item: ArkmeCalendarRecordItem; avatarRef?: string; onTeamOpened?: () => void; onOpen(): void; onSelectSource(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
   const sourceLabel = arkmeCalendarRecordSourceLabel(item)
-  return <article style={styles.recordRow}>
-    <div style={styles.recordStack}>
-      <div style={styles.recordHeader}>
-        <h3 style={styles.recordTitle}>你</h3>
+  const role = !item.protected && (item.sourceKind === 'self' || item.sourceKind === 'topic') ? item.content?.selfRole : undefined
+  return <article data-arkme-calendar-role={role?.roleId} style={{ ...styles.recordRow, ...(role === undefined ? {} : { flexDirection: 'row-reverse', justifyContent: 'flex-end' }) }}>
+    <div style={{ ...styles.recordStack, ...(role === undefined ? {} : { alignItems: 'flex-start' }) }}>
+      <div style={{ ...styles.recordHeader, ...(role === undefined ? {} : { justifyContent: 'flex-start' }) }}>
+        <h3 style={styles.recordTitle}>{role?.name ?? tr("你")}</h3>
         <time style={styles.recordTime}>{timeLabel(item.sendAtMillis)}</time>
       </div>
-      <div style={{ ...styles.recordBubble, cursor: 'pointer' }} tabIndex={0} role="button" aria-label="打开快记详情"
+      <div style={{ ...styles.recordBubble, ...(role === undefined ? {} : { borderRadius: '5px 16px 16px 16px', background: arkmeTheme.subtle }), cursor: 'pointer' }} tabIndex={0} role="button" aria-label={tr("打开快记详情")}
         onKeyDown={event => {
           if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
           event.preventDefault(); onOpen()
@@ -461,47 +671,88 @@ function RecordRow({ item, avatarRef, onOpen, onSelectSource }: { item: ArkmeCal
       }}>
         <ArkmeMessageContent item={calendarTimelineItem(item, avatarRef)} onArticleOpen={onOpen} onCallDetailOpen={onOpen} />
 
-        <CalendarSourceBadge item={item} onSelect={onSelectSource} />
+        <CalendarSourceBadge item={item} onSelect={onSelectSource} onTeamOpened={onTeamOpened} />
         {sourceLabel === '' ? null : <ArkmeDshAgentInputMarker
           style={styles.recordSource}
           iconStyle={styles.recordSourceIcon}
         />}
       </div>
     </div>
-    <ArkmeUserAvatar {...(avatarRef === undefined || avatarRef === '' ? {} : { avatarRef })} size={30} label="当前用户头像" />
+    {role === undefined ? <ArkmeUserAvatar {...(avatarRef === undefined || avatarRef === '' ? {} : { avatarRef })} size={30} label={tr("当前用户头像")} />
+      : <ArkmeUserAvatar {...(role.avatarRef ? { avatarRef: role.avatarRef } : {})} fallback={arkmeSelfRoleAvatarFallback(role)} size={30} label={`${role.name}的头像`} />}
   </article>
 }
 
 export function ArkmeCalendarCell({
-  date, meta, selected, disabled, onClick,
+  date, meta, selected, disabled, onClick, today, showCountLabel, unknown, incomplete, hasRecordingIndex,
 }: {
   date: Date
   meta?: ArkmeCalendarBucketDay
   selected: boolean
   disabled: boolean
   onClick(): void
+  today?: boolean
+  showCountLabel?: boolean
+  unknown?: boolean
+  incomplete?: boolean | undefined
+  hasRecordingIndex?: boolean
 }) {
   const count = meta?.count ?? 0
-  return <button
+  const breakdown = meta?.conversationCounts
+  const markers = meta?.activityMarkers
+  const tooltip = breakdown ? [breakdown.messages > 0 ? tr("私聊 {v0} 条", { v0: breakdown.messages }) : '',
+    breakdown.interactions > 0 ? tr("群聊互动 {v0} 条", { v0: breakdown.interactions }) : ''].filter(Boolean).join(' · ') : ''
+  const tooltipText = tooltip || (markers ? tr('多来源活动') : '')
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const tooltipId = useId()
+  const cellKey = dateKey(date)
+  const [hintDate, setHintDate] = useState<string>()
+  const closeHint = useCallback(() => setHintDate(undefined), [])
+  const showHint = !disabled && !unknown && hintDate === cellKey && tooltipText !== ''
+  return <><button ref={buttonRef} data-arkme-feedback={selected ? 'primary' : 'neutral'}
     type="button"
-    aria-label={`${dateKey(date)} ${count > 0 ? `${String(count)} 条记录` : '暂无记录'}`}
+    aria-label={`${dateKey(date)} ${unknown ? '待加载' : count > 0 ? `${incomplete ? '已知 ' : ''}${String(count)} 条记录` : incomplete ? '暂无已加载记录' : tr("暂无记录")}${hasRecordingIndex ? ' · 录音索引有内容' : ''}`}
+    aria-describedby={showHint ? tooltipId : undefined}
     data-selected={selected ? 'true' : 'false'}
+    data-arkme-hover="button"
+    data-calendar-date={dateKey(date)}
+    aria-current={today ? 'date' : undefined}
     disabled={disabled}
     style={{
       ...styles.dayButton,
+      ...(showCountLabel && count > 0 ? { background: colors.bubble } : {}),
+      ...(today ? { borderColor: colors.selected } : {}),
       ...(disabled ? styles.dayDisabled : {}),
       ...(selected ? styles.daySelected : {}),
     }}
-    onClick={onClick}
+    onPointerEnter={event => { if (event.pointerType !== 'touch') setHintDate(cellKey) }}
+    onPointerLeave={closeHint}
+    onPointerCancel={closeHint}
+    onFocus={event => { if (event.currentTarget.matches(':focus-visible')) setHintDate(cellKey) }}
+    onBlur={closeHint}
+    onClick={() => { closeHint(); onClick() }}
   >
     <span style={styles.dayNumber}>{date.getDate()}</span>
-    <span style={{ ...styles.dayCount, ...(count > 0 ? styles.dayCountPopulated : {}), ...(selected ? styles.selectedDayCount : {}) }}>{count > 0 ? count : ''}</span>
+    <span style={{ ...styles.dayCount, ...(count > 0 ? styles.dayCountPopulated : {}), ...(selected ? styles.selectedDayCount : {}) }}>{count > 0 ? `${count}${showCountLabel ? tr("条") : ''}` : ''}</span>
+    {(hasRecordingIndex || markers) && <span aria-hidden style={{ position: 'absolute', bottom: 2, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 2, height: 4 }}>
+      {(hasRecordingIndex || markers?.recording) && <i style={{ width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : colors.selected }} />}
+      {markers?.chat && <i style={{ width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : '#5d8dff' }} />}
+      {markers?.call && <i style={{ width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : '#d79838' }} />}
+      {(markers?.arko || markers?.bot) && <i style={{ width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : '#9a75d6' }} />}
+    </span>}
   </button>
+    {showHint && buttonRef.current && <ArkmeCalendarDateTooltip anchor={buttonRef.current}
+      id={tooltipId} text={tooltipText} onClose={closeHint} />}
+  </>
 }
 
-export function ArkmeCalendarSurface({
+export function ArkmeCalendarSurface(props: { onClose?: () => void; anchor?: 'directory' | 'product-rail'; accountScope?: string | undefined } = {}) {
+  return <TeamRecordSourceScope><ArkmeCalendarSurfaceBody {...props} /></TeamRecordSourceScope>
+}
+function ArkmeCalendarSurfaceBody({
   onClose, anchor = 'directory', accountScope,
 }: { onClose?: () => void; anchor?: 'directory' | 'product-rail'; accountScope?: string | undefined } = {}) {
+  useArkmeLocale()
   const today = useMemo(() => startOfLocalDay(new Date()), [])
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local', [])
   const [visibleMonth, setVisibleMonth] = useState(() => monthStart(today))
@@ -639,16 +890,16 @@ export function ArkmeCalendarSurface({
     onClose?.()
     arkmeUi.selectSource(source)
   }
-  const sourceBadge = selectedItem === undefined ? undefined : <CalendarSourceBadge item={selectedItem} onSelect={selectSource} />
+  const sourceBadge = selectedItem === undefined ? undefined : <CalendarSourceBadge item={selectedItem} onSelect={selectSource} onTeamOpened={() => { setSelectedRecord(undefined); onClose?.() }} />
 
   return <div style={{
     ...styles.root,
     ...(anchor === 'product-rail' ? styles.productRailRoot : {}),
-  }} aria-label="客户端日历">
+  }} aria-label={tr("客户端日历")}>
     <button type="button" style={{
       ...styles.backdrop,
       ...(anchor === 'product-rail' ? styles.productRailBackdrop : {}),
-    }} aria-label="关闭日历" onClick={() => {
+    }} aria-label={tr("关闭日历")} data-arkme-hover="none" onClick={() => {
       if (onClose === undefined) arkmeUi.showConversations()
       else onClose()
     }} />
@@ -656,7 +907,7 @@ export function ArkmeCalendarSurface({
       <section style={{
         ...styles.calendarCard,
         ...(anchor === 'product-rail' ? styles.productRailCalendarCard : {}),
-      }} aria-label="客户端日历">
+      }} aria-label={tr("客户端日历")}>
         <span style={styles.calendarPointer} aria-hidden />
         <ArkmeCalendarMonthView
           visibleMonth={visibleMonth}
@@ -669,35 +920,36 @@ export function ArkmeCalendarSurface({
           onSelectDate={chooseDate}
         />
       </section>
-      {detailsOpen && <section style={styles.recordsPanel} aria-label="当天内容">
+      {detailsOpen && <section style={styles.recordsPanel} aria-label={tr("当天内容")}>
         <header style={styles.recordsHeader}>
           <h2 style={styles.recordsTitle}>{selectedDayLabel(selectedDate, today)}</h2>
-          <button type="button" aria-label="刷新当天快记" disabled={recordsLoading} style={{ ...styles.iconButton, width: 'auto', fontSize: 12 }}
-            onClick={() => arkmeCalendarInvalidations.publish({ dateKey: selectedDateKey })}>刷新</button>
-          <button type="button" aria-label="关闭当天内容" title="关闭" style={styles.iconButton} onClick={() => { setDetailsOpen(false); setSelectedRecord(undefined) }}><X size={20} aria-hidden /></button>
+          <button data-arkme-feedback="neutral" type="button" aria-label={tr("刷新当天快记")} disabled={recordsLoading} style={{ ...styles.iconButton, width: 'auto', fontSize: 12 }}
+            onClick={() => arkmeCalendarInvalidations.publish({ dateKey: selectedDateKey })}>{tr("刷新")}</button>
+          <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭当天内容")} title={tr("关闭")} style={styles.iconButton} onClick={() => { setDetailsOpen(false); setSelectedRecord(undefined) }}><X size={20} aria-hidden /></button>
         </header>
         {recordsError !== '' && <div style={{ ...styles.status, ...styles.error }} role="alert">{recordsError}</div>}
-        {recordsError === '' && recordsLoading && records !== undefined && <div style={styles.loadingStatus} role="status">正在更新…</div>}
-        <div key={recordsScope} ref={listRef} style={styles.list} aria-label="当天快记列表">
-          {recordsLoading && records === undefined ? <div style={{ ...styles.loadingStatus, ...styles.initialLoading }} role="status">正在加载…</div>
+        {recordsError === '' && recordsLoading && records !== undefined && <div style={styles.loadingStatus} role="status">{tr("正在更新…")}</div>}
+        <div key={recordsScope} ref={listRef} style={styles.list} aria-label={tr("当天快记列表")}>
+          {recordsLoading && records === undefined ? <div style={{ ...styles.loadingStatus, ...styles.initialLoading }} role="status">{tr("正在加载…")}</div>
             : recordsError !== '' && records === undefined ? null
             : recordItems.length === 0 ? <div style={styles.emptyDay}>
               <NotePencil size={23} style={styles.emptyIcon} aria-hidden />
-              <strong>这一天还没有快记</strong>
+              <strong>{tr("这一天还没有快记")}</strong>
             </div>
-              : <ArkmeDirectoryWindow activeKey={selectedItem?.recordUid}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item}
-                onOpen={() => { setSelectedRecord({ scope: recordsScope, uid: item.recordUid }); setShowOriginal(false) }} onSelectSource={selectSource}
+              : <ArkmeDirectoryWindow scrollRootRef={listRef} activeKey={selectedItem?.recordUid}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item}
+                onOpen={() => { setSelectedRecord({ scope: recordsScope, uid: item.recordUid }); setShowOriginal(false) }} onSelectSource={selectSource} onTeamOpened={() => { setSelectedRecord(undefined); onClose?.() }}
                 {...(userProfile?.avatarRef === undefined ? {} : { avatarRef: userProfile.avatarRef })} />)}</ArkmeDirectoryWindow>}
           {records?.hasMore === true && records.nextCursor !== undefined && <div ref={loadMoreSentinel} style={{ minHeight: 1 }}>
-            {loadingMore && <div style={styles.loadingStatus} role="status">加载中…</div>}
+            {loadingMore && <div style={styles.loadingStatus} role="status">{tr("加载中…")}</div>}
           </div>}
         </div>
       </section>}
       {detailItem !== undefined && <div style={{ position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none' }}>
         <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 'min(394px, 100%)', pointerEvents: 'auto' }}>
           {detailItem.forwardRecords !== undefined
-            ? <ForwardRecordsDetail sourceBadge={sourceBadge} item={detailItem} onClose={() => setSelectedRecord(undefined)} />
-            : <ArkmeTimelineDetailDrawer sourceBadge={sourceBadge} key={detailItem.itemUid} item={detailItem} canExtend={false}
+            ? <ForwardRecordsDetail sourceBadge={sourceBadge} item={detailItem}
+              onPrivateChatOpened={selectSource} onClose={() => setSelectedRecord(undefined)} />
+            : <ArkmeTimelineDetailDrawer sourceBadge={sourceBadge} {...(detailItem.selfRole === undefined ? {} : selectedItem?.sourceKind === 'self' ? { sourceKind: 'send_to_self' as const } : selectedItem?.sourceKind === 'topic' ? { sourceKind: 'topic' as const } : {})} key={detailItem.itemUid} item={detailItem} canExtend={false}
               showOriginal={showOriginal} onToggleOriginal={() => setShowOriginal(value => !value)}
               onClose={() => setSelectedRecord(undefined)} />}
         </div>

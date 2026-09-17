@@ -1,3 +1,4 @@
+export const HARNESS_LOCAL_SESSION_OPEN = 'arkme:harness-local-session-open'
 /** Private presentation bridge between Arkme and its existing same-origin Harness frame. */
 export const HARNESS_MENU_OPEN = 'arkme:harness-menu-open'
 export const HARNESS_MENU_CLOSE = 'arkme:harness-menu-close'

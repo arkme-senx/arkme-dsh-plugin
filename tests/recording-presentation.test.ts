@@ -41,6 +41,10 @@ describe('recording presentation', () => {
       eventId: 'event-0', startAt: '09:00', endAt: '10:00', timeRange: '09:00–10:00',
       title: '周会', description: '同步项目进展', scene: '会议', emotion: '专注', todo: '整理结论',
       tags: ['工作'], participants: ['我', '小林'], rawText: '',
+      dialoguePoints: [
+        { speakerName: '我', summary: '', quote: '', roleDescription: '', isSelf: false },
+        { speakerName: '小林', summary: '', quote: '', roleDescription: '', isSelf: false },
+      ],
     }])
 
     expect(parseRecordingTimeline(`

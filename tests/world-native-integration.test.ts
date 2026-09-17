@@ -8,7 +8,7 @@ describe('native World integration', () => {
     const controller = await source('src/client/ui-controller.ts')
 
     expect(controller).toContain("| 'world'")
-    expect(controller).toContain('showWorld(): void')
+    expect(controller).toContain("showWorld(scope: 'all' | 'mine' = 'all'): void")
     expect(controller).toContain("mode: 'world'")
   })
 

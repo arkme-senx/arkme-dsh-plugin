@@ -1,16 +1,18 @@
+import type { TeamSendTask } from '../team-send-contract.js'
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { chmod, copyFile, link, mkdir, open, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { constants, createReadStream } from 'node:fs'
+import { chmod, copyFile, lstat, mkdir, open, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { arkmeNormalizedFileMimeType, arkmePickedFileKind, type ArkmeFileOpenResult, type ArkmeFilePolicy, type ArkmeFileProgress, type ArkmeFileReception, type ArkmeFileSendInput, type ArkmeFileSendTask, type ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { ArkmeUploadedAsset, ArkmeSourceSendResult } from '../types.js'
 import { ArkmePluginError } from './service.js'
 import { ARKME_TOOL_FILE_MAX_BYTES } from '../file-transfer-contract.js'
 import { arkmeFileBackgroundSound, assertArkmeBackgroundSoundLocalFiles } from '../record-background-sound.js'
+import { isLongArticleImageMimeType, LONG_ARTICLE_IMAGE_MAX_BYTES } from '../long-article-content.js'
 
 type Metadata = Pick<ArkmeLocalFile, 'fileName' | 'mimeType' | 'size'>
-interface StoredFile extends ArkmeLocalFile { sha256: string; createdAtMillis: number; asset?: ArkmeUploadedAsset; retention?: 'references' }
-interface FileState { version: 1; files: Record<string, StoredFile>; tasks: ArkmeFileSendTask[]; originals: Record<string, string> }
+interface StoredFile extends ArkmeLocalFile { sha256: string; createdAtMillis: number; asset?: ArkmeUploadedAsset; retention?: 'references'; longArticle?: true }
+interface FileState { version: 1; files: Record<string, StoredFile>; tasks: ArkmeFileSendTask[]; originals: Record<string, string>; teamSends?: TeamSendTask[] }
 export type FileTransferSendOutcome =
   | { kind: 'owner_accepted'; result: ArkmeSourceSendResult }
   | { kind: 'owner_not_accepted'; message: string; code?: string; retryable?: boolean }
@@ -86,17 +88,20 @@ export class FileTransfers {
     const directory = this.openDirectory(userId, ref)
     const target = join(directory, nativeOpenFileName(file.fileName))
     await mkdir(directory, { recursive: true, mode: 0o700 })
+    const sourceInfo = await stat(source)
+    const targetInfo = await lstat(target).catch(error => {
+      if (error.code === 'ENOENT') return undefined
+      throw error
+    })
+    if (targetInfo !== undefined && !targetInfo.isFile()) throw fail('file-open-target-invalid', '本地打开副本不是普通文件')
+    // Editable copies must never share the attachment's bytes; independent user edits are retained.
+    if (targetInfo !== undefined && (targetInfo.dev !== sourceInfo.dev || targetInfo.ino !== sourceInfo.ino)) return target
+    const temporary = join(directory, `${randomUUID()}.tmp`)
     try {
-      await link(source, target)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      const info = await stat(target).catch(() => undefined)
-      if (!info?.isFile() || info.size !== file.size) {
-        await unlink(target).catch(() => {})
-        await link(source, target)
-      }
-    }
-    await chmod(target, 0o600)
+      await copyFile(source, temporary, constants.COPYFILE_FICLONE)
+      await chmod(temporary, 0o600)
+      await rename(temporary, target)
+    } finally { await unlink(temporary).catch(() => {}) }
     return target
   }
   private async assertUser(userId: number, signal?: AbortSignal): Promise<void> {
@@ -115,7 +120,7 @@ export class FileTransfers {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw fail('file-state-invalid', '本地文件状态无法读取，请勿重复发送')
           return { version: 1 as const, files: {}, tasks: [], originals: {} }
         }
-        if (state.version !== 1 || !state.files || !Array.isArray(state.tasks) || !state.originals) throw fail('file-state-invalid', '本地文件状态版本无效')
+        if (state.version !== 1 || !state.files || !Array.isArray(state.tasks) || !state.originals || (state.teamSends !== undefined && (!Array.isArray(state.teamSends) || state.teamSends.some(task => !task || !Array.isArray(task.fileRefs) || !Array.isArray(task.files) || typeof task.taskRef !== 'string')))) throw fail('file-state-invalid', '本地文件状态版本无效')
         for (const task of state.tasks) {
           if (task.state === 'sending') { task.state = 'uncertain'; task.error = '发送结果待确认，请先核对会话，避免重复发送' }
           else if (task.state === 'queued' || task.state === 'uploading') { task.state = 'failed'; task.error = '上次传输已中断，请重试' }
@@ -142,8 +147,8 @@ export class FileTransfers {
     this.mutations = work
     return work
   }
-  private validateMetadata(metadata: Metadata): void {
-    const limit = metadata.mimeType.startsWith('image/') ? this.policy.maxImageBytes : this.policy.maxFileBytes
+  private validateMetadata(metadata: Metadata, longArticle = false): void {
+    const limit = longArticle ? LONG_ARTICLE_IMAGE_MAX_BYTES : metadata.mimeType.startsWith('image/') ? this.policy.maxImageBytes : this.policy.maxFileBytes
     if (!metadata.fileName.trim() || metadata.fileName.length > 255 || /[\u0000-\u001f]/.test(metadata.fileName)
       || metadata.mimeType.length > 200 || !/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/.test(metadata.mimeType)
       || !Number.isSafeInteger(metadata.size) || metadata.size <= 0 || metadata.size > limit) {
@@ -151,16 +156,25 @@ export class FileTransfers {
     }
   }
 
+  async stageLongArticleImage(temporaryPath: string, metadata: Metadata, expectedUserId?: number): Promise<ArkmeLocalFile> {
+    const mime = arkmeNormalizedFileMimeType(metadata.mimeType, metadata.fileName)
+    if (!isLongArticleImageMimeType(mime)) throw fail('long-article-image-invalid', '长文仅支持 JPG、PNG、GIF、WebP、AVIF、BMP 图片')
+    return await this.stageLocal(temporaryPath, metadata, expectedUserId, 'references', true)
+  }
   async stage(temporaryPath: string, metadata: Metadata, expectedUserId?: number, retention?: 'references'): Promise<ArkmeLocalFile> {
+    return await this.stageLocal(temporaryPath, metadata, expectedUserId, retention, false)
+  }
+  private async stageLocal(temporaryPath: string, metadata: Metadata, expectedUserId: number | undefined, retention: 'references' | undefined, longArticle: boolean): Promise<ArkmeLocalFile> {
     const userId = await this.ports.currentUser()
     if (expectedUserId !== undefined && expectedUserId !== userId) throw fail('file-account-changed', '账号已切换，本次文件导入已取消')
     const normalizedMetadata = { ...metadata, mimeType: arkmeNormalizedFileMimeType(metadata.mimeType, metadata.fileName) }
-    this.validateMetadata(normalizedMetadata)
+    this.validateMetadata(normalizedMetadata, longArticle)
     return this.exclusive(async () => {
       const state = await this.state(userId)
       await this.prune(userId, state)
-      const used = Object.values(state.files).reduce((sum, file) => sum + file.size, 0)
-      if (used + metadata.size > Math.max(this.policy.maxFileBytes, 1024 * 1024 * 1024) || Object.keys(state.files).length >= 256) {
+      const ordinaryFiles = Object.values(state.files).filter(file => file.longArticle !== true)
+      const used = ordinaryFiles.reduce((sum, file) => sum + file.size, 0)
+      if (!longArticle && used + metadata.size > Math.max(this.policy.maxFileBytes, 1024 * 1024 * 1024)) {
         throw fail('file-cache-full', '本地附件空间不足，请移除不再需要的草稿或失败任务')
       }
       const info = await stat(temporaryPath)
@@ -169,7 +183,7 @@ export class FileTransfers {
       for await (const chunk of createReadStream(temporaryPath)) hash.update(chunk)
       await this.assertUser(userId)
       const ref = `arkme-file-v1.${randomUUID()}`
-      const file: StoredFile = { ...normalizedMetadata, fileRef: ref, fileKind: arkmePickedFileKind(normalizedMetadata.mimeType, normalizedMetadata.fileName), sha256: hash.digest('hex'), createdAtMillis: Date.now(), ...(retention ? { retention } : {}) }
+      const file: StoredFile = { ...normalizedMetadata, fileRef: ref, fileKind: arkmePickedFileKind(normalizedMetadata.mimeType, normalizedMetadata.fileName), sha256: hash.digest('hex'), createdAtMillis: Date.now(), ...(retention ? { retention } : {}), ...(longArticle ? { longArticle: true as const } : {}) }
       await copyFile(temporaryPath, this.path(userId, ref))
       await chmod(this.path(userId, ref), 0o600)
       state.files[ref] = file
@@ -179,14 +193,16 @@ export class FileTransfers {
     })
   }
   private async prune(userId: number, state: FileState): Promise<void> {
-    const retained = new Set(state.tasks.filter(task => task.state !== 'sent').flatMap(task => task.fileRefs))
+    const retained = new Set((state.teamSends ?? []).filter(task => !['sent', 'cancelled'].includes(task.state)
+      || Date.now() - (task.completedAtMillis ?? task.createdAtMillis) < 7 * 24 * 3600_000).flatMap(task => task.fileRefs))
+    for (const ref of state.tasks.filter(task => task.state !== 'sent').flatMap(task => task.fileRefs)) retained.add(ref)
     // Cleanup is optional; unavailable retention evidence must neither delete
     // a possibly referenced file nor prevent ordinary staging and sending.
     let editRefs: readonly string[]
     try { editRefs = await this.ports.retainedFileRefs?.(userId) ?? [] }
     catch { return }
     for (const ref of editRefs) retained.add(ref)
-    const completed = new Set(state.tasks.filter(task => task.state === 'sent').flatMap(task => task.fileRefs))
+    const completed = new Set([...state.tasks.filter(task => task.state === 'sent').flatMap(task => task.fileRefs), ...(state.teamSends ?? []).filter(task => ['sent', 'cancelled'].includes(task.state)).flatMap(task => task.fileRefs)])
     const expired = Object.values(state.files).filter(file => {
       if (Date.now() - file.createdAtMillis < 7 * 24 * 3600_000 || retained.has(file.fileRef)
         || this.uploadingRefs.has(`${userId}:${file.fileRef}`)) return false
@@ -195,10 +211,13 @@ export class FileTransfers {
     const expiredRefs = new Set(expired.map(file => file.fileRef))
     const tasks = state.tasks.filter(task => task.state !== 'sent' || Date.now() - task.createdAtMillis < 7 * 24 * 3600_000
       || task.fileRefs.some(ref => state.files[ref] !== undefined && !expiredRefs.has(ref)))
-    if (expired.length === 0 && tasks.length === state.tasks.length) return
-    const previous = { files: state.files, tasks: state.tasks }
+    const teamSends = state.teamSends?.filter(task => !['sent', 'cancelled'].includes(task.state) || Date.now() - (task.completedAtMillis ?? task.createdAtMillis) < 7 * 24 * 3600_000
+      || task.fileRefs.some(ref => state.files[ref] !== undefined && !expiredRefs.has(ref)))
+    if (expired.length === 0 && tasks.length === state.tasks.length && teamSends?.length === state.teamSends?.length) return
+    const previous = { files: state.files, tasks: state.tasks, teamSends: state.teamSends }
     state.files = Object.fromEntries(Object.entries(state.files).filter(([ref]) => !expiredRefs.has(ref)))
     state.tasks = tasks
+    if (teamSends) state.teamSends = teamSends
     try { await this.save(userId, state) }
     catch (error) { Object.assign(state, previous); throw error }
     for (const file of expired) {
@@ -228,22 +247,36 @@ export class FileTransfers {
     await this.assertUser(userId)
     return { path, file: publicFile(file) }
   }
-  async openLocal(ref: string): Promise<ArkmeFileOpenResult> {
-    if (this.ports.openPath === undefined) throw fail('file-open-unavailable', '当前宿主不能使用本机应用打开文件')
+  async openLocal(ref: string, signal?: AbortSignal): Promise<ArkmeFileOpenResult> {
+    return { opened: true, file: await this.openLocalTarget(ref, 'file', signal) }
+  }
+  async openLocalFolder(ref: string, signal?: AbortSignal): Promise<{ folderOpened: true }> {
+    await this.openLocalTarget(ref, 'folder', signal)
+    return { folderOpened: true }
+  }
+  private async openLocalTarget(ref: string, target: 'file' | 'folder', signal?: AbortSignal): Promise<ArkmeLocalFile> {
+    if (this.ports.openPath === undefined) throw fail('file-open-unavailable', target === 'folder' ? '当前宿主不能打开本机文件夹' : '当前宿主不能使用本机应用打开文件')
     const controller = new AbortController()
     this.controllers.add(controller)
+    const operationSignal = signal === undefined ? controller.signal : AbortSignal.any([signal, controller.signal])
     try {
+      operationSignal.throwIfAborted()
       const userId = await this.ports.currentUser()
-      const { file } = await this.readLocal(ref)
-      await this.assertUser(userId, controller.signal)
-      const path = await this.nativeOpenPath(userId, ref, file)
-      await this.assertUser(userId, controller.signal)
-      await this.ports.openPath(path, controller.signal)
-      await this.assertUser(userId, controller.signal)
-      return { opened: true, file }
+      const { file, path } = await this.exclusive(async () => {
+        await this.assertUser(userId, operationSignal)
+        const { file } = await this.readLocal(ref)
+        await this.assertUser(userId, operationSignal)
+        return { file, path: await this.nativeOpenPath(userId, ref, file) }
+      })
+      await this.assertUser(userId, operationSignal)
+      await this.ports.openPath(target === 'folder' ? dirname(path) : path, operationSignal)
+      await this.assertUser(userId, operationSignal)
+      return file
     } catch (error) {
       if (error instanceof ArkmePluginError) throw error
-      throw fail('file-open-failed', '文件打开失败，请重试')
+      throw target === 'folder'
+        ? fail('file-folder-open-failed', '文件夹打开失败，请重试')
+        : fail('file-open-failed', '文件打开失败，请重试')
     } finally {
       this.controllers.delete(controller)
     }
@@ -257,7 +290,7 @@ export class FileTransfers {
     await this.exclusive(async () => {
       const state = await this.state(userId)
       await this.assertUser(userId)
-      if (state.tasks.some(task => task.fileRefs.includes(ref))) throw fail('file-in-use', '文件仍被本地发送任务引用，请先移除该任务')
+      if (state.tasks.some(task => task.fileRefs.includes(ref)) || (state.teamSends ?? []).some(task => task.state !== 'cancelled' && task.fileRefs.includes(ref))) throw fail('file-in-use', '文件仍被本地发送任务引用，请先移除该任务')
       if (this.uploadingRefs.has(`${userId}:${ref}`)) throw fail('file-in-use', '文件正在上传，请稍后移除')
       if ((await this.ports.retainedFileRefs?.(userId))?.includes(ref)) throw fail('file-in-use', '文件仍被重新编辑草稿引用，请先从草稿移除')
       if (!state.files[ref]) return
@@ -269,6 +302,27 @@ export class FileTransfers {
   async tasks(sourceRef?: string): Promise<ArkmeFileSendTask[]> {
     const state = await this.state(await this.ports.currentUser())
     return clone(state.tasks.filter(task => !sourceRef || task.sourceRef === sourceRef))
+  }
+  /** Internal Team delivery uses the existing account store and file-reference lock. */
+  async teamSends(userId: number): Promise<TeamSendTask[]> {
+    await this.assertUser(userId)
+    return clone((await this.state(userId)).teamSends ?? [])
+  }
+  async mutateTeamSends(userId: number, mutate: (tasks: TeamSendTask[]) => void): Promise<TeamSendTask[]> {
+    return this.exclusive(async () => {
+      await this.assertUser(userId)
+      const state = await this.state(userId)
+      const previous = state.teamSends
+      const next = clone(previous ?? [])
+      mutate(next)
+      for (const task of next) if (!['sent', 'cancelled'].includes(task.state)) {
+        for (const ref of task.fileRefs) if (!previous?.find(old => old.taskRef === task.taskRef)?.fileRefs.includes(ref) && !state.files[ref]) throw fail('file-local-missing', '本地附件已不存在')
+      }
+      state.teamSends = next
+      try { await this.save(userId, state) }
+      catch (error) { if (previous) state.teamSends = previous; else delete state.teamSends; throw error }
+      return clone(next)
+    })
   }
   async stageBytes(contentBase64: string, metadata: Omit<Metadata, 'size'>): Promise<ArkmeLocalFile> {
     if (contentBase64.length > Math.ceil(ARKME_TOOL_FILE_MAX_BYTES / 3) * 4 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(contentBase64)) throw fail('file-tool-input-invalid', '工具暂存只接受最多 64 KiB 的 Base64 内容，不接受本机路径')
@@ -375,9 +429,32 @@ export class FileTransfers {
       return clone(task)
     })
   }
-  async uploadRefs(fileRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeUploadedAsset[]> {
+  private imageFailure(error: unknown, fileRef: string, file: ArkmeLocalFile | undefined, phase: 'validation' | 'upload'): ArkmePluginError {
+    const known = error instanceof ArkmePluginError ? error : new ArkmePluginError('long-article-image-failed', '图片处理失败，请重试', true, 502, { cause: error })
+    return new ArkmePluginError(known.code, `${file?.fileName ?? '图片'}：${known.message}`, known.retryable, known.httpStatus, {
+      ...known, cause: known, imageFailures: [{ fileRef, fileName: file?.fileName ?? '图片', phase }],
+    })
+  }
+  async uploadLongArticleImages(fileRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeUploadedAsset[]> {
+    for (const ref of fileRefs) {
+      let file: ArkmeLocalFile | undefined
+      try {
+        const stored = (await this.state(await this.ports.currentUser())).files[ref]
+        if (stored !== undefined) file = publicFile(stored)
+        if (file !== undefined) this.validateMetadata(file, true)
+        file = (await this.readLocal(ref)).file
+        if (file.fileKind !== 1 || !isLongArticleImageMimeType(file.mimeType)) throw fail('long-article-image-invalid', '长文仅支持 JPG、PNG、GIF、WebP、AVIF、BMP 图片')
+        this.validateMetadata(file, true)
+      } catch (error) { throw this.imageFailure(error, ref, file, 'validation') }
+    }
+    return await this.uploadDirectRefs(fileRefs, signal, true)
+  }
+  async uploadRefs(fileRefs: readonly string[], signal?: AbortSignal, progress?: (ref: string, value: ArkmeFileProgress) => void): Promise<ArkmeUploadedAsset[]> {
+    return await this.uploadDirectRefs(fileRefs, signal, false, progress)
+  }
+  private async uploadDirectRefs(fileRefs: readonly string[], signal: AbortSignal | undefined, longArticle: boolean, progress?: (ref: string, value: ArkmeFileProgress) => void): Promise<ArkmeUploadedAsset[]> {
     const userId = await this.ports.currentUser()
-    if (fileRefs.length < 1 || fileRefs.length > this.policy.maxAttachments
+    if (fileRefs.length < 1 || (!longArticle && fileRefs.length > this.policy.maxAttachments)
       || new Set(fileRefs).size !== fileRefs.length || fileRefs.some(ref => !REF.test(ref))) {
       throw fail('file-upload-invalid', '请选择 1 至 9 个有效附件')
     }
@@ -397,17 +474,26 @@ export class FileTransfers {
         return current
       })
       try {
-        const assets: ArkmeUploadedAsset[] = []
-        for (const fileRef of fileRefs) {
+        const assets: ArkmeUploadedAsset[] = new Array(fileRefs.length)
+        let cursor = 0
+        const worker = async () => {
+        while (cursor < fileRefs.length) {
+          const index = cursor++
+          const fileRef = fileRefs[index]!
           await this.assertUser(userId, controller.signal)
           const stored = state.files[fileRef]
           if (stored === undefined) throw fail('file-local-missing', '本地附件已不存在')
           let asset = stored.asset?.fileKind === stored.fileKind ? stored.asset
             : Object.values(state.files).find(other => other.sha256 === stored.sha256 && other.asset?.fileKind === stored.fileKind)?.asset
           if (asset === undefined) {
-            asset = await this.ports.upload(
-              this.path(userId, fileRef), stored, () => {}, userId, controller.signal,
-            )
+            try {
+              asset = await this.ports.upload(
+                this.path(userId, fileRef), stored, value => progress?.(fileRef, value), userId, controller.signal,
+              )
+            } catch (error) {
+              if (!longArticle || controller.signal.aborted) throw error
+              throw this.imageFailure(error, fileRef, stored, 'upload')
+            }
           }
           await this.assertUser(userId, controller.signal)
           asset = { ...asset, fileName: stored.fileName }
@@ -415,7 +501,18 @@ export class FileTransfers {
             stored.asset = asset
             await this.save(userId, state)
           })
-          assets.push(asset)
+          assets[index] = asset
+        }
+        }
+        const outcomes = await Promise.allSettled(Array.from({ length: longArticle ? Math.min(3, fileRefs.length) : 1 }, worker))
+        const failure = outcomes.find(result => result.status === 'rejected')
+        if (failure?.status === 'rejected') {
+          const first = failure.reason
+          if (longArticle && first instanceof ArkmePluginError) {
+            const imageFailures = outcomes.flatMap(result => result.status === 'rejected' && result.reason instanceof ArkmePluginError ? result.reason.imageFailures ?? [] : [])
+            if (imageFailures.length) throw new ArkmePluginError(first.code, first.message, first.retryable, first.httpStatus, { ...first, cause: first, imageFailures })
+          }
+          throw first
         }
         await this.assertUser(userId, controller.signal)
         return clone(assets)

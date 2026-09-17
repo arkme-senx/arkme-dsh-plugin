@@ -8,6 +8,7 @@ describe('Bot conversation Host operations', () => {
       listBotPrivateChatDirectory: vi.fn(async () => ({ items: [] })),
       openBotPrivateChat: vi.fn(async () => ({ messages: [] })),
       refreshBotPrivateChat: vi.fn(async () => ({ messages: [] })),
+      readBotPrivateChatHistory: vi.fn(async () => ({ messages: [] })),
       sendBotPrivateChatMessage: vi.fn(async () => ({ status: 'ok' })),
       markBotPrivateChatRead: vi.fn(async () => ({ effectiveReadSequence: 8, unreadCount: 0 })),
       botNotificationPreference: vi.fn(async () => ({ muted: false })),
@@ -19,6 +20,7 @@ describe('Bot conversation Host operations', () => {
     await dispatchArkmeHostOperation(service, 'bots.private-chat.directory', privateFacts, undefined, undefined, undefined, undefined, signal)
     await dispatchArkmeHostOperation(service, 'bots.private-chat.open', { botRef: ' bot-ref ', ...privateFacts }, undefined, undefined, undefined, undefined, signal)
     await dispatchArkmeHostOperation(service, 'bots.private-chat.refresh', { botRef: ' bot-ref ', ...privateFacts }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service, 'bots.private-chat.history.read', { botRef: ' bot-ref ', ...privateFacts }, undefined, undefined, undefined, undefined, signal)
     await dispatchArkmeHostOperation(service, 'bots.private-chat.send', { botRef: ' bot-ref ', content: '正文', ...privateFacts }, undefined, undefined, undefined, undefined, signal)
     await dispatchArkmeHostOperation(service, 'bots.private-chat.mark-read', { botRef: ' bot-ref ', sequence: 8, ...privateFacts }, undefined, undefined, undefined, undefined, signal)
     await dispatchArkmeHostOperation(service, 'bots.private-chat.notification.status', { botRef: ' bot-ref ', ...privateFacts }, undefined, undefined, undefined, undefined, signal)
@@ -27,6 +29,7 @@ describe('Bot conversation Host operations', () => {
     expect(service.listBotPrivateChatDirectory).toHaveBeenCalledWith({ signal })
     expect(service.openBotPrivateChat).toHaveBeenCalledWith('bot-ref', { signal })
     expect(service.refreshBotPrivateChat).toHaveBeenCalledWith('bot-ref', { signal })
+    expect(service.readBotPrivateChatHistory).toHaveBeenCalledWith('bot-ref', { signal })
     expect(service.sendBotPrivateChatMessage).toHaveBeenCalledWith('bot-ref', '正文', { signal })
     expect(service.markBotPrivateChatRead).toHaveBeenCalledWith('bot-ref', 8, { signal })
     expect(service.botNotificationPreference).toHaveBeenCalledWith('bot-ref', { signal })

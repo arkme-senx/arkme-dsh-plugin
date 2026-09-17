@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmeRecordEditHistoryPage, ArkmeRecordEditHistoryReader } from '../record-edit-history.js'
 import type { ArkmeTimelineItem } from '../types.js'
@@ -22,6 +23,7 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
   messageActionRef: string
   reader?: ArkmeRecordEditHistoryReader
 }) {
+  useArkmeLocale()
   const [page, setPage] = useState(emptyPage)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -82,25 +84,25 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
         <div data-arkme-history-time style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', marginTop: 20, marginBottom: 15, color: arkmeTheme.caption, fontSize: 12, lineHeight: '18px' }}>
           <span />
           <time style={{ padding: '4px 6px' }} dateTime={new Date(revision.editAtMillis).toISOString()}>{historyTimeLabel(revision.editAtMillis)}</time>
-          <div>{index === 0 && <span data-arkme-history-latest style={{ display: 'inline-block', marginLeft: 10, padding: '1px 4px', borderRadius: 4, border: `0.5px solid color-mix(in srgb, ${arkmeTheme.recordHistoryLatest} 30%, transparent)`, color: arkmeTheme.recordHistoryLatest, fontSize: 10, fontWeight: 700, lineHeight: '14px' }}>最新</span>}</div>
+          <div>{index === 0 && <span data-arkme-history-latest style={{ display: 'inline-block', marginLeft: 10, padding: '1px 4px', borderRadius: 4, border: `0.5px solid color-mix(in srgb, ${arkmeTheme.recordHistoryLatest} 30%, transparent)`, color: arkmeTheme.recordHistoryLatest, fontSize: 10, fontWeight: 700, lineHeight: '14px' }}>{tr("最新")}</span>}</div>
         </div>
         <div data-arkme-history-row style={{ display: 'flex', flexDirection: mine ? 'row-reverse' : 'row', alignItems: 'flex-start', gap: 10 }}>
-          <ArkmeUserAvatar {...(author?.avatarRef === undefined ? {} : { avatarRef: author.avatarRef })} {...(author?.senderKind === undefined ? {} : { senderKind: author.senderKind })} size={32} label={author?.senderName || '作者头像'} />
+          <ArkmeUserAvatar {...(author?.avatarRef === undefined ? {} : { avatarRef: author.avatarRef })} {...(author?.senderKind === undefined ? {} : { senderKind: author.senderKind })} size={32} label={author?.senderName || tr("作者头像")} />
           <div data-arkme-history-bubble style={{ minWidth: 0, maxWidth: 'calc(100% - 84px)', minHeight: 42, boxSizing: 'border-box', padding: 10, borderRadius: mine ? '12px 4px 12px 12px' : '4px 12px 12px 12px', border: `1px solid ${arkmeTheme.borderSoft}`, background: mine ? arkmeTheme.messageOwn : arkmeTheme.messageOther, overflowWrap: 'anywhere' }}>
             {revision.content.title && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7 }}><ArkmeRichText text={revision.content.title} presentation="preview" /></h3>}
             {(revision.content.textContent || revision.content.contentBlocks.length > 0 || (!revision.content.title && !revision.content.mediaUnavailable)) && <ArkmeMessageContent presentation="detail" item={{
               ...revision.content, mediaUnavailable: false, itemUid: revision.revisionUid, senderName: author?.senderName ?? '', isMe: mine,
               sendAtMillis: revision.editAtMillis, status: 1,
             }} />}
-            {revision.content.mediaUnavailable === true && <p style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>部分历史附件暂不可用</p>}
+            {revision.content.mediaUnavailable === true && <p style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr("部分历史附件暂不可用")}</p>}
           </div>
         </div>
       </section>)}
-      {loading && <p role="status" style={{ color: arkmeTheme.tertiary }}>正在加载编辑记录…</p>}
-      {error !== '' && <div role="alert"><p>{error}</p><button type="button" style={actionStyle} onClick={() => { load(cursorRef.current) }}>重试</button></div>}
-      {!loading && error === '' && page.items.length === 0 && !page.hasMore && <p style={{ color: arkmeTheme.tertiary }}>暂无编辑记录</p>}
-      {!loading && error === '' && page.items.some(item => item.content.mediaUnavailable === true) && <button type="button" style={actionStyle} onClick={() => { load(0) }}>重新加载历史附件</button>}
-      {!loading && error === '' && page.hasMore && <button type="button" style={actionStyle} onClick={() => { load(cursorRef.current) }}>加载更多</button>}
+      {loading && <p role="status" style={{ color: arkmeTheme.tertiary }}>{tr("正在加载编辑记录…")}</p>}
+      {error !== '' && <div role="alert"><p>{error}</p><button data-arkme-feedback="neutral" type="button" style={actionStyle} onClick={() => { load(cursorRef.current) }}>{tr("重试")}</button></div>}
+      {!loading && error === '' && page.items.length === 0 && !page.hasMore && <p style={{ color: arkmeTheme.tertiary }}>{tr("暂无编辑记录")}</p>}
+      {!loading && error === '' && page.items.some(item => item.content.mediaUnavailable === true) && <button data-arkme-feedback="neutral" type="button" style={actionStyle} onClick={() => { load(0) }}>{tr("重新加载历史附件")}</button>}
+      {!loading && error === '' && page.hasMore && <button data-arkme-feedback="neutral" type="button" style={actionStyle} onClick={() => { load(cursorRef.current) }}>{tr("加载更多")}</button>}
     </div>
 }
 
@@ -111,7 +113,7 @@ function historyTimeLabel(value: number): string {
   const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`
   const offset = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()) / 86_400_000)
   if (offset === 0) return time
-  if (offset === 1) return `昨天 ${time}`
-  if (offset === 2) return `前天 ${time}`
+  if (offset === 1) return tr("昨天 {v0}", { v0: time })
+  if (offset === 2) return tr("前天 {v0}", { v0: time })
   return `${date.getFullYear() === now.getFullYear() ? '' : `${date.getFullYear()}-`}${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${time}`
 }

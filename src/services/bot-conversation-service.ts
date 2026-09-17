@@ -364,6 +364,15 @@ export class BotConversationService {
     return await this.adapter(context).refresh(context, options.signal)
   }
 
+  /** Calendar/background reads must never enter Subject's ensure/open endpoint. */
+  async readHistory(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotConversation> {
+    const context = await this.context(botRef)
+    if (context.reference.target.kind !== 'chat') {
+      throw new ArkmePluginError('bot-history-read-unsupported', '此 Bot 暂无独立只读历史接口', false, 409)
+    }
+    return await this.chatAdapter.refresh(context, options.signal)
+  }
+
   async send(
     botRef: string,
     content: string,

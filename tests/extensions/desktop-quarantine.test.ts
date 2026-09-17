@@ -81,7 +81,7 @@ async function setup() {
     installStore: store,
     setProfileEnabled,
     requestRestart,
-    isPackageActive: packageName => activePackages.has(packageName),
+    isPackageActive: async packageName => activePackages.has(packageName),
     now: () => 1_787_900_100_000,
   })
   return {

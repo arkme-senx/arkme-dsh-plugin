@@ -48,6 +48,21 @@ describe('Runtime local persistence without device authorization', () => {
     await expect(broker.runtimeCursor({ ...route, runtimeRef: 'runtime-02', channelRef: 'runtime-02' })).resolves.toBe(0)
   })
 
+  it('retires a rejected cursor in write order without resetting another Runtime', async () => {
+    const broker = new DshRemoteRuntimeSecretBroker(new MemorySecrets())
+    const route = { accountId: '42', runtimeRef: 'runtime-01', channelRef: 'runtime-01' }
+    const other = { ...route, runtimeRef: 'runtime-02', channelRef: 'runtime-02' }
+    await broker.putRuntimeCursor({ ...other, lastTransportSequence: 300 })
+    await Promise.all([
+      broker.putRuntimeCursor({ ...route, lastTransportSequence: 11844 }),
+      broker.putRuntimeCursor({ ...route, lastTransportSequence: 0, reset: true }),
+      broker.putRuntimeCursor({ ...route, lastTransportSequence: 21 }),
+      broker.putRuntimeCursor({ ...route, lastTransportSequence: 10 }),
+    ])
+    await expect(broker.runtimeCursor(route)).resolves.toBe(21)
+    await expect(broker.runtimeCursor(other)).resolves.toBe(300)
+  })
+
   it('migrates runtime-state v1 without credential, Binding, or remote toggle state', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'dsh-runtime-state-'))
     const remoteDirectory = join(directory, 'dsh-remote')

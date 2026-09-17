@@ -1,16 +1,21 @@
+import { tr, useArkmeLocale } from './locale.js'
+import type { ArkmeArchiveState } from '../archive-contract.js'
+import { withArkmeReadDeadline } from './read-deadline.js'
 import {
   useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties,
 } from 'react'
 import { ListBullets } from '@phosphor-icons/react/dist/icons/ListBullets'
 import type {
-  ArkmeEnvironment, ArkmeSourceItem, ArkmeTopicCreateResult,
+  ArkmeEnvironment, ArkmeSourceItem,
 } from '../types.js'
 import { callArkme } from './api.js'
+import { arkmeUi } from './ui-controller.js'
+import { createSelfTopic } from './create-self-topic.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import {
   ArkmeSourceSortControl, ArkmeTopicCard, ArkmeTopicCreateFooter, ArkmeTopicTreeRow,
   canCreateChildTopicAtParentLevel,
-  expandAncestorsForReveal, expandTopicFromRowClick, mergeCreatedTopicSource,
+  expandAncestorsForReveal, expandTopicFromRowClick,
   toggleTopicCollapsedState,
 } from './ArkmeVirtualWorkspace.js'
 import {
@@ -18,12 +23,14 @@ import {
   type ArkmeNavigationCache,
 } from './navigation-cache.js'
 import {
-  arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree,
+  arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree, sortArkmeSourceTree,
 } from './source-tree.js'
 import { arkmeSelfDirectorySources, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { useSelfTopicExpansion } from './self-topic-expansion-preference.js'
 import { mergeSelfTopicSources, selfTopicDirectory } from './self-topic-directory-cache.js'
+import { filterArkmeTopicSources } from './topic-search.js'
+export { filterArkmeTopicSources } from './topic-search.js'
 
 export interface ArkmeTopicDirectoryPopoverProps {
   userId: number
@@ -132,33 +139,6 @@ const styles: Record<string, CSSProperties> = {
   error: { color: arkmeTheme.danger },
 }
 
-/** Keep matching topics and their ancestors so search never destroys the directory hierarchy. */
-export function filterArkmeTopicSources(
-  sources: readonly ArkmeSourceItem[],
-  queryInput: string,
-): ArkmeSourceItem[] {
-  const query = queryInput.trim().toLocaleLowerCase()
-  if (query === '') return [...sources]
-  const byRef = new Map(sources.map(source => [source.sourceRef, source]))
-  const byTopicHierarchyKey = new Map(
-    sources.flatMap(source => source.topicHierarchyKey === undefined ? [] : [[source.topicHierarchyKey, source] as const]),
-  )
-  const included = new Set<string>()
-  for (const source of sources) {
-    if (!source.displayName.toLocaleLowerCase().includes(query)) continue
-    let current: ArkmeSourceItem | undefined = source
-    const visited = new Set<string>()
-    while (current !== undefined && !visited.has(current.sourceRef)) {
-      visited.add(current.sourceRef)
-      included.add(current.sourceRef)
-      current = current.parentTopicHierarchyKey === undefined
-        ? current.parentSourceRef === undefined ? undefined : byRef.get(current.parentSourceRef)
-        : byTopicHierarchyKey.get(current.parentTopicHierarchyKey)
-    }
-  }
-  return sources.filter(source => included.has(source.sourceRef))
-}
-
 function cacheWithTopics(
   userId: number,
   sources: ArkmeSourceItem[],
@@ -188,8 +168,12 @@ function cacheWithTopics(
 export function ArkmeTopicDirectoryPopover({
   userId, environment = 'prod', selectedSource, trigger = 'button', onSelect, onSelectionRefreshed = onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateWarning, onCreateTopicReady, retryRevision,
 }: ArkmeTopicDirectoryPopoverProps) {
+  useArkmeLocale()
+  const topicDirectoryRevision = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getTopicDirectoryRevision, arkmeUi.getTopicDirectoryRevision)
+  const recordRevision = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getRecordRevision, arkmeUi.getRecordRevision)
   const directory = useMemo(() => selfTopicDirectory(userId, environment), [userId, environment])
   const snapshot = useSyncExternalStore(directory.subscribe, directory.getSnapshot, directory.getSnapshot)
+  const resolvedRoots = useRef<{ directory: typeof directory; aggregateSource: ArkmeSourceItem; defaultCategorySource: ArkmeSourceItem }>()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const createRequestRef = useRef<symbol>()
@@ -217,28 +201,43 @@ export function ArkmeTopicDirectoryPopover({
   const firstLoad = useRef(true)
   useEffect(() => {
     let disposed = false
+    const controller = new AbortController()
     const force = !firstLoad.current
     firstLoad.current = false
-    void directory.ensure(force).then(() => {
+    void directory.ensure(force).then(async () => {
       if (disposed) return
-      const result = directory.getSnapshot()
+      const result = directory.getConfirmedSnapshot()
       if (!result.complete || result.error) return
       const loaded = result.sources
-      const reconciliation = reconcileArkmeTopicSelection(selectedSourceRef.current, loaded)
+      const currentSelected = selectedSourceRef.current
+      const reconciliation = reconcileArkmeTopicSelection(currentSelected, loaded)
       if (reconciliation.status === 'selected') {
         selectedSourceRef.current = reconciliation.source
         onSelectionRefreshed(reconciliation.source)
         persist(loaded, reconciliation.source.sourceRef)
       } else if (reconciliation.status === 'invalid') {
-        selectedSourceRef.current = undefined
-        onSelectionInvalidated()
-        persist(loaded, null)
+        // Directory absence is not deletion: an archived UID remains a valid
+        // content destination, and must not clear the open scene or its draft.
+        const states = currentSelected?.kind === 'topic'
+          ? await withArkmeReadDeadline(signal => callArkme<ArkmeArchiveState[]>('archives.state', { sourceRefs: [currentSelected.sourceRef] }, signal), controller.signal)
+          : []
+        if (controller.signal.aborted || selectedSourceRef.current?.sourceRef !== currentSelected?.sourceRef) return
+        if (states[0]?.ownerAvailable === true && states[0].effectiveArchived) {
+          persist(loaded, currentSelected!.sourceRef)
+        } else {
+          selectedSourceRef.current = undefined
+          onSelectionInvalidated()
+          persist(loaded, null)
+        }
       } else {
         persist(loaded, null)
       }
+    }).catch(() => {
+      // An unavailable archive read cannot prove deletion or discard a draft.
+      // The next directory refresh retries this owner check.
     })
-    return () => { disposed = true }
-  }, [directory, retryRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
+    return () => { disposed = true; controller.abort() }
+  }, [directory, retryRevision, recordRevision, topicDirectoryRevision, onSelectionRefreshed, onSelectionInvalidated, persist])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
@@ -249,17 +248,21 @@ export function ArkmeTopicDirectoryPopover({
   }, [directory])
 
   useEffect(() => {
-    const aggregateSource = sources.find(source => source.kind === 'send_to_self')
-    const defaultCategorySource = sources.find(source => source.kind === 'default_category')
+    // Directory invalidation clears visible topics/counts, not the mounted conversation's route.
+    const previous = error === '' && resolvedRoots.current?.directory === directory ? resolvedRoots.current : undefined
+    const aggregateSource = sources.find(source => source.kind === 'send_to_self') ?? previous?.aggregateSource
+    const defaultCategorySource = sources.find(source => source.kind === 'default_category') ?? previous?.defaultCategorySource
     if (aggregateSource === undefined || defaultCategorySource === undefined) {
+      resolvedRoots.current = undefined
       onSelfSourcesResolution(userId, error ? { status: 'error', message: error } : { status: 'loading' })
       return
     }
+    resolvedRoots.current = { directory, aggregateSource, defaultCategorySource }
     onSelfSourcesResolution(userId, {
       status: 'ready', aggregateSource, defaultCategorySource, sources, loading: busy, complete,
       ...(error === '' ? {} : { error }),
     })
-  }, [busy, complete, error, onSelfSourcesResolution, sources, userId])
+  }, [busy, complete, directory, error, onSelfSourcesResolution, sources, userId])
 
   useEffect(() => {
     if (!open && topicCreateParent === undefined) return
@@ -303,7 +306,7 @@ export function ArkmeTopicDirectoryPopover({
     [cardMode, directorySources, sourceSort],
   )
   const rows = useMemo(
-    () => flattenVisibleArkmeSourceTree(buildArkmeSourceTree(filteredSources), collapsedSourceRefs),
+    () => flattenVisibleArkmeSourceTree(sortArkmeSourceTree(buildArkmeSourceTree(filteredSources), 'custom'), collapsedSourceRefs),
     [collapsedSourceRefs, filteredSources],
   )
 
@@ -352,15 +355,14 @@ export function ArkmeTopicDirectoryPopover({
     setTopicCreateSubmitting(true)
     setTopicCreateError('')
     try {
-      const result = await callArkme<ArkmeTopicCreateResult>('topic.create', {
+      const result = await createSelfTopic({
         title,
         contextSourceRef: contextSource.sourceRef,
         ...(parent === null ? {} : { parentSourceRef: parent.sourceRef }),
-      })
+      }, directory)
       if (createRequestRef.current !== request) return
-      const nextSources = mergeCreatedTopicSource(sourcesRef.current, result.source)
+      const nextSources = directory.getConfirmedSnapshot().sources
       sourcesRef.current = nextSources
-      directory.upsert(result.source)
       setCollapsedSourceRefs(current => expandAncestorsForReveal(nextSources, result.source.sourceRef, current), nextSources)
       setTopicCreateParent(undefined)
       setTopicCreateParentLevel(undefined)
@@ -384,20 +386,20 @@ export function ArkmeTopicDirectoryPopover({
   }
 
   return <>
-    {trigger === 'button' && <button
-      ref={triggerRef} type="button" aria-label="打开主题" title="主题" aria-haspopup="dialog" aria-expanded={open}
+    {trigger === 'button' && <button data-arkme-feedback="neutral" data-arkme-feedback-selected={open}
+      ref={triggerRef} type="button" aria-label={tr("打开主题")} title={tr("主题")} aria-haspopup="dialog" aria-expanded={open}
       data-arkme-topic-directory-trigger="leading"
       style={{ ...styles.trigger, ...(open ? styles.triggerActive : {}) }}
       onClick={() => { setOpen(value => !value) }}
     ><ListBullets size={17} aria-hidden /></button>}
-    {open && <div ref={popoverRef} role="dialog" aria-label="主题" style={styles.popover}>
+    {open && <div ref={popoverRef} role="dialog" aria-label={tr("主题")} style={styles.popover}>
       <div style={styles.head}>
-        <h3 style={styles.heading}>主题</h3>
+        <h3 style={styles.heading}>{tr("主题")}</h3>
         <ArkmeSourceSortControl value={sourceSort} onChange={value => {
           setSourceSort(value)
           setHoveredSourceRef(undefined)
         }} />
-        <button type="button" aria-label="关闭主题" style={styles.close} onClick={() => { setOpen(false) }}>×</button>
+        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭主题")} style={styles.close} onClick={() => { setOpen(false) }}>×</button>
       </div>
       <label style={styles.search}>
         <svg aria-hidden viewBox="0 0 16 16" width="14" height="14" fill="none">
@@ -405,11 +407,11 @@ export function ArkmeTopicDirectoryPopover({
           <path d="m10.2 10.2 3.05 3.05" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
         </svg>
         <input
-          type="search" value={query} placeholder="搜索主题" aria-label="搜索主题" style={styles.searchInput}
+          type="search" value={query} placeholder={tr("搜索主题")} aria-label={tr("搜索主题")} style={styles.searchInput}
           onChange={event => { setQuery(event.currentTarget.value) }}
         />
       </label>
-      <div role={cardMode ? 'list' : 'tree'} aria-label="主题列表" style={styles.tree}>
+      <div role={cardMode ? 'list' : 'tree'} aria-label={tr("主题列表")} style={styles.tree}>
         {!cardMode && rows.map(row => {
           const source = row.source
           return <ArkmeTopicTreeRow
@@ -430,12 +432,12 @@ export function ArkmeTopicDirectoryPopover({
           onHoverChange={hovered => { setHoveredSourceRef(hovered ? source.sourceRef : undefined) }}
           onSelect={() => { selectSource(source) }}
         />)}
-        {busy && (cardMode ? cardSources.length === 0 : rows.length === 0) && <div role="status" style={styles.status}>正在加载主题…</div>}
+        {busy && (cardMode ? cardSources.length === 0 : rows.length === 0) && <div role="status" style={styles.status}>{tr("正在加载主题…")}</div>}
         {!busy && error === '' && (cardMode ? cardSources.length === 0 : rows.length === 0) && <div style={styles.status}>{query.trim() === '' ? '暂无主题' : '没有匹配的主题'}</div>}
         {error !== '' && <div role="alert" style={{ ...styles.status, ...styles.error }}>
           <div>{error}</div>
-          <button type="button" style={{ ...styles.close, width: 'auto', margin: '8px auto 0', padding: '0 10px', fontSize: 12 }}
-            onClick={() => { void directory.ensure(true) }}>重试</button>
+          <button data-arkme-feedback="neutral" type="button" style={{ ...styles.close, width: 'auto', margin: '8px auto 0', padding: '0 10px', fontSize: 12 }}
+            onClick={() => { void directory.ensure(true) }}>{tr("重试")}</button>
         </div>}
       </div>
       <ArkmeTopicCreateFooter onCreate={() => { openCreate(null) }} />

@@ -1,3 +1,4 @@
+import { isRetryableRecordingUploadError, RECORDING_UPLOAD_RETRY_DELAYS, RECORDING_UPLOAD_REQUEST_TIMEOUT, waitForRecordingUploadRetry } from './recording-import-upload-retry.js'
 import { createHash } from 'node:crypto'
 import { open, type FileHandle } from 'node:fs/promises'
 import { Readable } from 'node:stream'
@@ -122,27 +123,33 @@ export async function uploadRecordingFile(
       const size = Math.min(upload.partSize, job.fileSize - offset)
       const md5 = await hashPart(file, offset, size, whole, signal)
       if (upload.uploadedParts.has(number)) continue
-      const signed = grant(await post('/api/v1/audio/uploads/sign-part', { ...request, part_number: number, content_md5: md5 }), size, md5)
-      await assertAccount(); cancelled(signal)
-      const partSignal = signal === undefined ? AbortSignal.timeout(5 * 60_000) : AbortSignal.any([signal, AbortSignal.timeout(5 * 60_000)])
-      const stream = Readable.from(partBytes(file, offset, size, partSignal), { objectMode: false, highWaterMark: 64 * 1024, signal: partSignal })
-      try {
-        // Node fetch streams a bounded file range. No account credentials or
-        // cookies are attached; redirects cannot forward this signed request.
-        const options: RequestInit & { duplex: 'half' } = {
-          method: 'PUT', headers: signed.headers, body: stream as unknown as BodyInit,
-          duplex: 'half', redirect: 'error', credentials: 'omit', signal: partSignal,
-        }
-        const response = await fetchImpl(signed.url, options)
-        await response.body?.cancel()
-        if (!response.ok) throw new RecordingImportContractError('recording-import-part-failed', '录音分片上传失败，可从已上传位置重试', true)
-      } catch (error) {
-        cancelled(signal)
-        if (error instanceof RecordingImportContractError) throw error
-        // Fetch errors may include a signed URL. Never persist them in the job
-        // error message which is visible through Tools, SDK and UI.
-        throw new RecordingImportContractError('recording-import-part-failed', '录音分片上传中断，可继续重试', true)
-      } finally { stream.destroy() }
+      for (let attempt = 0; ; attempt++) {
+        await assertAccount(); cancelled(signal)
+        const signed = grant(await post('/api/v1/audio/uploads/sign-part', { ...request, part_number: number, content_md5: md5 }), size, md5)
+        await assertAccount(); cancelled(signal)
+        const timeout = AbortSignal.timeout(RECORDING_UPLOAD_REQUEST_TIMEOUT)
+        const partSignal = signal === undefined ? timeout : AbortSignal.any([signal, timeout])
+        const stream = Readable.from(partBytes(file, offset, size, partSignal), { objectMode: false, highWaterMark: 64 * 1024, signal: partSignal })
+        let retry = false
+        try {
+          const options: RequestInit & { duplex: 'half' } = {
+            method: 'PUT', headers: signed.headers, body: stream as unknown as BodyInit,
+            duplex: 'half', redirect: 'error', credentials: 'omit', signal: partSignal,
+          }
+          const response = await fetchImpl(signed.url, options)
+          await response.body?.cancel()
+          if (!response.ok) throw { status: response.status }
+        } catch (error) {
+          cancelled(signal)
+          retry = attempt < RECORDING_UPLOAD_RETRY_DELAYS.length && (timeout.aborted || isRetryableRecordingUploadError(error))
+          if (!retry) {
+            // Signed URLs and underlying transport errors stay private.
+            throw new RecordingImportContractError('recording-import-part-failed', '录音分片上传中断，可继续重试', true)
+          }
+        } finally { stream.destroy() }
+        if (!retry) break
+        await waitForRecordingUploadRetry(RECORDING_UPLOAD_RETRY_DELAYS[attempt]!, signal)
+      }
       await assertAccount(); cancelled(signal)
       uploadedBytes += size
       await onProgress(Math.min(uploadedBytes, job.fileSize - 1), persisted)

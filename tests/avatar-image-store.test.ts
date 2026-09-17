@@ -33,6 +33,25 @@ function clientSourceFiles(directory: URL, prefix = ''): Array<{ name: string; s
 }
 
 describe('InMemoryArkmeAvatarImageStore', () => {
+  it('shares twenty rotating Team grants by display identity and revalidates with the latest grant', async () => {
+    const pending = deferred<ReturnType<typeof imagePayload>>()
+    const reader = vi.fn().mockImplementationOnce(() => pending.promise).mockResolvedValue(imagePayload('new'))
+    const store = new InMemoryArkmeAvatarImageStore({ reader })
+    store.activateScope('test:1999')
+    const loads = Array.from({length:20}, (_, i) => store.load(`grant-${i}`, 'member-avatar'))
+    expect(reader).toHaveBeenCalledTimes(1)
+    pending.resolve(imagePayload('old'))
+    await Promise.all(loads)
+    expect(store.current('member-avatar')).toBe(imageDataUrl('old'))
+    const stop = store.subscribe('member-avatar', () => undefined)
+    await store.revalidateActive()
+    expect(reader.mock.calls[1]![0]).toBe('grant-19')
+    expect(store.current('member-avatar')).toBe(imageDataUrl('new'))
+    store.activateScope('test:1998')
+    expect(store.current('member-avatar')).toBeUndefined()
+    stop()
+  })
+
   it('reports one failure for a shared load without adding retries or changing the rejection', async () => {
     let now = 100
     const pending = deferred<ReturnType<typeof imagePayload>>()
@@ -304,4 +323,92 @@ it('bounds inactive avatar retention while protecting a mounted row', async () =
   expect(store.current('mounted')).toBeDefined()
   expect(store.current('past-299')).toBeDefined()
   stop()
+})
+
+
+describe('persistent immutable avatar fast path', () => {
+  it('restores a new page store before slow remote avatars release their permits', async () => {
+    const disk = new Map<string, ReturnType<typeof imagePayload>>()
+    const persistentCache = {
+      read: vi.fn(async (scope: string, ref: string) => disk.get(`${scope}/${ref}`)),
+      write: vi.fn(async (scope: string, ref: string, payload: ReturnType<typeof imagePayload>) => { disk.set(`${scope}/${ref}`, payload) }),
+    }
+    const ref = 'file_asset://avatar-cached-role'
+    const beforeReload = new InMemoryArkmeAvatarImageStore({ reader: async () => imagePayload('role'), persistentCache })
+    beforeReload.activateScope('prod:4')
+    await beforeReload.load(ref)
+    const slow = deferred<ReturnType<typeof imagePayload>>()
+    const reader = vi.fn(async () => await slow.promise)
+    const afterReload = new InMemoryArkmeAvatarImageStore({ reader, persistentCache, concurrency: 1 })
+    afterReload.activateScope('prod:4')
+    const blocked = afterReload.load('remote-profile')
+    await expect(afterReload.load(ref)).resolves.toBe(imageDataUrl('role'))
+    expect(reader).toHaveBeenCalledExactlyOnceWith('remote-profile')
+    slow.resolve(imagePayload('remote'))
+    await blocked
+  })
+
+  it('deduplicates disk misses and falls back when browser storage is unavailable', async () => {
+    const reader = vi.fn(async () => imagePayload('host'))
+    const persistentCache = { read: vi.fn().mockRejectedValue(new Error('storage denied')), write: vi.fn().mockRejectedValue(new Error('quota')) }
+    const store = new InMemoryArkmeAvatarImageStore({ reader, persistentCache })
+    store.activateScope('prod:4')
+    const ref = 'file_asset://avatar-cached-role'
+    await expect(Promise.all([store.load(ref), store.load(ref)])).resolves.toEqual([imageDataUrl('host'),imageDataUrl('host')])
+    expect(reader).toHaveBeenCalledTimes(1)
+    expect(persistentCache.read).toHaveBeenCalledExactlyOnceWith('prod:4', ref)
+  })
+
+  it('rejects an old-account disk result before displaying or fetching it', async () => {
+    const disk = deferred<ReturnType<typeof imagePayload>>()
+    const reader = vi.fn()
+    const store = new InMemoryArkmeAvatarImageStore({ reader, persistentCache: { read: async () => await disk.promise, write: vi.fn() } })
+    store.activateScope('prod:4')
+    const stale = store.load('file_asset://avatar-cached-role')
+    store.activateScope('prod:5')
+    disk.resolve(imagePayload('private'))
+    await expect(stale).rejects.toThrow('Avatar image scope changed')
+    expect(reader).not.toHaveBeenCalled()
+    expect(store.current('file_asset://avatar-cached-role')).toBeUndefined()
+  })
+})
+
+it('reserves Host-cache read capacity even before this browser has cached the file asset', async () => {
+  const slow = deferred<ReturnType<typeof imagePayload>>()
+  const reader = vi.fn(async (ref: string) => ref.startsWith('file_asset://') ? imagePayload('host-local') : await slow.promise)
+  const store = new InMemoryArkmeAvatarImageStore({ reader, concurrency: 1 })
+  const profile = store.load('slow-profile')
+  await expect(store.load('file_asset://avatar-local-host')).resolves.toBe(imageDataUrl('host-local'))
+  expect(reader).toHaveBeenCalledTimes(2)
+  slow.resolve(imagePayload('profile'))
+  await profile
+})
+
+it('probes Host cache outside the two occupied immutable download permits', async () => {
+  let release!: () => void
+  const slow = new Promise<void>(resolve => { release = resolve })
+  const reader = vi.fn(async () => { await slow; return imagePayload('download') })
+  const cachedReader = vi.fn(async (ref: string) => ref.endsWith('cached') ? imagePayload('local') : undefined)
+  const store = new InMemoryArkmeAvatarImageStore({ reader, cachedReader })
+  store.activateScope('prod:4')
+  const cold = [store.load('file_asset://cold-one'),store.load('file_asset://cold-two')]
+  await vi.waitFor(() => expect(reader).toHaveBeenCalledTimes(2))
+  try {
+    await expect(store.load('file_asset://host-cached')).resolves.toBe(imageDataUrl('local'))
+    expect(reader).toHaveBeenCalledTimes(2)
+  } finally { release(); await Promise.all(cold) }
+})
+
+it('does not deliver an old account cache probe after switching accounts', async () => {
+ const disk=deferred<ReturnType<typeof imagePayload>>()
+ const reader=vi.fn()
+ const store=new InMemoryArkmeAvatarImageStore({reader,cachedReader:async()=>await disk.promise})
+ store.activateScope('prod:4')
+ const old=store.load('file_asset://host-cached')
+ await new Promise(resolve=>setTimeout(resolve,0))
+ store.activateScope('prod:5')
+ disk.resolve(imagePayload('old account'))
+ await expect(old).rejects.toThrow('Avatar image scope changed')
+ expect(reader).not.toHaveBeenCalled()
+ expect(store.current('file_asset://host-cached')).toBeUndefined()
 })

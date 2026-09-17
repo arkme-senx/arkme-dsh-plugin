@@ -1,3 +1,4 @@
+import { tr } from './locale.js'
 import TourModule, { type TourProps } from '@rc-component/tour'
 import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
@@ -14,9 +15,9 @@ const placements: TourProps['builtinPlacements'] = {
 }
 const samplePlacements: TourProps['builtinPlacements'] = { ...placements, top: { points: ['bc','tc'], offset: [0,-14], overflow: { adjustX: true, shiftX: 12, adjustY: false, shiftY: false }, autoArrow: true } }
 const steps = [
- { id: 'import', title: '导入历史音频', description: '把已有音频文件导入 Arkme，统一管理和回顾。' },
+ { id: 'import', get title() { return tr("导入历史音频") }, description: '把已有音频文件导入 Arkme，统一管理和回顾。' },
  { id: 'tabs', title: '体验录音内容', description: '切换 Tab，体验逐句转写、重点总结和关键事件时间轴。' },
- { id: 'calendar', title: '录音日历', description: '选择日期查看当天录音，有录音的日期会显示时长标记。' },
+ { id: 'calendar', get title() { return tr("录音日历") }, description: '选择日期查看当天录音，有录音的日期会显示时长标记。' },
 ] as const
 function visible(element: HTMLElement): boolean {
  if (!element.isConnected || element.closest('[hidden], [inert], [aria-hidden="true"]')) return false
@@ -242,10 +243,10 @@ export function useRecordingTour({ root, auth, active, blocked, deepLink, notifi
   </svg>
   <Tour open current={0} prefixCls="arkme-home-tour" getPopupContainer={false} mask={false} disabledInteraction={false} keyboard={false} scrollIntoViewOptions={false} arrow={{ pointAtCenter: true }} placement={placement} builtinPlacements={current === 1 ? samplePlacements : placements} zIndex={100100}
    steps={[{ ...steps[current]!, target, scrollIntoViewOptions: false }]}
-   renderPanel={() => <section className="arkme-home-tour-panel" data-arkme-recording-tour-panel role="region" aria-label="录音体验引导">
-    <div className="arkme-home-tour-header"><span className="arkme-home-tour-progress" aria-live="polite">{current + 1} / 3</span><button type="button" className="arkme-home-tour-close" aria-label="关闭录音体验" onClick={() => finish()}>×</button></div>
+   renderPanel={() => <section className="arkme-home-tour-panel" data-arkme-recording-tour-panel role="region" aria-label={tr("录音体验引导")}>
+    <div className="arkme-home-tour-header"><span className="arkme-home-tour-progress" aria-live="polite">{current + 1} / 3</span><button type="button" className="arkme-home-tour-close" aria-label={tr("关闭录音体验")} onClick={() => finish()}>×</button></div>
     <h2>{steps[current]!.title}</h2><p>{steps[current]!.description}</p>
-    <div className="arkme-home-tour-actions"><button type="button" className="arkme-home-tour-skip" onClick={() => finish()}>跳过引导</button><div className="arkme-home-tour-navigation">{current > 0 && <button type="button" onClick={() => change(current-1)}>上一步</button>}<button ref={focusTourButton} type="button" className="arkme-home-tour-primary" onClick={() => current === 2 ? finish() : change(current+1)}>{current === 2 ? '完成体验' : '下一步'}</button></div></div>
+    <div className="arkme-home-tour-actions"><button type="button" className="arkme-home-tour-skip" onClick={() => finish()}>{tr("跳过引导")}</button><div className="arkme-home-tour-navigation">{current > 0 && <button type="button" onClick={() => change(current-1)}>{tr("上一步")}</button>}<button ref={focusTourButton} type="button" className="arkme-home-tour-primary" onClick={() => current === 2 ? finish() : change(current+1)}>{current === 2 ? '完成体验' : tr("下一步")}</button></div></div>
    </section>} />
  </div>, document.body) : null
  return { sample: valid && current === 1, panel, finish }

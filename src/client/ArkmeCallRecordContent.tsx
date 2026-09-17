@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useState, type CSSProperties } from 'react'
 import { PlayIcon } from '@phosphor-icons/react/dist/csr/Play'
 import type { ArkmeCallVideoPerspective, ArkmeTimelineItem } from '../types.js'
@@ -17,18 +18,20 @@ export function arkmeCallRecordBubbleStyle(isMe: boolean): CSSProperties {
 }
 
 function CallPreviewImage({ clip, label }: { clip: ArkmeCallVideoPerspective; label: string }) {
+  useArkmeLocale()
   const [posterFailed, setPosterFailed] = useState(false)
   const [videoFailed, setVideoFailed] = useState(false)
   const style: CSSProperties = { width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }
   return <>
     {clip.posterUrl && !posterFailed ? <img src={clip.posterUrl} alt={label} loading="lazy" style={style} onError={() => { setPosterFailed(true) }} />
       : clip.videoUrl && !videoFailed ? <video src={clip.videoUrl} muted playsInline preload="metadata" aria-label={label} style={style} onError={() => { setVideoFailed(true) }} />
-        : <span style={{ display: 'grid', placeItems: 'center', height: '100%', fontSize: 11 }}>预览暂不可用</span>}
+        : <span style={{ display: 'grid', placeItems: 'center', height: '100%', fontSize: 11 }}>{tr("预览暂不可用")}</span>}
     <span aria-hidden style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#fff', background: 'linear-gradient(transparent,rgba(0,0,0,.3))' }}><PlayIcon size={24} weight="fill" /></span>
   </>
 }
 
 export function ArkmeCallRecordContent({ call, revision, onOpenDetail }: { call: NonNullable<ArkmeTimelineItem['callRecord']>; revision?: number | string | undefined; onOpenDetail?: ((videoUrl?: string) => void) | undefined }) {
+  useArkmeLocale()
   const { element, detail, failed } = useCallRecordPreview(call.callRef, revision)
   const summary = detail?.summaryText?.trim() || call.summaryText?.trim()
   const status = detail?.summaryStatus ?? call.summaryStatus
@@ -47,17 +50,16 @@ export function ArkmeCallRecordContent({ call, revision, onOpenDetail }: { call:
       </svg>}
     <span>{call.text}</span>
     </div>
-    {summary && <p data-arkme-call-summary="preview" style={{ margin: 0, fontSize: 12, lineHeight: '18px', color: arkmeTheme.tertiary, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>AI 摘要：{summary}</p>}
-    {status === 'pending' && <span role="status" style={{ fontSize: 12, color: arkmeTheme.tertiary }}>摘要生成中…</span>}
-    {status === 'failed' && <span style={{ fontSize: 12, color: arkmeTheme.tertiary }}>摘要生成失败，查看详情</span>}
-    {failed && !summary && <span style={{ fontSize: 12, color: arkmeTheme.tertiary }}>预览加载失败，查看详情</span>}
-    {clips.length > 0 && <div aria-label="通话视频预览" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+    {summary && <p data-arkme-call-summary="preview" style={{ margin: 0, fontSize: 12, lineHeight: '18px', color: arkmeTheme.tertiary, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{tr("AI 摘要：")}{summary}</p>}
+    {status === 'pending' && <span role="status" style={{ fontSize: 12, color: arkmeTheme.tertiary }}>{tr("摘要生成中…")}</span>}
+    {status === 'failed' && <span style={{ fontSize: 12, color: arkmeTheme.tertiary }}>{tr("摘要生成失败，查看详情")}</span>}
+    {failed && !summary && <span style={{ fontSize: 12, color: arkmeTheme.tertiary }}>{tr("预览加载失败，查看详情")}</span>}
+    {clips.length > 0 && <div aria-label={tr("通话视频预览")} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
       {clips.map((clip, index) => {
         const label = clip.label || (clip.perspective === 'self' ? '我的视角' : clip.perspective === 'peer' ? '对方视角' : '通话视频')
         const preview = <span style={{ display: 'block', position: 'relative', width: '100%', aspectRatio: '9 / 16', borderRadius: 8, overflow: 'hidden', background: arkmeTheme.layer1 }}><CallPreviewImage clip={clip} label={label} /></span>
-        return <span key={`${clip.videoUrl}:${clip.posterUrl}:${index}`} style={{ display: 'grid', gap: 4, width: 88, maxWidth: '100%', fontSize: 11 }}>
-          {onOpenDetail ? <button type="button" aria-label={`查看${label}通话详情`} onClick={event => { event.stopPropagation(); onOpenDetail(clip.videoUrl ?? clip.posterUrl) }} style={{ width: '100%', border: 0, padding: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' }}>{preview}</button> : preview}
-          <span>{label}</span>
+        return <span key={`${clip.videoUrl}:${clip.posterUrl}:${index}`} style={{ display: 'block', width: 88, maxWidth: '100%' }}>
+          {onOpenDetail ? <button type="button" aria-label={tr("查看{v0}通话详情", { v0: label })} onClick={event => { event.stopPropagation(); onOpenDetail(clip.videoUrl ?? clip.posterUrl) }} style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' }}>{preview}</button> : preview}
         </span>
       })}
     </div>}

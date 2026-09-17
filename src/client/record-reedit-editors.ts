@@ -14,6 +14,7 @@ export interface ArkmeRecordReeditComposerState extends RecordReeditScope {
   snapshot: ArkmeRecordReeditEditorSnapshot | undefined
   title: string
   textContent: string
+  mentions?: import('../record-reedit-contract.js').ArkmeRecordReeditMention[]
   attachments: ArkmeRecordReeditAttachmentView[]
   // One session owns its CAS revision and queue, even when its editor is inactive.
   persisted: { candidateKey: string; draftRevision: number; saveTail: Promise<void>; exclusive?: boolean }

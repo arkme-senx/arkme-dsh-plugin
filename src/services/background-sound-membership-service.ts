@@ -31,6 +31,13 @@ export class BackgroundSoundMembershipService {
   async current(
     options: ArkmeBackgroundSoundMembershipOptions = {},
   ): Promise<ArkmeBackgroundSoundMembership> {
+    const { raw, userId } = await this.readCurrent(options)
+    const memberType = memberTypeFromResponse(raw)
+    return { userId, memberType, eligible: memberType > 0 }
+  }
+
+  /** Shared account-bound read for the membership UI and background-sound eligibility. */
+  async readCurrent(options: ArkmeBackgroundSoundMembershipOptions = {}): Promise<{ raw: Record<string, unknown>; userId: number }> {
     const expectedUserId = options.expectedUserId
     if (expectedUserId !== undefined
       && (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0)) {
@@ -70,11 +77,7 @@ export class BackgroundSoundMembershipService {
       )
     }
 
-    const memberType = memberTypeFromResponse(raw)
-    return {
-      userId: session.userId,
-      memberType,
-      eligible: memberType > 0,
-    }
+    memberTypeFromResponse(raw)
+    return { raw, userId: session.userId }
   }
 }

@@ -1,6 +1,20 @@
 import { CONVERSATION_MENU_LAYOUT } from './conversation-selector-style.js'
 
 export type ConversationMenuAnchor = Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>
+export interface ConversationMenuPoint { x: number; y: number }
+
+/** Only the narrow shared edge is traversable, not the space below the card. */
+export function conversationMenuHoverBridge(anchor: ConversationMenuAnchor, menu: ConversationMenuAnchor): ConversationMenuAnchor | undefined {
+  const top = Math.max(anchor.top, menu.top), bottom = Math.min(anchor.bottom, menu.bottom)
+  const left = menu.left >= anchor.right ? anchor.right : menu.right
+  const right = menu.left >= anchor.right ? menu.left : anchor.left
+  if (bottom <= top || right < left || right - left > CONVERSATION_MENU_LAYOUT.hoverGap + 1) return
+  return { left, right, top, bottom }
+}
+
+function containsPoint(rect: ConversationMenuAnchor, point: ConversationMenuPoint): boolean {
+  return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y < rect.bottom
+}
 
 /** One document-level host, outside workspace clipping and without its own stacking context. */
 export function conversationMenuLayer(doc: Document): HTMLElement {
@@ -27,8 +41,7 @@ export function conversationMenuPosition(anchor: ConversationMenuAnchor, width: 
 export interface ConversationMenuHoverRequest {
   focusMenu: boolean
   anchor(): ConversationMenuAnchor
-  keepOpen(): void
-  scheduleClose(): void
+  checkPointer(target: EventTarget | null, point?: ConversationMenuPoint): void
   onClose(focus?: boolean): void
 }
 
@@ -37,6 +50,8 @@ interface ConversationMenuHoverAdapter {
   close(): void
   position(): void
   contains(target: EventTarget | null): boolean
+  /** Visible menu layers in the anchor document's viewport coordinates; main menu first. */
+  bounds(): ConversationMenuAnchor[]
 }
 
 const activeHovers = new WeakMap<Document, () => void>()
@@ -45,10 +60,10 @@ const activeHovers = new WeakMap<Document, () => void>()
 export function watchConversationMenuHover(anchor: HTMLElement, adapter: ConversationMenuHoverAdapter): () => void {
   const doc = anchor.ownerDocument, win = doc.defaultView
   if (!win) return () => {}
-  let open = false, openTimer = 0, closeTimer = 0
+  let open = false, openTimer = 0
   const clearTimers = () => {
-    win.clearTimeout(openTimer); win.clearTimeout(closeTimer)
-    openTimer = 0; closeTimer = 0
+    win.clearTimeout(openTimer)
+    openTimer = 0
   }
   const release = (focus = false) => {
     clearTimers(); open = false
@@ -57,31 +72,41 @@ export function watchConversationMenuHover(anchor: HTMLElement, adapter: Convers
     if (focus && anchor.isConnected) anchor.focus({ preventScroll: true })
   }
   const close = () => { clearTimers(); if (open) adapter.close(); release() }
-  const keepOpen = () => { win.clearTimeout(closeTimer); closeTimer = 0 }
-  const scheduleClose = () => {
-    win.clearTimeout(openTimer); openTimer = 0
-    if (open && !closeTimer) closeTimer = win.setTimeout(close, 300)
+  const inside = (target: EventTarget | null) => target != null && typeof (target as Node).nodeType === 'number'
+    && (anchor.contains(target as Node) || adapter.contains(target))
+  const checkPointer = (target: EventTarget | null, point?: ConversationMenuPoint) => {
+    if (!open || inside(target)) return
+    if (point) {
+      const card = anchor.getBoundingClientRect(), menus = adapter.bounds()
+      const bridge = menus[0] && conversationMenuHoverBridge(card, menus[0])
+      if (containsPoint(card, point) || menus.some(rect => containsPoint(rect, point))
+        || bridge && containsPoint(bridge, point)) return
+    }
+    close()
   }
   const openMenu = (focusMenu = false) => {
     clearTimers()
     if (open || !anchor.isConnected || !anchor.getClientRects().length) return
     activeHovers.get(doc)?.()
-    open = adapter.open({ focusMenu, anchor: () => anchor.getBoundingClientRect(), keepOpen, scheduleClose, onClose: release })
+    open = adapter.open({ focusMenu, anchor: () => anchor.getBoundingClientRect(), checkPointer, onClose: release })
     if (!open) return
     activeHovers.set(doc, close)
     anchor.setAttribute('aria-expanded', 'true')
   }
   const enter = (event: PointerEvent) => {
     if (event.pointerType === 'touch') return
-    keepOpen()
     if (!open && !openTimer) openTimer = win.setTimeout(() => openMenu(), 200)
   }
   const key = (event: KeyboardEvent) => {
     if (event.key !== 'ArrowRight') return
     event.preventDefault(); openMenu(true)
   }
-  const inside = (target: EventTarget | null) => anchor.contains(target as Node | null) || adapter.contains(target)
-  const move = (event: Event) => { if (open) { if (inside(event.target)) keepOpen(); else scheduleClose() } }
+  const move = (event: PointerEvent) => checkPointer(event.target, { x: event.clientX, y: event.clientY })
+  const leave = (event: PointerEvent) => {
+    clearTimers()
+    checkPointer(event.relatedTarget, { x: event.clientX, y: event.clientY })
+  }
+  const leaveDocument = (event: PointerEvent) => { if (!event.relatedTarget) leave(event) }
   const down = (event: Event) => { if (open && !inside(event.target)) close() }
   const escape = (event: KeyboardEvent) => {
     if (!open || event.key !== 'Escape') return
@@ -93,11 +118,12 @@ export function watchConversationMenuHover(anchor: HTMLElement, adapter: Convers
   anchor.setAttribute('aria-haspopup', 'dialog')
   anchor.setAttribute('aria-expanded', 'false')
   anchor.addEventListener('pointerenter', enter)
-  anchor.addEventListener('pointerleave', scheduleClose)
+  anchor.addEventListener('pointerleave', leave)
   anchor.addEventListener('pointerdown', close)
   anchor.addEventListener('keydown', key)
   doc.addEventListener('pointermove', move, true)
   doc.addEventListener('pointerover', move, true)
+  doc.addEventListener('pointerout', leaveDocument, true)
   doc.addEventListener('pointerdown', down, true)
   doc.addEventListener('keydown', escape)
   doc.addEventListener('scroll', position, true)
@@ -107,11 +133,12 @@ export function watchConversationMenuHover(anchor: HTMLElement, adapter: Convers
   return () => {
     close(); resize?.disconnect()
     anchor.removeEventListener('pointerenter', enter)
-    anchor.removeEventListener('pointerleave', scheduleClose)
+    anchor.removeEventListener('pointerleave', leave)
     anchor.removeEventListener('pointerdown', close)
     anchor.removeEventListener('keydown', key)
     doc.removeEventListener('pointermove', move, true)
     doc.removeEventListener('pointerover', move, true)
+    doc.removeEventListener('pointerout', leaveDocument, true)
     doc.removeEventListener('pointerdown', down, true)
     doc.removeEventListener('keydown', escape)
     doc.removeEventListener('scroll', position, true)

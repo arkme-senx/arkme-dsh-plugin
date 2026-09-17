@@ -79,6 +79,9 @@ export interface RecordingImportOwnerSession {
 }
 
 export interface RecordingImportOwnerProgress {
+  serviceUnavailable?: boolean
+  pausedCount?: number
+  completedCount?: number
   displayStatus?: Extract<RecordingImportDisplayStatus,
     'speaker-waiting' | 'speaker-recognizing' | 'transcript-waiting' | 'transcribing' | 'completed' | 'partial' | 'failed' | 'unavailable'>
   importProgress?: PublicRecordingImportProgress
@@ -141,6 +144,8 @@ export interface RecordingImportOwnerGateway {
 }
 
 export type RecordingImportFileKind = 'wav' | 'mp3' | 'm4a'
+/** Zero preserves compatibility for restored jobs and callers which predate source classification. */
+export type RecordingImportRecordingKind = 0 | 1 | 3
 
 export interface RecordingImportJob {
   jobId: string
@@ -154,6 +159,7 @@ export interface RecordingImportJob {
   sha256: string
   startAtMillis: number
   belongUserId: number
+  recordingKind: RecordingImportRecordingKind
   sourceHandle: string
   uploadedBytes: number
   createdAtMillis: number
@@ -307,7 +313,7 @@ export function toPublicRecordingImportJob(
     : job.phase === 'uploading' ? 'uploading'
       : job.phase === 'finalizing' ? 'processing'
         : job.phase === 'accepted' ? 'accepted'
-        : job.phase === 'failed' ? 'failed'
+        : job.phase === 'failed' ? (job.errorCode === 'recording_storage_exhausted' ? 'paused' : 'failed')
           : 'cancelled'
   const statusDetail = job.phase === 'prepared' ? '准备中'
     : job.phase === 'uploading' ? '上传中'

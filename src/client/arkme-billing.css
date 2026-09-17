@@ -1,3 +1,16 @@
+.arkme-billing-modal-host {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.arkme-billing-modal-host::backdrop { background: transparent; }
 .arkme-billing-backdrop {
   position: fixed;
   z-index: 120;

@@ -1,10 +1,9 @@
+import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
+import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { compareTimelineMessages } from './timeline-message-order.js'
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
-import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
-import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmeMemberEvent, ArkmeRelatedQuickNoteItem, ArkmeSourceItem, ArkmeTimelineItem } from '../types.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import {
@@ -16,6 +15,8 @@ import {
   type ArkmeRelatedQuickNotesLoadState,
 } from './ArkmeRelatedQuickNotes.js'
 import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
+import { ArkmeInterwovenReadReceipt, useArkmeInterwovenReadReceipt } from './ArkmeInterwovenReadReceipt.js'
+import { ArkmeCalendarDateTooltip } from './ArkmeCalendarDateTooltip.js'
 
 export type ArkmeConversationRow =
   | { kind: 'message'; id: string; occurredAtMillis: number; item: ArkmeTimelineItem }
@@ -55,12 +56,15 @@ export function projectInterwovenWindow(
   messages: readonly ArkmeTimelineItem[],
   moments: readonly ArkmeInterwovenMention[],
   hasMoreMessages: boolean,
+  includeFromMillis?: number,
 ): { prelude: ArkmeInterwovenMention[]; inline: ArkmeInterwovenMention[] } {
   const sorted = [...new Map(moments.map(moment => [moment.momentId, moment])).values()]
     .sort((a, b) => a.occurredAtMillis - b.occurredAtMillis || a.momentId.localeCompare(b.momentId))
   const oldest = messages.length === 0 ? Infinity : Math.min(...messages.map(message => message.sendAtMillis))
-  const prelude = sorted.filter(moment => moment.occurredAtMillis <= oldest)
-  const inline = sorted.filter(moment => moment.occurredAtMillis > oldest)
+  const isInline = (moment: ArkmeInterwovenMention) => moment.occurredAtMillis > oldest
+    || includeFromMillis !== undefined && moment.occurredAtMillis >= includeFromMillis
+  const prelude = sorted.filter(moment => !isInline(moment))
+  const inline = sorted.filter(isInline)
   return { prelude: hasMoreMessages && inline.length > 0 ? [] : prelude, inline }
 }
 
@@ -68,12 +72,13 @@ export function ArkmeInterwovenPrelude({ moments, onOpen }: {
   moments: readonly ArkmeInterwovenMention[]
   onOpen: (moment: ArkmeInterwovenMention) => void
 }) {
+  useArkmeLocale()
   const [expanded, setExpanded] = useState(false)
   const hiddenCount = Math.max(0, moments.length - 2)
   return <ul data-arkme-interwoven-prelude style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
     {!expanded && hiddenCount > 0 && <li style={styles.momentRow}>
       <button type="button" data-arkme-interwoven-expand aria-expanded={false}
-        style={styles.card} onClick={() => { setExpanded(true) }}>展开另外{hiddenCount}条更早互动</button>
+        style={styles.card} onClick={() => { setExpanded(true) }}>{tr("展开另外")}{hiddenCount}{tr("条更早互动")}</button>
     </li>}
     {(expanded ? moments : moments.slice(-2)).map(moment => <ArkmeInterwovenMentionCard
       key={moment.momentId} moment={moment} rowId={`moment:${moment.momentId}`} onOpen={onOpen} />)}
@@ -83,14 +88,14 @@ export function ArkmeInterwovenPrelude({ moments, onOpen }: {
 export function interwovenTimeLabel(value: number, now = Date.now()): string {
   const date = new Date(value)
   const current = new Date(now)
-  const time = new Intl.DateTimeFormat('zh-CN', {
+  const time = new Intl.DateTimeFormat(arkmeIntlLocale(), {
     hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(date)
   const dayStart = new Date(current.getFullYear(), current.getMonth(), current.getDate()).getTime()
   const targetStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
   if (targetStart === dayStart) return time
-  if (targetStart === dayStart - 24 * 60 * 60 * 1000) return `昨天 ${time}`
-  const day = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(date)
+  if (targetStart === dayStart - 24 * 60 * 60 * 1000) return tr("昨天 {v0}", { v0: time })
+  const day = new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit' }).format(date)
   return `${day} ${time}`
 }
 
@@ -138,6 +143,13 @@ const styles: Record<string, CSSProperties> = {
   },
   avatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   cardText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' },
+  originLabel: {
+    minWidth: 0, maxWidth: 'min(9em, 24%)', flex: '0 0 auto', boxSizing: 'border-box',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    padding: '0 5px', borderRadius: 4, fontSize: 11, lineHeight: '18px',
+    background: 'var(--dsw-alias-bg-layer-2, #f3f4f6)',
+    color: 'var(--dsw-alias-label-tertiary, #9097a1)',
+  },
   chevron: { width: 15, height: 15, flex: 'none', color: 'var(--dsw-alias-label-tertiary, #9097a1)' },
   aside: {
     position: 'absolute', zIndex: 8, top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, width: 'min(372px, 100%)',
@@ -145,20 +157,6 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex', flexDirection: 'column', boxSizing: 'border-box',
     borderLeft: '1px solid #e5e6e9',
     background: '#fff', boxShadow: '-12px 0 28px rgba(29,32,40,.055)',
-  },
-  asideHeader: {
-    height: 56, flex: 'none', padding: '0 14px 0 17px', display: 'flex', alignItems: 'center',
-    justifyContent: 'space-between', gap: 12, boxSizing: 'border-box',
-  },
-  asideTitleWrap: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, color: '#687081' },
-  asideTitle: { margin: 0, color: '#17191c', fontSize: 14, lineHeight: '20px', fontWeight: 600 },
-  back: {
-    width: 30, height: 30, marginLeft: -7, display: 'grid', placeItems: 'center', padding: 0, border: 0,
-    borderRadius: 8, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #68707c)', cursor: 'pointer',
-  },
-  close: {
-    width: 32, height: 32, display: 'grid', placeItems: 'center', padding: 0, border: 0,
-    borderRadius: 9, background: 'transparent', color: '#68707c', cursor: 'pointer',
   },
   asideBody: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 18px 22px' },
   detailSender: { display: 'flex', alignItems: 'center', gap: 10 },
@@ -189,9 +187,27 @@ const styles: Record<string, CSSProperties> = {
 }
 
 function OpaqueAvatar({ avatarRef, size = 18 }: { avatarRef?: string; size?: number }) {
+  useArkmeLocale()
   const src = useArkmeAvatarImage(avatarRef) ?? ''
-  return <span style={{ ...styles.avatar, width: size, height: size, minWidth: size }} aria-hidden>
+  return <span data-arkme-avatar style={{ ...styles.avatar, width: size, height: size, minWidth: size }} aria-hidden>
     {src === '' ? <ArkmeMark size={size} /> : <img src={src} alt="" draggable={false} style={styles.avatarImage} />}
+  </span>
+}
+
+/** Inline identity only; keep the row distinct from a regular chat bubble. */
+function InterwovenSenderAvatar({ avatarRef, name }: { avatarRef: string | undefined; name: string }) {
+  const src = useArkmeAvatarImage(avatarRef)
+  const [failedSrc, setFailedSrc] = useState<string>()
+  const initial = Array.from(name.trim())[0] || '?'
+  return <span data-arkme-interwoven-avatar aria-hidden style={{
+    ...styles.avatar, width: 20, height: 20, minWidth: 20, flex: 'none',
+    fontSize: 11, lineHeight: '20px', fontWeight: 500,
+    color: 'var(--dsw-alias-label-secondary, #737982)',
+  }}>
+    {src && src !== failedSrc
+      ? <img key={src} src={src} alt="" draggable={false} style={styles.avatarImage}
+        onError={() => { setFailedSrc(src) }} />
+      : initial}
   </span>
 }
 
@@ -199,12 +215,20 @@ export function ArkmeInterwovenMentionCard({
   moment,
   rowId,
   onOpen,
+  highlighted = false,
 }: {
   moment: ArkmeInterwovenMention
   rowId?: string
   onOpen: (moment: ArkmeInterwovenMention) => void
+  highlighted?: boolean
 }) {
-  const summary = moment.summary.trim() || '群聊提及'
+  useArkmeLocale()
+  const receipt = useArkmeInterwovenReadReceipt(moment)
+  const [hint, setHint] = useState<{ anchor: HTMLButtonElement; receipt: boolean }>()
+  const hintId = useId()
+  const closeHint = useCallback(() => { setHint(undefined) }, [])
+  useEffect(closeHint, [moment.momentRef, closeHint])
+  const summary = moment.summary.trim() || tr('群聊提及')
   const accessible = `${moment.groupName}，${moment.senderName}：${summary}`
   return <li style={styles.momentRow} data-arkme-interwoven-card={moment.momentId} data-arkme-conversation-row={rowId}>
     <time style={styles.momentTime} dateTime={new Date(moment.occurredAtMillis).toISOString()}>
@@ -212,19 +236,34 @@ export function ArkmeInterwovenMentionCard({
     </time>
     <button
       type="button"
-      style={styles.card}
-      aria-label={`打开快记详情：${accessible}`}
-      title={accessible}
-      onFocus={event => { event.currentTarget.style.boxShadow = '0 0 0 2px var(--dsw-alias-state-business-primary, #3964fe)' }}
-      onBlur={event => { event.currentTarget.style.boxShadow = 'none' }}
-      onClick={() => { onOpen(moment) }}
+      data-arkme-interwoven-summary
+      style={{ ...styles.card, ...(highlighted ? { background: 'var(--dsw-alias-bg-active, #eef0fa)', outline: '1px solid var(--dsw-alias-state-business-primary, #a5acff)' } : {}) }}
+      aria-label={tr("打开快记详情：{v0}", { v0: accessible })}
+      aria-describedby={hint ? hintId : undefined}
+      onMouseOver={event => {
+        const anchor = event.currentTarget
+        const isReceipt = Boolean((event.target as Element).closest?.('[data-arkme-interwoven-receipt]'))
+        setHint(current => current?.anchor === anchor && current.receipt === isReceipt
+          ? current : { anchor, receipt: isReceipt })
+      }}
+      onMouseLeave={closeHint}
+      onFocus={event => {
+        event.currentTarget.style.boxShadow = '0 0 0 2px var(--dsw-alias-state-business-primary, #3964fe)'
+        setHint({ anchor: event.currentTarget, receipt: event.target !== event.currentTarget })
+      }}
+      onBlur={event => { event.currentTarget.style.boxShadow = 'none'; closeHint() }}
+      onClick={() => { closeHint(); onOpen(moment) }}
     >
-      <OpaqueAvatar {...(moment.senderAvatarRef === undefined ? {} : { avatarRef: moment.senderAvatarRef })} />
-      <span style={styles.cardText}>{accessible}</span>
+      <InterwovenSenderAvatar key={moment.senderAvatarRef || moment.senderName}
+        avatarRef={moment.senderAvatarRef} name={moment.senderName} />
+      <span data-arkme-interwoven-content style={styles.cardText}>{summary}</span>
+      <span data-arkme-interwoven-origin style={styles.originLabel}>{moment.groupName || tr('群聊')}</span>
+      <ArkmeInterwovenReadReceipt receipt={receipt} describedBy={hint?.receipt ? hintId : undefined} />
       <svg viewBox="0 0 16 16" style={styles.chevron} aria-hidden>
         <path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </button>
+    {hint && <ArkmeCalendarDateTooltip anchor={hint.anchor} id={hintId} text={hint.receipt ? receipt.text : accessible} onClose={closeHint} />}
   </li>
 }
 
@@ -264,6 +303,7 @@ export function ArkmeInterwovenDetailAside({
   sourceRef?: string
   shareWebsite?: string
 }) {
+  useArkmeLocale()
   const asideBodyRef = useRef<HTMLDivElement>(null)
   const detailPanelRef = useRef<HTMLElement>(null)
   const resize = useResizableNoteDetail(detailPanelRef)
@@ -288,19 +328,13 @@ export function ArkmeInterwovenDetailAside({
     : ''
   const relatedTotal = relatedState.kind === 'success' ? relatedState.list.total : 0
   const title = relatedView === 'related-list'
-    ? `${String(relatedTotal)} 条相关快记`
+    ? tr("{v0} 条相关快记", { v0: String(relatedTotal) })
     : relatedView === 'related-detail' ? '相关快记详情' : '快记详情'
-  return <aside ref={detailPanelRef} style={{ ...styles.aside, ...resize.style }} aria-label="快记详情" data-arkme-interwoven-detail>
+  return <aside ref={detailPanelRef} style={{ ...styles.aside, ...resize.style }} aria-label={tr("快记详情")} data-arkme-interwoven-detail>
     {resize.handle}
-    <header style={styles.asideHeader}>
-      <span style={styles.asideTitleWrap}>
-        {relatedView !== 'source-detail' && <button type="button" style={styles.back}
-          aria-label={relatedView === 'related-detail' ? '返回相关快记列表' : '返回快记详情'}
-          onClick={() => { rememberCurrentScroll(); onBackRelated?.() }}><ArrowLeft size={18} aria-hidden /></button>}
-        <NotePencil size={17} aria-hidden /><h3 style={styles.asideTitle}>{title}</h3>
-      </span>
-      <button type="button" style={styles.close} aria-label="关闭快记详情" onClick={onClose}><X size={18} aria-hidden /></button>
-    </header>
+    <ArkmeRightPanelHeader title={title} onClose={onClose} closeLabel={tr("关闭快记详情")}
+      onBack={relatedView === 'source-detail' ? undefined : () => { rememberCurrentScroll(); onBackRelated?.() }}
+      backLabel={relatedView === 'related-detail' ? tr("返回相关快记列表") : tr("返回快记详情")} />
     <div ref={asideBodyRef} style={styles.asideBody} aria-live="polite" data-arkme-interwoven-aside-body>
       {relatedView === 'related-list'
         ? <ArkmeRelatedQuickNotesList state={relatedState}
@@ -313,10 +347,10 @@ export function ArkmeInterwovenDetailAside({
             onRetry={onRetryRelatedDetail ?? (() => undefined)}
             {...(sourceRef === undefined ? {} : { sourceRef })}
             {...(shareWebsite === undefined ? {} : { shareWebsite })} />
-          : state.kind === 'loading' ? <div style={styles.state} role="status">正在加载快记详情…</div>
+          : state.kind === 'loading' ? <div style={styles.state} role="status">{tr("正在加载快记详情…")}</div>
         : state.kind === 'error' ? <div style={styles.state} role="alert">
           <div>{state.message}</div>
-          <button type="button" style={styles.retry} onClick={onRetry}>重试</button>
+          <button type="button" style={styles.retry} onClick={onRetry}>{tr("重试")}</button>
         </div> : <>
           <div style={styles.detailSender}>
             <OpaqueAvatar {...(state.detail.senderAvatarRef === undefined ? {} : { avatarRef: state.detail.senderAvatarRef })} size={40} />
@@ -328,7 +362,7 @@ export function ArkmeInterwovenDetailAside({
             </div>
           </div>
           {detailContent === '' && state.detail.degraded
-            ? <div style={{ ...styles.state, marginTop: 16 }}>这条快记正文暂时不可用，请稍后重试。</div>
+            ? <div style={{ ...styles.state, marginTop: 16 }}>{tr("这条快记正文暂时不可用，请稍后重试。")}</div>
             : <p style={styles.detailText} data-arkme-interwoven-degraded={state.detail.degraded || undefined}>
               {(detailContent === '' ? [{ text: '暂无文本内容', mention: false }] : interwovenContentParts(detailContent))
                 .map((part, index) => <span key={`${index}:${part.text}`} style={part.mention ? styles.mention : undefined}>{part.text}</span>)}
@@ -337,8 +371,8 @@ export function ArkmeInterwovenDetailAside({
             type="button"
             style={{ ...styles.groupTag, ...(onOpenGroup === undefined ? { cursor: 'not-allowed', opacity: .65 } : {}) }}
             disabled={onOpenGroup === undefined}
-            aria-label={`打开群聊：${state.detail.groupName}`}
-            title={onOpenGroup === undefined ? '当前会话列表中无法唯一定位该群聊' : `打开群聊：${state.detail.groupName}`}
+            aria-label={tr("打开群聊：{v0}", { v0: state.detail.groupName })}
+            title={onOpenGroup === undefined ? '当前会话列表中无法唯一定位该群聊' : tr("打开群聊：{v0}", { v0: state.detail.groupName })}
             data-arkme-interwoven-group-target={state.detail.groupName}
             onClick={onOpenGroup}
           >

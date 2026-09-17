@@ -1,7 +1,8 @@
+import { tr } from './locale.js'
 export function ArkmeMuteIcon({ size = 18 }: { size?: number }) {
   return <svg
     role="img"
-    aria-label="消息免打扰已开启"
+    aria-label={tr("消息免打扰已开启")}
     width={size}
     height={size}
     viewBox="0 0 20 20"

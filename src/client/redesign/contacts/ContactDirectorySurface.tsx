@@ -1,3 +1,6 @@
+import { subscribeTeamMessageChanges } from '../../team-messaging-events.js'
+import { TeamDirectoryActions } from './TeamDirectoryActions.js'
+import { tr, useArkmeLocale } from '../../locale.js'
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react'
 import type { ArkmeBotSummary, ArkmeDirectoryItem, ArkmeDirectoryPage, ArkmeDirectorySectionKind } from '../../../types.js'
 import { callArkme } from '../../api.js'
@@ -26,7 +29,7 @@ const SECTION_LABELS: Record<ArkmeDirectorySectionKind, { label: string; empty: 
   bots: { label: 'Bot', empty: '暂无 Bot' },
   'unmarked-speakers': { label: '未标记说话人', empty: '暂无未标记说话人' },
   teams: { label: '团队', empty: '暂无团队' },
-  contacts: { label: '联系人', empty: '暂无联系人' },
+  contacts: { get label() { return tr("联系人") }, empty: '暂无联系人' },
 }
 
 export interface ContactDirectoryLoadOptions {
@@ -85,6 +88,7 @@ export function ContactDirectoryContent({
   countLabels = {},
   searchStatus,
   searching = false,
+  teamActions,
   onToggle,
   onRetry,
   onLoadMore,
@@ -98,6 +102,7 @@ export function ContactDirectoryContent({
   countLabels?: Partial<Record<ArkmeDirectorySectionKind, string>>
   searchStatus?: string | undefined
   searching?: boolean
+  teamActions?: ReactNode
   onToggle(section: ArkmeDirectorySectionKind): void
   onRetry(section: ArkmeDirectorySectionKind): void
   onLoadMore(section: ArkmeDirectorySectionKind): void
@@ -105,13 +110,14 @@ export function ContactDirectoryContent({
   onOpenGroup(sourceRef: string): void
   onOpenBot(bot: ArkmeBotSummary): void
 }) {
-  return <nav ref={directoryRef} className="arkme-contact-directory" aria-label="联系人目录">
+  return <nav ref={directoryRef} className="arkme-contact-directory" aria-label={tr("联系人目录")}>
     {CONTACT_DIRECTORY_SECTION_ORDER.map(sectionKind => {
       const section = state.sections[sectionKind]
       const labels = SECTION_LABELS[sectionKind]
       return <CollapsibleDirectorySection
         key={sectionKind}
         active={active}
+        {...(sectionKind === 'teams' && teamActions ? { actions: teamActions } : {})}
         section={section}
         label={labels.label}
         emptyLabel={searching ? '未找到匹配的项目' : labels.empty}
@@ -148,7 +154,7 @@ export function ContactDirectoryContent({
 }
 
 const defaultLoadPage: ContactDirectoryPageLoader = async (section, options, signal) => await callArkme<ArkmeDirectoryPage>(
-  'directory.list',
+  section === 'teams' ? 'team.app.directory' : 'directory.list',
   {
     section,
     limit: options.limit,
@@ -162,7 +168,7 @@ const defaultLoadPage: ContactDirectoryPageLoader = async (section, options, sig
 function errorMessage(error: unknown, section: ArkmeDirectorySectionKind): string {
   const code = (error as { body?: { code?: string } } | undefined)?.body?.code ?? ''
   if (['login-required', 'login-expired', 'auth-http-401', 'auth-http-403'].includes(code) && error instanceof Error) return error.message
-  return `${SECTION_LABELS[section].label}暂时无法加载`
+  return tr("{v0}暂时无法加载", { v0: SECTION_LABELS[section].label })
 }
 
 export function directoryStateForAccount(
@@ -190,6 +196,7 @@ export function ContactDirectorySurface({
   onStateChange,
   loadPage = defaultLoadPage,
 }: ContactDirectorySurfaceProps) {
+  useArkmeLocale()
   const [state, dispatch] = useReducer(
     contactDirectoryReducer,
     { accountKey, initialState },
@@ -315,6 +322,10 @@ export function ContactDirectorySurface({
       commit({ type: 'load-error', section, accountKey, generation, message: errorMessage(error, section) })
     })
   }, [active, accountKey, commit])
+
+  useEffect(() => subscribeTeamMessageChanges(account => {
+    if (account === accountKey && active) load('teams', 'replace', true)
+  }), [accountKey, active, load])
 
   useEffect(() => {
     if (refreshCachedOnMountRef.current) return
@@ -459,6 +470,7 @@ export function ContactDirectorySurface({
       onToggle={handleToggle}
       onRetry={section => { delete staleRestartsRef.current[section]; load(section, 'replace', true) }}
       onLoadMore={section => { load(section, 'append') }}
+      teamActions={<TeamDirectoryActions key={accountKey} accountKey={accountKey} onChanged={() => { load('teams', 'replace', true) }} onSelect={handleSelect} />}
       onSelect={handleSelect}
       onOpenGroup={onOpenGroup}
       onOpenBot={onOpenBot}

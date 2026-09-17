@@ -20,6 +20,60 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordService', () => {
+  it('reads a complete personal Team record without a Home or conversation dependency', async () => {
+    const session = { userId: 42, refreshToken: 'test-session' }
+    const core = { record_uid: 'team-record', owner_user_id: 42, origin_kind: 5, status: 1,
+      content_access_state: 1, text_content: '正文'.repeat(2000), content_payload: { media_refs: [{ file_asset_uid: 'image' }] } }
+    const post = vi.fn(async () => ({ record_core: core }))
+    const runtime = { requireSession: async () => session, accountScopedSession: async () => session, authenticatedPost: post } as unknown as ServiceRuntime
+    const displays = [{ file_asset_uid: 'image' }]
+    const media = { hydrateRecordMediaPage: vi.fn(async () => ({ displayItemsByRecordUid: new Map([['team-record', displays]]), unavailableRecordUids: new Set() })),
+      richContentBlocks: vi.fn(() => []), recordMediaUnavailable: () => false } as unknown as MediaService
+    const service = new RecordService(runtime, media, {} as never)
+    const item = await service.personalRecordDetail('team-record')
+    expect(item.textContent).toBe(core.text_content)
+    expect(item.isMe).toBe(true)
+    expect(media.richContentBlocks).toHaveBeenCalledWith({ record_core: core }, 42, displays)
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post.mock.calls[0]?.[0]).toBe('/api/v1/records/detail')
+  })
+  it.each([
+    { owner_user_id: 43 }, { record_uid: 'another' }, { status: 2 },
+    { content_access_state: 2 }, { content_access_state: 0 },
+  ])('does not render inaccessible personal content: %j', async change => {
+    const session = { userId: 42, refreshToken: 'test-session' }
+    const runtime = { requireSession: async () => session,
+      authenticatedPost: async () => ({ record_core: { record_uid: 'team-record', owner_user_id: 42,
+        status: 1, content_access_state: 1, ...change } }) } as unknown as ServiceRuntime
+    const hydrateRecordMediaPage = vi.fn()
+    const service = new RecordService(runtime, { hydrateRecordMediaPage } as unknown as MediaService, {} as never)
+    await expect(service.personalRecordDetail('team-record')).rejects.toMatchObject({ code: 'record-detail-unavailable' })
+    expect(hydrateRecordMediaPage).not.toHaveBeenCalled()
+  })
+  it('discards a personal detail response when the authenticated account changes', async () => {
+    const runtime = { requireSession: async () => ({ userId: 42, refreshToken: 'a' }),
+      accountScopedSession: async () => ({ userId: 43, refreshToken: 'b' }),
+      authenticatedPost: async () => ({ record_core: { record_uid: 'r', owner_user_id: 42, status: 1, content_access_state: 1 } }) } as unknown as ServiceRuntime
+    const media = { hydrateRecordMediaPage: async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() }) } as unknown as MediaService
+    await expect(new RecordService(runtime, media, {} as never).personalRecordDetail('r')).rejects.toMatchObject({ code: 'record-account-changed' })
+  })
+  it.each(['file_asset://avatar-at-creation', '42_old_avatar.jpg', 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/42_old_avatar.jpg'])('preserves the historical avatar %s through both self projections', avatar => {
+    const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
+    const service = new RecordService({} as ServiceRuntime, media, {} as never)
+    const raw = { record_uid: 'r', record_core: { record_uid: 'r', avatar, nickname: '当时的名字' } }
+    for (const item of [service.recordTimelineItemFromRaw(raw, 42), service.recordTimelineItem(service.recordItem(raw, 42)!)]) {
+      expect(item).toMatchObject({ avatarSnapshot: true, avatarRef: avatar, senderName: '当时的名字' })
+    }
+  })
+  it.each([{}, { avatar: 'arkme-profile-image-v1.current-profile' }])('marks missing or mutable historical avatars without substituting the current profile: %j', snapshot => {
+    const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
+    const service = new RecordService({} as ServiceRuntime, media, {} as never)
+    const raw = { record_uid: 'r', record_core: { record_uid: 'r', ...snapshot } }
+    for (const item of [service.recordTimelineItemFromRaw(raw, 42), service.recordTimelineItem(service.recordItem(raw, 42)!)]) {
+      expect(item.avatarSnapshot).toBe(true)
+      expect(item.avatarRef).toBeUndefined()
+    }
+  })
   it.each([true, false])('preserves manual edit fact %s through both self record projections', fact => {
     const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
     const service = new RecordService({} as ServiceRuntime, media, {} as never)
@@ -306,6 +360,12 @@ describe('RecordService', () => {
     await expect(service.prepareRecordReedit({
       sourceRef: 'source-ref', itemUid: 'record-mention', newTitle: '只改标题', newText: '@小明 原正文',
     })).resolves.toMatchObject({ newTitle: '只改标题', newTextPreview: '@小明 原正文' })
+    await expect(service.prepareRecordReedit({
+      sourceRef: 'source-ref', itemUid: 'record-mention', newText: '😀 @小明 修改后正文',
+      expectedVersion: 1,
+      mentions: [{ originalIndex: 0, displayName: '小明', startIndex: 3, length: 3 }],
+    })).resolves.toMatchObject({ newTextPreview: '😀 @小明 修改后正文' })
+
   })
 
   it('keeps the draft when the owner version changes before commit', async () => {
@@ -578,6 +638,7 @@ describe('RecordService', () => {
     { sourceKind: 'topic' as const, ownerRef: 'topic-1', originKind: 2, topicUid: 'topic-1' },
     { sourceKind: 'private_chat' as const, ownerRef: 'private-1', originKind: 3 },
     { sourceKind: 'default_category' as const, ownerRef: 'uncategorized', originKind: 1 },
+    { sourceKind: 'default_category' as const, ownerRef: 'uncategorized', originKind: 5 },
   ])('accepts a record from the exact $sourceKind family', async ({ sourceKind, ownerRef, originKind, topicUid }) => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-source-family-valid-'))
     const stateStore = new ArkmeStateStore(root)
@@ -589,6 +650,7 @@ describe('RecordService', () => {
           record_core: {
             record_uid: 'record-1', owner_user_id: 42, creator_user_id: 42,
             origin_kind: originKind,
+            ...(originKind === 5 ? {source_kind:1,origin_container_ref:'team-conversation'} : {}),
             ...(sourceKind === 'private_chat' ? { origin_container_ref: ownerRef } : {}),
             template_kind: 1, title: '', text_content: '原正文', status: 1,
             version: 7, content_access_state: 1, send_at: 123_000,
@@ -729,7 +791,7 @@ describe('RecordService', () => {
     })
   })
 
-  it('restores a record extension parent preview from the durable home-feed contract', () => {
+  it.each([undefined, { role_id: 'parent-role', name: '角色作者' }])('restores a record extension parent preview with frozen role %j', selfRole => {
     const media = {
       recordMediaUnavailable: () => false, richContentBlocks: vi.fn((raw: unknown) => {
         const core = (raw as { record_core?: { record_uid?: string } }).record_core
@@ -750,7 +812,7 @@ describe('RecordService', () => {
         parent_record_uid: 'record-parent',
         extension_parent_preview: {
           record: {
-            record_uid: 'record-parent', nickname: '我', title: '', text_content: '原快记内容',
+            record_uid: 'record-parent', nickname: '我', self_role_snapshot: selfRole, title: '', text_content: '原快记内容',
             template_kind: 2, status: 1,
           },
         },
@@ -760,7 +822,7 @@ describe('RecordService', () => {
       textContent: '延展正文',
       extensionParentRecordUid: 'record-parent',
       extensionParent: {
-        itemUid: 'record-parent', senderName: '我', title: '', textContent: '原快记内容',
+        itemUid: 'record-parent', senderName: selfRole?.name ?? '我', title: '', textContent: '原快记内容',
         contentBlocks: [{ kind: 'image', mediaRef: 'parent-image-ref', fileName: 'parent.png' }],
       },
     })
@@ -800,7 +862,8 @@ describe('RecordService', () => {
     }, { recordUid() { return '' } })
     const service = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-    })
+    }, undefined, undefined, undefined, undefined,
+    async () => ({ avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' }))
     const recordUid = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
     const captureContext = {
       clientName: 'Google Chrome（DeepSeek Harness）', networkName: '网络已连接', electric: 100, charge: 1,
@@ -819,6 +882,7 @@ describe('RecordService', () => {
       expect(body).toMatchObject({
         record_uid: recordUid,
         text_content: '#项目 浏览器采集验证',
+        sender_snapshot: { avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' },
         record_duration_millis: 3_200,
         capture_context: {
           client_name: 'Google Chrome（DeepSeek Harness）', network_name: '网络已连接', electric: 100, charge: 1,
@@ -941,6 +1005,23 @@ describe('RecordService', () => {
     expect(requestBody).toEqual({ limit: 100 })
   })
 
+  it('sends tag search and pagination to the server and preserves page metadata', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let requestBody: unknown
+    const fetchImpl = vi.fn(async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: true, next_cursor: 'next-page' } }), { status: 200 })
+    }) as typeof fetch
+    const service = new RecordService(new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl), {} as MediaService, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+    await expect(service.listTags({ query: '项目', limit: 20, cursor: 'previous-page' })).resolves.toEqual({ items: [], hasMore: true, nextCursor: 'next-page' })
+    expect(requestBody).toEqual({ query: '项目', limit: 20, cursor: 'previous-page' })
+  })
+
   it('creates a canonical Record whose file assets stay in content_payload media refs', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
@@ -958,7 +1039,8 @@ describe('RecordService', () => {
     }, { recordUid() { return '' } })
     const service = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
-    })
+    }, undefined, undefined, undefined, undefined,
+    async () => ({ avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' }))
 
     await expect(service.createFileAssetsForConversation(
       'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
@@ -971,6 +1053,7 @@ describe('RecordService', () => {
       display_kind: 0,
       title: '',
       text_content: '图片正文',
+      sender_snapshot: { avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' },
       content_payload: {
         payload_kind: 2,
         schema_version: 1,
@@ -1007,7 +1090,8 @@ describe('RecordService', () => {
     const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
     const service = new RecordService(runtime, {} as MediaService, {
       async openSourceRef() { throw new Error('unexpected') },
-    })
+    }, undefined, undefined, undefined, undefined,
+    async () => ({ avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' }))
     const childRecordUid = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
 
     await expect(service.createExtensionForConversation(
@@ -1023,6 +1107,7 @@ describe('RecordService', () => {
       template_kind: 2,
       title: '',
       text_content: '附件延展',
+      sender_snapshot: { avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' },
       content_payload: {
         payload_kind: 2,
         schema_version: 1,

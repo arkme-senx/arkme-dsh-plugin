@@ -13,6 +13,7 @@ import { serializeArkmeComposerDraft, type ArkmeComposerEmoji, type ArkmeCompose
 import { closeHistory } from '@tiptap/pm/history'
 import { Slice, type Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
+import { useComposerSelectionRequest } from './composer-selection-request.js'
 
 export interface ArkmeDocumentComposerHandle extends ArkmeRichComposerHandle {
   insertEmoji(emoji: ArkmeEmoji): 'inserted' | 'length-limit' | 'unavailable'
@@ -190,7 +191,10 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
       const native = nativeSelection()
       const pending = pendingEmojiSelection.current
       pendingEmojiSelection.current = undefined
-      const selection = native ?? (pending?.doc === editor.state.doc ? pending : editor.state.selection)
+      // The native range can collapse while focus moves into the picker. The
+      // range captured before that transition takes precedence until the user
+      // interacts with the editor again or the document changes.
+      const selection = (pending?.doc === editor.state.doc ? pending : undefined) ?? native ?? editor.state.selection
       const anchor = Math.max(0, Math.min(editor.state.doc.content.size, selection.anchor))
       const head = Math.max(0, Math.min(editor.state.doc.content.size, selection.head))
       const previousState = editor.state
@@ -229,12 +233,29 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
     getEditorGeometry() { return editor?.view.dom.getBoundingClientRect() },
   }), [editor])
 
+  useComposerSelectionRequest(props.selectionRequest, props.value, props.disabled, request => {
+    if (!editor) return false
+    const projected = arkmeEditorProjection(editor.state.doc)
+    if (projected.text !== request.text) return false
+    // Set the document selection first, then focus through ProseMirror so native
+    // focus restoration cannot replace it with the old DOM selection.
+    editor.commands.setTextSelection({
+      from: projected.positions[request.start] ?? editor.state.doc.content.size - 1,
+      to: projected.positions[request.end] ?? editor.state.doc.content.size - 1,
+    })
+    editor.view.focus()
+    return true
+  })
+
   return <div ref={host} data-arkme-composer-editor-box="true" className={`${props.format === 'text' ? 'arkme-text-document' : 'arkme-markdown'} ${props.className ?? ''}`} style={{ ...props.style, position: 'relative' }}
     onFocus={props.onFocus} onBlur={props.onBlur}
+    onPointerDownCapture={() => { pendingEmojiSelection.current = undefined }}
+    onMouseDownCapture={() => { pendingEmojiSelection.current = undefined }}
     onCopyCapture={syncNativeTextSelection}
     onCutCapture={syncNativeTextSelection}
     onPasteCapture={event => { syncNativeTextSelection(); props.onPaste?.(event) }}
     onKeyDownCapture={event => {
+      pendingEmojiSelection.current = undefined
       if (event.nativeEvent.isComposing || event.keyCode === 229) {
         if (props.format === 'text') event.stopPropagation()
         return
@@ -273,7 +294,7 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
     <style>{props.format === 'text'
       ? '.arkme-text-document .ProseMirror{outline:none;min-height:inherit;white-space:pre-wrap}.arkme-text-document p{margin:0;min-height:1em}'
       : arkmeMarkdownStyles}</style>
-    {showPlaceholder && <span aria-hidden style={{ position: 'absolute', pointerEvents: 'none', color: 'var(--dsw-alias-label-tertiary,#9097a1)' }}>{props.placeholder}</span>}
+    {showPlaceholder && <span aria-hidden style={{ position: 'absolute', pointerEvents: 'none', color: 'var(--dsw-alias-label-secondary,#68707c)' }}>{props.placeholder}</span>}
     <EditorContent editor={editor} />
   </div>
 })

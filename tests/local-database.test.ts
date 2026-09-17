@@ -19,6 +19,19 @@ function pending(recordUid: string, textContent: string): ArkmePendingWrite {
   }
 }
 
+it('preserves historical sender avatars across database restart without affecting other accounts', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'arkme-record-avatar-'))
+  const operational = new ArkmeStateStore(directory)
+  let database = new ArkmeLocalDatabase(directory, operational)
+  try {
+    await database.cachePage(42, { items: [{ ...remote('history', '旧记录'), avatarRef: 'file_asset://old-avatar', senderName: '旧昵称' }], hasMore: false })
+    database.close()
+    database = new ArkmeLocalDatabase(directory, operational)
+    expect((await database.cachedSnapshot(42)).items[0]).toMatchObject({ avatarRef: 'file_asset://old-avatar', senderName: '旧昵称' })
+    expect((await database.cachedSnapshot(43)).items).toEqual([])
+  } finally { database.close() }
+})
+
 function capturedPending(recordUid: string, textContent: string): ArkmePendingWrite {
   return {
     ...pending(recordUid, textContent),

@@ -1,14 +1,16 @@
+import { arkmeConversationMembers } from '../src/client/conversation-members-store.js'
+import { memberPageFixture } from './helpers/member-page-fixture.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeSourceItem, ArkmeTimelineItem } from '../src/types.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), renderedItems: [] as ArkmeTimelineItem[] }))
-vi.mock('../src/client/api.js', () => ({
-  callArkme: mocks.callArkme,
+vi.mock('../src/client/api.js', async () => { const { emptyTimelineCacheFixture } = await import('./helpers/member-page-fixture.js'); return ({
+  callArkme: emptyTimelineCacheFixture(mocks.callArkme),
   ArkmeClientError: class extends Error {
     constructor(readonly body: { code: string; message: string; retryable: boolean }) { super(body.message) }
   },
-}))
+}) })
 vi.mock('react-dom', () => ({ createPortal: (children: unknown) => children }))
 vi.mock('../src/client/ArkmeRichContent.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/client/ArkmeRichContent.js')>()
@@ -22,6 +24,7 @@ import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { ArkmeAttachmentStrip } from '../src/client/ArkmeAttachmentStrip.js'
 import { ArkmeConfirmDialog } from '../src/client/ArkmeConfirmDialog.js'
 import { ArkmeClientError } from '../src/client/api.js'
+import { ArkmeMentionSuggestionRow } from '../src/client/ArkmeMentionSuggestionRow.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import * as composerFocus from '../src/client/composer-focus.js'
 import { ArkmeMediaPreview } from '../src/client/ArkmeRichContent.js'
@@ -88,6 +91,87 @@ describe('record re-edit attachment UI', () => {
     })
   }
 
+  it('restores and shifts original mentions in an isolated re-edit draft', async () => {
+    Object.assign(snapshot, { textContent: '@小明 原正文', mentions: [
+      { originalIndex: 0, displayName: '小明', startIndex: 0, length: 3 },
+    ] })
+    await mount(); await open()
+    expect(composer().props.mentions).toEqual([{ originalIndex: 0, displayName: '小明', startIndex: 0, length: 3 }])
+    act(() => composer().props.onTextChange('😀 @小明 原正文'))
+    act(() => composer().props.onTextChange('😀 @小明 修改后'))
+    expect(composer().props.mentions[0].startIndex).toBe(3)
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '关闭重新编辑' }).props.onClick(); await flush() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.draft.put', expect.objectContaining({
+      newText: '😀 @小明 修改后', mentions: [{ originalIndex: 0, displayName: '小明', startIndex: 3, length: 3 }],
+    }))
+    expect(arkmeComposerDraftStore.get(normalKey).mentions).toEqual([])
+  })
+
+  it('allows selecting a group member while re-editing and submits mention evidence', async () => {
+    const group = { ...source, sourceKey: 'chat:reedit-mentions-group', kind: 'group_chat' as const }
+    arkmeUi.selectSource(group)
+    arkmeConversationMembers.activateAccount('test:42')
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(memberPageFixture(async (op, params) => op === 'source.members'
+      ? { source: group, items: [{ memberRef: 'member', mentionRef: 'mention', displayName: '小明', mentionDisplayName: '小明', isSelf: false, status: 'active', role: 'member', joinedAtMillis: 1, isOwner: false, recordCount: 0, mentionCount: 0 }], total: 1, activeCount: 1 }
+      : op === 'group.bots' ? { items: [] } : base(op, params)))
+    await mount(); await open()
+    act(() => composer().props.onTextChange('@'))
+    act(() => composer().props.onSelectionChange('@', 1, 1))
+    const composingEnter = { key: 'Enter', nativeEvent: { isComposing: true }, preventDefault: vi.fn() }
+    act(() => composer().props.onKeyDown(composingEnter))
+    expect(composer().props.value).toBe('@')
+    expect(composingEnter.preventDefault).not.toHaveBeenCalled()
+    const list = renderer!.root.findByProps({ 'aria-label': '选择要 @ 的对象' })
+    const option = list.findAllByType(ArkmeMentionSuggestionRow).find(node => node.props.candidate.kind === 'member')!
+    act(() => option.props.onSelect())
+    expect(composer().props.value).toBe('@小明 ')
+    expect(composer().props.mentions).toEqual([{ mentionRef: 'mention', displayName: '小明', startIndex: 0, length: 3 }])
+    act(() => composer().props.onSelectionChange('@小明 @', 5, 5))
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.onClick(); await flush() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.draft.put', expect.objectContaining({
+      mentions: [{ mentionRef: 'mention', displayName: '小明', startIndex: 0, length: 3 }],
+    }))
+    expect(renderer!.root.findAllByProps({ 'aria-label': '选择要 @ 的对象' })).toHaveLength(0)
+  })
+
+  it.each(['human', 'bot'] as const)('keeps a new %s mention and ordinary draft after rejected submission, then retries the saved candidate', async kind => {
+    const targetSource = { ...source, kind: kind === 'human' ? 'group_chat' as const : 'private_chat' as const }
+    arkmeUi.selectSource(targetSource)
+    const ordinaryKey = arkmeSourceComposerDraftKey(42, targetSource)
+    arkmeComposerDraftStore.setText(ordinaryKey, '普通发送草稿')
+    const mentions = [{ ...(kind === 'human' ? { mentionRef: 'new-human' } : { botRef: 'new-bot' }),
+      displayName: '小明', startIndex: 0, length: 3 }]
+    snapshot.draft = { title: '', textContent: '@小明 输入', mentions, attachments: snapshot.attachments,
+      baseVersion: 3, draftRevision: 7, updatedAtMillis: 1 }
+    const base = mocks.callArkme.getMockImplementation()!
+    let rejected = true
+    mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'source.record-reedit.submit' && rejected) {
+        throw new ArkmeClientError({ code: kind === 'human' ? 'chat-member-ref-stale' : 'bot-mention-not-available', message: '@ 对象当前不可用', retryable: false })
+      }
+      return base(operation, params)
+    })
+    await mount(); await open()
+    act(() => composer().props.onTextChange('@小明 输入更新'))
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.onClick(); await flush() })
+    expect(composer().props.value).toBe('@小明 输入更新')
+    expect(composer().props.mentions).toEqual(mentions)
+    expect(renderer!.root.findByProps({ role: 'alert' }).children).toContain('@ 对象当前不可用')
+    expect(renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.disabled).toBe(false)
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.draft.put', expect.objectContaining({
+      newText: '@小明 输入更新', mentions, expectedDraftRevision: 7,
+    }))
+    expect(arkmeComposerDraftStore.get(ordinaryKey).text).toBe('普通发送草稿')
+    rejected = false
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.onClick(); await flush() })
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-reedit.submit')
+      .map(([, params]) => params.expectedDraftRevision)).toEqual([8, 8])
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-reedit.draft.put')).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-composer-reedit-target': 'true' })).toHaveLength(0)
+    expect(composer().props.value).toBe('普通发送草稿')
+  })
+
   it.each([1, 3])('pages a topic target with an owner ID beyond the initial page: kind %s', async topicKind => {
     const self: ArkmeSourceItem = { kind: 'topic', topicKind, sourceRef: 'topic-ref', displayName: '主题', activeAtMillis: 0, unreadCount: 0 }
     const base = mocks.callArkme.getMockImplementation()!
@@ -105,14 +189,14 @@ describe('record re-edit attachment UI', () => {
     expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.timeline-around')).toBe(false)
   })
 
-  it('routes outer composer whitespace to the current handle and marks only its two bottom regions', async () => {
+  it('routes outer composer whitespace to the current handle and keeps the shortcut on the send button', async () => {
     const focus = vi.spyOn(composerFocus, 'focusArkmeComposerFromClick').mockReturnValue(false)
     await mount()
     const outer = renderer!.root.findByProps({ className: 'arkme-conversation-composer' })
     const footers = outer.findAll(node => typeof node.type === 'string' && node.props['data-arkme-composer-footer'] !== undefined)
-    expect(footers.map(node => node.props['data-arkme-composer-footer'])).toEqual(['tools', 'hint'])
+    expect(footers.map(node => node.props['data-arkme-composer-footer'])).toEqual(['tools'])
     expect(footers[0]!.findByProps({ 'aria-label': '发送消息' })).toBeDefined()
-    expect(footers[1]!.children).toEqual(['Enter发送 / Shift+Enter换行'])
+    expect(footers[0]!.findByProps({ role: 'tooltip' }).children.join('')).toBe('Enter发送 / Shift+Enter换行')
     const event = { currentTarget: {}, target: {}, button: 0, defaultPrevented: false }
     act(() => outer.props.onClick(event))
     expect(focus).toHaveBeenLastCalledWith(expect.objectContaining({ disabled: false, focus: expect.any(Function) }), event)
@@ -609,7 +693,9 @@ describe('record re-edit attachment UI', () => {
       await flush()
     })
     const frames = mocks.renderedItems.filter(value => value.itemUid === item.itemUid)
-    expect(frames.length).toBeGreaterThan(0)
+    // An unchanged row may be memoized; the mounted view must keep both complete images.
+    const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': item.itemUid })
+    expect(row.findByProps({ alt: 'b.png' }).props.src).toContain('complete-b')
     expect(frames.every(value => value.mediaUnavailable === false && value.contentBlocks?.length === 2)).toBe(true)
   })
 
@@ -851,6 +937,7 @@ describe('record re-edit attachment UI', () => {
   afterEach(async () => {
     await act(async () => { renderer?.unmount(); await flush() })
     renderer = undefined
+    arkmeConversationMembers.activateAccount(undefined)
     arkmeComposerDraftStore.clearAccount(42)
     arkmeChatDirectory.clear()
     arkmeChatTimelineDelta.publish([])
@@ -1485,10 +1572,11 @@ describe('record re-edit attachment UI', () => {
     snapshot.draft = { title: '', textContent: '原候选', attachments: [existing('b')], baseVersion: 2, draftRevision: 7, updatedAtMillis: 2 }
     await mount(); await open()
     act(() => renderer!.root.findByProps({ 'aria-label': '放弃草稿并重新载入' }).props.onClick())
-    snapshot.draft = { ...snapshot.draft, textContent: '其他入口新候选', draftRevision: 8 }
+    snapshot.draft = { ...snapshot.draft, textContent: '@小红 新候选', mentions: [{ mentionRef: 'new-ref', displayName: '小红', startIndex: 0, length: 3 }], draftRevision: 8 }
     await act(async () => { renderer!.root.findByType(ArkmeConfirmDialog).props.onConfirm(); await flush() })
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.record-reedit.draft.delete')).toHaveLength(0)
-    expect(composer().props.value).toBe('其他入口新候选')
+    expect(composer().props.value).toBe('@小红 新候选')
+    expect(composer().props.mentions).toEqual(snapshot.draft.mentions)
     expect(renderer!.root.findAllByType(ArkmeConfirmDialog)).toHaveLength(0)
   })
 

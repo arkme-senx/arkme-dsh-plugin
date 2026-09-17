@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useState, type CSSProperties } from 'react'
 import copyIcon from '../../assets/search_file_icons/copy.png'
 import { arkmeTheme } from './arkme-theme.js'
@@ -34,8 +35,8 @@ export function searchUploadDate(millis: number): string {
   const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
   const offset = (today - day) / 86_400_000
   if (offset === 0) return time
-  if (offset === 1) return `昨天 ${time}`
-  if (offset === 2) return `前天 ${time}`
+  if (offset === 1) return tr("昨天 {v0}", { v0: time })
+  if (offset === 2) return tr("前天 {v0}", { v0: time })
   return `${date.getFullYear() === now.getFullYear() ? '' : `${date.getFullYear()}-`}${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${time}`
 }
 export function searchDuration(seconds: number): string {
@@ -47,18 +48,19 @@ export function searchDuration(seconds: number): string {
 export function SearchMediaTile({ url, video, durationSec, name, onOpen, unavailable = false }: {
   url?: string | undefined; video: boolean; durationSec?: number | undefined; name: string; onOpen(): void; unavailable?: boolean
 }) {
+  useArkmeLocale()
   const [failed, setFailed] = useState(false)
   const [measured, setMeasured] = useState(0)
   useEffect(() => { setFailed(false); setMeasured(0) }, [url])
   const duration = durationSec || measured
-  return <button type="button" data-search-media-tile aria-label={`查看${video ? '视频' : '图片'} ${name}`} onClick={onOpen}
+  return <button type="button" data-search-media-tile aria-label={`查看${video ? tr("视频") : tr("图片")} ${name}`} onClick={onOpen}
     style={{ ...plain, position: 'relative', padding: 0, borderRadius: 0, overflow: 'hidden', aspectRatio: '1', minWidth: 0, background: arkmeTheme.subtle }}>
     {url && !failed ? video
       ? <video src={url} muted playsInline preload="metadata" onError={() => setFailed(true)} onLoadedMetadata={event => { if (Number.isFinite(event.currentTarget.duration)) setMeasured(event.currentTarget.duration) }} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
       : <img src={url} alt={name} loading="lazy" onError={() => setFailed(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-      : <span style={{ color: arkmeTheme.tertiary, fontSize: 11 }}>{unavailable || failed ? '点击查看原媒体' : '加载中…'}</span>}
+      : <span style={{ color: arkmeTheme.tertiary, fontSize: 11 }}>{unavailable || failed ? '点击查看原媒体' : tr("加载中…")}</span>}
     {video && duration > 0 && <span style={{ position: 'absolute', left: 6, bottom: 8, height: 20, display: 'flex', alignItems: 'center', gap: 2, padding: '0 5px', borderRadius: 4, background: 'rgba(0,0,0,.4)', color: '#fff', fontSize: 11, fontWeight: 600 }}>
-      <img src={assetUrl(play)} alt="" aria-hidden width={6} height={8} />{duration > 0 ? searchDuration(duration) : '视频'}
+      <img src={assetUrl(play)} alt="" aria-hidden width={6} height={8} />{duration > 0 ? searchDuration(duration) : tr("视频")}
     </span>}
   </button>
 }
@@ -70,13 +72,14 @@ export function SearchFileRow({ file, item, onOpen }: { file: ArkmeSearchAssetIt
       <img src={assetUrl(icons[kind])} alt="" aria-hidden width={22} height={22} data-search-file-icon={kind === 'dmg' ? 'default' : kind} />
     </span>
     <span style={{ minWidth: 0 }}><span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, fontWeight: 500 }}>{file.fileName || '未知文件'}</span>
-      <span style={{ display: 'block', marginTop: 4, color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '16px' }}>{searchUploadDate(item.sendAtMillis)} 上传</span></span>
+      <span style={{ display: 'block', marginTop: 4, color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '16px' }}>{searchUploadDate(item.sendAtMillis)} {tr("上传")}</span></span>
   </button></div>
 }
 export function searchLinkUrls(item: ArkmeSearchRecordItem): string[] {
   return [...new Set(textLinkRuns([item.linkUrl, item.textContent].filter(Boolean).join('\n')).flatMap(run => run.kind === 'link' ? [run.href] : []))].slice(0, 5)
 }
 function SearchLinkCard({ url, onLocate }: { url: string; onLocate?: (() => void) | undefined }) {
+  useArkmeLocale()
   const [metadata, setMetadata] = useState<ArkmeLinkMetadata | null>()
   const [notice, setNotice] = useState('')
   const [imageFailed, setImageFailed] = useState(false)
@@ -94,7 +97,7 @@ function SearchLinkCard({ url, onLocate }: { url: string; onLocate?: (() => void
   return <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
     <div style={{ flex: 1, minWidth: 0, borderRadius: 12, background: arkmeTheme.subtle, border: `1px solid ${arkmeTheme.border}`, padding: '10px 10px 0' }}>
       <a href={url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', color: 'inherit', textDecoration: 'none' }}>
-        {metadata === undefined ? <span role="status" aria-label="加载链接信息" style={{ display: 'block', marginBottom: 10 }}><span style={{ display: 'block', width: '70%', height: 16, borderRadius: 6, background: arkmeTheme.borderSoft }} /></span> : null}
+        {metadata === undefined ? <span role="status" aria-label={tr("加载链接信息")} style={{ display: 'block', marginBottom: 10 }}><span style={{ display: 'block', width: '70%', height: 16, borderRadius: 6, background: arkmeTheme.borderSoft }} /></span> : null}
         {metadata?.title && <span style={{ ...clamp(2), fontSize: 16, marginBottom: 10 }}>{metadata.title}</span>}
         <span style={{ display: 'flex', gap: 10, alignItems: 'center', minHeight: 30 }}>
           {metadata?.imageUrl && !imageFailed && <img src={metadata.imageUrl} referrerPolicy="no-referrer" alt="" onError={() => setImageFailed(true)} style={{ width: 30, height: 30, objectFit: 'cover', borderRadius: 4 }} />}
@@ -106,14 +109,14 @@ function SearchLinkCard({ url, onLocate }: { url: string; onLocate?: (() => void
       </button>
       {notice && <span role="status" style={{ display: 'block', paddingBottom: 6, fontSize: 12, color: arkmeTheme.secondary }}>{notice}</span>}
     </div>
-    <span style={{ width: 27, flex: 'none' }}>{onLocate && <button type="button" aria-label="定位链接消息" onClick={onLocate} style={{ ...plain, padding: 5, borderRadius: 30, background: arkmeTheme.subtle, display: 'flex' }}><img src={assetUrl(location)} alt="" aria-hidden width={17} height={17} /></button>}</span>
+    <span style={{ width: 27, flex: 'none' }}>{onLocate && <button type="button" aria-label={tr("定位链接消息")} onClick={onLocate} style={{ ...plain, padding: 5, borderRadius: 30, background: arkmeTheme.subtle, display: 'flex' }}><img src={assetUrl(location)} alt="" aria-hidden width={17} height={17} /></button>}</span>
   </div>
 }
 export function SearchLinkRows({ item, onLocate }: { item: ArkmeSearchRecordItem; onLocate(): void }) {
   const urls = searchLinkUrls(item)
   return <div style={{ padding: '10px 0', borderBottom: `1px solid ${arkmeTheme.border}` }}>
     {urls.map((url, index) => <SearchLinkCard key={url} url={url} onLocate={index === 0 ? onLocate : undefined} />)}
-    {urls.length === 0 && <button type="button" style={plain} onClick={onLocate}>查看链接消息</button>}
+    {urls.length === 0 && <button type="button" style={plain} onClick={onLocate}>{tr("查看链接消息")}</button>}
     <div style={{ fontSize: 12, color: arkmeTheme.tertiary, marginTop: 6 }}>{searchUploadDate(item.sendAtMillis)}{item.sourceTitle ? ` · ${item.sourceTitle}` : ''}</div>
   </div>
 }

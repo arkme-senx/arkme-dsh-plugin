@@ -65,9 +65,9 @@ async function ready() {
   if (flags.staff) await act(async () => { await vi.waitFor(() => {
     expect(privateChatActions.ban.get(chatActionKey({ account, source })).value).toBeDefined()
   }) })
-  expect(mount.textContent).toContain('相关录音')
+  expect(document.body.textContent).toContain('相关录音')
 }
-const row = (name: string) => Array.from(mount.querySelectorAll('button')).find(button => button.textContent === name)!
+const row = (name: string) => Array.from(document.querySelectorAll('button')).find(button => button.textContent === name)!
 async function click(name: string) {
   await act(async () => { row(name).click() })
   await act(async () => { await vi.waitFor(() => {
@@ -145,9 +145,9 @@ afterEach(async () => {
 
 it('runs actual UI → SDK HTTP → Host → service → upstream refusal and revocation contracts', async () => {
   await ready(); await click('拒收对方消息')
-  expect(flags.own).toBe(true); expect(mount.querySelector('[data-send-blocked]')!.textContent).toBe('true')
+  expect(flags.own).toBe(true); expect(document.querySelector('[data-send-blocked]')!.textContent).toBe('true')
   await click('拒收对方消息')
-  expect(flags.own).toBe(false); expect(mount.querySelector('[data-send-blocked]')!.textContent).toBe('false')
+  expect(flags.own).toBe(false); expect(document.querySelector('[data-send-blocked]')!.textContent).toBe('false')
   expect(requests.filter(item => item.path.endsWith('/direct-message-refusal/set')).map(item => item.body))
     .toEqual([{ chat_session_uid: 'private-chain', status: 1, expected_revision: 0 }, { chat_session_uid: 'private-chain', status: 2, expected_revision: 1 }])
 })
@@ -155,17 +155,17 @@ it('runs actual UI → SDK HTTP → Host → service → upstream refusal and re
 it('returns real Host conflict data to the same menu snapshot without replaying the mutation', async () => {
   await ready(); flags.revision = 2; flags.peer = true
   await click('拒收对方消息')
-  expect(mount.textContent).toContain('拒收状态已变化')
+  expect(document.body.textContent).toContain('拒收状态已变化')
   expect(row('拒收对方消息')).toBeDefined()
-  expect(mount.querySelector('[data-send-blocked]')!.textContent).toBe('true')
+  expect(document.querySelector('[data-send-blocked]')!.textContent).toBe('true')
   expect(requests.filter(item => item.path.endsWith('/direct-message-refusal/set'))).toHaveLength(1)
 })
 
 it('keeps ban retry direction across real error envelopes and successful read-back', async () => {
   await ready(); flags.uncertain = true
   await click('封禁用户')
-  expect(flags.banned).toBe(true); expect(mount.textContent).toContain('重试封禁用户')
-  await click('重试封禁用户'); expect(mount.textContent).toContain('解封用户')
+  expect(flags.banned).toBe(true); expect(document.body.textContent).toContain('重试封禁用户')
+  await click('重试封禁用户'); expect(document.body.textContent).toContain('解封用户')
   expect(requests.filter(item => /\/user-ban\/(ban|unban)$/.test(item.path)).map(item => item.path))
     .toEqual(['/api/v1/user-ban/ban', '/api/v1/user-ban/ban'])
   const value = await transport.sdk!.userBanStatus(source.sourceRef)
@@ -174,7 +174,7 @@ it('keeps ban retry direction across real error envelopes and successful read-ba
 
 it('does not query ban for ordinary users and independently rechecks related-list eligibility', async () => {
   flags.staff = false; await ready()
-  expect(mount.textContent).not.toContain('封禁用户')
+  expect(document.body.textContent).not.toContain('封禁用户')
   expect(requests.some(item => item.path.includes('/user-ban/'))).toBe(false)
   flags.eligible = false
   await expect(transport.sdk!.relatedRecordings(source.sourceRef)).rejects.toMatchObject({ body: { code: 'related-recordings-not-allowed' } })

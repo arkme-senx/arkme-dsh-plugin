@@ -420,6 +420,11 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
         const progress = importProgress(owner.import_progress, observedAtMillis)
         result.set(sessionId, {
           ...(displayStatus === undefined ? {} : { displayStatus }),
+          ...(rawStatuses.some(child => objectValue(child).quota_status === 'recording_service_unavailable') ? { serviceUnavailable: true } : {}),
+          ...(rawStatuses.some(child => objectValue(child).quota_status === 'recording_transcription_quota_exhausted') ? {
+            pausedCount: rawStatuses.filter(child => objectValue(child).quota_status === 'recording_transcription_quota_exhausted').length,
+            completedCount: parsedStatuses.filter(status => status === 5).length,
+          } : {}),
           ...(progress === undefined ? {} : { importProgress: progress }),
         })
       }
@@ -494,6 +499,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
       '/api/v1/audio/new-session',
       {
         source: 2,
+        recording_kind: job.recordingKind,
         operate_at: job.createdAtMillis,
         orig_name: job.fileName,
         tz_offset: timezoneOffsetMillis,

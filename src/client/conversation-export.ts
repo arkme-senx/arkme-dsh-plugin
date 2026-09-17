@@ -1,3 +1,4 @@
+import { tr } from './locale.js'
 import type {
   ArkmeSourceItem, ArkmeSourceList, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
 } from '../types.js'
@@ -96,7 +97,7 @@ function escapePlainMarkdown(value: string): string {
 }
 
 function durationLabel(seconds: number | undefined): string {
-  if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return '未知'
+  if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return tr("未知")
   const rounded = Math.max(0, Math.round(seconds))
   const minutes = Math.floor(rounded / 60)
   const remainder = rounded % 60
@@ -123,7 +124,7 @@ export function arkmeConversationExportScopeLabel(
     const path = arkmeTopicPathNames(resolved, topics).join(' / ') || source.displayName
     return `发给自己 / ${path}`
   }
-  return `${source.kind === 'private_chat' ? '私聊' : '群聊'} / ${source.displayName}`
+  return `${source.kind === 'private_chat' ? tr("私聊") : '群聊'} / ${source.displayName}`
 }
 
 export function arkmeConversationExportFileName(

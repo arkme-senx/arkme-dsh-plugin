@@ -23,6 +23,10 @@ function hostCases(source: string): Set<string> {
   const operations = new Set<string>()
   const visit = (node: ts.Node): void => {
     if (ts.isCaseClause(node) && ts.isStringLiteral(node.expression)) operations.add(node.expression.text)
+    if (ts.isIfStatement(node) && ts.isBinaryExpression(node.expression) &&
+        node.expression.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken &&
+        node.expression.left.getText(file) === 'request.operation' &&
+        ts.isStringLiteral(node.expression.right)) operations.add(node.expression.right.text)
     node.forEachChild(visit)
   }
   visit(file)
@@ -40,6 +44,11 @@ describe('Host operation contract', () => {
       "export type ArkmePluginOperation = 'world.feed' | 'world.publish-text'",
       "switch (operation) { case 'world.feed': break }",
     )).toEqual(['world.publish-text'])
+  })
+
+  it('recognizes the HTTP streaming dispatcher', () => {
+    expect(missingHostOperations("export type ArkmePluginOperation = 'remote.session.observe'",
+      "if (request.operation === 'remote.session.observe') { stream(); return }")).toEqual([])
   })
 
   it('dispatches every public Provider operation instead of failing at runtime', () => {

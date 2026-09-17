@@ -1,3 +1,4 @@
+import { ARKME_CONVERSATION_HEADER_HEIGHT } from '../src/client/arkme-layout.js'
 import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
@@ -85,7 +86,7 @@ describe('related recordings UI', () => {
     expect(source).not.toContain('正在检查')
   })
 
-  it('renders a lowered overlay panel with partial and shared states', () => {
+  it('aligns the overlay below the conversation header with partial and shared states', () => {
     const html = renderPanel({
       state: 'partial',
       stateMessage: '部分来源暂不可用',
@@ -93,7 +94,7 @@ describe('related recordings UI', () => {
       monthBuckets: [{ monthKey: '2026-08', itemCount: 1 }],
     })
 
-    expect(html).toContain('top:48px')
+    expect(html).toContain(`top:${ARKME_CONVERSATION_HEADER_HEIGHT}px`)
     expect(html).toContain('bottom:0')
     expect(html).toContain('width:min(408px, 100%)')
     expect(html.slice(0, html.indexOf(' aria-label="相关录音"'))).not.toContain('height:100%')

@@ -1,9 +1,11 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
+import { createHash } from 'node:crypto'
+import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { postChatMessageCreation } from './direct-message-admission-service.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   MessageActionCapabilityCodec,
+  MessageActionSource,
   MessageActionGateway,
   MessageActionReference,
   MessageActionTarget,
@@ -16,36 +18,9 @@ function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
-export class LocalMessageActionCapabilityCodec implements MessageActionCapabilityCodec {
-  constructor(private readonly uniqueCode: () => Promise<string>) {}
-
-  async seal(prefix: string, payload: unknown): Promise<string> {
-    const iv = randomBytes(12)
-    const cipher = createCipheriv('aes-256-gcm', await this.key(prefix), iv)
-    const encrypted = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()])
-    return `${prefix}.${iv.toString('base64url')}.${encrypted.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}`
-  }
-
-  async open(prefix: string, value: string): Promise<Record<string, unknown>> {
-    const parts = value.trim().split('.')
-    if (parts.length !== 4 || parts[0] !== prefix) {
-      throw new ArkmePluginError('message-action-ref-invalid', '消息操作引用无效', false, 400)
-    }
-    try {
-      const decipher = createDecipheriv('aes-256-gcm', await this.key(prefix), Buffer.from(parts[1] ?? '', 'base64url'))
-      decipher.setAuthTag(Buffer.from(parts[3] ?? '', 'base64url'))
-      const encoded = Buffer.concat([
-        decipher.update(Buffer.from(parts[2] ?? '', 'base64url')),
-        decipher.final(),
-      ]).toString('utf8')
-      return objectValue(JSON.parse(encoded) as unknown)
-    } catch (error) {
-      throw new ArkmePluginError('message-action-ref-invalid', '消息操作引用无效', false, 400, { cause: error })
-    }
-  }
-
-  private async key(prefix: string): Promise<Buffer> {
-    return createHash('sha256').update(await this.uniqueCode()).update(`\0${prefix}`).digest()
+export class LocalMessageActionCapabilityCodec extends EncryptedReferenceCodec implements MessageActionCapabilityCodec {
+  constructor(uniqueCode: () => Promise<string>) {
+    super(uniqueCode, cause => new ArkmePluginError('message-action-ref-invalid', '消息操作引用无效', false, 400, { cause }))
   }
 }
 
@@ -54,6 +29,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
     private readonly runtime: ServiceRuntime,
     private readonly source: SourceService,
     private readonly onForwarded?: (target: ArkmeSourceRefPayload, sequence?: number) => void | Promise<void>,
+    private readonly currentSenderSnapshot?: (session: ArkmeSessionCredentials) => Promise<{ avatar?: string; nickname?: string } | undefined>,
   ) {}
 
   async requireSession(): Promise<ArkmeSessionCredentials> { return await this.runtime.requireSession() }
@@ -69,7 +45,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
   }
 
   async createCopyLink(
-    references: readonly MessageActionReference[],
+    references: readonly MessageActionSource[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<ArkmeMessageCopyLinkResult> {
@@ -115,43 +91,59 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
   async forwardToRecord(input: Parameters<MessageActionGateway['forwardToRecord']>[0]): Promise<ArkmeSourceSendResult> {
     const contentPayload = this.recordForwardPayload(input.references, input.requestId, input.sendAtMillis)
     const title = input.references.length === 1 ? '转发快记' : `转发 ${String(input.references.length)} 条快记`
+    const senderSnapshot = await this.currentSenderSnapshot?.(input.session)
     const data = input.target.kind === 'topic'
       ? await this.runtime.authenticatedPost<Record<string, unknown>>(
         '/api/v1/topics/records/create', {
           topic_uid: input.target.ownerRef, record_uid: input.recordUid, template_kind: 1, title: '',
           text_content: title, content_payload: contentPayload, send_at: input.sendAtMillis,
+          ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
         }, input.session, input.signal,
       )
       : await this.runtime.authenticatedPost<Record<string, unknown>>(
         '/api/v1/records/create', {
           record_uid: input.recordUid, template_kind: 1, title: '', text_content: title,
           content_payload: contentPayload, send_at: input.sendAtMillis,
+          ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
         }, input.session, input.signal,
       )
+    this.confirmRecordReceipt(data, input.target, input.recordUid)
     this.source.invalidateSourceListCache(input.session.userId, 'send_to_self')
     try { await this.onForwarded?.(input.target as ArkmeSourceRefPayload) } catch { /* delivery already succeeded */ }
     return {
       sourceRef: input.targetSourceRef,
-      itemUid: stringValue(data.record_uid).trim() || input.recordUid,
-      status: Math.trunc(numberValue(data.status)) || 1,
+      itemUid: input.recordUid,
+      status: input.target.kind === 'topic' ? numberValue(data.record_status) : numberValue(data.status),
       localState: 'synced',
     }
   }
 
   async createRecordTargetComment(input: Parameters<MessageActionGateway['createRecordTargetComment']>[0]): Promise<void> {
+    const senderSnapshot = await this.currentSenderSnapshot?.(input.session)
     const body = {
       record_uid: input.recordUid, template_kind: 1, title: '', text_content: input.textContent, send_at: input.sendAtMillis,
+      ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
     }
-    if (input.target.kind === 'topic') {
-      await this.runtime.authenticatedPost(
-        '/api/v1/topics/records/create', { ...body, topic_uid: input.target.ownerRef }, input.session, input.signal,
-      )
-    } else {
-      await this.runtime.authenticatedPost('/api/v1/records/create', body, input.session, input.signal)
-    }
+    const data = input.target.kind === 'topic'
+      ? await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/topics/records/create', { ...body, topic_uid: input.target.ownerRef }, input.session, input.signal)
+      : await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/create', body, input.session, input.signal)
+    this.confirmRecordReceipt(data, input.target, input.recordUid)
+    this.source.invalidateSourceListCache(input.session.userId, 'send_to_self')
+    try { await this.onForwarded?.(input.target as ArkmeSourceRefPayload) } catch { /* comment delivery already succeeded */ }
   }
 
-  private copyLinkSource(reference: MessageActionReference): Record<string, unknown> {
+  private confirmRecordReceipt(data: Record<string, unknown>, target: Exclude<MessageActionTarget, { kind: 'private_chat' | 'group_chat' }>, recordUid: string): void {
+    const confirmed = stringValue(data.record_uid).trim() === recordUid && (target.kind === 'topic'
+      ? data.record_status === 1 && data.topic_uid === target.ownerRef && data.relation_status === 1 && stringValue(data.rel_uid).trim() !== ''
+      : data.status === 1)
+    if (!confirmed) throw new ArkmePluginError('message-actions-forward-outcome-unknown', '转发结果尚未确认，请使用原请求重试', false, 409)
+  }
+
+  private copyLinkSource(reference: MessageActionSource): Record<string, unknown> {
+    if (reference.ownerKind === 'dsh_native') return {
+      kind: 'dsh_native', dsh_message: { session_id: reference.sessionId, message_id: reference.messageIdentity,
+        role: reference.role, text_content: reference.textContent, send_at: reference.createdAtMillis },
+    }
     if (reference.ownerKind === 'agent') {
       if (reference.role === 'assistant') return {
         kind: 'agent_message', agent_session_id: reference.agentSessionId, agent_message_id: reference.agentMessageId,
@@ -164,7 +156,12 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
     return { kind: 'record', record_owner_user_id: reference.userId, record_uid: reference.recordUid }
   }
 
-  private chatForwardSourceItem(reference: MessageActionReference): Record<string, unknown> {
+  private chatForwardSourceItem(reference: MessageActionSource): Record<string, unknown> {
+    if (reference.ownerKind === 'dsh_native') return {
+      source_type: 'agent', render_format: 'markdown', source_identity_kind: 'agent_message',
+      source_identity_id: this.nativeIdentity(reference), snapshot_text: reference.textContent, source_sender_user_id: reference.senderUserId,
+      ...(reference.role === 'assistant' ? { source_avatar_kind: 'deepseek' } : {}),
+    }
     if (reference.ownerKind === 'agent') return {
       source_type: 'agent', render_format: 'markdown', source_identity_kind: 'agent_message',
       source_identity_id: `${String(reference.agentSessionId)}:${reference.messageIdentity}`,
@@ -178,26 +175,33 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
     return { source_type: 'record', record_uid: reference.recordUid }
   }
 
+  private nativeIdentity(reference: Extract<MessageActionSource, { ownerKind: 'dsh_native' }>): string {
+    return `dsh:${createHash('sha256').update(JSON.stringify([reference.sessionId, reference.messageIdentity])).digest('hex')}`
+  }
+
   private recordForwardPayload(
-    references: readonly MessageActionReference[],
+    references: readonly MessageActionSource[],
     requestId: string,
     sendAtMillis: number,
   ): Record<string, unknown> {
-    const sourceRecordUids = references.flatMap(reference => reference.ownerKind === 'agent' ? [] : [reference.recordUid])
+    const sourceRecordUids = references.flatMap(reference => reference.ownerKind === 'agent' || reference.ownerKind === 'dsh_native' ? [] : [reference.recordUid])
     return {
       payload_kind: 1,
       schema_version: 1,
       text_state: 1,
       forward_records: {
         render_kind: 'forward_records', schema_version: 1, forward_id: requestId,
-        source_type: references[0]?.ownerKind === 'agent' ? 'agent' : 'quick_records',
+        source_type: ['agent', 'dsh_native'].includes(references[0]?.ownerKind ?? '') ? 'agent' : 'quick_records',
         title: '转发快记', source_record_uids: sourceRecordUids, created_at: sendAtMillis,
         summary_lines: references.slice(0, 3).map(reference => `${reference.senderName}: ${arkmeEmojiTokenSafePrefix(reference.textContent.trim(), 500, 'codeUnits')}`),
         items: references.map((reference, index) => ({
           item_order: index,
-          source_kind: reference.ownerKind === 'agent' ? 'agent_message' : reference.ownerKind === 'bot_chat' ? 'chat_relation' : 'record',
-          source_type: reference.ownerKind === 'agent' ? 'agent' : reference.ownerKind === 'bot_chat' ? 'chat_record' : 'record',
-          ...(reference.ownerKind === 'agent' ? {
+          source_kind: reference.ownerKind === 'agent' || reference.ownerKind === 'dsh_native' ? 'agent_message' : reference.ownerKind === 'bot_chat' ? 'chat_relation' : 'record',
+          source_type: reference.ownerKind === 'agent' || reference.ownerKind === 'dsh_native' ? 'agent' : reference.ownerKind === 'bot_chat' ? 'chat_record' : 'record',
+          ...(reference.ownerKind === 'dsh_native' ? {
+            render_format: 'markdown', source_identity_kind: 'agent_message', source_identity_id: this.nativeIdentity(reference),
+            ...(reference.role === 'assistant' ? { source_avatar_kind: 'deepseek' } : {}),
+          } : reference.ownerKind === 'agent' ? {
             render_format: 'markdown', source_identity_kind: 'agent_message',
             source_identity_id: `${String(reference.agentSessionId)}:${reference.messageIdentity}`,
             ...(reference.entryRecordUid === undefined ? {} : { record_uid: reference.entryRecordUid }),

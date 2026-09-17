@@ -24,10 +24,11 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
-          if [ "$AUTHOR_ASSOCIATION" = "MEMBER" ] \
-            || [ "$AUTHOR_ASSOCIATION" = "OWNER" ] \
-            || [ "$AUTHOR_ASSOCIATION" = "COLLABORATOR" ]; then
-            echo "允许当前团队成员 $PR_AUTHOR 向 master 创建 PR。"
+          if [ "$HEAD_REPO" = "$GH_REPO" ] && [ "$HEAD_REF" = "dev" ] \
+            && { [ "$AUTHOR_ASSOCIATION" = "MEMBER" ] \
+              || [ "$AUTHOR_ASSOCIATION" = "OWNER" ] \
+              || [ "$AUTHOR_ASSOCIATION" = "COLLABORATOR" ]; }; then
+            echo "允许当前团队成员 $PR_AUTHOR 从同仓 dev 向 master 创建 PR。"
             exit 0
           fi
           if [ "$PR_AUTHOR" = "github-actions[bot]" ] \
@@ -36,5 +37,6 @@ jobs:
             echo "允许同仓自动发版分支 $HEAD_REF 向 master 创建 PR。"
             exit 0
           fi
-          echo "关闭未授权来源 $PR_AUTHOR（$AUTHOR_ASSOCIATION）的 master PR。"
+          echo "::error::master 仅接受同仓 dev 或 github-actions[bot] 的同仓 release/v* PR；请先将功能分支合入 dev。来源：$HEAD_REPO/$HEAD_REF，作者：$PR_AUTHOR（$AUTHOR_ASSOCIATION）。"
           gh pr close "$PR_NUMBER" --repo "$GH_REPO"
+          exit 1

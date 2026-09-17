@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { createHomeTourTrace, homeTourDiagnostic } from './home-tour-diagnostics.js'
 import { useTourAccount } from './use-tour-account.js'
 import TourModule, { type TourProps } from '@rc-component/tour'
@@ -12,17 +13,17 @@ const Tour = TourModule.default ?? TourModule
 const directorySteps = [
   { id: 'harness', title: 'DeepSeek Harness', description: '使用原生 AI 工作台，与模型对话、处理任务和编写代码。' },
   { id: 'arko', title: 'Arko', description: '你的个人 AI 助手，可以结合记录回答问题，帮你整理信息。' },
-  { id: 'send-to-self', title: '发给自己', description: '随手保存文字、图片和文件，把想法与重要内容留给自己。' },
-  { id: 'official-author', title: '联系作者', description: '遇到问题或有使用建议，可以在这里直接联系作者。' },
+  { id: 'send-to-self', get title() { return tr("发给自己") }, description: '随手保存文字、图片和文件，把想法与重要内容留给自己。' },
+  { id: 'official-author', get title() { return tr("联系作者") }, description: '遇到问题或有使用建议，可以在这里直接联系作者。' },
 ] as const
 
 const navigationSteps = [
-  { id: 'contacts', title: '联系人', description: '在这里查找和管理联系人，快速进入对话。' },
-  { id: 'calls', title: '通话', description: '查看通话记录，回顾你的沟通内容。' },
-  { id: 'recordings', title: '录音', description: '查看和回听录音，阅读转写内容，找回重要信息。' },
-  { id: 'calendar', title: '日历', description: '按日期浏览记录，快速回顾某一天的内容。' },
-  { id: 'world', title: '世界', description: '看看大家正在记录什么，也分享自己的想法与生活。' },
-  { id: 'extensions', title: '市集', description: '发现、安装和管理插件，扩展 Arkme 的功能。' },
+  { id: 'contacts', get title() { return tr("联系人") }, description: '在这里查找和管理联系人，快速进入对话。' },
+  { id: 'calls', get title() { return tr("通话") }, description: '查看通话记录，回顾你的沟通内容。' },
+  { id: 'recordings', get title() { return tr("录音") }, description: '查看和回听录音，阅读转写内容，找回重要信息。' },
+  { id: 'calendar', get title() { return tr("日历") }, description: '按日期浏览记录，快速回顾某一天的内容。' },
+  { id: 'world', get title() { return tr("世界") }, description: '看看大家正在记录什么，也分享自己的想法与生活。' },
+  { id: 'extensions', get title() { return tr("市集") }, description: '发现、安装和管理插件，扩展 Arkme 的功能。' },
 ] as const
 
 const allSteps = [...directorySteps, ...navigationSteps] as const
@@ -178,6 +179,7 @@ function HomeTourPanel({ steps, current, onPrevious, onNext, onDismiss, returnFo
   returnFocusTo: HTMLElement | null
   restoreFocus: RefObject<boolean>
 }) {
+  useArkmeLocale()
   const panelRef = useRef<HTMLElement>(null)
   const primaryRef = useRef<HTMLButtonElement>(null)
   const dismissAction = useRef(onDismiss)
@@ -230,15 +232,15 @@ function HomeTourPanel({ steps, current, onPrevious, onNext, onDismiss, returnFo
     aria-labelledby="arkme-home-tour-title" aria-describedby="arkme-home-tour-description">
     <div className="arkme-home-tour-header">
       <span className="arkme-home-tour-progress" aria-live="polite">{current + 1} / {steps.length}</span>
-      <button type="button" className="arkme-home-tour-close" aria-label="关闭功能引导" onClick={onDismiss}>×</button>
+      <button type="button" className="arkme-home-tour-close" aria-label={tr("关闭功能引导")} onClick={onDismiss}>×</button>
     </div>
     <h2 id="arkme-home-tour-title">{step.title}</h2>
     <p id="arkme-home-tour-description">{step.description}</p>
     <div className="arkme-home-tour-actions">
-      <button type="button" className="arkme-home-tour-skip" onClick={onDismiss}>跳过引导</button>
+      <button type="button" className="arkme-home-tour-skip" onClick={onDismiss}>{tr("跳过引导")}</button>
       <div className="arkme-home-tour-navigation">
-        {current > 0 && <button type="button" onClick={onPrevious}>上一步</button>}
-        <button ref={primaryRef} type="button" className="arkme-home-tour-primary" onClick={onNext}>{current === steps.length - 1 ? '开始使用' : '下一步'}</button>
+        {current > 0 && <button type="button" onClick={onPrevious}>{tr("上一步")}</button>}
+        <button ref={primaryRef} type="button" className="arkme-home-tour-primary" onClick={onNext}>{current === steps.length - 1 ? '开始使用' : tr("下一步")}</button>
       </div>
     </div>
   </section>
@@ -299,6 +301,7 @@ function sameStabilitySample(previous: HomeTourStabilitySample | undefined, next
 
 /** One owner in the persistent runtime, independent of the currently selected module. */
 export function ArkmeHomeTour({ auth, blocked, routeActive, notificationRevision, session = arkmeHomeTourSession }: ArkmeHomeTourProps) {
+  useArkmeLocale()
   const accountKey = useTourAccount(auth)
   const [active, setActive] = useState<ActiveHomeTour>()
   const [currentStepId, setCurrentStepId] = useState<HomeTourStepId>('harness')

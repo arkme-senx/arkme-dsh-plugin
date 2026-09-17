@@ -96,12 +96,15 @@ describe('official DSH client adapter', () => {
       'conversation',
       'details',
       'settings.section',
+      'settings.section',
+      'settings.section',
       'settings.general.item',
       'settings.section',
       'shell.overlay',
       'shell.overlay',
     ])
     expect(registered).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'settings.section', id: 'arkme-data', order: -2.5, label: expect.any(Function) }),
       expect.objectContaining({
         name: 'sidebar',
         priority: -100,
@@ -124,13 +127,13 @@ describe('official DSH client adapter', () => {
       expect.objectContaining({
         name: 'settings.section',
         id: 'arkme-account',
-        order: -1,
-        label: '我的账户',
+        order: -3,
+        label: expect.any(Function),
       }),
     ]))
     expect(effect).toHaveBeenCalledWith(
       expect.any(Function),
-      'dsh-arkme: render account settings navigation icon',
+      'dsh-arkme: render Arkme settings navigation icons',
     )
 
     const sidebarFace = registered.find(item => item.name === 'sidebar')?.inject?.() as {
@@ -146,7 +149,7 @@ describe('official DSH client adapter', () => {
     expect(registered.map(item => item.name)).not.toContain('sidebar.footer.action')
     expect(registered.map(item => item.name)).not.toContain('sidebar.settings')
     expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.general.item', id: 'arkme-general' }))
-    expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.section', id: 'arkme-about', label: '关于' }))
+    expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.section', id: 'arkme-about', label: expect.any(Function) }))
     expect(registered.find(item => item.name === 'conversation')?.children).toBeUndefined()
     cleanups.forEach(cleanup => { cleanup() })
   })
@@ -204,7 +207,7 @@ describe('official DSH client adapter', () => {
       configurable: true,
       value: {
         querySelector: vi.fn((selector: string) => {
-          if (selector.includes('[role="dialog"]')) return {}
+          if (selector.includes('[role="dialog"]') && !selector.includes('settings.header')) return {}
           if (selector === '[data-slot="sidebar"]') return nativeSidebar
           return null
         }),

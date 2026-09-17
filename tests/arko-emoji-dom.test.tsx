@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -52,6 +53,7 @@ async function chooseEmoji() {
 async function send() { await click(host.querySelector('button[title="发送"]')!) }
 
 beforeEach(() => {
+  arkoModelCache.clear()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0 })
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
@@ -70,7 +72,7 @@ beforeEach(() => {
     if (method === 'arko.ask') return ask(input)
     if (method === 'arko.session') return { sessionId: 88 } as never
     if (method === 'arko.history') return { items: history } as never
-    if (method === 'arko.models') return { options: [], effectiveRouteKey: 'model-a' } as never
+    if (method === 'arko.models') return { options: [{ routeKey: 'model-a', displayName: 'Model A', selected: true }, { routeKey: 'model-b', displayName: 'Model B', selected: false }], effectiveRouteKey: 'model-a' } as never
     if (method === 'arko.profile') return { displayName: 'Arko', version: 1 } as never
     if (method === 'user.profile') return { profile: {} } as never
     if (method === 'emoji.recent.list') return [] as never
@@ -94,6 +96,83 @@ afterEach(() => {
 })
 
 describe('Arko emoji input and send boundary', () => {
+  it('shows cached models immediately after reopening without another catalog request', async () => {
+    await mount()
+    expect(host.querySelector('footer [aria-label="选择模型"]')?.textContent).toBe('Model A')
+    await act(async () => { root.render(null) })
+    await act(async () => { root.render(<ArkmeArkoSurface />) })
+    expect(host.querySelector('footer [aria-label="选择模型"]')?.textContent).toBe('Model A')
+    expect(vi.mocked(callArkme).mock.calls.filter(([method]) => method === 'arko.models')).toHaveLength(1)
+  })
+
+  it('does not keep session initialization waiting for the model directory', async () => {
+    const original = vi.mocked(callArkme).getMockImplementation()!
+    vi.mocked(callArkme).mockImplementation((method, input, signal) => method === 'arko.models'
+      ? new Promise(() => {}) : original(method, input, signal))
+    await mount()
+    expect(host.textContent).not.toContain('正在恢复会话')
+    expect(host.querySelector('[role="textbox"]')?.getAttribute('contenteditable')).toBe('true')
+  })
+
+  it('opens model selection from the composer and keeps sending disabled for an empty draft', async () => {
+    await mount()
+    const trigger = host.querySelector<HTMLButtonElement>('footer button[aria-label="选择模型"]')
+    expect(trigger).not.toBeNull()
+    expect(trigger!.disabled).toBe(false)
+    expect(host.querySelector<HTMLButtonElement>('button[title="发送"]')!.disabled).toBe(true)
+    expect(trigger!.textContent).toBe('Model A')
+    await click(trigger!)
+    expect(document.querySelector('[role="menu"]')?.getAttribute('aria-label')).toBe('模型选择')
+    const currentApi = vi.mocked(callArkme).getMockImplementation()!
+    vi.mocked(callArkme).mockImplementation(async (method, input, signal) => {
+      if (method === 'arko.model.activate') return {
+        options: [{ routeKey: 'model-a', displayName: 'Model A', selected: false }, { routeKey: 'model-b', displayName: 'Model B', selected: true }],
+        effectiveRouteKey: 'model-b',
+      } as never
+      return currentApi(method, input, signal)
+    })
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')).find(node => node.textContent === 'Model B')!)
+    expect(trigger!.textContent).toBe('Model B')
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+    ask.mockImplementation(() => new Promise(() => {}))
+    act(() => documentEditor().commands.insertContent('test'))
+    await send()
+    expect(trigger!.disabled).toBe(true)
+  })
+
+  it('navigates the model popup and closes with Escape or an outside click', async () => {
+    await mount()
+    const trigger = host.querySelector<HTMLButtonElement>('footer button[aria-label="选择模型"]')!
+    await click(trigger)
+    const items = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
+    expect(items).toHaveLength(2)
+    expect(items[0]!.getAttribute('aria-checked')).toBe('true')
+    expect(document.activeElement).toBe(items[0])
+    await act(async () => { items[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })) })
+    expect(document.activeElement).toBe(items[1])
+    await act(async () => { items[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+    await click(trigger)
+    await act(async () => { document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })) })
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+  })
+
+  it('keeps the model menu open and prior selection on activation failure', async () => {
+    await mount()
+    const currentApi = vi.mocked(callArkme).getMockImplementation()!
+    vi.mocked(callArkme).mockImplementation(async (method, input, signal) => {
+      if (method === 'arko.model.activate') throw new Error('模型切换失败')
+      return currentApi(method, input, signal)
+    })
+    const trigger = host.querySelector<HTMLButtonElement>('footer button[aria-label="选择模型"]')!
+    await click(trigger)
+    await click(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')[1]!)
+    expect(document.querySelector('[role="menu"] [role="alert"]')?.textContent).toBe('模型切换失败')
+    expect(trigger.textContent).toBe('Model A')
+    expect(document.querySelector('[aria-checked="true"]')?.textContent).toBe('Model A')
+  })
+
   it('undoes and redoes text and rich emoji using the existing editor history', async () => {
     await mount()
     act(() => documentEditor().commands.insertContent('abc'))
@@ -242,7 +321,12 @@ describe('Arko emoji input and send boundary', () => {
     arkmeComposerDraftStore.setText(draftKey, '前替换后')
     await mount()
     expect(editor()).not.toBeNull()
+    // This case exercises replacement and consecutive insertions. Keep the
+    // ProseMirror fallback aligned with the visible range; the separate pending
+    // selection cases cover native selectionchange arriving later.
+    act(() => documentEditor().commands.setTextSelection({ from: 2, to: 4 }))
     select(1, 3)
+    expect(document.getSelection()?.toString()).toBe('替换')
     await chooseEmoji()
     await chooseEmoji()
     expect(serialized()).toBe(`前${emoji.token}${emoji.token}后`)
@@ -270,6 +354,37 @@ describe('Arko emoji input and send boundary', () => {
     await chooseEmoji()
     await chooseEmoji()
     expect(serialized()).toBe(`前${emoji.token}${emoji.token}后`)
+  })
+
+  it.each(['cleared', 'collapsed'])('keeps the visible selection when pointerdown leaves it %s before mousedown', async kind => {
+    arkmeComposerDraftStore.setText(draftKey, '前替换后')
+    await mount()
+    select(1, 3)
+    expect(document.getSelection()?.toString()).toBe('替换')
+    const trigger = button('选择表情')
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }))
+      if (kind === 'cleared') document.getSelection()!.removeAllRanges()
+      else document.getSelection()!.collapse(document.createTreeWalker(editor(), NodeFilter.SHOW_TEXT).nextNode()!, 0)
+      trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+      trigger.click()
+    })
+    await click(document.querySelector(`[data-arkme-emoji-grid="default"] [data-arkme-emoji-id="${emoji.id}"]`)!)
+    expect(serialized()).toBe(`前${emoji.token}后`)
+  })
+
+  it('uses a new caret position after returning to the editor from the picker', async () => {
+    arkmeComposerDraftStore.setText(draftKey, '前替换后')
+    await mount()
+    select(1, 3)
+    await click(button('选择表情'))
+    await act(async () => {
+      editor().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }))
+      documentEditor().commands.setTextSelection(5)
+    })
+    await click(button('选择表情'))
+    await click(document.querySelector(`[data-arkme-emoji-grid="default"] [data-arkme-emoji-id="${emoji.id}"]`)!)
+    expect(serialized()).toBe(`前替换后${emoji.token}`)
   })
 
   it('discards a pending emoji selection after the draft changes', async () => {

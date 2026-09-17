@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { securePrivateDirectorySync, securePrivateFileSync } from '../private-filesystem.js'
@@ -233,10 +233,20 @@ export class DshRemoteCommandLedger {
     return before - after
   }
 
+  get isOpen(): boolean {
+    return this.database.isOpen
+  }
+
   close(): void {
-    this.database.close()
-    this.secureFiles()
-    this.key.fill(0)
+    if (!this.database.isOpen) return
+    try {
+      this.database.close()
+      this.secureFiles()
+    } finally {
+      // Permission failures must not retain a closed ledger's private key copy.
+      // If SQLite itself failed to close, keep the live connection recoverable.
+      if (!this.database.isOpen) this.key.fill(0)
+    }
   }
 
   private validateIdentity(input: DshRemoteLedgerIdentity): void {
@@ -323,9 +333,15 @@ export class DshRemoteCommandLedger {
   }
 
   private secureFiles(): void {
-    for (const suffix of ['', '-wal', '-shm']) {
-      try { securePrivateFileSync(`${this.path}${suffix}`) } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    securePrivateFileSync(this.path)
+    for (const suffix of ['-wal', '-shm']) {
+      const path = `${this.path}${suffix}`
+      // SQLite may remove these optional files when the last connection closes.
+      // Check the filesystem rather than interpreting localized icacls output.
+      if (statSync(path, { throwIfNoEntry: false }) === undefined) continue
+      try { securePrivateFileSync(path) } catch (error) {
+        // The sidecar can disappear between the check and the ACL operation.
+        if (statSync(path, { throwIfNoEntry: false }) !== undefined) throw error
       }
     }
   }

@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type {
   ArkmeContactSearchResult,
@@ -12,6 +13,7 @@ import type {
 import { ARKME_VOICEPRINT_ENROLLMENT_MIN_DURATION_MS } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { arkmeTheme } from './arkme-theme.js'
 import { arkmeAuthStore } from './auth-store.js'
 import {
   arkmeVoiceprintEnrollmentClient,
@@ -35,15 +37,15 @@ export type ArkmeVoiceprintInvitationState =
   | { status: 'success'; value: ArkmeVoiceprintInvitation }
 
 const colors = {
-  text: 'var(--dsw-alias-text-primary, #20232c)',
-  secondary: 'var(--dsw-alias-text-secondary, #6f7480)',
-  border: 'var(--dsw-alias-border-subtle, #e6e7eb)',
-  surface: 'var(--dsw-alias-bg-layer-1, #fff)',
-  subtle: 'var(--dsw-alias-bg-layer-2, #f6f7f9)',
-  action: 'var(--dsw-alias-accent-primary, #20232c)',
-  inverted: 'var(--dsw-alias-label-primary-inverted, #fff)',
-  danger: 'var(--dsw-alias-state-error-primary, #b42318)',
-  dangerSurface: 'var(--dsw-alias-interactive-bg-hover-danger, #fff1f0)',
+  text: arkmeTheme.text,
+  secondary: arkmeTheme.secondary,
+  border: arkmeTheme.border,
+  surface: arkmeTheme.layer1,
+  subtle: arkmeTheme.subtle,
+  action: arkmeTheme.primaryAction,
+  inverted: arkmeTheme.onPrimaryAction,
+  danger: arkmeTheme.danger,
+  dangerSurface: arkmeTheme.dangerSoft,
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -77,7 +79,7 @@ const styles: Record<string, CSSProperties> = {
   dangerButton: { color: colors.danger, background: colors.surface },
   linkBox: { padding: 12, borderRadius: 12, background: colors.subtle, wordBreak: 'break-all', fontSize: 12, lineHeight: '19px' },
   overlay: { position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 20, background: 'rgba(20, 23, 31, .36)' },
-  dialog: { width: 'min(520px, 100%)', maxHeight: 'min(720px, calc(100vh - 40px))', overflowY: 'auto', borderRadius: 20, padding: 22, background: colors.surface, boxShadow: '0 24px 80px rgba(20, 23, 31, .22)' },
+  dialog: { width: 'min(520px, 100%)', maxHeight: 'min(720px, calc(100vh - 40px))', overflowY: 'auto', borderRadius: 20, padding: 22, background: colors.surface, color: colors.text, boxShadow: arkmeTheme.shadow },
   recorder: { minHeight: 96, display: 'grid', placeItems: 'center', borderRadius: 15, background: colors.subtle, color: colors.secondary, textAlign: 'center' },
 }
 
@@ -86,7 +88,7 @@ function message(error: unknown, fallback: string): string {
 }
 
 function dateLabel(millis: number): string {
-  return millis <= 0 ? '时间未知' : new Date(millis).toLocaleDateString('zh-CN')
+  return millis <= 0 ? '时间未知' : new Date(millis).toLocaleDateString(arkmeIntlLocale())
 }
 
 function copyText(value: string): void {
@@ -99,10 +101,11 @@ function requestActive(signal: AbortSignal | undefined): boolean {
 }
 
 function ResourceError({ message, onRetry }: { message: string; onRetry(): void }) {
-  return <div style={styles.error} role="alert">{message}<div style={styles.actions}><button type="button" style={styles.button} onClick={() => { onRetry() }}>重试</button></div></div>
+  return <div style={styles.error} role="alert">{message}<div style={styles.actions}><button data-arkme-feedback="neutral" type="button" style={styles.button} onClick={() => { onRetry() }}>{tr("重试")}</button></div></div>
 }
 
 function VoiceprintWavPreview({ recording }: { recording: ArkmeVoiceprintRecording }) {
+  useArkmeLocale()
   const [url, setUrl] = useState('')
   useEffect(() => {
     if (typeof URL.createObjectURL !== 'function') return
@@ -110,7 +113,7 @@ function VoiceprintWavPreview({ recording }: { recording: ArkmeVoiceprintRecordi
     setUrl(value)
     return () => { URL.revokeObjectURL(value) }
   }, [recording])
-  return url === '' ? null : <audio controls preload="metadata" src={url} aria-label="试听本次声纹录音" style={{ width: '100%', marginTop: 12 }} />
+  return url === '' ? null : <audio controls preload="metadata" src={url} aria-label={tr("试听本次声纹录音")} style={{ width: '100%', marginTop: 12 }} />
 }
 
 export interface ArkmeVoiceprintContentProps {
@@ -134,38 +137,38 @@ export interface ArkmeVoiceprintContentProps {
 
 export function ArkmeVoiceprintContent(props: ArkmeVoiceprintContentProps) {
   return <div style={styles.content}>
-    <section style={styles.card} aria-label="我的声音" data-voiceprint-layer="foundation">
-      <div style={styles.cardHead}><span><h2 style={styles.cardTitle}>我的声音</h2><small style={styles.cardHint}>管理声纹录入、识别与播放能力</small></span><button type="button" style={styles.button} onClick={() => { props.onRefreshStatus() }}>刷新状态</button></div>
-      {props.status.status === 'loading' ? <div style={styles.state} role="status">正在加载我的声音…</div>
+    <section style={styles.card} aria-label={tr("我的声音")} data-voiceprint-layer="foundation">
+      <div style={styles.cardHead}><span><h2 style={styles.cardTitle}>{tr("我的声音")}</h2><small style={styles.cardHint}>{tr("管理声纹录入、识别与播放能力")}</small></span><button data-arkme-feedback="neutral" type="button" style={styles.button} onClick={() => { props.onRefreshStatus() }}>{tr("刷新状态")}</button></div>
+      {props.status.status === 'loading' ? <div style={styles.state} role="status">{tr("正在加载我的声音…")}</div>
         : props.status.status === 'error' ? <ResourceError message={props.status.message} onRetry={props.onRefreshStatus} />
           : <>
-            <div style={styles.row}><span style={styles.rowCopy}><strong style={styles.rowTitle}>{props.status.value.hasVoiceprint ? props.status.value.nickname || '我的声音' : '尚未录入声纹'}</strong><small style={styles.rowMeta}>{props.status.value.enrollmentPending ? '声纹正在处理中' : props.status.value.hasVoiceprint ? `最近更新：${dateLabel(props.status.value.updatedAtMillis)}` : '录制 3 至 60 秒清晰语音即可录入'}</small></span><span style={styles.badge}>{props.status.value.canPlay ? '可识别 · 可播放' : props.status.value.canIdentify ? '可识别' : '未录入'}</span></div>
+            <div style={styles.row}><span style={styles.rowCopy}><strong style={styles.rowTitle}>{props.status.value.hasVoiceprint ? props.status.value.nickname || tr("我的声音") : '尚未录入声纹'}</strong><small style={styles.rowMeta}>{props.status.value.enrollmentPending ? '声纹正在处理中' : props.status.value.hasVoiceprint ? tr("最近更新：{v0}", { v0: dateLabel(props.status.value.updatedAtMillis) }) : '录制 3 至 60 秒清晰语音即可录入'}</small></span><span style={styles.badge}>{props.status.value.canPlay ? '可识别 · 可播放' : props.status.value.canIdentify ? '可识别' : '未录入'}</span></div>
             <div style={styles.actions}>
-              {!props.status.value.enrollmentPending && <button type="button" style={{ ...styles.button, ...styles.primary }} onClick={props.onStartEnrollment}>{props.status.value.hasVoiceprint ? '重新录入声纹' : '录入我的声纹'}</button>}
-              {props.status.value.canRestorePlayback && <button type="button" style={styles.button} disabled={props.restoreBusy} onClick={props.onRestore}>{props.restoreBusy ? '正在恢复…' : '恢复声纹播放'}</button>}
+              {!props.status.value.enrollmentPending && <button data-arkme-feedback="primary" type="button" style={{ ...styles.button, ...styles.primary }} onClick={props.onStartEnrollment}>{props.status.value.hasVoiceprint ? '重新录入声纹' : tr("录入我的声纹")}</button>}
+              {props.status.value.canRestorePlayback && <button data-arkme-feedback="neutral" type="button" style={styles.button} disabled={props.restoreBusy} onClick={props.onRestore}>{props.restoreBusy ? '正在恢复…' : '恢复声纹播放'}</button>}
             </div>
             {props.status.message !== undefined && <div style={{ ...styles.error, marginTop: 12 }}>{props.status.message}</div>}
           </>}
     </section>
 
     <div className="arkme-voiceprint-relationships" style={styles.relationships} data-voiceprint-layout="primary-secondary">
-      <section style={styles.section} aria-label="我识别到的人">
-        <div style={styles.cardHead}><span><h2 style={styles.cardTitle}>我识别到的人</h2><small style={styles.cardHint}>已识别的声音及我获得的播放权限</small></span><span style={styles.headActions}>{props.people.status === 'success' && <span style={styles.badge}>{props.people.value.items.length} 人</span>}<button type="button" style={styles.button} onClick={() => { props.onRefreshPeople() }}>刷新识别</button><button type="button" style={{ ...styles.button, ...styles.primary }} disabled={props.invitation.status === 'busy'} onClick={props.onInvite}>{props.invitation.status === 'busy' ? '正在生成…' : props.invitation.status === 'success' ? '重新生成邀请链接' : '邀请他人授权'}</button></span></div>
-        {props.invitation.status === 'success' && <div style={{ marginBottom: 16 }}><div style={styles.linkBox}>{props.invitation.value.inviteUrl}</div><div style={styles.actions}><button type="button" style={styles.button} onClick={() => { copyText(props.invitation.status === 'success' ? props.invitation.value.inviteUrl : '') }}>复制邀请链接</button></div></div>}
+      <section style={styles.section} aria-label={tr("我识别到的人")}>
+        <div style={styles.cardHead}><span><h2 style={styles.cardTitle}>{tr("我识别到的人")}</h2><small style={styles.cardHint}>{tr("已识别的声音及我获得的播放权限")}</small></span><span style={styles.headActions}>{props.people.status === 'success' && <span style={styles.badge}>{props.people.value.items.length} {tr("人")}</span>}<button data-arkme-feedback="neutral" type="button" style={styles.button} onClick={() => { props.onRefreshPeople() }}>{tr("刷新识别")}</button><button data-arkme-feedback="primary" type="button" style={{ ...styles.button, ...styles.primary }} disabled={props.invitation.status === 'busy'} onClick={props.onInvite}>{props.invitation.status === 'busy' ? '正在生成…' : props.invitation.status === 'success' ? '重新生成邀请链接' : '邀请他人授权'}</button></span></div>
+        {props.invitation.status === 'success' && <div style={{ marginBottom: 16 }}><div style={styles.linkBox}>{props.invitation.value.inviteUrl}</div><div style={styles.actions}><button data-arkme-feedback="neutral" type="button" style={styles.button} onClick={() => { copyText(props.invitation.status === 'success' ? props.invitation.value.inviteUrl : '') }}>{tr("复制邀请链接")}</button></div></div>}
         {props.invitation.status === 'error' && <div style={{ ...styles.error, marginBottom: 16 }} role="alert">{props.invitation.message}</div>}
-        {props.invitation.status === 'idle' && <div style={{ ...styles.cardHint, marginBottom: 16 }}>邀请由对方明确授权，不会自动改变任何人的权限。</div>}
-        {props.people.status === 'loading' ? <div style={styles.state} role="status">正在加载我识别到的人…</div>
+        {props.invitation.status === 'idle' && <div style={{ ...styles.cardHint, marginBottom: 16 }}>{tr("邀请由对方明确授权，不会自动改变任何人的权限。")}</div>}
+        {props.people.status === 'loading' ? <div style={styles.state} role="status">{tr("正在加载我识别到的人…")}</div>
           : props.people.status === 'error' ? <ResourceError message={props.people.message} onRetry={props.onRefreshPeople} />
-            : props.people.value.items.length === 0 ? <div style={styles.state}>还没有识别到其他人</div>
-              : <><ul style={styles.list}>{props.people.value.items.map(item => <li key={item.personRef} style={styles.row}><span style={styles.rowIdentity}><ArkmeUserAvatar {...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef })} size={36} label={`${item.displayName}的头像`} /><span style={styles.rowCopy}><strong style={styles.rowTitle}>{item.displayName}</strong><small style={styles.rowMeta}>{item.identityKind === 'speaker' ? '录音中识别到的声音' : '已授权的用户'} · {item.playGranted ? '可播放' : '未授权播放'}</small></span></span><button type="button" style={styles.button} onClick={() => { props.onOpenPerson(item.personRef, item.identityKind) }}>查看识别详情</button></li>)}</ul>{props.people.message !== undefined && <div style={{ ...styles.error, marginTop: 12 }}>{props.people.message}</div>}{props.people.value.hasMore && props.onMorePeople !== undefined && <div style={styles.actions}><button type="button" style={styles.button} onClick={props.onMorePeople}>加载更多识别人</button></div>}</>}
+            : props.people.value.items.length === 0 ? <div style={styles.state}>{tr("还没有识别到其他人")}</div>
+              : <><ul style={styles.list}>{props.people.value.items.map(item => <li key={item.personRef} style={styles.row}><span style={styles.rowIdentity}><ArkmeUserAvatar {...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef })} size={36} label={tr("{v0}的头像", { v0: item.displayName })} /><span style={styles.rowCopy}><strong style={styles.rowTitle}>{item.displayName}</strong><small style={styles.rowMeta}>{item.identityKind === 'speaker' ? '录音中识别到的声音' : '已授权的用户'} · {item.playGranted ? '可播放' : '未授权播放'}</small></span></span><button data-arkme-feedback="neutral" type="button" style={styles.button} onClick={() => { props.onOpenPerson(item.personRef, item.identityKind) }}>{tr("查看识别详情")}</button></li>)}</ul>{props.people.message !== undefined && <div style={{ ...styles.error, marginTop: 12 }}>{props.people.message}</div>}{props.people.value.hasMore && props.onMorePeople !== undefined && <div style={styles.actions}><button data-arkme-feedback="neutral" type="button" style={styles.button} onClick={props.onMorePeople}>{tr("加载更多识别人")}</button></div>}</>}
       </section>
 
-      <section className="arkme-voiceprint-outbound" style={styles.outboundSection} aria-label="谁能播放我的声音">
-        <div style={styles.cardHead}><span><h2 style={styles.cardTitle}>谁能播放我的声音</h2><small style={styles.cardHint}>我主动授予的播放权限</small></span><span style={styles.headActions}>{props.grants.status === 'success' && <span style={styles.badge}>{props.grants.value.items.length} 人</span>}<button type="button" style={styles.button} onClick={() => { props.onRefreshGrants() }}>刷新授权</button></span></div>
-        {props.grants.status === 'loading' ? <div style={styles.state} role="status">正在加载谁能播放我的声音…</div>
+      <section className="arkme-voiceprint-outbound" style={styles.outboundSection} aria-label={tr("谁能播放我的声音")}>
+        <div style={styles.cardHead}><span><h2 style={styles.cardTitle}>{tr("谁能播放我的声音")}</h2><small style={styles.cardHint}>{tr("我主动授予的播放权限")}</small></span><span style={styles.headActions}>{props.grants.status === 'success' && <span style={styles.badge}>{props.grants.value.items.length} {tr("人")}</span>}<button data-arkme-feedback="neutral" type="button" style={styles.button} onClick={() => { props.onRefreshGrants() }}>{tr("刷新授权")}</button></span></div>
+        {props.grants.status === 'loading' ? <div style={styles.state} role="status">{tr("正在加载谁能播放我的声音…")}</div>
           : props.grants.status === 'error' ? <ResourceError message={props.grants.message} onRetry={props.onRefreshGrants} />
-            : props.grants.value.items.length === 0 ? <div style={styles.state}>还没有人可以播放你的声音</div>
-              : <><ul style={styles.list}>{props.grants.value.items.map(item => <li key={item.grantRef} style={styles.row}><span style={styles.rowIdentity}><ArkmeUserAvatar {...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef })} size={36} label={`${item.displayName}的头像`} /><span style={styles.rowCopy}><strong style={styles.rowTitle}>{item.displayName}</strong><small style={styles.rowMeta}>{item.playEnabled ? '可以播放你的声纹' : '播放授权已关闭'}</small></span></span>{item.playEnabled && <button type="button" style={{ ...styles.button, ...styles.dangerButton }} disabled={props.revokingGrantRef === item.grantRef} onClick={() => { props.onRevoke(item.grantRef, item.displayName) }}>{props.revokingGrantRef === item.grantRef ? '正在撤销…' : '撤销播放授权'}</button>}</li>)}</ul>{props.grants.message !== undefined && <div style={{ ...styles.error, marginTop: 12 }}>{props.grants.message}</div>}{props.grants.value.hasMore && props.onMoreGrants !== undefined && <div style={styles.actions}><button type="button" style={styles.button} onClick={props.onMoreGrants}>加载更多授权</button></div>}</>}
+            : props.grants.value.items.length === 0 ? <div style={styles.state}>{tr("还没有人可以播放你的声音")}</div>
+              : <><ul style={styles.list}>{props.grants.value.items.map(item => <li key={item.grantRef} style={styles.row}><span style={styles.rowIdentity}><ArkmeUserAvatar {...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef })} size={36} label={tr("{v0}的头像", { v0: item.displayName })} /><span style={styles.rowCopy}><strong style={styles.rowTitle}>{item.displayName}</strong><small style={styles.rowMeta}>{item.playEnabled ? '可以播放你的声纹' : '播放授权已关闭'}</small></span></span>{item.playEnabled && <button data-arkme-feedback="danger" type="button" style={{ ...styles.button, ...styles.dangerButton }} disabled={props.revokingGrantRef === item.grantRef} onClick={() => { props.onRevoke(item.grantRef, item.displayName) }}>{props.revokingGrantRef === item.grantRef ? '正在撤销…' : '撤销播放授权'}</button>}</li>)}</ul>{props.grants.message !== undefined && <div style={{ ...styles.error, marginTop: 12 }}>{props.grants.message}</div>}{props.grants.value.hasMore && props.onMoreGrants !== undefined && <div style={styles.actions}><button data-arkme-feedback="neutral" type="button" style={styles.button} onClick={props.onMoreGrants}>{tr("加载更多授权")}</button></div>}</>}
       </section>
     </div>
   </div>
@@ -187,40 +190,43 @@ export function RecognizedPersonDialog({
   onInvite(): void
   onClose(): void
 }) {
-  return <div style={styles.overlay} role="presentation"><section style={styles.dialog} role="dialog" aria-modal="true" aria-label="识别详情">
-    <div style={styles.cardHead}><h2 style={styles.cardTitle}>识别详情</h2><button type="button" style={styles.button} onClick={onClose}>关闭</button></div>
-    {person.status === 'loading' ? <div style={styles.state}>正在加载识别详情…</div>
+  return <div style={styles.overlay} role="presentation"><section style={styles.dialog} role="dialog" aria-modal="true" aria-label={tr("识别详情")}>
+    <div style={styles.cardHead}><h2 style={styles.cardTitle}>{tr("识别详情")}</h2><button data-arkme-feedback="neutral" type="button" style={styles.button} onClick={onClose}>{tr("关闭")}</button></div>
+    {person.status === 'loading' ? <div style={styles.state}>{tr("正在加载识别详情…")}</div>
       : person.status === 'error' ? <ResourceError message={person.message} onRetry={onRetryPerson} />
         : <>
-          <div style={styles.row}><span style={styles.rowIdentity}><ArkmeUserAvatar {...(person.value.avatarRef === undefined ? {} : { avatarRef: person.value.avatarRef })} size={40} label={`${person.value.displayName}的头像`} /><span style={styles.rowCopy}><strong>{person.value.displayName}</strong><small style={styles.rowMeta}>{person.value.identityKind === 'speaker' ? '录音中识别到的声音' : '已授权的用户'} · {person.value.playGranted ? '已授权播放' : '未授权播放'}</small></span></span></div>
-          {person.value.identityKind === 'speaker' && library?.status === 'loading' && <div style={styles.state}>正在加载声纹记录…</div>}
+          <div style={styles.row}><span style={styles.rowIdentity}><ArkmeUserAvatar {...(person.value.avatarRef === undefined ? {} : { avatarRef: person.value.avatarRef })} size={40} label={tr("{v0}的头像", { v0: person.value.displayName })} /><span style={styles.rowCopy}><strong>{person.value.displayName}</strong><small style={styles.rowMeta}>{person.value.identityKind === 'speaker' ? '录音中识别到的声音' : '已授权的用户'} · {person.value.playGranted ? '已授权播放' : '未授权播放'}</small></span></span></div>
+          {person.value.identityKind === 'speaker' && library?.status === 'loading' && <div style={styles.state}>{tr("正在加载声纹记录…")}</div>}
           {person.value.identityKind === 'speaker' && library?.status === 'error' && <ResourceError message={library.message} onRetry={onRetryLibrary} />}
           {person.value.identityKind === 'speaker' && library?.status === 'success' && (library.value.items.length === 0
-            ? <div style={styles.state}>暂无声纹记录</div>
-            : <ul style={{ ...styles.list, marginTop: 12 }}>{library.value.items.map((item, index) => <li key={`${item.kind}:${String(item.createdAtMillis ?? 0)}:${String(item.hitCount)}:${String(index)}`} style={styles.row}><span style={styles.rowCopy}><strong>声纹记录 {index + 1}</strong><small style={styles.rowMeta}>{item.kind === 'authorized' ? '授权声纹' : item.kind === 'legacy' ? '历史声纹' : '本地识别声纹'} · 命中 {item.hitCount} 次</small></span></li>)}</ul>)}
-          {person.value.canInvite && <section style={{ ...styles.card, marginTop: 16 }} aria-label="邀请识别人授权">
-            <h3 style={styles.cardTitle}>邀请对方授权</h3><small style={styles.cardHint}>{person.value.inviteTargetSelectionRequired ? '先用手机号或 Arkme ID 精确找到本人，再生成这条声音专属的认领邀请。' : '为当前已绑定用户生成这条声音专属的播放邀请。'}</small>
+            ? <div style={styles.state}>{tr("暂无声纹记录")}</div>
+            : <ul style={{ ...styles.list, marginTop: 12 }}>{library.value.items.map((item, index) => <li key={`${item.kind}:${String(item.createdAtMillis ?? 0)}:${String(item.hitCount)}:${String(index)}`} style={styles.row}><span style={styles.rowCopy}><strong>{tr("声纹记录")} {index + 1}</strong><small style={styles.rowMeta}>{item.kind === 'authorized' ? '授权声纹' : item.kind === 'legacy' ? '历史声纹' : '本地识别声纹'} {tr("· 命中")} {item.hitCount} {tr("次")}</small></span></li>)}</ul>)}
+          {person.value.canInvite && <section style={{ ...styles.card, marginTop: 16 }} aria-label={tr("邀请识别人授权")}>
+            <h3 style={styles.cardTitle}>{tr("邀请对方授权")}</h3><small style={styles.cardHint}>{person.value.inviteTargetSelectionRequired ? '先用手机号或 Arkme ID 精确找到本人，再生成这条声音专属的认领邀请。' : '为当前已绑定用户生成这条声音专属的播放邀请。'}</small>
             {person.value.inviteTargetSelectionRequired && <>
-              <div style={styles.actions}><input aria-label="邀请对象手机号或 Arkme ID" value={targetIdentifier} onChange={event => { onTargetIdentifierChange(event.target.value) }} placeholder="手机号或 Arkme ID" style={{ ...styles.button, flex: 1, minWidth: 160, cursor: 'text' }} /><button type="button" style={styles.button} onClick={onSearchTarget}>查找用户</button></div>
-              {targetContact?.status === 'loading' && <div style={styles.state}>正在查找邀请对象…</div>}
+              <div style={styles.actions}><input aria-label={tr("邀请对象手机号或 Arkme ID")} value={targetIdentifier} onChange={event => { onTargetIdentifierChange(event.target.value) }} placeholder={tr("手机号或 Arkme ID")} style={{ ...styles.button, flex: 1, minWidth: 160, cursor: 'text' }} /><button data-arkme-feedback="neutral" type="button" style={styles.button} onClick={onSearchTarget}>{tr("查找用户")}</button></div>
+              {targetContact?.status === 'loading' && <div style={styles.state}>{tr("正在查找邀请对象…")}</div>}
               {targetContact?.status === 'error' && <div style={styles.error}>{targetContact.message}</div>}
-              {targetContact?.status === 'success' && <div style={{ ...styles.row, marginTop: 12 }}><span style={styles.rowIdentity}><ArkmeUserAvatar {...(targetContact.value.avatarRef === undefined ? {} : { avatarRef: targetContact.value.avatarRef })} size={36} label={`${targetContact.value.displayName}的头像`} /><span style={styles.rowCopy}><strong>{targetContact.value.displayName}</strong><small style={styles.rowMeta}>{targetContact.value.registered ? '已注册 Arkme 用户' : '该对象尚未注册'}</small></span></span></div>}
+              {targetContact?.status === 'success' && <div style={{ ...styles.row, marginTop: 12 }}><span style={styles.rowIdentity}><ArkmeUserAvatar {...(targetContact.value.avatarRef === undefined ? {} : { avatarRef: targetContact.value.avatarRef })} size={36} label={tr("{v0}的头像", { v0: targetContact.value.displayName })} /><span style={styles.rowCopy}><strong>{targetContact.value.displayName}</strong><small style={styles.rowMeta}>{targetContact.value.registered ? '已注册 Arkme 用户' : '该对象尚未注册'}</small></span></span></div>}
             </>}
             {invitation.status === 'error' && <div style={{ ...styles.error, marginTop: 12 }}>{invitation.message}</div>}
             {invitation.status === 'success' && <div style={{ ...styles.linkBox, marginTop: 12 }}>{invitation.value.inviteUrl}</div>}
-            <div style={styles.actions}><button type="button" style={{ ...styles.button, ...styles.primary }} disabled={(person.value.inviteTargetSelectionRequired && (targetContact?.status !== 'success' || !targetContact.value.registered || targetContact.value.isSelf)) || invitation.status === 'busy'} onClick={onInvite}>{invitation.status === 'busy' ? '正在生成…' : '生成专属邀请'}</button>{invitation.status === 'success' && <button type="button" style={styles.button} onClick={() => { copyText(invitation.value.inviteUrl) }}>复制专属邀请</button>}</div>
+            <div style={styles.actions}><button data-arkme-feedback="primary" type="button" style={{ ...styles.button, ...styles.primary }} disabled={(person.value.inviteTargetSelectionRequired && (targetContact?.status !== 'success' || !targetContact.value.registered || targetContact.value.isSelf)) || invitation.status === 'busy'} onClick={onInvite}>{invitation.status === 'busy' ? '正在生成…' : '生成专属邀请'}</button>{invitation.status === 'success' && <button data-arkme-feedback="neutral" type="button" style={styles.button} onClick={() => { copyText(invitation.value.inviteUrl) }}>{tr("复制专属邀请")}</button>}</div>
           </section>}
         </>}
   </section></div>
 }
 
 export function ArkmeVoiceprintSurface({
+  onBack,
   recorderFactory = () => new BrowserPcmVoiceprintRecorder(),
   enrollmentClient = arkmeVoiceprintEnrollmentClient,
 }: {
+  onBack?: () => void
   recorderFactory?: () => ArkmeVoiceprintRecorder
   enrollmentClient?: ArkmeVoiceprintEnrollmentClient
 } = {}) {
+  useArkmeLocale()
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const [status, setStatus] = useState<ArkmeVoiceprintResource<ArkmeMyVoiceprint>>({ status: 'loading' })
   const [grants, setGrants] = useState<ArkmeVoiceprintResource<ArkmeVoiceprintGrantPage>>({ status: 'loading' })
@@ -514,9 +520,9 @@ export function ArkmeVoiceprintSurface({
     }
   }
 
-  return <main style={styles.root} data-arkme-owned="voiceprint-surface" aria-label="声纹管理">
+  return <main style={styles.root} data-arkme-owned="voiceprint-surface" aria-label={tr("声纹管理")}>
     <div style={styles.inner}>
-      <header style={styles.header}><p style={styles.eyebrow}>账户与声音</p><h1 style={styles.title}>声纹管理</h1><p style={styles.subtitle}>管理你的声纹、对外授权和录音中已识别的人。授权变更均需由你明确操作。</p></header>
+      <header style={styles.header}>{onBack ? <button type="button" style={styles.button} onClick={onBack}>{tr("‹ 返回录音")}</button> : <p style={styles.eyebrow}>{tr("账户与声音")}</p>}<h1 style={styles.title}>{tr("声纹管理")}</h1><p style={styles.subtitle}>{tr("管理你的声纹、对外授权和录音中已识别的人。授权变更均需由你明确操作。")}</p></header>
       <ArkmeVoiceprintContent
         status={status} grants={grants} people={people} invitation={invitation}
         revokingGrantRef={revokingGrantRef} restoreBusy={restoreBusy}
@@ -630,6 +636,6 @@ export function ArkmeVoiceprintSurface({
       onClose={() => { personRequestRevisionRef.current += 1; libraryRequestRevisionRef.current += 1; contactSearchRevisionRef.current += 1; setPerson(undefined); setLibrary(undefined); setSelectedPersonRef(''); setSelectedPersonKind(undefined); setTargetContact(undefined) }}
     />}
 
-    {enrollmentOpen && <div style={styles.overlay} role="presentation"><section style={styles.dialog} role="dialog" aria-modal="true" aria-label="录入我的声纹"><div style={styles.cardHead}><span><h2 style={styles.cardTitle}>录入我的声纹</h2><small style={styles.cardHint}>请在安静环境中，用自然语速连续说话 3 至 60 秒。</small></span><button type="button" style={styles.button} disabled={recordingBusy} onClick={() => { if (timerRef.current !== undefined) clearInterval(timerRef.current); timerRef.current = undefined; const recorder = recorderRef.current; recorderRef.current = undefined; if (recorder !== undefined) void recorder.cancel(); setEnrollmentOpen(false); setRecording(false); setRecordingStarting(false); setRecorded(undefined) }}>关闭</button></div><div style={{ ...styles.linkBox, marginBottom: 12 }}>Arkme 是你的 AI 个人全息记忆中枢，可以记录生活灵感、日程安排和重要瞬间。它会帮你整理日常想法、回顾关键记忆，并在需要时陪你重新看见自己的生活脉络。</div><div style={styles.recorder}><strong>{recordingStarting ? '正在打开麦克风…' : recording ? `正在录音 ${recordingSeconds.toFixed(1)} 秒` : recorded === undefined ? '麦克风尚未开始' : `录音已就绪 · ${recordingSeconds.toFixed(1)} 秒`}</strong><small>{recording ? '说完后点击停止录音' : recorded === undefined ? '浏览器会在开始时请求麦克风权限' : '可先试听，确认无误后提交录入'}</small></div>{recorded !== undefined && <VoiceprintWavPreview recording={recorded} />}{recordingError !== '' && <div style={{ ...styles.error, marginTop: 12 }}>{recordingError}</div>}<div style={styles.actions}>{recording ? <button type="button" style={{ ...styles.button, ...styles.dangerButton }} onClick={() => { void stopRecording() }}>停止录音</button> : <button type="button" style={styles.button} disabled={recordingBusy || recordingStarting} onClick={() => { void startRecording() }}>{recordingStarting ? '正在打开麦克风…' : recorded === undefined ? '开始录音' : '重新录音'}</button>}{recorded !== undefined && <button type="button" style={{ ...styles.button, ...styles.primary }} disabled={recordingBusy || recordingStarting} onClick={() => { void submitRecording() }}>{recordingBusy ? '正在提交…' : '提交声纹录入'}</button>}</div></section></div>}
+    {enrollmentOpen && <div style={styles.overlay} role="presentation"><section style={styles.dialog} role="dialog" aria-modal="true" aria-label={tr("录入我的声纹")}><div style={styles.cardHead}><span><h2 style={styles.cardTitle}>{tr("录入我的声纹")}</h2><small style={styles.cardHint}>{tr("请在安静环境中，用自然语速连续说话 3 至 60 秒。")}</small></span><button data-arkme-feedback="neutral" type="button" style={styles.button} disabled={recordingBusy} onClick={() => { if (timerRef.current !== undefined) clearInterval(timerRef.current); timerRef.current = undefined; const recorder = recorderRef.current; recorderRef.current = undefined; if (recorder !== undefined) void recorder.cancel(); setEnrollmentOpen(false); setRecording(false); setRecordingStarting(false); setRecorded(undefined) }}>{tr("关闭")}</button></div><div style={{ ...styles.linkBox, marginBottom: 12 }}>{tr("Arkme 是你的 AI 个人全息记忆中枢，可以记录生活灵感、日程安排和重要瞬间。它会帮你整理日常想法、回顾关键记忆，并在需要时陪你重新看见自己的生活脉络。")}</div><div style={styles.recorder}><strong>{recordingStarting ? '正在打开麦克风…' : recording ? tr("正在录音 {v0} 秒", { v0: recordingSeconds.toFixed(1) }) : recorded === undefined ? '麦克风尚未开始' : tr("录音已就绪 · {v0} 秒", { v0: recordingSeconds.toFixed(1) })}</strong><small>{recording ? '说完后点击停止录音' : recorded === undefined ? '浏览器会在开始时请求麦克风权限' : '可先试听，确认无误后提交录入'}</small></div>{recorded !== undefined && <VoiceprintWavPreview recording={recorded} />}{recordingError !== '' && <div style={{ ...styles.error, marginTop: 12 }}>{recordingError}</div>}<div style={styles.actions}>{recording ? <button data-arkme-feedback="danger" type="button" style={{ ...styles.button, ...styles.dangerButton }} onClick={() => { void stopRecording() }}>{tr("停止录音")}</button> : <button data-arkme-feedback="neutral" type="button" style={styles.button} disabled={recordingBusy || recordingStarting} onClick={() => { void startRecording() }}>{recordingStarting ? '正在打开麦克风…' : recorded === undefined ? '开始录音' : '重新录音'}</button>}{recorded !== undefined && <button data-arkme-feedback="primary" type="button" style={{ ...styles.button, ...styles.primary }} disabled={recordingBusy || recordingStarting} onClick={() => { void submitRecording() }}>{recordingBusy ? '正在提交…' : '提交声纹录入'}</button>}</div></section></div>}
   </main>
 }

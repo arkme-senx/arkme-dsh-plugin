@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import TourModule, { type TourProps } from '@rc-component/tour'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
@@ -68,20 +69,21 @@ function SendToSelfTourPanel({ current, onPrevious, onNext, onDismiss }: {
   onNext(): void
   onDismiss(): void
 }) {
+  useArkmeLocale()
   const primaryRef = useRef<HTMLButtonElement>(null)
   useLayoutEffect(() => { primaryRef.current?.focus({ preventScroll: true }) }, [current])
   return <section className="arkme-home-tour-panel" data-arkme-self-tour-panel role="dialog" aria-modal="true"
-    aria-label="发给自己引导" aria-describedby="arkme-self-tour-description">
+    aria-label={tr("发给自己引导")} aria-describedby="arkme-self-tour-description">
     <div className="arkme-home-tour-header">
       <span className="arkme-home-tour-progress" aria-live="polite">{current + 1} / 2</span>
-      <button type="button" className="arkme-home-tour-close" aria-label="关闭发给自己引导" onClick={onDismiss}>×</button>
+      <button type="button" className="arkme-home-tour-close" aria-label={tr("关闭发给自己引导")} onClick={onDismiss}>×</button>
     </div>
     <h2>{steps[current]!.title}</h2><p id="arkme-self-tour-description">{steps[current]!.description}</p>
     <div className="arkme-home-tour-actions">
-      <button type="button" className="arkme-home-tour-skip" onClick={onDismiss}>跳过引导</button>
+      <button type="button" className="arkme-home-tour-skip" onClick={onDismiss}>{tr("跳过引导")}</button>
       <div className="arkme-home-tour-navigation">
-        {current === 1 && <button type="button" onClick={onPrevious}>上一步</button>}
-        <button ref={primaryRef} type="button" className="arkme-home-tour-primary" onClick={onNext}>{current === 1 ? '开始使用' : '下一步'}</button>
+        {current === 1 && <button type="button" onClick={onPrevious}>{tr("上一步")}</button>}
+        <button ref={primaryRef} type="button" className="arkme-home-tour-primary" onClick={onNext}>{current === 1 ? '开始使用' : tr("下一步")}</button>
       </div>
     </div>
   </section>

@@ -17,8 +17,9 @@ interface SubmissionPorts {
 export function recordReeditSubmissionView(job: ArkmeRecordReeditSubmission): ArkmeRecordReeditSubmissionView {
   const { submissionId, state, attachments, voiceFileAssetUid, voiceBlock, result, error } = job
   const { itemUid, baseVersion } = job.context
-  const { title, textContent } = job.draft
+  const { title, textContent, mentions } = job.draft
   return structuredClone({ submissionId, baseVersion, itemUid, state, title, textContent, attachments,
+    ...(mentions === undefined ? {} : { mentions }),
     ...(voiceFileAssetUid ? { voiceFileAssetUid } : {}), ...(voiceBlock ? { voiceBlock } : {}),
     ...(result ? { result } : {}), ...(error ? { error } : {}) })
 }

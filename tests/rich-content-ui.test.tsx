@@ -9,12 +9,28 @@ import {
   arkmeImagePreviewDragTop, arkmeMessageCopyLinkSidFromUrl, arkmeNextImagePreviewMode,
   arkmeRelatedRecordingItemFromSharedRecording, arkmeSharedRecordingTimeText,
 } from '../src/client/ArkmeRichContent.js'
-import { ArkmeLongArticleDialog } from '../src/client/ArkmeLongArticleDialog.js'
+import { ArkmeLongArticleDialog, ArkmeLongArticleSnapshotDialog } from '../src/client/ArkmeLongArticleDialog.js'
 import { ArkmeLivePhotoBadge } from '../src/client/ArkmeLivePhotoBadge.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from '../src/client/ArkmeNoteDetails.js'
 import { arkmeClipboardImageFiles, arkmeShouldDismissAnchoredMenu, arkmeShouldToggleMessageSelectFromRowClick } from '../src/client/ArkmeSidebar.js'
 
 describe('Arkme rich content presentation', () => {
+  it('keeps forwarded articles as cards without a duplicate attachment gallery', () => {
+    const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
+      itemUid: 'forward-article', senderName: '我', isMe: true, sendAtMillis: 1, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '转发长文', createdAtMillis: 1, summaryLines: [], items: [{
+        senderName: '作者', sendAtMillis: 1, title: '文章标题', displayKind: 1,
+        textFormat: 'markdown', textContent: '图片前段落\n\n![正文图片](arkme-asset:media-0)\n\n图片后段落',
+        contentBlocks: [{ kind: 'image', fileAssetUid: 'media-0', mediaRef: 'forward-image',
+          fileName: 'photo.png', mimeType: 'image/png', size: 1, sortOrder: 0 }],
+      }] },
+    }} />)
+    expect(html).toContain('data-arkme-long-article="preview"')
+    expect(html).not.toContain('arkme-asset:media-0')
+    expect(html).not.toContain('<img ')
+    expect(html).not.toContain('data-arkme-media-count')
+  })
+
   it('uses the Flutter Live ring geometry without an unavailable-state glyph', () => {
     const compact = renderToStaticMarkup(<ArkmeLivePhotoBadge variant="thumbnail" />)
     expect(compact).toContain('width="16" height="16"')
@@ -455,7 +471,17 @@ describe('Arkme rich content presentation', () => {
     })
   })
 
-  it('renders copied quick links and normal urls as Flutter-style inline link previews', () => {
+  it('keeps historical link-label prose visible outside the link alongside its preview', () => {
+    const href = 'https://jiwo.cc/s/U2HQgn1RhPJZaFmx'
+    const html = renderToStaticMarkup(<ArkmeMessageContent item={{
+      itemUid: 'historical-link', senderName: '我', isMe: true, sendAtMillis: 1, status: 1, title: '',
+      textFormat: 'markdown', textContent: `[${href} 后面的普通文字](${href})`,
+    }} />)
+    expect(html).toContain('data-arkme-share-preview="message"')
+    expect(html).toContain('<span data-arkme-share-trailing-text="true"> 后面的普通文字</span>')
+  })
+
+  it('renders copied quick links as inline labels and keeps normal urls inline', () => {
     const sid = 'U2HQgn1RhPJZaFmx'
     expect(arkmeMessageCopyLinkSidFromUrl(`https://jiwo.cc/s/${sid}`, 'https://jiwo.cc')).toBe(sid)
     const copyLinkHtml = renderToStaticMarkup(<ArkmeMessageContent
@@ -466,9 +492,10 @@ describe('Arkme rich content presentation', () => {
       shareWebsite="https://jiwo.cc"
       onMessageCopyLinkOpen={() => undefined}
     />)
-    expect(copyLinkHtml).toContain('data-arkme-inline-link="message-copy-link"')
-    expect(copyLinkHtml).toContain('data-arkme-link-label="true">快记分享链接</span>')
+    expect(copyLinkHtml).toContain('data-arkme-share-preview="message"')
     expect(copyLinkHtml).toContain('快记分享链接')
+    expect(copyLinkHtml).not.toContain('正在读取分享预览')
+    expect(copyLinkHtml).not.toContain('data-arkme-share-preview-list')
     expect(copyLinkHtml).not.toContain(`https://jiwo.cc/s/${sid}</p>`)
 
     const webLinkHtml = renderToStaticMarkup(<ArkmeMessageContent
@@ -976,7 +1003,7 @@ describe('Arkme rich content presentation', () => {
     if (count > 1) expect(html.indexOf('ref-0')).toBeLessThan(html.indexOf(`ref-${String(count - 1)}`))
   })
 
-  it('renders compact audio and two-line file cards independently of text width', () => {
+  it('renders compact audio and single-line intrinsic-width file cards independently of text width', () => {
     const html = renderToStaticMarkup(<ArkmeMessageContent item={{
       itemUid: 'compact', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,
       title: '', textContent: '短', contentBlocks: [
@@ -988,7 +1015,48 @@ describe('Arkme rich content presentation', () => {
     expect(html).toContain('1:05')
     expect(html).not.toContain('data-arkme-voice-transcript')
     expect(html).toContain('data-arkme-file-card="file"')
-    expect(html).toContain('-webkit-line-clamp:2')
+    expect(html).not.toContain('-webkit-line-clamp:2')
+    expect(html).toContain('white-space:nowrap;text-overflow:ellipsis')
+    expect(html).toContain('title="非常长的文件名称需要显示两行然后省略.pdf"')
+    expect(html).not.toContain('width:220px')
+    expect(html).toContain('min-height:48px')
+  })
+
+  it.each([3, 4])('keeps voice kind %s controls before the transcript and accompanying media', templateKind => {
+    for (const presentation of ['bubble', 'detail'] as const) for (const isMe of [false, true]) for (const audioSort of [-1, 5]) {
+      const html = renderToStaticMarkup(<ArkmeMessageContent presentation={presentation} item={{
+        itemUid: 'voice-with-media', senderName: '用户', isMe, sendAtMillis: 1, status: 1,
+        templateKind, title: '', textContent: '这是附图语音转写。', recordDurationMillis: 4_000,
+        contentBlocks: [
+          { kind: 'image', mediaRef: 'photo-first', fileName: 'photo.png', mimeType: 'image/png', size: 1, sortOrder: 0 },
+          { kind: 'audio', mediaRef: 'voice-mixed', fileName: 'voice.m4a', mimeType: 'audio/mp4', size: 3, sortOrder: audioSort },
+          { kind: 'file', mediaRef: 'file-last', fileName: 'attachment.pdf', mimeType: 'application/pdf', size: 4, sortOrder: 2 },
+        ],
+      }} />)
+      expect(html.match(/data-arkme-voice="inline"/g)).toHaveLength(1)
+      expect(html.match(/这是附图语音转写。/g)).toHaveLength(1)
+      expect(html).toContain('data-arkme-voice-transcript')
+      expect(html.indexOf('0:04')).toBeLessThan(html.indexOf('这是附图语音转写。'))
+      expect(html.indexOf('这是附图语音转写。')).toBeLessThan(html.indexOf('photo-first'))
+      expect(html.indexOf('photo-first')).toBeLessThan(html.indexOf('attachment.pdf'))
+    }
+  })
+
+  it.each([undefined, 2, 3, 4])('does not pair unrelated text with multiple audio attachments (kind %s)', templateKind => {
+    const html = renderToStaticMarkup(<ArkmeMessageContent item={{
+      itemUid: 'multi-audio', senderName: '用户', isMe: false, sendAtMillis: 1, status: 1,
+      ...(templateKind === undefined ? {} : { templateKind }), title: '', textContent: '多附件说明',
+      contentBlocks: [
+        { kind: 'audio', mediaRef: 'audio-first', fileName: 'a.m4a', mimeType: 'audio/mp4', size: 3, durationSec: 4, sortOrder: 0 },
+        { kind: 'image', mediaRef: 'photo-middle', fileName: 'photo.png', mimeType: 'image/png', size: 1, sortOrder: 1 },
+        { kind: 'audio', mediaRef: 'audio-last', fileName: 'b.m4a', mimeType: 'audio/mp4', size: 3, durationSec: 8, sortOrder: 2 },
+      ],
+    }} />)
+    expect(html).not.toContain('data-arkme-voice-transcript')
+    expect(html.match(/多附件说明/g)).toHaveLength(1)
+    expect(html.indexOf('多附件说明')).toBeLessThan(html.indexOf('0:04'))
+    expect(html.indexOf('0:04')).toBeLessThan(html.indexOf('photo-middle'))
+    expect(html.indexOf('photo-middle')).toBeLessThan(html.indexOf('0:08'))
   })
 
   it.each([3, 4])('places voice kind %s before its transcript, with no separate player plate or duplicate text', (templateKind) => {
@@ -1119,7 +1187,7 @@ describe('Arkme rich content presentation', () => {
     const html = renderToStaticMarkup(<ArkmeLongArticleDialog sourceRef="source-1" onClose={() => undefined} />)
     expect(html).toContain('data-arkme-long-article-dialog="create"')
     expect(html).toContain('placeholder="请输入标题"')
-    expect(html).toContain('placeholder="请输入正文内容"')
+    expect(html).toContain('正在加载长文')
     expect(html).toContain('0秒')
     expect(html).toContain('0字')
     expect(html).toContain('发布')
@@ -1135,6 +1203,39 @@ describe('Arkme rich content presentation', () => {
   })
 })
 describe('forward detail summary content', () => {
+  it.each([{ displayKind: 1 }, { templateKind: 8 }])('uses the original article card for forwarded articles with %o', kind => {
+    const textContent = '长文正文'.repeat(80)
+    const forwarded = { senderName: '作者', sendAtMillis: 1, title: '原文标题', textContent, ...kind }
+    const item = { itemUid: 'forward-card', senderName: '转发者', isMe: false, sendAtMillis: 1, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '转发快记', createdAtMillis: 1, summaryLines: [], items: [forwarded] } }
+    const detail = renderToStaticMarkup(<ForwardRecordsDetail item={item} onClose={() => {}} />)
+    const original = renderToStaticMarkup(<ArkmeMessageContent item={{ ...item, forwardRecords: undefined, ...forwarded }} />)
+    expect(detail).toContain('data-arkme-long-article="preview"')
+    expect(detail).toContain('-webkit-line-clamp:2')
+    expect(detail).toContain('320字')
+    expect(detail).toContain(original.match(/<button\b[\s\S]*?<\/button>/u)![0])
+    const snapshot = renderToStaticMarkup(<ArkmeLongArticleSnapshotDialog item={{ ...item, ...forwarded }} onClose={() => {}} />)
+    expect(snapshot).toContain(textContent)
+    expect(snapshot).toContain('原文标题')
+    expect(snapshot).not.toContain('编辑')
+  })
+
+  it.each(['plain', 'markdown'] as const)('preserves an article title alongside its %s body without article metadata', textFormat => {
+    const item = {
+      itemUid: 'forward-article', senderName: '转发者', isMe: false, sendAtMillis: 1, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '转发快记', createdAtMillis: 1, summaryLines: [], items: [{
+        senderName: '作者', sendAtMillis: 1, title: '原文标题', textContent: '完整正文', textFormat,
+      }] },
+    }
+    const detail = renderToStaticMarkup(<ForwardRecordsDetail item={item} onClose={() => {}} />)
+    expect(detail).toContain('原文标题')
+    expect(detail).toContain('完整正文')
+    expect(detail.indexOf('原文标题')).toBeLessThan(detail.indexOf('完整正文'))
+    expect(detail.match(/原文标题/gu)).toHaveLength(1)
+    const preview = renderToStaticMarkup(<ArkmeMessageContent item={item} />)
+    expect(preview).toContain('作者：原文标题')
+  })
+
   it('does not interpret a colon inside a token or URL as sender metadata', () => {
     const summaryLines = ['[jm_emoji:heart_eyes][im_emoji:thumb_up]', 'https://example.com/path', '09:30 开会', '小林：完整摘要']
     const markup = renderToStaticMarkup(<ForwardRecordsDetail item={{

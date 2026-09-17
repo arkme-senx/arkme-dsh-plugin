@@ -21,6 +21,49 @@ function disk() {
 }
 
 describe('shared calendar month cache', () => {
+  it.each(['calendar-view-invalid', 'arkme-code-40001', 'arkme-code-50001'])('drops unsafe stale summaries and anchors after %s', async code => {
+    let now = 100_000
+    const { storage } = disk()
+    const load = vi.fn(async q => page(q))
+    const cache = new CalendarMonthCache(load, () => storage, () => now)
+    cache.activateAccount('a'); await cache.ensure('a', query())
+    now += 61_000
+    load.mockRejectedValueOnce(Object.assign(new Error('需要重新加载'), { body: { code } }))
+    await cache.ensure('a', query())
+    expect(cache.get('a', query())).toEqual({ loading: false, error: '需要重新加载' })
+    const restored = new CalendarMonthCache(load, () => storage, () => now)
+    restored.activateAccount('a')
+    expect(restored.get('a', query()).value).toBeUndefined()
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not restore summaries from the old client-counted calendar contract', () => {
+    const { storage } = disk()
+    storage.setItem('dsh-arkme:calendar-months:v1:a', JSON.stringify([{
+      key: JSON.stringify(['send_to_self', 'Asia/Shanghai', '2026-09-01', '2026-09-30']),
+      value: page(query(), 999), refreshed: Date.now(),
+    }]))
+    const cache = new CalendarMonthCache(async q => page(q), () => storage)
+    cache.activateAccount('a')
+    expect(cache.get('a', query()).value).toBeUndefined()
+  })
+
+  it('persists full chat date summaries and precise owner anchors without message bodies', async () => {
+    const { storage, values } = disk()
+    const q = { ...query(), scopeKey: 'chat:a', startDate: '0001-01-01', endDate: '9999-12-31', timezoneOffsetMillis: 28800000 }
+    const value: ArkmeCalendarBucketPage = { ...page(q), scope: 'private_chat', totalDayCount: 1,
+      days: [{ bucketDate: '2020-01-02', count: 9, protectedCount: 0, hasRecords: true,
+        anchor: { recordUid: 'old', recordOwnerUserId: '9223372036854775806', sendAtMillis: 123 } }] }
+    const cache = new CalendarMonthCache(async () => ({ ...value, text: 'private-message-body' }), () => storage)
+    cache.activateAccount('a'); await cache.ensure('a', q)
+    const restored = new CalendarMonthCache(async () => value, () => storage)
+    restored.activateAccount('a')
+    expect(restored.get('a', q).value).toMatchObject(value)
+    expect([...values.values()].join('')).not.toContain('private-message-body')
+    expect(restored.get('a', { ...q, timezoneOffsetMillis: 0 }).value).toBeUndefined()
+    restored.activateAccount('b')
+    expect(restored.get('b', q).value).toBeUndefined()
+  })
   it('reuses multiple months on switching, closing and remounting without another request', async () => {
     const load = vi.fn(async q => page(q))
     const cache = new CalendarMonthCache(load, () => undefined)

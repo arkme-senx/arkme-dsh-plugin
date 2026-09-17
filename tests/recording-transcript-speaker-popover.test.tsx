@@ -72,7 +72,7 @@ describe('recording transcript speaker popover', () => {
       await tick()
     })
 
-    const button = renderer.root.findByProps({ 'aria-label': '编辑说话人 说话人 1' })
+    const button = renderer.root.findByProps({ 'data-recording-transcript-item': 'item-1' }).findByProps({ 'aria-label': '编辑说话人 说话人 1' })
     await act(async () => {
       button.props.onClick({
         stopPropagation() {},
@@ -98,7 +98,7 @@ describe('recording transcript speaker popover', () => {
       await tick()
     })
     await act(async () => {
-      renderer.root.findByProps({ 'aria-label': '编辑说话人 说话人 1' }).props.onClick({
+      renderer.root.findByProps({ 'data-recording-transcript-item': 'item-1' }).findByProps({ 'aria-label': '编辑说话人 说话人 1' }).props.onClick({
         stopPropagation() {},
         currentTarget: { getBoundingClientRect: () => ({ left: 24, right: 104, top: 120, bottom: 142 }) },
       })

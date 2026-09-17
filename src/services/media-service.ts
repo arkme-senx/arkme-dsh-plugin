@@ -15,6 +15,7 @@ import type {
   ArkmeUploadedAsset,
 } from '../types.js'
 import { ProfileService } from './profile-service.js'
+import { SelfRoleAvatarStore, MAX_SELF_ROLE_AVATAR_BYTES } from '../self-role-avatar-store.js'
 import { isRecordDynamicPhotoMotion, recordDynamicPhotoGroups } from './dynamic-photo.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
@@ -71,6 +72,18 @@ export interface ArkmeIssuedAudioMedia {
   durationSeconds?: number
 }
 
+/** Persist only the confirmation payload, never signed storage URLs. */
+export interface ArkmeUploadCompletion {
+  upload_session_uid: string
+  uploaded_size: number
+  storage_etag: string
+  multipart_parts: Array<{ part_number: number; etag: string }>
+}
+export interface ArkmeUploadCompletionRecovery {
+  read(): ArkmeUploadCompletion | undefined
+  save(completion: ArkmeUploadCompletion): void
+}
+
 interface ArkmePreparedUpload {
   upload_session_uid?: unknown
   upload_url?: unknown
@@ -88,6 +101,16 @@ interface ArkmeOssCredentials {
 }
 
 interface CacheEntry<T> { value: T; expiresAtMillis: number }
+
+interface PendingAvatarAsset {
+  generation: number
+  session: ArkmeSessionCredentials
+  uid: string
+  started: boolean
+  promise: Promise<ArkmeFileAssetDisplayItem | undefined>
+  resolve: (asset: ArkmeFileAssetDisplayItem | undefined) => void
+  reject: (error: unknown) => void
+}
 
 export const MAX_ARKME_IMAGE_BYTES = 2 * 1024 * 1024
 const MAX_ARKME_PROFILE_IMAGE_BYTES = 8 * 1024 * 1024
@@ -289,6 +312,10 @@ export class MediaService {
   private imageCacheBytes = 0
   private activeImageDownloads = 0
   private readonly imageDownloadWaiters: Array<() => void> = []
+  private readonly avatarAssets = new Map<string, PendingAvatarAsset>()
+  private avatarAssetTimer: ReturnType<typeof setTimeout> | undefined
+  private imageGeneration = 0
+  private readonly localAvatarReads = new Map<string, Promise<ArkmeImageBytes | undefined>>()
 
   constructor(
     private readonly runtime: ServiceRuntime,
@@ -296,21 +323,31 @@ export class MediaService {
     private readonly worldImages: ArkmeWorldImageReader,
     private readonly recordIdentity: ArkmeRecordIdentity,
     private readonly botImages?: ArkmeBotImageReader,
+    private readonly selfRoleAvatars?: SelfRoleAvatarStore,
   ) {}
 
   dispose(): void {
+    this.imageGeneration += 1
+    clearTimeout(this.avatarAssetTimer)
+    this.avatarAssetTimer = undefined
+    for (const pending of this.avatarAssets.values()) pending.reject(new Error('Avatar image scope changed'))
+    this.avatarAssets.clear()
     this.mediaRefs.clear()
     this.stableMediaRefs.clear()
     this.imageCache.clear()
     this.imageInFlight.clear()
+    this.localAvatarReads.clear()
     this.imageCacheBytes = 0
     this.imageDownloadWaiters.splice(0).forEach(resolve => { resolve() })
   }
 
   async queryFileAssets(fileAssetUids: readonly string[], signal?: AbortSignal): Promise<ArkmeFileAssetDisplayItem[]> {
+    return await this.queryFileAssetsForSession(await this.runtime.requireSession(), fileAssetUids, signal)
+  }
+
+  private async queryFileAssetsForSession(session: ArkmeSessionCredentials, fileAssetUids: readonly string[], signal?: AbortSignal): Promise<ArkmeFileAssetDisplayItem[]> {
     const unique = [...new Set(fileAssetUids.map(uid => uid.trim()).filter(uid => uid !== ''))].slice(0, 50)
     if (unique.length === 0) return []
-    const session = await this.runtime.requireSession()
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/files/assets/query',
       { file_asset_uids: unique },
@@ -338,7 +375,7 @@ export class MediaService {
   async uploadLocalFile(
     filePath: string,
     metadata: { size: number; sha256: string; mimeType: string; fileName: string; fileKind: 1 | 2 | 3 | 4 },
-    options: { onProgress?: (progress: ArkmeFileProgress) => void; expectedUserId?: number; signal?: AbortSignal } = {},
+    options: { onProgress?: (progress: ArkmeFileProgress) => void; expectedUserId?: number; signal?: AbortSignal; completionRecovery?: ArkmeUploadCompletionRecovery } = {},
   ): Promise<ArkmeUploadedAsset> {
     if (this.runtime.config.richMediaSendEnabled === false) {
       throw new ArkmePluginError('rich-content-disabled', '文件上传已被插件配置关闭', false, 403)
@@ -354,79 +391,86 @@ export class MediaService {
     const progress = (phase: ArkmeFileProgress['phase'], sentBytes: number) => options.onProgress?.({ phase, sentBytes, totalBytes: metadata.size })
     progress('preparing', 0)
     const uploadMode = metadata.size > 16 * 1024 * 1024 ? 2 : 1
-    const prepared = await this.runtime.authenticatedPost<ArkmePreparedUpload>('/api/v1/files/prepare-upload', {
+    const pendingCompletion = options.completionRecovery?.read()
+    let completionPersisted = pendingCompletion !== undefined
+    const prepared = pendingCompletion === undefined ? await this.runtime.authenticatedPost<ArkmePreparedUpload>('/api/v1/files/prepare-upload', {
       planned_size: metadata.size,
       file_hash: metadata.sha256,
       mime_type: metadata.mimeType || 'application/octet-stream',
       file_kind: metadata.fileKind,
       upload_mode: uploadMode,
       display_name: metadata.fileName,
-    }, session, options.signal)
-    const uploadSessionUid = stringValue(prepared.upload_session_uid).trim()
+    }, session, options.signal) : undefined
+    const uploadSessionUid = pendingCompletion?.upload_session_uid ?? stringValue(prepared?.upload_session_uid).trim()
     if (uploadSessionUid === '') throw new ArkmePluginError('upload-prepare-invalid', '上传准备响应无效', true, 502)
     try {
-      let storageETag = ''
-      const completedParts: Array<{ part_number: number; etag: string }> = []
-      if (uploadMode === 1) {
-        const uploadUrl = stringValue(prepared.upload_url).trim()
-        if (uploadUrl === '') throw new ArkmePluginError('upload-url-missing', '对象存储上传地址缺失', true, 502)
-        const signal = options.signal
-        const body = options.onProgress === undefined ? createReadStream(filePath) : Readable.from((async function* () {
-          let sent = 0
-          for await (const chunk of createReadStream(filePath)) {
-            signal?.throwIfAborted(); sent += (chunk as Buffer).length; progress('uploading', sent); yield chunk
-          }
-        })())
-        const response = await this.runtime.fetchImpl(uploadUrl, {
-          method: 'PUT',
-          headers: Object.fromEntries(Object.entries(objectValue(prepared.upload_headers)).map(([key, value]) => [key, stringValue(value)])),
-          body: body as never,
-          duplex: 'half',
-          redirect: 'error',
-          ...(signal === undefined ? {} : { signal }),
-        } as RequestInit)
-        if (!response.ok) throw new ArkmePluginError('upload-storage-failed', `对象存储上传失败（${String(response.status)}）`, true, 502)
-        storageETag = response.headers.get('etag') ?? ''
-      } else {
-        const partSize = Math.trunc(numberValue(prepared.multipart_part_size))
-        const parts = listValue(prepared.multipart_parts).map(objectValue)
-        if (partSize <= 0 || parts.length === 0) throw new ArkmePluginError('upload-parts-missing', '分片上传参数缺失', true, 502)
-        const handle = await openFile(filePath, 'r')
-        try {
-          for (const part of parts) {
-            options.signal?.throwIfAborted()
-            const partNumber = Math.trunc(numberValue(part.part_number))
-            const uploadUrl = stringValue(part.upload_url).trim()
-            const offset = (partNumber - 1) * partSize
-            const length = Math.min(partSize, metadata.size - offset)
-            if (partNumber <= 0 || uploadUrl === '' || length <= 0) throw new ArkmePluginError('upload-part-invalid', '分片上传参数无效', true, 502)
-            const buffer = Buffer.allocUnsafe(length)
-            const read = await handle.read(buffer, 0, length, offset)
-            if (read.bytesRead !== length) throw new ArkmePluginError('upload-part-read-failed', '读取上传分片失败', true, 500)
-            const response = await this.runtime.fetchImpl(uploadUrl, {
-              method: 'PUT',
-              headers: Object.fromEntries(Object.entries(objectValue(part.upload_headers)).map(([key, value]) => [key, stringValue(value)])),
-              body: buffer,
-              redirect: 'error',
-              ...(options.signal === undefined ? {} : { signal: options.signal }),
-            })
-            if (!response.ok) throw new ArkmePluginError('upload-storage-failed', `对象存储分片上传失败（${String(response.status)}）`, true, 502)
-            completedParts.push({ part_number: partNumber, etag: response.headers.get('etag') ?? '' })
-            progress('uploading', Math.min(metadata.size, offset + length))
-          }
-        } finally { await handle.close() }
+      let storageETag = pendingCompletion?.storage_etag ?? ''
+      const completedParts: Array<{ part_number: number; etag: string }> = pendingCompletion?.multipart_parts ?? []
+      if (pendingCompletion === undefined) {
+        if (uploadMode === 1) {
+          const uploadUrl = stringValue(prepared!.upload_url).trim()
+          if (uploadUrl === '') throw new ArkmePluginError('upload-url-missing', '对象存储上传地址缺失', true, 502)
+          const signal = options.signal
+          const body = options.onProgress === undefined ? createReadStream(filePath) : Readable.from((async function* () {
+            let sent = 0
+            for await (const chunk of createReadStream(filePath)) {
+              signal?.throwIfAborted(); sent += (chunk as Buffer).length; progress('uploading', sent); yield chunk
+            }
+          })())
+          const response = await this.runtime.fetchImpl(uploadUrl, {
+            method: 'PUT',
+            headers: Object.fromEntries(Object.entries(objectValue(prepared!.upload_headers)).map(([key, value]) => [key, stringValue(value)])),
+            body: body as never,
+            duplex: 'half',
+            redirect: 'error',
+            ...(signal === undefined ? {} : { signal }),
+          } as RequestInit)
+          if (!response.ok) throw new ArkmePluginError('upload-storage-failed', `对象存储上传失败（${String(response.status)}）`, true, 502)
+          storageETag = response.headers.get('etag') ?? ''
+        } else {
+          const partSize = Math.trunc(numberValue(prepared!.multipart_part_size))
+          const parts = listValue(prepared!.multipart_parts).map(objectValue)
+          if (partSize <= 0 || parts.length === 0) throw new ArkmePluginError('upload-parts-missing', '分片上传参数缺失', true, 502)
+          const handle = await openFile(filePath, 'r')
+          try {
+            for (const part of parts) {
+              options.signal?.throwIfAborted()
+              const partNumber = Math.trunc(numberValue(part.part_number))
+              const uploadUrl = stringValue(part.upload_url).trim()
+              const offset = (partNumber - 1) * partSize
+              const length = Math.min(partSize, metadata.size - offset)
+              if (partNumber <= 0 || uploadUrl === '' || length <= 0) throw new ArkmePluginError('upload-part-invalid', '分片上传参数无效', true, 502)
+              const buffer = Buffer.allocUnsafe(length)
+              const read = await handle.read(buffer, 0, length, offset)
+              if (read.bytesRead !== length) throw new ArkmePluginError('upload-part-read-failed', '读取上传分片失败', true, 500)
+              const response = await this.runtime.fetchImpl(uploadUrl, {
+                method: 'PUT',
+                headers: Object.fromEntries(Object.entries(objectValue(part.upload_headers)).map(([key, value]) => [key, stringValue(value)])),
+                body: buffer,
+                redirect: 'error',
+                ...(options.signal === undefined ? {} : { signal: options.signal }),
+              })
+              if (!response.ok) throw new ArkmePluginError('upload-storage-failed', `对象存储分片上传失败（${String(response.status)}）`, true, 502)
+              completedParts.push({ part_number: partNumber, etag: response.headers.get('etag') ?? '' })
+              progress('uploading', Math.min(metadata.size, offset + length))
+            }
+          } finally { await handle.close() }
+        }
       }
       if (options.expectedUserId !== undefined
         && (await this.runtime.requireSession()).userId !== options.expectedUserId) {
         throw new ArkmePluginError('file-account-changed', '账号已切换，本次上传已取消', false, 409)
       }
       progress('completing', metadata.size)
-      const completed = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/files/complete-upload', {
-        upload_session_uid: uploadSessionUid,
-        uploaded_size: metadata.size,
-        storage_etag: storageETag,
-        multipart_parts: completedParts,
-      }, session, options.signal)
+      const completion: ArkmeUploadCompletion = {
+        upload_session_uid: uploadSessionUid, uploaded_size: metadata.size,
+        storage_etag: storageETag, multipart_parts: completedParts,
+      }
+      if (options.completionRecovery !== undefined && !completionPersisted) {
+        options.completionRecovery.save(completion)
+        completionPersisted = true
+      }
+      const completed = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/files/complete-upload', { ...completion }, session, options.signal)
       const fileAssetUid = stringValue(completed.file_asset_uid).trim()
       if (fileAssetUid === '') throw new ArkmePluginError('upload-complete-invalid', '上传完成响应无效', true, 502)
       if (options.expectedUserId !== undefined
@@ -442,7 +486,7 @@ export class MediaService {
         fileKind: metadata.fileKind,
       }
     } catch (error) {
-      await this.runtime.authenticatedPost('/api/v1/files/abort-upload', { upload_session_uid: uploadSessionUid }, session).catch(() => undefined)
+      if (!completionPersisted) await this.runtime.authenticatedPost('/api/v1/files/abort-upload', { upload_session_uid: uploadSessionUid }, session).catch(() => undefined)
       throw error
     }
   }
@@ -615,14 +659,20 @@ export class MediaService {
 
   async readImage(
     imageRef: string,
-    options: { maxBytes?: number; signal?: AbortSignal; refresh?: boolean } = {},
+    options: { maxBytes?: number; signal?: AbortSignal; refresh?: boolean; cacheOnly?: boolean } = {},
   ): Promise<ArkmeImageBytes> {
     options.signal?.throwIfAborted()
+    const generation = this.imageGeneration
     const session = await this.runtime.requireSession()
+    const assetMatch = /^file_asset:\/\/([A-Za-z0-9_-]{8,128})$/.exec(imageRef.trim())
+    if (assetMatch !== null) return await this.readFileAssetImage(session, assetMatch[1]!, options, generation)
+    if (options.cacheOnly) throw new ArkmePluginError('image-cache-miss', '本地没有可用的资产头像', false, 404)
     const isProfileImage = imageRef.trim().startsWith('arkme-profile-image-v1.')
     const isBotImage = imageRef.trim().startsWith('arkme-bot-image-v1.')
+    const isSelfRoleImage = imageRef.trim().startsWith('arkme-self-role-image-v1.')
     const isAvatar = isProfileImage || isBotImage
-    const maximumBytes = isProfileImage ? MAX_ARKME_PROFILE_IMAGE_BYTES : MAX_ARKME_IMAGE_BYTES
+    const maximumBytes = isProfileImage ? MAX_ARKME_PROFILE_IMAGE_BYTES
+      : isSelfRoleImage ? MAX_SELF_ROLE_AVATAR_BYTES : MAX_ARKME_IMAGE_BYTES
     const byteLimit = Math.min(maximumBytes, Math.max(1, Math.trunc(options.maxBytes ?? maximumBytes)))
     const cacheKey = `${String(session.userId)}:${String(byteLimit)}:${imageRef.trim()}`
     if (isProfileImage) await this.profile.openProfileImageRef(imageRef, session.userId)
@@ -665,6 +715,151 @@ export class MediaService {
       throw error
     } finally {
       if (this.imageInFlight.get(cacheKey) === pending) this.imageInFlight.delete(cacheKey)
+    }
+  }
+
+  /** Immutable asset bytes survive URL expiry and Host restarts in the existing avatar store. */
+  private async readFileAssetImage(
+    session: ArkmeSessionCredentials,
+    uid: string,
+    options: { maxBytes?: number; signal?: AbortSignal; refresh?: boolean; cacheOnly?: boolean },
+    generation: number,
+  ): Promise<ArkmeImageBytes> {
+    await this.assertImageAccount(session, generation)
+    options.signal?.throwIfAborted()
+    const byteLimit = Math.min(MAX_SELF_ROLE_AVATAR_BYTES, Math.max(1, Math.trunc(options.maxBytes ?? MAX_SELF_ROLE_AVATAR_BYTES)))
+    const diskKey = `asset:${this.runtime.config.environment}:${uid}`
+    const cacheKey = `${session.userId}:${byteLimit}:${diskKey}`
+    const cached = this.cachedImage(cacheKey)
+    if (cached !== undefined) return cached
+    if (options.cacheOnly) {
+      const value = await this.readLocalFileAssetImage(session, uid, diskKey, byteLimit, generation)
+      options.signal?.throwIfAborted()
+      await this.assertImageAccount(session, generation)
+      if (value === undefined) throw new ArkmePluginError('image-cache-miss', '本地没有可用的资产头像', false, 404)
+      this.cacheImage(cacheKey, value)
+      return cloneImageBytes(value)
+    }
+    let pending = this.imageInFlight.get(cacheKey)
+    if (pending === undefined) {
+      pending = this.loadFileAssetImage(session, uid, diskKey, byteLimit, generation)
+      this.imageInFlight.set(cacheKey, pending)
+    }
+    try {
+      const value = await pending
+      options.signal?.throwIfAborted()
+      await this.assertImageAccount(session, generation)
+      this.cacheImage(cacheKey, value)
+      return cloneImageBytes(value)
+    } finally {
+      if (this.imageInFlight.get(cacheKey) === pending) this.imageInFlight.delete(cacheKey)
+    }
+  }
+
+  private async assertImageAccount(session: ArkmeSessionCredentials, generation: number): Promise<void> {
+    const current = await this.runtime.requireSession()
+    if (generation !== this.imageGeneration || current.userId !== session.userId) {
+      throw new ArkmePluginError('image-account-changed', '账号已切换，请重试', false, 409)
+    }
+  }
+
+  private async validAvatar(image: ArkmeImageBytes, byteLimit: number): Promise<boolean> {
+    if (image.bytes <= 0 || image.bytes !== image.data.byteLength || image.bytes > byteLimit
+      || imageMediaType(image.data) !== image.mediaType) return false
+    try {
+      const { default: sharp } = await import('sharp')
+      // Decode one full frame, not just metadata or the magic bytes. Bound pixel memory.
+      await sharp(image.data, { failOn: 'warning', limitInputPixels: 64 * 1024 * 1024 })
+        .resize(1, 1).raw().toBuffer()
+      return true
+    } catch { return false }
+  }
+
+  private async readLocalFileAssetImage(session: ArkmeSessionCredentials, uid: string, diskKey: string, byteLimit: number, generation: number): Promise<ArkmeImageBytes | undefined> {
+    const key = `${generation}:${session.userId}:${byteLimit}:${diskKey}`
+    let pending = this.localAvatarReads.get(key)
+    if (pending === undefined) {
+      pending = (async () => {
+        const persisted = await this.runtime.stateStore.readAvatarCache?.(session.userId, diskKey).catch(() => undefined)
+        if (persisted !== undefined && await this.validAvatar(persisted, byteLimit)) return persisted
+        await this.assertImageAccount(session, generation)
+        const localRef = await this.runtime.stateStore.selfRoleAvatarLocalRef?.(session.userId, uid).catch(() => undefined)
+        const original = localRef === undefined ? undefined
+          : await this.selfRoleAvatars?.read(session.userId, localRef, byteLimit).catch(() => undefined)
+        return original !== undefined && await this.validAvatar(original, byteLimit) ? original : undefined
+      })()
+      this.localAvatarReads.set(key, pending)
+    }
+    try {
+      const value = await pending
+      await this.assertImageAccount(session, generation)
+      return value
+    } finally {
+      if (this.localAvatarReads.get(key) === pending) this.localAvatarReads.delete(key)
+    }
+  }
+
+  private async loadFileAssetImage(session: ArkmeSessionCredentials, uid: string, diskKey: string, byteLimit: number, generation: number): Promise<ArkmeImageBytes> {
+    let value = await this.readLocalFileAssetImage(session, uid, diskKey, byteLimit, generation)
+    if (value === undefined) {
+      await this.assertImageAccount(session, generation)
+      const asset = await this.queueAvatarAsset(session, uid, generation)
+      const url = asset?.previewUrl ?? asset?.downloadUrl
+      if (url === undefined) throw new ArkmePluginError('image-ref-unavailable', '历史头像当前不可用', true, 404)
+      await this.assertImageAccount(session, generation)
+      value = await this.withImageDownloadPermit(async () => {
+        await this.assertImageAccount(session, generation)
+        return await this.downloadSignedImage(
+          trustedSignedImageUrl(this.runtime.config.environment, url), byteLimit, undefined, this.runtime.requestScope(session.userId),
+        )
+      })
+      if (!await this.validAvatar(value, byteLimit)) {
+        throw new ArkmePluginError('image-bytes-invalid', '头像数据损坏，请重试', true, 502)
+      }
+    }
+    await this.assertImageAccount(session, generation)
+    await this.runtime.stateStore.writeAvatarCache?.(session.userId, diskKey, value).catch(() => {
+      console.warn('dsh-arkme: avatar_cache_write_failed')
+    })
+    return value
+  }
+
+  private queueAvatarAsset(session: ArkmeSessionCredentials, uid: string, generation: number): Promise<ArkmeFileAssetDisplayItem | undefined> {
+    const key = `${session.userId}:${uid}`
+    const existing = this.avatarAssets.get(key)
+    if (existing !== undefined) return existing.promise
+    let resolve!: PendingAvatarAsset['resolve']
+    let reject!: PendingAvatarAsset['reject']
+    const promise = new Promise<ArkmeFileAssetDisplayItem | undefined>((done, fail) => { resolve = done; reject = fail })
+    this.avatarAssets.set(key, { session, uid, generation, started: false, promise, resolve, reject })
+    // Host calls arrive through separate HTTP requests; allow one short window to collect them.
+    this.avatarAssetTimer ??= setTimeout(() => { this.avatarAssetTimer = undefined; void this.flushAvatarAssets() }, 8)
+    return promise
+  }
+
+  private async flushAvatarAssets(): Promise<void> {
+    const groups = new Map<number, Array<[string, PendingAvatarAsset]>>()
+    for (const entry of this.avatarAssets.entries()) {
+      if (entry[1].started) continue
+      entry[1].started = true
+      const group = groups.get(entry[1].session.userId) ?? []
+      group.push(entry)
+      groups.set(entry[1].session.userId, group)
+    }
+    for (const group of groups.values()) {
+      for (let start = 0; start < group.length; start += 50) {
+        const batch = group.slice(start, start + 50)
+        try {
+          await this.assertImageAccount(batch[0]![1].session, batch[0]![1].generation)
+          const items = await this.queryFileAssetsForSession(batch[0]![1].session, batch.map(([, pending]) => pending.uid))
+          const byUid = new Map(items.map(item => [item.fileAssetUid, item]))
+          for (const [, pending] of batch) pending.resolve(byUid.get(pending.uid))
+        } catch (error) {
+          for (const [, pending] of batch) pending.reject(error)
+        } finally {
+          for (const [key, pending] of batch) if (this.avatarAssets.get(key) === pending) this.avatarAssets.delete(key)
+        }
+      }
     }
   }
 
@@ -716,6 +911,10 @@ export class MediaService {
     byteLimit: number,
     signal?: AbortSignal,
   ): Promise<ArkmeImageBytes> {
+    if (imageRef.trim().startsWith('arkme-self-role-image-v1.')) {
+      if (this.selfRoleAvatars === undefined) throw new ArkmePluginError('self-role-avatar-missing', '本地角色头像不可用', false, 404)
+      return await this.selfRoleAvatars.read(session.userId, imageRef.trim(), byteLimit)
+    }
     if (imageRef.trim().startsWith('arkme-bot-image-v1.')) {
       if (this.botImages === undefined) throw new ArkmePluginError('bot-image-ref-invalid', 'Bot 头像引用不可用', false, 403)
       const reference = await this.botImages.openBotImageRef(imageRef, session.userId)
@@ -1144,9 +1343,9 @@ export class MediaService {
   }
 
   /** Only the already-authorized received snapshot is used; never hydrate its source IDs. */
-  forwardContentBlocks(files: unknown[], viewerUserId: number): ArkmeContentBlock[] {
+  forwardContentBlocks(files: unknown[], viewerUserId: number, options: { longArticle?: boolean } = {}): ArkmeContentBlock[] {
     if (this.runtime.config.richMediaRenderEnabled === false) return []
-    const displayItems = files.slice(0, 32).map(objectValue).flatMap((file, index) => {
+    const displayItems = (options.longArticle ? files : files.slice(0, 32)).map(objectValue).flatMap((file, index) => {
       if (numberValue(file.content_file_role) === RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND) return []
       const trustedUrl = (raw: unknown): string | undefined => {
         const value = safeHttpsUrl(raw)
@@ -1159,17 +1358,24 @@ export class MediaService {
       const downloadUrl = trustedUrl(file.download_url ?? file.downloadUrl)
       const previewUrl = trustedUrl(file.preview_url ?? file.previewUrl)
       return [{
-        // Do not copy file/source IDs into the public projection or stable media cache.
+        // Only item-local aliases are exposed, never source asset IDs.
+        ...(options.longArticle ? { inline_alias: /^arkme-asset:media-\d+$/.test(stringValue(file.inline_ref)) ? stringValue(file.inline_ref).slice('arkme-asset:'.length) : `media-${index}` } : {}),
         file_name: stringValue(file.name ?? file.file_name ?? file.fileName),
         file_kind: numberValue(file.type ?? file.file_kind ?? file.fileKind),
         mime_type: stringValue(file.mime_type ?? file.mimeType),
-        size: numberValue(file.size), sort_order: numberValue(file.order ?? file.sort_order ?? index),
+        size: numberValue(file.size), sort_order: options.longArticle ? index : numberValue(file.order ?? file.sort_order ?? index),
         duration_sec: numberValue(file.duration_sec ?? file.durationSec),
         ...(downloadUrl === undefined ? {} : { download_url: downloadUrl }),
         ...(previewUrl === undefined ? {} : { preview_url: previewUrl }),
       }]
     })
-    return this.richContentBlocks({}, viewerUserId, displayItems)
+    const blocks = this.richContentBlocks({}, viewerUserId, displayItems)
+    // Aliases only join this snapshot's Markdown to its authorized media. They
+    // must not be used as global cache identities across unrelated snapshots.
+    return options.longArticle ? blocks.map(block => {
+      const alias = displayItems.find(item => item.sort_order === block.sortOrder)?.inline_alias
+      return alias === undefined ? block : { ...block, fileAssetUid: alias }
+    }) : blocks
   }
 
   issueImageMediaRef(
@@ -1228,8 +1434,9 @@ export class MediaService {
   }
 
   /** A current Record version does not imply that every media URL was resolved. */
-  recordMediaUnavailable(raw: unknown, blocks: readonly ArkmeContentBlock[]): boolean {
-    if (this.runtime.config.richMediaRenderEnabled === false) return false
+  recordMediaUnavailable(raw: unknown, blocks: readonly ArkmeContentBlock[], requireComplete = false): boolean {
+    // Export must report omitted originals even when visual rich-media rendering is disabled.
+    if (!requireComplete && this.runtime.config.richMediaRenderEnabled === false) return false
     const displayed = new Set(blocks.flatMap(block => [block.fileAssetUid, block.dynamicPhoto?.motion?.fileAssetUid]))
     return this.recordMediaRefs(raw).some(ref => !displayed.has(stringValue(ref.file_asset_uid).trim()))
   }

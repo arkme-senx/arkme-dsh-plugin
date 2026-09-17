@@ -1,7 +1,8 @@
-import { HARNESS_MENU_OPEN, HARNESS_MENU_CLOSE, HARNESS_MENU_POSITION, type HarnessSessionMenuRequest } from './harness-session-menu-bridge.js'
+import { HARNESS_LOCAL_SESSION_OPEN, HARNESS_MENU_OPEN, HARNESS_MENU_CLOSE, HARNESS_MENU_POSITION, type HarnessSessionMenuRequest } from './harness-session-menu-bridge.js'
 import { CONVERSATION_MENU_COLORS, CONVERSATION_MENU_LAYOUT, CONVERSATION_MENU_SURFACE, CONVERSATION_SELECTOR_CSS } from './conversation-selector-style.js'
 import { conversationMenuPosition } from './conversation-menu-layer.js'
 import { watchConversationMenuScrollbars } from './conversation-menu-scrollbars.js'
+import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
 
 const PREFIX = 'data-arkme-session-'
 const HEADER = '[data-slot="conversation.session.header"] > header'
@@ -68,7 +69,28 @@ function summaryLayout(header: HTMLElement | undefined): Array<[HTMLElement, str
   const nav = cluster?.querySelector<HTMLElement>(':scope > nav')
   if (!actions || !cluster || !row || !nav || row.parentElement !== header || cluster.children.length !== 2
     || cluster.firstElementChild !== nav || cluster.lastElementChild !== actions) return []
-  return [[row, 'title-row'], [cluster, 'title-cluster'], [actions, 'summary'], [nav, 'title-nav']]
+  const utilities = [...row.children].filter(node => node !== cluster && !node.hasAttribute(PREFIX + 'identity')) as HTMLElement[]
+  return [[header, 'header'], [row, 'title-row'], [cluster, 'title-cluster'], [actions, 'summary'], [nav, 'title-nav'],
+    ...utilities.map(node => [node, 'utilities'] as [HTMLElement, string]),
+    ...(utilities[0] ? [[utilities[0], 'utilities-start'] as [HTMLElement, string]] : [])]
+}
+
+/**
+ * The selected row already owns the live task status (pending interaction, live
+ * activity, running subagents). Mirror that exact node instead of re-deriving
+ * the states and colors here, so the fixed title cannot drift from the list.
+ */
+type NativeSessionStatus = 'done' | 'warning' | 'ongoing' | 'error' | 'idle'
+
+function selectedRowStatus(value: Shell): { dot: Element; labels: string[]; state: NativeSessionStatus } | undefined {
+  const row = value.column.querySelector<HTMLElement>('[role="treeitem"][aria-selected="true"]')
+  const slot = row?.firstElementChild
+  const dot = slot?.querySelector<HTMLElement>('[data-state]')
+  const state = dot?.getAttribute('data-state') as NativeSessionStatus | null
+  if (!slot || !dot || state === null || !['done', 'warning', 'ongoing', 'error', 'idle'].includes(state)) return undefined
+  const labels = [...slot.querySelectorAll('span:not([data-state])')]
+    .map(node => node.textContent?.trim() ?? '').filter(text => text !== '')
+  return { dot, labels, state }
 }
 
 /**
@@ -83,6 +105,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   if (!win || !doc.body) return () => {}
   let current: Shell | undefined
   let title: HTMLElement | undefined
+  let statusSignature = ''
   let open = false
   let external: HarnessSessionMenuRequest | undefined
   let disposed = false
@@ -97,6 +120,12 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   let columnBefore = { role: null as string | null, label: null as string | null, inert: false }
   const host = doc.createElement('span')
   mark(host, 'anchor')
+  const identity = doc.createElement('span')
+  mark(identity, 'identity')
+  identity.textContent = HARNESS_CONVERSATION_NAME
+  identity.title = HARNESS_CONVERSATION_NAME
+  identity.setAttribute('role', 'heading')
+  identity.setAttribute('aria-level', '2')
   const trigger = doc.createElement('button')
   trigger.type = 'button'
   trigger.setAttribute('aria-haspopup', 'dialog')
@@ -104,6 +133,14 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   trigger.setAttribute('data-arkme-conversation-selector', '')
   mark(trigger, 'trigger')
   const label = doc.createElement('span')
+  const status = doc.createElement('span')
+  mark(status, 'status')
+  status.setAttribute('aria-hidden', 'true')
+  const statusLabel = doc.createElement('span')
+  mark(statusLabel, 'status-label')
+  statusLabel.setAttribute('aria-hidden', 'true')
+  const labelText = doc.createElement('span')
+  label.append(status, labelText, statusLabel)
   const arrow = doc.createElement('span')
   const chevron = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
   chevron.setAttribute('viewBox', '0 0 16 16')
@@ -140,7 +177,6 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       display: none !important; pointer-events: none;
     }
     [${PREFIX}column][${PREFIX}open] { display: block !important; pointer-events: auto; }
-    html[data-arkme-harness-viewport] [${PREFIX}column] { box-shadow: none; }
     [${PREFIX}root] { width: 100% !important; height: auto; max-height: var(--arkme-session-height); border-radius: 9px; padding: ${CONVERSATION_MENU_LAYOUT.paddingY}px ${CONVERSATION_MENU_LAYOUT.paddingX}px !important; position: relative; }
     [${PREFIX}brand], [${PREFIX}native-title] { display: none !important; }
     [${PREFIX}create] { order: 10; flex-shrink: 0; margin: 8px 0 0 !important; }
@@ -153,16 +189,70 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       opacity: 1 !important; visibility: visible !important; transform: none !important;
     }
     [${PREFIX}anchor] { display: inline-flex; width: max-content; min-width: 0; max-width: 100%; }
-    [${PREFIX}title-row] { align-items: flex-start; }
-    [${PREFIX}title-cluster] { flex-direction: column; align-items: stretch; gap: 4px; }
-    [${PREFIX}title-nav] { width: 100%; }
-    [${PREFIX}summary] { min-width: 0; min-height: 18px; gap: 0; flex-wrap: wrap; color: var(--dsw-alias-label-secondary, #626872); font-size: 12px; line-height: 18px; }
+    /* The selected row's own status dot, mirrored beside the fixed title. Empty
+       when the session has no status, so the title keeps its full width. */
+    [${PREFIX}status] {
+      display: none; flex: none; width: 16px; height: 16px; margin-right: 6px;
+      align-items: center; justify-content: center; vertical-align: middle;
+    }
+    [${PREFIX}status]:not(:empty) { display: inline-flex; }
+    [${PREFIX}status-label] {
+      display: none; flex: none; min-width: 0; max-width: 96px; margin-left: 6px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--dsw-alias-label-secondary, #626872); font-size: 12px; font-weight: 500; line-height: 18px;
+    }
+    [${PREFIX}status-label]:not(:empty) { display: inline-block; }
+    [${PREFIX}header] { padding-left: 20px; padding-right: 20px; container: arkme-session-header / inline-size; }
+    [${PREFIX}title-row] {
+      --arkme-header-side: max(calc((100% - 8px) / 4), var(--arkme-header-utilities-width, 0px));
+      display: flex !important; flex-wrap: nowrap; gap: 4px; align-items: flex-start;
+    }
+    [${PREFIX}identity] {
+      flex: 0 0 var(--arkme-header-side); min-width: 0; max-width: 100%;
+      color: var(--dsw-alias-label-primary); font-size: 15px; font-weight: 600; line-height: 30px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    [${PREFIX}identity][${PREFIX}fallback] { position: absolute; top: 10px; left: 20px; max-width: calc(25% - 24px); }
+    [${PREFIX}title-cluster] { flex: 0 0 max(0px, calc(100% - 2 * var(--arkme-header-side) - 8px)); min-width: 0; flex-direction: column; align-items: stretch; gap: 4px; }
+    [${PREFIX}utilities] { flex: 0 0 auto; min-width: 0; }
+    [${PREFIX}utilities-start] { margin-left: auto; }
+    /* Equal side reservations center both native rows without moving any of the
+       multiple upstream right-side control groups into a new grid row. */
+    [${PREFIX}title-nav] { width: 100%; display: flex; justify-content: center; }
+    [${PREFIX}title-nav] > * { min-width: 0; max-width: 100%; }
+    [${PREFIX}summary] { min-width: 0; height: 18px; min-height: 18px; gap: 0; flex-wrap: nowrap; overflow: hidden; white-space: nowrap; justify-content: center; color: var(--dsw-alias-label-secondary, #626872); font-size: 12px; line-height: 18px; }
+    [${PREFIX}summary] [data-slot="conversation.session.header.actions"] { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     [${PREFIX}summary] [data-slot="conversation.session.header.actions"] > * { font-size: inherit; line-height: inherit; }
     [${PREFIX}turn-count] { display: inline-flex; align-items: center; white-space: nowrap; }
     [${PREFIX}summary] [data-slot="conversation.session.header.actions"] > * + [${PREFIX}turn-count]::before { content: '·'; margin: 0 7px; }
+    [${PREFIX}summary]:has([${PREFIX}computer]) { overflow: visible; }
+    [${PREFIX}summary] [data-slot="conversation.session.header.actions"]:has([${PREFIX}computer]) { display: flex; align-items: center; overflow: visible; min-width: 0; }
+    [${PREFIX}summary] [data-slot="conversation.session.header.actions"]:has([${PREFIX}computer]) > :not([${PREFIX}computer]) { flex: none; }
+    [${PREFIX}computer] { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 240px; }
+    [${PREFIX}computer]::before { content: ''; flex: none; height: 12px; border-left: 1px solid var(--dsw-alias-border-l3, #d4d6da); margin: 0 6px; }
+    [${PREFIX}computer]:first-child::before { display: none; }
+    [${PREFIX}remote-label] { flex: none; color: var(--dsw-alias-label-secondary, #626872); }
+    [${PREFIX}computer-name] { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    [${PREFIX}computer]:focus-visible { outline: 2px solid #4c70ef; outline-offset: 2px; border-radius: 2px; }
+    /* Narrow headers give the metadata the full row; keep native React ancestry. */
+    @container arkme-session-header (max-width: 600px) {
+      [${PREFIX}title-row]:has([${PREFIX}computer]) { position: relative; padding-bottom: 22px; }
+      [${PREFIX}summary]:has([${PREFIX}computer]) { position: absolute; left: 0; right: 0; bottom: 0; }
+      [${PREFIX}summary] [data-slot="conversation.session.header.actions"]:has([${PREFIX}computer]) { max-width: 100%; }
+    }
+    /* The embedded conversation can be much narrower than the browser. Keep
+       native controls in their React ancestry, wrapping only in that case. */
+    @container arkme-session-header (max-width: 360px) {
+      [${PREFIX}title-row] { flex-wrap: wrap; row-gap: 8px; }
+      [${PREFIX}identity] { flex-basis: calc(40% - 1.6px); }
+      [${PREFIX}title-cluster] { flex-basis: calc(60% - 2.4px); }
+      [${PREFIX}utilities] { margin-left: 0; margin-right: 0; max-width: 100%; flex-wrap: wrap; }
+      [${PREFIX}utilities-start] { margin-left: auto; }
+      [${PREFIX}title-nav] [${PREFIX}anchor] { display: inline-flex; min-width: 0; max-width: 100%; }
+    }
     [${PREFIX}anchor][${PREFIX}fallback] {
       width: max-content; position: absolute; top: 10px;
-      left: 20px; z-index: 10; max-width: calc(100% - 40px);
+      left: 50%; transform: translateX(-50%); z-index: 10; max-width: calc(50% - 8px);
     }
     ${CONVERSATION_SELECTOR_CSS}
     [${PREFIX}column] [role="treeitem"][aria-selected]:hover { background: ${CONVERSATION_MENU_COLORS.hover}; }
@@ -189,11 +279,18 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     for (const cleanup of rowFocusCleanups.values()) cleanup()
     for (const [node, key] of toolbarMarks) node.removeAttribute(PREFIX + key)
     toolbarMarks = []
-    for (const [node, key] of summaryMarks) node.removeAttribute(PREFIX + key)
+    for (const [node, key] of summaryMarks) {
+      node.removeAttribute(PREFIX + key)
+      if (key === 'title-row') node.style.removeProperty('--arkme-header-utilities-width')
+    }
     summaryMarks = []
     title?.removeAttribute(PREFIX + 'native-title')
     title = undefined
+    statusSignature = ''
+    status.replaceChildren()
+    statusLabel.textContent = ''
     host.remove()
+    identity.remove()
     if (current) {
       const { frame, column, root, brand, create, toggle } = current
       for (const [node, key] of [[frame, 'frame'], [column, 'column'], [root, 'root'], [brand, 'brand'], [create, 'create']] as const) node.removeAttribute(PREFIX + key)
@@ -273,11 +370,30 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     const header = next.center.querySelector<HTMLElement>(HEADER)
     const nextSummary = summaryLayout(header ?? undefined)
     for (const [node, key] of summaryMarks) {
-      if (!nextSummary.some(([nextNode, nextKey]) => node === nextNode && key === nextKey)) node.removeAttribute(PREFIX + key)
+      if (!nextSummary.some(([nextNode, nextKey]) => node === nextNode && key === nextKey)) {
+        node.removeAttribute(PREFIX + key)
+        if (key === 'title-row') node.style.removeProperty('--arkme-header-utilities-width')
+      }
     }
     summaryMarks = nextSummary
     for (const [node, key] of summaryMarks) mark(node, key)
     const visibleHeader = header && header.getAttribute('aria-hidden') !== 'true'
+    const titleRow = summaryMarks.find(([, key]) => key === 'title-row')?.[0]
+    if (titleRow) {
+      const utilityNodes = summaryMarks.filter(([, key]) => key === 'utilities').map(([node]) => node)
+      const utilityWidth = utilityNodes.reduce((sum, node) => sum + node.getBoundingClientRect().width, 0)
+        + Math.max(0, utilityNodes.length - 1) * 4
+      variable(titleRow, '--arkme-header-utilities-width', `${Math.ceil(utilityWidth)}px`)
+      identity.removeAttribute(PREFIX + 'fallback')
+      if (identity.parentElement !== titleRow) titleRow.prepend(identity)
+    } else if (!visibleHeader) {
+      mark(identity, 'fallback')
+      if (identity.parentElement !== next.center) next.center.append(identity)
+    } else {
+      // An unrecognized future native header keeps its own layout, not an
+      // overlaid product name that could obscure upstream navigation.
+      identity.remove()
+    }
     const nativeTitle = visibleHeader
       ? header?.querySelector<HTMLElement>('nav > :last-child > button:disabled') : undefined
     if (title !== nativeTitle) {
@@ -298,9 +414,34 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       if (host.parentElement !== next.center) next.center.append(host)
     }
     const text = title?.textContent?.trim() || (visibleHeader ? next.copy.sessions : next.copy.blank)
-    if (label.textContent !== text) label.textContent = text
+    if (labelText.textContent !== text) labelText.textContent = text
     trigger.title = text
-    trigger.setAttribute('aria-label', `${next.copy.choose}：${text}`)
+    // Re-clone only when the row's status actually changed: replacing the node
+    // restarts the ongoing dot's CSS chase animation and would make it flicker
+    // on every unrelated re-render of the native list.
+    const nativeStatus = selectedRowStatus(next)
+    const statusText = nativeStatus?.labels.join('、') ?? ''
+    const signature = nativeStatus === undefined ? '' : `${nativeStatus.dot.outerHTML}\u0000${statusText}\u0000${nativeStatus.state}`
+    if (statusSignature !== signature) {
+      statusSignature = signature
+      status.replaceChildren()
+      statusLabel.textContent = ''
+      if (nativeStatus !== undefined) {
+        const mirror = nativeStatus.dot.cloneNode(true) as Element
+        mark(mirror, 'status-dot')
+        status.append(mirror)
+        statusLabel.textContent = nativeStatus.labels[0] ?? ({
+          ongoing: next.copy.expand === 'Open sidebar' ? 'Running' : '进行中',
+          done: next.copy.expand === 'Open sidebar' ? 'Completed' : '已完成',
+          warning: next.copy.expand === 'Open sidebar' ? 'Needs attention' : '等待处理',
+          error: next.copy.expand === 'Open sidebar' ? 'Error' : '出错',
+          idle: next.copy.expand === 'Open sidebar' ? 'Idle' : '空闲',
+        } satisfies Record<NativeSessionStatus, string>)[nativeStatus.state]
+      }
+    }
+    trigger.setAttribute('aria-label', statusText === ''
+      ? `${next.copy.choose}：${text}`
+      : `${next.copy.choose}：${text}（${statusText}）`)
     position()
   }
   function schedule() {
@@ -327,6 +468,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     if (open && !external) { close(); return }
     close()
     show()
+    doc.dispatchEvent(new win.Event(HARNESS_MENU_OPEN))
   })
   function externalOpen(event: Event) {
     const request = (event as CustomEvent<HarnessSessionMenuRequest>).detail
@@ -358,6 +500,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     const row = target.closest('[role="treeitem"][aria-selected]')
     const buttonLabel = target.closest('button')?.getAttribute('aria-label') ?? ''
     const workspaceCreate = /^在“.+”中新建会话$/.test(buttonLabel) || /^New session in /.test(buttonLabel)
+    if (current.create.contains(target)) doc.dispatchEvent(new doc.defaultView!.Event(HARNESS_LOCAL_SESSION_OPEN))
     if ((row && !target.closest('button, input, [role="menu"]')) || current.create.contains(target) || workspaceCreate
       || target.closest('nav button')) {
       const request = external
@@ -399,7 +542,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   }
   const observer = new win.MutationObserver(schedule)
   observer.observe(doc.body, { childList: true, subtree: true, characterData: true, attributes: true,
-    attributeFilter: ['class', 'style', 'aria-hidden', 'aria-selected', 'disabled', 'data-slot'] })
+    attributeFilter: ['class', 'style', 'aria-hidden', 'aria-selected', 'disabled', 'data-slot', 'data-state'] })
   doc.addEventListener('pointerdown', pointer, true)
   doc.addEventListener('click', click)
   doc.addEventListener('keydown', key)

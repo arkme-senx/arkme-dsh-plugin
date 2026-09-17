@@ -7,7 +7,7 @@ export function useCalendarMonth(query: CalendarMonthQuery, enabled = true, acco
   const [local] = useState(() => { const cache = new CalendarMonthCache(undefined, () => undefined); cache.activateAccount('local'); return cache })
   const cache = account ? arkmeCalendarMonths : local
   const owner = account ?? 'local'
-  const stable = useMemo(() => query, [query.scopeKey, query.sourceRef, query.startDate, query.endDate, query.timezone])
+  const stable = useMemo(() => query, [query.scopeKey, query.sourceRef, query.startDate, query.endDate, query.timezone, query.timezoneOffsetMillis])
   const subscribe = useCallback((notify: () => void) => enabled ? cache.subscribe(owner, stable, notify) : () => {}, [cache, owner, stable, enabled])
   const get = useCallback(() => cache.get(owner, stable), [cache, owner, stable])
   const snapshot = useSyncExternalStore(subscribe, get, get)
@@ -18,7 +18,7 @@ export function useCalendarMonth(query: CalendarMonthQuery, enabled = true, acco
   useEffect(() => { if (enabled) void cache.ensure(owner, stable) }, [cache, owner, stable, enabled])
   // One previous month, only after the visible month succeeds and the UI is idle.
   useEffect(() => {
-    if (!account || !enabled || snapshot.loading || !snapshot.value || snapshot.error) return
+    if (!account || !enabled || stable.timezoneOffsetMillis !== undefined || snapshot.loading || !snapshot.value || snapshot.error) return
     const timer = setTimeout(() => {
       const [year, month] = stable.startDate.split('-').map(Number)
       const first = new Date(year!, month! - 2, 1)
@@ -28,5 +28,7 @@ export function useCalendarMonth(query: CalendarMonthQuery, enabled = true, acco
     }, 1500)
     return () => clearTimeout(timer)
   }, [account, cache, owner, stable, enabled, snapshot.loading, snapshot.value, snapshot.error])
-  return snapshot
+  const retry = useCallback(() => cache.refresh(owner, stable), [cache, owner, stable])
+  const revalidate = useCallback(() => { void cache.ensure(owner, stable) }, [cache, owner, stable])
+  return { ...snapshot, retry, revalidate }
 }

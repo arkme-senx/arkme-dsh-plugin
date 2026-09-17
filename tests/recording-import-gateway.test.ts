@@ -8,7 +8,7 @@ function job(overrides: Partial<RecordingImportJob> = {}): RecordingImportJob {
     jobId: 'job-1', userId: 42, revision: 4, phase: 'uploading',
     fileName: 'meeting.m4a', mimeType: 'audio/mp4', fileSize: 1024,
     durationMillis: 60_000, sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
-    belongUserId: 42, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
+    belongUserId: 42, recordingKind: 3, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
     createdAtMillis: 1_725_000_000_100, updatedAtMillis: 1_725_000_000_100,
     ...overrides,
   }
@@ -621,6 +621,14 @@ describe('AudioRecordingImportGateway', () => {
     })
   })
 
+  it('counts quota-paused children independently from completed and active children', async () => {
+    const gateway = gatewayForOwnerProgress([{ session_id: 'session-1', child_status_ls: [
+      { status: 5 }, { status: 3, quota_status: 'recording_transcription_quota_exhausted' }, { status: 4 },
+    ] }])
+    const page = await gateway.listOwnerTasks({ viewerUserId: 42, scope: 'active', toMillis: 1_725_100_000_000, limit: 20, offset: 0 })
+    expect(page.tasks[0]?.progress).toMatchObject({ pausedCount: 1, completedCount: 1 })
+  })
+
   it('keeps owner status available while business-progress rows are temporarily absent', async () => {
     const gateway = gatewayForOwnerProgress([{
       session_id: 'session-1', timing_state: 'processing', child_status_ls: [{ status: 4 }],
@@ -761,6 +769,24 @@ describe('AudioRecordingImportGateway', () => {
     expect(uploadFile).toHaveBeenCalledWith(current, expect.any(Function), progress, expect.any(Function), undefined, undefined)
     expect(progress).toHaveBeenLastCalledWith(1024, { upload_id: 'upload-1' })
     expect(JSON.stringify(posts)).not.toContain('access_key_secret')
+  })
+
+  it.each([0, 1, 3] as const)('keeps recording kind %s on the new-session owner request', async recordingKind => {
+    const posts: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        posts.push({ path, body })
+        if (path.endsWith('get-session-ls')) return { session_ls: [] }
+        if (path.endsWith('check-exist-same-orig')) return { exist_names: [] }
+        if (path.endsWith('new-session')) return { session_id: 'session-1' }
+        return {}
+      },
+    } as unknown as ServiceRuntime
+
+    await expect(new AudioRecordingImportGateway(runtime).ensureSession(job({ recordingKind }))).resolves.toBe('session-1')
+    expect(posts.find(item => item.path.endsWith('/new-session'))?.body).toMatchObject({ recording_kind: recordingKind })
   })
 
   it('rejects names returned by the owner using the conservative local conflict key', async () => {

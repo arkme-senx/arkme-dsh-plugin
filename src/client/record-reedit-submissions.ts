@@ -22,6 +22,8 @@ export function projectRecordReedit(item: ArkmeTimelineItem, jobs: readonly Arkm
     : undefined
   return {
     ...item, title: job.title, textContent: job.textContent,
+    // Click targets belong to the canonical projection; old ranges cannot follow an edited candidate.
+    ...(job.mentions === undefined ? {} : { mentions: [] }),
     // The candidate supplies the complete media selection, including explicit removal.
     mediaUnavailable: Boolean(job.voiceFileAssetUid && !voiceBlock),
     contentBlocks: [

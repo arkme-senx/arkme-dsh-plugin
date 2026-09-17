@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale, arkmeIntlLocale } from '../locale.js'
 import { arkmeSourceAllowsUserWrite } from '../../topic-policy.js'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { CaretLeft } from '@phosphor-icons/react/dist/icons/CaretLeft'
@@ -25,6 +26,7 @@ function TargetAvatar({ target, size }: { target: ArkmeSourceItem; size: number 
 export function RecordingTranscriptForward({ attempt, onClose, onComplete, maxCommentLength = 20_000 }: {
   attempt: RecordingForwardAttempt; onClose(): void; onComplete(message: string): void; maxCommentLength?: number
 }) {
+  useArkmeLocale()
   const [directory, setDirectory] = useState<'root' | 'send_to_self'>('root')
   const [targets, setTargets] = useState<ArkmeSourceItem[]>([])
   const [selfTarget, setSelfTarget] = useState<ArkmeSourceItem>()
@@ -151,7 +153,7 @@ export function RecordingTranscriptForward({ attempt, onClose, onComplete, maxCo
     ? flattenVisibleArkmeSourceTree(buildArkmeSourceTree(directoryTargets), collapsedTopics)
     : directoryTargets.filter(target => `${target.displayName} ${target.latestPreview ?? ''}`.toLocaleLowerCase().includes(keyword)).map(source => ({ source, depth: 0, hasChildren: false, expanded: false }))
 
-  return <div style={{ position: 'fixed', inset: 0, zIndex: 1_100, display: 'grid', placeItems: 'center', padding: 'min(48px,5vh) min(48px,5vw)', boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(19,22,26,.34))' }}><section role="dialog" aria-modal="true" aria-label="转发录音片段" onKeyDown={event => {
+  return <div style={{ position: 'fixed', inset: 0, zIndex: 1_100, display: 'grid', placeItems: 'center', padding: 'min(48px,5vh) min(48px,5vw)', boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(19,22,26,.34))' }}><section role="dialog" aria-modal="true" aria-label={tr("转发录音片段")} onKeyDown={event => {
     if (event.key === 'Escape') { event.stopPropagation(); onClose() }
     if (event.key === 'Tab') {
       const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled)'))
@@ -160,45 +162,45 @@ export function RecordingTranscriptForward({ attempt, onClose, onComplete, maxCo
     }
   }} style={{ width: 'min(520px,100%)', height: 'min(660px,100%)', minHeight: 'min(520px,100%)', overflow: 'hidden', display: 'flex', flexDirection: 'column', borderRadius: 16, background: colors.base, color: colors.text, border: `1px solid ${colors.border}`, boxShadow: colors.shadow }}>
     <header style={{ height: 54, flex: 'none', display: 'grid', gridTemplateColumns: '54px 1fr 54px', alignItems: 'center' }}>
-      {directory === 'send_to_self' ? <RecordingTranscriptButton aria-label="返回转发对象" onClick={() => { setDirectory('root') }} style={{ border: 0, background: 'transparent', display: 'grid', placeItems: 'center' }}><CaretLeft size={20} /></RecordingTranscriptButton> : <span />}
-      <strong style={{ fontSize: 16, textAlign: 'center', fontWeight: 600 }}>{directory === 'root' ? '转发给' : '发给自己'}</strong>
-      <RecordingTranscriptButton ref={closeButton} aria-label="关闭录音转发" onClick={onClose} style={{ border: 0, background: 'transparent', display: 'grid', placeItems: 'center', color: colors.tertiary }}><X size={20} /></RecordingTranscriptButton>
+      {directory === 'send_to_self' ? <RecordingTranscriptButton aria-label={tr("返回转发对象")} onClick={() => { setDirectory('root') }} style={{ border: 0, background: 'transparent', display: 'grid', placeItems: 'center' }}><CaretLeft size={20} /></RecordingTranscriptButton> : <span />}
+      <strong style={{ fontSize: 16, textAlign: 'center', fontWeight: 600 }}>{directory === 'root' ? tr("转发给") : tr("发给自己")}</strong>
+      <RecordingTranscriptButton ref={closeButton} aria-label={tr("关闭录音转发")} onClick={onClose} style={{ border: 0, background: 'transparent', display: 'grid', placeItems: 'center', color: colors.tertiary }}><X size={20} /></RecordingTranscriptButton>
     </header>
     <div style={{ margin: '4px 18px 12px', height: 38, flex: 'none', position: 'relative' }}>
       <span style={{ position: 'absolute', left: 13, top: 10, color: colors.caption }}><RecordingDesktopIcon name="search" size={17} /></span>
-      <input aria-label="搜索转发对象" placeholder="搜索" value={filter} onChange={event => { setFilter(event.target.value) }} style={{ boxSizing: 'border-box', width: '100%', height: '100%', border: 0, borderRadius: 10, padding: '0 12px 0 40px', background: colors.layer2, color: colors.text, outline: 0, fontSize: 13 }} />
+      <input aria-label={tr("搜索转发对象")} placeholder={tr("搜索")} value={filter} onChange={event => { setFilter(event.target.value) }} style={{ boxSizing: 'border-box', width: '100%', height: '100%', border: 0, borderRadius: 10, padding: '0 12px 0 40px', background: colors.layer2, color: colors.text, outline: 0, fontSize: 13 }} />
     </div>
-    {directory === 'root' && recordSupported && selfTarget === undefined && loadError === '' && <small role="status" style={{ margin: '0 18px 8px', color: colors.secondary }}>正在读取发给自己入口…</small>}
-    {capability === undefined && <small role="status" style={{ margin: '0 18px 8px', color: colors.secondary }}>正在检查自己和主题转发能力…</small>}
+    {directory === 'root' && recordSupported && selfTarget === undefined && loadError === '' && <small role="status" style={{ margin: '0 18px 8px', color: colors.secondary }}>{tr("正在读取发给自己入口…")}</small>}
+    {capability === undefined && <small role="status" style={{ margin: '0 18px 8px', color: colors.secondary }}>{tr("正在检查自己和主题转发能力…")}</small>}
     {capability !== undefined && ('error' in capability
-      ? <small role="alert" style={{ margin: '0 18px 8px', color: colors.danger }}>{capability.error}<RecordingTranscriptButton aria-label="重新检查转发能力" onClick={() => { void checkCapability() }}>重试</RecordingTranscriptButton></small>
-      : !capability.supported && <small role="status" style={{ margin: '0 18px 8px', color: colors.secondary }}>服务端暂不支持向自己或主题转发录音</small>)}
+      ? <small role="alert" style={{ margin: '0 18px 8px', color: colors.danger }}>{capability.error}<RecordingTranscriptButton aria-label={tr("重新检查转发能力")} onClick={() => { void checkCapability() }}>{tr("重试")}</RecordingTranscriptButton></small>
+      : !capability.supported && <small role="status" style={{ margin: '0 18px 8px', color: colors.secondary }}>{tr("服务端暂不支持向自己或主题转发录音")}</small>)}
     <div style={{ overflowY: 'auto', minHeight: 0, flex: 1, padding: '4px 18px 18px' }}>{rows.map(({ source: target, depth, hasChildren, expanded }) => {
       const key = targetKey(target); const sent = attempt.hasSent(key)
       const checked = sent || selected.has(key)
       const recordTarget = target.kind === 'send_to_self' || target.kind === 'topic'
       const disabled = sending || sent || (recordTarget && !recordSupported)
       return <div key={key} style={{ display: 'flex', alignItems: 'center', paddingLeft: depth * 18 }}>
-        {hasChildren && <RecordingTranscriptButton aria-label={`${expanded ? '折叠' : '展开'}主题 ${target.displayName}`} onClick={() => { setCollapsedTopics(previous => { const next = new Set(previous); if (next.has(target.sourceRef)) next.delete(target.sourceRef); else next.add(target.sourceRef); return next }) }} style={{ width: 20, padding: 0, border: 0, background: 'transparent', transform: expanded ? 'rotate(90deg)' : undefined }}><CaretRight size={14} /></RecordingTranscriptButton>}
+        {hasChildren && <RecordingTranscriptButton aria-label={`${expanded ? '折叠' : tr("展开")}主题 ${target.displayName}`} onClick={() => { setCollapsedTopics(previous => { const next = new Set(previous); if (next.has(target.sourceRef)) next.delete(target.sourceRef); else next.add(target.sourceRef); return next }) }} style={{ width: 20, padding: 0, border: 0, background: 'transparent', transform: expanded ? 'rotate(90deg)' : undefined }}><CaretRight size={14} /></RecordingTranscriptButton>}
         <label style={{ minWidth: 0, flex: 1, display: 'grid', gridTemplateColumns: '20px 36px minmax(0,1fr) auto', gap: 10, padding: '9px 8px', alignItems: 'center', cursor: disabled ? 'default' : 'pointer', borderRadius: 8 }}>
-          <span style={{ position: 'relative', width: 20, height: 20 }}><input type="checkbox" aria-label={`选择发送对象 ${target.displayName}`} disabled={disabled} checked={checked} onChange={event => { toggleTarget(target, event.target.checked) }} style={{ appearance: 'none', margin: 0, width: 20, height: 20, borderRadius: '50%', border: `1px solid ${checked ? colors.text : colors.caption}`, background: checked ? colors.text : 'transparent', cursor: 'inherit', opacity: disabled && !sent ? .4 : 1 }} />{checked && <Check aria-hidden size={14} weight="bold" style={{ position: 'absolute', left: 3, top: 3, color: colors.base, pointerEvents: 'none' }} />}</span>
+          <span style={{ position: 'relative', width: 20, height: 20 }}><input type="checkbox" aria-label={tr("选择发送对象 {v0}", { v0: target.displayName })} disabled={disabled} checked={checked} onChange={event => { toggleTarget(target, event.target.checked) }} style={{ appearance: 'none', margin: 0, width: 20, height: 20, borderRadius: '50%', border: `1px solid ${checked ? colors.text : colors.caption}`, background: checked ? colors.text : 'transparent', cursor: 'inherit', opacity: disabled && !sent ? .4 : 1 }} />{checked && <Check aria-hidden size={14} weight="bold" style={{ position: 'absolute', left: 3, top: 3, color: colors.base, pointerEvents: 'none' }} />}</span>
           <TargetAvatar target={target} size={36} />
           <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, fontWeight: 500 }}>{target.displayName}</span>{target.latestPreview && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: colors.secondary }}>{target.latestPreview}</span>}</span>
-          {sent ? <small>已转发</small> : target.activeAtMillis > 0 && <time style={{ fontSize: 12, color: colors.caption }}>{new Date(target.activeAtMillis).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</time>}
+          {sent ? <small>{tr("已转发")}</small> : target.activeAtMillis > 0 && <time style={{ fontSize: 12, color: colors.caption }}>{new Date(target.activeAtMillis).toLocaleDateString(arkmeIntlLocale(), { month: 'numeric', day: 'numeric' })}</time>}
         </label>
-        {target.kind === 'send_to_self' && directory === 'root' && <RecordingTranscriptButton aria-label="选择自己和主题" disabled={!recordSupported} onClick={() => { setDirectory('send_to_self') }} style={{ width: 28, border: 0, padding: 0, background: 'transparent' }}><CaretRight size={16} /></RecordingTranscriptButton>}
+        {target.kind === 'send_to_self' && directory === 'root' && <RecordingTranscriptButton aria-label={tr("选择自己和主题")} disabled={!recordSupported} onClick={() => { setDirectory('send_to_self') }} style={{ width: 28, border: 0, padding: 0, background: 'transparent' }}><CaretRight size={16} /></RecordingTranscriptButton>}
       </div>
     })}{!loading && rows.length === 0 && loadError === '' && <p style={{ textAlign: 'center', fontSize: 12, color: colors.secondary }}>{keyword ? '未找到匹配的对象' : '暂无转发目标'}</p>}
-    {loadError !== '' && <div role="alert">{loadError}<RecordingTranscriptButton disabled={loading} onClick={() => { void load(nextCursor) }}>重试</RecordingTranscriptButton></div>}
-    {loading && <span role="status">正在读取目标…</span>}{nextCursor !== undefined && <RecordingTranscriptButton disabled={loading} onClick={() => { void load(nextCursor) }}>加载更多目标</RecordingTranscriptButton>}
+    {loadError !== '' && <div role="alert">{loadError}<RecordingTranscriptButton disabled={loading} onClick={() => { void load(nextCursor) }}>{tr("重试")}</RecordingTranscriptButton></div>}
+    {loading && <span role="status">{tr("正在读取目标…")}</span>}{nextCursor !== undefined && <RecordingTranscriptButton disabled={loading} onClick={() => { void load(nextCursor) }}>{tr("加载更多目标")}</RecordingTranscriptButton>}
     </div>
     {selectionError && <small role="alert" style={{ margin: '0 18px 8px', color: colors.danger }}>{selectionError}</small>}
-    {selected.size > 0 && <footer aria-label="已选转发目标" style={{ flex: 'none', padding: '10px 16px 14px', borderTop: `1px solid ${colors.border}` }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 30 }}><span style={{ fontSize: 14, fontWeight: 600 }}>发送给：</span>{[...selected].map(([key, target]) => <span key={key} title={target.displayName}><TargetAvatar target={target} size={26} /></span>)}</div>
+    {selected.size > 0 && <footer aria-label={tr("已选转发目标")} style={{ flex: 'none', padding: '10px 16px 14px', borderTop: `1px solid ${colors.border}` }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 30 }}><span style={{ fontSize: 14, fontWeight: 600 }}>{tr("发送给：")}</span>{[...selected].map(([key, target]) => <span key={key} title={target.displayName}><TargetAvatar target={target} size={26} /></span>)}</div>
       <div style={{ height: 1, margin: '8px 2px 6px', background: colors.border }} />
-      <div aria-label="录音转发预览" style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 34, fontSize: 12 }}><RecordingDesktopIcon name="forward" size={18} /><div style={{ minWidth: 0, flex: 1 }}><div>录音片段（{attempt.items.length}）</div><div style={{ color: colors.tertiary, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{attempt.items[0]?.speakerLabel}：{attempt.items[0]?.text}</div></div></div>
+      <div aria-label={tr("录音转发预览")} style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 34, fontSize: 12 }}><RecordingDesktopIcon name="forward" size={18} /><div style={{ minWidth: 0, flex: 1 }}><div>{tr("录音片段（")}{attempt.items.length}）</div><div style={{ color: colors.tertiary, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{attempt.items[0]?.speakerLabel}：{attempt.items[0]?.text}</div></div></div>
       <div style={{ position: 'relative', marginTop: 6, borderRadius: 12, background: colors.layer2 }}>
-        <textarea rows={1} aria-label="转发附言" placeholder="说点什么..." value={comment} maxLength={maxCommentLength} readOnly={attempt.commentText !== undefined} onChange={event => { setComment(event.target.value) }} style={{ width: '100%', minHeight: 54, maxHeight: 102, resize: 'none', border: 0, outline: 0, padding: '17px 66px 17px 16px', boxSizing: 'border-box', background: 'transparent', color: colors.text, font: 'inherit', fontSize: 14, lineHeight: '20px', display: 'block' }} />
+        <textarea rows={1} aria-label={tr("转发附言")} placeholder={tr("说点什么...")} value={comment} maxLength={maxCommentLength} readOnly={attempt.commentText !== undefined} onChange={event => { setComment(event.target.value) }} style={{ width: '100%', minHeight: 54, maxHeight: 102, resize: 'none', border: 0, outline: 0, padding: '17px 66px 17px 16px', boxSizing: 'border-box', background: 'transparent', color: colors.text, font: 'inherit', fontSize: 14, lineHeight: '20px', display: 'block' }} />
         <RecordingTranscriptButton aria-label={sending ? '正在转发' : '发送录音'} disabled={sending || [...selected.keys()].every(key => attempt.hasSent(key))} onClick={() => { void send() }} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 40, height: 40, border: 0, borderRadius: '50%', padding: 0, display: 'grid', placeItems: 'center', background: colors.primaryAction, color: colors.onPrimaryAction }}><RecordingDesktopIcon name="forward" size={22} /></RecordingTranscriptButton>
       </div>
       {results.size > 0 && <div role="status" style={{ maxHeight: 64, overflowY: 'auto', fontSize: 12, lineHeight: '18px', marginTop: 6 }}>{[...selected].map(([key, target]) => results.has(key) && <div key={key} style={{ color: attempt.hasSent(key) ? colors.secondary : colors.danger }}>{target.displayName}：{results.get(key)}</div>)}</div>}

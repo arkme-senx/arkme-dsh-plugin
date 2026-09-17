@@ -21,7 +21,11 @@ export function mergeSelfTopicSources(current: readonly ArkmeSourceItem[], incom
 
 /** One account-owned read survives menu unmounts; complete snapshots are replaced atomically. */
 export class SelfTopicDirectoryCache {
+  private readonly lifetime = new AbortController()
+  readonly signal = this.lifetime.signal
   private snapshot: SelfTopicDirectorySnapshot
+  private visibleSnapshot: SelfTopicDirectorySnapshot
+  private archiveRemovals = new Map<string, { keys: Set<string>; confirmed: boolean }>()
   private listeners = new Set<() => void>()
   private pending: Promise<void> | undefined
   private controller: AbortController | undefined
@@ -46,24 +50,61 @@ export class SelfTopicDirectoryCache {
     this.snapshot = { sources: valid ? cached?.sources.send_to_self ?? [] : [],
       complete: valid && metadata.complete, refreshedAtMillis: valid ? metadata.refreshedAtMillis : 0,
       loading: false, error: '' }
+    this.visibleSnapshot = this.snapshot
   }
-  readonly getSnapshot = () => this.snapshot
+  readonly getSnapshot = () => this.visibleSnapshot
+  /** Navigation persistence and selection reconciliation must not treat pending intent as server truth. */
+  readonly getConfirmedSnapshot = () => ({ ...this.snapshot, sources: this.withoutArchived(this.snapshot.sources, true) })
   readonly subscribe = (listener: () => void) => {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
   }
-  private publish(patch: Partial<SelfTopicDirectorySnapshot>): void {
+  private publish(patch: Partial<SelfTopicDirectorySnapshot> = {}): void {
     this.snapshot = { ...this.snapshot, ...patch }
+    this.visibleSnapshot = { ...this.snapshot, sources: this.withoutArchived(this.snapshot.sources) }
     for (const listener of this.listeners) listener()
+  }
+  private subtreeKeys(sources: readonly ArkmeSourceItem[], roots: Iterable<string>): Set<string> {
+    const byRef = new Map(sources.map(source => [source.sourceRef, identity(source)]))
+    const children = new Map<string, string[]>()
+    for (const source of sources) {
+      const parent = source.parentTopicHierarchyKey ?? (source.parentSourceRef && byRef.get(source.parentSourceRef))
+      if (parent) children.set(parent, [...children.get(parent) ?? [], identity(source)])
+    }
+    const hidden = new Set(roots)
+    for (const key of hidden) for (const child of children.get(key) ?? []) hidden.add(child)
+    return hidden
+  }
+  private withoutArchived(sources: ArkmeSourceItem[], confirmedOnly = false): ArkmeSourceItem[] {
+    if (!this.archiveRemovals.size) return sources
+    const roots = [...this.archiveRemovals.values()].filter(entry => !confirmedOnly || entry.confirmed).flatMap(entry => [...entry.keys])
+    const hidden = this.subtreeKeys(sources, roots)
+    return sources.filter(source => !hidden.has(identity(source)))
+  }
+  /** An account-scoped optimistic removal. Overlapping trees roll back independently. */
+  beginArchive(source: ArkmeSourceItem): ((confirmed: boolean) => void) | undefined {
+    const key = identity(source)
+    if (this.archiveRemovals.has(key)) return undefined
+    const entry = { keys: this.subtreeKeys(this.snapshot.sources, [key]), confirmed: false }
+    this.archiveRemovals.set(key, entry)
+    this.publish()
+    return confirmed => {
+      if (this.archiveRemovals.get(key) !== entry) return
+      if (confirmed) entry.confirmed = true
+      else this.archiveRemovals.delete(key)
+      this.publish()
+      if (confirmed) this.persist()
+    }
   }
   private persist(): void {
     const previous = this.readCache(this.userId)
     this.writeCache({ ...(previous ?? { version: 1, userId: this.userId, directory: 'root', sources: {} }),
-      sources: { ...previous?.sources, send_to_self: this.snapshot.sources }, updatedAtMillis: this.now(),
+      sources: { ...previous?.sources, send_to_self: this.getConfirmedSnapshot().sources }, updatedAtMillis: this.now(),
       selfTopics: { environment: this.environment, complete: this.snapshot.complete, refreshedAtMillis: this.snapshot.refreshedAtMillis },
     } satisfies ArkmeNavigationCache)
   }
   ensure(force = false): Promise<void> {
+    if (this.signal.aborted) return Promise.resolve()
     if (this.pending) { this.dirty ||= force; return this.pending }
     if (!force && !this.dirty && this.snapshot.complete && this.now() - this.snapshot.refreshedAtMillis < FRESH_MS) return Promise.resolve()
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined }
@@ -71,6 +112,8 @@ export class SelfTopicDirectoryCache {
     const controller = new AbortController()
     this.controller = controller
     const current = () => this.controller === controller && !controller.signal.aborted
+    // Only a read started after acknowledgement may retire a confirmed removal.
+    const acknowledged = [...this.archiveRemovals].filter(([, entry]) => entry.confirmed)
     this.publish({ loading: true, error: '' })
     const task = async () => {
       let loaded: ArkmeSourceItem[] = [], cursor: string | undefined
@@ -88,6 +131,7 @@ export class SelfTopicDirectoryCache {
         if (!loaded.some(source => source.kind === 'send_to_self') || !loaded.some(source => source.kind === 'default_category')) {
           throw Error('未找到发给自己或未分类，请重试')
         }
+        for (const [key, entry] of acknowledged) if (this.archiveRemovals.get(key) === entry) this.archiveRemovals.delete(key)
         this.publish({ sources: mergeSelfTopicSources(loaded, [...this.patches.values()]), complete: true, refreshedAtMillis: this.now() })
         this.persist()
       } catch (error) {
@@ -109,11 +153,19 @@ export class SelfTopicDirectoryCache {
     return this.pending
   }
   /** Use confirmed mutation results, never guessed count deltas. Preserve them against an older read. */
-  upsert(source: ArkmeSourceItem): void {
+  upsert(source: ArkmeSourceItem, relatedSources: readonly ArkmeSourceItem[] = []): void {
+    if (this.signal.aborted) return
     const next = { ...this.snapshot.sources.find(item => identity(item) === identity(source)), ...source }
-    if (this.pending) this.patches.set(identity(next), next)
-    this.publish({ sources: mergeSelfTopicSources(this.snapshot.sources, [next]) })
+    const incoming = [...relatedSources, next]
+    if (this.pending) for (const item of incoming) this.patches.set(identity(item), item)
+    this.publish({ sources: mergeSelfTopicSources(this.snapshot.sources, incoming) })
     this.persist()
+  }
+  /** Join older reads, then coalesce mutations into one authoritative background refresh. */
+  async refreshAfterMutation(): Promise<void> {
+    this.dirty = true
+    if (this.pending) await this.pending
+    if (this.dirty && !this.signal.aborted) await this.ensure(true)
   }
   invalidate(hard = false): void {
     this.dirty = true
@@ -128,7 +180,9 @@ export class SelfTopicDirectoryCache {
     this.timer = setTimeout(() => { this.timer = undefined; if (this.listeners.size) void this.ensure(true) }, 250)
   }
   dispose(): void {
+    this.lifetime.abort()
     this.controller?.abort(); this.controller = undefined; this.pending = undefined
+    this.archiveRemovals.clear()
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
   }

@@ -1,5 +1,17 @@
 export type ArkmeOutgoingCallMediaType = 'audio' | 'video'
 
+export interface ArkmeShareCallLink {
+  callUrl: string
+  expiresAtMillis: number
+  mediaType: ArkmeOutgoingCallMediaType
+  sharerDisplayName: string
+}
+
+export interface ArkmeCallReceiverPrepareResult {
+  accountUserId: number
+  bootstrap: Omit<ArkmeOutgoingCallPrepareResult['bootstrap'], 'outgoingOnly'> & { outgoingOnly: false }
+}
+
 export type ArkmeOutgoingCallFailureCode =
   | 'call-ui-unavailable'
   | 'call-active'

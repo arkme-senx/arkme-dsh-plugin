@@ -1,3 +1,5 @@
+import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule } from './private-interactions.js'
+import { archiveToolModules } from './archive.js'
 import { memberPageToolModules } from './member-pages.js'
 import type { ArkmeToolModule } from '../../contract/module.js'
 import { listSourcesToolModule } from './list-sources.js'
@@ -5,6 +7,7 @@ import { topicHomeVisibilityToolModule } from './topic-home-visibility.js'
 import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './member-records.js'
 import { groupAiPolishToolModule } from './group-ai-polish.js'
 import { addFavoriteStickerToolModule, listFavoriteStickersToolModule, manageFavoriteStickerToolModule, sendFavoriteStickerToolModule } from './favorite-stickers.js'
+import { readReactionsToolModule, writeReactionsToolModule } from './reactions.js'
 import { readSourceToolModule } from './read-source.js'
 import { messageReadReceiptToolModules } from './read-receipts.js'
 import { relatedRecordingsToolModule } from './related-recordings.js'
@@ -19,7 +22,10 @@ import { conversationMarkReadToolModule, unreadConversationsToolModule } from '.
 export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
   listSourcesToolModule,
   topicHomeVisibilityToolModule,
+  ...archiveToolModules,
   unreadConversationsToolModule,
+  privateInteractionSummaryToolModule,
+  privateInteractionsQueryToolModule,
   readSourceToolModule,
   sourceMembersToolModule,
   ...memberPageToolModules,
@@ -32,6 +38,8 @@ export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
   ...userBanToolModules,
   groupAiPolishToolModule,
   listFavoriteStickersToolModule,
+  readReactionsToolModule,
+  writeReactionsToolModule,
   addFavoriteStickerToolModule,
   sendFavoriteStickerToolModule,
   manageFavoriteStickerToolModule,

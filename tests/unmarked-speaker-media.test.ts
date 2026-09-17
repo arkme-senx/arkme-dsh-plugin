@@ -71,6 +71,7 @@ function fixture(options: { connectMedia?: boolean; environment?: 'test' | 'prod
   let currentSession = baseSession
   const remoteRequests: Array<{ url: string; range: string }> = []
   const runtime = {
+    stateStore: { uniqueCode: async () => 'stable-host-secret' },
     config: { environment: options.environment ?? 'test', requestTimeoutMs: 5_000 },
     requireSession: vi.fn(async () => currentSession),
     requestScope: vi.fn((userId: number) => `user:${String(userId)}`),

@@ -62,17 +62,20 @@ function managerFixture(): {
   realtime: FakeRealtime
   dispatch: ReturnType<typeof vi.fn>
   fatals: unknown[]
+  diagnostics: ReturnType<typeof vi.fn>
 } {
   const realtime = new FakeRealtime()
   const dispatch = vi.fn(async () => response('request-01') as never)
   const fatals: unknown[] = []
+  const diagnostics = vi.fn()
   const manager = new DshRemoteHostChannelManager({
     accountId: '42', profileRef: 'web', hostClientRef: 'host-client-01', runtimeRef: 'runtime-01',
     realtime, secretBroker: new DshRemoteRuntimeSecretBroker(new MemorySecrets()), dispatch,
     onProjectionError: error => { fatals.push({ projection: error }) },
     onFatal: error => { fatals.push(error) },
+    onDiagnostic: diagnostics,
   })
-  return { manager, realtime, dispatch, fatals }
+  return { manager, realtime, dispatch, fatals, diagnostics }
 }
 
 const controllerMetadata = (generation: number, sequence = 1): DshRemoteTrustedEventMetadata => ({
@@ -81,6 +84,78 @@ const controllerMetadata = (generation: number, sequence = 1): DshRemoteTrustedE
 })
 
 describe('account-scoped Runtime channel manager', () => {
+  it('redelivers a ledger result without reusing the previous response delivery ID', async () => {
+    const { manager, realtime, dispatch, fatals } = managerFixture()
+    await manager.prepare()
+    manager.activate(9)
+    realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9))
+    await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(1) })
+    dispatch.mockResolvedValueOnce({ ...response('request-01'), status: 'duplicate', issued_at: 2_000 } as never)
+    realtime.failPublishCount = 1
+    realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9, 2))
+    await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(3) })
+    const [first, retried, publishRetry] = realtime.publishes
+    expect(retried!.commandId).not.toBe(first!.commandId)
+    expect(publishRetry!.commandId).toBe(retried!.commandId)
+    expect(publishRetry!.payload).toEqual(retried!.payload)
+    expect(publishRetry!.payload).toMatchObject({ request_ref: 'request-01', status: 'duplicate' })
+    expect(fatals).toEqual([])
+    await manager.close()
+  })
+
+  it('correlates request processing and publish acknowledgement without logging bodies', async () => {
+    const { manager, realtime, diagnostics } = managerFixture()
+    await manager.prepare()
+    manager.activate(9)
+    realtime.event({ ...response('request-01'), kind: 'request', body: { content: 'private prompt' } }, controllerMetadata(9))
+    await vi.waitFor(() => { expect(diagnostics).toHaveBeenCalledWith('host_response_publish_finished', expect.objectContaining({ completed: true })) })
+    expect(diagnostics.mock.calls.map(([event]) => event)).toEqual(['host_request_received', 'host_request_processed', 'host_response_publish_finished'])
+    for (const [, fields] of diagnostics.mock.calls) expect(fields).toMatchObject({ user_id: '42', runtime_ref: 'runtime-01', request_ref: 'request-01', operation: 'capabilities.get' })
+    expect(JSON.stringify(diagnostics.mock.calls)).not.toContain('private prompt')
+    diagnostics.mockImplementation(() => { throw new Error('logger unavailable') })
+    realtime.event({ ...response('request-02'), kind: 'request' }, controllerMetadata(9, 2))
+    await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(2) })
+    await manager.close()
+  })
+
+  it('distinguishes completed processing from a failed response publish', async () => {
+    const { manager, realtime, diagnostics } = managerFixture()
+    realtime.failPublishCount = 3
+    await manager.prepare()
+    manager.activate(9)
+    realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9))
+    await vi.waitFor(() => { expect(diagnostics).toHaveBeenCalledWith('host_response_publish_failed', expect.objectContaining({ request_ref: 'request-01', error_code: 'REMOTE_TRANSPORT_FAILED' })) })
+    expect(diagnostics).toHaveBeenCalledWith('host_request_processed', expect.objectContaining({ status: 'completed' }))
+    expect(diagnostics).toHaveBeenCalledWith('host_response_publish_finished', expect.objectContaining({ completed: false }))
+    await manager.close()
+  })
+
+  it('reports a response skipped because the channel closed during dispatch', async () => {
+    const { manager, realtime, dispatch, diagnostics, fatals } = managerFixture()
+    await manager.prepare()
+    manager.activate(9)
+    dispatch.mockImplementationOnce(async () => {
+      await manager.close()
+      return response('request-01') as never
+    })
+    realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9))
+    await vi.waitFor(() => { expect(diagnostics).toHaveBeenCalledWith('host_response_publish_failed', expect.objectContaining({ request_ref: 'request-01', error_code: 'HOST_CHANNEL_NOT_READY' })) })
+    expect(realtime.publishes).toHaveLength(0)
+    expect(fatals).toEqual([])
+  })
+
+  it('keeps successful native stream polling out of request logs', async () => {
+    const { manager, realtime, diagnostics } = managerFixture()
+    await manager.prepare()
+    manager.activate(9)
+    for (let i = 0; i < 20; i++) realtime.event({
+      ...response(`poll-request-${i}`), kind: 'request', operation: 'session.native', body: { mode: 'pull' },
+    }, controllerMetadata(9, i + 1))
+    await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(20) })
+    expect(diagnostics).not.toHaveBeenCalled()
+    await manager.close()
+  })
+
   it('subscribes with generation 0, then publishes only with the activated lease', async () => {
     const { manager, realtime, dispatch } = managerFixture()
     await manager.prepare()
@@ -149,6 +224,31 @@ describe('account-scoped Runtime channel manager', () => {
     expect([...secrets.values.values()].join('\n')).not.toContain('binding')
   })
 
+  it('persists the new sequence after a rollback instead of keeping the rejected future cursor', async () => {
+    const broker = new DshRemoteRuntimeSecretBroker(new MemorySecrets())
+    const route = { accountId: '42', runtimeRef: 'runtime-01', channelRef: 'runtime-01' }
+    await broker.putRuntimeCursor({ ...route, lastTransportSequence: 11844 })
+    const realtime = new FakeRealtime()
+    realtime.failReplayOnce = true
+    const options = {
+      ...route, profileRef: 'web', hostClientRef: 'host-client-01', realtime, secretBroker: broker,
+      dispatch: async () => response('request-01') as never,
+      onProjectionError: () => undefined, onFatal: (error: unknown) => { throw error },
+    }
+    const manager = new DshRemoteHostChannelManager(options)
+    await manager.prepare()
+    await expect(broker.runtimeCursor(route)).resolves.toBe(0)
+    manager.activate(9)
+    realtime.event({ kind: 'request' }, controllerMetadata(9, 21))
+    await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(1) })
+    await manager.close()
+    await expect(broker.runtimeCursor(route)).resolves.toBe(21)
+    const reopened = new DshRemoteHostChannelManager(options)
+    await reopened.prepare()
+    expect(realtime.subscriptions.at(-1)?.afterSequence).toBe(21)
+    await reopened.close()
+  })
+
   it('fragments multi-megabyte responses without treating them as a fatal channel error', async () => {
     const { manager, realtime, dispatch, fatals } = managerFixture()
     dispatch.mockResolvedValue({ ...response('request-01'), result: { blob: 'x'.repeat(5 * 1024 * 1024) } })
@@ -215,4 +315,19 @@ it('separates outbound queue time from ACK time and contains diagnostic failures
     await expect(manager.publishProjectionEvent({ kind: 'event' }, 'failed', timing)).rejects.toThrow('invalid')
     expect(timing).toHaveBeenCalledWith({ queueMs: 0, publishMs: 0, completed: false })
   } finally { clock.mockRestore(); await manager.close() }
+})
+
+it('reassembles native attachment requests only from the current authenticated controller lease', async () => {
+  const { dshRemoteOutboundPayloads } = await import('../src/dsh-remote/transport-fragment.js')
+  const { manager, realtime, dispatch, fatals } = managerFixture()
+  await manager.prepare(); await manager.activate(9)
+  const payload = { protocol: 'dsh.remote', kind: 'request', operation: 'session.native', body: { data: 'a'.repeat(100_000) } }
+  const frames = dshRemoteOutboundPayloads(payload, 'attachment')
+  for (const frame of frames) realtime.event(frame.value as never, controllerMetadata(8))
+  await Promise.resolve(); expect(dispatch).not.toHaveBeenCalled()
+  for (const frame of [...frames].reverse()) realtime.event(frame.value as never, controllerMetadata(9))
+  await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+  expect(dispatch.mock.calls[0]![0]).toEqual(payload)
+  expect(fatals).toEqual([])
+  await manager.close()
 })

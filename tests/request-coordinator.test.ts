@@ -331,3 +331,27 @@ describe('ArkmeRequestCoordinator', () => {
     expect(coordinator.snapshotStats()['background-read:chat']?.queueRejected).toBe(1)
   })
 })
+
+
+it('reports bounded admission reasons and cancellation without exposing request keys', async () => {
+  vi.useFakeTimers()
+  const coordinator = new ArkmeRequestCoordinator({
+    laneLimits: { 'interactive-read': { maxConcurrent: 1, burst: 1, ratePerSecond: 1 } },
+    defaultServiceLimit: { maxConcurrent: 1, burst: 1, ratePerSecond: 1 },
+  })
+  const gate = deferred<string>(), onQueue = vi.fn()
+  const request = { scope: 'secret-account', lane: 'interactive-read' as const, service: 'record' as const }
+  const first = coordinator.run({ ...request, operation: () => gate.promise })
+  const queued = coordinator.run({ ...request, onQueue, operation: async () => 'next' })
+  const controller = new AbortController(), cancelledLog = vi.fn()
+  const cancelled = coordinator.run({ ...request, signal: controller.signal, onQueue: cancelledLog, operation: async () => 'never' })
+  const rejected = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
+  controller.abort(); await rejected
+  expect(cancelledLog.mock.calls.at(-1)).toEqual(['cancel', expect.objectContaining({ blockedBy: expect.stringContaining('service-concurrency') })])
+  gate.resolve('first'); await first
+  await vi.advanceTimersByTimeAsync(1000); await queued
+  expect(onQueue.mock.calls.map(([event]) => event)).toEqual(['enter', 'start'])
+  expect(onQueue.mock.calls[1]?.[1]).toMatchObject({ queueWaitMs: 1000, blockedBy: 'lane-concurrency,lane-rate,service-concurrency,service-rate' })
+  expect(JSON.stringify(onQueue.mock.calls)).not.toContain('secret-account')
+  coordinator.dispose()
+})

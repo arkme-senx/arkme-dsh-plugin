@@ -1,5 +1,7 @@
 import type {
   ArkmeRecordingSummaryModelConfig,
+  ArkmeRecordingTimelineDialoguePoint,
+  ArkmeRecordingTimelineDetailItem,
   ArkmeRecordingTimelineEvent,
   ArkmeRecordingTranscriptItem,
   ArkmeRecordingVersion,
@@ -142,15 +144,23 @@ function normalizeStructuredTimeline(value: unknown): ArkmeRecordingTimelineEven
     const rangeMatch = TIMELINE_HEADER.exec(rawRange)
     const startAt = stringValue(row.start_at ?? row.startAt ?? row.start_time).trim() || rangeMatch?.[1] || ''
     const endAt = stringValue(row.end_at ?? row.endAt ?? row.end_time).trim() || rangeMatch?.[2] || ''
-    const dialoguePoints = listValue(row.dialogue_points ?? row.dialogues).map(objectValue)
+    const dialoguePoints = listValue(row.dialogue_points ?? row.dialogues)
+      .map(objectValue)
+      .map(normalizeTimelineDialoguePoint)
+      .filter(point => point.speakerName !== '' || point.summary !== '' || point.quote !== '' || point.roleDescription !== '')
     const participantValues = [
       ...listValue(row.participants ?? row.roles).map(item => {
         const participant = objectValue(item)
         return Object.keys(participant).length === 0 ? item : participant.name ?? participant.spk_name
       }),
-      ...dialoguePoints.map(item => item.spk_name ?? item.speaker_name),
+      ...dialoguePoints.map(item => item.speakerName),
     ]
     const tags = listValue(row.event_tags ?? row.tags)
+    const otherInfo = normalizeTimelineDetailItems(row.other_info ?? row.otherInfo)
+    const positionNote = stringValue(row.position_note ?? row.positionNote).trim()
+    const environmentNote = stringValue(row.environment_note ?? row.environmentNote).trim()
+    const praise = stringValue(row.praise ?? row.praise_text).trim()
+    const praisePoint = optionalNumberValue(row.praise_point ?? row.praisePoint)
     return {
       eventId: stringValue(row.id ?? row.event_id).trim() || `event-${index}`,
       startAt,
@@ -164,8 +174,45 @@ function normalizeStructuredTimeline(value: unknown): ArkmeRecordingTimelineEven
       tags: uniqueStrings(tags),
       participants: uniqueStrings(participantValues),
       rawText: stringValue(row.raw_source).trim(),
+      ...(stringValue(row.period_label ?? row.periodLabel).trim() === '' ? {} : { periodLabel: stringValue(row.period_label ?? row.periodLabel).trim() }),
+      ...(stringValue(row.duration_text ?? row.durationText).trim() === '' ? {} : { durationText: stringValue(row.duration_text ?? row.durationText).trim() }),
+      ...(typeof row.related_to_me === 'boolean' || typeof row.relatedToMe === 'boolean' ? { relatedToMe: row.related_to_me === true || row.relatedToMe === true } : {}),
+      ...(positionNote === '' ? {} : { positionNote }),
+      ...(environmentNote === '' ? {} : { environmentNote }),
+      ...(praise === '' ? {} : { praise }),
+      ...(praisePoint === undefined ? {} : { praisePoint }),
+      ...(stringValue(row.speaker_note ?? row.speakerNote).trim() === '' ? {} : { speakerNote: stringValue(row.speaker_note ?? row.speakerNote).trim() }),
+      ...(dialoguePoints.length === 0 ? {} : { dialoguePoints }),
+      ...(otherInfo.length === 0 ? {} : { otherInfo }),
     }
   }).filter(item => item.startAt !== '' || item.endAt !== '' || item.title !== '' || item.description !== '')
+}
+
+function normalizeTimelineDialoguePoint(row: Record<string, unknown>): ArkmeRecordingTimelineDialoguePoint {
+  const rawData = listValue(row.raw_data_ls ?? row.rawData).map(objectValue)
+  const quote = rawData
+    .map(item => stringValue(item.text ?? item.content).trim())
+    .filter(value => value !== '')
+    .join('\n')
+  return {
+    speakerName: stringValue(row.spk_name ?? row.speaker_name ?? row.speakerName).trim(),
+    summary: stringValue(row.summary ?? row.summary_content).trim(),
+    quote: stringValue(row.quote ?? row.quote_content).trim() || quote,
+    roleDescription: stringValue(row.role_description ?? row.roleDescription).trim() || rawData
+      .map(item => stringValue(item.role_in_period ?? item.roleInPeriod).trim())
+      .filter(value => value !== '')
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .join('；'),
+    isSelf: row.is_self === true || row.isSelf === true,
+  }
+}
+
+function normalizeTimelineDetailItems(value: unknown): ArkmeRecordingTimelineDetailItem[] {
+  return listValue(value).map(objectValue).flatMap(item => {
+    const label = stringValue(item.label ?? item.name).trim()
+    const detail = stringValue(item.value ?? item.content ?? item.text).trim()
+    return label !== '' && detail !== '' ? [{ label, value: detail }] : []
+  })
 }
 
 interface MutableMarkdownEvent {
@@ -178,7 +225,8 @@ interface MutableMarkdownEvent {
 const TIMELINE_HEADER = /^(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—~～至]\s*(\d{1,2}:\d{2}(?::\d{2})?)\s*(.*)$/
 const TIMELINE_SECTION_LABELS = new Set([
   '场景类型', '场景', '角色', '说话人', '发生的事情', '内容描述', '我的心情', '心情', '待办',
-  '代表性原话', '关键对话', '环境', '环境说明', '评价', '表扬', '事件标签',
+  '代表性原话', '关键对话', '环境', '环境说明', '环境备注', '评价', '表扬', '事件标签',
+  '场景说明', '位置说明', '说话人备注', '说话人说明', '其他信息',
 ])
 
 function cleanMarkdownLine(source: string): string {
@@ -231,6 +279,14 @@ function markdownEvent(event: MutableMarkdownEvent, index: number): ArkmeRecordi
     return sectionValue(event.lines, names)
   }
   const description = field('发生的事情', '内容描述') || unsectionedValue(event.lines)
+  const quote = field('代表性原话', '关键对话')
+  const speakerNote = field('说话人备注', '说话人说明')
+  const positionNote = field('场景说明', '位置说明')
+  const environmentNote = field('环境', '环境说明', '环境备注')
+  const praise = field('评价', '表扬')
+  const dialoguePoints: ArkmeRecordingTimelineDialoguePoint[] = quote === '' ? [] : [{
+    speakerName: '', summary: '', quote, roleDescription: '', isSelf: false,
+  }]
   return {
     eventId: `event-${index}`,
     startAt: event.startAt,
@@ -244,6 +300,11 @@ function markdownEvent(event: MutableMarkdownEvent, index: number): ArkmeRecordi
     tags: splitLabels(field('事件标签')),
     participants: splitLabels(field('角色', '说话人')),
     rawText: event.lines.join('\n').trim(),
+    ...(positionNote === '' ? {} : { positionNote }),
+    ...(environmentNote === '' ? {} : { environmentNote }),
+    ...(praise === '' ? {} : { praise }),
+    ...(speakerNote === '' ? {} : { speakerNote }),
+    ...(dialoguePoints.length === 0 ? {} : { dialoguePoints }),
   }
 }
 

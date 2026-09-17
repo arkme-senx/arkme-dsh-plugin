@@ -1,4 +1,6 @@
+import { harnessNativeTransportScript } from './harness-native-transport-script.js'
 import { HARNESS_SESSION_CLIENT_ID, HARNESS_SESSION_CLIENT_PATH } from './harness-embed-contract.js'
+import { HARNESS_SESSION_RESTORE_SCRIPT } from './harness-session-restore-script.js'
 import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
@@ -47,10 +49,11 @@ interface HarnessEmbedRouteOptions {
   trajectoryClient?: DshWebBootEntry
   sidebarClient?: DshWebBootEntry
   onboardingClient?: DshWebBootEntry
+  selectionClientRevision?: string
   getGraph(): DshWebBootGraph
   installedPackageNames(): readonly string[]
   readRootHtml(request: IncomingMessage): Promise<string>
-  sessionClient?: { revision: string; apiPath?: string }
+  sessionClient?: { revision: string; apiPath?: string; defaultWorkspacePath?: string }
   onError?(error: unknown): void
 }
 
@@ -283,6 +286,17 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
         projectedGraph.rev = shortHash(`${projectedGraph.rev}:${rev}`)
       }
       let html = replaceHarnessBootGraph(await options.readRootHtml(request), fullGraph, projectedGraph)
+      if (options.sessionClient !== undefined) {
+        if (!/<head(?:\s[^>]*)?>/i.test(html)) throw new Error('harness session restore requires a document head')
+        html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-session-restore>${HARNESS_SESSION_RESTORE_SCRIPT}</script>`)
+      }
+      if (options.selectionClientRevision && /^[a-f0-9]+$/.test(options.selectionClientRevision)) {
+        html = html.replace('</head>', `<meta name="arkme-native-selection" content="/arkme-self/harness-native-selection-client.js?rev=${options.selectionClientRevision}"></head>`)
+      }
+      if (options.sessionClient?.defaultWorkspacePath) {
+        const path = encodeURIComponent(options.sessionClient.defaultWorkspacePath)
+        html = html.replace('</head>', `<meta name="arkme-default-workspace" content="${path}"></head>`)
+      }
       if (options.sessionClient?.apiPath !== undefined) {
         const apiPath = options.sessionClient.apiPath
         if (!/^\/[A-Za-z0-9/_-]+$/.test(apiPath) || !html.includes('</head>')) {
@@ -290,6 +304,7 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
         }
         html = html.replace('</head>', `<meta name="arkme-session-api" content="${apiPath}"></head>`)
       }
+      if (options.sessionClient?.apiPath !== undefined) html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-native-transport>${harnessNativeTransportScript(options.sessionClient!.apiPath!)}</script>`)
       const body = Buffer.from(html)
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',

@@ -30,9 +30,12 @@ function fixture(visible = false) {
   const activate = vi.fn()
   cleanups.push(watchHarnessSessionHover(card, 'prod:42', activate))
   const column = native.querySelector<HTMLElement>('[data-arkme-session-column]')!
+  vi.spyOn(card, 'getBoundingClientRect').mockReturnValue({ ...rect, left: 20, top: 140, bottom: 204, height: 64 })
+  vi.spyOn(iframe, 'getBoundingClientRect').mockReturnValue({ ...rect, left: 0, top: 0, right: 1024, bottom: 768 })
+  vi.spyOn(column, 'getBoundingClientRect').mockReturnValue({ ...rect, left: 308, right: 628, top: 140, bottom: 700 })
   const row = native.querySelector<HTMLElement>('[aria-selected="false"]')!
   const trigger = native.querySelector<HTMLButtonElement>('[data-arkme-session-trigger]')!
-  const move = (target: Element, type: string) => target.dispatchEvent(new Event(type, { bubbles: true }))
+  const move = (target: Element, type: string, x = 0, y = 0) => target.dispatchEvent(new target.ownerDocument.defaultView!.MouseEvent(type, { bubbles: true, clientX: x, clientY: y }))
   const enter = () => { move(card, 'pointerenter'); vi.advanceTimersByTime(200) }
   return { card, chat, surface, iframe, native, nw, column, row, trigger, activate, move, enter }
 }
@@ -70,18 +73,33 @@ it('positions only the native menu and never resizes or shifts the iframe or con
   expect([surface.style.cssText, iframe.style.cssText, grid.style.cssText]).toEqual(before)
 })
 
-it('cancels brief pass-throughs and bridges the card/menu gap before closing after a full leave', () => {
+it('cancels brief pass-throughs, bridges only the card/menu gap, and closes immediately outside', () => {
   const { card, column, surface, row, move, enter } = fixture()
   move(card, 'pointerenter'); vi.advanceTimersByTime(100); move(card, 'pointerleave'); vi.advanceTimersByTime(400)
   expect(column.inert).toBe(true)
-  enter(); move(card, 'pointerleave'); vi.advanceTimersByTime(200); move(row, 'pointerover'); vi.advanceTimersByTime(500)
+  enter(); move(card, 'pointerleave', 304, 170); vi.advanceTimersByTime(500)
   expect(column.inert).toBe(false)
-  move(row.ownerDocument.body, 'pointermove'); vi.advanceTimersByTime(299)
+  move(row, 'pointerover', 320, 170); vi.advanceTimersByTime(500)
   expect(column.inert).toBe(false)
-  vi.advanceTimersByTime(1)
+  move(row.ownerDocument.body, 'pointermove', 700, 300)
   expect(column.inert).toBe(true)
   expect(surface.hasAttribute('data-arkme-harness-menu-preview')).toBe(false)
   expect(surface.getAttribute('aria-hidden')).toBe('true')
+})
+
+it('normalizes iframe pointer coordinates when returning through the gap to the card', () => {
+  const { card, column, iframe, native, move, enter } = fixture()
+  vi.spyOn(iframe, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 20 } as DOMRect)
+  vi.spyOn(column, 'getBoundingClientRect').mockReturnValue({ left: 298, right: 618, top: 120, bottom: 680 } as DOMRect)
+  enter()
+  move(card, 'pointerleave', 304, 170)
+  move(native.body, 'pointermove', 294, 150)
+  expect(column.inert).toBe(false)
+  move(native.body, 'pointerout', 280, 150)
+  expect(column.inert).toBe(false)
+  move(card, 'pointerover', 290, 170)
+  move(card, 'pointerleave', 100, 210)
+  expect(column.inert).toBe(true)
 })
 
 it('runs the original native row action before activating DSH and keeps one list mounted', () => {

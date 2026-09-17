@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { useState } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { arkmeComposerTextRuns } from '../src/client/ArkmeMentionTextarea.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { useMessagePreparing } from '../src/client/use-message-preparing.js'
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
@@ -65,6 +66,13 @@ function stubComposerDom(): void {
 }
 
 describe('composer draft UI projection', () => {
+  it('highlights escaped Markdown mention source without treating plain text as Markdown', () => {
+    const text = String.raw`@a\_b`
+    const mentions = [{ originalIndex: 0, displayName: 'a_b', startIndex: 0, length: text.length }]
+    expect(arkmeComposerTextRuns(text, mentions, [], undefined, 'markdown')).toEqual([{ kind: 'mention', text }])
+    expect(arkmeComposerTextRuns(text, mentions, [])).toEqual([{ kind: 'text', text }])
+  })
+
   afterEach(() => {
     arkmeComposerDraftStore.clearAccount(10001)
     vi.unstubAllGlobals()
@@ -273,6 +281,25 @@ describe('composer draft UI projection', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(600) })
       expect(transport.report).toHaveBeenCalledOnce()
     } finally { act(() => { renderer.unmount() }) }
+  })
+
+  it('preserves native text nodes when committed plain text already matches the editor', () => {
+    stubComposerDom()
+    const root = new FakeComposerElement()
+    function Harness() {
+      const [value, setValue] = useState('')
+      return <ArkmeRichComposerInput value={value} mentions={[]} emojis={[]} maxLength={20000}
+        placeholder="消息" ariaLabel="消息" disabled={false} style={{}} onTextChange={setValue} />
+    }
+    let renderer: ReactTestRenderer
+    act(() => { renderer = create(<Harness />, {createNodeMock: element => element.props['data-arkme-rich-composer'] ? root : null}) })
+    const node = new FakeComposerNode(FakeComposerNode.TEXT_NODE, '中文输入')
+    root.replaceChildren(node)
+    const replace = vi.spyOn(root, 'replaceChildren')
+    act(() => { renderer.root.findByProps({'data-arkme-rich-composer':'true'}).props.onInput({currentTarget:root,nativeEvent:{isComposing:false}}) })
+    expect(root.childNodes[0]).toBe(node)
+    expect(replace).not.toHaveBeenCalled()
+    act(() => { renderer.unmount() })
   })
 
   it('treats the browser empty-editor BR filler as empty after clearing committed text', () => {

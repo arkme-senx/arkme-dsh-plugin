@@ -200,3 +200,13 @@ describe('recording UI-only host operations', () => {
     expect(assignRecordingSpeaker).not.toHaveBeenCalled()
   })
 })
+
+describe('unified speaker directory host operations', () => {
+  it.each(['Summary', 'List', 'Seen', 'Open', 'Avatars'] as const)('dispatches %s with the request signal and opaque parameters', async name => {
+    const method = vi.fn(async () => ({ ok: true }))
+    const controller = new AbortController(), params = { snapshotVersion: 'opaque', throughCursor: 'opaque-seen', detailRef: 'sealed' }
+    const service = { [`speakerDirectory${name}`]: method } as unknown as ArkmeService
+    await dispatchArkmeHostOperation(service, `speaker-directory.${name.toLowerCase()}` as never, params, undefined, undefined, undefined, undefined, controller.signal)
+    expect(method).toHaveBeenCalledWith(params, controller.signal)
+  })
+})

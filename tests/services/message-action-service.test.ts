@@ -30,7 +30,7 @@ function runtime(overrides: Record<string, unknown> = {}) {
     stateStore: { uniqueCode: vi.fn(async () => signingKey) },
     requireSession: vi.fn(async () => ({ userId, accessToken: 'access', refreshToken: 'refresh' })),
     authenticatedChatPost: vi.fn(async () => ({ sid: 'share-sid', url: 'https://jotmo.example/s/share-sid' })),
-    authenticatedPost: vi.fn(async () => ({ record_uid: 'created-record', status: 1 })),
+    authenticatedPost: vi.fn(async (_path: string, body: Record<string, unknown>) => body.topic_uid ? { record_uid: body.record_uid, record_status: 1, topic_uid: body.topic_uid, rel_uid: 'rel', relation_status: 1 } : { record_uid: body.record_uid, status: 1 }),
     ...overrides,
   }
 }
@@ -348,5 +348,97 @@ describe('MessageActionService', () => {
       expect.objectContaining({ userId }),
       undefined,
     )
+  })
+})
+
+describe('native DSH snapshot forwarding', () => {
+  const snapshot = { sessionId: 'local-session', messages: [
+    { key: 'user:opaque', role: 'user', text: '**问题**', anchorSeq: 1, createdAtMillis: 1000 },
+    { key: 'assistant-step:opaque', role: 'assistant', text: '回答', anchorSeq: 4, createdAtMillis: 2000 },
+  ] }
+  const options = { targetSourceRef: 'target', requestId: 'native-attempt', recordUid: forwardRecordUid, commentRecordUid: forwardCommentUid, sendAtMillis: 1_786_000_123_000 }
+  it('uses immutable Markdown snapshots and DSH identities without guessing Arkme Agent or Record IDs', async () => {
+    const r = runtime({ authenticatedChatPost: vi.fn(async () => ({ record_uid: 'delivered', seq: 3 })) })
+    const service = messageActionService(r, { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'target-chat' }) })
+    const result = await service.forwardNative(snapshot, userId, options)
+    expect(result.itemUid).toBe('delivered')
+    const body = r.authenticatedChatPost.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(body.source_items).toEqual(snapshot.messages.map((message, index) => ({ source_type: 'agent', render_format: 'markdown', source_identity_kind: 'agent_message', source_identity_id: expect.stringMatching(/^dsh:[0-9a-f]{64}$/), snapshot_text: message.text, source_sender_user_id: index === 0 ? userId : 0, ...(index === 0 ? {} : { source_avatar_kind: 'deepseek' }) })))
+    expect(JSON.stringify(body)).not.toContain('agent_session_id')
+    expect(JSON.stringify(body.source_items)).not.toContain('record_uid')
+    await service.forwardNative(snapshot, userId, options)
+    expect(r.authenticatedChatPost.mock.calls[1]?.[1]).toEqual(body)
+  })
+  it('creates a Record forward bundle without creating source records and preserves original timestamps', async () => {
+    const r = runtime()
+    const source = { openSourceRef: async () => ({ kind: 'topic', ownerRef: 'topic' }), invalidateSourceListCache: vi.fn() }
+    await messageActionService(r, source).forwardNative(snapshot, userId, options)
+    expect(r.authenticatedPost).toHaveBeenCalledTimes(1)
+    const [path, body] = r.authenticatedPost.mock.calls[0] as unknown as [string, { content_payload: { forward_records: { source_record_uids: string[]; items: Array<Record<string, unknown>> } } }]
+    expect(path).toBe('/api/v1/topics/records/create')
+    const payload = body.content_payload.forward_records
+    expect(payload.source_record_uids).toEqual([])
+    expect(payload.items.map(item => item.send_at)).toEqual([1000, 2000])
+    expect(payload.items.map(item => item.source_display_name)).toEqual(['我', 'DeepSeek Harness'])
+    expect(payload.items.map(item => item.source_avatar_kind)).toEqual([undefined, 'deepseek'])
+    expect(payload.items.every(item => !('record_uid' in item))).toBe(true)
+  })
+  it('rejects account mismatch, duplicate identities, wrong order, unsupported roles and oversized text before writes', async () => {
+    const r = runtime(); const target = vi.fn()
+    const service = messageActionService(r, { openSourceRef: target })
+    await expect(service.forwardNative(snapshot, 99, options)).rejects.toMatchObject({ code: 'native-forward-account-changed' })
+    for (const invalid of [null, {}, { ...snapshot, messages: [] }, { ...snapshot, messages: [...snapshot.messages].reverse() },
+      { ...snapshot, messages: [snapshot.messages[0], snapshot.messages[0]] },
+      { ...snapshot, messages: [{ ...snapshot.messages[0], role: 'tool' }] },
+      { ...snapshot, messages: [{ ...snapshot.messages[0], text: 'x'.repeat(256 * 1024 + 1) }] }]) {
+      await expect(service.forwardNative(invalid, userId, options)).rejects.toMatchObject({ code: 'native-selection-snapshot-invalid' })
+    }
+    expect(target).not.toHaveBeenCalled()
+    expect(r.authenticatedPost).not.toHaveBeenCalled(); expect(r.authenticatedChatPost).not.toHaveBeenCalled()
+  })
+})
+
+describe('Record forwarding receipt facts', () => {
+  const snapshot = { sessionId: 'local', messages: [{ key: 'one', role: 'user', text: 'hello', anchorSeq: 1, createdAtMillis: 1000 }] }
+  const options = { targetSourceRef: 'target', requestId: 'receipt', recordUid: forwardRecordUid, commentRecordUid: forwardCommentUid, sendAtMillis: 1000 }
+  it.each([
+    { kind: 'send_to_self', receipt: {} },
+    { kind: 'send_to_self', receipt: { record_uid: 'other', status: 1 } },
+    { kind: 'send_to_self', receipt: { record_uid: forwardRecordUid, status: 2 } },
+    { kind: 'topic', receipt: { record_uid: forwardRecordUid, status: 1 } },
+    { kind: 'topic', receipt: { record_uid: forwardRecordUid, record_status: 1, topic_uid: 'topic', relation_status: 2, rel_uid: 'rel' } },
+    { kind: 'topic', receipt: { record_uid: forwardRecordUid, record_status: 1, topic_uid: 'wrong', relation_status: 1, rel_uid: 'rel' } },
+  ])('does not invent confirmed delivery from incomplete or mismatched $kind receipts', async ({ kind, receipt }) => {
+    const r = runtime({ authenticatedPost: vi.fn(async () => receipt) })
+    const invalidateSourceListCache = vi.fn()
+    const service = messageActionService(r, { openSourceRef: async () => ({ kind, ownerRef: 'topic' }), invalidateSourceListCache })
+    await expect(service.forwardNative(snapshot, userId, { ...options, commentText: 'note' })).rejects.toMatchObject({ code: 'message-actions-forward-outcome-unknown' })
+    expect(r.authenticatedPost).toHaveBeenCalledTimes(1)
+    expect(invalidateSourceListCache).not.toHaveBeenCalled()
+  })
+  it('distinguishes confirmed primary content from an unconfirmed comment', async () => {
+    const r = runtime({ authenticatedPost: vi.fn().mockResolvedValueOnce({ record_uid: forwardRecordUid, status: 1 }).mockResolvedValueOnce({}) })
+    const result = await messageActionService(r, { openSourceRef: async () => ({ kind: 'send_to_self', ownerRef: 'self' }), invalidateSourceListCache() {} }).forwardNative(snapshot, userId, { ...options, commentText: 'note' })
+    expect(result.itemUid).toBe(forwardRecordUid)
+    expect(result.warningText).toBe('转发已完成，附言发送失败')
+  })
+})
+
+
+describe('native DSH copy link owner boundary', () => {
+  const snapshot = { sessionId: 'local-session', messages: [{ key: 'u1', anchorSeq: 1, role: 'user', text: '    code()\n', createdAtMillis: 1000 }, { key: 'a1', anchorSeq: 2, role: 'assistant', text: '**answer**', createdAtMillis: 2000 }] }
+  it('uses the original link endpoint with explicit local content, without writing records or sending chat', async () => {
+    const rt = runtime(); const service = messageActionService(rt)
+    await expect(service.copyLinkNative(snapshot, userId)).resolves.toMatchObject({ sid: 'share-sid' })
+    expect(rt.authenticatedChatPost).toHaveBeenCalledWith('/api/v1/chats/messages/copy-link/get-or-create', { sources: snapshot.messages.map(item => ({ kind: 'dsh_native', dsh_message: { session_id: snapshot.sessionId, message_id: item.key, role: item.role, text_content: item.text, send_at: item.createdAtMillis } })) }, expect.objectContaining({ userId }), undefined)
+    expect(rt.authenticatedPost).not.toHaveBeenCalled()
+  })
+  it('rejects stale accounts, empty content, duplicates, malformed roles and the copy-specific budget before HTTP', async () => {
+    const rt = runtime(); const service = messageActionService(rt)
+    await expect(service.copyLinkNative(snapshot, 99)).rejects.toMatchObject({ code: 'native-copy-link-account-changed' })
+    for (const messages of [[], [snapshot.messages[0], snapshot.messages[0]], [{ ...snapshot.messages[0], role: 'tool' }], [{ ...snapshot.messages[0], text: ' ' }], [{ ...snapshot.messages[0], text: 'x'.repeat(90_001) }]]) {
+      await expect(service.copyLinkNative({ ...snapshot, messages }, userId)).rejects.toThrow()
+    }
+    expect(rt.authenticatedChatPost).not.toHaveBeenCalled()
   })
 })

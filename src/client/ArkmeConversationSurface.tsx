@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import type { CSSProperties } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
@@ -25,8 +26,9 @@ const root: CSSProperties = {
 export function ArkmeConversationSurface({
   initialAuth, openedFromSession, useSessions, renderSlot,
 }: ArkmeConversationSurfaceProps) {
+  useArkmeLocale()
   const currentSession = useSessions(state => state.current)
-  return <section data-arkme-owned="persistent-conversation-compat" style={root} aria-label="Arkme 客户端">
+  return <section data-arkme-owned="persistent-conversation-compat" style={root} aria-label={tr("Arkme 客户端")}>
     <ArkmeSurface
       productNavigation={false}
       initialAuth={initialAuth}

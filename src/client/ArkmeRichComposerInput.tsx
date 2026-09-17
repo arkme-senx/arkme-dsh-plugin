@@ -5,9 +5,10 @@ import {
   type ClipboardEvent, type CSSProperties, type FocusEvent, type KeyboardEvent,
 } from 'react'
 import type { ArkmeComposerEmoji, ArkmeComposerMention } from './composer-draft-store.js'
-import { ARKME_COMPOSER_EMOJI_PLACEHOLDER } from './composer-draft-store.js'
+import { ARKME_COMPOSER_EMOJI_PLACEHOLDER, replaceArkmeComposerEmojiSelection } from './composer-draft-store.js'
 import { arkmeComposerTextRuns } from './ArkmeMentionTextarea.js'
 import { arkmeHashTagTrigger } from '../hashtag.js'
+import { useComposerSelectionRequest, type ArkmeComposerSelectionRequest } from './composer-selection-request.js'
 
 const mentionColor = 'var(--dsw-alias-state-business-primary, #3964fe)'
 
@@ -16,7 +17,7 @@ const styles: Record<string, CSSProperties> = {
   editor: { cursor: 'text', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' },
   placeholder: {
     position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
-    color: 'var(--dsw-alias-label-tertiary, #9097a1)',
+    color: 'var(--dsw-alias-label-secondary, #68707c)',
   },
   mention: { color: mentionColor },
   tag: { color: mentionColor, fontWeight: 500 },
@@ -49,6 +50,9 @@ export interface ArkmeComposerCaretGeometry {
 }
 
 export interface ArkmeRichComposerInputProps {
+  /** Format of source text in the plain editor; independent of rich Markdown editing. */
+  textFormat?: 'plain' | 'markdown'
+  selectionRequest?: ArkmeComposerSelectionRequest | undefined
   markdownEnabled?: boolean
   markdown?: ArkmeMarkdownDraft | undefined
   onMarkdownChange?(value: ArkmeMarkdownDraft, text: string, mentions: readonly ArkmeComposerMention[], emojis: readonly ArkmeComposerEmoji[]): void
@@ -61,7 +65,7 @@ export interface ArkmeRichComposerInputProps {
   ariaLabel: string
   disabled: boolean
   style: CSSProperties
-  onTextChange(text: string): void
+  onTextChange(text: string, emojis?: readonly ArkmeComposerEmoji[]): void
   /** Genuine editor activity, including provisional IME text; never a draft commit. */
   onInputActivity?(text: string): void
   onSelectionChange?(text: string, selectionStart: number, selectionEnd: number): void
@@ -98,6 +102,23 @@ function editorSemanticText(root: HTMLElement): string {
   }
   const text = read(root)
   return text === '\n' && root.textContent === '' ? '' : text
+}
+
+/** Read actual atom identities after native edits; equal placeholder text is ambiguous. */
+function editorEmojis(root: HTMLElement): ArkmeComposerEmoji[] {
+  const result: ArkmeComposerEmoji[] = []
+  let offset = 0
+  const visit = (node: Node) => {
+    if (node instanceof HTMLElement && node.dataset.arkmeEditableEmoji !== undefined) {
+      result.push({ emojiId: node.dataset.arkmeEditableEmoji, startIndex: offset++ })
+    } else if (node.nodeType === Node.TEXT_NODE || (node instanceof HTMLElement && node.tagName === 'BR')) {
+      offset += nodeSemanticLength(node)
+    } else {
+      for (const child of node.childNodes) visit(child)
+    }
+  }
+  visit(root)
+  return result
 }
 
 function pointSemanticOffset(root: HTMLElement, targetNode: Node, targetOffset: number): number | undefined {
@@ -229,9 +250,10 @@ function renderEditorContents(
   mentions: readonly ArkmeComposerMention[],
   emojis: readonly ArkmeComposerEmoji[],
   activeHashTagStart?: number,
+  textFormat: 'plain' | 'markdown' = 'plain',
 ): void {
   const fragment = document.createDocumentFragment()
-  for (const run of arkmeComposerTextRuns(value, mentions, emojis, activeHashTagStart)) {
+  for (const run of arkmeComposerTextRuns(value, mentions, emojis, activeHashTagStart, textFormat)) {
     if (run.kind === 'emoji' && run.emoji !== undefined) {
       const atom = document.createElement('span')
       atom.contentEditable = 'false'
@@ -263,7 +285,7 @@ function renderEditorContents(
 /** Native contenteditable surface whose rich emoji spans remain atomic, selectable inline objects. */
 const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(
   function ArkmeRichComposerInput({
-    className, value, mentions, emojis, maxLength, placeholder, ariaLabel, disabled, style,
+    className, value, mentions, emojis, textFormat = 'plain', maxLength, placeholder, ariaLabel, disabled, style, selectionRequest,
     onTextChange, onInputActivity, onSelectionChange, onFocus, onBlur, onPaste, onKeyDown,
   }, forwardedRef) {
     const editorRef = useRef<HTMLDivElement>(null)
@@ -319,25 +341,47 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
       const nextSelection = pendingSelectionRef.current
         ?? (active ? editorSelection(root, selectionRef.current) : selectionRef.current)
       const activeHashTagStart = arkmeHashTagTrigger(value, nextSelection.start, nextSelection.end)?.startIndex
-      renderEditorContents(root, value, mentions, emojis, activeHashTagStart)
+      // Native plain-text edits already have the right DOM and selection. Replacing
+      // those nodes on each key also destroys the browser's editing/undo context.
+      if (mentions.length === 0 && emojis.length === 0 && !/[#＃]/u.test(value) && activeHashTagStart === undefined
+        && root.textContent === value && Array.from(root.childNodes).every(node => node.nodeType === Node.TEXT_NODE)) {
+        setEditorHasContent(value !== '')
+        pendingSelectionRef.current = undefined
+        selectionRef.current = nextSelection
+        return
+      }
+      renderEditorContents(root, value, mentions, emojis, activeHashTagStart, textFormat)
       setEditorHasContent(value !== '')
       pendingSelectionRef.current = undefined
       selectionRef.current = nextSelection
       if (active) applySelection(nextSelection.start, nextSelection.end)
-    }, [value, mentions, emojis])
+    }, [value, mentions, emojis, textFormat])
+
+    useComposerSelectionRequest(selectionRequest, value, disabled, request => {
+      const root = editorRef.current
+      if (root === null) return false
+      root.focus({ preventScroll: true })
+      applySelection(request.start, request.end)
+      return true
+    })
+
+    const commitText = (text: string, nextEmojis: readonly ArkmeComposerEmoji[]) => {
+      if (emojis.length > 0 || nextEmojis.length > 0) onTextChange(text, nextEmojis)
+      else onTextChange(text)
+    }
 
     const commitDom = (root: HTMLDivElement, nextText = editorSemanticText(root)) => {
       const selection = editorSelection(root, selectionRef.current)
       if (nextText.length > maxLength) {
         const activeHashTagStart = arkmeHashTagTrigger(valueRef.current, selectionRef.current.start, selectionRef.current.end)?.startIndex
-        renderEditorContents(root, valueRef.current, mentions, emojis, activeHashTagStart)
+        renderEditorContents(root, valueRef.current, mentions, emojis, activeHashTagStart, textFormat)
         setEditorHasContent(valueRef.current !== '')
         applySelection(selectionRef.current.start, selectionRef.current.end)
         return
       }
       selectionRef.current = selection
       pendingSelectionRef.current = selection
-      onTextChange(nextText)
+      commitText(nextText, editorEmojis(root))
       onInputActivity?.(nextText)
       onSelectionChange?.(nextText, selection.start, selection.end)
     }
@@ -349,7 +393,7 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
       const caret = selection.start + 1
       selectionRef.current = { start: caret, end: caret }
       pendingSelectionRef.current = selectionRef.current
-      onTextChange(nextText)
+      commitText(nextText, replaceArkmeComposerEmojiSelection(emojis, selection.start, selection.end, 1))
       onInputActivity?.(nextText)
     }
 
@@ -360,7 +404,7 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
       const caret = selection.start + text.length
       selectionRef.current = { start: caret, end: caret }
       pendingSelectionRef.current = selectionRef.current
-      onTextChange(nextText)
+      commitText(nextText, replaceArkmeComposerEmojiSelection(emojis, selection.start, selection.end, text.length))
       onInputActivity?.(nextText)
       onSelectionChange?.(nextText, caret, caret)
     }

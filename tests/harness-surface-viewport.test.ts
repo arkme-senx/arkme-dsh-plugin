@@ -2,6 +2,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { watchHarnessSurfaceViewport } from '../src/client/harness-surface-viewport.js'
 import { conversationMenuLayer, conversationMenuPosition } from '../src/client/conversation-menu-layer.js'
+import { HARNESS_MENU_POSITION } from '../src/client/harness-session-menu-bridge.js'
 
 let stop: (() => void) | undefined
 afterEach(() => { stop?.(); stop = undefined; document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
@@ -11,7 +12,11 @@ const rect = (left: number, top: number, width: number, height: number) => ({ le
 function fixture(visible = true) {
   vi.useFakeTimers()
   vi.stubGlobal('innerWidth', 1400)
-  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  let resize = () => {}
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: () => void) { resize = callback }
+    observe() {} unobserve() {} disconnect() {}
+  })
   document.body.innerHTML = '<main style="overflow:hidden"><span id="seat"></span></main>'
   const seat = document.querySelector<HTMLElement>('#seat')!
   vi.spyOn(seat, 'getBoundingClientRect').mockReturnValue(rect(356, 0, 1044, 1000))
@@ -28,8 +33,32 @@ function fixture(visible = true) {
   vi.spyOn(column, 'getBoundingClientRect').mockReturnValue(rect(346, 120, 320, 560))
   vi.spyOn(column, 'getClientRects').mockReturnValue([rect(346, 120, 320, 560)] as unknown as DOMRectList)
   stop = watchHarnessSurfaceViewport(surface, frame, seat)
-  return { seat, surface, frame, native, column }
+  return { seat, surface, frame, native, column, resize }
 }
+
+it('skips stale resize callbacks during iframe navigation and resumes after load', () => {
+  const { frame, native, resize } = fixture()
+  const positioned = vi.fn()
+  native.addEventListener(HARNESS_MENU_POSITION, positioned)
+  resize()
+  expect(positioned).toHaveBeenCalledTimes(1)
+  const detached = vi.spyOn(native, 'defaultView', 'get').mockReturnValue(null)
+  expect(() => resize()).not.toThrow()
+  expect(positioned).toHaveBeenCalledTimes(1)
+  detached.mockRestore()
+  frame.dispatchEvent(new Event('load'))
+  resize()
+  expect(positioned).toHaveBeenCalledTimes(2)
+})
+
+it('ignores a resize callback already queued when the observer was disposed', () => {
+  const { native, resize } = fixture()
+  const positioned = vi.fn()
+  native.addEventListener(HARNESS_MENU_POSITION, positioned)
+  stop?.(); stop = undefined
+  expect(() => resize()).not.toThrow()
+  expect(positioned).not.toHaveBeenCalled()
+})
 
 it('uses the same top-level host and leaves the clipped workspace without moving native nodes', async () => {
   const { surface, frame, native, column } = fixture()
@@ -71,6 +100,41 @@ it('exposes only the menu while DSH is inactive, without activating or reloading
   expect(frame.contentDocument).toBe(native)
 })
 
+it.each([true, false])('keeps list shadow below overlapping native menus without double painting (DSH visible: %s)', async visible => {
+  const { surface, frame, native, column } = fixture(visible)
+  column.setAttribute('data-arkme-session-open', '')
+  await flush()
+  const shadow = document.querySelector<HTMLElement>('[data-arkme-harness-menu-shadow]')!
+  const before = shadow.style.clipPath
+  const frameStyle = frame.style.cssText
+  const menus = [rect(640, 180, 218, 128), rect(800, 210, 218, 128)].map(bounds => {
+    const menu = native.createElement('div')
+    menu.setAttribute('role', 'menu')
+    vi.spyOn(menu, 'getBoundingClientRect').mockReturnValue(bounds)
+    vi.spyOn(menu, 'getClientRects').mockReturnValue([bounds] as unknown as DOMRectList)
+    native.body.append(menu)
+    return menu
+  })
+  await flush()
+  expect(Number(shadow.style.zIndex)).toBeLessThan(Number(surface.style.zIndex))
+  expect(shadow.style.pointerEvents).toBe('none')
+  // The external shadow fills only the iframe's unpainted regions. Overlapping
+  // action menus must not create holes that re-enable the shadow over them.
+  const paths = [...shadow.style.clipPath.matchAll(/M (-?[\d.]+) (-?[\d.]+) H (-?[\d.]+) V (-?[\d.]+) H -?[\d.]+ Z/g)]
+  const paints = (x: number, y: number) => paths.some(match => {
+    const [left, top, right, bottom] = match.slice(1).map(Number)
+    return x - 346 > left! && x - 346 < right! && y - 120 > top! && y - 120 < bottom!
+  })
+  expect(paints(680, 200)).toBe(false)
+  expect(paints(820, 250)).toBe(false)
+  expect(paints(690, 600)).toBe(!visible)
+  expect(frame.style.cssText).toBe(frameStyle)
+  expect(surface.getAttribute('data-arkme-visible')).toBe(String(visible))
+  menus.forEach(menu => menu.remove())
+  await flush()
+  expect(shadow.style.clipPath).toBe(before)
+})
+
 it('shares right-side placement, left-side fallback and viewport clamping for both menus', () => {
   expect(conversationMenuPosition(rect(58, 120, 280, 52), 320, 560, { width: 1400, height: 1000 })).toEqual({ left: 346, top: 120 })
   expect(conversationMenuPosition(rect(500, 700, 280, 52), 320, 560, { width: 900, height: 800 })).toEqual({ left: 172, top: 228 })
@@ -87,4 +151,64 @@ it('keeps the native shell visible if the optional dropdown adapter stops recogn
   expect(surface.style.clipPath).toContain('M 356 0 H 1400 V 1000')
   stop?.(); stop = undefined
   expect(content.hasAttribute('data-arkme-harness-content-frame')).toBe(false)
+})
+
+it('bounds native fullscreen sidebars below the task header without moving the iframe or native content', async () => {
+  const { native, frame, seat, resize } = fixture()
+  const shell = native.querySelector('[data-arkme-session-frame]')!
+  const draft = native.querySelector('textarea')!
+  const headerSlot = native.createElement('div')
+  headerSlot.setAttribute('data-slot', 'conversation.session.header')
+  const header = native.createElement('header')
+  headerSlot.append(header); shell.prepend(headerSlot)
+  vi.spyOn(header, 'getBoundingClientRect').mockReturnValue(rect(356, 0, 1044, 73))
+  const panel = native.createElement('div')
+  panel.setAttribute('data-sidebar-right-panel', 'fullscreen')
+  panel.style.width = '100%'
+  panel.textContent = 'Files'
+  shell.querySelector('[data-rightbar-col]')!.append(panel)
+  const frameStyle = frame.style.cssText
+  await flush()
+  const value = (key: string) => native.documentElement.style.getPropertyValue(`--arkme-harness-${key}`)
+  expect(value('panel-top')).toBe('73px')
+  expect(value('panel-height')).toBe('927px')
+  // Resize and reposition the embedding seat, not the iframe viewport.
+  vi.mocked(seat.getBoundingClientRect).mockReturnValue(rect(184, 20, 536, 800))
+  vi.mocked(header.getBoundingClientRect).mockReturnValue(rect(184, 20, 536, 96))
+  resize()
+  expect(value('content-left')).toBe('184px')
+  expect(value('content-width')).toBe('536px')
+  expect(value('panel-top')).toBe('116px')
+  expect(value('panel-height')).toBe('704px')
+  const css = [...native.querySelectorAll('style')].map(style => style.textContent).join('')
+  expect(css).toContain('[data-arkme-harness-content-frame] [data-sidebar-right-panel="fullscreen"]')
+  expect(css).toContain('width: var(--arkme-harness-content-width) !important')
+  expect(css).not.toContain('[data-sidebar-right-panel="push"]')
+  expect(frame.style.cssText).toBe(frameStyle)
+  expect(native.querySelector('textarea')).toBe(draft)
+  expect(panel.textContent).toBe('Files')
+  header.setAttribute('aria-hidden', 'true')
+  await flush()
+  expect(value('panel-top')).toBe('20px')
+  expect(value('panel-height')).toBe('800px')
+  headerSlot.remove(); await flush()
+  expect(value('panel-top')).toBe('20px')
+  stop?.(); stop = undefined
+  expect(value('panel-top')).toBe('')
+  expect(value('panel-height')).toBe('')
+  expect(native.querySelector('style')).toBeNull()
+  expect(native.querySelector('textarea')).toBe(draft)
+})
+
+it('keeps native boot and error content visible before the session layout exists', async () => {
+  const { native, surface } = fixture()
+  native.body.innerHTML = '<main>Native loading or connection error</main>'
+  await flush()
+  expect(surface.style.visibility).toBe('visible')
+  expect(surface.style.clipPath).toContain('M 356 0 H 1400 V 1000')
+  expect(native.body.hasAttribute('data-arkme-harness-content-frame')).toBe(true)
+  native.body.innerHTML = '<main><div data-rightbar-col></div></main>'
+  await flush()
+  expect(native.body.hasAttribute('data-arkme-harness-content-frame')).toBe(false)
+  expect(native.querySelector('main')?.hasAttribute('data-arkme-harness-content-frame')).toBe(true)
 })

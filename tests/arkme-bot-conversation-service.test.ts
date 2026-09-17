@@ -23,6 +23,21 @@ function json(data: unknown): Response {
 }
 
 describe('BotConversationService', () => {
+  it.each(['chat', 'subject'])('calendar history never creates a conversation for %s ownership', async owner => {
+    const requests: string[] = []
+    const service = new ArkmeService(config, new SessionStore({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }),
+      { async uniqueCode() { return 'calendar-read-test' } } as never, async input => {
+        const url = String(input); requests.push(url)
+        if (url.endsWith('/api/v1/bot/list')) return json({ code: 200, data: { bots: [{ bot_id: 'bot-1', name: 'Bot', provider: 'webhook', status: 'online',
+          subject_uid: owner === 'subject' ? 'subject-1' : '', chat_session_uid: owner === 'chat' ? 'chat-1' : '' }] } })
+        if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: { chat_session_uid: 'chat-1', items: [] } })
+        throw new Error(`unexpected ${url}`)
+      })
+    const bot = (await service.listBots()).items[0]!
+    if (owner === 'chat') await expect(service.readBotPrivateChatHistory(bot.botRef)).resolves.toMatchObject({ messages: [] })
+    else await expect(service.readBotPrivateChatHistory(bot.botRef)).rejects.toMatchObject({ code: 'bot-history-read-unsupported' })
+    expect(requests.some(url => /private-chat\/open|mark-read|send/.test(url))).toBe(false)
+  })
   it('projects Chat-owned Bot actions from canonical relation identity and reopens them only through Host', async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = []
     const service = new ArkmeService(

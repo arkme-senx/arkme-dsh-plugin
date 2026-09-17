@@ -1,37 +1,35 @@
+import { useSocialAccess } from './social-access-store.js'
+import { tr, useArkmeLocale } from './locale.js'
+import { IconNewChatOutline16, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import arkmeBotIconBase64 from '../../assets/icons/cpu-linear.svg'
 import arkmeGroupIconBase64 from '../../assets/icons/profile-2user-linear.svg'
 import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
 import { callArkme } from './api.js'
 import { ArkmeBotCreateDialog } from './ArkmeBotCreateDialog.js'
+import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { watchFrameMenuDismissal } from './frame-menu-dismissal.js'
+import { directorySearchLayout } from './directory-search-layout.js'
 
-type QuickAddDialogKind = 'group' | 'bot'
+
+type QuickAddDialogKind = 'group' | 'call' | 'bot'
 
 const style: Record<string, CSSProperties> = {
   // Keep the menu above later sidebar rows without escaping the frame-wide overlay layer.
   anchor: { position: 'relative', zIndex: 10, flex: 'none' },
+  // Align the directory action with its search field, retaining the host's
+  // icon and feedback tokens. Avoid a background shorthand that resets hover.
   trigger: {
-    width: 40, height: 40, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 11, background: arkmeTheme.menu, color: '#555a64',
-    cursor: 'pointer', font: 'inherit', fontSize: 23, lineHeight: 1, fontWeight: 300, outline: 0,
+    width: directorySearchLayout.field.height, height: directorySearchLayout.field.height,
+    flex: 'none', padding: 0, display: 'grid', placeItems: 'center', boxSizing: 'border-box',
+    border: 0, borderRadius: directorySearchLayout.field.borderRadius, backgroundColor: 'var(--dsw-specific-selector, transparent)',
+    color: 'var(--dsw-alias-label-primary)', cursor: 'pointer', font: 'inherit', outline: 0,
   },
-  menu: {
-    position: 'absolute', zIndex: 1, top: 36, right: 0, width: 176, padding: '6px 10px',
-    boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l2, #e3e4e8)', borderRadius: 18,
-    background: 'var(--dsw-specific-menu, rgba(255,255,255,.98))', color: 'var(--dsw-alias-label-primary, #1a1c21)',
-    boxShadow: 'var(--dsw-shadow-lv3, 0 20px 56px rgba(30,34,43,.16), 0 2px 8px rgba(30,34,43,.08))',
-    WebkitBackdropFilter: 'blur(18px)', backdropFilter: 'blur(18px)',
-  },
-  menuItem: {
-    width: '100%', minHeight: 46, display: 'flex', alignItems: 'center', gap: 10,
-    padding: '0 12px', border: 0, borderRadius: 8, background: 'transparent', color: 'inherit', textAlign: 'left',
-    cursor: 'pointer', font: 'inherit', fontSize: 13, lineHeight: '18px', fontWeight: 550,
-  },
-  menuIcon: { width: 19, height: 19, flex: 'none', color: 'var(--dsw-alias-label-secondary, #6f747e)' },
-  divider: { height: 1, margin: '0 10px', background: 'var(--dsw-alias-border-l1, #ececef)' },
+
   overlay: {
     position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 16,
     boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(19, 22, 26, 0.34))',
@@ -77,40 +75,39 @@ function maskIcon(base64: string, iconStyle: CSSProperties): CSSProperties {
   }
 }
 
-function ArkmeQuickAddMenuItem({ icon, label, onClick }: {
-  icon: string | ReactNode
-  label: string
-  onClick(): void
-}) {
-  return <button
-    type="button" role="menuitem" style={style.menuItem} onClick={onClick}
-    onMouseEnter={event => { event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, #f4f4f6)' }}
-    onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-  >
-    {typeof icon === 'string' ? <span aria-hidden style={maskIcon(icon, style.menuIcon!)} /> : <span aria-hidden style={style.menuIcon}>{icon}</span>}
-    <span>{label}</span>
-  </button>
-}
-
-export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onAddBot, onNewDshSession, error }: {
+export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, onAddBot, onNewDshSession, error,
+  anchor, open = true, onClose = () => {}, getAnchorRect, hoverAnchor,
+}: {
   onContactAdd(): void
   onCreateGroup(): void
+  onStartCall?: () => void
   onAddBot(): void
   onNewDshSession?: (() => void) | undefined
   error?: string
+  open?: boolean
+  anchor?: ReactNode
+  onClose?: () => void
+  getAnchorRect?: () => DOMRect | null
+  /** Hover entry point: the trigger and the menu stay one hover target. */
+  hoverAnchor?: HTMLElement | undefined
 }) {
-  return <div data-arkme-notification-blocking-overlay="true" role="menu" aria-label="添加" style={style.menu}>
-    {onNewDshSession && <>
-      <ArkmeQuickAddMenuItem icon={<svg width={19} height={19} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><path d="M7 20.5 3 22l1.5-4A9 9 0 1 1 7 20.5Z" /><path d="M12 8v8m-4-4h8" /></svg>} label="新建 DSH 会话" onClick={onNewDshSession} />
-      <div aria-hidden style={style.divider} />
-    </>}
-    <ArkmeQuickAddMenuItem icon={arkmeUserAddIconBase64} label="添加联系人" onClick={onContactAdd} />
-    <div aria-hidden style={style.divider} />
-    <ArkmeQuickAddMenuItem icon={arkmeGroupIconBase64} label="创建群聊" onClick={onCreateGroup} />
-    <div aria-hidden style={style.divider} />
-    <ArkmeQuickAddMenuItem icon={arkmeBotIconBase64} label="添加 Bot" onClick={onAddBot} />
-    {error && <p role="alert" style={style.error}>{error}</p>}
-  </div>
+  const socialAllowed = useSocialAccess()
+  const icon = (base64: string) => <span aria-hidden style={maskIcon(base64, { width: 16, height: 16 })} />
+  return <span data-arkme-notification-blocking-overlay={open ? 'true' : undefined}>
+    <ArkmeActionMenu label={tr("添加")} open={open} anchor={anchor} align="end" onClose={onClose}
+      hoverCloseDelayMs={500}
+      {...(getAnchorRect === undefined ? {} : { getAnchorRect })}
+      {...(hoverAnchor === undefined ? {} : { hoverAnchor })}
+      actions={[
+        onNewDshSession !== undefined && { id: 'dsh', label: '新建 DSH 会话', icon: <IconNewChatOutline16 />, onSelect: onNewDshSession },
+        socialAllowed && { id: 'contact', label: '添加联系人', icon: icon(arkmeUserAddIconBase64), onSelect: onContactAdd },
+        socialAllowed && { id: 'group', label: '创建群聊', icon: icon(arkmeGroupIconBase64), onSelect: onCreateGroup },
+        { id: 'bot', label: '添加 Bot', icon: icon(arkmeBotIconBase64), onSelect: onAddBot },
+        socialAllowed && onStartCall !== undefined && { id: 'call', label: '发起通话', icon: <PhoneCall size={16} />, onSelect: onStartCall },
+        error ? { id: 'error', label: <span role="alert">{error}</span>, disabled: true, onSelect: () => {} } : false,
+      ]}
+    />
+  </span>
 }
 
 export function ArkmeQuickAddButton({
@@ -128,15 +125,28 @@ export function ArkmeQuickAddButton({
   notificationActivationRevision?: number
   onBlockingOverlayChange?(open: boolean): void
 }) {
-  const [menuOpen, setMenuOpen] = useState(false)
+  useArkmeLocale()
+  const socialAllowed = useSocialAccess()
+  const [menuMode, setMenuMode] = useState<'hover' | 'pinned'>()
+  const menuOpen = menuMode !== undefined
+  const closeMenu = () => setMenuMode(undefined)
   const [menuError, setMenuError] = useState('')
   const [dialogKind, setDialogKind] = useState<QuickAddDialogKind>()
   const [dialogBusy, setDialogBusy] = useState(false)
   const anchorRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const restoreCallFocus = useRef(false)
+  useEffect(() => {
+    if (dialogKind === undefined && restoreCallFocus.current) {
+      restoreCallFocus.current = false
+      triggerRef.current?.focus({ preventScroll: true })
+    }
+  }, [dialogKind])
+
   const notificationRevisionRef = useRef(notificationActivationRevision)
   const pendingNotificationDismissRef = useRef(false)
   const blockingOverlayOpen = menuOpen || dialogKind !== undefined
+
 
   useLayoutEffect(() => {
     onBlockingOverlayChange?.(blockingOverlayOpen)
@@ -146,7 +156,7 @@ export function ArkmeQuickAddButton({
     if (notificationRevisionRef.current === notificationActivationRevision) return
     notificationRevisionRef.current = notificationActivationRevision
     pendingNotificationDismissRef.current = true
-    setMenuOpen(false)
+    closeMenu()
     if (!dialogBusy) {
       pendingNotificationDismissRef.current = false
       setDialogKind(undefined)
@@ -158,57 +168,49 @@ export function ArkmeQuickAddButton({
     setDialogKind(undefined)
   }, [dialogBusy])
 
-  useEffect(() => {
-    if (!menuOpen || typeof document === 'undefined') return
-    const closeFromOutside = (event: PointerEvent | MouseEvent) => {
-      if (anchorRef.current !== null && !anchorRef.current.contains(event.target as Node)) setMenuOpen(false)
-    }
-    const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        event.stopPropagation()
-        setMenuOpen(false)
-        triggerRef.current?.focus()
-      }
-    }
-    document.addEventListener('pointerdown', closeFromOutside, true)
-    document.addEventListener('mousedown', closeFromOutside, true)
-    document.addEventListener('keydown', closeFromKeyboard, true)
-    const stopFrames = watchFrameMenuDismissal(document, () => setMenuOpen(false), closeFromKeyboard)
-    return () => {
-      stopFrames()
-      document.removeEventListener('pointerdown', closeFromOutside, true)
-      document.removeEventListener('mousedown', closeFromOutside, true)
-      document.removeEventListener('keydown', closeFromKeyboard, true)
-    }
-  }, [menuOpen])
 
   const chooseDialog = (kind: QuickAddDialogKind) => {
-    setMenuOpen(false)
+    closeMenu()
     setDialogBusy(false)
     setDialogKind(kind)
   }
 
-  return <div ref={anchorRef} style={style.anchor}>
-    <button
-      ref={triggerRef} type="button" aria-label={onNewDshSession ? '新建 DSH 会话、添加联系人、群聊或 Bot' : '添加联系人、群聊或 Bot'} title="添加"
-      aria-haspopup="menu" aria-expanded={menuOpen}
-      style={style.trigger}
-      onClick={() => { setMenuError(''); setMenuOpen(open => !open) }}
-    >＋</button>
-    {menuOpen && <ArkmeQuickAddMenu
+  const openMenu = () => { setMenuError(''); setMenuMode(current => current ?? 'hover') }
+
+  const menu = <ArkmeQuickAddMenu
+      open={menuOpen} onClose={closeMenu}
+      hoverAnchor={menuMode === 'hover' ? triggerRef.current ?? undefined : undefined}
+      anchor={<button data-arkme-feedback="neutral"
+        ref={triggerRef} type="button" aria-label={socialAllowed
+          ? onNewDshSession ? '新建 DSH 会话、添加联系人、群聊、发起通话或添加 Bot' : '添加联系人、群聊、发起通话或添加 Bot'
+          : onNewDshSession ? '新建 DSH 会话或添加 Bot' : '添加 Bot'} title={tr("添加")}
+        aria-haspopup="menu" aria-expanded={menuOpen} style={style.trigger}
+        // A click pins an already-hovered menu as well as opening a closed one.
+        // Removing hoverAnchor also cancels any pending hover-close timer.
+        // Re-entering the trigger must never demote a pinned menu to hover mode.
+        onPointerEnter={event => { if (event?.pointerType !== 'touch') openMenu() }}
+        onClick={() => { setMenuError(''); setMenuMode('pinned') }}
+      ><IconPlusOutline16 size={20} aria-hidden /></button>}
       error={menuError}
       onNewDshSession={onNewDshSession === undefined ? undefined : () => {
-        try { onNewDshSession(); setMenuError(''); setMenuOpen(false) }
+        try { onNewDshSession(); setMenuError(''); closeMenu() }
         catch (error) { setMenuError(error instanceof Error ? error.message : '暂时无法新建 DSH 会话，请稍后再试') }
       }}
       onContactAdd={() => {
-        setMenuOpen(false)
+        closeMenu()
         onContactAdd()
       }}
       onCreateGroup={() => { chooseDialog('group') }}
+      onStartCall={() => { chooseDialog('call') }}
       onAddBot={() => { chooseDialog('bot') }}
-    />}
+    />
+  return <div ref={anchorRef} style={style.anchor}>
+    {menu}
+    {dialogKind === 'call' && <ArkmeCallSurface presentation="dialog" initialPickerOpen onClose={() => {
+      pendingNotificationDismissRef.current = false
+      restoreCallFocus.current = true
+      setDialogKind(undefined)
+    }} />}
     {dialogKind === 'group' && <ArkmeGroupCreateDialog
       onClose={() => {
         pendingNotificationDismissRef.current = false
@@ -237,6 +239,7 @@ function ArkmeGroupCreateDialog({ onClose, onSourceCreated, onBusyChange }: {
   onSourceCreated(source: ArkmeSourceItem): void | Promise<void>
   onBusyChange?(busy: boolean): void
 }) {
+  useArkmeLocale()
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -279,11 +282,10 @@ function ArkmeGroupCreateDialog({ onClose, onSourceCreated, onBusyChange }: {
   >
     <div role="dialog" aria-modal="true" aria-labelledby="arkme-quick-add-title" style={style.dialog}>
       <div style={style.dialogHeader}>
-        <h2 id="arkme-quick-add-title" style={style.heading}>创建群聊</h2>
-        <button type="button" style={style.close} aria-label="关闭" disabled={busy} onClick={onClose}>×</button>
+        <h2 id="arkme-quick-add-title" style={style.heading}>{tr("创建群聊")}</h2>
+        <button data-arkme-feedback="neutral" type="button" style={style.close} aria-label={tr("关闭")} disabled={busy} onClick={onClose}>×</button>
       </div>
-      <label style={style.label}>群聊名称
-        <input
+      <label style={style.label}>{tr("群聊名称")}<input
           ref={firstInput} style={style.input} value={name} disabled={busy}
           maxLength={80}
           onChange={event => { setName(event.target.value) }}
@@ -292,11 +294,11 @@ function ArkmeGroupCreateDialog({ onClose, onSourceCreated, onBusyChange }: {
       </label>
       {error !== '' && <div role="alert" style={style.error}>{error}</div>}
       <div style={style.actions}>
-        <button type="button" style={style.button} disabled={busy} onClick={onClose}>取消</button>
-        <button
+        <button data-arkme-feedback="neutral" type="button" style={style.button} disabled={busy} onClick={onClose}>{tr("取消")}</button>
+        <button data-arkme-feedback="primary"
           type="button" style={{ ...style.button, ...style.primary }} disabled={busy || name.trim() === ''}
           onClick={() => { void submit() }}
-        >{busy ? '处理中…' : '确认'}</button>
+        >{busy ? tr("处理中…") : tr("确认")}</button>
       </div>
     </div>
   </div>

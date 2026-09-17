@@ -45,6 +45,19 @@ function htmlWithGraph(
 }
 
 describe('core-only DeepSeek Harness iframe route', () => {
+  it('advertises optional selection without adding it to native boot dependencies', async () => {
+    const full = graph()
+    const response = responseDouble()
+    await createHarnessEmbedRouteHandler({
+      getGraph: () => full, installedPackageNames: () => [], selectionClientRevision: 'abcd1234',
+      readRootHtml: async () => htmlWithGraph(full),
+    })({ method: 'GET' } as IncomingMessage, response.value)
+    expect(response.status()).toBe(200)
+    expect(response.body()).toContain('<meta name="arkme-native-selection" content="/arkme-self/harness-native-selection-client.js?rev=abcd1234">')
+    const projected = projectHarnessBootGraph(full, [])
+    expect(response.body()).toContain(bootAssignment(projected, 'dsh-v0.1.1-rc.2'))
+    expect(projected.entries.some(entry => entry.id.includes('native-selection'))).toBe(false)
+  })
   it('loads the account-aware settings contribution only with the native sidebar, preserving boot batches', async () => {
     const full = graph()
     const sidebarClient = { id: '@senguoyun/dsh-arkme/harness-sidebar', url: '/sidebar-client.js', rev: 'sidebar' }

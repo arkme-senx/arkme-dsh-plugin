@@ -47,14 +47,14 @@ it('loads balance only on opening, shows the blue recharge entry, and opens exis
   await render()
   expect(mocks.callArkme).not.toHaveBeenCalled()
   await click('DeepSeek-V4-Flash')
-  expect(host.textContent).toContain('Arkme · ¥123.45')
+  expect(host.textContent).toContain('Arkme · 12,345 积分')
   expect(host.textContent).not.toContain('余额计费')
   expect(button('去充值').closest('.arkme-model-balance-actions')).not.toBeNull()
   expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'billing.quota')).toHaveLength(1)
   await click('去充值')
   expect(directory.select).not.toHaveBeenCalled()
   expect(host.querySelector('[role="menu"]')).toBeNull()
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('当前余额¥123.45')
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('可用积分12,345 积分')
   expect(mocks.callArkme).toHaveBeenCalledWith('billing.products')
   expect(document.activeElement?.getAttribute('aria-label')).toBe('关闭充值弹窗')
   await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
@@ -76,8 +76,8 @@ it('uses the shared model owner for selection and advertised reasoning effort; E
 it('keeps recharge usable on quota failure, retries quota, and retains the selected model on selection failure', async () => {
   mocks.callArkme.mockRejectedValueOnce(new Error('offline'))
   await render(); await click('DeepSeek-V4-Flash')
-  expect(host.textContent).toContain('余额读取失败'); expect(button('去充值')).toBeDefined()
-  await click('重试'); expect(host.textContent).toContain('¥123.45')
+  expect(host.textContent).toContain('积分读取失败'); expect(button('去充值')).toBeDefined()
+  await click('重试'); expect(host.textContent).toContain('12,345 积分')
   directory.select = vi.fn(async () => {
     state = { ...state, error: '选择失败', status: 'error' }; listeners.forEach(listener => listener()); throw new Error('failed')
   })
@@ -94,4 +94,31 @@ it('does not load unavailable sessions, honors locked state, and cancels quota w
   const signal = mocks.callArkme.mock.calls.find(call => call[0] === 'billing.quota')?.[2] as AbortSignal
   await act(async () => root.unmount()); root = createRoot(host)
   expect(signal.aborted).toBe(true); expect(listeners.size).toBe(0)
+})
+
+it('consolidates model prices into one keyboard-accessible disclosure without selecting a model',async()=>{
+ const group=state.groups.find(group=>group.id==='arkme-managed')!
+ group.models[0]!.description='输入 0.2075 积分，输出 0.83 积分。'
+ state = { ...state, groups: state.groups.map(provider => provider === group ? { ...group, models: [...group.models,
+   { id: 'flash', name: 'DeepSeek V4 Flash', description: '输入 0.32 积分，输出 1.28 积分' },
+ ] } : provider) }
+ await render(); await click('DeepSeek-V4-Flash')
+ expect(host.querySelectorAll('details')).toHaveLength(1)
+ expect(host.querySelector('details')?.open).toBe(false)
+ const summary=host.querySelector('details summary')!
+ expect(summary.textContent).toBe('按用量扣积分 · 计费说明')
+ await act(async()=>{button('DeepSeek V4 Flash').dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}))})
+ expect(document.activeElement).toBe(summary)
+ await act(async()=>{summary.dispatchEvent(new MouseEvent('click',{bubbles:true}))})
+ expect(directory.select).not.toHaveBeenCalled()
+ expect(host.querySelector('details')?.textContent).toContain('0.2075')
+ expect(host.querySelector('details')?.textContent).toContain('DeepSeek V4 Pro')
+ expect(host.querySelector('details')?.textContent).toContain('DeepSeek V4 Flash')
+ expect(host.querySelector('details')?.textContent).toContain('1.28')
+ expect(host.querySelector('[role="menu"]')).not.toBeNull()
+})
+
+it('omits pricing when no managed model advertises it', async () => {
+ await render(); await click('DeepSeek-V4-Flash')
+ expect(host.querySelector('details')).toBeNull()
 })

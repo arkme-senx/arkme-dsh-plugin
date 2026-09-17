@@ -21,6 +21,18 @@ export class OutgoingCallUiController {
   private listeners = new Set<() => void>()
   private settledListeners = new Set<(event: OutgoingCallUiSettledEvent) => void>()
   private snapshot: OutgoingCallUiSnapshot = {}
+  private receiver: (() => Promise<void>) | undefined
+
+  registerReceiver(receiver: () => Promise<void>): (() => void) | undefined {
+    if (this.receiver !== undefined) return undefined
+    this.receiver = receiver
+    return () => { if (this.receiver === receiver) this.receiver = undefined }
+  }
+
+  async ensureReceiver(): Promise<void> {
+    if (this.receiver === undefined) throw new Error('通话服务尚未就绪，请保持桌面端打开后重试')
+    await this.receiver()
+  }
 
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)

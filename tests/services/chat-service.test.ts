@@ -138,6 +138,9 @@ describe('ChatService', () => {
       makeItem('bot-b', { sender_actor_kind: 2, sender_bot_uid: 'b', sender_user_id: 9002 }),
       makeItem('removed-bot', { sender_actor_kind: 2, sender_bot_uid: 'removed', sender_user_id: 9003, display_name_snapshot: '历史机器人' }),
       { ...makeItem('human', { sender_actor_kind: 1, sender_user_id: 7, sender_bot_uid: 'a', display_name_snapshot: '群内昵称' }),
+        record: { status: 1, payload: { text_content: '@助手甲 hi', mention_metadata: { bot_mentions: [
+          { bot_uid: 'a', start_index: 0, length: 4, display_name_snapshot: '助手甲' },
+        ] } } },
         extension_parent_preview: makeItem('parent-outside-page', { sender_actor_kind: 2, sender_bot_uid: 'b', sender_user_id: 9002 }) },
       makeItem('incomplete-bot', { sender_actor_kind: 2, sender_user_id: 42 }),
       ...['bot_outbound_253_legacy_outbound-a', 'bot_reply_253_legacy_source__grp_group',
@@ -171,6 +174,13 @@ describe('ChatService', () => {
         : (await chat.readSource('source', { cursor: path === 'tail' ? { afterSequence: 1 } : { beforeSequence: 1 } })).items
     expect(items.map(item => item.senderName)).toEqual(['助手甲', '助手乙', 'Bot', '群内昵称', 'Bot', '历史助手', '历史助手', '历史助手', '旧助手', '群内助手'])
     expect(items[0]).toMatchObject({ isMe: false, avatarRef: expect.stringMatching(/^arkme-bot-image-v1\./) })
+    const botKey = (botId: string) => `arkme-bot-directory-v1.${createHmac('sha256', 'fixture-signing-key')
+      .update(`arkme-bot-directory-v1:42:${botId}`).digest('base64url')}`
+    expect(items[0]?.senderBotDirectoryKey).toBe(botKey('a'))
+    expect(items[1]?.senderBotDirectoryKey).toBe(botKey('b'))
+    expect(items[3]?.senderBotDirectoryKey).toBeUndefined()
+    expect(items[3]?.mentions?.[0]).toMatchObject({ kind: 'bot', botDirectoryKey: botKey('a') })
+    expect(items[4]?.senderBotDirectoryKey).toBeUndefined()
     expect(await bot.openBotImageRef(items[0]!.avatarRef!, session.userId)).toMatchObject({ sourceUrl: 'https://images.test/a.png' })
     await expect(bot.openBotImageRef(items[0]!.avatarRef!, 99)).rejects.toThrow('Bot 头像引用无效或已过期')
     await expect(bot.openBotImageRef(items[0]!.avatarRef!, session.userId)).resolves.toMatchObject({ sourceUrl: 'https://images.test/a.png' })
@@ -260,7 +270,7 @@ describe('ChatService', () => {
     expect((await chat.chatTimelineItems({ items: [raw] }, session, 'chat', kind))[0]).toMatchObject(expected)
   })
 
-  it.each(['Audio', 'Video'])('projects cancelled %s records on both page and realtime paths', async mediaType => {
+  it.each(['Audio', 'Video'])('projects cancelled and answered %s summaries on both page and realtime paths', async mediaType => {
     const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
     const raw = { relation: { record_uid: 'r', sender_user_id: 42 }, record: { status: 1,
       payload: { template_kind: 5, content_payload: { call_record: { room_id: 'private-call-room', media_type: mediaType, call_result: 'Cancel', caller_id: 42 } } } } }
@@ -272,9 +282,16 @@ describe('ChatService', () => {
       { sealProfileImageRef: async () => 'avatar', publicProfilesByUserIds: async () => new Map() } as never,
       media, {} as never, {} as never, { currentUserAgentSourceFallback: () => undefined } as never,
       { timelineAiPolish: () => undefined } as never, {} as never)
-    const expected = { callRecord: { mediaType: mediaType.toLowerCase(), text: '已取消', callRef: expect.stringMatching(/^arkme-call-v1\./), direction: 'outgoing' } }
+    const expected = { conversationPreview: `${mediaType === 'Video' ? '视频' : '语音'}通话 已取消`,
+      callRecord: { mediaType: mediaType.toLowerCase(), text: '已取消', callRef: expect.stringMatching(/^arkme-call-v1\./), direction: 'outgoing' } }
     expect((await chat.readSource('source', { cursor: { beforeSequence: 1 } })).items[0]).toMatchObject(expected)
     expect((await chat.chatTimelineItems({ items: [raw] }, session, 'chat', 'private_chat'))[0]).toMatchObject(expected)
+    Object.assign(raw.record.payload.content_payload.call_record, {
+      call_result: 'NormalEnd', duration_sec: mediaType === 'Video' ? 59 : 12,
+    })
+    const answered = mediaType === 'Video' ? '视频通话 已接听 00:59' : '语音通话 已接听 00:12'
+    expect((await chat.readSource('source', { cursor: { beforeSequence: 1 } })).items[0]?.conversationPreview).toBe(answered)
+    expect((await chat.chatTimelineItems({ items: [raw] }, session, 'chat', 'private_chat'))[0]?.conversationPreview).toBe(answered)
   })
 
   it.each(['send_to_self', 'topic'] as const)('preserves Markdown when forwarding to %s', async targetKind => {
@@ -290,7 +307,7 @@ describe('ChatService', () => {
       ownerRef: ref === 'source' ? 'chat-1' : 'target', displayName: '测试',
     })) }
     const chat = new ChatService(runtime as never, source as never, {} as never, {} as never,
-      {} as never, {} as never, {} as never, {} as never,
+      { createPersonalRecord: runtime.authenticatedPost } as never, {} as never, {} as never, {} as never,
       { invalidateRecordProjection: vi.fn(async () => {}) } as never)
     const actionRef = snapshotActionRef({ textContent: '    code\n', textFormat: 'markdown' })
     await chat.forwardSourceMessages('source', [actionRef], { targetSourceRef: 'target' })
@@ -663,6 +680,7 @@ describe('ChatService', () => {
       }),
     }
     const record = {
+      createPersonalRecord: runtime.authenticatedPost,
       createTextForConversation: vi.fn(async (recordUid: string) => ({ recordUid, status: 1, localState: 'synced' })),
     }
     const realtime = {
@@ -682,8 +700,10 @@ describe('ChatService', () => {
         )
       }),
     }
+    const senderSnapshot = { avatar: 'file_asset://historical_avatar_42', nickname: '当时的昵称' }
+    const profile = { recordSenderSnapshot: vi.fn(async () => senderSnapshot) }
     chat = new ChatService(
-      runtime as never, source as never, {} as never, {} as never, record as never,
+      runtime as never, source as never, profile as never, {} as never, record as never,
       {} as never, {} as never, aiPolish as never, realtime,
     )
 
@@ -729,6 +749,12 @@ describe('ChatService', () => {
           .rejects.toMatchObject({ code: 'message-action-ref-invalid' })
       }
     }
+    const personalCreates = runtime.authenticatedPost.mock.calls.filter(([path]) =>
+      path === '/api/v1/records/create' || path === '/api/v1/topics/records/create')
+    expect(personalCreates).toHaveLength(4)
+    for (const [, body] of personalCreates) {
+      expect(body).toMatchObject({ sender_snapshot: senderSnapshot })
+    }
   })
 
   it('never turns a confirmed send into a failed promise when action-ref signing fails', async () => {
@@ -743,6 +769,7 @@ describe('ChatService', () => {
       invalidateSourceListCache: vi.fn(),
     }
     const record = {
+      createPersonalRecord: runtime.authenticatedPost,
       createTextForConversation: vi.fn(async () => ({ recordUid: 'record-confirmed', status: 1, localState: 'synced' })),
     }
     const chat = new ChatService(
@@ -769,6 +796,7 @@ describe('ChatService', () => {
       invalidateSourceListCache: vi.fn(),
     }
     const record = {
+      createPersonalRecord: runtime.authenticatedPost,
       createTextForConversation: vi.fn(async () => ({
         recordUid: 'record-failed', status: 0, localState: 'failed', error: '未写入',
       })),
@@ -961,6 +989,7 @@ describe('ChatService', () => {
       invalidateSourceListCache: vi.fn(),
     }
     const record = {
+      createPersonalRecord: runtime.authenticatedPost,
       createTextForConversation: vi.fn(async (recordUid: string) => ({ recordUid, status: 1, localState: 'synced' })),
     }
     const realtime = { invalidateRecordProjection: vi.fn(async () => undefined) }
@@ -1802,8 +1831,9 @@ describe('ChatService', () => {
       })),
       recordMediaUnavailable: () => false, richContentBlocks: vi.fn((_raw: unknown, _viewerUserId: number, displayItems: unknown[] = []) => displayItems.length === 0 ? [] : contentBlocks),
     }
+    const profile = { sealProfileImageRef: vi.fn(async () => 'current-extension-avatar') }
     const chat = new ChatService(
-      runtime as never, source as never, {} as never, media as never, {} as never,
+      runtime as never, source as never, profile as never, media as never, {} as never,
       {} as never, {} as never, {} as never, {} as never,
     )
 
@@ -1815,9 +1845,11 @@ describe('ChatService', () => {
       extensions: [expect.objectContaining({
         recordUid: 'extension-record-1', textContent: '补充信息',
         parentRecordUid: 'record-snapshot-1', recordOwnerUserId: 17, level: 2,
-        contentBlocks,
+        contentBlocks, senderMemberRef: expect.any(String), senderIsMe: false,
+        senderAvatarUrl: 'current-extension-avatar',
       })],
     })
+    expect(profile.sealProfileImageRef).toHaveBeenCalledWith(42, 7)
     expect(media.hydrateRecordMediaPage).toHaveBeenCalledOnce()
     expect(media.richContentBlocks).toHaveBeenCalledWith(
       expect.objectContaining({ record_uid: 'extension-record-1' }),
@@ -2003,7 +2035,7 @@ describe('ChatService', () => {
     const source = { openSourceRef: vi.fn(async () => ({
       version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
     })) }
-    const profile = { refreshProfile: vi.fn(async () => ({ profile: {
+    const profile = { sealProfileImageRef: vi.fn(async () => 'current-extension-avatar'), refreshProfile: vi.fn(async () => ({ profile: {
       userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
       createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
     } })) }
@@ -2329,7 +2361,7 @@ describe('ChatService', () => {
       arkmeId: 'doge', accountType: 1, createdAt: 1,
       bindings: { apple: false, wechat: true, google: false }, contact: { phoneMasked: '138****0000' },
     } })) }
-    const record = { createExtensionForConversation: vi.fn() }
+    const record = { createExtensionForConversation: vi.fn(), createPersonalRecord: runtime.authenticatedPost }
     const realtime = { nextChatClientRevision: vi.fn(() => 8), emitChatClientEvent: vi.fn() }
     const chat = new ChatService(
       runtime as never, source as never, profile as never, {} as never, record as never,
@@ -2501,6 +2533,93 @@ describe('ChatService', () => {
     }])
   })
 
+  it.each(['send_to_self', 'topic'] as const)('loads %s note replies from the record-owned tree, not world comments', async kind => {
+    const ownerRef = kind === 'topic' ? 'topic-a' : 'self-a'
+    const authenticatedPost = vi.fn(async () => ({
+      record_uid: 'opened-note', root_record_uid: 'root-note',
+      tree: { record_uid: 'root-note', children: [
+        { record_uid: 'opened-note', children: [
+          { record_uid: 'reply-1', children: [{ record_uid: 'reply-2', children: [] }] },
+        ] },
+        { record_uid: 'other-note', children: [] },
+      ] },
+      edges: [
+        { parent_record_uid: 'opened-note', child_record_uid: 'reply-1', status: 1, create_at: 1_787_735_200_000 },
+        { parent_record_uid: 'reply-1', child_record_uid: 'reply-2', status: 1, create_at: 1_787_735_300_000 },
+      ],
+      records: [
+        { record_uid: 'reply-1', owner_user_id: 42, content_access_state: 1, status: 1,
+          nickname: '写作者', text_content: '第一条回复', send_at: 1_787_735_200_000 },
+        { record_uid: 'reply-2', content_access_state: 2, status: 1 },
+        { record_uid: 'other-note', content_access_state: 1, status: 1, text_content: '无关内容' },
+      ],
+    }))
+    const authenticatedWorldPost = vi.fn(async () => { throw new Error('personal replies must not use public comments') })
+    const runtime = {
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      authenticatedPost, authenticatedWorldPost,
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind, ownerRef })) }
+    const media = { hydrateRecordMediaPage: vi.fn(async () => ({
+      displayItemsByRecordUid: new Map<string, unknown[]>(), unavailableRecordUids: new Set<string>(),
+    })) }
+    const record = { recordTimelineItemFromRaw: vi.fn((raw: { record_uid: string; nickname: string; text_content: string; send_at: number }) => ({
+      itemUid: raw.record_uid, senderName: raw.nickname, title: '', textContent: raw.text_content,
+      senderNameSnapshot: true, avatarRef: 'file_asset://historical_avatar_42',
+      sendAtMillis: raw.send_at, templateKind: 1, displayKind: 0, contentBlocks: [],
+    })) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, media as never,
+      record as never, {} as never, {} as never, {} as never, {} as never)
+
+    const result = await chat.sourceMessageExtensionContext('opaque-source', snapshotActionRef({
+      sourceKind: 'record', sourceOwnerRef: ownerRef, chatSessionUid: '', relationUid: '',
+      recordUid: 'opened-note',
+    }))
+    expect(authenticatedPost).toHaveBeenCalledWith('/api/v1/records/extensions/tree',
+      { record_uid: 'opened-note' }, expect.any(Object), undefined, { lane: 'interactive-read', bypassCache: true })
+    expect(authenticatedWorldPost).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ parentRecordUid: 'opened-note', extensionCount: 2,
+      extensions: [
+        { recordUid: 'reply-2', parentRecordUid: 'reply-1', level: 3, textContent: '该延展内容受隐私保护' },
+        { recordUid: 'reply-1', parentRecordUid: 'opened-note', level: 2, textContent: '第一条回复',
+          senderNameSnapshot: true, senderAvatarUrl: 'file_asset://historical_avatar_42' },
+      ],
+    })
+    expect(JSON.stringify(result)).not.toContain('无关内容')
+    expect(media.hydrateRecordMediaPage).toHaveBeenCalledOnce()
+    expect(record.recordTimelineItemFromRaw).toHaveBeenCalledOnce()
+  })
+
+  it.each(['send_to_self', 'default_category', 'topic'] as const)('hydrates the same cross-topic source and related locator from %s', async kind => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const ownerRef = kind === 'topic' ? 'topic-new' : 'self'
+    const parent = { record_uid: 'original', owner_user_id: 42, status: 1, content_access_state: 1,
+      nickname: '作者', text_content: '未分类中的原消息', send_at: 1000 }
+    const runtime = { requireSession: vi.fn(async () => session),
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      authenticatedPost: vi.fn(async () => ({ record_uid: 'moved', parent_record_uid: 'original', root_record_uid: 'original',
+        edges: [], tree: { record_uid: 'moved', children: [] }, records: [parent] })) }
+    const source = { openSourceRef: vi.fn(async () => ({ kind, ownerRef })) }
+    const media = { hydrateRecordMediaPage: vi.fn(async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() })) }
+    const record = { recordTimelineItemFromRaw: vi.fn(() => ({ itemUid: 'original', senderName: '作者', selfRole: { roleId: 'parent-role', name: '角色作者' }, title: '',
+      textContent: '未分类中的原消息', sendAtMillis: 1000, contentBlocks: [] })) }
+    const privacy = { lockedRecordUids: vi.fn(async () => new Set()) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, media as never, record as never,
+      {} as never, {} as never, {} as never, {} as never, privacy as never)
+    const ref = snapshotActionRef({ sourceKind: 'record', sourceOwnerRef: ownerRef, recordUid: 'moved', chatSessionUid: '', relationUid: '' })
+    const detail = await chat.sourceMessageExtensionContext('source', ref)
+    const preview = await chat.sourceMessageExtensionParent('source', ref)
+    expect(detail).toMatchObject({ parentRecordUid: 'moved', extensionCount: 0, extensions: [],
+      extensionParent: { itemUid: 'original', senderName: '角色作者', textContent: '未分类中的原消息', sendAtMillis: 1000, recordOwnerUserId: 42 } })
+    expect(preview.extensionParent).toEqual(detail.extensionParent)
+    expect(await chat.relatedQuickNoteLocator('source', ref)).toMatchObject({ contextType: 'record', recordUid: 'moved', recordOwnerUserId: 42, chatSessionUid: '' })
+    privacy.lockedRecordUids.mockResolvedValue(new Set(['original']))
+    const locked = await chat.sourceMessageExtensionParent('source', ref)
+    expect(locked.extensionParent?.textContent).toBe('该延展源暂不可用')
+    expect(JSON.stringify(locked)).not.toContain('未分类中的原消息')
+  })
+
   it('falls back to the copy-link source anchor when the resolve item does not expose a public record uid', async () => {
     const worldPostBodies: Record<string, unknown>[] = []
     const runtime = {
@@ -2669,6 +2788,7 @@ describe('ChatService', () => {
       })),
     }
     const record = {
+      createPersonalRecord: runtime.authenticatedPost,
       createTextForConversation: vi.fn(async (recordUid: string) => ({ recordUid, status: 1, localState: 'synced' })),
     }
     const realtime = {
@@ -3512,4 +3632,133 @@ describe('ChatService', () => {
     })
     expect(remarkLookup).toHaveBeenCalledWith([7], {})
   })
+})
+
+it('preserves long article identity and remaps all forwarded image nodes to snapshot-local aliases', async () => {
+  const runtime = {config} as ServiceRuntime
+  const media = new MediaService(runtime, {} as never, {} as never, {} as never)
+  const chat = new ChatService(runtime, {} as never, {} as never, media, {} as never, {} as never, {} as never, {} as never, {} as never)
+  const files = Array.from({length:100}, (_, i) => ({file_asset_uid:`secret-${i}`,type:1,name:`${i}.png`,mime_type:'image/png',preview_url:`https://jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com/${i}.png`}))
+  const result = await chat.chatForwardRecordsPreview({content_payload:{render_kind:'forward_records',items:[{display_kind:1,text_format:'markdown',title:'article',text:files.map(f => `![x](arkme-asset:${f.file_asset_uid})`).join('\n'),files}]}},42,1)
+  const item = result!.items[0]!
+  expect(item.displayKind).toBe(1)
+  expect(item.contentBlocks).toHaveLength(100)
+  expect(item.textContent).toContain('![x](arkme-asset:media-99)')
+  expect(item.contentBlocks![99]!.fileAssetUid).toBe('media-99')
+  expect(item.truncated).toBeUndefined()
+  expect(JSON.stringify(item)).not.toContain('secret-')
+})
+
+it('confirms article delivery only for the exact chat relation and record owner', async () => {
+  let relationUid='other-relation'
+  const runtime={requireSession:async()=>({userId:42}),authenticatedChatPost:async()=>({chat_session_uid:'chat',anchor:{relation:{rel_uid:relationUid,record_uid:'article',record_owner_user_id:42,seq:9},record:{status:1}}})}
+  const chat=new ChatService(runtime as never,{openSourceRef:async()=>({kind:'private_chat',ownerRef:'chat'})} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+  const input={title:'article',textContent:'text',recordUid:'article',relationUid:'expected-relation'}
+  await expect(chat.confirmLongArticlePublication('source',input,42)).rejects.toMatchObject({code:'long-article-outcome-unknown'})
+  relationUid='expected-relation'
+  await expect(chat.confirmLongArticlePublication('source',input,42)).resolves.toMatchObject({itemUid:'article',sequence:9,localState:'synced'})
+})
+
+
+describe('received Markdown long article detail', () => {
+  function fixture(kind = 'private_chat') {
+    const raw = { relation: { rel_uid: 'rel-snapshot-1' }, record: { payload: {
+      record_uid: 'record-snapshot-1', owner_user_id: 99, creator_user_id: 99,
+      template_kind: 2, display_kind: 1, title: '对方长文',
+      text_content: '# 标题\n![图片](arkme-asset:image-1)',
+      content_payload: { text_format: 'markdown', media_refs: [{ file_asset_uid: 'image-1' }] },
+      version: 3, record_duration_millis: 100, edit_duration_millis: 20,
+    } } }
+    const runtime = {
+      stateStore: { uniqueCode: async () => 'snapshot-test-signing-key' },
+      requireSession: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }),
+      authenticatedChatPost: vi.fn(async () => ({ item: raw })),
+      authenticatedPost: vi.fn(),
+    }
+    const media = { richContentBlocks: vi.fn(() => [{ kind: 'image', fileAssetUid: 'image-1', mediaRef: 'controlled' }]) }
+    const source = { openSourceRef: async () => ({ kind, ownerRef: 'chat-1' }) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+    const actionRef = snapshotActionRef({ senderUserId: 99, recordOwnerUserId: 99, displayKind: 1 })
+    return { chat, runtime, raw, actionRef, media }
+  }
+  it.each(['private_chat', 'group_chat'])('reads other authors through the authorized %s relation', async kind => {
+    const x = fixture(kind)
+    await expect(x.chat.longArticleDetail('source', 'record-snapshot-1', undefined, x.actionRef)).resolves.toMatchObject({
+      title: '对方长文', textFormat: 'markdown', editable: false, version: 3, thinkingDurationMillis: 120,
+      contentBlocks: [{ fileAssetUid: 'image-1', mediaRef: 'controlled' }],
+    })
+    expect(x.runtime.authenticatedChatPost).toHaveBeenCalledWith('/api/v1/chats/records/detail', {
+      chat_session_uid: 'chat-1', record_uid: 'record-snapshot-1', record_owner_user_id: 99, rel_uid: 'rel-snapshot-1', seq: 9,
+    }, expect.anything(), undefined)
+    expect(x.runtime.authenticatedPost).not.toHaveBeenCalled()
+    expect(x.media.richContentBlocks).toHaveBeenCalledWith(x.raw, 42)
+  })
+  it('rejects a different record before requesting the backend', async () => {
+    const x = fixture()
+    await expect(x.chat.longArticleDetail('source', 'other', undefined, x.actionRef)).rejects.toMatchObject({ code: 'long-article-target-invalid' })
+    expect(x.runtime.authenticatedChatPost).not.toHaveBeenCalled()
+  })
+  it('rejects a response belonging to a different record', async () => {
+    const x = fixture(); x.raw.record.payload.record_uid = 'other'
+    await expect(x.chat.longArticleDetail('source', 'record-snapshot-1', undefined, x.actionRef)).rejects.toMatchObject({ code: 'long-article-detail-unavailable' })
+  })
+  it('preserves server denial and never falls back to an owner read', async () => {
+    const x = fixture(); x.runtime.authenticatedChatPost.mockRejectedValueOnce(new Error('not authorized'))
+    await expect(x.chat.longArticleDetail('source', 'record-snapshot-1', undefined, x.actionRef)).rejects.toThrow('not authorized')
+    expect(x.runtime.authenticatedPost).not.toHaveBeenCalled()
+  })
+})
+
+
+it('returns the hydrated original attachment snapshot only when requested for Ask DSH', async () => {
+  const raw = { record_uid: 'record-snapshot-1', title: '完整标题', text_content: '完整正文', media_refs: [{ file_asset_uid: 'file-1' }] }
+  const runtime = {
+    stateStore: { uniqueCode: async () => 'snapshot-test-signing-key' },
+    requireSession: async () => ({ userId: 42 }),
+    authenticatedChatPost: async () => ({ item: { record: raw } }),
+    authenticatedPost: vi.fn(async (path: string) => {
+      if (path.endsWith('/context/get')) throw new Error('Ask DSH must not query location')
+      return { record_core: raw }
+    }),
+  }
+  const block = { kind: 'file', originalRef: 'original', fileName: '报告.pdf' }
+  const media = {
+    hydrateRecordSnapshotMediaPage: async () => [[{ file_asset_uid: 'file-1' }]],
+    richContentBlocks: () => [block], recordMediaUnavailable: () => false,
+  }
+  const chat = new ChatService(runtime as never, { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat-1' }) } as never,
+    { publicProfileSummariesByUserIds: async () => new Map([[42, { displayName: '本人昵称' }]]) } as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+  const result = await chat.messageSnapshotDetail('source', snapshotActionRef(), { includeAttachments: true })
+  expect(runtime.authenticatedPost).toHaveBeenCalledTimes(1)
+  expect(runtime.authenticatedPost.mock.calls[0]![0]).toBe('/api/v1/records/detail')
+  expect(result).toMatchObject({ title: '完整标题', textContent: '完整正文', contentBlocks: [block], mediaUnavailable: false })
+})
+
+
+it.each(['private_chat', 'group_chat'])('exports received notes through authorized %s detail only', async kind => {
+  const raw = { relation: { rel_uid: 'rel-snapshot-1' }, record: { payload: {
+    record_uid: 'record-snapshot-1', owner_user_id: 99, text_content: '# 完整正文',
+    title: '他人快记', content_payload: { text_format: 'markdown' },
+  } } }
+  const runtime = {
+    stateStore: { uniqueCode: async () => 'snapshot-test-signing-key' }, requireSession: async () => ({ userId: 42 }),
+    authenticatedChatPost: vi.fn(async () => ({ item: raw })), authenticatedPost: vi.fn(),
+  }
+  const media = { hydrateRecordSnapshotMediaPage: vi.fn(async () => [[]]), richContentBlocks: () => [], recordMediaUnavailable: () => false }
+  const remarks = vi.fn(async () => { throw new Error('must reuse local names') })
+  const profiles = vi.fn(async () => { throw new Error('must reuse local names') })
+  const chat = new ChatService(runtime as never, { openSourceRef: async () => ({ kind, ownerRef: 'chat-1' }), privateRemarksByUserIds: remarks } as never,
+    { publicProfileSummariesByUserIds: profiles } as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+  const ref = snapshotActionRef({ senderUserId: 99, recordOwnerUserId: 99 })
+  await expect(chat.messageSnapshotDetail('source', ref, { includeAttachments: true })).resolves.toMatchObject({
+    itemUid: 'record-snapshot-1', title: '他人快记', textContent: '# 完整正文', textFormat: 'markdown', contentBlocks: [],
+  })
+  expect(runtime.authenticatedPost).not.toHaveBeenCalled()
+  expect(media.hydrateRecordSnapshotMediaPage).toHaveBeenCalledWith([raw], expect.anything(), {
+    chatSessionUid: 'chat-1', recordUid: 'record-snapshot-1', recordOwnerUserId: 99, relationUid: 'rel-snapshot-1',
+  }, undefined)
+  expect(remarks).not.toHaveBeenCalled()
+  expect(profiles).not.toHaveBeenCalled()
+  raw.record.payload.owner_user_id = 7
+  await expect(chat.messageSnapshotDetail('source', ref, { includeAttachments: true })).rejects.toMatchObject({ code: 'message-snapshot-detail-unavailable' })
 })

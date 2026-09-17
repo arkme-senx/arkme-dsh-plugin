@@ -1,5 +1,9 @@
+import type { ArkmeSessionCredentials } from '../keychain-store.js'
+import { NATIVE_FORWARD_MAX_MESSAGES, NATIVE_FORWARD_MAX_TEXT_BYTES, NATIVE_FORWARD_MAX_TOTAL_BYTES } from '../native-chat-selection-contract.js'
 import type {
   AgentMessageActionConversation,
+  MessageActionSource,
+  NativeMessageSnapshot,
   AgentMessageActionReference,
   ChatBotMessageActionReference,
   MessageActionBotRegistryPort,
@@ -175,6 +179,62 @@ export class MessageActionService {
     if (references.some(reference => reference.textContent.trim() === '')) {
       throw new ArkmePluginError('message-actions-source-unavailable', '所选消息暂不支持转发', false, 409)
     }
+    return await this.deliver(references, session, options)
+  }
+
+  async forwardNative(snapshot: unknown, expectedUserId: number, options: MessageActionForwardOptions): Promise<ArkmeSourceSendResult> {
+    const session = await this.gateway.requireSession()
+    if (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0 || session.userId !== expectedUserId) {
+      throw new ArkmePluginError('native-forward-account-changed', '账号已变化，请重新选择后转发', false, 409)
+    }
+    const references = this.nativeMessages(snapshot, session.userId)
+    return await this.deliver(references, session, options)
+  }
+
+  async copyLinkNative(snapshot: unknown, expectedUserId: number, signal?: AbortSignal): Promise<ArkmeMessageCopyLinkResult> {
+    const session = await this.gateway.requireSession()
+    if (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0 || session.userId !== expectedUserId) {
+      throw new ArkmePluginError('native-copy-link-account-changed', '账号已变化，请重新选择', false, 409)
+    }
+    const messages = this.nativeMessages(snapshot, session.userId)
+    if (messages.some(item => new TextEncoder().encode(item.sessionId).byteLength > 512 || new TextEncoder().encode(item.messageIdentity).byteLength > 1024)) {
+      throw new ArkmePluginError('native-selection-snapshot-invalid', '所选对话标识无效，请重新选择', false, 400)
+    }
+    if (messages.reduce((sum, item) => sum + new TextEncoder().encode(item.textContent).byteLength, 0) > 512 * 1024
+      || messages.some(item => [...item.textContent].length > 90_000)) {
+      throw new ArkmePluginError('native-copy-link-too-large', '所选内容过长，请减少消息后重试', false, 400)
+    }
+    return await this.gateway.createCopyLink(messages, session, signal)
+  }
+
+  private nativeMessages(snapshot: unknown, userId: number): NativeMessageSnapshot[] {
+    const invalid = () => new ArkmePluginError('native-selection-snapshot-invalid', '所选对话正文无效，请重新选择', false, 400)
+    if (!snapshot || typeof snapshot !== 'object') throw invalid()
+    const raw = snapshot as Record<string, unknown>
+    if (typeof raw.sessionId !== 'string' || !raw.sessionId.trim() || raw.sessionId.length > 512
+      || !Array.isArray(raw.messages) || raw.messages.length === 0 || raw.messages.length > NATIVE_FORWARD_MAX_MESSAGES) throw invalid()
+    const sessionId = raw.sessionId
+    let bytes = 0
+    const keys = new Set<string>()
+    let previous = -1
+    return raw.messages.map((value: unknown) => {
+      if (!value || typeof value !== 'object') throw invalid()
+      const item = value as Record<string, unknown>
+      if (typeof item.key !== 'string' || !item.key.trim() || item.key.length > 1024 || keys.has(item.key)
+        || (item.role !== 'user' && item.role !== 'assistant') || typeof item.text !== 'string' || !item.text.trim()
+        || typeof item.anchorSeq !== 'number' || !Number.isSafeInteger(item.anchorSeq) || item.anchorSeq <= previous
+        || typeof item.createdAtMillis !== 'number' || !Number.isSafeInteger(item.createdAtMillis) || item.createdAtMillis <= 0) throw invalid()
+      const size = new TextEncoder().encode(item.text).byteLength
+      bytes += size
+      if (size > NATIVE_FORWARD_MAX_TEXT_BYTES || bytes > NATIVE_FORWARD_MAX_TOTAL_BYTES) throw invalid()
+      keys.add(item.key); previous = item.anchorSeq
+      return { ownerKind: 'dsh_native', sessionId, messageIdentity: item.key, role: item.role,
+        textContent: item.text, createdAtMillis: item.createdAtMillis, sortOrdinal: item.anchorSeq,
+        senderUserId: item.role === 'user' ? userId : 0, senderName: item.role === 'user' ? '我' : 'DeepSeek Harness' }
+    })
+  }
+
+  private async deliver(references: readonly MessageActionSource[], session: ArkmeSessionCredentials, options: MessageActionForwardOptions): Promise<ArkmeSourceSendResult> {
     const targetSourceRef = options.targetSourceRef.trim()
     const requestId = options.requestId.trim()
     const recordUid = options.recordUid.trim()

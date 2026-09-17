@@ -1,3 +1,4 @@
+import { arkmeIntlLocale, tr } from './locale.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
 import type { ArkmeCallParticipant, ArkmeCallVideoPerspective } from '../types.js'
@@ -9,7 +10,7 @@ export function callVideoPerspectiveLabel(perspective: ArkmeCallVideoPerspective
   const namedView = (value: string | undefined): string => {
     const name = value?.trim() ?? ''
     if (!name || ['通话详情', '通话参与者', '对方'].includes(name)) return ''
-    return name.endsWith('视角') ? name : `${name}的视角`
+    return name.endsWith('视角') ? name : tr("{v0}的视角", { v0: name })
   }
   if (owner && namedView(owner.displayName)) return namedView(owner.displayName)
   if (perspective?.perspective === 'self') return '我的视角'
@@ -38,7 +39,7 @@ export function formatDuration(seconds: number): string {
 
 export function clockTime(millis: number): string {
   if (!Number.isFinite(millis) || millis <= 0) return ''
-  return new Date(millis).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return new Date(millis).toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 export function cleanAvatarRef(value: string | undefined): string | undefined {
@@ -50,7 +51,7 @@ export function CallAvatar({ name, avatarRef, assetUrl, size = 40 }: { name: str
   if (assetUrl !== undefined) return <span style={{
     width: size, height: size, flex: 'none', display: 'grid', placeItems: 'center', overflow: 'hidden',
     borderRadius: 999, background: arkmeTheme.layer2,
-  }} aria-label={`${name}头像`}>
+  }} aria-label={tr("{v0}头像", { v0: name })}>
     <img src={assetUrl} alt="" draggable={false} style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }} />
   </span>
   const normalizedRef = cleanAvatarRef(avatarRef)
@@ -58,6 +59,6 @@ export function CallAvatar({ name, avatarRef, assetUrl, size = 40 }: { name: str
     {...(normalizedRef === undefined ? {} : { avatarRef: normalizedRef })}
     size={size}
     fallback={{ kind: 'phone_default', colorIndex: name.length, label: name.slice(0, 1) || '即' }}
-    label={`${name}头像`}
+    label={tr("{v0}头像", { v0: name })}
   />
 }

@@ -1,7 +1,9 @@
+import { refreshUnifiedTimelineWindow } from './unified-timeline-window.js'
 import type { ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage } from '../types.js'
 
 /** The loaded read window, independent of cache storage and message enhancement state. */
 export interface ConversationTimelineReadWindow {
+  readonly unified?: import('../unified-chat-timeline.js').ArkmeUnifiedTimelineWindow | undefined
   readonly items: readonly ArkmeTimelineItem[]
   readonly mode?: 'latest' | 'around'
   readonly aroundSequenceRange?: { readonly minimumSequence: number; readonly maximumSequence: number }
@@ -13,6 +15,7 @@ export async function readConversationTimelineWindow(
   readPage: (cursor?: ArkmeTimelineCursor) => Promise<ArkmeTimelinePage>,
   signal: AbortSignal,
 ): Promise<ArkmeTimelinePage> {
+  if (snapshot.unified) return await refreshUnifiedTimelineWindow(snapshot.unified, readPage, signal, snapshot.mode !== 'around')
   const records = snapshot.items.filter(item => item.status === 1 && item.awaitingTimelineProjection !== true)
   const aroundRange = snapshot.mode === 'around' ? snapshot.aroundSequenceRange : undefined
   const sequenced = aroundRange !== undefined || records.length > 0 && records.every(item => (item.sequence ?? 0) > 0)

@@ -14,6 +14,7 @@ export type RecordingImportPhase =
   | 'cancelled'
 
 export type RecordingImportDisplayStatus =
+  | 'paused'
   | 'preparing'
   | 'uploading'
   | 'accepted'

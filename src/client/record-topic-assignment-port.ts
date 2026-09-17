@@ -1,6 +1,9 @@
 import type { ArkmeRecordTopicAssignmentInput, ArkmeRecordTopicAssignmentResult } from '../record-topic-assignment-contract.js'
-import type { ArkmeSourceItem, ArkmeSourceList, ArkmeTopicCreateResult } from '../types.js'
+import type { ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { callArkme } from './api.js'
+import { createSelfTopic } from './create-self-topic.js'
+import { arkmeAuthStore } from './auth-store.js'
+import { selfTopicDirectory } from './self-topic-directory-cache.js'
 
 export type RecordTopicAssignmentTarget = ArkmeSourceItem & { topicHierarchyKey: string }
 
@@ -33,7 +36,11 @@ export const recordTopicAssignmentPort: RecordTopicAssignmentPort = {
     return { items, hasMore: page.hasMore, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) }
   },
   async createTopic(title, contextSourceRef, signal) {
-    return (await request<ArkmeTopicCreateResult>('topic.create', { title, contextSourceRef }, signal)).source
+    const auth = arkmeAuthStore.getSnapshot().auth
+    if (auth?.status !== 'authenticated' || auth.userId === undefined) throw new Error('请先登录')
+    const result = await createSelfTopic({ title, contextSourceRef }, selfTopicDirectory(auth.userId, auth.environment), signal)
+    if (result.warning !== undefined) throw new Error(result.warning)
+    return result.source
   },
   async assign(input, signal) {
     return await request<ArkmeRecordTopicAssignmentResult>('source.record-topic.assign', { ...input }, signal)

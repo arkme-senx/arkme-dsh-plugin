@@ -61,7 +61,7 @@ it('does not expand a selected topic ancestor from either header or hover entry'
   expect(row('root')?.getAttribute('aria-expanded')).toBe('false')
   await click('选择主题')
   const request: SelfTopicMenuRequest = { anchor: () => ({ left: 20, right: 300, top: 50, bottom: 100 }),
-    focusMenu: false, keepOpen() {}, scheduleClose() {}, onClose() {}, onSelect() {} }
+    accepted: false, focusMenu: false, checkPointer() {}, onClose() {}, onSelect() {} }
   await act(async () => document.dispatchEvent(new CustomEvent(SELF_TOPIC_MENU_OPEN, { detail: request })))
   expect(request.accepted).toBe(true)
   expect(row('root')?.getAttribute('aria-expanded')).toBe('false')

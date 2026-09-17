@@ -94,3 +94,14 @@ describe('Arrangement consumer SDK', () => {
       .rejects.toThrow('Reminder references must be unique')
   })
 })
+
+it('passes board version and opaque reorder placement through the SDK', async () => {
+  const calls: unknown[] = []
+  const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => { calls.push(JSON.parse(String(init?.body))); return success({ board: { supported: true, version: 'v2' } }) } })
+  await sdk.arrangements({ status: 'following', order: 'board', boardVersion: 'v1' })
+  await sdk.reorderArrangement({ arrangementRef: 'ref', status: 'following', beforeRef: 'next', boardVersion: 'v1', requestId: 'r1' })
+  expect(calls).toEqual([
+    { operation: 'arrangements.list', params: { status: 'following', order: 'board', boardVersion: 'v1' } },
+    { operation: 'arrangements.reorder', params: { arrangementRef: 'ref', status: 'following', beforeRef: 'next', boardVersion: 'v1', requestId: 'r1' } },
+  ])
+})

@@ -1,3 +1,4 @@
+import { tr } from './locale.js'
 import { useEffect, useRef, useState } from 'react'
 import type { ArkmeContentBlock } from '../types.js'
 import { arkmeLocalFileUrl, useArkmeOriginal } from './ArkmeFileViewer.js'
@@ -38,7 +39,7 @@ export function useArkmeLivePhotoPlayback(cover: ArkmeContentBlock) {
     playing: phase === 'playing',
     video: active && reception.localRef !== undefined ? <video
       key={identity} ref={videoRef} src={arkmeLocalFileUrl(reception.localRef)} muted playsInline
-      aria-label={`实况 ${cover.fileName}`}
+      aria-label={tr("实况 {v0}", { v0: cover.fileName })}
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', visibility: phase === 'playing' ? 'visible' : 'hidden' }}
       onCanPlay={event => {
         const video = event.currentTarget

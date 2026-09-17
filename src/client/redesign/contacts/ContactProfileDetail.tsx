@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from '../../locale.js'
 import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
 import { PencilSimple } from '@phosphor-icons/react/PencilSimple'
 import { ChatCircle } from '@phosphor-icons/react/ChatCircle'
@@ -292,32 +293,32 @@ export function ContactProfileContent({
   const profile = state.status === 'ready' ? state.profile : undefined
   const remark = profile?.remark.trim() || ''
   const displayName = remark || profile?.nickname.trim() || profile?.accountName?.trim() || profile?.displayName || '联系人'
-  return <section className="arkme-contact-profile" aria-label="联系人资料">
-    {state.status === 'loading' && <div role="status" className="arkme-contact-profile-status">正在加载联系人资料…</div>}
+  return <section className="arkme-contact-profile" aria-label={tr("联系人资料")}>
+    {state.status === 'loading' && <div role="status" className="arkme-contact-profile-status">{tr("正在加载联系人资料…")}</div>}
     {profile !== undefined && <>
       <header className="arkme-contact-profile-main">
         <span className="arkme-contact-profile-avatar">
           <ArkmeUserAvatar
             {...(profile.avatarRef === undefined ? {} : { avatarRef: profile.avatarRef })}
             size={72}
-            label={`${displayName}的头像`}
+            label={tr("{v0}的头像", { v0: displayName })}
           />
         </span>
         <div className="arkme-contact-profile-identity">
           <h1 className="arkme-contact-profile-name">{displayName}</h1>
           <dl className="arkme-contact-profile-fields">
-            <div aria-label={`昵称：${profile.nickname.trim() || '未设置'}`}><dt>昵称</dt><dd>{profile.nickname.trim() || '未设置'}</dd></div>
-            <div aria-label={`即我号：${profile.accountName?.trim() || '未设置'}`}><dt>即我号</dt><dd>{profile.accountName?.trim() || '未设置'}</dd></div>
+            <div aria-label={tr("昵称：{v0}", { v0: profile.nickname.trim() || '未设置' })}><dt>{tr("昵称")}</dt><dd>{profile.nickname.trim() || '未设置'}</dd></div>
+            <div aria-label={tr("即我号：{v0}", { v0: profile.accountName?.trim() || '未设置' })}><dt>{tr("即我号")}</dt><dd>{profile.accountName?.trim() || '未设置'}</dd></div>
           </dl>
         </div>
       </header>
       <section className="arkme-contact-profile-section">
-        <h2 className="arkme-contact-profile-section-title">联系人资料</h2>
-        <dl className="arkme-contact-profile-row" aria-label={`备注：${remark || '未设置'}`}>
-          <dt>备注</dt><dd className="arkme-contact-profile-remark">
+        <h2 className="arkme-contact-profile-section-title">{tr("联系人资料")}</h2>
+        <dl className="arkme-contact-profile-row" aria-label={tr("备注：{v0}", { v0: remark || '未设置' })}>
+          <dt>{tr("备注")}</dt><dd className="arkme-contact-profile-remark">
             <span>{remark || '未设置'}</span>
-            <button type="button" className="arkme-contact-remark-edit" onClick={onEditRemark} disabled={onEditRemark === undefined} aria-label="编辑备注">
-              <PencilSimple size={15} aria-hidden /><span>编辑</span>
+            <button data-arkme-feedback="neutral" type="button" className="arkme-contact-remark-edit" onClick={onEditRemark} disabled={onEditRemark === undefined} aria-label={tr("编辑备注")}>
+              <PencilSimple size={15} aria-hidden /><span>{tr("编辑")}</span>
             </button>
           </dd>
         </dl>
@@ -325,18 +326,18 @@ export function ContactProfileContent({
     </>}
     {state.status === 'error' && <div role="alert" className="arkme-contact-profile-error">
       <span>{state.message ?? '联系人资料加载失败'}</span>
-      {onRetry !== undefined && <button type="button" onClick={onRetry}>重试</button>}
+      {onRetry !== undefined && <button data-arkme-feedback="neutral" type="button" onClick={onRetry}>{tr("重试")}</button>}
     </div>}
     {children}
-    <footer className="arkme-contact-profile-actions" aria-label="联系操作" aria-busy={messageBusy}>
-      <button type="button" className="arkme-contact-profile-action" disabled={messageBusy} onClick={onOpenMessage}>
-        <ChatCircle size={28} weight="regular" aria-hidden /><span>{messageBusy ? '正在打开…' : '发消息'}</span>
+    <footer className="arkme-contact-profile-actions" aria-label={tr("联系操作")} aria-busy={messageBusy}>
+      <button data-arkme-feedback="neutral" type="button" className="arkme-contact-profile-action" disabled={messageBusy} onClick={onOpenMessage}>
+        <ChatCircle size={28} weight="regular" aria-hidden /><span>{messageBusy ? tr("正在打开…") : tr("发消息")}</span>
       </button>
-      <button type="button" className="arkme-contact-profile-action" disabled={messageBusy || onOpenCall === undefined} onClick={() => { onOpenCall?.('audio') }}>
-        <Phone size={28} weight="regular" aria-hidden /><span>语音聊天</span>
+      <button data-arkme-feedback="neutral" type="button" className="arkme-contact-profile-action" disabled={messageBusy || onOpenCall === undefined} onClick={() => { onOpenCall?.('audio') }}>
+        <Phone size={28} weight="regular" aria-hidden /><span>{tr("语音聊天")}</span>
       </button>
-      <button type="button" className="arkme-contact-profile-action" disabled={messageBusy || onOpenCall === undefined} onClick={() => { onOpenCall?.('video') }}>
-        <VideoCamera size={28} weight="regular" aria-hidden /><span>视频聊天</span>
+      <button data-arkme-feedback="neutral" type="button" className="arkme-contact-profile-action" disabled={messageBusy || onOpenCall === undefined} onClick={() => { onOpenCall?.('video') }}>
+        <VideoCamera size={28} weight="regular" aria-hidden /><span>{tr("视频聊天")}</span>
       </button>
     </footer>
     {messageError !== undefined && <div role="alert" className="arkme-contact-profile-message-error">{messageError}</div>}
@@ -366,6 +367,7 @@ export function ContactProfileDetail({
   saveRemark = defaultSaveRemark,
   onProfileUpdated,
 }: ContactProfileDetailProps) {
+  useArkmeLocale()
   const generationRef = useRef(0)
   const identityKeyRef = useRef('')
   const identityRef = useRef<ContactDetailIdentity>({ accountKey, contactRef, generation: 0 })

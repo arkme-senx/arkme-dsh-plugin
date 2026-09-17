@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useRef } from 'react'
 import { ArkmeAttachmentDraftTile } from './ArkmeRichContent.js'
 import { arkmeLocalFileUrl } from './ArkmeFileViewer.js'
@@ -5,7 +6,7 @@ import { arkmeAttachmentId, arkmeAttachmentMetadata, type ArkmeComposerAttachmen
 
 /** Local preparation stays in the existing add button, not in a separate workflow. */
 export function ArkmeFilePreparingIndicator() {
-  return <svg width="18" height="18" viewBox="0 0 20 20" role="progressbar" aria-label="正在准备附件">
+  return <svg width="18" height="18" viewBox="0 0 20 20" role="progressbar" aria-label={tr("正在准备附件")}>
     <circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="30 14">
       <animateTransform attributeName="transform" type="rotate" from="0 10 10" to="360 10 10" dur="0.8s" repeatCount="indefinite" />
     </circle>
@@ -20,8 +21,9 @@ export function ArkmeAttachmentStrip({ attachments, disabled, onMove, onRemove, 
   onPreview(attachment: ArkmeComposerAttachment): void
   canPreview?(attachment: ArkmeComposerAttachment): boolean
 }) {
+  useArkmeLocale()
   const dragging = useRef<string>()
-  return <div role="list" aria-label="待发送附件" style={{ display: 'flex', gap: 4, overflowX: 'auto', flex: 'none' }}>
+  return <div role="list" aria-label={tr("待发送附件")} style={{ display: 'flex', gap: 4, overflowX: 'auto', flex: 'none' }}>
     {attachments.map((attachment, index) => {
       const id = arkmeAttachmentId(attachment)
       const metadata = arkmeAttachmentMetadata(attachment)
@@ -29,7 +31,7 @@ export function ArkmeAttachmentStrip({ attachments, disabled, onMove, onRemove, 
       const previewUrl = attachment.previewUrl ?? (attachment.localFile === undefined
         ? undefined : arkmeLocalFileUrl(attachment.localFile.fileRef))
       return <span key={id} role="listitem" tabIndex={canMove ? 0 : -1}
-        aria-label={`${metadata.fileName}，第 ${index + 1} 个附件`}
+        aria-label={tr("{v0}，第 {v1} 个附件", { v0: metadata.fileName, v1: index + 1 })}
         aria-keyshortcuts={canMove ? 'Alt+ArrowLeft Alt+ArrowRight' : undefined}
         title={canMove ? '拖动调整顺序；也可按 Alt 加左右方向键' : metadata.fileName}
         draggable={canMove} style={{ display: 'inline-flex', flex: 'none', cursor: canMove ? 'grab' : undefined }}
