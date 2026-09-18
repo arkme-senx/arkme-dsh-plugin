@@ -125,7 +125,7 @@ async function fixture(input: {
     ...(input.yieldToEventLoop === undefined ? {} : { yieldToEventLoop: input.yieldToEventLoop }),
     now: input.now ?? (() => 2_000),
   })
-  return { host, realtime, controlCalls, adapter, sessionOwnership }
+  return { host, realtime, controlCalls, controlPlane, adapter, sessionOwnership }
 }
 
 function historyEvent(type: string, seq: number): DshRemoteHistoryEntry['event'] {
@@ -465,6 +465,52 @@ describe('Host login-only registration lifecycle', () => {
     expect(new Set(snapshotRefs.slice(3)).size).toBe(1)
     expect(snapshotRefs[0]).not.toBe(snapshotRefs[3])
     await host.stop()
+  })
+
+  it('pushes canonical session metadata over Realtime without waiting for Backend, and coalesces changes during sync', async () => {
+    const { host, realtime, adapter, controlPlane, controlCalls } = await fixture()
+    await host.start()
+    const internal = host as unknown as {
+      backgroundProjectionFlight?: Promise<void>
+      publishProjectionEvent(event: unknown): Promise<void>
+      flushPendingSessionEventBatches(): Promise<void>
+    }
+    await internal.backgroundProjectionFlight
+    const original = adapter.sessions.bind(adapter)
+    let title = 'First title'
+    let seq = 1
+    vi.spyOn(adapter, 'sessions').mockImplementation(async input => {
+      const page = await original(input)
+      return { ...page, items: page.items.map(item => ({ ...item, title, projectionAsOfSeq: seq })) }
+    })
+    let release!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    const sync = vi.spyOn(controlPlane, 'syncWorkspaces').mockImplementationOnce(async () => { await blocked; return {} })
+    controlCalls.splice(0)
+    const emit = async (type: string) => {
+      await internal.publishProjectionEvent({ kind: 'session-event', sessionId: 'session-01', entry: { event: historyEvent(type, seq++) } })
+      await internal.flushPendingSessionEventBatches()
+    }
+    try {
+      await emit('turn/start')
+      const metadata = () => realtime.published.filter(p => p.operation === 'snapshot.get' && (p.body as Record<string, unknown>).sessions)
+      expect(metadata().at(-1)?.body).toMatchObject({ sessions: [{ sessionId: 'session-01', title: 'First title', blank: false }] })
+      await vi.waitFor(() => { expect(sync).toHaveBeenCalledOnce() })
+      expect(controlCalls.some(call => call.name === 'complete')).toBe(false)
+      title = 'Final title'
+      await emit('session/title')
+      expect(metadata().at(-1)?.body).toMatchObject({ sessions: [{ title: 'Final title' }] })
+      for (let i = 0; i < 20; i++) await emit('assistant/chunk')
+      expect(metadata()).toHaveLength(2)
+      expect(sync).toHaveBeenCalledOnce()
+      release()
+      await vi.waitFor(() => { expect(sync).toHaveBeenCalledTimes(2) })
+      await internal.backgroundProjectionFlight
+      expect(controlCalls.filter(call => call.name === 'sessions').at(-1)?.value).toMatchObject({ items: [{ title: 'Final title' }] })
+    } finally {
+      release()
+      await host.stop()
+    }
   })
 
   it('does not repeat a complete Backend projection inside the 30 second metadata interval', async () => {

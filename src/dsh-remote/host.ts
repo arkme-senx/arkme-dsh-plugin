@@ -273,6 +273,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private lastDeliveryReportAt = performance.now()
   private projectionSyncTail: Promise<void> = Promise.resolve()
   private backgroundProjectionFlight: Promise<void> | undefined
+  private projectionSnapshotPending = false
 
   constructor(private readonly options: ArkmeRemoteRealtimeHostOptions) {
     this.now = options.now ?? Date.now
@@ -894,6 +895,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.accountGeneration += 1
     this.projectionController.abort()
     this.backgroundProjectionFlight = undefined
+    this.projectionSnapshotPending = false
     this.projectionSyncTail = Promise.resolve()
     this.stopApiProxyEvents()
     this.connectionController?.abort()
@@ -1206,6 +1208,10 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
 
     const captureMs = performance.now() - captureStarted
     if (batch.generation !== this.accountGeneration || this.liveEventBatcher?.key !== batch.scopeKey) return
+    const metadataChanged = entries.some(({ event }) =>
+      event.type === 'turn/start' || event.type === 'user/message'
+      || event.type === 'session/title' || event.type === 'turn/end')
+    if (metadataChanged) this.scheduleProjectionSnapshot(true)
     const manager = this.channelManager
     // Backend durability is independent from Realtime presence. A disconnected
     // Host still persists the DSH batch; only the live mobile projection waits.
@@ -1221,6 +1227,27 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       itemCount: entries.length, payloadBytes: batch.bytes,
       requestRef: diagnosticRef(requestRef),
     })
+    // Use the existing bounded live batch owner. Metadata must reach mobile
+    // independently of Backend latency, before history for a newly seen session.
+    if (metadataChanged) {
+      try {
+        const page = await this.options.apiProxy.sessions({ sessionId: sessionRef, limit: 1 })
+        if (batch.generation !== this.accountGeneration || this.channelManager !== manager) return
+        if (page.items.length > 0) {
+          const metadataRef = `metadata_${requestRef}`
+          await manager.publishProjectionEvent({
+            protocol: DSH_REMOTE_PROTOCOL, protocol_major: DSH_REMOTE_PROTOCOL_MAJOR,
+            kind: 'event', request_ref: metadataRef, host_generation: runtime.hostGeneration,
+            issued_at: this.now(), operation: 'snapshot.get', body: { session_ref: sessionRef, sessions: page.items },
+          }, metadataRef)
+        }
+      } catch (error) {
+        if (batch.generation !== this.accountGeneration) return
+        this.projectionError = asDshRemoteError(error)
+        this.bump()
+      }
+    }
+    if (batch.generation !== this.accountGeneration || this.channelManager !== manager) return
     const runState = liveRunState(entries)
     let completed = false
     try {
@@ -1446,9 +1473,17 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   }
 
   private scheduleProjectionSnapshot(force = false): void {
-    if (this.backgroundProjectionFlight !== undefined) return
+    if (this.backgroundProjectionFlight !== undefined) {
+      this.projectionSnapshotPending ||= force
+      return
+    }
     const flight = this.syncProjectionSnapshotSafely(force).finally(() => {
-      if (this.backgroundProjectionFlight === flight) this.backgroundProjectionFlight = undefined
+      if (this.backgroundProjectionFlight !== flight) return
+      this.backgroundProjectionFlight = undefined
+      if (this.projectionSnapshotPending) {
+        this.projectionSnapshotPending = false
+        this.scheduleProjectionSnapshot(true)
+      }
     })
     this.backgroundProjectionFlight = flight
   }

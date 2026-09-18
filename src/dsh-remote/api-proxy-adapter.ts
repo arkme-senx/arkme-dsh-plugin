@@ -460,7 +460,9 @@ export class DshApiProxyAdapter {
         archived: archived.has(item.sessionId),
         ...(item.origin === undefined ? {} : { origin: item.origin }),
         ...(item.parentSessionId === undefined ? {} : { parentSessionId: item.parentSessionId }),
-        ...(item.projections === undefined ? {} : { projectionAsOfSeq: item.projections.asOfSeq }),
+        // DSH predecessor titles have no current-log watermark; -1 means unknown.
+        ...(item.projections === undefined || item.projections.asOfSeq === -1
+          ? {} : { projectionAsOfSeq: item.projections.asOfSeq }),
         ...(item.projections !== undefined && Object.hasOwn(item.projections.values, 'goal')
           ? { goal: item.projections.values.goal }
           : {}),
