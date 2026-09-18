@@ -1447,13 +1447,13 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
   box-sizing: border-box; color: var(--dsw-alias-label-primary, #202124); font-size: 13px;
 }
 [data-arkme-directory-mode="contacts"] {
-  background: var(--dsw-specific-sidebar-fill, #fff) !important;
+  background: var(--dsw-alias-bg-base, #fff) !important;
   border-left-color: var(--dsw-alias-border-l1, #ececef) !important;
 }
-.arkme-contact-directory { --arkme-contact-directory-header-fill: var(--dsw-specific-sidebar-fill, #fff); padding: 0 6px 18px; overflow-y: auto; overflow-wrap: anywhere; }
+.arkme-contact-directory { --arkme-contact-directory-header-fill: var(--dsw-alias-bg-base, #fff); padding: 0 6px 18px; overflow-y: auto; overflow-wrap: anywhere; }
 .arkme-contact-directory-surface {
   display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%;
-  color: var(--dsw-alias-label-primary, #202124); background: var(--dsw-specific-sidebar-fill, #fff);
+  color: var(--dsw-alias-label-primary, #202124); background: var(--dsw-alias-bg-base, #fff);
 }
 .arkme-contact-directory-surface > .arkme-contact-directory { flex: 1; height: auto; }
 .arkme-contact-directory-toolbar {
@@ -1470,14 +1470,14 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
   width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent;
   color: var(--dsw-alias-label-primary, #202124); font: inherit; font-size: 12px;
 }
-.arkme-contact-directory-search-field input::placeholder { color: var(--dsw-alias-label-tertiary, #92959e); }
+.arkme-directory-search-toolbar input::placeholder { color: var(--dsw-alias-label-tertiary, #92959e); }
 .arkme-contact-directory-search-field:focus-within { outline: 2px solid var(--arkme-focus); outline-offset: 2px; }
 .arkme-contact-directory-search-field button {
   flex: none; display: grid; place-items: center; width: 20px; height: 28px; padding: 0; border: 0;
   border-radius: 6px; background: transparent; color: inherit; cursor: pointer;
 }
 .arkme-contact-directory-search-field button:hover { background: var(--dsw-alias-interactive-bg-hover, #f6f6f7); }
-.arkme-contact-directory-toolbar [aria-label="添加联系人、群聊或 Bot"] {
+.arkme-directory-search-toolbar button[title="添加"] {
   background: var(--dsw-specific-input-major, #fff) !important;
   border-color: var(--dsw-alias-border-l2, #e2e3e6) !important;
   color: var(--dsw-alias-label-secondary, #555a64) !important;
@@ -1901,4 +1901,9 @@ body[data-ds-dark-theme] .arkme-peer-membership-disc { fill: #171717; stroke: #3
   font-size: 12px;
   font-weight: 400;
   line-height: 18px;
+}
+
+/* The two retained directories share the same divider and header appearance. */
+[data-arkme-owned="persistent-sidebar"] [data-arkme-retained-directory] {
+  border-left-color: var(--dsw-alias-border-l1, #ececef) !important;
 }

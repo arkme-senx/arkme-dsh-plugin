@@ -1,3 +1,4 @@
+import { directorySearchLayout } from './directory-search-layout.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { useHarnessActivity } from './use-harness-activity.js'
 import { watchHarnessSessionHover } from './harness-session-hover.js'
@@ -208,8 +209,7 @@ const styles: Record<string, CSSProperties> = {
     height: 40, flex: 'none', margin: '12px 16px 8px', padding: '0 11px', display: 'flex', alignItems: 'center', gap: 8,
     boxSizing: 'border-box', border: '1px solid #e2e3e6', borderRadius: 11, color: '#92959e', background: '#fff',
   },
-  conversationToolbar: { flex: 'none', margin: '24px 16px 16px', display: 'flex', alignItems: 'center', gap: 8 },
-  embeddedSearchField: { flex: 1, minWidth: 0, margin: 0 },
+  conversationToolbar: directorySearchLayout.toolbar,
   createTaskButton: {
     width: 40, height: 40, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
     border: '1px solid #e2e3e6', borderRadius: 11, background: '#fff', color: '#555a64', cursor: 'pointer',
@@ -2037,13 +2037,13 @@ export function ArkmeNavigation({
       }} />
       {onClose !== undefined && <button type="button" style={styles.headerButton} aria-label="关闭 Arkme" title="关闭 Arkme" onClick={onClose}>×</button>}
     </header>}
-    {directory === 'root' && embeddedProductShell && <div data-arkme-window-drag-region="conversation" data-arkme-window-drag-directory="" style={styles.conversationToolbar}>
-      <label style={{ ...styles.searchField, ...styles.embeddedSearchField }}>
-        <MagnifyingGlass size={16} aria-hidden />
+    {directory === 'root' && embeddedProductShell && <div className="arkme-directory-search-toolbar" data-arkme-window-drag-region="conversation" data-arkme-window-drag-directory="" style={styles.conversationToolbar}>
+      <label style={directorySearchLayout.field}>
+        <MagnifyingGlass size={16} style={directorySearchLayout.icon} aria-hidden />
         <input
           value=""
           readOnly
-          style={styles.searchInput}
+          style={directorySearchLayout.input}
           placeholder="搜索对话或消息"
           aria-label="搜索对话或消息"
           aria-haspopup="dialog"
