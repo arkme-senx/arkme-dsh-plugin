@@ -86,7 +86,7 @@ export function ArkmeCallDetailDrawer({ item, onClose, initialVideoUrl }: { item
   return <aside ref={panel} role="dialog" aria-label="通话详情" data-arkme-call-detail="true" style={styles.drawer}>
     <header style={styles.header}>
       <h3 style={{ margin: 0, fontSize: 18, lineHeight: '26px', fontWeight: 600 }}>通话详情</h3>
-      <button ref={closeButton} type="button" aria-label="关闭通话详情" title="关闭" style={styles.close} onClick={onClose}><XIcon size={24} /></button>
+      <button data-arkme-feedback="neutral" ref={closeButton} type="button" aria-label="关闭通话详情" title="关闭" style={styles.close} onClick={onClose}><XIcon size={24} /></button>
     </header>
     <div style={styles.overview}>
       <span style={styles.cell}><span aria-hidden style={{ width: 12, height: 12, flex: '0 0 12px', background: iconColor, mask: `url("/arkme-self/api/call/${icon}") center / contain no-repeat`, WebkitMask: `url("/arkme-self/api/call/${icon}") center / contain no-repeat` }} />{video ? '视频通话' : '语音通话'}</span>
@@ -95,7 +95,7 @@ export function ArkmeCallDetailDrawer({ item, onClose, initialVideoUrl }: { item
     </div>
     <div style={styles.content} aria-busy={loading}>
       {loading ? <div role="status" style={styles.state}>加载中…</div>
-        : error ? <div role="alert" style={styles.state}>{error}{callRef && <button type="button" style={styles.retry} onClick={() => { setRevision(value => value + 1) }}>重试</button>}</div>
+        : error ? <div role="alert" style={styles.state}>{error}{callRef && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={() => { setRevision(value => value + 1) }}>重试</button>}</div>
           : <>
             {detail && <ArkmeCallDetailContent key={detail.callRef} compact detail={detail} detailState="ready" initialVideoUrl={initialVideoUrl} selectedItem={{
               callRef: detail.callRef,
@@ -104,7 +104,7 @@ export function ArkmeCallDetailDrawer({ item, onClose, initialVideoUrl }: { item
               acceptedAtMillis: detail.acceptedAtMillis,
               durationSeconds: detail.durationSeconds,
             }} />}
-            {(detail?.transcriptFailed || detail?.transcriptPending || detail?.summaryStatus === 'pending') && <button type="button" style={styles.retry} onClick={() => { setRevision(value => value + 1) }}>刷新</button>}
+            {(detail?.transcriptFailed || detail?.transcriptPending || detail?.summaryStatus === 'pending') && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={() => { setRevision(value => value + 1) }}>刷新</button>}
           </>}
     </div>
   </aside>

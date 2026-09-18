@@ -316,7 +316,7 @@ export function ContactProfileContent({
         <dl className="arkme-contact-profile-row" aria-label={`备注：${remark || '未设置'}`}>
           <dt>备注</dt><dd className="arkme-contact-profile-remark">
             <span>{remark || '未设置'}</span>
-            <button type="button" className="arkme-contact-remark-edit" onClick={onEditRemark} disabled={onEditRemark === undefined} aria-label="编辑备注">
+            <button data-arkme-feedback="neutral" type="button" className="arkme-contact-remark-edit" onClick={onEditRemark} disabled={onEditRemark === undefined} aria-label="编辑备注">
               <PencilSimple size={15} aria-hidden /><span>编辑</span>
             </button>
           </dd>
@@ -325,17 +325,17 @@ export function ContactProfileContent({
     </>}
     {state.status === 'error' && <div role="alert" className="arkme-contact-profile-error">
       <span>{state.message ?? '联系人资料加载失败'}</span>
-      {onRetry !== undefined && <button type="button" onClick={onRetry}>重试</button>}
+      {onRetry !== undefined && <button data-arkme-feedback="neutral" type="button" onClick={onRetry}>重试</button>}
     </div>}
     {children}
     <footer className="arkme-contact-profile-actions" aria-label="联系操作" aria-busy={messageBusy}>
-      <button type="button" className="arkme-contact-profile-action" disabled={messageBusy} onClick={onOpenMessage}>
+      <button data-arkme-feedback="neutral" type="button" className="arkme-contact-profile-action" disabled={messageBusy} onClick={onOpenMessage}>
         <ChatCircle size={28} weight="regular" aria-hidden /><span>{messageBusy ? '正在打开…' : '发消息'}</span>
       </button>
-      <button type="button" className="arkme-contact-profile-action" disabled={messageBusy || onOpenCall === undefined} onClick={() => { onOpenCall?.('audio') }}>
+      <button data-arkme-feedback="neutral" type="button" className="arkme-contact-profile-action" disabled={messageBusy || onOpenCall === undefined} onClick={() => { onOpenCall?.('audio') }}>
         <Phone size={28} weight="regular" aria-hidden /><span>语音聊天</span>
       </button>
-      <button type="button" className="arkme-contact-profile-action" disabled={messageBusy || onOpenCall === undefined} onClick={() => { onOpenCall?.('video') }}>
+      <button data-arkme-feedback="neutral" type="button" className="arkme-contact-profile-action" disabled={messageBusy || onOpenCall === undefined} onClick={() => { onOpenCall?.('video') }}>
         <VideoCamera size={28} weight="regular" aria-hidden /><span>视频聊天</span>
       </button>
     </footer>

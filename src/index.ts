@@ -1,6 +1,8 @@
 import { adaptSessionPersistence } from './dsh-remote/session-persistence.js'
 import { currentDesktopSessionTool } from './dsh-remote/current-session-tool.js'
 import { HARNESS_SESSION_CLIENT_PATH } from './harness-embed-contract.js'
+import { HARNESS_LAYOUT_MODULES, type HarnessLayoutPart } from './harness-conversation-layout-contract.js'
+import { harnessConversationLayoutAsset, readHarnessConversationLayout } from './harness-conversation-layout-assets.js'
 import { readInstalledPluginVersion } from './plugin-update.js'
 import { DshConnectionDiagnostics } from './dsh-remote/connection-diagnostics.js'
 import { createDesktopLifecycleReader } from './services/desktop-attention-bridge.js'
@@ -702,6 +704,15 @@ export function apply(ctx: Context, config: Config): void {
   const harnessOnboardingClient = readFileSync(new URL('../lib/harness-onboarding-client.js', import.meta.url))
   const harnessTrajectoryClient = readFileSync(new URL('../lib/harness-trajectory-client.js', import.meta.url))
   const harnessSidebarClient = readFileSync(new URL('../lib/harness-sidebar-client.js', import.meta.url))
+  for (const part of Object.keys(HARNESS_LAYOUT_MODULES) as HarnessLayoutPart[]) {
+    let source: string | undefined
+    try { source = readHarnessConversationLayout(dshBinPath, part) }
+    catch { ctx.logger.warn(`dsh-arkme: optional native ${part} layout export unavailable`) }
+    ctx.effect(() => ctx.webServer.register({
+      kind: 'exact', path: HARNESS_LAYOUT_MODULES[part].path,
+      handler: harnessConversationLayoutAsset(source),
+    }), `arkme: optional native ${part} layout asset`)
+  }
   let selectionClientRevision: string | undefined
   try {
     const selectionClient = readFileSync(new URL('../lib/harness-native-selection-client.js', import.meta.url))

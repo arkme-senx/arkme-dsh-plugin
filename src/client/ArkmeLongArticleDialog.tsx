@@ -60,7 +60,7 @@ export function ArkmeLongArticleSnapshotDialog({ item, onClose }: { item: ArkmeT
     <article style={styles.dialog} data-arkme-long-article-dialog="snapshot">
       <header style={styles.header}>
         <h2 style={styles.titleRead}><ArkmeRichText text={item.title || '无标题长文'} presentation="preview" /></h2>
-        <button autoFocus type="button" style={styles.close} aria-label="关闭长文" onClick={onClose}>×</button>
+        <button data-arkme-feedback="neutral" autoFocus type="button" style={styles.close} aria-label="关闭长文" onClick={onClose}>×</button>
       </header>
       <div style={styles.metaRow}>
         {item.sendAtMillis > 0 && <span style={styles.meta}>▦ {formatDate(item.sendAtMillis)}</span>}
@@ -315,17 +315,17 @@ export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, on
         {editing
           ? <input autoFocus style={styles.titleInput} value={title} maxLength={MAX_TITLE_LENGTH} placeholder="请输入标题" aria-label="长文标题" disabled={submitting} onChange={event => { setTitle(event.target.value) }} />
           : <h2 style={styles.titleRead}><ArkmeRichText text={titleValue || '无标题长文'} presentation="preview" /></h2>}
-        <button type="button" style={styles.close} aria-label="关闭长文" disabled={submitting} onClick={requestClose}>×</button>
+        <button data-arkme-feedback="neutral" type="button" style={styles.close} aria-label="关闭长文" disabled={submitting} onClick={requestClose}>×</button>
       </header>
       <div style={styles.metaRow}>
         {!creating && sendAt > 0 && <span style={styles.meta}>▦ {formatDate(sendAt)}</span>}
         <span style={styles.meta}>◷ {formatDuration(metaDuration)}</span>
         <span style={styles.meta}>▤ {String(textValue.length)}字</span>
         {editing
-          ? <button type="button" style={{ ...styles.action, opacity: submitting ? .55 : 1 }} disabled={submitting} onClick={() => { void publish() }}>➤ {submitting ? '发布中…' : '发布'}</button>
-          : detail?.editable === true && <button type="button" style={styles.action} onClick={() => { void beginEditing() }}>✎ 编辑</button>}
+          ? <button data-arkme-feedback="neutral" type="button" style={{ ...styles.action, opacity: submitting ? .55 : 1 }} disabled={submitting} onClick={() => { void publish() }}>➤ {submitting ? '发布中…' : '发布'}</button>
+          : detail?.editable === true && <button data-arkme-feedback="neutral" type="button" style={styles.action} onClick={() => { void beginEditing() }}>✎ 编辑</button>}
       </div>
-      {error !== '' && <div style={styles.error} role="alert">{error}{!creating && detail === undefined && <button type="button" style={styles.retry} onClick={() => { void loadDetail() }}>重试</button>}</div>}
+      {error !== '' && <div style={styles.error} role="alert">{error}{!creating && detail === undefined && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={() => { void loadDetail() }}>重试</button>}</div>}
       {loading
         ? <div style={styles.state} role="status">正在加载长文…</div>
         : <div style={styles.body}>

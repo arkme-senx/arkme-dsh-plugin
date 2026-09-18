@@ -26,6 +26,20 @@ function setup(load: (cursor?: string) => Promise<ArkmeSourceList>, cached?: Ark
 }
 
 describe('local-first directory', () => {
+  it('refreshes a persisted generic card preview even when the last message sequence is unchanged', async () => {
+    const cached = { ...page([row(1, { latestSequence: 8, latestPreview: '[卡片]' })]),
+      projection: { revision: 8, phase: 'cached' as const, cachedAtMillis: 1, bots: [], visibility: [] } }
+    const remote = gate<ArkmeSourceList>()
+    const test = setup(() => remote.promise, cached)
+    expect((await test.owner.read()).items[0]?.latestPreview).toBe('[卡片]')
+    remote.resolve(page([row(1, { latestSequence: 8, latestPreview: '视频通话 已接听 00:59' })]))
+    await test.owner.settled()
+    expect((await test.owner.read()).items[0]?.latestPreview).toBe('视频通话 已接听 00:59')
+    expect(test.write).toHaveBeenLastCalledWith(1, expect.objectContaining({
+      items: expect.arrayContaining([expect.objectContaining({ latestPreview: '视频通话 已接听 00:59' })]),
+    }))
+  })
+
   it('publishes the first twenty rows before slow page two, avatars, or disk', async () => {
     const next = gate<ArkmeSourceList>(); const avatar = gate<ArkmeSourceItem[]>(); const disk = gate<void>()
     const test = setup(async cursor => cursor === undefined ? page(Array.from({ length: 20 }, (_, i) => row(i)), 'next') : next.promise)

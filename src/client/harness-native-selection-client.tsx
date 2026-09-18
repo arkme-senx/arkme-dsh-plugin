@@ -1,9 +1,10 @@
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { copyText } from './clipboard-text.js'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import { Component, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ArkmeMessageSelectionControl, ArkmeSelectActionIcon, messageSelectionMenuStyles, messageSelectionStyles } from './message-selection-presentation.js'
+import { ArkmeMessageSelectionControl, ArkmeSelectActionIcon, messageSelectionStyles } from './message-selection-presentation.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { EMPTY_NATIVE_SELECTION, nativeSelectionCopyText, nativeSelectionReducer, observeSelectedNativeNodes, readNativeChat, type NativeChat } from './harness-native-selection.js'
 import { watchNativeSelectionGeometry, nativeSelectionActionOverlayCss, observeNativeChatPresence, nativeSelectionMessageRow, nativeSelectionPointerRow, nativeSelectionHighlightSelector, type NativeSelectionLayout } from './harness-native-selection-geometry.js'
@@ -63,7 +64,7 @@ function NativeCopyTextAction({ chat, selectedKey, doc }: { chat: NativeChat; se
   }
   const disabled = selectedKey === undefined || busy
   return <>
-    <button type="button" aria-label="复制文本" disabled={disabled} onClick={() => { void copy() }}
+    <button data-arkme-feedback="neutral" type="button" aria-label="复制文本" disabled={disabled} onClick={() => { void copy() }}
       style={{ ...messageSelectionStyles.selectBarButton, ...(disabled ? messageSelectionStyles.selectBarButtonDisabled : {}) }}>
       <span style={messageSelectionStyles.selectBarIconTile}><ArkmeSelectActionIcon kind="copy" size={22} /></span>
       <span style={messageSelectionStyles.selectBarLabel}>{busy ? '复制中…' : '复制文本'}</span>
@@ -150,7 +151,7 @@ function NativeSelectionSession({ useChat, doc }: { useChat: SnapshotSelectorHoo
         if (!target) return
         event.preventDefault(); event.stopPropagation()
         entry.current = doc.activeElement instanceof doc.defaultView!.HTMLElement ? doc.activeElement : null
-        setMenu({ ...target, autoFocus: event.button !== 2, x: Math.max(8, Math.min(event.clientX, doc.defaultView!.innerWidth - 186)), y: Math.max(8, Math.min(event.clientY, doc.defaultView!.innerHeight - 56)) })
+        setMenu({ ...target, autoFocus: event.button !== 2, x: event.clientX, y: event.clientY })
       } catch { fail() }
     }
     doc.addEventListener('contextmenu', open)
@@ -174,24 +175,6 @@ function NativeSelectionSession({ useChat, doc }: { useChat: SnapshotSelectorHoo
     doc.addEventListener('click', toggle)
     return () => { doc.removeEventListener('mousedown', preventTextSelection); doc.removeEventListener('click', toggle) }
   }, [state.active, visible, failed, chat, doc, layout.viewport])
-  useEffect(() => {
-    if (!menu) return
-    const close = () => setMenu(null)
-    const outside = (event: MouseEvent) => {
-      if (!(event.target instanceof doc.defaultView!.Element) || !event.target.closest('[data-arkme-native-selection="menu"]')) close()
-    }
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); entry.current?.focus() }
-    }
-    doc.addEventListener('mousedown', outside)
-    doc.addEventListener('keydown', keydown, true)
-    doc.defaultView!.addEventListener('resize', close)
-    doc.addEventListener('scroll', close, true)
-    return () => {
-      doc.removeEventListener('mousedown', outside); doc.removeEventListener('keydown', keydown, true)
-      doc.defaultView!.removeEventListener('resize', close); doc.removeEventListener('scroll', close, true)
-    }
-  }, [menu, doc])
 
   if (!visible) return null
   if (failed || !chat) return <span role="status">多选暂不可用</span>
@@ -213,28 +196,29 @@ function NativeSelectionSession({ useChat, doc }: { useChat: SnapshotSelectorHoo
     {state.active && <div data-arkme-native-selection="header" onKeyDown={escape} style={{ display: 'flex', alignItems: 'center', gap: 6, color: arkmeTheme.text, fontSize: 12 }}>
         <span role="status" aria-live="polite">已选 {state.keys.size} 条</span>
         {layout.cramped && <span role="status" style={{ color: arkmeTheme.secondary }}>请扩大窗口以勾选消息</span>}
-        <button type="button" style={buttonStyle} onClick={exit}><ArkmeSelectActionIcon kind="close" size={16} />退出</button>
+        <button data-arkme-feedback="neutral" type="button" style={buttonStyle} onClick={exit}><ArkmeSelectActionIcon kind="close" size={16} />退出</button>
     </div>}
-    {menu && createPortal(<div data-arkme-native-selection="menu" role="menu" aria-label="消息操作" style={{ ...messageSelectionMenuStyles.menu, left: menu.x, top: menu.y }}>
-      <button autoFocus={menu.autoFocus} type="button" role="menuitem" style={messageSelectionMenuStyles.menuButton} onClick={() => {
-        setMenu(null)
-        try {
-          const target = nativeSelectionMessageRow(doc, menu.row, chat)
-          if (target?.key === menu.key) dispatch({ type: 'enter', key: menu.key })
-        } catch { fail() }
-      }}><span style={messageSelectionMenuStyles.menuIcon}><ArkmeSelectActionIcon kind="select" size={16} /></span>多选</button>
-    </div>, doc.body)}
+    {menu && createPortal(<ArkmeActionMenu label="消息操作" point={{ x: menu.x, y: menu.y }} pointDocument={doc}
+      autoFocus={menu.autoFocus} onClose={() => setMenu(null)} actions={[
+        { id: 'select', label: '多选', icon: <ArkmeSelectActionIcon kind="select" size={16} />, onSelect: () => {
+          setMenu(null)
+          try {
+            const target = nativeSelectionMessageRow(doc, menu.row, chat)
+            if (target?.key === menu.key) dispatch({ type: 'enter', key: menu.key })
+          } catch { fail() }
+        } },
+      ]} />, doc.body)}
     {state.active && layout.actionDock && createPortal(<div data-arkme-native-selection="actions" role="group" aria-label="多选操作" onKeyDown={escape}
       style={{ ...messageSelectionStyles.selectBar, height: '100%', borderTop: 0 }}>
       <style>{nativeSelectionActionOverlayCss}</style>
       <NativeCopyTextAction key={state.keys.size === 1 ? [...state.keys][0] : 'no-single-selection'} chat={chat} selectedKey={state.keys.size === 1 ? [...state.keys][0] : undefined} doc={doc} />
       {([{ kind: 'link', label: '复制链接' }, { kind: 'forward', label: '转发' }] as const).map(action =>
-        <button key={action.kind} type="button" disabled title="暂未接入" aria-label={action.label}
+        <button data-arkme-feedback="neutral" key={action.kind} type="button" disabled title="暂未接入" aria-label={action.label}
           style={{ ...messageSelectionStyles.selectBarButton, ...messageSelectionStyles.selectBarButtonDisabled }}>
           <span style={messageSelectionStyles.selectBarIconTile}><ArkmeSelectActionIcon kind={action.kind} size={22} /></span>
           <span style={messageSelectionStyles.selectBarLabel}>{action.label}</span>
         </button>)}
-      <button type="button" aria-label="退出多选" style={messageSelectionStyles.selectBarButton} onClick={exit}>
+      <button data-arkme-feedback="neutral" type="button" aria-label="退出多选" style={messageSelectionStyles.selectBarButton} onClick={exit}>
         <span style={messageSelectionStyles.selectBarIconTile}><ArkmeSelectActionIcon kind="close" size={18} /></span>
         <span style={messageSelectionStyles.selectBarLabel}>退出多选</span>
       </button>

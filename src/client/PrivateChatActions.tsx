@@ -139,7 +139,8 @@ export function ConversationActionsMenu({ items, anchor, onClose, label = 'æ›´å¤
     open={open}
     label={label}
     align="end"
-    dense
+    portal
+    getAnchorRect={() => anchor.current?.getBoundingClientRect() ?? null}
     items={menuItems}
     selectedIds={items.filter(item => item.checked === true).map(item => item.id)}
     onClose={close}

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, isValidElement, type ReactNode } from 'react'
+import { ARKME_CONVERSATION_ROW_HEIGHT } from './arkme-layout.js'
 
 /** Keep nearby directory chunks mounted; measured spacers preserve the scroll range. */
 function DirectoryChunk({ children, count, initial, selected }: { children: ReactNode; count: number; initial: boolean; selected: boolean }) {
   const element = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(initial || typeof IntersectionObserver === 'undefined')
   const [focused, setFocused] = useState(false)
-  const height = useRef(count * 54)
+  // Include the row's two 1px margins until the chunk has an actual measurement.
+  const height = useRef(count * (ARKME_CONVERSATION_ROW_HEIGHT + 2))
   useEffect(() => {
     const target = element.current
     if (target === null || typeof IntersectionObserver === 'undefined') return

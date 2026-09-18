@@ -85,6 +85,7 @@ function fakeService() {
     searchImages: vi.fn(async (input: unknown) => input),
     searchRecordings: vi.fn(async (input: unknown) => input),
     calendarBuckets: vi.fn(async (input: unknown) => input),
+    calendarChatStatistics: vi.fn(async (input: unknown) => input),
     calendarRecords: vi.fn(async (input: unknown) => input),
     searchContact: vi.fn(async (identifier: string) => ({ identifier })),
     addContact: vi.fn(async (_contactRef: string, options: unknown) => options),
@@ -1319,6 +1320,15 @@ describe('outgoing call Host API dispatch', () => {
     })
     expect(service.calendarBuckets).toHaveBeenCalledWith({ startDate: '2026-09-01', endDate: '2026-09-30', sourceRef: 'signed-topic' })
     expect(service.calendarRecords).toHaveBeenCalledWith({ bucketDate: '2026-09-16', sourceRef: 'signed-topic', limit: 20 })
+  })
+
+  it('uses an authorized source reference for the chat calendar, ignoring caller-supplied session ids', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'calendar.chat-statistics', {
+      sourceRef: 'signed-chat', timezone: 'Asia/Shanghai', timezoneOffsetMillis: 28800000,
+      chat_session_uid: 'must-not-forward', user_id: 999,
+    })
+    expect(service.calendarChatStatistics).toHaveBeenCalledWith({ sourceRef: 'signed-chat', timezone: 'Asia/Shanghai', timezoneOffsetMillis: 28800000 })
   })
 
   it('rejects missing or oversized interwoven references', async () => {

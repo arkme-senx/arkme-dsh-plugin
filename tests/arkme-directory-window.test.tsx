@@ -26,6 +26,17 @@ it('keeps all rows reachable without IntersectionObserver', () => {
   act(() => { view!.unmount() })
 })
 
+it('estimates offscreen chunks with the same relaxed row height as visible cards', () => {
+  vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} })
+  let view: ReturnType<typeof create>
+  act(() => { view = create(<ArkmeDirectoryWindow>{Array.from({ length: 45 }, (_, i) => <button key={i}>Row {i}</button>)}</ArkmeDirectoryWindow>) })
+  const chunks = view!.root.findAllByProps({ 'data-arkme-directory-chunk': true })
+  expect(chunks[0]!.props.style).toBeUndefined()
+  expect(chunks[1]!.props.style.height).toBe(20 * (58 + 2))
+  expect(chunks[2]!.props.style.height).toBe(5 * (58 + 2))
+  act(() => { view!.unmount() })
+})
+
 it('does not unmount keyboard focus when its chunk leaves the viewport', () => {
   let notify!: (entries: { isIntersecting: boolean }[]) => void
   vi.stubGlobal('IntersectionObserver', class { constructor(callback: typeof notify) { notify = callback } observe() {} disconnect() {} })

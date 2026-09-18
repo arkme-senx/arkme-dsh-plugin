@@ -11,6 +11,13 @@ import { callArkme } from '../src/client/api.js'
 import type { ArkmeSourceItem, ArkmeTopicCreateResult } from '../src/types.js'
 
 vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
+// State-transition tests use the test renderer; DOM tests below keep real portals.
+const portalMode = vi.hoisted(() => ({ dom: false }))
+vi.mock('react-dom', async importOriginal => {
+  const actual = await importOriginal<typeof import('react-dom')>()
+  return { ...actual, createPortal: (...args: Parameters<typeof actual.createPortal>) =>
+    portalMode.dom ? actual.createPortal(...args) : args[0] }
+})
 const self: ArkmeSourceItem = { sourceRef: 'self', kind: 'send_to_self', displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 }
 const uncategorized: ArkmeSourceItem = { ...self, sourceRef: 'default', kind: 'default_category', displayName: '未分类' }
 const parent: ArkmeSourceItem = { ...self, sourceRef: 'parent', topicHierarchyKey: 'topic-key-parent', kind: 'topic', displayName: '父主题' }
@@ -20,6 +27,7 @@ let resolveCreate: (value: ArkmeTopicCreateResult) => void
 let rejectCreate: (error: Error) => void
 
 beforeEach(() => {
+  portalMode.dom = false
   resetSelfTopicDirectories()
   localStorage.clear()
   vi.mocked(callArkme).mockReset()
@@ -252,6 +260,7 @@ describe('navigate to a newly created self topic', () => {
   })
 
   it.each([false, true])('opens the created topic through the real form and keyed remount (old read pending=%s)', async oldReadPending => {
+    portalMode.dom = true
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     let accepted = false
     let delayOldRead = false
@@ -291,17 +300,17 @@ describe('navigate to a newly created self topic', () => {
         expect(finishOldRead).toBeDefined()
       }
       await act(async () => host.querySelector('button')!.click())
-      const input = host.querySelector('input')!
+      const input = document.querySelector<HTMLInputElement>('[role="dialog"] input')!
       await act(async () => {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '新主题')
         input.dispatchEvent(new Event('input', { bubbles: true }))
       })
-      await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+      await act(async () => document.querySelector('form[role="dialog"]')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
       if (finishOldRead !== undefined) {
         await act(async () => { finishOldRead!({ items: [self, uncategorized, parent], hasMore: false }) })
       }
       expect(host.querySelector('h1')?.textContent).toBe('新主题')
-      expect(host.querySelector('form')).toBeNull()
+      expect(document.querySelector('form[role="dialog"]')).toBeNull()
       expect(onInvalidated).not.toHaveBeenCalled()
       expect(readNavigationCache(10001)?.selectedSourceRef).toBe(created.sourceRef)
       expect(vi.mocked(callArkme).mock.calls.filter(([method]) => method === 'topic.create')).toHaveLength(1)

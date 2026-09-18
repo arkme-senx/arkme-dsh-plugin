@@ -20,6 +20,23 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordService', () => {
+  it.each(['file_asset://avatar-at-creation', '42_old_avatar.jpg', 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/42_old_avatar.jpg'])('preserves the historical avatar %s through both self projections', avatar => {
+    const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
+    const service = new RecordService({} as ServiceRuntime, media, {} as never)
+    const raw = { record_uid: 'r', record_core: { record_uid: 'r', avatar, nickname: '当时的名字' } }
+    for (const item of [service.recordTimelineItemFromRaw(raw, 42), service.recordTimelineItem(service.recordItem(raw, 42)!)]) {
+      expect(item).toMatchObject({ avatarSnapshot: true, avatarRef: avatar, senderName: '当时的名字' })
+    }
+  })
+  it.each([{}, { avatar: 'arkme-profile-image-v1.current-profile' }])('marks missing or mutable historical avatars without substituting the current profile: %j', snapshot => {
+    const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
+    const service = new RecordService({} as ServiceRuntime, media, {} as never)
+    const raw = { record_uid: 'r', record_core: { record_uid: 'r', ...snapshot } }
+    for (const item of [service.recordTimelineItemFromRaw(raw, 42), service.recordTimelineItem(service.recordItem(raw, 42)!)]) {
+      expect(item.avatarSnapshot).toBe(true)
+      expect(item.avatarRef).toBeUndefined()
+    }
+  })
   it.each([true, false])('preserves manual edit fact %s through both self record projections', fact => {
     const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
     const service = new RecordService({} as ServiceRuntime, media, {} as never)

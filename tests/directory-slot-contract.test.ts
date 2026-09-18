@@ -30,7 +30,7 @@ describe('Arkme directory slot contract', () => {
     expect(workspace).not.toContain('activateNativeEntry(); arkmeUi.showSearch()')
     expect(workspace).not.toContain('<ArkmeSearchRow')
     expect(workspace).toContain('<ArkmeGlobalSearchDialog')
-    expect(workspace).toContain('placeholder="搜索对话或消息"')
+    expect(workspace).toContain('aria-label="搜索对话或消息"')
     expect(workspace).toContain('activateNativeEntry(); arkmeUi.showContactAdd()')
     expect(workspace).toContain('activateNativeEntry(); arkmeUi.showArko()')
     expect(workspace).toMatch(

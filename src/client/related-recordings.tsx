@@ -1,3 +1,4 @@
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
@@ -51,19 +52,6 @@ const styles: Record<string, CSSProperties> = {
     color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 13, outline: 0,
   },
   filterChevron: { color: colors.secondary, fontSize: 15, lineHeight: 1 },
-  filterMenu: {
-    position: 'absolute', top: 42, right: 0, zIndex: 2, width: 202, maxHeight: 420, padding: 0, boxSizing: 'border-box',
-    border: `1px solid ${colors.border}`, borderRadius: 12, background: colors.panel,
-    overflowY: 'auto', boxShadow: '0 14px 36px rgba(24,27,34,.14)',
-  },
-  filterMenuItem: {
-    width: '100%', height: 48, display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px',
-    border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', textAlign: 'left',
-    font: 'inherit', boxSizing: 'border-box', outline: 0,
-  },
-  filterMenuItemLabel: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 },
-  filterMenuItemLabelActive: { color: colors.text, fontWeight: 650 },
-  filterMenuItemCount: { flex: 'none', color: colors.caption, fontSize: 12 },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '6px 24px 28px' },
   state: { minHeight: 180, display: 'grid', placeItems: 'center', textAlign: 'center', color: colors.secondary, fontSize: 13, padding: 24 },
   stateBox: { maxWidth: 280 },
@@ -377,7 +365,6 @@ export function RelatedRecordingsPanel(props: RelatedRecordingsPanelProps) {
   const showCards = visibleItems.length > 0
   const [filterOpen, setFilterOpen] = useState(false)
   const [expandedGroupKeys, setExpandedGroupKeys] = useState<Set<string>>(() => initialExpandedGroupKeys(groups))
-  const filterRef = useRef<HTMLDivElement>(null)
   const selectedFilterLabel = selectedMonth === '' ? '全部时间' : monthEntries.find(entry => entry.key === selectedMonth)?.label ?? monthLabel(selectedMonth)
   const groupKeySignature = groups.map(group => group.key).join('|')
   const totalBucketCount = monthEntries.reduce((total, entry) => total + Math.max(0, entry.itemCount), 0)
@@ -389,23 +376,7 @@ export function RelatedRecordingsPanel(props: RelatedRecordingsPanelProps) {
       return initialExpandedGroupKeys(groups)
     })
   }, [groupKeySignature, groups])
-  useEffect(() => {
-    if (!filterOpen || typeof document === 'undefined') return
-    const closeFromOutside = (event: PointerEvent | MouseEvent) => {
-      if (filterRef.current?.contains(event.target as Node) !== true) setFilterOpen(false)
-    }
-    const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') setFilterOpen(false)
-    }
-    document.addEventListener('pointerdown', closeFromOutside, true)
-    document.addEventListener('mousedown', closeFromOutside, true)
-    document.addEventListener('keydown', closeFromKeyboard)
-    return () => {
-      document.removeEventListener('pointerdown', closeFromOutside, true)
-      document.removeEventListener('mousedown', closeFromOutside, true)
-      document.removeEventListener('keydown', closeFromKeyboard)
-    }
-  }, [filterOpen])
+
   const chooseMonth = (month: string) => {
     props.onMonthChange(month)
     setFilterOpen(false)
@@ -418,25 +389,21 @@ export function RelatedRecordingsPanel(props: RelatedRecordingsPanelProps) {
       </div>
       <div style={styles.subtitleRow}>
         <p style={styles.subtitle}>你与 {props.contactName} 的线下交流记录</p>
-        <div ref={filterRef} style={styles.filterWrap}>
-          <button
-            type="button" style={styles.filter} aria-label="按时间筛选相关录音"
-            aria-haspopup="menu" aria-expanded={filterOpen}
-            onClick={() => { setFilterOpen(value => !value) }}
-          >
-            <span>{selectedFilterLabel}</span><CaretDown size={16} weight="bold" style={styles.filterChevron} aria-hidden />
-          </button>
-          {filterOpen && <div style={styles.filterMenu} role="menu" aria-label="按月份筛选">
-            <button
-              type="button" role="menuitem" style={styles.filterMenuItem}
-              onClick={() => { chooseMonth('') }}
-            ><span style={{ ...styles.filterMenuItemLabel, ...(selectedMonth === '' ? styles.filterMenuItemLabelActive : {}) }}>全部时间</span><span style={styles.filterMenuItemCount}>{bucketCountText(totalBucketCount)}</span></button>
-            {monthEntries.map(entry => <button
-              key={entry.key} type="button" role="menuitem"
-              style={styles.filterMenuItem}
-              onClick={() => { chooseMonth(entry.key) }}
-            ><span style={{ ...styles.filterMenuItemLabel, ...(selectedMonth === entry.key ? styles.filterMenuItemLabelActive : {}) }}>{entry.label}</span><span style={styles.filterMenuItemCount}>{bucketCountText(entry.itemCount)}</span></button>)}
-          </div>}
+        <div style={styles.filterWrap}>
+          <ArkmeActionMenu label="按月份筛选" open={filterOpen} align="end"
+            onClose={() => setFilterOpen(false)} selectedIds={[selectedMonth]}
+            anchor={<button data-arkme-feedback="neutral"
+              type="button" style={styles.filter} aria-label="按时间筛选相关录音"
+              aria-haspopup="menu" aria-expanded={filterOpen} onClick={() => setFilterOpen(value => !value)}>
+              <span>{selectedFilterLabel}</span><CaretDown size={16} weight="bold" style={styles.filterChevron} aria-hidden />
+            </button>}
+            actions={[{ key: '', label: '全部时间', itemCount: totalBucketCount }, ...monthEntries].map(entry => ({
+              id: entry.key,
+              label: <span style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+                <span>{entry.label}</span><span style={{ color: arkmeTheme.secondary }}>{bucketCountText(entry.itemCount)}</span>
+              </span>,
+              onSelect: () => chooseMonth(entry.key),
+            }))} />
         </div>
       </div>
     </div>

@@ -27,13 +27,14 @@ import { arkmeUi } from './ui-controller.js'
 import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
 import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested, openEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
+import { installHarnessConversationLayoutLoader } from './harness-conversation-layout.js'
 import { installArkmeAccountSettingsNavIcon } from './account-settings-nav-icon.js'
 import { DesktopHarnessReadinessCommit } from './desktop-harness-readiness.js'
 import {
   ARKME_LOGIN_LOCALE_NAMESPACE, arkmeLoginEn, arkmeLoginZh,
 } from './arkme-login-locales.js'
 
-export const inject = ['slots', 'layout', 'locale', 'sessions']
+export const inject = ['slots', 'layout', 'locale', 'sessions', 'modules']
 
 function closeLayoutDetails(layout: ClientContext['layout']): void {
   const compatible = layout as typeof layout & {
@@ -114,6 +115,7 @@ export function apply(ctx: ClientContext): void {
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
 
   ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update bridge')
+  ctx.effect(() => installHarnessConversationLayoutLoader(ctx, document), 'dsh-arkme: native wide conversation exports')
   ctx.effect(() => {
     let disposed = false
     let resolving: {

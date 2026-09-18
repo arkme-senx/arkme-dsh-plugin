@@ -44,11 +44,11 @@ export function ArkmeConversationBottomControl({ showBackToBottom, newMessageCou
   if (!showBackToBottom && newMessageCount === 0 && !pending && !failed) return null
   return <div data-arkme-bottom-controls style={{ position: 'absolute', inset: 'auto 24px 10px', zIndex: 4, pointerEvents: 'none' }}>
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minHeight: 30 }}>
-      {newMessageCount > 0 && <button type="button" disabled={pending} onClick={() => { void activate() }}
+      {newMessageCount > 0 && <button data-arkme-feedback="neutral" type="button" disabled={pending} onClick={() => { void activate() }}
         style={{ ...button, position: 'absolute', left: '50%', transform: 'translateX(-50%)', padding: '7px 13px', fontSize: 12 }}>
         {newMessageCount} 条新消息
       </button>}
-      {(showBackToBottom || pending || failed) && <button type="button" aria-label="回到底部"
+      {(showBackToBottom || pending || failed) && <button data-arkme-feedback="neutral" type="button" aria-label="回到底部"
         title={pending ? '正在回到底部…' : '回到底部'} aria-busy={pending} disabled={pending}
         onClick={() => { void activate() }} style={{ ...button, width: 50, height: 30, flexShrink: 0, opacity: pending ? 0.6 : 1 }}>
         <img src={`data:image/svg+xml;base64,${backBottomIcon}`} width={24} height={24} style={{ objectFit: 'none', filter: 'brightness(0)' }} alt="" aria-hidden />

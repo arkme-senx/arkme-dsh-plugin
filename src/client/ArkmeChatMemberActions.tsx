@@ -1,3 +1,4 @@
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import {
   Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties,
   type PointerEvent as ReactPointerEvent,
@@ -128,21 +129,7 @@ function errorMessage(caught: unknown): string {
 }
 
 const styles: Record<string, CSSProperties> = {
-  menu: {
-    position: 'absolute', zIndex: 42, width: MENU_WIDTH, overflow: 'hidden', boxSizing: 'border-box',
-    border: `1px solid ${arkmeTheme.border}`, borderRadius: 12,
-    background: arkmeTheme.menu,
-    backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
-    boxShadow: '0 12px 34px rgba(24, 29, 36, .16)',
-  },
-  menuRow: {
-    width: '100%', height: MENU_ROW_HEIGHT, padding: '0 12px', border: 0, background: 'transparent',
-    display: 'flex', alignItems: 'center', gap: 10, boxSizing: 'border-box', cursor: 'pointer',
-    color: arkmeTheme.text, fontSize: 14, lineHeight: '20px', textAlign: 'left',
-  },
-  menuLabel: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  menuCount: { flex: 'none', color: arkmeTheme.text, fontVariantNumeric: 'tabular-nums' },
-  divider: { height: 1, margin: '0 12px', background: arkmeTheme.border },
+
   cardScrim: {
     position: 'absolute', inset: 0, zIndex: 40, display: 'grid', placeItems: 'center', padding: 20,
     background: 'rgba(25, 28, 34, .12)', boxSizing: 'border-box',
@@ -257,61 +244,18 @@ export function ArkmeMemberActionMenu(props: {
   onRemove?: () => void
   onClose: () => void
 }) {
-  const menuRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const onPointer = (event: PointerEvent) => {
-      if (event.target instanceof Node && menuRef.current?.contains(event.target) === true) return
-      props.onClose()
-    }
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') props.onClose() }
-    window.addEventListener('pointerdown', onPointer, true)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('pointerdown', onPointer, true)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [props.onClose])
   const ownerLabel = props.member.isSelf ? '看我的快记' : '看TA的快记'
   const mentionedLabel = props.member.isSelf ? '@我的快记' : '@TA的快记'
-  return <div
-    ref={menuRef}
-    role="menu"
-    aria-label={`${props.member.displayName} 的成员操作`}
-    data-arkme-member-action-menu="true"
-    data-placement={props.position.placement}
-    style={{ ...styles.menu, left: props.position.left, top: props.position.top }}
-    onContextMenu={event => { event.preventDefault() }}
-  >
-    {!props.member.isSelf && props.sourceKind === 'group_chat' && <>
-      <button type="button" role="menuitem" style={styles.menuRow} onClick={props.onMention}
-        onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
-        <span style={styles.menuLabel}>@{props.member.displayName}</span>
-      </button>
-      <div style={styles.divider} />
-    </>}
-    {props.sourceKind === 'group_chat' && <>
-      <button type="button" role="menuitem" style={styles.menuRow} onClick={() => { props.onRecords('mentioned') }}
-        onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
-        <span style={styles.menuLabel}>{mentionedLabel}</span><span style={styles.menuCount}>{props.member.statsKnown === false ? '' : props.member.mentionCount}</span>
-      </button>
-      <div style={styles.divider} />
-    </>}
-    <button type="button" role="menuitem" style={styles.menuRow} onClick={() => { props.onRecords('owner') }}
-      onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
-      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
-      <span style={styles.menuLabel}>{ownerLabel}</span><span style={styles.menuCount}>{props.member.statsKnown === false ? '' : props.member.recordCount}</span>
-    </button>
-    {props.canRemove === true && props.onRemove !== undefined && <>
-      <div style={styles.divider} />
-      <button type="button" role="menuitem" style={{ ...styles.menuRow, color: arkmeTheme.danger }} onClick={props.onRemove}
-        onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.dangerSoft }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
-        <span style={styles.menuLabel}>移出群聊</span>
-      </button>
-    </>}
-  </div>
+  const countLabel = (label: string, count: number) => <span style={{ display: 'flex', gap: 16, justifyContent: 'space-between' }}>
+    <span>{label}</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{props.member.statsKnown === false ? '' : count}</span>
+  </span>
+  return <ArkmeActionMenu label={`${props.member.displayName} 的成员操作`}
+    point={{ x: props.position.left, y: props.position.top }} onClose={props.onClose} actions={[
+      !props.member.isSelf && props.sourceKind === 'group_chat' && { id: 'mention', label: `@${props.member.displayName}`, onSelect: props.onMention },
+      props.sourceKind === 'group_chat' && { id: 'mentioned-records', label: countLabel(mentionedLabel, props.member.mentionCount), onSelect: () => props.onRecords('mentioned') },
+      { id: 'owner-records', label: countLabel(ownerLabel, props.member.recordCount), onSelect: () => props.onRecords('owner') },
+      props.canRemove === true && props.onRemove !== undefined && { id: 'remove', label: '移出群聊', danger: true, onSelect: props.onRemove },
+    ]} />
 }
 
 export function ArkmeGroupMemberRemoveDialog(props: {
@@ -437,7 +381,7 @@ export function ArkmeMemberProfileCard(props: {
           size={100} label={`${names.displayName} 的头像`} />
         <h3 style={styles.cardName}>{names.displayName}</h3>
         {names.topicNickname !== '' && <p style={styles.cardSecondaryName}>主题内昵称：{names.topicNickname}</p>}
-        <button
+        <button data-arkme-feedback="neutral"
           type="button"
           style={{
             ...styles.cardButton,
@@ -740,7 +684,7 @@ export function ArkmeMemberRecordsPanel(props: {
         <h3 style={styles.drawerTitle}>{title}</h3>
         <div style={styles.drawerCount}>{total === undefined ? '' : `${total}条`}</div>
       </div>
-      <button type="button" style={styles.drawerClose} aria-label="关闭成员快记" onClick={props.onClose}>
+      <button data-arkme-feedback="neutral" type="button" style={styles.drawerClose} aria-label="关闭成员快记" onClick={props.onClose}>
         <XIcon size={18} weight="regular" aria-hidden />
       </button>
     </header>
@@ -756,7 +700,7 @@ export function ArkmeMemberRecordsPanel(props: {
     }}>
       {loading && items.length === 0 && <div style={styles.state}>正在加载快记…</div>}
       {error !== '' && items.length === 0 && <div style={styles.state} role="alert">
-        <div>{error}</div><button type="button" style={styles.retry} onClick={() => { load() }}>重试</button>
+        <div>{error}</div><button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={() => { load() }}>重试</button>
       </div>}
       {!loading && error === '' && items.length === 0 && <div style={styles.state}>暂无快记</div>}
       {loading && items.length > 0 && <div style={styles.loadMoreState} role="status" aria-live="polite">
@@ -764,7 +708,7 @@ export function ArkmeMemberRecordsPanel(props: {
       </div>}
       {error !== '' && items.length > 0 && <div style={styles.loadMoreState} role="alert" title={error}>
         <span>加载快记失败</span>
-        <button type="button" style={styles.loadMoreRetry} onClick={() => { load(lastLoadRef.current.beforeSequence, lastLoadRef.current.refresh) }}>
+        <button data-arkme-feedback="neutral" type="button" style={styles.loadMoreRetry} onClick={() => { load(lastLoadRef.current.beforeSequence, lastLoadRef.current.refresh) }}>
           重试
         </button>
       </div>}

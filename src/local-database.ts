@@ -29,6 +29,8 @@ import { securePrivateDirectorySync, securePrivateFileSync } from './private-fil
 type CacheState = 'synced' | 'pending' | 'failed'
 
 interface RecordRow {
+  sender_avatar_ref?: string | null
+  sender_name?: string | null
   record_uid: string
   send_at_millis: number
   title: string
@@ -191,6 +193,12 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       }
     })
     const recordColumns = this.database.prepare('PRAGMA table_info(record_cache)').all() as unknown as Array<{ name: string }>
+    if (!recordColumns.some(column => column.name === 'sender_avatar_ref')) {
+      this.database.exec('ALTER TABLE record_cache ADD COLUMN sender_avatar_ref TEXT')
+    }
+    if (!recordColumns.some(column => column.name === 'sender_name')) {
+      this.database.exec('ALTER TABLE record_cache ADD COLUMN sender_name TEXT')
+    }
     if (!recordColumns.some(column => column.name === 'record_duration_millis')) {
       this.database.exec('ALTER TABLE record_cache ADD COLUMN record_duration_millis INTEGER NOT NULL DEFAULT 0')
     }
@@ -305,7 +313,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     await this.ensureMigrated(userId)
     const rows = this.database.prepare(`
       SELECT record_uid, send_at_millis, title, text_content, template_kind,
-             status, version, sync_state, attempts, last_error, created_at_millis
+             status, version, sync_state, attempts, last_error, created_at_millis, sender_avatar_ref, sender_name
       FROM record_cache
       WHERE user_id = ?
       ORDER BY send_at_millis DESC, record_uid DESC
@@ -343,7 +351,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     const rows = (query === ''
       ? this.database.prepare(`
           SELECT record_uid, send_at_millis, title, text_content, template_kind,
-                 status, version, sync_state, attempts, last_error, created_at_millis
+                 status, version, sync_state, attempts, last_error, created_at_millis, sender_avatar_ref, sender_name
           FROM record_cache
           WHERE user_id = ? AND send_at_millis < ?
           ORDER BY send_at_millis DESC, record_uid DESC
@@ -351,7 +359,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
         `).all(userId, beforeMillis, limit)
       : this.database.prepare(`
           SELECT record_uid, send_at_millis, title, text_content, template_kind,
-                 status, version, sync_state, attempts, last_error, created_at_millis
+                 status, version, sync_state, attempts, last_error, created_at_millis, sender_avatar_ref, sender_name
           FROM record_cache
           WHERE user_id = ? AND send_at_millis < ?
             AND (text_content LIKE ? ESCAPE '\\' COLLATE NOCASE OR title LIKE ? ESCAPE '\\' COLLATE NOCASE)
@@ -770,6 +778,8 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
 
   private recordFromRow(row: RecordRow): ArkmeSelfRecordItem {
     return {
+      ...(row.sender_avatar_ref ? { avatarRef: row.sender_avatar_ref } : {}),
+      ...(row.sender_name ? { senderName: row.sender_name } : {}),
       recordUid: row.record_uid,
       sendAtMillis: row.send_at_millis,
       title: row.title,
@@ -855,8 +865,8 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       INSERT INTO record_cache (
         user_id, record_uid, send_at_millis, title, text_content, template_kind,
         status, version, sync_state, attempts, last_error,
-        created_at_millis, updated_at_millis
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'synced', 0, NULL, ?, ?)
+        created_at_millis, updated_at_millis, sender_avatar_ref, sender_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'synced', 0, NULL, ?, ?, ?, ?)
       ON CONFLICT(user_id, record_uid) DO UPDATE SET
         send_at_millis = excluded.send_at_millis,
         title = excluded.title,
@@ -864,12 +874,14 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
         template_kind = excluded.template_kind,
         status = excluded.status,
         version = excluded.version,
+        sender_avatar_ref = excluded.sender_avatar_ref,
+        sender_name = excluded.sender_name,
         sync_state = 'synced',
         last_error = NULL,
         updated_at_millis = excluded.updated_at_millis
     `).run(
       userId, item.recordUid, item.sendAtMillis, item.title, item.textContent,
-      item.templateKind, item.status, item.version, item.sendAtMillis || now, now,
+      item.templateKind, item.status, item.version, item.sendAtMillis || now, now, item.avatarRef ?? null, item.senderName ?? null,
     )
   }
 

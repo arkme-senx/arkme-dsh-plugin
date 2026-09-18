@@ -15,6 +15,31 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('replaces generic cached previews with viewer-aware calls without extra detail requests', async () => {
+    const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+    const payload = { template_kind: 5, structured_anchor: { anchor_kind: 2 },
+      content_payload: { crd: { mt: 'Video', rs: 'Cancel', cr: 42, du: 0 } } }
+    const bundle = { session: { chat_session_uid: 'call-chat', session_kind: 1, last_seq: 7 },
+      private_counterpart: { user_id: 17, display_name_snapshot: '同事' },
+      latest_preview: { record: { payload } }, unread_snapshot: { unread_count: 0 } }
+    const post = vi.fn(async (_path: string) => ({ items: [bundle], has_more: false }))
+    const runtime = { config, requireSession: async () => session, authenticatedChatPost: post,
+      stateStore: { uniqueCode: async () => 'fixture-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    service.setChatSource(42, 'call-chat', { sourceRef: 'old', kind: 'private_chat', displayName: '同事',
+      activeAtMillis: 0, unreadCount: 0, latestSequence: 7, latestPreview: '[卡片]' })
+    const page = await service.listSources('root', { refresh: true, firstPaint: true })
+    expect(page.items[0]?.latestPreview).toBe('视频通话 已取消')
+    expect(service.cachedChatSource(42, 'call-chat')?.latestPreview).toBe('视频通话 已取消')
+    expect(post).toHaveBeenCalledOnce()
+    expect(post.mock.calls[0]?.[0]).toBe('/api/v1/chats/list')
+    const updated = await service.chatSourceFromBundle(bundle, session, page.items[0], [{
+      itemUid: 'call', title: '', textContent: '', senderName: '我', isMe: true,
+      status: 1, sendAtMillis: 1, sequence: 8, conversationPreview: '视频通话 已接听 00:59',
+    }])
+    expect(updated.latestPreview).toBe('视频通话 已接听 00:59')
+  })
+
   it.each(['vip', 'svip', 'free', undefined])('projects counterpart membership %s and clears stale paid snapshots', async memberType => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime

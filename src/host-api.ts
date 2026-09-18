@@ -1335,6 +1335,12 @@ export async function dispatchArkmeHostOperation(
       ...(stringParam(params, 'newSpeakerName').trim() === '' ? {} : { newSpeakerName: stringParam(params, 'newSpeakerName').trim() }),
       scope: recordingSpeakerScopeParam(params),
     }, requestSignal)
+    case 'calendar.chat-statistics': return await service.calendarChatStatistics({
+      sourceRef: stringParam(params, 'sourceRef'),
+      timezone: stringParam(params, 'timezone'),
+      timezoneOffsetMillis: numberParam(params, 'timezoneOffsetMillis', 0),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+    })
     case 'calendar.buckets': return await service.calendarBuckets({
       ...(params?.background === true ? { background: true } : {}),
       startDate: stringParam(params, 'startDate'),

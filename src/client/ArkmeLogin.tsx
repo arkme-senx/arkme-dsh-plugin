@@ -1,4 +1,5 @@
 import { ArkmeScanGuide } from './ArkmeScanGuide.js'
+import { ArkmeJiwoBrandMark } from './ArkmeJiwoBrandMark.js'
 import type { ChangeEvent } from 'react'
 import { ARKME_WORDMARK_DATA_URL } from './arkme-wordmark.js'
 import {
@@ -417,7 +418,9 @@ const loginStyles = `
   }
   .dsh-arkme-login-wordmark { width: 106px; height: 27px; display: block; object-fit: contain; object-position: left center; }
   body[data-ds-dark-theme] .dsh-arkme-login-wordmark { filter: invert(1) hue-rotate(180deg); }
-  .dsh-arkme-login-definition { width: min(540px, 92%); margin: auto 0; transform: translateY(-18px); }
+  /* The translated block is a stacking context: inherit its surface so the
+     original white-backed light mark can blend without a white rectangle. */
+  .dsh-arkme-login-definition { width: min(540px, 92%); margin: auto 0; transform: translateY(-18px); background: inherit; }
   .dsh-arkme-login-definition h1 { margin: 0; color: var(--arkme-login-text); font-size: 47px; line-height: 1.16; font-weight: 600; letter-spacing: -.045em; }
   .dsh-arkme-login-description { margin: 24px 0 0; color: var(--arkme-login-secondary); font-size: 14px; line-height: 24px; font-weight: 400; }
   .dsh-arkme-login-card {
@@ -647,7 +650,11 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
     <section className="dsh-arkme-login-story" aria-label={t('story.aria')}>
       <img className="dsh-arkme-login-wordmark" src={ARKME_WORDMARK_DATA_URL} alt={t('brand.alt')} />
       <div className="dsh-arkme-login-definition">
-        <h1>{t('story.title.first')}<br />{t('story.title.second')}</h1>
+        <h1>
+          <ArkmeJiwoBrandMark label={t('brand.alt')} className="dsh-arkme-login-story-mark"
+            style={{ width: '2.5em', height: '1.16em', marginLeft: '-.25em', marginBottom: '.14em' }} />
+          {t('story.title.second')}
+        </h1>
         <p className="dsh-arkme-login-description">{t('story.description')}</p>
       </div>
     </section>

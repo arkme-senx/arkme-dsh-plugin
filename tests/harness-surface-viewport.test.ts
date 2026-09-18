@@ -71,6 +71,41 @@ it('exposes only the menu while DSH is inactive, without activating or reloading
   expect(frame.contentDocument).toBe(native)
 })
 
+it.each([true, false])('keeps list shadow below overlapping native menus without double painting (DSH visible: %s)', async visible => {
+  const { surface, frame, native, column } = fixture(visible)
+  column.setAttribute('data-arkme-session-open', '')
+  await flush()
+  const shadow = document.querySelector<HTMLElement>('[data-arkme-harness-menu-shadow]')!
+  const before = shadow.style.clipPath
+  const frameStyle = frame.style.cssText
+  const menus = [rect(640, 180, 218, 128), rect(800, 210, 218, 128)].map(bounds => {
+    const menu = native.createElement('div')
+    menu.setAttribute('role', 'menu')
+    vi.spyOn(menu, 'getBoundingClientRect').mockReturnValue(bounds)
+    vi.spyOn(menu, 'getClientRects').mockReturnValue([bounds] as unknown as DOMRectList)
+    native.body.append(menu)
+    return menu
+  })
+  await flush()
+  expect(Number(shadow.style.zIndex)).toBeLessThan(Number(surface.style.zIndex))
+  expect(shadow.style.pointerEvents).toBe('none')
+  // The external shadow fills only the iframe's unpainted regions. Overlapping
+  // action menus must not create holes that re-enable the shadow over them.
+  const paths = [...shadow.style.clipPath.matchAll(/M (-?[\d.]+) (-?[\d.]+) H (-?[\d.]+) V (-?[\d.]+) H -?[\d.]+ Z/g)]
+  const paints = (x: number, y: number) => paths.some(match => {
+    const [left, top, right, bottom] = match.slice(1).map(Number)
+    return x - 346 > left! && x - 346 < right! && y - 120 > top! && y - 120 < bottom!
+  })
+  expect(paints(680, 200)).toBe(false)
+  expect(paints(820, 250)).toBe(false)
+  expect(paints(690, 600)).toBe(!visible)
+  expect(frame.style.cssText).toBe(frameStyle)
+  expect(surface.getAttribute('data-arkme-visible')).toBe(String(visible))
+  menus.forEach(menu => menu.remove())
+  await flush()
+  expect(shadow.style.clipPath).toBe(before)
+})
+
 it('shares right-side placement, left-side fallback and viewport clamping for both menus', () => {
   expect(conversationMenuPosition(rect(58, 120, 280, 52), 320, 560, { width: 1400, height: 1000 })).toEqual({ left: 346, top: 120 })
   expect(conversationMenuPosition(rect(500, 700, 280, 52), 320, 560, { width: 900, height: 800 })).toEqual({ left: 172, top: 228 })

@@ -32,8 +32,15 @@ export class ArkmeAccountSessionOwner {
   ) {}
 
   start(): Promise<void> {
-    this.startTask ??= this.attestCurrent()
-    return this.startTask
+    if (this.startTask !== undefined) return this.startTask
+    const task = this.attestCurrent().catch(error => {
+      // A locked keychain or unavailable bridge must not poison every later read.
+      // Keep the failing attempt shared, but let the next caller retry attestation.
+      if (this.startTask === task) this.startTask = undefined
+      throw error
+    })
+    this.startTask = task
+    return task
   }
 
   attachGuestConversationProbe(probe: () => Promise<boolean>): void {

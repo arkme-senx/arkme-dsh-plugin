@@ -22,27 +22,11 @@ describe('Arkme quick-add UI', () => {
     expect(markup).not.toContain('>添加联系人<')
   })
 
-  it('layers the menu above later sidebar rows without escaping the shell overlay', () => {
-    const button = renderToStaticMarkup(<ArkmeQuickAddButton
-      onContactAdd={vi.fn()}
-      onSourceCreated={vi.fn()}
-    />)
-    const menu = renderToStaticMarkup(<ArkmeQuickAddMenu
-      onContactAdd={vi.fn()}
-      onCreateGroup={vi.fn()}
-      onAddBot={vi.fn()}
-    />)
-
-    expect(button).toContain('position:relative;z-index:10')
-    expect(menu).toContain('position:absolute;z-index:1')
-    expect(quickAddSource).not.toContain('zIndex: 90')
-  })
-
-  it('dismisses the menu before unrelated dialogs can consume outside pointer events', () => {
-    expect(quickAddSource).toContain("document.addEventListener('pointerdown', closeFromOutside, true)")
-    expect(quickAddSource).toContain("document.addEventListener('mousedown', closeFromOutside, true)")
-    expect(quickAddSource).toContain("document.removeEventListener('pointerdown', closeFromOutside, true)")
-    expect(quickAddSource).toContain("document.removeEventListener('mousedown', closeFromOutside, true)")
+  it('delegates placement and theme styling to the shared native menu', () => {
+    expect(quickAddSource).toContain('<ArkmeActionMenu')
+    expect(quickAddSource).toContain('align="end"')
+    expect(quickAddSource).not.toContain('style.menuItem')
+    expect(quickAddSource).not.toContain('menuPosition')
   })
 
   it('renders the desktop menu order and all three transplanted icon resources', () => {
@@ -60,33 +44,15 @@ describe('Arkme quick-add UI', () => {
     expect(markup.match(/-webkit-mask-image:url\(data:image\/svg\+xml;base64,/g)).toHaveLength(3)
   })
 
-  it('uses the compact neutral styling from the refactored desktop UI', () => {
+  it('keeps trigger feedback but leaves native menu styling to DSH', () => {
+    expect(quickAddSource).toContain('data-arkme-feedback="neutral"')
+    expect(quickAddSource).not.toContain('event.currentTarget.style.background')
     const markup = renderToStaticMarkup(<ArkmeQuickAddMenu
-      onContactAdd={vi.fn()}
-      onCreateGroup={vi.fn()}
-      onAddBot={vi.fn()}
-    />)
-    expect(markup).toContain('width:176px')
-    expect(markup).toContain('border-radius:18px')
-    expect(markup).toContain('font-size:13px')
-    expect(markup).toContain('font-weight:550')
-    expect(markup).toContain('background:var(--dsw-specific-menu, rgba(255,255,255,.98))')
-    expect(markup).not.toMatch(/green|#07c160|#16a34a/i)
+      onContactAdd={vi.fn()} onCreateGroup={vi.fn()} onAddBot={vi.fn()} />)
+    expect(markup).toContain('role="menu"')
+    expect(markup).not.toContain('width:176px')
   })
 
-  it('keeps the menu readable across DSH themes without changing its light fallbacks', () => {
-    const markup = renderToStaticMarkup(<ArkmeQuickAddMenu
-      onContactAdd={vi.fn()}
-      onCreateGroup={vi.fn()}
-      onAddBot={vi.fn()}
-    />)
-
-    expect(markup).toContain('border:1px solid var(--dsw-alias-border-l2, #e3e4e8)')
-    expect(markup).toContain('color:var(--dsw-alias-label-primary, #1a1c21)')
-    expect(markup).toContain('color:var(--dsw-alias-label-secondary, #6f747e)')
-    expect(markup).toContain('background:var(--dsw-alias-border-l1, #ececef)')
-    expect(quickAddSource).toContain("event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, #f4f4f6)'")
-  })
 })
 
 describe('Arkme desktop Bot create dialog', () => {

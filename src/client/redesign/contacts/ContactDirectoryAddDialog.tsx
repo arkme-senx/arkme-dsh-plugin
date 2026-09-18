@@ -61,7 +61,7 @@ export function ContactDirectoryAddDialog({ shareWebsite, onClose, onAdded }: {
     <section ref={dialogRef} style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} onKeyDown={onKeyDown}>
       <header style={styles.header}>
         <h2 id={`${id}-title`} style={styles.title}>添加联系人</h2>
-        <button type="button" style={styles.close} aria-label="关闭添加联系人" onClick={onClose}>×</button>
+        <button data-arkme-feedback="neutral" type="button" style={styles.close} aria-label="关闭添加联系人" onClick={onClose}>×</button>
       </header>
       <div style={styles.body}>
         <ArkmeContactAddSurface compact shareWebsite={shareWebsite} submitLabel="添加联系人" onSourceActivated={onAdded} />

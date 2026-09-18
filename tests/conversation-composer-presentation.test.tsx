@@ -22,7 +22,8 @@ describe('Arkme conversation composer presentation', () => {
 
   it('keeps file selection in the existing menu instead of exposing the internal cache', () => {
     const menu = sidebarSource.slice(sidebarSource.indexOf('{addMenuOpen &&'), sidebarSource.indexOf('<input ref={fileInputRef}'))
-    expect(menu.match(/role="menuitem"/gu)).toHaveLength(2)
+    expect(menu).toContain('<ArkmeActionMenu')
+    expect(menu.match(/id: '/gu)).toHaveLength(2)
     expect(menu).toContain('添加照片和文件')
     expect(menu).toContain('写长文')
     expect(menu).not.toContain('采集本次位置')
@@ -151,9 +152,9 @@ describe('Arkme conversation composer presentation', () => {
     expect(arkoSource).toContain("callArkme<ArkmeArkoModelCatalog>('arko.model.activate'")
   })
 
-  it('preserves the original add button while aligning the static emoji tool to it', () => {
+  it('preserves tool geometry while sharing hover feedback between add and emoji', () => {
     expect(sidebarSource).toContain("plus: { width: 34, height: 34, border: 0, borderRadius: 9, background: 'transparent', color: colors.secondary, cursor: 'pointer', fontSize: 22, lineHeight: '30px' }")
-    expect(sidebarSource).toContain('<button ref={addMenuTriggerRef} type="button" style={styles.plus}')
+    expect(sidebarSource).toContain('<button data-arkme-feedback="neutral" ref={addMenuTriggerRef} type="button" style={styles.plus}')
     expect(sidebarSource).toContain("(activeRecordReeditComposer === undefined ? preparingFiles : preparingReeditFiles) ? <ArkmeFilePreparingIndicator /> : '+'")
     expect(sidebarSource).not.toContain('aria-label={`前移')
     expect(sidebarSource).not.toContain('aria-label={`后移')
@@ -165,7 +166,7 @@ describe('Arkme conversation composer presentation', () => {
     expect(sidebarSource).not.toContain('onBeforeToggle={() => { textareaRef.current?.focus({ preventScroll: true }) }}')
     expect(toolButtonSource).toContain("width: 34")
     expect(toolButtonSource).toContain("height: 34")
-    expect(toolButtonSource).toContain("transition: 'none'")
+    expect(toolButtonSource).toContain('data-arkme-feedback="neutral"')
     expect(toolButtonSource).not.toContain('onMouseEnter')
     expect(toolButtonSource).not.toContain('onMouseLeave')
     expect(toolIconSource).toContain('viewBox="0 0 20 20"')

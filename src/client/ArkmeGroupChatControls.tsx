@@ -327,22 +327,20 @@ export function ArkmeConversationHeaderIconButton(props: {
   label: string
   children: ReactNode
   buttonRef?: RefObject<HTMLButtonElement>
-  hasPopup?: boolean
+  hasPopup?: boolean | 'dialog'
   expanded?: boolean
   busy?: boolean
   onClick: () => void
 }) {
-  return <button
+  return <button data-arkme-feedback="neutral"
     ref={props.buttonRef}
     type="button"
     aria-label={props.label}
-    aria-haspopup={props.hasPopup ? 'menu' : undefined}
+    aria-haspopup={props.hasPopup === 'dialog' ? 'dialog' : props.hasPopup ? 'menu' : undefined}
     aria-expanded={props.expanded}
     aria-busy={props.busy || undefined}
     title={props.label}
     style={styles.headerButton}
-    onMouseEnter={event => { event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover)' }}
-    onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
     onClick={props.onClick}
   >{props.children}</button>
 }
@@ -361,13 +359,9 @@ const GroupMemberRow = memo(function GroupMemberRow({ member, onMemberOpen, onMe
   onMemberContextMenu: (member: ArkmeConversationMemberItem, rect: DOMRect) => void
 }) {
   const badge = roleLabel(member)
-  return <button
+  return <button data-arkme-feedback="neutral"
     type="button"
     style={styles.memberRow}
-    onMouseEnter={event => {
-      event.currentTarget.style.background = colors.subtle
-    }}
-    onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
     onClick={() => { onMemberOpen(member) }}
     onContextMenu={event => {
       event.preventDefault()
@@ -416,11 +410,11 @@ function GroupMembersDrawer(props: {
     <div style={styles.drawerHeader}>
       <h3 style={{ ...styles.drawerTitle, fontSize: 16, fontWeight: 400 }}>协作者{visibleSnapshot === undefined ? '' : `（${visibleSnapshot.items.length}）`}</h3>
       <span style={{ flex: 1 }} />
-      <button type="button" style={{ ...styles.closeButton, width: 'auto', padding: '0 6px', fontSize: 14, fontWeight: 700, color: colors.primary }} onClick={props.onAdd}>添加</button>
+      <button data-arkme-feedback="neutral" type="button" style={{ ...styles.closeButton, width: 'auto', padding: '0 6px', fontSize: 14, fontWeight: 700, color: colors.primary }} onClick={props.onAdd}>添加</button>
     </div>
     <div style={styles.drawerBody}>
       {loading && items.length === 0 ? <div style={styles.loading}>正在读取群成员…</div> : null}
-      {snapshot.error !== undefined && <button type="button" role="alert" style={styles.restrictionRetry}
+      {snapshot.error !== undefined && <button data-arkme-feedback="neutral" type="button" role="alert" style={styles.restrictionRetry}
         onClick={() => { if (props.accountScope !== undefined) void arkmeConversationMembers.ensure(props.accountScope, props.source, true) }}
       >{snapshot.error}，点击重试</button>}
       {snapshot.ready && !loading && snapshot.error === undefined && items.length === 0 ? <div style={styles.empty}>暂无群成员</div> : null}
@@ -664,7 +658,7 @@ function AddMembersDrawer(props: {
   const candidateRow = (item: ArkmeGroupMemberCandidate, compact = false) => {
     const checked = selected.includes(item.candidateRef)
     const disabled = item.disabled === true
-    return <button
+    return <button data-arkme-feedback="neutral"
       key={item.candidateRef}
       type="button"
       disabled={busy || disabled}
@@ -681,7 +675,7 @@ function AddMembersDrawer(props: {
   const botRow = (item: typeof botItems[number]) => {
     const disabled = item.installed || bots?.canAddBots === false
     const checked = item.installed || selectedBots.includes(item.botRef)
-    return <button
+    return <button data-arkme-feedback="neutral"
       key={item.botRef}
       type="button"
       disabled={busy || disabled}
@@ -707,7 +701,7 @@ function AddMembersDrawer(props: {
     const isLoading = loadingGroups.includes(group.sourceRef)
     const memberCount = bundle?.total ?? group.groupAvatar?.memberCount ?? group.avatarRefs?.length ?? 0
     return <div key={group.sourceRef}>
-      <button
+      <button data-arkme-feedback="neutral"
         type="button"
         onClick={() => { toggleGroup(group) }}
         style={{ ...styles.memberRow, padding: '8px 2px', borderBottom: expanded ? 0 : `1px solid ${colors.border}`, borderRadius: 0 }}
@@ -719,7 +713,7 @@ function AddMembersDrawer(props: {
       </button>
       {expanded ? <div style={{ marginLeft: 14, padding: '2px 0 10px 8px', borderLeft: `1px solid rgba(0,0,0,.08)` }}>
         {isLoading ? <div style={{ ...styles.loading, textAlign: 'left' }}>正在加载群成员</div> : null}
-        {!isLoading && bundle?.error !== undefined ? <div style={{ padding: '10px 0', display: 'flex', alignItems: 'center', gap: 8, color: colors.secondary, fontSize: 13 }}><span>{bundle.error}</span><button type="button" style={{ border: 0, background: 'transparent', color: colors.primary, cursor: 'pointer' }} onClick={() => { loadGroupMembers(group) }}>重试</button></div> : null}
+        {!isLoading && bundle?.error !== undefined ? <div style={{ padding: '10px 0', display: 'flex', alignItems: 'center', gap: 8, color: colors.secondary, fontSize: 13 }}><span>{bundle.error}</span><button data-arkme-feedback="neutral" type="button" style={{ border: 0, background: 'transparent', color: colors.primary, cursor: 'pointer' }} onClick={() => { loadGroupMembers(group) }}>重试</button></div> : null}
         {!isLoading && bundle?.error === undefined && groupItems.length === 0 ? <div style={{ padding: '10px 0', color: colors.secondary, fontSize: 13 }}>{normalizedQuery === '' ? '暂无可选群成员' : '没有找到相关成员'}</div> : null}
         {groupItems.map(item => candidateRow(item, true))}
       </div> : null}
@@ -739,16 +733,16 @@ function AddMembersDrawer(props: {
     if (event.target === event.currentTarget && !busy) props.onClose()
   }}>
     <section style={{ ...styles.drawer, top: 0, width: 360, maxWidth: '92%', zIndex: 36, background: '#fff' }} role="dialog" aria-modal="true" aria-label="添加成员">
-      <div style={{ height: 52, padding: '0 12px', display: 'flex', alignItems: 'center', flex: 'none' }}><h3 style={{ margin: 0, fontSize: 20, lineHeight: '28px', color: colors.text }}>添加成员</h3><span style={{ flex: 1 }} /><button type="button" aria-label="关闭" style={{ ...styles.closeButton, width: 28, height: 28, borderRadius: 0, background: 'transparent' }} onClick={props.onClose}><CloseGlyph /></button></div>
+      <div style={{ height: 52, padding: '0 12px', display: 'flex', alignItems: 'center', flex: 'none' }}><h3 style={{ margin: 0, fontSize: 20, lineHeight: '28px', color: colors.text }}>添加成员</h3><span style={{ flex: 1 }} /><button data-arkme-feedback="neutral" type="button" aria-label="关闭" style={{ ...styles.closeButton, width: 28, height: 28, borderRadius: 0, background: 'transparent' }} onClick={props.onClose}><CloseGlyph /></button></div>
       <div style={{ position: 'relative', margin: '0 12px 8px' }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ position: 'absolute', left: 12, top: 11, color: '#aaa' }}><circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2"/><path d="m16 16 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
         <input style={{ ...styles.dialogInput, height: 40, border: 0, borderRadius: 11, paddingLeft: 36, paddingRight: 30, background: '#f5f5f5' }} value={query} placeholder="搜索" aria-label="搜索成员候选人" disabled={busy} onChange={event => { setQuery(event.target.value) }} />
-        {query !== '' ? <button type="button" aria-label="清除搜索" disabled={busy} onClick={() => { setQuery('') }} style={{ position: 'absolute', right: 8, top: 8, width: 24, height: 24, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer' }}><CloseGlyph /></button> : null}
+        {query !== '' ? <button data-arkme-feedback="neutral" type="button" aria-label="清除搜索" disabled={busy} onClick={() => { setQuery('') }} style={{ position: 'absolute', right: 8, top: 8, width: 24, height: 24, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer' }}><CloseGlyph /></button> : null}
       </div>
       <div style={{ overflowY: 'auto', minHeight: 120, flex: 1, padding: '0 12px' }}>
         {!isSearchMode && <><div style={{ padding: '2px 0 8px', fontSize: 14, fontWeight: 600 }}>我的会话</div>{focusRows.map(row => {
           const active = focus === row.focus
-          return <button key={row.focus} type="button" onClick={() => { setFocus(current => current === row.focus ? 'all' : row.focus) }} style={{ width: '100%', height: 52, padding: '0 12px', border: 0, borderBottom: `1px solid ${colors.border}`, outline: 0, background: '#fff', display: 'flex', alignItems: 'center', gap: 12, color: active ? colors.text : colors.secondary, position: 'relative', cursor: 'pointer' }}>
+          return <button data-arkme-feedback="neutral" key={row.focus} type="button" onClick={() => { setFocus(current => current === row.focus ? 'all' : row.focus) }} style={{ width: '100%', height: 52, padding: '0 12px', border: 0, borderBottom: `1px solid ${colors.border}`, outline: 0, background: '#fff', display: 'flex', alignItems: 'center', gap: 12, color: active ? colors.text : colors.secondary, position: 'relative', cursor: 'pointer' }}>
             {active && <span style={{ position: 'absolute', left: 0, width: 2, height: 16, borderRadius: 2, background: colors.text }} />}{focusIcon(row.focus)}<strong style={{ fontSize: 14, fontWeight: active ? 700 : 500 }}>{row.label}</strong><span style={{ marginLeft: 'auto', fontSize: 12 }}>{row.count}</span>
           </button>
         })}</>}
@@ -767,7 +761,7 @@ function AddMembersDrawer(props: {
       </div>
       <div style={{ height: 58, flex: 'none', display: 'flex', alignItems: 'center', padding: '0 14px', borderTop: `1px solid ${colors.border}`, background: '#fff' }}>
         <span style={{ minWidth: 0, flex: 1 }}>{selectedPreview}</span><span style={{ width: 10 }} />
-        <button
+        <button data-arkme-feedback="neutral"
           type="button"
           style={{ ...styles.dialogButton, width: 126, height: 38, borderRadius: 11, background: selectedCount === 0 ? '#f5f5f5' : colors.text, color: selectedCount === 0 ? '#aaa' : '#fff', opacity: busy ? .55 : 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
           disabled={busy || selectedCount === 0}
@@ -816,7 +810,7 @@ function InviteCollaboratorsDialog(props: {
   }, [])
   if (!props.open) return null
   const qrUrl = preview === undefined ? '' : qrDataUrl(preview.inviteLink)
-  const action = (kind: 'copy' | 'save' | 'add', label: string, onClick: () => void, disabled = false, busy = false) => <button
+  const action = (kind: 'copy' | 'save' | 'add', label: string, onClick: () => void, disabled = false, busy = false) => <button data-arkme-feedback="neutral"
     type="button" disabled={disabled} onClick={onClick}
     aria-busy={busy || undefined}
     style={{ width: 78, padding: 0, border: 0, background: 'transparent', color: colors.secondary, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? .45 : 1 }}
@@ -849,7 +843,7 @@ function InviteCollaboratorsDialog(props: {
   }
   return <div style={styles.dialogScrim} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) props.onClose() }}>
     <section style={{ ...styles.dialog, width: 420 }} role="dialog" aria-modal="true" aria-label="邀请协作者">
-      <div style={{ display: 'flex', alignItems: 'center' }}><h3 style={{ ...styles.dialogTitle, margin: 0, fontSize: 18 }}>邀请协作者</h3><span style={{ flex: 1 }} /><button type="button" aria-label="关闭" style={{ ...styles.closeButton, width: 28, height: 28, padding: 0, borderRadius: 999, background: colors.subtle, color: colors.secondary }} onClick={props.onClose}><CloseGlyph /></button></div>
+      <div style={{ display: 'flex', alignItems: 'center' }}><h3 style={{ ...styles.dialogTitle, margin: 0, fontSize: 18 }}>邀请协作者</h3><span style={{ flex: 1 }} /><button data-arkme-feedback="neutral" type="button" aria-label="关闭" style={{ ...styles.closeButton, width: 28, height: 28, padding: 0, borderRadius: 999, background: colors.subtle, color: colors.secondary }} onClick={props.onClose}><CloseGlyph /></button></div>
       <div style={{ height: 10 }} />
       <div style={{ width: 264, margin: '0 auto', padding: '16px 16px 14px', borderRadius: 18, background: colors.panel, boxSizing: 'border-box', boxShadow: '0 10px 22px rgba(0,0,0,.08)' }}>
         <div style={{ display: 'flex', alignItems: 'center' }}><Avatar imageRef={props.source.avatarRef} size={32} /><div style={{ marginLeft: 10, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview?.title ?? props.source.displayName}</div><div style={{ marginTop: 2, fontSize: 12, color: colors.secondary }}>发起人：{preview?.inviterDisplayName ?? 'Arkme'}</div></div></div>
@@ -1052,44 +1046,38 @@ function GroupAiPolishPanel(props: {
       aria-modal="true"
     >
       <div style={styles.aiHeader}>
-        {view === 'editor' ? <button type="button" aria-label="返回规则列表" style={styles.aiHeaderButton} disabled={busy} onClick={() => { setView('rules'); setError('') }}><ArrowLeft size={18} /></button> : <span />}
+        {view === 'editor' ? <button data-arkme-feedback="neutral" type="button" aria-label="返回规则列表" style={styles.aiHeaderButton} disabled={busy} onClick={() => { setView('rules'); setError('') }}><ArrowLeft size={18} /></button> : <span />}
         <div style={styles.aiHeaderTitle}>{view === 'rules' ? 'AI 表达润色' : title}</div>
-        {view === 'editor' ? <button
+        {view === 'editor' ? <button data-arkme-feedback="primary"
           type="button"
           data-arkme-ai-polish-apply="true"
           style={{ ...styles.aiApplyButton, opacity: canApply ? 1 : .32, cursor: canApply ? 'pointer' : 'default' }}
           disabled={!canApply}
           onClick={() => { void applyRule() }}
-        >{busy ? '处理中' : '应用规则'}</button> : <button type="button" aria-label="关闭 AI 润色设置" style={{ ...styles.aiHeaderButton, justifySelf: 'end' }} onClick={props.onClose}><X size={18} /></button>}
+        >{busy ? '处理中' : '应用规则'}</button> : <button data-arkme-feedback="neutral" type="button" aria-label="关闭 AI 润色设置" style={{ ...styles.aiHeaderButton, justifySelf: 'end' }} onClick={props.onClose}><X size={18} /></button>}
       </div>
       {view === 'rules' ? <div style={styles.aiBody}>
         {loading && settings === undefined ? <div style={styles.loading}>正在读取 AI 润色设置…</div> : null}
         {!loading && settings !== undefined ? <>
-          <button
+          <button data-arkme-feedback="neutral"
             type="button"
             style={{ ...styles.aiRuleRow, opacity: canManage ? 1 : .5 }}
             disabled={!canManage || busy}
-            onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-            onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
             onClick={() => { void disablePolish() }}
           ><span style={{ ...styles.aiRadio, ...(!settings.enabled ? { border: `4px solid ${colors.primary}` } : {}) }} /><span style={styles.aiRuleName}>不润色</span></button>
-          {settings.rules.map(rule => <button
+          {settings.rules.map(rule => <button data-arkme-feedback="neutral"
             key={rule.ruleRef}
             type="button"
             data-arkme-ai-polish-rule-ref={rule.ruleRef}
             style={{ ...styles.aiRuleRow, opacity: canManage ? 1 : .5 }}
             disabled={!canManage || busy}
-            onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-            onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
             onClick={() => { openEditor(rule) }}
           ><span style={{ ...styles.aiRadio, ...(rule.isActive ? { border: `4px solid ${colors.primary}` } : {}) }} /><span style={styles.aiRuleName}>{rule.name}</span><span style={styles.aiRuleStatus}>{rule.isActive ? '当前应用' : '›'}</span></button>)}
-          <button
+          <button data-arkme-feedback="neutral"
             type="button"
             data-arkme-ai-polish-new-rule="true"
             style={{ ...styles.aiRuleRow, opacity: canManage ? 1 : .5 }}
             disabled={!canManage || busy}
-            onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-            onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
             onClick={() => { openEditor() }}
           ><Plus size={16} /><span style={styles.aiRuleName}>新建规则</span><CaretRight size={15} color={colors.secondary} /></button>
         </> : null}
@@ -1128,7 +1116,7 @@ function GroupAiPolishPanel(props: {
                 if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void generateRule() }
               }}
             />
-            <button
+            <button data-arkme-feedback="primary"
               type="button"
               aria-label="发送规则描述"
               title="发送"
@@ -1336,7 +1324,7 @@ function GroupSettingsMenu(props: {
   entries.push(
     { type: 'separator', id: 'leave-separator' },
     {
-      id: 'leave',
+      id: 'leave', danger: true,
       label: <span style={{ color: arkmeTheme.danger }}>{effective.canDissolve ? '解散群聊' : '退出群聊'}</span>,
       icon: <span style={{ color: arkmeTheme.danger }}><ClientIcon src={icons.exit} size={16} /></span>,
       disabled: busy || (!effective.canLeave && !effective.canDissolve),
@@ -1351,7 +1339,7 @@ function GroupSettingsMenu(props: {
     open={props.open}
     label="群聊设置"
     align="end"
-    dense
+    portal
     items={entries}
     onClose={close}
     onSelect={id => {
@@ -1516,14 +1504,12 @@ function GroupJoinRestrictionsPanel(props: {
     >
       <div style={styles.restrictionHeader}>
         <h3 id="arkme-group-join-restrictions-title" style={styles.restrictionTitle}>禁止加入名单</h3>
-        <button
+        <button data-arkme-feedback="neutral"
           ref={closeButtonRef}
           type="button"
           aria-label="关闭禁止加入名单"
           disabled={busyMemberRef !== ''}
           style={{ ...styles.restrictionClose, opacity: busyMemberRef === '' ? 1 : .45 }}
-          onMouseEnter={event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = colors.subtle }}
-          onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
           onClick={props.onClose}
         ><X size={18} /></button>
       </div>
@@ -1539,20 +1525,18 @@ function GroupJoinRestrictionsPanel(props: {
             <span style={styles.memberName}>{item.displayName}</span>
             <span style={styles.restrictionStatus}>已禁止再次加入</span>
           </span>
-          <button
+          <button data-arkme-feedback="neutral"
             type="button"
             disabled={busyMemberRef !== ''}
             style={{ ...styles.restrictionAction, opacity: busyMemberRef === '' ? 1 : .45 }}
-            onMouseEnter={event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = arkmeTheme.hover }}
-            onMouseLeave={event => { event.currentTarget.style.background = arkmeTheme.elevated }}
             onClick={() => { setMutationError(''); setConfirmationTarget(item) }}
           >解除限制</button>
         </div>)}
         {loadError === '' ? null : <div role="alert" style={styles.restrictionError}>
           <span style={{ minWidth: 0, flex: 1, overflowWrap: 'anywhere' }}>{loadError}</span>
-          <button type="button" disabled={loading} style={styles.restrictionRetry} onClick={() => { load(cursor) }}>重试</button>
+          <button data-arkme-feedback="neutral" type="button" disabled={loading} style={styles.restrictionRetry} onClick={() => { load(cursor) }}>重试</button>
         </div>}
-        {cursor !== undefined && loadError === '' ? <button type="button" disabled={loading} style={{ ...styles.restrictionLoadMore, opacity: loading ? .45 : 1 }} onClick={() => { load(cursor) }}>
+        {cursor !== undefined && loadError === '' ? <button data-arkme-feedback="neutral" type="button" disabled={loading} style={{ ...styles.restrictionLoadMore, opacity: loading ? .45 : 1 }} onClick={() => { load(cursor) }}>
           {loading ? '加载中…' : '加载更多'}
         </button> : null}
       </div>
@@ -1600,8 +1584,8 @@ function RenameDialog(props: {
         onChange={event => { setTitle(event.target.value) }}
       />
       <div style={styles.dialogActions}>
-        <button type="button" style={{ ...styles.dialogButton, background: colors.subtle, color: colors.text }} disabled={busy} onClick={props.onClose}>取消</button>
-        <button
+        <button data-arkme-feedback="neutral" type="button" style={{ ...styles.dialogButton, background: colors.subtle, color: colors.text }} disabled={busy} onClick={props.onClose}>取消</button>
+        <button data-arkme-feedback="primary"
           type="button"
           style={{ ...styles.dialogButton, background: colors.primary, color: arkmeTheme.foreground, opacity: busy || title.trim() === '' ? .55 : 1 }}
           disabled={busy || title.trim() === ''}

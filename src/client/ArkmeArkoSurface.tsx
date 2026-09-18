@@ -1,6 +1,7 @@
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from './message-selection-presentation.js'
 import { RegionMarquee } from './selection/RegionMarquee.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
+import { ArkmeWideConversation } from './ArkmeWideConversation.js'
 import {
   Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties,
@@ -308,7 +309,7 @@ function ArkoThinkingPanel({ reasoning, activity }: { reasoning?: string; activi
   }, [active])
   const detail = reasoning?.trim() || (activity === '正在处理' ? '正在处理...' : '正在思考...')
   return <div style={styles.thinking}>
-    <button
+    <button data-arkme-feedback="neutral"
       type="button"
       style={styles.thinkingHeader}
       aria-expanded={expanded}
@@ -977,7 +978,7 @@ export function ArkmeArkoSurface() {
         <span style={styles.aiDisclaimer}>Agent · 内容由 AI 生成，仅供参考</span>
       </span>
       <div style={styles.actions} role="toolbar" aria-label="Arko 操作">
-        <button
+        <button data-arkme-feedback="neutral"
           type="button"
           title="选择模型"
           style={{ ...styles.actionButton, opacity: !canChooseModel || interactionLocked || clearing ? .55 : 1 }}
@@ -990,7 +991,7 @@ export function ArkmeArkoSurface() {
             <span style={styles.actionSub}>{selectedModel}</span>
           </span>
         </button>
-        <button
+        <button data-arkme-feedback="neutral"
           type="button"
           title="清除上下文"
           style={{ ...styles.actionButton, opacity: loading || interactionLocked || clearing ? .55 : 1 }}
@@ -1004,13 +1005,14 @@ export function ArkmeArkoSurface() {
         </button>
       </div>
     </header>
+    <ArkmeWideConversation enabled scopeKey={messageSelectionScope} viewportRef={bodyRef} turns controlsHidden={messageActions.selecting}>
     <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-    <div ref={bodyRef} data-arko-message-viewport style={styles.body}>
+    <div ref={bodyRef} data-arkme-width-viewport data-arko-message-viewport style={styles.body}>
       {notice !== '' && <div style={styles.notice}>{notice}</div>}
       {error !== '' && <div style={styles.error}>{error}</div>}
       {historyError !== '' && <div style={{ ...styles.error, ...styles.feedbackRow }}>
         <span>{historyError}</span>
-        <button type="button" style={styles.retryButton} disabled={historyLoading} onClick={() => {
+        <button data-arkme-feedback="neutral" type="button" style={styles.retryButton} disabled={historyLoading} onClick={() => {
           if (historyOffset === undefined) void retryHistory()
           else void loadEarlier()
         }}>
@@ -1019,7 +1021,7 @@ export function ArkmeArkoSurface() {
       </div>}
       {pendingTurn !== undefined && !sending && activeRun === undefined && <div style={{ ...styles.notice, ...styles.feedbackRow }}>
         <span>上一次发送结果尚未确认，请先用原请求标识完成对账。</span>
-        <button type="button" style={styles.retryButton} onClick={() => { void submitTurn(pendingTurn) }}>重试确认</button>
+        <button data-arkme-feedback="neutral" type="button" style={styles.retryButton} onClick={() => { void submitTurn(pendingTurn) }}>重试确认</button>
       </div>}
       <div ref={historySentinelRef} style={styles.historySentinel} />
       {historyLoading && <div style={styles.historyLoading} role="status">正在加载更早内容…</div>}
@@ -1032,9 +1034,15 @@ export function ArkmeArkoSurface() {
           const actionItem = messageActionItems.find(candidate => candidate.id === item.id)
           const selectedForAction = messageActions.selectedIds.has(item.id)
           return <Fragment key={item.id}>
-          {item.role === 'divider' ? <li style={{ ...styles.row, justifyContent: 'center' }}>
+          {item.role === 'divider' ? <li data-arkme-width-anchor={item.id} data-arkme-width-role="divider" style={{ ...styles.row, justifyContent: 'center' }}>
             <span style={styles.divider}>{item.text}</span>
           </li> : <li
+            data-arkme-width-anchor={item.id}
+            data-arkme-width-role={item.role}
+            data-arkme-width-preview={item.text.slice(0, 320)}
+            data-arkme-width-avatar={item.role === 'user' ? userProfile?.avatarRef : undefined}
+            data-arkme-width-sender={item.role === 'user' ? userProfile?.displayName || userProfile?.nickname || '我' : displayName}
+            data-arkme-width-sender-kind={item.role === 'user' ? 'human' : 'arko'}
             data-arko-selection-key={item.id}
             style={{ ...styles.row, ...(item.role === 'user' ? styles.rowMe : styles.rowArko), ...(messageActions.selecting ? { ...messageSelectionStyles.rowSelectAvatarMode, marginBottom: 23 } : {}), ...(selectedForAction ? messageSelectionStyles.rowSelectedForAction : {}) }}
             onClick={event => {
@@ -1141,7 +1149,7 @@ export function ArkmeArkoSurface() {
         <h3 id="arkme-arko-model-title" style={styles.dialogTitle}>选择模型</h3>
         <p style={styles.dialogContent}>仅影响之后发起的新任务，进行中的任务会继续使用原模型</p>
         <div style={styles.modelList}>
-          {catalog.options.map(option => <button
+          {catalog.options.map(option => <button data-arkme-feedback="neutral" data-arkme-feedback-selected={option.selected}
             key={option.routeKey}
             type="button"
             style={{ ...styles.modelOption, ...(option.selected ? styles.modelOptionSelected : {}), opacity: selectingModel ? .6 : 1 }}
@@ -1157,7 +1165,7 @@ export function ArkmeArkoSurface() {
           </button>)}
         </div>
         <div style={styles.dialogActions}>
-          <button type="button" style={styles.dialogButton} onClick={() => { setModelDialogOpen(false) }} disabled={selectingModel}>关闭</button>
+          <button data-arkme-feedback="neutral" type="button" style={styles.dialogButton} onClick={() => { setModelDialogOpen(false) }} disabled={selectingModel}>关闭</button>
         </div>
       </section>
     </div>}
@@ -1169,16 +1177,16 @@ export function ArkmeArkoSurface() {
         <h3 id="arkme-arko-clear-title" style={styles.dialogTitle}>清除上下文</h3>
         <p style={styles.dialogContent}>将创建新的 Agent 会话，已有聊天记录不会删除。</p>
         <div style={styles.dialogActions}>
-          <button type="button" style={styles.dialogButton} onClick={() => { setClearConfirmOpen(false) }}>取消</button>
-          <button type="button" style={{ ...styles.dialogButton, ...styles.dialogPrimary }} onClick={() => { void clearContext() }}>确认</button>
+          <button data-arkme-feedback="neutral" type="button" style={styles.dialogButton} onClick={() => { setClearConfirmOpen(false) }}>取消</button>
+          <button data-arkme-feedback="primary" type="button" style={{ ...styles.dialogButton, ...styles.dialogPrimary }} onClick={() => { void clearContext() }}>确认</button>
         </div>
       </section>
     </div>}
 
     <div style={{ position: 'relative', flex: 'none' }}>
     {messageActions.selecting && <div style={{ position: 'absolute', inset: 0, zIndex: 35, display: 'grid', background: arkmeTheme.layer2 }}>{messageActions.selectionBar}</div>}
-    <footer ref={composerRef} aria-hidden={messageActions.selecting || undefined} {...(messageActions.selecting ? { inert: '' } : {})} style={{ ...styles.composer, ...(messageActions.selecting ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}>
-      <button
+    <footer data-arkme-width-composer ref={composerRef} aria-hidden={messageActions.selecting || undefined} {...(messageActions.selecting ? { inert: '' } : {})} style={{ ...styles.composer, ...(messageActions.selecting ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}>
+      <button data-arkme-feedback="neutral"
         type="button"
         aria-label={`${displayName} 能干什么`}
         style={{ ...styles.capabilityShortcut, opacity: sendDisabled ? .45 : 1, cursor: sendDisabled ? 'default' : 'pointer' }}
@@ -1219,13 +1227,13 @@ export function ArkmeArkoSurface() {
           onSelect={insertEmoji}
         />
         <span style={styles.hint}>{hint}</span>
-        {activeRun === undefined ? <button
+        {activeRun === undefined ? <button data-arkme-feedback="neutral"
           type="button"
           title="发送"
           style={{ ...styles.send, opacity: sendDisabled || draft.trim() === '' ? .45 : 1 }}
           disabled={sendDisabled || draft.trim() === ''}
           onClick={() => { void send() }}
-        ><span aria-hidden>↑</span></button> : <button
+        ><span aria-hidden>↑</span></button> : <button data-arkme-feedback="neutral"
           type="button"
           title="停止当前任务"
           aria-label="停止当前 Arko 任务"
@@ -1237,5 +1245,6 @@ export function ArkmeArkoSurface() {
     </div></footer>
     </div>
     {messageActions.overlay}
+    </ArkmeWideConversation>
   </div>
 }

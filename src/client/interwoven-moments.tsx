@@ -55,12 +55,15 @@ export function projectInterwovenWindow(
   messages: readonly ArkmeTimelineItem[],
   moments: readonly ArkmeInterwovenMention[],
   hasMoreMessages: boolean,
+  includeFromMillis?: number,
 ): { prelude: ArkmeInterwovenMention[]; inline: ArkmeInterwovenMention[] } {
   const sorted = [...new Map(moments.map(moment => [moment.momentId, moment])).values()]
     .sort((a, b) => a.occurredAtMillis - b.occurredAtMillis || a.momentId.localeCompare(b.momentId))
   const oldest = messages.length === 0 ? Infinity : Math.min(...messages.map(message => message.sendAtMillis))
-  const prelude = sorted.filter(moment => moment.occurredAtMillis <= oldest)
-  const inline = sorted.filter(moment => moment.occurredAtMillis > oldest)
+  const isInline = (moment: ArkmeInterwovenMention) => moment.occurredAtMillis > oldest
+    || includeFromMillis !== undefined && moment.occurredAtMillis >= includeFromMillis
+  const prelude = sorted.filter(moment => !isInline(moment))
+  const inline = sorted.filter(isInline)
   return { prelude: hasMoreMessages && inline.length > 0 ? [] : prelude, inline }
 }
 
@@ -199,10 +202,12 @@ export function ArkmeInterwovenMentionCard({
   moment,
   rowId,
   onOpen,
+  highlighted = false,
 }: {
   moment: ArkmeInterwovenMention
   rowId?: string
   onOpen: (moment: ArkmeInterwovenMention) => void
+  highlighted?: boolean
 }) {
   const summary = moment.summary.trim() || '群聊提及'
   const accessible = `${moment.groupName}，${moment.senderName}：${summary}`
@@ -212,7 +217,7 @@ export function ArkmeInterwovenMentionCard({
     </time>
     <button
       type="button"
-      style={styles.card}
+      style={{ ...styles.card, ...(highlighted ? { background: 'var(--dsw-alias-bg-active, #eef0fa)', outline: '1px solid var(--dsw-alias-state-business-primary, #a5acff)' } : {}) }}
       aria-label={`打开快记详情：${accessible}`}
       title={accessible}
       onFocus={event => { event.currentTarget.style.boxShadow = '0 0 0 2px var(--dsw-alias-state-business-primary, #3964fe)' }}

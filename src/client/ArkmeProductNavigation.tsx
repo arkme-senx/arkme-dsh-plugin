@@ -13,14 +13,14 @@ import { AddressBook } from '@phosphor-icons/react/dist/icons/AddressBook'
 import type { Icon } from '@phosphor-icons/react/lib'
 import type { ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../types.js'
 import pluginManifest from '../../package.json' with { type: 'json' }
-import arkmeNavigationLogoBase64 from '../../assets/branding/arkme-navigation-logo.png'
-import arkmeNavigationLogoDarkBase64 from '../../assets/branding/arkme-navigation-logo-dark.png'
+import { ArkmeJiwoBrandMark } from './ArkmeJiwoBrandMark.js'
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
+import { ARKME_NAVIGATION_WIDTH, ARKME_PROFILE_AVATAR_SIZE } from './arkme-layout.js'
 
 export interface ArkmeProductNavigationProps {
   compact: boolean
@@ -50,8 +50,8 @@ const items: NavigationItem[] = [
 const styles: Record<string, CSSProperties> = {
   rail: {
     position: 'relative',
-    width: 72,
-    minWidth: 72,
+    width: ARKME_NAVIGATION_WIDTH,
+    minWidth: ARKME_NAVIGATION_WIDTH,
     height: '100%',
     padding: '24px 8px 14px',
     boxSizing: 'border-box',
@@ -76,13 +76,12 @@ const styles: Record<string, CSSProperties> = {
   hostedRail: {
     width: '100%', minWidth: 0, padding: '28px 4px 12px', borderRight: 0,
   },
-  taskExpandedRail: { width: 72, minWidth: 72 },
+  taskExpandedRail: { width: ARKME_NAVIGATION_WIDTH, minWidth: ARKME_NAVIGATION_WIDTH },
   brand: {
     width: '100%', minHeight: 44, flex: 'none', display: 'flex', flexDirection: 'column',
     alignItems: 'center', justifyContent: 'flex-start', gap: 2,
     overflow: 'visible', borderRadius: 10, background: 'transparent',
   },
-  brandImage: { display: 'block', width: 48, height: 28, objectFit: 'cover' },
   brandVersion: { color: '#a5a8af', fontSize: 10, lineHeight: '13px', whiteSpace: 'nowrap' },
   primary: {
     minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5,
@@ -109,16 +108,9 @@ const styles: Record<string, CSSProperties> = {
   compactButton: { minHeight: 42, height: 42, flex: 1, flexDirection: 'row', gap: 6, padding: '0 8px', borderRadius: 12 },
   hostedButton: { minHeight: 52, padding: '6px 2px', borderRadius: 13 },
   activeButton: { background: '#f1f2f6', color: '#151722' },
-  activeMarker: {
-    position: 'absolute',
-    left: -9,
-    width: 3,
-    height: 33,
-    borderRadius: 3,
-    background: '#9eadff',
-  },
-  compactMarker: { left: '50%', bottom: -6, width: 30, height: 3, transform: 'translateX(-50%)' },
-  hostedMarker: { left: -5 },
+  activeMarker: { left: -8 },
+  compactMarker: { left: '50%', top: 'auto', bottom: -6, width: 30, height: 3, transform: 'translateX(-50%)' },
+  hostedMarker: { left: -4 },
   icon: { position: 'relative', display: 'inline-flex' },
   unreadIndicator: {
     position: 'absolute', top: -7, right: -10, minWidth: 16, height: 16,
@@ -230,20 +222,7 @@ export function ArkmeProductNavigation({
       }}
     >
       {!compact && <div data-arkme-owned="product-brand" style={styles.brand}>
-        <img
-          src={`data:image/png;base64,${arkmeNavigationLogoBase64}`}
-          alt="Arkme"
-          data-arkme-theme-image="light"
-          draggable={false}
-          style={styles.brandImage}
-        />
-        <img
-          src={`data:image/png;base64,${arkmeNavigationLogoDarkBase64}`}
-          alt="Arkme"
-          data-arkme-theme-image="dark"
-          draggable={false}
-          style={styles.brandImage}
-        />
+        <ArkmeJiwoBrandMark />
         <span data-arkme-plugin-version={pluginManifest.version} style={styles.brandVersion}>
           v{pluginManifest.version}
         </span>
@@ -256,7 +235,7 @@ export function ArkmeProductNavigation({
         const ItemIcon = item.icon
         const active = item.id === activeId
         const showsUnread = item.id === 'conversations' && conversationUnreadCount > 0
-        return <button
+        return <button data-arkme-feedback="neutral"
           key={item.id}
           data-arkme-home-tour-target={item.id}
           type="button"
@@ -280,7 +259,7 @@ export function ArkmeProductNavigation({
             }
           }}
         >
-          {active && <span aria-hidden style={{
+          {active && <span aria-hidden data-arkme-selection-marker style={{
             ...styles.activeMarker,
             ...(compact ? styles.compactMarker : {}),
             ...(hosted ? styles.hostedMarker : {}),
@@ -317,13 +296,13 @@ export function ArkmeProductNavigation({
             <span><strong>{profile?.displayName || profile?.nickname || 'Arkme 用户'}</strong><small>{profile?.arkmeId ? `@${profile.arkmeId}` : 'Arkme 账号'}</small></span>
           </button>
           <div className="arkme-redesign-profile-menu">
-            <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.showWorld() }}><GlobeHemisphereWest size={19} /><span><strong>我的世界</strong><small>管理你的个人内容</small></span><CaretRight size={15} /></button>
-            <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.showVoiceprint() }}><Fingerprint size={19} /><span><strong>声纹管理</strong><small>设置声音识别</small></span><CaretRight size={15} /></button>
-            <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}><GearSix size={19} /><span><strong>设置</strong><small>打开 DSH 应用设置</small></span><CaretRight size={15} /></button>
+            <button data-arkme-feedback="neutral" type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.showWorld() }}><GlobeHemisphereWest size={19} /><span><strong>我的世界</strong><small>管理你的个人内容</small></span><CaretRight size={15} /></button>
+            <button data-arkme-feedback="neutral" type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.showVoiceprint() }}><Fingerprint size={19} /><span><strong>声纹管理</strong><small>设置声音识别</small></span><CaretRight size={15} /></button>
+            <button data-arkme-feedback="neutral" type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}><GearSix size={19} /><span><strong>设置</strong><small>打开 DSH 应用设置</small></span><CaretRight size={15} /></button>
           </div>
         </div>, document.body)}
         <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label="个人资料" onClick={() => { setProfileOpen(value => !value) }}>
-          <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={32} label="当前用户头像" />
+          <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={ARKME_PROFILE_AVATAR_SIZE} label="当前用户头像" />
         </button>
         </>}
       </div>}

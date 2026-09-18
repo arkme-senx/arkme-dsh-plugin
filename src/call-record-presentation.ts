@@ -34,7 +34,18 @@ function callRecordCandidates(raw: unknown): Record<string, unknown>[] {
   const record = object(root.record)
   const core = object(root.record_core)
   const payload = object(record.payload ?? root.payload)
-  return [payload, record, root, core].flatMap(value => [value, object(value.content_payload ?? value.contentPayload)])
+  const candidates: Record<string, unknown>[] = []
+  const seen = new Set<Record<string, unknown>>()
+  const visit = (value: Record<string, unknown>, depth: number) => {
+    if (depth > 4 || seen.has(value)) return
+    seen.add(value)
+    candidates.push(value)
+    for (const key of ['content_payload', 'contentPayload', 'record_payload', 'recordPayload', 'payload', 'record', 'record_core']) {
+      if (value[key] != null) visit(object(value[key]), depth + 1)
+    }
+  }
+  for (const value of [payload, record, root, core]) visit(value, 0)
+  return candidates
 }
 
 /** Host-only metadata used by the existing call-history owner to seal a detail reference. */
@@ -67,6 +78,57 @@ export function callRecordRoomId(raw: unknown): string {
     if (typeof uid === 'string' && uid.trim()) return uid.trim()
   }
   return ''
+}
+
+function callPreviewDuration(source: Record<string, unknown>): number {
+  const seconds = Number(first(source, ['du', 'duration', 'duration_sec', 'durationSec']) ?? 0)
+  if (Number.isFinite(seconds) && seconds > 0) return Math.floor(seconds)
+  const accepted = Number(first(source, ['at', 'accept_time', 'acceptTime', 'call_accept_time', 'callAcceptTime']) ?? 0)
+  const started = Number(first(source, ['st', 'start_time', 'startTime', 'call_start_time', 'callStartTime']) ?? 0)
+  const end = Number(first(source, ['et', 'end_time', 'endTime', 'call_end_time', 'callEndTime']) ?? 0)
+  const begin = accepted > 0 ? accepted : started
+  if (!Number.isFinite(begin) || !Number.isFinite(end) || begin <= 0 || end <= begin) return 0
+  const delta = end - begin
+  // Historical payloads contain both epoch seconds and milliseconds. Recognize
+  // millisecond epochs even for short calls, before Flutter's legacy delta fallback.
+  return Math.floor(begin >= 1e11 && end >= 1e11 || delta > 12 * 60 * 60 ? delta / 1000 : delta)
+}
+
+function callPreviewDurationText(seconds: number): string {
+  const parts = [Math.floor(seconds / 60) % 60, seconds % 60]
+  if (seconds >= 3600) parts.unshift(Math.floor(seconds / 3600))
+  return parts.map(part => String(part).padStart(2, '0')).join(':')
+}
+
+/** Flutter chat_record_preview_formatter parity. Shared by directory and live
+ * message previews; this reads the message payload only, never call details. */
+export function callRecordConversationPreview(raw: unknown, viewerUserId = 0): string | undefined {
+  const source = callRecordSource(raw)
+  const isCall = source !== undefined || callRecordCandidates(raw).some(value => {
+    const template = Number(first(value, ['template_kind', 'templateKind', 'payload_kind', 'payloadKind']))
+    const anchor = object(value.structured_anchor ?? value.structuredAnchor ?? value)
+    return template === 9 || ((!Number.isFinite(template) || template === 5)
+      && Number(anchor.anchor_kind ?? anchor.anchorKind) === 2)
+  })
+  if (!isCall) return undefined
+  if (!source) return '[通话]'
+  const media = String(first(source, ['mt', 'media_type', 'mediaType', 'call_media_type', 'callMediaType']) ?? '').trim().toLowerCase()
+  if (!['audio', 'video', '1', '2'].includes(media)) return '[通话]'
+  const typeText = media === 'video' || media === '2' ? '视频通话' : '语音通话'
+  const result = String(first(source, ['rs', 'call_result', 'callResult', 'result']) ?? '').toLowerCase().replace(/[\s_-]+/g, '')
+  const duration = callPreviewDuration(source)
+  if (!result && duration <= 0) return '[通话]'
+  const isCaller = viewerUserId > 0 && Number(first(source, ['cr', 'caller_id', 'callerId', 'caller_user_id', 'callerUserId'])) === viewerUserId
+  let status: string
+  switch (result) {
+    case 'cancel': case 'canceled': case 'cancelled': status = isCaller ? '已取消' : '对方已取消'; break
+    case 'reject': case 'rejected': status = isCaller ? '对方已拒绝' : '已拒绝'; break
+    case 'notanswer': case 'noanswer': case 'missed': status = isCaller ? '对方无应答' : '未接听'; break
+    case 'callbusy': case 'busy': status = isCaller ? '对方忙线中' : '未接听'; break
+    case 'offline': status = isCaller ? '对方离线' : '未接听'; break
+    default: status = duration > 0 ? '已接听' : '未接通'
+  }
+  return `${typeText} ${status}${status === '已接听' ? ` ${callPreviewDurationText(duration)}` : ''}`
 }
 
 /** Port of desktop call_record.dart; identifiers remain on the host. */

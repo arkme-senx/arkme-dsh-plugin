@@ -1867,6 +1867,12 @@ export class ArkmeService {
     return await this.calendar.bucketPage(options)
   }
 
+  async calendarChatStatistics(options: {
+    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal
+  }): Promise<ArkmeCalendarBucketPage> {
+    return await this.calendar.chatStatistics(options)
+  }
+
   async calendarRecords(
     options: {
       bucketDate: string

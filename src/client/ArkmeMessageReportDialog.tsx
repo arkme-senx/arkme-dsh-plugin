@@ -176,7 +176,7 @@ export function ArkmeMessageReportDialog({
     onMouseDown={event => { if (event.target === event.currentTarget) close() }}
   >
     <section role="dialog" aria-modal="true" aria-labelledby="arkme-message-report-title" style={styles.dialog}>
-      <button ref={closeRef} type="button" aria-label="关闭举报" style={{ ...styles.close, ...(submitting ? styles.disabled : {}) }} disabled={submitting} onClick={close}>×</button>
+      <button data-arkme-feedback="neutral" ref={closeRef} type="button" aria-label="关闭举报" style={{ ...styles.close, ...(submitting ? styles.disabled : {}) }} disabled={submitting} onClick={close}>×</button>
       <header style={styles.header}>
         <h2 id="arkme-message-report-title" style={styles.title}>举报和反馈</h2>
         <p style={styles.subtitle}>你的反馈可以帮助我们持续优化，Arkme 会及时处理。</p>
@@ -186,7 +186,7 @@ export function ArkmeMessageReportDialog({
         <div role="radiogroup" aria-label="举报类型" style={styles.group}>
           {REPORT_OPTIONS.map(option => {
             const selected = reportType === option.type
-            return <button
+            return <button data-arkme-feedback="neutral"
               key={option.type}
               type="button"
               role="radio"
@@ -213,8 +213,8 @@ export function ArkmeMessageReportDialog({
         <div style={styles.count}>{String(Array.from(reason).length)}/500</div>
         {error !== '' ? <div role="alert" style={styles.error}>{error}</div> : null}
         <footer style={styles.footer}>
-          <button type="button" style={{ ...styles.button, ...(submitting ? styles.disabled : {}) }} disabled={submitting} onClick={close}>取消</button>
-          <button
+          <button data-arkme-feedback="neutral" type="button" style={{ ...styles.button, ...(submitting ? styles.disabled : {}) }} disabled={submitting} onClick={close}>取消</button>
+          <button data-arkme-feedback="primary"
             type="button"
             aria-label="提交举报"
             style={{ ...styles.button, ...styles.submit, ...(!canSubmit ? styles.disabled : {}) }}

@@ -68,8 +68,8 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
         />
         {error !== '' && <div role="alert" style={styles.error}>{error}</div>}
         <div style={styles.actions}>
-          <button type="button" style={styles.secondary} disabled={busy} onClick={onCancel}>取消</button>
-          <button type="submit" style={styles.primary} disabled={busy}>{busy ? '发布中…' : '确认发布'}</button>
+          <button data-arkme-feedback="neutral" type="button" style={styles.secondary} disabled={busy} onClick={onCancel}>取消</button>
+          <button data-arkme-feedback="primary" type="submit" style={styles.primary} disabled={busy}>{busy ? '发布中…' : '确认发布'}</button>
         </div>
       </form>
     </section>

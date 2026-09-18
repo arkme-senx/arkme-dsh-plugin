@@ -41,6 +41,16 @@ function moment(momentId: string): ArkmeInterwovenMention {
 }
 
 describe('ArkmeConversationMemoryCache', () => {
+  it('isolates interaction completeness by conversation and clears it on eviction or account reset', () => {
+    const cache = new ArkmeConversationMemoryCache(1)
+    cache.storeInterwovenState('private-one', 'partial')
+    expect(cache.getInterwovenState('private-one')).toBe('partial')
+    expect(cache.getInterwovenState('private-two')).toBeUndefined()
+    cache.storeInterwovenState('private-two', 'success')
+    expect(cache.getInterwovenState('private-one')).toBeUndefined()
+    cache.clear()
+    expect(cache.getInterwovenState('private-two')).toBeUndefined()
+  })
   it('consumes delta objects only for their source and leaves unconsumed window items available', () => {
     const cache = new ArkmeConversationMemoryCache()
     const a = { ...timeline('a').items[0]!, sequence: 10 }

@@ -260,7 +260,7 @@ describe('ChatService', () => {
     expect((await chat.chatTimelineItems({ items: [raw] }, session, 'chat', kind))[0]).toMatchObject(expected)
   })
 
-  it.each(['Audio', 'Video'])('projects cancelled %s records on both page and realtime paths', async mediaType => {
+  it.each(['Audio', 'Video'])('projects cancelled and answered %s summaries on both page and realtime paths', async mediaType => {
     const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
     const raw = { relation: { record_uid: 'r', sender_user_id: 42 }, record: { status: 1,
       payload: { template_kind: 5, content_payload: { call_record: { room_id: 'private-call-room', media_type: mediaType, call_result: 'Cancel', caller_id: 42 } } } } }
@@ -272,9 +272,16 @@ describe('ChatService', () => {
       { sealProfileImageRef: async () => 'avatar', publicProfilesByUserIds: async () => new Map() } as never,
       media, {} as never, {} as never, { currentUserAgentSourceFallback: () => undefined } as never,
       { timelineAiPolish: () => undefined } as never, {} as never)
-    const expected = { callRecord: { mediaType: mediaType.toLowerCase(), text: '已取消', callRef: expect.stringMatching(/^arkme-call-v1\./), direction: 'outgoing' } }
+    const expected = { conversationPreview: `${mediaType === 'Video' ? '视频' : '语音'}通话 已取消`,
+      callRecord: { mediaType: mediaType.toLowerCase(), text: '已取消', callRef: expect.stringMatching(/^arkme-call-v1\./), direction: 'outgoing' } }
     expect((await chat.readSource('source', { cursor: { beforeSequence: 1 } })).items[0]).toMatchObject(expected)
     expect((await chat.chatTimelineItems({ items: [raw] }, session, 'chat', 'private_chat'))[0]).toMatchObject(expected)
+    Object.assign(raw.record.payload.content_payload.call_record, {
+      call_result: 'NormalEnd', duration_sec: mediaType === 'Video' ? 59 : 12,
+    })
+    const answered = mediaType === 'Video' ? '视频通话 已接听 00:59' : '语音通话 已接听 00:12'
+    expect((await chat.readSource('source', { cursor: { beforeSequence: 1 } })).items[0]?.conversationPreview).toBe(answered)
+    expect((await chat.chatTimelineItems({ items: [raw] }, session, 'chat', 'private_chat'))[0]?.conversationPreview).toBe(answered)
   })
 
   it.each(['send_to_self', 'topic'] as const)('preserves Markdown when forwarding to %s', async targetKind => {

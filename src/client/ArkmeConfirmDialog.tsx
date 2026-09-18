@@ -133,8 +133,8 @@ export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
       {props.children}
       {props.error === undefined || props.error === '' ? null : <div role="alert" style={styles.error}>{props.error}</div>}
       {props.layout !== 'picker' && <footer style={styles.footer}>
-        <button ref={cancelRef} type="button" style={{ ...styles.button, ...(closeDisabled ? styles.disabled : {}) }} disabled={closeDisabled} onClick={props.onClose}>{props.cancelLabel ?? '取消'}</button>
-        <button
+        <button data-arkme-feedback="neutral" ref={cancelRef} type="button" style={{ ...styles.button, ...(closeDisabled ? styles.disabled : {}) }} disabled={closeDisabled} onClick={props.onClose}>{props.cancelLabel ?? '取消'}</button>
+        <button data-arkme-feedback="primary"
           type="button"
           style={{ ...styles.button, ...styles[props.confirmTone ?? 'primary'], ...(props.busy || props.confirmDisabled ? styles.disabled : {}) }}
           disabled={props.busy || props.confirmDisabled}

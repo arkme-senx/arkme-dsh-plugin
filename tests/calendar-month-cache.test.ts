@@ -21,6 +21,22 @@ function disk() {
 }
 
 describe('shared calendar month cache', () => {
+  it('persists full chat date summaries and precise owner anchors without message bodies', async () => {
+    const { storage, values } = disk()
+    const q = { ...query(), scopeKey: 'chat:a', startDate: '0001-01-01', endDate: '9999-12-31', timezoneOffsetMillis: 28800000 }
+    const value: ArkmeCalendarBucketPage = { ...page(q), scope: 'private_chat', totalDayCount: 1,
+      days: [{ bucketDate: '2020-01-02', count: 9, protectedCount: 0, hasRecords: true,
+        anchor: { recordUid: 'old', recordOwnerUserId: '9223372036854775806', sendAtMillis: 123 } }] }
+    const cache = new CalendarMonthCache(async () => ({ ...value, text: 'private-message-body' }), () => storage)
+    cache.activateAccount('a'); await cache.ensure('a', q)
+    const restored = new CalendarMonthCache(async () => value, () => storage)
+    restored.activateAccount('a')
+    expect(restored.get('a', q).value).toMatchObject(value)
+    expect([...values.values()].join('')).not.toContain('private-message-body')
+    expect(restored.get('a', { ...q, timezoneOffsetMillis: 0 }).value).toBeUndefined()
+    restored.activateAccount('b')
+    expect(restored.get('b', q).value).toBeUndefined()
+  })
   it('reuses multiple months on switching, closing and remounting without another request', async () => {
     const load = vi.fn(async q => page(q))
     const cache = new CalendarMonthCache(load, () => undefined)

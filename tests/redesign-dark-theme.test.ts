@@ -168,7 +168,7 @@ describe('Arkme redesign dark theme', () => {
     expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-owned="directory-pane"]')
     expect(darkCss).toContain('[data-arkme-owned="persistent-sidebar"] [aria-label="Arkme 会话列表"]')
     expect(darkCss).toContain('[aria-label="Arkme 会话列表"]')
-    expect(darkCss).toContain('input[aria-label="搜索对话或消息"]')
+    expect(darkCss).toContain('[data-arkme-directory-search]')
     expect(darkCss).toContain('button[aria-label="新任务"]')
     expect(darkCss).toContain('[role="treeitem"][aria-selected="true"]')
   })
@@ -280,6 +280,10 @@ describe('Arkme redesign dark theme', () => {
   })
 
   it('refreshes a retained style element when a newer plugin bundle is installed', () => {
-    expect(redesignStylesSource).toContain('existing.textContent = redesignCss')
+    expect(redesignStylesSource).toContain('existing.textContent = layoutCss')
+    expect(redesignStylesSource).toContain('--arkme-navigation-width: ${ARKME_NAVIGATION_WIDTH}px')
+    expect(redesignCss).toContain('left: calc(var(--arkme-navigation-width) - 8px)')
+    expect(redesignCss).not.toContain('.arkme-redesign-profile > span')
+    expect(redesignCss).toContain('.arkme-redesign-profile { position: relative; padding: 0; }')
   })
 })

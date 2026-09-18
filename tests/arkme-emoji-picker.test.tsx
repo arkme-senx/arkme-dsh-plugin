@@ -154,9 +154,9 @@ describe('Arkme emoji composer', () => {
     await act(async () => {
       first.props.onContextMenu({ preventDefault: () => undefined, stopPropagation: () => undefined, clientX: 220, clientY: 220 })
     })
-    expect(renderer.root.findByProps({ children: '移至最前' })).toBeDefined()
-    expect(renderer.root.findByProps({ children: '删除' })).toBeDefined()
-    await act(async () => { renderer.root.findByProps({ children: '移至最前' }).props.onClick() })
+    expect(renderer.root.findByProps({ role: 'menuitem', 'aria-label': '移至最前' })).toBeDefined()
+    expect(renderer.root.findByProps({ role: 'menuitem', 'aria-label': '删除' })).toBeDefined()
+    await act(async () => { renderer.root.findByProps({ role: 'menuitem', 'aria-label': '移至最前' }).props.onClick() })
     expect(callArkme).toHaveBeenCalledWith('favorite-stickers.manage', {
       fileAssetUid: 'asset-first-1234', action: 'move-to-front',
     })
@@ -262,7 +262,7 @@ describe('Arkme emoji composer', () => {
     await act(async () => {
       pending.props.onContextMenu({ preventDefault: () => undefined, stopPropagation: () => undefined, clientX: 220, clientY: 220 })
     })
-    await act(async () => { renderer.root.findByProps({ children: '删除' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ role: 'menuitem', 'aria-label': '删除' }).props.onClick() })
     await act(async () => {
       finishUpload({ fileAssetUid: 'asset-pending-1234', fileName: 'pending.png', mimeType: 'image/png', size: 5, fileKind: 1 })
       await upload

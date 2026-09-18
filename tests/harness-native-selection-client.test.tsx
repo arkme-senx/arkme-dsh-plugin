@@ -50,7 +50,7 @@ async function setup() {
   const render = async (sessionId: string) => { await act(async () => root.render(<NativeSelectionHeader sessionId={sessionId} useChat={useChat} doc={doc} />)) }
   await render('one')
   disposals.push(async () => { await act(async () => root.unmount()) })
-  const click = async (selector: string) => { await act(async () => doc.querySelector<HTMLButtonElement>(selector)!.click()) }
+  const click = async (selector: string) => { await act(async () => (doc.querySelector<HTMLButtonElement>(selector) ?? document.querySelector<HTMLButtonElement>(selector))!.click()) }
   const enter = async () => {
     await act(async () => row.dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true })))
     await click('[role="menuitem"]'); await flush()
@@ -69,7 +69,7 @@ it('enters from a message context menu and selects that message', async () => {
   const event = new s.win.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 120 })
   await act(async () => s.row.dispatchEvent(event))
   expect(event.defaultPrevented).toBe(true)
-  expect(s.doc.querySelector('[role="menuitem"]')?.textContent).toContain('多选')
+  expect(document.querySelector('[role="menuitem"]')?.textContent).toContain('多选')
   await s.click('[role="menuitem"]'); await s.flush()
   expect(s.doc.body.textContent).toContain('已选 1 条')
   expect(s.doc.querySelector('[role="checkbox"]')?.getAttribute('aria-checked')).toBe('true')
@@ -108,9 +108,9 @@ it('overlays the Arkme action bar on the mounted composer, keeps zero selection,
 it.each([2, 0])('only autofocuses a menu opened without a secondary mouse button (%s)', async button => {
   const s = await setup()
   await act(async () => s.row.dispatchEvent(new s.win.MouseEvent('contextmenu', { bubbles: true, cancelable: true, button })))
-  const item = s.doc.querySelector('[role="menuitem"]')!
+  const item = document.querySelector('[role="menuitem"]')!
   expect(item).not.toBeNull()
-  expect(s.doc.activeElement === item).toBe(button !== 2)
+  expect(document.activeElement === item).toBe(button !== 2)
 })
 
 it('highlights only selected message keys and removes styling on cancellation and exit', async () => {
@@ -251,7 +251,7 @@ it('keeps zero selection active and isolates missing native DOM', async () => {
   await s.click('[data-arkme-native-selection="header"] button')
   s.flow.removeAttribute('data-chat-flow')
   await act(async () => s.row.dispatchEvent(new s.win.MouseEvent('contextmenu', { bubbles: true, cancelable: true })))
-  expect(s.doc.querySelector('[role="menu"]')).toBeNull()
+  expect(document.querySelector('[role="menu"]')).toBeNull()
   expect(s.doc.body.textContent).toContain('Original message')
   expect(s.doc.querySelector('[data-arkme-native-selection="controls"]')).toBeNull()
 })
@@ -376,7 +376,7 @@ it('disables ambiguous duplicate anchors instead of selecting the wrong row', as
   duplicate.getBoundingClientRect = s.row.getBoundingClientRect
   s.flow.append(duplicate)
   await act(async () => s.row.dispatchEvent(new s.win.MouseEvent('contextmenu', { bubbles: true, cancelable: true })))
-  expect(s.doc.querySelector('[role="menu"]')).toBeNull()
+  expect(document.querySelector('[role="menu"]')).toBeNull()
   expect(s.doc.querySelector('[role="checkbox"]')).toBeNull()
   expect(s.callbacks.size).toBe(0)
   const down = new s.win.MouseEvent('mousedown', { bubbles: true, cancelable: true })
@@ -402,19 +402,19 @@ it.each(['button', 'a', 'input', 'textarea'])('preserves native %s context menus
   const event = new s.win.MouseEvent('contextmenu', { bubbles: true, cancelable: true })
   await act(async () => target.dispatchEvent(event))
   expect(event.defaultPrevented).toBe(false)
-  expect(s.doc.querySelector('[role="menu"]')).toBeNull()
+  expect(document.querySelector('[role="menu"]')).toBeNull()
 })
 
 it.each(['scroll', 'outside', 'escape'])('dismisses a context menu on %s without entering selection', async reason => {
   const s = await setup()
   await act(async () => s.row.dispatchEvent(new s.win.MouseEvent('contextmenu', { bubbles: true, cancelable: true })))
-  expect(s.doc.querySelector('[role="menu"]')).not.toBeNull()
+  expect(document.querySelector('[role="menu"]')).not.toBeNull()
   await act(async () => {
     if (reason === 'scroll') s.viewport.dispatchEvent(new s.win.Event('scroll'))
     else if (reason === 'outside') s.doc.body.dispatchEvent(new s.win.MouseEvent('mousedown', { bubbles: true }))
     else s.doc.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
   })
-  expect(s.doc.querySelector('[role="menu"]')).toBeNull()
+  expect(document.querySelector('[role="menu"]')).toBeNull()
   expect(s.doc.querySelector('[data-arkme-native-selection="header"]')).toBeNull()
 })
 
@@ -434,16 +434,16 @@ it('leaves an already handled native context event untouched', async () => {
   const s = await setup()
   s.row.addEventListener('contextmenu', event => event.preventDefault())
   await act(async () => s.row.dispatchEvent(new s.win.MouseEvent('contextmenu', { bubbles: true, cancelable: true })))
-  expect(s.doc.querySelector('[role="menu"]')).toBeNull()
+  expect(document.querySelector('[role="menu"]')).toBeNull()
   expect(s.doc.querySelector('[data-arkme-native-selection="header"]')).toBeNull()
 })
 
 it('closes an open context menu on account change before it can select old data', async () => {
   const s = await setup()
   await act(async () => s.row.dispatchEvent(new s.win.MouseEvent('contextmenu', { bubbles: true, cancelable: true })))
-  expect(s.doc.querySelector('[role="menuitem"]')).not.toBeNull()
+  expect(document.querySelector('[role="menuitem"]')).not.toBeNull()
   await act(async () => { s.surface.dataset.arkmeAccountScope = 'other-account' })
-  expect(s.doc.querySelector('[role="menuitem"]')).toBeNull()
+  expect(document.querySelector('[role="menuitem"]')).toBeNull()
   expect(s.doc.querySelector('[data-arkme-native-selection="header"]')).toBeNull()
   expect(s.callbacks.size).toBe(0)
   const down = new s.win.MouseEvent('mousedown', { bubbles: true, cancelable: true })

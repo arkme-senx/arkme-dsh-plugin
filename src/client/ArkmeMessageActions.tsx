@@ -1,5 +1,7 @@
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import { ArkmeForwardSearch } from './ArkmeForwardSearch.js'
 import { copyText } from './clipboard-text.js'
-import { messageSelectionStyles, messageSelectionMenuStyles, ArkmeSelectActionIcon } from './message-selection-presentation.js'
+import { messageSelectionStyles, ArkmeSelectActionIcon } from './message-selection-presentation.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import type {
@@ -107,7 +109,7 @@ function MessageActionIcon({ kind, size = 18 }: { kind: 'copy' | 'link' | 'selec
 }
 
 const styles: Record<string, CSSProperties> = {
-  ...messageSelectionMenuStyles,
+
   selectBar: messageSelectionStyles.selectBar,
   selectButton: messageSelectionStyles.selectBarButton,
   icon: messageSelectionStyles.selectBarIconTile,
@@ -127,7 +129,8 @@ const styles: Record<string, CSSProperties> = {
   },
   dialogHeader: { display: 'flex', alignItems: 'center', padding: '16px 18px', borderBottom: `1px solid ${arkmeTheme.border}` },
   dialogTitle: { flex: 1, margin: 0, fontSize: 17, lineHeight: '24px' },
-  input: { margin: '12px 16px 4px', padding: '9px 11px', border: `1px solid ${arkmeTheme.border}`, borderRadius: 8, background: arkmeTheme.input, color: arkmeTheme.text },
+  searchWrap: { margin: '12px 16px 4px', height: 38, flex: 'none' },
+  commentInput: { margin: '12px 16px 4px', padding: '9px 11px', border: `1px solid ${arkmeTheme.border}`, borderRadius: 8, background: arkmeTheme.input, color: arkmeTheme.text },
   targetList: { flex: 1, minHeight: 140, overflowY: 'auto', padding: '8px 12px' },
   target: { width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '9px 8px', border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.text, textAlign: 'left', cursor: 'pointer' },
   targetCheck: { width: 20, height: 20, display: 'grid', placeItems: 'center', border: `1px solid ${arkmeTheme.border}`, borderRadius: 6 },
@@ -140,8 +143,7 @@ const styles: Record<string, CSSProperties> = {
 const FORWARD_TARGET_LIMIT = 80
 const MAX_FORWARD_TARGET_SELECTION = 5
 const MESSAGE_ACTION_REQUEST_TIMEOUT_MS = 30_000
-const MESSAGE_ACTION_MENU_OUTER_WIDTH = 178
-const MESSAGE_ACTION_MENU_OUTER_HEIGHT = 4 * 34 + (6 + 1) * 2
+
 
 
 interface MenuState { itemId: string; left: number; top: number }
@@ -201,13 +203,6 @@ export function useArkmeMessageActions(input: {
     else if (visible.size !== selectedIds.size) setSelectedIds(visible)
   }, [selectable, selectedIds])
 
-  useEffect(() => {
-    if (menu === undefined) return
-    const close = () => { setMenu(undefined) }
-    window.addEventListener('mousedown', close)
-    window.addEventListener('resize', close)
-    return () => { window.removeEventListener('mousedown', close); window.removeEventListener('resize', close) }
-  }, [menu])
 
   const openMenu = useCallback((item: ArkmeMessageActionViewItem, event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault()
@@ -215,8 +210,8 @@ export function useArkmeMessageActions(input: {
     if (busy !== undefined) return
     setMenu({
       itemId: item.id,
-      left: Math.max(8, Math.min(event.clientX, window.innerWidth - MESSAGE_ACTION_MENU_OUTER_WIDTH - 8)),
-      top: Math.max(8, Math.min(event.clientY, window.innerHeight - MESSAGE_ACTION_MENU_OUTER_HEIGHT - 8)),
+      left: event.clientX,
+      top: event.clientY,
     })
   }, [busy])
 
@@ -408,21 +403,24 @@ export function useArkmeMessageActions(input: {
   })
 
   const overlay = <>
-    {menu !== undefined && menuItem !== undefined && <div style={{ ...styles.menu, left: menu.left, top: menu.top }} onMouseDown={event => { event.stopPropagation() }} role="menu" aria-label="消息操作">
-      <button type="button" role="menuitem" aria-label="复制" style={styles.menuButton} onClick={() => { void copyOne(menuItem) }}><span style={styles.menuIcon}><MessageActionIcon kind="copy" size={16} /></span><span>复制</span></button>
-      <button type="button" role="menuitem" aria-label="复制链接" style={{ ...styles.menuButton, opacity: menuItem.copyLinkAvailable ? 1 : .4 }} disabled={!menuItem.copyLinkAvailable} onClick={() => { void copyLink([menuItem]) }}><span style={styles.menuIcon}><MessageActionIcon kind="link" size={16} /></span><span>复制链接</span></button>
-      <button type="button" role="menuitem" aria-label="多选" style={styles.menuButton} onClick={() => { enter(menuItem) }}><span style={styles.menuIcon}><MessageActionIcon kind="select" size={16} /></span><span>多选</span></button>
-      <button type="button" role="menuitem" aria-label="转发" style={{ ...styles.menuButton, opacity: menuItem.forwardAvailable ? 1 : .4 }} disabled={!menuItem.forwardAvailable} onClick={() => { void openForward([menuItem]) }}><span style={styles.menuIcon}><MessageActionIcon kind="forward" size={18} /></span><span>转发</span></button>
-    </div>}
+    {menu !== undefined && menuItem !== undefined && <ArkmeActionMenu label="消息操作"
+      point={{ x: menu.left, y: menu.top }} onClose={() => setMenu(undefined)} actions={[
+        { id: 'copy', label: '复制', icon: <MessageActionIcon kind="copy" size={16} />, onSelect: () => { void copyOne(menuItem) } },
+        { id: 'link', label: '复制链接', icon: <MessageActionIcon kind="link" size={16} />, disabled: !menuItem.copyLinkAvailable, onSelect: () => { void copyLink([menuItem]) } },
+        { id: 'select', label: '多选', icon: <MessageActionIcon kind="select" size={16} />, onSelect: () => enter(menuItem) },
+        { id: 'forward', label: '转发', icon: <MessageActionIcon kind="forward" size={16} />, disabled: !menuItem.forwardAvailable, onSelect: () => { void openForward([menuItem]) } },
+      ]} />}
     {status !== '' && <div style={styles.status} role="status">{status}</div>}
     {picker !== undefined && <div style={styles.backdrop} onMouseDown={event => { if (event.target === event.currentTarget && busy !== 'forward') setPicker(undefined) }}>
       <section style={styles.dialog} role="dialog" aria-modal="true" aria-label="选择转发对象">
-        <header style={styles.dialogHeader}><h3 style={styles.dialogTitle}>转发给</h3><button type="button" aria-label="关闭转发对象选择" style={styles.closeButton} disabled={busy === 'forward'} onClick={() => { setPicker(undefined) }}><MessageActionIcon kind="close" size={16} /></button></header>
-        <input style={styles.input} value={picker.keyword} placeholder="搜索" aria-label="搜索转发对象" disabled={busy === 'forward'} onChange={event => { setPicker({ ...picker, keyword: event.target.value }) }} />
+        <header style={styles.dialogHeader}><h3 style={styles.dialogTitle}>转发给</h3><button data-arkme-feedback="neutral" type="button" aria-label="关闭转发对象选择" style={styles.closeButton} disabled={busy === 'forward'} onClick={() => { setPicker(undefined) }}><MessageActionIcon kind="close" size={16} /></button></header>
+        <div style={styles.searchWrap}>
+          <ArkmeForwardSearch value={picker.keyword} disabled={busy === 'forward'} onChange={event => { setPicker({ ...picker, keyword: event.target.value }) }} />
+        </div>
         <div style={styles.targetList}>
           {picker.loading ? <div>正在加载…</div> : filteredTargets.map(target => {
             const selectedTarget = picker.selectedRefs.includes(target.sourceRef)
-            return <button key={target.sourceRef} type="button" style={styles.target} disabled={busy === 'forward'} onClick={() => {
+            return <button data-arkme-feedback="neutral" key={target.sourceRef} type="button" style={styles.target} disabled={busy === 'forward'} onClick={() => {
               if (busy === 'forward') return
               if (!selectedTarget && picker.selectedRefs.length >= MAX_FORWARD_TARGET_SELECTION) {
                 showStatus(`最多选择 ${String(MAX_FORWARD_TARGET_SELECTION)} 个转发对象`)
@@ -434,17 +432,17 @@ export function useArkmeMessageActions(input: {
           })}
           {picker.error !== '' && <div style={{ color: arkmeTheme.danger, padding: 8 }}>{picker.error}</div>}
         </div>
-        <textarea style={{ ...styles.input, minHeight: 58, resize: 'vertical' }} value={picker.commentText} placeholder="附言（可选）" disabled={busy === 'forward' || picker.submitted} onChange={event => { setPicker({ ...picker, commentText: event.target.value }) }} />
-        <footer style={styles.dialogFooter}><button type="button" style={styles.dialogButton} disabled={busy === 'forward'} onClick={() => { setPicker(undefined) }}>取消</button><button type="button" style={{ ...styles.dialogButton, ...styles.primary, opacity: picker.selectedRefs.length === 0 || busy === 'forward' ? .45 : 1 }} disabled={picker.selectedRefs.length === 0 || busy === 'forward'} onClick={() => { void confirmForward() }}>{busy === 'forward' ? '转发中…' : '转发'}</button></footer>
+        <textarea style={{ ...styles.commentInput, minHeight: 58, resize: 'vertical' }} value={picker.commentText} placeholder="附言（可选）" disabled={busy === 'forward' || picker.submitted} onChange={event => { setPicker({ ...picker, commentText: event.target.value }) }} />
+        <footer style={styles.dialogFooter}><button data-arkme-feedback="neutral" type="button" style={styles.dialogButton} disabled={busy === 'forward'} onClick={() => { setPicker(undefined) }}>取消</button><button data-arkme-feedback="primary" type="button" style={{ ...styles.dialogButton, ...styles.primary, opacity: picker.selectedRefs.length === 0 || busy === 'forward' ? .45 : 1 }} disabled={picker.selectedRefs.length === 0 || busy === 'forward'} onClick={() => { void confirmForward() }}>{busy === 'forward' ? '转发中…' : '转发'}</button></footer>
       </section>
     </div>}
   </>
 
   const selectionBar = selectedIds === undefined ? undefined : <>{input.selectionItems !== undefined && !completeBatch && selectedContent.length > 0 && <div role="status" style={{ color: arkmeTheme.secondary, padding: '6px 16px', fontSize: 12 }}>{selectedContent.length > 100 ? '批量操作最多支持 100 条消息，请减少选择后操作' : '选中消息暂不支持整批复制链接或转发，可调整选择后操作'}</div>}<div style={styles.selectBar} role="toolbar" aria-label={`已选择 ${String(selectedContent.length)} 条消息`}>
-    <button type="button" aria-label="复制文本" style={{ ...styles.selectButton, ...(selectedContent.length === 1 && busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={selectedContent.length !== 1 || busy !== undefined} onClick={() => { const first = selectedContent[0]; if (first !== undefined) void copyOne(first) }}><span style={styles.icon}><ArkmeSelectActionIcon kind="copy" size={22} /></span><span style={messageSelectionStyles.selectBarLabel}>复制文本</span></button>
-    <button type="button" aria-label="复制链接" style={{ ...styles.selectButton, ...(completeBatch && selected.every(item => item.copyLinkAvailable) && busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={!completeBatch || selected.some(item => !item.copyLinkAvailable) || busy !== undefined} onClick={() => { if (completeBatch) void copyLink(selected) }}><span style={styles.icon}><ArkmeSelectActionIcon kind="link" size={22} /></span><span style={messageSelectionStyles.selectBarLabel}>复制链接</span></button>
-    <button type="button" aria-label="转发" style={{ ...styles.selectButton, ...(completeBatch && selected.every(item => item.forwardAvailable) && busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={!completeBatch || selected.some(item => !item.forwardAvailable) || busy !== undefined} onClick={() => { if (completeBatch) void openForward(selected) }}><span style={styles.icon}><ArkmeSelectActionIcon kind="forward" size={22} /></span><span style={messageSelectionStyles.selectBarLabel}>{busy === 'forward' ? '转发中' : '转发'}</span></button>
-    <button type="button" style={{ ...styles.selectButton, ...(busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={busy !== undefined} onClick={() => { setSelectedIds(undefined); requestIdsRef.current = undefined }} aria-label="退出多选"><span style={styles.icon}><ArkmeSelectActionIcon kind="close" size={18} /></span><span style={messageSelectionStyles.selectBarLabel}>退出多选</span></button>
+    <button data-arkme-feedback="neutral" type="button" aria-label="复制文本" style={{ ...styles.selectButton, ...(selectedContent.length === 1 && busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={selectedContent.length !== 1 || busy !== undefined} onClick={() => { const first = selectedContent[0]; if (first !== undefined) void copyOne(first) }}><span style={styles.icon}><ArkmeSelectActionIcon kind="copy" size={22} /></span><span style={messageSelectionStyles.selectBarLabel}>复制文本</span></button>
+    <button data-arkme-feedback="neutral" type="button" aria-label="复制链接" style={{ ...styles.selectButton, ...(completeBatch && selected.every(item => item.copyLinkAvailable) && busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={!completeBatch || selected.some(item => !item.copyLinkAvailable) || busy !== undefined} onClick={() => { if (completeBatch) void copyLink(selected) }}><span style={styles.icon}><ArkmeSelectActionIcon kind="link" size={22} /></span><span style={messageSelectionStyles.selectBarLabel}>复制链接</span></button>
+    <button data-arkme-feedback="neutral" type="button" aria-label="转发" style={{ ...styles.selectButton, ...(completeBatch && selected.every(item => item.forwardAvailable) && busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={!completeBatch || selected.some(item => !item.forwardAvailable) || busy !== undefined} onClick={() => { if (completeBatch) void openForward(selected) }}><span style={styles.icon}><ArkmeSelectActionIcon kind="forward" size={22} /></span><span style={messageSelectionStyles.selectBarLabel}>{busy === 'forward' ? '转发中' : '转发'}</span></button>
+    <button data-arkme-feedback="neutral" type="button" style={{ ...styles.selectButton, ...(busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={busy !== undefined} onClick={() => { setSelectedIds(undefined); requestIdsRef.current = undefined }} aria-label="退出多选"><span style={styles.icon}><ArkmeSelectActionIcon kind="close" size={18} /></span><span style={messageSelectionStyles.selectBarLabel}>退出多选</span></button>
   </div></>
 
   return { selectMany, canSelectMany: input.selectionItems !== undefined && busy === undefined && picker === undefined, selecting: selectedIds !== undefined, selectedIds: selectedIds ?? new Set<string>(), openMenu, toggle, overlay, selectionBar }

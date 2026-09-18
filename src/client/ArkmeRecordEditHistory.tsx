@@ -97,10 +97,10 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
         </div>
       </section>)}
       {loading && <p role="status" style={{ color: arkmeTheme.tertiary }}>正在加载编辑记录…</p>}
-      {error !== '' && <div role="alert"><p>{error}</p><button type="button" style={actionStyle} onClick={() => { load(cursorRef.current) }}>重试</button></div>}
+      {error !== '' && <div role="alert"><p>{error}</p><button data-arkme-feedback="neutral" type="button" style={actionStyle} onClick={() => { load(cursorRef.current) }}>重试</button></div>}
       {!loading && error === '' && page.items.length === 0 && !page.hasMore && <p style={{ color: arkmeTheme.tertiary }}>暂无编辑记录</p>}
-      {!loading && error === '' && page.items.some(item => item.content.mediaUnavailable === true) && <button type="button" style={actionStyle} onClick={() => { load(0) }}>重新加载历史附件</button>}
-      {!loading && error === '' && page.hasMore && <button type="button" style={actionStyle} onClick={() => { load(cursorRef.current) }}>加载更多</button>}
+      {!loading && error === '' && page.items.some(item => item.content.mediaUnavailable === true) && <button data-arkme-feedback="neutral" type="button" style={actionStyle} onClick={() => { load(0) }}>重新加载历史附件</button>}
+      {!loading && error === '' && page.hasMore && <button data-arkme-feedback="neutral" type="button" style={actionStyle} onClick={() => { load(cursorRef.current) }}>加载更多</button>}
     </div>
 }
 

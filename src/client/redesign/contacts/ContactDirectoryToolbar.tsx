@@ -25,7 +25,7 @@ export function ContactDirectoryToolbar({ value, onChange, children }: {
           }
         }}
       />
-      {value !== '' && <button type="button" aria-label="清空搜索" onClick={() => {
+      {value !== '' && <button data-arkme-feedback="neutral" type="button" aria-label="清空搜索" onClick={() => {
         onChange('')
         inputRef.current?.focus()
       }}><X size={14} aria-hidden /></button>}

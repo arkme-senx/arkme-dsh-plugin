@@ -13,6 +13,7 @@ import { serializeArkmeComposerDraft, type ArkmeComposerEmoji, type ArkmeCompose
 import { closeHistory } from '@tiptap/pm/history'
 import { Slice, type Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
+import { useComposerSelectionRequest } from './composer-selection-request.js'
 
 export interface ArkmeDocumentComposerHandle extends ArkmeRichComposerHandle {
   insertEmoji(emoji: ArkmeEmoji): 'inserted' | 'length-limit' | 'unavailable'
@@ -228,6 +229,20 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
     },
     getEditorGeometry() { return editor?.view.dom.getBoundingClientRect() },
   }), [editor])
+
+  useComposerSelectionRequest(props.selectionRequest, props.value, props.disabled, request => {
+    if (!editor) return false
+    const projected = arkmeEditorProjection(editor.state.doc)
+    if (projected.text !== request.text) return false
+    // Set the document selection first, then focus through ProseMirror so native
+    // focus restoration cannot replace it with the old DOM selection.
+    editor.commands.setTextSelection({
+      from: projected.positions[request.start] ?? editor.state.doc.content.size - 1,
+      to: projected.positions[request.end] ?? editor.state.doc.content.size - 1,
+    })
+    editor.view.focus()
+    return true
+  })
 
   return <div ref={host} data-arkme-composer-editor-box="true" className={`${props.format === 'text' ? 'arkme-text-document' : 'arkme-markdown'} ${props.className ?? ''}`} style={{ ...props.style, position: 'relative' }}
     onFocus={props.onFocus} onBlur={props.onBlur}

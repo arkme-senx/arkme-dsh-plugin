@@ -116,12 +116,12 @@ export function ArkmeDSHBetaCommunityEntryContent({
       {groupAvatar === undefined
         ? <ArkmeAvatarMosaic urls={avatarUrls} size={40} fallback={false} />
         : <ArkmeSourceAvatar kind="group" groupAvatar={groupAvatar} size={40} />}
-      <span style={styles.content}>
+      <span data-arkme-conversation-content style={styles.content}>
         <span style={styles.title}>还没加入 DSH 内测群？</span>
         <span style={styles.subtitle}>和内测用户一起聊聊</span>
       </span>
-      <span style={styles.action}>{joining ? '加入中…' : '去加入'}</span>
-      {!joining && <span style={styles.chevron} aria-hidden>›</span>}
+      <span data-arkme-conversation-content style={styles.action}>{joining ? '加入中…' : '去加入'}</span>
+      {!joining && <span data-arkme-conversation-content style={styles.chevron} aria-hidden>›</span>}
     </button>
     <div style={styles.bottomLine} aria-hidden />
   </div>

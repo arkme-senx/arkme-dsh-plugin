@@ -153,6 +153,8 @@ describe('Arkme persistent conversation frame', () => {
 
     expect(arkmeTimelineSenderName(item, profile)).toBe('Ye')
     expect(arkmeTimelineAvatarRef(item, profile)).toBe('profile-avatar-ref')
+    expect(arkmeTimelineAvatarRef({ ...item, avatarSnapshot: true }, profile)).toBeUndefined()
+    expect(arkmeTimelineAvatarRef({ ...item, avatarSnapshot: true, avatarRef: 'historical-avatar' }, profile)).toBe('historical-avatar')
     expect(arkmeTimelineAvatarRef({ ...item, avatarRef: 'timeline-avatar-ref' }, profile)).toBe('timeline-avatar-ref')
     expect(arkmeTimelineSenderName({ ...item, isMe: false, senderName: '小林' }, profile)).toBe('小林')
   })

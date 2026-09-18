@@ -376,6 +376,9 @@ export interface ArkmeRecordCursor {
 }
 
 export interface ArkmeSelfRecordItem {
+  /** Immutable sender presentation stored with this record. */
+  avatarRef?: string
+  senderName?: string
   hasManualEdit?: boolean | undefined
   /** Frozen long-recording selection returned by the Record owner. */
   forwardRecords?: ArkmeForwardRecordsPreview
@@ -413,7 +416,20 @@ export interface ArkmeSelfSummary {
 }
 
 // 'self' is the account-wide calendar (including chat and DSH inputs).
-export type ArkmeCalendarScopeKind = 'self' | 'send_to_self' | 'topic' | 'uncategorized'
+export type ArkmeCalendarScopeKind = 'self' | 'send_to_self' | 'topic' | 'uncategorized' | 'private_chat' | 'group_chat'
+
+export interface ArkmeCalendarAnchor {
+  recordUid: string
+  sendAtMillis: number
+  recordOwnerUserId?: RecordOwnerId
+}
+
+/** Client-projected interaction target; contextAnchor is always a private-chat record, never a group record. */
+export interface ArkmeCalendarMomentAnchor {
+  momentId: string
+  occurredAtMillis: number
+  contextAnchor?: ArkmeCalendarAnchor
+}
 
 export interface ArkmeCalendarBucketDay {
   bucketDate: string
@@ -421,6 +437,9 @@ export interface ArkmeCalendarBucketDay {
   protectedCount: number
   hasRecords: boolean
   firstSendAtMillis?: number
+  anchor?: ArkmeCalendarAnchor
+  momentAnchor?: ArkmeCalendarMomentAnchor
+  conversationCounts?: { messages: number; interactions: number }
 }
 
 export interface ArkmeCalendarBucketPage {
@@ -430,6 +449,8 @@ export interface ArkmeCalendarBucketPage {
   timezone: string
   refreshedAtMillis: number
   days: ArkmeCalendarBucketDay[]
+  /** Present only when the server supplied the complete conversation date index. */
+  totalDayCount?: number
 }
 
 export type ArkmeCalendarContentAccessState = 'available' | 'protected' | 'unknown'
@@ -439,7 +460,7 @@ export interface ArkmeCalendarRecordCursor {
   recordUid: string
 }
 
-export interface ArkmeCalendarRecordItem {
+export interface ArkmeCalendarRecordItem extends ArkmeCalendarAnchor {
   /** Viewer-authorized source presentation shared with conversation navigation. */
   source?: ArkmeSourceItem
   /** Authorized rich projection shared by calendar UI, SDK and Tools; no storage URLs. */
@@ -1630,6 +1651,8 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  /** Even an absent snapshot must not fall back to today's account avatar. */
+  avatarSnapshot?: boolean
   /** Record owner manual-edit fact; independent of AI polish and content version. */
   hasManualEdit?: boolean | undefined
   /** Display-only call status; room, participant and call identifiers stay host-side. */
@@ -3458,6 +3481,7 @@ export type ArkmePluginOperation =
   | 'records.outbox'
   | 'records.retry'
   | 'calendar.buckets'
+  | 'calendar.chat-statistics'
   | 'calendar.records'
   | 'user.profile'
   | 'user.profile.refresh'

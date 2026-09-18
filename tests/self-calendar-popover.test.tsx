@@ -11,6 +11,7 @@ vi.mock('../src/client/api.js', () => ({
 }))
 
 import { ArkmeSelfCalendarPopover } from '../src/client/ArkmeCalendarSurface.js'
+import { jumpCalendarMonth, visibleCalendarMonth } from './helpers/calendar-navigation.js'
 
 let root: Root
 let host: HTMLDivElement
@@ -82,6 +83,19 @@ it('reuses the counted month calendar and resolves a populated day before naviga
   expect(select).toHaveBeenCalledWith(record)
 })
 
+it('hands the date off immediately so closing the popover does not own the ongoing locate', async () => {
+  const todayKey = localDateKey(new Date())
+  api.call.mockResolvedValue({ days: [{ bucketDate: todayKey, count: 1, hasRecords: true }] })
+  const selectDate = vi.fn(), selectRecord = vi.fn(), close = vi.fn()
+  await act(async () => root.render(<ArkmeSelfCalendarPopover open anchor={{ current: anchor }}
+    accountScope="immediate-date-test" onSelectDate={selectDate} onSelectRecord={selectRecord} onClose={close} />))
+  await act(async () => document.querySelector<HTMLButtonElement>(`[aria-label="${todayKey} 1 条记录"]`)!.click())
+  expect(selectDate).toHaveBeenCalledWith({ bucketDate: todayKey, timezone: expect.any(String) })
+  expect(close).toHaveBeenCalledOnce()
+  expect(selectRecord).not.toHaveBeenCalled()
+  expect(api.call.mock.calls.map(([operation]) => operation)).toEqual(['calendar.buckets'])
+})
+
 it('discards old counts when the topic changes while a month request is pending', async () => {
   const todayKey = localDateKey(new Date())
   let resolveOld!: (value: unknown) => void
@@ -116,4 +130,67 @@ it('keeps an empty date in the calendar and reports it without requesting record
 
   expect(document.body.textContent).toContain('这一天没有发给自己的记录')
   expect(api.call.mock.calls.map(([operation]) => operation)).toEqual(['calendar.buckets'])
+})
+
+it('loads the newly selected month even when it was already mounted offscreen', async () => {
+  api.call.mockResolvedValue({ days: [] })
+  await act(async () => root.render(<ArkmeSelfCalendarPopover open sourceRef="month-switch"
+    anchor={{ current: anchor }} onClose={() => {}} onSelectRecord={() => {}} />))
+  const previous = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)
+  await jumpCalendarMonth(document, localDateKey(previous).slice(0, 7))
+  expect(api.call.mock.calls.some(([operation, params]) => operation === 'calendar.buckets' && params.startDate === localDateKey(previous))).toBe(true)
+})
+
+it.each(['send_to_self', 'topic'])('uses the shared reading-date interaction for %s without loading today first', async sourceRef => {
+  api.call.mockResolvedValue({ days: [{ bucketDate: '2020-01-02', count: 1, hasRecords: true }] })
+  const reading = vi.fn(() => '2020-01-02')
+  const onSelect = vi.fn()
+  const render = (open: boolean) => root.render(<ArkmeSelfCalendarPopover open={open} sourceRef={sourceRef}
+    accountScope={`reading:${sourceRef}`} anchor={{ current: anchor }} getReadingDate={reading}
+    onClose={() => {}} onSelectRecord={() => {}} onSelectDate={onSelect} />)
+  await act(async () => render(true))
+  expect(visibleCalendarMonth(document)).toBe('2020-01')
+  expect(document.querySelector('[data-calendar-date="2020-01-02"]')?.getAttribute('data-selected')).toBe('true')
+  expect(api.call.mock.calls.every(([operation, params]) => operation !== 'calendar.buckets' || params.startDate.startsWith('2019-') || params.startDate.startsWith('2020-'))).toBe(true)
+  expect(document.body.textContent).not.toContain('回到今日')
+  await jumpCalendarMonth(document, '2019-12')
+  expect(onSelect).not.toHaveBeenCalled()
+  await act(async () => render(false))
+  reading.mockReturnValue('2019-12-03')
+  await act(async () => render(true))
+  expect(visibleCalendarMonth(document)).toBe('2019-12')
+  expect(reading).toHaveBeenCalledTimes(2)
+})
+
+it.each(['send_to_self', 'topic'])('loads newer %s months only when browsed and reuses previous counts', async sourceRef => {
+  const current = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+  const previous = new Date(current.getFullYear(), current.getMonth() - 1, 12)
+  const previousKey = localDateKey(new Date(previous.getFullYear(), previous.getMonth(), 1))
+  const currentKey = localDateKey(current)
+  api.call.mockImplementation(async (_operation: string, params: { startDate: string }) => ({
+    days: [{ bucketDate: params.startDate, count: 7, hasRecords: true }],
+  }))
+  await act(async () => root.render(<ArkmeSelfCalendarPopover open sourceRef={sourceRef}
+    accountScope={`continuous:${sourceRef}`} anchor={{ current: anchor }} getReadingDate={() => localDateKey(previous)}
+    onClose={() => {}} onSelectRecord={() => {}} />))
+  const requests = () => api.call.mock.calls.filter(([operation]) => operation === 'calendar.buckets').map(([, params]) => params.startDate)
+  expect(requests()).toEqual([previousKey])
+  const scroll = document.querySelector<HTMLDivElement>('[data-arkme-calendar-months]')!
+  const sections = [...scroll.querySelectorAll<HTMLElement>('[data-calendar-month]')]
+  expect(sections.at(-1)?.dataset.calendarMonth).toBe(currentKey.slice(0, 7))
+  Object.defineProperties(scroll, { clientHeight: { value: 370 }, scrollHeight: { value: 930 } })
+  const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 350, width: 350, x: 0, y: top, toJSON: () => ({}) })
+  scroll.getBoundingClientRect = () => rect(100, 370)
+  sections.forEach((section, i) => { section.getBoundingClientRect = () => rect(130 + i * 300 - scroll.scrollTop, 300) })
+  const move = async (top: number) => act(async () => {
+    scroll.dispatchEvent(new WheelEvent('wheel', { bubbles: true }))
+    scroll.scrollTop = top
+    scroll.dispatchEvent(new Event('scroll', { bubbles: true }))
+  })
+  await move(560)
+  expect(requests()).toEqual([previousKey, currentKey])
+  expect(document.querySelector<HTMLButtonElement>(`[aria-label="${currentKey} 7 条记录"]`)?.disabled).toBe(false)
+  await move(300)
+  await move(560)
+  expect(requests()).toEqual([previousKey, currentKey])
 })

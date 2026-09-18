@@ -9,7 +9,7 @@ export function ArkmeSharedExtensionDetail({ extension, onBack }: {
 	onBack(): void
 }) {
 	return <div style={styles.detail}>
-		<button type="button" style={styles.back} onClick={onBack}>‹ 返回列表</button>
+		<button data-arkme-feedback="neutral" type="button" style={styles.back} onClick={onBack}>‹ 返回列表</button>
 		<div style={styles.hero}>
 			<span style={styles.icon} aria-hidden><ArkmeExtensionIcon size={26} /></span>
 			<div style={styles.heading}>

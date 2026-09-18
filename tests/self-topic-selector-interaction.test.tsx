@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ArkmeSourceBreadcrumb } from '../src/client/ArkmeSourceBreadcrumb.js'
 import { CONVERSATION_MENU_LAYOUT } from '../src/client/conversation-selector-style.js'
-import { IconNewChatOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconEllipsisOutline16, IconNewChatOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ArkmeSourceItem } from '../src/types.js'
 
@@ -86,6 +86,69 @@ it('closes the topic menu when the header blank area outside the trigger and men
   })
 
   expect(host.querySelector('[data-arkme-self-topic-menu]')).toBeNull()
+})
+
+it('uses the native horizontal icon and portaled action menu, retaining it across row leave and closing one layer on Escape', async () => {
+  const onSelect = vi.fn(), create = vi.fn()
+  await act(async () => root.render(<ArkmeSourceBreadcrumb selectedSource={undefined}
+    sources={[{ kind: 'topic', sourceRef: 'work', displayName: '工作' }]}
+    onSelect={onSelect} onSelectAggregate={vi.fn()} onCreateChildTopic={create}
+    onRenameTopic={vi.fn()} onDissolveTopic={vi.fn()} />))
+  await clickButton('选择主题')
+  const row = host.querySelector('[data-arkme-self-topic-tree-row]')!
+  await act(async () => row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+  const trigger = row.querySelector<HTMLButtonElement>('[aria-label="工作主题操作"]')!
+  const glyph = document.createElement('div')
+  glyph.innerHTML = renderToStaticMarkup(<IconEllipsisOutline16 />)
+  expect(trigger.querySelector('svg')?.outerHTML).toBe(glyph.querySelector('svg')?.outerHTML)
+  await clickButton('工作主题操作')
+  const menu = document.querySelector<HTMLElement>('[role="menu"]')!
+  expect(menu.parentElement).toBe(document.body)
+  expect([...menu.querySelectorAll('[role="menuitem"]')].map(el => el.textContent)).toEqual(['新建子主题', '重命名', '解散主题'])
+  expect(menu.querySelectorAll('[role="menuitem"] svg')).toHaveLength(3)
+  expect(menu.style.width).toBe('')
+  expect(menu.style.fontSize).toBe('')
+  await act(async () => row.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: menu })))
+  expect(trigger.isConnected).toBe(true)
+  expect(document.querySelector('[role="menu"]')).toBe(menu)
+  await act(async () => menu.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })))
+  expect(document.querySelector('[role="menu"]')).toBe(menu)
+  expect(onSelect).not.toHaveBeenCalled()
+  await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(document.querySelector('[role="menu"]')).toBeNull()
+  expect(document.querySelector('[data-arkme-self-topic-menu]')).not.toBeNull()
+  await act(async () => document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })))
+  expect(document.querySelector('[data-arkme-self-topic-menu]')).toBeNull()
+  expect(create).not.toHaveBeenCalled()
+})
+
+it('replaces the count in place with right-aligned actions for root and nested topics without narrowing the title', async () => {
+  const sources: ArkmeSourceItem[] = [
+    { kind: 'topic', sourceRef: 'root', displayName: '父主题', recordCount: 123 },
+    { kind: 'topic', sourceRef: 'child', parentSourceRef: 'root', displayName: '子主题', recordCount: 4 },
+  ]
+  await act(async () => root.render(<ArkmeSourceBreadcrumb selectedSource={undefined}
+    sources={sources} onSelect={vi.fn()} onSelectAggregate={vi.fn()} onRenameTopic={vi.fn()} />))
+  await clickButton('选择主题')
+  for (const source of sources) {
+    const row = host.querySelector<HTMLElement>(`[data-arkme-self-topic-tree-row-ref="${source.sourceRef}"]`)!
+    const count = row.querySelector<HTMLElement>('[data-arkme-topic-count]')!
+    const select = count.closest('button')!
+    const before = select.getAttribute('style')
+    await act(async () => row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+    const actions = row.querySelector<HTMLElement>('[data-arkme-self-topic-actions]')!
+    expect(actions.style.position).toBe('absolute')
+    expect(actions.style.right).toBe(select.style.paddingRight)
+    expect(actions.style.top).toBe('0px')
+    expect(actions.style.bottom).toBe('0px')
+    expect(count.style.visibility).toBe('hidden')
+    expect(select.getAttribute('style')).toBe(before)
+    expect(select.contains(actions)).toBe(false) // No nested interactive buttons.
+    expect(actions.querySelector('button')?.getAttribute('aria-label')).toBe(`${source.displayName}主题操作`)
+    await act(async () => row.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body })))
+    expect(row.querySelector('[data-arkme-self-topic-actions]')).toBeNull()
+    expect(count.style.visibility).toBe('')
+  }
 })
 
 it('restores the last topic sort for the same account across component remounts', async () => {

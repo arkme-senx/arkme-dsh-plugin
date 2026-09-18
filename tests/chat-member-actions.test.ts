@@ -173,7 +173,8 @@ describe('chat member action menu placement', () => {
     expect(menu).toContain('看TA的快记')
     expect(menu).toContain('>2<')
     expect(menu).toContain('>7<')
-    expect(menu).toContain('background:var(--dsw-specific-menu')
+    expect(menu).toContain('role="menu"')
+    expect(menu).not.toContain('box-shadow:')
 
     const ownerMenu = renderToStaticMarkup(createElement(ArkmeMemberActionMenu, {
       member,

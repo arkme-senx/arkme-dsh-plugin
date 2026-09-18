@@ -8,6 +8,7 @@ vi.mock('../src/client/api.js', () => ({
   ArkmeClientError: class ArkmeClientError extends Error { body = { message: this.message } },
 }))
 
+import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { useArkmeMessageActions, type ArkmeMessageActionViewItem } from '../src/client/ArkmeMessageActions.js'
 
 const message: ArkmeMessageActionViewItem = {
@@ -104,7 +105,7 @@ describe('shared owner message action UI', () => {
     }), expect.any(AbortSignal))
   })
 
-  it('keeps the complete right-click menu inside the viewport', async () => {
+  it('delegates pointer placement to the native viewport-fitting menu', async () => {
     await act(async () => { renderer = create(<Harness conversationRef="conversation-one" />) })
 
     await act(async () => {
@@ -113,7 +114,7 @@ describe('shared owner message action UI', () => {
       })
     })
 
-    expect(renderer!.root.findByProps({ role: 'menu' }).props.style).toMatchObject({ left: 1_014, top: 642 })
+    expect(renderer!.root.findByType(ArkmeActionMenu).props.point).toEqual({ x: 1199, y: 799 })
   })
 
   it('freezes forward targets and text inputs while the owner mutation is pending', async () => {

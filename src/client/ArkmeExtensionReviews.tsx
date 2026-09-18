@@ -229,7 +229,7 @@ function ReplyButton({ item, visible, onReply }: {
   visible: boolean
   onReply(item: ArkmeExtensionReviewItem): void
 }) {
-  return <button
+  return <button data-arkme-feedback="neutral"
     type="button"
     style={{
       ...styles.replyButton,
@@ -312,7 +312,7 @@ export function ArkmeExtensionReplyListDialog({ root, onClose, onReply }: {
     <section role="dialog" aria-modal="true" aria-labelledby="arkme-extension-replies-title" style={styles.threadDialog}>
       <header style={styles.threadHeader}>
         <h3 id="arkme-extension-replies-title" style={styles.composerTitle}>评论回复</h3>
-        <button type="button" style={styles.closeButton} aria-label="关闭回复列表" onClick={onClose}>×</button>
+        <button data-arkme-feedback="neutral" type="button" style={styles.closeButton} aria-label="关闭回复列表" onClick={onClose}>×</button>
       </header>
       <div style={styles.threadBody}>
         <div style={styles.threadOriginal}>
@@ -379,7 +379,7 @@ export function ArkmeExtensionReviewComposerDialog({ state, submitting, onChange
         <p style={styles.originalText}>{state.parent!.textContent}</p>
       </div>}
       {!replying && <div style={styles.ratingPicker} aria-label="选择评分">
-        {[1, 2, 3, 4, 5].map(star => <button
+        {[1, 2, 3, 4, 5].map(star => <button data-arkme-feedback="neutral"
           key={star} type="button" style={{ ...styles.starButton, color: star <= state.rating ? '#f3aa18' : '#d7d9dd' }}
           aria-label={`${String(star)} 星`} aria-pressed={star <= state.rating}
           onClick={() => { onChange({ ...state, rating: star, error: '' }) }}
@@ -393,8 +393,8 @@ export function ArkmeExtensionReviewComposerDialog({ state, submitting, onChange
       <div style={styles.composerFooter}>
         <span style={styles.charCount}>{[...state.textContent].length}/2000</span>
         <div style={styles.actions}>
-          <button type="button" style={styles.cancel} disabled={submitting} onClick={onClose}>取消</button>
-          <button type="button" style={{ ...styles.submit, ...(!valid || submitting ? { opacity: .5, cursor: 'not-allowed' } : {}) }} disabled={!valid || submitting} onClick={onSubmit}>
+          <button data-arkme-feedback="neutral" type="button" style={styles.cancel} disabled={submitting} onClick={onClose}>取消</button>
+          <button data-arkme-feedback="primary" type="button" style={{ ...styles.submit, ...(!valid || submitting ? { opacity: .5, cursor: 'not-allowed' } : {}) }} disabled={!valid || submitting} onClick={onSubmit}>
             {submitting ? '提交中…' : replying ? '回复' : '发表评论'}
           </button>
         </div>
@@ -423,7 +423,7 @@ export function ArkmeExtensionInlineReviewComposer({ state, submitting, currentU
     <div style={styles.inlineComposerMain}>
       {replying && <div style={styles.inlineComposerTitle}>回复 {state.parent!.authorName}</div>}
       {!replying && <div style={styles.inlineRatingPicker} aria-label="选择评分">
-        {[1, 2, 3, 4, 5].map(star => <button
+        {[1, 2, 3, 4, 5].map(star => <button data-arkme-feedback="neutral"
           key={star} type="button" style={{ ...styles.inlineStarButton, color: star <= state.rating ? '#f3aa18' : '#d7d9dd' }}
           aria-label={`${String(star)} 星`} aria-pressed={star <= state.rating}
           onClick={() => { onChange({ ...state, rating: star, error: '' }) }}
@@ -440,8 +440,8 @@ export function ArkmeExtensionInlineReviewComposer({ state, submitting, currentU
       <div style={styles.inlineComposerFooter}>
         <span style={styles.charCount}>{[...state.textContent].length}/2000</span>
         <div style={styles.actions}>
-          {onCancel !== undefined && <button type="button" style={styles.inlineCancel} disabled={submitting} onClick={onCancel}>取消</button>}
-          <button
+          {onCancel !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.inlineCancel} disabled={submitting} onClick={onCancel}>取消</button>}
+          <button data-arkme-feedback="neutral"
             type="button" style={{ ...styles.inlineSubmit, ...(!valid || submitting ? { opacity: .42, cursor: 'not-allowed' } : {}) }}
             disabled={!valid || submitting} onClick={onSubmit}
           >{submitting ? '提交中…' : replying ? '回复' : '发布'}</button>
@@ -610,7 +610,7 @@ export function ArkmeExtensionReviews({
         } })}
       />)}
     </div>}
-    {page?.hasMore === true && <button type="button" style={styles.loadMore} disabled={loadingMore} onClick={() => { void load(page.nextOffset ?? page.offset + page.limit) }}>
+    {page?.hasMore === true && <button data-arkme-feedback="neutral" type="button" style={styles.loadMore} disabled={loadingMore} onClick={() => { void load(page.nextOffset ?? page.offset + page.limit) }}>
       {loadingMore ? '加载中…' : '加载更多'}
     </button>}
   </section>

@@ -37,6 +37,7 @@ import { arkmeMediaKind } from '../file-transfer-contract.js'
 import { projectArkmeChatAttention, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import { arkmeEmojiTokenSafePrefix, arkmeHasKnownEmojiToken } from '../arkme-emoji-text.js'
+import { callRecordConversationPreview } from '../call-record-presentation.js'
 import { ARKME_DSH_INPUT_TOPIC_KIND, arkmeSourceAllowsUserWrite, arkmeTopicDisplayName } from '../topic-policy.js'
 
 export interface ArkmeSourceRefPayload {
@@ -315,7 +316,9 @@ function conversationMediaMarker(values: readonly Record<string, unknown>[]): st
   return sticker ? '[表情]' : ''
 }
 
-export function arkmeChatConversationPreview(raw: Record<string, unknown>): string {
+export function arkmeChatConversationPreview(raw: Record<string, unknown>, viewerUserId = 0): string {
+  const callPreview = callRecordConversationPreview(raw, viewerUserId)
+  if (callPreview !== undefined) return callPreview
   const values = conversationPreviewObjects(raw)
   const text = normalizedConversationText(values)
   let marker = conversationMediaMarker(values)
@@ -1561,7 +1564,7 @@ export class SourceService {
           ...(parentTopicUid === '' || parentTopicUid === topicUid ? {} : { parentTopicUid }),
           siblingOrder: numberValue(siblingOrderByChild.get(topicUid) ?? core.sibling_order ?? item.sibling_order),
           title,
-          latestPreview: arkmeChatConversationPreview(latest),
+          latestPreview: arkmeChatConversationPreview(latest, session.userId),
           latestMessageAtMillis: numberValue(latest.send_at ?? summary.latest_send_at),
           activeAtMillis: numberValue(latest.send_at ?? summary.latest_send_at ?? core.update_at),
           recordCount: numberValue(summary.record_count),
@@ -1693,7 +1696,7 @@ export class SourceService {
           ?? supplement.pending_name ?? counterpart.visible_phone,
         )
         : stringValue(chatSession.title)).trim() || '未命名会话'
-      const preview = arkmeChatConversationPreview(latestPayload)
+      const preview = arkmeChatConversationPreview(latestRecord, session.userId)
       const unreadCount = attention.unreadCount
       const latestRelation = objectValue(latestPreview.relation)
       const latestSenderUserId = integerLikeValue(latestRelation.sender_user_id ?? latestRelation.senderUserId)

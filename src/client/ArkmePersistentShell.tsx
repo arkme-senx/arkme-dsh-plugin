@@ -33,6 +33,7 @@ import { useArkmeRealtimeClientEvents } from './realtime-client-events.js'
 import { arkmeUi } from './ui-controller.js'
 import { ARKME_LOGIN_LOCALE_NAMESPACE } from './arkme-login-locales.js'
 import { ArkmeExtensionRecoveryNotice } from './ArkmeExtensionRecoveryNotice.js'
+import { ARKME_NAVIGATION_WIDTH } from './arkme-layout.js'
 
 const styles: Record<string, CSSProperties> = {
   sidebar: {
@@ -59,18 +60,18 @@ const styles: Record<string, CSSProperties> = {
   details: { width: 0, height: 0, overflow: 'hidden' },
 }
 
-// The DSH layout width covers the legacy sidebar seat; Arkme adds its 72px navigation rail plus its divider budget.
-const ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH = 76
-const ARKME_PERSISTENT_NAVIGATION_WIDTH = 72
-const ARKME_PERSISTENT_DIVIDER_BUDGET = ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH - ARKME_PERSISTENT_NAVIGATION_WIDTH
-const ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH = 72
+// Keep directory width independent of the navigation rail and its 4px divider budget.
+const ARKME_PERSISTENT_DIVIDER_BUDGET = 4
+const ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH = ARKME_NAVIGATION_WIDTH + ARKME_PERSISTENT_DIVIDER_BUDGET
+const ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH = 120
 const ARKME_PERSISTENT_DIRECTORY_COMPACT_WIDTH = 200
-const ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH = ARKME_PERSISTENT_NAVIGATION_WIDTH
-  + ARKME_PERSISTENT_DIVIDER_BUDGET
+const ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH = ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
   + ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH
-const ARKME_PERSISTENT_SIDEBAR_MAX_WIDTH = 480
-const ARKME_PERSISTENT_DIRECTORY_MAX_WIDTH = ARKME_PERSISTENT_SIDEBAR_MAX_WIDTH - ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
-const ARKME_PERSISTENT_SIDEBAR_WIDTH_STORAGE_KEY = 'dsh-arkme:persistent-sidebar-width:v1'
+const ARKME_PERSISTENT_DIRECTORY_MAX_WIDTH = 404
+const ARKME_PERSISTENT_SIDEBAR_MAX_WIDTH = ARKME_PERSISTENT_DIRECTORY_MAX_WIDTH + ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
+const ARKME_PERSISTENT_DIRECTORY_WIDTH_STORAGE_KEY = 'dsh-arkme:persistent-directory-width:v2'
+const ARKME_LEGACY_SIDEBAR_WIDTH_STORAGE_KEY = 'dsh-arkme:persistent-sidebar-width:v1'
+const ARKME_LEGACY_SIDEBAR_CHROME_WIDTH = 76
 
 type PersistentSidebarStorage = Pick<Storage, 'getItem' | 'setItem'>
 
@@ -86,16 +87,18 @@ function browserPersistentSidebarStorage(): PersistentSidebarStorage | undefined
 export function readPersistentSidebarWidth(storage: PersistentSidebarStorage | undefined = browserPersistentSidebarStorage()): number | undefined {
   if (storage === undefined) return undefined
   try {
-    const raw = storage.getItem(ARKME_PERSISTENT_SIDEBAR_WIDTH_STORAGE_KEY)
+    const directoryRaw = storage.getItem(ARKME_PERSISTENT_DIRECTORY_WIDTH_STORAGE_KEY)
+    const raw = directoryRaw ?? storage.getItem(ARKME_LEGACY_SIDEBAR_WIDTH_STORAGE_KEY)
     if (raw === null || raw.trim() === '') return undefined
     const parsed = Number(raw)
-    return Number.isFinite(parsed) ? clampPersistentSidebarWidth(parsed) : undefined
+    const directoryWidth = parsed - (directoryRaw === null ? ARKME_LEGACY_SIDEBAR_CHROME_WIDTH : 0)
+    return Number.isFinite(parsed) ? clampPersistentSidebarWidth(directoryWidth + ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH) : undefined
   } catch { return undefined }
 }
 
 export function writePersistentSidebarWidth(width: number, storage: PersistentSidebarStorage | undefined = browserPersistentSidebarStorage()): void {
   if (storage === undefined) return
-  try { storage.setItem(ARKME_PERSISTENT_SIDEBAR_WIDTH_STORAGE_KEY, String(clampPersistentSidebarWidth(width))) }
+  try { storage.setItem(ARKME_PERSISTENT_DIRECTORY_WIDTH_STORAGE_KEY, String(clampPersistentSidebarWidth(width) - ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH)) }
   catch { /* Browser privacy settings may make localStorage unavailable. */ }
 }
 

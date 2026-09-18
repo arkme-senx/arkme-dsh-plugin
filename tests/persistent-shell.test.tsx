@@ -25,10 +25,10 @@ describe('Arkme persistent DSH shell', () => {
   })
 
   it('keeps a durable full-width preference while compact layouts use an independently expandable width', () => {
-    expect(clampPersistentSidebarWidth(0)).toBe(148)
-    expect(clampPersistentSidebarWidth(900)).toBe(480)
+    expect(clampPersistentSidebarWidth(0)).toBe(184)
+    expect(clampPersistentSidebarWidth(900)).toBe(468)
     for (const viewportWidth of [1023, 1024]) {
-      expect(resolvePersistentSidebarWidth(true, viewportWidth, 380)).toBe(148)
+      expect(resolvePersistentSidebarWidth(true, viewportWidth, 380)).toBe(184)
       expect(resolvePersistentSidebarWidth(true, viewportWidth, 380, 220)).toBe(220)
     }
     expect(resolvePersistentSidebarWidth(false, 1099, 380, 220)).toBe(380)
@@ -39,12 +39,35 @@ describe('Arkme persistent DSH shell', () => {
       setItem: (key: string, value: string) => { values.set(key, value) },
     }
     expect(readPersistentSidebarWidth(storage)).toBeUndefined()
+    // Preserve the actual directory width when upgrading the old 72px rail.
+    const legacyKey = 'dsh-arkme:persistent-sidebar-width:v1'
+    const directoryKey = 'dsh-arkme:persistent-directory-width:v2'
+    values.set(legacyKey, '382')
+    expect(readPersistentSidebarWidth(storage)).toBe(370)
+    expect(values.get(legacyKey)).toBe('382')
+    expect(values.has(directoryKey)).toBe(false)
+    values.set(legacyKey, '480')
+    expect(readPersistentSidebarWidth(storage)).toBe(468)
+    // Upgrade an old avatar-only width without hiding the two-icon toolbar.
+    values.set(legacyKey, '148')
+    expect(readPersistentSidebarWidth(storage)).toBe(184)
+    values.set(legacyKey, 'not-a-number')
+    expect(readPersistentSidebarWidth(storage)).toBeUndefined()
     writePersistentSidebarWidth(382, storage)
     expect(readPersistentSidebarWidth(storage)).toBe(382)
+    expect(values.get(directoryKey)).toBe('318')
+    values.set(legacyKey, '480')
+    expect(readPersistentSidebarWidth(storage)).toBe(382)
     writePersistentSidebarWidth(1, storage)
-    expect(readPersistentSidebarWidth(storage)).toBe(148)
-    values.set('dsh-arkme:persistent-sidebar-width:v1', 'not-a-number')
-    expect(readPersistentSidebarWidth(storage)).toBeUndefined()
+    expect(readPersistentSidebarWidth(storage)).toBe(184)
+    expect(values.get(directoryKey)).toBe('120')
+    for (const raw of ['', ' ', 'NaN', 'Infinity']) {
+      values.set(directoryKey, raw)
+      expect(readPersistentSidebarWidth(storage)).toBeUndefined()
+    }
+    const unavailable = { getItem: () => { throw Error('Denied') }, setItem: () => { throw Error('Denied') } }
+    expect(readPersistentSidebarWidth(unavailable)).toBeUndefined()
+    expect(() => writePersistentSidebarWidth(382, unavailable)).not.toThrow()
   })
 
   it('applies the conversation and Web-locked grid contract below the desktop breakpoint without changing Contacts', () => {
@@ -56,7 +79,7 @@ describe('Arkme persistent DSH shell', () => {
     expect(conversationRule).toBeLessThan(desktopOnlyMedia)
     expect(webLockedRule).toBeLessThan(desktopOnlyMedia)
     expect(redesignCss.slice(desktopOnlyMedia)).toContain('[data-arkme-directory-mode="contacts"]')
-    expect(redesignCss).toContain('[data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 72px !important; }')
+    expect(redesignCss).toContain('[data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 120px !important; }')
   })
 
   it('renders an Arkme-owned sidebar rail for the lifetime of the plugin', () => {
@@ -76,9 +99,9 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('data-arkme-owned="product-navigation"')
     expect(markup).toContain('data-arkme-directory-visible="true"')
     expect(markup).toContain('persistent-sidebar-resize-handle-style')
-    expect(markup).toContain('--arkme-persistent-sidebar-width: 148px')
-    expect(markup).toContain('left: 148px !important')
-    expect(markup).toContain('data-arkme-directory-width="72"')
+    expect(markup).toContain('--arkme-persistent-sidebar-width: 184px')
+    expect(markup).toContain('left: 184px !important')
+    expect(markup).toContain('data-arkme-directory-width="120"')
     expect(markup).toContain('data-arkme-directory-compact="true"')
     expect(markup).toContain('data-arkme-owned="persistent-sidebar-resize-handle"')
     expect(markup).toContain('cursor:ew-resize')
@@ -88,8 +111,8 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain(':hover::after')
     expect(markup).toContain(':focus-visible::after')
     expect(markup).toContain('[data-arkme-sidebar-resizing=&quot;true&quot;] [data-arkme-owned=&quot;persistent-sidebar-resize-handle&quot;]::after')
-    expect(markup).toContain('aria-valuemin="72"')
-    expect(markup).toContain('aria-valuenow="72"')
+    expect(markup).toContain('aria-valuemin="120"')
+    expect(markup).toContain('aria-valuenow="120"')
     expect(markup).toContain('DeepSeek Harness')
     expect(markup).not.toContain('与 Arkme 沟通任务')
     expect(markup).not.toContain('aria-label="新任务"')
@@ -111,11 +134,11 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('data-arkme-test-directory-entry="true"')
     expect(markup).toContain('测试插件')
     expect(markup).toContain('data-arkme-owned="persistent-sidebar-resize-handle-style"')
-    expect(markup).toContain('--arkme-persistent-sidebar-width: 148px')
-    expect(markup).toContain('left: 148px !important')
+    expect(markup).toContain('--arkme-persistent-sidebar-width: 184px')
+    expect(markup).toContain('left: 184px !important')
     expect(markup).toContain('data-arkme-owned="persistent-sidebar-resize-handle"')
-    expect(markup).toContain('aria-valuemin="72"')
-    expect(markup).toContain('aria-valuenow="72"')
+    expect(markup).toContain('aria-valuemin="120"')
+    expect(markup).toContain('aria-valuenow="120"')
     expect(markup).toContain('data-arkme-sidebar-resizing="false"')
     expect(markup).toContain('transition: none !important')
   })
@@ -157,15 +180,15 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('加入 DSH 内测群')
     expect(markup).toContain('联系作者')
     expect(markup).toContain('你的 DeepSeek 智能助手')
-    expect(markup).toContain('width:72px')
+    expect(markup).toContain('width:60px')
     expect(markup).toContain('data-arkme-owned="product-navigation"')
     expect(markup).toContain('data-arkme-plugin-version=')
     expect(markup).toContain('对话')
-    expect(markup).toContain('data-arkme-directory-width="72"')
-    expect(markup).toContain('--arkme-persistent-sidebar-width: 148px')
+    expect(markup).toContain('data-arkme-directory-width="120"')
+    expect(markup).toContain('--arkme-persistent-sidebar-width: 184px')
     expect(markup).toContain('data-arkme-directory-compact="true"')
     expect(markup).toContain('data-arkme-owned="persistent-sidebar-resize-handle"')
-    expect(markup).toContain('aria-valuemin="72"')
+    expect(markup).toContain('aria-valuemin="120"')
   })
 
   it('renders Arkme as the permanent conversation owner without its old floating card', () => {

@@ -1,4 +1,5 @@
 import { recordManualEditFact } from '../record-edit-history.js'
+import { recordSenderSnapshot } from '../record-sender-snapshot.js'
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { isDshAgentInputRawRecord } from '../dsh-agent-input-source.js'
 import { projectCallRecord } from '../call-record-presentation.js'
@@ -1645,7 +1646,9 @@ export class RecordService {
     return {
       itemUid: item.recordUid,
       ...(item.hasManualEdit === undefined ? {} : { hasManualEdit: item.hasManualEdit }),
-      senderName: '我',
+      senderName: item.senderName || '我',
+      avatarSnapshot: true,
+      ...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef }),
       isMe: true,
       sendAtMillis: item.sendAtMillis,
       title: item.title,
@@ -1722,7 +1725,7 @@ export class RecordService {
     const callRecord = projectCallRecord(raw, userId)
     return {
       itemUid: stringValue(item.record_uid ?? core.record_uid).trim(),
-      senderName: stringValue(item.nickname).trim() || '我',
+      ...recordSenderSnapshot(raw),
       isMe: options.isMe ?? numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId,
       ...(callRecord === undefined ? {} : { callRecord }),
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
@@ -1760,6 +1763,7 @@ export class RecordService {
     const contentBlocks = userId === undefined ? undefined : this.media.richContentBlocks(raw, userId, options.displayItems)
     return {
       recordUid,
+      ...recordSenderSnapshot(raw),
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
       title: stringValue(core.title),
       textContent: stringValue(core.text_content),

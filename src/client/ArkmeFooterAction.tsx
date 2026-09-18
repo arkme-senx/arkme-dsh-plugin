@@ -103,7 +103,7 @@ export function ArkmeFooterAction({
     ...(statusLabel !== '' || normalizedUnread === 0 ? [] : [`${unreadLabel} 条未读`]),
   ].join(' · ')
   return <div style={wide ? actionRowStyle : { width: 36 }}>
-    <button
+    <button data-arkme-feedback="neutral"
       type="button"
       disabled={authPending}
       style={{ ...buttonStyle, ...(wide ? {} : railButtonStyle) }}
@@ -111,8 +111,6 @@ export function ArkmeFooterAction({
       aria-controls="arkme-product-workspace"
       aria-expanded={expanded}
       title={wide ? undefined : accessibleLabel}
-      onMouseEnter={event => { event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, #eef1f5)' }}
-      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
       onClick={() => { toggle(currentSession, authenticated) }}
     >
       <span style={{ position: 'relative', flex: 'none' }}>

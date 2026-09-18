@@ -56,6 +56,16 @@ export const CONVERSATION_SELECTOR_CSS = `
 }
 /* Match DSH's solid selector footer and its native New Session / View Options controls. */
 :is([data-arkme-workspace], [data-arkme-self-topic-menu]) .arkme-self-topic-create-button { flex: 1; }
+/* The floating conversation layer sits above the embedded workspace. Only
+ * adapt stacking for its native body portals; all menu visuals stay upstream. */
+body:has([data-arkme-self-topic-menu]) > [role="menu"] { z-index: 10030; }
+.arkme-dsh-row-actions-button {
+  width: 16px; height: 16px; flex: none; display: inline-flex;
+  align-items: center; justify-content: center; padding: 0; border: none;
+  border-radius: 4px; background: transparent;
+  color: var(--dsw-alias-label-tertiary); cursor: pointer;
+}
+.arkme-dsh-row-actions-button:hover { color: var(--dsw-alias-label-primary); }
 :is([data-arkme-workspace], [data-arkme-self-topic-menu]) .arkme-self-topic-create-button,
 [data-arkme-session-create] {
   min-width: 0;

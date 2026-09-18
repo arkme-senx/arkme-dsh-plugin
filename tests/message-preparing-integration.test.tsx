@@ -179,8 +179,14 @@ describe('preparing production wiring', () => {
     const deletion = sidebar.slice(deletionStart, sidebar.indexOf('if (event.key === \'Enter\' && !event.shiftKey', deletionStart))
     expect(deletion.includes('focusEditedComposer(caret)')).toBe(true)
     const editCompletion = sidebar.slice(sidebar.indexOf('const focusEditedComposer'), sidebar.indexOf('const insertMemberMentionAt'))
-    expect(editCompletion.includes('composerAsyncScopeRef.current !== scope')).toBe(true)
-    expect(editCompletion.indexOf('messagePreparing.input(')).toBeGreaterThan(editCompletion.indexOf('editor.focus()'))
+    // Caret placement is now consumed by the editor after its document commit,
+    // rather than a parent animation frame. Keep draft/account scoping explicit.
+    expect(editCompletion).toContain('scope: composerAsyncScopeRef.current')
+    expect(editCompletion).toContain('request: { text, start: cursor, end: cursor }')
+    expect(editCompletion.indexOf('messagePreparing.input(text)')).toBeGreaterThan(editCompletion.indexOf('setEditedComposerSelection('))
+    expect(sidebar).toContain('editedComposerSelection?.scope === composerAsyncScopeRef.current')
+    expect(sidebar).toContain('authenticatedAccountKey === editedComposerSelection.scope.accountKey')
+    expect(sidebar).toContain('? editedComposerSelection.request : undefined')
     expect(sidebar.includes('messagePreparing.focus(true); setComposerInputFocused(true)')).toBe(true)
   })
 })

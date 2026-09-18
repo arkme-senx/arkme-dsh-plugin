@@ -2,6 +2,7 @@ import type {
   ArkmeGroupAiPolishNotice,
   ArkmeGroupAiPolishSnapshot,
   ArkmeInterwovenMention,
+  ArkmeInterwovenState,
   ArkmeTimelineCursor,
   ArkmeTimelineItem,
 } from '../types.js'
@@ -131,6 +132,7 @@ export function arkmeConversationRestoredScrollTop(
 export class ArkmeConversationMemoryCache {
   private readonly timelines = new Map<string, ArkmeConversationTimelineSnapshot>()
   private readonly interwovenMoments = new Map<string, ArkmeInterwovenMention[]>()
+  private readonly interwovenStates = new Map<string, ArkmeInterwovenState>()
   private readonly interwovenRefreshRevisions = new Map<string, number>()
   private readonly pendingInterwovenMoments = new Map<string, ArkmeInterwovenMention[]>()
   private readonly pendingInterwovenRefreshRevisions = new Map<string, number>()
@@ -205,6 +207,15 @@ export class ArkmeConversationMemoryCache {
     return moments
   }
 
+  getInterwovenState(conversationKey: string): ArkmeInterwovenState | undefined {
+    return this.interwovenStates.get(conversationKey)
+  }
+
+  storeInterwovenState(conversationKey: string, state: ArkmeInterwovenState): void {
+    this.touch(conversationKey)
+    this.interwovenStates.set(conversationKey, state)
+  }
+
   /** Returns true only when the ordinary timeline is ready and the result may be revealed. */
   storeInterwovenMoments(conversationKey: string, moments: ArkmeInterwovenMention[], refreshRevision = 0): boolean {
     this.touch(conversationKey)
@@ -244,6 +255,7 @@ export class ArkmeConversationMemoryCache {
   clear(): void {
     this.timelines.clear()
     this.interwovenMoments.clear()
+    this.interwovenStates.clear()
     this.interwovenRefreshRevisions.clear()
     this.pendingInterwovenMoments.clear()
     this.pendingInterwovenRefreshRevisions.clear()
@@ -262,6 +274,7 @@ export class ArkmeConversationMemoryCache {
       this.timelines.delete(oldest)
       this.appliedTimelineDeltas.delete(oldest)
       this.interwovenMoments.delete(oldest)
+      this.interwovenStates.delete(oldest)
       this.interwovenRefreshRevisions.delete(oldest)
       this.pendingInterwovenMoments.delete(oldest)
       this.pendingInterwovenRefreshRevisions.delete(oldest)

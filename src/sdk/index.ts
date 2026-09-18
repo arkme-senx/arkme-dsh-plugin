@@ -2011,6 +2011,14 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Service-owned daily chat counts and exact first-message anchors, shared with Flutter. */
+  async calendarChatStatistics(options: {
+    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal
+  }): Promise<ArkmeCalendarBucketPage> {
+    const { signal, ...params } = options
+    return await this.call<ArkmeCalendarBucketPage>('calendar.chat-statistics', params, signal)
+  }
+
   /** Search current-account server records, including retained DSH navigation identity. */
   async searchRemote(query: string, options: { limit?: number; cursor?: string; signal?: AbortSignal } = {}): Promise<ArkmeRecordSearchResult> {
     const { signal, ...params } = options

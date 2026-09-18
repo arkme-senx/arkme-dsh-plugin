@@ -60,7 +60,7 @@ export function ArkmeGroupSelfNicknameDialog(props: {
     description="仅在当前群聊中使用，最多10个字。" confirmLabel="保存" busyLabel="保存中…"
     busy={busy} confirmDisabled={!loaded || !valid || loading} error={error} onClose={props.onClose} onConfirm={() => { void save() }}>
     {loading && <p role="status">正在读取昵称…</p>}
-    {!loading && !loaded && <button type="button" onClick={() => { setAttempt(current => current + 1) }}>重试</button>}
+    {!loading && !loaded && <button data-arkme-feedback="neutral" type="button" onClick={() => { setAttempt(current => current + 1) }}>重试</button>}
     {loaded && <><input ref={input} aria-label="我在本群聊的昵称" value={nickname} disabled={busy}
       aria-describedby="arkme-group-self-nickname-count" aria-invalid={!valid}
       style={{ width: '100%', boxSizing: 'border-box', marginTop: 16, padding: '10px 12px', borderRadius: 8,

@@ -715,6 +715,17 @@ export class MediaService {
     byteLimit: number,
     signal?: AbortSignal,
   ): Promise<ArkmeImageBytes> {
+    const snapshotAsset = /^file_asset:\/\/([A-Za-z0-9_-]{8,128})$/.exec(imageRef.trim())
+    if (snapshotAsset !== null) {
+      // Resolve the immutable historical asset with the existing authenticated file API.
+      // Do not fall back to the user's current profile when this asset is unavailable.
+      const asset = (await this.queryFileAssets([snapshotAsset[1]!], signal))
+        .find(item => item.fileAssetUid === snapshotAsset[1])
+      const url = asset?.previewUrl ?? asset?.downloadUrl
+      if (url === undefined) throw new ArkmePluginError('image-ref-unavailable', '历史头像当前不可用', true, 404)
+      return await this.downloadSignedImage(trustedSignedImageUrl(this.runtime.config.environment, url),
+        byteLimit, signal, this.runtime.requestScope(session.userId))
+    }
     if (imageRef.trim().startsWith('arkme-bot-image-v1.')) {
       if (this.botImages === undefined) throw new ArkmePluginError('bot-image-ref-invalid', 'Bot 头像引用不可用', false, 403)
       const reference = await this.botImages.openBotImageRef(imageRef, session.userId)

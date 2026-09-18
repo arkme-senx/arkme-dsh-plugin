@@ -584,10 +584,10 @@ export function ArkmeExtensionRestartDialog({ kind, restarting, onLater, onResta
       </p>
       <div style={styles.restartActions}>
         {kind === 'unavailable'
-          ? <button type="button" style={styles.restartPrimary} onClick={onLater}>知道了</button>
+          ? <button data-arkme-feedback="primary" type="button" style={styles.restartPrimary} onClick={onLater}>知道了</button>
           : <>
-            <button type="button" style={{ ...styles.restartLater, ...disabledStyle }} disabled={restarting} onClick={onLater}>稍后</button>
-            <button type="button" style={{ ...styles.restartPrimary, ...disabledStyle }} disabled={restarting} onClick={onRestart}>
+            <button data-arkme-feedback="neutral" type="button" style={{ ...styles.restartLater, ...disabledStyle }} disabled={restarting} onClick={onLater}>稍后</button>
+            <button data-arkme-feedback="primary" type="button" style={{ ...styles.restartPrimary, ...disabledStyle }} disabled={restarting} onClick={onRestart}>
               {restarting ? '正在重启…' : '立即重启'}
             </button>
           </>}
@@ -669,7 +669,7 @@ function MarketplaceMenu<T extends string>({
   }, [open])
 
   return <div ref={rootRef} style={styles.marketplaceMenuRoot}>
-    <button
+    <button data-arkme-feedback="neutral"
       type="button"
       style={styles.marketplaceMenuButton}
       aria-label={ariaLabel}
@@ -699,7 +699,7 @@ function MarketplaceMenu<T extends string>({
         {visibleOptions.map(option => {
           const selected = option.value === value
           const disabled = !available && !selected
-          return <button
+          return <button data-arkme-feedback="neutral"
             key={option.value}
             type="button"
             role="option"
@@ -812,26 +812,22 @@ export function ArkmeExtensionDetailHeader({ title, copyAvailable, copyNotice = 
 }) {
   return <header style={styles.detailModalHeader}>
     <h2 id="arkme-extension-detail-title" style={styles.detailModalTitle}>{title}</h2>
-    {copyAvailable && <button
+    {copyAvailable && <button data-arkme-feedback="neutral"
       type="button"
       style={styles.detailModalHeaderAction}
       aria-label="复制扩展链接"
       title="复制链接"
       onClick={onCopy}
-      onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
-      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
     >
       <LinkIcon />
       {copyNotice !== '' && <span role="status" style={styles.detailCopyNotice}>{copyNotice}</span>}
     </button>}
-    <button
+    <button data-arkme-feedback="neutral"
       type="button"
       style={styles.detailModalHeaderAction}
       aria-label="关闭扩展详情"
       title="关闭"
       onClick={onClose}
-      onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
-      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
     ><CloseIcon /></button>
   </header>
 }
@@ -908,7 +904,7 @@ export function ArkmeExtensionAuditAction({ extensionId, busyExtensionId, onRun 
   onRun(extensionId: string): void
 }) {
   const busy = busyExtensionId === extensionId
-  return <button
+  return <button data-arkme-feedback="neutral"
     type="button"
     style={{ ...styles.auditButton, ...(busy ? { opacity: .62, cursor: 'default' } : {}) }}
     disabled={busy}
@@ -944,7 +940,7 @@ function InstallLoadingButton({ task, onPause, onResume }: {
   const pausable = task !== undefined && ['resolving', 'downloading'].includes(task.phase)
   const action = paused ? onResume : pausable ? onPause : undefined
   const label = paused ? '继续安装' : pausable ? '暂停安装' : '正在处理'
-  return <button
+  return <button data-arkme-feedback="neutral"
     type="button" style={{ ...styles.loadingButton, ...(action === undefined ? { cursor: 'default' } : {}) }}
     disabled={action === undefined} aria-label={label} title={label} onClick={action}
   >{paused
@@ -957,7 +953,7 @@ export function ArkmeExtensionToggle({ item, busy, onChange }: {
   busy: boolean
   onChange(enabled: boolean): void
 }) {
-  return <button
+  return <button data-arkme-feedback="neutral"
     type="button"
     role="switch"
     aria-label={`${item.enabled ? '关闭' : '启用'}扩展 ${item.manifest.name}`}
@@ -1262,7 +1258,7 @@ export function ArkmeExtensionAuthorPopover({
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={styles.authorCardName}>{extensionCommunityAuthor(item).name}</div>
         </div>
-        {worldTarget !== undefined && <button
+        {worldTarget !== undefined && <button data-arkme-feedback="neutral"
           type="button"
           style={styles.authorCardProfileIcon}
           aria-label={`进入${extensionCommunityAuthor(item).name}的世界`}
@@ -1270,7 +1266,7 @@ export function ArkmeExtensionAuthorPopover({
           onClick={openWorld}
         ><ArrowUpRight size={17} aria-hidden /></button>}
       </div>
-      {worldTarget !== undefined && <button
+      {worldTarget !== undefined && <button data-arkme-feedback="neutral"
         type="button"
         style={styles.authorCardWorldLink}
         data-extension-author-world-link="true"
@@ -1278,13 +1274,13 @@ export function ArkmeExtensionAuthorPopover({
       >进入 TA 的世界 <CaretRight size={13} weight="bold" aria-hidden /></button>}
       {actionError !== '' && <div style={{ ...styles.error, marginTop: 8 }}>{actionError}</div>}
       {(canMessage || canBrowseOtherExtensions) && <div style={styles.authorCardActions}>
-        {canMessage && <button
+        {canMessage && <button data-arkme-feedback="neutral"
           type="button"
           style={{ ...styles.authorCardMessageButton, ...(actionBusy ? { opacity: .62, cursor: 'default' } : {}) }}
           disabled={actionBusy}
           onClick={onPrivateChat}
         >{actionBusy ? '正在打开…' : '发送消息'}</button>}
-        {canBrowseOtherExtensions && <button
+        {canBrowseOtherExtensions && <button data-arkme-feedback="neutral"
           type="button"
           style={styles.authorCardExtensionsButton}
           disabled={actionBusy}
@@ -1353,7 +1349,7 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
     {(installTask !== undefined && !installTask.done) || (actionBusy === true && actionLabel !== undefined) ? <InstallLoadingButton
       task={installTask} onPause={onPause} onResume={onResume}
     /> : <span style={styles.actionGroup}>
-      {actionLabel !== undefined && <button
+      {actionLabel !== undefined && <button data-arkme-feedback="neutral"
         type="button"
         style={{ ...styles.installSmall, ...(onAction === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
         disabled={onAction === undefined || actionBusy === true}
@@ -1418,7 +1414,7 @@ export function ArkmeExtensionLifecycleRow({
       />
     </span>}
     {kind === 'update' && <span style={styles.lifecycleActions}>
-      {processing ? <InstallLoadingButton task={installTask} onPause={onPause} onResume={onResume} /> : <button
+      {processing ? <InstallLoadingButton task={installTask} onPause={onPause} onResume={onResume} /> : <button data-arkme-feedback="neutral"
         type="button"
         style={{ ...styles.installSmall, height: 32, padding: '0 16px', background: '#17191c', color: '#fff' }}
         disabled={onUpdate === undefined}
@@ -1457,8 +1453,8 @@ export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish
       {version !== '' && <span style={styles.meta}>{version}</span>}
     </span>
     <span style={styles.actionGroup}>
-		{item.published !== undefined && <button type="button" style={styles.restartLater} onClick={onOpen}>详情</button>}
-      {action !== undefined && <button
+		{item.published !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.restartLater} onClick={onOpen}>详情</button>}
+      {action !== undefined && <button data-arkme-feedback="neutral"
         type="button"
         style={{ ...styles.installSmall, ...((action.kind === 'publish' ? onPublish : onEdit) === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
         disabled={(action.kind === 'publish' ? onPublish : onEdit) === undefined}
@@ -2645,7 +2641,7 @@ export function ArkmeMarketplace({
     aria-label="市集页面导航"
     {...(inline ? { 'data-market-page-tabs': 'inline', 'data-arkme-window-drag-region': 'marketplace' } : {})}
   >
-    {(Object.keys(TAB_LABELS) as Tab[]).map(value => <button
+    {(Object.keys(TAB_LABELS) as Tab[]).map(value => <button data-arkme-feedback="neutral"
       key={value} type="button" role="tab" aria-selected={tab === value}
       style={{
         ...(inline ? styles.marketPageTab : styles.tab),
@@ -2653,12 +2649,6 @@ export function ArkmeMarketplace({
       }}
       {...(inline ? { 'data-market-page-nav-state': tab === value ? 'selected' : 'idle' } : {})}
       onClick={() => { switchTab(value) }}
-      onMouseEnter={event => {
-        if (inline && tab !== value) event.currentTarget.style.background = colors.hover
-      }}
-      onMouseLeave={event => {
-        if (inline && tab !== value) event.currentTarget.style.background = 'transparent'
-      }}
     >
       <span style={inline
         ? styles.marketPageNavLabel
@@ -2683,18 +2673,16 @@ export function ArkmeMarketplace({
   <div style={{ ...styles.shell, ...(displayMode === 'page' ? styles.pageShell : {}) }} aria-label="Arkme 市集">
     {displayMode === 'dialog' && <header style={styles.header}>
       <h2 id="arkme-marketplace-title" style={styles.title}>市集</h2>
-      {detail?.share !== undefined && <button
+      {detail?.share !== undefined && <button data-arkme-feedback="neutral"
         type="button"
         style={{ ...styles.iconButton, position: 'relative' }}
         aria-label="复制扩展链接"
         title="复制链接"
         onClick={() => { setShareNotice(''); void copyShareLink() }}
       ><LinkIcon />{shareNotice !== '' && <span role="status" style={styles.detailCopyNotice}>{shareNotice}</span>}</button>}
-      <button
+      <button data-arkme-feedback="neutral"
         type="button" style={styles.iconButton} aria-label="关闭市集" title="关闭"
         onClick={onClose}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
       ><CloseIcon /></button>
     </header>}
     {displayMode === 'page' && <header data-arkme-window-drag-region="marketplace" style={styles.marketPageHeader} data-market-header-layer="primary">
@@ -2713,7 +2701,7 @@ export function ArkmeMarketplace({
       />
       {authorFilter !== undefined && <span style={styles.marketplaceAuthorFilter} data-marketplace-author-filter="true">
         <span style={styles.marketplaceAuthorFilterLabel}>{authorFilter.ownerName === '我' ? '我的全部插件' : `${authorFilter.ownerName} 的全部插件`}</span>
-        <button
+        <button data-arkme-feedback="neutral"
           type="button"
           style={styles.marketplaceAuthorFilterClear}
           aria-label={`清除作者 ${authorFilter.ownerName} 筛选`}
@@ -2809,7 +2797,7 @@ export function ArkmeMarketplace({
         </div>}
         {!loadingMoreDiscover && loadMoreDiscoverError !== '' && <div role="alert" style={styles.marketplaceLoadMoreRetry}>
           <span>加载更多失败</span>
-          <button type="button" style={styles.marketplaceRetryButton} onClick={() => { void loadMoreDiscoverPage() }}>重试</button>
+          <button data-arkme-feedback="neutral" type="button" style={styles.marketplaceRetryButton} onClick={() => { void loadMoreDiscoverPage() }}>重试</button>
         </div>}
         {visibleItems.length === 0 && (authorFilter === undefined
           ? <EmptyState tab={tab} />
@@ -2958,8 +2946,8 @@ export function ArkmeMarketplace({
             <div>
               <div>{detailError}</div>
               <div style={styles.detailModalErrorActions}>
-                <button type="button" style={styles.restartLater} onClick={() => { closeDetail() }}>关闭</button>
-                {detailRequestedExtensionId !== undefined && <button
+                <button data-arkme-feedback="neutral" type="button" style={styles.restartLater} onClick={() => { closeDetail() }}>关闭</button>
+                {detailRequestedExtensionId !== undefined && <button data-arkme-feedback="primary"
                   type="button" style={styles.primaryButton}
                   onClick={() => { void inspect(detailRequestedExtensionId) }}
                 >重新加载</button>}
@@ -2989,7 +2977,7 @@ export function ArkmeMarketplace({
                               onPause={() => { void controlInstall('extensions.install.pause') }}
                               onResume={() => { void controlInstall('extensions.install.resume') }}
                             />
-                          : <button
+                          : <button data-arkme-feedback="primary"
                               type="button" style={styles.primaryButton} disabled={actionBusyExtensionId === detail.extension_id}
                               onClick={() => {
                                 if (detailUpdateAvailable && detailUpdate?.latest_version !== undefined) {
@@ -3063,11 +3051,11 @@ export function ArkmeMarketplace({
                     ? <div style={styles.detailConfirm} role="alert">
                       卸载只删除当前设备中的扩展制品和 Profile 依赖；如果只是暂时不使用，请关闭上方开关。
                       <div style={styles.detailConfirmActions}>
-                        <button type="button" style={styles.restartLater} onClick={() => { setUninstallConfirmExtensionId(undefined) }}>取消</button>
-                        <button type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void uninstall(detail.extension_id) }}>确认卸载</button>
+                        <button data-arkme-feedback="neutral" type="button" style={styles.restartLater} onClick={() => { setUninstallConfirmExtensionId(undefined) }}>取消</button>
+                        <button data-arkme-feedback="danger" type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void uninstall(detail.extension_id) }}>确认卸载</button>
                       </div>
                     </div>
-                    : <button
+                    : <button data-arkme-feedback="danger"
                       type="button" style={styles.detailDanger} disabled={actionBusyExtensionId === detail.extension_id}
                       onClick={() => { setDeleteConfirmExtensionId(undefined); setUninstallConfirmExtensionId(detail.extension_id) }}
                     >卸载本地扩展</button>)}
@@ -3075,11 +3063,11 @@ export function ArkmeMarketplace({
                     ? <div style={styles.detailConfirm} role="alert">
                       删除会将这个扩展从市集中移除，但不会自动卸载当前设备中的本地副本。
                       <div style={styles.detailConfirmActions}>
-                        <button type="button" style={styles.restartLater} onClick={() => { setDeleteConfirmExtensionId(undefined) }}>取消</button>
-                        <button type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void deletePublishedExtension(detail.extension_id) }}>确认删除</button>
+                        <button data-arkme-feedback="neutral" type="button" style={styles.restartLater} onClick={() => { setDeleteConfirmExtensionId(undefined) }}>取消</button>
+                        <button data-arkme-feedback="danger" type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void deletePublishedExtension(detail.extension_id) }}>确认删除</button>
                       </div>
                     </div>
-                    : <button
+                    : <button data-arkme-feedback="danger"
                       type="button" style={styles.detailDanger} disabled={actionBusyExtensionId === detail.extension_id}
                       onClick={() => { setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(detail.extension_id) }}
                     >删除市集扩展</button>)}

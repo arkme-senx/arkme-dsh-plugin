@@ -75,7 +75,7 @@ function SpeakerOptionRow({ option, selected, onClick }: {
   selected: boolean
   onClick(): void
 }) {
-  return <button type="button" style={{ ...styles.option, ...(selected ? { background: desktop.hover } : {}) }} onClick={onClick}>
+  return <button data-arkme-feedback="neutral" type="button" style={{ ...styles.option, ...(selected ? { background: desktop.hover } : {}) }} onClick={onClick}>
     {option.avatarRef === undefined
       ? <span style={{ ...styles.avatar, ...(selected ? { boxShadow: '0 0 0 1px rgba(9,184,62,.3)' } : {}) }}>{option.label.slice(0, 1) || '声'}</span>
       : <ArkmeUserAvatar avatarRef={option.avatarRef} size={24} label={`${option.label}的头像`} />}
@@ -180,12 +180,12 @@ export function ArkmeRecordingSpeakerEditor({ item, anchor, forceBatchUpdate = f
       <SpeakerSection title="已添加说话人" options={categories.speakers} selected={selected} onSelect={choose} />
       <SpeakerSection title="Arkme 用户" options={categories.users} selected={selected} onSelect={choose} />
     </div>}
-    {newSpeakerName !== '' && !exactMatch && <button type="button" aria-label="添加新说话人" style={styles.add} disabled={!optionsReady || pending} onClick={() => { void mutate() }}><Plus size={15} />添加“{newSpeakerName}”为说话人</button>}
-    {optionsError !== '' && <div role="alert" style={styles.error}>{optionsError} <button type="button" aria-label="重试读取说话人候选" style={styles.unassign} onClick={refresh}>重试</button></div>}
+    {newSpeakerName !== '' && !exactMatch && <button data-arkme-feedback="neutral" type="button" aria-label="添加新说话人" style={styles.add} disabled={!optionsReady || pending} onClick={() => { void mutate() }}><Plus size={15} />添加“{newSpeakerName}”为说话人</button>}
+    {optionsError !== '' && <div role="alert" style={styles.error}>{optionsError} <button data-arkme-feedback="neutral" type="button" aria-label="重试读取说话人候选" style={styles.unassign} onClick={refresh}>重试</button></div>}
     {mutationError !== '' && <div role="alert" style={styles.error}>{mutationError}</div>}
     <div style={styles.bottom}>
       {canBatch ? <><input aria-label="批量修改" type="checkbox" checked={forceBatchUpdate || batch} disabled={pending || forceBatchUpdate} onChange={event => { if (!forceBatchUpdate) setBatch(event.target.checked) }} /><span style={styles.batchText}>批量修改 {item.sameSpeakerItemCount} 处“{item.speakerLabel}”</span></> : <span style={styles.batchText}>仅修改当前片段</span>}
-      <button type="button" style={{ ...styles.confirm, ...(!canSubmit ? { background: desktop.avatar, cursor: 'default' } : {}) }} disabled={!canSubmit} onClick={() => { void mutate() }}>{pending ? '保存中…' : '确认'}</button>
+      <button data-arkme-feedback="primary" type="button" style={{ ...styles.confirm, ...(!canSubmit ? { background: desktop.avatar, cursor: 'default' } : {}) }} disabled={!canSubmit} onClick={() => { void mutate() }}>{pending ? '保存中…' : '确认'}</button>
     </div>
   </div></>
   return typeof document === 'undefined' || document.body === undefined ? layer : createPortal(layer, document.body)

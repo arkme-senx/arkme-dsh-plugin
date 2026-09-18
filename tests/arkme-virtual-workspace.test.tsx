@@ -147,23 +147,24 @@ describe('Arkme conversation directory load state', () => {
     expect(workspaceSource).toContain('bot => conversationBotVisibilityKey(bot) === stableKey')
     expect(workspaceSource).toContain('botDirectoryIsPinned(botDirectoryPreferences, bot)')
     expect(workspaceSource).not.toContain('bots.private-chat.directory-source')
-    expect(workspaceSource).toContain('>移除</button>')
+    expect(workspaceSource).toContain("id: 'remove', label: '移除', danger: true")
     expect(workspaceSource).toContain('Number(right.pinned) - Number(left.pinned) || right.activeAtMillis - left.activeAtMillis')
   })
 
-  it('closes the directory action menu from a captured outside click', () => {
-    expect(workspaceSource).toContain("document.addEventListener('pointerdown', closeIfOutside, true)")
-    expect(workspaceSource).toContain("document.removeEventListener('pointerdown', closeIfOutside, true)")
-    expect(workspaceSource).toContain("window.addEventListener('blur', close)")
-    expect(workspaceSource).toContain("document.addEventListener('visibilitychange', closeWhenHidden)")
+  it('delegates directory dismissal and pointer placement to the shared native menu', () => {
+    expect(workspaceSource).toContain('<ArkmeActionMenu')
+    expect(workspaceSource).toContain('onClose={() => setDirectoryContextMenu(undefined)}')
+    expect(workspaceSource).toContain('point={{ x: directoryContextMenu.x, y: directoryContextMenu.y }}')
+    expect(workspaceSource).not.toContain('directoryContextMenuRef')
   })
 
-  it('hides a removed conversation immediately after the owner accepts it', () => {
-    expect(workspaceSource).not.toContain('window.setTimeout(resolve, 700)')
-    expect(workspaceSource).not.toContain('chatRowRemoveContentHidden')
-    expect(workspaceSource).not.toContain('chatRowRemoveOverlayVisible')
+  it('commits owner visibility immediately but retains shared inline removal feedback', () => {
+    expect(workspaceSource).toContain('useConversationRemovalFeedback({')
+    expect(workspaceSource).toContain('removalFeedback.begin(presentationRow, submittedActivity)')
+    expect(workspaceSource).toContain('removalFeedback.rows.map(row =>')
+    expect(workspaceSource.match(/<ArkmeConversationRemovalFeedback phase=\{removalPhase\}/g)).toHaveLength(2)
     expect(workspaceSource).toContain('setConversationVisibility(current => dismissConversationVisibilityEntry(')
-    expect(workspaceSource).toContain("setDirectoryActionFeedback('已移除对话，可在联系人中找回')")
+    expect(workspaceSource).not.toContain("setDirectoryActionFeedback('已移除对话，可在联系人中找回')")
     expect(workspaceSource).toContain('const protectedKeysAtRequest = conversationVisibilityFeedbackRef.current')
     expect(workspaceSource).toContain('result,\n        protectedKeysAtRequest,')
     expect(workspaceSource).toContain(

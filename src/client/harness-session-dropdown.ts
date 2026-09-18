@@ -140,7 +140,6 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       display: none !important; pointer-events: none;
     }
     [${PREFIX}column][${PREFIX}open] { display: block !important; pointer-events: auto; }
-    html[data-arkme-harness-viewport] [${PREFIX}column] { box-shadow: none; }
     [${PREFIX}root] { width: 100% !important; height: auto; max-height: var(--arkme-session-height); border-radius: 9px; padding: ${CONVERSATION_MENU_LAYOUT.paddingY}px ${CONVERSATION_MENU_LAYOUT.paddingX}px !important; position: relative; }
     [${PREFIX}brand], [${PREFIX}native-title] { display: none !important; }
     [${PREFIX}create] { order: 10; flex-shrink: 0; margin: 8px 0 0 !important; }

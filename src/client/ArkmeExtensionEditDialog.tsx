@@ -59,8 +59,8 @@ export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit
         {legacyVisibility && visibility === '' && <div role="status" style={styles.notice}>该历史可见范围已隐藏，请选择仅自己或公开后保存。</div>}
         {error !== '' && <div role="alert" style={styles.error}>{error}</div>}
         <div style={styles.actions}>
-          <button type="button" style={styles.secondary} disabled={busy} onClick={onCancel}>取消</button>
-          <button type="submit" style={styles.primary} disabled={busy || visibility === ''}>{busy ? '保存中…' : '保存'}</button>
+          <button data-arkme-feedback="neutral" type="button" style={styles.secondary} disabled={busy} onClick={onCancel}>取消</button>
+          <button data-arkme-feedback="primary" type="submit" style={styles.primary} disabled={busy || visibility === ''}>{busy ? '保存中…' : '保存'}</button>
         </div>
       </form>
     </section>

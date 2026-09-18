@@ -38,7 +38,7 @@ afterEach(() => {
   privateChatActions.activateAccount(undefined); privateChatActions.reset(); localStorage.clear()
   close.mockReset(); mocks.call.mockReset(); vi.useRealTimers(); vi.unstubAllGlobals()
 })
-const rows = () => Array.from(host.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]'))
+const rows = () => Array.from(document.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]'))
   .filter(button => button.querySelector('[role="status"]') === null)
 const render = async (open = true) => { await act(async () => { root.render(<Probe open={open} />) }) }
 
@@ -47,8 +47,8 @@ it('shows an enabled unchecked result immediately, never a loading row or an unc
   await render()
   expect(rows().map(button => button.textContent)).toEqual(['拒收对方消息'])
   expect(rows()[0]!.disabled).toBe(false)
-  expect(host.textContent).not.toMatch(/加载|正在检查|封禁/)
-  expect(host.querySelector('[role=menu]')!.hasAttribute('aria-busy')).toBe(false)
+  expect(document.body.textContent).not.toMatch(/加载|正在检查|封禁/)
+  expect(document.querySelector('[role=menu]')!.hasAttribute('aria-busy')).toBe(false)
 })
 
 it('revalidates both warm business snapshots on every open without refreshing the still-fresh identity', async () => {
@@ -66,7 +66,7 @@ it('does not query ban status for an ordinary account or show staff from persist
   mocks.call.mockImplementation(async operation => operation === 'user.profile.refresh'
     ? { ...profile, profile: { userId: 7, accountType: 1 } } : await original(operation))
   await render()
-  expect(host.textContent).not.toContain('封禁')
+  expect(document.body.textContent).not.toContain('封禁')
   expect(mocks.call.mock.calls.some(call => call[0] === 'user-ban.status')).toBe(false)
 })
 
@@ -79,11 +79,11 @@ it('does not issue menu-only reads on invalidation while closed or expose a reje
     if (operation === 'user-ban.status') throw new ArkmeClientError({ code: 'arkme-code-1001', message: '参数错误', retryable: false })
     return await original(operation)
   })
-  await render(); expect(host.textContent).not.toContain('封禁用户')
+  await render(); expect(document.body.textContent).not.toContain('封禁用户')
   expect(mocks.call.mock.calls.filter(call => call[0] === 'user-ban.status')).toHaveLength(1)
   mocks.call.mockImplementation(original)
   await render(false); await render()
-  expect(host.textContent).toContain('封禁用户')
+  expect(document.body.textContent).toContain('封禁用户')
 })
 
 it('keeps cached visible values enabled while background requests stall', async () => {
@@ -101,11 +101,11 @@ it('retries an unavailable identity when the user reopens the menu, without a ba
     return await original(operation)
   })
   await render()
-  expect(host.textContent).not.toContain('封禁用户')
+  expect(document.body.textContent).not.toContain('封禁用户')
   expect(mocks.call.mock.calls.filter(call => call[0] === 'user.profile.refresh')).toHaveLength(1)
   mocks.call.mockImplementation(original)
   await render(false); await render()
-  expect(host.textContent).toContain('封禁用户')
+  expect(document.body.textContent).toContain('封禁用户')
   expect(mocks.call.mock.calls.filter(call => call[0] === 'user.profile.refresh')).toHaveLength(2)
 })
 
@@ -115,10 +115,10 @@ it('keeps a known authorization rejection hidden throughout a pending retry', as
     if (operation === 'user-ban.status') throw new ArkmeClientError({ code: 'arkme-code-1001', message: '参数错误', retryable: false })
     return await original(operation)
   })
-  await render(); expect(host.textContent).not.toContain('封禁用户')
+  await render(); expect(document.body.textContent).not.toContain('封禁用户')
   mocks.call.mockImplementation(operation => operation === 'user-ban.status' ? new Promise(() => {}) : original(operation))
   await render(false); await render()
-  expect(host.textContent).not.toContain('封禁用户')
+  expect(document.body.textContent).not.toContain('封禁用户')
 })
 
 it('shows local failure feedback while leaving independent actions usable', async () => {
@@ -130,14 +130,14 @@ it('shows local failure feedback while leaving independent actions usable', asyn
   await render()
   expect(rows().map(button => button.textContent)).toEqual(['重新检查相关录音', '拒收对方消息', '封禁用户'])
   expect(rows().every(button => !button.disabled)).toBe(true)
-  expect(host.querySelector('[role=status]')!.textContent).toContain('暂时无法读取')
+  expect(document.querySelector('[role=status]')!.textContent).toContain('暂时无法读取')
 })
 
 it('drops employee visibility on expiry even when the refresh never completes', async () => {
   vi.useFakeTimers(); await render()
   mocks.call.mockImplementation(() => new Promise(() => {}))
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
-  expect(host.textContent).not.toContain('封禁')
+  expect(document.body.textContent).not.toContain('封禁')
   expect(rows().some(button => button.textContent === '拒收对方消息')).toBe(true)
 })
 

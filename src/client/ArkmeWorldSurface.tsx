@@ -713,7 +713,7 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect 
 
   return <div role="dialog" aria-modal="true" aria-label="世界图片预览" style={styles.previewBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section style={styles.previewModal}>
-      <button type="button" style={styles.previewClose} aria-label="关闭图片预览" title="关闭" onClick={onClose}>
+      <button data-arkme-feedback="neutral" type="button" style={styles.previewClose} aria-label="关闭图片预览" title="关闭" onClick={onClose}>
         <X size={16} weight="bold" aria-hidden />
       </button>
       <div style={styles.previewStage}>
@@ -731,8 +731,8 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect 
           <WorldImagePreviewMedia imageRef={imageRef} alt={`${item.authorName}发布的图片 ${String(previewIndex + 1)}`} zoomed={zoomed} />
         </div>
         {multiple && <>
-          <button type="button" style={{ ...styles.previewNav, left: 10, opacity: previewIndex === 0 ? 0.3 : 1 }} aria-label="上一张图片" disabled={previewIndex === 0} onClick={() => { selectImage(Math.max(0, previewIndex - 1)) }}>‹</button>
-          <button type="button" style={{ ...styles.previewNav, right: 10, opacity: previewIndex === item.imageRefs.length - 1 ? 0.3 : 1 }} aria-label="下一张图片" disabled={previewIndex === item.imageRefs.length - 1} onClick={() => { selectImage(Math.min(item.imageRefs.length - 1, previewIndex + 1)) }}>›</button>
+          <button data-arkme-feedback="neutral" type="button" style={{ ...styles.previewNav, left: 10, opacity: previewIndex === 0 ? 0.3 : 1 }} aria-label="上一张图片" disabled={previewIndex === 0} onClick={() => { selectImage(Math.max(0, previewIndex - 1)) }}>‹</button>
+          <button data-arkme-feedback="neutral" type="button" style={{ ...styles.previewNav, right: 10, opacity: previewIndex === item.imageRefs.length - 1 ? 0.3 : 1 }} aria-label="下一张图片" disabled={previewIndex === item.imageRefs.length - 1} onClick={() => { selectImage(Math.min(item.imageRefs.length - 1, previewIndex + 1)) }}>›</button>
           <span style={styles.previewCounter} aria-live="polite" data-world-image-preview-counter>{previewIndex + 1} / {item.imageRefs.length}</span>
         </>}
       </div>
@@ -838,7 +838,7 @@ export function WorldCollapsibleText({ recordRef, authorName, textContent, hasMe
       style={{ ...styles.text, ...(!expanded ? styles.textCollapsed : {}), ...(!expanded ? { WebkitLineClamp: maxLines } : {}) }}
       data-world-text-expanded={expanded ? 'true' : 'false'}
     ><WorldLinkText text={textContent} {...(extensionShareLink === undefined ? {} : { extensionShareLink })} /></p>
-    {collapsible && <button
+    {collapsible && <button data-arkme-feedback="neutral"
       type="button"
       style={styles.textToggle}
       aria-expanded={expanded}
@@ -944,7 +944,7 @@ function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }:
       </header>
       <div style={styles.interactionContentRow}>
         <p style={{ ...styles.interactionText, ...(reply ? styles.interactionReplyText : {}) }}><WorldLinkText text={item.textContent} /></p>
-        {onReply !== undefined && <button type="button" style={styles.interactionAction} aria-label={`回复${item.authorName}的评论`} onClick={() => { onReply(item) }}>{active ? '取消回复' : '回复'}</button>}
+        {onReply !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.interactionAction} aria-label={`回复${item.authorName}的评论`} onClick={() => { onReply(item) }}>{active ? '取消回复' : '回复'}</button>}
       </div>
     </div>
   </div>
@@ -1062,7 +1062,7 @@ function WorldExtensionShelf({ ownerUserId, ownerName, onOpen, onOpenAll }: {
       <span style={styles.extensionShelfItemCopy}><span style={styles.extensionShelfItemName}>{extension.name}</span><span style={styles.extensionShelfItemDescription}>{extension.description || `v${extension.latest_stable_version ?? extension.version ?? ''}`}</span></span>
     </button>)}</div>
     {state.total > state.items.length && <footer style={styles.extensionShelfFooter}>
-      <button type="button" style={styles.extensionShelfViewAll} onClick={() => { onOpenAll(ownerUserId, ownerName) }}>查看全部 {state.total} 个</button>
+      <button data-arkme-feedback="neutral" type="button" style={styles.extensionShelfViewAll} onClick={() => { onOpenAll(ownerUserId, ownerName) }}>查看全部 {state.total} 个</button>
     </footer>}
   </section>
 }
@@ -1117,14 +1117,14 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
         <span style={styles.authorRow}>
           {item.authorRef === undefined
             ? <strong style={styles.author}>{item.authorName}</strong>
-            : <button type="button" style={styles.authorButton} aria-label={`查看${item.authorName}的用户卡片`} onClick={() => { onOpenAuthor?.(item) }}><strong style={styles.author}>{item.authorName}</strong></button>}
+            : <button data-arkme-feedback="neutral" type="button" style={styles.authorButton} aria-label={`查看${item.authorName}的用户卡片`} onClick={() => { onOpenAuthor?.(item) }}><strong style={styles.author}>{item.authorName}</strong></button>}
           {playable
-            ? <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintLoading ? '正在生成声纹，点击停止' : voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintLoading ? `正在生成${item.authorName}的声纹，点击停止` : voiceprintActive ? `停止播放${item.authorName}的声纹` : `播放${item.authorName}的声纹`} aria-busy={voiceprintLoading || undefined} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
+            ? <button data-arkme-feedback="neutral" data-arkme-feedback-selected={voiceprintActive} type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintLoading ? '正在生成声纹，点击停止' : voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintLoading ? `正在生成${item.authorName}的声纹，点击停止` : voiceprintActive ? `停止播放${item.authorName}的声纹` : `播放${item.authorName}的声纹`} aria-busy={voiceprintLoading || undefined} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
               {voiceprintLoading
                 ? <SpinnerGap className="arkme-icon-spin" size={15} weight="bold" />
                 : <SpeakerHigh size={16} weight="light" />}
             </button>
-            : <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title="邀请开启声纹" aria-label={`邀请${item.authorName}开启声纹`} data-world-voiceprint-invite-icon="microphone" onClick={() => { onInviteVoiceprint(item) }}>
+            : <button data-arkme-feedback="neutral" type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title="邀请开启声纹" aria-label={`邀请${item.authorName}开启声纹`} data-world-voiceprint-invite-icon="microphone" onClick={() => { onInviteVoiceprint(item) }}>
               <Microphone size={17} weight="light" />
             </button>}
         </span>
@@ -1153,7 +1153,7 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
       </button>
     })}</div>}
     <footer style={styles.cardFooter}>
-      <button type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={() => { onOpenInteractions(item) }}>
+      <button data-arkme-feedback="neutral" data-arkme-feedback-selected={interactionsOpen} type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={() => { onOpenInteractions(item) }}>
         <ChatCircleDots size={16} weight="light" aria-hidden />{interactionLabel}
       </button>
     </footer>
@@ -1186,8 +1186,8 @@ export function VoiceprintInviteDialog({ item, variantIndex, socialContext, send
         {message !== undefined && <p role="status" style={styles.inviteStatus}>{message}</p>}
       </div>
       <div style={styles.inviteActions}>
-        <button type="button" style={styles.inviteActionButton} disabled={sending} onClick={onClose}>再想想</button>
-        <button type="button" style={{ ...styles.inviteActionButton, ...styles.inviteConfirmButton }} disabled={sending} onClick={() => { onConfirm(item) }}>{sending ? '发送中…' : '让TA知道'}</button>
+        <button data-arkme-feedback="neutral" type="button" style={styles.inviteActionButton} disabled={sending} onClick={onClose}>再想想</button>
+        <button data-arkme-feedback="neutral" type="button" style={{ ...styles.inviteActionButton, ...styles.inviteConfirmButton }} disabled={sending} onClick={() => { onConfirm(item) }}>{sending ? '发送中…' : '让TA知道'}</button>
       </div>
     </section>
   </div>
@@ -1240,7 +1240,7 @@ export function WorldInfiniteScrollTrigger({ scrollRootRef, loading, error, onLo
 
   return <div ref={sentinelRef} style={styles.feedLoadMore} data-world-load-more-sentinel="true" aria-hidden={!loading && !error}>
     {loading && <span role="status" aria-label="正在加载更多世界动态" style={styles.feedLoadMoreStatus}><WorldLoadMoreSpinner /></span>}
-    {!loading && error && <button type="button" style={styles.feedLoadMoreRetry} onClick={retry}>重试</button>}
+    {!loading && error && <button data-arkme-feedback="neutral" type="button" style={styles.feedLoadMoreRetry} onClick={retry}>重试</button>}
   </div>
 }
 
@@ -1312,7 +1312,7 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
       {target === undefined
         ? <div><h1 style={styles.heading}>世界</h1><p style={styles.subtitle}>看看大家此刻正在记录什么</p></div>
         : <div style={styles.targetHeading}>
-          <button type="button" style={styles.backButton} aria-label={'contactRef' in target ? '返回联系人' : '返回世界'} onClick={onBackToWorld}><ArrowLeft size={18} weight="bold" /></button>
+          <button data-arkme-feedback="neutral" type="button" style={styles.backButton} aria-label={'contactRef' in target ? '返回联系人' : '返回世界'} onClick={onBackToWorld}><ArrowLeft size={18} weight="bold" /></button>
           <ArkmeUserAvatar
             {...(target.avatarRef === undefined ? {} : { avatarRef: target.avatarRef })}
             {...(target.avatarFallback === undefined ? {} : { fallback: target.avatarFallback })}
@@ -1322,16 +1322,16 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
           <div style={styles.targetTitle}><h1 style={styles.heading}>{target.displayName}的世界</h1><p style={styles.subtitle}>TA 公开分享的内容</p></div>
         </div>}
       <div style={styles.headerActions}>
-        <button type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? '刷新中' : '刷新'} aria-label={state.refreshing ? '刷新中' : '刷新'} onClick={onRefresh}>
+        <button data-arkme-feedback="neutral" type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? '刷新中' : '刷新'} aria-label={state.refreshing ? '刷新中' : '刷新'} onClick={onRefresh}>
           <ArrowClockwise size={18} weight="light" />
         </button>
-        {target === undefined && <button type="button" style={{ ...styles.button, ...styles.primaryButton }} aria-label="发世界" onClick={onOpenComposer}><Plus size={14} weight="regular" aria-hidden />发布</button>}
+        {target === undefined && <button data-arkme-feedback="primary" type="button" style={{ ...styles.button, ...styles.primaryButton }} aria-label="发世界" onClick={onOpenComposer}><Plus size={14} weight="regular" aria-hidden />发布</button>}
       </div>
     </header>
     {target === undefined && <div style={styles.worldToolbar}>
       <nav style={styles.tabs} aria-label="世界范围">
-        <button type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { selectScope('all') }}>世界</button>
-        <button type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { selectScope('mine') }}>我的世界</button>
+        <button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { selectScope('all') }}>世界</button>
+        <button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { selectScope('mine') }}>我的世界</button>
       </nav>
     </div>}
     <div style={styles.worldLayout} data-world-layout={interactionItem === undefined ? 'feed' : 'comments-open'}>
@@ -1345,7 +1345,7 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
         />}
         {actionMessage !== undefined && <div role="status" style={{ ...styles.notice, ...(actionMessage.startsWith('已') ? {} : styles.error), width: '100%', margin: 0 }}>{actionMessage}</div>}
         {state.status === 'loading' && <div role="status" style={{ ...styles.notice, width: '100%', margin: 0 }}>{target === undefined ? '正在加载世界…' : `正在加载 ${target.displayName} 的世界…`}</div>}
-        {state.status === 'error' && <div role="alert" style={{ ...styles.notice, ...styles.error, ...styles.errorRow, width: '100%', margin: 0 }}><span>{state.message}</span><button type="button" style={styles.button} onClick={onRefresh}>重试</button></div>}
+        {state.status === 'error' && <div role="alert" style={{ ...styles.notice, ...styles.error, ...styles.errorRow, width: '100%', margin: 0 }}><span>{state.message}</span><button data-arkme-feedback="neutral" type="button" style={styles.button} onClick={onRefresh}>重试</button></div>}
         {state.status === 'empty' && <ArkmeWorldEmptyNotice style={{ ...styles.emptyNotice, width: '100%', margin: 0 }}>
           {target === undefined ? '这里还没有世界动态。你可以先发一条，或者稍后再刷新。' : 'TA 的世界暂无公开内容。'}
         </ArkmeWorldEmptyNotice>}
@@ -1484,7 +1484,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
           <h2 style={styles.publishTitle}>发世界</h2>
           <p style={styles.publishIntro}>记录此刻，也分享给世界。发布失败时会显示原因，草稿不会被清空，可以继续编辑后重试。</p>
         </div>
-        <button type="button" style={styles.publishClose} disabled={sending} aria-label="关闭发布窗口" onClick={onClose}><X size={18} weight="regular" aria-hidden /></button>
+        <button data-arkme-feedback="neutral" type="button" style={styles.publishClose} disabled={sending} aria-label="关闭发布窗口" onClick={onClose}><X size={18} weight="regular" aria-hidden /></button>
       </header>
       <div style={styles.publishEditor} data-world-publish-editor="true">
         <textarea style={styles.publishTextarea} value={text} disabled={sending} maxLength={2000} autoFocus aria-label="世界内容" placeholder="分享此刻的想法…" onChange={event => { setText(event.currentTarget.value); resetMutationId(); setMessage('') }} />
@@ -1497,7 +1497,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
         </div>
         <input ref={fileInputRef} style={styles.publishHiddenInput} type="file" accept="image/*" multiple disabled={sending || files.length >= ARKME_WORLD_PUBLISH_MAX_IMAGES} aria-label="选择世界图片" onChange={event => { chooseFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
         {files.length === 0
-          ? <button type="button" style={styles.publishUploadEmpty} disabled={sending} onClick={() => { fileInputRef.current?.click() }}>
+          ? <button data-arkme-feedback="neutral" type="button" style={styles.publishUploadEmpty} disabled={sending} onClick={() => { fileInputRef.current?.click() }}>
               <span style={styles.publishUploadIcon}><Plus size={18} weight="regular" aria-hidden /></span>
               <span style={styles.publishUploadTitle}>添加图片</span>
               <span style={styles.publishUploadHint}>可一次选择多张图片</span>
@@ -1505,14 +1505,14 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
           : <div style={styles.publishImageGrid}>
               {files.map((file, index) => <div key={`${file.name}:${String(file.size)}:${String(file.lastModified)}:${String(index)}`} style={styles.publishImageTile}>
                 <WorldPublishImagePreview file={file} index={index} />
-                <button type="button" style={styles.publishImageRemove} disabled={sending} aria-label={`移除图片 ${String(index + 1)}`} onClick={() => { removeFile(index) }}><X size={12} weight="bold" aria-hidden /></button>
+                <button data-arkme-feedback="neutral" type="button" style={styles.publishImageRemove} disabled={sending} aria-label={`移除图片 ${String(index + 1)}`} onClick={() => { removeFile(index) }}><X size={12} weight="bold" aria-hidden /></button>
               </div>)}
-              {files.length < ARKME_WORLD_PUBLISH_MAX_IMAGES && <button type="button" style={styles.publishAddTile} disabled={sending} aria-label="继续添加图片" onClick={() => { fileInputRef.current?.click() }}><Plus size={19} weight="regular" aria-hidden /><span>继续添加</span></button>}
+              {files.length < ARKME_WORLD_PUBLISH_MAX_IMAGES && <button data-arkme-feedback="neutral" type="button" style={styles.publishAddTile} disabled={sending} aria-label="继续添加图片" onClick={() => { fileInputRef.current?.click() }}><Plus size={19} weight="regular" aria-hidden /><span>继续添加</span></button>}
             </div>}
       </section>
       <div style={styles.publishFooter}>
         <span role="status" style={{ ...styles.publishStatus, ...(message !== '' && !message.includes('正在') ? styles.modalError : {}) }}>{message}</span>
-        <span style={styles.publishActions}><button type="button" style={{ ...styles.button, ...styles.publishActionButton }} disabled={sending} onClick={onClose}>取消</button><button type="button" style={{ ...styles.button, ...styles.primaryButton, ...styles.publishActionButton }} disabled={sending} onClick={() => { void submit() }}>{sending ? '发布中…' : '发布'}</button></span>
+        <span style={styles.publishActions}><button data-arkme-feedback="neutral" type="button" style={{ ...styles.button, ...styles.publishActionButton }} disabled={sending} onClick={onClose}>取消</button><button data-arkme-feedback="primary" type="button" style={{ ...styles.button, ...styles.primaryButton, ...styles.publishActionButton }} disabled={sending} onClick={() => { void submit() }}>{sending ? '发布中…' : '发布'}</button></span>
       </div>
     </section>
   </div>
@@ -1616,23 +1616,23 @@ function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved
     <div style={styles.interactionPanelSticky} data-world-comment-toolbar="sticky">
       <header style={styles.interactionPanelHeader}>
         <strong style={styles.interactionPanelTitle}>{worldInteractionCountLabel(state.items.length, state.hasMore)}</strong>
-        <button type="button" style={styles.interactionPanelClose} aria-label="收起评论" onClick={onClose}>收起</button>
+        <button data-arkme-feedback="neutral" type="button" style={styles.interactionPanelClose} aria-label="收起评论" onClick={onClose}>收起</button>
       </header>
       <div style={styles.interactionComposer}>
-        {replyTarget !== undefined && <div style={styles.replyTarget}><span>回复 {replyTarget.authorName}</span><button type="button" style={styles.linkButton} onClick={() => { setReplyTarget(undefined); textareaRef.current?.focus() }}>取消回复</button></div>}
+        {replyTarget !== undefined && <div style={styles.replyTarget}><span>回复 {replyTarget.authorName}</span><button data-arkme-feedback="neutral" type="button" style={styles.linkButton} onClick={() => { setReplyTarget(undefined); textareaRef.current?.focus() }}>取消回复</button></div>}
         <div style={styles.interactionComposerRow}>
           <textarea ref={textareaRef} rows={1} style={styles.interactionInput} value={draft} disabled={sending} maxLength={20_000} placeholder={replyTarget === undefined ? '写一条评论…' : `回复 ${replyTarget.authorName}…`} onChange={event => {
             setDraft(event.currentTarget.value)
             event.currentTarget.style.height = '40px'
             event.currentTarget.style.height = `${String(Math.min(96, event.currentTarget.scrollHeight))}px`
           }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void send() } }} />
-          <button type="button" style={{ ...styles.interactionSend, ...(sendDisabled ? { opacity: 0.38, cursor: 'default' } : {}) }} title="Ctrl / ⌘ + Enter 发送" disabled={sendDisabled} onClick={() => { void send() }}>{sending ? '发送中…' : '发送'}</button>
+          <button data-arkme-feedback="primary" type="button" style={{ ...styles.interactionSend, ...(sendDisabled ? { opacity: 0.38, cursor: 'default' } : {}) }} title="Ctrl / ⌘ + Enter 发送" disabled={sendDisabled} onClick={() => { void send() }}>{sending ? '发送中…' : '发送'}</button>
         </div>
       </div>
     </div>
     <div style={styles.interactionPanelBody}>
       {state.status === 'loading' && <p role="status" style={styles.subtitle}>评论加载中…</p>}
-      {state.message !== undefined && <div role="alert" style={{ ...styles.notice, ...styles.error, width: '100%', margin: '12px 0 0' }}>{state.message}{state.status === 'error' && <button type="button" style={{ ...styles.button, marginLeft: 12 }} onClick={load}>重试</button>}</div>}
+      {state.message !== undefined && <div role="alert" style={{ ...styles.notice, ...styles.error, width: '100%', margin: '12px 0 0' }}>{state.message}{state.status === 'error' && <button data-arkme-feedback="neutral" type="button" style={{ ...styles.button, marginLeft: 12 }} onClick={load}>重试</button>}</div>}
       <WorldInteractionThreadList
         rootRef={item.recordRef}
         items={state.items}
@@ -1642,7 +1642,7 @@ function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved
           textareaRef.current?.focus()
         }}
       />
-      {state.hasMore && <div style={styles.loadMore}><button type="button" style={styles.button} disabled={state.loadingMore} onClick={() => { void loadMore() }}>{state.loadingMore ? '加载中…' : '加载更多评论'}</button></div>}
+      {state.hasMore && <div style={styles.loadMore}><button data-arkme-feedback="neutral" type="button" style={styles.button} disabled={state.loadingMore} onClick={() => { void loadMore() }}>{state.loadingMore ? '加载中…' : '加载更多评论'}</button></div>}
       {state.status === 'ready' && state.items.length === 0 && <div style={styles.interactionEmpty}>还没有评论</div>}
     </div>
   </section>

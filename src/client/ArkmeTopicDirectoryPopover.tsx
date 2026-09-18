@@ -24,6 +24,8 @@ import { arkmeSelfDirectorySources, sortArkmeSources, type ArkmeSourceSort } fro
 import { arkmeTheme } from './arkme-theme.js'
 import { useSelfTopicExpansion } from './self-topic-expansion-preference.js'
 import { mergeSelfTopicSources, selfTopicDirectory } from './self-topic-directory-cache.js'
+import { filterArkmeTopicSources } from './topic-search.js'
+export { filterArkmeTopicSources } from './topic-search.js'
 
 export interface ArkmeTopicDirectoryPopoverProps {
   userId: number
@@ -130,33 +132,6 @@ const styles: Record<string, CSSProperties> = {
   },
   status: { padding: '22px 18px 80px', color: colors.secondary, fontSize: 12, textAlign: 'center' },
   error: { color: arkmeTheme.danger },
-}
-
-/** Keep matching topics and their ancestors so search never destroys the directory hierarchy. */
-export function filterArkmeTopicSources(
-  sources: readonly ArkmeSourceItem[],
-  queryInput: string,
-): ArkmeSourceItem[] {
-  const query = queryInput.trim().toLocaleLowerCase()
-  if (query === '') return [...sources]
-  const byRef = new Map(sources.map(source => [source.sourceRef, source]))
-  const byTopicHierarchyKey = new Map(
-    sources.flatMap(source => source.topicHierarchyKey === undefined ? [] : [[source.topicHierarchyKey, source] as const]),
-  )
-  const included = new Set<string>()
-  for (const source of sources) {
-    if (!source.displayName.toLocaleLowerCase().includes(query)) continue
-    let current: ArkmeSourceItem | undefined = source
-    const visited = new Set<string>()
-    while (current !== undefined && !visited.has(current.sourceRef)) {
-      visited.add(current.sourceRef)
-      included.add(current.sourceRef)
-      current = current.parentTopicHierarchyKey === undefined
-        ? current.parentSourceRef === undefined ? undefined : byRef.get(current.parentSourceRef)
-        : byTopicHierarchyKey.get(current.parentTopicHierarchyKey)
-    }
-  }
-  return sources.filter(source => included.has(source.sourceRef))
 }
 
 function cacheWithTopics(
@@ -389,7 +364,7 @@ export function ArkmeTopicDirectoryPopover({
   }
 
   return <>
-    {trigger === 'button' && <button
+    {trigger === 'button' && <button data-arkme-feedback="neutral" data-arkme-feedback-selected={open}
       ref={triggerRef} type="button" aria-label="打开主题" title="主题" aria-haspopup="dialog" aria-expanded={open}
       data-arkme-topic-directory-trigger="leading"
       style={{ ...styles.trigger, ...(open ? styles.triggerActive : {}) }}
@@ -402,7 +377,7 @@ export function ArkmeTopicDirectoryPopover({
           setSourceSort(value)
           setHoveredSourceRef(undefined)
         }} />
-        <button type="button" aria-label="关闭主题" style={styles.close} onClick={() => { setOpen(false) }}>×</button>
+        <button data-arkme-feedback="neutral" type="button" aria-label="关闭主题" style={styles.close} onClick={() => { setOpen(false) }}>×</button>
       </div>
       <label style={styles.search}>
         <svg aria-hidden viewBox="0 0 16 16" width="14" height="14" fill="none">
@@ -439,7 +414,7 @@ export function ArkmeTopicDirectoryPopover({
         {!busy && error === '' && (cardMode ? cardSources.length === 0 : rows.length === 0) && <div style={styles.status}>{query.trim() === '' ? '暂无主题' : '没有匹配的主题'}</div>}
         {error !== '' && <div role="alert" style={{ ...styles.status, ...styles.error }}>
           <div>{error}</div>
-          <button type="button" style={{ ...styles.close, width: 'auto', margin: '8px auto 0', padding: '0 10px', fontSize: 12 }}
+          <button data-arkme-feedback="neutral" type="button" style={{ ...styles.close, width: 'auto', margin: '8px auto 0', padding: '0 10px', fontSize: 12 }}
             onClick={() => { void directory.ensure(true) }}>重试</button>
         </div>}
       </div>

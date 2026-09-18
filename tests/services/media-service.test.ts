@@ -17,6 +17,22 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('MediaService', () => {
+  it.each([true, false])('loads the recorded asset rather than the current avatar (asset available: %s)', async available => {
+    const fetchImpl = vi.fn(async () => new Response(new Uint8Array([137,80,78,71,13,10,26,10]), { headers: { 'Content-Type': 'image/png' } }))
+    const runtime = new ServiceRuntime(config, { read: async () => ({ userId: 42, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }, {} as StateStore, fetchImpl)
+    const profile = new ProfileService(runtime)
+    const currentProfile = vi.spyOn(profile, 'publicProfilesByUserIds')
+    const media = new MediaService(runtime, profile, {} as never, { recordUid: () => '' })
+    const assets = vi.spyOn(media, 'queryFileAssets').mockResolvedValue(available ? [{
+      fileAssetUid: 'old-avatar', status: 'ready',
+      previewUrl: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/old.png?x-oss-signature=fixture',
+    }] : [])
+    if (available) await expect(media.readImage('file_asset://old-avatar')).resolves.toMatchObject({ mediaType: 'image/png', bytes: 8 })
+    else await expect(media.readImage('file_asset://old-avatar')).rejects.toMatchObject({ code: 'image-ref-unavailable' })
+    expect(assets).toHaveBeenCalledWith(['old-avatar'], undefined)
+    expect(currentProfile).not.toHaveBeenCalled()
+    expect(fetchImpl).toHaveBeenCalledTimes(available ? 1 : 0)
+  })
   it.each([1, 2])('projects an explicit Live pair for cover render role %s', async (coverRenderRole) => {
     const media = new MediaService({ config: {} } as ServiceRuntime, {} as never, {} as never, {} as never)
     const refs = [

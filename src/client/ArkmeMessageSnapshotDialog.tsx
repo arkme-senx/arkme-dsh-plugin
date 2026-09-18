@@ -141,7 +141,7 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, loading = fals
     <div style={styles.location} title={locationText}><SnapshotGlyph><MapPin size={19} weight="fill" /></SnapshotGlyph><span style={styles.locationText}>{locationText}</span></div>
     {loading ? <p style={styles.loading}>正在补全记忆快照…</p> : null}
     <div style={styles.rows} aria-label="记忆快照">
-      {rows.map(row => <div key={row.label} style={styles.row}><SnapshotGlyph>{row.icon}</SnapshotGlyph><span style={styles.rowLabel}>{row.label}</span><div title={typeof row.value === 'string' ? row.value : undefined} style={styles.rowValue}>{row.value}{row.action ? <button type="button" style={styles.backgroundAction} onClick={onEnableBackgroundSound} disabled={onEnableBackgroundSound === undefined}>去开启›</button> : null}</div></div>)}
+      {rows.map(row => <div key={row.label} style={styles.row}><SnapshotGlyph>{row.icon}</SnapshotGlyph><span style={styles.rowLabel}>{row.label}</span><div title={typeof row.value === 'string' ? row.value : undefined} style={styles.rowValue}>{row.value}{row.action ? <button data-arkme-feedback="neutral" type="button" style={styles.backgroundAction} onClick={onEnableBackgroundSound} disabled={onEnableBackgroundSound === undefined}>去开启›</button> : null}</div></div>)}
     </div>
   </>
 }
@@ -159,7 +159,7 @@ export function ArkmeMessageSnapshotDialog({ item, detail, loading = false, load
   return createPortal(
     <div style={styles.backdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
       <section role="dialog" aria-modal="true" aria-label="快记详情" style={styles.dialog}>
-        <button ref={closeRef} type="button" aria-label="关闭快记详情" style={styles.close} onClick={onClose}><X size={22} weight="bold" /></button>
+        <button data-arkme-feedback="neutral" ref={closeRef} type="button" aria-label="关闭快记详情" style={styles.close} onClick={onClose}><X size={22} weight="bold" /></button>
         <div style={styles.body}><ArkmeMessageSnapshotDialogContent item={item} {...(detail === undefined ? {} : { detail })} loading={loading} {...(loadError === undefined ? {} : { loadError })} backgroundSoundEnabled={backgroundSoundEnabled} backgroundSoundSupported={backgroundSoundSupported} backgroundSoundEligibilityReason={backgroundSoundEligibilityReason} {...(onEnableBackgroundSound === undefined ? {} : { onEnableBackgroundSound })} /></div>
       </section>
     </div>,

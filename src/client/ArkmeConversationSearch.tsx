@@ -43,7 +43,7 @@ export function ArkmeConversationSearch({ source, host, accountKey }: { source: 
   }, [preferenceKey, preferences])
   const close = () => { setOpen(false); trigger.current?.focus() }
   return <>
-    <button ref={trigger} type="button" aria-label="搜索聊天记录" title="搜索聊天记录" aria-expanded={open} style={ARKME_CONVERSATION_HEADER_BUTTON_STYLE} onClick={() => setOpen(value => !value)}><MagnifyingGlass size={22} /></button>
+    <button data-arkme-feedback="neutral" ref={trigger} type="button" aria-label="搜索聊天记录" title="搜索聊天记录" aria-expanded={open} style={ARKME_CONVERSATION_HEADER_BUTTON_STYLE} onClick={() => setOpen(value => !value)}><MagnifyingGlass size={22} /></button>
     {open && host.current !== null && createPortal(<ArkmeConversationSearchPanel source={source} scene={preferences.scene} global={preferences.global}
       onScene={scene => setPreferences(value => ({ ...value, scene }))} onGlobal={global => setPreferences(value => ({ ...value, global }))} onClose={close} />, host.current)}
   </>
@@ -88,8 +88,8 @@ export function ArkmeConversationSearchPanel({ source, scene, global, onScene, o
     <header style={{ padding: '14px 14px 8px', flex: 'none' }}>
       <div style={row}>
         <strong style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14 }}>{global ? '全局搜索' : source.displayName}</strong>
-        <button type="button" style={button} onClick={() => onGlobal(!global)}>{global ? '当前范围' : '全局'}</button>
-        <button type="button" aria-label="关闭聊天搜索" style={button} onClick={onClose}><X size={18} /></button>
+        <button data-arkme-feedback="neutral" type="button" style={button} onClick={() => onGlobal(!global)}>{global ? '当前范围' : '全局'}</button>
+        <button data-arkme-feedback="neutral" type="button" aria-label="关闭聊天搜索" style={button} onClick={onClose}><X size={18} /></button>
       </div>
       <div style={{ ...row, marginTop: 10, padding: '0 10px', borderRadius: 8, background: arkmeTheme.input }}>
         <MagnifyingGlass size={18} />
@@ -98,10 +98,10 @@ export function ArkmeConversationSearchPanel({ source, scene, global, onScene, o
           onCompositionEnd={event => { setComposing(false); setQuery(event.currentTarget.value) }}
           onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); search.submit() } }}
           style={{ width: '100%', minWidth: 0, height: 36, border: 0, outline: 0, background: 'transparent', color: arkmeTheme.text, font: 'inherit', fontSize: 14 }} />
-        {query !== '' && <button type="button" aria-label="清空搜索" style={button} onClick={() => { setQuery(''); setComposing(false) }}><X size={16} /></button>}
+        {query !== '' && <button data-arkme-feedback="neutral" type="button" aria-label="清空搜索" style={button} onClick={() => { setQuery(''); setComposing(false) }}><X size={16} /></button>}
       </div>
       {!keyword && <div role="tablist" aria-label="聊天记录分类" style={{ ...row, gap: 0, overflowX: 'auto', marginTop: 10 }}>
-        {scenes.map(item => <button type="button" role="tab" className="arkme-search-tab" aria-selected={scene === item.key} key={item.key}
+        {scenes.map(item => <button data-arkme-feedback="neutral" type="button" role="tab" className="arkme-search-tab" aria-selected={scene === item.key} key={item.key}
           onClick={() => onScene(item.key)} style={{ ...button, position: 'relative', flex: 'none', padding: '8px 0', marginRight: 30, fontSize: 14, fontWeight: scene === item.key ? 600 : 400, color: scene === item.key ? arkmeTheme.text : arkmeTheme.secondary,
             borderRadius: 0 }}>{item.label}</button>)}
       </div>}
@@ -117,15 +117,15 @@ export function ArkmeConversationSearchPanel({ source, scene, global, onScene, o
       {search.page?.items.map((item, index, items) => <Fragment key={`${item.sourceKind}:${item.sourceUid ?? ''}:${item.recordOwnerUserId ?? ''}:${item.recordUid}`}>
         {!keyword && scene !== 'link' && (index === 0 || searchMonth(item.sendAtMillis) !== searchMonth(items[index - 1]!.sendAtMillis)) && <p style={{ gridColumn: '1 / -1', margin: '12px 0 8px', fontSize: 12, color: arkmeTheme.secondary }}>{searchMonth(item.sendAtMillis)}</p>}
         <div style={!keyword && scene === 'image_video' ? { display: 'contents' } : { marginBottom: scene === 'file' || scene === 'link' ? 0 : 8 }}>
-        {!keyword && scene === 'image_video' ? item.sourceKind === 3 ? item.media.length > 0 ? <ChatSearchMedia item={item} active={selected === undefined} onSelect={selectHit} /> : <button type="button" style={button} onClick={() => selectHit(item)}>查看媒体消息</button> : <div style={{ display: 'contents' }}>
+        {!keyword && scene === 'image_video' ? item.sourceKind === 3 ? item.media.length > 0 ? <ChatSearchMedia item={item} active={selected === undefined} onSelect={selectHit} /> : <button data-arkme-feedback="neutral" type="button" style={button} onClick={() => selectHit(item)}>查看媒体消息</button> : <div style={{ display: 'contents' }}>
           {item.media.map(asset => { const display = search.assets.get(asset.fileAssetUid); const url = display?.previewUrl ?? display?.downloadUrl
             const video = (display?.mimeType ?? asset.mimeType ?? '').startsWith('video/') || asset.fileKind === 3
             return <SearchMediaTile key={asset.fileAssetUid} url={url} unavailable={url === undefined} name={display?.fileName ?? asset.fileName ?? ''} video={video} durationSec={asset.durationMillis === undefined ? undefined : asset.durationMillis / 1000} onOpen={() => selectHit(item, asset.fileAssetUid)} />
           })}
-          {item.media.length === 0 && <button type="button" style={button} onClick={() => selectHit(item)}>查看媒体消息</button>}
+          {item.media.length === 0 && <button data-arkme-feedback="neutral" type="button" style={button} onClick={() => selectHit(item)}>查看媒体消息</button>}
         </div> : !keyword && scene === 'file' ? <>
           {[...new Map(item.files.map(file => [file.fileAssetUid, file])).values()].map(file => <SearchFileRow key={file.fileAssetUid} file={file} item={item} onOpen={() => selectHit(item, file.fileAssetUid)} />)}
-          {item.files.length === 0 && <button type="button" style={button} onClick={() => selectHit(item)}>查看文件消息</button>}
+          {item.files.length === 0 && <button data-arkme-feedback="neutral" type="button" style={button} onClick={() => selectHit(item)}>查看文件消息</button>}
         </> : !keyword && scene === 'link' ? <SearchLinkRows item={item} onLocate={() => {
           if (item.targetSource !== undefined && (item.sourceKind !== 3 || item.recordOwnerUserId !== undefined)) {
             arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis, item.recordOwnerUserId); onClose()
@@ -134,9 +134,9 @@ export function ArkmeConversationSearchPanel({ source, scene, global, onScene, o
       </div></Fragment>)}
       </div>
       {search.loading && <div role="status" style={status}>加载中…</div>}
-      {search.error !== '' && <div role="alert" style={status}>{search.error}<button type="button" style={button} onClick={search.retry}>重试</button></div>}
+      {search.error !== '' && <div role="alert" style={status}>{search.error}<button data-arkme-feedback="neutral" type="button" style={button} onClick={search.retry}>重试</button></div>}
       {!search.loading && !search.error && search.page?.items.length === 0 && ['complete', 'ok'].includes(search.page.queryGuard.state) && <div style={status}>暂无搜索结果</div>}
-      {!search.loading && !search.error && search.page?.hasMore && <button type="button" style={{ ...button, width: '100%' }} onClick={search.loadMore}>加载更多</button>}
+      {!search.loading && !search.error && search.page?.hasMore && <button data-arkme-feedback="neutral" type="button" style={{ ...button, width: '100%' }} onClick={search.loadMore}>加载更多</button>}
     </div>
   </aside>
 }
@@ -164,16 +164,16 @@ function SearchDetail({ item, assetUid, onSelectAsset, onBack, onLocate, navigat
   if (assetUid !== undefined) {
     if (preview !== undefined) return <ArkmeMediaPreview blocks={(detail?.contentBlocks ?? []).filter(block => preview.kind === 'file' ? block.kind === 'file' : block.kind === 'image' || block.kind === 'video')} selected={preview} navigation={navigation} onSelect={block => { if (block.fileAssetUid !== undefined) onSelectAsset(block.fileAssetUid) }} onClose={onBack} />
     return <div style={status}>
-      {error !== '' ? <div role="alert">{error}<button type="button" style={button} onClick={retry}>重试</button></div>
+      {error !== '' ? <div role="alert">{error}<button data-arkme-feedback="neutral" type="button" style={button} onClick={retry}>重试</button></div>
         : detail === undefined ? <div role="status">加载详情…</div>
           : <p role="alert">该附件已不存在或暂不可访问，请返回结果重新选择</p>}
-      <button autoFocus type="button" style={button} onClick={onBack}>返回结果</button>
+      <button data-arkme-feedback="neutral" autoFocus type="button" style={button} onClick={onBack}>返回结果</button>
     </div>
   }
   return <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 16px 20px' }}>
-    <div style={{ ...row, justifyContent: 'space-between' }}><button autoFocus type="button" style={button} onClick={onBack}>返回结果</button>
-      <button type="button" style={button} disabled={item.targetSource === undefined || item.recordOwnerUserId === undefined || detail === undefined} onClick={onLocate}>定位到消息</button></div>
-    {error !== '' ? <div role="alert" style={status}>{error}<button type="button" style={button} onClick={retry}>重试</button></div>
+    <div style={{ ...row, justifyContent: 'space-between' }}><button data-arkme-feedback="neutral" autoFocus type="button" style={button} onClick={onBack}>返回结果</button>
+      <button data-arkme-feedback="neutral" type="button" style={button} disabled={item.targetSource === undefined || item.recordOwnerUserId === undefined || detail === undefined} onClick={onLocate}>定位到消息</button></div>
+    {error !== '' ? <div role="alert" style={status}>{error}<button data-arkme-feedback="neutral" type="button" style={button} onClick={retry}>重试</button></div>
       : detail === undefined ? <div role="status" style={status}>加载详情…</div>
         : <><p style={{ color: arkmeTheme.secondary, fontSize: 12 }}>{detail.senderName} · {new Date(detail.sendAtMillis).toLocaleString('zh-CN')}</p>
           <ArkmeMessageContent item={detail} presentation="detail" collapseText={false} {...(item.targetSource === undefined ? {} : { sourceRef: item.targetSource.sourceRef })} /></>}

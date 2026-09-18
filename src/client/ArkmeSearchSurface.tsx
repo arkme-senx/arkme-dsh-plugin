@@ -164,14 +164,14 @@ export function RecordRow({ item, onClick, onTagClick }: {
   if (item.voice !== undefined || item.templateKind === 3 || item.templateKind === 4) return <AudioQuickRow item={item} onOpen={onClick} {...(onTagClick === undefined ? {} : { onTagClick })} />
   const summary = recordSummary(item)
   const title = recordTitle(item)
-  return <button type="button" style={styles.row} onClick={onClick}>
+  return <button data-arkme-feedback="neutral" type="button" style={styles.row} onClick={onClick}>
     <p style={styles.title}>{arkmeHashTagRanges(title).length === 0 ? title : <ArkmeRichText text={title} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>
     {summary !== '' && <p style={styles.text}>{arkmeHashTagRanges(summary).length === 0 ? summary : <ArkmeRichText text={summary} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>}
     <RecordMeta item={item} />
   </button>
 }
 function RecordingRow({ item }: { item: ArkmeRecordingSearchResult['items'][number] }) {
-  return <button type="button" style={styles.row} onClick={() => arkmeUi.showRecordingTarget(item.dateStamp, item.startAtMillis)}>
+  return <button data-arkme-feedback="neutral" type="button" style={styles.row} onClick={() => arkmeUi.showRecordingTarget(item.dateStamp, item.startAtMillis)}>
     <p style={{ ...styles.text, marginTop: 0, color: colors.text }}>{item.snippet || '暂无转写内容'}</p>
     <span style={styles.meta}>{dateTimeLabel(item.startAtMillis || item.dateStamp)}</span>
   </button>
@@ -548,7 +548,7 @@ export function ArkmeSearchSurface({
     if (loading || (recordError !== '' && quick !== 'image')) return <Status loading={loading} error={recordError} />
     if (quick === 'image') {
       const items = images ?? []
-      const loadMoreSentinel = imageHasMore && <div ref={imageLoadMoreSentinel} style={styles.loadMoreSentinel}>{recordError !== '' ? <button type="button" style={styles.retryLoadMore} onClick={() => { void loadMoreImages() }}>重试加载</button> : loadingMore ? '正在加载…' : null}</div>
+      const loadMoreSentinel = imageHasMore && <div ref={imageLoadMoreSentinel} style={styles.loadMoreSentinel}>{recordError !== '' ? <button data-arkme-feedback="neutral" type="button" style={styles.retryLoadMore} onClick={() => { void loadMoreImages() }}>重试加载</button> : loadingMore ? '正在加载…' : null}</div>
       if (items.length === 0) return <><Status loading={false} error={recordError} empty={recordError === ''} />{loadMoreSentinel}</>
       const sections = new Map<string, ArkmeImageSearchItem[]>()
       for (const item of items) {
@@ -593,7 +593,7 @@ export function ArkmeSearchSurface({
   ]
   const searchResults = <>
     <nav style={styles.resultTabs} aria-label="全局搜索结果类型">
-      {resultTabs.map(([key, label]) => <button
+      {resultTabs.map(([key, label]) => <button data-arkme-feedback="neutral" data-arkme-feedback-selected={resultTab === key}
         key={key} type="button" style={{ ...styles.resultTab, ...(resultTab === key ? styles.resultTabActive : {}) }}
         onClick={() => setResultTab(key)}
       >{label}{resultTab === key && <span style={styles.resultIndicator} />}</button>)}
@@ -612,7 +612,7 @@ export function ArkmeSearchSurface({
           {sourceItems.length === 0 && dshItems.length === 0 && !searchLoading.records && !searchLoading.dsh && <Status loading={false} empty />}
           {sourceItems.map(item => {
             const active = selectedDshSessionId === '' && selectedSourceUid === item.sourceUid
-            return <button key={`${String(item.sourceKind)}:${item.sourceUid}`} type="button" style={{ ...styles.sourceRow, ...(active ? styles.sourceRowActive : {}) }} title="单击查看关联快记，双击打开会话" onClick={() => { void chooseSource(item.sourceUid, item.sourceKind) }} onDoubleClick={() => { void openSource(item.sourceUid, item.sourceKind) }} onKeyDown={event => {
+            return <button data-arkme-feedback="neutral" data-arkme-feedback-selected={active} key={`${String(item.sourceKind)}:${item.sourceUid}`} type="button" style={{ ...styles.sourceRow, ...(active ? styles.sourceRowActive : {}) }} title="单击查看关联快记，双击打开会话" onClick={() => { void chooseSource(item.sourceUid, item.sourceKind) }} onDoubleClick={() => { void openSource(item.sourceUid, item.sourceKind) }} onKeyDown={event => {
               if (event.key === 'Enter') { event.preventDefault(); void openSource(item.sourceUid, item.sourceKind) }
             }}>
               {active && <span style={styles.sourceMarker} />}
@@ -621,7 +621,7 @@ export function ArkmeSearchSurface({
             </button>
           })}
           {dshError !== '' && <div style={styles.error}>DSH 任务暂不可用：{dshError}</div>}
-          {dshItems.map(item => <button
+          {dshItems.map(item => <button data-arkme-feedback="neutral" data-arkme-feedback-selected={selectedDshSessionId === item.sessionId}
             key={`dsh:${item.sessionId}`} type="button"
             style={{ ...styles.sourceRow, ...(selectedDshSessionId === item.sessionId ? styles.sourceRowActive : {}) }}
             title="单击查看匹配摘要，双击打开 DSH 对话"
@@ -641,7 +641,7 @@ export function ArkmeSearchSurface({
               {selectedDshRecords.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { void openRecord(item) }} onTagClick={selectTag} />)}
               {records?.hasMore && <span style={styles.meta}>当前仅显示本页匹配记录。</span>}
             </> : <>
-              <button type="button" style={styles.row} onClick={() => openDshSession(selectedDsh.sessionId)}>{selectedDsh.snippet}</button>
+              <button data-arkme-feedback="neutral" type="button" style={styles.row} onClick={() => openDshSession(selectedDsh.sessionId)}>{selectedDsh.snippet}</button>
             </>}
           </div> : selectedSourceUid === '' ? <div style={styles.sourcePrompt}>选择一个主题查看关联快记</div>
             : sourceLoading ? <Status loading />
@@ -670,34 +670,34 @@ export function ArkmeSearchSurface({
         <div style={styles.searchBox}>
           <MagnifyingGlass size={20} color="#a3a7af" aria-hidden />
           <input autoFocus style={styles.input} value={query} placeholder="搜索对话、快记或消息" aria-label="搜索" onChange={event => setQuery(event.target.value)} />
-          {query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}
+          {query !== '' && <button data-arkme-feedback="neutral" type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}
         </div>
-        {onClose !== undefined && <button type="button" aria-label="关闭全局搜索" style={styles.close} onClick={onClose}><X size={21} aria-hidden /></button>}
+        {onClose !== undefined && <button data-arkme-feedback="neutral" type="button" aria-label="关闭全局搜索" style={styles.close} onClick={onClose}><X size={21} aria-hidden /></button>}
       </div>
       {!hasQuery ? <div style={{ ...styles.scroll, ...(variant === 'dialog' ? styles.dialogScroll : {}) }}>
         {history.length > 0 && <section style={styles.section} aria-label="搜索历史">
           <div style={styles.sectionHeader}><h3 style={styles.sectionTitle}>搜索历史</h3></div>
-          <div style={styles.historyChips}>{history.map(value => <button key={value} type="button" style={styles.historyChip} onClick={() => setQuery(value)}>{value}</button>)}</div>
+          <div style={styles.historyChips}>{history.map(value => <button data-arkme-feedback="neutral" key={value} type="button" style={styles.historyChip} onClick={() => setQuery(value)}>{value}</button>)}</div>
         </section>}
         <section style={styles.section} aria-label="快速查找">
           <div style={styles.sectionHeader}><h3 style={styles.sectionTitle}>快速查找</h3><span style={styles.quickHint}>按内容类型浏览</span></div>
-          <div style={styles.quickChips}>{quickEntries.map(entry => <button key={entry.key} type="button" style={styles.quickChip} onClick={() => { void loadQuick(entry.key) }}>{entry.key === 'file' ? <FileTextIcon size={18} aria-hidden /> : entry.key === 'audio' ? <Waveform size={18} aria-hidden /> : <img src={`${assetRoot}/${entry.key === 'image' ? 'gallery-linear.svg' : 'arkme-video-linear.svg'}`} alt="" aria-hidden style={styles.quickChipIcon} />}<span>{entry.label}</span></button>)}</div>
+          <div style={styles.quickChips}>{quickEntries.map(entry => <button data-arkme-feedback="neutral" key={entry.key} type="button" style={styles.quickChip} onClick={() => { void loadQuick(entry.key) }}>{entry.key === 'file' ? <FileTextIcon size={18} aria-hidden /> : entry.key === 'audio' ? <Waveform size={18} aria-hidden /> : <img src={`${assetRoot}/${entry.key === 'image' ? 'gallery-linear.svg' : 'arkme-video-linear.svg'}`} alt="" aria-hidden style={styles.quickChipIcon} />}<span>{entry.label}</span></button>)}</div>
         </section>
       </div> : searchResults}
     </div> : <div style={{ ...styles.quickShell, ...(variant === 'dialog' ? styles.column : {}) }}>
       <header style={styles.quickHeader}>
-        <div style={styles.quickTopRow}><button type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button><div style={styles.quickSearch}><MagnifyingGlass size={20} color="#a3a7af" aria-hidden /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div>{onClose !== undefined && <button type="button" aria-label="关闭全局搜索" style={styles.close} onClick={onClose}><X size={21} aria-hidden /></button>}</div>
+        <div style={styles.quickTopRow}><button data-arkme-feedback="neutral" type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button><div style={styles.quickSearch}><MagnifyingGlass size={20} color="#a3a7af" aria-hidden /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button data-arkme-feedback="neutral" type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div>{onClose !== undefined && <button data-arkme-feedback="neutral" type="button" aria-label="关闭全局搜索" style={styles.close} onClick={onClose}><X size={21} aria-hidden /></button>}</div>
         <div style={styles.tabs}>{hasQuery
-          ? <button type="button" style={{ ...styles.tab, ...styles.tabActive }}>搜索快记<span style={styles.indicator} /></button>
+          ? <button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...styles.tabActive }}>搜索快记<span style={styles.indicator} /></button>
           : quickEntries.map(entry => {
             const active = quick === entry.key
-            return <button key={entry.key} type="button" style={{ ...styles.tab, ...(active ? styles.tabActive : {}) }} onClick={() => { if (!active) void loadQuick(entry.key) }}>{entry.tabLabel}{active && <span style={styles.indicator} />}</button>
+            return <button data-arkme-feedback="neutral" data-arkme-feedback-selected={active} key={entry.key} type="button" style={{ ...styles.tab, ...(active ? styles.tabActive : {}) }} onClick={() => { if (!active) void loadQuick(entry.key) }}>{entry.tabLabel}{active && <span style={styles.indicator} />}</button>
           })}
         </div>
       </header>
       <main key={quick} ref={quickScroll} aria-label="快速查找内容" tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{quick === 'file' ? <ArkmeFileQuickView query={query} onOpenRecord={openRecord} /> : hasQuery ? <>{searchLoading.records ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>}</> : quickBody}</main>
     </div>}
-    {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}>{preview.subtitle}</span>}<button type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>关闭</button></div></div>}
+    {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}>{preview.subtitle}</span>}<button data-arkme-feedback="neutral" type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>关闭</button></div></div>}
   </div>
 }
 

@@ -8,6 +8,7 @@ import type { ArkmeComposerEmoji, ArkmeComposerMention } from './composer-draft-
 import { ARKME_COMPOSER_EMOJI_PLACEHOLDER } from './composer-draft-store.js'
 import { arkmeComposerTextRuns } from './ArkmeMentionTextarea.js'
 import { arkmeHashTagTrigger } from '../hashtag.js'
+import { useComposerSelectionRequest, type ArkmeComposerSelectionRequest } from './composer-selection-request.js'
 
 const mentionColor = 'var(--dsw-alias-state-business-primary, #3964fe)'
 
@@ -49,6 +50,7 @@ export interface ArkmeComposerCaretGeometry {
 }
 
 export interface ArkmeRichComposerInputProps {
+  selectionRequest?: ArkmeComposerSelectionRequest | undefined
   markdownEnabled?: boolean
   markdown?: ArkmeMarkdownDraft | undefined
   onMarkdownChange?(value: ArkmeMarkdownDraft, text: string, mentions: readonly ArkmeComposerMention[], emojis: readonly ArkmeComposerEmoji[]): void
@@ -263,7 +265,7 @@ function renderEditorContents(
 /** Native contenteditable surface whose rich emoji spans remain atomic, selectable inline objects. */
 const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(
   function ArkmeRichComposerInput({
-    className, value, mentions, emojis, maxLength, placeholder, ariaLabel, disabled, style,
+    className, value, mentions, emojis, maxLength, placeholder, ariaLabel, disabled, style, selectionRequest,
     onTextChange, onInputActivity, onSelectionChange, onFocus, onBlur, onPaste, onKeyDown,
   }, forwardedRef) {
     const editorRef = useRef<HTMLDivElement>(null)
@@ -325,6 +327,14 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
       selectionRef.current = nextSelection
       if (active) applySelection(nextSelection.start, nextSelection.end)
     }, [value, mentions, emojis])
+
+    useComposerSelectionRequest(selectionRequest, value, disabled, request => {
+      const root = editorRef.current
+      if (root === null) return false
+      root.focus({ preventScroll: true })
+      applySelection(request.start, request.end)
+      return true
+    })
 
     const commitDom = (root: HTMLDivElement, nextText = editorSemanticText(root)) => {
       const selection = editorSelection(root, selectionRef.current)

@@ -26,7 +26,7 @@ function GroupNickname({ sourceRef }: { sourceRef: string }) {
     return () => { controller.abort() }
   }, [sourceRef, revision])
   return <dl className="arkme-contact-profile-row"><dt>群内昵称</dt><dd>
-    {failed ? <span className="arkme-contact-profile-error" role="alert">加载失败<button type="button" onClick={() => { setRevision(value => value + 1) }}>重试</button></span>
+    {failed ? <span className="arkme-contact-profile-error" role="alert">加载失败<button data-arkme-feedback="neutral" type="button" onClick={() => { setRevision(value => value + 1) }}>重试</button></span>
       : nickname === undefined ? <span role="status">加载中…</span> : nickname}
   </dd></dl>
 }
@@ -81,7 +81,7 @@ export function ConversationProfileDetail({ item, onSourceActivated, onBotActiva
           : <dl className="arkme-contact-profile-row"><dt>简介</dt><dd>{item.bot.description.trim() || '暂无简介'}</dd></dl>}
       </section>
       <footer className="arkme-contact-profile-actions arkme-conversation-profile-actions" aria-label="联系操作" aria-busy={busy}>
-        <button type="button" className="arkme-contact-profile-action" disabled={busy || !available} onClick={() => { void openMessage() }}>
+        <button data-arkme-feedback="neutral" type="button" className="arkme-contact-profile-action" disabled={busy || !available} onClick={() => { void openMessage() }}>
           <ChatCircle size={28} weight="regular" aria-hidden /><span>{busy ? '正在打开…' : '发消息'}</span>
         </button>
       </footer>

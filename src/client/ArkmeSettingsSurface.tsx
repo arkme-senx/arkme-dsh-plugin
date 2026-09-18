@@ -98,7 +98,7 @@ function SettingsRow({ title, description, href, onClick, danger = false, disabl
     return <a className="arkme-redesign-setting-row" href={href} target="_blank" rel="noreferrer">{body}</a>
   }
   if (onClick !== undefined) {
-    return <button type="button" className="arkme-redesign-setting-row" disabled={disabled} onClick={onClick}>{body}</button>
+    return <button data-arkme-feedback="neutral" type="button" className="arkme-redesign-setting-row" disabled={disabled} onClick={onClick}>{body}</button>
   }
   return <div className="arkme-redesign-setting-row">{body}</div>
 }
@@ -121,7 +121,7 @@ export function BackgroundSoundSettingsRow({
     <strong>文字背景音</strong>
     <span style={{ minWidth: 0, maxWidth: 430, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 }}>
       <span className="arkme-redesign-setting-summary" style={{ minWidth: 0 }}>{description}</span>
-      <button
+      <button data-arkme-feedback="neutral"
         type="button"
         role="switch"
         aria-label="文字背景音"
@@ -184,7 +184,7 @@ export function VersionSettingsRow({
     </span>
     {hasAction ?
       <span className="arkme-redesign-version-action-slot">
-      <button
+      <button data-arkme-feedback="neutral"
         type="button"
         className="arkme-redesign-update-button"
         aria-label={`${actionLabel}：${title}`}
@@ -225,7 +225,7 @@ function AccountInfoRow({ icon, title, value, action, disabled = false, onClick 
     {onClick === undefined ? <span className="arkme-redesign-trailing-slot" aria-hidden /> : <CaretRight size={15} aria-hidden />}
   </>
   if (onClick === undefined) return <div className="arkme-account-info-row">{content}</div>
-  return <button type="button" className="arkme-account-info-row" disabled={disabled} onClick={onClick}>{content}</button>
+  return <button data-arkme-feedback="neutral" type="button" className="arkme-account-info-row" disabled={disabled} onClick={onClick}>{content}</button>
 }
 
 export function WechatBindingSettingsRow({ bound, onBind, busy = false }: {
@@ -321,7 +321,7 @@ function SettingsDialog({
     <section className="arkme-account-dialog" role="dialog" aria-modal="true" aria-label={title} onClick={event => { event.stopPropagation() }}>
       <header>
         <h3>{title}</h3>
-        <button type="button" aria-label="关闭" onClick={onClose}><X size={20} aria-hidden /></button>
+        <button data-arkme-feedback="neutral" type="button" aria-label="关闭" onClick={onClose}><X size={20} aria-hidden /></button>
       </header>
       {children}
     </section>
@@ -349,7 +349,7 @@ function ProfileQrDialog({
       <small>扫码查看我的主页</small>
     </div>
     <div className="arkme-account-dialog-actions">
-      <button type="button" onClick={() => {
+      <button data-arkme-feedback="neutral" type="button" onClick={() => {
         void copyText(shareUrl).then(() => { setStatus('主页链接已复制') }).catch(() => { setStatus('复制失败，请稍后重试') })
       }}><Copy size={16} aria-hidden />复制主页链接</button>
     </div>
@@ -433,8 +433,8 @@ function ArkmeIdDialog({
       {statusText !== '' ? <p className={`arkme-account-dialog-status${localError !== undefined || availability?.available === false || error !== '' ? ' is-error' : ''}`} role="status">{statusText}</p> : null}
       {error !== '' ? <p className="arkme-account-dialog-status is-error" role="alert">{error}</p> : null}
       <div className="arkme-account-dialog-actions">
-        <button type="button" onClick={onClose}>取消</button>
-        <button type="submit" disabled={!canSubmit}>{submitting ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}确认创建</button>
+        <button data-arkme-feedback="neutral" type="button" onClick={onClose}>取消</button>
+        <button data-arkme-feedback="primary" type="submit" disabled={!canSubmit}>{submitting ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}确认创建</button>
       </div>
     </form>
   </SettingsDialog>
@@ -517,15 +517,15 @@ function PhoneBindDialog({
         <span>验证码</span>
         <span className="arkme-account-code-row">
           <input value={code} inputMode="numeric" maxLength={6} placeholder="请输入验证码" onChange={event => { setCode(event.target.value) }} />
-          <button type="button" disabled={phoneBusy || !phoneValid || countdown > 0} onClick={() => { void sendCode() }}>
+          <button data-arkme-feedback="neutral" type="button" disabled={phoneBusy || !phoneValid || countdown > 0} onClick={() => { void sendCode() }}>
             {countdown > 0 ? `${countdown}s` : '发送验证码'}
           </button>
         </span>
       </label>
       {status !== '' ? <p className={`arkme-account-dialog-status${status.includes('失败') || status.includes('错误') || status.includes('请输入') || status.includes('已绑定') ? ' is-error' : ''}`} role="status">{status}</p> : null}
       <div className="arkme-account-dialog-actions">
-        <button type="button" onClick={onClose}>取消</button>
-        <button type="submit" disabled={phoneBusy || !phoneValid || !codeValid}>{phoneBusy ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}{profile.contact.phoneMasked === undefined ? '绑 定' : '更 换'}</button>
+        <button data-arkme-feedback="neutral" type="button" onClick={onClose}>取消</button>
+        <button data-arkme-feedback="primary" type="submit" disabled={phoneBusy || !phoneValid || !codeValid}>{phoneBusy ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}{profile.contact.phoneMasked === undefined ? '绑 定' : '更 换'}</button>
       </div>
     </form>
   </SettingsDialog>
@@ -926,7 +926,7 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
           <h1>{displayName}</h1>
           {!authenticated && <p><span>{accountDescription}</span></p>}
         </div>
-            {authenticated ? <button
+            {authenticated ? <button data-arkme-feedback="neutral"
               type="button"
               className="arkme-account-profile-qr"
               aria-label="查看我的二维码"
@@ -969,7 +969,7 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
         <ArkmeBillingSettings />
       </SettingsGroup>}
       {authenticated && <div className="arkme-account-logout">
-        <button type="button" disabled={logoutBusy} onClick={() => { void logout() }}>{logoutBusy ? '正在退出…' : '退出登录'}</button>
+        <button data-arkme-feedback="danger" type="button" disabled={logoutBusy} onClick={() => { void logout() }}>{logoutBusy ? '正在退出…' : '退出登录'}</button>
       </div>}
       </>}
 

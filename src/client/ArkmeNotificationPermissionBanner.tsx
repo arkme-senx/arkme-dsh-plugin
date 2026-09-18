@@ -28,7 +28,7 @@ const styles: Record<string, CSSProperties> = {
     background: `color-mix(in srgb, ${arkmeTheme.dangerSoft} 78%, transparent)`, color: arkmeTheme.secondary,
     fontSize: 11, lineHeight: '16px', boxSizing: 'border-box',
   },
-  message: { flex: 1, minWidth: 0 },
+  message: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   action: {
     flex: 'none', padding: 0, border: 0, background: 'transparent', color: arkmeTheme.danger,
     cursor: 'pointer', font: 'inherit', fontWeight: 600,
@@ -66,8 +66,8 @@ export function ArkmeNotificationPermissionBanner() {
     }
   }
   return <div style={styles.root} role="status" aria-live="polite">
-    <span style={styles.message}>{failure || prompt.message}</span>
-    <button type="button" style={styles.action} disabled={busy} onClick={() => { void activate() }}>
+    <span style={styles.message} title={failure || prompt.message}>{failure || prompt.message}</span>
+    <button data-arkme-feedback="neutral" type="button" style={styles.action} disabled={busy} onClick={() => { void activate() }}>
       {busy ? '处理中…' : prompt.action}
     </button>
   </div>

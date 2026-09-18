@@ -139,7 +139,7 @@ function ProviderOption({ provider, selected, disabled, onSelect }: {
   onSelect(): void
 }) {
   const copy = providerCopy[provider]
-  return <button
+  return <button data-arkme-feedback="neutral"
     type="button" role="radio" aria-checked={selected} disabled={disabled}
     data-arkme-bot-provider={provider}
     style={{ ...styles.providerOption, ...(selected ? { borderColor: arkmeTheme.primaryAction, background: arkmeTheme.active } : {}) }}
@@ -252,7 +252,7 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
     <section role="dialog" aria-modal="true" aria-labelledby="arkme-add-bot-title" style={styles.dialog}>
       <header style={styles.header}>
         <h2 id="arkme-add-bot-title" style={styles.heading}>创建 Bot</h2>
-        <button type="button" style={styles.close} aria-label="关闭" disabled={busy} onClick={onClose}>×</button>
+        <button data-arkme-feedback="neutral" type="button" style={styles.close} aria-label="关闭" disabled={busy} onClick={onClose}>×</button>
       </header>
       <div style={styles.body}>
         <input
@@ -295,8 +295,8 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
         </label>
         {error !== '' && <p role="alert" style={styles.error}>{error}</p>}
         <footer style={styles.footer}>
-          <button type="button" style={styles.cancel} disabled={busy} onClick={onClose}>取消</button>
-          <button
+          <button data-arkme-feedback="neutral" type="button" style={styles.cancel} disabled={busy} onClick={onClose}>取消</button>
+          <button data-arkme-feedback="primary"
             type="button" style={{ ...styles.submit, ...(canSubmit ? {} : { opacity: .45, cursor: 'not-allowed' }) }} disabled={!canSubmit}
             onClick={() => { void submit() }}
           >{busyLabel || '创建 Bot'}</button>

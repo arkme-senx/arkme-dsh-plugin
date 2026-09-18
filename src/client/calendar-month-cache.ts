@@ -1,6 +1,8 @@
 import type { ArkmeCalendarBucketPage } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeCalendarInvalidations, type CalendarInvalidation } from './calendar-invalidation-store.js'
+import { recordOwnerId } from '../record-owner-id.js'
+import { withArkmeReadDeadline } from './read-deadline.js'
 
 export interface CalendarMonthQuery {
   scopeKey: string
@@ -8,6 +10,8 @@ export interface CalendarMonthQuery {
   startDate: string
   endDate: string
   timezone: string
+  /** Defined for the complete, server-owned chat date index. */
+  timezoneOffsetMillis?: number
 }
 export interface CalendarMonthSnapshot { value?: ArkmeCalendarBucketPage; loading: boolean; error: string }
 export const EMPTY_CALENDAR_MONTH: CalendarMonthSnapshot = { loading: false, error: '' }
@@ -23,7 +27,8 @@ interface Entry {
   controller?: AbortController
   pending?: Promise<void>
 }
-const identity = (query: CalendarMonthQuery) => JSON.stringify([query.scopeKey, query.timezone, query.startDate, query.endDate])
+const identity = (query: CalendarMonthQuery) => JSON.stringify([query.scopeKey, query.timezone, query.startDate, query.endDate,
+  ...(query.timezoneOffsetMillis === undefined ? [] : [query.timezoneOffsetMillis])])
 const storage = (): Storage | undefined => { try { return globalThis.localStorage } catch { return undefined } }
 
 /** Bounded per-account month summaries only. No record bodies, tokens or media are persisted. */
@@ -33,7 +38,8 @@ export class CalendarMonthCache {
   private saved = new Map<string, { value: ArkmeCalendarBucketPage; refreshed: number }>()
   constructor(
     private readonly load: (query: CalendarMonthQuery, signal: AbortSignal, background: boolean) => Promise<ArkmeCalendarBucketPage>
-      = (query, signal, background) => { const { scopeKey: _, ...params } = query; return callArkme('calendar.buckets', { ...params, background }, signal) },
+      = (query, signal, background) => { const { scopeKey: _, ...params } = query; return withArkmeReadDeadline(
+        requestSignal => callArkme(query.timezoneOffsetMillis === undefined ? 'calendar.buckets' : 'calendar.chat-statistics', { ...params, background }, requestSignal), signal) },
     private readonly getStorage: () => Storage | undefined = storage,
     private readonly now = Date.now,
   ) {}
@@ -126,6 +132,12 @@ export class CalendarMonthCache {
       if (entry.listeners.size && this.account) void this.ensure(this.account, entry.query)
     }
   }
+  refresh(account: string, query: CalendarMonthQuery): void {
+    if (this.account !== account) return
+    const entry = this.entry(query)
+    this.cancel(entry); entry.refreshed = 0
+    void this.ensure(account, query)
+  }
   private cancel(entry: Entry): void { entry.controller?.abort(); delete entry.controller; delete entry.pending }
   private publish(entry: Entry, snapshot: CalendarMonthSnapshot): void { entry.snapshot = snapshot; for (const notify of entry.listeners) notify() }
   private prune(): void {
@@ -143,16 +155,21 @@ export class CalendarMonthCache {
 
 function cleanPage(value: unknown): ArkmeCalendarBucketPage | undefined {
   const page = value as ArkmeCalendarBucketPage | undefined
-  if (!page || !['self', 'send_to_self', 'topic', 'uncategorized'].includes(page.scope)
+  const chat = page?.scope === 'private_chat' || page?.scope === 'group_chat'
+  if (!page || !['self', 'send_to_self', 'topic', 'uncategorized', 'private_chat', 'group_chat'].includes(page.scope)
     || !/^\d{4}-\d{2}-\d{2}$/.test(page.startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(page.endDate)
-    || typeof page.timezone !== 'string' || page.timezone.length > 80 || !Array.isArray(page.days) || page.days.length > 62) return
+    || typeof page.timezone !== 'string' || page.timezone.length > 80 || !Array.isArray(page.days) || page.days.length > (chat ? 36600 : 62)) return
   const days = page.days.filter(day => day && /^\d{4}-\d{2}-\d{2}$/.test(day.bucketDate)
     && day.bucketDate >= page.startDate && day.bucketDate <= page.endDate
     && Number.isSafeInteger(day.count) && day.count >= 0).map(day => ({ bucketDate: day.bucketDate, count: day.count,
       hasRecords: day.count > 0, protectedCount: 0,
-      ...(Number.isFinite(day.firstSendAtMillis) ? { firstSendAtMillis: day.firstSendAtMillis } : {}) }))
+      ...(Number.isFinite(day.firstSendAtMillis) ? { firstSendAtMillis: day.firstSendAtMillis } : {}),
+      ...(chat && typeof day.anchor?.recordUid === 'string' && day.anchor.recordUid.length <= 256
+        && recordOwnerId(day.anchor.recordOwnerUserId) !== 0 && Number.isFinite(day.anchor.sendAtMillis)
+        ? { anchor: { recordUid: day.anchor.recordUid, recordOwnerUserId: recordOwnerId(day.anchor.recordOwnerUserId), sendAtMillis: day.anchor.sendAtMillis } } : {}) }))
   return { scope: page.scope, startDate: page.startDate, endDate: page.endDate, timezone: page.timezone,
-    refreshedAtMillis: Number.isFinite(page.refreshedAtMillis) ? page.refreshedAtMillis : 0, days }
+    refreshedAtMillis: Number.isFinite(page.refreshedAtMillis) ? page.refreshedAtMillis : 0, days,
+    ...(chat ? { totalDayCount: days.filter(day => day.hasRecords).length } : {}) }
 }
 
 export const arkmeCalendarMonths = new CalendarMonthCache()

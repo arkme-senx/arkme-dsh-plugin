@@ -5093,7 +5093,7 @@ export class ChatService {
           : rawAgentSource
         const contentBlocks = this.media.richContentBlocks(item, session.userId)
         const extensionProjection = this.timelineExtensionProjection(item, session.userId, botProfiles)
-        const conversationPreview = arkmeChatConversationPreview(item)
+        const conversationPreview = arkmeChatConversationPreview(item, session.userId)
         const callRecord = await this.callHistory.timelineCallRecord(item, session.userId)
         const senderName = this.timelineSenderName(relation, botProfiles)
         const mentions = await this.timelineMentionTargets(record, payload, session.userId, chatSessionUid)
@@ -5985,6 +5985,7 @@ export class ChatService {
         payload.incr_cost_mill_sec, record.incr_cost_mill_sec, payload.incrCostMillSec, record.incrCostMillSec,
       )
       const callRecord = await this.callHistory.timelineCallRecord(item, session.userId)
+      const conversationPreview = arkmeChatConversationPreview(item, session.userId)
       const itemIndex = items.push({
         ...recordDeletionCapability({ userId: session.userId, sourceKind: source.kind, sourceOwnerRef: source.ownerRef,
           recordUid: uid, recordVersion: numberValue(payload.version), recordOwnerUserId: numberValue(payload.owner_user_id),
@@ -6033,6 +6034,7 @@ export class ChatService {
         title: stringValue(payload.title),
         textContent: stringValue(payload.text_content),
         textFormat: arkmeRecordTextFormat(payload),
+        ...(conversationPreview === '' ? {} : { conversationPreview }),
         status: recordStatus,
         sequence: numberValue(relation.seq),
         ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),

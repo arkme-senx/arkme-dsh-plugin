@@ -77,12 +77,12 @@ export function ArkmeDetailShell({ title, label, subtitle, footer, footerHidden 
   return <aside ref={panelRef} role="dialog" aria-label={label} aria-labelledby={titleId} style={{ ...styles.drawer, ...resize.style }} data-arkme-note-detail="true">
     {resize.handle}
     <header style={styles.header}>
-      {onBack !== undefined && <button ref={backRef} type="button" style={styles.back}
+      {onBack !== undefined && <button data-arkme-feedback="neutral" ref={backRef} type="button" style={styles.back}
         aria-label={backLabel ?? '返回'} onClick={onBack}><ArrowLeft size={18} /></button>}
       <div style={styles.heading}><h3 id={titleId} style={styles.title}><ArkmeRichText text={title} presentation="preview" /></h3>
         {subtitle && <div style={styles.subtitle}>{subtitle}</div>}
       </div>
-      <button ref={closeRef} type="button" style={styles.close} aria-label="关闭详情" onClick={onClose}><X size={18} /></button>
+      <button data-arkme-feedback="neutral" ref={closeRef} type="button" style={styles.close} aria-label="关闭详情" onClick={onClose}><X size={18} /></button>
     </header>
     <div ref={bodyRef} style={styles.body}>{children}</div>
     {footer !== undefined && footer !== null && <footer hidden={footerHidden} style={typeof footer === 'string' ? styles.footer : styles.extensionFooter}>{footer}</footer>}

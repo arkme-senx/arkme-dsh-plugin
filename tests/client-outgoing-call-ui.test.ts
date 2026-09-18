@@ -2,7 +2,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { describe, expect, it } from 'vitest'
-import { ArkmePrivateCallMenu, arkmePrivateCallMenuMotionCss, arkmePrivateCallMenuPlacement } from '../src/client/ArkmePrivateCallMenu.js'
+import { ArkmePrivateCallMenu } from '../src/client/ArkmePrivateCallMenu.js'
+import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { outgoingCallModalLayout } from '../src/client/ArkmeOutgoingCallHost.js'
 
 describe('outgoing call UI', () => {
@@ -20,22 +21,14 @@ describe('outgoing call UI', () => {
     expect(html).not.toContain('<img')
   })
 
-  it('keeps the private-chat call menu inside the viewport when the trigger sits near a clipped edge', () => {
-    const placement = arkmePrivateCallMenuPlacement(
-      { left: 180, right: 204, top: 20, bottom: 44 },
-      { width: 240, height: 300 },
-    )
-    expect(placement).toMatchObject({ position: 'fixed', left: 84, top: 52, width: 148, transformOrigin: '108px top' })
-  })
-
-  it('uses Flutter popup menu expansion and sequential item fades without scaling the content', () => {
-    expect(arkmePrivateCallMenuMotionCss).toContain('arkme-private-call-menu-width 85.714286ms linear both')
-    expect(arkmePrivateCallMenuMotionCss).toContain('arkme-private-call-menu-height 171.428571ms linear both')
-    expect(arkmePrivateCallMenuMotionCss).toContain('arkme-private-call-menu-fade 128.571429ms linear both')
-    expect(arkmePrivateCallMenuMotionCss).toContain('animation-delay: 85.714286ms')
-    expect(arkmePrivateCallMenuMotionCss).toContain('animation-delay: 171.428571ms')
-    expect(arkmePrivateCallMenuMotionCss).not.toContain('scale(')
-    expect(arkmePrivateCallMenuMotionCss).toContain('prefers-reduced-motion')
+  it('uses the shared DSH menu rather than a private sizing or animation implementation', () => {
+    let renderer: ReactTestRenderer | undefined
+    act(() => { renderer = create(createElement(ArkmePrivateCallMenu, { sourceRef: 'ref', displayName: '小林' })) })
+    const menu = renderer!.root.findByType(ArkmeActionMenu)
+    expect(menu.props.label).toBe('选择通话方式')
+    expect(menu.props.align).toBe('end')
+    expect(menu.props.actions.map((item: { label: string }) => item.label)).toEqual(['语音通话', '视频通话'])
+    act(() => renderer!.unmount())
   })
 
   it('opens with the original desktop private-chat call menu assets and item rhythm', () => {
@@ -56,21 +49,14 @@ describe('outgoing call UI', () => {
     })
 
     const audioIcon = renderer!.root.findByProps({ 'data-arkme-private-call-menu-icon': 'call-linear.svg' })
-    expect(audioIcon.props.style).toMatchObject({ width: 18, height: 18, backgroundColor: 'currentColor' })
+    expect(audioIcon.props.style).toMatchObject({ width: 16, height: 16, backgroundColor: 'currentColor' })
     expect(audioIcon.props.style.maskImage).toBe('url("/arkme-self/api/call/call-linear.svg")')
     const videoIcon = renderer!.root.findByProps({ 'data-arkme-private-call-menu-icon': 'video-linear.svg' })
     expect(videoIcon.props.style.maskImage).toBe('url("/arkme-self/api/call/video-linear.svg")')
     const [audioItem, videoItem] = renderer!.root.findAllByProps({ role: 'menuitem' })
-    expect(audioItem!.props.style).toMatchObject({
-      height: '100%',
-      padding: '0 10px',
-      gap: 8,
-      borderRadius: 10,
-      color: '#292D32',
-      fontSize: 13,
-      fontWeight: 500,
-    })
-    expect(videoItem!.children).toContain('视频通话')
+    expect(audioItem!.props['aria-label']).toBe('语音通话')
+    expect(videoItem!.props['aria-label']).toBe('视频通话')
+    expect(audioItem!.props.style).toBeUndefined()
     act(() => { renderer!.unmount() })
   })
 

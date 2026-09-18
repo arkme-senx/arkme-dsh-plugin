@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ArkmeCalendarCell,
   ArkmeCalendarSurface,
+  ArkmeCalendarMonthView,
   arkmeCalendarRecordIsDSHAgentInput,
   arkmeCalendarRecordSourceLabel,
 } from '../src/client/ArkmeCalendarSurface.js'
@@ -25,6 +26,12 @@ function matchStyle(markup: string, pattern: RegExp): Map<string, string> {
 }
 
 describe('ArkmeCalendarSurface layout', () => {
+  it('keeps return-to-today in the standalone calendar', () => {
+    const markup = renderToStaticMarkup(<ArkmeCalendarMonthView visibleMonth={new Date(2026, 6, 1)}
+      selectedDate={new Date(2026, 6, 15)} today={new Date(2026, 8, 18)} days={[]} loading={false} error=""
+      onVisibleMonthChange={() => {}} onSelectDate={() => {}} />)
+    expect(markup).toContain('回到今日')
+  })
   it('renders record counts under the date and keeps the selected cell stable', () => {
     const markup = renderToStaticMarkup(<ArkmeCalendarCell
       date={new Date(2026, 7, 21)}

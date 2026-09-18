@@ -32,6 +32,27 @@ const redesignCss = readFileSync(
 )
 
 describe('Arkme product navigation', () => {
+  it('uses a 60px rail and a 36px footer avatar without resizing navigation controls', () => {
+    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 10001 })
+    arkmeUi.showConversations()
+    let renderer!: ReactTestRenderer
+    act(() => { renderer = create(<ArkmeProductNavigation compact={false} hosted taskExpanded />) })
+    try {
+      const nav = renderer.root.findByType('nav')
+      expect(nav.props.style.width).toBe(60)
+      expect(nav.props.style.minWidth).toBe(60)
+      const profile = renderer.root.findByProps({ 'aria-label': '个人资料' })
+      const avatar = profile.findByProps({ 'data-arkme-avatar': true })
+      expect(avatar.props.style.width).toBe(36)
+      expect(avatar.props.style.height).toBe(36)
+      const active = renderer.root.findByProps({ 'aria-current': 'page' })
+      expect(active.props.style.minHeight).toBe(52)
+      expect(active.props.style.padding).toBe('6px 2px')
+    } finally {
+      act(() => renderer.unmount())
+    }
+  })
+
   it('publishes drag mode from the active tab and clears it for hidden or locked navigation', () => {
     let renderer!: ReactTestRenderer
     act(() => {
@@ -116,7 +137,7 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('width:48px;height:28px;object-fit:cover')
     expect(markup).toContain('min-height:44px')
     expect(markup.indexOf('data-arkme-owned="product-brand"')).toBeLessThan(markup.indexOf('>对话<'))
-    expect(markup).toContain('background:#9eadff')
+    expect(markup).toContain('data-arkme-selection-marker="true"')
     expect(markup).toContain('aria-label="Arkme 功能导航"')
     expect(markup).toContain('>对话<')
     expect(markup).toContain('>通话<')
@@ -128,7 +149,7 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('aria-current="page"')
     expect(markup).toContain('background:#f1f2f6')
     expect(markup).not.toContain('outline:0')
-    expect(markup).toContain('height:33px')
+    expect(redesignCss).toContain('[data-arkme-selection-marker],')
     expect(markup).not.toContain('data-slot="conversation"')
     expect(markup).not.toContain('data-slot="sidebar.footer.action"')
   })

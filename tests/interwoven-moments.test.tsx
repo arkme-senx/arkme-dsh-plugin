@@ -33,6 +33,16 @@ function source(sourceRef: string, kind: ArkmeSourceItem['kind'], displayName: s
 }
 
 describe('interwoven conversation projection', () => {
+  it('keeps a calendar target inline even before the oldest loaded message without duplicating the prelude', () => {
+    const cards = [moment('old', 10), moment('target', 20), moment('later', 50)]
+    expect(projectInterwovenWindow([message('latest', 40)], cards, true).inline.map(item => item.momentId)).toEqual(['later'])
+    const window = projectInterwovenWindow([message('latest', 40)], cards, true, 20)
+    expect(window.inline.map(item => item.momentId)).toEqual(['target', 'later'])
+    expect(window.prelude).toEqual([])
+    const html = renderToStaticMarkup(<ArkmeInterwovenMentionCard moment={cards[1]!} rowId="moment:target" highlighted onOpen={() => {}} />)
+    expect(html).toContain('data-arkme-conversation-row="moment:target"')
+    expect(html).toContain('outline:1px solid')
+  })
   it('keeps a same-time forward comment after its card by chat sequence among events', () => {
     const card = { ...message('forward_record_example', 20), sequence: 41 }
     const comment = { ...message('forward_comment_record_example', 20), sequence: 42 }
