@@ -1,3 +1,5 @@
+import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
+import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
@@ -33,14 +35,12 @@ const ARKME_RELATED_RECORDING_MODAL_SCROLLBAR_CSS = `
 
 const styles: Record<string, CSSProperties> = {
   panel: {
-    position: 'absolute', zIndex: 30, top: 48, right: 0, bottom: 0, width: 'min(408px, 100%)',
+    position: 'absolute', zIndex: 30, top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, width: 'min(408px, 100%)',
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
     border: `1px solid ${colors.border}`, borderRight: 0, borderBottom: 0, borderRadius: '18px 0 0 0',
     background: colors.panel, boxSizing: 'border-box', boxShadow: '-14px 0 30px rgba(31,34,41,.09)',
   },
-  panelHeader: { flex: 'none', padding: '34px 26px 18px' },
-  titleRow: { display: 'flex', alignItems: 'center', gap: 12 },
-  title: { margin: 0, flex: 1, fontSize: 22, lineHeight: '30px', fontWeight: 650 },
+  panelHeader: { flex: 'none', padding: '0 26px 18px' },
   iconButton: { width: 36, height: 36, display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 10, background: 'transparent', color: colors.secondary, lineHeight: 1, cursor: 'pointer' },
   subtitleRow: { position: 'relative', marginTop: 18, display: 'flex', alignItems: 'center', gap: 14 },
   subtitle: { minWidth: 0, flex: 1, margin: 0, color: colors.secondary, fontSize: 13, lineHeight: '20px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
@@ -411,11 +411,8 @@ export function RelatedRecordingsPanel(props: RelatedRecordingsPanelProps) {
     setFilterOpen(false)
   }
   return <aside style={styles.panel} aria-label="相关录音">
+    <ArkmeRightPanelHeader title="相关录音" onClose={props.onClose} closeLabel="关闭相关录音" />
     <div style={styles.panelHeader}>
-      <div style={styles.titleRow}>
-        <h2 style={styles.title}>相关录音</h2>
-        <button type="button" style={styles.iconButton} onClick={props.onClose} aria-label="关闭相关录音"><X size={25} aria-hidden /></button>
-      </div>
       <div style={styles.subtitleRow}>
         <p style={styles.subtitle}>你与 {props.contactName} 的线下交流记录</p>
         <div ref={filterRef} style={styles.filterWrap}>

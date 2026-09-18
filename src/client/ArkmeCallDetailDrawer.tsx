@@ -1,5 +1,6 @@
+import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
+import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { XIcon } from '@phosphor-icons/react/dist/csr/X'
 import { ClockIcon } from '@phosphor-icons/react/dist/csr/Clock'
 import { TimerIcon } from '@phosphor-icons/react/dist/csr/Timer'
 import type { ArkmeCallDetail, ArkmeTimelineItem } from '../types.js'
@@ -8,9 +9,7 @@ import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
 
 const styles: Record<string, CSSProperties> = {
-  drawer: { position: 'absolute', inset: '0 0 0 auto', zIndex: 10, width: 'min(460px, 100%)', minWidth: 0, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', background: arkmeTheme.base, color: arkmeTheme.text, boxShadow: '-12px 0 28px rgba(29,32,40,.08)' },
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '16px 16px 12px', flex: 'none' },
-  close: { display: 'grid', placeItems: 'center', width: 28, height: 28, padding: 0, border: 0, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer', flex: 'none' },
+  drawer: { position: 'absolute', top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, zIndex: 10, width: 'min(460px, 100%)', minWidth: 0, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', background: arkmeTheme.base, color: arkmeTheme.text, boxShadow: '-12px 0 28px rgba(29,32,40,.08)' },
   overview: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, padding: '12px 16px 16px', fontSize: 12, flex: 'none' },
   cell: { display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, fontVariantNumeric: 'tabular-nums' },
   content: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' },
@@ -84,10 +83,7 @@ export function ArkmeCallDetailDrawer({ item, onClose, initialVideoUrl }: { item
   const icon = `${video ? 'video' : 'call'}-${item.callRecord?.direction ?? (item.isMe ? 'outgoing' : 'incoming')}-linear.svg`
   const iconColor = (detail?.acceptedAtMillis ?? 0) > 0 ? arkmeTheme.accent : arkmeTheme.danger
   return <aside ref={panel} role="dialog" aria-label="通话详情" data-arkme-call-detail="true" style={styles.drawer}>
-    <header style={styles.header}>
-      <h3 style={{ margin: 0, fontSize: 18, lineHeight: '26px', fontWeight: 600 }}>通话详情</h3>
-      <button ref={closeButton} type="button" aria-label="关闭通话详情" title="关闭" style={styles.close} onClick={onClose}><XIcon size={24} /></button>
-    </header>
+    <ArkmeRightPanelHeader title="通话详情" onClose={onClose} closeLabel="关闭通话详情" closeRef={closeButton} />
     <div style={styles.overview}>
       <span style={styles.cell}><span aria-hidden style={{ width: 12, height: 12, flex: '0 0 12px', background: iconColor, mask: `url("/arkme-self/api/call/${icon}") center / contain no-repeat`, WebkitMask: `url("/arkme-self/api/call/${icon}") center / contain no-repeat` }} />{video ? '视频通话' : '语音通话'}</span>
       <span style={{ ...styles.cell, justifyContent: 'center' }}><ClockIcon size={14} color={arkmeTheme.tertiary} aria-hidden />{startTime(detail?.startedAtMillis || item.callRecord?.startedAtMillis || item.sendAtMillis)}</span>

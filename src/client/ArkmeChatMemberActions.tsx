@@ -1,8 +1,8 @@
+import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import {
   Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { XIcon } from '@phosphor-icons/react/dist/csr/X'
 import type {
   ArkmeConversationMemberItem,
   ArkmeConversationMemberRecordMode,
@@ -189,20 +189,6 @@ const styles: Record<string, CSSProperties> = {
   drawerResizeIndicator: {
     position: 'absolute', top: 0, bottom: 0, width: ARKME_MEMBER_RECORDS_RESIZE_INDICATOR_WIDTH,
     background: arkmeTheme.accent, transition: 'opacity 120ms ease', pointerEvents: 'none',
-  },
-  drawerHeader: {
-    minHeight: 88, flex: 'none', display: 'flex', alignItems: 'flex-start', gap: 10, padding: '16px 12px 14px 20px',
-    borderBottom: `1px solid ${arkmeTheme.border}`, boxSizing: 'border-box',
-  },
-  drawerHeading: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 },
-  drawerTitle: {
-    margin: 0, minWidth: 0, color: arkmeTheme.text, fontSize: 18, lineHeight: '25px',
-    fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-  },
-  drawerCount: { color: arkmeTheme.secondary, fontSize: 12, lineHeight: '18px', fontVariantNumeric: 'tabular-nums' },
-  drawerClose: {
-    width: 30, height: 30, flex: 'none', border: 0, borderRadius: 6, background: 'transparent',
-    color: arkmeTheme.secondary, cursor: 'pointer', fontSize: 22,
   },
   drawerBody: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 8px 24px', boxSizing: 'border-box' },
   state: { padding: '42px 12px', color: arkmeTheme.secondary, fontSize: 13, textAlign: 'center' },
@@ -735,15 +721,8 @@ export function ArkmeMemberRecordsPanel(props: {
     <aside style={{ ...styles.drawer, width: effectiveWidth }} role="dialog" aria-modal="true" aria-label={title}
       data-arkme-member-records-panel="true" data-mode={props.mode} data-total={total}
       data-width={Math.round(effectiveWidth)} data-resizing={resizing ? 'true' : 'false'}>
-    <header style={styles.drawerHeader}>
-      <div style={styles.drawerHeading}>
-        <h3 style={styles.drawerTitle}>{title}</h3>
-        <div style={styles.drawerCount}>{total === undefined ? '' : `${total}条`}</div>
-      </div>
-      <button type="button" style={styles.drawerClose} aria-label="关闭成员快记" onClick={props.onClose}>
-        <XIcon size={18} weight="regular" aria-hidden />
-      </button>
-    </header>
+    <ArkmeRightPanelHeader title={title} subtitle={total === undefined ? undefined : String(total) + '条'}
+      onClose={props.onClose} closeLabel="关闭成员快记" />
     <div ref={bodyRef} style={styles.drawerBody} onScroll={event => {
       if (shouldLoadOlderArkmeMemberRecords(
         event.currentTarget.scrollTop,

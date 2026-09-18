@@ -1,3 +1,4 @@
+import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import {
   memo, useCallback, useEffect, useRef, useState,
   type CSSProperties, type MouseEventHandler, type ReactNode, type RefObject,
@@ -123,11 +124,6 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: '0 4px 10px rgba(0,0,0,.1)',
   },
   drawerScrim: { position: 'absolute', inset: 0, zIndex: 7, background: 'transparent' },
-  drawerHeader: {
-    flex: 'none', height: 54, display: 'flex', alignItems: 'center',
-    padding: '0 10px', boxSizing: 'border-box',
-  },
-  drawerTitle: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 600, color: colors.text },
   closeButton: {
     width: 30, height: 30, border: 0, borderRadius: 4, background: 'transparent',
     color: colors.secondary, display: 'grid', placeItems: 'center', cursor: 'pointer', fontSize: 20,
@@ -154,19 +150,6 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex', flexDirection: 'column', background: colors.panel,
     borderLeft: `1px solid ${colors.border}`, borderRadius: '12px 0 0 0',
     boxShadow: '-8px 14px 28px rgba(24, 29, 36, .1)',
-  },
-  restrictionHeader: {
-    flex: 'none', height: 54, padding: '0 10px 0 16px', boxSizing: 'border-box',
-    display: 'flex', alignItems: 'center', borderBottom: `1px solid ${arkmeTheme.borderSoft}`,
-  },
-  restrictionTitle: {
-    minWidth: 0, flex: 1, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    color: colors.text, fontSize: 16, lineHeight: '22px', fontWeight: 600,
-  },
-  restrictionClose: {
-    width: 32, height: 32, flex: 'none', padding: 0, border: 0, borderRadius: 8,
-    display: 'grid', placeItems: 'center', background: 'transparent', color: colors.secondary,
-    cursor: 'pointer', transition: 'background-color 120ms ease, color 120ms ease',
   },
   restrictionDescription: {
     flex: 'none', margin: 0, padding: '12px 16px', borderBottom: `1px solid ${colors.border}`,
@@ -415,11 +398,9 @@ function GroupMembersDrawer(props: {
   return <>
     <div style={styles.drawerScrim} aria-hidden onPointerDown={event => { event.preventDefault(); props.onClose() }} />
     <aside style={styles.drawer} aria-label="协作者">
-    <div style={styles.drawerHeader}>
-      <h3 style={{ ...styles.drawerTitle, fontSize: 16, fontWeight: 400 }}>协作者{visibleSnapshot === undefined ? '' : `（${visibleSnapshot.items.length}）`}</h3>
-      <span style={{ flex: 1 }} />
-      <button type="button" style={{ ...styles.closeButton, width: 'auto', padding: '0 6px', fontSize: 14, fontWeight: 700, color: colors.primary }} onClick={props.onAdd}>添加</button>
-    </div>
+    <ArkmeRightPanelHeader title={<>协作者{visibleSnapshot === undefined ? '' : `（${visibleSnapshot.items.length}）`}</>}
+      onClose={props.onClose} closeLabel="关闭协作者"
+      actions={<button type="button" style={{ ...styles.closeButton, height: 30, marginTop: -3, width: 'auto', padding: '0 6px', fontSize: 14, fontWeight: 700, color: colors.primary }} onClick={props.onAdd}>添加</button>} />
     <div style={styles.drawerBody}>
       {loading && items.length === 0 ? <div style={styles.loading}>正在读取群成员…</div> : null}
       {snapshot.error !== undefined && <button type="button" role="alert" style={styles.restrictionRetry}
@@ -741,8 +722,8 @@ function AddMembersDrawer(props: {
     if (event.target === event.currentTarget && !busy) props.onClose()
   }}>
     <section style={{ ...styles.drawer, top: 0, width: 360, maxWidth: '92%', zIndex: 36, background: '#fff' }} role="dialog" aria-modal="true" aria-label="添加成员">
-      <div style={{ height: 52, padding: '0 12px', display: 'flex', alignItems: 'center', flex: 'none' }}><h3 style={{ margin: 0, fontSize: 20, lineHeight: '28px', color: colors.text }}>添加成员</h3><span style={{ flex: 1 }} /><button type="button" aria-label="关闭" style={{ ...styles.closeButton, width: 28, height: 28, borderRadius: 0, background: 'transparent' }} onClick={props.onClose}><CloseGlyph /></button></div>
-      <div style={{ position: 'relative', margin: '0 12px 8px' }}>
+      <ArkmeRightPanelHeader title="添加成员" onClose={props.onClose} closeLabel="关闭" />
+      <div style={{ position: 'relative', margin: '16px 12px 8px' }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ position: 'absolute', left: 12, top: 11, color: '#aaa' }}><circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2"/><path d="m16 16 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
         <input style={{ ...styles.dialogInput, height: 40, border: 0, borderRadius: 11, paddingLeft: 36, paddingRight: 30, background: '#f5f5f5' }} value={query} placeholder="搜索" aria-label="搜索成员候选人" disabled={busy} onChange={event => { setQuery(event.target.value) }} />
         {query !== '' ? <button type="button" aria-label="清除搜索" disabled={busy} onClick={() => { setQuery('') }} style={{ position: 'absolute', right: 8, top: 8, width: 24, height: 24, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer' }}><CloseGlyph /></button> : null}
@@ -1519,19 +1500,8 @@ function GroupJoinRestrictionsPanel(props: {
       aria-labelledby="arkme-group-join-restrictions-title"
       aria-busy={busyMemberRef !== '' || undefined}
     >
-      <div style={styles.restrictionHeader}>
-        <h3 id="arkme-group-join-restrictions-title" style={styles.restrictionTitle}>禁止加入名单</h3>
-        <button
-          ref={closeButtonRef}
-          type="button"
-          aria-label="关闭禁止加入名单"
-          disabled={busyMemberRef !== ''}
-          style={{ ...styles.restrictionClose, opacity: busyMemberRef === '' ? 1 : .45 }}
-          onMouseEnter={event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = colors.subtle }}
-          onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-          onClick={props.onClose}
-        ><X size={18} /></button>
-      </div>
+      <ArkmeRightPanelHeader title="禁止加入名单" titleId="arkme-group-join-restrictions-title"
+        onClose={props.onClose} closeLabel="关闭禁止加入名单" closeRef={closeButtonRef} closeDisabled={busyMemberRef !== ''} />
       <p style={styles.restrictionDescription}>
         名单中的用户无法通过邀请、添加或入群审批再次加入此群。
       </p>

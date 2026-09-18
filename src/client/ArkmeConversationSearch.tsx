@@ -1,3 +1,4 @@
+import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
@@ -85,12 +86,9 @@ export function ArkmeConversationSearchPanel({ source, scene, global, onScene, o
     onKeyDown={event => { if (event.key === 'Escape' && !event.nativeEvent.isComposing && !(typeof document !== 'undefined' && document.querySelector('[role="dialog"][aria-modal="true"]')) && !(event.target instanceof Element && event.target.closest('[role="dialog"]'))) { event.stopPropagation(); selected === undefined ? onClose() : setSelected(undefined) } }}>
     {resize.handle}
     <style>{`.arkme-search-tab[aria-selected=true]::after { content: ''; position: absolute; bottom: 0; left: calc(50% - 5px); width: 10px; height: 2px; border-radius: 2px; background: currentColor; } .arkme-search-file-row:hover { background: ${arkmeTheme.hover} !important; }`}</style>
-    <header style={{ padding: '14px 14px 8px', flex: 'none' }}>
-      <div style={row}>
-        <strong style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14 }}>{global ? '全局搜索' : source.displayName}</strong>
-        <button type="button" style={button} onClick={() => onGlobal(!global)}>{global ? '当前范围' : '全局'}</button>
-        <button type="button" aria-label="关闭聊天搜索" style={button} onClick={onClose}><X size={18} /></button>
-      </div>
+    <ArkmeRightPanelHeader title={global ? '全局搜索' : source.displayName} onClose={onClose} closeLabel="关闭聊天搜索"
+      actions={<button type="button" style={{ ...button, height: 30, marginTop: -3, padding: '0 9px' }} onClick={() => onGlobal(!global)}>{global ? '当前范围' : '全局'}</button>} />
+    <div style={{ padding: '0 14px 8px', flex: 'none' }}>
       <div style={{ ...row, marginTop: 10, padding: '0 10px', borderRadius: 8, background: arkmeTheme.input }}>
         <MagnifyingGlass size={18} />
         <input ref={queryInput} autoFocus aria-label="搜索聊天关键词" placeholder="搜索" value={query}
@@ -105,7 +103,7 @@ export function ArkmeConversationSearchPanel({ source, scene, global, onScene, o
           onClick={() => onScene(item.key)} style={{ ...button, position: 'relative', flex: 'none', padding: '8px 0', marginRight: 30, fontSize: 14, fontWeight: scene === item.key ? 600 : 400, color: scene === item.key ? arkmeTheme.text : arkmeTheme.secondary,
             borderRadius: 0 }}>{item.label}</button>)}
       </div>}
-    </header>
+    </div>
     {selected !== undefined && <SearchDetail key={`${selected.sourceKind}:${selected.sourceUid ?? ''}:${selected.recordOwnerUserId}:${selected.recordUid}`} item={selected} assetUid={selectedAssetUid} onSelectAsset={setSelectedAssetUid} navigation={navigation} onBack={() => setSelected(undefined)} onLocate={() => {
       if (selected.targetSource !== undefined) { arkmeUi.showConversationTarget(selected.targetSource, selected.recordUid, selected.sendAtMillis, selected.recordOwnerUserId); onClose() }
     }} />}

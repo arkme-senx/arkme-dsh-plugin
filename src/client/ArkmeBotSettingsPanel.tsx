@@ -1,5 +1,5 @@
+import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { CaretLeft } from '@phosphor-icons/react/dist/icons/CaretLeft'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { PencilSimpleIcon } from '@phosphor-icons/react/dist/csr/PencilSimple'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
@@ -15,10 +15,6 @@ const MAX_AVATAR_BYTES = 5 * 1024 * 1024
 const styles: Record<string, CSSProperties> = {
   backdrop: { position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(20, 23, 28, .18)' },
   panel: { position: 'absolute', top: 0, right: 0, width: 'min(405px, 100vw)', height: '100%', display: 'flex', flexDirection: 'column', background: arkmeTheme.menu, color: arkmeTheme.text, boxShadow: '-8px 0 28px rgba(20,23,31,.14)' },
-  header: { height: 60, flex: 'none', display: 'flex', alignItems: 'center', padding: '0 14px 0 18px', borderBottom: `1px solid ${arkmeTheme.borderSoft}` },
-  title: { flex: 1, margin: 0, fontSize: 16, fontWeight: 600 },
-  back: { width: 30, height: 30, display: 'grid', placeItems: 'center', marginRight: 4, padding: 0, border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },
-  close: { width: 30, height: 30, border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer', fontSize: 22 },
   scroll: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 20px 24px' },
   summary: { display: 'flex', gap: 12, alignItems: 'flex-start' },
   identity: { display: 'flex', gap: 14, alignItems: 'center', padding: '22px 0 20px' },
@@ -178,7 +174,8 @@ export function ArkmeBotSettingsPanel({ bot, onClose, onUpdated, onDeleted }: {
         : detail === 'groups' ? '已加入群聊' : 'Bot 设置'
   return <div style={styles.backdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !disabled) onClose() }}>
     <aside role="dialog" aria-modal="true" aria-label="Bot 设置" style={styles.panel} onMouseDown={event => { event.stopPropagation() }}>
-      <header style={styles.header}>{detail !== undefined && <button type="button" aria-label="返回 Bot 设置" style={styles.back} disabled={disabled} onClick={leaveDetail}><CaretLeft size={18} /></button>}<h2 style={styles.title}>{detailTitle}</h2><button type="button" aria-label="关闭" style={styles.close} disabled={disabled} onClick={onClose}>×</button></header>
+      <ArkmeRightPanelHeader title={detailTitle} onClose={onClose} closeLabel="关闭" closeDisabled={disabled}
+        onBack={detail === undefined ? undefined : leaveDetail} backLabel="返回 Bot 设置" backDisabled={disabled} />
       <div style={styles.scroll}>
         {profile === undefined ? <p style={styles.hint}>{error === '' ? '正在加载 Bot 设置…' : error}</p> : <>
           {detail === undefined && <><section style={styles.identity}><div style={styles.summary}>

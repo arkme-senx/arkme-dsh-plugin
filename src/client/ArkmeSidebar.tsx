@@ -1,3 +1,4 @@
+import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { compareTimelineMessages } from './timeline-message-order.js'
 import { ArkmeLivePhotoBadge } from './ArkmeLivePhotoBadge.js'
 import { selfTopicDirectory } from './self-topic-directory-cache.js'
@@ -745,22 +746,10 @@ const styles: Record<string, CSSProperties> = {
     height: 58, flex: 'none', position: 'relative', display: 'grid', placeItems: 'center',
     padding: '0 92px 0 58px', boxSizing: 'border-box',
   },
-  copyLinkDetailTitle: {
-    margin: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    color: arkmeTheme.text, textAlign: 'center', fontSize: 16, lineHeight: '22px', fontWeight: 600,
-  },
-  copyLinkDetailSubtitle: {
-    marginTop: 1, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    color: arkmeTheme.tertiary, textAlign: 'center', fontSize: 11, lineHeight: '15px',
-  },
-  copyLinkDetailHeaderActions: {
-    position: 'absolute', right: 10, top: 0, bottom: 0, display: 'flex', alignItems: 'center', gap: 2,
-  },
   copyLinkDetailHeaderButton: {
     width: 40, height: 44, border: 0, padding: 0, borderRadius: 10, display: 'grid', placeItems: 'center',
     background: 'transparent', color: arkmeTheme.text, cursor: 'pointer',
   },
-  copyLinkDetailCloseButton: { color: arkmeTheme.tertiary, fontSize: 28, lineHeight: 1 },
   copyLinkDetailBody: {
     flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: '18px 30px 8px', boxSizing: 'border-box',
     display: 'flex', flexDirection: 'column',
@@ -2041,27 +2030,10 @@ function CopyLinkDetailDrawer({
   const showExtensions = extensionCount > 0 || extensionItems.length > 0
   return <aside ref={panelRef} style={{ ...styles.copyLinkDetailPanel, ...resize.style }} aria-label="快记分享链接详情" data-arkme-copy-link-detail="true">
     {resize.handle}
-    <header style={styles.copyLinkDetailHeader}>
-      <div style={{ minWidth: 0 }}>
-        <h3 style={styles.copyLinkDetailTitle}>{title}</h3>
-        {subtitle !== '' && <div style={styles.copyLinkDetailSubtitle}>{subtitle}</div>}
-      </div>
-      <div style={styles.copyLinkDetailHeaderActions}>
-        <button
-          type="button"
-          style={{ ...styles.copyLinkDetailHeaderButton, opacity: shareDisabled ? .38 : 1, cursor: shareDisabled ? 'default' : 'pointer' }}
-          disabled={shareDisabled}
-          aria-label="分享快记链接"
-          onClick={onShare}
-        ><ArkmeForwardSubmitIcon /></button>
-        <button
-          type="button"
-          style={{ ...styles.copyLinkDetailHeaderButton, ...styles.copyLinkDetailCloseButton }}
-          aria-label="关闭详情"
-          onClick={onClose}
-        >×</button>
-      </div>
-    </header>
+    <ArkmeRightPanelHeader title={title} subtitle={subtitle} onClose={onClose}
+      actions={<button type="button" className="arkme-right-panel-header-button"
+        style={{ ...styles.copyLinkDetailHeaderButton, width: 30, height: 30, marginTop: -3, opacity: shareDisabled ? .38 : 1, cursor: shareDisabled ? 'default' : 'pointer' }}
+        disabled={shareDisabled} aria-label="分享快记链接" onClick={onShare}><ArkmeForwardSubmitIcon /></button>} />
     {state.status === 'loading' && <div role="status" style={styles.copyLinkDetailStatus}>正在加载链接内容...</div>}
     {state.status === 'error' && <div role="alert" style={styles.copyLinkDetailStatus}>
       <div style={styles.copyLinkDetailError}>
