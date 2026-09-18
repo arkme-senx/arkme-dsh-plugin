@@ -29,6 +29,7 @@ interface CachedCalendarValue<T> { revision: string; expires: number; value: T }
 interface CalendarScope {
   kind: ArkmeCalendarScopeKind
   buckets: Array<{ kind: 1 | 2; uid: string }>
+  view?: Record<string, unknown>
 }
 
 async function mapBounded<T, R>(items: T[], project: (item: T) => Promise<R>): Promise<R[]> {
@@ -214,7 +215,8 @@ export class CalendarService {
     options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
     const timezone = readTimezone(options.timezone)
-    const key = JSON.stringify([session.userId, options.sourceRef ?? 'global', options.startDate, options.endDate, timezone])
+    const key = JSON.stringify([session.userId, options.sourceRef ?? 'global', options.startDate, options.endDate, timezone,
+      this.runtime.config?.selfCalendarViewsEnabled !== false ? 'views-v1:natural' : 'legacy'])
     const revision = () => this.runtime.calendarReadRevision?.(`user:${session.userId}`, options.startDate, options.endDate, timezone) ?? '0'
     const version = revision()
     const cached = this.months.get(key)
@@ -249,8 +251,41 @@ export class CalendarService {
     }
     const timezone = readTimezone(options.timezone)
     const session = await this.runtime.requireSession()
-    const locked = await this.privacy.lockedRecordUids(session, options.signal)
     const scope = await this.resolveScope(options.sourceRef, session, options.signal)
+    if (scope.view) {
+      const data = await this.runtime.authenticatedCalendarPost<Record<string, unknown>>(
+        '/api/v1/calendar/buckets/query',
+        { ...scope.view, start_date: startDate, end_date: endDate, timezone, belong_date_policy: { kind: 1 } },
+        session, options.signal, {
+          key: `calendar:view:buckets:${JSON.stringify(scope.view)}:${startDate}:${endDate}:${timezone}:natural`,
+          lane: options.background ? 'background-read' : 'interactive-read',
+          // The service owns the bounded, revision-aware summary cache. Do not
+          // add a second transport cache that survives a failed revalidation.
+          cacheMs: 0, failureCooldownMs: 0,
+        },
+      )
+      this.validateViewContext(data, timezone)
+      if (!Array.isArray(data.daily_data)) this.invalidViewResponse()
+      const seen = new Set<string>()
+      const days = (data.daily_data as unknown[]).map(raw => {
+        const item = objectValue(raw)
+        let date: string
+        try { date = readCalendarDate(stringValue(item.bucket_date), 'bucket_date') }
+        catch { this.invalidViewResponse() }
+        if (date < startDate || date > endDate || seen.has(date)
+          || !Number.isSafeInteger(item.count) || (item.count as number) < 0
+          || item.has_records !== ((item.count as number) > 0)
+          || item.protected_count !== 0) this.invalidViewResponse()
+        seen.add(date)
+        // These are already filtered/deduplicated server counts. first_* is
+        // newest, NOT an anchor for navigating to the beginning of the day.
+        return { bucketDate: date, count: item.count as number, hasRecords: item.has_records as boolean, protectedCount: 0 }
+      }).sort((a, b) => a.bucketDate.localeCompare(b.bucketDate))
+      return { expires: Date.now() + CALENDAR_CACHE_TTL_MS, value: {
+        scope: scope.kind, startDate, endDate, timezone, refreshedAtMillis: Date.now(), days,
+      } }
+    }
+    const locked = await this.privacy.lockedRecordUids(session, options.signal)
     const pages = await mapBounded(scope.buckets, async bucket => {
       const data = await this.runtime.authenticatedCalendarPost<Record<string, unknown>>(
         '/api/v1/calendar/buckets/query',
@@ -346,6 +381,7 @@ export class CalendarService {
     sourceRef?: string
     timezone?: string
     limit?: number
+    oldestFirst?: boolean
     cursor?: { sendAtMillis: number; recordUid: string }
     signal?: AbortSignal
   }): Promise<ArkmeCalendarDayRecordPage> {
@@ -354,17 +390,39 @@ export class CalendarService {
     const limit = boundedLimit(options.limit)
     const cursorSendAt = Math.trunc(options.cursor?.sendAtMillis ?? 0)
     const cursorRecordUid = options.cursor?.recordUid.trim() ?? ''
+    if (options.cursor && (!Number.isSafeInteger(options.cursor.sendAtMillis) || cursorSendAt <= 0 || cursorRecordUid === '')) {
+      throw new ArkmePluginError('calendar-cursor-invalid', '日历分页游标必须同时包含时间和记录 ID', false, 400)
+    }
     const session = await this.runtime.requireSession()
-    const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
     const scope = await this.resolveScope(options.sourceRef, session, options.signal)
+    if (scope.kind === 'self' && options.oldestFirst) {
+      throw new ArkmePluginError('calendar-order-unsupported', '正序定位需要指定发给自己或主题范围', false, 400)
+    }
+    // New views enforce current visibility on the server. Reapplying legacy
+    // origin filtering would hide chat-origin records legitimately in home.
+    const lockedRecordUids = scope.view ? new Set<string>() : await this.privacy.lockedRecordUids(session, options.signal)
     let data: Record<string, unknown>
-    if (scope.kind !== 'self') {
+    if (scope.view) {
+      const body = { ...scope.view, bucket_date: bucketDate, timezone, belong_date_policy: { kind: 1 },
+        limit, oldest_first: options.oldestFirst === true,
+        ...(options.cursor ? { cursor_send_at: cursorSendAt, cursor_record_uid: cursorRecordUid } : {}) }
+      data = await this.runtime.authenticatedCalendarPost<Record<string, unknown>>(
+        '/api/v1/calendar/records/query', body, session, options.signal,
+        { key: `calendar:view:records:${JSON.stringify(body)}`, cacheMs: 0, failureCooldownMs: 0 },
+      )
+      this.validateViewContext(data, timezone)
+      this.validateViewRecords(data, limit, options.oldestFirst === true, options.cursor)
+    }
+    else if (scope.kind !== 'self') {
       const streams = await mapBounded(scope.buckets, bucket => this.scopedDayRows(
-        bucket, scope.kind, bucketDate, timezone, limit + 1, options.cursor, session, lockedRecordUids, options.signal,
+        bucket, scope.kind, bucketDate, timezone, options.oldestFirst ? Infinity : limit + 1,
+        options.oldestFirst ? undefined : options.cursor, session, lockedRecordUids, options.signal,
       ))
       const unique = new Map(streams.flat().map(row => [row.item.recordUid, row]))
-      const sorted = [...unique.values()].sort((a, b) => b.item.sendAtMillis - a.item.sendAtMillis
-        || b.item.recordUid.localeCompare(a.item.recordUid))
+      const sorted = [...unique.values()].filter(({ item }) => !options.oldestFirst || !options.cursor
+        || item.sendAtMillis > cursorSendAt || item.sendAtMillis === cursorSendAt && item.recordUid > cursorRecordUid)
+        .sort((a, b) => (options.oldestFirst ? -1 : 1) * (b.item.sendAtMillis - a.item.sendAtMillis
+          || (a.item.recordUid === b.item.recordUid ? 0 : a.item.recordUid < b.item.recordUid ? 1 : -1)))
       const last = sorted[Math.min(limit, sorted.length) - 1]?.item
       data = { items: sorted.slice(0, limit).map(row => row.raw), has_more: sorted.length > limit,
         ...(sorted.length > limit && last ? { next_cursor_send_at: last.sendAtMillis, next_cursor_record_uid: last.recordUid } : {}) }
@@ -446,6 +504,18 @@ export class CalendarService {
   private async resolveScope(sourceRef: string | undefined, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<CalendarScope> {
     if (sourceRef === undefined) return { kind: 'self', buckets: [{ kind: 1, uid: '' }] }
     const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (this.runtime.config?.selfCalendarViewsEnabled !== false) {
+      if (source.kind === 'send_to_self' || source.kind === 'default_category') return {
+        kind: source.kind === 'send_to_self' ? 'send_to_self' : 'uncategorized', buckets: [],
+        view: { bucket_scope_kind: 1, view_scope_kind: source.kind === 'send_to_self' ? 1 : 2 },
+      }
+      if (source.kind !== 'topic') throw new ArkmePluginError('calendar-source-invalid', '此日历仅支持发给自己和主题', false, 400)
+      // Authenticated signed root only; backend owns subtree membership,
+      // deduplication and live root/descendant permission checks.
+      return { kind: 'topic', buckets: [], view: {
+        bucket_scope_kind: 2, bucket_scope_uid: source.ownerRef, view_scope_kind: 3, include_descendants: true,
+      } }
+    }
     if (source.kind === 'send_to_self') return { kind: 'send_to_self', buckets: [{ kind: 1, uid: '' }] }
     if (source.kind === 'default_category') return { kind: 'uncategorized', buckets: [{ kind: 1, uid: '' }] }
     if (source.kind !== 'topic') throw new ArkmePluginError('calendar-source-invalid', '此日历仅支持发给自己和主题', false, 400)
@@ -500,6 +570,41 @@ export class CalendarService {
       cursor = { sendAtMillis, recordUid }
     }
     throw new ArkmePluginError('calendar-pagination-limit', '日历当日记录尚未加载完整，请重试', true, 502)
+  }
+
+  private invalidViewResponse(): never {
+    throw new ArkmePluginError('calendar-view-invalid', '日历数据尚未就绪或范围已变化，请重新加载；持续失败请确认服务端版本', true, 502)
+  }
+
+  private validateViewContext(data: Record<string, unknown>, timezone: string): void {
+    // Existing UI uses natural days. Reject a server-side policy mismatch
+    // instead of displaying counts and navigating under different calendars.
+    if (data.timezone !== timezone || objectValue(data.belong_date_policy).kind !== 1) this.invalidViewResponse()
+  }
+
+  private validateViewRecords(data: Record<string, unknown>, limit: number, oldestFirst: boolean,
+    cursor?: { sendAtMillis: number; recordUid: string }): void {
+    if (!Array.isArray(data.items) || data.items.length > limit || typeof data.has_more !== 'boolean') this.invalidViewResponse()
+    const seen = new Set<string>()
+    let previous = cursor
+    for (const raw of data.items as unknown[]) {
+      const wire = objectValue(raw)
+      const timestamp = wire.send_at ?? objectValue(wire.record_core).send_at
+      const item = this.dayRecord(raw)
+      if (!item || item.accessState !== 'available' || !Number.isSafeInteger(timestamp) || seen.has(item.recordUid)) this.invalidViewResponse()
+      if (previous) {
+        const order = item.sendAtMillis - previous.sendAtMillis
+          || (item.recordUid === previous.recordUid ? 0 : item.recordUid > previous.recordUid ? 1 : -1)
+        if (oldestFirst ? order <= 0 : order >= 0) this.invalidViewResponse()
+      }
+      seen.add(item.recordUid)
+      previous = item
+    }
+    const nextAt = data.next_cursor_send_at
+    const nextUid = data.next_cursor_record_uid
+    if (data.has_more === true && ((data.items as unknown[]).length === 0
+      || nextAt !== previous?.sendAtMillis || nextUid !== previous?.recordUid)) this.invalidViewResponse()
+    if ((nextAt === undefined) !== (nextUid === undefined)) this.invalidViewResponse()
   }
 
   private bucketDay(raw: unknown): ArkmeCalendarBucketDay | undefined {

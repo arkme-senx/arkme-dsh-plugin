@@ -9,6 +9,7 @@ const raw = (uid: string, at: number, extra: Record<string, unknown> = {}) => ({
 
 function fixture() {
   const runtime = {
+    config: { selfCalendarViewsEnabled: false },
     calendarReadRevision: vi.fn(() => '0'),
     requireSession: vi.fn(async () => ({ userId: 42 })),
     authenticatedPost: vi.fn(async (_path: string, body: { topic_uid: string }) => ({ topic_core: {
@@ -33,6 +34,17 @@ function fixture() {
 }
 
 describe('topic scoped calendar', () => {
+  it('explicit rollback keeps exact filtering and locates the earliest visible record without new wire fields', async () => {
+    const { runtime, service } = fixture()
+    runtime.authenticatedCalendarPost.mockResolvedValue({ items: [
+      raw('dsh', 300, { creation_source: 3, is_uncategorized: true }),
+      raw('new', 200, { is_uncategorized: true }), raw('old', 100, { is_uncategorized: true }),
+    ], has_more: false })
+    const result = await service.dayRecords({ sourceRef: 'all', bucketDate: day, limit: 1, oldestFirst: true })
+    expect(result.items.map(item => item.recordUid)).toEqual(['old'])
+    expect(runtime.authenticatedCalendarPost.mock.calls[0]?.[1]).not.toHaveProperty('view_scope_kind')
+    expect(runtime.authenticatedCalendarPost.mock.calls[0]?.[1]).not.toHaveProperty('oldest_first')
+  })
   it('caches completed multi-query results, isolates months, and refreshes changed revisions', async () => {
     const { runtime, service } = fixture()
     runtime.authenticatedCalendarPost.mockResolvedValue({ daily_data: [] })

@@ -551,6 +551,7 @@ export function ArkmeSelfCalendarPopover({
     try {
       const page = await callArkme<ArkmeCalendarDayRecordPage>('calendar.records', {
         ...(sourceRef === undefined ? {} : { sourceRef }),
+        ...(sourceRef === undefined ? {} : { oldestFirst: true }),
         bucketDate: key,
         timezone,
         limit: 1,

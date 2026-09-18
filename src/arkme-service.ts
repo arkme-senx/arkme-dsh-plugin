@@ -1879,6 +1879,7 @@ export class ArkmeService {
       sourceRef?: string
       timezone?: string
       limit?: number
+      oldestFirst?: boolean
       cursor?: ArkmeRecordCursor
       signal?: AbortSignal
     },

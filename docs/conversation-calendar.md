@@ -25,7 +25,7 @@ Flutter `ChatPhasedRequestClient.fetchChatSessionStatistics` 使用：
 
 选择日期后直接调用已有的 `/api/v1/chat/timeline/around`，保留完整 owner ID，获取目标消息前后内容。没有逐页扫描全部聊天记录，也不借用个人日历推算群聊历史。
 
-发给自己和主题继续使用现有日历适配器，保留 DSH 输入过滤、隐私锁过滤及子主题去重。Flutter 主题的 `/api/v1/topics/display/statistics` 是另一种统计范围，未用它直接替换上述过滤后的统计。
+发给自己、未分类和主题使用 Record 新视图日历接口，过滤、可见性和子主题去重由后端统一完成，不再逐日拉取正文重算数量。月份只请求 `buckets/query`，点击日期请求 `records/query` 的 `oldest_first=true, limit=1` 第一页再定位。完整对接说明见 [发给自己日历接口升级](self-calendar-view-integration.md)。Flutter 主题的 `/api/v1/topics/display/statistics` 是另一种统计范围，未直接替换。
 
 ## 缓存与边界
 

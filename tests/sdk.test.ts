@@ -699,10 +699,13 @@ describe('Arkme SDK', () => {
     await expect(sdk.calendarBuckets({
       startDate: '2026-08-01',
       endDate: '2026-08-31',
+      sourceRef: 'signed-self',
       timezone: 'Asia/Shanghai',
     })).resolves.toMatchObject({ scope: 'self', days: [] })
     await expect(sdk.calendarRecords({
       bucketDate: '2026-08-21',
+      sourceRef: 'signed-self',
+      oldestFirst: true,
       timezone: 'Asia/Shanghai',
       limit: 10,
       cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
@@ -721,11 +724,13 @@ describe('Arkme SDK', () => {
       },
       { operation: 'auth.phone.verify', params: { phone: '13800008000', code: '123456' } },
       { operation: 'image.read', params: { imageRef: '1_1700000000_1_0.png' } },
-      { operation: 'calendar.buckets', params: { startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Shanghai' } },
+      { operation: 'calendar.buckets', params: { startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Shanghai', sourceRef: 'signed-self' } },
       {
         operation: 'calendar.records',
         params: {
           bucketDate: '2026-08-21',
+          sourceRef: 'signed-self',
+          oldestFirst: true,
           timezone: 'Asia/Shanghai',
           limit: 10,
           cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },

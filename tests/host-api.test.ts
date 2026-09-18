@@ -1316,10 +1316,17 @@ describe('outgoing call Host API dispatch', () => {
       startDate: '2026-09-01', endDate: '2026-09-30', sourceRef: 'signed-topic', bucket_scope_uid: 'not-forwarded',
     })
     await dispatchArkmeHostOperation(service as never, 'calendar.records', {
-      bucketDate: '2026-09-16', sourceRef: 'signed-topic', bucket_scope_kind: 1,
+      bucketDate: '2026-09-16', sourceRef: 'signed-topic', bucket_scope_kind: 1, oldestFirst: true,
     })
     expect(service.calendarBuckets).toHaveBeenCalledWith({ startDate: '2026-09-01', endDate: '2026-09-30', sourceRef: 'signed-topic' })
-    expect(service.calendarRecords).toHaveBeenCalledWith({ bucketDate: '2026-09-16', sourceRef: 'signed-topic', limit: 20 })
+    expect(service.calendarRecords).toHaveBeenCalledWith({ bucketDate: '2026-09-16', sourceRef: 'signed-topic', limit: 20, oldestFirst: true })
+  })
+
+  it.each([{ sendAtMillis: 100 }, { recordUid: 'id' }, { sendAtMillis: 1.5, recordUid: 'id' }, null])('rejects incomplete calendar cursor %j', async cursor => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'calendar.records', { bucketDate: '2026-09-16', cursor }))
+      .rejects.toMatchObject({ code: 'calendar-cursor-invalid' })
+    expect(service.calendarRecords).not.toHaveBeenCalled()
   })
 
   it('uses an authorized source reference for the chat calendar, ignoring caller-supplied session ids', async () => {

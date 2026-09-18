@@ -63,6 +63,7 @@ it('keeps feedback across the day request and subsequent history paging until th
   await act(async () => root.render(<Harness />))
   await act(async () => navigation.select(selection))
   expect(host.textContent).toContain('正在定位 2020年01月02日')
+  expect(api.call.mock.calls[0]?.[1]).toMatchObject({ ...selection, limit: 1, oldestFirst: true })
   expect(host.querySelector('[data-spinner]')).not.toBeNull()
   await act(async () => pending.resolve({ items: [{ recordUid: 'old' }] }))
   expect(locate).toHaveBeenCalledWith({ recordUid: 'old' })

@@ -1351,11 +1351,15 @@ export async function dispatchArkmeHostOperation(
     })
     case 'calendar.records': {
       const cursor = cursorParam(params)
+      if (params?.cursor !== undefined && (cursor === undefined || !Number.isSafeInteger(cursor.sendAtMillis))) {
+        throw new ArkmePluginError('calendar-cursor-invalid', '日历分页游标必须同时包含时间和记录 ID', false, 400)
+      }
       return await service.calendarRecords({
         bucketDate: stringParam(params, 'bucketDate'),
         ...(params?.sourceRef === undefined ? {} : { sourceRef: stringParam(params, 'sourceRef') }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
         limit: numberParam(params, 'limit', 20),
+        ...(params?.oldestFirst === undefined ? {} : { oldestFirst: booleanParam(params, 'oldestFirst') }),
         ...(stringParam(params, 'timezone') === '' ? {} : { timezone: stringParam(params, 'timezone') }),
         ...(cursor === undefined ? {} : { cursor }),
       })

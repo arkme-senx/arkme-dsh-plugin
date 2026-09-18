@@ -15,7 +15,8 @@ export interface CalendarMonthQuery {
 }
 export interface CalendarMonthSnapshot { value?: ArkmeCalendarBucketPage; loading: boolean; error: string }
 export const EMPTY_CALENDAR_MONTH: CalendarMonthSnapshot = { loading: false, error: '' }
-const PREFIX = 'dsh-arkme:calendar-months:v1:'
+// New filtered server views must not reuse old client-counted summaries.
+const PREFIX = 'dsh-arkme:calendar-months:v2:'
 const LIMIT = 48
 const RETAIN_MS = 7 * 86_400_000
 const FRESH_MS = 60_000
@@ -27,7 +28,7 @@ interface Entry {
   controller?: AbortController
   pending?: Promise<void>
 }
-const identity = (query: CalendarMonthQuery) => JSON.stringify([query.scopeKey, query.timezone, query.startDate, query.endDate,
+const identity = (query: CalendarMonthQuery) => JSON.stringify([query.scopeKey, query.timezone, query.startDate, query.endDate, 'natural-day:1',
   ...(query.timezoneOffsetMillis === undefined ? [] : [query.timezoneOffsetMillis])])
 const storage = (): Storage | undefined => { try { return globalThis.localStorage } catch { return undefined } }
 
@@ -109,8 +110,9 @@ export class CalendarMonthCache {
       if (clean) { this.saved.delete(identity(query)); this.saved.set(identity(query), { value: clean, refreshed: entry.refreshed }); this.persist() }
     }).catch(error => {
       if (!current()) return
-      const code = (error as { body?: { code?: string } } | undefined)?.body?.code
-      const accessDenied = code && /privacy|login-required|account-changed|source-invalid|ref-invalid|not-found/.test(code)
+      const failure = error as { code?: string; body?: { code?: string } } | undefined
+      const code = failure?.body?.code ?? failure?.code
+      const accessDenied = code && /privacy|login-required|account-changed|source-invalid|ref-invalid|not-found|calendar-view|40001|50001/.test(code)
       if (accessDenied) {
         this.saved.delete(identity(query)); this.persist(); entry.refreshed = 0
       }

@@ -58,7 +58,7 @@ export function useSelfCalendarNavigation(options: {
     const request = selection.momentAnchor !== undefined ? Promise.resolve(selection.momentAnchor)
       : selection.anchor !== undefined ? Promise.resolve(selection.anchor)
       : withArkmeReadDeadline(signal => callArkme<ArkmeCalendarDayRecordPage>('calendar.records', {
-      sourceRef, ...selection, limit: 1,
+      sourceRef, ...selection, limit: 1, oldestFirst: true,
     }, signal), current.controller.signal).then(page => page.items[0])
     void request.then(item => {
       if (job.current !== current || current.controller.signal.aborted) return
