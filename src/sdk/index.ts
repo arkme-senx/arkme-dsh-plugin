@@ -2045,9 +2045,11 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
-  async tags(options: { limit?: number; signal?: AbortSignal } = {}): Promise<ArkmeRecordTagList> {
+  async tags(options: { limit?: number; query?: string; cursor?: string; signal?: AbortSignal } = {}): Promise<ArkmeRecordTagList> {
     return await this.call<ArkmeRecordTagList>('records.tags.list', {
       limit: options.limit ?? 100,
+      ...(options.query === undefined ? {} : { query: options.query }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
     }, options.signal)
   }
 

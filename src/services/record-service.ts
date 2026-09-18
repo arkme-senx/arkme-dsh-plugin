@@ -1193,15 +1193,22 @@ export class RecordService {
     await Promise.all([this.summary(), this.list(50)])
   }
 
-  async listTags(limit = 100, signal?: AbortSignal): Promise<ArkmeRecordTagList> {
+  async listTags(options: number | { limit?: number; query?: string; cursor?: string } = 100, signal?: AbortSignal): Promise<ArkmeRecordTagList> {
+    const { limit = 100, query, cursor } = typeof options === 'number' ? { limit: options } : options
     const session = await this.runtime.requireSession()
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/tags/list',
-      { limit: Math.max(1, Math.min(200, Math.trunc(limit))) },
+      {
+        limit: Number.isFinite(limit) ? Math.max(1, Math.min(200, Math.trunc(limit))) : 100,
+        ...(query === undefined ? {} : { query }),
+        ...(cursor === undefined ? {} : { cursor }),
+      },
       session,
       signal,
     )
     return {
+      ...(typeof data.has_more === 'boolean' ? { hasMore: data.has_more } : {}),
+      ...(typeof data.next_cursor === 'string' ? { nextCursor: data.next_cursor } : {}),
       items: listValue(data.items).flatMap(raw => {
         const item = objectValue(raw)
         const tagText = stringValue(item.tag_text ?? item.tagText).trim()

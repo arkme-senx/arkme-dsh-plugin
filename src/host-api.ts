@@ -1439,7 +1439,11 @@ export async function dispatchArkmeHostOperation(
     }
     case 'records.summary': return await service.summary()
     case 'records.list': return await service.list(numberParam(params, 'limit', 30), cursorParam(params))
-    case 'records.tags.list': return await service.listRecordTags(numberParam(params, 'limit', 100), requestSignal)
+    case 'records.tags.list': return await service.listRecordTags({
+      limit: numberParam(params, 'limit', 100),
+      ...(typeof params?.query === 'string' ? { query: params.query } : {}),
+      ...(typeof params?.cursor === 'string' ? { cursor: params.cursor } : {}),
+    }, requestSignal)
     case 'records.tags.query': {
       const cursorSendAt = numberParam(params, 'cursorSendAt', 0)
       const cursorRecordUid = stringParam(params, 'cursorRecordUid').trim()

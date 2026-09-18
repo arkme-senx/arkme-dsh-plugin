@@ -2072,8 +2072,8 @@ export class ArkmeService {
     await this.realtime.invalidateRecordProjection({ contentOnly: true }); return result
   }
 
-  async listRecordTags(limit = 100, signal?: AbortSignal): Promise<ArkmeRecordTagList> {
-    return await this.record.listTags(limit, signal)
+  async listRecordTags(options: number | { limit?: number; query?: string; cursor?: string } = 100, signal?: AbortSignal): Promise<ArkmeRecordTagList> {
+    return await this.record.listTags(options, signal)
   }
 
   async createTextForConversation(

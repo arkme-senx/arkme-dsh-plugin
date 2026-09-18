@@ -496,6 +496,8 @@ export interface ArkmeRecordTagItem {
 
 export interface ArkmeRecordTagList {
   items: ArkmeRecordTagItem[]
+  hasMore?: boolean
+  nextCursor?: string
 }
 
 export interface ArkmeCreateTextResult {

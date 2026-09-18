@@ -941,6 +941,23 @@ describe('RecordService', () => {
     expect(requestBody).toEqual({ limit: 100 })
   })
 
+  it('sends tag search and pagination to the server and preserves page metadata', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let requestBody: unknown
+    const fetchImpl = vi.fn(async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: true, next_cursor: 'next-page' } }), { status: 200 })
+    }) as typeof fetch
+    const service = new RecordService(new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl), {} as MediaService, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+    await expect(service.listTags({ query: '项目', limit: 20, cursor: 'previous-page' })).resolves.toEqual({ items: [], hasMore: true, nextCursor: 'next-page' })
+    expect(requestBody).toEqual({ query: '项目', limit: 20, cursor: 'previous-page' })
+  })
+
   it('creates a canonical Record whose file assets stay in content_payload media refs', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

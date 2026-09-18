@@ -2834,18 +2834,24 @@ export function ArkmeSurface({
   const [mentionTrigger, setMentionTrigger] = useState<ArkmeComposerMentionTrigger>()
   const [mentionCandidateIndex, setMentionCandidateIndex] = useState(0)
   const [hashTagTrigger, setHashTagTrigger] = useState<ArkmeHashTagTrigger>()
-  const [hashTagItems, setHashTagItems] = useState<ArkmeRecordTagItem[]>([])
+  const [hashTagMemory, setHashTagMemory] = useState<{ accountKey?: string; items: ArkmeRecordTagItem[] }>({ items: [] })
+  const hashTagItems = hashTagMemory.accountKey === authenticatedAccountKey ? hashTagMemory.items : []
   const [hashTagLoading, setHashTagLoading] = useState(false)
+  const [hashTagError, setHashTagError] = useState(false)
+  const [hashTagRemote, setHashTagRemote] = useState<{ key: string; items: ArkmeRecordTagItem[] }>({ key: '', items: [] })
+  const hashTagRetryRef = useRef<() => void>()
   const [hashTagCandidateIndex, setHashTagCandidateIndex] = useState(0)
   const [hashTagRefreshRevision, setHashTagRefreshRevision] = useState(0)
   const hashTagSuggestionListRef = useRef<HTMLDivElement | null>(null)
   const activeHashTagStartRef = useRef<number>()
   const dismissedHashTagStartRef = useRef<number>()
   const hashTagActive = hashTagTrigger !== undefined
+  const hashTagQuery = hashTagTrigger?.query ?? ''
+  const hashTagSearchKey = JSON.stringify([authenticatedAccountKey, conversationKey, hashTagQuery])
   useEffect(() => {
     // Candidate memory belongs to an account, never to a conversation. Clear it
     // only when the authenticated account changes or logs out.
-    setHashTagItems([])
+    setHashTagMemory({ ...(authenticatedAccountKey === undefined ? {} : { accountKey: authenticatedAccountKey }), items: [] })
   }, [authenticatedAccountKey])
   const [memberMenu, setMemberMenu] = useState<{
     member: ArkmeConversationMemberItem
@@ -2960,25 +2966,42 @@ export function ArkmeSurface({
     if (!activeConversation || authenticatedAccountKey === undefined || authenticatedUserId === undefined || source === undefined || !hashTagActive) return
     const controller = new AbortController()
     const localItems = arkmeMergeHashTagSuggestions([], items)
-    setHashTagItems(current => arkmeReconcileHashTagSuggestionSnapshots(current, localItems))
+    setHashTagMemory(current => ({ accountKey: authenticatedAccountKey, items: arkmeReconcileHashTagSuggestionSnapshots(
+      current.accountKey === authenticatedAccountKey ? current.items : [], localItems,
+    ) }))
+    setHashTagRemote({ key: hashTagSearchKey, items: [] })
+    setHashTagError(false)
     setHashTagLoading(true)
-    void callArkme<ArkmeRecordTagList>('records.tags.list', { limit: 100 }, controller.signal)
-      .then(snapshot => {
-        if (!controller.signal.aborted) {
-          setHashTagItems(current => arkmeReconcileHashTagSuggestionSnapshots(snapshot.items, current, localItems))
-        }
-      })
-      .catch(caught => {
-        if (!controller.signal.aborted) {
-          setHashTagItems(current => arkmeReconcileHashTagSuggestionSnapshots(current, localItems))
-          console.warn('dsh-arkme: hashtag refresh failed', errorMessage(caught))
-        }
-      })
-      .finally(() => {
+    let inFlight = false
+    // Each query/account owns its controller. Even transports that
+    // ignore abort cannot publish an old response into the new candidate list.
+    const loadTags = () => {
+      if (inFlight || controller.signal.aborted) return
+      inFlight = true
+      setHashTagLoading(true)
+      setHashTagError(false)
+      void callArkme<ArkmeRecordTagList>('records.tags.list', {
+        query: hashTagQuery, limit: 100,
+      }, controller.signal).then(snapshot => {
+        if (controller.signal.aborted) return
+        setHashTagRemote({ key: hashTagSearchKey, items: snapshot.items })
+      }).catch(caught => {
+        if (controller.signal.aborted) return
+        setHashTagError(true)
+        console.warn('dsh-arkme: hashtag refresh failed', errorMessage(caught))
+      }).finally(() => {
+        inFlight = false
         if (!controller.signal.aborted) setHashTagLoading(false)
-    })
-    return () => { controller.abort() }
-  }, [activeConversation, authenticatedAccountKey, authenticatedUserId, conversationKey, hashTagActive, hashTagRefreshRevision, source?.sourceRef])
+      })
+    }
+    hashTagRetryRef.current = loadTags
+    const timer = window.setTimeout(loadTags, 200)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+      hashTagRetryRef.current = undefined
+    }
+  }, [activeConversation, authenticatedAccountKey, authenticatedUserId, conversationKey, hashTagActive, hashTagQuery, hashTagSearchKey, hashTagRefreshRevision, source?.sourceRef])
 
   useEffect(() => () => {
     if (messageActionStatusTimerRef.current !== undefined) window.clearTimeout(messageActionStatusTimerRef.current)
@@ -4628,12 +4651,12 @@ export function ArkmeSurface({
     textFormat?: 'plain' | 'markdown',
   ) => {
     if (arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) !== accountKey) return
-    setHashTagItems(current => arkmeMergeHashTagSuggestions(current, [{
+    setHashTagMemory(current => ({ accountKey, items: arkmeMergeHashTagSuggestions(current.accountKey === accountKey ? current.items : [], [{
       itemUid,
       textContent,
       textFormat: textFormat ?? 'plain',
       sendAtMillis,
-    }]))
+    }]) }))
   }, [])
 
   const send = async () => {
@@ -5241,8 +5264,14 @@ export function ArkmeSurface({
   )
   const hashTagCandidates = useMemo(() => {
     if (hashTagTrigger === undefined) return []
-    return hashTagItems.filter(item => arkmeHashTagMatches(item.tagText, hashTagTrigger.query))
-  }, [hashTagItems, hashTagTrigger])
+    const query = hashTagTrigger.query.toLocaleLowerCase()
+    const remote = hashTagRemote.key === hashTagSearchKey ? hashTagRemote.items : []
+    return arkmeReconcileHashTagSuggestionSnapshots(remote, hashTagItems)
+      .filter(item => arkmeHashTagMatches(item.tagText, hashTagTrigger.query))
+      .sort((left, right) => Number(right.tagText.toLocaleLowerCase() === query) - Number(left.tagText.toLocaleLowerCase() === query)
+        || right.latestSendAtMillis - left.latestSendAtMillis || left.normalizedTag.localeCompare(right.normalizedTag))
+      .slice(0, 100)
+  }, [hashTagItems, hashTagRemote, hashTagSearchKey, hashTagTrigger])
   const selfConversationMember = useMemo(
     () => conversationMembers.find(member => member.isSelf),
     [conversationMembers],
@@ -7864,7 +7893,7 @@ export function ArkmeSurface({
               ? attachments.flatMap(attachment => attachment.localFile === undefined ? [] : [localFileBlock(attachment.localFile)])
               : activeRecordReeditComposer.attachments.flatMap(attachment => { const block = arkmeRecordReeditAttachmentBlock(attachment); return block === undefined ? [] : [block] })} onSelect={setDraftPreview} onClose={() => setDraftPreview(undefined)} openLocalFile={false} />, document.body)}
             {activeRecordReeditComposer === undefined && hashTagTrigger !== undefined && <div ref={hashTagSuggestionListRef} style={styles.mentionSuggestions} role="listbox" aria-label="选择标签">
-              {hashTagCandidates.length === 0
+              {hashTagCandidates.length === 0 && !hashTagError
                 ? <div style={styles.mentionSuggestionsEmpty}>{hashTagLoading ? '正在加载标签…' : '暂无匹配标签，可继续输入创建新标签'}</div>
                 : hashTagCandidates.map((item, index) => <button
                   key={`${item.normalizedTag}:${item.tagText}`}
@@ -7887,6 +7916,9 @@ export function ArkmeSurface({
                     <span style={styles.mentionSuggestionSecondary}>使用 {item.recordCount} 次</span>
                   </span>
                 </button>)}
+              {hashTagError && <div role="status" style={styles.mentionSuggestionsEmpty}>
+                标签加载失败，<button type="button" onMouseDown={event => event.preventDefault()} onClick={() => hashTagRetryRef.current?.()}>重试</button>
+              </div>}
             </div>}
             {activeRecordReeditComposer === undefined && mentionTrigger !== undefined && <div style={styles.mentionSuggestions} role="listbox" aria-label="选择要 @ 的对象">
               <ArkmeMentionSuggestionThemeStyles />
