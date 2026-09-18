@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { ARKME_CONVERSATION_HEADER_BUTTON_STYLE } from './ArkmeGroupChatControls.js'
+import { ArkmeConversationHeaderIconButton } from './ArkmeGroupChatControls.js'
 
 export interface ArkmePrivateCallMenuProps {
   sourceRef: string
@@ -103,9 +103,6 @@ export function arkmePrivateCallMenuPlacement(
 
 const styles: Record<string, CSSProperties> = {
   root: { position: 'relative', flex: 'none' },
-  trigger: {
-    ...ARKME_CONVERSATION_HEADER_BUTTON_STYLE, appearance: 'none',
-  },
   triggerIcon: {
     width: 20, height: 20, display: 'block', backgroundColor: 'currentColor',
     maskRepeat: 'no-repeat', maskPosition: 'center', maskSize: 'contain',
@@ -216,14 +213,12 @@ export function ArkmePrivateCallMenu({
   </>
 
   return <div ref={root} style={styles.root}>
-    <button
-      ref={button}
-      type="button"
-      aria-label={`呼叫${displayName}`}
-      aria-haspopup="menu"
-      aria-expanded={open}
+    <ArkmeConversationHeaderIconButton
+      buttonRef={button}
+      label={`呼叫${displayName}`}
+      hasPopup
+      expanded={open}
       title="发起通话"
-      style={styles.trigger}
       onClick={event => {
         if (!open) placeMenu(event.currentTarget.getBoundingClientRect())
         setOpen(value => !value)
@@ -233,7 +228,7 @@ export function ArkmePrivateCallMenu({
         ...styles.triggerIcon,
         maskImage: `url("${callIconUrl}")`, WebkitMaskImage: `url("${callIconUrl}")`,
       }} />
-    </button>
+    </ArkmeConversationHeaderIconButton>
     {callMenu !== false && callMenu !== null && typeof document !== 'undefined' && document.body !== null
       ? createPortal(callMenu, document.body)
       : callMenu}

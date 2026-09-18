@@ -568,7 +568,7 @@ export function ArkmeRecordingTimeline({ items, dayStartMillis, playheadMillis, 
     {loading ? <span style={styles.loadingControl} data-timeline-layer="loading" aria-label="正在读取录音" /> : showEmptyState ? <span style={styles.emptyControl} data-timeline-layer="empty">
       <span style={styles.emptyIndicator} aria-hidden />
       <span>无录音</span>
-      <button type="button" style={{ ...styles.importButton, ...(onImportAudio === undefined ? { cursor: 'default', opacity: .3 } : {}) }} disabled={onImportAudio === undefined} onClick={onImportAudio}>导入音频<CaretRight size={8} aria-hidden /></button>
+      <button data-arkme-hover="none" type="button" style={{ ...styles.importButton, ...(onImportAudio === undefined ? { cursor: 'default', opacity: .3 } : {}) }} disabled={onImportAudio === undefined} onClick={onImportAudio}>导入音频<CaretRight size={8} aria-hidden /></button>
     </span> : zoomIndex > 0 && visibleSpeakers.length > 0 ? <>
       {legendOpen && <button type="button" tabIndex={-1} aria-label="关闭当前窗口说话人统计" style={styles.legendBackdrop} onClick={() => { if (legendRef.current !== null) legendRef.current.open = false; setLegendOpen(false) }} />}
       <details ref={legendRef} open={legendOpen} style={styles.legend} data-timeline-layer="speakers" onToggle={event => { setLegendOpen(event.currentTarget.open) }}>

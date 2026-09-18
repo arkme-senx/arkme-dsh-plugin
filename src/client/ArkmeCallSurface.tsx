@@ -212,8 +212,9 @@ const styles: Record<string, CSSProperties> = {
   sectionLabel: { margin: '0 0 11px 2px', color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '17px', fontWeight: 650 },
   contacts: { height: 56, margin: '0 0 13px', display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 8 },
   contact: {
-    minWidth: 0, height: 56, display: 'grid', justifyItems: 'center', alignContent: 'start', gap: 4,
-    padding: 0, border: 0, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit',
+    minWidth: 0, width: '100%', maxWidth: 64, height: 56, justifySelf: 'center', boxSizing: 'border-box',
+    display: 'grid', justifyItems: 'center', alignContent: 'center', gap: 4,
+    padding: '4px 6px', border: 0, borderRadius: 12, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit',
   },
   contactName: { maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 10, lineHeight: '14px' },
   search: {
@@ -994,6 +995,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
       <button
         type="button"
         aria-pressed={selected}
+        data-arkme-hover="button"
         style={{ ...styles.callRow, ...(selected ? styles.callRowSelected : {}) }}
         onClick={() => {
           if (tour.current === 2 && item.callRef === 'sample-video') tour.change(3)
@@ -1039,6 +1041,8 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
         {contacts.slice(0, 5).map(contact => <button
           key={`${String(contact.userId)}:${contact.displayName}`}
           type="button"
+          className="arkme-call-recent-contact"
+          data-arkme-hover="none"
           style={usingSampleContacts ? { ...styles.contact, cursor: 'default' } : styles.contact}
           aria-label={usingSampleContacts ? `${contact.displayName}示例联系人` : `选择${contact.displayName}通话方式`}
           aria-disabled={usingSampleContacts || undefined}

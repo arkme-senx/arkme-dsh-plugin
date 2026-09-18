@@ -385,7 +385,7 @@ export function ArkmeSelfCalendarPopover({
 
   if (!open || typeof document === 'undefined') return null
   return createPortal(<>
-    <button type="button" aria-label="关闭发给自己日历" onClick={onClose} style={{
+    <button data-arkme-hover="none" type="button" aria-label="关闭发给自己日历" onClick={onClose} style={{
       position: 'fixed', inset: 0, zIndex: 299, width: '100%', height: '100%', padding: 0,
       border: 0, background: 'transparent', cursor: 'default',
     }} />
@@ -486,6 +486,7 @@ export function ArkmeCalendarCell({
     type="button"
     aria-label={`${dateKey(date)} ${count > 0 ? `${String(count)} 条记录` : '暂无记录'}`}
     data-selected={selected ? 'true' : 'false'}
+    data-arkme-hover="button"
     disabled={disabled}
     style={{
       ...styles.dayButton,
@@ -648,7 +649,7 @@ export function ArkmeCalendarSurface({
     <button type="button" style={{
       ...styles.backdrop,
       ...(anchor === 'product-rail' ? styles.productRailBackdrop : {}),
-    }} aria-label="关闭日历" onClick={() => {
+    }} aria-label="关闭日历" data-arkme-hover="none" onClick={() => {
       if (onClose === undefined) arkmeUi.showConversations()
       else onClose()
     }} />

@@ -146,11 +146,11 @@ button.arkme-redesign-profile-head { width: 100%; border: 0; background: transpa
 
 /* Conversation cards share feedback across native entries, extensions and virtualized rows. */
 [aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] {
-  --arkme-directory-card-hover: var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, .06));
-  --arkme-directory-card-selected-hover: color-mix(in srgb, #f1f2f6 94%, var(--dsw-alias-label-primary, #17191c));
+  --arkme-directory-card-hover: var(--arkme-control-hover-surface, #f1f2f6);
+  --arkme-directory-card-selected-hover: var(--arkme-directory-card-hover);
 }
 body[data-ds-dark-theme] [aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] {
-  --arkme-directory-card-selected-hover: color-mix(in srgb, var(--dsw-alias-interactive-bg-active, rgba(255, 255, 255, .1)) 94%, var(--dsw-alias-label-primary, #eee));
+  --arkme-directory-card-hover: var(--dsw-alias-interactive-bg-active, rgba(255, 255, 255, .1));
 }
 [aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] button[role="treeitem"] {
   transition: background-color .12s ease;
@@ -158,9 +158,6 @@ body[data-ds-dark-theme] [aria-label="Arkme 会话列表"] [role="tree"][aria-la
 @media (hover: hover) {
   [aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] button[role="treeitem"]:not(:disabled):not([aria-disabled="true"]):not([aria-selected="true"]):hover {
     background-color: var(--arkme-directory-card-hover) !important;
-  }
-  [aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] button[role="treeitem"][aria-selected="true"]:not(:disabled):not([aria-disabled="true"]):hover {
-    background-color: var(--arkme-directory-card-selected-hover) !important;
   }
 }
 [aria-label="Arkme 会话列表"] [role="tree"][aria-label="Arkme 会话"] button[data-arkme-home-tour-target="harness"][aria-expanded="true"]:not([aria-selected="true"]) {
@@ -1658,7 +1655,8 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-contact-world-title { margin: 0; color: var(--dsw-alias-label-secondary, #68707c); font-size: 14px; line-height: 22px; font-weight: 400; }
 .arkme-contact-world { position: relative; padding-right: 28px; }
 .arkme-contact-world-open { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: flex-end; width: 100%; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--dsw-alias-label-secondary, #68707c); cursor: pointer; }
-.arkme-contact-world-open:hover { background: var(--dsw-alias-bg-hover, rgba(127, 127, 127, .06)); }
+.arkme-contact-world:has(.arkme-contact-world-open:hover) { background: var(--arkme-control-hover-surface, #f1f2f6); border-radius: 8px; }
+.arkme-contact-world-open:hover { background: transparent; }
 .arkme-contact-world-open:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #4778f5); outline-offset: 3px; }
 .arkme-contact-world-error button { position: relative; z-index: 2; }
 .arkme-contact-world-content, .arkme-contact-world-summary { min-width: 0; }

@@ -85,7 +85,7 @@ describe('Arkme quick-add UI', () => {
     expect(markup).toContain('color:var(--dsw-alias-label-primary, #1a1c21)')
     expect(markup).toContain('color:var(--dsw-alias-label-secondary, #6f747e)')
     expect(markup).toContain('background:var(--dsw-alias-border-l1, #ececef)')
-    expect(quickAddSource).toContain("event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, #f4f4f6)'")
+    expect(quickAddSource).toContain('data-arkme-hover="surface"')
   })
 })
 

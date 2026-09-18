@@ -164,14 +164,14 @@ export function RecordRow({ item, onClick, onTagClick }: {
   if (item.voice !== undefined || item.templateKind === 3 || item.templateKind === 4) return <AudioQuickRow item={item} onOpen={onClick} {...(onTagClick === undefined ? {} : { onTagClick })} />
   const summary = recordSummary(item)
   const title = recordTitle(item)
-  return <button type="button" style={styles.row} onClick={onClick}>
+  return <button type="button" style={styles.row} data-arkme-hover="surface" onClick={onClick}>
     <p style={styles.title}>{arkmeHashTagRanges(title).length === 0 ? title : <ArkmeRichText text={title} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>
     {summary !== '' && <p style={styles.text}>{arkmeHashTagRanges(summary).length === 0 ? summary : <ArkmeRichText text={summary} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>}
     <RecordMeta item={item} />
   </button>
 }
 function RecordingRow({ item }: { item: ArkmeRecordingSearchResult['items'][number] }) {
-  return <button type="button" style={styles.row} onClick={() => arkmeUi.showRecordingTarget(item.dateStamp, item.startAtMillis)}>
+  return <button type="button" style={styles.row} data-arkme-hover="surface" onClick={() => arkmeUi.showRecordingTarget(item.dateStamp, item.startAtMillis)}>
     <p style={{ ...styles.text, marginTop: 0, color: colors.text }}>{item.snippet || '暂无转写内容'}</p>
     <span style={styles.meta}>{dateTimeLabel(item.startAtMillis || item.dateStamp)}</span>
   </button>
@@ -641,7 +641,7 @@ export function ArkmeSearchSurface({
               {selectedDshRecords.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { void openRecord(item) }} onTagClick={selectTag} />)}
               {records?.hasMore && <span style={styles.meta}>当前仅显示本页匹配记录。</span>}
             </> : <>
-              <button type="button" style={styles.row} onClick={() => openDshSession(selectedDsh.sessionId)}>{selectedDsh.snippet}</button>
+              <button type="button" style={styles.row} data-arkme-hover="surface" onClick={() => openDshSession(selectedDsh.sessionId)}>{selectedDsh.snippet}</button>
             </>}
           </div> : selectedSourceUid === '' ? <div style={styles.sourcePrompt}>选择一个主题查看关联快记</div>
             : sourceLoading ? <Status loading />
@@ -677,7 +677,7 @@ export function ArkmeSearchSurface({
       {!hasQuery ? <div style={{ ...styles.scroll, ...(variant === 'dialog' ? styles.dialogScroll : {}) }}>
         {history.length > 0 && <section style={styles.section} aria-label="搜索历史">
           <div style={styles.sectionHeader}><h3 style={styles.sectionTitle}>搜索历史</h3></div>
-          <div style={styles.historyChips}>{history.map(value => <button key={value} type="button" style={styles.historyChip} onClick={() => setQuery(value)}>{value}</button>)}</div>
+          <div style={styles.historyChips}>{history.map(value => <button key={value} type="button" style={styles.historyChip} data-arkme-hover="button" onClick={() => setQuery(value)}>{value}</button>)}</div>
         </section>}
         <section style={styles.section} aria-label="快速查找">
           <div style={styles.sectionHeader}><h3 style={styles.sectionTitle}>快速查找</h3><span style={styles.quickHint}>按内容类型浏览</span></div>

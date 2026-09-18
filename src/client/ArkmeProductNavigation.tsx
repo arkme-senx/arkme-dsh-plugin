@@ -259,6 +259,7 @@ export function ArkmeProductNavigation({
         return <button
           key={item.id}
           data-arkme-home-tour-target={item.id}
+          data-arkme-hover="button"
           type="button"
           aria-current={active ? 'page' : undefined}
           aria-label={showsUnread ? `${item.label}，${String(conversationUnreadCount)} 条未读` : undefined}

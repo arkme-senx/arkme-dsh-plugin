@@ -1,4 +1,7 @@
-import redesignCss from './arkme-redesign.css?inline'
+import redesignBaseCss from './arkme-redesign.css?inline'
+import buttonHoverCss from '../arkme-button-hover.css?inline'
+
+const redesignCss = `${redesignBaseCss}\n${buttonHoverCss}`
 
 const REDESIGN_STYLE_ID = '@senguoyun/dsh-arkme/redesign'
 

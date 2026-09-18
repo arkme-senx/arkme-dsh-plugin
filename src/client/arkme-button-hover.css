@@ -1,0 +1,47 @@
+/* One opaque neutral hover fill prevents existing component hover backgrounds
+   from being darkened by a second translucent layer. */
+body:has([data-arkme-owned="product-navigation"]) {
+  --arkme-control-hover-surface: #f1f2f6;
+}
+
+body[data-ds-dark-theme]:has([data-arkme-owned="product-navigation"]) {
+  --arkme-control-hover-surface: var(--dsw-alias-interactive-bg-active, rgba(255, 255, 255, .1));
+}
+
+@media (hover: hover) {
+  body:has([data-arkme-owned="product-navigation"])
+  button:is(:has(svg, img, [aria-hidden]), [data-arkme-hover="button"]):not([style*="--dsw-alias-button-primary-fill"]):not([style*="--dsw-alias-label-primary-inverted"]):not([role="treeitem"]):not(:disabled):not([aria-disabled="true"]):not([inert] *):not([aria-disabled="true"] *):not([role="tab"]):not([role="tablist"] *):not([aria-selected="true"]):not([aria-current]:not([data-arkme-hover="button"])):not([data-arkme-hover="none"]):not([data-arkme-hover="surface"]):not([data-arkme-conversation-row] *):not(:has([data-arkme-avatar]):not([data-arkme-hover="button"])):hover {
+    background: var(--arkme-control-hover-surface, #f1f2f6) !important;
+  }
+}
+
+/* Recent contacts keep their rounded tile geometry and the shared fill. */
+.arkme-call-recent-contact {
+  transition: background-color 140ms ease;
+}
+@media (hover: hover) {
+  button.arkme-call-recent-contact:not(:disabled):not([aria-disabled="true"]):hover {
+    background: var(--arkme-control-hover-surface, #f1f2f6) !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arkme-call-recent-contact { transition: none; }
+}
+
+@media (hover: hover) {
+  button[data-arkme-hover="surface"]:not(:disabled):not([aria-disabled="true"]):hover {
+    background: var(--arkme-control-hover-surface, #f1f2f6) !important;
+  }
+}
+
+/* Menu commands and listbox choices are interactive even without an icon. */
+@media (hover: hover) {
+  body:has([data-arkme-owned="product-navigation"]) :is([role="menuitem"], [role="option"]):not(:disabled):not([aria-disabled="true"]):not([aria-selected="true"]):not([inert] *):not([aria-disabled="true"] *):hover {
+    background: var(--arkme-control-hover-surface, #f1f2f6) !important;
+  }
+}
+
+/* Selected choices and hovered choices share the same neutral fill. */
+body:has([data-arkme-owned="product-navigation"]) [role="option"][aria-selected="true"] {
+  background: var(--arkme-control-hover-surface, #f1f2f6) !important;
+}

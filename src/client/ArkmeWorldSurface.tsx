@@ -166,7 +166,7 @@ const styles: Record<string, CSSProperties> = {
   extensionShelfFooter: { display: 'flex', justifyContent: 'flex-end' },
   extensionShelfViewAll: { minHeight: 30, padding: '0 9px', border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 },
   linkButton: { padding: '5px 7px', border: 0, borderRadius: 7, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
-  commentButton: { padding: '3px 0', display: 'inline-flex', alignItems: 'center', gap: 6, border: 0, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  commentButton: { padding: '4px 8px', borderRadius: 8, display: 'inline-flex', alignItems: 'center', gap: 6, border: 0, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   commentButtonActive: { color: arkmeTheme.accent, fontWeight: 600 },
   commentPreview: { position: 'relative', marginTop: 6, padding: '8px 12px', overflow: 'hidden', borderRadius: 10, background: arkmeTheme.subtle },
   commentPreviewHitTarget: { position: 'absolute', inset: 0, width: '100%', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' },

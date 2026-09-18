@@ -83,9 +83,7 @@ function ArkmeQuickAddMenuItem({ icon, label, onClick }: {
   onClick(): void
 }) {
   return <button
-    type="button" role="menuitem" style={style.menuItem} onClick={onClick}
-    onMouseEnter={event => { event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, #f4f4f6)' }}
-    onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+    type="button" role="menuitem" data-arkme-hover="surface" style={style.menuItem} onClick={onClick}
   >
     {typeof icon === 'string' ? <span aria-hidden style={maskIcon(icon, style.menuIcon!)} /> : <span aria-hidden style={style.menuIcon}>{icon}</span>}
     <span>{label}</span>
@@ -194,6 +192,7 @@ export function ArkmeQuickAddButton({
       ref={triggerRef} type="button" aria-label={onNewDshSession ? '新建 DSH 会话、添加联系人、群聊或 Bot' : '添加联系人、群聊或 Bot'} title="添加"
       aria-haspopup="menu" aria-expanded={menuOpen}
       style={style.trigger}
+      data-arkme-hover="button"
       onClick={() => { setMenuError(''); setMenuOpen(open => !open) }}
     >＋</button>
     {menuOpen && <ArkmeQuickAddMenu

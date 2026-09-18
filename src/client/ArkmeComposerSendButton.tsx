@@ -38,6 +38,7 @@ export function ArkmeComposerSendButton({ ariaLabel, disabled, onClick }: {
   const buttonDisabled = disabled === true
   return <button
     type="button"
+    data-arkme-hover="none"
     style={{
       ...arkmeComposerSendButtonStyle,
       ...(buttonDisabled ? arkmeComposerSendButtonDisabledStyle : {}),

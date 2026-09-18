@@ -1,6 +1,6 @@
 import {
   memo, useCallback, useEffect, useRef, useState,
-  type CSSProperties, type ReactNode, type RefObject,
+  type CSSProperties, type MouseEventHandler, type ReactNode, type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -71,7 +71,7 @@ export const ARKME_CONVERSATION_HEADER_ACTIONS_STYLE: CSSProperties = {
 export const ARKME_CONVERSATION_HEADER_BUTTON_STYLE: CSSProperties = {
   width: 28, height: 28, padding: 2, boxSizing: 'border-box', border: 0, borderRadius: 28, background: 'transparent',
   color: 'var(--dsw-alias-label-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-  flex: 'none', cursor: 'pointer',
+  flex: 'none', cursor: 'pointer', appearance: 'none',
 }
 
 export const ARKME_CONVERSATION_SETTINGS_MENU_WIDTH = GROUP_SETTINGS_MENU_WIDTH
@@ -326,12 +326,13 @@ function MagicWandIcon() {
 
 export function ArkmeConversationHeaderIconButton(props: {
   label: string
+  title?: string
   children: ReactNode
   buttonRef?: RefObject<HTMLButtonElement>
   hasPopup?: boolean
   expanded?: boolean
   busy?: boolean
-  onClick: () => void
+  onClick: MouseEventHandler<HTMLButtonElement>
 }) {
   return <button
     ref={props.buttonRef}
@@ -340,7 +341,7 @@ export function ArkmeConversationHeaderIconButton(props: {
     aria-haspopup={props.hasPopup ? 'menu' : undefined}
     aria-expanded={props.expanded}
     aria-busy={props.busy || undefined}
-    title={props.label}
+    title={props.title ?? props.label}
     style={styles.headerButton}
     onMouseEnter={event => { event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover)' }}
     onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}

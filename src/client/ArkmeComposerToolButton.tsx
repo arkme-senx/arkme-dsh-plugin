@@ -18,7 +18,7 @@ export const arkmeComposerToolButtonStyle: CSSProperties = Object.freeze({
   transition: 'none',
 })
 
-/** Shared visual contract for composer toolbar icons; interaction state never changes its styling. */
+/** Shared toolbar geometry; the Arkme button stylesheet supplies hover feedback. */
 export const ArkmeComposerToolButton = forwardRef<
   HTMLButtonElement,
   Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'style'>
