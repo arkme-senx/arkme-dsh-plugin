@@ -1,3 +1,4 @@
+import { NativeForwardAction } from './NativeForwardAction.js'
 import { copyText } from './clipboard-text.js'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
@@ -26,13 +27,13 @@ class SelectionBoundary extends Component<{ children: ReactNode }, { failed: boo
 
 export function NativeSelectionHeader({ sessionId, useChat, doc = document }: HeaderProps & { doc?: Document }) {
   if (typeof useChat !== 'function') return null
-  return <SelectionBoundary key={sessionId}><NativeSelectionView useChat={useChat} doc={doc} /></SelectionBoundary>
+  return <SelectionBoundary key={sessionId}><NativeSelectionView sessionId={sessionId} useChat={useChat} doc={doc} /></SelectionBoundary>
 }
 
-function NativeSelectionView({ useChat, doc }: { useChat: SnapshotSelectorHook<unknown>; doc: Document }) {
+function NativeSelectionView({ sessionId, useChat, doc }: { sessionId: string; useChat: SnapshotSelectorHook<unknown>; doc: Document }) {
   const [present, setPresent] = useState(false)
   useLayoutEffect(() => observeNativeChatPresence(doc, setPresent), [doc])
-  return present ? <NativeSelectionSession useChat={useChat} doc={doc} /> : null
+  return present ? <NativeSelectionSession sessionId={sessionId} useChat={useChat} doc={doc} /> : null
 }
 
 function NativeCopyTextAction({ chat, selectedKey, doc }: { chat: NativeChat; selectedKey: string | undefined; doc: Document }) {
@@ -72,7 +73,7 @@ function NativeCopyTextAction({ chat, selectedKey, doc }: { chat: NativeChat; se
   </>
 }
 
-function NativeSelectionSession({ useChat, doc }: { useChat: SnapshotSelectorHook<unknown>; doc: Document }) {
+function NativeSelectionSession({ sessionId, useChat, doc }: { sessionId: string; useChat: SnapshotSelectorHook<unknown>; doc: Document }) {
   const snapshot = useChat(value => value)
   const chat = readNativeChat(snapshot)
   const chatRef = useRef<NativeChat | undefined>(chat)
@@ -224,21 +225,22 @@ function NativeSelectionSession({ useChat, doc }: { useChat: SnapshotSelectorHoo
         } catch { fail() }
       }}><span style={messageSelectionMenuStyles.menuIcon}><ArkmeSelectActionIcon kind="select" size={16} /></span>多选</button>
     </div>, doc.body)}
-    {state.active && layout.actionDock && createPortal(<div data-arkme-native-selection="actions" role="group" aria-label="多选操作" onKeyDown={escape}
+    {state.active && <NativeForwardAction chat={chat} keys={state.keys} sessionId={sessionId} doc={doc} onComplete={exit}>{forwardButton => layout.actionDock && createPortal(<div data-arkme-native-selection="actions" role="group" aria-label="多选操作" onKeyDown={escape}
       style={{ ...messageSelectionStyles.selectBar, height: '100%', borderTop: 0 }}>
       <style>{nativeSelectionActionOverlayCss}</style>
       <NativeCopyTextAction key={state.keys.size === 1 ? [...state.keys][0] : 'no-single-selection'} chat={chat} selectedKey={state.keys.size === 1 ? [...state.keys][0] : undefined} doc={doc} />
-      {([{ kind: 'link', label: '复制链接' }, { kind: 'forward', label: '转发' }] as const).map(action =>
+      {([{ kind: 'link', label: '复制链接' }] as const).map(action =>
         <button key={action.kind} type="button" disabled title="暂未接入" aria-label={action.label}
           style={{ ...messageSelectionStyles.selectBarButton, ...messageSelectionStyles.selectBarButtonDisabled }}>
           <span style={messageSelectionStyles.selectBarIconTile}><ArkmeSelectActionIcon kind={action.kind} size={22} /></span>
           <span style={messageSelectionStyles.selectBarLabel}>{action.label}</span>
         </button>)}
+      {forwardButton}
       <button type="button" aria-label="退出多选" style={messageSelectionStyles.selectBarButton} onClick={exit}>
         <span style={messageSelectionStyles.selectBarIconTile}><ArkmeSelectActionIcon kind="close" size={18} /></span>
         <span style={messageSelectionStyles.selectBarLabel}>退出多选</span>
       </button>
-    </div>, layout.actionDock)}
+    </div>, layout.actionDock)}</NativeForwardAction>}
     {state.active && layout.viewport && createPortal(<div ref={layer} data-arkme-native-selection="controls" onKeyDown={escape}
       style={{ position: 'relative', width: 0, height: 0, overflowAnchor: 'none', pointerEvents: 'none', zIndex: 20 }}>
       <style>{'[data-arkme-native-selection] button:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8); outline-offset: 2px; }'}</style>

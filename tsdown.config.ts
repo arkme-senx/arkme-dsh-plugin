@@ -112,6 +112,7 @@ export default defineConfig([
     entry: { 'harness-native-selection-client': 'src/client/harness-native-selection-client.tsx' },
     outDir: 'lib', format: 'cjs', platform: 'browser', inputOptions: { platform: 'browser' }, target: 'es2022',
     fixedExtension: false, dts: false, clean: false,
+    loader: { '.svg': 'base64', '.png': 'base64' },
     external: CLIENT_EXTERNALS,
     noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
     define: { 'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production') },

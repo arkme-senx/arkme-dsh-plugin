@@ -39,7 +39,13 @@ function MixedOwnerHarness() {
   </>
 }
 
+const targetButtons = (renderer: ReactTestRenderer) => renderer.root.findAllByType('button').filter(node => typeof node.props['aria-pressed'] === 'boolean')
 function button(renderer: ReactTestRenderer, label: string) {
+  if (label === '取消') return renderer.root.findAllByProps({ 'aria-label': '关闭转发对象选择' })[0]
+  if (label === '转发') {
+    const submit = renderer.root.findAllByType('button').find(node => node.props['aria-label'] === '发送转发')
+    if (submit) return submit
+  }
   return renderer.root.findAllByType('button').find(node => node.props['aria-label'] === label || node.children.join('') === label)
 }
 
@@ -90,7 +96,7 @@ describe('shared owner message action UI', () => {
       })
     })
     await act(async () => { button(renderer!, '转发')?.props.onClick(); await Promise.resolve() })
-    await act(async () => { renderer!.root.findByType('strong').parent?.parent?.props.onClick() })
+    await act(async () => { targetButtons(renderer!)[0]?.props.onClick() })
     await act(async () => { button(renderer!, '转发')?.props.onClick(); await Promise.resolve() })
 
     expect(mocks.callArkme).toHaveBeenCalledWith('message-actions.forward', expect.objectContaining({
@@ -137,13 +143,13 @@ describe('shared owner message action UI', () => {
       })
     })
     await act(async () => { button(renderer!, '转发')?.props.onClick(); await Promise.resolve() })
-    await act(async () => { renderer!.root.findByType('strong').parent?.parent?.props.onClick() })
+    await act(async () => { targetButtons(renderer!)[0]?.props.onClick() })
     await act(async () => { button(renderer!, '转发')?.props.onClick(); await Promise.resolve() })
 
     expect(renderer!.root.findByProps({ 'aria-label': '搜索转发对象' }).props.disabled).toBe(true)
     expect(renderer!.root.findByType('textarea').props.disabled).toBe(true)
     expect(renderer!.root.findByType('textarea').props.maxLength).toBeUndefined()
-    expect(renderer!.root.findByType('strong').parent?.parent?.props.disabled).toBe(true)
+    expect(targetButtons(renderer!)[0]?.props.disabled).toBe(true)
 
     await act(async () => {
       finishForward?.({ sourceRef: 'target-ref', itemUid: 'forwarded-record', status: 1, localState: 'synced' })
@@ -230,7 +236,7 @@ describe('shared owner message action UI', () => {
       })
     })
     await act(async () => { button(renderer!, '转发')?.props.onClick(); await Promise.resolve() })
-    await act(async () => { renderer!.root.findByType('strong').parent?.parent?.props.onClick() })
+    await act(async () => { targetButtons(renderer!)[0]?.props.onClick() })
     await act(async () => { button(renderer!, '转发')?.props.onClick(); await Promise.resolve() })
 
     expect(renderer!.root.findAllByProps({ role: 'dialog' })).toHaveLength(1)
@@ -268,7 +274,7 @@ describe('shared owner message action UI', () => {
       })
     })
     await act(async () => { button(renderer!, '转发')?.props.onClick(); await Promise.resolve() })
-    await act(async () => { renderer!.root.findByType('strong').parent?.parent?.props.onClick() })
+    await act(async () => { targetButtons(renderer!)[0]?.props.onClick() })
     await act(async () => { button(renderer!, '转发')?.props.onClick(); await Promise.resolve() })
 
     expect(renderer!.root.findAllByProps({ role: 'dialog' })).toHaveLength(1)
@@ -309,8 +315,8 @@ describe('shared owner message action UI', () => {
       })
     })
     await act(async () => { button(renderer!, '转发')?.props.onClick(); await Promise.resolve() })
-    await act(async () => { renderer!.root.findAllByType('strong')[0]?.parent?.parent?.props.onClick() })
-    await act(async () => { renderer!.root.findAllByType('strong')[1]?.parent?.parent?.props.onClick() })
+    await act(async () => { targetButtons(renderer!)[0]?.props.onClick() })
+    await act(async () => { targetButtons(renderer!)[1]?.props.onClick() })
     await act(async () => { button(renderer!, '转发')?.props.onClick(); await Promise.resolve() })
 
     expect(renderer!.root.findAllByProps({ role: 'dialog' })).toHaveLength(1)
@@ -345,11 +351,45 @@ describe('shared owner message action UI', () => {
       })
     })
     await act(async () => { button(renderer!, '转发')?.props.onClick(); await Promise.resolve() })
-    for (const target of renderer!.root.findAllByType('strong')) {
-      await act(async () => { target.parent?.parent?.props.onClick() })
+    for (const target of targetButtons(renderer!)) {
+      await act(async () => { target.props.onClick() })
     }
 
-    expect(renderer!.root.findAll(node => node.type === 'span' && node.children.join('') === '✓')).toHaveLength(5)
+    expect(targetButtons(renderer!).filter(node => node.props['aria-pressed'])).toHaveLength(5)
     expect(renderer!.root.findByProps({ role: 'status' }).children.join('')).toBe('最多选择 5 个转发对象')
   })
+})
+
+it('resumes the same frozen forwarding attempt after closing and ends it when copy-link succeeds', async () => {
+  mocks.callArkme.mockReset().mockImplementation(async (operation: string, params: { directory?: string }) => {
+    if (operation === 'sources.list') return { items: params.directory === 'root' ? [{ sourceRef: 'target', sourceKey: 'target', kind: 'private_chat', displayName: '目标' }] : [], hasMore: false }
+    if (operation === 'message-actions.copy-link') return { sid: 'link', url: 'https://jotmo.example/s/link' }
+    if (operation === 'message-actions.forward') throw new Error('结果未知')
+    throw new Error(operation)
+  })
+  vi.stubGlobal('window', { innerWidth: 1200, innerHeight: 800, addEventListener: vi.fn(), removeEventListener: vi.fn(), setTimeout, clearTimeout })
+  vi.stubGlobal('document', { defaultView: { navigator: { clipboard: { writeText: vi.fn(async () => {}) } } } })
+  let view: ReactTestRenderer
+  await act(async () => { view = create(<Harness conversationRef="same" />) })
+  const menu = async () => { await act(async () => view!.root.findByProps({ 'data-message': 'one' }).props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 1, clientY: 1 })) }
+  try {
+    await menu(); await act(async () => button(view!, '转发')!.props.onClick())
+    await act(async () => targetButtons(view!)[0]!.props.onClick())
+    await act(async () => view!.root.findByType('textarea').props.onChange({ currentTarget: { value: '原附言' } }))
+    await act(async () => button(view!, '转发')!.props.onClick())
+    const first = mocks.callArkme.mock.calls.find(([op]) => op === 'message-actions.forward')![1]
+    await act(async () => button(view!, '取消')!.props.onClick())
+    await menu(); await act(async () => button(view!, '转发')!.props.onClick())
+    expect(view!.root.findByType('textarea').props.value).toBe('原附言')
+    await act(async () => button(view!, '转发')!.props.onClick())
+    const calls = mocks.callArkme.mock.calls.filter(([op]) => op === 'message-actions.forward')
+    expect(calls).toHaveLength(2)
+    expect(calls[1]![1]).toEqual(first)
+    await act(async () => button(view!, '取消')!.props.onClick())
+    await menu(); await act(async () => button(view!, '复制链接')!.props.onClick())
+    await menu(); await act(async () => button(view!, '转发')!.props.onClick())
+    expect(view!.root.findAllByType('textarea')).toHaveLength(0)
+    await act(async () => targetButtons(view!)[0]!.props.onClick())
+    expect(view!.root.findByType('textarea').props.value).toBe('')
+  } finally { await act(async () => view!.unmount()); vi.unstubAllGlobals() }
 })

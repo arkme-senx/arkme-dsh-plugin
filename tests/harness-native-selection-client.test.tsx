@@ -5,8 +5,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { NativeSelectionHeader } from '../src/client/harness-native-selection-client.js'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 
+const api = vi.hoisted(() => ({ call: vi.fn() }))
+vi.mock('../src/client/api.js', () => ({ callArkme: api.call, ArkmeClientError: class extends Error {} }))
+
 const disposals: Array<() => Promise<void>> = []
-beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true) })
+beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); api.call.mockReset() })
 afterEach(async () => { for (const dispose of disposals.splice(0)) await dispose(); document.body.replaceChildren(); vi.unstubAllGlobals() })
 
 async function setup() {
@@ -15,7 +18,7 @@ async function setup() {
   const frame = document.createElement('iframe'); surface.append(frame); document.body.append(surface)
   const doc = frame.contentDocument!; const win = doc.defaultView!
   const callbacks = new Set<() => void>()
-  let node: { key: string; target: string; kind: string; visibility: string; data: { content?: Array<{ type: string; text?: string }>; status?: string; blocks?: Array<{ kind: string; text: string }> } } = { key: 'user:opaque', target: 'chat', kind: 'user', visibility: 'visible', data: {} }
+  let node: { anchorSeq?: number; key: string; target: string; kind: string; visibility: string; data: { time?: number; content?: Array<{ type: string; text?: string }>; status?: string; blocks?: Array<{ kind: string; text: string }> } } = { key: 'user:opaque', target: 'chat', kind: 'user', visibility: 'visible', data: {} }
   const chat = { order: [node.key], nodes: {
     get: (key: string) => key === node.key ? node : undefined,
     source: () => ({ subscribe: (cb: () => void) => { callbacks.add(cb); return () => { callbacks.delete(cb) } } }),
@@ -75,7 +78,7 @@ it('enters from a message context menu and selects that message', async () => {
   expect(s.doc.querySelector('[role="checkbox"]')?.getAttribute('aria-checked')).toBe('true')
 })
 
-it('overlays the Arkme action bar on the mounted composer, keeps zero selection, and exits without enabling unfinished actions', async () => {
+it('overlays the Arkme action bar on the mounted composer, keeps zero selection, and enables forwarding while leaving copy-link unavailable', async () => {
   const s = await setup()
   const dock = s.doc.createElement('div'); dock.dataset.slot = 'conversation.input.dock'
   const input = s.doc.createElement('textarea')
@@ -87,7 +90,8 @@ it('overlays the Arkme action bar on the mounted composer, keeps zero selection,
   expect(bar?.parentElement).toBe(dock)
   const buttons = [...bar.querySelectorAll('button')]
   expect(buttons.map(button => button.textContent)).toEqual(['复制文本', '复制链接', '转发', '退出多选'])
-  expect(buttons.slice(1, 3).every(button => button.disabled && button.title === '暂未接入')).toBe(true)
+  expect(buttons[1]!.disabled && buttons[1]!.title === '暂未接入').toBe(true)
+  expect(buttons[2]!.disabled).toBe(false)
   expect(buttons[0]!.disabled).toBe(false)
   expect(buttons[3]!.disabled).toBe(false)
   await s.click('[role="checkbox"]')
@@ -579,4 +583,95 @@ it.each([[4, 120], [798, 120], [20, 59], [20, 561], [20, 250]])('ignores gutter 
   expect(event.defaultPrevented).toBe(false)
   await act(async () => s.viewport.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true, clientX: x, clientY: y })))
   expect(s.doc.body.textContent).toContain('已选 1 条')
+})
+
+
+async function setupForward(authResult?: () => Promise<unknown>) {
+  const s = await setup()
+  const dock = s.doc.createElement('div'); dock.dataset.slot = 'conversation.input.dock'
+  const composer = s.doc.createElement('div'); composer.dataset.slot = 'conversation.composer.bar'
+  s.doc.body.append(dock, composer)
+  s.setNode({ key: 'user:opaque', anchorSeq: 1, kind: 'user', target: 'chat', visibility: 'visible', data: { time: 1000, content: [{ type: 'text', text: '**source**' }] } })
+  api.call.mockImplementation(async (operation: string, params: { directory?: string }) => {
+    if (operation === 'auth.status') return authResult ? await authResult() : { status: 'authenticated', userId: 42 }
+    if (operation === 'sources.list') return { items: params.directory === 'root' ? [{ sourceRef: 'target', sourceKey: 'chat:t', kind: 'private_chat', displayName: '目标' }] : [], hasMore: false }
+    if (operation === 'native-chat.forward') return { itemUid: 'sent', localState: 'synced' }
+    throw new Error(operation)
+  })
+  await s.enter()
+  await s.click('[data-arkme-native-selection="actions"] [aria-label="转发"]')
+  return s
+}
+it('forwards from the native selection through the shared picker and exits only after confirmed success', async () => {
+  const s = await setupForward()
+  expect(s.doc.querySelector('[role="dialog"]')).not.toBeNull()
+  expect(s.doc.querySelector('[data-arkme-forward-source]')).toBeNull()
+  await s.click('[role="dialog"] button[aria-pressed]')
+  const source = s.doc.querySelector('[data-arkme-forward-source]')!
+  expect(source.textContent).toBe('我和DeepSeek Harness的快记我：**source**')
+  expect(source.querySelector('svg')).not.toBeNull()
+  expect(s.doc.body.textContent).toContain('已选 1 条')
+  await act(async () => { [...s.doc.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.getAttribute('aria-label') === '发送转发')!.click() })
+  expect(api.call).toHaveBeenCalledWith('native-chat.forward', expect.objectContaining({ expectedUserId: 42, snapshot: { sessionId: 'one', messages: [{ key: 'user:opaque', anchorSeq: 1, role: 'user', text: '**source**', createdAtMillis: 1000 }] } }), expect.any(AbortSignal))
+  expect(s.doc.querySelector('[role="dialog"]')).toBeNull()
+  expect(s.doc.querySelector('[data-arkme-native-selection="actions"]')).toBeNull()
+})
+it('cancels forwarding without writing or losing native selection', async () => {
+  const s = await setupForward()
+  await s.click('[aria-label="关闭转发对象选择"]')
+  expect(s.doc.querySelector('[role="dialog"]')).toBeNull()
+  expect(s.doc.body.textContent).toContain('已选 1 条')
+  expect(api.call.mock.calls.some(([operation]) => operation === 'native-chat.forward')).toBe(false)
+})
+it.each(['session', 'account'])('cleans native forwarding on %s changes', async kind => {
+  const s = await setupForward()
+  if (kind === 'session') await s.render('other')
+  else await act(async () => { s.surface.dataset.arkmeAccountId = '99' })
+  expect(s.doc.querySelector('[role="dialog"]')).toBeNull()
+  expect(api.call.mock.calls.some(([operation]) => operation === 'native-chat.forward')).toBe(false)
+})
+it('keeps the frozen forwarding attempt when the native composer docking element is replaced', async () => {
+  const s = await setupForward()
+  await act(async () => { s.doc.querySelector('[data-slot="conversation.input.dock"]')!.remove() })
+  await s.flush()
+  expect(s.doc.querySelector('[role="dialog"]')).not.toBeNull()
+  const dock = s.doc.createElement('div'); dock.dataset.slot = 'conversation.input.dock'
+  await act(async () => s.doc.querySelector('[data-slot="conversation.composer.bar"]')!.before(dock))
+  await s.flush()
+  expect(s.doc.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+  await s.click('[aria-label="关闭转发对象选择"]')
+  expect(s.doc.body.textContent).toContain('已选 1 条')
+})
+it('resumes native forwarding with the same frozen snapshot and delivery identity after an uncertain result', async () => {
+  const s = await setupForward()
+  const original = api.call.getMockImplementation()!
+  api.call.mockImplementation(async (...args) => {
+    if (args[0] === 'native-chat.forward') throw new Error('unknown outcome')
+    return original(...args)
+  })
+  await s.click('[role="dialog"] button[aria-pressed]')
+  const send = async () => act(async () => { [...s.doc.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.getAttribute('aria-label') === '发送转发')!.click() })
+  await send()
+  const first = api.call.mock.calls.find(([operation]) => operation === 'native-chat.forward')![1]
+  await s.click('[aria-label="关闭转发对象选择"]')
+  s.setNode({ key: 'user:opaque', anchorSeq: 1, kind: 'user', target: 'chat', visibility: 'visible', data: { time: 1000, content: [{ type: 'text', text: 'changed source' }] } })
+  await s.click('[data-arkme-native-selection="actions"] [aria-label="转发"]')
+  await send()
+  const calls = api.call.mock.calls.filter(([operation]) => operation === 'native-chat.forward')
+  expect(calls).toHaveLength(2)
+  expect(calls[1]![1]).toEqual(first)
+})
+
+it.each(['selection', 'session', 'account'])('ignores pending authentication after the native %s changes', async kind => {
+  let finish!: (value: unknown) => void
+  const s = await setupForward(() => new Promise(resolve => { finish = resolve }))
+  const signal = api.call.mock.calls.find(([operation]) => operation === 'auth.status')![2] as AbortSignal
+  expect(s.doc.querySelector('[aria-label="转发"]')?.hasAttribute('disabled')).toBe(true)
+  if (kind === 'selection') await s.click('[role="checkbox"]')
+  else if (kind === 'session') await s.render('other')
+  else await act(async () => { s.surface.dataset.arkmeAccountId = '99' })
+  expect(signal.aborted).toBe(true)
+  await act(async () => finish({ status: 'authenticated', userId: 42 }))
+  expect(s.doc.querySelector('[role="dialog"]')).toBeNull()
+  expect(api.call.mock.calls.some(([operation]) => operation === 'sources.list' || operation === 'native-chat.forward')).toBe(false)
 })

@@ -1837,6 +1837,8 @@ export interface ArkmeForwardTranscriptSegment {
 }
 
 export interface ArkmeForwardRecordPreviewItem {
+  /** Built-in AI presentation asset; never a user identity. */
+  avatarKind?: 'deepseek'
   templateKind?: number
   displayKind?: number
   senderName: string
@@ -3703,6 +3705,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'arko.cancel'
   | 'message-actions.copy-link'
   | 'message-actions.forward'
+  | 'native-chat.forward'
   | 'plugin.update.status'
   | 'plugin.update.check'
   | 'plugin.update.acknowledge'

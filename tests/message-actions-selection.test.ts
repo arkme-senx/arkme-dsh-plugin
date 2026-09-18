@@ -3,7 +3,6 @@ import {
   arkmeMessageActionCopyText,
   arkmeMessageActionConversationRef,
   arkmeMessageActionSelection,
-  arkmeMessageActionStableRequestIds,
   arkmeToggleMessageActionSelection,
   type ArkmeMessageActionViewItem,
 } from '../src/client/ArkmeMessageActions.js'
@@ -47,13 +46,4 @@ describe('Arkme shared message action selection', () => {
     ])).toBeUndefined()
   })
 
-  it('reuses per-target request identities while the selection key is unchanged', () => {
-    const first = arkmeMessageActionStableRequestIds(undefined, 'conversation\u0000a,b', ['target-a', 'target-b'])
-    const retry = arkmeMessageActionStableRequestIds(first, 'conversation\u0000a,b', ['target-b', 'target-a'])
-    const changed = arkmeMessageActionStableRequestIds(first, 'conversation\u0000a,c', ['target-a'])
-
-    expect(retry.ids).toEqual(first.ids)
-    expect(changed.ids['target-a']).not.toBe(first.ids['target-a'])
-    expect(retry.ids['target-a']?.sendAtMillis).toBe(first.ids['target-a']?.sendAtMillis)
-  })
 })

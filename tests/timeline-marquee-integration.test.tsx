@@ -135,7 +135,7 @@ it('keeps the 100-item action boundary separate from selecting 101 eligible mess
 it('opens the existing forward picker and suspends marquee until the picker closes', async () => {
   await render(); await select('occurrence-0', 'occurrence-1')
   await act(async () => action('转发').props.onClick())
-  const dialog = renderer.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })
+  const dialog = renderer.root.findByProps({ role: 'dialog', 'aria-label': '选择转发对象' })
   const targets = dialog.findByProps({ 'aria-label': '转发对象列表' }).findAllByType('button')
   expect(targets).toHaveLength(2)
   expect(targets.some(button => renderedText(button).includes('发给自己'))).toBe(true)
@@ -147,7 +147,7 @@ it('opens the existing forward picker and suspends marquee until the picker clos
   const backdrop = renderer.root.findAll(node => node.props['data-arkme-notification-blocking-overlay'] === 'true' && node.props.onMouseDown)[0]!
   const target = {}
   await act(async () => backdrop.props.onMouseDown({ target, currentTarget: target }))
-  expect(renderer.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+  expect(renderer.root.findAllByProps({ role: 'dialog', 'aria-label': '选择转发对象' })).toHaveLength(0)
   expect(renderer.root.findByType(RegionMarquee).props.enabled).toBe(true)
   expect(toolbar()!.props['aria-label']).toBe('已选择 2 条消息')
 })
