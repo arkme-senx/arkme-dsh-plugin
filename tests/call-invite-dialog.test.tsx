@@ -60,7 +60,7 @@ describe('desktop call invitations', () => {
   it('copies the invitation text when system sharing is unavailable', async () => {
     vi.stubGlobal('navigator', {})
     const renderer = await render(); await click(renderer, '生成邀请链接'); await click(renderer, '分享邀请')
-    expect(mocks.copy).toHaveBeenLastCalledWith(`即我通话\n分享者邀请你发起语音通话\n${url}`)
+    expect(mocks.copy).toHaveBeenLastCalledWith(`Arkme 通话\n分享者邀请你发起语音通话\n${url}`)
     expect(text(renderer.toJSON())).toContain('邀请文案和链接已复制')
   })
 
@@ -68,7 +68,7 @@ describe('desktop call invitations', () => {
     const share = vi.fn().mockRejectedValue(new DOMException('cancelled', 'AbortError'))
     vi.stubGlobal('navigator', { share })
     const renderer = await render(); await click(renderer, '生成邀请链接'); await click(renderer, '分享邀请')
-    expect(share).toHaveBeenCalledWith({ title: '即我通话', text: '分享者邀请你发起语音通话', url })
+    expect(share).toHaveBeenCalledWith({ title: 'Arkme 通话', text: '分享者邀请你发起语音通话', url })
     expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
   })
 

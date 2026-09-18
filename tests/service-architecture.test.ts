@@ -19,6 +19,7 @@ const expectedPublicMethods = [
   'billingQuota', 'billingProducts', 'createBillingOrder', 'billingOrderStatus',
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
+  'createShareCallLink', 'prepareCallReceiver', 'claimIncomingCall',
   'listCallHistory', 'callDetail', 'retryCallSummary',
   'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'publicAvatarPresentationsByArkmeIds', 'extensionAuthors', 'listExtensionReviews',
   'backgroundSoundPreference', 'updateBackgroundSoundPreference',

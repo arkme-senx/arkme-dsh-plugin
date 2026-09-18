@@ -201,7 +201,7 @@ export class OutgoingCallRuntime {
     const generation = this.generation
     const callRequestId = this.snapshot.callRequestId
     this.receiverReady = false
-    this.update({ phase: 'incoming', displayName: message.callerName || '即我用户', mediaType: message.mediaType ?? 'audio', statusText: '收到来电邀请' })
+    this.update({ phase: 'incoming', displayName: message.callerName || 'Arkme 用户', mediaType: message.mediaType ?? 'audio', statusText: '收到来电邀请' })
     try {
       await this.callApi('calls.receiver.claim', { callRequestId })
       if (generation !== this.generation || this.getSnapshot().phase !== 'incoming') {

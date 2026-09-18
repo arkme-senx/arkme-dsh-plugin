@@ -61,7 +61,7 @@ export class OutgoingCallService {
       throw new ArkmePluginError('call-link-invalid', '通话邀请链接无效，请重试', true, 502)
     }
     return { callUrl: url.href, expiresAtMillis: numberValue(data.expires_at), mediaType,
-      sharerDisplayName: stringValue(profile.display_name).trim() || '即我用户' }
+      sharerDisplayName: stringValue(profile.display_name).trim() || 'Arkme 用户' }
   }
 
   async prepareCallReceiver(): Promise<ArkmeCallReceiverPrepareResult> {
@@ -80,7 +80,7 @@ export class OutgoingCallService {
       throw new ArkmePluginError('call-credentials-invalid', '桌面通话初始化失败', true, 502)
     }
     return { accountUserId: session.userId, bootstrap: {
-      sdkAppId, userId, userSig, nickName: profile.displayName.trim() || '即我用户', avatar: '', outgoingOnly: false,
+      sdkAppId, userId, userSig, nickName: profile.displayName.trim() || 'Arkme 用户', avatar: '', outgoingOnly: false,
     } }
   }
 

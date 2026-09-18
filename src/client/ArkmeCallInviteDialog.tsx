@@ -84,9 +84,9 @@ export function ArkmeCallInviteDialog({ onBack, onClose }: { onBack(): void; onC
     const invitation = `${link.sharerDisplayName}邀请你发起${link.mediaType === 'video' ? '视频' : '语音'}通话`
     try {
       if (systemShare && typeof navigator !== 'undefined' && navigator.share !== undefined) {
-        await navigator.share({ title: '即我通话', text: invitation, url: link.callUrl })
+        await navigator.share({ title: 'Arkme 通话', text: invitation, url: link.callUrl })
       } else {
-        await copyText(systemShare ? `即我通话\n${invitation}\n${link.callUrl}` : link.callUrl)
+        await copyText(systemShare ? `Arkme 通话\n${invitation}\n${link.callUrl}` : link.callUrl)
         if (alive.current) setStatus(systemShare ? '邀请文案和链接已复制，可粘贴分享' : '链接已复制，可粘贴给对方')
       }
     } catch (cause) {
