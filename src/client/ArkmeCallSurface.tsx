@@ -5,6 +5,11 @@ import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlas
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { X } from '@phosphor-icons/react/dist/icons/X'
+import { Link } from '@phosphor-icons/react/dist/icons/Link'
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
+import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
+import { ArkmeCallInviteDialog } from './ArkmeCallInviteDialog.js'
+import { useResizableCallBrowser } from './use-resizable-call-browser.js'
 import type {
   ArkmeCallDetail,
   ArkmeCallHistoryItem,
@@ -194,12 +199,12 @@ function sampleDetailForCall(callRef: string): ArkmeCallDetail | undefined {
 
 const styles: Record<string, CSSProperties> = {
   root: {
-    width: '100%', height: '100%', minWidth: 0, minHeight: 0,
-    display: 'grid', gridTemplateColumns: '326px minmax(0, 1fr)', background: arkmeTheme.base, color: arkmeTheme.text,
+    width: '100%', height: '100%', minWidth: 0, minHeight: 0, position: 'relative',
+    display: 'grid', background: arkmeTheme.base, color: arkmeTheme.text,
   },
   browser: {
     minWidth: 0, minHeight: 0, padding: '30px 15px 17px', display: 'flex', flexDirection: 'column',
-    borderRight: `1px solid ${arkmeTheme.borderSoft}`, background: arkmeTheme.base, boxSizing: 'border-box',
+    background: arkmeTheme.base, boxSizing: 'border-box',
   },
   heading: { padding: '0 1px 0 2px' },
   title: { margin: 0, fontSize: 22, lineHeight: '28px', fontWeight: 650, letterSpacing: '-0.02em' },
@@ -224,16 +229,21 @@ const styles: Record<string, CSSProperties> = {
   list: { minHeight: 0, flex: 1, overflowY: 'auto', margin: 0, padding: 0, listStyle: 'none' },
   callRow: {
     width: '100%', minHeight: 64, display: 'grid', gridTemplateColumns: '48px minmax(0, 1fr) auto',
-    alignItems: 'center', gap: 10, padding: '8px 8px', border: 0, borderRadius: 13,
+    alignItems: 'center', columnGap: 10, rowGap: 4, padding: '8px 8px', border: 0, borderRadius: 13,
     background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
   },
   callRowSelected: { background: arkmeTheme.active },
-  callContent: { minWidth: 0, display: 'grid', gap: 4 },
-  callNameLine: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
+  callNameLine: { gridColumn: 2, gridRow: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
   callName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '20px', fontWeight: 650 },
   sampleBadge: { height: 17, padding: '0 5px', borderRadius: 5, background: arkmeTheme.layer2, color: arkmeTheme.tertiary, fontSize: 10, lineHeight: '17px' },
-  callMeta: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 4, color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '16px' },
-  callTime: { alignSelf: 'start', paddingTop: 8, color: arkmeTheme.tertiary, fontSize: 11, whiteSpace: 'nowrap' },
+  callMeta: { gridColumn: '2 / -1', gridRow: 2, minWidth: 0, display: 'flex', alignItems: 'center', gap: 4, color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '16px' },
+  callTime: { gridColumn: 3, gridRow: 1, color: arkmeTheme.tertiary, fontSize: 11, whiteSpace: 'nowrap' },
+  callSummary: {
+    gridColumn: '2 / -1', minWidth: 0, padding: '6px 8px', marginTop: 4, borderRadius: 8,
+    background: `color-mix(in srgb, ${arkmeTheme.text} 4%, transparent)`,
+    border: `1px solid ${arkmeTheme.borderSoft}`, color: arkmeTheme.secondary, fontSize: 12, lineHeight: '17px',
+  },
+  callSummaryText: { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 3, overflow: 'hidden', overflowWrap: 'anywhere', whiteSpace: 'pre-line' },
   status: { padding: '18px 6px', color: arkmeTheme.tertiary, fontSize: 12, textAlign: 'center', lineHeight: '18px' },
   content: { minWidth: 0, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column', background: arkmeTheme.base },
   empty: {
@@ -250,7 +260,7 @@ const styles: Record<string, CSSProperties> = {
     font: 'inherit', fontSize: 12, fontWeight: 650,
   },
   detailHeader: {
-    height: 68, flex: 'none', padding: '0 22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    minHeight: 68, flex: 'none', padding: '12px 22px', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between',
     borderBottom: `1px solid ${arkmeTheme.borderSoft}`, boxSizing: 'border-box',
   },
   detailIdentity: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 12 },
@@ -258,6 +268,11 @@ const styles: Record<string, CSSProperties> = {
   detailTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 16, lineHeight: '22px', fontWeight: 650 },
   detailSub: { margin: 0, color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '17px' },
   detailActions: { flex: 'none', display: 'flex', alignItems: 'center', gap: 8 },
+  privateChatButton: {
+    height: 36, padding: '0 11px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+    border: `1px solid ${arkmeTheme.border}`, borderRadius: 10, background: arkmeTheme.elevated,
+    color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 12, whiteSpace: 'nowrap',
+  },
   iconButton: {
     width: 36, height: 36, display: 'grid', placeItems: 'center', border: `1px solid ${arkmeTheme.border}`,
     borderRadius: 10, background: arkmeTheme.elevated, color: arkmeTheme.text, cursor: 'pointer',
@@ -270,26 +285,33 @@ const styles: Record<string, CSSProperties> = {
   },
   picker: {
     width: 360, maxWidth: 'calc(100vw - 48px)', height: 'min(620px, calc(100vh - 48px))',
-    display: 'flex', flexDirection: 'column', overflowY: 'auto', overscrollBehavior: 'contain',
-    padding: 14, border: `1px solid ${arkmeTheme.border}`,
-    borderRadius: 18, background: arkmeTheme.menu, boxShadow: arkmeTheme.shadow,
+    display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    padding: 16, border: `1px solid ${arkmeTheme.border}`,
+    borderRadius: 18, background: `color-mix(in srgb, ${arkmeTheme.base} 97%, ${arkmeTheme.text})`, boxShadow: arkmeTheme.shadow,
     boxSizing: 'border-box',
   },
-  pickerHeader: { height: 34, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  pickerHeader: { height: 34, flex: 'none', marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   pickerTitle: { margin: 0, color: arkmeTheme.text, fontSize: 15, lineHeight: '21px', fontWeight: 650 },
   closeButton: {
     width: 30, height: 30, display: 'grid', placeItems: 'center', border: 0, borderRadius: 9,
     background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer',
   },
   pickerSearch: {
-    height: 36, minHeight: 36, flex: 'none', margin: '0 0 13px', padding: '0 10px',
-    display: 'flex', alignItems: 'center', gap: 8, border: 0, borderRadius: 9,
-    color: arkmeTheme.tertiary, background: arkmeTheme.input, boxSizing: 'border-box',
+    height: 40, minHeight: 40, flex: 'none', margin: '0 0 12px', padding: '0 12px',
+    display: 'flex', alignItems: 'center', gap: 8,
+    border: `1px solid var(--arkme-call-search-border, ${arkmeTheme.border})`, borderRadius: 10,
+    color: arkmeTheme.secondary, background: arkmeTheme.base, boxSizing: 'border-box', cursor: 'text',
+    transition: 'border-color 120ms ease, box-shadow 120ms ease',
   },
-  pickerInput: { minWidth: 0, flex: 1, border: 0, outline: 0, padding: 0, background: 'transparent', color: arkmeTheme.text, font: 'inherit', fontSize: 12 },
+  pickerInput: { minWidth: 0, flex: 1, height: '100%', border: 0, outline: 0, padding: 0, background: 'transparent', color: arkmeTheme.text, font: 'inherit', fontSize: 13 },
+  pickerInvite: {
+    flex: 'none', gridTemplateColumns: '28px minmax(0, 1fr) 16px', marginBottom: 12, padding: '12px 10px',
+    background: `color-mix(in srgb, ${arkmeTheme.accent} 8%, ${arkmeTheme.base})`,
+  },
+  pickerContacts: { minHeight: 0, flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', scrollbarWidth: 'thin' },
   recommendation: {
     minHeight: 58, marginBottom: 12, padding: '9px 10px', display: 'grid', gridTemplateColumns: '44px minmax(0, 1fr) auto',
-    alignItems: 'center', gap: 9, borderRadius: 13, background: arkmeTheme.layer1, boxSizing: 'border-box',
+    alignItems: 'center', gap: 9, borderRadius: 13, background: 'transparent', boxSizing: 'border-box',
   },
   pickerText: { minWidth: 0, display: 'grid', gap: 3 },
   pickerNameLine: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
@@ -544,6 +566,7 @@ function typePickerPlacementFromAnchor(anchor: HTMLElement | undefined): TypePic
 
 export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurfaceProps = {}) {
   const surfaceRef = useRef<HTMLElement>(null)
+  const browserResize = useResizableCallBrowser(surfaceRef)
   const tourPickerOwned = useRef(false)
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
@@ -556,12 +579,20 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
   const paginationAbortRef = useRef<AbortController>()
   const listRef = useRef<HTMLUListElement>(null)
   const [selectedRef, setSelectedRef] = useState('')
+  const privateChatAbortRef = useRef<AbortController>()
+  const [openingPrivateChat, setOpeningPrivateChat] = useState(false)
+  useEffect(() => {
+    setOpeningPrivateChat(false)
+    return () => { privateChatAbortRef.current?.abort(); privateChatAbortRef.current = undefined }
+  }, [selectedRef, auth.auth?.environment, auth.auth?.userId])
   const [detail, setDetail] = useState<ArkmeCallDetail>()
   const [detailState, setDetailState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [detailError, setDetailError] = useState('')
   const [sources, setSources] = useState<ArkmeSourceItem[]>([])
   const [notice, setNotice] = useState('')
   const [pickerOpen, setPickerOpen] = useState(initialPickerOpen)
+  const [inviteOpen, setInviteOpen] = useState(false)
+  useEffect(() => { setInviteOpen(false) }, [auth.auth?.environment, auth.auth?.userId])
   const [pickerQuery, setPickerQuery] = useState('')
   const [contactSearchResult, setContactSearchResult] = useState<ArkmeContactSearchResult>()
   const [contactSearchState, setContactSearchState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -968,6 +999,32 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
     }, mediaType)
   }, [avatarRefForCall, openPicker, requestTargetCall, selectedItem, selectedSource])
 
+  const openSelectedPrivateChat = async () => {
+    const item = selectedItem
+    if (!item?.peerUserId || privateChatAbortRef.current) return
+    const controller = new AbortController()
+    privateChatAbortRef.current = controller
+    setOpeningPrivateChat(true)
+    setNotice('')
+    try {
+      // A display-name match is insufficient: different users can share a nickname.
+      const existing = sources.find(source => source.kind === 'private_chat' && source.peerUserId === item.peerUserId)
+      const source = existing ?? (await callArkme<ArkmeOpenPrivateChatResult>('chat.private.open', {
+        peerUserId: item.peerUserId, displayName: item.peerDisplayName,
+      }, controller.signal)).source
+      if (controller.signal.aborted) return
+      rememberSource(source)
+      arkmeUi.selectSource(source)
+    } catch (error) {
+      if (!controller.signal.aborted) setNotice(readableError(error) || '打开私聊失败，请稍后重试')
+    } finally {
+      if (privateChatAbortRef.current === controller) {
+        privateChatAbortRef.current = undefined
+        setOpeningPrivateChat(false)
+      }
+    }
+  }
+
   const openContact = (contact: ArkmeCallRecentContact, event?: MouseEvent<HTMLElement>) => {
     openTargetTypePicker(targetFromRecentContact(contact), event?.currentTarget)
   }
@@ -990,6 +1047,9 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
 
   const renderCallRow = (item: ArkmeCallHistoryItem, sample: boolean) => {
     const selected = item.callRef === selectedRef
+    const summary = item.summaryStatus === 'pending' ? '摘要生成中…'
+      : item.summaryStatus === 'failed' ? '摘要生成失败，点击查看详情'
+      : item.summaryStatus === 'done' && item.summaryPreview?.trim() ? `AI 摘要：${item.summaryPreview.trim()}` : ''
     return <li key={callKey(item)}>
       <button
         type="button"
@@ -1000,18 +1060,21 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
           else { finishTour(false); selectItem(item) }
         }}
       >
-        <CallAvatar name={item.peerDisplayName} avatarRef={sample ? undefined : avatarRefForCall(item)} assetUrl={sample ? sampleAvatarUrl(item.peerDisplayName) : undefined} />
-        <span style={styles.callContent}>
-          <span style={styles.callNameLine}>
-            <strong style={styles.callName}>{item.peerDisplayName}</strong>
-            {sample && <em style={styles.sampleBadge}>示例</em>}
-          </span>
-          <span style={styles.callMeta}>
-            {item.mediaType === 'video' ? <CallVideoIcon size={14} /> : <PhoneCall size={14} />}
-            {mediaLabel(item.mediaType)} · {formatDuration(item.durationSeconds)}
-          </span>
+        <span style={{ gridColumn: 1, gridRow: '1 / 3' }}>
+          <CallAvatar name={item.peerDisplayName} avatarRef={sample ? undefined : avatarRefForCall(item)} assetUrl={sample ? sampleAvatarUrl(item.peerDisplayName) : undefined} />
+        </span>
+        <span style={styles.callNameLine}>
+          <strong style={styles.callName}>{item.peerDisplayName}</strong>
+          {sample && <em style={styles.sampleBadge}>示例</em>}
+        </span>
+        <span style={styles.callMeta}>
+          {item.mediaType === 'video' ? <CallVideoIcon size={14} /> : <PhoneCall size={14} />}
+          {mediaLabel(item.mediaType)} · {formatDuration(item.durationSeconds)}
         </span>
         <time style={styles.callTime}>{sample ? item.resultLabel : shortTime(item.startedAtMillis)}</time>
+        {summary && <span style={styles.callSummary} data-arkme-call-summary="true">
+          <span style={{ ...styles.callSummaryText, ...(item.summaryStatus === 'done' ? {} : { WebkitLineClamp: 1 }) }}>{summary}</span>
+        </span>}
       </button>
     </li>
   }
@@ -1025,7 +1088,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
   const selectedIsSample = selectedItem?.callRef.startsWith('sample-') === true
   const selectedSampleAvatarUrl = selectedItem === undefined || !selectedIsSample ? undefined : sampleAvatarUrl(selectedItem.peerDisplayName)
 
-  return <section ref={surfaceRef} style={styles.root} aria-label="通话" data-arkme-call-surface="true">
+  return <section ref={surfaceRef} style={{ ...styles.root, gridTemplateColumns: `${browserResize.width}px 3px minmax(0, 1fr)` }} aria-label="通话" data-arkme-call-surface="true">
     <aside style={styles.browser}>
       <header style={styles.heading}>
         <h1 style={styles.title}>通话</h1>
@@ -1085,6 +1148,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
             </ul>}
       </section>
     </aside>
+    {browserResize.handle}
     <main style={styles.content}>
       {selectedItem === undefined ? <div style={styles.empty}>
         <div style={styles.emptyInner}>
@@ -1105,12 +1169,18 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
             </span>
           </div>
           {!selectedIsSample && <div style={styles.detailActions}>
+            <button type="button" style={{ ...styles.privateChatButton, ...(!selectedItem.peerUserId || openingPrivateChat ? { opacity: 0.5, cursor: 'default' } : {}) }}
+              disabled={!selectedItem.peerUserId || openingPrivateChat} aria-busy={openingPrivateChat}
+              title={selectedItem.peerUserId ? '打开与这位联系人的私聊' : '暂无法识别通话对象'}
+              onClick={() => { void openSelectedPrivateChat() }}><ChatCircle size={17} />{openingPrivateChat ? '正在打开…' : '发起私聊'}</button>
             <button type="button" style={styles.iconButton} aria-label={`和${selectedItem.peerDisplayName}语音通话`} onClick={() => { startSelectedCall('audio') }}><PhoneCall size={19} /></button>
             <button type="button" style={styles.iconButton} aria-label={`和${selectedItem.peerDisplayName}视频通话`} onClick={() => { startSelectedCall('video') }}><CallVideoIcon size={19} /></button>
           </div>}
         </header>
         <ArkmeCallDetailContent key={selectedItem.callRef} selectedItem={selectedItem} detail={detail} detailState={detailState} detailError={detailError} avatarRefForName={avatarRefForName} tourSample={tour.current !== undefined && tour.current >= 3} />
       </>}
+      {notice !== '' && <div role="status" style={styles.notice}>{notice}</div>}
+    </main>
       {pickerOpen && <div
         style={styles.layer}
         role="presentation"
@@ -1121,7 +1191,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
             <h3 style={styles.pickerTitle}>发起通话</h3>
             <button type="button" style={styles.closeButton} aria-label="关闭联系人选择" onClick={closePicker}><X size={17} /></button>
           </header>
-          <label style={styles.pickerSearch}>
+          <label className="arkme-call-picker-search" style={styles.pickerSearch}>
             <MagnifyingGlass size={16} />
             <input
               autoFocus
@@ -1135,59 +1205,68 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
               aria-label="搜索私聊联系人"
             />
           </label>
-          {pickerQuery.trim() === '' && recommendedTarget !== undefined && <section style={styles.recommendation} aria-label="推荐联系人">
-            <CallAvatar name={recommendedTarget.displayName} avatarRef={recommendedTarget.avatarRef} size={38} />
-            <span style={styles.pickerText}>
-              <strong style={styles.pickerName}>{recommendedTarget.displayName}</strong>
-              <small style={styles.pickerSub}>{recommendedTarget.relation}</small>
-            </span>
-            <span style={styles.pickerActions} data-arkme-call-tour-target="types">
-              <button type="button" style={styles.pickerRound} aria-label={`和${recommendedTarget.displayName}语音通话`} onClick={() => { requestTargetCall(recommendedTarget, 'audio') }}><PhoneCall size={17} /></button>
-              <button type="button" style={styles.pickerRound} aria-label={`和${recommendedTarget.displayName}视频通话`} onClick={() => { requestTargetCall(recommendedTarget, 'video') }}><CallVideoIcon size={17} /></button>
-            </span>
-          </section>}
-          <p style={styles.sectionLabel}>{pickerListTitle}</p>
-          <div style={styles.pickerList} data-arkme-call-picker-list="true">
-            {filteredPickerTargets.length > 0 ? filteredPickerTargets.map(target => {
-              const unavailable = !targetCanResolve(target)
-              const sample = target.sample === true
-              return <div key={target.key} style={styles.pickerRowFrame}>
-                <button
-                  type="button"
-                  style={{ ...styles.pickerRow, ...(unavailable && !sample ? styles.pickerRowDisabled : {}) }}
-                  aria-label={sample ? `${target.displayName}示例联系人，暂不可发起通话` : unavailable ? `${target.displayName}暂不可直接呼叫` : `选择${target.displayName}通话方式`}
-                  aria-disabled={sample || undefined}
-                  disabled={sample}
-                  onClick={sample ? undefined : event => { openTargetTypePicker(target, event?.currentTarget, { keepPickerOpen: true }) }}
-                >
-                  <CallAvatar name={target.displayName} avatarRef={target.avatarRef} assetUrl={sample ? sampleAvatarUrl(target.displayName) : undefined} size={36} />
-                  <span style={styles.pickerText}>
-                    <span style={styles.pickerNameLine}>
-                      <strong style={styles.pickerName}>{target.displayName}</strong>
-                      {sample && <em style={styles.sampleBadge}>示例</em>}
+          <button type="button" className="arkme-call-picker-invite" style={{ ...styles.pickerRow, ...styles.pickerInvite }}
+            onClick={() => { closePicker(); setInviteOpen(true) }}>
+            <Link size={20} />
+            <span style={styles.pickerText}><strong style={styles.pickerName}>邀请他人向我发起通话</strong><small style={styles.pickerSub}>分享链接，让对方联系我</small></span>
+            <CaretRight size={15} />
+          </button>
+          <div style={styles.pickerContacts} data-arkme-call-picker-contacts="true">
+            {pickerQuery.trim() === '' && recommendedTarget !== undefined && <section style={styles.recommendation} aria-label="推荐联系人">
+              <CallAvatar name={recommendedTarget.displayName} avatarRef={recommendedTarget.avatarRef} size={38} />
+              <span style={styles.pickerText}>
+                <strong style={styles.pickerName}>{recommendedTarget.displayName}</strong>
+                <small style={styles.pickerSub}>{recommendedTarget.relation}</small>
+              </span>
+              <span style={styles.pickerActions} data-arkme-call-tour-target="types">
+                <button type="button" style={styles.pickerRound} aria-label={`和${recommendedTarget.displayName}语音通话`} onClick={() => { requestTargetCall(recommendedTarget, 'audio') }}><PhoneCall size={17} /></button>
+                <button type="button" style={styles.pickerRound} aria-label={`和${recommendedTarget.displayName}视频通话`} onClick={() => { requestTargetCall(recommendedTarget, 'video') }}><CallVideoIcon size={17} /></button>
+              </span>
+            </section>}
+            <p style={styles.sectionLabel}>{pickerListTitle}</p>
+            <div style={styles.pickerList} data-arkme-call-picker-list="true">
+              {filteredPickerTargets.length > 0 ? filteredPickerTargets.map(target => {
+                const unavailable = !targetCanResolve(target)
+                const sample = target.sample === true
+                return <div key={target.key} style={styles.pickerRowFrame}>
+                  <button
+                    type="button"
+                    style={{ ...styles.pickerRow, ...(unavailable && !sample ? styles.pickerRowDisabled : {}) }}
+                    aria-label={sample ? `${target.displayName}示例联系人，暂不可发起通话` : unavailable ? `${target.displayName}暂不可直接呼叫` : `选择${target.displayName}通话方式`}
+                    aria-disabled={sample || undefined}
+                    disabled={sample}
+                    onClick={sample ? undefined : event => { openTargetTypePicker(target, event?.currentTarget, { keepPickerOpen: true }) }}
+                  >
+                    <CallAvatar name={target.displayName} avatarRef={target.avatarRef} assetUrl={sample ? sampleAvatarUrl(target.displayName) : undefined} size={36} />
+                    <span style={styles.pickerText}>
+                      <span style={styles.pickerNameLine}>
+                        <strong style={styles.pickerName}>{target.displayName}</strong>
+                        {sample && <em style={styles.sampleBadge}>示例</em>}
+                      </span>
+                      <small style={styles.pickerSub}>{targetSubtitle(target)}</small>
                     </span>
-                    <small style={styles.pickerSub}>{targetSubtitle(target)}</small>
+                  </button>
+                  <span style={styles.pickerActions}>
+                    <button type="button" style={{ ...styles.pickerRound, ...(sample ? styles.pickerRoundDisabled : {}) }} aria-label={sample ? `${target.displayName}示例联系人，语音通话不可用` : `直接和${target.displayName}语音通话`} aria-disabled={sample || undefined} disabled={sample} onClick={sample ? undefined : () => { requestTargetCall(target, 'audio') }}><PhoneCall size={16} /></button>
+                    <button type="button" style={{ ...styles.pickerRound, ...(sample ? styles.pickerRoundDisabled : {}) }} aria-label={sample ? `${target.displayName}示例联系人，视频通话不可用` : `直接和${target.displayName}视频通话`} aria-disabled={sample || undefined} disabled={sample} onClick={sample ? undefined : () => { requestTargetCall(target, 'video') }}><CallVideoIcon size={16} /></button>
                   </span>
-                </button>
-                <span style={styles.pickerActions}>
-                  <button type="button" style={{ ...styles.pickerRound, ...(sample ? styles.pickerRoundDisabled : {}) }} aria-label={sample ? `${target.displayName}示例联系人，语音通话不可用` : `直接和${target.displayName}语音通话`} aria-disabled={sample || undefined} disabled={sample} onClick={sample ? undefined : () => { requestTargetCall(target, 'audio') }}><PhoneCall size={16} /></button>
-                  <button type="button" style={{ ...styles.pickerRound, ...(sample ? styles.pickerRoundDisabled : {}) }} aria-label={sample ? `${target.displayName}示例联系人，视频通话不可用` : `直接和${target.displayName}视频通话`} aria-disabled={sample || undefined} disabled={sample} onClick={sample ? undefined : () => { requestTargetCall(target, 'video') }}><CallVideoIcon size={16} /></button>
-                </span>
-              </div>
-            }) : <div style={styles.pickerEmpty}>
-              <PhoneCall size={22} />
-              <strong>没有可呼叫联系人</strong>
-              <span>{pickerQuery.trim() === ''
-                ? '先在对话里建立私聊后，就可以从这里发起通话。'
-                : contactSearchState === 'loading'
-                  ? '正在搜索即我号...'
-                  : contactSearchState === 'error'
-                    ? contactSearchError || '搜索即我号失败，请稍后重试。'
-                    : '没有匹配的私聊联系人。'}</span>
-            </div>}
+                </div>
+              }) : <div style={styles.pickerEmpty}>
+                <PhoneCall size={22} />
+                <strong>没有可呼叫联系人</strong>
+                <span>{pickerQuery.trim() === ''
+                  ? '先在对话里建立私聊后，就可以从这里发起通话。'
+                  : contactSearchState === 'loading'
+                    ? '正在搜索即我号...'
+                    : contactSearchState === 'error'
+                      ? contactSearchError || '搜索即我号失败，请稍后重试。'
+                      : '没有匹配的私聊联系人。'}</span>
+              </div>}
+            </div>
           </div>
         </section>
       </div>}
+      {inviteOpen && <ArkmeCallInviteDialog onClose={() => { setInviteOpen(false) }} onBack={() => { setInviteOpen(false); setPickerOpen(true) }} />}
       {typeTarget !== undefined && <div
         style={typePickerLayerStyle}
         role="presentation"
@@ -1229,8 +1308,6 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
           {unavailableTarget !== undefined && <p role="status" style={styles.unavailable}>还没有找到这个联系人对应的私聊会话，暂时不能从通话页直接呼叫。请先从对话里打开该联系人，或搜索已有私聊联系人。</p>}
         </section>
       </div>}
-      {notice !== '' && <div role="status" style={styles.notice}>{notice}</div>}
-    </main>
     {tour.panel}
   </section>
 }

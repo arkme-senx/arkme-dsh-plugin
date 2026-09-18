@@ -2202,6 +2202,9 @@ export async function dispatchArkmeHostOperation(
         },
       })
     }
+    case 'calls.invite.create': return await service.createShareCallLink(outgoingMediaTypeParam(params))
+    case 'calls.receiver.prepare': return await service.prepareCallReceiver()
+    case 'calls.receiver.claim': return await service.claimIncomingCall(requiredCallParam(params, 'callRequestId', 'call-request-invalid'))
     case 'calls.outgoing.prepare': return await service.prepareOutgoingCall({
       sourceRef: requiredCallParam(params, 'sourceRef', 'call-source-invalid', 4096),
       mediaType: outgoingMediaTypeParam(params),

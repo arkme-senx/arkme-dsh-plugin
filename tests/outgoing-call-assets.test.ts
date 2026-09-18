@@ -133,7 +133,7 @@ describe('outgoing call assets', () => {
     expect((await request('/arkme-self/api/call/%2e%2e%2fpackage.json')).status).toBe(404)
   })
 
-  it('pins the upstream frontend and verifies the outgoing-only derived bundle', async () => {
+  it('pins the upstream frontend and verifies the incoming-capable derived bundle', async () => {
     const manifest = JSON.parse(await readFile(join(assetDirectory, 'manifest.json'), 'utf8')) as Record<string, unknown>
     const bundle = await readFile(join(assetDirectory, 'bundle.js'))
     const icon = await readFile(join(assetDirectory, 'call-linear-strong.svg'))
@@ -145,7 +145,8 @@ describe('outgoing call assets', () => {
       callEngineRange: '^3.5.9',
       upstreamBundleSha256: '6ff59d3eb9ce4d7556ba4054bac0df22ae279a7bccc56ccbf5712b6f475c95ce',
       iconSha256: '583d7dbd34069c5b50ca294a071637bbd3beed913cecdb91a202c001004eed45',
-      outgoingOnly: true,
+      outgoingOnly: false,
+      supportsIncoming: true,
     })
     expect(createHash('sha256').update(bundle).digest('hex')).toBe(manifest.bundleSha256)
     expect(createHash('sha256').update(icon).digest('hex')).toBe(manifest.iconSha256)

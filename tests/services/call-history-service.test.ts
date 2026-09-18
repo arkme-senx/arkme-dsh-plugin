@@ -53,6 +53,28 @@ function service(fetchImpl: typeof fetch, override: Partial<ArkmeServiceConfig> 
 }
 
 describe('CallHistoryService', () => {
+  it('renders list summary templates with viewer identity, peer remarks and participant names', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/call/history-aggregate')) return envelope({ items: [
+        { trtc: { room_id: 'template', caller_user_id: 42, callee_user_ids: [77], call_summary_status: 'done',
+          call_summary_template: '{{speaker:self}}与{{user:77}}确认{{user:88}}的排期',
+          call_summary_speaker_user_ids: { self: 42 }, participant_display_names: { 88: '小林' } } },
+        { trtc: { room_id: 'fallback', call_summary_status: 'done', call_summary_template: '{{user:999}}确认排期', call_summary: '确认排期' } },
+        { trtc: { room_id: 'unresolved', call_summary_status: 'done', call_summary_template: '{{user:999}}确认排期' } },
+        { trtc: { room_id: 'label', call_summary_status: 'done', call_summary_template: '{{speaker:guest}}确认排期',
+          call_summary_speaker_labels: { guest: '访客' } } },
+      ], has_more: false })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({ items: [{ user_id: 77, nick_name: '昵称' }] })
+      if (url.endsWith('/api/v1/chats/contacts/list')) return envelope({ items: [{ user_id: 77, remark: '张总' }], has_more: false })
+      if (url.endsWith('/api/v1/chats/list')) return envelope({ items: [], has_more: false })
+      throw new Error(`unexpected ${url}`)
+    })
+    const page = await service(fetchImpl).listCallHistory({ includeRecentContacts: false })
+    expect(page.items.map(item => item.summaryPreview)).toEqual(['我与张总确认小林的排期', '确认排期', undefined, '访客确认排期'])
+    expect(JSON.stringify(page)).not.toContain('{{')
+    expect(fetchImpl.mock.calls.some(([input]) => String(input).includes('call-detail'))).toBe(false)
+  })
   it.each([undefined, 'page2'])('prefers viewer remarks on history page %s by user ID', async cursor => {
     const fetchImpl = vi.fn<typeof fetch>(async input => {
       const url = String(input)

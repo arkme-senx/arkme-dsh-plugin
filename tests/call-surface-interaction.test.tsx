@@ -3,6 +3,7 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeCallSurface } from '../src/client/ArkmeCallSurface.js'
 import { outgoingCallUi } from '../src/client/outgoing-call-ui-controller.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 
 const callSurfaceSource = readFileSync(
   new URL('../src/client/ArkmeCallSurface.tsx', import.meta.url),
@@ -79,6 +80,16 @@ function buttonByLabel(renderer: ReactTestRenderer, label: string): ReactTestIns
 }
 
 describe('ArkmeCallSurface interactions', () => {
+  it('opens link invitations from the contact picker and returns to the picker', async () => {
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface initialPickerOpen />); await tick() })
+    await act(async () => { buttonByText(renderer, '邀请他人向我发起通话').props.onClick(); await tick() })
+    expect(buttonByText(renderer, '生成邀请链接')).toBeDefined()
+    expect(renderer.root.findAllByProps({ 'aria-label': '选择通话联系人' })).toHaveLength(0)
+    await act(async () => { buttonByLabel(renderer, '返回联系人选择').props.onClick(); await tick() })
+    expect(renderer.root.findAllByProps({ 'aria-label': '选择通话联系人' })).toHaveLength(1)
+    act(() => renderer.unmount())
+  })
   beforeEach(() => {
     mocks.callArkme.mockReset()
     mocks.outgoingCallRequest.mockReset()
@@ -114,8 +125,74 @@ describe('ArkmeCallSurface interactions', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+
+  it('shows summary text and generation states on the corresponding call rows', async () => {
+    const item = (id: string, status: string, summaryPreview?: string) => ({ callRef: id, stableId: id,
+      peerDisplayName: id, mediaType: 'audio', startedAtMillis: 1, durationSeconds: 2, resultLabel: '已接通',
+      summaryStatus: status, summaryPreview, canOpenDetail: false, canRedial: false })
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'calls.history.list'
+      ? { items: [item('已完成', 'done', '确认周五上线'), item('处理中', 'pending'), item('出错', 'failed'), item('无摘要', 'idle')], hasMore: false }
+      : { items: [], hasMore: false })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
+    expect(textContent(buttonByText(renderer, '已完成'))).toContain('AI 摘要：确认周五上线')
+    expect(textContent(buttonByText(renderer, '处理中'))).toContain('摘要生成中')
+    expect(textContent(buttonByText(renderer, '出错'))).toContain('摘要生成失败，点击查看详情')
+    expect(buttonByText(renderer, '无摘要').findAllByProps({ 'data-arkme-call-summary': 'true' })).toHaveLength(0)
+    act(() => renderer.unmount())
+  })
+
+  it.each([false, true])('opens the selected peer private chat safely (existing: %s)', async existing => {
+    const navigate = vi.spyOn(arkmeUi, 'selectSource').mockImplementation(() => {})
+    const opened = deferred<unknown>()
+    const source = { sourceRef: 'right-peer', kind: 'private_chat', peerUserId: 77, displayName: '重复名', activeAtMillis: 1, unreadCount: 0 }
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return { items: [{ callRef: 'real', stableId: 'real', peerDisplayName: '重复名', peerUserId: 77,
+        mediaType: 'audio', startedAtMillis: 1, durationSeconds: 2, resultLabel: '已接通', summaryStatus: 'idle', canOpenDetail: false }], hasMore: false }
+      if (operation === 'sources.list') return { items: [existing ? source : { ...source, sourceRef: 'wrong-peer', peerUserId: 88 }], hasMore: false }
+      if (operation === 'chat.private.open') return opened.promise
+      return {}
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
+    await act(async () => { buttonByText(renderer, '重复名').props.onClick(); await tick() })
+    const click = buttonByText(renderer, '发起私聊').props.onClick
+    await act(async () => { click(); click(); await tick() })
+    if (!existing) {
+      expect(buttonByText(renderer, '正在打开').props.disabled).toBe(true)
+      expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'chat.private.open')).toHaveLength(1)
+      expect(mocks.callArkme).toHaveBeenCalledWith('chat.private.open', { peerUserId: 77, displayName: '重复名' }, expect.any(AbortSignal))
+      await act(async () => { opened.resolve({ source }); await tick() })
+    } else expect(mocks.callArkme.mock.calls.some(([op]) => op === 'chat.private.open')).toBe(false)
+    expect(navigate).toHaveBeenCalledWith(source)
+    expect(outgoingCallUi.request).not.toHaveBeenCalled()
+    act(() => renderer.unmount())
+  })
+
+  it('ignores a late private chat response after leaving the selected call', async () => {
+    const navigate = vi.spyOn(arkmeUi, 'selectSource').mockImplementation(() => {})
+    const opened = deferred<unknown>()
+    let signal: AbortSignal | undefined
+    mocks.callArkme.mockImplementation(async (operation: string, _args: unknown, nextSignal: AbortSignal) => {
+      if (operation === 'calls.history.list') return { items: [{ callRef: 'real', stableId: 'real', peerDisplayName: '待打开', peerUserId: 77,
+        mediaType: 'audio', startedAtMillis: 1, durationSeconds: 2, resultLabel: '已接通', summaryStatus: 'idle', canOpenDetail: false }], hasMore: false }
+      if (operation === 'sources.list') return { items: [], hasMore: false }
+      if (operation === 'chat.private.open') { signal = nextSignal; return opened.promise }
+      return {}
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
+    await act(async () => { buttonByText(renderer, '待打开').props.onClick(); await tick() })
+    await act(async () => { buttonByText(renderer, '发起私聊').props.onClick(); await tick() })
+    act(() => renderer.unmount())
+    expect(signal?.aborted).toBe(true)
+    await act(async () => { opened.resolve({ source: { sourceRef: 'late' } }); await tick() })
+    expect(navigate).not.toHaveBeenCalled()
   })
 
   it('loads the next page on scroll once, shows progress and deduplicates records', async () => {
@@ -258,18 +335,18 @@ describe('ArkmeCallSurface interactions', () => {
     const picker = renderer.root.findByProps({ 'aria-label': '选择通话联系人' })
     const search = renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).parent
     expect(picker.props.style.background)
-      .toBe('var(--dsw-specific-menu, var(--dsw-alias-bg-layer-3, #ffffff))')
+      .toBe('color-mix(in srgb, var(--dsw-alias-bg-base, #ffffff) 97%, var(--dsw-alias-label-primary, #17191c))')
     expect(picker.props.style.border)
       .toBe('1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10))')
-    expect(search?.props.style.height).toBe(36)
-    expect(search?.props.style.minHeight).toBe(36)
-    expect(search?.props.style.borderRadius).toBe(9)
-    expect(search?.props.style.padding).toBe('0 10px')
-    expect(search?.props.style.background).toBe('var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-2, #ffffff))')
-    expect(search?.props.style.color).toBe('var(--dsw-alias-label-tertiary, #9097a1)')
+    expect(search?.props.style.height).toBe(40)
+    expect(search?.props.style.minHeight).toBe(40)
+    expect(search?.props.style.borderRadius).toBe(10)
+    expect(search?.props.style.padding).toBe('0 12px')
+    expect(search?.props.style.background).toBe('var(--dsw-alias-bg-base, #ffffff)')
+    expect(search?.props.style.color).toBe('var(--dsw-alias-label-secondary, #68707c)')
     expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.placeholder).toBe('输入即我号或昵称')
     expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.style.color).toBe('var(--dsw-alias-label-primary, #17191c)')
-    expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.style.fontSize).toBe(12)
+    expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.style.fontSize).toBe(13)
     const videoIcon = buttonByLabel(renderer, '和即我作者视频通话')
       .findByProps({ 'data-arkme-call-video-icon': 'compact' })
     expect(videoIcon.type).toBe('svg')
@@ -834,8 +911,9 @@ describe('ArkmeCallSurface interactions', () => {
     expect(textContent(recommendation)).toContain('即我作者 · 推荐')
     expect(textContent(recommendation)).not.toContain('菜市场')
     const picker = renderer.root.findByProps({ 'aria-label': '选择通话联系人' })
-    expect(picker.props.style.overflowY).toBe('auto')
+    expect(picker.props.style.overflow).toBe('hidden')
     expect(picker.props.style.height).toBe('min(620px, calc(100vh - 48px))')
+    expect(renderer.root.findByProps({ 'data-arkme-call-picker-contacts': 'true' }).props.style.overflowY).toBe('auto')
     expect(renderer.root.findByProps({ 'data-arkme-call-picker-list': 'true' }).props.style.overflowY).toBe('visible')
   })
 
@@ -1208,7 +1286,7 @@ describe('ArkmeCallSurface interactions', () => {
   })
 
   it('anchors the recent-contact call-type picker near the clicked contact', async () => {
-    vi.stubGlobal('window', { innerWidth: 1200, innerHeight: 800 })
+    vi.stubGlobal('window', { innerWidth: 1200, innerHeight: 800, addEventListener: vi.fn(), removeEventListener: vi.fn() })
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'calls.history.list') return {
         items: [],

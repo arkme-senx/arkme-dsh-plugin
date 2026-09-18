@@ -4,6 +4,7 @@ import type { ArkmeClientConfig } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { OutgoingCallRuntime } from './outgoing-call-runtime.js'
+import { arkmeAuthStore } from './auth-store.js'
 
 export function outgoingCallModalLayout(compact: boolean, fullscreen: boolean): CSSProperties {
   if (fullscreen) return { width: '100vw', height: '100vh', borderRadius: 0 }
@@ -36,11 +37,15 @@ export function ArkmeOutgoingCallHost() {
     runtimeRef.current = new OutgoingCallRuntime({ loadAvatar: imageRef => arkmeAvatarImages.load(imageRef) })
   }
   const runtime = runtimeRef.current
+  const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
+  const userId = authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined
+  const scope = userId === undefined ? undefined : `${authState.auth?.environment}:${userId}`
   const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot)
   const attachCallFrame = useCallback((node: HTMLIFrameElement | null) => { runtime.attachFrame(node) }, [runtime])
   const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.callRequestId || 'idle')}`
 
   useEffect(() => {
+    runtime.configureReceiver(userId, scope)
     runtime.mount()
     const onMessage = (event: MessageEvent) => { runtime.handleWindowMessage(event) }
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && runtime.getSnapshot().visible) runtime.cancel() }
@@ -54,7 +59,7 @@ export function ArkmeOutgoingCallHost() {
       window.removeEventListener('keydown', onKeyDown)
       runtime.dispose()
     }
-  }, [runtime])
+  }, [runtime, userId, scope])
 
   if ((!snapshot.visible && !snapshot.retainFrame) || typeof document === 'undefined') return null
   const compact = snapshot.compact && !snapshot.fullscreen
@@ -88,6 +93,7 @@ export function ArkmeOutgoingCallHost() {
           }}
         >关闭</button></div>
       </div> : <iframe
+        key={snapshot.callRequestId}
         ref={attachCallFrame}
         src={callFrameUrl}
         name={JSON.stringify({ callRequestId: snapshot.callRequestId })}

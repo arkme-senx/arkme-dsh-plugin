@@ -69,6 +69,9 @@ function fakeService() {
       _options?: unknown,
     ): Promise<{ url: string; title: string } | null> => ({ url, title: '即我 Jotmo' })),
     prepareOutgoingCall: vi.fn(async (input: unknown) => input),
+    createShareCallLink: vi.fn(async (input: unknown) => input),
+    prepareCallReceiver: vi.fn(async () => ({})),
+    claimIncomingCall: vi.fn(async (input: unknown) => input),
     listCallHistory: vi.fn(async (input: unknown) => input),
     callDetail: vi.fn(async (callRef: string) => ({ callRef })),
     retryCallSummary: vi.fn(async (callRef: string) => ({ callRef, status: 'submitted' })),
@@ -1107,6 +1110,17 @@ describe('related quick note Host API dispatch', () => {
 })
 
 describe('outgoing call Host API dispatch', () => {
+  it('routes invitation and receiver operations without accepting a browser-supplied owner', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'calls.invite.create', { mediaType: 'video', userId: 999 })
+    expect(service.createShareCallLink).toHaveBeenCalledWith('video')
+    await dispatchArkmeHostOperation(service as never, 'calls.receiver.prepare', { userId: 999 })
+    expect(service.prepareCallReceiver).toHaveBeenCalledWith()
+    await dispatchArkmeHostOperation(service as never, 'calls.receiver.claim', { callRequestId: 'incoming-1', userId: 999 })
+    expect(service.claimIncomingCall).toHaveBeenCalledWith('incoming-1')
+    await expect(dispatchArkmeHostOperation(service as never, 'calls.invite.create', { mediaType: 'invalid' })).rejects.toThrow()
+    await expect(dispatchArkmeHostOperation(service as never, 'calls.receiver.claim', {})).rejects.toThrow()
+  })
   it('dispatches contact search/add without forwarding browser-owned account fields', async () => {
     const service = fakeService()
     await dispatchArkmeHostOperation(service as never, 'contacts.search', { identifier: 'lin-lin', userId: 999 })

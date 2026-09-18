@@ -13,5 +13,5 @@ async function verify(name, expected) {
 
 await verify('bundle.js', manifest.bundleSha256)
 await verify('call-linear-strong.svg', manifest.iconSha256)
-if (manifest.outgoingOnly !== true) throw new Error('desktop call assets must remain outgoing-only')
+if (manifest.outgoingOnly !== false || manifest.supportsIncoming !== true) throw new Error('desktop call assets must support incoming invitations')
 console.log('desktop call assets verified')

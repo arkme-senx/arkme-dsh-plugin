@@ -319,10 +319,26 @@ export class CallHistoryService {
         failureCooldownMs: 2_000,
       },
     )
-    const items = await Promise.all(this.historyItems(raw)
+    const rawItems = this.historyItems(raw)
+    const items = await Promise.all(rawItems
       .map(async item => await this.normalizeHistoryItem(item, session.userId)))
     const validItems = items.filter((item): item is ArkmeCallHistoryItem => item !== undefined)
     await this.attachPeerPresentation(validItems, session, signal)
+    // Resolve templates after profile/remark enrichment, without a detail request per row.
+    items.forEach((item, index) => {
+      if (item === undefined) return
+      const source = rawItems[index]!
+      const record = { ...source, ...objectValue(source.trtc ?? source.call ?? source.call_record) }
+      const names = new Map<number, string>()
+      for (const [id, name] of Object.entries(objectValue(record.participant_display_names ?? record.participantDisplayNames))) {
+        if (Number(id) > 0 && typeof name === 'string' && name.trim()) names.set(Number(id), name.trim())
+      }
+      if (item.peerUserId !== undefined && !/^Arkme 用户 \d+$/.test(item.peerDisplayName)) {
+        names.set(item.peerUserId, item.peerDisplayName)
+      }
+      const summary = safeSummary(renderCallRecordSummary(record, session.userId, names))
+      if (summary) item.summaryPreview = summary
+    })
     const hasMore = booleanValue(raw.has_more ?? raw.hasMore)
     const nextCursor = firstString(raw, ['next_cursor', 'nextCursor', 'cursor'])
     const includeRecentContacts = options.includeRecentContacts !== false && cursor === ''
@@ -409,7 +425,6 @@ export class CallHistoryService {
     const calleeUserIds = numberList(item.callee_user_ids ?? item.calleeUserIds)
     const connectedUserIds = numberList(item.connected_user_ids ?? item.connectedUserIds)
     const peerUserId = this.resolvePeerUserId(viewerUserId, callerUserId, calleeUserIds, connectedUserIds, item)
-    const summaryText = safeSummary(firstString(item, ['call_summary', 'callSummary', 'summary_text', 'summaryText', 'summary']))
     const summaryUpdatedAtMillis = firstEpochMillis(item, [
       'call_summary_updated_at', 'callSummaryUpdatedAt', 'summary_updated_at', 'summaryUpdatedAt',
     ])
@@ -436,7 +451,6 @@ export class CallHistoryService {
       callResult,
       resultLabel: resultLabel(callResult, acceptedAtMillis, duration),
       summaryStatus: summaryStatus(firstValue(item, ['call_summary_status', 'callSummaryStatus', 'summary_status', 'summaryStatus'])),
-      ...(summaryText === '' ? {} : { summaryPreview: summaryText }),
       ...(summaryUpdatedAtMillis > 0 ? { summaryUpdatedAtMillis } : {}),
       canOpenDetail: true,
       canRedial: peerUserId > 0,

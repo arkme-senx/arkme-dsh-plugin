@@ -4,7 +4,7 @@ export const DESKTOP_CALL_CHANNEL = `jot${'mo'}-desktop-call`
 const DESKTOP_CALL_HOST_KEY = `__JOT${'MO'}_DESKTOP_CALL_HOST__`
 
 const BRIDGE_EVENT_TYPES = new Set([
-  'ready', 'state', 'calling', 'begin', 'end', 'user_reject', 'user_no_response',
+  'ready', 'state', 'incoming', 'calling', 'begin', 'end', 'user_reject', 'user_no_response',
   'user_line_busy', 'not_connected', 'permission_denied', 'fatal_error',
   'toggle_fullscreen_request', 'toggle_compact_mode_request', 'hide_window_request',
   'media_permission_request', 'diag',
@@ -16,6 +16,7 @@ const HOST_COMMAND_TYPES = new Set([
 
 export interface DesktopCallBridgeEvent {
   type: string
+  callerName?: string
   requestId?: string
   roomId?: string
   callId?: string
@@ -59,6 +60,7 @@ export function parseDesktopCallBridgeEvent(
   const message = raw as Record<string, unknown>
   if (typeof message.type !== 'string' || !BRIDGE_EVENT_TYPES.has(message.type)) return undefined
   const mediaType = message.mediaType === 'video' ? 'video' : message.mediaType === 'audio' ? 'audio' : undefined
+  if (message.type === 'incoming' && mediaType === undefined) return undefined
   const requestId = safeString(message.requestId, 100)
   const roomId = safeString(message.roomId, 200)
   const callId = safeString(message.callId, 200)
@@ -68,8 +70,11 @@ export function parseDesktopCallBridgeEvent(
   const reason = safeString(message.reason, 200)
   const label = safeString(message.label, 200)
   const detail = message.detail === undefined ? undefined : safeString(JSON.stringify(message.detail), 2_000)
+  const caller = message.caller !== null && typeof message.caller === 'object' ? message.caller as Record<string, unknown> : {}
+  const callerName = safeString(message.callerName ?? caller.name, 120)
   return {
     type: message.type,
+    ...(callerName === undefined ? {} : { callerName }),
     ...(requestId === undefined ? {} : { requestId }),
     ...(roomId === undefined ? {} : { roomId }),
     ...(callId === undefined ? {} : { callId }),
