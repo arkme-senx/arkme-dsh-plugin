@@ -7256,7 +7256,7 @@ export function ArkmeSurface({
                 setSelfMenuOpen(false)
                 setSelfCalendarOpen(value => !value)
               }}
-            ><CalendarBlank size={16} aria-hidden /></ArkmeConversationHeaderIconButton>
+            ><CalendarBlank size={24} aria-hidden /></ArkmeConversationHeaderIconButton>
             <ArkmeSelfCalendarPopover
               key={`self-calendar:${authenticatedAccountKey}:${conversationKey}`}
               accountScope={authenticatedAccountKey}
