@@ -214,6 +214,7 @@ describe('Arkme surface refresh boundaries', () => {
       if (operation === 'user.profile') return { profile: null, cachedAtMillis: 1, revision: 1 }
       if (operation === 'user.profile.refresh') return { profile: null, cachedAtMillis: 1, revision: 1 }
       if (operation === 'source.long-article.draft.get') return undefined
+      if (operation === 'search.scene') return { items: [], hasMore: false }
       if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [] }
       if (operation === 'source.message-extension.context') {
         if ((_params as { sourceRef?: string })?.sourceRef === 'source-extension-refresh') return await new Promise(() => {})
@@ -310,16 +311,31 @@ describe('Arkme surface refresh boundaries', () => {
     await act(async () => { renderer!.update(<ArkmeSurface productChrome={false} active />); await Promise.resolve() })
     expect(renderer.root.findAll(node => node.props.role === 'dialog' && node.props['aria-label'] === 'overlay.png')).toHaveLength(0)
 
-    await act(async () => { renderer!.root.findByProps({ 'aria-label': '添加内容' }).props.onClick() })
-    const longArticleEntry = renderer.root.findAllByProps({ role: 'menuitem' })
-      .find(node => node.findAll(child => child.children.includes('写长文')).length > 0)
-    expect(longArticleEntry).toBeDefined()
-    await act(async () => { longArticleEntry!.props.onClick(); await Promise.resolve() })
+    const openArticlePicker = async () => {
+      await act(async () => { renderer!.root.findByProps({ 'aria-label': '添加内容' }).props.onClick() })
+      const longArticleEntry = renderer!.root.findAllByProps({ role: 'menuitem' })
+        .find(node => node.findAll(child => child.children.includes('添加长文')).length > 0)
+      expect(longArticleEntry).toBeDefined()
+      await act(async () => { longArticleEntry!.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(renderer!.root.findAllByProps({ role: 'dialog', 'aria-label': '添加长文' })).toHaveLength(1)
+      expect(renderer!.root.findAllByProps({ 'data-arkme-long-article-dialog': 'create' })).toHaveLength(0)
+    }
+    await openArticlePicker()
+    await act(async () => { renderer!.update(<ArkmeSurface productChrome={false} active={false} />) })
+    expect(renderer.root.findAllByProps({ role: 'dialog', 'aria-label': '添加长文' })).toHaveLength(0)
+    await act(async () => { renderer!.update(<ArkmeSurface productChrome={false} active />) })
+    expect(renderer.root.findAllByProps({ role: 'dialog', 'aria-label': '添加长文' })).toHaveLength(0)
+    await openArticlePicker()
+    await act(async () => {
+      renderer!.root.findAllByType('button').find(node => node.children.includes('＋新建长文'))!.props.onClick()
+    })
     expect(renderer.root.findAllByProps({ 'data-arkme-long-article-dialog': 'create' })).toHaveLength(1)
     await act(async () => { renderer!.update(<ArkmeSurface productChrome={false} active={false} />); await Promise.resolve() })
     expect(renderer.root.findAllByProps({ 'data-arkme-long-article-dialog': 'create' })).toHaveLength(0)
     await act(async () => { renderer!.update(<ArkmeSurface productChrome={false} active />); await Promise.resolve() })
     expect(renderer.root.findAllByProps({ 'data-arkme-long-article-dialog': 'create' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ role: 'dialog', 'aria-label': '添加长文' })).toHaveLength(0)
+    expect(state.callArkme.mock.calls.filter(([operation]) => ['source.send-rich', 'source.long-article.publish', 'source.messages.forward'].includes(operation))).toHaveLength(0)
 
     const bubble = renderer.root.findByProps({ 'data-arkme-message-direction': 'self' })
     await act(async () => {

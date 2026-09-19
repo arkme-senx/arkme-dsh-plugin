@@ -209,6 +209,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'search.history'
   | 'search.history.create'
   | 'search.records'
+  | 'search.conversations'
   | 'search.scene'
   | 'search.recordings'
   | 'ai-video.list'

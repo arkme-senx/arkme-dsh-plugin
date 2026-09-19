@@ -19,6 +19,12 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('exposes the paginated conversation-name read with cancellation', async () => {
+    const fetcher = vi.fn(async () => success({ items: [], hasMore: false }))
+    const sdk = createArkmeSdk({ fetchImpl: fetcher })
+    await expect(sdk.searchConversationNames('狗才', { cursor: 'next', signal: new AbortController().signal })).resolves.toEqual({ items: [], hasMore: false })
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({ operation: 'search.conversations', params: { query: '狗才', cursor: 'next' } })
+  })
   it('exposes the five-section directory, passes refresh/cursor and preserves Host recovery metadata', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {

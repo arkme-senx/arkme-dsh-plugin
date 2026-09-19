@@ -53,6 +53,52 @@ function service(fetchImpl: typeof fetch, override: Partial<ArkmeServiceConfig> 
 }
 
 describe('CallHistoryService', () => {
+  it.each([false, true])('resolves detail summaries by explicit identity without guessing unknown speakers (remark failure: %s)', async remarkFailure => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/trtc/call-detail')) return envelope({
+        caller_user_id: 42, callee_user_ids: [77], call_summary_status: 'done',
+        participant_profiles: [{ user_id: 77, display_name: '旧昵称' }],
+        call_summary_template: '{{user:42}}与{{user:77}}、{{speaker:s1}}、{{speaker:s2}}和{{speaker:s3}}聊天。',
+        call_summary_speaker_user_ids: { s1: 88, s3: 99 },
+        call_summary_speaker_labels: { s1: '已绑定的人', s2: 'Jotmoer方说话人A', s3: '已标记姓名' },
+        room_transcript_segments: [{ speaker_user_id: 77, text: '你好', start_ms: 1000, end_ms: 2000 }],
+      })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({ items: [
+        { user_id: 42, nick_name: '自己' }, { user_id: 77, nick_name: 'Jotmoer' }, { user_id: 88, nick_name: 'Jotmoer' },
+      ] })
+      if (url.endsWith('/api/v1/chats/contacts/list')) {
+        if (remarkFailure) throw new Error('contact lookup failed')
+        return envelope({ items: [{ user_id: 77, remark: '  英梦华 ' }, { user_id: 88, remark: '安宝' }], has_more: false })
+      }
+      if (url.endsWith('/api/v1/chats/list')) return envelope({ items: [], has_more: false })
+      throw new Error(`unexpected ${url}`)
+    })
+    const owner = service(fetchImpl)
+    const record = await owner.timelineCallRecord({ crd: { ri: 'identity-room', cr: 42, mt: 'Video', rs: 'NormalEnd' } }, 42)
+    const detail = await owner.callDetail(record!.callRef!)
+    expect(detail.summaryText).toBe(remarkFailure
+      ? '我与Jotmoer、Jotmoer、Jotmoer方说话人A和已标记姓名聊天。'
+      : '我与英梦华、安宝、Jotmoer方说话人A和已标记姓名聊天。')
+    expect(detail.participants.map(p => p.userId).sort()).toEqual([42, 77])
+    expect(detail.transcriptSegments[0]?.speakerDisplayName).toBe(remarkFailure ? 'Jotmoer' : '英梦华')
+    expect(fetchImpl.mock.calls.filter(([input]) => String(input).endsWith('/api/v1/auth/get-public-users-by-ids'))).toHaveLength(1)
+  })
+
+  it('keeps legacy free-form summaries unchanged even when a nickname has a remark', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/trtc/call-detail')) return envelope({ caller_user_id: 42, callee_user_ids: [77],
+        call_summary: 'Jotmoer方说话人A和说话人B聊天。' })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({ items: [{ user_id: 77, nick_name: 'Jotmoer' }] })
+      if (url.endsWith('/api/v1/chats/contacts/list')) return envelope({ items: [{ user_id: 77, remark: '英梦华' }], has_more: false })
+      throw new Error(`unexpected ${url}`)
+    })
+    const owner = service(fetchImpl)
+    const record = await owner.timelineCallRecord({ crd: { ri: 'legacy-room', cr: 42, mt: 'Audio', rs: 'NormalEnd' } }, 42)
+    expect((await owner.callDetail(record!.callRef!)).summaryText).toBe('Jotmoer方说话人A和说话人B聊天。')
+  })
+
   it('renders list summary templates with viewer identity, peer remarks and participant names', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async input => {
       const url = String(input)

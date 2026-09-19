@@ -224,6 +224,8 @@ export function ArkmeMemberActionMenu(props: {
   member: ArkmeConversationMemberItem
   sourceKind: ArkmeSourceItem['kind']
   position: ArkmeMemberMenuPosition
+  hoverAnchor?: HTMLElement | undefined
+  hoverSide?: 'left' | 'right' | undefined
   onMention: () => void
   onRecords: (mode: ArkmeConversationMemberRecordMode) => void
   canRemove?: boolean
@@ -236,6 +238,8 @@ export function ArkmeMemberActionMenu(props: {
     <span>{label}</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{props.member.statsKnown === false ? '' : count}</span>
   </span>
   return <ArkmeActionMenu label={`${props.member.displayName} 的成员操作`}
+    hoverAnchor={props.hoverAnchor} align={props.hoverSide === 'left' ? 'end' : 'start'}
+    autoFocus={props.hoverAnchor === undefined}
     point={{ x: props.position.left, y: props.position.top }} onClose={props.onClose} actions={[
       !props.member.isSelf && props.sourceKind === 'group_chat' && { id: 'mention', label: `@${props.member.displayName}`, onSelect: props.onMention },
       props.sourceKind === 'group_chat' && { id: 'mentioned-records', label: countLabel(mentionedLabel, props.member.mentionCount), onSelect: () => props.onRecords('mentioned') },

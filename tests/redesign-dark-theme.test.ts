@@ -183,15 +183,9 @@ describe('Arkme redesign dark theme', () => {
     expect(darkCss).toContain('color: var(--dsw-alias-label-primary-inverted) !important;')
   })
 
-  it('covers the calendar portal, day selection, and record panel', () => {
-    const darkCss = redesignCss.slice(redesignCss.indexOf('body[data-ds-dark-theme] [data-arkme-workspace] {'))
-
-    expect(darkCss).toContain('[aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])')
-    expect(darkCss).toContain('section[aria-label="当天内容"]')
-    expect(darkCss).toContain('button[data-selected="false"][aria-label*="条记录"]')
-    expect(darkCss).toMatch(/button\[data-selected="true"\] > span:last-child \{[^}]*background: transparent !important;[^}]*color: var\(--dsw-alias-label-primary-inverted\) !important;/)
-    expect(darkCss).not.toContain('button[style*="--dsw-alias-button-primary-fill"]')
-    expect(darkCss).toContain('background: var(--dsw-alias-bg-layer-1) !important;')
+  it('lets all calendar portals use component theme tokens without label-dependent overrides', () => {
+    expect(redesignCss).not.toContain('[aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])')
+    expect(redesignCss).toContain('Calendar surfaces and their body portals use shared semantic component styles.')
   })
 
   it('keeps the task start brand and control hierarchy readable in dark mode', () => {

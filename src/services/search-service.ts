@@ -20,6 +20,7 @@ import { SourceService } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue } from './service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
 import { arkmeNormalizedHashTag } from '../hashtag.js'
+import { arkmeSearchRecordLinks } from '../search-record-links.js'
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -283,30 +284,44 @@ export class SearchService {
     signal?: AbortSignal,
     sourceRef?: string,
   ): Promise<ArkmeRecordSearchResult> {
-    if (this.source === undefined || result.items.length === 0) return result
+    if (this.source === undefined || (result.items.length === 0 && result.sourceAggregates.length === 0)) return result
     if (sourceRef !== undefined) {
       const session = await this.runtime.requireSession()
       const source = await this.source.openSourceRef(sourceRef, session.userId)
       const targetSource = await this.source.sourceItem(source)
       return { ...result, items: result.items.map(item => item.sourceKind === 3 && (item.sourceUid ?? item.routeTargetUid) === source.ownerRef
-        ? { ...item, targetSource } : item) }
+        ? { ...item, targetSource, sourceTitle: targetSource.displayName } : item) }
     }
-    const targets = new Map<string, ArkmeSearchRecordItem>()
+    const targets = new Map<string, { sourceKind: number; sourceUid: string; title: string }>()
     const aggregateTitleByKey = new Map(result.sourceAggregates.map(item => [
       `${String(item.sourceKind)}:${item.sourceUid}`,
       item.title,
     ]))
     for (const item of result.items) {
       const sourceUid = item.sourceUid ?? item.routeTargetUid ?? ''
-      targets.set(`${String(item.sourceKind)}:${sourceUid}`, item)
+      const key = `${String(item.sourceKind)}:${sourceUid}`
+      targets.set(key, { sourceKind: item.sourceKind, sourceUid, title: item.sourceTitle ?? aggregateTitleByKey.get(key) ?? '' })
+    }
+    // Aggregates can refer to conversations whose matching messages are on later pages.
+    for (const item of result.sourceAggregates) {
+      const key = `${String(item.sourceKind)}:${item.sourceUid}`
+      if (!targets.has(key)) targets.set(key, item)
     }
     const sourceByKey = new Map<string, Awaited<ReturnType<SourceService['searchTargetSource']>>>()
+    const chatUids = [...targets.values()].filter(item => item.sourceKind === 3).map(item => item.sourceUid)
+    if (chatUids.length > 0) {
+      try {
+        const chats = await this.source.chatSourcesBySessionUids(chatUids, signal)
+        for (const [uid, source] of chats) sourceByKey.set(`3:${uid}`, source)
+      } catch (error) { if (signal?.aborted) throw error }
+    }
     for (const [key, item] of targets) {
+      if (item.sourceKind === 3) continue
       try {
         sourceByKey.set(key, await this.source.searchTargetSource(
           item.sourceKind,
-          item.sourceUid ?? item.routeTargetUid ?? '',
-          item.sourceTitle ?? aggregateTitleByKey.get(key) ?? '',
+          item.sourceUid,
+          item.title,
           signal,
         ))
       } catch (error) {
@@ -319,7 +334,12 @@ export class SearchService {
       items: result.items.map(item => {
         const sourceUid = item.sourceUid ?? item.routeTargetUid ?? ''
         const targetSource = sourceByKey.get(`${String(item.sourceKind)}:${sourceUid}`)
-        return targetSource === undefined ? item : { ...item, targetSource }
+        return targetSource === undefined ? item : { ...item, targetSource, sourceTitle: targetSource.displayName }
+      }),
+      sourceAggregates: result.sourceAggregates.map(item => {
+        const targetSource = sourceByKey.get(`${String(item.sourceKind)}:${item.sourceUid}`)
+        return targetSource === undefined ? item : { ...item, title: targetSource.displayName, targetSource,
+          ...(targetSource.privateNickname ? { nickname: targetSource.privateNickname } : {}) }
       }),
     }
   }
@@ -488,13 +508,14 @@ export class SearchService {
     const files = listValue(item.file_ls).map(assetItem).filter((value): value is NonNullable<typeof value> => value !== undefined)
     const voice = assetItem(payload.voice)
     const textContent = clippedText(core.text_content, 2_000)
-    const linkMatch = textContent.match(/https:\/\/[^\s<>()]+/u)
+    const linkUrls = arkmeSearchRecordLinks(stringValue(core.text_content))
     const sourceTitle = stringValue(topic.title ?? chat.title).trim()
     const creationSource = Math.trunc(numberValue(core.creation_source ?? item.creation_source))
     const recordOwnerUserId = recordOwnerId(core.owner_user_id)
     return {
       recordUid,
       ...(recordOwnerUserId !== 0 ? { recordOwnerUserId } : {}),
+      ...(recordOwnerId(core.creator_user_id) !== 0 ? { recordCreatorUserId: recordOwnerId(core.creator_user_id) } : {}),
       sourceKind: Math.trunc(numberValue(item.source_kind)),
       ...(stringValue(item.source_uid).trim() === '' ? {} : { sourceUid: stringValue(item.source_uid).trim() }),
       routeTargetKind: stringValue(item.route_target_kind).trim(),
@@ -511,7 +532,7 @@ export class SearchService {
       media,
       files,
       ...(voice === undefined ? {} : { voice }),
-      ...(linkMatch === null ? {} : { linkUrl: linkMatch[0] }),
+      ...(linkUrls.length === 0 ? {} : { linkUrl: linkUrls[0], linkUrls }),
       ...(numberValue(core.duration_millis ?? core.record_duration_millis) <= 0 ? {} : { recordDurationMillis: numberValue(core.duration_millis ?? core.record_duration_millis) }),
       ...(numberValue(item.scene_item_count) <= 0 ? {} : { sceneItemCount: numberValue(item.scene_item_count) }),
       ...(numberValue(item.scene_item_size) <= 0 ? {} : { sceneItemSize: numberValue(item.scene_item_size) }),

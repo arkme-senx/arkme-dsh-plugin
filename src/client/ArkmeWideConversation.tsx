@@ -253,7 +253,9 @@ export function ArkmeWideConversation({ children, enabled, scopeKey, viewportRef
     else resize(preference.current)
   }
   const shell: CSSProperties = enabled
-    ? { position: 'relative', display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0, minWidth: 0, height: 'auto' }
+    // Native rail/width controls belong to the conversation, below sibling drawers.
+    // Contain upstream z-index values here without changing the native components.
+    ? { position: 'relative', zIndex: 0, display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0, minWidth: 0, height: 'auto' }
     : { display: 'contents' }
   return <div ref={rootRef} style={shell} className={wide ? native.rootClass : undefined}
     data-arkme-wide-conversation={wide ? 'true' : 'false'}>

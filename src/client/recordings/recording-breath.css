@@ -1,0 +1,38 @@
+/* Capture-only, two-second breathing shared by rail, controls and portals.
+   Animate visual layers, never text, layout dimensions or the whole sidebar. */
+[data-arkme-recording-breath="dot"],
+[data-arkme-recording-breath="icon"] {
+  flex-shrink: 0;
+  transform-origin: center;
+  animation: arkme-recording-breathe 2s ease-in-out infinite;
+  animation-delay: var(--arkme-recording-breath-delay, 0ms);
+}
+[data-arkme-recording-breath="dot"] {
+  color: var(--dsw-alias-state-error-primary, #c2413b);
+  animation-name: arkme-recording-dot-breathe;
+}
+[data-arkme-recording-breath="surface"] {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--dsw-alias-state-error-primary, #c2413b);
+  animation: arkme-recording-surface-breathe 2s ease-in-out infinite;
+  animation-delay: var(--arkme-recording-breath-delay, 0ms);
+}
+@keyframes arkme-recording-breathe {
+  0%, 100% { opacity: .65; transform: scale(.94); }
+  50% { opacity: 1; transform: scale(1.04); }
+}
+@keyframes arkme-recording-dot-breathe {
+  0%, 100% { opacity: .65; transform: scale(.9); box-shadow: 0 0 0 0 transparent; }
+  50% { opacity: 1; transform: scale(1.08); box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent); }
+}
+@keyframes arkme-recording-surface-breathe {
+  0%, 100% { opacity: .025; }
+  50% { opacity: .11; }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-arkme-recording-breath] { animation: none !important; transform: none; opacity: 1; box-shadow: none; }
+  [data-arkme-recording-breath="surface"] { opacity: .06; }
+}

@@ -1,4 +1,5 @@
 import { emojiSample } from './fixtures/emoji.js'
+import { arkmeTheme } from '../src/client/arkme-theme.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
@@ -702,7 +703,7 @@ describe('normal timeline related quick note drawer', () => {
     expect(attachmentButton.props.style).toMatchObject({ width: 18, height: 28 })
     const sendButton = renderer.root.findByProps({ 'aria-label': '发送延展' })
     expect(sendButton.findByType('svg').props.viewBox).toBe('9.7 6.1 16 16')
-    expect(sendButton.props.style).toMatchObject({ width: 36, height: 28, background: '#DCE1E9' })
+    expect(sendButton.props.style).toMatchObject({ width: 36, height: 28, background: arkmeTheme.active, color: arkmeTheme.tertiary })
 
     const pastedImage = { name: 'desktop.png', type: 'image/png', size: 12 }
     const preventDefault = vi.fn()

@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { expect, it, vi } from 'vitest'
 import { ArkmeSourceBreadcrumb } from '../src/client/ArkmeSourceBreadcrumb.js'
 import { CONVERSATION_MENU_COLORS } from '../src/client/conversation-selector-style.js'
+import { arkmeTheme } from '../src/client/arkme-theme.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 
 async function openCustomTopics(renderer: ReactTestRenderer) {
@@ -185,7 +186,7 @@ it('renders faint vertical guides for every visible ancestor level', async () =>
     const childGuides = row('child').findAllByProps({ 'data-arkme-self-topic-hierarchy-guide': 0 })
     expect(childGuides).toHaveLength(1)
     expect(childGuides[0]!.props.style.left).toBe(-4)
-    expect(childGuides[0]!.props.style.background).toBe('#e7e9ed')
+    expect(childGuides[0]!.props.style.background).toBe(arkmeTheme.border)
     const grandchildGuides = row('grandchild').findAll(node => node.props['data-arkme-self-topic-hierarchy-guide'] !== undefined)
     expect(grandchildGuides.map(guide => guide.props.style.left)).toEqual([-20, -4])
   } finally { act(() => { renderer.unmount() }) }

@@ -1,4 +1,5 @@
 import { IconNewChatOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 
@@ -8,10 +9,11 @@ import arkmeGroupIconBase64 from '../../assets/icons/profile-2user-linear.svg'
 import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
 import { callArkme } from './api.js'
 import { ArkmeBotCreateDialog } from './ArkmeBotCreateDialog.js'
+import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 
-type QuickAddDialogKind = 'group' | 'bot'
+type QuickAddDialogKind = 'group' | 'call' | 'bot'
 
 const style: Record<string, CSSProperties> = {
   // Keep the menu above later sidebar rows without escaping the frame-wide overlay layer.
@@ -67,11 +69,12 @@ function maskIcon(base64: string, iconStyle: CSSProperties): CSSProperties {
   }
 }
 
-export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onAddBot, onNewDshSession, error,
+export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, onAddBot, onNewDshSession, error,
   anchor, open = true, onClose = () => {}, getAnchorRect,
 }: {
   onContactAdd(): void
   onCreateGroup(): void
+  onStartCall?: () => void
   onAddBot(): void
   onNewDshSession?: (() => void) | undefined
   error?: string
@@ -89,6 +92,7 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onAddBot, onNew
         { id: 'contact', label: '添加联系人', icon: icon(arkmeUserAddIconBase64), onSelect: onContactAdd },
         { id: 'group', label: '创建群聊', icon: icon(arkmeGroupIconBase64), onSelect: onCreateGroup },
         { id: 'bot', label: '添加 Bot', icon: icon(arkmeBotIconBase64), onSelect: onAddBot },
+        onStartCall !== undefined && { id: 'call', label: '发起通话', icon: <PhoneCall size={16} />, onSelect: onStartCall },
         error ? { id: 'error', label: <span role="alert">{error}</span>, disabled: true, onSelect: () => {} } : false,
       ]}
     />
@@ -116,6 +120,13 @@ export function ArkmeQuickAddButton({
   const [dialogBusy, setDialogBusy] = useState(false)
   const anchorRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const restoreCallFocus = useRef(false)
+  useEffect(() => {
+    if (dialogKind === undefined && restoreCallFocus.current) {
+      restoreCallFocus.current = false
+      triggerRef.current?.focus({ preventScroll: true })
+    }
+  }, [dialogKind])
 
   const notificationRevisionRef = useRef(notificationActivationRevision)
   const pendingNotificationDismissRef = useRef(false)
@@ -152,7 +163,7 @@ export function ArkmeQuickAddButton({
   const menu = <ArkmeQuickAddMenu
       open={menuOpen} onClose={() => setMenuOpen(false)}
       anchor={<button data-arkme-feedback="neutral"
-        ref={triggerRef} type="button" aria-label={onNewDshSession ? '新建 DSH 会话、添加联系人、群聊或 Bot' : '添加联系人、群聊或 Bot'} title="添加"
+        ref={triggerRef} type="button" aria-label={onNewDshSession ? '新建 DSH 会话、添加联系人、群聊、发起通话或添加 Bot' : '添加联系人、群聊、发起通话或添加 Bot'} title="添加"
         aria-haspopup="menu" aria-expanded={menuOpen} style={style.trigger}
         onClick={() => { setMenuError(''); setMenuOpen(open => !open) }}
       >＋</button>}
@@ -166,10 +177,16 @@ export function ArkmeQuickAddButton({
         onContactAdd()
       }}
       onCreateGroup={() => { chooseDialog('group') }}
+      onStartCall={() => { chooseDialog('call') }}
       onAddBot={() => { chooseDialog('bot') }}
     />
   return <div ref={anchorRef} style={style.anchor}>
     {menu}
+    {dialogKind === 'call' && <ArkmeCallSurface presentation="dialog" initialPickerOpen onClose={() => {
+      pendingNotificationDismissRef.current = false
+      restoreCallFocus.current = true
+      setDialogKind(undefined)
+    }} />}
     {dialogKind === 'group' && <ArkmeGroupCreateDialog
       onClose={() => {
         pendingNotificationDismissRef.current = false

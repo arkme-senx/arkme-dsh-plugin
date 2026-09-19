@@ -6,6 +6,7 @@ import { ArkmeSdk } from '../src/sdk/index.js'
 import { ArkmeFileQuickView } from '../src/client/ArkmeFileQuickView.js'
 import { ArkmeFileCard } from '../src/client/ArkmeRichContent.js'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { arkmeTheme } from '../src/client/arkme-theme.js'
 
 const api = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: api.call }))
@@ -15,6 +16,18 @@ const original = { localRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000001
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); vi.restoreAllMocks(); vi.clearAllMocks() })
 
 describe('file save UI', () => {
+  it.each(['a.pdf', 'a.md', 'a.txt'])('pairs the portaled %s preview surface and text with host theme tokens', async fileName => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    vi.stubGlobal('fetch', async () => new Response('Preview text'))
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<ArkmeFileViewer block={{ ...block, fileName, localFileRef: original.localRef }} openLocalFile onClose={() => {}} />) })
+      expect(view.root.findByProps({ role: 'dialog' }).props.style).toMatchObject({
+        color: arkmeTheme.text, background: arkmeTheme.menu,
+      })
+    } finally { if (view) await act(async () => view.unmount()) }
+  })
+
   it('keeps absent resources idle and cancels reception when the resource disappears', async () => {
     let signal: AbortSignal | undefined
     const receive = vi.spyOn(ArkmeSdk.prototype, 'receiveFile').mockImplementation(async (_ref, _start, incomingSignal) => {

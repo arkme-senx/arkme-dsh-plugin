@@ -6,8 +6,9 @@ export function watchHarnessSessionHover(anchor: HTMLElement, scope: string, act
   const doc = anchor.ownerDocument, win = doc.defaultView
   if (!win) return () => {}
   let native: Document | undefined
+  let frameElement: HTMLIFrameElement | undefined
   let stopWatching: (() => void) | undefined
-  const release = () => { stopWatching?.(); stopWatching = undefined; native = undefined }
+  const release = () => { stopWatching?.(); stopWatching = undefined; native = undefined; frameElement = undefined }
   return watchConversationMenuHover(anchor, {
     open: hover => {
       const surface = doc.querySelector<HTMLElement>('[data-arkme-owned="deepseek-harness-surface"][data-arkme-account-id]')
@@ -17,14 +18,16 @@ export function watchHarnessSessionHover(anchor: HTMLElement, scope: string, act
       try { next = frame?.contentDocument } catch { return false }
       if (!frame || !next?.querySelector('[data-arkme-session-column]')) return false
       native = next
+      frameElement = frame
       const nw = next.defaultView!
       const visible = surface.getAttribute('data-arkme-visible')
       const close = () => next.dispatchEvent(new nw.Event(HARNESS_MENU_CLOSE))
-      const move = (event: Event) => {
-        if (harnessMenuLayers(next).some(node => node.contains(event.target as Node | null))) hover.keepOpen()
-        else hover.scheduleClose()
+      const point = (event: PointerEvent) => {
+        const viewport = frame.getBoundingClientRect()
+        return { x: event.clientX + viewport.left, y: event.clientY + viewport.top }
       }
-      const leave = (event: PointerEvent) => { if (!event.relatedTarget) hover.scheduleClose() }
+      const move = (event: PointerEvent) => hover.checkPointer(event.target, point(event))
+      const leave = (event: PointerEvent) => { if (!event.relatedTarget) hover.checkPointer(null, point(event)) }
       const observer = new win.MutationObserver(() => {
         if (!surface.isConnected || surface.getAttribute('data-arkme-account-scope') !== scope
           || surface.getAttribute('data-arkme-visible') !== visible) close()
@@ -58,6 +61,15 @@ export function watchHarnessSessionHover(anchor: HTMLElement, scope: string, act
     },
     close: () => { native?.dispatchEvent(new native.defaultView!.Event(HARNESS_MENU_CLOSE)); release() },
     position: () => native?.dispatchEvent(new native.defaultView!.Event(HARNESS_MENU_POSITION)),
-    contains: () => false, // Native iframe events are forwarded to the same lifecycle above.
+    contains: target => !!native && harnessMenuLayers(native).some(node => node.contains(target as Node | null)),
+    bounds: () => {
+      if (!native || !frameElement) return []
+      const viewport = frameElement.getBoundingClientRect()
+      return harnessMenuLayers(native).map(node => {
+        const rect = node.getBoundingClientRect()
+        return { left: rect.left + viewport.left, right: rect.right + viewport.left,
+          top: rect.top + viewport.top, bottom: rect.bottom + viewport.top }
+      })
+    },
   })
 }

@@ -13,6 +13,8 @@ import { arkmeAuthStore } from './auth-store.js'
 import { useConversationMembers } from './use-conversation-members.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ArkmeMentionReadProvider } from './mention-read-status.js'
+import { ArkmeReadReceiptIcon } from './ArkmeReadReceiptIcon.js'
 import {
   arkmeMessageReadReceipts,
   type ArkmeMessageReadReceiptTarget,
@@ -49,7 +51,7 @@ const styles: Record<string, CSSProperties> = {
   indicator: {
     position: 'relative', width: 12, height: 12, display: 'grid', placeItems: 'center', flex: 'none',
   },
-  indicatorIcon: { position: 'absolute', inset: 0, width: 12, height: 12, opacity: 0.16 },
+  indicatorIcon: { position: 'absolute', inset: 0 },
   indicatorCount: {
     position: 'relative', zIndex: 1, color: arkmeTheme.text, opacity: 0.16,
     fontSize: 7, lineHeight: '12px', letterSpacing: 0, textAlign: 'center',
@@ -157,13 +159,7 @@ function summaryLabel(summary: ArkmeMessageReadReceiptSummary): string {
 function ReceiptCircle(props: { checked?: boolean; count?: number }) {
   const count = props.count === undefined ? undefined : Math.min(999, Math.max(0, props.count))
   return <span style={styles.indicator} data-arkme-read-receipt-indicator={props.checked === true ? 'all-read' : 'partial-read'}>
-    <svg style={styles.indicatorIcon} viewBox="0 0 12 12" fill="none" aria-hidden>
-      <circle cx="6" cy="6" r="5.4" stroke="currentColor" strokeWidth="1.2" />
-      {props.checked === true && <path
-        d="M5.17 7.15 8.37 4.1a.37.37 0 0 1 .52.5L5.43 7.9a.37.37 0 0 1-.52 0L3.1 6.18a.35.35 0 0 1 .52-.5l1.54 1.47Z"
-        fill="currentColor"
-      />}
-    </svg>
+    <ArkmeReadReceiptIcon checked={props.checked === true} style={styles.indicatorIcon} />
     {count !== undefined && <span style={{ ...styles.indicatorCount, fontSize: count > 99 ? 4.5 : 7 }}>{count}</span>}
   </span>
 }
@@ -475,7 +471,9 @@ export function ArkmeMessageReadReceiptLine(props: {
   wide?: boolean
   children: ReactNode
 }) {
-  return <div
+  const elementRef = useRef<HTMLDivElement>(null)
+  return <ArkmeMentionReadProvider source={props.source} item={props.item} elementRef={elementRef}><div
+    ref={elementRef}
     data-arkme-message-content-line={props.item.itemUid}
     style={{
       maxWidth: '100%', minWidth: 0, display: 'flex', alignItems: 'flex-end',
@@ -487,5 +485,5 @@ export function ArkmeMessageReadReceiptLine(props: {
   >
     {props.item.isMe && <ArkmeMessageReadReceipt source={props.source} item={props.item} />}
     {props.children}
-  </div>
+  </div></ArkmeMentionReadProvider>
 }

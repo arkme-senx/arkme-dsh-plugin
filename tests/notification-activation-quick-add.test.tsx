@@ -27,7 +27,7 @@ describe('notification activation quick-add cleanup', () => {
     await act(async () => { renderer = create(<ArkmeQuickAddButton onNewDshSession={createSession} onContactAdd={vi.fn()} onSourceCreated={vi.fn()} />) })
     await act(async () => { renderer.root.findByProps({ 'aria-haspopup': 'menu' }).props.onClick() })
     const items = renderer!.root.findAllByProps({ role: 'menuitem' })
-    expect(items).toHaveLength(4)
+    expect(items).toHaveLength(5)
     expect(items[0]!.findAll(node => node.children.includes('新建 DSH 会话'))).not.toHaveLength(0)
     await act(async () => { items[0]!.props.onClick() })
     expect(renderer!.root.findAllByProps({ role: 'menu' })).toHaveLength(1)
@@ -51,7 +51,7 @@ describe('notification activation quick-add cleanup', () => {
     await act(async () => { renderer = create(render(1)); await Promise.resolve() })
 
     const openMenu = async () => {
-      await act(async () => { renderer.root.findByProps({ 'aria-label': '添加联系人、群聊或 Bot' }).props.onClick() })
+      await act(async () => { renderer.root.findByProps({ 'aria-label': '添加联系人、群聊、发起通话或添加 Bot' }).props.onClick() })
     }
     const openGroup = async () => {
       await openMenu()

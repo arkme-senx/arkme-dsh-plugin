@@ -992,7 +992,7 @@ describe('Arkme rich content presentation', () => {
     if (count > 1) expect(html.indexOf('ref-0')).toBeLessThan(html.indexOf(`ref-${String(count - 1)}`))
   })
 
-  it('renders compact audio and two-line file cards independently of text width', () => {
+  it('renders compact audio and single-line intrinsic-width file cards independently of text width', () => {
     const html = renderToStaticMarkup(<ArkmeMessageContent item={{
       itemUid: 'compact', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,
       title: '', textContent: '短', contentBlocks: [
@@ -1004,7 +1004,48 @@ describe('Arkme rich content presentation', () => {
     expect(html).toContain('1:05')
     expect(html).not.toContain('data-arkme-voice-transcript')
     expect(html).toContain('data-arkme-file-card="file"')
-    expect(html).toContain('-webkit-line-clamp:2')
+    expect(html).not.toContain('-webkit-line-clamp:2')
+    expect(html).toContain('white-space:nowrap;text-overflow:ellipsis')
+    expect(html).toContain('title="非常长的文件名称需要显示两行然后省略.pdf"')
+    expect(html).not.toContain('width:220px')
+    expect(html).toContain('min-height:48px')
+  })
+
+  it.each([3, 4])('keeps voice kind %s controls before the transcript and accompanying media', templateKind => {
+    for (const presentation of ['bubble', 'detail'] as const) for (const isMe of [false, true]) for (const audioSort of [-1, 5]) {
+      const html = renderToStaticMarkup(<ArkmeMessageContent presentation={presentation} item={{
+        itemUid: 'voice-with-media', senderName: '用户', isMe, sendAtMillis: 1, status: 1,
+        templateKind, title: '', textContent: '这是附图语音转写。', recordDurationMillis: 4_000,
+        contentBlocks: [
+          { kind: 'image', mediaRef: 'photo-first', fileName: 'photo.png', mimeType: 'image/png', size: 1, sortOrder: 0 },
+          { kind: 'audio', mediaRef: 'voice-mixed', fileName: 'voice.m4a', mimeType: 'audio/mp4', size: 3, sortOrder: audioSort },
+          { kind: 'file', mediaRef: 'file-last', fileName: 'attachment.pdf', mimeType: 'application/pdf', size: 4, sortOrder: 2 },
+        ],
+      }} />)
+      expect(html.match(/data-arkme-voice="inline"/g)).toHaveLength(1)
+      expect(html.match(/这是附图语音转写。/g)).toHaveLength(1)
+      expect(html).toContain('data-arkme-voice-transcript')
+      expect(html.indexOf('0:04')).toBeLessThan(html.indexOf('这是附图语音转写。'))
+      expect(html.indexOf('这是附图语音转写。')).toBeLessThan(html.indexOf('photo-first'))
+      expect(html.indexOf('photo-first')).toBeLessThan(html.indexOf('attachment.pdf'))
+    }
+  })
+
+  it.each([undefined, 2, 3, 4])('does not pair unrelated text with multiple audio attachments (kind %s)', templateKind => {
+    const html = renderToStaticMarkup(<ArkmeMessageContent item={{
+      itemUid: 'multi-audio', senderName: '用户', isMe: false, sendAtMillis: 1, status: 1,
+      ...(templateKind === undefined ? {} : { templateKind }), title: '', textContent: '多附件说明',
+      contentBlocks: [
+        { kind: 'audio', mediaRef: 'audio-first', fileName: 'a.m4a', mimeType: 'audio/mp4', size: 3, durationSec: 4, sortOrder: 0 },
+        { kind: 'image', mediaRef: 'photo-middle', fileName: 'photo.png', mimeType: 'image/png', size: 1, sortOrder: 1 },
+        { kind: 'audio', mediaRef: 'audio-last', fileName: 'b.m4a', mimeType: 'audio/mp4', size: 3, durationSec: 8, sortOrder: 2 },
+      ],
+    }} />)
+    expect(html).not.toContain('data-arkme-voice-transcript')
+    expect(html.match(/多附件说明/g)).toHaveLength(1)
+    expect(html.indexOf('多附件说明')).toBeLessThan(html.indexOf('0:04'))
+    expect(html.indexOf('0:04')).toBeLessThan(html.indexOf('photo-middle'))
+    expect(html.indexOf('photo-middle')).toBeLessThan(html.indexOf('0:08'))
   })
 
   it.each([3, 4])('places voice kind %s before its transcript, with no separate player plate or duplicate text', (templateKind) => {

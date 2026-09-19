@@ -1,3 +1,5 @@
+import type { ConversationMenuHoverRequest } from './conversation-menu-layer.js'
+
 /** Private presentation bridge that lets every trigger open the one self-topic menu owner. */
 export const SELF_TOPIC_MENU_OPEN = 'arkme:self-topic-menu-open'
 export const SELF_TOPIC_MENU_CLOSE = 'arkme:self-topic-menu-close'
@@ -10,12 +12,7 @@ export interface SelfTopicMenuAnchor {
   bottom: number
 }
 
-export interface SelfTopicMenuRequest {
+export interface SelfTopicMenuRequest extends ConversationMenuHoverRequest {
   accepted: boolean
-  focusMenu: boolean
-  anchor(): SelfTopicMenuAnchor
-  keepOpen(): void
-  scheduleClose(): void
-  onClose(focus: boolean): void
   onSelect(): void
 }

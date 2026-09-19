@@ -15,6 +15,65 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('searches remark and nickname independently of message content, preserving directory pagination and account binding', async () => {
+    const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+    const post = vi.fn(async (_path: string, body: { page_cursor?: unknown }) => ({
+      items: [{ session: { chat_session_uid: body.page_cursor ? 'group' : 'private', session_kind: body.page_cursor ? 2 : 1, title: '讨论群' },
+        private_counterpart: { user_id: 17, display_name_snapshot: '狗才' }, private_supplement: { remark: '周鹏' } }],
+      has_more: !body.page_cursor, ...(!body.page_cursor ? { next_page_cursor: { id: 'second' } } : {}),
+    }))
+    const runtime = { config, requireSession: async () => session, authenticatedChatPost: post,
+      stateStore: { uniqueCode: async () => 'fixture-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, { publicProfileSummariesByUserIds: async () => new Map() } as unknown as ProfileService, {} as never)
+    for (const query of [' 周鹏 ', '狗才']) {
+      const page = await service.searchConversationNames({ query })
+      expect(page.items).toHaveLength(1)
+      expect(page.items[0]).toMatchObject({ title: '周鹏', nickname: '狗才', sourceUid: 'private', targetSource: { displayName: '周鹏', privateNickname: '狗才' } })
+      expect(await service.openSourceRef(page.items[0]!.targetSource!.sourceRef, 42)).toMatchObject({ ownerRef: 'private' })
+      await expect(service.openSourceRef(page.items[0]!.targetSource!.sourceRef, 43)).rejects.toBeDefined()
+      expect(page.hasMore).toBe(true)
+    }
+    const first = await service.searchConversationNames({ query: '讨论' })
+    expect(first.items).toEqual([])
+    const second = await service.searchConversationNames({ query: '讨论', cursor: first.nextCursor })
+    expect(second.items[0]).toMatchObject({ title: '讨论群', sourceUid: 'group' })
+    expect(second.items[0]!.nickname).toBeUndefined()
+    expect(second.hasMore).toBe(false)
+    expect(post).toHaveBeenCalledTimes(2)
+    await expect(service.searchConversationNames({ query: ' ' })).rejects.toMatchObject({ code: 'conversation-query-empty' })
+  })
+
+  it('does not turn an empty remark into a nameless private conversation', async () => {
+    const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+    const bundle = { session: { chat_session_uid: 'private', session_kind: 1 }, private_counterpart: { user_id: 17, display_name_snapshot: '狗才' }, private_supplement: { remark: '  ', counterpart_name_snapshot: '' } }
+    const runtime = { config, requireSession: async () => session, authenticatedChatPost: async () => ({ items: [bundle], has_more: false }), stateStore: { uniqueCode: async () => 'fixture-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, { publicProfileSummariesByUserIds: async () => new Map() } as unknown as ProfileService, {} as never)
+    expect((await service.searchConversationNames({ query: '狗才' })).items[0]!.title).toBe('狗才')
+    expect((await service.chatSourceFromBundle(bundle, session, undefined, [])).displayName).toBe('狗才')
+    const controller = new AbortController(); controller.abort()
+    await expect(service.searchConversationNames({ query: '狗才', signal: controller.signal })).rejects.toBeDefined()
+  })
+
+  it('reports broken name-search pagination instead of claiming complete results', async () => {
+    const runtime = { config, requireSession: async () => ({ userId: 42 }) } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    vi.spyOn(service, 'listSources').mockResolvedValue({ directory: 'root', items: [], hasMore: true })
+    await expect(service.searchConversationNames({ query: '周鹏' })).rejects.toMatchObject({ code: 'conversation-search-incomplete' })
+  })
+
+  it('uses real profile nicknames when legacy chat snapshots contain the remark instead', async () => {
+    const session = { userId: 42 }
+    const runtime = { config, requireSession: async () => session } as unknown as ServiceRuntime
+    const profiles = vi.fn(async () => new Map([[17, { nickname: '狗才' }]]))
+    const service = new SourceService(runtime, { publicProfileSummariesByUserIds: profiles } as unknown as ProfileService, {} as never)
+    vi.spyOn(service, 'listSources').mockResolvedValue({ directory: 'root', items: [{ sourceRef: 'ref', kind: 'private_chat', peerUserId: 17, displayName: '周鹏', privateNickname: '周鹏', activeAtMillis: 0, unreadCount: 0 }], hasMore: false })
+    vi.spyOn(service, 'openSourceRef').mockResolvedValue({ version: 1, userId: 42, ownerRef: 'private', displayName: '周鹏', kind: 'private_chat' })
+    const result = await service.searchConversationNames({ query: '狗才' })
+    expect(result.items[0]).toMatchObject({ title: '周鹏', nickname: '狗才', targetSource: { privateNickname: '狗才' } })
+    expect(profiles).toHaveBeenCalledExactlyOnceWith([17], session, undefined)
+    profiles.mockRejectedValueOnce(new Error('资料不可用'))
+    await expect(service.searchConversationNames({ query: '狗才' })).rejects.toThrow('资料不可用')
+  })
   it('replaces generic cached previews with viewer-aware calls without extra detail requests', async () => {
     const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
     const payload = { template_kind: 5, structured_anchor: { anchor_kind: 2 },

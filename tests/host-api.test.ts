@@ -5,6 +5,13 @@ import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.
 import { ARKME_RUNTIME_INSTANCE_ID } from '../src/runtime-instance.js'
 import { ArkmePluginError } from '../src/services/service.js'
 
+it('passes paginated conversation-name reads and cancellation without trusting caller identity', async () => {
+  const signal = new AbortController().signal
+  const service = { searchConversationNames: vi.fn(async () => ({ items: [], hasMore: false })) }
+  await dispatchArkmeHostOperation(service as never, 'search.conversations', { query: '周鹏', cursor: 'next', userId: 999 }, undefined, undefined, undefined, undefined, signal)
+  expect(service.searchConversationNames).toHaveBeenCalledExactlyOnceWith({ query: '周鹏', cursor: 'next', signal })
+})
+
 it('passes home preference read cancellation through the Host owner', async () => {
   const controller = new AbortController()
   const service = { topicHomeVisibility: vi.fn() }

@@ -623,8 +623,13 @@ function DetailExtensionComposer({ sourceRef, sourceKind, conversationMembers, m
   </div>
 }
 
-export function arkmeTimelineDetailSenderText(item: ArkmeTimelineItem): string {
-  return item.agentSource === undefined ? item.senderName : `${item.senderName} · ${item.agentSource.label}`
+export function arkmeTimelineDetailSenderText(item: ArkmeTimelineItem, members: readonly ArkmeConversationMemberItem[] = []): string {
+  const member = item.senderKind === 'bot' ? undefined : item.memberRef !== undefined
+    ? members.find(member => member.memberRef === item.memberRef)
+    : item.isMe ? members.find(member => member.isSelf) : undefined
+  const displayName = member?.displayName.trim()
+  const name = displayName && displayName !== '群成员' ? displayName : item.senderName
+  return item.agentSource === undefined ? name : `${name} · ${item.agentSource.label}`
 }
 
 type ArkmeDetailExtensionLoadState =
@@ -990,14 +995,14 @@ export function ArkmeTimelineDetailDrawer({
   }
   return <ArkmeDetailShell title={historyOpen ? "编辑记录" : "快记详情"} label={historyOpen ? "编辑记录" : "快记详情"}
     onClose={closeDrawer} bodyRef={bodyRef} footer={extensionFooter} footerHidden={historyOpen}
-    {...(historyOpen ? { onBack: () => { setEditHistoryTarget(undefined) }, backLabel: '返回快记详情' } : {})}>
-    {historyOpen ? <ArkmeRecordEditHistory key={historyTarget} sourceRef={normalizedSourceRef} messageActionRef={messageActionRef} author={item} /> : <>
-    <div style={{ ...styles.row, alignItems: 'center', marginBottom: 20, ...(item.senderKind === 'bot' ? { gap: 10 } : {}) }}>
+    headerContent={historyOpen ? undefined : <div data-arkme-detail-author style={{ ...styles.row, alignItems: 'center', ...(item.senderKind === 'bot' ? { gap: 10 } : {}) }}>
       <ArkmeUserAvatar senderKind={item.senderKind} {...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef })} size={40} label="作者头像" />
-      <div style={styles.content}><div style={styles.name}>{item.senderKind === 'bot' ? <ArkmeBotSenderName name={arkmeTimelineDetailSenderText(item)} detail /> : arkmeTimelineDetailSenderText(item)}</div>
+      <div style={styles.content}><div style={styles.name}>{item.senderKind === 'bot' ? <ArkmeBotSenderName name={arkmeTimelineDetailSenderText(item, conversationMembers)} detail /> : arkmeTimelineDetailSenderText(item, conversationMembers)}</div>
         <div style={{ ...styles.time, marginTop: item.senderKind === 'bot' ? 2 : 4, ...(item.senderKind === 'bot' ? { fontSize: 12 } : {}) }}>{[dateLabel(item.sendAtMillis), timeLabel(item.sendAtMillis)].filter(Boolean).join(' ')}</div>
       </div>
-    </div>
+    </div>}
+    {...(historyOpen ? { onBack: () => { setEditHistoryTarget(undefined) }, backLabel: '返回快记详情' } : {})}>
+    {historyOpen ? <ArkmeRecordEditHistory key={historyTarget} sourceRef={normalizedSourceRef} messageActionRef={messageActionRef} author={item} /> : <>
     {canToggle && <button data-arkme-feedback="neutral" type="button" style={styles.toggle} onClick={onToggleOriginal}>{showOriginal ? '显示润色' : '显示原文'}</button>}
     <div data-arkme-timeline-detail-rich-content>
       <ArkmeMessageContent

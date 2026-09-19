@@ -14,10 +14,12 @@ const styles: Record<string, CSSProperties> = {
 }
 
 /** Shared geometry for right-side drawers; each panel retains its own navigation and body. */
-export function ArkmeRightPanelHeader({ title, titleId, subtitle, actions, onClose, closeLabel = '关闭详情', closeRef,
+export function ArkmeRightPanelHeader({ title, titleId, heading, subtitle, actions, onClose, closeLabel = '关闭详情', closeRef,
   closeDisabled = false, onBack, backLabel = '返回', backRef, backDisabled = false }: {
   title: ReactNode
   titleId?: string | undefined
+  /** A compact author block can replace the visible title without adding a row. */
+  heading?: ReactNode
   subtitle?: ReactNode
   actions?: ReactNode
   onClose: () => void
@@ -36,7 +38,7 @@ export function ArkmeRightPanelHeader({ title, titleId, subtitle, actions, onClo
     {onBack !== undefined && <button data-arkme-feedback="neutral" ref={backRef} type="button" className="arkme-right-panel-header-button" style={styles.button}
       aria-label={backLabel} disabled={backDisabled} onClick={onBack}><ArrowLeft size={18} aria-hidden /></button>}
     <div style={styles.heading}>
-      <h3 id={titleId} style={styles.title}>{title}</h3>
+      {heading ?? <h3 id={titleId} style={styles.title}>{title}</h3>}
       {subtitle !== undefined && subtitle !== null && subtitle !== '' && <div style={styles.subtitle}>{subtitle}</div>}
     </div>
     {actions !== undefined && <div style={styles.actions}>{actions}</div>}

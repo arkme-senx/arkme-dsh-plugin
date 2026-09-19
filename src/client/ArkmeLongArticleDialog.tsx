@@ -49,10 +49,13 @@ function errorMessage(error: unknown): string {
 
 export interface ArkmeLongArticleDialogProps {
   sourceRef: string
-  item?: ArkmeTimelineItem
+  item?: Pick<ArkmeTimelineItem, 'itemUid' | 'title' | 'textContent' | 'sendAtMillis' | 'recordDurationMillis' | 'editDurationMillis' | 'messageActionRef' | 'textFormat' | 'contentBlocks'>
+  overlayZIndex?: number
   onClose: () => void
   onCreated?: (item: ArkmeTimelineItem) => void
   onUpdated?: (detail: ArkmeLongArticleDetail) => void
+  /** Composer mode: save locally and attach a draft; never publish here. */
+  onPrepared?: (draft: ArkmeLongArticleDraft) => void
 }
 
 /** Forwarded content is a read-only snapshot, not an editable source record. */
@@ -81,7 +84,7 @@ export function ArkmeLongArticleSnapshotDialog({ item, onClose }: { item: ArkmeT
   </div>
 }
 
-export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, onUpdated }: ArkmeLongArticleDialogProps) {
+export function ArkmeLongArticleDialog({ sourceRef, item, overlayZIndex, onClose, onCreated, onUpdated, onPrepared }: ArkmeLongArticleDialogProps) {
   const { notice: imageNotice, showNotice: showImageNotice } = useArkmeFileActionNotice(5000)
   const messageActionRef = useRef(item?.messageActionRef)
   messageActionRef.current = item?.messageActionRef
@@ -261,9 +264,9 @@ export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, on
   }, [deleteDraft, dirty, editing, onClose, saveDraft, submitting])
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') requestClose() }
-    window.addEventListener('keydown', onKeyDown)
-    return () => { window.removeEventListener('keydown', onKeyDown) }
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); requestClose() } }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => { window.removeEventListener('keydown', onKeyDown, true) }
   }, [requestClose])
 
   const beginEditing = async () => {
@@ -325,6 +328,18 @@ export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, on
     try {
       if (creating) {
         const submissionIds = getIds()
+        if (onPrepared) {
+          await saveDraft()
+          const auth = arkmeAuthStore.getSnapshot().auth
+          if (authAtOpen.current?.status === 'authenticated' && (auth?.status !== 'authenticated' || auth.userId !== authAtOpen.current.userId || auth.environment !== authAtOpen.current.environment)) throw new Error('账号已切换，请重新打开长文')
+          skipUnmountSaveRef.current = true
+          onPrepared({ sourceRef, ...submissionIds, title: normalizedTitle, textContent: normalizedText,
+            textFormat: format, durationMillis: editingDurationMillis, updatedAtMillis: Date.now(),
+            ...(article ? { document: article.document, images: article.images } : {}),
+          })
+          onClose()
+          return
+        }
         const result = await callArkme<ArkmeSourceSendResult>(article ? 'source.long-article.publish' : 'source.send-rich', {
           sourceRef,
           title: normalizedTitle,
@@ -399,7 +414,7 @@ export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, on
   const wordCount = (article || readFormat === 'markdown') ? arkmeMarkdownPlainText(textValue).replace(/\[图片\]/g, '').length : textValue.length
   const sendAt = detail?.sendAtMillis ?? item?.sendAtMillis ?? 0
 
-  return <div style={styles.overlay} role="dialog" aria-modal="true" aria-label={creating ? '写长文' : '长文详情'} onClick={event => { event.stopPropagation() }} onMouseDown={event => { if (event.target === event.currentTarget) requestClose() }}>
+  return <div style={{ ...styles.overlay, ...(overlayZIndex === undefined ? {} : { zIndex: overlayZIndex }) }} role="dialog" aria-modal="true" aria-label={creating ? '写长文' : '长文详情'} onClick={event => { event.stopPropagation() }} onMouseDown={event => { if (event.target === event.currentTarget) requestClose() }}>
     <article style={styles.dialog} data-arkme-long-article-dialog={creating ? 'create' : editing ? 'edit' : 'detail'}>
       <header style={styles.header}>
         {editing
@@ -412,7 +427,7 @@ export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, on
         <span style={styles.meta}>◷ {formatDuration(metaDuration)}</span>
         <span style={styles.meta}>▤ {String(wordCount)}字</span>
         {editing
-          ? <button data-arkme-feedback="neutral" type="button" style={{ ...styles.action, opacity: submitting ? .55 : 1 }} disabled={loading || !capabilityReady || (draftFormat === 'markdown' && !markdownEnabled) || (markdownEnabled && !article) || submitting || accountChanged || preparingImages || Boolean(article?.pendingImages) || Boolean(article?.failedImages)} onClick={() => { void publish() }}>➤ {submitting ? '发布中…' : '发布'}</button>
+          ? <button data-arkme-feedback="neutral" type="button" style={{ ...styles.action, opacity: submitting ? .55 : 1 }} disabled={loading || !capabilityReady || (draftFormat === 'markdown' && !markdownEnabled) || (markdownEnabled && !article) || submitting || accountChanged || preparingImages || Boolean(article?.pendingImages) || Boolean(article?.failedImages)} onClick={() => { void publish() }}>➤ {creating && onPrepared ? (submitting ? '正在添加…' : '添加到待发送') : (submitting ? '发布中…' : '发布')}</button>
           : detail?.editable === true && <button data-arkme-feedback="neutral" type="button" style={styles.action} onClick={() => { void beginEditing() }}>✎ 编辑</button>}
       </div>
       {error !== '' && <div style={styles.error} role="alert">{error}{!creating && detail === undefined && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={() => { void loadDetail() }}>重试</button>}</div>}

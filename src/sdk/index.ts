@@ -371,6 +371,7 @@ export type {
 } from '../outgoing-call-contract.js'
 
 const DEFAULT_ROUTE = '/arkme-self/api'
+export type { ArkmeMembership, ArkmeMembershipCatalog, ArkmeMembershipProduct } from '../types.js'
 
 function expectedUserIdHeaders(expectedUserId: number | undefined): Record<string, string> {
   if (expectedUserId === undefined) return {}
@@ -2046,6 +2047,12 @@ export class ArkmeSdk {
   }): Promise<ArkmeCalendarBucketPage> {
     const { signal, ...params } = options
     return await this.call<ArkmeCalendarBucketPage>('calendar.chat-statistics', params, signal)
+  }
+
+  /** Search one viewer-owned conversation directory page by remark or nickname. */
+  async searchConversationNames(query: string, options: { cursor?: string; signal?: AbortSignal } = {}): Promise<import('../types.js').ArkmeConversationNameSearchResult> {
+    const { signal, ...params } = options
+    return await this.call('search.conversations', { query, ...params }, signal)
   }
 
   /** Search current-account server records, including retained DSH navigation identity. */

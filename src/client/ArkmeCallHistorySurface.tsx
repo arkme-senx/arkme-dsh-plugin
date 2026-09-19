@@ -153,7 +153,7 @@ const styles: Record<string, CSSProperties> = {
   itemTime: { flex: 'none', color: c.tertiary, fontSize: 10, lineHeight: '16px' },
   itemMeta: { marginTop: 4, display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden', whiteSpace: 'nowrap', color: c.tertiary, fontSize: 11, lineHeight: '17px' },
   direction: { color: c.tertiary, fontWeight: 700 }, missed: { color: c.danger },
-  itemPlay: { width: 38, height: 38, zIndex: 2, display: 'grid', placeItems: 'center', padding: 0, border: `1px solid ${c.borderSoft}`, borderRadius: 999, background: '#fff', color: '#17191c', cursor: 'pointer' },
+  itemPlay: { width: 38, height: 38, zIndex: 2, display: 'grid', placeItems: 'center', padding: 0, border: `1px solid ${c.borderSoft}`, borderRadius: 999, background: arkmeTheme.elevated, color: c.text, cursor: 'pointer' },
   playSpacer: { width: 38, height: 38 },
   detail: { minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: c.panel },
   detailScroll: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '24px clamp(18px,3.8vw,52px) 40px', boxSizing: 'border-box' },

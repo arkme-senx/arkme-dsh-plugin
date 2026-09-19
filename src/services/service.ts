@@ -66,7 +66,7 @@ export interface StateStore extends RecentEmojiStore {
   removeExtensionReviewOperation(userId: number, clientMutationId: string): Promise<void>
   getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined>
   putLongArticleDraft(userId: number, draft: ArkmeLongArticleDraft): Promise<void>
-  removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void>
+  removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string, expectedRecordUid?: string): Promise<void>
   getRecordReeditDraft(
     userId: number,
     sourceIdentityKey: string,

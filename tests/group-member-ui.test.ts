@@ -32,7 +32,7 @@ describe('group member add UI', () => {
     expect(source).toContain("item.relation === 'stranger'")
     expect(source).toContain("确认添加")
     expect(source).toContain('添加成员')
-    expect(source).toContain('协作者{visibleSnapshot === undefined')
+    expect(source).toContain('群成员{visibleSnapshot === undefined')
     expect(source).toContain('邀请协作者')
     expect(source).toContain('二维码有效期')
     expect(source).toContain("'复制链接'")

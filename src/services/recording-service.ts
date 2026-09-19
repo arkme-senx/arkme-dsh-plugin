@@ -55,6 +55,7 @@ import type {
   ArkmeRecordingVersion,
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import { projectRecordingCoverage, recordingBelongsToViewer } from '../recording-coverage.js'
 import type { ArkmePublicProfile } from './profile-service.js'
 import { RECORDING_FORWARD_MAX_SEGMENTS, type RecordingForwardGateway, type RecordingForwardInput } from '../recording-forward-contract.js'
 
@@ -1234,6 +1235,11 @@ export class RecordingService {
     dayEnd.setDate(dayEnd.getDate() + 1)
     const options = { viewerUserId: session.userId, dayStartMillis: date, dayEndMillis: dayEnd.getTime() }
     const response = transcriptResult.value
+    const coverage = projectRecordingCoverage(response, date, dayEnd.getTime(), session.userId)
+    const ownSessionIds = new Set(listValue(response.session_ls ?? response.sessions)
+      .filter(raw => recordingBelongsToViewer(raw, session.userId))
+      .map(raw => stringValue(objectValue(raw).id ?? objectValue(raw).session_id).trim())
+      .filter(id => id !== ''))
     const { processingCount: pendingDoubao, candidateCount, failedCount, silentCount } = recordingDoubaoProgress(response, options)
     const section = (transcriptSource: ArkmeRecordingTranscriptSource): ArkmeRecordingPrivateTranscriptSection => {
       const items = projectRecordingTranscripts(response, speakerData, profilesByUserId, { ...options, transcriptSource })
@@ -1242,12 +1248,12 @@ export class RecordingService {
       return {
         state: items.length > 0 ? 'ready' : processingCount > 0 ? 'processing' : transcriptSource === 'doubao' && failedCount > 0 ? 'error' : 'empty',
         items,
-        message: items.length > 0 ? '' : processingCount > 0 ? '音频文字正在导入&转写中' : transcriptSource === 'doubao' && failedCount > 0 ? '豆包转写失败，请稍后重试' : transcriptSource === 'system' ? '当天无录音' : '暂无豆包转写内容',
+        message: items.length > 0 ? '' : processingCount > 0 ? '音频文字正在导入&转写中' : transcriptSource === 'doubao' && failedCount > 0 ? '豆包转写失败，请稍后重试' : transcriptSource === 'system' ? coverage.intervals.length > 0 ? '已有录音，暂无转写内容' : '当天无录音' : '暂无豆包转写内容',
         identityCoverage: speakerResult.status === 'fulfilled' ? 'complete' : 'partial',
         totalDurationMillis, processingCount,
       }
     }
-    return { section, candidateCount, failedCount, silentCount }
+    return { section, candidateCount, failedCount, silentCount, coverage, ownSessionIds }
   }
 
   async recordingComparison(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingComparison> {
@@ -1411,13 +1417,14 @@ export class RecordingService {
   ): Promise<ArkmeRecordingDay> {
     const date = this.recordingDayStart(dateStamp).getTime()
     const [transcriptResult, summaryResult, timelineResult] = await Promise.allSettled([
-      this.recordingTranscriptWithSession(date, session, signal),
+      this.readRecordingTranscripts(date, session, signal),
       this.recordingProjectionWithSession(date, 'summary', session, signal),
       this.recordingProjectionWithSession(date, 'timeline', session, signal),
     ])
     let transcript: ArkmeRecordingDay['transcript']
     if (transcriptResult.status === 'fulfilled') {
-      const items = transcriptResult.value.items
+      const section = transcriptResult.value.section('system')
+      const items = section.items
       const counts = new Map<string, number>()
       for (const item of items) {
         const key = this.recordingSpeakerMutationKey(item)
@@ -1426,15 +1433,15 @@ export class RecordingService {
       const recordingItemRefKey = await this.recordingRefKey('arkme-recording-item-v1')
       const speakerRefKey = await this.recordingRefKey('arkme-recording-speaker-v1')
       transcript = {
-        ...transcriptResult.value,
-        items: items.map(item => this.workbenchItem(
+        ...section,
+        items: items.map(item => ({ ...this.workbenchItem(
           date,
           item,
           counts.get(this.recordingSpeakerMutationKey(item)) ?? 1,
           session.userId,
           recordingItemRefKey,
           speakerRefKey,
-        )),
+        ), recordingBelongsToViewer: transcriptResult.value.ownSessionIds.has(item.sessionId) })),
       }
     } else {
       transcript = {
@@ -1444,8 +1451,9 @@ export class RecordingService {
     }
     return {
       dateStamp: date,
+      coverage: transcriptResult.status === 'fulfilled' ? transcriptResult.value.coverage : { state: 'error', intervals: [] },
       totalDurationMillis: transcriptResult.status === 'fulfilled'
-        ? transcriptResult.value.totalDurationMillis
+        ? transcript.totalDurationMillis
         : 0,
       transcript,
       summary: summaryResult.status === 'fulfilled' ? summaryResult.value : {

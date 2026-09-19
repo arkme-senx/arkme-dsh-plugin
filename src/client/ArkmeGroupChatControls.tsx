@@ -49,6 +49,7 @@ import { ArkmeMark } from './ArkmeFooterAction.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
 import { ArkmeDshMenu } from './ArkmeDshMenu.js'
+import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 
 const colors = {
   panel: arkmeTheme.layer2,
@@ -338,15 +339,25 @@ function Avatar({ imageRef, size = 32, lazy = false }: { imageRef: string | unde
   </span>
 }
 
-const GroupMemberRow = memo(function GroupMemberRow({ member, onMemberOpen, onMemberContextMenu }: {
+export const GroupMemberRow = memo(function GroupMemberRow({ member, onMemberOpen, onMemberContextMenu, onMemberHover }: {
   member: ArkmeConversationMemberItem
   onMemberOpen: (member: ArkmeConversationMemberItem) => void
   onMemberContextMenu: (member: ArkmeConversationMemberItem, rect: DOMRect) => void
+  onMemberHover?: ((member: ArkmeConversationMemberItem, anchor: HTMLElement, side: 'left') => void) | undefined
 }) {
   const badge = roleLabel(member)
   return <button data-arkme-feedback="neutral"
     type="button"
     style={styles.memberRow}
+    data-arkme-group-member-row
+    onPointerEnter={event => {
+      if (event.pointerType === 'mouse' && event.buttons === 0) onMemberHover?.(member, event.currentTarget, 'left')
+    }}
+    onKeyDown={event => {
+      if (event.key !== 'ArrowDown') return
+      event.preventDefault()
+      onMemberContextMenu(member, event.currentTarget.getBoundingClientRect())
+    }}
     onClick={() => { onMemberOpen(member) }}
     onContextMenu={event => {
       event.preventDefault()
@@ -365,7 +376,7 @@ const GroupMemberRow = memo(function GroupMemberRow({ member, onMemberOpen, onMe
   </button>
 })
 
-function GroupMembersDrawer(props: {
+export function GroupMembersDrawer(props: {
   source: ArkmeSourceItem
   open: boolean
   accountScope: string | undefined
@@ -373,14 +384,17 @@ function GroupMembersDrawer(props: {
   onAdd: () => void
   onMemberOpen: (member: ArkmeConversationMemberItem) => void
   onMemberContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
+  onMemberHover?: ((member: ArkmeConversationMemberItem, anchor: HTMLElement, side: 'left') => void) | undefined
   onError: (message: string) => void
 }) {
+  const panelRef = useRef<HTMLElement>(null)
+  const resize = useResizableNoteDetail(panelRef, 'arkme:group-members-width:v1', '调整群成员宽度', 262)
   const snapshot = useConversationMembers(props.accountScope, props.source, props.open)
   const loading = snapshot.refreshing
   useEffect(() => {
     if (!props.open) return
     const dismissOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') props.onClose()
+      if (event.key === 'Escape' && !event.defaultPrevented && !document.querySelector('[role="menu"], [aria-modal="true"]')) props.onClose()
     }
     window.addEventListener('keydown', dismissOnEscape)
     return () => { window.removeEventListener('keydown', dismissOnEscape) }
@@ -391,9 +405,10 @@ function GroupMembersDrawer(props: {
   const items = snapshot.items
   return <>
     <div style={styles.drawerScrim} aria-hidden onPointerDown={event => { event.preventDefault(); props.onClose() }} />
-    <aside style={styles.drawer} aria-label="协作者">
-    <ArkmeRightPanelHeader title={<>协作者{visibleSnapshot === undefined ? '' : `（${visibleSnapshot.items.length}）`}</>}
-      onClose={props.onClose} closeLabel="关闭协作者"
+    <aside ref={panelRef} style={{ ...styles.drawer, ...resize.style }} aria-label="群成员">
+    {resize.handle}
+    <ArkmeRightPanelHeader title={<>群成员{visibleSnapshot === undefined ? '' : `（${visibleSnapshot.items.length}）`}</>}
+      onClose={props.onClose} closeLabel="关闭群成员"
       actions={<button data-arkme-feedback="neutral" type="button" style={{ ...styles.closeButton, height: 30, marginTop: -3, width: 'auto', padding: '0 6px', fontSize: 14, fontWeight: 700, color: colors.primary }} onClick={props.onAdd}>添加</button>} />
     <div style={styles.drawerBody}>
       {loading && items.length === 0 ? <div style={styles.loading}>正在读取群成员…</div> : null}
@@ -402,7 +417,7 @@ function GroupMembersDrawer(props: {
       >{snapshot.error}，点击重试</button>}
       {snapshot.ready && !loading && snapshot.error === undefined && items.length === 0 ? <div style={styles.empty}>暂无群成员</div> : null}
       {items.map(member => <GroupMemberRow key={member.memberRef} member={member}
-        onMemberOpen={props.onMemberOpen} onMemberContextMenu={props.onMemberContextMenu} />)}
+        onMemberOpen={props.onMemberOpen} onMemberContextMenu={props.onMemberContextMenu} onMemberHover={props.onMemberHover} />)}
     </div>
     </aside>
   </>
@@ -453,7 +468,7 @@ function CloseGlyph() {
   </svg>
 }
 
-function AddMembersDrawer(props: {
+export function AddMembersDrawer(props: {
   source: ArkmeSourceItem
   open: boolean
   onClose: () => void
@@ -629,7 +644,7 @@ function AddMembersDrawer(props: {
       : <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 7h12a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-7a3 3 0 0 1 3-3Z" stroke="currentColor" strokeWidth="1.5"/><path d="M12 3v4M8 13h.01M16 13h.01M8 17h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
   const selector = (checked: boolean, disabled = false) => <span aria-hidden style={{
     width: 20, height: 20, borderRadius: 999, flex: 'none', display: 'grid', placeItems: 'center', boxSizing: 'border-box',
-    border: `1px solid ${colors.border}`, background: checked ? (disabled ? colors.subtle : colors.text) : 'transparent', color: '#fff', fontSize: 12,
+    border: `1px solid ${colors.border}`, background: checked ? (disabled ? colors.subtle : arkmeTheme.primaryAction) : 'transparent', color: disabled ? colors.secondary : arkmeTheme.onPrimaryAction, fontSize: 12,
   }}>{checked ? '✓' : ''}</span>
   const sectionTitle = (label: string) => <div style={{ padding: '12px 4px 4px', color: colors.secondary, fontSize: 12 }}>{label}</div>
   const toggleCandidate = (item: ArkmeGroupMemberCandidate) => {
@@ -707,7 +722,7 @@ function AddMembersDrawer(props: {
     : <span style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
       {[...selectedCandidateByRef.values()].slice(0, 5).map(item => <Avatar key={item.candidateRef} imageRef={item.avatarRef} size={24} />)}
       {selectedBotItems.slice(0, Math.max(0, 5 - selectedCandidateByRef.size)).map(item => <span key={item.botRef} style={{ ...styles.avatar, width: 24, height: 24, fontSize: 13 }}>🤖</span>)}
-      {selectedCount > 5 ? <span style={{ minWidth: 30, height: 24, padding: '0 6px', borderRadius: 999, background: '#f5f5f5', color: colors.secondary, display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700 }}>+{String(selectedCount - 5)}</span> : null}
+      {selectedCount > 5 ? <span style={{ minWidth: 30, height: 24, padding: '0 6px', borderRadius: 999, background: colors.subtle, color: colors.secondary, display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700 }}>+{String(selectedCount - 5)}</span> : null}
     </span>
   const primaryText = snapshot?.mode === 'approval_invite' && selectedCandidateByRef.size > 0 && selectedBots.length === 0 ? '发送邀请' : '确认添加'
   const buttonText = selectedCount > 0 ? `${primaryText}（${String(selectedCount)}）` : primaryText
@@ -715,17 +730,17 @@ function AddMembersDrawer(props: {
   return <div style={{ position: 'absolute', inset: 0, zIndex: 35, background: 'rgba(0,0,0,.24)' }} role="presentation" onMouseDown={event => {
     if (event.target === event.currentTarget && !busy) props.onClose()
   }}>
-    <section style={{ ...styles.drawer, top: 0, width: 360, maxWidth: '92%', zIndex: 36, background: '#fff' }} role="dialog" aria-modal="true" aria-label="添加成员">
+    <section style={{ ...styles.drawer, top: 0, width: 360, maxWidth: '92%', zIndex: 36, background: colors.panel, color: colors.text }} role="dialog" aria-modal="true" aria-label="添加成员">
       <ArkmeRightPanelHeader title="添加成员" onClose={props.onClose} closeLabel="关闭" />
       <div style={{ position: 'relative', margin: '16px 12px 8px' }}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ position: 'absolute', left: 12, top: 11, color: '#aaa' }}><circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2"/><path d="m16 16 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
-        <input style={{ ...styles.dialogInput, height: 40, border: 0, borderRadius: 11, paddingLeft: 36, paddingRight: 30, background: '#f5f5f5' }} value={query} placeholder="搜索" aria-label="搜索成员候选人" disabled={busy} onChange={event => { setQuery(event.target.value) }} />
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ position: 'absolute', left: 12, top: 11, color: colors.secondary }}><circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2"/><path d="m16 16 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+        <input className="arkme-group-member-search" style={{ ...styles.dialogInput, height: 40, border: 0, borderRadius: 11, paddingLeft: 36, paddingRight: 30, background: arkmeTheme.base }} value={query} placeholder="搜索" aria-label="搜索成员候选人" disabled={busy} onChange={event => { setQuery(event.target.value) }} />
         {query !== '' ? <button data-arkme-feedback="neutral" type="button" aria-label="清除搜索" disabled={busy} onClick={() => { setQuery('') }} style={{ position: 'absolute', right: 8, top: 8, width: 24, height: 24, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer' }}><CloseGlyph /></button> : null}
       </div>
       <div style={{ overflowY: 'auto', minHeight: 120, flex: 1, padding: '0 12px' }}>
         {!isSearchMode && <><div style={{ padding: '2px 0 8px', fontSize: 14, fontWeight: 600 }}>我的会话</div>{focusRows.map(row => {
           const active = focus === row.focus
-          return <button data-arkme-feedback="neutral" key={row.focus} type="button" onClick={() => { setFocus(current => current === row.focus ? 'all' : row.focus) }} style={{ width: '100%', height: 52, padding: '0 12px', border: 0, borderBottom: `1px solid ${colors.border}`, outline: 0, background: '#fff', display: 'flex', alignItems: 'center', gap: 12, color: active ? colors.text : colors.secondary, position: 'relative', cursor: 'pointer' }}>
+          return <button data-arkme-feedback="neutral" key={row.focus} type="button" onClick={() => { setFocus(current => current === row.focus ? 'all' : row.focus) }} style={{ width: '100%', height: 52, padding: '0 12px', border: 0, borderBottom: `1px solid ${colors.border}`, outline: 0, background: 'transparent', display: 'flex', alignItems: 'center', gap: 12, color: active ? colors.text : colors.secondary, position: 'relative', cursor: 'pointer' }}>
             {active && <span style={{ position: 'absolute', left: 0, width: 2, height: 16, borderRadius: 2, background: colors.text }} />}{focusIcon(row.focus)}<strong style={{ fontSize: 14, fontWeight: active ? 700 : 500 }}>{row.label}</strong><span style={{ marginLeft: 'auto', fontSize: 12 }}>{row.count}</span>
           </button>
         })}</>}
@@ -742,11 +757,11 @@ function AddMembersDrawer(props: {
         {!isSearchMode && !loading && (effectiveFocus === 'all' || effectiveFocus === 'group') ? <>{sectionTitle('群聊')}{visibleGroups.length === 0 ? <div style={{ padding: '10px 0', color: colors.secondary, fontSize: 13 }}>暂无群聊</div> : visibleGroups.map(groupRow)}</> : null}
         {!isSearchMode && !loading && (effectiveFocus === 'all' || effectiveFocus === 'bot') ? <>{sectionTitle('Bot')}{visibleBots.length === 0 ? <div style={{ padding: '10px 0', color: colors.secondary, fontSize: 13 }}>当前没有可添加到本群的 Bot</div> : visibleBots.map(botRow)}</> : null}
       </div>
-      <div style={{ height: 58, flex: 'none', display: 'flex', alignItems: 'center', padding: '0 14px', borderTop: `1px solid ${colors.border}`, background: '#fff' }}>
+      <div style={{ height: 58, flex: 'none', display: 'flex', alignItems: 'center', padding: '0 14px', borderTop: `1px solid ${colors.border}`, background: colors.panel }}>
         <span style={{ minWidth: 0, flex: 1 }}>{selectedPreview}</span><span style={{ width: 10 }} />
         <button data-arkme-feedback="neutral"
           type="button"
-          style={{ ...styles.dialogButton, width: 126, height: 38, borderRadius: 11, background: selectedCount === 0 ? '#f5f5f5' : colors.text, color: selectedCount === 0 ? '#aaa' : '#fff', opacity: busy ? .55 : 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+          style={{ ...styles.dialogButton, width: 126, height: 38, borderRadius: 11, background: selectedCount === 0 ? colors.subtle : arkmeTheme.primaryAction, color: selectedCount === 0 ? colors.secondary : arkmeTheme.onPrimaryAction, opacity: busy ? .55 : 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
           disabled={busy || selectedCount === 0}
           onClick={() => {
             setBusy(true)
@@ -768,7 +783,7 @@ function AddMembersDrawer(props: {
   </div>
 }
 
-function InviteCollaboratorsDialog(props: {
+export function InviteCollaboratorsDialog(props: {
   source: ArkmeSourceItem
   open: boolean
   onClose: () => void
@@ -830,7 +845,7 @@ function InviteCollaboratorsDialog(props: {
       <div style={{ height: 10 }} />
       <div style={{ width: 264, margin: '0 auto', padding: '16px 16px 14px', borderRadius: 18, background: colors.panel, boxSizing: 'border-box', boxShadow: '0 10px 22px rgba(0,0,0,.08)' }}>
         <div style={{ display: 'flex', alignItems: 'center' }}><Avatar imageRef={props.source.avatarRef} size={32} /><div style={{ marginLeft: 10, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview?.title ?? props.source.displayName}</div><div style={{ marginTop: 2, fontSize: 12, color: colors.secondary }}>发起人：{preview?.inviterDisplayName ?? 'Arkme'}</div></div></div>
-        <div style={{ position: 'relative', width: 176, height: 176, padding: 10, margin: '14px auto 0', border: `1px solid ${colors.border}`, borderRadius: 12, boxSizing: 'border-box', background: '#fff', display: 'grid', placeItems: 'center' }}>{loading ? <span style={styles.loading}>加载中…</span> : qrUrl === '' ? <span style={{ fontSize: 12, color: colors.secondary }}>邀请链接生成失败，请重试</span> : <img src={qrUrl} alt="群聊邀请二维码" style={{ width: 156, height: 156, imageRendering: 'pixelated' }} />}{copied ? <span role="status" aria-live="polite" style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', padding: '9px 12px', borderRadius: 4, background: '#fff', boxShadow: '0 3px 12px rgba(0,0,0,.18)', color: colors.text, fontSize: 12, lineHeight: '18px', whiteSpace: 'nowrap' }}>邀请链接已复制</span> : null}</div>
+        <div style={{ position: 'relative', width: 176, height: 176, padding: 10, margin: '14px auto 0', border: `1px solid ${colors.border}`, borderRadius: 12, boxSizing: 'border-box', background: '#fff', display: 'grid', placeItems: 'center' }}>{loading ? <span style={{ ...styles.loading, color: '#51565f' }}>加载中…</span> : qrUrl === '' ? <span style={{ fontSize: 12, color: '#51565f' }}>邀请链接生成失败，请重试</span> : <img src={qrUrl} alt="群聊邀请二维码" style={{ width: 156, height: 156, imageRendering: 'pixelated' }} />}{copied ? <span role="status" aria-live="polite" style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', padding: '9px 12px', borderRadius: 4, background: '#fff', boxShadow: '0 3px 12px rgba(0,0,0,.18)', color: '#17191c', fontSize: 12, lineHeight: '18px', whiteSpace: 'nowrap' }}>邀请链接已复制</span> : null}</div>
         <div style={{ marginTop: 14, textAlign: 'center', fontSize: 11.5, color: colors.secondary }}>{inviteExpireText(preview?.expireAtMillis ?? 0)}</div>
       </div>
       <div style={{ marginTop: 10, textAlign: 'center', fontSize: 12, color: colors.secondary }}>扫码加入，或转发邀请链接</div>
@@ -1593,6 +1608,7 @@ export function ArkmeGroupChatControls(props: {
   onMessageDndUpdated: (target: ArkmeGroupActionTarget, result: ArkmeGroupNotificationResult) => boolean
   onMemberOpen: (member: ArkmeConversationMemberItem) => void
   onMemberContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
+  onMemberHover?: ((member: ArkmeConversationMemberItem, anchor: HTMLElement, side: 'left') => void) | undefined
   aiPolishSettings?: ArkmeGroupAiPolishSnapshot | undefined
   onAiPolishSettingsChanged?: (settings: ArkmeGroupAiPolishSnapshot) => void
   onStatus?: (message: string) => void
@@ -1703,7 +1719,7 @@ export function ArkmeGroupChatControls(props: {
         onClose={closeRestrictions}
         onStatus={message => { props.onStatus?.(message) }}
       />
-      <GroupMembersDrawer
+      {membersOpen && <GroupMembersDrawer
         source={props.source}
         open={membersOpen}
         accountScope={props.accountScope}
@@ -1711,8 +1727,9 @@ export function ArkmeGroupChatControls(props: {
         onAdd={() => { setInviteOpen(true) }}
         onMemberOpen={props.onMemberOpen}
         onMemberContextMenu={props.onMemberContextMenu}
+        onMemberHover={props.onMemberHover}
         onError={reportError}
-      />
+      />}
       <InviteCollaboratorsDialog
         source={props.source}
         open={inviteOpen}

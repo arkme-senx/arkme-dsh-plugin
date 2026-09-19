@@ -8,6 +8,7 @@ vi.mock('../src/client/api.js', async importOriginal => ({
 }))
 
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
+import { arkmeTheme } from '../src/client/arkme-theme.js'
 import type { ArkmeRecordingDay } from '../src/types.js'
 
 function recordingDay(dateStamp: number, text: string): ArkmeRecordingDay {
@@ -62,7 +63,7 @@ describe('recording calendar selection', () => {
     await act(async () => { importButton.props.onClick() })
     expect(onOpenRecordingImport).toHaveBeenLastCalledWith(new Date(2026, 7, 31).getTime())
     await act(async () => { renderer.root.findByProps({ 'aria-label': '9月3日' }).props.onClick() })
-    expect(renderer.root.findByProps({ 'aria-label': '9月4日' }).props.style.borderColor).toBe('transparent')
+    expect(renderer.root.findByProps({ 'aria-label': '9月4日' }).props.style.background).toBe('transparent')
     await act(async () => { importButton.props.onClick() })
     expect(onOpenRecordingImport).toHaveBeenLastCalledWith(new Date(2026, 8, 3).getTime())
     const tab = (label: string) => renderer.root.findAll(node => node.type === 'button' && node.children.includes(label))[0]!
@@ -99,10 +100,10 @@ describe('recording calendar selection', () => {
     expect(rendered).not.toContain('旧日期内容')
     expect(rendered).not.toContain('旧日期错误')
     expect(renderer.root.findByProps({ 'aria-label': '9月3日' }).props['aria-pressed']).toBe(true)
-    expect(renderer.root.findByProps({ 'aria-label': '9月4日' }).props.style.borderColor).toBe('transparent')
+    expect(renderer.root.findByProps({ 'aria-label': '9月4日' }).props.style.background).toBe('transparent')
   })
 
-  it.each(['loading', 'failed'] as const)('clears previous borders and allows date changes while details are %s', async state => {
+  it.each(['loading', 'failed'] as const)('moves the single selection background and allows date changes while details are %s', async state => {
     mocks.callArkme.mockImplementation(async operation => {
       if (operation === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
       if (operation === 'recordings.summary-model-config') return { options: [] }
@@ -127,9 +128,10 @@ describe('recording calendar selection', () => {
     const expectSelection = (day: number) => {
       expect(dates().filter(node => node.props['aria-pressed'])).toEqual([date(day)])
       for (const node of dates()) {
-        if (!node.props['aria-pressed']) expect(node.props.style.borderColor).toBe('transparent')
+        expect(node.props.style.border).toBe(0)
+        if (!node.props['aria-pressed']) expect(node.props.style.background).toBe('transparent')
       }
-      expect(date(day).props.style.borderColor).not.toBe('transparent')
+      expect(date(day).props.style.background).toBe(arkmeTheme.layer2)
       expect(date(day).props.disabled).toBe(false)
       expect(date(5).props.disabled).toBe(true)
     }

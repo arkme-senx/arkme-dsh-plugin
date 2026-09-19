@@ -11,6 +11,18 @@ function first(source: Record<string, unknown>, keys: string[]): unknown {
   return keys.map(key => source[key]).find(value => value !== undefined && value !== null && value !== '')
 }
 
+/** Only explicit template identities, never names inferred from summary prose. */
+export function callSummaryUserIds(source: Record<string, unknown>): number[] {
+  const template = String(first(source, ['smt', 'call_summary_template', 'callSummaryTemplate', 'summary_template', 'summaryTemplate']) ?? '')
+  const users = object(first(source, ['ssu', 'summary_speaker_user_ids', 'call_summary_speaker_user_ids']))
+  const ids = new Set<number>()
+  for (const match of template.matchAll(/\{\{(user|speaker):([^{}]+)\}\}/g)) {
+    const userId = Number(match[1] === 'user' ? match[2] : users[match[0]] ?? users[match[2]!])
+    if (Number.isSafeInteger(userId) && userId > 0) ids.add(userId)
+  }
+  return [...ids]
+}
+
 /** Flutter-compatible summary templates, resolved on the host before projection. */
 export function renderCallRecordSummary(source: Record<string, unknown>, viewerUserId: number, displayNames: ReadonlyMap<number, string> = new Map()): string {
   const fallback = String(first(source, ['sm', 'call_summary', 'callSummary', 'summary_text', 'summaryText', 'summary']) ?? '').trim()

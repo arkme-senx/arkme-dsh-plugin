@@ -5,6 +5,7 @@ import { ArkmeFileIcon } from './ArkmeFileIcon.js'
 import type { ArkmeContentBlock } from '../types.js'
 import { arkmeBrowserVisualKind, arkmeCanInlineLocalFile, type ArkmeFileReception } from '../file-transfer-contract.js'
 import { createArkmeSdk } from '../sdk/index.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 const sdk = createArkmeSdk()
 const markdownLabels = { code: { copyLabel: '复制', copiedLabel: '复制成功' }, footnotes: '脚注' }
@@ -486,7 +487,7 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
   const contentMaxHeight = filePanel ? 'calc(65vh - 56px)' : '65vh'
   const mediaStyle = { width: '100%', maxHeight: contentMaxHeight, objectFit: 'contain' as const }
   return createPortal(<div style={{ position: 'fixed', inset: 0, zIndex: 11000, background: 'rgba(0,0,0,.72)', display: 'grid', placeItems: 'center', padding: 24 }} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
-    <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`文件预览 ${block.fileName}`} style={{ position: 'relative', width: showContent ? 'min(860px, 90vw)' : 'min(420px, 90vw)', maxHeight: '80vh', borderRadius: 16, padding: showContent ? '56px 20px 20px' : '48px 40px 32px', color: 'var(--dsw-alias-label-primary, #17191c)', background: 'var(--dsw-alias-bg-elevated, white)' }} onKeyDown={event => {
+    <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`文件预览 ${block.fileName}`} style={{ position: 'relative', width: showContent ? 'min(860px, 90vw)' : 'min(420px, 90vw)', maxHeight: '80vh', borderRadius: 16, padding: showContent ? '56px 20px 20px' : '48px 40px 32px', color: arkmeTheme.text, background: arkmeTheme.menu }} onKeyDown={event => {
       if (event.key === 'Escape') { event.stopPropagation(); onClose() }
       if (event.key === 'Tab') {
         const focusable = panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],video[controls],audio[controls]')

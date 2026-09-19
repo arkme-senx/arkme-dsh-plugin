@@ -1,6 +1,7 @@
 import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
 import { CallAvatar, cleanAvatarRef, formatDuration, sampleAvatarUrl } from './call-detail-presentation.js'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
@@ -46,6 +47,8 @@ interface CallTarget {
 
 export interface ArkmeCallSurfaceProps {
   initialPickerOpen?: boolean
+  presentation?: 'page' | 'dialog'
+  onClose?: () => void
 }
 
 type TypePickerPlacement =
@@ -565,7 +568,7 @@ function typePickerPlacementFromAnchor(anchor: HTMLElement | undefined): TypePic
   }
 }
 
-export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurfaceProps = {}) {
+export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'page', onClose }: ArkmeCallSurfaceProps = {}) {
   const surfaceRef = useRef<HTMLElement>(null)
   const browserResize = useResizableCallBrowser(surfaceRef)
   const tourPickerOwned = useRef(false)
@@ -602,6 +605,60 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
   const [typePickerPlacement, setTypePickerPlacement] = useState<TypePickerPlacement>({ kind: 'center' })
   const [unavailableTarget, setUnavailableTarget] = useState<CallTarget>()
   const [callingKey, setCallingKey] = useState('')
+  const callAbortRef = useRef<AbortController>()
+  useEffect(() => {
+    setCallingKey('')
+    return () => { callAbortRef.current?.abort(); callAbortRef.current = undefined }
+  }, [auth.auth?.environment, auth.auth?.userId, auth.auth?.status])
+  const dialogAccount = `${auth.auth?.environment ?? ''}:${auth.auth?.userId ?? ''}:${auth.auth?.status ?? ''}`
+  const initialDialogAccount = useRef(dialogAccount)
+  const closeDialogRef = useRef(onClose)
+  closeDialogRef.current = onClose
+  useEffect(() => {
+    if (presentation !== 'dialog') return
+    if (initialDialogAccount.current !== dialogAccount || (!pickerOpen && !inviteOpen && !typeTarget && callingKey === '')) {
+      closeDialogRef.current?.()
+    }
+  }, [presentation, dialogAccount, pickerOpen, inviteOpen, typeTarget, callingKey])
+
+  // The same picker can sit above a conversation without allowing keyboard events
+  // or focus to escape to its composer. The invitation dialog owns its own portal.
+  useEffect(() => {
+    if (presentation !== 'dialog' || typeof document === 'undefined') return
+    if (inviteOpen) {
+      const closeInvitation = (event: KeyboardEvent) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        setInviteOpen(false)
+      }
+      document.addEventListener('keydown', closeInvitation, true)
+      return () => document.removeEventListener('keydown', closeInvitation, true)
+    }
+    const dialogs = surfaceRef.current?.querySelectorAll<HTMLElement>('[role="dialog"]')
+    const dialog = dialogs?.[dialogs.length - 1]
+    if (!dialog) return
+    const focusable = () => [...dialog.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled), [tabindex="0"]')]
+    const focusFirst = () => (dialog.querySelector<HTMLElement>('input') ?? focusable()[0] ?? dialog).focus({ preventScroll: true })
+    focusFirst()
+    const keepFocus = (event: FocusEvent) => { if (!dialog.contains(event.target as Node)) focusFirst() }
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        if (typeTarget) setTypeTarget(undefined)
+        else { callAbortRef.current?.abort(); closeDialogRef.current?.() }
+      } else if (event.key === 'Tab') {
+        const items = focusable()
+        const first = items[0], last = items[items.length - 1]
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+      }
+    }
+    document.addEventListener('focusin', keepFocus)
+    document.addEventListener('keydown', keyboard, true)
+    return () => { document.removeEventListener('focusin', keepFocus); document.removeEventListener('keydown', keyboard, true) }
+  }, [presentation, pickerOpen, inviteOpen, typeTarget, callingKey])
   const [officialAuthorProfile, setOfficialAuthorProfile] = useState<ArkmeOfficialAuthorProfile>()
   const searchRef = useRef<HTMLInputElement>(null)
   const historyGenerationRef = useRef(0)
@@ -915,7 +972,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
   const closeTourPicker = useCallback(() => {
     if (tourPickerOwned.current) { tourPickerOwned.current = false; setPickerOpen(false) }
   }, [])
-  const tour = useCallTour({ root: surfaceRef, auth: auth.auth, active: ui.mode === 'calls',
+  const tour = useCallTour({ root: surfaceRef, auth: auth.auth, active: presentation === 'page' && ui.mode === 'calls',
     ready: historyState === 'ready', blocked: auth.busy || ui.webLoginDialogOpen === true,
     explicitEntry: initialPickerOpen, notificationRevision: ui.notificationActivationRevision ?? 0,
     onStep: prepareTourStep, onExit: closeTourPicker })
@@ -927,7 +984,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
   const closePicker = () => { finishTour(); setPickerOpen(false) }
 
   const requestTargetCall = useCallback((target: CallTarget, mediaType: 'audio' | 'video') => {
-    if (callingKey !== '') return
+    if (callingKey !== '' || callAbortRef.current) return
     finishTour(false)
     if (!targetCanResolve(target)) {
       setPickerOpen(false)
@@ -941,37 +998,45 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
     setUnavailableTarget(undefined)
     setNotice(target.source === undefined ? '正在打开私聊会话...' : '')
     const requestKey = `${target.key}:${mediaType}`
+    const controller = new AbortController()
+    callAbortRef.current = controller
     setCallingKey(requestKey)
     void (async () => {
       let source = target.source
       if (source === undefined) {
         const opened = target.officialAuthor === true
-          ? await callArkme<ArkmeOpenPrivateChatResult>('chat.official-author.private.open')
+          ? await callArkme<ArkmeOpenPrivateChatResult>('chat.official-author.private.open', undefined, controller.signal)
           : target.contactRef !== undefined
             ? await callArkme<ArkmeOpenPrivateChatResult>('chat.private.open-from-contact', {
               contactRef: target.contactRef,
-            })
+            }, controller.signal)
           : await (async () => {
             const peerUserId = target.peerUserId
             if (peerUserId === undefined) throw new Error('还没有找到这个联系人对应的私聊会话')
             return await callArkme<ArkmeOpenPrivateChatResult>('chat.private.open', {
               peerUserId,
               displayName: target.displayName,
-            })
+            }, controller.signal)
           })()
         source = opened.source
+        if (controller.signal.aborted) return
         rememberSource(opened.source)
       }
+      if (controller.signal.aborted) return
       outgoingCallUi.request({ sourceRef: source.sourceRef, displayName: source.displayName || target.displayName, mediaType })
       setNotice('')
     })()
       .catch(error => {
+        if (controller.signal.aborted) return
         setNotice(readableError(error) || '发起通话失败，请稍后重试')
         setTypeTarget(target)
         setTypePickerPlacement({ kind: 'center' })
         setUnavailableTarget(targetCanResolve(target) ? undefined : target)
       })
-      .finally(() => { setCallingKey('') })
+      .finally(() => {
+        if (callAbortRef.current === controller) callAbortRef.current = undefined
+        if (!controller.signal.aborted) setCallingKey('')
+      })
   }, [callingKey, rememberSource, finishTour])
 
   const openTargetTypePicker = useCallback((target: CallTarget, anchor?: HTMLElement, options: { keepPickerOpen?: boolean } = {}) => {
@@ -1090,7 +1155,13 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
   const selectedIsSample = selectedItem?.callRef.startsWith('sample-') === true
   const selectedSampleAvatarUrl = selectedItem === undefined || !selectedIsSample ? undefined : sampleAvatarUrl(selectedItem.peerDisplayName)
 
-  return <section ref={surfaceRef} style={{ ...styles.root, gridTemplateColumns: `${browserResize.width}px 3px minmax(0, 1fr)` }} aria-label="通话" data-arkme-call-surface="true">
+  const content = <section ref={surfaceRef}
+    style={presentation === 'dialog' ? { position: 'fixed', inset: 0, zIndex: 10300, color: arkmeTheme.text } : { ...styles.root, gridTemplateColumns: `${browserResize.width}px 3px minmax(0, 1fr)` }}
+    aria-label={presentation === 'dialog' ? '发起通话' : '通话'}
+    data-arkme-call-surface={presentation === 'page' ? 'true' : undefined}
+    data-arkme-call-launcher={presentation === 'dialog' ? 'true' : undefined}
+    data-arkme-notification-blocking-overlay={presentation === 'dialog' ? 'true' : undefined}>
+    {presentation === 'page' && <>
     <aside style={styles.browser}>
       <header style={styles.heading}>
         <h1 style={styles.title}>通话</h1>
@@ -1185,6 +1256,15 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
       </>}
       {notice !== '' && <div role="status" style={styles.notice}>{notice}</div>}
     </main>
+    </>}
+      {presentation === 'dialog' && callingKey !== '' && <div style={styles.layer}>
+        <section role="dialog" aria-modal="true" aria-label="正在准备通话" style={styles.typePicker}>
+          <p role="status">正在准备通话…</p>
+          <button type="button" data-arkme-feedback="neutral" style={styles.typeOption} onClick={() => {
+            callAbortRef.current?.abort(); closeDialogRef.current?.()
+          }}>取消</button>
+        </section>
+      </div>}
       {pickerOpen && <div
         style={styles.layer}
         role="presentation"
@@ -1310,8 +1390,10 @@ export function ArkmeCallSurface({ initialPickerOpen = false }: ArkmeCallSurface
             </span>
           </button>
           {unavailableTarget !== undefined && <p role="status" style={styles.unavailable}>还没有找到这个联系人对应的私聊会话，暂时不能从通话页直接呼叫。请先从对话里打开该联系人，或搜索已有私聊联系人。</p>}
+          {presentation === 'dialog' && notice !== '' && <p role="alert" style={styles.unavailable}>{notice}</p>}
         </section>
       </div>}
     {tour.panel}
   </section>
+  return presentation === 'dialog' && typeof document !== 'undefined' ? createPortal(content, document.body) : content
 }

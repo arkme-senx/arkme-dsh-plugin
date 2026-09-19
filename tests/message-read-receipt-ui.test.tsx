@@ -28,6 +28,8 @@ import {
   ArkmeMessageReadReceiptLine,
   arkmeMessageReadReceiptPanelLayout,
 } from '../src/client/ArkmeMessageReadReceipt.js'
+import { ArkmeReadReceiptIcon } from '../src/client/ArkmeReadReceiptIcon.js'
+import { arkmeTheme } from '../src/client/arkme-theme.js'
 
 function source(kind: 'private_chat' | 'group_chat'): ArkmeSourceItem {
   return {
@@ -86,6 +88,9 @@ describe('Arkme message read receipt UI', () => {
 
     expect(renderer.root.findByProps({ 'aria-label': '已读' })).toBeDefined()
     expect(renderer.root.findByProps({ 'data-arkme-read-receipt-indicator': 'all-read' })).toBeDefined()
+    expect(renderer.root.findByType(ArkmeReadReceiptIcon).props.checked).toBe(true)
+    expect(renderer.root.findByType('svg').props).toMatchObject({ width: 12, height: 12,
+      style: { position: 'absolute', inset: 0, color: arkmeTheme.text, opacity: 0.16 } })
     expect(renderer.root.findAllByType('button')).toHaveLength(0)
     expect(renderer.toJSON()).toMatchObject({ props: { 'data-arkme-read-receipt': 'ready' } })
   })

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
@@ -14,6 +14,8 @@ import type { Icon } from '@phosphor-icons/react/lib'
 import type { ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../types.js'
 import pluginManifest from '../../package.json' with { type: 'json' }
 import { ArkmeJiwoBrandMark } from './ArkmeJiwoBrandMark.js'
+import { ArkmeMembershipDialog } from './ArkmeMembershipDialog.js'
+import { membershipLabel, membershipDescription, useMembership } from './arkme-membership.js'
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
@@ -21,6 +23,10 @@ import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { ARKME_NAVIGATION_WIDTH, ARKME_PROFILE_AVATAR_SIZE } from './arkme-layout.js'
+import { arkmeTheme as theme } from './arkme-theme.js'
+import { directRecordingStore } from './recordings/direct-recording-store.js'
+import { ArkmeRecordingNavigationHint } from './recordings/ArkmeRecordingNavigationHint.js'
+import { useRecordingBreathStyle } from './recordings/recording-breath.js'
 
 export interface ArkmeProductNavigationProps {
   compact: boolean
@@ -134,6 +140,18 @@ export function ArkmeProductNavigation({
     arkmeChatDirectory.getConversationSnapshot,
   )
   const [profileOpen, setProfileOpen] = useState(false)
+  const [membershipOpenScope, setMembershipOpenScope] = useState<string>()
+  const memberUserId = authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined
+  const memberScope = authState.auth?.status === 'authenticated' ? `${authState.auth.environment}:${memberUserId}` : undefined
+  const recording = useSyncExternalStore(directRecordingStore.subscribe, directRecordingStore.getSnapshot, directRecordingStore.getSnapshot)
+  const isRecording = !locked && !hidden && memberScope !== undefined
+    && recording.accountKey === memberScope && recording.phase === 'recording'
+  const recordingBreathStyle = useRecordingBreathStyle(isRecording, recording.startedAt)
+  const recordingButtonRef = useRef<HTMLButtonElement>(null)
+  const recordingHintId = useId()
+  const [recordingHintOpen, setRecordingHintOpen] = useState(false)
+  useEffect(() => { setRecordingHintOpen(false) }, [memberScope, isRecording])
+  const membership = useMembership(memberScope, memberUserId, profileOpen)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
   const profileTriggerRef = useRef<HTMLButtonElement>(null)
   const profilePopoverRef = useRef<HTMLDivElement>(null)
@@ -235,31 +253,42 @@ export function ArkmeProductNavigation({
         const ItemIcon = item.icon
         const active = item.id === activeId
         const showsUnread = item.id === 'conversations' && conversationUnreadCount > 0
+        const showsRecording = item.id === 'recordings' && isRecording
         return <button data-arkme-feedback="neutral"
           key={item.id}
+          ref={item.id === 'recordings' ? recordingButtonRef : undefined}
           data-arkme-home-tour-target={item.id}
           data-arkme-hover="button"
           type="button"
           aria-current={active ? 'page' : undefined}
-          aria-label={showsUnread ? `${item.label}，${String(conversationUnreadCount)} 条未读` : undefined}
+          aria-label={showsRecording ? '录音，本机正在录音，点击查看' : showsUnread ? `${item.label}，${String(conversationUnreadCount)} 条未读` : undefined}
+          aria-describedby={showsRecording && recordingHintOpen ? recordingHintId : undefined}
+          {...(showsRecording ? { 'data-arkme-navigation-recording': 'local' } : {})}
           {...(showsUnread ? { 'data-arkme-conversation-unread': conversationUnreadCount } : {})}
           style={{
             ...styles.button,
             ...(compact ? styles.compactButton : {}),
             ...(hosted ? styles.hostedButton : {}),
             ...(active ? styles.activeButton : {}),
+            ...(showsRecording ? recordingBreathStyle : {}),
           }}
-          onClick={() => { activate(item.id) }}
+          onClick={() => { setRecordingHintOpen(false); activate(item.id) }}
+          onMouseEnter={item.id === 'recordings' ? () => { setRecordingHintOpen(true) } : undefined}
+          onMouseLeave={item.id === 'recordings' ? () => { setRecordingHintOpen(false) } : undefined}
+          onFocus={item.id === 'recordings' ? () => { setRecordingHintOpen(true) } : undefined}
+          onBlur={item.id === 'recordings' ? () => { setRecordingHintOpen(false) } : undefined}
           onDoubleClick={item.id === 'conversations' && !locked ? () => { arkmeUi.locateNextUnreadConversation() } : undefined}
           title={item.id === 'conversations' && !locked ? '双击定位下一个未读对话（Shift+Enter）' : undefined}
           aria-keyshortcuts={item.id === 'conversations' && !locked ? 'Shift+Enter' : undefined}
           onKeyDown={event => {
+            if (item.id === 'recordings' && event.key === 'Escape') setRecordingHintOpen(false)
             if (item.id === 'conversations' && !locked && event.shiftKey && event.key === 'Enter') {
               event.preventDefault()
               arkmeUi.locateNextUnreadConversation()
             }
           }}
         >
+          {showsRecording && <span data-arkme-recording-breath="surface" aria-hidden />}
           {active && <span aria-hidden data-arkme-selection-marker style={{
             ...styles.activeMarker,
             ...(compact ? styles.compactMarker : {}),
@@ -267,6 +296,9 @@ export function ArkmeProductNavigation({
           }} />}
           <span style={styles.icon}>
             <ItemIcon size={22} weight="regular" aria-hidden />
+            {showsRecording && <span data-arkme-recording-indicator data-arkme-recording-breath="dot" aria-hidden style={{
+              position: 'absolute', top: -3, right: -5, width: 7, height: 7, borderRadius: '50%', background: theme.danger,
+            }} />}
             {showsUnread && <span
               data-arkme-unread-indicator
               data-arkme-unread-count={conversationUnreadCount}
@@ -274,10 +306,11 @@ export function ArkmeProductNavigation({
               style={styles.unreadIndicator}
             >{conversationUnreadLabel}</span>}
           </span>
-          <span style={styles.label}>{item.label}</span>
+          <span style={styles.label}>{showsRecording ? '录音中' : item.label}</span>
         </button>
       })}
       </div>
+      {isRecording && recordingHintOpen && <ArkmeRecordingNavigationHint anchor={recordingButtonRef} elapsedMillis={recording.elapsedMillis} startedAt={recording.startedAt} id={recordingHintId} />}
       {ui.calendarOpen === true && typeof document !== 'undefined' && createPortal(<ArkmeCalendarSurface
         anchor="product-rail"
         accountScope={authState.auth?.status === 'authenticated' ? `${authState.auth.environment}:${authState.auth.userId}` : undefined}
@@ -296,15 +329,21 @@ export function ArkmeProductNavigation({
             <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={40} label="当前用户头像" />
             <span><strong>{profile?.displayName || profile?.nickname || 'Arkme 用户'}</strong><small>{profile?.arkmeId ? `@${profile.arkmeId}` : 'Arkme 账号'}</small></span>
           </button>
+          <button type="button" role="menuitem" className="arkme-member-entry" aria-label="查看会员权益" onClick={() => { setProfileOpen(false); setMembershipOpenScope(memberScope) }}>
+            <span><strong>{membershipLabel(membership.state)}</strong><small>{membershipDescription(membership.state)}</small></span>
+            <span>{membership.state.status === 'ready' && membership.state.value.memberType === 0 ? '升级会员' : '查看权益'} ›</span>
+          </button>
           <div className="arkme-redesign-profile-menu">
             <button data-arkme-feedback="neutral" type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.showWorld() }}><GlobeHemisphereWest size={19} /><span><strong>我的世界</strong><small>管理你的个人内容</small></span><CaretRight size={15} /></button>
             <button data-arkme-feedback="neutral" type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.showVoiceprint() }}><Fingerprint size={19} /><span><strong>声纹管理</strong><small>设置声音识别</small></span><CaretRight size={15} /></button>
             <button data-arkme-feedback="neutral" type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}><GearSix size={19} /><span><strong>设置</strong><small>打开 DSH 应用设置</small></span><CaretRight size={15} /></button>
           </div>
         </div>, document.body)}
-        <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label="个人资料" onClick={() => { setProfileOpen(value => !value) }}>
+        <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label="个人资料" title={`${membershipLabel(membership.state)} · ${membershipDescription(membership.state)}`} onClick={() => { setProfileOpen(value => !value) }}>
           <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={ARKME_PROFILE_AVATAR_SIZE} label="当前用户头像" />
+          <span className="arkme-member-label" data-tier={membership.state.status === 'ready' ? membership.state.value.memberType : undefined}>{membershipLabel(membership.state)}</span>
         </button>
+        {memberScope && memberUserId !== undefined && membershipOpenScope === memberScope && <ArkmeMembershipDialog key={memberScope} userId={memberUserId} state={membership.state} onRefresh={membership.refresh} returnFocusRef={profileTriggerRef} onClose={() => { setMembershipOpenScope(undefined) }} />}
         </>}
       </div>}
     </nav>

@@ -9,6 +9,18 @@ beforeEach(() => {
   mocks.call.mockReset()
 })
 afterEach(async () => { if (renderer) await act(async () => renderer!.unmount()); renderer = undefined; vi.unstubAllGlobals() })
+it('composer prepare mode saves locally and attaches without publishing', async () => {
+  const prepared = vi.fn(), close = vi.fn()
+  mocks.call.mockImplementation(async (operation: string) => operation === 'provider.capabilities' ? { features: { markdownLongArticles: false } } : undefined)
+  await act(async () => { renderer = create(<ArkmeLongArticleDialog sourceRef="chat" onClose={close} onPrepared={prepared} />) })
+  act(() => { renderer!.root.findByProps({ 'aria-label': '长文标题' }).props.onChange({ target: { value: '新长文' } }); renderer!.root.findByProps({ 'aria-label': '长文正文' }).props.onChange({ target: { value: '原有正文' } }) })
+  const attach = renderer!.root.findAllByType('button').find(node => node.children.some(value => typeof value === 'string' && value.includes('添加到待发送')))!
+  await act(async () => { attach.props.onClick() })
+  expect(prepared).toHaveBeenCalledWith(expect.objectContaining({ title: '新长文', textContent: '原有正文', recordUid: expect.any(String), relationUid: expect.any(String) }))
+  expect(close).toHaveBeenCalledOnce()
+  expect(mocks.call.mock.calls.some(([operation]) => operation === 'source.long-article.draft.put')).toBe(true)
+  expect(mocks.call.mock.calls.some(([operation]) => operation === 'source.long-article.publish' || operation === 'source.send-rich' || operation === 'source.long-article.draft.delete')).toBe(false)
+})
 it.each(['pending', 'disabled', 'failed'])('does not publish restored image drafts through plain text when capability is %s', async state => {
   mocks.call.mockImplementation(async (operation: string) => {
     if (operation === 'provider.capabilities') {

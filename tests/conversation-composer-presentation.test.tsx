@@ -24,7 +24,7 @@ describe('Arkme conversation composer presentation', () => {
     const menu = sidebarSource.slice(sidebarSource.indexOf('{addMenuOpen &&'), sidebarSource.indexOf('<input ref={fileInputRef}'))
     expect(menu).toContain('<ArkmeActionMenu')
     expect(menu.match(/id: '/gu)).toHaveLength(2)
-    expect(menu).toContain('添加照片和文件')
+    expect(menu).toContain('添加附件')
     expect(menu).toContain('写长文')
     expect(menu).not.toContain('采集本次位置')
     expect(sidebarSource).not.toContain('开启位置记录')

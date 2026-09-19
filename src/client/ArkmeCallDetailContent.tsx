@@ -55,12 +55,14 @@ const styles: Record<string, CSSProperties> = {
   transcriptEmpty: { margin: '10px 0 0', color: arkmeTheme.tertiary, fontSize: 13, lineHeight: '21px' },
   segment: { display: 'flex', gap: 9, alignItems: 'flex-start' },
   segmentMine: { justifyContent: 'flex-end' },
-  segmentStack: { maxWidth: '76%', minWidth: 0, display: 'grid', gap: 5, justifyItems: 'start' },
+  segmentStack: { maxWidth: '76%', minWidth: 0, display: 'grid', justifyItems: 'start' },
   segmentStackMine: { justifyItems: 'end' },
   segmentBubble: { maxWidth: '76%', padding: '9px 11px', borderRadius: '5px 14px 14px 14px', background: arkmeTheme.messageOther, color: arkmeTheme.text },
   segmentBubbleMine: { borderRadius: '14px 5px 14px 14px', background: arkmeTheme.messageOwn },
   segmentBubbleInStack: { maxWidth: '100%' },
-  segmentMeta: { display: 'block', color: arkmeTheme.tertiary, fontSize: 10, lineHeight: '14px' },
+  segmentContent: { position: 'relative', display: 'block', minWidth: 0 },
+  segmentTime: { position: 'absolute', right: 0, bottom: 0, color: arkmeTheme.tertiary, fontSize: 10, lineHeight: '14px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
+  segmentTimeSpace: { display: 'inline-block', width: 40, height: 0 },
   segmentText: { margin: 0, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' },
   endEvent: { maxWidth: 360, margin: '6px auto 0', display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 8, color: arkmeTheme.tertiary, fontSize: 10 },
   endLine: { height: 1, background: arkmeTheme.borderSoft },
@@ -349,7 +351,15 @@ export function ArkmeCallDetailContent({ selectedItem, detail, detailState, deta
               const playback = transcriptPlayback.state?.segmentId === segment.segmentId ? transcriptPlayback.state.status : undefined
               const highlighted = playback === 'loading' || playback === 'playing'
               const bubbleStyle = { ...styles.segmentBubble, ...styles.segmentBubbleInStack, ...(mine ? styles.segmentBubbleMine : {}) }
-              return <article key={segment.segmentId} style={{ ...styles.segment, ...(mine ? styles.segmentMine : {}) }}>
+              // Like Flutter's trailing WidgetSpan, reserve the last line for
+              // the timestamp without adding a separate metadata row.
+              const timeSpace = segmentTime !== '' ? <span aria-hidden="true" style={styles.segmentTimeSpace} /> : null
+              const content = <span style={styles.segmentContent} data-arkme-call-utterance-content="true">
+                <span style={{ ...styles.segmentText, display: 'block' }}>{segment.text}{!playback && timeSpace}</span>
+                {playback && <span role="status" style={{ display: 'block', marginTop: 4, fontSize: 11, color: playback === 'failed' ? arkmeTheme.danger : arkmeTheme.secondary }}>{playback === 'loading' ? '正在加载… 点击停止' : playback === 'playing' ? '■ 正在播放' : '播放失败，点击重试'}{timeSpace}</span>}
+                {segmentTime !== '' && <time style={styles.segmentTime} data-arkme-call-utterance-time="true">{segmentTime}</time>}
+              </span>
+              return <article key={segment.segmentId} data-arkme-call-utterance={segment.segmentId} style={{ ...styles.segment, ...(mine ? styles.segmentMine : {}) }}>
                 {!mine && <CallAvatar
                   name={segment.speakerDisplayName}
                   avatarRef={selectedIsSample ? undefined : speakerAvatarRef}
@@ -357,7 +367,6 @@ export function ArkmeCallDetailContent({ selectedItem, detail, detailState, deta
                   size={30}
                 />}
                 <span style={{ ...styles.segmentStack, ...(mine ? styles.segmentStackMine : {}) }}>
-                  <small style={styles.segmentMeta}>{segment.speakerDisplayName}{segmentTime === '' ? '' : ` · ${segmentTime}`}</small>
                   {segment.audioUrl ? <button type="button"
                     data-arkme-call-tour-target={tourSample && segment.segmentId === 'sample-video-1' ? 'utterance' : undefined}
                     aria-label={`${highlighted ? '停止' : playback === 'failed' ? '重试播放' : '播放'}${segment.speakerDisplayName}的录音片段：${segment.text}`}
@@ -365,10 +374,9 @@ export function ArkmeCallDetailContent({ selectedItem, detail, detailState, deta
                     aria-busy={playback === 'loading'}
                     onClick={() => { transcriptPlayback.toggle(segment) }}
                     style={{ ...bubbleStyle, border: 0, font: 'inherit', textAlign: 'left', cursor: 'pointer', ...(highlighted ? { boxShadow: `inset 0 0 0 1px ${arkmeTheme.accent}`, background: arkmeTheme.accentSoft } : {}) }}>
-                    <span style={{ ...styles.segmentText, display: 'block' }}>{segment.text}</span>
-                    {playback && <span role="status" style={{ display: 'block', marginTop: 4, fontSize: 11, color: playback === 'failed' ? arkmeTheme.danger : arkmeTheme.secondary }}>{playback === 'loading' ? '正在加载… 点击停止' : playback === 'playing' ? '■ 正在播放' : '播放失败，点击重试'}</span>}
+                    {content}
                   </button> : <span style={bubbleStyle}>
-                    <p style={styles.segmentText}>{segment.text}</p>
+                    {content}
                   </span>}
                 </span>
                 {mine && <CallAvatar

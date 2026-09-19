@@ -31,6 +31,21 @@ it('uses latest close callback and removes its Escape listener on unmount', asyn
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
   expect(latest).toHaveBeenCalledTimes(1)
 })
+it('replaces the title row with a compact author block while keeping close and accessible label', async () => {
+  const close = vi.fn()
+  await act(async () => root.render(<ArkmeDetailShell title="快记详情" label="快记详情"
+    headerContent={<div data-arkme-detail-author>何宏顺<small>2026年9月18日 18:04</small></div>}
+    onClose={close}><p>正文内容</p></ArkmeDetailShell>))
+  const panel = host.querySelector('[role="dialog"]')!
+  expect(panel.getAttribute('aria-label')).toBe('快记详情')
+  expect(panel.hasAttribute('aria-labelledby')).toBe(false)
+  expect(panel.querySelector('h3')).toBeNull()
+  expect(panel.textContent).not.toContain('快记详情')
+  expect(panel.querySelector('header [data-arkme-detail-author]')).not.toBeNull()
+  expect(panel.querySelectorAll('[data-arkme-detail-author]')).toHaveLength(1)
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="关闭详情"]')!.click())
+  expect(close).toHaveBeenCalledOnce()
+})
 it('does not steal focus back after the user moves to another control', async () => {
   const elsewhere = document.createElement('button'); document.body.append(elsewhere)
   await act(async () => { root.render(<ArkmeDetailShell title="详情" label="详情" onClose={() => {}}>正文</ArkmeDetailShell>) })

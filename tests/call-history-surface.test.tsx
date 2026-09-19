@@ -73,7 +73,7 @@ describe('ArkmeCallHistorySurface', () => {
     expect(markup).toContain('aria-selected="true"')
     expect(markup).toContain('aria-label="向林小满发起视频通话"')
     expect(markup).toContain('data-arkme-call-action="video"')
-    expect(markup).toContain('background:#fff;color:#17191c')
+    expect(markup).toContain('background:var(--dsw-alias-button-elevated-fill, var(--dsw-alias-bg-layer-2, #ffffff));color:var(--dsw-alias-label-primary, #17191c)')
     expect(markup).toContain('data-arkme-demo-avatar="demo-wife"')
     expect(markup).not.toContain('data-arkme-media-icon="play"')
     expect(markup).not.toContain('▶')

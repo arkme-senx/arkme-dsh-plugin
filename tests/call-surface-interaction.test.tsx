@@ -80,6 +80,80 @@ function buttonByLabel(renderer: ReactTestRenderer, label: string): ReactTestIns
 }
 
 describe('ArkmeCallSurface interactions', () => {
+  it('reuses contact, call-type and invitation dialogs without rendering or navigating to the calls page', async () => {
+    const onClose = vi.fn()
+    const previousUi = arkmeUi.getSnapshot()
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface presentation="dialog" initialPickerOpen onClose={onClose} />); await tick() })
+    expect(renderer.root.findAllByProps({ 'data-arkme-call-surface': 'true' })).toHaveLength(0)
+    expect(renderer.root.findAllByType('main')).toHaveLength(0)
+    await act(async () => { renderer.root.findAllByProps({ 'aria-label': '选择重复名通话方式' })[0]!.props.onClick(); await tick() })
+    expect(renderer.root.findAllByProps({ 'aria-label': '选择和重复名的通话方式' })).toHaveLength(1)
+    await act(async () => { buttonByLabel(renderer, '关闭通话方式选择').props.onClick(); await tick() })
+    expect(onClose).not.toHaveBeenCalled()
+    await act(async () => { buttonByText(renderer, '邀请他人向我发起通话').props.onClick(); await tick() })
+    expect(buttonByText(renderer, '生成邀请链接')).toBeDefined()
+    expect(onClose).not.toHaveBeenCalled()
+    await act(async () => { buttonByLabel(renderer, '返回联系人选择').props.onClick(); await tick() })
+    expect(renderer.root.findAllByProps({ 'aria-label': '选择通话联系人' })).toHaveLength(1)
+    await act(async () => { buttonByLabel(renderer, '关闭联系人选择').props.onClick(); await tick() })
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(arkmeUi.getSnapshot()).toBe(previousUi)
+    expect(mocks.outgoingCallRequest).not.toHaveBeenCalled()
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'calls.invite.create')).toBe(false)
+    act(() => renderer.unmount())
+  })
+
+  it.each(['audio', 'video'] as const)('hands off %s calls through the existing global call controller and dismisses the launcher', async mediaType => {
+    const onClose = vi.fn()
+    const previousUi = arkmeUi.getSnapshot()
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface presentation="dialog" initialPickerOpen onClose={onClose} />); await tick() })
+    await act(async () => { renderer.root.findAllByProps({ 'aria-label': `直接和重复名${mediaType === 'audio' ? '语音' : '视频'}通话` })[0]!.props.onClick(); await tick() })
+    expect(mocks.outgoingCallRequest).toHaveBeenCalledExactlyOnceWith({ sourceRef: 'wrong-same-name-source', displayName: '重复名', mediaType })
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(arkmeUi.getSnapshot()).toBe(previousUi)
+    act(() => renderer.unmount())
+  })
+
+  it('shows an opening error in the global dialog and allows retry', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
+      if (operation === 'chat.official-author.private.open') throw new Error('暂时无法发起通话')
+      return original(operation, ...args)
+    })
+    const onClose = vi.fn()
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface presentation="dialog" initialPickerOpen onClose={onClose} />); await tick() })
+    await act(async () => { buttonByLabel(renderer, '和即我作者语音通话').props.onClick(); await tick() })
+    expect(textContent(renderer.root.findByProps({ role: 'alert' }))).toContain('暂时无法发起通话')
+    expect(buttonByText(renderer, '语音通话')).toBeDefined()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(mocks.outgoingCallRequest).not.toHaveBeenCalled()
+    act(() => renderer.unmount())
+  })
+
+  it.each(['cancel', 'unmount'] as const)('never dials after %s while resolving a contact', async action => {
+    const original = mocks.callArkme.getMockImplementation()!
+    const opened = deferred<unknown>()
+    let signal: AbortSignal | undefined
+    mocks.callArkme.mockImplementation(async (operation: string, payload?: unknown, nextSignal?: AbortSignal) => {
+      if (operation === 'chat.official-author.private.open') { signal = nextSignal; return opened.promise }
+      return original(operation, payload, nextSignal)
+    })
+    const onClose = vi.fn()
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface presentation="dialog" initialPickerOpen onClose={onClose} />); await tick() })
+    await act(async () => { buttonByLabel(renderer, '和即我作者语音通话').props.onClick(); await tick() })
+    expect(renderer.root.findAllByProps({ 'aria-label': '正在准备通话' })).toHaveLength(1)
+    if (action === 'cancel') await act(async () => { buttonByText(renderer, '取消').props.onClick(); await tick() })
+    else act(() => renderer.unmount())
+    expect(signal?.aborted).toBe(true)
+    await act(async () => { opened.resolve({ source: { sourceRef: 'late-peer', displayName: '即我作者' } }); await tick() })
+    expect(mocks.outgoingCallRequest).not.toHaveBeenCalled()
+    if (action === 'cancel') { expect(onClose).toHaveBeenCalledOnce(); act(() => renderer.unmount()) }
+  })
+
   it('opens link invitations from the contact picker and returns to the picker', async () => {
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<ArkmeCallSurface initialPickerOpen />); await tick() })
@@ -566,7 +640,7 @@ describe('ArkmeCallSurface interactions', () => {
     expect(mocks.callArkme).toHaveBeenCalledWith('chat.private.open', {
       peerUserId: 77,
       displayName: '重复名',
-    })
+    }, expect.any(AbortSignal))
     expect(outgoingCallUi.request).toHaveBeenCalledWith({
       sourceRef: 'resolved-peer-source',
       displayName: '重复名',
@@ -826,8 +900,10 @@ describe('ArkmeCallSurface interactions', () => {
     expect(controls.props.style.bottom).toBe(0)
     expect(renderer.root.findAllByProps({ alt: '林小满示例主画面' })).toHaveLength(0)
     expect(textContent(renderer.toJSON())).not.toContain('功能示例 · 完整保留双方画面')
-    expect(renderer.root.findAllByType('small').map(item => textContent(item.props.children)).join('\n')).toContain('真实用户')
-    expect(renderer.root.findAllByType('small').map(item => textContent(item.props.children)).join('\n')).toContain('你')
+    const transcriptRows = renderer.root.findAllByType('article')
+    expect(transcriptRows).toHaveLength(2)
+    expect(transcriptRows.flatMap(row => row.findAllByType('small'))).toHaveLength(0)
+    expect(transcriptRows.flatMap(row => row.findAllByType('time'))).toHaveLength(2)
     expect(renderer.root.findAllByProps({ 'aria-label': '真实用户头像' }).length).toBeGreaterThan(0)
     expect(renderer.root.findAllByProps({ 'aria-label': '你头像' }).length).toBeGreaterThan(0)
 
@@ -947,7 +1023,7 @@ describe('ArkmeCallSurface interactions', () => {
     expect(textContent(recommendation)).toContain('即我作者 · 推荐')
     expect(buttonByLabel(renderer, '和阿森视频通话')).toBeTruthy()
     expect(mocks.callArkme).toHaveBeenCalledWith('chat.official-author.profile', {}, expect.any(AbortSignal))
-    expect(mocks.callArkme).not.toHaveBeenCalledWith('chat.official-author.private.open')
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'chat.official-author.private.open')).toBe(false)
   })
 
   it('deduplicates the official author from private and recent contacts by user identity', async () => {
@@ -1046,7 +1122,7 @@ describe('ArkmeCallSurface interactions', () => {
       await tick()
     })
 
-    expect(mocks.callArkme).toHaveBeenCalledWith('chat.official-author.private.open')
+    expect(mocks.callArkme).toHaveBeenCalledWith('chat.official-author.private.open', undefined, expect.any(AbortSignal))
     expect(mocks.callArkme).not.toHaveBeenCalledWith('chat.private.open', expect.anything())
     expect(mocks.outgoingCallRequest).toHaveBeenCalledWith({
       sourceRef: 'source-official-author',
@@ -1239,7 +1315,7 @@ describe('ArkmeCallSurface interactions', () => {
     expect(mocks.callArkme).toHaveBeenCalledWith('contacts.search', { identifier: '@mbr_sylj' }, expect.any(AbortSignal))
     expect(mocks.callArkme).toHaveBeenCalledWith('chat.private.open-from-contact', {
       contactRef: 'arkme-contact-v1.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-    })
+    }, expect.any(AbortSignal))
     expect(mocks.callArkme).not.toHaveBeenCalledWith('contacts.add', expect.anything())
     expect(mocks.outgoingCallRequest).toHaveBeenCalledWith({
       sourceRef: 'source-mubai',

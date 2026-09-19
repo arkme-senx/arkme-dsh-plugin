@@ -11,6 +11,8 @@ import type {
 } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { conversationSearchReadPort } from './conversation-search-port.js'
+import { useConversationNameSearch } from './use-conversation-name-search.js'
+import { searchSourceRows } from './search-source-rows.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeDshAgentInputMarker, isDshAgentInputRecord } from './ArkmeDshAgentInputMarker.js'
 import { arkmeUi } from './ui-controller.js'
@@ -53,7 +55,7 @@ const styles: Record<string, CSSProperties> = {
   resultTab: { position: 'relative', minHeight: 42, display: 'inline-flex', alignItems: 'center', padding: '0 0 12px', border: 0, outline: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 14, whiteSpace: 'nowrap' },
   resultTabActive: { color: colors.text, fontWeight: 600 },
   resultIndicator: { position: 'absolute', left: '50%', bottom: 5, width: 16, height: 2, marginLeft: -8, borderRadius: 22, background: colors.text },
-  resultFrame: { position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1, marginTop: 2, overflow: 'hidden', border: '1px solid rgba(60, 60, 67, .10)', borderRadius: 14, background: '#fbfbfc' },
+  resultFrame: { position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1, marginTop: 2, overflow: 'hidden', border: `1px solid ${colors.border}`, borderRadius: 14, background: arkmeTheme.layer1 },
   resultHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 20, margin: 0, padding: '14px 16px 8px', color: colors.tertiary, fontSize: 13, lineHeight: '20px', fontWeight: 500 },
   searchProgress: { position: 'absolute', inset: 0, pointerEvents: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 400, color: colors.tertiary, whiteSpace: 'nowrap' },
   status: { padding: '54px 12px', textAlign: 'center', color: colors.secondary, fontSize: 13 },
@@ -91,14 +93,20 @@ const styles: Record<string, CSSProperties> = {
 }
 
 import { ArkmeFileQuickView } from './ArkmeFileQuickView.js'
+import { ArkmeLongArticleQuickView } from './ArkmeLongArticleQuickView.js'
+import { ArkmeLinkQuickView } from './ArkmeLinkQuickView.js'
+import { LinkIcon } from '@phosphor-icons/react/dist/csr/Link'
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
+import { Article } from '@phosphor-icons/react/dist/icons/Article'
 
 const quickEntries: Array<{ key: QuickKey; label: string; tabLabel: string }> = [
   { key: 'image', label: '图片', tabLabel: '图片库' },
   { key: 'audio', label: '语音', tabLabel: '语音' },
+  { key: 'link', label: '外部链接', tabLabel: '外部链接' },
   { key: 'file', label: '文件', tabLabel: '文件' },
+  { key: 'long_article', label: '长文', tabLabel: '长文' },
 ]
-type QuickKey = 'image' | 'ai_video' | 'audio' | 'file'
+type QuickKey = 'image' | 'ai_video' | 'audio' | 'link' | 'file' | 'long_article'
 type Preview = { kind: 'image' | 'video'; url: string; name: string; subtitle?: string }
 type SearchResultTab = 'records' | 'topics' | 'recordings'
 
@@ -279,6 +287,7 @@ export function ArkmeSearchSurface({
     dsh: (waitingForSearch && quick === undefined && searchDshMessages !== undefined) || activeSearchLoading.dsh,
   }
   const [sourceLoading, setSourceLoading] = useState(false)
+  const [sourceError, setSourceError] = useState('')
   const [recordError, setRecordError] = useState('')
   const [recordingError, setRecordingError] = useState('')
   const [dshError, setDshError] = useState('')
@@ -292,6 +301,7 @@ export function ArkmeSearchSurface({
   const quickScroll = useRef<HTMLElement>(null)
   const imageLoadMoreInFlight = useRef(false)
   const appliedInitialQueryRevision = useRef<number>()
+  const nameSearch = useConversationNameSearch(query, resultTab === 'topics' && quick === undefined)
 
   useEffect(() => {
     if (initialQueryRevision === undefined || appliedInitialQueryRevision.current === initialQueryRevision) return
@@ -317,7 +327,7 @@ export function ArkmeSearchSurface({
     searchAbort.current?.abort()
     sourceSearchAbort.current?.abort()
     sourceSearchAbort.current = undefined
-    sourceSearchRevision.current += 1
+    const selectionRevision = ++sourceSearchRevision.current
     const controller = new AbortController()
     searchAbort.current = controller
     const includeCompanionDomains = quickRef.current === undefined
@@ -328,6 +338,10 @@ export function ArkmeSearchSurface({
       setSearchLoading(current => current[domain] ? { ...current, [domain]: false } : current)
     }
     setSelectedDshSessionId('')
+    setSourceError('')
+    setSelectedSourceUid('')
+    setSourceRecords([])
+    setSourceLoading(false)
     setSearchLoading({ records: true, recordings: includeCompanionDomains, dsh: includeDsh })
     setRecordError(''); setRecordingError(''); setDshError('')
     const recordRequest = callArkme<ArkmeRecordSearchResult>(
@@ -337,6 +351,7 @@ export function ArkmeSearchSurface({
     ).then(nextRecords => {
       if (!active()) return
       setRecords(nextRecords)
+      if (selectionRevision !== sourceSearchRevision.current) return
       const firstSource = nextRecords.sourceAggregates[0]
       const firstDsh = nextRecords.items.find(item => isDshAgentInputRecord(item) && item.sourceUid === firstSource?.sourceUid)
       setSelectedSourceUid(firstDsh === undefined ? firstSource?.sourceUid ?? '' : '')
@@ -370,6 +385,7 @@ export function ArkmeSearchSurface({
     if (keyword === '') return
     setSelectedDshSessionId('')
     setSelectedSourceUid(sourceUid)
+    setSourceError('')
     const cached = (records?.items ?? []).filter(item => item.sourceUid === sourceUid)
     setSourceRecords(cached)
     setSourceLoading(true)
@@ -386,7 +402,7 @@ export function ArkmeSearchSurface({
         return result.items
       }
     } catch (caught) {
-      if (!controller.signal.aborted && revision === sourceSearchRevision.current) setRecordError(errorMessage(caught))
+      if (!controller.signal.aborted && revision === sourceSearchRevision.current) setSourceError(errorMessage(caught))
     } finally {
       if (sourceSearchAbort.current === controller) sourceSearchAbort.current = undefined
       if (revision === sourceSearchRevision.current) setSourceLoading(false)
@@ -397,14 +413,16 @@ export function ArkmeSearchSurface({
     const findTarget = (items: ArkmeSearchRecordItem[]) => items.find(item =>
       item.sourceKind === sourceKind && (item.sourceUid ?? item.routeTargetUid) === sourceUid
       && item.targetSource !== undefined)?.targetSource
-    let target = findTarget([...(records?.items ?? []), ...sourceRecords])
+    let target = nameSearch.items.find(item => item.sourceKind === sourceKind && item.sourceUid === sourceUid)?.targetSource
+      ?? records?.sourceAggregates.find(item => item.sourceKind === sourceKind && item.sourceUid === sourceUid)?.targetSource
+      ?? findTarget([...(records?.items ?? []), ...sourceRecords])
     if (target === undefined) {
       const items = await chooseSource(sourceUid, sourceKind)
       if (items === undefined) return
       target = findTarget(items)
     }
     if (target === undefined) {
-      setRecordError('暂时无法打开该会话，请重试')
+      setSourceError('暂时无法打开该会话，请重试')
       return
     }
     sourceSearchAbort.current?.abort()
@@ -412,9 +430,10 @@ export function ArkmeSearchSurface({
     setSourceLoading(false)
     arkmeUi.selectSource(target)
     onClose?.()
-  }, [chooseSource, onClose, records, sourceRecords])
+  }, [chooseSource, onClose, records, sourceRecords, nameSearch.items])
 
   const chooseDshSession = (sessionId: string) => {
+    setSourceError('')
     sourceSearchAbort.current?.abort()
     sourceSearchRevision.current += 1
     setSourceLoading(false)
@@ -432,7 +451,7 @@ export function ArkmeSearchSurface({
   }
 
   useEffect(() => {
-    if (quickRef.current === 'file') return
+    if (quickRef.current === 'file' || quickRef.current === 'long_article' || quickRef.current === 'link') return
     if (query.trim() === '') { resetResults(); return }
     if (arkmeHashTagSearchKey(query) !== undefined) { void runSearch(query); return }
     const timer = window.setTimeout(() => { void runSearch(query) }, 300)
@@ -448,7 +467,7 @@ export function ArkmeSearchSurface({
     const id = ++requestId.current
     quickRef.current = value
     setQuick(value); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSelectedDshSessionId(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setSearchLoading({ records: false, recordings: false, dsh: false })
-    if (value === 'file' || hasCachedPage) { setLoading(false); return }
+    if (value === 'file' || value === 'long_article' || value === 'link' || hasCachedPage) { setLoading(false); return }
     const controller = new AbortController()
     quickRequestAbort.current = controller
     const timeout = window.setTimeout(() => controller.abort(), 20_000)
@@ -579,7 +598,8 @@ export function ArkmeSearchSurface({
   const recordingItems = recordings?.items ?? []
   const syncedDshRecords = recordItems.filter(isDshAgentInputRecord)
   const dshSourceUids = new Set(syncedDshRecords.map(item => item.sourceUid))
-  const sourceItems = (records?.sourceAggregates ?? []).filter(item => !dshSourceUids.has(item.sourceUid))
+  const sourceItems = searchSourceRows((records?.sourceAggregates ?? []).filter(item => !dshSourceUids.has(item.sourceUid)), nameSearch.items)
+  const selectedSource = sourceItems.find(item => item.sourceUid === selectedSourceUid)
   const dshById = new Map((dshMessages?.items ?? []).map(item => [item.sessionId, item]))
   for (const item of syncedDshRecords) {
     const sessionId = syncedDshKey(item)
@@ -608,8 +628,10 @@ export function ArkmeSearchSurface({
       </div> : resultTab === 'topics' ? <div style={styles.sourceLayout} aria-label="主题搜索结果">
         <div style={styles.sourceList}>
           <h3 style={styles.resultHeader}><span>{records === undefined && dshMessages === undefined ? '关联主题' : `${String(sourceItems.length + dshItems.length)}个关联主题`}</span></h3>
-          {recordError !== '' && <div style={styles.error}>主题暂不可用：{recordError}</div>}
-          {sourceItems.length === 0 && dshItems.length === 0 && !searchLoading.records && !searchLoading.dsh && <Status loading={false} empty />}
+          {recordError !== '' && <div style={styles.error}>内容查找暂不可用：{recordError}<button type="button" style={styles.retryLoadMore} onClick={() => { void runSearch(query) }}>重试内容查找</button></div>}
+          {nameSearch.error !== '' && <div style={styles.error}>会话名称查找未完成：{nameSearch.error}<button type="button" style={styles.retryLoadMore} onClick={nameSearch.retry}>重试名称查找</button></div>}
+          {nameSearch.loading && <div style={styles.meta} role="status" aria-label="正在查找会话名称">正在查找会话名称…</div>}
+          {sourceItems.length === 0 && dshItems.length === 0 && !searchLoading.records && !searchLoading.dsh && !nameSearch.loading && !recordError && !nameSearch.error && !dshError && <Status loading={false} empty />}
           {sourceItems.map(item => {
             const active = selectedDshSessionId === '' && selectedSourceUid === item.sourceUid
             return <button data-arkme-feedback="neutral" data-arkme-feedback-selected={active} key={`${String(item.sourceKind)}:${item.sourceUid}`} type="button" style={{ ...styles.sourceRow, ...(active ? styles.sourceRowActive : {}) }} title="单击查看关联快记，双击打开会话" onClick={() => { void chooseSource(item.sourceUid, item.sourceKind) }} onDoubleClick={() => { void openSource(item.sourceUid, item.sourceKind) }} onKeyDown={event => {
@@ -617,7 +639,8 @@ export function ArkmeSearchSurface({
             }}>
               {active && <span style={styles.sourceMarker} />}
               <p style={styles.title}>{item.title}</p>
-              <span style={styles.meta}>{item.matchedRecordCountExact ? item.matchedRecordCount : `约 ${String(item.matchedRecordCount)}`}条关联快记</span>
+              {item.nickname && item.nickname !== item.title && <p style={{ ...styles.meta, margin: '3px 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.nickname}>昵称：{item.nickname}</p>}
+              <span style={styles.meta}>{item.matchedRecordCount === undefined ? `名称匹配 · ${item.targetSource?.kind === 'private_chat' ? '私聊' : '群聊'}` : `${item.matchedRecordCountExact ? String(item.matchedRecordCount) : `约 ${String(item.matchedRecordCount)}`}条关联快记`}</span>
             </button>
           })}
           {dshError !== '' && <div style={styles.error}>DSH 任务暂不可用：{dshError}</div>}
@@ -635,7 +658,7 @@ export function ArkmeSearchSurface({
           </button>)}
         </div>
         <div style={styles.sourceResults}>
-          <h3 style={styles.resultHeader}>记录详情</h3>
+          <h3 style={styles.resultHeader}><span>记录详情</span>{selectedSource?.targetSource && selectedDsh === undefined && <button type="button" style={styles.retryLoadMore} onClick={() => { void openSource(selectedSource.sourceUid, selectedSource.sourceKind) }}>打开会话</button>}</h3>
           {selectedDsh !== undefined ? <div style={styles.list}>
             {selectedDshRecords.length > 0 ? <>
               {selectedDshRecords.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { void openRecord(item) }} onTagClick={selectTag} />)}
@@ -645,8 +668,9 @@ export function ArkmeSearchSurface({
             </>}
           </div> : selectedSourceUid === '' ? <div style={styles.sourcePrompt}>选择一个主题查看关联快记</div>
             : sourceLoading ? <Status loading />
+              : sourceError !== '' ? <div style={styles.error} role="alert">该会话查询失败：{sourceError}{selectedSource && <button type="button" style={styles.retryLoadMore} onClick={() => { void chooseSource(selectedSource.sourceUid, selectedSource.sourceKind) }}>重试</button>}</div>
               : sourceRecords.length > 0 ? <div style={styles.list}>{sourceRecords.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>
-                : <Status loading={false} empty />}
+                : selectedSource?.nameMatched ? <div style={styles.sourcePrompt}>已匹配会话名称，没有匹配的消息内容。可打开会话继续查看。</div> : <Status loading={false} empty />}
         </div>
       </div> : <div style={{ height: '100%', overflowY: 'auto' }} aria-label="录音转写搜索结果">
         <h3 style={styles.resultHeader}><span>{recordings === undefined ? '关联录音' : `${String(recordingItems.length)}个关联录音`}</span></h3>
@@ -656,7 +680,7 @@ export function ArkmeSearchSurface({
       </div>}
       </div>
       <div style={styles.searchProgress} role="status" aria-live="polite">
-        {(resultTab === 'topics' ? searchLoading.records || searchLoading.dsh : searchLoading[resultTab]) && <span aria-label={`正在搜索${resultTabs.find(([key]) => key === resultTab)![1]}`}>搜索中…</span>}
+        {(resultTab === 'topics' ? searchLoading.records || searchLoading.dsh || nameSearch.loading : searchLoading[resultTab]) && <span aria-label={`正在搜索${resultTabs.find(([key]) => key === resultTab)![1]}`}>搜索中…</span>}
       </div>
     </div>
   </>
@@ -681,12 +705,16 @@ export function ArkmeSearchSurface({
         </section>}
         <section style={styles.section} aria-label="快速查找">
           <div style={styles.sectionHeader}><h3 style={styles.sectionTitle}>快速查找</h3><span style={styles.quickHint}>按内容类型浏览</span></div>
-          <div style={styles.quickChips}>{quickEntries.map(entry => <button data-arkme-feedback="neutral" key={entry.key} type="button" style={styles.quickChip} onClick={() => { void loadQuick(entry.key) }}>{entry.key === 'file' ? <FileTextIcon size={18} aria-hidden /> : entry.key === 'audio' ? <Waveform size={18} aria-hidden /> : <img src={`${assetRoot}/${entry.key === 'image' ? 'gallery-linear.svg' : 'arkme-video-linear.svg'}`} alt="" aria-hidden style={styles.quickChipIcon} />}<span>{entry.label}</span></button>)}</div>
+          <div style={styles.quickChips}>{quickEntries.map(entry => <button data-arkme-feedback="neutral" key={entry.key} type="button" style={styles.quickChip} onClick={() => { void loadQuick(entry.key) }}>{entry.key === 'link' ? <LinkIcon size={18} aria-hidden /> : entry.key === 'long_article' ? <Article size={18} aria-hidden /> : entry.key === 'file' ? <FileTextIcon size={18} aria-hidden /> : entry.key === 'audio' ? <Waveform size={18} aria-hidden /> : <img src={`${assetRoot}/${entry.key === 'image' ? 'gallery-linear.svg' : 'arkme-video-linear.svg'}`} alt="" aria-hidden style={styles.quickChipIcon} />}<span>{entry.label}</span></button>)}</div>
         </section>
       </div> : searchResults}
     </div> : <div style={{ ...styles.quickShell, ...(variant === 'dialog' ? styles.column : {}) }}>
       <header style={styles.quickHeader}>
-        <div style={styles.quickTopRow}><button data-arkme-feedback="neutral" type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button><div style={styles.quickSearch}><MagnifyingGlass size={20} color="#a3a7af" aria-hidden /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button data-arkme-feedback="neutral" type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div>{onClose !== undefined && <button data-arkme-feedback="neutral" type="button" aria-label="关闭全局搜索" style={styles.close} onClick={onClose}><X size={21} aria-hidden /></button>}</div>
+        <div style={styles.quickTopRow}>
+          <button data-arkme-feedback="neutral" type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button>
+          {quick === 'long_article' || quick === 'link' ? <h2 style={{ ...styles.sectionTitle, flex: 1 }}>{quick === 'link' ? '外部链接' : '长文'}</h2> : <div style={styles.quickSearch}><MagnifyingGlass size={20} color="#a3a7af" aria-hidden /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button data-arkme-feedback="neutral" type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div>}
+          {onClose !== undefined && <button data-arkme-feedback="neutral" type="button" aria-label="关闭全局搜索" style={styles.close} onClick={onClose}><X size={21} aria-hidden /></button>}
+        </div>
         <div style={styles.tabs}>{hasQuery
           ? <button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...styles.tabActive }}>搜索快记<span style={styles.indicator} /></button>
           : quickEntries.map(entry => {
@@ -695,7 +723,7 @@ export function ArkmeSearchSurface({
           })}
         </div>
       </header>
-      <main key={quick} ref={quickScroll} aria-label="快速查找内容" tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{quick === 'file' ? <ArkmeFileQuickView query={query} onOpenRecord={openRecord} /> : hasQuery ? <>{searchLoading.records ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>}</> : quickBody}</main>
+      <main key={quick} ref={quickScroll} aria-label="快速查找内容" tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{quick === 'link' ? <>{recordError !== '' && <Status loading={false} error={recordError} />}<ArkmeLinkQuickView onOpenRecord={openRecord} {...(variant === 'dialog' ? { scrollRoot: quickScroll } : {})} /></> : quick === 'long_article' ? <ArkmeLongArticleQuickView {...(variant === 'dialog' ? { scrollRoot: quickScroll } : {})} /> : quick === 'file' ? <ArkmeFileQuickView query={query} onOpenRecord={openRecord} /> : hasQuery ? <>{searchLoading.records ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>}</> : quickBody}</main>
     </div>}
     {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}>{preview.subtitle}</span>}<button data-arkme-feedback="neutral" type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>关闭</button></div></div>}
   </div>

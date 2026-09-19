@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { projectCallRecord } from '../src/call-record-presentation.js'
+import { callSummaryUserIds, projectCallRecord } from '../src/call-record-presentation.js'
 import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
 import { arkmeCallRecordBubbleStyle } from '../src/client/ArkmeCallRecordContent.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
 
 describe('desktop call record presentation', () => {
+  it('collects only explicitly referenced summary identities, including bound speakers', () => {
+    expect(callSummaryUserIds({ smt: '{{user:77}}与{{speaker:s1}}、{{speaker:s2}}、{{speaker:unknown}}和{{user:77}}',
+      ssu: JSON.stringify({ s1: 88, '{{speaker:s2}}': 42, unused: 99 }), sm: 'Jotmoer 方说话人 A' })).toEqual([77, 88, 42])
+    expect(callSummaryUserIds({ call_summary: 'Jotmoer 方说话人 A', call_summary_speaker_user_ids: { s1: 77 } })).toEqual([])
+    expect(callSummaryUserIds({ summary_template: '{{user:0}} {{user:-1}} {{user:Infinity}} {{user:9007199254740992}}' })).toEqual([])
+  })
+
   it.each(['Audio', 'Video'])('renders cancelled %s with the original desktop styling', media => {
     const callRecord = projectCallRecord({ record: { payload: { content_payload: { crd: { mt: media, rs: 'Cancel', cr: 42, ri: 'private-room', ci: 'private-call' } } } } }, 42)!
     expect(callRecord).toEqual({ mediaType: media.toLowerCase(), text: '已取消' })

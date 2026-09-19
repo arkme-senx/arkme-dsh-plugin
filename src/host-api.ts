@@ -907,6 +907,14 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation === 'desktop.screenshot.capture' || request.operation === 'desktop.screenshot.capability') {
+        // This local desktop action must remain unavailable to remote clients,
+        // even when other Host operations explicitly allow non-loopback access.
+        if (!isLoopback(req.socket.remoteAddress)) throw new ArkmePluginError('loopback-required', '截屏仅允许本机访问', false, 403)
+        if (origin === undefined) throw new ArkmePluginError('origin-required', '截屏必须从当前 DSH 页面发起', false, 403)
+        const url = new URL(origin)
+        if (!['http:', 'https:'].includes(url.protocol) || url.host !== req.headers.host) throw new ArkmePluginError('origin-rejected', '截屏必须从当前 DSH 页面发起', false, 403)
+      }
       if (request.operation === 'link.metadata' && origin === undefined) {
         throw new ArkmePluginError('origin-required', '网址名称解析必须从当前 DSH 页面发起', false, 403)
       }
@@ -1114,6 +1122,8 @@ export async function dispatchArkmeHostOperation(
     case 'remote.renameDesktop': return await requireRemoteHost(remoteHost, remoteUnavailableReason).renameDesktop(stringParam(params, 'displayName'))
     case 'billing.quota': return await service.billingQuota()
     case 'billing.products': return await service.billingProducts()
+    case 'membership.current': return await service.membershipCurrent(numberParam(params, 'expectedUserId', Number.NaN))
+    case 'membership.catalog': return await service.membershipCatalog(numberParam(params, 'expectedUserId', Number.NaN))
     case 'billing.order.create': return await service.createBillingOrder({
       productId: billingIdentifierParam(params, 'productId', 'billing-product-id-invalid', '购买套餐无效'),
       paymentMethod: billingPaymentMethodParam(params),
@@ -1366,6 +1376,11 @@ export async function dispatchArkmeHostOperation(
         ...(cursor === undefined ? {} : { cursor }),
       })
     }
+    case 'search.conversations': return await service.searchConversationNames({
+      query: stringParam(params, 'query'),
+      ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+    })
     case 'search.records': return await service.searchRemote({
       query: stringParam(params, 'query'),
       limit: numberParam(params, 'limit', 20),
@@ -1876,6 +1891,8 @@ export async function dispatchArkmeHostOperation(
         ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(stringParam(params, 'commentText') === '' ? {} : { commentText: stringParam(params, 'commentText') }),
+        ...(params.expectedUserId === undefined ? {} : { expectedUserId: numberParam(params, 'expectedUserId', 0) }),
+        ...(params.sendAtMillis === undefined ? {} : { sendAtMillis: numberParam(params, 'sendAtMillis', 0) }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
@@ -2062,6 +2079,12 @@ export async function dispatchArkmeHostOperation(
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
     case 'files.capabilities': return service.fileCapabilities()
+    case 'desktop.screenshot.capability': return await service.screenshotCapability()
+    case 'desktop.screenshot.capture': {
+      const expectedUserId = fileExpectedUserIdParam(params)
+      if (expectedUserId === undefined) throw new ArkmePluginError('screenshot-account-required', '请先登录后再截屏', false, 400)
+      return await service.captureScreenshot(expectedUserId, requestSignal)
+    }
     case 'files.local.list': return await service.fileList()
     case 'files.local.open-folder': return await service.fileOpenLocalFolder(stringParam(params, 'fileRef'), requestSignal)
     case 'files.local.open': return await service.fileOpenLocal(stringParam(params, 'fileRef'), requestSignal)
@@ -2114,7 +2137,9 @@ export async function dispatchArkmeHostOperation(
     case 'favorite-stickers.manage': return await service.manageFavoriteSticker(
       stringParam(params, 'fileAssetUid'), favoriteStickerManageActionParam(params),
     )
+    case 'source.long-article.own': return await service.ownLongArticle(stringParam(params, 'itemUid'), numberParam(params, 'expectedUserId', 0), requestSignal)
     case 'source.long-article.publish': return await service.publishLongArticle(stringParam(params, 'sourceRef'), {
+      ...(params.expectedUserId === undefined ? {} : { expectedUserId: numberParam(params, 'expectedUserId', 0) }),
       title: stringParam(params, 'title'), textContent: stringParam(params, 'textContent'),
       textFormat: params.textFormat === 'markdown' ? 'markdown' : 'plain',
       ...(params.images === undefined ? {} : { images: longArticleImagesParam(params)! }),
@@ -2161,6 +2186,7 @@ export async function dispatchArkmeHostOperation(
     case 'source.long-article.draft.delete': return await service.removeLongArticleDraft(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'itemUid') || undefined,
+      ...(params.expectedRecordUid === undefined ? [] : [stringParam(params, 'expectedRecordUid')]),
     )
     case 'source.record-reedit.detail': return await service.recordReeditEditor(
       stringParam(params, 'sourceRef'),

@@ -3,6 +3,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { watchFrameMenuDismissal } from './frame-menu-dismissal.js'
+import { inMenuHoverRegion } from './menu-hover-region.js'
 
 const conversationMenuCss = `
 [role="menu"]:has(.arkme-conversation-actions-menu-label) {
@@ -155,6 +156,8 @@ export function ArkmeActionMenu(props: {
   align?: 'start' | 'end'
   side?: 'top' | 'bottom' | 'right'
   autoFocus?: boolean
+  /** Hover menus dismiss immediately outside the trigger, menu and crossing gap. */
+  hoverAnchor?: HTMLElement | undefined
 }) {
   const open = props.open ?? true
   const root = useRef<HTMLSpanElement>(null)
@@ -163,6 +166,24 @@ export function ArkmeActionMenu(props: {
   const focused = useRef(false)
   const closeRef = useRef(props.onClose)
   closeRef.current = props.onClose
+  const focusFirstItem = useCallback(() => {
+    if (!props.autoFocus || focused.current) return
+    const button = menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+    if (!button) return
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    button.focus({ preventScroll: true })
+    // The native portal first mounts hidden to measure its placement. Hidden
+    // items cannot take focus; retry after placement instead of marking success.
+    if (document.activeElement === button) {
+      returnFocus.current = previous
+      focused.current = true
+    }
+  }, [props.autoFocus])
+  useEffect(() => {
+    if (!open || !props.autoFocus || focused.current) return
+    const frame = requestAnimationFrame(focusFirstItem)
+    return () => cancelAnimationFrame(frame)
+  }, [open, props.autoFocus, focusFirstItem])
   const getAnchorRect = useCallback(() => {
     if (!props.point) return props.getAnchorRect?.() ?? root.current?.querySelector('button')?.getBoundingClientRect() ?? root.current?.getBoundingClientRect() ?? null
     let { x, y } = props.point
@@ -215,6 +236,30 @@ export function ArkmeActionMenu(props: {
       doc.defaultView?.removeEventListener('resize', close)
     }
   }, [open, props.point !== undefined, props.pointDocument])
+  useEffect(() => {
+    const anchor = props.hoverAnchor
+    if (!open || !anchor || typeof document === 'undefined') return
+    const doc = anchor.ownerDocument
+    const close = () => closeRef.current()
+    const move = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') return
+      const list = menu.current
+      if (!anchor.isConnected || (list && !inMenuHoverRegion(event.clientX, event.clientY,
+        anchor.getBoundingClientRect(), list.getBoundingClientRect()))) close()
+    }
+    const leave = (event: PointerEvent) => { if (event.relatedTarget === null) close() }
+    const observer = new MutationObserver(() => { if (!anchor.isConnected) close() })
+    observer.observe(doc.body, { childList: true, subtree: true })
+    doc.addEventListener('pointermove', move, true)
+    doc.addEventListener('pointerout', leave, true)
+    doc.defaultView?.addEventListener('blur', close)
+    return () => {
+      observer.disconnect()
+      doc.removeEventListener('pointermove', move, true)
+      doc.removeEventListener('pointerout', leave, true)
+      doc.defaultView?.removeEventListener('blur', close)
+    }
+  }, [open, props.hoverAnchor])
   const actions = props.actions.filter((action): action is ArkmeMenuAction => !!action)
   const items: MenuEntry[] = actions.map(action => 'type' in action ? action : ({
     id: action.id, label: typeof document === 'undefined' || typeof document.createElement !== 'function' ? action.label : <span ref={node => {
@@ -227,11 +272,7 @@ export function ArkmeActionMenu(props: {
       list.setAttribute('data-arkme-action-menu', 'true')
       // React portal events still bubble through this adapter, so keyboard
       // navigation also works without modifying the upstream component.
-      if (props.autoFocus && !focused.current) {
-        returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-        focused.current = true
-        list.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus()
-      }
+      focusFirstItem()
     }}>{action.label}</span>,
     ...(action.icon === undefined ? {} : { icon: action.icon }),
     ...(action.disabled === undefined ? {} : { disabled: action.disabled }),

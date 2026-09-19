@@ -1,3 +1,5 @@
+import { arkmeTheme } from './arkme-theme.js'
+
 /** Native DSH menu metrics, shared by both topic-menu entry points and the session adapter. */
 export const CONVERSATION_MENU_LAYOUT = {
   width: 320,
@@ -21,8 +23,8 @@ export const CONVERSATION_MENU_LAYOUT = {
 
 /** Keep the current selection distinct from a transient hover in both menus. */
 export const CONVERSATION_MENU_COLORS = {
-  selected: '#eef1f8',
-  hover: 'var(--dsw-alias-interactive-bg-hover, #f3f4f7)',
+  selected: arkmeTheme.accentSoft,
+  hover: arkmeTheme.hover,
 } as const
 
 export const CONVERSATION_MENU_SURFACE = {

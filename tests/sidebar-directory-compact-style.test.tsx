@@ -193,6 +193,11 @@ describe('compact conversation directory styles', () => {
       // Match the contacts toolbar's shared grid while retaining the scroll
       // viewport and full-width conversation-card layout from master.
       expect((toolbar as HTMLElement).style.margin).toBe('24px 16px 16px')
+      // macOS replaces the margins with padding for its window drag region.
+      // A fixed wrapper height would collapse the content and overlap row 1.
+      expect((toolbar as HTMLElement).style.height).toBe('auto')
+      expect(toolbar.hasAttribute('data-arkme-window-drag-directory')).toBe(true)
+      expect((search as HTMLElement).style.height).toBe('40px')
       const viewport = directory.querySelector<HTMLElement>('[role="tree"]')!
       expect(viewport.style.paddingLeft).toBe('0px')
       expect(viewport.style.paddingRight).toBe('0px')

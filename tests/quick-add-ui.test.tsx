@@ -12,7 +12,7 @@ describe('Arkme quick-add UI', () => {
       onContactAdd={vi.fn()}
       onSourceCreated={vi.fn()}
     />)
-    expect(markup).toContain('aria-label="添加联系人、群聊或 Bot"')
+    expect(markup).toContain('aria-label="添加联系人、群聊、发起通话或添加 Bot"')
     expect(markup).toContain('aria-haspopup="menu"')
     expect(markup).toContain('>＋</button>')
     expect(markup).toContain('width:40px;height:40px')
@@ -33,14 +33,17 @@ describe('Arkme quick-add UI', () => {
     const markup = renderToStaticMarkup(<ArkmeQuickAddMenu
       onContactAdd={vi.fn()}
       onCreateGroup={vi.fn()}
+      onStartCall={vi.fn()}
       onAddBot={vi.fn()}
     />)
     const contact = markup.indexOf('添加联系人')
     const group = markup.indexOf('创建群聊')
     const bot = markup.indexOf('添加 Bot')
+    const call = markup.indexOf('发起通话')
     expect(contact).toBeGreaterThan(0)
     expect(group).toBeGreaterThan(contact)
     expect(bot).toBeGreaterThan(group)
+    expect(call).toBeGreaterThan(bot)
     expect(markup.match(/-webkit-mask-image:url\(data:image\/svg\+xml;base64,/g)).toHaveLength(3)
   })
 

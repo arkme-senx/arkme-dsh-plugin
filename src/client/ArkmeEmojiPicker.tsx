@@ -1,4 +1,5 @@
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import { arkmeTheme } from './arkme-theme.js'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type {
@@ -131,7 +132,7 @@ const styles: Record<string, CSSProperties> = {
   favoriteGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, 82px)', gap: 8, alignContent: 'start' },
   stickerTile: {
     position: 'relative', width: 82, height: 82, padding: 0, overflow: 'hidden', border: 0, borderRadius: 12,
-    background: 'var(--dsw-alias-fill-l2, #f5f6f7)', cursor: 'pointer',
+    background: arkmeTheme.subtle, cursor: 'pointer',
   },
   stickerImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   stickerFallback: { width: '100%', height: '100%', display: 'grid', placeItems: 'center', color: '#a7adb5', fontSize: 24 },
@@ -676,8 +677,8 @@ export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey,
         <input ref={stickerInputRef} type="file" accept="image/*,.gif" hidden onChange={addSticker} />
       </div>}
       {mode === 'all' && <div style={styles.toolbar}>
-        <button data-arkme-feedback="neutral" data-arkme-feedback-selected={tab === 'emoji'} type="button" style={{ ...styles.tab, ...(tab === 'emoji' ? { background: '#f3f4f5', color: '#737a84' } : {}) }} aria-label="默认表情" title="默认表情" onClick={() => { setTab('emoji') }}><SmileIcon /></button>
-        <button data-arkme-feedback="neutral" data-arkme-feedback-selected={tab === 'favorite'} type="button" style={{ ...styles.tab, ...(tab === 'favorite' ? { background: '#f3f4f5', color: '#737a84' } : {}) }} aria-label="收藏表情" title="收藏表情" onClick={() => { setTab('favorite') }}><HeartIcon /></button>
+        <button data-arkme-feedback="neutral" data-arkme-feedback-selected={tab === 'emoji'} type="button" style={{ ...styles.tab, ...(tab === 'emoji' ? { background: arkmeTheme.accentSoft, color: arkmeTheme.text } : {}) }} aria-label="默认表情" title="默认表情" onClick={() => { setTab('emoji') }}><SmileIcon /></button>
+        <button data-arkme-feedback="neutral" data-arkme-feedback-selected={tab === 'favorite'} type="button" style={{ ...styles.tab, ...(tab === 'favorite' ? { background: arkmeTheme.accentSoft, color: arkmeTheme.text } : {}) }} aria-label="收藏表情" title="收藏表情" onClick={() => { setTab('favorite') }}><HeartIcon /></button>
       </div>}
       {mode === 'all' && contextMenu !== undefined && <ArkmeActionMenu label="收藏表情操作"
         point={{ x: contextMenu.x, y: contextMenu.y }} onClose={() => setContextMenu(undefined)}

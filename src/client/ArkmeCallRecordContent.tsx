@@ -55,9 +55,8 @@ export function ArkmeCallRecordContent({ call, revision, onOpenDetail }: { call:
       {clips.map((clip, index) => {
         const label = clip.label || (clip.perspective === 'self' ? '我的视角' : clip.perspective === 'peer' ? '对方视角' : '通话视频')
         const preview = <span style={{ display: 'block', position: 'relative', width: '100%', aspectRatio: '9 / 16', borderRadius: 8, overflow: 'hidden', background: arkmeTheme.layer1 }}><CallPreviewImage clip={clip} label={label} /></span>
-        return <span key={`${clip.videoUrl}:${clip.posterUrl}:${index}`} style={{ display: 'grid', gap: 4, width: 88, maxWidth: '100%', fontSize: 11 }}>
-          {onOpenDetail ? <button type="button" aria-label={`查看${label}通话详情`} onClick={event => { event.stopPropagation(); onOpenDetail(clip.videoUrl ?? clip.posterUrl) }} style={{ width: '100%', border: 0, padding: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' }}>{preview}</button> : preview}
-          <span>{label}</span>
+        return <span key={`${clip.videoUrl}:${clip.posterUrl}:${index}`} style={{ display: 'block', width: 88, maxWidth: '100%' }}>
+          {onOpenDetail ? <button type="button" aria-label={`查看${label}通话详情`} onClick={event => { event.stopPropagation(); onOpenDetail(clip.videoUrl ?? clip.posterUrl) }} style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' }}>{preview}</button> : preview}
         </span>
       })}
     </div>}

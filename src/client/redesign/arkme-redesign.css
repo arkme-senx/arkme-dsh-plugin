@@ -101,10 +101,16 @@
 .arkme-redesign-rail-footer > button:not([data-arkme-feedback]):hover, .arkme-redesign-rail-footer > button.is-active { background: #f1f2f5; }
 .arkme-redesign-rail-footer:empty { display: none; }
 .arkme-conversation-input-card { display: contents; }
+/* Keep the send action visible even inside a narrow conversation pane. The
+   complete keyboard shortcut remains available via the hint's title. */
+@container arkme-composer (max-width: 340px) {
+  .arkme-composer-shortcut-details { display: none; }
+}
 body:is([data-ds-skin='qq2006'], [data-arkme-skin='qq2006']) [data-arkme-owned='product-surface']
   .arkme-conversation-input-card.arkme-conversation-input-card.arkme-conversation-tools {
   display: flex !important;
 }
+.arkme-group-member-search::placeholder { color: var(--dsw-alias-label-secondary, #68707c); opacity: 1; }
 .arkme-redesign-profile { position: relative; padding: 0; }
 .arkme-redesign-profile-popover { position: fixed; z-index: 10000; left: calc(var(--arkme-navigation-width) - 8px); bottom: 14px; width: 264px; padding: 10px; border: 1px solid rgba(216,217,221,.9); border-radius: 18px; background: rgba(255,255,255,.96); box-shadow: 0 20px 50px rgba(26,28,35,.15), 0 2px 8px rgba(26,28,35,.05); backdrop-filter: blur(20px); }
 .arkme-redesign-profile-head { padding: 9px 9px 13px; display: flex; align-items: center; gap: 11px; }
@@ -1083,68 +1089,7 @@ body[data-ds-dark-theme] [data-arkme-owned="product-surface"] [aria-label="全�
   color: var(--dsw-alias-label-primary-inverted) !important;
 }
 
-/* Calendar is portalled to document.body, so it cannot inherit the product
-   workspace background. Anchor the dark mapping to its own accessible root. */
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"]) {
-  color: var(--dsw-alias-label-primary) !important;
-}
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  > div > section[aria-label="客户端日历"],
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  > div > section[aria-label="当天内容"] {
-  border-color: var(--dsw-alias-border-l2) !important;
-  background: var(--dsw-alias-bg-layer-1) !important;
-  color: var(--dsw-alias-label-primary) !important;
-  box-shadow: var(--dsw-shadow-lv2) !important;
-}
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  > div > section[aria-label="客户端日历"] > span[aria-hidden] {
-  border-color: var(--dsw-alias-border-l2) !important;
-  background: var(--dsw-alias-bg-layer-1) !important;
-}
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  section[aria-label="客户端日历"] > header button,
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  section[aria-label="客户端日历"] button[aria-label*="记录"] {
-  color: var(--dsw-alias-label-primary) !important;
-}
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  section[aria-label="客户端日历"] > div > span {
-  color: var(--dsw-alias-label-tertiary) !important;
-}
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  section[aria-label="客户端日历"] button[data-selected="false"][aria-label*="条记录"] > span:last-child {
-  background: transparent !important;
-  color: var(--dsw-alias-label-secondary) !important;
-}
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  section[aria-label="客户端日历"] button[data-selected="true"],
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  section[aria-label="客户端日历"] button[data-selected="true"] > span {
-  color: var(--dsw-alias-label-primary-inverted) !important;
-}
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  section[aria-label="客户端日历"] button[data-selected="true"] > span:last-child {
-  background: transparent !important;
-  color: var(--dsw-alias-label-primary-inverted) !important;
-}
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  section[aria-label="当天内容"] article > div > div:last-child {
-  border-color: var(--dsw-alias-border-l1) !important;
-  background: var(--dsw-alias-bg-layer-2) !important;
-}
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  section[aria-label="当天内容"] article h3,
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  section[aria-label="当天内容"] article p {
-  color: var(--dsw-alias-label-primary) !important;
-}
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  section[aria-label="当天内容"] article time,
-body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
-  section[aria-label="当天内容"] article span {
-  color: var(--dsw-alias-label-secondary) !important;
-}
+/* Calendar surfaces and their body portals use shared semantic component styles. */
 
 body[data-ds-dark-theme] .arkme-redesign-root,
 body[data-ds-dark-theme] .arkme-redesign-chat-panel,
@@ -1324,13 +1269,23 @@ body[data-ds-dark-theme] .arkme-redesign-search-page .arkme-search-box {
   box-shadow: var(--dsw-shadow-lv2) !important;
 }
 body[data-ds-dark-theme] .arkme-conversation-composer-inner[data-arkme-primary-composer="true"] {
-  --arkme-primary-composer-idle: #151515;
-  --arkme-primary-composer-focused: #000000;
+  --arkme-primary-composer-idle: var(--dsw-alias-bg-base);
+  --arkme-primary-composer-focused: var(--dsw-specific-input-major);
+  border-color: var(--dsw-alias-border-l2) !important;
+  color: var(--dsw-alias-label-primary) !important;
   background: var(--arkme-primary-composer-idle, #f6f6f6) !important;
   box-shadow: none !important;
+  transition: background-color .15s ease !important;
 }
 body[data-ds-dark-theme] .arkme-conversation-composer-inner[data-arkme-primary-composer="true"][data-arkme-composer-focused="true"] {
+  border-color: var(--dsw-alias-border-l2) !important;
   background: var(--arkme-primary-composer-focused, #ffffff) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  body[data-ds-dark-theme] .arkme-conversation-composer-inner[data-arkme-primary-composer="true"] { transition: none !important; }
+}
+body[data-ds-dark-theme] .arkme-conversation-composer-inner[data-arkme-composer-resize-highlighted="true"] {
+  border-color: var(--dsw-alias-state-success-primary) !important;
 }
 body[data-ds-dark-theme] .arkme-redesign-task-greeting img {
   filter: invert(1) hue-rotate(180deg);
@@ -1464,7 +1419,7 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
   .arkme-redesign-starters { grid-template-columns: 1fr; gap: 6px; }
   .arkme-redesign-starters > button { border-right: 0; }
   .arkme-voiceprint-relationships { grid-template-columns: minmax(0, 1fr) !important; gap: 28px !important; }
-  .arkme-voiceprint-outbound { padding-left: 0 !important; padding-top: 28px !important; border-left: 0 !important; border-top: 1px solid var(--dsw-alias-border-subtle, #e6e7eb) !important; }
+  .arkme-voiceprint-outbound { padding-left: 0 !important; padding-top: 28px !important; border-left: 0 !important; border-top: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10)) !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -3804,9 +3804,11 @@ export class ChatService {
   async forwardSourceMessages(
       sourceRef: string,
       actionRefs: readonly string[],
-      options: { targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; signal?: AbortSignal } = {},
+      options: { targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; expectedUserId?: number; sendAtMillis?: number; signal?: AbortSignal } = {},
     ): Promise<ArkmeSourceSendResult> {
       const session = await this.runtime.requireSession()
+      if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
+      if (options.sendAtMillis !== undefined && (!Number.isSafeInteger(options.sendAtMillis) || options.sendAtMillis <= 0)) throw new ArkmePluginError('message-actions-time-invalid', '发送时间无效', false)
       const source = await this.source.openSourceRef(sourceRef, session.userId)
       const targetSourceRef = options.targetSourceRef?.trim() || sourceRef
       const targetSource = targetSourceRef === sourceRef ? source : await this.source.openSourceRef(targetSourceRef, session.userId)
@@ -3854,7 +3856,7 @@ export class ChatService {
         }
       }
       if (targetSource.kind === 'private_chat' || targetSource.kind === 'group_chat') {
-        const sendAtMillis = Date.now()
+        const sendAtMillis = options.sendAtMillis ?? Date.now()
         const clientRequestId = this.forwardClientRequestId(targetSource.ownerRef, references, sendAtMillis)
         const hasChatRecordSources = references.some(reference => reference.sourceKind === 'chat_relation')
         const sourceRecordUids = hasChatRecordSources
@@ -4825,6 +4827,22 @@ export class ChatService {
       editable: numberValue(core.owner_user_id) === session.userId && numberValue(core.creator_user_id) === session.userId,
     }
   }
+
+  /** Resolve a complete, owned article, never trust a search excerpt as send content. */
+  async ownLongArticle(itemUid: string, expectedUserId: number, signal?: AbortSignal): Promise<{ detail: ArkmeLongArticleDetail; messageActionRef: string }> {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== expectedUserId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
+    const target = await this.source.selfTarget(signal)
+    const source = await this.source.openSourceRef(target.sourceRef, session.userId)
+    const detail = await this.record.longArticleDetail(target.sourceRef, itemUid, signal)
+    if (!detail.editable) throw new ArkmePluginError('long-article-not-owned', '只能添加自己创建的长文', false, 403)
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
+    const item = this.withRecordMessageActionRef(source, {
+      ...detail, isMe: true, senderName: '我', status: 1, templateKind: 8, displayKind: 1,
+    }, session.userId, await this.runtime.stateStore.uniqueCode())
+    if (!item.messageActionRef) throw new ArkmePluginError('long-article-ref-invalid', '长文暂不可添加，请重试', true)
+    return { detail, messageActionRef: item.messageActionRef }
+  }
   
   async updateLongArticle(
       sourceRef: string,
@@ -4842,8 +4860,8 @@ export class ChatService {
       return await this.record.putLongArticleDraft(draft)
     }
   
-  async removeLongArticleDraft(sourceRef: string, itemUid?: string): Promise<void> {
-      return await this.record.removeLongArticleDraft(sourceRef, itemUid)
+  async removeLongArticleDraft(sourceRef: string, itemUid?: string, expectedRecordUid?: string): Promise<void> {
+      return await this.record.removeLongArticleDraft(sourceRef, itemUid, expectedRecordUid)
     }
   
   async uploadLocalFile(

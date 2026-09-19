@@ -70,6 +70,30 @@ export interface ArkmeBillingProduct {
   enabled: boolean
 }
 
+export interface ArkmeMembership {
+  userId: number
+  memberType: 0 | 1 | 2
+  expireAtMillis: number | null
+  gifted: boolean
+  lifetime: boolean
+}
+
+export interface ArkmeMembershipProduct {
+  id: string
+  memberType: 1 | 2
+  name: string
+  priceMinor: number
+  currency: 'CNY'
+  recurring: boolean
+  monthCount: number
+}
+
+export interface ArkmeMembershipCatalog {
+  userId: number
+  products: ArkmeMembershipProduct[]
+  checkout: 'mobile-app-only'
+}
+
 export interface ArkmeBillingProductList {
   items: ArkmeBillingProduct[]
 }
@@ -1029,6 +1053,7 @@ export interface ArkmeSearchRecordItem {
   recordUid: string
   /** Record owner required by Chat's exact timeline locator; never the current viewer. */
   recordOwnerUserId?: RecordOwnerId
+  recordCreatorUserId?: RecordOwnerId
   sourceKind: number
   sourceUid?: string
   routeTargetKind: string
@@ -1047,6 +1072,8 @@ export interface ArkmeSearchRecordItem {
   files: ArkmeSearchAssetItem[]
   voice?: ArkmeSearchAssetItem
   linkUrl?: string
+  /** Deduplicated safe links extracted before the search text excerpt is clipped. */
+  linkUrls?: string[]
   recordDurationMillis?: number
   sceneItemCount?: number
   sceneItemSize?: number
@@ -1054,12 +1081,23 @@ export interface ArkmeSearchRecordItem {
   targetSource?: ArkmeSourceItem
 }
 
-export interface ArkmeSearchSourceAggregate {
+export interface ArkmeSearchSourceMatch {
   sourceKind: number
   sourceUid: string
+  title: string
+  nickname?: string
+  targetSource?: ArkmeSourceItem
+}
+
+export interface ArkmeConversationNameSearchResult {
+  items: ArkmeSearchSourceMatch[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface ArkmeSearchSourceAggregate extends ArkmeSearchSourceMatch {
   routeTargetKind: string
   routeTargetUid?: string
-  title: string
   matchedRecordCount: number
   matchedRecordCountExact: boolean
 }
@@ -1432,6 +1470,8 @@ export interface ArkmeGroupAvatarPresentation {
 }
 
 export interface ArkmeSourceItem {
+  /** Viewer-visible private counterpart nickname, independent of the preferred remark. */
+  privateNickname?: string
   /** Record-owned topic container kind; never a chat kind or creation source. */
   topicKind?: number
   sourceRef: string
@@ -2082,6 +2122,7 @@ export interface ArkmeBotMentionInput {
 
 export interface ArkmeLongArticleImage { fileRef?: string; fileAssetUid?: string }
 export interface ArkmeLongArticlePublishInput {
+  expectedUserId?: number
   title: string
   textContent: string
   textFormat?: 'plain' | 'markdown'
@@ -2801,6 +2842,8 @@ export interface ArkmeRecordingWorkbenchItem {
   speakerAvatarRef?: string
   sameSpeakerItemCount: number
   isSelf: boolean
+  /** Explicit recording attribution, independent of isSelf (speaker identity). Optional for legacy payloads. */
+  recordingBelongsToViewer?: boolean
   isBackground: boolean
   text: string
 }
@@ -2879,9 +2922,23 @@ export interface ArkmeRecordingTranscriptSection<T = ArkmeRecordingTranscriptIte
   processingCount: number
 }
 
+/** Recording coverage is independent of ASR: silence and pending ASR still have audio. */
+export interface ArkmeRecordingCoverageInterval {
+  startAtMillis: number
+  endAtMillis: number
+  sourceLabel: string
+  status: 'saved' | 'processing' | 'local' | 'submitted' | 'recording'
+}
+
+export interface ArkmeRecordingCoverage {
+  state: 'ready' | 'partial' | 'error'
+  intervals: ArkmeRecordingCoverageInterval[]
+}
+
 export interface ArkmeRecordingDay {
   dateStamp: number
   totalDurationMillis: number
+  coverage?: ArkmeRecordingCoverage
   transcript: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
   summary: ArkmeRecordingSection<ArkmeRecordingVersion>
   timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
@@ -3478,6 +3535,8 @@ export type ArkmePluginOperation =
   | 'remote.renameDesktop'
   | 'billing.quota'
   | 'billing.products'
+  | 'membership.current'
+  | 'membership.catalog'
   | 'billing.order.create'
   | 'billing.order.status'
   | 'contacts.search'
@@ -3503,6 +3562,7 @@ export type ArkmePluginOperation =
   | 'records.refresh'
   | 'records.search'
   | 'search.records'
+  | 'search.conversations'
   | 'records.list'
   | 'records.tags.list'
   | 'records.tags.query'
@@ -3617,6 +3677,8 @@ export type ArkmePluginOperation =
   | 'favorite-stickers.send'
   | 'favorite-stickers.manage'
   | 'files.capabilities'
+  | 'desktop.screenshot.capability'
+  | 'desktop.screenshot.capture'
   | 'files.search'
   | 'files.stage-bytes'
   | 'files.send.discard'
@@ -3630,6 +3692,7 @@ export type ArkmePluginOperation =
   | 'files.send.retry'
   | 'files.receive'
   | 'source.long-article.publish'
+  | 'source.long-article.own'
   | 'source.long-article.detail'
   | 'source.long-article.update'
   | 'source.long-article.draft.get'

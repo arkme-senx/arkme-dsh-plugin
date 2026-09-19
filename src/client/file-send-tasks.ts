@@ -15,7 +15,7 @@ export function fileTaskHasOnlyBackgroundFiles(task: ArkmeFileSendTask): boolean
   return task.fileRefs.length > 0 && backgroundRefs.size > 0
     && task.fileRefs.every(fileRef => backgroundRefs.has(fileRef))
 }
-/** Active supplemental capture is intentionally invisible inside the message bubble. */
+/** Active supplemental capture has no visible per-message status. */
 export function fileTaskShowsInlineStatus(task: ArkmeFileSendTask): boolean {
   return !fileTaskHasOnlyBackgroundFiles(task) || !['queued', 'uploading', 'sending'].includes(task.state)
 }

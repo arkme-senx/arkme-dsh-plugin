@@ -1,4 +1,5 @@
 import type { CSSProperties, MouseEvent } from 'react'
+import { arkmeTheme } from './arkme-theme.js'
 
 const SEND_BACKGROUND = '#09B83E'
 const SEND_BACKGROUND_HOVER = '#08A437'
@@ -19,8 +20,8 @@ export const arkmeComposerSendButtonStyle: CSSProperties = {
 }
 
 export const arkmeComposerSendButtonDisabledStyle: CSSProperties = {
-  background: '#DCE1E9',
-  color: '#fff',
+  background: arkmeTheme.active,
+  color: arkmeTheme.tertiary,
   cursor: 'default',
 }
 

@@ -24,6 +24,7 @@ import {
 import { arkmeCanInlineLocalFile, arkmeVisibleUploadFraction } from '../file-transfer-contract.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { ArkmeRichText, type ArkmeMentionClickHandler, type ArkmeMentionClickPredicate } from './ArkmeRichText.js'
+import { useReadMentionMembers } from './mention-read-status.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import type { ArkmeLinkLabelMode, ArkmeLinkRenderer } from './ArkmeLinkText.js'
 import { retainPartialTimelineMedia } from './timeline-media.js'
@@ -48,9 +49,9 @@ const styles: Record<string, CSSProperties> = {
   sticker: { display: 'block', width: 148, maxWidth: '42vw', height: 148, maxHeight: '24vh', objectFit: 'contain', cursor: 'pointer' },
   videoPreview: { display: 'block', width: '100%', height: '100%', objectFit: 'cover', background: '#111', pointerEvents: 'none' },
   videoBadge: { position: 'absolute', left: 6, bottom: 6, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 5px', borderRadius: 6, background: 'rgba(0,0,0,.62)', color: '#fff', fontSize: 10, lineHeight: '14px' },
-  file: { width: 220, maxWidth: '100%', height: 56, display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0', boxSizing: 'border-box', borderRadius: 8, color: 'inherit', background: 'transparent', textDecoration: 'none' },
+  file: { width: 'max-content', maxWidth: '100%', minWidth: 0, minHeight: 48, display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0', boxSizing: 'border-box', borderRadius: 8, color: 'inherit', background: 'transparent', textDecoration: 'none' },
   fileIconBox: { width: 40, height: 40, flex: 'none', display: 'grid', placeItems: 'center' },
-  fileName: { minWidth: 0, display: '-webkit-box', overflow: 'hidden', overflowWrap: 'anywhere', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, fontSize: 12, lineHeight: '18px' },
+  fileName: { minWidth: 0, display: 'block', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 12, lineHeight: '18px' },
   article: { width: 400, maxWidth: '100%', display: 'flex', flexDirection: 'column', padding: 0, boxSizing: 'border-box', borderRadius: 0, background: 'transparent', color: 'inherit' },
   articleButton: { border: 0, font: 'inherit', textAlign: 'left', cursor: 'pointer' },
   articleHeading: { display: 'flex', alignItems: 'center', gap: 6 },
@@ -176,6 +177,7 @@ function ArkmeMessageRichText({
   highlightMentions,
   linkLabelMode,
   mentionTargets,
+  readMentionMembers,
   shareWebsite,
   onMessageCopyLinkOpen,
   onMentionClick,
@@ -187,6 +189,7 @@ function ArkmeMessageRichText({
   highlightMentions: boolean
   linkLabelMode: ArkmeLinkLabelMode
   mentionTargets?: readonly ArkmeTimelineMentionTarget[]
+  readMentionMembers?: ReadonlySet<string>
   shareWebsite?: string
   onMessageCopyLinkOpen?: (sid: string) => void
   onMentionClick?: ArkmeMentionClickHandler
@@ -208,6 +211,8 @@ function ArkmeMessageRichText({
     textStyle={textStyle}
     highlightMentions={highlightMentions}
     renderLink={renderLink}
+    {...(mentionTargets === undefined ? {} : { mentionTargets })}
+    {...(readMentionMembers === undefined ? {} : { readMentionMembers })}
     {...(onMentionClick === undefined ? {} : { onMentionClick })}
     {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
   />
@@ -216,6 +221,7 @@ function ArkmeMessageRichText({
     highlightMentions={highlightMentions}
     linkLabelMode={linkLabelMode}
     {...(mentionTargets === undefined ? {} : { mentionTargets })}
+    {...(readMentionMembers === undefined ? {} : { readMentionMembers })}
     renderLink={renderLink}
     {...(onMentionClick === undefined ? {} : { onMentionClick })}
     {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
@@ -269,6 +275,7 @@ function LongText({
   expanded = false,
   linkLabelMode,
   mentionTargets,
+  readMentionMembers,
   shareWebsite,
   onMessageCopyLinkOpen,
   onMentionClick,
@@ -281,6 +288,7 @@ function LongText({
   expanded?: boolean
   linkLabelMode: ArkmeLinkLabelMode
   mentionTargets?: readonly ArkmeTimelineMentionTarget[]
+  readMentionMembers?: ReadonlySet<string>
   shareWebsite?: string
   onMessageCopyLinkOpen?: (sid: string) => void
   onMentionClick?: ArkmeMentionClickHandler
@@ -309,6 +317,7 @@ function LongText({
     highlightMentions={highlightMentions}
     linkLabelMode={linkLabelMode}
     {...(mentionTargets === undefined ? {} : { mentionTargets })}
+    {...(readMentionMembers === undefined ? {} : { readMentionMembers })}
     {...(shareWebsite === undefined ? {} : { shareWebsite })}
     {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
     {...(onMentionClick === undefined ? {} : { onMentionClick })}
@@ -433,7 +442,7 @@ export function ArkmeFileCard({ block, fallback = false, onOpen, previewOpen = f
   }
   return <><button type="button" aria-busy={opening} disabled={opening} onClick={event => { event.stopPropagation(); void activate() }} style={{ ...styles.file, border: 0, textAlign: 'left', cursor: opening ? 'progress' : 'pointer', position: 'relative' }} data-arkme-file-card={fallback ? 'fallback' : 'file'}>
     <span style={{ ...styles.fileIconBox, position: 'relative' }}><ArkmeFileIcon fileName={block.fileName} mimeType={block.mimeType} /><UploadProgress block={block} /></span>
-    <span><span style={styles.fileName}>{block.fileName || '未知文件'}</span><small style={{ color: arkmeTheme.tertiary }}>{arkmeFileSize(block.size)}{downloadLabel && ` · ${downloadLabel}`}</small></span>
+    <span style={{ minWidth: 0, flex: '1 1 auto' }}><span style={styles.fileName} title={block.fileName || '未知文件'}>{block.fileName || '未知文件'}</span><small style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: arkmeTheme.tertiary }}>{arkmeFileSize(block.size)}{downloadLabel && ` · ${downloadLabel}`}</small></span>
     {downloading && <progress aria-label={`下载 ${block.fileName}`} max={100} value={percent} style={{ position: 'absolute', left: 0, bottom: 0, height: 3, width: '100%' }} />}
   </button>{open && <ArkmeFileViewer block={block} openLocalFile onClose={() => setOpen(false)} />}</>
 }
@@ -932,6 +941,7 @@ export function ArkmeMessageContent({ item, sourceRef, sourceIdentityKey, onLong
   onCallDetailOpen?: (videoUrl?: string) => void
   onArticleOpen?: () => void
 }) {
+  const readMentionMembers = useReadMentionMembers(item.itemUid, sourceRef)
   // Access references rotate on new messages; only a different conversation ends this media scope.
   const mediaSourceKey = sourceIdentityKey ?? sourceRef
   const lastMedia = useRef<{ sourceKey: string | undefined; item: ArkmeTimelineItem }>()
@@ -1011,11 +1021,12 @@ export function ArkmeMessageContent({ item, sourceRef, sourceIdentityKey, onLong
     ? 'markdown' : item.textFormat ?? 'plain'
   const text = item.textContent || (!isArticle && blocks.length === 0 ? item.title : '')
   const linkLabelMode: ArkmeLinkLabelMode = presentation === 'detail' ? 'raw' : 'resolved'
-  // Only a voice note's single audio owns its transcript. Generic/mixed
-  // attachments must keep their original ordering and separate body text.
+  // A voice note's single audio owns its transcript even with photos/files.
+  // Generic attachments and ambiguous multi-audio notes retain their order.
   const isVoiceNote = item.templateKind === 3 || item.templateKind === 4
-  const inlineVoice = !isArticle && (item.templateKind === undefined || isVoiceNote)
-    && blocks.length === 1 && blocks[0]?.kind === 'audio' ? blocks[0] : undefined
+  const audioBlocks = blocks.filter(block => block.kind === 'audio')
+  const inlineVoice = !isArticle && audioBlocks.length === 1
+    && (isVoiceNote || (item.templateKind === undefined && blocks.length === 1)) ? audioBlocks[0] : undefined
   const renderVoice = (block: ArkmeContentBlock, withTranscript = false) => <ArkmeVoiceContent
     key={block.mediaRef}
     sourceKey={`${sourceRef ?? ''}:${item.itemUid}:${block.fileAssetUid ?? block.mediaRef}`}
@@ -1029,12 +1040,13 @@ export function ArkmeMessageContent({ item, sourceRef, sourceIdentityKey, onLong
       highlightMentions={highlightMentions}
       linkLabelMode={linkLabelMode}
       {...(display.mentions === undefined ? {} : { mentionTargets: display.mentions })}
+      readMentionMembers={readMentionMembers}
       {...(shareWebsite === undefined ? {} : { shareWebsite })}
       {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
       {...(onMentionClick === undefined ? {} : { onMentionClick })}
       {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
     /> : undefined}</ArkmeVoiceContent>
-  const renderRows = splitVisualRuns(blocks).map((row, rowIndex) => {
+  const renderRows = splitVisualRuns(blocks.filter(block => block !== inlineVoice)).map((row, rowIndex) => {
     if (Array.isArray(row)) {
       return <div key={`visual-row:${String(rowIndex)}`} style={styles.stack}>
         <MediaGallery blocks={row} failures={failures} retryVersions={retryVersions} onOpen={openPreview} onFailure={markFailed} onRetry={retryMedia} onOpenAsFile={openAsFile} />
@@ -1059,7 +1071,7 @@ export function ArkmeMessageContent({ item, sourceRef, sourceIdentityKey, onLong
 
   return <>
     <div style={{ ...styles.stack, ...(presentation === 'detail' ? { width: '100%' } : {}) }} data-arkme-message-content={isArticle ? 'article' : 'message'} data-arkme-content-presentation={presentation}>
-      {inlineVoice !== undefined ? renderVoice(inlineVoice, true) : <>
+      {inlineVoice !== undefined ? <>{renderVoice(inlineVoice, true)}{renderRows}</> : <>
         {isArticle && presentation === 'bubble' ? <ArticleCard title={item.title} text={item.textFormat === 'markdown' ? arkmeMarkdownPlainText(item.textContent) : item.textContent} onOpen={() => { if (onArticleOpen !== undefined) onArticleOpen(); else setArticleOpen(true) }} /> : <>
           {isArticle && item.title && <h3 style={{ margin: 0, fontSize: 14, lineHeight: 1.7 }}><ArkmeRichText text={item.title} presentation="preview" /></h3>}
           {isArticle && bodyTextFormat === 'markdown' ? <ArkmeLongArticleBody text={text} blocks={blocks} textStyle={{ fontSize: 16, lineHeight: '26px' }} /> : text !== '' && <LongText
@@ -1070,6 +1082,7 @@ export function ArkmeMessageContent({ item, sourceRef, sourceIdentityKey, onLong
             expanded={presentation === 'detail'}
             linkLabelMode={linkLabelMode}
             {...(display.mentions === undefined ? {} : { mentionTargets: display.mentions })}
+            readMentionMembers={readMentionMembers}
             {...(shareWebsite === undefined ? {} : { shareWebsite })}
             {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
             {...(onMentionClick === undefined ? {} : { onMentionClick })}
@@ -1146,7 +1159,7 @@ export function ArkmeAttachmentDraftTile({ asset, previewUrl, onRemove, onOpen, 
       aria-label={`移除${asset.fileName}`}
       disabled={disabled}
       onClick={onRemove}
-      style={{ position: 'absolute', top: 2, right: 2, width: 16, height: 16, display: 'grid', placeItems: 'center', border: 0, borderRadius: 999, padding: 0, background: 'var(--dsw-alias-bg-elevated, rgba(255,255,255,.9))', color: 'var(--dsw-alias-label-primary, #17191c)', boxShadow: '0 1px 3px rgba(0,0,0,.14)', cursor: 'pointer', fontSize: 13, lineHeight: '16px' }}
+      style={{ position: 'absolute', top: 2, right: 2, width: 16, height: 16, display: 'grid', placeItems: 'center', border: 0, borderRadius: 999, padding: 0, background: arkmeTheme.menu, color: arkmeTheme.text, boxShadow: '0 1px 3px rgba(0,0,0,.14)', cursor: 'pointer', fontSize: 13, lineHeight: '16px' }}
     >×</button>
   </span>
 }

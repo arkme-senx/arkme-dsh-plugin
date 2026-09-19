@@ -17,7 +17,7 @@ const styles: Record<string, CSSProperties> = {
   editor: { cursor: 'text', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' },
   placeholder: {
     position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
-    color: 'var(--dsw-alias-label-tertiary, #9097a1)',
+    color: 'var(--dsw-alias-label-secondary, #68707c)',
   },
   mention: { color: mentionColor },
   tag: { color: mentionColor, fontWeight: 500 },

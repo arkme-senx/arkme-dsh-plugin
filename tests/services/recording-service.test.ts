@@ -425,6 +425,49 @@ describe('RecordingService', () => {
     })
   })
 
+  it('projects a fully silent owner recording to browser-safe day coverage before ASR exists', async () => {
+    const fixture = await speakerCacheFixture()
+    const dayStart = new Date(2026, 8, 18).getTime()
+    try {
+      vi.mocked(fixture.fetchImpl).mockImplementation(async input => {
+        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+        const data = path.endsWith('/one-day-trans') ? {
+          session_ls: [{ id: 'silent-secret', user_id: 42, belong_usr: 42, start_at: dayStart + 8 * 3600000, end_at: dayStart + 20 * 3600000, duration: 12 * 3600000 }],
+          child_ls: [{ session_id: 'silent-secret', start_at: dayStart + 8 * 3600000, duration: 12 * 3600000, has_asr: true, asr: [] }],
+        } : { spk_ls: [] }
+        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+      })
+      const day = await fixture.service.recordingDay(dayStart)
+      expect(day.transcript).toMatchObject({ state: 'empty', items: [], message: '已有录音，暂无转写内容' })
+      expect(day.coverage).toEqual({ state: 'ready', intervals: [{ startAtMillis: dayStart + 8 * 3600000, endAtMillis: dayStart + 20 * 3600000, sourceLabel: '已同步录音', status: 'saved' }] })
+      expect(JSON.stringify(day.coverage)).not.toContain('silent-secret')
+    } finally { await fixture.close() }
+  })
+
+  it('attributes timeline coverage and speech independently of who uploaded or spoke, retaining transcript access', async () => {
+    const fixture = await speakerCacheFixture()
+    const dayStart = new Date(2026, 8, 18).getTime(), hour = 3600000
+    try {
+      vi.mocked(fixture.fetchImpl).mockImplementation(async input => {
+        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+        const source = (id: string, belong_usr: number, at: number) => ({ id, user_id: 42, belong_usr, start_at: dayStart + at * hour, end_at: dayStart + (at + 1) * hour, duration: hour, spk_ls: [{ num: 1, spk_id: id === 'own-secret' ? 'partner' : 'self' }] })
+        const audio = (session_id: string, at: number) => ({ id: `${session_id}-child`, session_id, start_at: dayStart + at * hour, duration: hour, has_asr: true, asr: [{ s: 0, e: 1000, n: 1, t: `${session_id} content` }] })
+        const data = path.endsWith('/one-day-trans') ? {
+          session_ls: [source('own-secret', 42, 8), source('other-secret', 99, 10), source('unmarked-secret', 0, 12)],
+          child_ls: [audio('own-secret', 8), audio('other-secret', 10), audio('unmarked-secret', 12)],
+        } : path.endsWith('/get-speaker-ls') ? { spk_ls: [{ id: 'self', ref_usr_id: 42 }, { id: 'partner', ref_usr_id: 77 }] } : {}
+        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+      })
+      const day = await fixture.service.recordingDay(dayStart)
+      expect(day.coverage).toMatchObject({ state: 'ready', intervals: [{ startAtMillis: dayStart + 8 * hour, endAtMillis: dayStart + 9 * hour }] })
+      expect(day.coverage?.intervals).toHaveLength(1)
+      expect(JSON.stringify(day.coverage)).not.toContain('secret')
+      expect(day.transcript.items.map(item => ({ own: item.recordingBelongsToViewer, self: item.isSelf }))).toEqual([
+        { own: true, self: false }, { own: false, self: true }, { own: false, self: true },
+      ])
+    } finally { await fixture.close() }
+  })
+
   it('rejects an account mismatch before accepting the Host-local file', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-account-fence-'))
     const path = join(root, 'voice.upload')

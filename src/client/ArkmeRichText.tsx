@@ -5,6 +5,7 @@ import type { ArkmeTimelineMentionTarget } from '../types.js'
 import { ArkmeLinkText, type ArkmeLinkLabelMode, type ArkmeLinkRenderer } from './ArkmeLinkText.js'
 import { arkmeHashTagRanges } from '../hashtag.js'
 import { arkmeUi } from './ui-controller.js'
+import { ArkmeReadReceiptIcon, ARKME_READ_RECEIPT_ICON_SIZE } from './ArkmeReadReceiptIcon.js'
 
 const emojiInlineStyle: CSSProperties = { display: 'inline-block', width: 22, height: 22, objectFit: 'contain', verticalAlign: '-6px' }
 
@@ -115,6 +116,13 @@ const mentionStyle: CSSProperties = { color: 'var(--dsw-alias-state-business-pri
 const clickableMentionStyle: CSSProperties = { ...mentionStyle, cursor: 'pointer' }
 const tagStyle: CSSProperties = { ...mentionStyle, fontWeight: 500 }
 const clickableTagStyle: CSSProperties = { ...tagStyle, cursor: 'pointer' }
+const readMentionStyle: CSSProperties = {
+  position: 'relative', whiteSpace: 'nowrap', paddingRight: ARKME_READ_RECEIPT_ICON_SIZE + 2,
+}
+const mentionReadBadgeStyle: CSSProperties = {
+  position: 'absolute', right: 0, bottom: 0, width: ARKME_READ_RECEIPT_ICON_SIZE,
+  height: ARKME_READ_RECEIPT_ICON_SIZE, lineHeight: 0, userSelect: 'none', pointerEvents: 'none',
+}
 
 export type ArkmeMentionClickHandler = (mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget) => void
 export type ArkmeMentionClickPredicate = (mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget) => boolean
@@ -122,6 +130,7 @@ export type ArkmeMentionClickPredicate = (mentionText: string, mentionTarget?: A
 export function ArkmeMentionText({
   text,
   mentionTargets,
+  readMentionMembers,
   interactive = true,
   highlightTags = true,
   onTagClick = tagText => { arkmeUi.showTagSearch(tagText) },
@@ -130,6 +139,7 @@ export function ArkmeMentionText({
 }: {
   text: string
   mentionTargets?: readonly ArkmeTimelineMentionTarget[]
+  readMentionMembers?: ReadonlySet<string>
   interactive?: boolean
   highlightTags?: boolean
   onTagClick?: (tagText: string) => void
@@ -140,6 +150,13 @@ export function ArkmeMentionText({
     const canClickMention = run.kind === 'mention' && interactive && onMentionClick !== undefined
       && (isMentionClickable?.(run.text, run.mentionTarget) ?? true)
     const mentionClick = canClickMention ? onMentionClick : undefined
+    const memberRef = run.mentionTarget?.kind === 'member' ? run.mentionTarget.memberRef : undefined
+    const readIndicator = interactive && memberRef !== undefined && readMentionMembers?.has(memberRef)
+      ? <span role="img" title="已读"
+        aria-label={`${run.text} 已读`} data-arkme-mention-read="true"
+        style={mentionReadBadgeStyle}>
+        <ArkmeReadReceiptIcon checked />
+      </span> : null
     return run.kind === 'tag' && interactive
       ? <span
         key={`${String(index)}:${run.kind}:${run.text}`}
@@ -158,17 +175,17 @@ export function ArkmeMentionText({
           role="link"
           tabIndex={0}
           aria-label={`查看 ${run.text}`}
-          style={clickableMentionStyle}
+          style={readIndicator === null ? clickableMentionStyle : { ...clickableMentionStyle, ...readMentionStyle }}
           onClick={event => { event.preventDefault(); event.stopPropagation(); mentionClick(run.text, run.mentionTarget) }}
           onKeyDown={event => {
             if (event.key !== 'Enter' && event.key !== ' ') return
             event.preventDefault(); event.stopPropagation(); mentionClick(run.text, run.mentionTarget)
           }}
-        >{run.text}</span>
+        >{run.text}{readIndicator}</span>
         : <span
           key={`${String(index)}:${run.kind}:${run.text}`}
-          style={run.kind === 'mention' ? mentionStyle : run.kind === 'tag' ? tagStyle : undefined}
-        >{run.text}</span>
+          style={run.kind === 'mention' ? (readIndicator === null ? mentionStyle : { ...mentionStyle, ...readMentionStyle }) : run.kind === 'tag' ? tagStyle : undefined}
+        >{run.text}{readIndicator}</span>
   })}</>
 }
 
@@ -187,13 +204,17 @@ function ArkmeInlineEmoji({ emoji, size }: { emoji: ArkmeEmoji; size: number | s
   />
 }
 
-function copyRichText(event: ClipboardEvent<HTMLSpanElement>) {
+export function copyArkmeRichText(event: ClipboardEvent<HTMLElement>) {
   if (event.defaultPrevented) return
   const selection = event.currentTarget.ownerDocument.getSelection()
   if (selection === null || selection.rangeCount !== 1 || selection.isCollapsed
     || !event.currentTarget.contains(selection.anchorNode) || !event.currentTarget.contains(selection.focusNode)) return
   const fragment = selection.getRangeAt(0).cloneContents()
   let converted = false
+  for (const indicator of fragment.querySelectorAll('[data-arkme-mention-read]')) {
+    indicator.remove()
+    converted = true
+  }
   for (const img of fragment.querySelectorAll('img[data-arkme-rich-emoji]')) {
     const emoji = arkmeEmojiById[img.getAttribute('data-arkme-rich-emoji') ?? '']
     if (emoji !== undefined) {
@@ -218,6 +239,7 @@ export function ArkmeRichText({
   emojiSize,
   linkLabelMode = 'resolved',
   mentionTargets,
+  readMentionMembers,
   onTagClick,
   onMentionClick,
   isMentionClickable,
@@ -230,6 +252,7 @@ export function ArkmeRichText({
   emojiSize?: number
   linkLabelMode?: ArkmeLinkLabelMode
   mentionTargets?: readonly ArkmeTimelineMentionTarget[]
+  readMentionMembers?: ReadonlySet<string>
   onTagClick?: (tagText: string) => void
   onMentionClick?: ArkmeMentionClickHandler
   isMentionClickable?: ArkmeMentionClickPredicate
@@ -250,6 +273,7 @@ export function ArkmeRichText({
           ? <ArkmeMentionText
             text={run.text}
             {...(runMentionTargets === undefined ? {} : { mentionTargets: runMentionTargets })}
+            {...(readMentionMembers === undefined ? {} : { readMentionMembers })}
             highlightTags={highlightTags}
             interactive={presentation === 'body'}
             {...(onTagClick === undefined ? {} : { onTagClick })}
@@ -259,7 +283,7 @@ export function ArkmeRichText({
           : run.text}</Fragment>
     })
   }
-  return <span onCopy={copyRichText}><ArkmeLinkText
+  return <span onCopy={copyArkmeRichText}><ArkmeLinkText
     text={text}
     linkLabelMode={linkLabelMode}
     renderText={renderText}

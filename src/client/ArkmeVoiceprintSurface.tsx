@@ -12,6 +12,7 @@ import type {
 import { ARKME_VOICEPRINT_ENROLLMENT_MIN_DURATION_MS } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { arkmeTheme } from './arkme-theme.js'
 import { arkmeAuthStore } from './auth-store.js'
 import {
   arkmeVoiceprintEnrollmentClient,
@@ -35,15 +36,15 @@ export type ArkmeVoiceprintInvitationState =
   | { status: 'success'; value: ArkmeVoiceprintInvitation }
 
 const colors = {
-  text: 'var(--dsw-alias-text-primary, #20232c)',
-  secondary: 'var(--dsw-alias-text-secondary, #6f7480)',
-  border: 'var(--dsw-alias-border-subtle, #e6e7eb)',
-  surface: 'var(--dsw-alias-bg-layer-1, #fff)',
-  subtle: 'var(--dsw-alias-bg-layer-2, #f6f7f9)',
-  action: 'var(--dsw-alias-accent-primary, #20232c)',
-  inverted: 'var(--dsw-alias-label-primary-inverted, #fff)',
-  danger: 'var(--dsw-alias-state-error-primary, #b42318)',
-  dangerSurface: 'var(--dsw-alias-interactive-bg-hover-danger, #fff1f0)',
+  text: arkmeTheme.text,
+  secondary: arkmeTheme.secondary,
+  border: arkmeTheme.border,
+  surface: arkmeTheme.layer1,
+  subtle: arkmeTheme.subtle,
+  action: arkmeTheme.primaryAction,
+  inverted: arkmeTheme.onPrimaryAction,
+  danger: arkmeTheme.danger,
+  dangerSurface: arkmeTheme.dangerSoft,
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -77,7 +78,7 @@ const styles: Record<string, CSSProperties> = {
   dangerButton: { color: colors.danger, background: colors.surface },
   linkBox: { padding: 12, borderRadius: 12, background: colors.subtle, wordBreak: 'break-all', fontSize: 12, lineHeight: '19px' },
   overlay: { position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 20, background: 'rgba(20, 23, 31, .36)' },
-  dialog: { width: 'min(520px, 100%)', maxHeight: 'min(720px, calc(100vh - 40px))', overflowY: 'auto', borderRadius: 20, padding: 22, background: colors.surface, boxShadow: '0 24px 80px rgba(20, 23, 31, .22)' },
+  dialog: { width: 'min(520px, 100%)', maxHeight: 'min(720px, calc(100vh - 40px))', overflowY: 'auto', borderRadius: 20, padding: 22, background: colors.surface, color: colors.text, boxShadow: arkmeTheme.shadow },
   recorder: { minHeight: 96, display: 'grid', placeItems: 'center', borderRadius: 15, background: colors.subtle, color: colors.secondary, textAlign: 'center' },
 }
 

@@ -288,7 +288,7 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
     <style>{props.format === 'text'
       ? '.arkme-text-document .ProseMirror{outline:none;min-height:inherit;white-space:pre-wrap}.arkme-text-document p{margin:0;min-height:1em}'
       : arkmeMarkdownStyles}</style>
-    {showPlaceholder && <span aria-hidden style={{ position: 'absolute', pointerEvents: 'none', color: 'var(--dsw-alias-label-tertiary,#9097a1)' }}>{props.placeholder}</span>}
+    {showPlaceholder && <span aria-hidden style={{ position: 'absolute', pointerEvents: 'none', color: 'var(--dsw-alias-label-secondary,#68707c)' }}>{props.placeholder}</span>}
     <EditorContent editor={editor} />
   </div>
 })

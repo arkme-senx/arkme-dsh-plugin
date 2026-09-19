@@ -98,6 +98,8 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
     join(root, 'src/client/ArkmeLogin.tsx'),
     join(root, 'src/client/arkme-login-locales.ts'),
     join(root, 'src/client/ArkmeSettingsSurface.tsx'),
+    // Membership follows the same Jiwo-localized account surfaces and mobile entitlements.
+    join(root, 'src/client/ArkmeMembershipDialog.tsx'),
   ])
   if (localizedUiFiles.has(file)) return content.replaceAll('即我', '')
   const allowedFiles = new Set([
@@ -208,7 +210,41 @@ function withoutCalendarBackendOwnerName(file: string, content: string): string 
   return content.replaceAll('`jotmo-record`', '')
 }
 
+function withoutRecordingHandoffNames(file: string, content: string): string {
+  if (file === join(root, 'docs/recording-presence-handoff.md')) {
+    // Exact code references to the owners we must hand off to, not UI branding.
+    return content
+      .replaceAll('`jotmo-audio`', '')
+      .replaceAll('`jotmo-frontend`', '')
+      .replaceAll('`jotmo-frontend-web`', '')
+      .replaceAll('`apps/jotmo-web-pages/src/app/app/audio/long-recording`', '')
+  }
+  if (file === join(root, 'src/client/recordings/direct-recording-store.ts')) {
+    // Preserve the approved localized download filename, not every use of the brand.
+    return content.replaceAll('`即我录音-${stamp}-${id.slice(0, 8)}.wav`', '')
+  }
+  return content
+}
+
 describe('Arkme plugin identity', () => {
+  it('allows only exact recording handoff references and the localized recording filename', () => {
+    const handoff = join(root, 'docs/recording-presence-handoff.md')
+    const recorder = join(root, 'src/client/recordings/direct-recording-store.ts')
+    const references = ['`jotmo-audio`', '`jotmo-frontend`', '`jotmo-frontend-web`', '`apps/jotmo-web-pages/src/app/app/audio/long-recording`']
+    for (const reference of references) {
+      expect(withoutRecordingHandoffNames(handoff, reference)).toBe('')
+      expect(withoutRecordingHandoffNames(join(root, 'README.md'), reference)).toBe(reference)
+      expect(withoutRecordingHandoffNames(recorder, reference)).toBe(reference)
+    }
+    const filename = '`即我录音-${stamp}-${id.slice(0, 8)}.wav`'
+    expect(withoutRecordingHandoffNames(recorder, filename)).toBe('')
+    expect(withoutRecordingHandoffNames(handoff, filename)).toBe(filename)
+    for (const file of [handoff, recorder]) {
+      const otherCopy = 'Jotmo jiwo 即我产品 即我录音 jotmo-audio jotmo-frontend-web'
+      expect(withoutRecordingHandoffNames(file, otherCopy)).toBe(otherCopy)
+    }
+  })
+
   it('allows shared logo identifiers without exempting legacy product copy', () => {
     const file = join(root, 'src/client/ArkmeJiwoBrandMark.tsx')
     expect(withoutSharedBrandMarkIdentifiers(file, 'ArkmeJiwoBrandMark data-arkme-jiwo-brand')).toBe(' ')
@@ -275,10 +311,10 @@ describe('Arkme plugin identity', () => {
           ),
         ),
       )
-      const content = withoutCalendarBackendOwnerName(file, withoutSharedBrandMarkIdentifiers(file, withoutInfrastructureNames(withoutDshRemoteRepositoryNames(
+      const content = withoutRecordingHandoffNames(file, withoutCalendarBackendOwnerName(file, withoutSharedBrandMarkIdentifiers(file, withoutInfrastructureNames(withoutDshRemoteRepositoryNames(
         file,
         withoutOpenClawProtocolNames(file, withoutBotOwnerProtocolNames(file, source)),
-      ))))
+      )))))
       // Engineering plans identify real repository owners, not product branding.
       const productCopy = file.includes('/docs/plans/recording-')
         ? content.replace(/jotmo-(audio|openapi|meta|intelligent)\b/g, '') : content

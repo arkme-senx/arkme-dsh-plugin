@@ -5,6 +5,8 @@ export interface ArkmeComposerSelectionRequest {
   text: string
   start: number
   end: number
+  /** Async attachment work must not override a later navigation/focus choice. */
+  canApply?: () => boolean
 }
 
 export function useComposerSelectionRequest(
@@ -19,7 +21,7 @@ export function useComposerSelectionRequest(
   useLayoutEffect(() => {
     if (request === undefined || consumed.current === request) return
     consumed.current = request
-    if (disabled || value !== request.text) return
+    if (disabled || value !== request.text || request.canApply?.() === false) return
     if (!apply(request)) consumed.current = undefined
   })
 }

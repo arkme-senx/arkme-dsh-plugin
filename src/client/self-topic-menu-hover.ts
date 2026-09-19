@@ -14,5 +14,9 @@ export function watchSelfTopicMenuHover(anchor: HTMLElement, activate: () => voi
     close: () => doc.dispatchEvent(new win.CustomEvent(SELF_TOPIC_MENU_CLOSE)),
     position: () => doc.dispatchEvent(new win.CustomEvent(SELF_TOPIC_MENU_POSITION)),
     contains: target => target instanceof win.Element && target.closest('[data-arkme-self-topic-menu], [role="menu"], [role="dialog"], [role="alertdialog"]') !== null,
+    bounds: () => [...doc.querySelectorAll<HTMLElement>('[data-arkme-self-topic-menu], [role="menu"], [role="dialog"], [role="alertdialog"]')]
+      .filter(node => node.getClientRects().length > 0 && win.getComputedStyle(node).visibility !== 'hidden')
+      .sort((a, b) => Number(b.hasAttribute('data-arkme-self-topic-menu')) - Number(a.hasAttribute('data-arkme-self-topic-menu')))
+      .map(node => node.getBoundingClientRect()),
   })
 }

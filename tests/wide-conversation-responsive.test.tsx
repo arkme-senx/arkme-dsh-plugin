@@ -39,6 +39,9 @@ describe('wide conversation responsive lifecycle', () => {
       const editor = host.querySelector('textarea')!
       const shell = host.querySelector('[data-arkme-wide-conversation]') as HTMLElement
       expect(shell.dataset.arkmeWideConversation).toBe('true')
+      expect(shell.style.position).toBe('relative')
+      expect(shell.style.zIndex).toBe('0')
+      expect(host.querySelector<HTMLElement>('[data-arkme-native-turn-rail]')?.style.zIndex).toBe('9')
       expect(host.querySelectorAll('[data-width-handle]')).toHaveLength(2)
       await act(async () => (host.querySelector('[data-width-handle]') as HTMLElement).click())
       expect(localStorage.getItem(WIDE_CONVERSATION_WIDTH_KEY)).toBe('668')
@@ -46,6 +49,7 @@ describe('wide conversation responsive lifecycle', () => {
       column = 900
       await act(async () => { for (const callback of [...observers]) callback() })
       expect(shell.dataset.arkmeWideConversation).toBe('false')
+      expect(shell.style.zIndex).toBe('0')
       expect(host.querySelectorAll('[data-width-handle]')).toHaveLength(0)
       column = 1200
       await act(async () => { for (const callback of [...observers]) callback() })

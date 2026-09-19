@@ -1009,10 +1009,15 @@ export class RecordService {
     await this.runtime.stateStore.removeLongArticleDraft(session.userId, draft.sourceRef, itemUid)
   }
 
-  async removeLongArticleDraft(sourceRef: string, itemUid?: string): Promise<void> {
+  async removeLongArticleDraft(sourceRef: string, itemUid?: string, expectedRecordUid?: string): Promise<void> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     const uid = itemUid?.trim() || undefined
+    if (expectedRecordUid !== undefined) {
+      if (uid !== undefined || expectedRecordUid.trim() === '') throw new ArkmePluginError('long-article-draft-invalid', '长文草稿标识无效', false)
+      await this.runtime.stateStore.removeLongArticleDraft(session.userId, sourceRef, undefined, expectedRecordUid)
+      return
+    }
     if (uid !== undefined) {
       const sourceIdentityKey = await this.recordReeditSourceIdentityKey(source)
       const current = await this.runtime.stateStore.getRecordReeditDraft(session.userId, sourceIdentityKey, uid)

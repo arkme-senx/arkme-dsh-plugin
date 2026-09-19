@@ -658,11 +658,12 @@ export class ArkmeStateStore {
     })
   }
 
-  async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void> {
+  async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string, expectedRecordUid?: string): Promise<void> {
     await this.update(state => {
       const userKey = String(userId)
       const drafts = state.longArticleDraftsByUser[userKey]
       if (drafts === undefined) return
+      if (expectedRecordUid !== undefined && drafts[longArticleDraftKey(sourceRef, itemUid)]?.recordUid !== expectedRecordUid) return
       delete drafts[longArticleDraftKey(sourceRef, itemUid)]
       if (Object.keys(drafts).length === 0) delete state.longArticleDraftsByUser[userKey]
     })

@@ -106,7 +106,7 @@ export function arkmeTopicDragAutoScrollDelta(
 }
 
 const colors = {
-  text: '#171923', secondary: '#6f747d', border: '#e1e2e5', surface: '#fff',
+  text: arkmeTheme.text, secondary: arkmeTheme.secondary, border: arkmeTheme.border, surface: arkmeTheme.menu,
   selected: CONVERSATION_MENU_COLORS.selected,
 }
 
@@ -120,8 +120,8 @@ const styles: Record<string, CSSProperties> = {
   selectorText: { minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', overflow: 'hidden', whiteSpace: 'nowrap' },
   selectorPathRoot: { minWidth: 0, flex: '1 1 42%', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--dsw-alias-label-secondary, #626872)' },
   selectorPathCurrent: { minWidth: 0, flex: '1 1 58%', overflow: 'hidden', textOverflow: 'ellipsis', color: 'inherit' },
-  selectorPathSeparator: { flex: 'none', padding: '0 3px', color: '#a0a5af' },
-  selectorPathEllipsis: { flex: 'none', padding: '0 2px', color: '#a0a5af' },
+  selectorPathSeparator: { flex: 'none', padding: '0 3px', color: arkmeTheme.tertiary },
+  selectorPathEllipsis: { flex: 'none', padding: '0 2px', color: arkmeTheme.tertiary },
   menu: {
     ...CONVERSATION_MENU_SURFACE,
     position: 'absolute', zIndex: 100, top: 36, left: 0, width: menuLayout.width,
@@ -149,22 +149,22 @@ const styles: Record<string, CSSProperties> = {
   topicRowHover: { background: CONVERSATION_MENU_COLORS.hover },
   topicRowSelected: { background: colors.selected, fontWeight: 600 },
   topicHierarchyGuide: {
-    position: 'absolute', top: -menuLayout.rowGap, bottom: 0, width: 1, background: '#e7e9ed', pointerEvents: 'none',
+    position: 'absolute', top: -menuLayout.rowGap, bottom: 0, width: 1, background: colors.border, pointerEvents: 'none',
   },
-  topicRowDropInto: { background: '#eef2ff', outline: '1px solid #8295e5', outlineOffset: -1 },
+  topicRowDropInto: { background: arkmeTheme.accentSoft, outline: `1px solid ${arkmeTheme.accent}`, outlineOffset: -1 },
   topicDropLine: {
-    position: 'absolute', zIndex: 2, right: 4, height: 2, borderRadius: 0, background: '#5870d8', pointerEvents: 'none',
+    position: 'absolute', zIndex: 2, right: 4, height: 2, borderRadius: 0, background: arkmeTheme.accent, pointerEvents: 'none',
   },
   topicDropIntoBadge: {
     position: 'absolute', zIndex: 3, right: 6, top: 5, height: 22, display: 'inline-flex', alignItems: 'center',
-    padding: '0 6px', borderRadius: 5, background: '#dce4ff', color: '#445bbd', fontSize: 10, fontWeight: 600,
+    padding: '0 6px', borderRadius: 5, background: arkmeTheme.accentSoft, color: colors.text, fontSize: 10, fontWeight: 600,
     pointerEvents: 'none',
   },
   topicToggle: {
     width: 24, height: 28, flex: 'none', display: 'grid', placeItems: 'center', padding: 0, border: 0,
     borderRadius: 6, background: 'transparent', color: colors.secondary, cursor: 'pointer',
   },
-  topicSpacer: { width: 24, height: 28, flex: 'none', display: 'grid', placeItems: 'center', color: '#c1c5cd' },
+  topicSpacer: { width: 24, height: 28, flex: 'none', display: 'grid', placeItems: 'center', color: arkmeTheme.tertiary },
   topicSelect: {
     minWidth: 0, minHeight: menuLayout.rowHeight, flex: 1, display: 'flex', alignItems: 'center', gap: 6, padding: `0 ${topicTrailingInset}px 0 2px`,
     border: 0, borderRadius: 8, background: 'transparent', color: 'inherit', font: 'inherit', fontSize: menuLayout.titleFontSize,
@@ -875,8 +875,9 @@ export function ArkmeSourceBreadcrumb({
         maxHeight: `min(${menuLayout.maxHeight}px, calc(100vh - 24px))`,
       } : {}),
       ...(tourOpen ? { maxHeight: `min(${menuLayout.maxHeight}px, calc(100vh - 116px), var(--arkme-self-tour-menu-max-height, ${menuLayout.maxHeight}px))` } : {}),
-    }} onPointerEnter={() => { externalRequestRef.current?.keepOpen() }}
-      onPointerLeave={() => { externalRequestRef.current?.scheduleClose() }}>
+    }} onPointerLeave={event => {
+      externalRequestRef.current?.checkPointer(event.relatedTarget, { x: event.clientX, y: event.clientY })
+    }}>
       {assignment && <div style={styles.pickerHeader}><span id="arkme-record-topic-assignment-title" style={{ flex: 1 }}>指定主题 · 已选 {assignment.count} 条</span>
         <button data-arkme-feedback="neutral" type="button" aria-label="关闭指定主题" disabled={assignment.busy} style={styles.topicToggle} onClick={assignment.onClose}>×</button>
       </div>}

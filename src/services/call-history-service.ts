@@ -18,7 +18,7 @@ import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue
 import { ProfileService } from './profile-service.js'
 import type { MediaService } from './media-service.js'
 import type { SourceService } from './source-service.js'
-import { callRecordRoomId, callRecordSource, projectCallRecord, renderCallRecordSummary } from '../call-record-presentation.js'
+import { callRecordRoomId, callRecordSource, callSummaryUserIds, projectCallRecord, renderCallRecordSummary } from '../call-record-presentation.js'
 import type { ArkmeTimelineItem } from '../types.js'
 
 interface ArkmeCallRefPayload {
@@ -618,8 +618,17 @@ export class CallHistoryService {
         participantSeeds.push({ userId, displayName: userId === session.userId ? '我' : '通话参与者', ...(userId === session.userId ? { isCurrentUser: true } : {}) })
       }
     }
-    const participants = await this.attachParticipantAvatars(participantSeeds.slice(0, 50), session, signal)
-    const summaryText = safeSummary(renderCallRecordSummary(raw, session.userId, new Map(participants.flatMap(participant => participant.userId ? [[participant.userId, participant.displayName] as const] : []))))
+    const seeds = participantSeeds.slice(0, 50)
+    // A bound speaker can be a different person from the device's account.
+    // Resolve their display name without adding them as a call endpoint.
+    const summarySeeds = callSummaryUserIds(raw).filter(id => !seeds.some(participant => participant.userId === id))
+      .slice(0, 50).map(userId => ({ userId, displayName: '' }))
+    const presentations = await this.attachParticipantPresentation([...seeds, ...summarySeeds], session, signal)
+    const participants = presentations.slice(0, seeds.length)
+    const summaryNames = new Map(presentations.flatMap(participant => participant.userId && participant.displayName.trim()
+      && !/^(Arkme 用户 \d+|通话参与者)$/.test(participant.displayName.trim())
+      ? [[participant.userId, participant.displayName] as const] : []))
+    const summaryText = safeSummary(renderCallRecordSummary(raw, session.userId, summaryNames))
     const hangupParticipant = participants.find(participant => participant.userId === numberValue(hangupUserId))
     return {
       callRef: await this.sealCallRef({ ...payload, issuedAtMillis: Date.now() }),
@@ -646,19 +655,24 @@ export class CallHistoryService {
     }
   }
 
-  private async attachParticipantAvatars(
+  private async attachParticipantPresentation(
     participants: ArkmeCallParticipant[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<ArkmeCallParticipant[]> {
     const ids = [...new Set(participants.flatMap(participant => participant.userId === undefined ? [] : [participant.userId]))]
     if (ids.length === 0) return participants
-    const profiles = await this.profile.publicProfileSummariesByUserIds(ids, session, signal).catch(() => new Map())
+    const [profiles, remarks] = await Promise.all([
+      this.profile.publicProfileSummariesByUserIds(ids, session, signal).catch(() => new Map()),
+      this.source?.privateRemarksByUserIds(ids, signal === undefined ? {} : { signal })
+        .catch(() => new Map<number, string>()) ?? Promise.resolve(new Map<number, string>()),
+    ])
     return await Promise.all(participants.map(async participant => {
       const userId = participant.userId
       if (userId === undefined) return participant
       const profile = profiles.get(userId)
-      return { ...participant, displayName: profile?.displayName || participant.displayName,
+      const remark = userId === session.userId ? '' : remarks.get(userId)?.trim()
+      return { ...participant, displayName: remark || profile?.displayName || participant.displayName,
         ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, userId) }) }
     }))
   }

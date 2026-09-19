@@ -57,6 +57,29 @@ describe('call quick note previews', () => {
     expect(stopPropagation).toHaveBeenCalledOnce()
   })
 
+  it.each([true, false])('omits visible perspective captions and their row spacing (interactive: %s)', async interactive => {
+    vi.mocked(callArkme).mockResolvedValue(detail)
+    const open = vi.fn()
+    await act(async () => { view = create(<ArkmeCallRecordContent call={call} {...(interactive ? { onOpenDetail: open } : {})} />) })
+    const previews = view!.root.findByProps({ 'aria-label': '通话视频预览' })
+    expect(previews.findAll(node => node.type === 'span' && node.children.some(child => typeof child === 'string'))).toHaveLength(0)
+    const frames = previews.findAll(node => node.type === 'span' && node.props.style?.aspectRatio === '9 / 16')
+    expect(frames).toHaveLength(2)
+    for (const frame of frames) {
+      const wrapper = interactive ? frame.parent!.parent! : frame.parent!
+      expect(frame.props.style).toMatchObject({ aspectRatio: '9 / 16' })
+      expect(wrapper.props.style).toMatchObject({ display: 'block', width: 88 })
+      expect(wrapper.props.style.gap).toBeUndefined()
+      expect(wrapper.children).toHaveLength(1)
+    }
+    expect(previews.findByProps({ alt: '我的视角' })).toBeDefined()
+    expect(previews.findByProps({ alt: '对方视角' })).toBeDefined()
+    if (interactive) {
+      act(() => { previews.findByProps({ 'aria-label': '查看对方视角通话详情' }).props.onClick({ stopPropagation() {} }) })
+      expect(open).toHaveBeenCalledWith('https://example.com/peer.mp4')
+    }
+  })
+
   it('uses metadata-only video fallback after a poster fails, and a placeholder after video fails', async () => {
     vi.mocked(callArkme).mockResolvedValue(detail)
     await act(async () => { view = create(<ArkmeCallRecordContent call={call} />) })

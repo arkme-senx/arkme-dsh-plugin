@@ -153,7 +153,7 @@ export function arkmeLiteralMarkdownNodes(options?: { articleImages?: boolean })
 }
 
 /** Tag activation follows source text nodes, so escaped hashes and code never become links. */
-export function arkmeMarkdownBusinessNodes() {
+export function arkmeMarkdownBusinessNodes(options?: { mentions?: readonly { startIndex: number; length: number }[] }) {
   return (tree: MarkdownNode, file: { value?: unknown }) => {
     const source = String(file.value ?? '')
     const visit = (node: MarkdownNode) => {
@@ -164,15 +164,32 @@ export function arkmeMarkdownBusinessNodes() {
       if (start === undefined || end === undefined) return
       const raw = source.slice(start, end)
       const tags = arkmeMarkdownTextHashTagRanges(raw)
+      // Use wire source offsets, not display-name matching: repeated/same-name mentions may identify different people.
+      const mentions = (options?.mentions ?? []).flatMap((mention, index) => {
+        const mentionEnd = mention.startIndex + mention.length
+        if (!Number.isSafeInteger(mention.startIndex) || !Number.isSafeInteger(mention.length)
+          || mention.length < 2 || mention.startIndex < start || mentionEnd > end
+          || source[mention.startIndex] !== '@') return []
+        return [{ startIndex: mention.startIndex - start, length: mention.length, kind: 'mention', index }]
+      })
+      const ranges = [
+        ...mentions,
+        ...tags.filter(tag => !mentions.some(mention => tag.startIndex < mention.startIndex + mention.length
+          && tag.startIndex + tag.length > mention.startIndex)).map(tag => ({ ...tag, kind: 'tag', index: -1 })),
+      ].sort((left, right) => left.startIndex - right.startIndex)
       const children: MarkdownNode[] = []
-      const append = (value: string, kind: string) => {
-        if (value) children.push({ type: 'arkmeBusinessText', data: { hName: 'span', hProperties: { 'data-arkme-markdown-run': kind } }, children: [{ type: 'text', value: decodeString(value) }] })
+      const append = (value: string, kind: string, index?: number) => {
+        if (value) children.push({ type: 'arkmeBusinessText', data: { hName: 'span', hProperties: {
+          'data-arkme-markdown-run': kind,
+          ...(kind === 'mention' ? { 'data-arkme-mention-index': index } : {}),
+        } }, children: [{ type: 'text', value: decodeString(value) }] })
       }
       let cursor = 0
-      for (const tag of tags) {
-        append(raw.slice(cursor, tag.startIndex), 'text')
-        append(raw.slice(tag.startIndex, tag.startIndex + tag.length), 'tag')
-        cursor = tag.startIndex + tag.length
+      for (const range of ranges) {
+        if (range.startIndex < cursor) continue
+        append(raw.slice(cursor, range.startIndex), 'text')
+        append(raw.slice(range.startIndex, range.startIndex + range.length), range.kind, range.index)
+        cursor = range.startIndex + range.length
       }
       append(raw.slice(cursor), 'text')
       node.type = 'arkmeBusinessText'

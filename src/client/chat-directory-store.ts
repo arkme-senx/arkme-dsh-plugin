@@ -239,6 +239,7 @@ function directorySourceIdentity(source: ArkmeSourceItem): string {
 type DirectorySourceScalarField = Exclude<keyof ArkmeSourceItem, 'avatarRefs' | 'groupAvatar'>
 
 const DIRECTORY_SOURCE_SCALAR_FIELDS: Record<DirectorySourceScalarField, true> = {
+  privateNickname: true,
   directMessageAdmissionApplicable: true,
   topicKind: true,
   sourceRef: true,

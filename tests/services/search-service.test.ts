@@ -20,6 +20,38 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SearchService', () => {
+  it('projects viewer remarks into every source aggregate, including sources with no message on the current page', async () => {
+    const target = (displayName: string, privateNickname: string) => ({ sourceRef: displayName, kind: 'private_chat', displayName, privateNickname, unreadCount: 0, activeAtMillis: 0 })
+    const chats = new Map([['chat-1', target('周鹏', '狗才')], ['chat-2', target('何宏顺', '1D3E')]])
+    const chatSourcesBySessionUids = vi.fn(async () => chats)
+    const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => ({
+      items: [{ record_uid: 'hit', source_kind: 3, source_uid: 'chat-1', chat_core: { title: '狗才' }, record_core: { text_content: '搜索内容' } }],
+      source_aggregates: [...chats].map(([uid, source]) => ({ source_kind: 3, source_uid: uid, chat_core: { title: source.privateNickname }, matched_record_count: 2, matched_record_count_exact: true })),
+    }) } as unknown as ServiceRuntime
+    const service = new SearchService(runtime, {} as never, {} as never, { chatSourcesBySessionUids } as unknown as SourceService, { lockedRecordUids: async () => new Set() } as never)
+    const result = await service.searchRemote({ query: '搜索', limit: 50 })
+    expect(result.items[0]).toMatchObject({ sourceTitle: '周鹏', targetSource: chats.get('chat-1') })
+    expect(result.sourceAggregates.map(item => [item.title, item.nickname, item.matchedRecordCount])).toEqual([['周鹏', '狗才', 2], ['何宏顺', '1D3E', 2]])
+    expect(result.sourceAggregates[1]!.targetSource).toEqual(chats.get('chat-2'))
+    expect(chatSourcesBySessionUids).toHaveBeenCalledExactlyOnceWith(['chat-1', 'chat-2'], undefined)
+  })
+  it('projects HTTP and all HTTPS links before clipping long search text, without changing scene or privacy contracts', async () => {
+    const text = `http://example.com/first ${'说明'.repeat(1500)} https://example.org/late https://example.org/late`
+    const calls: unknown[] = []
+    const runtime = new ServiceRuntime(config, { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }, {} as StateStore,
+      vi.fn(async (input, init) => {
+        if (String(input).endsWith('/visibility-snapshot')) return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: false } }))
+        calls.push(JSON.parse(String(init?.body)))
+        return new Response(JSON.stringify({ code: 0, data: { items: [{ record_uid: 'link-note', source_kind: 1, record_core: { text_content: text } }], has_more: false } }))
+      }) as typeof fetch)
+    try {
+      const search = new SearchService(runtime, {} as never, {} as never)
+      const result = await search.searchScene({ scene: 'link', limit: 30, cursor: 'cursor-2' })
+      expect(calls).toEqual([{ scene_kind: 2, limit: 30, search_scope: 'global', cursor: 'cursor-2' }])
+      expect(result.items[0]).toMatchObject({ linkUrl: 'http://example.com/first', linkUrls: ['http://example.com/first', 'https://example.org/late'] })
+      expect(result.items[0]!.textContent.length).toBeLessThan(text.length)
+    } finally { runtime.dispose() }
+  })
   it.each(['keyword', 'scene', 'privacy', 'assets'] as const)('keeps writes available while four %s reads stall', async kind => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const reads: AbortSignal[] = []

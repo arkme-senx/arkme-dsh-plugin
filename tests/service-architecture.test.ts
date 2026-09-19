@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'screenshotCapability', 'captureScreenshot',
+  'searchConversationNames',
   'recentEmojiIds', 'recordRecentEmoji', 'publishLongArticle', 'stageLongArticleImage',
   'withGroupMemberInvalidation', // composition-only MCP presentation seam; no SDK/Host route
   'directMessageAdmission', 'setDirectMessageRefusal', 'assignRecordTopic', 'listTopicCandidates', 'deleteSourceRecords', 'selfTarget',
@@ -17,6 +19,7 @@ const expectedPublicMethods = [
   'manageBotProfile', 'updateManagedBot', 'revealManagedBotToken', 'deleteManagedBot', 'botNotificationPreference', 'updateBotNotificationPreference',
   'openBotChat', 'listBotPrivateChatDirectory', 'openBotPrivateChat', 'refreshBotPrivateChat', 'sendBotPrivateChatMessage', 'markBotPrivateChatRead', 'listGroupBots', 'addGroupBot', 'removeGroupBot', 'authStatus', 'clientConfig',
   'billingQuota', 'billingProducts', 'createBillingOrder', 'billingOrderStatus',
+  'membershipCurrent', 'membershipCatalog',
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'createShareCallLink', 'prepareCallReceiver', 'claimIncomingCall',
@@ -53,7 +56,7 @@ const expectedPublicMethods = [
   'openPrivateChatFromUser', 'openPrivateChatFromContact', 'officialAuthorProfile', 'openOfficialAuthorPrivateChat', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'readSourceAround', 'messageReadReceiptSummaries', 'messageReadReceiptDetail', 'messageSnapshotDetail', 'saveMessageLocation', 'sharedRecordingDetail', 'relatedRecordingEligibility', 'relatedRecordings',
   'recordRelatedRecordingsToolEvent', 'reportMessage', 'withdrawGroupMessage', 'copySourceMessageLink', 'copyMessageActionsLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'sourceMessageExtensionContext', 'extendSourceMessage', 'forwardSourceMessages', 'forwardMessageActions',
   'sendSourceText', 'retryGroupAiPolish',
-  'sendSourceRich', 'favoriteStickers', 'addFavoriteSticker', 'manageFavoriteSticker', 'sendFavoriteSticker', 'longArticleDetail', 'updateLongArticle', 'getLongArticleDraft',
+  'sendSourceRich', 'favoriteStickers', 'addFavoriteSticker', 'manageFavoriteSticker', 'sendFavoriteSticker', 'longArticleDetail', 'ownLongArticle', 'updateLongArticle', 'getLongArticleDraft',
   'putLongArticleDraft', 'removeLongArticleDraft', 'recordEditHistoryPage', 'recordReeditEditor', 'prepareRecordReedit', 'commitRecordReedit',
   'saveRecordReeditDraft', 'submitRecordReedit', 'recordReeditSubmissions', 'resumeRecordReeditSubmissions',
   'acknowledgeRecordReeditSubmission',
@@ -90,6 +93,7 @@ const expectedServiceFiles = [
   'topic-record-page.ts',
   'background-sound-preference-service.ts',
   'background-sound-membership-service.ts',
+  'membership-service.ts',
   'file-transfers.ts',
   'record-reedit-attachments.ts',
   'record-reedit-mentions.ts',
@@ -325,7 +329,7 @@ describe('Arkme service architecture', () => {
   })
 
   it('keeps link recognition separate from asynchronous metadata resolution', () => {
-    const parser = readFileSync(join(root, 'src/client/text-link-parser.ts'), 'utf8')
+    const parser = readFileSync(join(root, 'src/text-link-parser.ts'), 'utf8')
     const presentation = readFileSync(join(root, 'src/client/ArkmeLinkText.tsx'), 'utf8')
     const client = readFileSync(join(root, 'src/client/link-metadata-client.ts'), 'utf8')
     expect(parser).not.toMatch(/\bfetch\s*\(|callArkme|useEffect|useState/)

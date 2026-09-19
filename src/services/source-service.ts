@@ -9,6 +9,7 @@ import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeChatAttentionSummary,
+  ArkmeConversationNameSearchResult,
   ArkmeGroupAvatarPresentation,
   ArkmeSelfRecordItem,
   ArkmeSelfSummary,
@@ -527,6 +528,37 @@ export class SourceService {
     }
     if (sourceKind !== 3) return undefined
     return (await this.chatSourcesBySessionUids([ownerRef], signal)).get(ownerRef)
+  }
+
+  /** Search one canonical directory page, including names with no matching messages. */
+  async searchConversationNames(options: { query: string; cursor?: string; signal?: AbortSignal }): Promise<ArkmeConversationNameSearchResult> {
+    const keyword = options.query.trim().normalize('NFKC').toLocaleLowerCase()
+    if (keyword === '') throw new ArkmePluginError('conversation-query-empty', '搜索关键词不能为空', false)
+    const session = await this.runtime.requireSession()
+    const page = await this.listSources('root', { limit: 50, firstPaint: true,
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }) })
+    options.signal?.throwIfAborted()
+    if (page.hasMore && (!page.nextCursor || page.nextCursor === options.cursor)) {
+      throw new ArkmePluginError('conversation-search-incomplete', '会话名称查找未完成，请重试', true)
+    }
+    // Legacy private supplements sometimes store the viewer's remark as the
+    // name snapshot. Resolve actual nicknames from the existing batched profile read.
+    const peerIds = page.items.flatMap(item => item.kind === 'private_chat' && item.peerUserId !== undefined ? [item.peerUserId] : [])
+    const profiles = peerIds.length === 0 ? new Map<number, ArkmePublicProfile>()
+      : await this.profile.publicProfileSummariesByUserIds(peerIds, session, options.signal)
+    const items: ArkmeConversationNameSearchResult['items'] = []
+    for (const directorySource of page.items) {
+      const nickname = profiles.get(directorySource.peerUserId ?? 0)?.nickname.trim() || directorySource.privateNickname
+      const targetSource = nickname ? { ...directorySource, privateNickname: nickname } : directorySource
+      if (targetSource.kind !== 'private_chat' && targetSource.kind !== 'group_chat') continue
+      if (![targetSource.displayName, targetSource.privateNickname ?? ''].some(name => name.normalize('NFKC').toLocaleLowerCase().includes(keyword))) continue
+      const ref = await this.openSourceRef(targetSource.sourceRef, session.userId)
+      items.push({ sourceKind: 3, sourceUid: ref.ownerRef, title: targetSource.displayName, targetSource,
+        ...(targetSource.privateNickname ? { nickname: targetSource.privateNickname } : {}) })
+    }
+    options.signal?.throwIfAborted()
+    return { items, hasMore: page.hasMore, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) }
   }
 
   /** Resolve a bounded set in one directory walk, reusing viewer-scoped source projections. */
@@ -1690,11 +1722,9 @@ export class SourceService {
         ? 'group_chat'
         : sessionKind === 1 || sessionKind === 3 ? 'private_chat' : undefined
       if (uid === '' || kind === undefined) continue
+      const privateNickname = stringValue(supplement.counterpart_name_snapshot).trim() || stringValue(counterpart.display_name_snapshot).trim()
       const displayName = (kind === 'private_chat'
-        ? stringValue(
-          supplement.remark ?? supplement.counterpart_name_snapshot ?? counterpart.display_name_snapshot
-          ?? supplement.pending_name ?? counterpart.visible_phone,
-        )
+        ? stringValue(supplement.remark).trim() || privateNickname || stringValue(supplement.pending_name).trim() || stringValue(counterpart.visible_phone).trim()
         : stringValue(chatSession.title)).trim() || '未命名会话'
       const preview = arkmeChatConversationPreview(latestRecord, session.userId)
       const unreadCount = attention.unreadCount
@@ -1728,6 +1758,7 @@ export class SourceService {
         kind,
         directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
         displayName,
+        ...(kind === 'private_chat' && privateNickname !== '' ? { privateNickname } : {}),
         ...(kind === 'private_chat' && cached?.avatarRef !== undefined
           ? { avatarRef: cached.avatarRef }
           : {}),
@@ -1944,6 +1975,8 @@ export class SourceService {
     for (const [index, targetUserId] of privateUserIdByIndex) {
       const item = items[index]
       if (item === undefined) continue
+      const nickname = profiles.get(targetUserId)?.nickname?.trim()
+      if (nickname) item.privateNickname = nickname
       if (profiles.get(targetUserId)?.avatarUrl === undefined) {
         // The profile request completed and explicitly produced no usable
         // avatar, so the full directory baseline owns removal.
@@ -2159,11 +2192,9 @@ export class SourceService {
       ? 'group_chat'
       : sessionKind === 1 || sessionKind === 3 ? 'private_chat' : undefined
     if (uid === '' || kind === undefined) throw new Error('invalid chat display snapshot')
+    const privateNickname = stringValue(supplement.counterpart_name_snapshot).trim() || stringValue(counterpart.display_name_snapshot).trim()
     const displayName = (kind === 'private_chat'
-      ? stringValue(
-        supplement.remark ?? supplement.counterpart_name_snapshot ?? counterpart.display_name_snapshot
-        ?? supplement.pending_name ?? counterpart.visible_phone,
-      )
+      ? stringValue(supplement.remark).trim() || privateNickname || stringValue(supplement.pending_name).trim() || stringValue(counterpart.visible_phone).trim()
       : stringValue(chatSession.title)).trim() || cached?.displayName || '未命名会话'
     const latestItem = [...timelineItems].sort((left, right) => (right.sequence ?? 0) - (left.sequence ?? 0))[0]
     const latestPreview = latestItem === undefined
@@ -2203,6 +2234,7 @@ export class SourceService {
       kind,
       directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
       displayName,
+      ...(kind === 'private_chat' && privateNickname !== '' ? { privateNickname } : {}),
       ...(kind === 'private_chat' && Number.isSafeInteger(peerUserId) && peerUserId > 0 ? { peerUserId } : {}),
       ...(kind === 'private_chat' && Number.isSafeInteger(peerUserId) && peerUserId > 0
         ? { peerMemberType: arkmePeerMemberType(counterpart.member_type) } : {}),

@@ -39,7 +39,7 @@ const colors = {
   border: arkmeTheme.border,
   borderSoft: arkmeTheme.borderSoft,
   panel: arkmeTheme.base,
-  bubble: '#eef1f8',
+  bubble: arkmeTheme.accentSoft,
   selected: arkmeTheme.primaryAction,
   selectedText: arkmeTheme.onPrimaryAction,
   danger: arkmeTheme.danger,
@@ -66,21 +66,21 @@ const styles: Record<string, CSSProperties> = {
   },
   calendarCard: {
     position: 'absolute', top: 191, left: 105, width: 354, padding: '16px 17px 18px',
-    boxSizing: 'border-box', pointerEvents: 'auto', border: '1px solid rgba(216,217,221,.9)',
-    borderRadius: 18, background: 'rgba(255,255,255,.98)',
-    boxShadow: '0 22px 52px rgba(27,29,37,.14), 0 2px 8px rgba(27,29,37,.055)',
+    boxSizing: 'border-box', pointerEvents: 'auto', border: `1px solid ${colors.border}`,
+    borderRadius: 18, background: arkmeTheme.menu, color: colors.text,
+    boxShadow: arkmeTheme.shadow,
   },
   productRailCalendarCard: { top: 88, left: 12 },
   calendarPointer: {
     position: 'absolute', top: 124, left: -7, width: 13, height: 13,
-    transform: 'rotate(45deg)', background: '#fff',
-    borderBottom: '1px solid #dfe0e3', borderLeft: '1px solid #dfe0e3',
+    transform: 'rotate(45deg)', background: arkmeTheme.menu,
+    borderBottom: `1px solid ${colors.border}`, borderLeft: `1px solid ${colors.border}`,
   },
   header: { height: 30, display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   navCluster: { display: 'flex', alignItems: 'center', gap: 3 },
   iconButton: {
     width: 27, height: 27, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
-    border: 0, borderRadius: 8, background: 'transparent', color: '#777b84',
+    border: 0, borderRadius: 8, background: 'transparent', color: colors.secondary,
     cursor: 'pointer', font: 'inherit', lineHeight: 1,
   },
   navDisabled: { opacity: .32, cursor: 'default' },
@@ -88,7 +88,7 @@ const styles: Record<string, CSSProperties> = {
   monthTitle: { margin: '0 0 0 9px', fontSize: 13, lineHeight: '20px', fontWeight: 500 },
   todayButton: {
     width: 'auto', height: 27, flex: 'none', padding: '0 7px', border: 0,
-    borderRadius: 8, background: 'transparent', color: '#747984', cursor: 'pointer',
+    borderRadius: 8, background: 'transparent', color: colors.secondary, cursor: 'pointer',
     font: 'inherit', fontSize: 11, fontWeight: 400,
   },
   todayDisabled: { color: colors.caption, opacity: .45, cursor: 'default' },
@@ -97,7 +97,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center',
   },
   weekDay: {
-    textAlign: 'center', color: '#9a9da5', fontSize: 10, lineHeight: '16px', fontWeight: 400,
+    textAlign: 'center', color: colors.secondary, fontSize: 10, lineHeight: '16px', fontWeight: 400,
   },
   days: {
     display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4,
@@ -106,17 +106,17 @@ const styles: Record<string, CSSProperties> = {
   dayButton: {
     height: 45, minWidth: 0, display: 'grid', alignContent: 'center', justifyItems: 'center', gap: 3,
     padding: 0, borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent', borderRadius: 11,
-    background: 'transparent', color: '#50545d', cursor: 'pointer', font: 'inherit',
+    background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit',
     boxSizing: 'border-box', transition: 'background 120ms ease, border-color 120ms ease, color 120ms ease',
   },
-  dayDisabled: { color: colors.caption, opacity: .4, cursor: 'default' },
+  dayDisabled: { color: colors.tertiary, cursor: 'default' },
   daySelected: {
     borderColor: colors.selected, background: colors.selected, color: colors.selectedText,
   },
   dayNumber: { fontSize: 12, lineHeight: '16px', fontWeight: 500 },
-  dayCount: { height: 9, color: '#8b91a1', fontSize: 9, lineHeight: '9px', fontWeight: 400 },
+  dayCount: { height: 9, color: colors.secondary, fontSize: 9, lineHeight: '9px', fontWeight: 400 },
   dayCountPopulated: {
-    minWidth: 15, padding: '0 4px', background: 'transparent', color: 'var(--dsw-alias-label-secondary, #626878)',
+    minWidth: 15, padding: '0 4px', background: 'transparent', color: colors.secondary,
     transition: 'background 120ms ease, color 120ms ease',
   },
   selectedDayCount: { background: 'transparent', color: colors.selectedText, opacity: 1 },
@@ -130,8 +130,8 @@ const styles: Record<string, CSSProperties> = {
   recordsPanel: {
     position: 'absolute', top: 0, right: 0, bottom: 0, width: 394, minWidth: 0, minHeight: 0,
     display: 'flex', flexDirection: 'column', padding: '28px 22px', boxSizing: 'border-box',
-    overflow: 'hidden', pointerEvents: 'auto', borderLeft: '1px solid rgba(225,225,228,.9)',
-    background: 'rgba(255,255,255,.98)', boxShadow: '-18px 0 52px rgba(28,30,37,.09)',
+    overflow: 'hidden', pointerEvents: 'auto', borderLeft: `1px solid ${colors.border}`,
+    background: arkmeTheme.menu, boxShadow: arkmeTheme.shadow,
   },
   recordsHeader: {
     flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -145,19 +145,19 @@ const styles: Record<string, CSSProperties> = {
   recordStack: { width: 'auto', minWidth: 0, maxWidth: 282, flex: '0 1 auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' },
   recordHeader: { width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 7, marginBottom: 5 },
   recordTitle: {
-    margin: 0, color: '#4f535c', fontSize: 12, lineHeight: '18px', fontWeight: 500,
+    margin: 0, color: colors.text, fontSize: 12, lineHeight: '18px', fontWeight: 500,
   },
-  recordTime: { flex: 'none', color: '#a0a3aa', fontSize: 11, lineHeight: '18px' },
-  recordBubble: { maxWidth: '100%', padding: '11px 12px 9px', border: '1px solid rgba(83,97,145,.045)', borderRadius: '16px 5px 16px 16px', background: colors.bubble, color: '#292c34', boxShadow: '0 1px 1px rgba(20,22,28,.015)' },
+  recordTime: { flex: 'none', color: colors.secondary, fontSize: 11, lineHeight: '18px' },
+  recordBubble: { maxWidth: '100%', padding: '11px 12px 9px', border: `1px solid ${colors.borderSoft}`, borderRadius: '16px 5px 16px 16px', background: colors.bubble, color: colors.text, boxShadow: '0 1px 1px rgba(20,22,28,.015)' },
   recordSource: {
     display: 'flex', maxWidth: '100%', marginTop: 8, alignItems: 'center',
-    justifyContent: 'flex-end', gap: 4, color: '#858b99',
+    justifyContent: 'flex-end', gap: 4, color: colors.secondary,
     fontSize: 9, lineHeight: '14px', textAlign: 'right',
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
   recordSourceIcon: { width: 10, height: 10, flex: 'none', opacity: .72 },
-  emptyDay: { marginTop: 92, display: 'grid', justifyItems: 'center', textAlign: 'center', color: '#6d727b' },
-  emptyIcon: { marginBottom: 14, color: '#747b8a' },
+  emptyDay: { marginTop: 92, display: 'grid', justifyItems: 'center', textAlign: 'center', color: colors.secondary },
+  emptyIcon: { marginBottom: 14, color: colors.secondary },
 
 }
 

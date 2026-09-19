@@ -1,4 +1,6 @@
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
+import { ArkmeArticlePicker } from '../src/client/ArkmeArticlePicker.js'
+import { composerArticleKey, composerArticleStore } from '../src/client/composer-article-store.js'
 import { ArkmeSelfCalendarPopover } from '../src/client/ArkmeCalendarSurface.js'
 import { ArkmeCalendarNavigationStatus } from '../src/client/ArkmeCalendarNavigationStatus.js'
 import { ArkmeChatCalendar } from '../src/client/ArkmeChatCalendar.js'
@@ -1420,6 +1422,60 @@ describe('conversation send directory projection', () => {
     })
   })
 
+  it.each([target, group].flatMap(selectedSource => ['inactive', 'switch'].map(exit => ({ selectedSource, exit, kind: selectedSource.kind }))))('preserves pending articles and text/files in $kind through picker exit via $exit', async ({ selectedSource, exit }) => {
+    activeSource = selectedSource
+    arkmeUi.selectSource(selectedSource)
+    const draftKey = arkmeSourceComposerDraftKey(42, selectedSource)!
+    const articleKey = composerArticleKey('test:42', draftKey)!
+    composerArticleStore.remove(articleKey)
+    arkmeComposerDraftStore.setText(draftKey, '文字先保留')
+    arkmeComposerDraftStore.appendAttachments(draftKey, [{ asset: { fileAssetUid: 'original-file', fileName: '原附件.pdf', mimeType: 'application/pdf', size: 10, fileKind: 3 } }])
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (operation === 'search.scene') return { items: [], hasMore: false }
+      if (operation === 'source.forward-messages') return { itemUid: 'sent-article', status: 1 }
+      return base(operation, params, signal)
+    })
+    vi.stubGlobal('document', { body: {}, activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    act(() => renderer!.root.findByProps({ 'aria-label': '添加内容', 'aria-haspopup': 'menu' }).props.onClick())
+    const add = renderer!.root.findAllByType(ArkmeActionMenu).find(menu => menu.props.label === '添加内容')!.props.actions.find((action: { id: string }) => action.id === 'article')
+    expect(add.label).toBe('添加长文')
+    act(() => add.onSelect())
+    const picker = renderer!.root.findByType(ArkmeArticlePicker)
+    act(() => { picker.props.onSelect({ kind: 'existing', detail: { sourceRef: 'self', itemUid: 'mine', title: '我的长文', textContent: '全文' }, messageActionRef: 'signed' }); picker.props.onClose() })
+    expect(renderer!.root.findByProps({ 'data-arkme-pending-article': 'true' })).toBeDefined()
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.forward-messages')).toBe(false)
+    const pendingArticle = composerArticleStore.get(articleKey)
+    const pendingDraft = arkmeComposerDraftStore.get(draftKey)
+    act(() => add.onSelect())
+    expect(renderer!.root.findAllByType(ArkmeArticlePicker)).toHaveLength(1)
+    if (exit === 'inactive') {
+      await act(async () => { renderer!.update(<ArkmeSurface productChrome={false} productNavigation={false} active={false} />) })
+    } else {
+      activeSource = other
+      await act(async () => { arkmeUi.selectSource(other) })
+    }
+    expect(renderer!.root.findAllByType(ArkmeArticlePicker)).toHaveLength(0)
+    if (exit === 'inactive') {
+      await act(async () => { renderer!.update(<ArkmeSurface productChrome={false} productNavigation={false} active />) })
+    } else {
+      activeSource = selectedSource
+      await act(async () => { arkmeUi.selectSource(selectedSource) })
+    }
+    expect(renderer!.root.findAllByType(ArkmeArticlePicker)).toHaveLength(0)
+    expect(composerArticleStore.get(articleKey)).toBe(pendingArticle)
+    expect(arkmeComposerDraftStore.get(draftKey)).toEqual(pendingDraft)
+    expect(renderer!.root.findByProps({ 'data-arkme-pending-article': 'true' })).toBeDefined()
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.forward-messages')).toBe(false)
+    await act(async () => { renderer!.root.findAllByType('button').find(node => node.props['aria-label'] === '发送长文')!.props.onClick() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.forward-messages', expect.objectContaining({ sourceRef: 'self', targetSourceRef: selectedSource.sourceRef, actionRefs: ['signed'] }))
+    expect(arkmeComposerDraftStore.get(draftKey).text).toBe('文字先保留')
+    expect(arkmeComposerDraftStore.get(draftKey).attachments[0]?.asset?.fileAssetUid).toBe('original-file')
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.send-text' || op === 'source.send-rich' || op === 'files.send')).toBe(false)
+    expect(composerArticleStore.get(articleKey)).toBeUndefined()
+  })
+
   it('never saves another conversation anchor during repeated timeline switches', async () => {
     const stored = vi.spyOn(ArkmeConversationMemoryCache.prototype, 'storeViewport')
     const baseCall = mocks.callArkme.getMockImplementation()!
@@ -2028,6 +2084,45 @@ describe('conversation send directory projection', () => {
       mode: 'source', searchTarget: { query: '#项目' },
     })
     expect(renderer.root.findAllByProps({ 'aria-label': '搜索' }).find(node => node.type === 'input')).toBeUndefined()
+  })
+
+  it.each([target, group, sendToSelf].flatMap(source => ['queued', 'uploading', 'sending', 'failed', 'uncertain', 'sent'].map(state => ({ source, state }))))('renders $state attachment status outside the $source.kind bubble', async ({ source, state }) => {
+    activeSource = source
+    arkmeUi.selectSource(source)
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    const task = {
+      taskRef: 'task-external-status', sourceRef: source.sourceRef,
+      recordUid: 'record-external-status', relationUid: 'relation-status',
+      fileRefs: ['arkme-file-v1.00000000-0000-4000-8000-000000000001'],
+      content: { textContent: '图文正文' },
+      files: [{ fileRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000001',
+        fileName: '图片.png', mimeType: 'image/png', size: 3, fileKind: 1,
+        progress: { phase: 'uploading', sentBytes: 1, totalBytes: 3 } }],
+      state, createdAtMillis: 48,
+      ...(state === 'failed' ? { error: '上传失败' } : state === 'uncertain' ? { error: '发送结果待确认' } : {}),
+    }
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'files.send.tasks') return [task]
+      return baseCall(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const statuses = renderer!.root.findAllByProps({ 'aria-label': '附件发送状态' })
+    expect(statuses).toHaveLength(state === 'sent' ? 0 : 1)
+    if (state === 'sent') return
+    const status = statuses[0]!
+    expect(status.props.style.color).toBe(arkmeTheme.secondary)
+    let ancestor = status.parent
+    while (ancestor) {
+      expect(ancestor.props['data-arkme-message-direction']).toBeUndefined()
+      ancestor = ancestor.parent
+    }
+    expect(status.parent!.findAllByProps({ 'data-arkme-message-direction': 'self' })).toHaveLength(1)
+    expect(status.findAllByType('button').map(button => button.children.join(''))).toEqual(
+      state === 'failed' ? ['重试', '清除'] : state === 'uncertain' ? ['核对发送结果', '清除'] : [])
+    if (state === 'failed') {
+      await act(async () => status.findAllByType('button')[0]!.props.onClick({ stopPropagation: vi.fn() }))
+      expect(mocks.callArkme).toHaveBeenCalledWith('files.send.retry', { taskRef: task.taskRef })
+    }
   })
 
   it('lets the user remove terminal local file tasks without hiding an unknown remote outcome', async () => {
@@ -5940,9 +6035,11 @@ describe('conversation send directory projection', () => {
     const destinationHint = renderer!.root.findByProps({ 'data-arkme-composer-destination-hint': 'true' })
     // Keep the recipient hint above the extension, with the preview attached
     // directly to the separately decorated input card.
-    expect(destinationHint.parent).toBe(targetPreview.parent)
-    expect(destinationHint.parent!.children.indexOf(destinationHint))
-      .toBeLessThan(destinationHint.parent!.children.indexOf(targetPreview))
+    const composerInfo = renderer!.root.findByProps({ 'data-arkme-composer-info-row': 'true' })
+    expect(destinationHint.parent).toBe(composerInfo)
+    expect(composerInfo.parent).toBe(targetPreview.parent)
+    expect(composerInfo.parent!.children.indexOf(composerInfo))
+      .toBeLessThan(composerInfo.parent!.children.indexOf(targetPreview))
     expect(destinationHint.findAll(node => node.children.includes('正在给 '))).toHaveLength(1)
     expect(destinationHint.findAll(node => node.children.includes('Harness4')).length).toBeGreaterThan(0)
     expect(destinationHint.findAll(node => node.children.includes(' 发消息'))).toHaveLength(1)
@@ -7586,6 +7683,55 @@ describe('conversation send directory projection', () => {
     })
   })
 
+  it.each([target, group, sendToSelf])('moves composer stats above the card and shortcuts beside send ($kind)', async selected => {
+    arkmeUi.selectSource(selected)
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+    const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    const info = () => renderer!.root.findByProps({ 'data-arkme-composer-info-row': 'true' })
+    const card = renderer!.root.findByProps({ 'data-arkme-primary-composer': 'true' })
+    expect(info().parent).toBe(card.parent)
+    expect(info().parent!.children.indexOf(info())).toBeLessThan(info().parent!.children.indexOf(card))
+    expect(info().findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(0)
+    if (selected.kind === 'send_to_self') expect(info().props.style.minHeight).toBe(0)
+    const tools = card.findByProps({ 'data-arkme-composer-footer': 'tools' })
+    const shortcut = tools.findByProps({ 'data-arkme-composer-footer': 'hint' })
+    expect(shortcut.props.title).toBe('Enter发送 / Shift+Enter换行')
+    expect(shortcut.props.style.visibility).toBe('hidden')
+    expect(shortcut.props['aria-hidden']).toBe(true)
+    expect(shortcut.parent!.children[0]).toBe(shortcut)
+    expect(shortcut.parent!.findAllByProps({ 'aria-label': '发送消息' }).length).toBeGreaterThan(0)
+
+    act(() => composer.props.onFocus())
+    expect(shortcut.props.style.visibility).toBe('visible')
+    expect(shortcut.props['aria-hidden']).toBe(false)
+    expect(info().findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(1)
+    expect(card.findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(0)
+    await act(async () => { composer.props.onTextChange('布局测试'); await Promise.resolve() })
+    const stats = info().findByProps({ 'data-arkme-composer-stats': 'true' })
+    expect(stats.props['aria-label']).toContain('已输入 4 字')
+    const toggle = stats.findByType('button')
+    const previousLabel = toggle.props['aria-label']
+    const preventDefault = vi.fn()
+    act(() => toggle.props.onMouseDown({ preventDefault }))
+    expect(preventDefault).toHaveBeenCalledOnce()
+    act(() => toggle.props.onClick())
+    expect(info().findByProps({ 'data-arkme-composer-stats': 'true' }).findByType('button').props['aria-label']).not.toBe(previousLabel)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput)).toBe(composer)
+    expect(composer.props.value).toBe('布局测试')
+    act(() => composer.props.onBlur())
+    expect(shortcut.props.style.visibility).toBe('hidden')
+    expect(shortcut.props['aria-hidden']).toBe(true)
+    expect(info().findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(1)
+    act(() => composer.props.onFocus())
+    expect(shortcut.props.style.visibility).toBe('visible')
+    act(() => composer.props.onBlur())
+    await act(async () => { composer.props.onTextChange(''); await Promise.resolve() })
+    expect(info().findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(0)
+  })
+
   it('matches the desktop group destination hint height, name truncation and focus transition', async () => {
     arkmeUi.selectSource({ ...group, displayName: '一二三四五六七八九十甲乙' })
     await act(async () => {
@@ -7628,15 +7774,15 @@ describe('conversation send directory projection', () => {
       transition: 'opacity 150ms linear, height 150ms linear' })
     expect(destinationHint().props['aria-hidden']).toBe(true)
     expect(composerShell.findAllByProps({ 'data-arkme-composer-destination-hint': 'true' })).toHaveLength(0)
-    expect(destinationHint().parent).toBe(composerShell.parent)
+    expect(destinationHint().parent!.parent).toBe(composerShell.parent)
     expect(composerShell.props.style.borderColor).toBe('transparent')
     expect(sendButton.props.disabled).toBe(true)
     expect(sendButton.props.style).toMatchObject({
       width: 36,
       height: 28,
       borderRadius: 14,
-      background: '#DCE1E9',
-      color: '#fff',
+      background: arkmeTheme.active,
+      color: arkmeTheme.tertiary,
     })
 
     act(() => { composer.props.onFocus() })

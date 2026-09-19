@@ -3,7 +3,9 @@ import type { CSSProperties } from 'react'
 /** Keep both persistent directory modes on the same search and action grid. */
 export const directorySearchLayout = {
   toolbar: {
-    position: 'relative', flex: 'none', minWidth: 0, height: 40,
+    // The macOS host turns the margins into drag-region padding. Keep the
+    // wrapper intrinsic so that padding cannot consume the controls' height.
+    position: 'relative', flex: 'none', minWidth: 0, height: 'auto',
     margin: '24px 16px 16px', display: 'flex', alignItems: 'center', gap: 8,
   },
   field: {
