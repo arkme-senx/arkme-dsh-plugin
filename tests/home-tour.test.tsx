@@ -197,6 +197,10 @@ describe('home tour browser behavior', () => {
 
   it.each(['跳过引导', '关闭功能引导', 'Escape'])('remembers explicit dismissal with %s', async action => {
     await render()
+    await vi.waitFor(async () => {
+      await act(async () => {})
+      expect(panel()).not.toBeNull()
+    })
     if (action === 'Escape') {
       await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
       await settle()
