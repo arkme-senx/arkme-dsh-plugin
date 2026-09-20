@@ -1,3 +1,4 @@
+import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import type { ArkmeSourceItem } from '../types.js'
 
 export type ArkmeSourceTreeSort = 'latest' | 'most' | 'custom'
@@ -46,6 +47,7 @@ export function canMoveArkmeTopicToParent(
   nextParent: ArkmeSourceItem | undefined,
   sources: readonly ArkmeSourceItem[],
 ): boolean {
+  if (!arkmeSourceAllowsUserWrite(source) || (nextParent !== undefined && !arkmeSourceAllowsUserWrite(nextParent))) return false
   if (source.kind !== 'topic') return false
   if (nextParent === undefined) return true
   if (nextParent.kind !== 'topic' || nextParent.sourceRef === source.sourceRef) return false

@@ -20,7 +20,7 @@ const recording = () => ({
     }],
   } },
 })
-const service = () => new RecordService({} as never, { richContentBlocks: vi.fn(() => []) } as never, {} as never)
+const service = () => new RecordService({} as never, { recordMediaUnavailable: () => false, richContentBlocks: vi.fn(() => []) } as never, {} as never)
 
 describe('forwarded recording reads from the Record owner', () => {
   it.each(['send_to_self', 'topic'] as const)('rejects ordinary re-edit of a %s recording snapshot before creating a draft', async kind => {
@@ -40,27 +40,33 @@ describe('forwarded recording reads from the Record owner', () => {
   it.each(['send_to_self', 'topic'] as const)('reads %s through the owner API without hydrating the original Audio session', async kind => {
     const core = recording()
     const raw = { record_uid: core.record_uid, record_core: core }
-    const endpoint = kind === 'send_to_self' ? '/api/v1/home/feed/query' : '/api/v1/topics/display/detail'
+    const endpoint = kind === 'send_to_self' ? '/api/v1/home/feed/query' : '/api/v1/topics/display/records/page'
     const runtime = {
       config: { maxTextLength: 20_000 },
       stateStore: { uniqueCode: async () => 'snapshot-test-key' },
       requireSession: async () => ({ userId: 42 }),
       authenticatedPost: vi.fn(async (path: string) => {
+        if (path === '/api/v1/topics/display/metadata') {
+          return { topic_core: { topic_uid: 'destination', kind: 3, privacy_state: 1, show_in_home: false } }
+        }
         expect(path).toBe(endpoint)
-        return kind === 'send_to_self' ? { items: [raw], has_more: false } : { records: [raw], has_more: false }
+        return kind === 'send_to_self' ? { items: [raw], has_more: false } : { topic_uid: 'destination', privacy_state: 1, records: [raw], has_more: false }
       }),
     }
     const source = {
       openSourceRef: async () => ({ kind, userId: 42, ownerRef: 'destination' }),
       sourceItem: async () => ({ kind, sourceRef: 'target', displayName: '目标', unreadCount: 0, activeAtMillis: 0 }),
     }
-    const media = { richContentBlocks: () => [], hydrateRecordMediaPage: async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() }) }
+    const media = { recordMediaUnavailable: () => false, richContentBlocks: () => [], hydrateRecordMediaPage: async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() }) }
     const record = new RecordService(runtime as never, media as never, source as never)
     const chat = new ChatService(runtime as never, source as never, {} as never, media as never, record, {} as never, {} as never, {} as never, {} as never, { lockedRecordUids: async () => new Set() } as never)
     const page = await chat.readSource('target')
     expect(page.items[0]?.forwardRecords?.items[0]?.segments).toHaveLength(2)
     expect(page.items[0]?.messageActionRef).toMatch(/^arkme-message-action-v1\./)
-    expect(runtime.authenticatedPost).toHaveBeenCalledTimes(1)
+    expect(runtime.authenticatedPost).toHaveBeenCalledTimes(kind === 'topic' ? 2 : 1)
+    if (kind === 'topic') {
+      expect(page.source).toMatchObject({ topicKind: 3, displayName: '发给 DSH 的消息' })
+    }
   })
 
   it.each(['send_to_self', 'topic', 'default_category'] as const)('retains the complete snapshot through %s into the existing card and detail', kind => {

@@ -15,15 +15,15 @@ afterEach(() => {
 
 describe('preparing production wiring', () => {
   it.each(['open', 'error', 'reconcile', 'unmount'] as const)('preserves active preparing when the non-owner surface receives %s', async action => {
-    const connections: FakeEventSource[] = []
-    class FakeEventSource {
+    const connections: FakeWebSocket[] = []
+    class FakeWebSocket {
       onopen: (() => void) | null = null
       onerror: (() => void) | null = null
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor() { connections.push(this) }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     function Consumer({ owner = false }: { owner?: boolean }) {
       useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 1, environment: 'prod' }, 1, false, { ownsMessagePreparing: owner })
@@ -50,13 +50,13 @@ describe('preparing production wiring', () => {
     expect(arkmeMessagePreparing.get('chat', 'prod:1')).toHaveLength(1)
   })
   it('does not let a lagging duplicate arrival from another consumer clear a newer Host projection', async () => {
-    const connections: FakeEventSource[] = []
-    class FakeEventSource {
+    const connections: FakeWebSocket[] = []
+    class FakeWebSocket {
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor() { connections.push(this) }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     function Consumer() {
       useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 1, environment: 'prod' }, 1, false, { ownsMessagePreparing: true })
@@ -84,13 +84,13 @@ describe('preparing production wiring', () => {
     expect(arkmeMessagePreparing.get('chat', 'prod:1').map(item => item.stateVersion)).toEqual([now + 1])
   })
   it('does not grant preparing ownership to a directory-refreshing consumer by default', async () => {
-    const connections: FakeEventSource[] = []
-    class FakeEventSource {
+    const connections: FakeWebSocket[] = []
+    class FakeWebSocket {
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor() { connections.push(this) }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     vi.spyOn(arkmeChatDirectory, 'refreshRoot').mockResolvedValue([])
     function Consumer() {
@@ -112,15 +112,15 @@ describe('preparing production wiring', () => {
     expect(arkmeMessagePreparing.get('chat', 'prod:1')).toHaveLength(1)
   })
   it('routes transient events without refreshing chat facts and fences disconnected accounts', async () => {
-    const connections: FakeEventSource[] = []
-    class FakeEventSource {
+    const connections: FakeWebSocket[] = []
+    class FakeWebSocket {
       onopen: (() => void) | null = null
       onerror: (() => void) | null = null
       onmessage: ((event: MessageEvent<string>) => void) | null = null
       constructor() { connections.push(this) }
       close() {}
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     const refresh = vi.spyOn(arkmeChatDirectory, 'refreshRoot').mockResolvedValue([])
     const invalidate = vi.spyOn(arkmeInterwovenInvalidation, 'invalidate')
@@ -171,7 +171,18 @@ describe('preparing production wiring', () => {
     expect(sidebar.includes('onInputActivity={messagePreparing.input}')).toBe(true)
     expect(sidebar).toContain('if (sameTargetComposer()) messagePreparing.stop()')
     const submit = sidebar.slice(sidebar.indexOf('const send = async'), sidebar.indexOf('const updateComposerText ='))
-    expect(submit.indexOf('messagePreparing.stop()')).toBeGreaterThan(submit.indexOf("if (textContent === '' && readyDraft.attachments.length === 0) return"))
+    const normalSendStart = submit.indexOf('const targetSource = source')
+    expect(normalSendStart).toBeGreaterThan(0)
+    const articleSend = submit.slice(0, normalSendStart)
+    const articleGuard = articleSend.indexOf("if (!sameComposerAsyncScope(scope) || auth?.status !== 'authenticated') return")
+    const articleStop = articleSend.indexOf('messagePreparing.stop()')
+    expect(articleGuard).toBeGreaterThan(0)
+    expect(articleStop).toBeGreaterThan(articleGuard)
+    expect(articleSend.indexOf('composerArticleStore.send(')).toBeGreaterThan(articleStop)
+    const normalSend = submit.slice(normalSendStart)
+    const emptyGuard = normalSend.indexOf("if (textContent === '' && readyDraft.attachments.length === 0) return")
+    expect(emptyGuard).toBeGreaterThan(0)
+    expect(normalSend.indexOf('if (sameTargetComposer()) messagePreparing.stop()')).toBeGreaterThan(emptyGuard)
     expect(sidebar).toContain('<ArkmeMessagePreparingIndicator sourceKey={source.sourceKey} accountScope={authenticatedAccountKey} />')
     const atomicEdits = sidebar.slice(sidebar.indexOf('const insertMemberMentionAt'), sidebar.indexOf('const updateComposerRichTrigger'))
     expect(atomicEdits.match(/focusEditedComposer\((cursor|caretIndex)\)/g)).toHaveLength(5)
@@ -179,8 +190,14 @@ describe('preparing production wiring', () => {
     const deletion = sidebar.slice(deletionStart, sidebar.indexOf('if (event.key === \'Enter\' && !event.shiftKey', deletionStart))
     expect(deletion.includes('focusEditedComposer(caret)')).toBe(true)
     const editCompletion = sidebar.slice(sidebar.indexOf('const focusEditedComposer'), sidebar.indexOf('const insertMemberMentionAt'))
-    expect(editCompletion.includes('composerAsyncScopeRef.current !== scope')).toBe(true)
-    expect(editCompletion.indexOf('messagePreparing.input(')).toBeGreaterThan(editCompletion.indexOf('editor.focus()'))
+    // Caret placement is now consumed by the editor after its document commit,
+    // rather than a parent animation frame. Keep draft/account scoping explicit.
+    expect(editCompletion).toContain('scope: composerAsyncScopeRef.current')
+    expect(editCompletion).toContain('request: { text, start: cursor, end: cursor }')
+    expect(editCompletion.indexOf('messagePreparing.input(text)')).toBeGreaterThan(editCompletion.indexOf('setEditedComposerSelection('))
+    expect(sidebar).toContain('editedComposerSelection?.scope === composerAsyncScopeRef.current')
+    expect(sidebar).toContain('authenticatedAccountKey === editedComposerSelection.scope.accountKey')
+    expect(sidebar).toContain('? editedComposerSelection.request : undefined')
     expect(sidebar.includes('messagePreparing.focus(true); setComposerInputFocused(true)')).toBe(true)
   })
 })

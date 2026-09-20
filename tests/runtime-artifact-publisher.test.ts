@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   publishRuntimeArtifact,
+  readHarnessVersionCodeRangeFromEnvironment,
   requestBackendJSON,
   uploadRuntimeObject,
 } from '../scripts/publish-runtime-artifact.mjs'
@@ -40,6 +41,15 @@ async function artifactFixture() {
 }
 
 describe('runtime artifact publisher', () => {
+  it('reads an optional release range from the publishing environment', () => {
+    expect(readHarnessVersionCodeRangeFromEnvironment({})).toBeUndefined()
+    for (const invalid of ['null', '{}', '{"min":1}', '{"min":4,"max":2}']) {
+      expect(() => readHarnessVersionCodeRangeFromEnvironment({ ARKME_HARNESS_VERSION_CODE_RANGE: invalid })).toThrow()
+    }
+    expect(readHarnessVersionCodeRangeFromEnvironment({ ARKME_HARNESS_VERSION_CODE_RANGE: '{"min":4,"max":9}' })).toEqual({ min: 4, max: 9 })
+    expect(() => readHarnessVersionCodeRangeFromEnvironment({ ARKME_HARNESS_VERSION_CODE_RANGE: '4-9' })).toThrow('ARKME_HARNESS_VERSION_CODE_RANGE must be JSON')
+  })
+
   it('gets exact-object STS, uploads, creates, polls, and activates without exposing credentials', async () => {
     const fixture = await artifactFixture()
     const calls: Array<{ url: string; init: RequestInit; body: unknown }> = []
@@ -57,8 +67,8 @@ describe('runtime artifact publisher', () => {
           security_token: 'temporary-token',
         },
       },
-      { version: { id: 'version-1', status: 'validating' }, reused: false },
-      { id: 'version-1', status: 'ready' },
+      { version: { id: 'version-1', status: 'validating', harness_version_code_range: { min: 4, max: 9 } }, reused: false },
+      { id: 'version-1', status: 'ready', harness_version_code_range: { min: 4, max: 9 }, compatibility_source: { version_id: 'source-1', version_code: 3, revision: 2 } },
       { component: 'arkme-plugin', version_id: 'version-1', version_code: 9, already_current: false },
     ]
     const fetchImpl = async (url: string | URL | Request, init: RequestInit = {}) => {
@@ -69,12 +79,14 @@ describe('runtime artifact publisher', () => {
     const uploads: unknown[] = []
     const masks: string[] = []
 
+    const logs: string[] = []
     const result = await publishRuntimeArtifact({
       artifactDirectory: fixture.root,
       backendBaseURL: 'https://backend.example.com',
       secret: 'publisher-secret',
       sourceSHA,
       notes: 'pre-release build',
+      harnessVersionCodeRange: { min: 4, max: 9 },
     }, {
       fetchImpl,
       createOSSClient: clientOptions => ({
@@ -92,9 +104,10 @@ describe('runtime artifact publisher', () => {
       }),
       mask: value => masks.push(value),
       sleep: async () => {},
+      log: message => logs.push(message),
     })
 
-    expect(result).toEqual({ version: fixture.version, versionId: 'version-1', versionCode: 9, reused: false })
+    expect(result).toEqual({ version: fixture.version, versionId: 'version-1', versionCode: 9, reused: false, harnessVersionCodeRange: { min: 4, max: 9 }, compatibilitySource: { version_id: 'source-1', version_code: 3, revision: 2 } })
     expect(calls.map(call => call.url)).toEqual([
       'https://backend.example.com/api/public/v1/ci/arkme-plugin/runtime/upload-credentials',
       'https://backend.example.com/api/public/v1/ci/arkme-plugin/runtime/versions',
@@ -108,7 +121,7 @@ describe('runtime artifact publisher', () => {
       sha256: fixture.sha256,
       size: 16,
     })
-    expect(calls[1].body).toEqual({ ...calls[0].body as object, notes: 'pre-release build' })
+    expect(calls[1].body).toEqual({ ...calls[0].body as object, notes: 'pre-release build', harness_version_code_range: { min: 4, max: 9 } })
     expect(calls.every(call => new Headers(call.init.headers).get('Authorization') === 'Bearer publisher-secret')).toBe(true)
     expect(masks).toEqual(['temporary-ak', 'temporary-sk', 'temporary-token'])
     expect(uploads).toHaveLength(1)
@@ -123,6 +136,36 @@ describe('runtime artifact publisher', () => {
       } },
     })
     expect(JSON.stringify({ calls, uploads })).not.toContain('temporary-sk')
+    expect(logs).toContain('version_id=version-1 status=validating harness_version_code_range=4-9 compatibility_source=none')
+    expect(logs).toContain('version_id=version-1 status=ready harness_version_code_range=4-9 compatibility_source=source-1@3#2')
+  })
+
+  it('omits a range so Backend can inherit it, then rejects an invalid stored range before activation', async () => {
+    const fixture = await artifactFixture()
+    const objectKey = `app/arkme/test/plugin/${fixture.version}/${fixture.sha256}/${fixture.file}`
+    const calls: string[] = []
+    let createBody: Record<string, unknown> | undefined
+    const responses = [
+      { bucket: 'arkme-release-bucket', upload_endpoint: 'https://oss-cn-hangzhou.aliyuncs.com', object_key: objectKey, credentials: { access_key_id: 'temporary-ak', access_key_secret: 'temporary-sk', security_token: 'temporary-token' } },
+      { version: { id: 'version-1', status: 'validating', harness_version_code_range: { min: 4, max: 9 } }, reused: false },
+      { id: 'version-1', status: 'ready', harness_version_code_range: { min: 0, max: 9 } },
+    ]
+    await expect(publishRuntimeArtifact({
+      artifactDirectory: fixture.root, backendBaseURL: 'https://backend.example.com', secret: 'publisher-secret', sourceSHA, notes: '',
+    }, {
+      fetchImpl: async (url: string | URL | Request, init: RequestInit = {}) => {
+        calls.push(`${init.method} ${String(url)}`)
+        if (String(url).endsWith('/runtime/versions') && init.method === 'POST' && typeof init.body === 'string') createBody = JSON.parse(init.body)
+        return new Response(JSON.stringify(responses.shift()), { status: init.method === 'POST' ? 201 : 200 })
+      },
+      createOSSClient: () => ({ put: async () => ({}) }), mask: () => {}, sleep: async () => {},
+    })).rejects.toThrow('Backend returned an invalid stored harness version code range')
+    expect(calls).toEqual([
+      'POST https://backend.example.com/api/public/v1/ci/arkme-plugin/runtime/upload-credentials',
+      'POST https://backend.example.com/api/public/v1/ci/arkme-plugin/runtime/versions',
+      'GET https://backend.example.com/api/public/v1/ci/arkme-plugin/runtime/versions/version-1',
+    ])
+    expect(createBody).not.toHaveProperty('harness_version_code_range')
   })
 
   it('rejects a changed artifact before requesting credentials', async () => {

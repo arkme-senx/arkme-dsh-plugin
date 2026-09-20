@@ -18,8 +18,10 @@ import type { ArkmeExtensionReviewToolPort } from './extensions.js'
 import type { ArkmeGroupToolPort } from './groups.js'
 import type { ArkmeFileToolPort } from './files.js'
 import type { ArkmeUserBanToolPort } from './user-ban.js'
+import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
 export interface ArkmeCoreToolPorts extends
+  ArkmeDirectMessageAdmissionPort,
   ArkmeFileToolPort,
   ArkmeAiVideoToolPort,
   ArkmeArkoToolPort,

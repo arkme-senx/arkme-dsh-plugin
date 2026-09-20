@@ -2,6 +2,7 @@ export interface ArkmeLinkMetadata {
   url: string
   title: string
   description?: string
+  imageUrl?: string
   siteName?: string
 }
 

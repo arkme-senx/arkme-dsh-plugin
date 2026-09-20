@@ -20,6 +20,46 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordService', () => {
+  it.each(['file_asset://avatar-at-creation', '42_old_avatar.jpg', 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/42_old_avatar.jpg'])('preserves the historical avatar %s through both self projections', avatar => {
+    const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
+    const service = new RecordService({} as ServiceRuntime, media, {} as never)
+    const raw = { record_uid: 'r', record_core: { record_uid: 'r', avatar, nickname: '当时的名字' } }
+    for (const item of [service.recordTimelineItemFromRaw(raw, 42), service.recordTimelineItem(service.recordItem(raw, 42)!)]) {
+      expect(item).toMatchObject({ avatarSnapshot: true, avatarRef: avatar, senderName: '当时的名字' })
+    }
+  })
+  it.each([{}, { avatar: 'arkme-profile-image-v1.current-profile' }])('marks missing or mutable historical avatars without substituting the current profile: %j', snapshot => {
+    const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
+    const service = new RecordService({} as ServiceRuntime, media, {} as never)
+    const raw = { record_uid: 'r', record_core: { record_uid: 'r', ...snapshot } }
+    for (const item of [service.recordTimelineItemFromRaw(raw, 42), service.recordTimelineItem(service.recordItem(raw, 42)!)]) {
+      expect(item.avatarSnapshot).toBe(true)
+      expect(item.avatarRef).toBeUndefined()
+    }
+  })
+  it.each([true, false])('preserves manual edit fact %s through both self record projections', fact => {
+    const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
+    const service = new RecordService({} as ServiceRuntime, media, {} as never)
+    const raw = { record_uid: 'r', record_core: { record_uid: 'r', has_manual_edit: fact, edit_status: 4 } }
+    expect(service.recordTimelineItemFromRaw(raw, 42).hasManualEdit).toBe(fact)
+    expect(service.recordTimelineItem(service.recordItem(raw, 42)!).hasManualEdit).toBe(fact)
+  })
+
+  it.each(['timeline', 'record-list'] as const)('carries partial media evidence through the %s projection', path => {
+    const media = new MediaService({ config } as ServiceRuntime, {} as never, {} as never, { recordUid() { return 'r' } })
+    const service = new RecordService({} as ServiceRuntime, media, {} as never)
+    const raw = { record_uid: 'r', record_core: { record_uid: 'r', version: 8, status: 1,
+      content_payload: { media_refs: [{ file_asset_uid: 'a' }, { file_asset_uid: 'b' }] } } }
+    const displays = ['a', 'b'].map(file_asset_uid => ({ file_asset_uid, file_kind: 1,
+      file_name: `${file_asset_uid}.png`, preview_url: `https://example.test/${file_asset_uid}` }))
+    const project = (displayItems: unknown[]) => path === 'timeline'
+      ? service.recordTimelineItemFromRaw(raw, 42, { displayItems })
+      : service.recordTimelineItem(service.recordItem(raw, 42, { displayItems })!)
+    expect(project(displays.slice(0, 1))).toMatchObject({ version: 8, mediaUnavailable: true, contentBlocks: [{ fileAssetUid: 'a' }] })
+    expect(project(displays).contentBlocks).toHaveLength(2)
+    expect(project(displays).mediaUnavailable).not.toBe(true)
+  })
+
   it('preserves the Flutter battery contract including an explicit zero percent', () => {
     expect(arkmeRecordCaptureContextPayload({ electric: 0, charge: 2 })).toEqual({ electric: 0, charge: 2 })
     expect(arkmeRecordCaptureContextPayload({ electric: 100, charge: 1 })).toEqual({ electric: 100, charge: 1 })
@@ -109,7 +149,10 @@ describe('RecordService', () => {
         throw new Error(`unexpected path: ${path}`)
       },
     }
-    const service = new RecordService(runtime as never, {} as MediaService, {
+    const service = new RecordService(runtime as never, {
+      async hydrateRecordMediaPage() { return { displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() } },
+      richContentBlocks() { return [] },
+    } as unknown as MediaService, {
       async openSourceRef() {
         return { version: 1 as const, userId: 42, kind: 'group_chat' as const, ownerRef: 'group-1', displayName: '研发群' }
       },
@@ -280,6 +323,12 @@ describe('RecordService', () => {
     await expect(service.prepareRecordReedit({
       sourceRef: 'source-ref', itemUid: 'record-mention', newTitle: '只改标题', newText: '@小明 原正文',
     })).resolves.toMatchObject({ newTitle: '只改标题', newTextPreview: '@小明 原正文' })
+    await expect(service.prepareRecordReedit({
+      sourceRef: 'source-ref', itemUid: 'record-mention', newText: '😀 @小明 修改后正文',
+      expectedVersion: 1,
+      mentions: [{ originalIndex: 0, displayName: '小明', startIndex: 3, length: 3 }],
+    })).resolves.toMatchObject({ newTextPreview: '😀 @小明 修改后正文' })
+
   })
 
   it('keeps the draft when the owner version changes before commit', async () => {
@@ -638,7 +687,7 @@ describe('RecordService', () => {
 
     const restored = await reloadedService.prepareRecordReedit({ sourceRef: 'source-ref-new', itemUid: 'record-1' })
     expect(restored).toMatchObject({
-      draftRevision: first.draftRevision, baseVersion: 8,
+      draftRevision: first.draftRevision + 1, baseVersion: 8,
       oldTextPreview: '其他端已更新正文', newTextPreview: '未提交草稿', sourceRef: 'source-ref-new',
     })
     await expect(stateStore.getRecordReeditDraft(42, restored.sourceIdentityKey, 'record-1')).resolves.toMatchObject({
@@ -705,7 +754,7 @@ describe('RecordService', () => {
 
   it('restores a record extension parent preview from the durable home-feed contract', () => {
     const media = {
-      richContentBlocks: vi.fn((raw: unknown) => {
+      recordMediaUnavailable: () => false, richContentBlocks: vi.fn((raw: unknown) => {
         const core = (raw as { record_core?: { record_uid?: string } }).record_core
         return core?.record_uid === 'record-parent' ? [{
           kind: 'image', mediaRef: 'parent-image-ref', fileName: 'parent.png', mimeType: 'image/png', size: 12, sortOrder: 0,
@@ -913,6 +962,23 @@ describe('RecordService', () => {
     }] })
     expect(requestedUrl).toBe('https://record.test/api/v1/records/tags/list')
     expect(requestBody).toEqual({ limit: 100 })
+  })
+
+  it('sends tag search and pagination to the server and preserves page metadata', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let requestBody: unknown
+    const fetchImpl = vi.fn(async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: true, next_cursor: 'next-page' } }), { status: 200 })
+    }) as typeof fetch
+    const service = new RecordService(new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl), {} as MediaService, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+    await expect(service.listTags({ query: '项目', limit: 20, cursor: 'previous-page' })).resolves.toEqual({ items: [], hasMore: true, nextCursor: 'next-page' })
+    expect(requestBody).toEqual({ query: '项目', limit: 20, cursor: 'previous-page' })
   })
 
   it('creates a canonical Record whose file assets stay in content_payload media refs', async () => {

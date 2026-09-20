@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
@@ -52,6 +53,19 @@ export const ARKME_EXTENSION_RESTART_SURFACE = arkmeTheme.menu
 export const ARKME_EXTENSION_DETAIL_MODAL_MAX_WIDTH = 920
 export const ARKME_EXTENSION_DETAIL_MODAL_MAX_HEIGHT = 680
 export const ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE = 70
+
+export async function extensionRestartPageReady(
+  href: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  try {
+    return (await fetchImpl(new URL('/', href), {
+      cache: 'no-store', credentials: 'same-origin',
+    })).ok
+  } catch {
+    return false
+  }
+}
 
 export function extensionTabLoadMode(loadedTabs: ReadonlySet<string>, target: string): 'initial' | 'refresh' {
   return loadedTabs.has(target) ? 'refresh' : 'initial'
@@ -571,10 +585,10 @@ export function ArkmeExtensionRestartDialog({ kind, restarting, onLater, onResta
       </p>
       <div style={styles.restartActions}>
         {kind === 'unavailable'
-          ? <button type="button" style={styles.restartPrimary} onClick={onLater}>知道了</button>
+          ? <button data-arkme-feedback="primary" type="button" style={styles.restartPrimary} onClick={onLater}>{tr("知道了")}</button>
           : <>
-            <button type="button" style={{ ...styles.restartLater, ...disabledStyle }} disabled={restarting} onClick={onLater}>稍后</button>
-            <button type="button" style={{ ...styles.restartPrimary, ...disabledStyle }} disabled={restarting} onClick={onRestart}>
+            <button data-arkme-feedback="neutral" type="button" style={{ ...styles.restartLater, ...disabledStyle }} disabled={restarting} onClick={onLater}>{tr("稍后")}</button>
+            <button data-arkme-feedback="primary" type="button" style={{ ...styles.restartPrimary, ...disabledStyle }} disabled={restarting} onClick={onRestart}>
               {restarting ? '正在重启…' : '立即重启'}
             </button>
           </>}
@@ -629,6 +643,7 @@ function MarketplaceMenu<T extends string>({
   emptySearchLabel?: string
   onChange: (value: T) => void
 }) {
+  useArkmeLocale()
   const [open, setOpen] = useState(false)
   const [menuSearchQuery, setMenuSearchQuery] = useState('')
   const rootRef = useRef<HTMLDivElement>(null)
@@ -656,7 +671,7 @@ function MarketplaceMenu<T extends string>({
   }, [open])
 
   return <div ref={rootRef} style={styles.marketplaceMenuRoot}>
-    <button
+    <button data-arkme-feedback="neutral"
       type="button"
       style={styles.marketplaceMenuButton}
       aria-label={ariaLabel}
@@ -682,11 +697,11 @@ function MarketplaceMenu<T extends string>({
           onChange={event => { setMenuSearchQuery(event.currentTarget.value) }}
         />
       </div>}
-      <div role="listbox" aria-label={`${ariaLabel}选项`} style={styles.marketplaceMenuList}>
+      <div role="listbox" aria-label={tr("{v0}选项", { v0: ariaLabel })} style={styles.marketplaceMenuList}>
         {visibleOptions.map(option => {
           const selected = option.value === value
           const disabled = !available && !selected
-          return <button
+          return <button data-arkme-feedback="neutral"
             key={option.value}
             type="button"
             role="option"
@@ -759,7 +774,7 @@ export function marketplaceCategoryOptions(
   catalogTotal = tree.total_extensions,
 ): ReadonlyArray<{ value: MarketplaceCategory; label: string }> {
   return [
-    { value: 'all', label: `全部 · ${String(catalogTotal)}` },
+    { value: 'all', label: tr("全部 · {v0}", { v0: String(catalogTotal) }) },
     ...tree.categories.map(item => ({
       value: item.category_id,
       label: `${item.name} · ${String(item.extension_count)}`,
@@ -799,26 +814,22 @@ export function ArkmeExtensionDetailHeader({ title, copyAvailable, copyNotice = 
 }) {
   return <header style={styles.detailModalHeader}>
     <h2 id="arkme-extension-detail-title" style={styles.detailModalTitle}>{title}</h2>
-    {copyAvailable && <button
+    {copyAvailable && <button data-arkme-feedback="neutral"
       type="button"
       style={styles.detailModalHeaderAction}
-      aria-label="复制扩展链接"
-      title="复制链接"
+      aria-label={tr("复制扩展链接")}
+      title={tr("复制链接")}
       onClick={onCopy}
-      onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
-      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
     >
       <LinkIcon />
       {copyNotice !== '' && <span role="status" style={styles.detailCopyNotice}>{copyNotice}</span>}
     </button>}
-    <button
+    <button data-arkme-feedback="neutral"
       type="button"
       style={styles.detailModalHeaderAction}
-      aria-label="关闭扩展详情"
-      title="关闭"
+      aria-label={tr("关闭扩展详情")}
+      title={tr("关闭")}
       onClick={onClose}
-      onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
-      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
     ><CloseIcon /></button>
   </header>
 }
@@ -846,7 +857,7 @@ export function ArkmeExtensionManifestDetails({ manifest }: { manifest: unknown 
     : []
   if (!safeHalves.host && !safeHalves.client && safeRuntime.dsh.trim() === '' && permissions.length === 0) return null
   return <section style={styles.detailSection}>
-    <div style={styles.detailLabel}>运行能力</div>
+    <div style={styles.detailLabel}>{tr("运行能力")}</div>
     <Chips>
       {safeHalves.host && <Chip>Host</Chip>}
       {safeHalves.client && <Chip>Client</Chip>}
@@ -867,7 +878,7 @@ function auditRiskLabel(result: ArkmeExtensionAuditResult): string {
     : result.risk_level === 'high' ? '高'
     : result.risk_level === 'medium' ? '中'
     : '低'
-  return `${risk}风险`
+  return tr("{v0}风险", { v0: risk })
 }
 
 function ArkmeExtensionAuditPanel({ result }: { result: ArkmeExtensionAuditResult }) {
@@ -895,7 +906,7 @@ export function ArkmeExtensionAuditAction({ extensionId, busyExtensionId, onRun 
   onRun(extensionId: string): void
 }) {
   const busy = busyExtensionId === extensionId
-  return <button
+  return <button data-arkme-feedback="neutral"
     type="button"
     style={{ ...styles.auditButton, ...(busy ? { opacity: .62, cursor: 'default' } : {}) }}
     disabled={busy}
@@ -931,7 +942,7 @@ function InstallLoadingButton({ task, onPause, onResume }: {
   const pausable = task !== undefined && ['resolving', 'downloading'].includes(task.phase)
   const action = paused ? onResume : pausable ? onPause : undefined
   const label = paused ? '继续安装' : pausable ? '暂停安装' : '正在处理'
-  return <button
+  return <button data-arkme-feedback="neutral"
     type="button" style={{ ...styles.loadingButton, ...(action === undefined ? { cursor: 'default' } : {}) }}
     disabled={action === undefined} aria-label={label} title={label} onClick={action}
   >{paused
@@ -944,10 +955,10 @@ export function ArkmeExtensionToggle({ item, busy, onChange }: {
   busy: boolean
   onChange(enabled: boolean): void
 }) {
-  return <button
+  return <button data-arkme-feedback="neutral"
     type="button"
     role="switch"
-    aria-label={`${item.enabled ? '关闭' : '启用'}扩展 ${item.manifest.name}`}
+    aria-label={`${item.enabled ? tr("关闭") : '启用'}扩展 ${item.manifest.name}`}
     aria-checked={item.enabled}
     disabled={busy}
     style={{
@@ -991,10 +1002,10 @@ export function extensionDetailMetricLabels(
   if (item.rating_summary !== undefined) {
     labels.push(`★ ${item.rating_summary.average.toFixed(1)}`)
   }
-  if (item.comment_count !== undefined) labels.push(`评论 ${formatCompactCount(item.comment_count)}`)
+  if (item.comment_count !== undefined) labels.push(tr("评论 {v0}", { v0: formatCompactCount(item.comment_count) }))
   const views = item.open_count ?? item.view_count
-  if (views !== undefined) labels.push(`查看 ${formatCompactCount(views)}`)
-  if (item.install_user_count !== undefined) labels.push(`安装 ${formatCompactCount(item.install_user_count)}`)
+  if (views !== undefined) labels.push(tr("查看 {v0}", { v0: formatCompactCount(views) }))
+  if (item.install_user_count !== undefined) labels.push(tr("安装 {v0}", { v0: formatCompactCount(item.install_user_count) }))
   return labels
 }
 
@@ -1003,17 +1014,17 @@ export function ArkmeExtensionDetailMetrics({ item }: {
 }) {
   const views = item.open_count ?? item.view_count
   if (item.rating_summary === undefined && item.install_user_count === undefined && item.comment_count === undefined && views === undefined) return null
-  return <div style={styles.detailMetrics} aria-label="扩展统计" data-extension-detail-metrics="compact">
-    {item.rating_summary !== undefined && <span style={styles.detailMetric} aria-label={`评分 ${item.rating_summary.average.toFixed(1)}`}>
+  return <div style={styles.detailMetrics} aria-label={tr("扩展统计")} data-extension-detail-metrics="compact">
+    {item.rating_summary !== undefined && <span style={styles.detailMetric} aria-label={tr("评分 {v0}", { v0: item.rating_summary.average.toFixed(1) })}>
       <StarIcon />{item.rating_summary.average.toFixed(1)}
     </span>}
-    {item.comment_count !== undefined && <span style={styles.detailMetric} aria-label={`${String(item.comment_count)} 条评论`}>
+    {item.comment_count !== undefined && <span style={styles.detailMetric} aria-label={tr("{v0} 条评论", { v0: String(item.comment_count) })}>
       <CommentIcon />{formatCompactCount(item.comment_count)}
     </span>}
-    {views !== undefined && <span style={styles.detailMetric} aria-label={`查看次数 ${String(views)}`}>
+    {views !== undefined && <span style={styles.detailMetric} aria-label={tr("查看次数 {v0}", { v0: String(views) })}>
       <EyeIcon />{formatCompactCount(views)}
     </span>}
-    {item.install_user_count !== undefined && <span style={styles.detailMetric} aria-label={`${String(item.install_user_count)} 人已安装`}>
+    {item.install_user_count !== undefined && <span style={styles.detailMetric} aria-label={tr("{v0} 人已安装", { v0: String(item.install_user_count) })}>
       <InstallUsersIcon />{formatCompactCount(item.install_user_count)}
     </span>}
   </div>
@@ -1024,7 +1035,7 @@ export function formatMarketplaceDate(value: number): string {
   const millis = value < 10_000_000_000 ? value * 1000 : value
   const date = new Date(millis)
   if (Number.isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
+  return new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
 }
 
 export function extensionCommunityAuthor(item: ArkmeExtensionCatalogItem): { name: string; github: boolean } {
@@ -1081,7 +1092,7 @@ function ExtensionAuthorAvatar({ item, size }: { item: ArkmeExtensionCatalogItem
     {...(item.owner_avatar_ref === undefined ? {} : { avatarRef: item.owner_avatar_ref })}
     {...(item.owner_avatar_fallback === undefined ? {} : { fallback: item.owner_avatar_fallback })}
     size={size}
-    label={`${extensionCommunityAuthor(item).name}的头像`}
+    label={tr("{v0}的头像", { v0: extensionCommunityAuthor(item).name })}
   />
   const githubAvatar = safeGithubAvatarUrl(item.source_author?.avatar_url)
   if (githubAvatar !== undefined) return <img src={githubAvatar} alt="" style={{ width: size, height: size, flex: 'none', borderRadius: '50%', objectFit: 'cover' }} />
@@ -1089,7 +1100,7 @@ function ExtensionAuthorAvatar({ item, size }: { item: ArkmeExtensionCatalogItem
     {...(item.owner_avatar_ref === undefined ? {} : { avatarRef: item.owner_avatar_ref })}
     {...(item.owner_avatar_fallback === undefined ? {} : { fallback: item.owner_avatar_fallback })}
     size={size}
-    label={`${extensionCommunityAuthor(item).name}的头像`}
+    label={tr("{v0}的头像", { v0: extensionCommunityAuthor(item).name })}
   />
 }
 
@@ -1097,7 +1108,7 @@ function GitHubIdentityAvatar({ size = 18 }: { size?: number }) {
   const iconSize = Math.max(13, Math.round(size * .72))
   return <span
     style={{ ...styles.communityIdentityAvatar, width: size, height: size }}
-    aria-label="GitHub 来源"
+    aria-label={tr("GitHub 来源")}
     data-extension-community-identity="github"
   >
     <svg aria-hidden="true" width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="currentColor">
@@ -1156,7 +1167,7 @@ export function ArkmeExtensionAuthorTrigger({
       href={href}
       target="_blank"
       rel="noreferrer"
-      aria-label="在 GitHub 查看作者"
+      aria-label={tr("在 GitHub 查看作者")}
       data-extension-author-direct-link="github"
       style={{ ...styles.authorButton, ...style, textDecoration: 'none' }}
     >{identity}</a>
@@ -1227,6 +1238,7 @@ export function ArkmeExtensionAuthorPopover({
   onWorld(): void
   style?: CSSProperties
 }) {
+  useArkmeLocale()
   const worldTarget = extensionAuthorWorldTarget(item)
   const canMessage = worldTarget !== undefined && item.owner_user_id !== currentUserId
   const canBrowseOtherExtensions = worldTarget !== undefined
@@ -1241,7 +1253,7 @@ export function ArkmeExtensionAuthorPopover({
     {open && !extensionCommunityAuthor(item).github && <aside
       style={styles.authorCard}
       role="dialog"
-      aria-label={`${extensionCommunityAuthor(item).name}的个人资料`}
+      aria-label={tr("{v0}的个人资料", { v0: extensionCommunityAuthor(item).name })}
       data-extension-author-popover="profile"
     >
       <div style={styles.authorCardHeader}>
@@ -1249,35 +1261,35 @@ export function ArkmeExtensionAuthorPopover({
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={styles.authorCardName}>{extensionCommunityAuthor(item).name}</div>
         </div>
-        {worldTarget !== undefined && <button
+        {worldTarget !== undefined && <button data-arkme-feedback="neutral"
           type="button"
           style={styles.authorCardProfileIcon}
-          aria-label={`进入${extensionCommunityAuthor(item).name}的世界`}
+          aria-label={tr("进入{v0}的世界", { v0: extensionCommunityAuthor(item).name })}
           data-extension-author-profile-link="icon"
           onClick={openWorld}
         ><ArrowUpRight size={17} aria-hidden /></button>}
       </div>
-      {worldTarget !== undefined && <button
+      {worldTarget !== undefined && <button data-arkme-feedback="neutral"
         type="button"
         style={styles.authorCardWorldLink}
         data-extension-author-world-link="true"
         onClick={openWorld}
-      >进入 TA 的世界 <CaretRight size={13} weight="bold" aria-hidden /></button>}
+      >{tr("进入 TA 的世界")} <CaretRight size={13} weight="bold" aria-hidden /></button>}
       {actionError !== '' && <div style={{ ...styles.error, marginTop: 8 }}>{actionError}</div>}
       {(canMessage || canBrowseOtherExtensions) && <div style={styles.authorCardActions}>
-        {canMessage && <button
+        {canMessage && <button data-arkme-feedback="neutral"
           type="button"
           style={{ ...styles.authorCardMessageButton, ...(actionBusy ? { opacity: .62, cursor: 'default' } : {}) }}
           disabled={actionBusy}
           onClick={onPrivateChat}
-        >{actionBusy ? '正在打开…' : '发送消息'}</button>}
-        {canBrowseOtherExtensions && <button
+        >{actionBusy ? tr("正在打开…") : tr("发送消息")}</button>}
+        {canBrowseOtherExtensions && <button data-arkme-feedback="neutral"
           type="button"
           style={styles.authorCardExtensionsButton}
           disabled={actionBusy}
           data-extension-author-other-extensions="true"
           onClick={onOtherExtensions}
-        >TA 的全部插件</button>}
+        >{tr("TA 的全部插件")}</button>}
       </div>}
     </aside>}
   </div>
@@ -1313,7 +1325,7 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
         event.currentTarget.style.boxShadow = 'none'
       }}
     >
-      <button type="button" style={styles.communityPrimary} title={item.name} aria-label={`查看扩展：${item.name}`} onClick={onClick}>
+      <button type="button" style={styles.communityPrimary} title={item.name} aria-label={tr("查看扩展：{v0}", { v0: item.name })} onClick={onClick}>
         <ArkmeExtensionAvatar extensionId={item.extension_id} iconRef={item.icon_ref} size={34} />
         <span style={styles.communityTitleRow} data-extension-title-row="true">
           <span style={styles.communityTitle}>{item.name}</span>
@@ -1340,7 +1352,7 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
     {(installTask !== undefined && !installTask.done) || (actionBusy === true && actionLabel !== undefined) ? <InstallLoadingButton
       task={installTask} onPause={onPause} onResume={onResume}
     /> : <span style={styles.actionGroup}>
-      {actionLabel !== undefined && <button
+      {actionLabel !== undefined && <button data-arkme-feedback="neutral"
         type="button"
         style={{ ...styles.installSmall, ...(onAction === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
         disabled={onAction === undefined || actionBusy === true}
@@ -1387,11 +1399,11 @@ export function ArkmeExtensionLifecycleRow({
 }) {
   const processing = (installTask !== undefined && !installTask.done) || actionBusy
   return <article style={styles.lifecycleRow} data-extension-lifecycle-row={kind}>
-    <button type="button" style={styles.lifecyclePrimary} onClick={onOpen} aria-label={`查看扩展：${item.name}`}>
+    <button type="button" style={styles.lifecyclePrimary} onClick={onOpen} aria-label={tr("查看扩展：{v0}", { v0: item.name })}>
       <ArkmeExtensionAvatar extensionId={item.extension_id} iconRef={item.icon_ref} size={38} />
       <span style={styles.lifecycleCopy}>
         <span style={styles.lifecycleTitle}>{item.name}</span>
-        {quarantineReason !== undefined && <span style={styles.lifecycleQuarantine} title={quarantineReason}>已自动停用</span>}
+        {quarantineReason !== undefined && <span style={styles.lifecycleQuarantine} title={quarantineReason}>{tr("已自动停用")}</span>}
         {extensionHasAuthorIdentity(item) && <span style={styles.lifecycleAuthor}>
           <ArkmeExtensionAuthorIdentity item={item} size={20} />
         </span>}
@@ -1405,12 +1417,12 @@ export function ArkmeExtensionLifecycleRow({
       />
     </span>}
     {kind === 'update' && <span style={styles.lifecycleActions}>
-      {processing ? <InstallLoadingButton task={installTask} onPause={onPause} onResume={onResume} /> : <button
+      {processing ? <InstallLoadingButton task={installTask} onPause={onPause} onResume={onResume} /> : <button data-arkme-feedback="neutral"
         type="button"
         style={{ ...styles.installSmall, height: 32, padding: '0 16px', background: '#17191c', color: '#fff' }}
         disabled={onUpdate === undefined}
         onClick={onUpdate}
-      >更新</button>}
+      >{tr("更新")}</button>}
     </span>}
   </article>
 }
@@ -1437,15 +1449,15 @@ export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish
         <span style={styles.name}>{item.name}</span>
         <span style={styles.stateBadges}>
           {myExtensionBadges(item.states).map(label => <span key={label} style={styles.stateBadge}>{label}</span>)}
-          {item.persisted?.artifactContractVersion === 3 && <span style={styles.stateBadge}>V3 原生</span>}
+          {item.persisted?.artifactContractVersion === 3 && <span style={styles.stateBadge}>{tr("V3 原生")}</span>}
         </span>
       </span>
       <span style={styles.description}>{item.description || '这个扩展还没有填写说明。'}</span>
       {version !== '' && <span style={styles.meta}>{version}</span>}
     </span>
     <span style={styles.actionGroup}>
-		{item.published !== undefined && <button type="button" style={styles.restartLater} onClick={onOpen}>详情</button>}
-      {action !== undefined && <button
+		{item.published !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.restartLater} onClick={onOpen}>{tr("详情")}</button>}
+      {action !== undefined && <button data-arkme-feedback="neutral"
         type="button"
         style={{ ...styles.installSmall, ...((action.kind === 'publish' ? onPublish : onEdit) === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
         disabled={(action.kind === 'publish' ? onPublish : onEdit) === undefined}
@@ -1468,7 +1480,7 @@ function EmptyState({ tab }: { tab: Tab }) {
 }
 
 function LoadingState() {
-  return <div aria-label="正在加载扩展"><div style={styles.skeleton} /><div style={styles.skeleton} /><div style={styles.skeleton} /></div>
+  return <div aria-label={tr("正在加载扩展")}><div style={styles.skeleton} /><div style={styles.skeleton} /><div style={styles.skeleton} /></div>
 }
 
 export function extensionInstallPercent(task: Pick<ArkmeExtensionInstallTaskSnapshot, 'phase' | 'downloadedBytes' | 'totalBytes'>): number {
@@ -1597,7 +1609,7 @@ export function extensionAuthorLabel(
   if (displayName !== '' && arkmeId !== '') return `${displayName} · @${arkmeId}`
   if (displayName !== '') return displayName
   if (arkmeId !== '') return `@${arkmeId}`
-  if (item.owner_user_id !== undefined) return `Arkme 用户 ${String(item.owner_user_id)}`
+  if (item.owner_user_id !== undefined) return tr("Arkme 用户 {v0}", { v0: String(item.owner_user_id) })
   const sourceAuthorName = item.source_author?.name?.trim() ?? ''
   if (sourceAuthorName !== '') return sourceAuthorName
   if (effectiveExtensionPublisherRole(item) === 'importer' && item.source?.type === 'github_repository') return 'GitHub'
@@ -1636,7 +1648,7 @@ export function mergeInstalledExtensionCatalogItem(
 }
 
 export function extensionEnabledLabel(item: ArkmeInstalledExtensionView): string {
-  if (!item.enabled) return item.active || item.restartRequired ? '已关闭，重启后完全停用' : '已关闭'
+  if (!item.enabled) return item.active || item.restartRequired ? '已关闭，重启后完全停用' : tr("已关闭")
   return item.active ? '已启用' : '已启用，尚未加载'
 }
 
@@ -1672,6 +1684,7 @@ export function ArkmeMarketplace({
   sortingEnabled?: boolean
   closeOnDetailClose?: boolean
 }) {
+  useArkmeLocale()
   const initialDetailId = normalizedInitialMarketplaceExtensionId(initialExtensionId)
   const [tab, setTab] = useState<Tab>('discover')
   const [discoverItems, setDiscoverItems] = useState<ArkmeExtensionCatalogItem[]>([])
@@ -1873,7 +1886,7 @@ export function ArkmeMarketplace({
     while (Date.now() < deadline) {
       await new Promise(resolve => window.setTimeout(resolve, 300))
       const next = await hostInstance()
-      if (next !== undefined && next !== previous) {
+      if (next !== undefined && next !== previous && await extensionRestartPageReady(window.location.href)) {
         window.location.reload()
         return
       }
@@ -1997,7 +2010,7 @@ export function ArkmeMarketplace({
       if ((caught as Error).name !== 'AbortError' && sequence === requestSequence.current) {
         const message = caught instanceof Error ? caught.message : String(caught)
         if (mode === 'initial') setError(message)
-        else setRefreshError(`刷新失败，仍显示上次结果：${message}`)
+        else setRefreshError(tr("刷新失败，仍显示上次结果：{v0}", { v0: message }))
       }
     } finally {
       if (sequence === requestSequence.current) {
@@ -2629,10 +2642,10 @@ export function ArkmeMarketplace({
   const renderTabNavigation = (inline: boolean) => <nav
     style={inline ? styles.marketPageTabs : styles.tabs}
     role="tablist"
-    aria-label="市集页面导航"
-    {...(inline ? { 'data-market-page-tabs': 'inline' } : {})}
+    aria-label={tr("市集页面导航")}
+    {...(inline ? { 'data-market-page-tabs': 'inline', 'data-arkme-window-drag-region': 'marketplace' } : {})}
   >
-    {(Object.keys(TAB_LABELS) as Tab[]).map(value => <button
+    {(Object.keys(TAB_LABELS) as Tab[]).map(value => <button data-arkme-feedback="neutral"
       key={value} type="button" role="tab" aria-selected={tab === value}
       style={{
         ...(inline ? styles.marketPageTab : styles.tab),
@@ -2640,12 +2653,6 @@ export function ArkmeMarketplace({
       }}
       {...(inline ? { 'data-market-page-nav-state': tab === value ? 'selected' : 'idle' } : {})}
       onClick={() => { switchTab(value) }}
-      onMouseEnter={event => {
-        if (inline && tab !== value) event.currentTarget.style.background = colors.hover
-      }}
-      onMouseLeave={event => {
-        if (inline && tab !== value) event.currentTarget.style.background = 'transparent'
-      }}
     >
       <span style={inline
         ? styles.marketPageNavLabel
@@ -2667,25 +2674,23 @@ export function ArkmeMarketplace({
     {...(displayMode === 'dialog' ? { role: 'dialog', 'aria-modal': true } : { role: 'region' })}
     aria-labelledby="arkme-marketplace-title"
   >
-  <div style={{ ...styles.shell, ...(displayMode === 'page' ? styles.pageShell : {}) }} aria-label="Arkme 市集">
+  <div style={{ ...styles.shell, ...(displayMode === 'page' ? styles.pageShell : {}) }} aria-label={tr("Arkme 市集")}>
     {displayMode === 'dialog' && <header style={styles.header}>
-      <h2 id="arkme-marketplace-title" style={styles.title}>市集</h2>
-      {detail?.share !== undefined && <button
+      <h2 id="arkme-marketplace-title" style={styles.title}>{tr("市集")}</h2>
+      {detail?.share !== undefined && <button data-arkme-feedback="neutral"
         type="button"
         style={{ ...styles.iconButton, position: 'relative' }}
-        aria-label="复制扩展链接"
-        title="复制链接"
+        aria-label={tr("复制扩展链接")}
+        title={tr("复制链接")}
         onClick={() => { setShareNotice(''); void copyShareLink() }}
       ><LinkIcon />{shareNotice !== '' && <span role="status" style={styles.detailCopyNotice}>{shareNotice}</span>}</button>}
-      <button
-        type="button" style={styles.iconButton} aria-label="关闭市集" title="关闭"
+      <button data-arkme-feedback="neutral"
+        type="button" style={styles.iconButton} aria-label={tr("关闭市集")} title={tr("关闭")}
         onClick={onClose}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
       ><CloseIcon /></button>
     </header>}
-    {displayMode === 'page' && <header style={styles.marketPageHeader} data-market-header-layer="primary">
-      <h2 id="arkme-marketplace-title" style={styles.marketPageTitle}>市集</h2>
+    {displayMode === 'page' && <header data-arkme-window-drag-region="marketplace" style={styles.marketPageHeader} data-market-header-layer="primary">
+      <h2 id="arkme-marketplace-title" style={styles.marketPageTitle}>{tr("市集")}</h2>
       {renderTabNavigation(true)}
     </header>}
     {displayMode === 'dialog' && renderTabNavigation(false)}
@@ -2695,28 +2700,28 @@ export function ArkmeMarketplace({
         onChange={event => { setSearchQuery(event.target.value) }}
         style={styles.searchBox}
         type="search"
-        aria-label="搜索扩展、功能或作者"
-        placeholder="搜索扩展、功能或作者…"
+        aria-label={tr("搜索扩展、功能或作者")}
+        placeholder={tr("搜索扩展、功能或作者…")}
       />
       {authorFilter !== undefined && <span style={styles.marketplaceAuthorFilter} data-marketplace-author-filter="true">
-        <span style={styles.marketplaceAuthorFilterLabel}>{authorFilter.ownerName === '我' ? '我的全部插件' : `${authorFilter.ownerName} 的全部插件`}</span>
-        <button
+        <span style={styles.marketplaceAuthorFilterLabel}>{authorFilter.ownerName === '我' ? '我的全部插件' : tr("{v0} 的全部插件", { v0: authorFilter.ownerName })}</span>
+        <button data-arkme-feedback="neutral"
           type="button"
           style={styles.marketplaceAuthorFilterClear}
-          aria-label={`清除作者 ${authorFilter.ownerName} 筛选`}
-          title="清除作者筛选"
+          aria-label={tr("清除作者 {v0} 筛选", { v0: authorFilter.ownerName })}
+          title={tr("清除作者筛选")}
           onClick={() => { setAuthorFilter(undefined) }}
         >×</button>
       </span>}
       <div style={styles.discoverControls}>
         <MarketplaceMenu
-          ariaLabel="扩展分类"
-          triggerLabel={`分类：${selectedCategoryName}`}
+          ariaLabel={tr("扩展分类")}
+          triggerLabel={tr("分类：{v0}", { v0: selectedCategoryName })}
           value={category}
           options={categoryOptions}
           searchable
-          searchPlaceholder="搜索扩展分类"
-          emptySearchLabel="未找到相关分类"
+          searchPlaceholder={tr("搜索扩展分类")}
+          emptySearchLabel={tr("未找到相关分类")}
           {...(classificationHint === undefined ? {} : { hint: classificationHint })}
           onChange={value => {
             setCategory(value)
@@ -2724,14 +2729,14 @@ export function ArkmeMarketplace({
           }}
         />
         <MarketplaceMenu
-          ariaLabel="扩展排序"
-          triggerLabel={`排序：${MARKET_SORTS.find(option => option.value === sort)?.label
+          ariaLabel={tr("扩展排序")}
+          triggerLabel={tr("排序：{v0}", { v0: MARKET_SORTS.find(option => option.value === sort)?.label
             ?? MARKET_SORTS.find(option => option.value === DEFAULT_MARKETPLACE_SORT)?.label
-            ?? '评分最高'}`}
+            ?? '评分最高' })}
           value={sort}
           options={MARKET_SORTS}
           available={sortingEnabled}
-          unavailableHint="排序接口暂未同步，当前保持最新创建。"
+          unavailableHint={tr("排序接口暂未同步，当前保持最新创建。")}
           onChange={value => {
             setSort(value)
             writeMarketplaceSortPreference(currentUserId, value)
@@ -2792,18 +2797,17 @@ export function ArkmeMarketplace({
         })}
         </div>
         {loadingMoreDiscover && <div role="status" style={styles.marketplaceLoadingMore}>
-          <LoadingIcon />正在加载更多…
-        </div>}
+          <LoadingIcon />{tr("正在加载更多…")}</div>}
         {!loadingMoreDiscover && loadMoreDiscoverError !== '' && <div role="alert" style={styles.marketplaceLoadMoreRetry}>
-          <span>加载更多失败</span>
-          <button type="button" style={styles.marketplaceRetryButton} onClick={() => { void loadMoreDiscoverPage() }}>重试</button>
+          <span>{tr("加载更多失败")}</span>
+          <button data-arkme-feedback="neutral" type="button" style={styles.marketplaceRetryButton} onClick={() => { void loadMoreDiscoverPage() }}>{tr("重试")}</button>
         </div>}
         {visibleItems.length === 0 && (authorFilter === undefined
           ? <EmptyState tab={tab} />
           : <div style={styles.empty} data-marketplace-author-empty="true">
               <span style={styles.emptyIcon}><ArkmeExtensionIcon size={22} /></span>
-              <span style={styles.emptyTitle}>暂无插件</span>
-              <span style={styles.emptyDesc}>该作者暂未发布公开插件</span>
+              <span style={styles.emptyTitle}>{tr("暂无插件")}</span>
+              <span style={styles.emptyDesc}>{tr("该作者暂未发布公开插件")}</span>
             </div>)}
       </>}
       {!busy && error === '' && sharedDetail === undefined && (displayMode === 'page' || detail === undefined) && tab === 'mine' && <>
@@ -2933,23 +2937,23 @@ export function ArkmeMarketplace({
         }}
       >
         <ArkmeExtensionDetailHeader
-          title={detail?.name ?? '扩展详情'}
+          title={detail?.name ?? tr("扩展详情")}
           copyAvailable={detail?.share !== undefined}
           copyNotice={shareNotice}
           onCopy={() => { setShareNotice(''); void copyShareLink() }}
           onClose={() => { closeDetail() }}
         />
         <div style={styles.detailModalBody}>
-          {detailBusy && <div style={styles.detailModalState} aria-label="正在加载扩展详情"><LoadingState /></div>}
+          {detailBusy && <div style={styles.detailModalState} aria-label={tr("正在加载扩展详情")}><LoadingState /></div>}
           {!detailBusy && detailError !== '' && <div style={styles.detailModalState} role="alert">
             <div>
               <div>{detailError}</div>
               <div style={styles.detailModalErrorActions}>
-                <button type="button" style={styles.restartLater} onClick={() => { closeDetail() }}>关闭</button>
-                {detailRequestedExtensionId !== undefined && <button
+                <button data-arkme-feedback="neutral" type="button" style={styles.restartLater} onClick={() => { closeDetail() }}>{tr("关闭")}</button>
+                {detailRequestedExtensionId !== undefined && <button data-arkme-feedback="primary"
                   type="button" style={styles.primaryButton}
                   onClick={() => { void inspect(detailRequestedExtensionId) }}
-                >重新加载</button>}
+                >{tr("重新加载")}</button>}
               </div>
             </div>
           </div>}
@@ -2976,7 +2980,7 @@ export function ArkmeMarketplace({
                               onPause={() => { void controlInstall('extensions.install.pause') }}
                               onResume={() => { void controlInstall('extensions.install.resume') }}
                             />
-                          : <button
+                          : <button data-arkme-feedback="primary"
                               type="button" style={styles.primaryButton} disabled={actionBusyExtensionId === detail.extension_id}
                               onClick={() => {
                                 if (detailUpdateAvailable && detailUpdate?.latest_version !== undefined) {
@@ -3016,7 +3020,7 @@ export function ArkmeMarketplace({
                     </div>}
                   </div>
                 </div>
-                {detailInstallAction.disabled && detailInstalled === undefined && <div style={styles.detailHint}>该扩展的制品上传或发布尚未完成，目前没有可安装版本。</div>}
+                {detailInstallAction.disabled && detailInstalled === undefined && <div style={styles.detailHint}>{tr("该扩展的制品上传或发布尚未完成，目前没有可安装版本。")}</div>}
               </div>
               {detailHasPreviews && <div style={styles.detailPreview}>
                 <ArkmeExtensionPreviewGallery
@@ -3032,44 +3036,40 @@ export function ArkmeMarketplace({
 
             <div style={styles.detailColumns}>
               <div style={styles.detailAbout}>
-                <h3 style={styles.detailSectionTitle}>关于</h3>
+                <h3 style={styles.detailSectionTitle}>{tr("关于")}</h3>
                 <div style={{ ...styles.detailValue, marginTop: 0, whiteSpace: 'pre-wrap' }}>{detail.description || '这个扩展还没有填写说明。'}</div>
                 <ArkmeExtensionManifestDetails manifest={detail.manifest} />
               </div>
-              <aside style={styles.detailFacts} aria-label="扩展详细信息">
-                <h3 style={styles.detailSectionTitle}>详情</h3>
-                {detailInstalled !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>已安装版本</div><div style={styles.detailValue}>{displayVersion(detailInstalled.installedVersion)}</div></section>}
-                {(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version) !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>市场最新版本</div><div style={styles.detailValue}>{displayVersion(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version)}</div></section>}
-                {detail.created_at !== undefined && formatMarketplaceDate(detail.created_at) !== '' && <section style={styles.detailSection}><div style={styles.detailLabel}>创建时间</div><div style={styles.detailValue}>{formatMarketplaceDate(detail.created_at)}</div></section>}
+              <aside style={styles.detailFacts} aria-label={tr("扩展详细信息")}>
+                <h3 style={styles.detailSectionTitle}>{tr("详情")}</h3>
+                {detailInstalled !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>{tr("已安装版本")}</div><div style={styles.detailValue}>{displayVersion(detailInstalled.installedVersion)}</div></section>}
+                {(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version) !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>{tr("市场最新版本")}</div><div style={styles.detailValue}>{displayVersion(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version)}</div></section>}
+                {detail.created_at !== undefined && formatMarketplaceDate(detail.created_at) !== '' && <section style={styles.detailSection}><div style={styles.detailLabel}>{tr("创建时间")}</div><div style={styles.detailValue}>{formatMarketplaceDate(detail.created_at)}</div></section>}
                 {detail.source !== undefined && <section style={styles.detailSection}>
-                  <div style={styles.detailLabel}>来源</div>
+                  <div style={styles.detailLabel}>{tr("来源")}</div>
                   <div style={styles.detailValue}><ArkmeExtensionSourceLink source={detail.source} /></div>
                 </section>}
-                {(detailInstalled !== undefined || canDeleteDetail) && <div style={styles.detailDangerZone} aria-label="扩展危险操作">
+                {(detailInstalled !== undefined || canDeleteDetail) && <div style={styles.detailDangerZone} aria-label={tr("扩展危险操作")}>
                   {detailInstalled !== undefined && (uninstallConfirmExtensionId === detail.extension_id
-                    ? <div style={styles.detailConfirm} role="alert">
-                      卸载只删除当前设备中的扩展制品和 Profile 依赖；如果只是暂时不使用，请关闭上方开关。
-                      <div style={styles.detailConfirmActions}>
-                        <button type="button" style={styles.restartLater} onClick={() => { setUninstallConfirmExtensionId(undefined) }}>取消</button>
-                        <button type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void uninstall(detail.extension_id) }}>确认卸载</button>
+                    ? <div style={styles.detailConfirm} role="alert">{tr("卸载只删除当前设备中的扩展制品和 Profile 依赖；如果只是暂时不使用，请关闭上方开关。")}<div style={styles.detailConfirmActions}>
+                        <button data-arkme-feedback="neutral" type="button" style={styles.restartLater} onClick={() => { setUninstallConfirmExtensionId(undefined) }}>{tr("取消")}</button>
+                        <button data-arkme-feedback="danger" type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void uninstall(detail.extension_id) }}>{tr("确认卸载")}</button>
                       </div>
                     </div>
-                    : <button
+                    : <button data-arkme-feedback="danger"
                       type="button" style={styles.detailDanger} disabled={actionBusyExtensionId === detail.extension_id}
                       onClick={() => { setDeleteConfirmExtensionId(undefined); setUninstallConfirmExtensionId(detail.extension_id) }}
-                    >卸载本地扩展</button>)}
+                    >{tr("卸载本地扩展")}</button>)}
                   {canDeleteDetail && (deleteConfirmExtensionId === detail.extension_id
-                    ? <div style={styles.detailConfirm} role="alert">
-                      删除会将这个扩展从市集中移除，但不会自动卸载当前设备中的本地副本。
-                      <div style={styles.detailConfirmActions}>
-                        <button type="button" style={styles.restartLater} onClick={() => { setDeleteConfirmExtensionId(undefined) }}>取消</button>
-                        <button type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void deletePublishedExtension(detail.extension_id) }}>确认删除</button>
+                    ? <div style={styles.detailConfirm} role="alert">{tr("删除会将这个扩展从市集中移除，但不会自动卸载当前设备中的本地副本。")}<div style={styles.detailConfirmActions}>
+                        <button data-arkme-feedback="neutral" type="button" style={styles.restartLater} onClick={() => { setDeleteConfirmExtensionId(undefined) }}>{tr("取消")}</button>
+                        <button data-arkme-feedback="danger" type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void deletePublishedExtension(detail.extension_id) }}>{tr("确认删除")}</button>
                       </div>
                     </div>
-                    : <button
+                    : <button data-arkme-feedback="danger"
                       type="button" style={styles.detailDanger} disabled={actionBusyExtensionId === detail.extension_id}
                       onClick={() => { setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(detail.extension_id) }}
-                    >删除市集扩展</button>)}
+                    >{tr("删除市集扩展")}</button>)}
                 </div>}
               </aside>
             </div>

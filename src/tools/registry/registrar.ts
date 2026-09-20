@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { ToolArgsError, validateJsonSchemaValue, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { isArkmeContextToolModule, isArkmeCoreToolModule } from '../contract/module.js'
 import type { ArkmeToolModule, ArkmeToolProfile } from '../contract/module.js'
 import type { ArkmeCoreToolPorts, ArkmeToolPorts } from '../ports/index.js'
@@ -10,19 +10,26 @@ import {
   ArkmeConversationalConfirmation,
   arkmeConfirmationContextHooks,
 } from '../shared/conversational-confirmation.js'
+import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation } from './group-governance-confirmation.js'
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_bot_conversation_pin',
+  'arkme_direct_message_refusal_set',
+  'arkme_topic_home_visibility',
   'arkme_background_sound_disable',
   'arkme_file_prepare',
   'arkme_files_send',
   'arkme_file_task',
+  'arkme_recording_import',
+  'arkme_recording_import_folder',
   'arkme_id_set',
   'arkme_record_reedit',
   'arkme_bot_openclaw_connect',
   'arkme_extension_review_create',
   'arkme_group_member_add',
   'arkme_group_member_remove',
+  'arkme_group_self_nickname_set',
   'arkme_group_join_restriction_set',
   'arkme_message_withdraw',
   'arkme_contact_add',
@@ -58,8 +65,9 @@ function createArkmeContextToolDefinitions(
   ctx: Context,
   ports: ArkmeToolPorts,
   profile: ArkmeToolProfile,
+  phase: 'host' | 'attachments',
 ): ToolDefinition[] {
-  return arkmeToolCatalog.modulesFor(profile).filter(isArkmeContextToolModule)
+  return arkmeToolCatalog.modulesFor(profile, phase).filter(isArkmeContextToolModule)
     .map(module => validateMaterializedTool(module, module.create(ctx, ports)))
 }
 
@@ -70,6 +78,15 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_direct_message_refusal_set') return args.refused === true
+    ? '是否确认拒收这个私聊用户的消息？拒收期间双方都无法发送新消息，历史记录保留。'
+    : '是否确认解除你对这个私聊用户的拒收？如果对方仍拒收，双方依然无法发送新消息。'
+  if (name === 'arkme_recording_import') return args.action === 'retry'
+    ? '是否确认重试这条失败的录音上传任务？'
+    : `是否确认按指定的开始时间导入所选录音，并将归属设为“${args.ownership === 'other' ? '其他' : '自己'}”？`
+  if (name === 'arkme_topic_home_visibility') return args.show_in_home === true
+    ? '是否确认将这个主题的快记展示在首页？'
+    : '是否确认在首页隐藏这个主题的快记？主题与快记不会被删除。'
   if (name === 'arkme_background_sound_disable') return '是否确认关闭当前 Arkme 账号的文字背景音？这不会删除已经发送的背景音。'
   if (name === 'arkme_user_ban') return '是否确认封禁这个私聊用户？确认后将无法重新登录；Backend、聊天和录音请求立即受限；其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效。'
   if (name === 'arkme_user_unban') return '是否确认解封这个私聊用户？确认后该用户可重新登录并恢复操作。'
@@ -82,6 +99,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
     const count = Array.isArray(args.candidate_refs) ? args.candidate_refs.length : 0
     return `是否确认向这个群聊添加或邀请 ${String(count)} 位成员？成员加入后将可以看到群内后续消息。`
   }
+  if (name === 'arkme_group_self_nickname_set') return '是否确认将你在这个群聊中的昵称修改为“' + cleanArgument(args.nickname, 40) + '”？'
   if (name === 'arkme_group_member_remove') {
     return args.prevent_rejoin === true
       ? '是否确认将这位成员移出群聊，并禁止其再次加入？'
@@ -159,19 +177,28 @@ function withCoreConversationalConfirmation(
   return {
     ...definition,
     async execute(args, exec) {
+      const violations = validateJsonSchemaValue(definition.parameters, args, '')
+      if (violations.length > 0) throw new ToolArgsError(violations)
+      if (definition.name === 'arkme_recording_import'
+        && typeof args === 'object' && args !== null && 'action' in args && args.action === 'status') {
+        return await definition.execute(args, exec)
+      }
+      if (definition.name === 'arkme_topic_home_visibility' && (args as Record<string, unknown>).show_in_home === undefined) {
+        return await definition.execute(args, exec)
+      }
       if (exec.agent === undefined) throw new Error('该 Arkme 操作必须在一个真实 DSH Agent 会话中执行')
-      const question = coreConfirmationQuestion(
-        definition.name,
-        typeof args === 'object' && args !== null ? args as Record<string, unknown> : {},
-      )
       const hooks = arkmeConfirmationContextHooks(definition)
+      const request = hooks?.confirmationRequest?.(args)
       const result = await conversation.prepareOrExecute({
         agent: exec.agent as Agent,
+        callId: exec.callId, rootCallId: exec.rootCallId,
         operationKey: definition.name,
-        arguments: args,
-        question: hooks?.question === undefined
-          ? question
-          : preparedContext => hooks.question!(args, preparedContext),
+        arguments: request === undefined ? args : request.arguments,
+        ...(request === undefined ? {} : { forcePrepare: request.forcePrepare }),
+        question: hooks?.question === undefined ? coreConfirmationQuestion(
+          definition.name,
+          typeof args === 'object' && args !== null ? args as Record<string, unknown> : {},
+        ) : prepared => hooks.question!(args, prepared),
         ...(hooks === undefined ? {} : { prepare: async () => await hooks.prepare(args, exec) }),
         execute: async preparedContext => hooks === undefined
           ? await definition.execute(args, exec)
@@ -186,6 +213,7 @@ export function registerArkmeTools(
   ctx: Context,
   ports: ArkmeToolPorts,
   profile: ArkmeToolProfile = 'business',
+  presentation?: GroupGovernancePresentation,
 ): void {
   const prompt = promptForArkmeToolProfile(profile)
   if (prompt !== '') {
@@ -201,12 +229,14 @@ export function registerArkmeTools(
     })
   }
   const coreConversation = new ArkmeConversationalConfirmation()
+  registerGroupGovernanceConfirmation(ctx, coreConversation, presentation)
   for (const definition of createArkmeCoreToolDefinitions(ports, profile)) {
     ctx.tools.register(withCoreConversationalConfirmation(definition, coreConversation))
   }
+  for (const definition of createArkmeContextToolDefinitions(ctx, ports, profile, 'host')) ctx.tools.register(definition)
   if (arkmeToolCatalog.modulesFor(profile, 'attachments').length === 0) return
   ctx.inject(['attachments'], imageCtx => {
-    for (const definition of createArkmeContextToolDefinitions(imageCtx, ports, profile)) {
+    for (const definition of createArkmeContextToolDefinitions(imageCtx, ports, profile, 'attachments')) {
       imageCtx.tools.register(definition)
     }
   })

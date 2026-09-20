@@ -146,7 +146,7 @@ describe('Bundle v2 profile installation', () => {
     })
     expect(store.get('ext-bundle')?.profilePackageName).not.toMatch(/^@arkme-local\//)
     expect(remove).toHaveBeenCalledWith('@arkme-local/ext-0123456789abcdef')
-    expect(manager.listInstalled()[0]?.active).toBe(true)
+    expect((await manager.listInstalled())[0]?.active).toBe(true)
     store.close()
   })
 
@@ -227,7 +227,7 @@ describe('Bundle v2 profile installation', () => {
       nativeCapabilities: ['lifecycle_scripts', 'profile_patch_override', 'runtime_dependencies'],
       profilePackageName: '@example/native-v3-install',
     })
-    expect(manager.listInstalled()[0]).toMatchObject({ artifactContractVersion: 3 })
+    expect((await manager.listInstalled())[0]).toMatchObject({ artifactContractVersion: 3 })
     store.close()
   })
 

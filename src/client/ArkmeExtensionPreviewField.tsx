@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { arkmeExtensionPreviewUrl } from './ArkmeExtensionPreviewGallery.js'
 import {
@@ -6,6 +7,7 @@ import {
 } from './extension-preview-edit.js'
 
 function LocalImage({ item }: { item: Extract<ExtensionPreviewDraftItem, { kind: 'local' }> }) {
+  useArkmeLocale()
   const [url, setUrl] = useState('')
   useEffect(() => {
     if (typeof URL.createObjectURL !== 'function') return
@@ -13,7 +15,7 @@ function LocalImage({ item }: { item: Extract<ExtensionPreviewDraftItem, { kind:
     setUrl(next)
     return () => { URL.revokeObjectURL(next) }
   }, [item.file])
-  return url === '' ? <span style={styles.placeholder}>待上传</span> : <img src={url} alt="" style={styles.image} />
+  return url === '' ? <span style={styles.placeholder}>{tr("待上传")}</span> : <img src={url} alt="" style={styles.image} />
 }
 
 export function ArkmeExtensionPreviewField({ extensionId, draft, disabled, onChange }: {
@@ -22,10 +24,11 @@ export function ArkmeExtensionPreviewField({ extensionId, draft, disabled, onCha
   disabled: boolean
   onChange(draft: ExtensionPreviewDraft): void
 }) {
+  useArkmeLocale()
   const input = useRef<HTMLInputElement>(null)
   const dragged = useRef<string>()
   const [error, setError] = useState('')
-  if (extensionId === undefined) return <div style={styles.field}><b>扩展预览图</b><span style={styles.hint}>发布后可上传预览图</span></div>
+  if (extensionId === undefined) return <div style={styles.field}><b>{tr("扩展预览图")}</b><span style={styles.hint}>{tr("发布后可上传预览图")}</span></div>
   const addFiles = (files: readonly File[]) => {
     try {
       onChange(appendExtensionPreviewFiles(draft, files, () => crypto.randomUUID(), () => crypto.randomUUID()))
@@ -33,8 +36,8 @@ export function ArkmeExtensionPreviewField({ extensionId, draft, disabled, onCha
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
   }
   return <div style={styles.field}>
-    <div style={styles.header}><b>扩展预览图</b><button type="button" disabled={disabled} onClick={() => { input.current?.click() }}>选择图片</button></div>
-    <span style={styles.hint}>最多 20 张，第一张作为封面</span>
+    <div style={styles.header}><b>{tr("扩展预览图")}</b><button type="button" disabled={disabled} onClick={() => { input.current?.click() }}>{tr("选择图片")}</button></div>
+    <span style={styles.hint}>{tr("最多 20 张，第一张作为封面")}</span>
     <input ref={input} type="file" multiple accept="image/png,image/jpeg,image/webp" disabled={disabled} style={{ display: 'none' }} onChange={event => {
       const files = [...(event.target.files ?? [])]
       event.target.value = ''
@@ -49,11 +52,11 @@ export function ArkmeExtensionPreviewField({ extensionId, draft, disabled, onCha
       <div style={styles.frame}>{item.kind === 'remote'
         ? <img src={arkmeExtensionPreviewUrl(extensionId, item.preview.preview_ref)} alt="" style={styles.image} />
         : <LocalImage item={item} />}</div>
-      {index === 0 && <span style={styles.cover}>封面</span>}
+      {index === 0 && <span style={styles.cover}>{tr("封面")}</span>}
       <div style={styles.actions}>
-        <button type="button" aria-label={`向前移动第 ${index + 1} 张预览图`} disabled={disabled || index === 0} onClick={() => { onChange(moveExtensionPreviewDraftItem(draft, item.id, index - 1)) }}>←</button>
-        <button type="button" aria-label={`向后移动第 ${index + 1} 张预览图`} disabled={disabled || index === draft.items.length - 1} onClick={() => { onChange(moveExtensionPreviewDraftItem(draft, item.id, index + 1)) }}>→</button>
-        <button type="button" aria-label={`删除第 ${index + 1} 张预览图`} disabled={disabled} onClick={() => { onChange(removeExtensionPreviewDraftItem(draft, item.id)) }}>×</button>
+        <button type="button" aria-label={tr("向前移动第 {v0} 张预览图", { v0: index + 1 })} disabled={disabled || index === 0} onClick={() => { onChange(moveExtensionPreviewDraftItem(draft, item.id, index - 1)) }}>←</button>
+        <button type="button" aria-label={tr("向后移动第 {v0} 张预览图", { v0: index + 1 })} disabled={disabled || index === draft.items.length - 1} onClick={() => { onChange(moveExtensionPreviewDraftItem(draft, item.id, index + 1)) }}>→</button>
+        <button type="button" aria-label={tr("删除第 {v0} 张预览图", { v0: index + 1 })} disabled={disabled} onClick={() => { onChange(removeExtensionPreviewDraftItem(draft, item.id)) }}>×</button>
       </div>
     </div>)}</div>}
     {error !== '' && <span role="alert" style={styles.error}>{error}</span>}

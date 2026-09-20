@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import jsQRModule from 'jsqr'
 import qrcode from 'qrcode-generator'
@@ -95,11 +96,13 @@ function qrDataUrl(content: string): string | undefined {
   return qr.createDataURL(5, 8)
 }
 
-export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compact = false }: {
+export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compact = false, submitLabel = '添加并打开会话' }: {
   shareWebsite: string
   onSourceActivated(source: ArkmeSourceItem): void
   compact?: boolean
+  submitLabel?: string
 }) {
+  useArkmeLocale()
   const [identifier, setIdentifier] = useState('')
   const [candidate, setCandidate] = useState<ArkmeContactSearchResult>()
   const [remark, setRemark] = useState('')
@@ -212,7 +215,7 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
         const name = caught instanceof DOMException ? caught.name : ''
         setError(name === 'NotAllowedError' ? '无法使用摄像头，请允许摄像头权限后重试'
           : name === 'NotFoundError' ? '未找到可用摄像头'
-            : `摄像头启动失败：${errorMessage(caught)}`)
+            : tr("摄像头启动失败：{v0}", { v0: errorMessage(caught) }))
       }
     }
     void start()
@@ -228,7 +231,7 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
         ...(remark.trim() === '' ? {} : { remark: remark.trim() }),
         requestUid: crypto.randomUUID(),
       })
-      setNotice(result.state === 'pending' ? '已添加待注册联系人并打开会话' : '联系人已添加')
+      setNotice(result.state === 'pending' ? '已添加待注册联系人' : '联系人已添加')
       onSourceActivated(result.source)
     } catch (caught) { setError(errorMessage(caught)) }
     finally { setBusy(false) }
@@ -273,13 +276,13 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
 
   return <div style={{ ...styles.shell, ...(compact ? styles.compactShell : {}) }}>
     <form style={{ ...styles.form, ...(compact ? styles.compactForm : {}) }} onSubmit={event => { void search(event) }}>
-      <input style={styles.input} value={identifier} disabled={busy} placeholder="输入手机号或即我号" aria-label="手机号或即我号" onChange={event => { setIdentifier(event.target.value); setCandidate(undefined); setError(''); setNotice('') }} />
-      <button type="submit" style={styles.iconButton} disabled={busy} aria-label="搜索联系人"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" /><path d="m15.5 15.5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg></button>
+      <input style={styles.input} value={identifier} disabled={busy} placeholder={tr("输入手机号或即我号")} aria-label={tr("手机号或即我号")} onChange={event => { setIdentifier(event.target.value); setCandidate(undefined); setError(''); setNotice('') }} />
+      <button data-arkme-feedback="neutral" type="submit" style={styles.iconButton} disabled={busy} aria-label={tr("搜索联系人")}><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" /><path d="m15.5 15.5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg></button>
     </form>
     <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={event => { void scanFile(event.target.files?.[0]) }} />
-    <button type="button" style={{ ...styles.scan, ...(compact ? styles.compactScan : {}) }} disabled={busy} onClick={() => { setError(''); setNotice(''); setCameraActive(false); setScannerOpen(true) }}>
+    <button data-arkme-feedback="neutral" type="button" style={{ ...styles.scan, ...(compact ? styles.compactScan : {}) }} disabled={busy} onClick={() => { setError(''); setNotice(''); setCameraActive(false); setScannerOpen(true) }}>
       <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M8 8h3v3H8zm5 0h3v3h-3zm-5 5h3v3H8zm6 1h2v2h-2z" fill="currentColor" /></svg>
-      <span>识别二维码图片添加好友</span><span style={styles.arrow}>›</span>
+      <span>{tr("识别二维码图片添加好友")}</span><span style={styles.arrow}>›</span>
     </button>
     <div style={{
       ...styles.resultArea,
@@ -287,37 +290,37 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
       gridTemplateRows: statusVisible ? '53px minmax(0, 1fr)' : '0 minmax(0, 1fr)',
     }} data-arkme-contact-state-area>
       <div style={styles.statusArea} data-arkme-contact-status-area>
-        {busy && <div style={{ ...styles.statusFeedback, ...styles.statusNotice }} role="status" data-arkme-contact-status-feedback>正在处理…</div>}
+        {busy && <div style={{ ...styles.statusFeedback, ...styles.statusNotice }} role="status" data-arkme-contact-status-feedback>{tr("正在处理…")}</div>}
         {!busy && error !== '' && !scannerOpen && <div style={{ ...styles.statusFeedback, ...styles.statusError }} role="alert" data-arkme-contact-status-feedback>{error}</div>}
         {!busy && notice !== '' && <div style={{ ...styles.statusFeedback, ...styles.statusNotice }} role="status" data-arkme-contact-status-feedback>{notice}</div>}
       </div>
       <div style={styles.candidateArea} data-arkme-contact-candidate-area>
-        {candidate !== undefined && <section style={styles.card} aria-label="联系人搜索结果">
-          <div style={styles.identity}><ArkmeUserAvatar {...(candidate.avatarRef === undefined ? {} : { avatarRef: candidate.avatarRef })} size={48} label={`${candidate.displayName}的头像`} /><div style={styles.identityText}>
-            <p style={styles.name}>{candidate.displayName}</p><p style={styles.meta}>{candidate.arkmeId === undefined ? '' : `即我号：${candidate.arkmeId} · `}{candidate.registered ? '已注册' : candidate.inviteBySms ? '未注册，将创建待注册联系人' : '未注册'}</p>
+        {candidate !== undefined && <section style={styles.card} aria-label={tr("联系人搜索结果")}>
+          <div style={styles.identity}><ArkmeUserAvatar {...(candidate.avatarRef === undefined ? {} : { avatarRef: candidate.avatarRef })} size={48} label={tr("{v0}的头像", { v0: candidate.displayName })} /><div style={styles.identityText}>
+            <p style={styles.name}>{candidate.displayName}</p><p style={styles.meta}>{candidate.arkmeId === undefined ? '' : tr("即我号：{v0} · ", { v0: candidate.arkmeId })}{candidate.registered ? '已注册' : candidate.inviteBySms ? '未注册，将创建待注册联系人' : '未注册'}</p>
           </div></div>
-          {candidate.isSelf ? <div style={styles.notice}>这是你自己，不能添加为联系人</div> : !candidate.canAdd ? <div style={styles.notice}>该账号当前无法添加</div> : <><input style={styles.remark} maxLength={100} value={remark} placeholder="备注（可选）" onChange={event => { setRemark(event.target.value) }} /><button type="button" style={styles.primary} disabled={busy} onClick={() => { void add() }}>添加并打开会话</button></>}
+          {candidate.isSelf ? <div style={styles.notice}>{tr("这是你自己，不能添加为联系人")}</div> : !candidate.canAdd ? <div style={styles.notice}>{tr("该账号当前无法添加")}</div> : <><input style={styles.remark} maxLength={100} value={remark} placeholder={tr("备注（可选）")} onChange={event => { setRemark(event.target.value) }} /><button data-arkme-feedback="primary" type="button" style={styles.primary} disabled={busy} onClick={() => { void add() }}>{submitLabel}</button></>}
         </section>}
       </div>
     </div>
-    <footer style={{ ...styles.footer, ...(compact ? styles.compactFooter : {}) }} data-arkme-contact-profile-footer><div><p style={styles.profileName}>{profile === null ? '正在加载个人信息…' : profile.displayName || profile.nickname || 'Arkme'}</p><p style={styles.profileId}>即我号：{profile === null ? '正在加载…' : profile.arkmeId || '尚未设置'}
-      {profile?.arkmeId !== undefined && profile.arkmeId !== '' && <button type="button" style={styles.copy} title="复制即我号" aria-label="复制即我号" onClick={() => { void copyArkmeId() }}><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg></button>}
+    <footer style={{ ...styles.footer, ...(compact ? styles.compactFooter : {}) }} data-arkme-contact-profile-footer><div><p style={styles.profileName}>{profile === null ? '正在加载个人信息…' : profile.displayName || profile.nickname || 'Arkme'}</p><p style={styles.profileId}>{tr("即我号：")}{profile === null ? tr("正在加载…") : profile.arkmeId || '尚未设置'}
+      {profile?.arkmeId !== undefined && profile.arkmeId !== '' && <button data-arkme-feedback="neutral" type="button" style={styles.copy} title={tr("复制即我号")} aria-label={tr("复制即我号")} onClick={() => { void copyArkmeId() }}><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg></button>}
     </p></div>{qr !== undefined
-      ? <img src={qr} alt="我的好友二维码" title={shareUrl} style={{ ...styles.qr, ...(compact ? styles.compactQr : {}) }} />
-      : <div style={{ ...styles.qr, ...styles.qrPlaceholder, ...(compact ? styles.compactQr : {}) }} role="status" aria-label="好友二维码加载中">二维码加载中…</div>}
+      ? <img src={qr} alt={tr("我的好友二维码")} title={shareUrl} style={{ ...styles.qr, ...(compact ? styles.compactQr : {}) }} />
+      : <div style={{ ...styles.qr, ...styles.qrPlaceholder, ...(compact ? styles.compactQr : {}) }} role="status" aria-label={tr("好友二维码加载中")}>{tr("二维码加载中…")}</div>}
     </footer>
-    {scannerOpen && <div style={styles.scannerBackdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeScanner() }}><section style={styles.scannerDialog} role="dialog" aria-modal="true" aria-label="识别联系人二维码"
+    {scannerOpen && <div style={styles.scannerBackdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeScanner() }}><section style={styles.scannerDialog} role="dialog" aria-modal="true" aria-label={tr("识别联系人二维码")}
       onPaste={event => { scanDroppedFiles(Array.from(event.clipboardData.items).flatMap(item => { const file = item.kind === 'file' ? item.getAsFile() : null; return file === null ? [] : [file] })) }}
       onDragOver={event => { event.preventDefault() }} onDrop={event => { event.preventDefault(); scanDroppedFiles(event.dataTransfer.files) }}>
-      <div style={styles.scannerHeader}><h2 style={styles.scannerTitle}>{cameraActive ? '摄像头扫描' : '识别联系人二维码'}</h2><button type="button" style={styles.scannerClose} aria-label="关闭二维码识别" onClick={closeScanner}>×</button></div>
-      {cameraActive ? <><div style={styles.cameraFrame}><video ref={videoRef} style={styles.video} autoPlay muted playsInline /><div style={styles.scanGuide} /></div><p style={styles.scannerHint}>将好友的个人二维码置于框内</p></>
+      <div style={styles.scannerHeader}><h2 style={styles.scannerTitle}>{cameraActive ? '摄像头扫描' : tr("识别联系人二维码")}</h2><button data-arkme-feedback="neutral" type="button" style={styles.scannerClose} aria-label={tr("关闭二维码识别")} onClick={closeScanner}>×</button></div>
+      {cameraActive ? <><div style={styles.cameraFrame}><video ref={videoRef} style={styles.video} autoPlay muted playsInline /><div style={styles.scanGuide} /></div><p style={styles.scannerHint}>{tr("将好友的个人二维码置于框内")}</p></>
         : <div style={styles.imageDropzone}>
           <svg viewBox="0 0 48 48" width="52" height="52" aria-hidden><rect x="5" y="5" width="38" height="38" rx="8" fill="none" stroke="currentColor" strokeWidth="2" opacity=".7" /><path d="M14 31l8-8 6 6 4-4 7 7M32 16h.01" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          <p style={styles.imageDropTitle}>粘贴或拖入二维码截图</p><p style={styles.imageDropHint}>支持 ⌘V / Ctrl+V，也可以直接选择电脑中的图片</p>
+          <p style={styles.imageDropTitle}>{tr("粘贴或拖入二维码截图")}</p><p style={styles.imageDropHint}>{tr("支持 ⌘V / Ctrl+V，也可以直接选择电脑中的图片")}</p>
         </div>}
       {error !== '' && <div style={styles.error} role="alert">{error}</div>}
-      <button type="button" style={styles.chooseImage} disabled={busy} onClick={() => { fileInputRef.current?.click() }}>选择二维码图片</button>
-      <button type="button" style={styles.secondaryAction} disabled={busy} onClick={() => { setError(''); setCameraActive(value => !value) }}>{cameraActive ? '返回图片识别' : '使用摄像头扫描'}</button>
+      <button data-arkme-feedback="neutral" type="button" style={styles.chooseImage} disabled={busy} onClick={() => { fileInputRef.current?.click() }}>{tr("选择二维码图片")}</button>
+      <button data-arkme-feedback="neutral" type="button" style={styles.secondaryAction} disabled={busy} onClick={() => { setError(''); setCameraActive(value => !value) }}>{cameraActive ? '返回图片识别' : '使用摄像头扫描'}</button>
     </section></div>}
     <canvas ref={canvasRef} hidden />
   </div>

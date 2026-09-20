@@ -1190,7 +1190,7 @@ describe('ArkmeRecordInputCaptureOwner', () => {
 
     const result = await owner.finishForSubmit('draft-a')
     expect(result.backgroundSound).toMatchObject({ enabled: true, state: 'failed', segments: [] })
-    expect(result.captureContext).toEqual({ clientName: '浏览器（DeepSeek Harness）' })
+    expect(result.captureContext).toEqual({ clientName: '未知电脑（浏览器）' })
     expect(failures).toEqual(['stop-failed'])
     await owner.dispose()
     expect(recorder.disposeCalls).toBe(1)
@@ -1291,11 +1291,69 @@ describe('shared input support and coarse capture context', () => {
       getBattery: async () => ({ level: 0.804, charging: false }),
     })
     expect(context).toEqual({
-      clientName: 'Google Chrome（DeepSeek Harness）',
-      networkName: 'Wi‑Fi',
+      clientName: '未知电脑（Google Chrome）',
+      networkName: 'WiFi',
       electric: 80,
       charge: 2,
     })
+  })
+
+  it('distinguishes Arkme from Chrome and uses native Wi-Fi rather than effective 4g', async () => {
+    const source = { userAgent: 'Chrome/150 Electron/43 Safari/537', onLine: true, connection: { effectiveType: '4g' } }
+    expect(await captureArkmeRecordInputContext(source, 20, {
+      arkmeDesktop: { startupAuthGate: true, device: { snapshot: async () => ({ schemaVersion: 1, computerName: '我的 MacBook Pro', networkType: 'wifi' }) } },
+    })).toEqual({ clientName: '我的 MacBook Pro（Arkme）', networkName: 'WiFi' })
+    expect(await captureArkmeRecordInputContext(source, 20, {})).toEqual({
+      clientName: '未知电脑（Google Chrome）', networkName: '网络已连接',
+    })
+  })
+
+  it.each([
+    ['senguoyun_5G', true, 'WiFi（senguoyun_5G）'],
+    ['Guest WiFi', true, 'WiFi（Guest WiFi）'],
+    [undefined, true, 'WiFi'], ['', true, 'WiFi'],
+    ['senguoyun_5G', false, '离线'],
+  ] as const)('formats an actual SSID %s without hiding offline state', async (wifiSsid, onLine, expected) => {
+    const context = await captureArkmeRecordInputContext({ onLine }, 20, {
+      arkmeDesktop: { startupAuthGate: true, device: { snapshot: async () => ({ schemaVersion: 1, networkType: 'wifi', wifiSsid }) } },
+    })
+    expect(context.networkName).toBe(expected)
+  })
+
+  it.each(['4g', '3g', '2g', 'slow-2g'])('does not infer mobile transport from speed %s', async effectiveType => {
+    expect((await captureArkmeRecordInputContext({ onLine: true, connection: { effectiveType } })).networkName).toBe('网络已连接')
+  })
+
+  it.each([
+    ['wifi', true, 'WiFi'], ['ethernet', true, '有线网络'], ['cellular', true, '移动网络'],
+    ['vpn', true, 'VPN'], ['wifi', false, '离线'], ['none', true, '离线'],
+  ] as const)('records transport %s with online=%s', async (type, onLine, expected) => {
+    expect((await captureArkmeRecordInputContext({ onLine, connection: { type } })).networkName).toBe(expected)
+  })
+
+  it.each(['unknown', 'reject', 'timeout'])('falls back safely when desktop network is %s', async mode => {
+    const context = await captureArkmeRecordInputContext({ onLine: true }, 5, {
+      arkmeDesktop: { startupAuthGate: true, device: { snapshot: async () => {
+        if (mode === 'reject') throw new Error('unavailable')
+        if (mode === 'timeout') return await new Promise(() => undefined)
+        return { schemaVersion: 1, networkType: 'unknown' }
+      } } },
+    })
+    expect(context).toEqual({ clientName: '未知电脑（Arkme）', networkName: '网络已连接' })
+  })
+
+  it('keeps old desktop clients recognizable and rejects unsupported device schemas', async () => {
+    const source = { userAgent: 'Macintosh Chrome/150 Safari/537', onLine: true }
+    for (const device of [undefined, { snapshot: async () => ({ schemaVersion: 2, computerName: 'wrong', networkType: 'cellular' }) }]) {
+      expect(await captureArkmeRecordInputContext(source, 20, {
+        arkmeDesktop: { startupAuthGate: true, ...(device === undefined ? {} : { device }) },
+      })).toEqual({ clientName: 'macOS（Arkme）', networkName: '网络已连接' })
+    }
+  })
+
+  it('uses the OS as a browser fallback rather than inventing a computer name', async () => {
+    expect((await captureArkmeRecordInputContext({ userAgent: 'Macintosh Chrome/150 Safari/537' }, 20, {})).clientName)
+      .toBe('macOS（Google Chrome）')
   })
 
   it('keeps submit metadata fail-open when the browser battery API stalls', async () => {
@@ -1305,7 +1363,7 @@ describe('shared input support and coarse capture context', () => {
       getBattery: async () => await new Promise(() => undefined),
     }, 5)
     expect(context).toEqual({
-      clientName: 'Firefox（DeepSeek Harness）',
+      clientName: '未知电脑（Firefox）',
       networkName: '离线',
     })
   })

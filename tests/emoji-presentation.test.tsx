@@ -1,5 +1,6 @@
 import { act, create } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
+import { JSDOM } from 'jsdom'
 import { ArkmeRichText } from '../src/client/ArkmeRichText.js'
 import { arkmeLinkMetadataResolver } from '../src/client/link-metadata-client.js'
 
@@ -59,29 +60,32 @@ describe('shared emoji presentation', () => {
     act(() => { renderer.unmount() })
   })
 
-  it('copies the selected fragment as readable text without replacing a selection across blocks', () => {
+  it.each([false, true])('copies emoji from a real selection, excludes read badges (%s), and leaves cross-block selection alone', withReadBadge => {
     let renderer!: ReturnType<typeof create>
     act(() => { renderer = create(<ArkmeRichText text="前[jm_emoji:heart_eyes]后" />) })
-    const fragment = {
-      textContent: '前后',
-      querySelectorAll: () => [{ getAttribute: () => 'heart_eyes', replaceWith: (value: string) => { fragment.textContent = `前${value}后` } }],
-    }
-    const selection = { rangeCount: 1, isCollapsed: false, anchorNode: {}, focusNode: {},
-      getRangeAt: () => ({ cloneContents: () => fragment }) }
-    const contains = vi.fn(() => true)
-    const event = { currentTarget: { ownerDocument: { getSelection: () => selection, createElement: () => ({ append: vi.fn(), innerHTML: '<span>前😍后</span>' }) }, contains },
+    const dom = new JSDOM('<div id="message"></div><p id="outside">另一条消息</p>')
+    const doc = dom.window.document
+    const message = doc.getElementById('message')!
+    message.innerHTML = `<b>前<img data-arkme-rich-emoji="heart_eyes">${withReadBadge ? '<span data-arkme-mention-read>已读</span>' : ''}</b><span>后</span>`
+    const range = doc.createRange()
+    range.selectNodeContents(message)
+    doc.getSelection()!.addRange(range)
+    const event = { currentTarget: message,
       clipboardData: { setData: vi.fn() }, preventDefault: vi.fn() }
     const copy = renderer.root.find(node => node.type === 'span' && node.props.onCopy !== undefined).props.onCopy
     copy(event)
     expect(event.clipboardData.setData).toHaveBeenCalledWith('text/plain', '前😍后')
-    expect(event.clipboardData.setData).toHaveBeenCalledWith('text/html', '<span>前😍后</span>')
+    expect(event.clipboardData.setData).toHaveBeenCalledWith('text/html', '<b>前😍</b><span>后</span>')
     expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(message.querySelectorAll('img[data-arkme-rich-emoji]')).toHaveLength(1)
+    expect(message.querySelectorAll('[data-arkme-mention-read]')).toHaveLength(withReadBadge ? 1 : 0)
     event.clipboardData.setData.mockClear()
     event.preventDefault.mockClear()
-    contains.mockReturnValue(false)
+    range.setEnd(doc.getElementById('outside')!.firstChild!, 2)
     copy(event)
     expect(event.clipboardData.setData).not.toHaveBeenCalled()
     expect(event.preventDefault).not.toHaveBeenCalled()
     act(() => { renderer.unmount() })
+    dom.window.close()
   })
 })

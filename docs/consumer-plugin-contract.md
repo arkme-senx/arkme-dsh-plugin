@@ -2,7 +2,7 @@
 
 `@senguoyun/dsh-arkme` owns authentication, OS credential-store access, SQLite caching, account isolation, remote synchronization, and retry semantics. A generated Consumer plugin owns only presentation and user interaction.
 
-The bundled UI uses only official DSH slots. `sidebar`, `conversation`, and `details` compose the resident Arkme product shell; `settings.section` owns the single `arkme-account` section inside native DSH Settings; `shell.overlay` owns lifecycle dialogs. DSH owns Settings chrome, ordering, and scrolling, while `ArkmeSettingsSurface` owns only Arkme account content and actions. Consumers must not depend on private `sidebar.workspaces.virtual` or `main.surface` extensions.
+The bundled UI uses only official DSH slots. `sidebar`, `conversation`, and `details` compose the resident Arkme product shell. In native DSH Settings, `settings.section` registers `arkme-account` and `arkme-about`; `settings.general.item` adds Arkme notification and background-sound preferences to the original General section. DSH owns Settings chrome, ordering, scrolling and its original model, plugin and preset forms. `ArkmeSettingsSurface` reuses the existing Arkme data and action owners for these three views. `shell.overlay` owns lifecycle dialogs. Consumers must not depend on private `sidebar.workspaces.virtual` or `main.surface` extensions.
 
 ## Browser SDK
 

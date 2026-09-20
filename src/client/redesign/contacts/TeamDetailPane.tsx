@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from '../../locale.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { ArkmeTeamMember, ArkmeTeamMemberPage, ArkmeTeamRole } from '../../../types.js'
@@ -30,6 +31,7 @@ function memberIdentity(member: ArkmeTeamMember): string {
 }
 
 export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; teamRef: string }) {
+  useArkmeLocale()
   const [state, setState] = useState<TeamDetailState>({ status: 'loading' })
   const generationRef = useRef(0)
   const controllerRef = useRef<AbortController>()
@@ -75,12 +77,12 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
   }, [load])
 
   if (state.status === 'loading') {
-    return <div className="arkme-team-detail-status" role="status">正在加载团队成员…</div>
+    return <div className="arkme-team-detail-status" role="status">{tr("正在加载团队成员…")}</div>
   }
   if (state.status === 'error' || state.page === undefined) {
     return <div className="arkme-team-detail-status is-error" role="alert">
       <span>{state.message ?? '团队成员加载失败'}</span>
-      <button type="button" onClick={() => { void load() }}>重试</button>
+      <button type="button" onClick={() => { void load() }}>{tr("重试")}</button>
     </div>
   }
 
@@ -88,7 +90,7 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
   return <section className="arkme-team-detail" data-team-ref={page.team.teamRef}>
     <header className="arkme-team-detail-header">
       <div className="arkme-team-detail-header-main">
-        <span className="arkme-team-detail-glyph" aria-hidden>团</span>
+        <span className="arkme-team-detail-glyph" aria-hidden>{tr("团")}</span>
         <div className="arkme-team-detail-summary">
           <h1>{page.team.name}</h1>
           <div className="arkme-team-detail-meta">
@@ -98,15 +100,15 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
             </span>
           </div>
         </div>
-        <span className="arkme-team-detail-count" aria-label={`${page.totalCount} 位成员`}>
+        <span className="arkme-team-detail-count" aria-label={tr("{v0} 位成员", { v0: page.totalCount })}>
           <strong>{page.totalCount}</strong>
-          <span>位成员</span>
+          <span>{tr("位成员")}</span>
         </span>
       </div>
     </header>
-    <section className="arkme-team-members" aria-label={`${page.team.name}的成员`}>
+    <section className="arkme-team-members" aria-label={tr("{v0}的成员", { v0: page.team.name })}>
       <div className="arkme-team-members-container">
-        <h2>团队成员</h2>
+        <h2>{tr("团队成员")}</h2>
         <div className="arkme-team-member-list" role="list">
           {page.items.map(member => <div className="arkme-team-member-row" role="listitem" key={member.userRef}>
             <span className="arkme-team-member-avatar">
@@ -114,7 +116,7 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
                 {...(member.avatarRef === undefined ? {} : { avatarRef: member.avatarRef })}
                 {...(member.avatarFallback === undefined ? {} : { fallback: member.avatarFallback })}
                 size={40}
-                label={`${member.displayName}的头像`}
+                label={tr("{v0}的头像", { v0: member.displayName })}
               />
             </span>
             <span className="arkme-team-member-copy">
@@ -131,7 +133,7 @@ export function TeamDetailPane({ accountKey, teamRef }: { accountKey: string; te
             className="arkme-team-member-more"
             disabled={state.loadingMore === true}
             onClick={() => { void load(page.nextPageCursor) }}
-          >{state.loadingMore === true ? '加载中…' : '加载更多成员'}</button>}
+          >{state.loadingMore === true ? tr("加载中…") : '加载更多成员'}</button>}
         </div>
       </div>
     </section>

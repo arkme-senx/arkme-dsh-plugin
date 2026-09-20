@@ -4,8 +4,11 @@ import type {
   ArkmeSourceDirectory,
   ArkmeSourceItem,
   ArkmeSourceKind,
+  ArkmeEnvironment,
 } from '../types.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
+import { homeTourDiagnostic } from './home-tour-diagnostics.js'
+import { arkmeTopicDisplayName, isArkmeDSHInputTopic } from '../topic-policy.js'
 
 const POINTER_KEY = 'dsh-arkme:navigation:v1:last-user'
 const CACHE_KEY_PREFIX = 'dsh-arkme:navigation:v1:user:'
@@ -19,6 +22,7 @@ export interface ArkmeNavigationCache {
   selectedSourceRef?: string
   sources: Partial<Record<ArkmeSourceDirectory, ArkmeSourceItem[]>>
   updatedAtMillis: number
+  selfTopics?: { environment: ArkmeEnvironment; complete: boolean; refreshedAtMillis: number }
 }
 
 function storageOrUndefined(storage?: Storage): Storage | undefined {
@@ -79,6 +83,8 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     || typeof item.activeAtMillis !== 'number' || !Number.isFinite(item.activeAtMillis)
     || typeof item.unreadCount !== 'number' || !Number.isFinite(item.unreadCount)) return undefined
   const groupAvatar = groupAvatarPresentation(item.groupAvatar)
+  const topicKind = item.kind === 'topic' && typeof item.topicKind === 'number'
+    && Number.isSafeInteger(item.topicKind) ? item.topicKind : undefined
   return {
     sourceRef: item.sourceRef,
     ...(typeof item.sourceKey === 'string' && item.sourceKey.trim() !== ''
@@ -94,7 +100,8 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
       ? { parentTopicHierarchyKey: item.parentTopicHierarchyKey }
       : {}),
     kind: item.kind,
-    displayName: item.displayName,
+    ...(topicKind === undefined ? {} : { topicKind }),
+    displayName: arkmeTopicDisplayName(item.displayName, topicKind),
     ...(typeof item.avatarRef === 'string' && item.avatarRef !== '' ? { avatarRef: item.avatarRef } : {}),
     ...(Array.isArray(item.avatarRefs)
       ? { avatarRefs: item.avatarRefs.filter(value => typeof value === 'string' && value !== '').slice(0, 5) as string[] }
@@ -130,20 +137,31 @@ function parseCache(raw: string | null, expectedUserId?: number): ArkmeNavigatio
       ? value.sources as Record<string, unknown>
       : {}
     const sources: ArkmeNavigationCache['sources'] = {}
+    const removedRefs = new Set<string>()
     for (const directory of ['root', 'send_to_self'] as const) {
       if (!Array.isArray(rawSources[directory])) continue
       sources[directory] = rawSources[directory]
-        .map(sourceItem).filter((item): item is ArkmeSourceItem => item !== undefined)
+        .map(sourceItem).filter((item): item is ArkmeSourceItem => {
+          if (!item) return false
+          if (directory === 'send_to_self' && isArkmeDSHInputTopic(item)) { removedRefs.add(item.sourceRef); return false }
+          return true
+        })
         .slice(0, MAX_CACHED_SOURCES)
     }
+    const metadata = value.selfTopics as Record<string, unknown> | undefined
+    const selfTopics: ArkmeNavigationCache['selfTopics'] = metadata && (metadata.environment === 'prod' || metadata.environment === 'test')
+      && typeof metadata.complete === 'boolean' && typeof metadata.refreshedAtMillis === 'number' && Number.isFinite(metadata.refreshedAtMillis)
+      ? { environment: metadata.environment, complete: metadata.complete && (rawSources.send_to_self as unknown[] | undefined)?.length === sources.send_to_self?.length,
+        refreshedAtMillis: metadata.refreshedAtMillis } : undefined
     return {
       version: 1,
       userId,
       directory: value.directory,
-      ...(typeof value.selectedSourceRef === 'string' && value.selectedSourceRef !== ''
+      ...(typeof value.selectedSourceRef === 'string' && value.selectedSourceRef !== '' && !removedRefs.has(value.selectedSourceRef)
         ? { selectedSourceRef: value.selectedSourceRef }
         : {}),
       sources,
+      ...(selfTopics === undefined ? {} : { selfTopics }),
       updatedAtMillis: typeof value.updatedAtMillis === 'number' && Number.isFinite(value.updatedAtMillis)
         ? value.updatedAtMillis
         : 0,
@@ -189,7 +207,12 @@ export function reconcileNavigationProviderInstance(instanceId: string, storage?
   const target = storageOrUndefined(storage)
   if (normalized === '' || target === undefined) return false
   try {
-    if (target.getItem(PROVIDER_INSTANCE_KEY) === normalized) return false
+    const previousInstance = target.getItem(PROVIDER_INSTANCE_KEY)
+    homeTourDiagnostic('provider-cache-check', {
+      hadStoredInstance: previousInstance !== null,
+      matches: previousInstance === normalized,
+    })
+    if (previousInstance === normalized) return false
     const staleKeys: string[] = []
     for (let index = 0; index < target.length; index += 1) {
       const key = target.key(index)

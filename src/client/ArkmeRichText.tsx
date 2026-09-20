@@ -1,28 +1,101 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { Fragment, useState, type ClipboardEvent, type CSSProperties } from 'react'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
 import { arkmeEmojiTextRuns } from '../arkme-emoji-text.js'
+import type { ArkmeTimelineMentionTarget } from '../types.js'
 import { ArkmeLinkText, type ArkmeLinkLabelMode, type ArkmeLinkRenderer } from './ArkmeLinkText.js'
 import { arkmeHashTagRanges } from '../hashtag.js'
 import { arkmeUi } from './ui-controller.js'
+import { ArkmeReadReceiptIcon, ARKME_READ_RECEIPT_ICON_SIZE } from './ArkmeReadReceiptIcon.js'
 
 const emojiInlineStyle: CSSProperties = { display: 'inline-block', width: 22, height: 22, objectFit: 'contain', verticalAlign: '-6px' }
 
 export interface ArkmeVisibleTextRun {
   kind: 'text' | 'mention' | 'tag'
   text: string
+  mentionTarget?: ArkmeTimelineMentionTarget
 }
 
-export function arkmeVisibleMentionRuns(text: string, highlightTags = true): ArkmeVisibleTextRun[] {
+const visibleMentionPattern = /@[^\s@,，.。;；:：!！?？、]+/gmu
+const emailLocalPartPattern = /[A-Za-z0-9._%+-]/u
+const asciiEmailPartPattern = /^[A-Za-z0-9._%+-]+$/u
+const asciiDomainPartPattern = /^[A-Za-z0-9-]+$/u
+
+function arkmeLooksLikeEmailAddress(text: string, start: number, end: number): boolean {
+  const previous = start > 0 ? text.charAt(start - 1) : ''
+  const next = end < text.length ? text.charAt(end) : ''
+  if (previous === '' || next !== '.' || !emailLocalPartPattern.test(previous)) return false
+  let localStart = start - 1
+  while (localStart > 0 && emailLocalPartPattern.test(text.charAt(localStart - 1))) localStart -= 1
+  const localPart = text.slice(localStart, start)
+  const domainPart = text.slice(start + 1, end)
+  return asciiEmailPartPattern.test(localPart) && asciiDomainPartPattern.test(domainPart)
+}
+
+function normalizedVisibleMentionTargets(
+  text: string,
+  mentionTargets?: readonly ArkmeTimelineMentionTarget[],
+): ArkmeTimelineMentionTarget[] {
+  const targets = (mentionTargets ?? []).flatMap(target => {
+    const startIndex = Math.trunc(target.startIndex)
+    const length = Math.trunc(target.length)
+    if (startIndex < 0 || length < 2 || startIndex + length > text.length) return []
+    const mentionText = text.slice(startIndex, startIndex + length)
+    if (!mentionText.startsWith('@')) return []
+    return [{ ...target, startIndex, length }]
+  }).sort((left, right) => left.startIndex - right.startIndex)
+  const normalized: ArkmeTimelineMentionTarget[] = []
+  for (const target of targets) {
+    const previous = normalized.at(-1)
+    if (previous !== undefined && previous.startIndex + previous.length > target.startIndex) continue
+    normalized.push(target)
+  }
+  return normalized
+}
+
+function shiftedVisibleMentionTargets(
+  mentionTargets: readonly ArkmeTimelineMentionTarget[] | undefined,
+  offset: number,
+  length: number,
+): ArkmeTimelineMentionTarget[] | undefined {
+  if (mentionTargets === undefined || mentionTargets.length === 0) return undefined
+  const end = offset + length
+  const shifted = mentionTargets.flatMap(target => {
+    const startIndex = Math.trunc(target.startIndex)
+    const targetEnd = startIndex + Math.trunc(target.length)
+    return startIndex >= offset && targetEnd <= end
+      ? [{ ...target, startIndex: startIndex - offset }]
+      : []
+  })
+  return shifted.length === 0 ? undefined : shifted
+}
+
+export function arkmeVisibleMentionRuns(
+  text: string,
+  highlightTags = true,
+  mentionTargets?: readonly ArkmeTimelineMentionTarget[],
+): ArkmeVisibleTextRun[] {
   const runs: ArkmeVisibleTextRun[] = []
-  const pattern = /(^|[\s([{（【])(@[^\s@,，.。;；:：!！?？、)\]}）】]+)/gmu
   let cursor = 0
-  for (const match of text.matchAll(pattern)) {
-    const prefix = match[1] ?? ''
-    const value = match[2] ?? ''
-    const start = match.index + prefix.length
-    if (start > cursor) runs.push({ kind: 'text', text: text.slice(cursor, start) })
-    runs.push({ kind: 'mention', text: value })
-    cursor = start + value.length
+  const explicitMentions = normalizedVisibleMentionTargets(text, mentionTargets)
+  if (explicitMentions.length > 0) {
+    for (const mention of explicitMentions) {
+      const start = mention.startIndex
+      const end = start + mention.length
+      if (start > cursor) runs.push({ kind: 'text', text: text.slice(cursor, start) })
+      runs.push({ kind: 'mention', text: text.slice(start, end), mentionTarget: mention })
+      cursor = end
+    }
+  } else {
+    for (const match of text.matchAll(visibleMentionPattern)) {
+      const value = match[0] ?? ''
+      const start = match.index ?? 0
+      const end = start + value.length
+      if (arkmeLooksLikeEmailAddress(text, start, end)) continue
+      if (start > cursor) runs.push({ kind: 'text', text: text.slice(cursor, start) })
+      runs.push({ kind: 'mention', text: value })
+      cursor = end
+    }
   }
   if (cursor < text.length) runs.push({ kind: 'text', text: text.slice(cursor) })
   const mentionRuns = runs.length === 0 && text !== '' ? [{ kind: 'text' as const, text }] : runs
@@ -41,34 +114,84 @@ export function arkmeVisibleMentionRuns(text: string, highlightTags = true): Ark
 }
 
 const mentionStyle: CSSProperties = { color: 'var(--dsw-alias-state-business-primary, #3964fe)' }
+const clickableMentionStyle: CSSProperties = { ...mentionStyle, cursor: 'pointer' }
 const tagStyle: CSSProperties = { ...mentionStyle, fontWeight: 500 }
 const clickableTagStyle: CSSProperties = { ...tagStyle, cursor: 'pointer' }
+const readMentionStyle: CSSProperties = {
+  position: 'relative', whiteSpace: 'nowrap', paddingRight: ARKME_READ_RECEIPT_ICON_SIZE + 2,
+}
+const mentionReadBadgeStyle: CSSProperties = {
+  position: 'absolute', right: 0, bottom: 0, width: ARKME_READ_RECEIPT_ICON_SIZE,
+  height: ARKME_READ_RECEIPT_ICON_SIZE, lineHeight: 0, userSelect: 'none', pointerEvents: 'none',
+}
 
-export function ArkmeMentionText({ text, interactive = true, highlightTags = true, onTagClick = tagText => { arkmeUi.showTagSearch(tagText) } }: {
+export type ArkmeMentionClickHandler = (mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget) => void
+export type ArkmeMentionClickPredicate = (mentionText: string, mentionTarget?: ArkmeTimelineMentionTarget) => boolean
+
+export function ArkmeMentionText({
+  text,
+  mentionTargets,
+  readMentionMembers,
+  interactive = true,
+  highlightTags = true,
+  onTagClick = tagText => { arkmeUi.showTagSearch(tagText) },
+  onMentionClick,
+  isMentionClickable,
+}: {
   text: string
+  mentionTargets?: readonly ArkmeTimelineMentionTarget[]
+  readMentionMembers?: ReadonlySet<string>
   interactive?: boolean
   highlightTags?: boolean
   onTagClick?: (tagText: string) => void
+  onMentionClick?: ArkmeMentionClickHandler
+  isMentionClickable?: ArkmeMentionClickPredicate
 }) {
-  return <>{arkmeVisibleMentionRuns(text, highlightTags).map((run, index) => run.kind === 'tag' && interactive
-    ? <span
-      key={`${String(index)}:${run.kind}:${run.text}`}
-      role="link"
-      tabIndex={0}
-      style={clickableTagStyle}
-      onClick={event => { event.preventDefault(); event.stopPropagation(); onTagClick(run.text) }}
-      onKeyDown={event => {
-        if (event.key !== 'Enter' && event.key !== ' ') return
-        event.preventDefault(); event.stopPropagation(); onTagClick(run.text)
-      }}
-    >{run.text}</span>
-    : <span
-      key={`${String(index)}:${run.kind}:${run.text}`}
-      style={run.kind === 'mention' ? mentionStyle : run.kind === 'tag' ? tagStyle : undefined}
-    >{run.text}</span>)}</>
+  return <>{arkmeVisibleMentionRuns(text, highlightTags, mentionTargets).map((run, index) => {
+    const canClickMention = run.kind === 'mention' && interactive && onMentionClick !== undefined
+      && (isMentionClickable?.(run.text, run.mentionTarget) ?? true)
+    const mentionClick = canClickMention ? onMentionClick : undefined
+    const memberRef = run.mentionTarget?.kind === 'member' ? run.mentionTarget.memberRef : undefined
+    const readIndicator = interactive && memberRef !== undefined && readMentionMembers?.has(memberRef)
+      ? <span role="img" title={tr("已读")}
+        aria-label={`${run.text} 已读`} data-arkme-mention-read="true"
+        style={mentionReadBadgeStyle}>
+        <ArkmeReadReceiptIcon checked />
+      </span> : null
+    return run.kind === 'tag' && interactive
+      ? <span
+        key={`${String(index)}:${run.kind}:${run.text}`}
+        role="link"
+        tabIndex={0}
+        style={clickableTagStyle}
+        onClick={event => { event.preventDefault(); event.stopPropagation(); onTagClick(run.text) }}
+        onKeyDown={event => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault(); event.stopPropagation(); onTagClick(run.text)
+        }}
+      >{run.text}</span>
+      : mentionClick !== undefined
+        ? <span
+          key={`${String(index)}:${run.kind}:${run.text}`}
+          role="link"
+          tabIndex={0}
+          aria-label={tr("查看 {v0}", { v0: run.text })}
+          style={readIndicator === null ? clickableMentionStyle : { ...clickableMentionStyle, ...readMentionStyle }}
+          onClick={event => { event.preventDefault(); event.stopPropagation(); mentionClick(run.text, run.mentionTarget) }}
+          onKeyDown={event => {
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            event.preventDefault(); event.stopPropagation(); mentionClick(run.text, run.mentionTarget)
+          }}
+        >{run.text}{readIndicator}</span>
+        : <span
+          key={`${String(index)}:${run.kind}:${run.text}`}
+          style={run.kind === 'mention' ? (readIndicator === null ? mentionStyle : { ...mentionStyle, ...readMentionStyle }) : run.kind === 'tag' ? tagStyle : undefined}
+        >{run.text}{readIndicator}</span>
+  })}</>
 }
 
 function ArkmeInlineEmoji({ emoji, size }: { emoji: ArkmeEmoji; size: number | string }) {
+  useArkmeLocale()
   const [failed, setFailed] = useState(false)
   return failed ? <span role="img" aria-label={emoji.label} title={emoji.label}>{emoji.unicode}</span> : <img
     src={emoji.assetUrl}
@@ -83,13 +206,17 @@ function ArkmeInlineEmoji({ emoji, size }: { emoji: ArkmeEmoji; size: number | s
   />
 }
 
-function copyRichText(event: ClipboardEvent<HTMLSpanElement>) {
+export function copyArkmeRichText(event: ClipboardEvent<HTMLElement>) {
   if (event.defaultPrevented) return
   const selection = event.currentTarget.ownerDocument.getSelection()
   if (selection === null || selection.rangeCount !== 1 || selection.isCollapsed
     || !event.currentTarget.contains(selection.anchorNode) || !event.currentTarget.contains(selection.focusNode)) return
   const fragment = selection.getRangeAt(0).cloneContents()
   let converted = false
+  for (const indicator of fragment.querySelectorAll('[data-arkme-mention-read]')) {
+    indicator.remove()
+    converted = true
+  }
   for (const img of fragment.querySelectorAll('img[data-arkme-rich-emoji]')) {
     const emoji = arkmeEmojiById[img.getAttribute('data-arkme-rich-emoji') ?? '']
     if (emoji !== undefined) {
@@ -105,7 +232,20 @@ function copyRichText(event: ClipboardEvent<HTMLSpanElement>) {
   event.preventDefault()
 }
 
-export function ArkmeRichText({ text, presentation = 'body', highlightMentions = false, highlightTags = true, renderLink, emojiSize, linkLabelMode = 'resolved', onTagClick }: {
+export function ArkmeRichText({
+  text,
+  presentation = 'body',
+  highlightMentions = false,
+  highlightTags = true,
+  renderLink,
+  emojiSize,
+  linkLabelMode = 'resolved',
+  mentionTargets,
+  readMentionMembers,
+  onTagClick,
+  onMentionClick,
+  isMentionClickable,
+}: {
   text: string
   presentation?: 'body' | 'preview'
   highlightMentions?: boolean
@@ -113,18 +253,39 @@ export function ArkmeRichText({ text, presentation = 'body', highlightMentions =
   renderLink?: ArkmeLinkRenderer
   emojiSize?: number
   linkLabelMode?: ArkmeLinkLabelMode
+  mentionTargets?: readonly ArkmeTimelineMentionTarget[]
+  readMentionMembers?: ReadonlySet<string>
   onTagClick?: (tagText: string) => void
+  onMentionClick?: ArkmeMentionClickHandler
+  isMentionClickable?: ArkmeMentionClickPredicate
 }) {
-  const renderText = (value: string) => arkmeEmojiTextRuns(value).map((run, index) => run.kind === 'emoji'
-    ? <ArkmeInlineEmoji
-      key={`${String(index)}:emoji:${run.emoji.id}`}
-      emoji={arkmeEmojiById[run.emoji.id]!}
-      size={emojiSize ?? (presentation === 'preview' ? '1.25em' : 22)}
-    />
-    : <Fragment key={`${String(index)}:text`}>{highlightMentions
-      ? <ArkmeMentionText text={run.text} highlightTags={highlightTags} interactive={presentation === 'body'} {...(onTagClick === undefined ? {} : { onTagClick })} />
-      : run.text}</Fragment>)
-  return <span onCopy={copyRichText}><ArkmeLinkText
+  const renderText = (value: string, startIndex = 0) => {
+    let cursor = 0
+    return arkmeEmojiTextRuns(value).map((run, index) => {
+      const runStart = cursor
+      cursor += run.text.length
+      const runMentionTargets = shiftedVisibleMentionTargets(mentionTargets, startIndex + runStart, run.text.length)
+      return run.kind === 'emoji'
+        ? <ArkmeInlineEmoji
+          key={`${String(index)}:emoji:${run.emoji.id}`}
+          emoji={arkmeEmojiById[run.emoji.id]!}
+          size={emojiSize ?? (presentation === 'preview' ? '1.25em' : 22)}
+        />
+        : <Fragment key={`${String(index)}:text`}>{highlightMentions
+          ? <ArkmeMentionText
+            text={run.text}
+            {...(runMentionTargets === undefined ? {} : { mentionTargets: runMentionTargets })}
+            {...(readMentionMembers === undefined ? {} : { readMentionMembers })}
+            highlightTags={highlightTags}
+            interactive={presentation === 'body'}
+            {...(onTagClick === undefined ? {} : { onTagClick })}
+            {...(onMentionClick === undefined ? {} : { onMentionClick })}
+            {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
+          />
+          : run.text}</Fragment>
+    })
+  }
+  return <span onCopy={copyArkmeRichText}><ArkmeLinkText
     text={text}
     linkLabelMode={linkLabelMode}
     renderText={renderText}

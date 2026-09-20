@@ -7,6 +7,7 @@ import type { ArkmeRecordingSpeakerOption } from '../src/types.js'
 
 function option(input: Partial<ArkmeRecordingSpeakerOption> & Pick<ArkmeRecordingSpeakerOption, 'speakerRef' | 'label' | 'kind'>): ArkmeRecordingSpeakerOption {
   return {
+    optionKey: `key-${input.speakerRef}`,
     currentAssignment: false,
     isCurrentUser: false,
     recommended: false,

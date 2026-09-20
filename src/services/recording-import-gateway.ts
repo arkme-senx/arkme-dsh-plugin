@@ -6,6 +6,7 @@ import {
   type RecordingImportOwnerSession,
   type RecordingImportOwnerTaskSnapshot,
   type RecordingImportOwnerGateway,
+  type RecordingDirectoryUploadedSession,
 } from '../recording-import-contract.js'
 import type {
   PublicRecordingImportProgress,
@@ -57,6 +58,7 @@ const AUDIO_SESSION_RECOVERY_LIMIT = 500
 const AUDIO_IMPORT_DUPLICATE_BATCH_SIZE = 100
 const AUDIO_IMPORT_PROGRESS_BATCH_SIZE = 100
 const AUDIO_IMPORT_OWNER_PAGE_SIZE = 100
+const AUDIO_DIRECTORY_IMPORT_SCAN_LIMIT = 10_000
 
 const IMPORT_PROGRESS_CODES = new Set<RecordingImportProgressCode>([
   'upload',
@@ -209,16 +211,99 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
   }): Promise<string[]> {
     const existing: string[] = []
     for (let offset = 0; offset < input.fileNames.length; offset += AUDIO_IMPORT_DUPLICATE_BATCH_SIZE) {
-      const data = await this.authenticatedOwnerPost<Record<string, unknown>>(
+      const batch = input.fileNames.slice(offset, offset + AUDIO_IMPORT_DUPLICATE_BATCH_SIZE)
+      const requestedNames = new Set(batch.map(recordingImportFileNameKey))
+      const data = await this.authenticatedOwnerPost<unknown>(
         input.viewerUserId,
         '/api/v1/audio/check-exist-same-orig',
-        { orig_names: input.fileNames.slice(offset, offset + AUDIO_IMPORT_DUPLICATE_BATCH_SIZE) },
+        { orig_names: batch },
         input.signal,
       )
-      if (!Array.isArray(data.exist_names)) continue
-      existing.push(...data.exist_names.map(stringValue).map(value => value.trim()).filter(Boolean))
+      const names = objectValue(data).exist_names
+      if (!Array.isArray(names) || names.some(value => typeof value !== 'string'
+        || value.trim() === '' || !requestedNames.has(recordingImportFileNameKey(value)))) {
+        throw new RecordingImportContractError(
+          'recording-import-duplicate-response-invalid', 'Audio 同名录音核对结果无效，请稍后重试', true,
+        )
+      }
+      existing.push(...names.map(value => value.trim()))
     }
     return existing
+  }
+
+  async findDirectoryImportSessions(input: {
+    viewerUserId: number
+    fileNames: readonly string[]
+    fromMillis: number
+    toMillis: number
+    signal?: AbortSignal
+  }): Promise<RecordingDirectoryUploadedSession[]> {
+    const names = new Set(input.fileNames.map(recordingImportFileNameKey).filter(Boolean))
+    if (names.size === 0) return []
+    const matches: RecordingDirectoryUploadedSession[] = []
+    const seenSessionIds = new Set<string>()
+    let offset = 0
+    let previousStartAtMillis = input.toMillis
+    while (offset < AUDIO_DIRECTORY_IMPORT_SCAN_LIMIT) {
+      const data = await this.authenticatedOwnerPost<unknown>(
+        input.viewerUserId,
+        '/api/v1/audio/get-session-ls',
+        { to_stamp: input.toMillis, limit: AUDIO_IMPORT_OWNER_PAGE_SIZE, offset, query_new: false },
+        input.signal,
+      )
+      const rawSessions = objectValue(data).session_ls
+      if (!Array.isArray(rawSessions) || rawSessions.length > AUDIO_IMPORT_OWNER_PAGE_SIZE) {
+        throw new RecordingImportContractError(
+          'recording-import-directory-response-invalid', 'Audio 录音核对列表无效，请稍后重试', true,
+        )
+      }
+      let reachedOlderSession = false
+      let newSessionCount = 0
+      for (const raw of rawSessions) {
+        const row = objectValue(raw)
+        const sessionId = stringValue(row.id).trim()
+        const startAtMillis = optionalIntegerValue(row.start_at)
+        if (sessionId === '' || startAtMillis === undefined || startAtMillis < 0
+          || startAtMillis >= input.toMillis || startAtMillis > previousStartAtMillis) {
+          throw new RecordingImportContractError(
+            'recording-import-directory-response-invalid', 'Audio 录音核对列表无效，请稍后重试', true,
+          )
+        }
+        previousStartAtMillis = startAtMillis
+        const alreadySeen = seenSessionIds.has(sessionId)
+        seenSessionIds.add(sessionId)
+        if (!alreadySeen) newSessionCount += 1
+        // Audio's unscoped list is ordered by start_at descending with an exclusive to_stamp.
+        if (startAtMillis < input.fromMillis) {
+          reachedOlderSession = true
+          continue
+        }
+        if (!names.has(recordingImportFileNameKey(stringValue(row.orig_name)))
+          || optionalIntegerValue(row.source) !== 2) continue
+        const session = ownerSession(row, input.viewerUserId)
+        const belongUserId = optionalIntegerValue(row.belong_usr)
+        if (session === undefined || belongUserId === undefined || belongUserId < 0) {
+          throw new RecordingImportContractError(
+            'recording-import-session-invalid', 'Audio 会话数据无效，无法完成目录录音核对', true,
+          )
+        }
+        if (!alreadySeen) matches.push({
+          sessionId: session.sessionId, fileName: session.fileName, fileSize: session.fileSize,
+          startAtMillis: session.startAtMillis, durationMillis: session.durationMillis,
+          belongUserId, hasFinishedUpload: session.hasFinishedUpload,
+        })
+      }
+      if (rawSessions.length > 0 && newSessionCount === 0) {
+        throw new RecordingImportContractError(
+          'recording-import-directory-scan-stalled', 'Audio 录音核对分页未推进，请稍后重试', true,
+        )
+      }
+      if (reachedOlderSession || rawSessions.length < AUDIO_IMPORT_OWNER_PAGE_SIZE) return matches
+      offset += rawSessions.length
+    }
+    throw new RecordingImportContractError(
+      'recording-import-directory-scan-limit', '录音核对范围过大，请缩小目录范围后重试', true,
+    )
   }
 
   async listOwnerTasks(input: {
@@ -421,20 +506,14 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     const recovered = await this.recoverSession(job, signal)
     if (recovered !== undefined) return recovered.sessionId
 
-    let session = await this.requireJobSession(job)
-    const duplicate = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-      '/api/v1/audio/check-exist-same-orig',
-      { orig_names: [job.fileName] },
-      session,
-      signal,
-    )
-    const fileNameKey = recordingImportFileNameKey(job.fileName)
-    if ((Array.isArray(duplicate.exist_names) ? duplicate.exist_names : [])
-      .some(value => recordingImportFileNameKey(stringValue(value)) === fileNameKey)) {
+    const existingNames = await this.findExistingFileNames({
+      viewerUserId: job.userId, fileNames: [job.fileName], ...(signal === undefined ? {} : { signal }),
+    })
+    if (existingNames.length > 0) {
       throw new RecordingImportContractError('recording-import-duplicate', '已存在同名录音，请更名后重试')
     }
     const timezoneOffsetMillis = -new Date(job.startAtMillis).getTimezoneOffset() * 60_000
-    session = await this.requireJobSession(job)
+    const session = await this.requireJobSession(job)
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/audio/new-session',
       {
@@ -658,7 +737,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
       return result
     }
 
-    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+    const data = await this.runtime.authenticatedAudioPost<unknown>(
       '/api/v1/audio/get-session-ls',
       {
         to_stamp: job.startAtMillis + 1,
@@ -669,7 +748,20 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
       session,
       signal,
     )
-    const candidates = (Array.isArray(data.session_ls) ? data.session_ls : []).map(objectValue)
+    const rawSessions = objectValue(data).session_ls
+    if (!Array.isArray(rawSessions) || rawSessions.length > AUDIO_SESSION_RECOVERY_LIMIT) {
+      throw new RecordingImportContractError(
+        'recording-import-session-recovery-invalid', 'Audio 会话恢复列表无效，请稍后重试', true,
+      )
+    }
+    const candidates = rawSessions.map(objectValue)
+    if (candidates.some(item => stringValue(item.id).trim() === ''
+      || optionalIntegerValue(item.start_at) === undefined || numberValue(item.start_at) < 0
+      || numberValue(item.start_at) > job.startAtMillis)) {
+      throw new RecordingImportContractError(
+        'recording-import-session-recovery-invalid', 'Audio 会话恢复列表无效，请稍后重试', true,
+      )
+    }
     const reachedOlderSession = candidates.some(item => numberValue(item.start_at) < job.startAtMillis)
     if (candidates.length >= AUDIO_SESSION_RECOVERY_LIMIT && !reachedOlderSession) {
       throw new RecordingImportContractError(

@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from '../../locale.js'
 import { useEffect, useState } from 'react'
 import type { ArkmeUnmarkedSpeakerOptions } from '../../../types.js'
 import { UnmarkedSpeakerLinearIcon } from './UnmarkedSpeakerVisuals.js'
@@ -31,6 +32,7 @@ export function SpeakerChoicePanel({
   onReload,
   onSubmit,
 }: SpeakerChoicePanelProps) {
+  useArkmeLocale()
   const [mode, setMode] = useState<ChoiceMode>('none')
   const [speakerRef, setSpeakerRef] = useState('')
   const [newName, setNewName] = useState('')
@@ -60,19 +62,19 @@ export function SpeakerChoicePanel({
     ? speakerRef !== ''
     : mode === 'new' && normalizedName !== '' && normalizedName.length <= 100)
   const controlsDisabled = busy || recovering
-  return <section className="arkme-unmarked-speaker-choice" aria-label="标记为说话人">
+  return <section className="arkme-unmarked-speaker-choice" aria-label={tr("标记为说话人")}>
     <header className="arkme-unmarked-speaker-subview-header">
-      <button type="button" onClick={onBack}>返回候选摘要</button>
+      <button type="button" onClick={onBack}>{tr("返回候选摘要")}</button>
       <span className="arkme-unmarked-speaker-action-icon"><UnmarkedSpeakerLinearIcon kind="profile" /></span>
       <div className="arkme-unmarked-speaker-subview-heading">
-        <h2>标记为说话人</h2>
-        <p>选择已有说话人，或创建一个新身份</p>
+        <h2>{tr("标记为说话人")}</h2>
+        <p>{tr("选择已有说话人，或创建一个新身份")}</p>
       </div>
     </header>
-    {options !== undefined && <p className="arkme-unmarked-speaker-choice-meta">出现 {options.appearanceDays} 天 · 相关片段 {options.segmentCount} 个</p>}
-    {loading && options === undefined && <div role="status">正在加载说话人选项…</div>}
+    {options !== undefined && <p className="arkme-unmarked-speaker-choice-meta">{tr("出现")} {options.appearanceDays} {tr("天 · 相关片段")} {options.segmentCount} {tr("个")}</p>}
+    {loading && options === undefined && <div role="status">{tr("正在加载说话人选项…")}</div>}
     <fieldset className="arkme-unmarked-speaker-choice-options" disabled={controlsDisabled}>
-      <legend>选择说话人</legend>
+      <legend>{tr("选择说话人")}</legend>
       {options?.speakerChoices.map(choice => <label className="arkme-unmarked-speaker-choice-option" key={choice.speakerRef}>
         <input
           type="radio"
@@ -86,7 +88,7 @@ export function SpeakerChoicePanel({
             setSelectionVersion(options.candidateVersion)
           }}
         />
-        <span>{choice.displayName}</span>{choice.source === 'recommended' && <span className="arkme-unmarked-speaker-recommended">推荐</span>}
+        <span>{choice.displayName}</span>{choice.source === 'recommended' && <span className="arkme-unmarked-speaker-recommended">{tr("推荐")}</span>}
       </label>)}
       <label className="arkme-unmarked-speaker-choice-option">
         <input
@@ -101,21 +103,21 @@ export function SpeakerChoicePanel({
             setSelectionVersion(options?.candidateVersion ?? '')
           }}
         />
-        <span>新建说话人</span>
+        <span>{tr("新建说话人")}</span>
       </label>
     </fieldset>
     {mode === 'new' && <input
       type="text"
       className="arkme-unmarked-speaker-choice-new-name"
-      aria-label="新说话人名称"
-      placeholder="请输入说话人名称"
+      aria-label={tr("新说话人名称")}
+      placeholder={tr("请输入说话人名称")}
       value={newName}
       maxLength={100}
       disabled={controlsDisabled}
       onChange={event => { setNewName(event.currentTarget.value.slice(0, 100)) }}
     />}
     {error !== undefined && <div role="alert">{error}</div>}
-    {options === undefined && !loading && !recovering && <button type="button" onClick={onReload}>重新加载选项</button>}
+    {options === undefined && !loading && !recovering && <button type="button" onClick={onReload}>{tr("重新加载选项")}</button>}
     <button
       type="button"
       className="arkme-unmarked-speaker-confirm"

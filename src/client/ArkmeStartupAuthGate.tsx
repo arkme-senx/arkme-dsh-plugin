@@ -10,7 +10,10 @@ import {
 
 declare global {
   interface Window {
-    readonly arkmeDesktop?: Readonly<{ startupAuthGate?: boolean }>
+    readonly arkmeDesktop?: Readonly<{
+      startupAuthGate?: boolean
+      notifyHarnessReady?: () => void
+    }>
   }
 }
 

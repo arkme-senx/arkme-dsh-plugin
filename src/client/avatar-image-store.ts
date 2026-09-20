@@ -10,7 +10,7 @@ export interface ArkmeAvatarImagePort {
   current(imageRef: string): string | undefined
   load(imageRef: string): Promise<string>
   subscribe(imageRef: string, listener: ArkmeAvatarImageListener): () => void
-  revalidateActive(): Promise<void>
+  revalidateActive(imageRefs?: readonly string[]): Promise<void>
 }
 
 interface AvatarImageEntry {
@@ -38,6 +38,8 @@ interface InMemoryArkmeAvatarImageStoreOptions {
 const DEFAULT_TTL_MILLIS = 10 * 60 * 1000
 const DEFAULT_JITTER_MILLIS = 2 * 60 * 1000
 const DEFAULT_CONCURRENCY = 6
+const MAX_RETAINED_AVATARS = 256
+const MAX_QUEUED_AVATARS = 512
 const AVATAR_IMAGE_SCOPE_CHANGED = 'Avatar image scope changed'
 
 export class InMemoryArkmeAvatarImageStore implements ArkmeAvatarImagePort {
@@ -92,12 +94,13 @@ export class InMemoryArkmeAvatarImageStore implements ArkmeAvatarImagePort {
     return () => {
       listeners?.delete(listener)
       if (listeners?.size === 0) this.listeners.delete(imageRef)
+      this.pruneCache()
     }
   }
 
-  async revalidateActive(): Promise<void> {
+  async revalidateActive(imageRefs?: readonly string[]): Promise<void> {
     const activeRefs = [...this.listeners.entries()]
-      .filter(([, listeners]) => listeners.size > 0)
+      .filter(([imageRef, listeners]) => listeners.size > 0 && (imageRefs === undefined || imageRefs.includes(imageRef)))
       .map(([imageRef]) => imageRef)
     await Promise.allSettled(activeRefs.map(async imageRef => await this.loadInternal(imageRef, true)))
   }
@@ -124,7 +127,9 @@ export class InMemoryArkmeAvatarImageStore implements ArkmeAvatarImagePort {
         entry.value = value
         entry.expiresAtMillis = this.now() + this.ttlMillis + Math.max(0, this.jitterMillis())
         entry.pending = undefined
+        this.entries.delete(imageRef)
         this.entries.set(imageRef, entry)
+        this.pruneCache()
         if (previousValue !== value) this.notify(imageRef, value)
         return value
       })
@@ -148,8 +153,16 @@ export class InMemoryArkmeAvatarImageStore implements ArkmeAvatarImagePort {
     return pending
   }
 
+  private pruneCache(): void {
+    for (const [ref, entry] of this.entries) {
+      if (this.entries.size <= MAX_RETAINED_AVATARS) break
+      if (entry.pending === undefined && !this.listeners.has(ref)) this.entries.delete(ref)
+    }
+  }
+
   private schedule<T>(load: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
+      if (this.queue.length >= MAX_QUEUED_AVATARS) { reject(new Error('Avatar loading queue is full')); return }
       this.queue.push(() => {
         void load().then(resolve, reject).finally(() => {
           this.activeDownloads -= 1

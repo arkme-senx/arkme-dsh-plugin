@@ -4,8 +4,11 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeGlobalSearchDialog, ArkmeSearchSurface, RecordRow } from '../src/client/ArkmeSearchSurface.js'
 import type { ArkmeSearchRecordItem } from '../src/types.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 
-const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
+const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), hasDsh: vi.fn() }))
+
+vi.mock('../src/client/DeepSeekHarnessSurface.js', () => ({ hasEmbeddedDshSession: mocks.hasDsh }))
 
 vi.mock('../src/client/api.js', () => ({
   callArkme: mocks.callArkme,
@@ -46,7 +49,9 @@ beforeEach(() => {
     clearTimeout: (timer: ReturnType<typeof setTimeout>) => clearTimeout(timer),
   })
   mocks.callArkme.mockReset()
+  mocks.hasDsh.mockReset()
   mocks.callArkme.mockImplementation(async (operation: string) => {
+    if (operation === 'search.conversations') return { items: [], hasMore: false }
     if (operation === 'search.history') return { items: [], hasMore: false }
     if (operation === 'search.records') return arkmeResults()
     if (operation === 'search.recordings') return { items: [{ sessionId: 'recording-1', dateStamp: 1, startAtMillis: 2, snippet: '发布会录音转写', score: 1 }], hasMore: false, queryGuard: { state: 'ok' } }
@@ -61,7 +66,184 @@ afterEach(() => {
 })
 
 describe('Arkme search surface', () => {
-  it('starts with quick-note search and exposes image, AI video, and voice quick entries', () => {
+  it('finds a name on a later directory page and opens it without requiring a content hit', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    const target = { sourceRef: 'private-ref', kind: 'private_chat', displayName: '周鹏', privateNickname: '狗才', activeAtMillis: 1, unreadCount: 0 }
+    const selected = vi.spyOn(arkmeUi, 'selectSource').mockImplementation(() => {})
+    const onClose = vi.fn()
+    mocks.callArkme.mockImplementation(async (op, params, signal) => {
+      if (op === 'search.conversations') return params.cursor ? { items: [{ sourceKind: 3, sourceUid: 'private-zhou', title: '周鹏', nickname: '狗才', targetSource: target }], hasMore: false }
+        : { items: [], hasMore: true, nextCursor: 'next' }
+      if (op === 'search.records') return { ...arkmeResults(), items: [], sourceAggregates: [] }
+      return original(op, params, signal)
+    })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeSearchSurface onClose={onClose} />) })
+      act(() => {
+        renderer.root.findByProps({ 'aria-label': '搜索' }).props.onChange({ target: { value: '狗才' } })
+      })
+      act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === '主题')!.props.onClick() })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      const row = renderer.root.findByProps({ title: '单击查看关联快记，双击打开会话' })
+      expect(content(row.props.children)).toContain('周鹏昵称：狗才名称匹配 · 私聊')
+      expect(content(row.props.children)).not.toContain('0条')
+      expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'search.conversations').map(([, params]) => params)).toEqual([{ query: '狗才' }, { query: '狗才', cursor: 'next' }])
+      await act(async () => { await row.props.onClick() })
+      expect(content(renderer.toJSON())).toContain('已匹配会话名称，没有匹配的消息内容')
+      await act(async () => { renderer.root.findAllByType('button').find(button => content(button.props.children) === '打开会话')!.props.onClick() })
+      expect(selected).toHaveBeenCalledExactlyOnceWith(target)
+      expect(onClose).toHaveBeenCalledOnce()
+    } finally { act(() => { renderer?.unmount() }); selected.mockRestore() }
+  })
+
+  it('deduplicates name and content matches and prioritizes the remark without changing the count', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    const target = { ...arkmeResults().items[0]!.targetSource, kind: 'private_chat', displayName: '周鹏', privateNickname: '狗才' }
+    mocks.callArkme.mockImplementation(async (op, params, signal) => {
+      if (op === 'search.conversations') return { items: [{ sourceKind: 3, sourceUid: 'source-1', title: '周鹏', targetSource: target }], hasMore: false }
+      if (op === 'search.records') return { ...arkmeResults(), sourceAggregates: [
+        { ...arkmeResults().sourceAggregates[0], sourceKind: 3, sourceUid: 'another', title: '其他会话' },
+        { ...arkmeResults().sourceAggregates[0], sourceKind: 3, title: '狗才', matchedRecordCount: 23, matchedRecordCountExact: true },
+      ] }
+      return original(op, params, signal)
+    })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeSearchSurface initialQuery="周鹏" />) })
+      act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === '主题')!.props.onClick() })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      const rows = renderer.root.findAllByProps({ title: '单击查看关联快记，双击打开会话' })
+      expect(rows).toHaveLength(2)
+      expect(content(rows[0]!.props.children)).toBe('周鹏昵称：狗才23条关联快记')
+    } finally { act(() => { renderer?.unmount() }) }
+  })
+
+  it('isolates a scoped error from the source list and clears it after successful retry', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let fail = true
+    mocks.callArkme.mockImplementation(async (op, params, signal) => {
+      if (op === 'search.records' && params?.sourceUid && fail) throw new Error('临时失败')
+      return original(op, params, signal)
+    })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeSearchSurface initialQuery="发布会" />) })
+      act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === '主题')!.props.onClick() })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      await act(async () => { renderer.root.findByProps({ title: '单击查看关联快记，双击打开会话' }).props.onClick() })
+      expect(content(renderer.root.findByProps({ role: 'alert' }).props.children)).toContain('该会话查询失败：临时失败')
+      expect(content(renderer.toJSON())).not.toContain('主题暂不可用')
+      expect(content(renderer.toJSON())).not.toContain('内容查找暂不可用')
+      fail = false
+      await act(async () => { renderer.root.findAllByType('button').find(button => content(button.props.children) === '重试')!.props.onClick() })
+      expect(content(renderer.toJSON())).not.toContain('临时失败')
+      expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+      expect(content(renderer.toJSON())).toContain('Arkme 中的发布会记录')
+    } finally { act(() => { renderer?.unmount() }) }
+  })
+
+  it('keeps content results when name search fails, with an independent retry', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let fail = true
+    mocks.callArkme.mockImplementation(async (op, params, signal) => {
+      if (op === 'search.conversations' && fail) throw new Error('网络暂不可用')
+      return original(op, params, signal)
+    })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeSearchSurface initialQuery="发布会" />) })
+      act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === '主题')!.props.onClick() })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      expect(content(renderer.toJSON())).toContain('会话名称查找未完成')
+      expect(content(renderer.toJSON())).toContain('发布会项目群')
+      fail = false
+      act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === '重试名称查找')!.props.onClick() })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      expect(content(renderer.toJSON())).not.toContain('网络暂不可用')
+      expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'search.records')).toHaveLength(1)
+    } finally { act(() => { renderer?.unmount() }) }
+  })
+  it.each(['快记', '主题', '录音·转写'])('never shows an empty result during the debounce window: %s', async tab => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let finish!: () => void
+    const pending = new Promise<void>(resolve => { finish = resolve })
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'search.records' || operation === 'search.recordings') {
+        await pending
+        return { items: [], sourceAggregates: [], hasMore: false, queryGuard: { state: 'ok' } }
+      }
+      return original(operation, params, signal)
+    })
+    const initial = renderToStaticMarkup(<ArkmeSearchSurface initialQuery="武汉" />)
+    expect(initial).toContain('搜索中')
+    expect(initial).not.toContain('暂无相关内容')
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeSearchSurface />) })
+      act(() => {
+        renderer.root.findByProps({ 'aria-label': '搜索' }).props.onChange({ target: { value: '武汉' } })
+      })
+      act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === tab)!.props.onClick() })
+      expect(content(renderer.toJSON())).toContain('搜索中')
+      expect(content(renderer.toJSON())).not.toContain('暂无相关内容')
+      await act(async () => { await vi.advanceTimersByTimeAsync(299) })
+      expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'search.records')).toBe(false)
+      expect(content(renderer.toJSON())).not.toContain('暂无相关内容')
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(content(renderer.toJSON())).toContain('搜索中')
+      await act(async () => { finish(); await pending })
+      expect(content(renderer.toJSON())).toContain('暂无相关内容')
+      act(() => { renderer.root.findByProps({ 'aria-label': '搜索' }).props.onChange({ target: { value: '北京' } }) })
+      expect(content(renderer.toJSON())).toContain('搜索中')
+      expect(content(renderer.toJSON())).not.toContain('暂无相关内容')
+    } finally { act(() => { renderer?.unmount() }) }
+  })
+
+  it.each(['double-click', 'Enter', 'uncached', 'unavailable'] as const)('opens the matching source from topic results: %s', async mode => {
+    const target = arkmeResults().items[0]!.targetSource
+    const selectSource = vi.spyOn(arkmeUi, 'selectSource').mockImplementation(() => {})
+    const onClose = vi.fn()
+    mocks.callArkme.mockImplementation(async (operation: string, params?: { sourceUid?: string }) => {
+      if (operation === 'search.records') return {
+        ...arkmeResults(),
+        items: mode === 'unavailable' || (mode === 'uncached' && params?.sourceUid === undefined) ? [] : arkmeResults().items,
+        sourceAggregates: [{ ...arkmeResults().sourceAggregates[0]!, sourceKind: 3 }],
+      }
+      if (operation === 'search.history' || operation === 'search.recordings') return { items: [], hasMore: false }
+      if (operation === 'search.history.create') return { created: true }
+      throw new Error(`unexpected Arkme call: ${operation}`)
+    })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => { renderer = create(<ArkmeSearchSurface initialQuery="发布会" onClose={onClose} />) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === '主题')!.props.onClick() })
+      const row = () => renderer.root.findByProps({ title: '单击查看关联快记，双击打开会话' })
+      if (mode === 'double-click') {
+        await act(async () => { row().props.onClick(); row().props.onClick() })
+        expect(selectSource).not.toHaveBeenCalled()
+        expect(onClose).not.toHaveBeenCalled()
+      }
+      await act(async () => {
+        if (mode === 'Enter') row().props.onKeyDown({ key: 'Enter', preventDefault: vi.fn() })
+        else row().props.onDoubleClick()
+      })
+      if (mode === 'unavailable') {
+        expect(selectSource).not.toHaveBeenCalled()
+        expect(onClose).not.toHaveBeenCalled()
+        expect(content(renderer.toJSON())).toContain('暂时无法打开该会话，请重试')
+      } else {
+        expect(selectSource).toHaveBeenCalledExactlyOnceWith(target)
+        expect(onClose).toHaveBeenCalledOnce()
+      }
+    } finally {
+      act(() => { renderer?.unmount() })
+      selectSource.mockRestore()
+    }
+  })
+
+  it('starts with quick-note search and exposes image, voice, file, and long-article quick entries', () => {
     const markup = renderToStaticMarkup(<ArkmeSearchSurface />)
 
     expect(markup).toContain('placeholder="搜索对话、快记或消息"')
@@ -69,24 +251,26 @@ describe('Arkme search surface', () => {
     expect(markup).toContain('fill="#a3a7af"')
     expect(markup).not.toContain('>搜索</button>')
     expect(markup).toContain('/arkme-self/api/call/gallery-linear.svg')
-    expect(markup).toContain('/arkme-self/api/call/arkme-video-linear.svg')
+    expect(markup).not.toContain('/arkme-self/api/call/arkme-video-linear.svg')
     expect(markup).toContain('>图片</span>')
-    expect(markup).toContain('AI 视频')
+    expect(markup).not.toContain('AI 视频')
     expect(markup).toContain('>语音</span>')
     expect(markup).toContain('>文件</span>')
-    for (const label of ['图片/视频', '录音', '外部链接', '长文']) expect(markup).not.toContain(label)
+    expect(markup).toContain('>长文</span>')
+    expect(markup).toContain('>外部链接</span>')
+    for (const label of ['图片/视频', '录音']) expect(markup).not.toContain(label)
   })
 
-  it('keeps the search results and AI video entry in the desktop document flow', async () => {
+  it('keeps search results in the desktop document flow without AI video', async () => {
     const source = await readFile(new URL('../src/client/ArkmeSearchSurface.tsx', import.meta.url), 'utf8')
     const mediaRouteSource = await readFile(new URL('../src/rich-media-routes.ts', import.meta.url), 'utf8')
 
     expect(source).not.toContain("height: 'min(600px, calc(100vh - 96px))'")
     expect(source).not.toContain("width: 'min(470px, 100%)'")
     expect(source).toContain("gridTemplateColumns: 'repeat(5, minmax(0, 1fr))'")
-    expect(source).toContain("{ key: 'image', label: '图片', tabLabel: '图片库' }")
-    expect(source).toContain("{ key: 'ai_video', label: 'AI 视频', tabLabel: 'AI 视频' }")
-    expect(source).toContain("{ key: 'audio', label: '语音', tabLabel: '语音' }")
+    expect(source).toContain("{ key: 'image', get label() { return tr(\"图片\") }, get tabLabel() { return tr('图片库') } }")
+    expect(source).not.toContain("{ key: 'ai_video', label: 'AI 视频', tabLabel: 'AI 视频' }")
+    expect(source).toContain("{ key: 'audio', get label() { return tr(\"语音\") }, get tabLabel() { return tr(\"语音\") } }")
     expect(source).toContain('if (!active) void loadQuick(entry.key)')
     expect(source).toContain("controller.signal.aborted ? '加载超时，请重试'")
     expect(source).toContain('if (items.length === 0) return <><Status')
@@ -112,7 +296,7 @@ describe('Arkme search surface', () => {
     expect(markup).toContain('backdrop-filter:blur(3px)')
     expect(markup).not.toContain('blur(12px)')
     expect(markup).toContain('>图片</span>')
-    expect(markup).toContain('AI 视频')
+    expect(markup).not.toContain('AI 视频')
     expect(markup).toContain('>语音</span>')
   })
 
@@ -177,6 +361,30 @@ describe('Arkme search surface', () => {
     act(() => { renderer.unmount() })
   })
 
+  it.each(['page', 'dialog'] as const)('keeps remaining quick entries usable without AI video in %s', async variant => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'search.history') return { items: [], hasMore: false }
+      if (operation === 'images.list') return { items: [], hasMore: false }
+      if (operation === 'search.scene' || operation === 'files.search') return { items: [], hasMore: false }
+      throw new Error(`unexpected Arkme call: ${operation}`)
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeSearchSurface variant={variant} />) })
+    for (const label of ['图片', '语音', '外部链接', '文件', '长文']) {
+      const entry = renderer.root.findAllByType('button').find(button => content(button.props.children) === label)
+      expect(entry).toBeDefined()
+      await act(async () => { entry!.props.onClick(); await vi.advanceTimersByTimeAsync(1) })
+      expect(content(renderer.toJSON())).not.toContain('AI 视频')
+      expect(renderer.root.findAllByType('header').flatMap(header => header.findAllByType('button')).map(button => content(button.props.children))).toEqual(['', '图片库', '语音', '外部链接', '文件', '长文'])
+      await act(async () => { renderer.root.findByProps({ 'aria-label': '返回搜索' }).props.onClick() })
+      expect(renderer.root.findByProps({ 'aria-label': '搜索' }).props.value).toBe('')
+    }
+    expect(mocks.callArkme.mock.calls.map(([operation]) => operation)).toEqual(['search.history', 'images.list', 'search.scene', 'search.scene', 'files.search', 'search.scene'])
+    expect(mocks.callArkme).toHaveBeenCalledWith('search.scene', { scene: 'link', limit: 30 }, expect.any(AbortSignal))
+    expect(mocks.callArkme).toHaveBeenCalledWith('search.scene', { scene: 'long_article', limit: 30 }, expect.any(AbortSignal))
+    act(() => { renderer.unmount() })
+  })
+
   it('keeps quick-category responses when switching from the unified search view', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'search.history') return { items: [], hasMore: false }
@@ -187,14 +395,6 @@ describe('Arkme search surface', () => {
         }],
         hasMore: false,
         queryGuard: { state: 'ok' },
-      }
-      if (operation === 'ai-video.list') return {
-        items: [{
-          jobId: 'video-1', sessionId: 'session-1', status: 'succeeded', stage: 'succeeded', progress: 100,
-          selectedSegmentCount: 1, title: '周会视频', sourceStartedAtMillis: 1, createdAtMillis: 1,
-          updatedAtMillis: 1, retryable: false,
-        }],
-        hasMore: false,
       }
       if (operation === 'search.scene') return {
         ...arkmeResults(),
@@ -215,10 +415,16 @@ describe('Arkme search surface', () => {
     const imageEntry = renderer.root.findAllByType('button').find(button => content(button.props.children) === '图片')
     await act(async () => { imageEntry?.props.onClick(); await Promise.resolve() })
     expect(renderer.root.findAllByProps({ alt: '产品截图.png' })).toHaveLength(1)
+    await act(async () => { renderer.root.findByProps({ title: '产品截图' }).props.onClick() })
+    const preview = renderer.root.findByProps({ role: 'dialog' })
+    expect(preview.findByType('img').props.alt).toBe('产品截图.png')
+    expect(preview.findAllByType('video')).toHaveLength(0)
+    await act(async () => { preview.findByType('button').props.onClick() })
+    expect(renderer.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)
 
     const videoTab = renderer.root.findAllByType('button').find(button => content(button.props.children) === 'AI 视频')
-    await act(async () => { videoTab?.props.onClick(); await Promise.resolve() })
-    expect(content(renderer.toJSON())).toContain('周会视频')
+    expect(videoTab).toBeUndefined()
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'ai-video.list')).toBe(false)
 
     const audioTab = renderer.root.findAllByType('button').find(button => content(button.props.children) === '语音')
     await act(async () => { audioTab?.props.onClick(); await Promise.resolve(); await Promise.resolve() })
@@ -250,13 +456,6 @@ describe('Arkme search surface', () => {
         })),
         hasMore: false,
       }
-      if (operation === 'ai-video.list') return {
-        items: Array.from({ length: count }, (_, index) => ({
-          jobId: `video-${index}`, title: `视频-${index}`, status: 'running', progress: 50,
-          createdAtMillis: 1,
-        })),
-        hasMore: false,
-      }
       if (operation === 'search.scene') return {
         ...arkmeResults(),
         items: Array.from({ length: count }, (_, index) => ({
@@ -270,7 +469,7 @@ describe('Arkme search surface', () => {
     })
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<ArkmeSearchSurface variant={variant} />) })
-    for (const [label, itemType] of [['图片', 'img'], ['AI 视频', 'article'], ['语音', 'audio']] as const) {
+    for (const [label, itemType] of [['图片', 'img'], ['语音', 'audio']] as const) {
       await act(async () => {
         renderer.root.findAllByType('button').find(button => content(button.props.children) === label)?.props.onClick()
       })
@@ -361,19 +560,19 @@ describe('Arkme search surface', () => {
     act(() => { renderer.unmount() })
   })
 
-  it('resolves a chat voice lazily from its owning timeline before playback', async () => {
+  it.each([undefined, 42])('resolves a chat voice with owner %s before playback', async recordOwnerUserId => {
     const audio = { src: '', play: vi.fn(async () => undefined), pause: vi.fn() }
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'search.history') return { items: [], hasMore: false }
       if (operation === 'search.scene') return {
         ...arkmeResults(),
         items: [{
-          ...arkmeResults().items[0], recordUid: 'voice-record-1', textContent: '这段转写需要突出显示', snippet: '',
+          ...arkmeResults().items[0], recordUid: 'voice-record-1', recordOwnerUserId, textContent: '这段转写需要突出显示', snippet: '',
           voice: { fileAssetUid: 'voice-asset-1', durationMillis: 3_000 },
         }],
       }
       if (operation === 'files.assets') return []
-      if (operation === 'source.timeline') return {
+      if (operation === (recordOwnerUserId === undefined ? 'source.timeline' : 'source.timeline-around')) return {
         source: arkmeResults().items[0]?.targetSource,
         items: [{
           itemUid: 'voice-record-1', senderName: 'JoJo', isMe: false, sendAtMillis: 1, title: '',
@@ -397,8 +596,15 @@ describe('Arkme search surface', () => {
     const play = renderer.root.findByProps({ 'aria-label': '播放语音，时长 0:03' })
     await act(async () => { play.props.onClick(); await Promise.resolve(); await Promise.resolve() })
 
-    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', {
-      sourceRef: 'source-ref-1', limit: 100,
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.timeline')).toBe(false)
+    if (recordOwnerUserId === undefined) {
+      expect(audio.play).not.toHaveBeenCalled()
+      expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.timeline-around')).toBe(false)
+      await act(async () => renderer.unmount())
+      return
+    }
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline-around', {
+      sourceRef: 'source-ref-1', itemUid: 'voice-record-1', recordOwnerUserId, beforeLimit: 1, afterLimit: 1,
     }, expect.any(AbortSignal))
     expect(audio.src).toBe('/arkme-self/api/media?ref=timeline-audio-ref')
     expect(audio.play).toHaveBeenCalledOnce()
@@ -459,8 +665,9 @@ describe('Arkme search surface', () => {
     act(() => { renderer.unmount() })
   })
 
-  it('restores the client search categories and opens the selected DSH task from its own result structure', async () => {
-    const openDshSession = vi.fn()
+  it.each(['double-click', 'Enter', 'unavailable'] as const)('opens DSH tasks from topics and keeps message navigation explicit: %s', async mode => {
+    const openDshSession = vi.fn(() => { if (mode === 'unavailable') throw new Error('任务已移除') })
+    const onClose = vi.fn()
     const searchDshMessages = vi.fn(async () => ({
       items: [{ sessionId: 'session-7', title: '发布会方案', snippet: '请整理发布会讲稿', updatedAtMillis: 2 }],
       hasMore: false,
@@ -471,7 +678,7 @@ describe('Arkme search surface', () => {
         variant="dialog"
         searchDshMessages={searchDshMessages}
         onOpenDshSession={openDshSession}
-        onClose={vi.fn()}
+        onClose={onClose}
       />)
       await Promise.resolve()
     })
@@ -485,16 +692,54 @@ describe('Arkme search surface', () => {
     expect(searchDshMessages).toHaveBeenCalledWith('发布会', expect.any(AbortSignal))
     const resultNav = renderer.root.findByProps({ 'aria-label': '全局搜索结果类型' })
     expect(resultNav.props.style).not.toHaveProperty('borderBottom')
-    expect(resultNav.findAllByType('button').map(button => content(button.props.children))).toEqual(['快记', '主题', '录音·转写', 'DSH'])
+    expect(resultNav.findAllByType('button').map(button => content(button.props.children))).toEqual(['快记', '主题', '录音·转写'])
     expect(content(renderer.toJSON())).toContain('发布会快记')
-    const dshTab = resultNav.findAllByType('button').find(button => content(button.props.children) === 'DSH')
+    const dshTab = resultNav.findAllByType('button').find(button => content(button.props.children) === '主题')
     act(() => { dshTab?.props.onClick() })
-    expect(content(renderer.toJSON())).toContain('1个关联DSH任务')
+    expect(content(renderer.toJSON())).toContain('2个关联主题')
     expect(content(renderer.toJSON())).toContain('发布会方案')
     const dshRow = renderer.root.findAllByType('button').find(button => content(button.props.children).includes('发布会方案'))
     expect(dshRow).toBeDefined()
     act(() => { dshRow?.props.onClick() })
-    expect(openDshSession).toHaveBeenCalledWith('session-7')
+    expect(openDshSession).not.toHaveBeenCalled()
+    expect(content(renderer.toJSON())).toContain('请整理发布会讲稿')
+    expect(content(renderer.toJSON())).not.toContain('当前 DSH 暂不支持从搜索结果定位具体消息')
+    const preventDefault = vi.fn()
+    act(() => {
+      if (mode === 'Enter') dshRow?.props.onKeyDown({ key: 'Enter', preventDefault })
+      else dshRow?.props.onDoubleClick()
+    })
+    expect(openDshSession).toHaveBeenCalledExactlyOnceWith('session-7')
+    if (mode === 'unavailable') {
+      expect(onClose).not.toHaveBeenCalled()
+      expect(content(renderer.toJSON())).toContain('任务已移除')
+    } else expect(onClose).toHaveBeenCalledOnce()
+    if (mode === 'Enter') expect(preventDefault).toHaveBeenCalledOnce()
+    act(() => { renderer.unmount() })
+  })
+
+  it('keeps the DSH selection when an older Arkme source request settles', async () => {
+    let resolveSource!: (value: ReturnType<typeof arkmeResults>) => void
+    let sourceSignal!: AbortSignal
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation: string, params: { sourceUid?: string }, signal: AbortSignal) => {
+      if (operation === 'search.records' && params.sourceUid !== undefined) {
+        sourceSignal = signal
+        return new Promise(resolve => { resolveSource = resolve })
+      }
+      return original(operation, params, signal)
+    })
+    const searchDshMessages = async () => ({ items: [{ sessionId: 'source-1', title: '原生任务', snippet: 'DSH 命中摘要', updatedAtMillis: 2 }], hasMore: false })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeSearchSurface initialQuery="发布会" searchDshMessages={searchDshMessages} />) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+    act(() => { renderer.root.findAllByType('button').find(button => content(button.props.children) === '主题')!.props.onClick() })
+    act(() => { renderer.root.findByProps({ title: '单击查看关联快记，双击打开会话' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ title: '单击查看匹配摘要，双击打开 DSH 对话' }).props.onClick() })
+    expect(sourceSignal.aborted).toBe(true)
+    await act(async () => { resolveSource(arkmeResults()) })
+    expect(content(renderer.toJSON())).toContain('DSH 命中摘要')
+    expect(content(renderer.toJSON())).not.toContain('Arkme 中的发布会记录')
     act(() => { renderer.unmount() })
   })
 
@@ -517,7 +762,7 @@ describe('Arkme search surface', () => {
 
     const allText = content(renderer.toJSON())
     expect(allText).toContain('发布会快记')
-    const dshTab = renderer.root.findAllByType('button').find(button => content(button.props.children) === 'DSH')
+    const dshTab = renderer.root.findAllByType('button').find(button => content(button.props.children) === '主题')
     act(() => { dshTab?.props.onClick() })
     expect(content(renderer.toJSON())).toContain('DSH 任务暂不可用：DSH 离线')
     act(() => { renderer.unmount() })
@@ -768,8 +1013,27 @@ describe('Arkme search surface', () => {
     delete legacyItem.creationSource
     const legacyMarkup = renderToStaticMarkup(<RecordRow item={legacyItem} onClick={() => {}} />)
 
-    expect(legacyMarkup).toContain('data-arkme-dsh-agent-input-marker="true"')
-    expect(legacyMarkup).toContain('DSH Agent 输入')
-    expect(legacyMarkup).not.toContain('DSH Agent Input')
+    expect(legacyMarkup).not.toContain('data-arkme-dsh-agent-input-marker="true"')
+    expect(legacyMarkup).not.toContain('DSH Agent 输入')
+    expect(legacyMarkup).toContain('DSH Agent Input')
   })
+})
+
+it.each(['local', 'remote', 'legacy', 'error'] as const)('opens the local DSH conversation from a synced record: %s', async mode => {
+ const record = { ...arkmeResults().items[0]!, creationSource: 3, sourceKind: 2, sourceUid: 'system:dsh',
+   ...(mode === 'legacy' ? {} : { dshOrigin: { sessionId: 'native-session', eventSeq: 7 } }),
+   targetSource: { sourceRef: 'topic-target', kind: 'topic', displayName: 'DSH Agent Input', activeAtMillis: 0, unreadCount: 0 } }
+ mocks.hasDsh.mockImplementation(async () => { if (mode === 'error') throw new Error('列表读取失败'); return mode === 'local' })
+ mocks.callArkme.mockImplementation(async (operation: string) => operation === 'search.records'
+   ? { ...arkmeResults(), items: [record], sourceAggregates: [{ ...arkmeResults().sourceAggregates[0], sourceKind: 2, sourceUid: 'system:dsh', title: 'DSH Agent Input' }] }
+   : { items: [], hasMore: false })
+ const onOpenRecord = vi.fn(), onOpenDshSession = vi.fn(), onClose = vi.fn()
+ let renderer!: ReactTestRenderer
+ await act(async () => { renderer = create(<ArkmeSearchSurface initialQuery="武汉" onOpenRecord={onOpenRecord} onOpenDshSession={onOpenDshSession} onClose={onClose} />) })
+ await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+ await act(async () => { renderer.root.findAllByType('button').find(button => content(button.props.children).includes('发布会快记'))?.props.onClick(); await Promise.resolve() })
+ if (mode === 'local') { expect(onOpenDshSession).toHaveBeenCalledWith('native-session'); expect(onOpenRecord).not.toHaveBeenCalled() }
+ else if (mode === 'error') { expect(onOpenRecord).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled(); expect(content(renderer.toJSON())).toContain('列表读取失败') }
+ else { expect(onOpenRecord).toHaveBeenCalledWith(record); expect(onOpenDshSession).not.toHaveBeenCalled() }
+ act(() => renderer.unmount())
 })

@@ -1,3 +1,5 @@
+import { HARNESS_SESSION_CLIENT_ID, HARNESS_SESSION_CLIENT_PATH } from './harness-embed-contract.js'
+import { HARNESS_SESSION_RESTORE_SCRIPT } from './harness-session-restore-script.js'
 import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
@@ -42,9 +44,15 @@ export interface DshWebBootGraph {
 }
 
 interface HarnessEmbedRouteOptions {
+  modelClient?: DshWebBootEntry
+  trajectoryClient?: DshWebBootEntry
+  sidebarClient?: DshWebBootEntry
+  onboardingClient?: DshWebBootEntry
+  selectionClientRevision?: string
   getGraph(): DshWebBootGraph
   installedPackageNames(): readonly string[]
   readRootHtml(request: IncomingMessage): Promise<string>
+  sessionClient?: { revision: string; apiPath?: string }
   onError?(error: unknown): void
 }
 
@@ -166,6 +174,9 @@ function projectBootBatches(
 export function projectHarnessBootGraph(
   graph: DshWebBootGraph,
   installedPackageNames: readonly string[],
+  modelClient?: DshWebBootEntry,
+  trajectoryClient?: DshWebBootEntry,
+  sidebarClient?: DshWebBootEntry,
 ): DshWebBootGraph {
   const requiredPackageNames = requiredBootPackages(graph.entries)
   const removedPackageNames = new Set([
@@ -183,6 +194,27 @@ export function projectHarnessBootGraph(
   }
   assertNoRemovedDependencies(entries, removedPackageNames)
   const batches = projectBootBatches(graph.batches, new Set(entries.map(entry => entry.id)))
+  if (modelClient && entries.some(entry => entry.id === '@deepseek-ai/dsh-client-ui-model-selection')) {
+    entries.push(modelClient)
+    batches?.push({ phase: 'application', url: modelClient.url, rev: modelClient.rev, entries: [modelClient.id] })
+  }
+
+  const trajectoryPackages = [
+    '@deepseek-ai/dsh-client-ui-conversation',
+    '@deepseek-ai/dsh-client-ui-trajectory',
+    '@deepseek-ai/dsh-session-log-export',
+  ]
+  if (trajectoryClient && trajectoryPackages.every(id => entries.some(entry => entry.id === id))) {
+    const entry = { ...trajectoryClient, inject: trajectoryPackages }
+    entries.push(entry)
+    batches?.push({ phase: 'application', url: entry.url, rev: entry.rev, entries: [entry.id] })
+  }
+
+  if (sidebarClient && entries.some(entry => entry.id === '@deepseek-ai/dsh-client-ui-sidebar')) {
+    const entry = { ...sidebarClient, inject: ['@deepseek-ai/dsh-client-ui-sidebar'] }
+    entries.push(entry)
+    batches?.push({ phase: 'application', url: entry.url, rev: entry.rev, entries: [entry.id] })
+  }
 
   return {
     rev: shortHash(JSON.stringify(batches === undefined ? entries : { entries, batches })),
@@ -229,8 +261,44 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
 
     try {
       const fullGraph = options.getGraph()
-      const projectedGraph = projectHarnessBootGraph(fullGraph, options.installedPackageNames())
-      const html = replaceHarnessBootGraph(await options.readRootHtml(request), fullGraph, projectedGraph)
+      const projectedGraph = projectHarnessBootGraph(fullGraph, options.installedPackageNames(), options.modelClient, options.trajectoryClient, options.sidebarClient)
+      if (options.onboardingClient !== undefined) {
+        const entry = {
+          ...options.onboardingClient,
+          // Register the final step after all native settings/onboarding contributions.
+          inject: [...requiredBootPackages(projectedGraph.entries), ...projectedGraph.entries
+            .filter(item => item.id.startsWith('@deepseek-ai/dsh-client-ui-settings')).map(item => item.id)],
+        }
+        projectedGraph.entries.push(entry)
+        projectedGraph.batches?.push({ phase: 'application', url: entry.url, rev: entry.rev, entries: [entry.id] })
+        projectedGraph.rev = shortHash(`${projectedGraph.rev}:${entry.rev}`)
+      }
+      if (options.sessionClient !== undefined) {
+        const rev = options.sessionClient.revision
+        projectedGraph.entries.push({
+          id: HARNESS_SESSION_CLIENT_ID, url: HARNESS_SESSION_CLIENT_PATH, rev,
+          inject: [...requiredBootPackages(projectedGraph.entries)].filter(id => !id.endsWith('dsh-client-modules')),
+        })
+        projectedGraph.batches?.push({
+          phase: 'application', url: HARNESS_SESSION_CLIENT_PATH, rev, entries: [HARNESS_SESSION_CLIENT_ID],
+        })
+        projectedGraph.rev = shortHash(`${projectedGraph.rev}:${rev}`)
+      }
+      let html = replaceHarnessBootGraph(await options.readRootHtml(request), fullGraph, projectedGraph)
+      if (options.sessionClient !== undefined) {
+        if (!/<head(?:\s[^>]*)?>/i.test(html)) throw new Error('harness session restore requires a document head')
+        html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-session-restore>${HARNESS_SESSION_RESTORE_SCRIPT}</script>`)
+      }
+      if (options.selectionClientRevision && /^[a-f0-9]+$/.test(options.selectionClientRevision)) {
+        html = html.replace('</head>', `<meta name="arkme-native-selection" content="/arkme-self/harness-native-selection-client.js?rev=${options.selectionClientRevision}"></head>`)
+      }
+      if (options.sessionClient?.apiPath !== undefined) {
+        const apiPath = options.sessionClient.apiPath
+        if (!/^\/[A-Za-z0-9/_-]+$/.test(apiPath) || !html.includes('</head>')) {
+          throw new Error('harness session observer configuration is invalid')
+        }
+        html = html.replace('</head>', `<meta name="arkme-session-api" content="${apiPath}"></head>`)
+      }
       const body = Buffer.from(html)
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',

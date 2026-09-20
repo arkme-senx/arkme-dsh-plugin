@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
+import ts from 'typescript'
 import {
   ARKME_TOPIC_CREATE_ACTION_COLOR, ArkmeTopicCreateDialog,
 } from '../src/client/ArkmeTopicCreateDialog.js'
@@ -47,12 +48,39 @@ const topicRow: ArkmeSourceTreeRow = {
 }
 
 describe('topic create UI', () => {
+  it('keeps a system archive discoverable without exposing child creation on hover', () => {
+    const markup = renderToStaticMarkup(<ArkmeTopicTreeRow
+      row={{ ...topicRow, source: { ...topicRow.source, topicKind: 3 } }}
+      selected={false} hovered onHoverChange={() => {}} onToggle={() => {}}
+      onSelect={() => {}} onCreateChild={() => {}}
+    />)
+    expect(markup).toContain('工作')
+    expect(markup).toContain('role="treeitem"')
+    expect(markup).not.toContain('创建子主题')
+  })
+
   it('keeps the add action at the far left of the composer tool row', async () => {
     const source = await readFile(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
 
     expect(arkmeConversationComposerLayout.tools.justifyContent).toBe('space-between')
-    expect(source).toContain('...arkmeConversationComposerLayout.tools')
-    expect(source.indexOf('aria-label="添加内容"')).toBeLessThan(source.indexOf('style={{ ...styles.send'))
+    expect(source).toContain('tools: { ...arkmeConversationComposerLayout.tools }')
+    const file = ts.createSourceFile('ArkmeSidebar.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    const toolbars: ts.JsxElement[] = []
+    function visit(node: ts.Node): void {
+      if (ts.isJsxElement(node) && node.openingElement.attributes.properties.some(attribute =>
+        ts.isJsxAttribute(attribute) && attribute.name.getText(file) === 'data-arkme-composer-footer'
+        && attribute.initializer !== undefined && ts.isStringLiteral(attribute.initializer)
+        && attribute.initializer.text === 'tools')) toolbars.push(node)
+      ts.forEachChild(node, visit)
+    }
+    visit(file)
+    expect(toolbars).toHaveLength(1)
+    const toolbar = toolbars[0]!.getText(file)
+    const addIndex = toolbar.indexOf('aria-label={tr("添加内容")}')
+    const sendIndex = toolbar.indexOf('<ArkmeComposerSendButton')
+    expect(addIndex).toBeGreaterThanOrEqual(0)
+    expect(sendIndex).toBeGreaterThanOrEqual(0)
+    expect(addIndex).toBeLessThan(sendIndex)
   })
 
   it('uses a compact trigger and a rounded floating sort menu', () => {
@@ -70,15 +98,9 @@ describe('topic create UI', () => {
     expect(control).toContain('z-index:40')
     expect(control).toContain('默认')
     expect(menu).toContain('role="menu"')
-    expect(menu).toContain('width:80px')
-    expect(menu).toContain('height:28px')
-    expect(menu).toContain('right:-8px')
-    expect(menu).toContain('justify-content:center')
-    expect(menu).toContain('text-align:center')
-    expect(menu).toContain('border-radius:10px')
-    expect(menu).toContain('--dsw-specific-menu')
-    expect(menu).toContain('--dsw-shadow-lv3')
-    expect(menu).toContain('aria-checked="true"')
+    expect(menu).toContain('data-arkme-command-menu="排序方式"')
+    expect(menu).not.toContain('width:80px')
+    expect(menu).not.toContain('box-shadow:')
     expect(menu).toContain('最新')
     expect(menu).toContain('最多')
     expect(menu).toContain('默认')
@@ -229,6 +251,7 @@ describe('topic create UI', () => {
 
   it('renders the original directory trigger as the leading header action', () => {
     const markup = renderToStaticMarkup(<ArkmeTopicDirectoryPopover
+      onCreateWarning={() => undefined}
       userId={10001} selectedSource={undefined} onSelect={() => {}}
       onSelectionInvalidated={() => {}} onSelfSourcesResolution={() => {}} retryRevision={0}
     />)

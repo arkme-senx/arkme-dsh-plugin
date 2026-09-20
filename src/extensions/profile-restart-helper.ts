@@ -123,6 +123,7 @@ function start(plan: ArkmeExtensionProfileRestartPlan) {
 async function healthy(plan: ArkmeExtensionProfileRestartPlan): Promise<boolean> {
   const deadline = Date.now() + HEALTH_TIMEOUT_MS
   while (Date.now() < deadline) {
+    let extensionReady = false
     try {
       const response = await fetch(plan.healthUrl, {
         method: 'POST',
@@ -140,20 +141,25 @@ async function healthy(plan: ArkmeExtensionProfileRestartPlan): Promise<boolean>
         }
         if (plan.desktopQuarantineActivation === true) {
           const status = body.value as { profileEnabled?: boolean; active?: boolean } | undefined
-          if (body.ok === true && status?.profileEnabled === true && status.active === true) return true
-          await new Promise(resolve => setTimeout(resolve, 500))
-          continue
+          extensionReady = body.ok === true && status?.profileEnabled === true && status.active === true
+        } else {
+          const installed = Array.isArray(body.value)
+            ? body.value.find(item => item.extensionId === plan.extensionId)
+            : undefined
+          extensionReady = body.ok === true && (plan.activationChange === true
+            ? plan.expectActive
+              ? installed?.enabled === true && installed.active === true
+              : installed?.enabled === false && installed.active === false
+            : plan.expectActive ? installed?.active === true : installed === undefined)
         }
-        const installed = Array.isArray(body.value)
-          ? body.value.find(item => item.extensionId === plan.extensionId)
-          : undefined
-        if (body.ok === true && (plan.activationChange === true
-          ? plan.expectActive
-            ? installed?.enabled === true && installed.active === true
-            : installed?.enabled === false && installed.active === false
-          : plan.expectActive ? installed?.active === true : installed === undefined)) return true
       }
     } catch { /* Restart is still in progress. */ }
+    if (extensionReady) {
+      try {
+        const root = await fetch(new URL('/', plan.healthUrl), { signal: AbortSignal.timeout(2_000) })
+        if (root.ok || root.status === 401 || root.status === 403) return true
+      } catch { /* The Web root is still starting. */ }
+    }
     await new Promise(resolve => setTimeout(resolve, 500))
   }
   return false

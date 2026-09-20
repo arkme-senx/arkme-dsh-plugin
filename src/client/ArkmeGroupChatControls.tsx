@@ -1,11 +1,17 @@
+import { tr, useArkmeLocale } from './locale.js'
+import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import {
-  useCallback, useEffect, useRef, useState,
-  type CSSProperties, type ReactNode, type RefObject,
+  memo, useCallback, useEffect, useRef, useState,
+  type CSSProperties, type MouseEventHandler, type ReactNode, type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
+import {
+  IconEllipsisOutline16, type MenuEntry,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ArrowUp } from '@phosphor-icons/react/dist/icons/ArrowUp'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
+import { DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { Prohibit } from '@phosphor-icons/react/dist/icons/Prohibit'
 import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
@@ -13,7 +19,6 @@ import { X } from '@phosphor-icons/react/dist/icons/X'
 import qrcode from 'qrcode-generator'
 import type {
   ArkmeConversationMemberItem,
-  ArkmeConversationMemberList,
   ArkmeGroupActionTarget,
   ArkmeGroupAiPolishMutationResult,
   ArkmeGroupAiPolishRule,
@@ -34,13 +39,18 @@ import type {
   ArkmeGroupSettingsSnapshot,
   ArkmeSourceItem,
 } from '../types.js'
+import { arkmeConversationMembers } from './conversation-members-store.js'
+import { useConversationMembers } from './use-conversation-members.js'
 import { callArkme } from './api.js'
+import { ArkmeGroupSelfNicknameDialog } from './ArkmeGroupSelfNicknameDialog.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { isArkmeRequestAbort, retryArkmeRead } from './read-retry.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
+import { ArkmeDshMenu } from './ArkmeDshMenu.js'
+import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 
 const colors = {
   panel: arkmeTheme.layer2,
@@ -62,8 +72,9 @@ export const ARKME_CONVERSATION_HEADER_ACTIONS_STYLE: CSSProperties = {
 }
 
 export const ARKME_CONVERSATION_HEADER_BUTTON_STYLE: CSSProperties = {
-  width: 32, height: 32, padding: 4, border: 0, borderRadius: 4, background: 'transparent',
-  color: ARKME_GROUP_HEADER_ICON_COLOR, display: 'grid', placeItems: 'center', cursor: 'pointer',
+  width: 28, height: 28, padding: 2, boxSizing: 'border-box', border: 0, borderRadius: 28, background: 'transparent',
+  color: 'var(--dsw-alias-label-secondary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  flex: 'none', cursor: 'pointer', appearance: 'none',
 }
 
 export const ARKME_CONVERSATION_SETTINGS_MENU_WIDTH = GROUP_SETTINGS_MENU_WIDTH
@@ -92,6 +103,8 @@ export const ARKME_CONVERSATION_SETTINGS_MENU_STATUS_STYLE: CSSProperties = {
 const asset = (value: string) => `data:image/svg+xml;base64,${value}`
 // These are the production desktop-client assets, embedded so the published plugin remains self-contained.
 const icons = {
+  // Same asset as the mobile group settings nickname action (record_func_edit.svg).
+  selfNickname: asset('PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgdmlld0JveD0iMCAwIDIwIDIwIiBmaWxsPSJub25lIj4KPHBhdGggZD0iTTIgMThIMTgiIHN0cm9rZT0iI0QyRDJEMiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8cGF0aCBkPSJNMTEuODk5MyAyLjcwNzExQzEyLjI4OTkgMi4zMTY1OCAxMi45MjMgMi4zMTY1OCAxMy4zMTM2IDIuNzA3MTFMMTYuMTQyIDUuNTM1NTNDMTYuNTMyNSA1LjkyNjA2IDE2LjUzMjUgNi41NTkyMiAxNi4xNDIgNi45NDk3NUw4Ljk1Mzk0IDE0LjEzNzhDOC43ODM4MSAxNC4zMDc5IDguNTU4MDYgMTQuNDExIDguMzE4MDggMTQuNDI4MUw1LjI3MjA4IDE0LjY0NTdDNC42NjQ3OSAxNC42ODkxIDQuMTU5OTkgMTQuMTg0MyA0LjIwMzM3IDEzLjU3N0w0LjQyMDk0IDEwLjUzMUM0LjQzODA5IDEwLjI5MSA0LjU0MTE3IDEwLjA2NTMgNC43MTEzIDkuODk1MTVMMTEuODk5MyAyLjcwNzExWiIgc3Ryb2tlPSIjRDJEMkQyIiBzdHJva2Utd2lkdGg9IjEuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPg=='),
   rename: asset('PHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTguODAwNzggMS42MDAxSDEwLjAwMDhNMTAuMDAwOCAxLjYwMDFIMTEuMjAwOE0xMC4wMDA4IDEuNjAwMVYxNC40MDAxTTguODAwNzggMTQuNDAwMUgxMS4yMDA4IiBzdHJva2U9IiNEMkQyRDIiIHN0cm9rZS13aWR0aD0iMS4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPHBhdGggZD0iTTcuODk5NjEgNEgzLjE5OTYxQzIuMzE1OTUgNCAxLjU5OTYxIDQuNzE2MzQgMS41OTk2MSA1LjZWMTAuNEMxLjU5OTYxIDExLjI4MzcgMi4zMTU5NSAxMiAzLjE5OTYxIDEySDcuODk5NjFNMTEuOTk5NiA0SDEyLjc5OTZDMTMuNjgzMyA0IDE0LjM5OTYgNC43MTYzNCAxNC4zOTk2IDUuNlYxMC40QzE0LjM5OTYgMTEuMjgzNyAxMy42ODMzIDEyIDEyLjc5OTYgMTJIMTEuOTk5NiIgc3Ryb2tlPSIjRDJEMkQyIiBzdHJva2Utd2lkdGg9IjEuMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CjxwYXRoIGQ9Ik00LjgwMDc4IDhMNi40MDA3OCA4IiBzdHJva2U9IiNEMkQyRDIiIHN0cm9rZS13aWR0aD0iMS4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg=='),
   exit: asset('PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMSIgaGVpZ2h0PSIyMCIgdmlld0JveD0iMCAwIDIxIDIwIiBmaWxsPSJub25lIj4KPHBhdGggZD0iTTMuNSA3VjRDMy41IDMuNDQ3NzIgMy45NDc3MiAzIDQuNSAzSDcuNSIgc3Ryb2tlPSIjRDJEMkQyIiBzdHJva2Utd2lkdGg9IjEuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CjxwYXRoIGQ9Ik0zLjUgMTNWMTZDMy41IDE2LjU1MjMgMy45NDc3MiAxNyA0LjUgMTdINy41IiBzdHJva2U9IiNEMkQyRDIiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPHBhdGggZD0iTTE3LjUgN1Y0QzE3LjUgMy40NDc3MiAxNy4wNTIzIDMgMTYuNSAzSDEzLjUiIHN0cm9rZT0iI0QyRDJEMiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8cGF0aCBkPSJNMTcuNSAxM0wxNS41IDE1TDEzLjUgMTciIHN0cm9rZT0iI0QyRDJEMiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8cGF0aCBkPSJNMTMuNSAxM0wxNS41IDE1TDE3LjUgMTciIHN0cm9rZT0iI0QyRDJEMiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4='),
   notice: asset('PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgdmlld0JveD0iMCAwIDIwIDIwIiBmaWxsPSJub25lIj4KPHBhdGggZD0iTTEwLjAxNzUgMi40MjQ4QzcuMjU5MTQgMi40MjQ4IDUuMDE3NDcgNC42NjY0NyA1LjAxNzQ3IDcuNDI0OFY5LjgzMzE0QzUuMDE3NDcgMTAuMzQxNSA0LjgwMDgxIDExLjExNjUgNC41NDI0NyAxMS41NDk4TDMuNTg0MTQgMTMuMTQxNUMyLjk5MjQ3IDE0LjEyNDggMy40MDA4MSAxNS4yMTY1IDQuNDg0MTQgMTUuNTgzMUM4LjA3NTgxIDE2Ljc4MzEgMTEuOTUwOCAxNi43ODMxIDE1LjU0MjUgMTUuNTgzMUMxNi41NTA4IDE1LjI0OTggMTYuOTkyNSAxNC4wNTgxIDE2LjQ0MjUgMTMuMTQxNUwxNS40ODQxIDExLjU0OThDMTUuMjM0MSAxMS4xMTY1IDE1LjAxNzUgMTAuMzQxNSAxNS4wMTc1IDkuODMzMTRWNy40MjQ4QzE1LjAxNzUgNC42NzQ4IDEyLjc2NzUgMi40MjQ4IDEwLjAxNzUgMi40MjQ4WiIgc3Ryb2tlPSIjRDJEMkQyIiBzdHJva2Utd2lkdGg9IjEuNCIgc3Ryb2tlLW1pdGVybGltaXQ9IjEwIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPHBhdGggZD0iTTExLjU1OTkgMi42NjcxOUMxMS4zMDE2IDIuNTkyMTkgMTEuMDM0OSAyLjUzMzg1IDEwLjc1OTkgMi41MDA1MkM5Ljk1OTkgMi40MDA1MiA5LjE5MzIzIDIuNDU4ODUgOC40NzY1NiAyLjY2NzE5QzguNzE4MjMgMi4wNTA1MiA5LjMxODIzIDEuNjE3MTkgMTAuMDE4MiAxLjYxNzE5QzEwLjcxODIgMS42MTcxOSAxMS4zMTgyIDIuMDUwNTIgMTEuNTU5OSAyLjY2NzE5WiIgc3Ryb2tlPSIjRDJEMkQyIiBzdHJva2Utd2lkdGg9IjEuMjUiIHN0cm9rZS1taXRlcmxpbWl0PSIxMCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CjxwYXRoIGQ9Ik0xMi41MTU2IDE1Ljg4MjhDMTIuNTE1NiAxNy4yNTc4IDExLjM5MDYgMTguMzgyOCAxMC4wMTU2IDE4LjM4MjhDOS4zMzIyOSAxOC4zODI4IDguNjk4OTYgMTguMDk5NSA4LjI0ODk2IDE3LjY0OTVDNy43OTg5NiAxNy4xOTk1IDcuNTE1NjIgMTYuNTY2MSA3LjUxNTYyIDE1Ljg4MjgiIHN0cm9rZT0iI0QyRDJEMiIgc3Ryb2tlLXdpZHRoPSIxLjI1IiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiLz4KPC9zdmc+'),
@@ -113,11 +126,6 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: '0 4px 10px rgba(0,0,0,.1)',
   },
   drawerScrim: { position: 'absolute', inset: 0, zIndex: 7, background: 'transparent' },
-  drawerHeader: {
-    flex: 'none', height: 54, display: 'flex', alignItems: 'center',
-    padding: '0 10px', boxSizing: 'border-box',
-  },
-  drawerTitle: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 600, color: colors.text },
   closeButton: {
     width: 30, height: 30, border: 0, borderRadius: 4, background: 'transparent',
     color: colors.secondary, display: 'grid', placeItems: 'center', cursor: 'pointer', fontSize: 20,
@@ -144,19 +152,6 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex', flexDirection: 'column', background: colors.panel,
     borderLeft: `1px solid ${colors.border}`, borderRadius: '12px 0 0 0',
     boxShadow: '-8px 14px 28px rgba(24, 29, 36, .1)',
-  },
-  restrictionHeader: {
-    flex: 'none', height: 54, padding: '0 10px 0 16px', boxSizing: 'border-box',
-    display: 'flex', alignItems: 'center', borderBottom: `1px solid ${arkmeTheme.borderSoft}`,
-  },
-  restrictionTitle: {
-    minWidth: 0, flex: 1, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    color: colors.text, fontSize: 16, lineHeight: '22px', fontWeight: 600,
-  },
-  restrictionClose: {
-    width: 32, height: 32, flex: 'none', padding: 0, border: 0, borderRadius: 8,
-    display: 'grid', placeItems: 'center', background: 'transparent', color: colors.secondary,
-    cursor: 'pointer', transition: 'background-color 120ms ease, color 120ms ease',
   },
   restrictionDescription: {
     flex: 'none', margin: 0, padding: '12px 16px', borderBottom: `1px solid ${colors.border}`,
@@ -290,7 +285,7 @@ function errorMessage(error: unknown): string {
 }
 
 function roleLabel(member: Pick<ArkmeConversationMemberItem, 'role'>): string {
-  if (member.role === 'owner') return '发起人'
+  if (member.role === 'owner') return tr("发起人")
   if (member.role === 'admin') return '管理员'
   return ''
 }
@@ -303,11 +298,7 @@ function ClientIcon({ src, size = 20 }: { src: string; size?: number }) {
 }
 
 export function ArkmeConversationMoreIcon() {
-  return <svg aria-hidden width="24" height="24" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}>
-    <circle cx="5" cy="12" r="1.8" fill="currentColor" />
-    <circle cx="12" cy="12" r="1.8" fill="currentColor" />
-    <circle cx="19" cy="12" r="1.8" fill="currentColor" />
-  </svg>
+  return <IconEllipsisOutline16 size={24} />
 }
 
 function MagicWandIcon() {
@@ -320,126 +311,117 @@ function MagicWandIcon() {
 
 export function ArkmeConversationHeaderIconButton(props: {
   label: string
+  title?: string
   children: ReactNode
   buttonRef?: RefObject<HTMLButtonElement>
-  hasPopup?: boolean
+  hasPopup?: boolean | 'dialog'
   expanded?: boolean
-  onClick: () => void
+  busy?: boolean
+  onClick: MouseEventHandler<HTMLButtonElement>
 }) {
-  return <button
+  return <button data-arkme-feedback="neutral"
     ref={props.buttonRef}
     type="button"
     aria-label={props.label}
-    aria-haspopup={props.hasPopup ? 'menu' : undefined}
+    aria-haspopup={props.hasPopup === 'dialog' ? 'dialog' : props.hasPopup ? 'menu' : undefined}
     aria-expanded={props.expanded}
-    title={props.label}
+    aria-busy={props.busy || undefined}
+    title={props.title ?? props.label}
     style={styles.headerButton}
-    onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-    onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
     onClick={props.onClick}
   >{props.children}</button>
 }
 
-function Avatar({ imageRef, size = 32 }: { imageRef: string | undefined; size?: number }) {
-  const src = useArkmeAvatarImage(imageRef) ?? ''
-  return <span style={{ ...styles.avatar, width: size, height: size }}>
+function Avatar({ imageRef, size = 32, lazy = false }: { imageRef: string | undefined; size?: number; lazy?: boolean }) {
+  useArkmeLocale()
+  const container = useRef<HTMLSpanElement>(null)
+  const src = useArkmeAvatarImage(imageRef, lazy ? container : undefined) ?? ''
+  return <span ref={container} style={{ ...styles.avatar, width: size, height: size }}>
     {src === '' ? <ArkmeMark size={size} /> : <img src={src} alt="" draggable={false} style={styles.avatarImage} />}
   </span>
 }
 
-function GroupMembersDrawer(props: {
+export const GroupMemberRow = memo(function GroupMemberRow({ member, onMemberOpen, onMemberContextMenu, onMemberHover }: {
+  member: ArkmeConversationMemberItem
+  onMemberOpen: (member: ArkmeConversationMemberItem) => void
+  onMemberContextMenu: (member: ArkmeConversationMemberItem, rect: DOMRect) => void
+  onMemberHover?: ((member: ArkmeConversationMemberItem, anchor: HTMLElement, side: 'left') => void) | undefined
+}) {
+  useArkmeLocale()
+  const badge = roleLabel(member)
+  return <button data-arkme-feedback="neutral"
+    type="button"
+    style={styles.memberRow}
+    data-arkme-group-member-row
+    onPointerEnter={event => {
+      if (event.pointerType === 'mouse' && event.buttons === 0) onMemberHover?.(member, event.currentTarget, 'left')
+    }}
+    onKeyDown={event => {
+      if (event.key !== 'ArrowDown') return
+      event.preventDefault()
+      onMemberContextMenu(member, event.currentTarget.getBoundingClientRect())
+    }}
+    onClick={() => { onMemberOpen(member) }}
+    onContextMenu={event => {
+      event.preventDefault()
+      const avatar = event.currentTarget.querySelector('[data-arkme-member-avatar]')
+      onMemberContextMenu(member, (avatar ?? event.currentTarget).getBoundingClientRect())
+    }}
+  >
+    <span data-arkme-member-avatar="true"><Avatar imageRef={member.avatarRef} lazy /></span>
+    <span style={styles.memberMain}>
+      <span style={styles.memberNameLine}>
+        <span style={styles.memberName}>{member.displayName}{member.isSelf ? tr('（我）') : ''}</span>
+        {badge !== '' && <span style={styles.badge}>{badge}</span>}
+      </span>
+      <span style={{ display: 'block', minHeight: 16, fontSize: 12, lineHeight: '16px', color: colors.secondary }}>{member.statsKnown === false ? '' : tr("{v0}条快记", { v0: member.recordCount })}</span>
+    </span>
+  </button>
+})
+
+export function GroupMembersDrawer(props: {
   source: ArkmeSourceItem
   open: boolean
-  refreshToken: number
+  accountScope: string | undefined
   onClose: () => void
   onAdd: () => void
   onMemberOpen: (member: ArkmeConversationMemberItem) => void
   onMemberContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
-  onSettingsLoaded: (settings: Pick<ArkmeGroupSettingsSnapshot, 'selfRole' | 'selfStatus'>) => void
+  onMemberHover?: ((member: ArkmeConversationMemberItem, anchor: HTMLElement, side: 'left') => void) | undefined
   onError: (message: string) => void
 }) {
-  const [snapshot, setSnapshot] = useState<ArkmeConversationMemberList>()
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    if (!props.open) return
-    const controller = new AbortController()
-    let active = true
-    setSnapshot(undefined)
-    setLoading(true)
-    void callArkme<ArkmeConversationMemberList>('source.members', {
-      sourceRef: props.source.sourceRef,
-      activeOnly: true,
-    }, controller.signal)
-      .then(value => {
-        if (!active) return
-        setSnapshot(value)
-        const self = value.items.find(member => member.isSelf)
-        if (self !== undefined) props.onSettingsLoaded({ selfRole: self.role, selfStatus: self.status })
-      })
-      .catch(caught => {
-        if (active && !isArkmeRequestAbort(caught, controller.signal)) props.onError(errorMessage(caught))
-      })
-      .finally(() => { if (active) setLoading(false) })
-    return () => {
-      active = false
-      controller.abort()
-    }
-  }, [props.open, props.refreshToken, props.source.sourceRef])
-
+  useArkmeLocale()
+  const panelRef = useRef<HTMLElement>(null)
+  const resize = useResizableNoteDetail(panelRef, 'arkme:group-members-width:v1', '调整群成员宽度', 262)
+  const snapshot = useConversationMembers(props.accountScope, props.source, props.open)
+  const loading = snapshot.refreshing
   useEffect(() => {
     if (!props.open) return
     const dismissOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') props.onClose()
+      if (event.key === 'Escape' && !event.defaultPrevented && !document.querySelector('[role="menu"], [aria-modal="true"]')) props.onClose()
     }
     window.addEventListener('keydown', dismissOnEscape)
     return () => { window.removeEventListener('keydown', dismissOnEscape) }
   }, [props.onClose, props.open])
 
   if (!props.open) return null
-  const visibleSnapshot = snapshot !== undefined
-    && arkmeSourceIdentityKey(snapshot.source) === arkmeSourceIdentityKey(props.source)
-    ? snapshot
-    : undefined
-  const items = visibleSnapshot?.items ?? []
+  const visibleSnapshot = snapshot.ready ? snapshot : undefined
+  const items = snapshot.items
   return <>
     <div style={styles.drawerScrim} aria-hidden onPointerDown={event => { event.preventDefault(); props.onClose() }} />
-    <aside style={styles.drawer} aria-label="协作者">
-    <div style={styles.drawerHeader}>
-      <h3 style={{ ...styles.drawerTitle, fontSize: 16, fontWeight: 400 }}>协作者{visibleSnapshot === undefined ? '' : `（${visibleSnapshot.activeCount}）`}</h3>
-      <span style={{ flex: 1 }} />
-      <button type="button" style={{ ...styles.closeButton, width: 'auto', padding: '0 6px', fontSize: 14, fontWeight: 700, color: colors.primary }} onClick={props.onAdd}>添加</button>
-    </div>
+    <aside ref={panelRef} style={{ ...styles.drawer, ...resize.style }} aria-label={tr("群成员")}>
+    {resize.handle}
+    <ArkmeRightPanelHeader title={<>{tr("群成员")}{visibleSnapshot === undefined ? '' : `（${visibleSnapshot.items.length}）`}</>}
+      onClose={props.onClose} closeLabel={tr("关闭群成员")}
+      actions={<button data-arkme-feedback="neutral" type="button" style={{ ...styles.closeButton, height: 30, marginTop: -3, width: 'auto', padding: '0 6px', fontSize: 14, fontWeight: 700, color: colors.primary }} onClick={props.onAdd}>{tr("添加")}</button>} />
     <div style={styles.drawerBody}>
-      {loading && items.length === 0 ? <div style={styles.loading}>正在读取群成员…</div> : null}
-      {!loading && items.length === 0 ? <div style={styles.empty}>暂无群成员</div> : null}
-      {items.map(member => {
-        const badge = roleLabel(member)
-        return <button
-          key={member.memberRef}
-          type="button"
-          style={styles.memberRow}
-          onMouseEnter={event => {
-            event.currentTarget.style.background = colors.subtle
-          }}
-          onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-          onClick={() => { props.onMemberOpen(member) }}
-          onContextMenu={event => {
-            event.preventDefault()
-            const avatar = event.currentTarget.querySelector('[data-arkme-member-avatar]')
-            props.onMemberContextMenu(member, (avatar ?? event.currentTarget).getBoundingClientRect())
-          }}
-        >
-          <span data-arkme-member-avatar="true"><Avatar imageRef={member.avatarRef} /></span>
-          <span style={styles.memberMain}>
-            <span style={styles.memberNameLine}>
-              <span style={styles.memberName}>{member.displayName}{member.isSelf ? '（我）' : ''}</span>
-              {badge !== '' && <span style={styles.badge}>{badge}</span>}
-            </span>
-            <span style={{ display: 'block', fontSize: 12, lineHeight: '16px', color: colors.secondary }}>{member.recordCount}条快记</span>
-          </span>
-        </button>
-      })}
+      {loading && items.length === 0 ? <div style={styles.loading}>{tr("正在读取群成员…")}</div> : null}
+      {snapshot.error !== undefined && <button data-arkme-feedback="neutral" type="button" role="alert" style={styles.restrictionRetry}
+        onClick={() => { if (props.accountScope !== undefined) void arkmeConversationMembers.ensure(props.accountScope, props.source, true) }}
+      >{snapshot.error}{tr("，点击重试")}</button>}
+      {snapshot.ready && !loading && snapshot.error === undefined && items.length === 0 ? <div style={styles.empty}>{tr("暂无群成员")}</div> : null}
+      {items.map(member => <GroupMemberRow key={member.memberRef} member={member}
+        onMemberOpen={props.onMemberOpen} onMemberContextMenu={props.onMemberContextMenu} onMemberHover={props.onMemberHover} />)}
     </div>
     </aside>
   </>
@@ -490,13 +472,14 @@ function CloseGlyph() {
   </svg>
 }
 
-function AddMembersDrawer(props: {
+export function AddMembersDrawer(props: {
   source: ArkmeSourceItem
   open: boolean
   onClose: () => void
   onAdded: () => void
   onError: (message: string) => void
 }) {
+  useArkmeLocale()
   type Focus = 'all' | 'group' | 'privateChat' | 'bot'
   const [query, setQuery] = useState('')
   const [snapshot, setSnapshot] = useState<ArkmeGroupMemberCandidateList>()
@@ -666,7 +649,7 @@ function AddMembersDrawer(props: {
       : <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 7h12a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-7a3 3 0 0 1 3-3Z" stroke="currentColor" strokeWidth="1.5"/><path d="M12 3v4M8 13h.01M16 13h.01M8 17h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
   const selector = (checked: boolean, disabled = false) => <span aria-hidden style={{
     width: 20, height: 20, borderRadius: 999, flex: 'none', display: 'grid', placeItems: 'center', boxSizing: 'border-box',
-    border: `1px solid ${colors.border}`, background: checked ? (disabled ? colors.subtle : colors.text) : 'transparent', color: '#fff', fontSize: 12,
+    border: `1px solid ${colors.border}`, background: checked ? (disabled ? colors.subtle : arkmeTheme.primaryAction) : 'transparent', color: disabled ? colors.secondary : arkmeTheme.onPrimaryAction, fontSize: 12,
   }}>{checked ? '✓' : ''}</span>
   const sectionTitle = (label: string) => <div style={{ padding: '12px 4px 4px', color: colors.secondary, fontSize: 12 }}>{label}</div>
   const toggleCandidate = (item: ArkmeGroupMemberCandidate) => {
@@ -678,7 +661,7 @@ function AddMembersDrawer(props: {
   const candidateRow = (item: ArkmeGroupMemberCandidate, compact = false) => {
     const checked = selected.includes(item.candidateRef)
     const disabled = item.disabled === true
-    return <button
+    return <button data-arkme-feedback="neutral"
       key={item.candidateRef}
       type="button"
       disabled={busy || disabled}
@@ -695,7 +678,7 @@ function AddMembersDrawer(props: {
   const botRow = (item: typeof botItems[number]) => {
     const disabled = item.installed || bots?.canAddBots === false
     const checked = item.installed || selectedBots.includes(item.botRef)
-    return <button
+    return <button data-arkme-feedback="neutral"
       key={item.botRef}
       type="button"
       disabled={busy || disabled}
@@ -704,7 +687,7 @@ function AddMembersDrawer(props: {
     >
       <span style={styles.avatar}>🤖</span>
       <span style={styles.memberMain}><span style={styles.memberName}>{item.name}</span></span>
-      {item.installed ? <span style={{ color: colors.secondary, fontSize: 11 }}>已添加</span> : null}
+      {item.installed ? <span style={{ color: colors.secondary, fontSize: 11 }}>{tr("已添加")}</span> : null}
       {selector(checked, disabled)}
     </button>
   }
@@ -721,30 +704,30 @@ function AddMembersDrawer(props: {
     const isLoading = loadingGroups.includes(group.sourceRef)
     const memberCount = bundle?.total ?? group.groupAvatar?.memberCount ?? group.avatarRefs?.length ?? 0
     return <div key={group.sourceRef}>
-      <button
+      <button data-arkme-feedback="neutral"
         type="button"
         onClick={() => { toggleGroup(group) }}
         style={{ ...styles.memberRow, padding: '8px 2px', borderBottom: expanded ? 0 : `1px solid ${colors.border}`, borderRadius: 0 }}
       >
         <Avatar imageRef={group.avatarRef} />
         <span style={styles.memberMain}><span style={styles.memberName}>{group.displayName}</span></span>
-        {memberCount > 0 ? <span style={{ color: colors.secondary, fontSize: 11 }}>{String(memberCount)}人</span> : null}
+        {memberCount > 0 ? <span style={{ color: colors.secondary, fontSize: 11 }}>{String(memberCount)}{tr("人")}</span> : null}
         <span style={{ color: colors.secondary, fontSize: 22, transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform .12s ease' }}>›</span>
       </button>
       {expanded ? <div style={{ marginLeft: 14, padding: '2px 0 10px 8px', borderLeft: `1px solid rgba(0,0,0,.08)` }}>
-        {isLoading ? <div style={{ ...styles.loading, textAlign: 'left' }}>正在加载群成员</div> : null}
-        {!isLoading && bundle?.error !== undefined ? <div style={{ padding: '10px 0', display: 'flex', alignItems: 'center', gap: 8, color: colors.secondary, fontSize: 13 }}><span>{bundle.error}</span><button type="button" style={{ border: 0, background: 'transparent', color: colors.primary, cursor: 'pointer' }} onClick={() => { loadGroupMembers(group) }}>重试</button></div> : null}
+        {isLoading ? <div style={{ ...styles.loading, textAlign: 'left' }}>{tr("正在加载群成员")}</div> : null}
+        {!isLoading && bundle?.error !== undefined ? <div style={{ padding: '10px 0', display: 'flex', alignItems: 'center', gap: 8, color: colors.secondary, fontSize: 13 }}><span>{bundle.error}</span><button data-arkme-feedback="neutral" type="button" style={{ border: 0, background: 'transparent', color: colors.primary, cursor: 'pointer' }} onClick={() => { loadGroupMembers(group) }}>{tr("重试")}</button></div> : null}
         {!isLoading && bundle?.error === undefined && groupItems.length === 0 ? <div style={{ padding: '10px 0', color: colors.secondary, fontSize: 13 }}>{normalizedQuery === '' ? '暂无可选群成员' : '没有找到相关成员'}</div> : null}
         {groupItems.map(item => candidateRow(item, true))}
       </div> : null}
     </div>
   }
   const selectedPreview = selectedCount === 0
-    ? <span style={{ color: colors.secondary, fontSize: 13 }}>未选择对象</span>
+    ? <span style={{ color: colors.secondary, fontSize: 13 }}>{tr("未选择对象")}</span>
     : <span style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
       {[...selectedCandidateByRef.values()].slice(0, 5).map(item => <Avatar key={item.candidateRef} imageRef={item.avatarRef} size={24} />)}
       {selectedBotItems.slice(0, Math.max(0, 5 - selectedCandidateByRef.size)).map(item => <span key={item.botRef} style={{ ...styles.avatar, width: 24, height: 24, fontSize: 13 }}>🤖</span>)}
-      {selectedCount > 5 ? <span style={{ minWidth: 30, height: 24, padding: '0 6px', borderRadius: 999, background: '#f5f5f5', color: colors.secondary, display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700 }}>+{String(selectedCount - 5)}</span> : null}
+      {selectedCount > 5 ? <span style={{ minWidth: 30, height: 24, padding: '0 6px', borderRadius: 999, background: colors.subtle, color: colors.secondary, display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700 }}>+{String(selectedCount - 5)}</span> : null}
     </span>
   const primaryText = snapshot?.mode === 'approval_invite' && selectedCandidateByRef.size > 0 && selectedBots.length === 0 ? '发送邀请' : '确认添加'
   const buttonText = selectedCount > 0 ? `${primaryText}（${String(selectedCount)}）` : primaryText
@@ -752,38 +735,38 @@ function AddMembersDrawer(props: {
   return <div style={{ position: 'absolute', inset: 0, zIndex: 35, background: 'rgba(0,0,0,.24)' }} role="presentation" onMouseDown={event => {
     if (event.target === event.currentTarget && !busy) props.onClose()
   }}>
-    <section style={{ ...styles.drawer, top: 0, width: 360, maxWidth: '92%', zIndex: 36, background: '#fff' }} role="dialog" aria-modal="true" aria-label="添加成员">
-      <div style={{ height: 52, padding: '0 12px', display: 'flex', alignItems: 'center', flex: 'none' }}><h3 style={{ margin: 0, fontSize: 20, lineHeight: '28px', color: colors.text }}>添加成员</h3><span style={{ flex: 1 }} /><button type="button" aria-label="关闭" style={{ ...styles.closeButton, width: 28, height: 28, borderRadius: 0, background: 'transparent' }} onClick={props.onClose}><CloseGlyph /></button></div>
-      <div style={{ position: 'relative', margin: '0 12px 8px' }}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ position: 'absolute', left: 12, top: 11, color: '#aaa' }}><circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2"/><path d="m16 16 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
-        <input style={{ ...styles.dialogInput, height: 40, border: 0, borderRadius: 11, paddingLeft: 36, paddingRight: 30, background: '#f5f5f5' }} value={query} placeholder="搜索" aria-label="搜索成员候选人" disabled={busy} onChange={event => { setQuery(event.target.value) }} />
-        {query !== '' ? <button type="button" aria-label="清除搜索" disabled={busy} onClick={() => { setQuery('') }} style={{ position: 'absolute', right: 8, top: 8, width: 24, height: 24, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer' }}><CloseGlyph /></button> : null}
+    <section style={{ ...styles.drawer, top: 0, width: 360, maxWidth: '92%', zIndex: 36, background: colors.panel, color: colors.text }} role="dialog" aria-modal="true" aria-label={tr("添加成员")}>
+      <ArkmeRightPanelHeader title={tr("添加成员")} onClose={props.onClose} closeLabel={tr("关闭")} />
+      <div style={{ position: 'relative', margin: '16px 12px 8px' }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ position: 'absolute', left: 12, top: 11, color: colors.secondary }}><circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2"/><path d="m16 16 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+        <input className="arkme-group-member-search" style={{ ...styles.dialogInput, height: 40, border: 0, borderRadius: 11, paddingLeft: 36, paddingRight: 30, background: arkmeTheme.base }} value={query} placeholder={tr("搜索")} aria-label={tr("搜索成员候选人")} disabled={busy} onChange={event => { setQuery(event.target.value) }} />
+        {query !== '' ? <button data-arkme-feedback="neutral" type="button" aria-label={tr("清除搜索")} disabled={busy} onClick={() => { setQuery('') }} style={{ position: 'absolute', right: 8, top: 8, width: 24, height: 24, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer' }}><CloseGlyph /></button> : null}
       </div>
       <div style={{ overflowY: 'auto', minHeight: 120, flex: 1, padding: '0 12px' }}>
-        {!isSearchMode && <><div style={{ padding: '2px 0 8px', fontSize: 14, fontWeight: 600 }}>我的会话</div>{focusRows.map(row => {
+        {!isSearchMode && <><div style={{ padding: '2px 0 8px', fontSize: 14, fontWeight: 600 }}>{tr("我的会话")}</div>{focusRows.map(row => {
           const active = focus === row.focus
-          return <button key={row.focus} type="button" onClick={() => { setFocus(current => current === row.focus ? 'all' : row.focus) }} style={{ width: '100%', height: 52, padding: '0 12px', border: 0, borderBottom: `1px solid ${colors.border}`, outline: 0, background: '#fff', display: 'flex', alignItems: 'center', gap: 12, color: active ? colors.text : colors.secondary, position: 'relative', cursor: 'pointer' }}>
+          return <button data-arkme-feedback="neutral" key={row.focus} type="button" onClick={() => { setFocus(current => current === row.focus ? 'all' : row.focus) }} style={{ width: '100%', height: 52, padding: '0 12px', border: 0, borderBottom: `1px solid ${colors.border}`, outline: 0, background: 'transparent', display: 'flex', alignItems: 'center', gap: 12, color: active ? colors.text : colors.secondary, position: 'relative', cursor: 'pointer' }}>
             {active && <span style={{ position: 'absolute', left: 0, width: 2, height: 16, borderRadius: 2, background: colors.text }} />}{focusIcon(row.focus)}<strong style={{ fontSize: 14, fontWeight: active ? 700 : 500 }}>{row.label}</strong><span style={{ marginLeft: 'auto', fontSize: 12 }}>{row.count}</span>
           </button>
         })}</>}
-        {loading ? <div style={styles.loading}>正在读取可添加对象…</div> : null}
+        {loading ? <div style={styles.loading}>{tr("正在读取可添加对象…")}</div> : null}
         {isSearchMode && !loading ? <>
-          {searchingGroups && matchedMembers.length + matchedGroups.length + matchedBots.length === 0 ? <div style={styles.loading}>正在搜索群成员…</div> : null}
+          {searchingGroups && matchedMembers.length + matchedGroups.length + matchedBots.length === 0 ? <div style={styles.loading}>{tr("正在搜索群成员…")}</div> : null}
           {matchedMembers.length > 0 ? <>{(matchedGroups.length + matchedBots.length > 0) && sectionTitle('成员')}{matchedMembers.map(item => candidateRow(item))}</> : null}
           {matchedGroups.length > 0 ? <>{(matchedMembers.length + matchedBots.length > 0) && sectionTitle('群聊')}{matchedGroups.map(groupRow)}</> : null}
           {matchedBots.length > 0 ? <>{(matchedMembers.length + matchedGroups.length > 0) && sectionTitle('Bot')}{matchedBots.map(botRow)}</> : null}
-          {!searchingGroups && matchedMembers.length + matchedGroups.length + matchedBots.length === 0 ? <div style={styles.empty}>没有找到相关对象</div> : null}
+          {!searchingGroups && matchedMembers.length + matchedGroups.length + matchedBots.length === 0 ? <div style={styles.empty}>{tr("没有找到相关对象")}</div> : null}
         </> : null}
         {!isSearchMode && !loading && effectiveFocus === 'all' && visibleContacts.length > 0 ? <>{sectionTitle('联系人')}{visibleContacts.map(item => candidateRow(item))}</> : null}
-        {showStrangerSection ? <>{sectionTitle('陌生人')}{visiblePrivateChats.length === 0 ? <div style={{ padding: '10px 0', color: colors.secondary, fontSize: 13 }}>暂无陌生人</div> : visiblePrivateChats.map(item => candidateRow(item))}</> : null}
-        {!isSearchMode && !loading && (effectiveFocus === 'all' || effectiveFocus === 'group') ? <>{sectionTitle('群聊')}{visibleGroups.length === 0 ? <div style={{ padding: '10px 0', color: colors.secondary, fontSize: 13 }}>暂无群聊</div> : visibleGroups.map(groupRow)}</> : null}
-        {!isSearchMode && !loading && (effectiveFocus === 'all' || effectiveFocus === 'bot') ? <>{sectionTitle('Bot')}{visibleBots.length === 0 ? <div style={{ padding: '10px 0', color: colors.secondary, fontSize: 13 }}>当前没有可添加到本群的 Bot</div> : visibleBots.map(botRow)}</> : null}
+        {showStrangerSection ? <>{sectionTitle('陌生人')}{visiblePrivateChats.length === 0 ? <div style={{ padding: '10px 0', color: colors.secondary, fontSize: 13 }}>{tr("暂无陌生人")}</div> : visiblePrivateChats.map(item => candidateRow(item))}</> : null}
+        {!isSearchMode && !loading && (effectiveFocus === 'all' || effectiveFocus === 'group') ? <>{sectionTitle('群聊')}{visibleGroups.length === 0 ? <div style={{ padding: '10px 0', color: colors.secondary, fontSize: 13 }}>{tr("暂无群聊")}</div> : visibleGroups.map(groupRow)}</> : null}
+        {!isSearchMode && !loading && (effectiveFocus === 'all' || effectiveFocus === 'bot') ? <>{sectionTitle('Bot')}{visibleBots.length === 0 ? <div style={{ padding: '10px 0', color: colors.secondary, fontSize: 13 }}>{tr("当前没有可添加到本群的 Bot")}</div> : visibleBots.map(botRow)}</> : null}
       </div>
-      <div style={{ height: 58, flex: 'none', display: 'flex', alignItems: 'center', padding: '0 14px', borderTop: `1px solid ${colors.border}`, background: '#fff' }}>
+      <div style={{ height: 58, flex: 'none', display: 'flex', alignItems: 'center', padding: '0 14px', borderTop: `1px solid ${colors.border}`, background: colors.panel }}>
         <span style={{ minWidth: 0, flex: 1 }}>{selectedPreview}</span><span style={{ width: 10 }} />
-        <button
+        <button data-arkme-feedback="neutral"
           type="button"
-          style={{ ...styles.dialogButton, width: 126, height: 38, borderRadius: 11, background: selectedCount === 0 ? '#f5f5f5' : colors.text, color: selectedCount === 0 ? '#aaa' : '#fff', opacity: busy ? .55 : 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+          style={{ ...styles.dialogButton, width: 126, height: 38, borderRadius: 11, background: selectedCount === 0 ? colors.subtle : arkmeTheme.primaryAction, color: selectedCount === 0 ? colors.secondary : arkmeTheme.onPrimaryAction, opacity: busy ? .55 : 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
           disabled={busy || selectedCount === 0}
           onClick={() => {
             setBusy(true)
@@ -799,19 +782,20 @@ function AddMembersDrawer(props: {
               .catch(caught => { props.onError(errorMessage(caught)) })
               .finally(() => { setBusy(false) })
           }}
-        >{busy ? '处理中…' : buttonText}</button>
+        >{busy ? tr("处理中…") : buttonText}</button>
       </div>
     </section>
   </div>
 }
 
-function InviteCollaboratorsDialog(props: {
+export function InviteCollaboratorsDialog(props: {
   source: ArkmeSourceItem
   open: boolean
   onClose: () => void
   onAddMembers: () => void
   onError: (message: string) => void
 }) {
+  useArkmeLocale()
   const [preview, setPreview] = useState<ArkmeGroupInvitePreview>()
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -830,7 +814,7 @@ function InviteCollaboratorsDialog(props: {
   }, [])
   if (!props.open) return null
   const qrUrl = preview === undefined ? '' : qrDataUrl(preview.inviteLink)
-  const action = (kind: 'copy' | 'save' | 'add', label: string, onClick: () => void, disabled = false, busy = false) => <button
+  const action = (kind: 'copy' | 'save' | 'add', label: string, onClick: () => void, disabled = false, busy = false) => <button data-arkme-feedback="neutral"
     type="button" disabled={disabled} onClick={onClick}
     aria-busy={busy || undefined}
     style={{ width: 78, padding: 0, border: 0, background: 'transparent', color: colors.secondary, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? .45 : 1 }}
@@ -862,37 +846,39 @@ function InviteCollaboratorsDialog(props: {
       .finally(() => { setSaving(false) })
   }
   return <div style={styles.dialogScrim} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) props.onClose() }}>
-    <section style={{ ...styles.dialog, width: 420 }} role="dialog" aria-modal="true" aria-label="邀请协作者">
-      <div style={{ display: 'flex', alignItems: 'center' }}><h3 style={{ ...styles.dialogTitle, margin: 0, fontSize: 18 }}>邀请协作者</h3><span style={{ flex: 1 }} /><button type="button" aria-label="关闭" style={{ ...styles.closeButton, width: 28, height: 28, padding: 0, borderRadius: 999, background: colors.subtle, color: colors.secondary }} onClick={props.onClose}><CloseGlyph /></button></div>
+    <section style={{ ...styles.dialog, width: 420 }} role="dialog" aria-modal="true" aria-label={tr("邀请协作者")}>
+      <div style={{ display: 'flex', alignItems: 'center' }}><h3 style={{ ...styles.dialogTitle, margin: 0, fontSize: 18 }}>{tr("邀请协作者")}</h3><span style={{ flex: 1 }} /><button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={{ ...styles.closeButton, width: 28, height: 28, padding: 0, borderRadius: 999, background: colors.subtle, color: colors.secondary }} onClick={props.onClose}><CloseGlyph /></button></div>
       <div style={{ height: 10 }} />
       <div style={{ width: 264, margin: '0 auto', padding: '16px 16px 14px', borderRadius: 18, background: colors.panel, boxSizing: 'border-box', boxShadow: '0 10px 22px rgba(0,0,0,.08)' }}>
-        <div style={{ display: 'flex', alignItems: 'center' }}><Avatar imageRef={props.source.avatarRef} size={32} /><div style={{ marginLeft: 10, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview?.title ?? props.source.displayName}</div><div style={{ marginTop: 2, fontSize: 12, color: colors.secondary }}>发起人：{preview?.inviterDisplayName ?? 'Arkme'}</div></div></div>
-        <div style={{ position: 'relative', width: 176, height: 176, padding: 10, margin: '14px auto 0', border: `1px solid ${colors.border}`, borderRadius: 12, boxSizing: 'border-box', background: '#fff', display: 'grid', placeItems: 'center' }}>{loading ? <span style={styles.loading}>加载中…</span> : qrUrl === '' ? <span style={{ fontSize: 12, color: colors.secondary }}>邀请链接生成失败，请重试</span> : <img src={qrUrl} alt="群聊邀请二维码" style={{ width: 156, height: 156, imageRendering: 'pixelated' }} />}{copied ? <span role="status" aria-live="polite" style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', padding: '9px 12px', borderRadius: 4, background: '#fff', boxShadow: '0 3px 12px rgba(0,0,0,.18)', color: colors.text, fontSize: 12, lineHeight: '18px', whiteSpace: 'nowrap' }}>邀请链接已复制</span> : null}</div>
+        <div style={{ display: 'flex', alignItems: 'center' }}><Avatar imageRef={props.source.avatarRef} size={32} /><div style={{ marginLeft: 10, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview?.title ?? props.source.displayName}</div><div style={{ marginTop: 2, fontSize: 12, color: colors.secondary }}>{tr("发起人：")}{preview?.inviterDisplayName ?? 'Arkme'}</div></div></div>
+        <div style={{ position: 'relative', width: 176, height: 176, padding: 10, margin: '14px auto 0', border: `1px solid ${colors.border}`, borderRadius: 12, boxSizing: 'border-box', background: '#fff', display: 'grid', placeItems: 'center' }}>{loading ? <span style={{ ...styles.loading, color: '#51565f' }}>{tr("加载中…")}</span> : qrUrl === '' ? <span style={{ fontSize: 12, color: '#51565f' }}>{tr("邀请链接生成失败，请重试")}</span> : <img src={qrUrl} alt={tr("群聊邀请二维码")} style={{ width: 156, height: 156, imageRendering: 'pixelated' }} />}{copied ? <span role="status" aria-live="polite" style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', padding: '9px 12px', borderRadius: 4, background: '#fff', boxShadow: '0 3px 12px rgba(0,0,0,.18)', color: '#17191c', fontSize: 12, lineHeight: '18px', whiteSpace: 'nowrap' }}>{tr("邀请链接已复制")}</span> : null}</div>
         <div style={{ marginTop: 14, textAlign: 'center', fontSize: 11.5, color: colors.secondary }}>{inviteExpireText(preview?.expireAtMillis ?? 0)}</div>
       </div>
-      <div style={{ marginTop: 10, textAlign: 'center', fontSize: 12, color: colors.secondary }}>扫码加入，或转发邀请链接</div>
+      <div style={{ marginTop: 10, textAlign: 'center', fontSize: 12, color: colors.secondary }}>{tr("扫码加入，或转发邀请链接")}</div>
       <div style={{ width: 266, margin: '14px auto 0', display: 'flex', justifyContent: 'space-between' }}>{action('copy', '复制链接', copyLink, preview === undefined)}{action('save', '保存', saveQr, qrUrl === '' || saving, saving)}{action('add', '添加成员', () => { props.onClose(); props.onAddMembers() }, loading)}</div>
     </section>
   </div>
 }
 
 function MessageDndSwitch(props: { checked: boolean; busy: boolean; onChange: (checked: boolean) => void }) {
-  return <button
-    type="button"
+  return <span
     role="switch"
-    aria-label="消息免打扰"
+    aria-label={tr("消息免打扰")}
     aria-checked={props.checked}
-    disabled={props.busy}
+    aria-disabled={props.busy || undefined}
     style={{
       ...styles.switch,
       background: props.checked ? colors.primary : arkmeTheme.active,
       opacity: props.busy ? .55 : 1,
       justifyContent: 'flex-start',
     }}
-    onClick={event => { event.stopPropagation(); props.onChange(!props.checked) }}
+    onClick={(event?: { stopPropagation(): void }) => {
+      event?.stopPropagation()
+      if (!props.busy) props.onChange(!props.checked)
+    }}
   >
     <span style={{ ...styles.switchThumb, transform: props.checked ? 'translateX(18px)' : 'translateX(0)' }} />
-  </button>
+  </span>
 }
 
 const initialAiPolishMessage: ArkmeGroupAiPolishThreadMessage = {
@@ -907,6 +893,7 @@ function GroupAiPolishPanel(props: {
   onSettingsChanged: (settings: ArkmeGroupAiPolishSnapshot) => void
   onError: (message: string) => void
 }) {
+  useArkmeLocale()
   const [settings, setSettings] = useState<ArkmeGroupAiPolishSnapshot | undefined>(props.initialSettings)
   const [view, setView] = useState<'rules' | 'editor'>('rules')
   const [editingRule, setEditingRule] = useState<ArkmeGroupAiPolishRule>()
@@ -1059,53 +1046,47 @@ function GroupAiPolishPanel(props: {
     <section
       style={styles.aiPopover}
       role="dialog"
-      aria-label="AI 表达润色"
+      aria-label={tr("AI 表达润色")}
       onMouseDown={event => { event.stopPropagation() }}
       aria-modal="true"
     >
       <div style={styles.aiHeader}>
-        {view === 'editor' ? <button type="button" aria-label="返回规则列表" style={styles.aiHeaderButton} disabled={busy} onClick={() => { setView('rules'); setError('') }}><ArrowLeft size={18} /></button> : <span />}
-        <div style={styles.aiHeaderTitle}>{view === 'rules' ? 'AI 表达润色' : title}</div>
-        {view === 'editor' ? <button
+        {view === 'editor' ? <button data-arkme-feedback="neutral" type="button" aria-label={tr("返回规则列表")} style={styles.aiHeaderButton} disabled={busy} onClick={() => { setView('rules'); setError('') }}><ArrowLeft size={18} /></button> : <span />}
+        <div style={styles.aiHeaderTitle}>{view === 'rules' ? tr("AI 表达润色") : title}</div>
+        {view === 'editor' ? <button data-arkme-feedback="primary"
           type="button"
           data-arkme-ai-polish-apply="true"
           style={{ ...styles.aiApplyButton, opacity: canApply ? 1 : .32, cursor: canApply ? 'pointer' : 'default' }}
           disabled={!canApply}
           onClick={() => { void applyRule() }}
-        >{busy ? '处理中' : '应用规则'}</button> : <button type="button" aria-label="关闭 AI 润色设置" style={{ ...styles.aiHeaderButton, justifySelf: 'end' }} onClick={props.onClose}><X size={18} /></button>}
+        >{busy ? tr("处理中") : '应用规则'}</button> : <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭 AI 润色设置")} style={{ ...styles.aiHeaderButton, justifySelf: 'end' }} onClick={props.onClose}><X size={18} /></button>}
       </div>
       {view === 'rules' ? <div style={styles.aiBody}>
-        {loading && settings === undefined ? <div style={styles.loading}>正在读取 AI 润色设置…</div> : null}
+        {loading && settings === undefined ? <div style={styles.loading}>{tr("正在读取 AI 润色设置…")}</div> : null}
         {!loading && settings !== undefined ? <>
-          <button
+          <button data-arkme-feedback="neutral"
             type="button"
             style={{ ...styles.aiRuleRow, opacity: canManage ? 1 : .5 }}
             disabled={!canManage || busy}
-            onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-            onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
             onClick={() => { void disablePolish() }}
-          ><span style={{ ...styles.aiRadio, ...(!settings.enabled ? { border: `4px solid ${colors.primary}` } : {}) }} /><span style={styles.aiRuleName}>不润色</span></button>
-          {settings.rules.map(rule => <button
+          ><span style={{ ...styles.aiRadio, ...(!settings.enabled ? { border: `4px solid ${colors.primary}` } : {}) }} /><span style={styles.aiRuleName}>{tr("不润色")}</span></button>
+          {settings.rules.map(rule => <button data-arkme-feedback="neutral"
             key={rule.ruleRef}
             type="button"
             data-arkme-ai-polish-rule-ref={rule.ruleRef}
             style={{ ...styles.aiRuleRow, opacity: canManage ? 1 : .5 }}
             disabled={!canManage || busy}
-            onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-            onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
             onClick={() => { openEditor(rule) }}
           ><span style={{ ...styles.aiRadio, ...(rule.isActive ? { border: `4px solid ${colors.primary}` } : {}) }} /><span style={styles.aiRuleName}>{rule.name}</span><span style={styles.aiRuleStatus}>{rule.isActive ? '当前应用' : '›'}</span></button>)}
-          <button
+          <button data-arkme-feedback="neutral"
             type="button"
             data-arkme-ai-polish-new-rule="true"
             style={{ ...styles.aiRuleRow, opacity: canManage ? 1 : .5 }}
             disabled={!canManage || busy}
-            onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-            onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
             onClick={() => { openEditor() }}
-          ><Plus size={16} /><span style={styles.aiRuleName}>新建规则</span><CaretRight size={15} color={colors.secondary} /></button>
+          ><Plus size={16} /><span style={styles.aiRuleName}>{tr("新建规则")}</span><CaretRight size={15} color={colors.secondary} /></button>
         </> : null}
-        {settings !== undefined && !canManage ? <div style={styles.aiError}>服务端未授予当前账号该群的 AI 润色设置权限</div> : null}
+        {settings !== undefined && !canManage ? <div style={styles.aiError}>{tr("服务端未授予当前账号该群的 AI 润色设置权限")}</div> : null}
       </div> : <>
         <div style={styles.aiThread} aria-live="polite" data-arkme-ai-polish-thread="true">
           {messages.map(message => message.role === 'ai' && message.isRule !== true ? <div key={message.id} style={styles.aiAssistantMessage}>
@@ -1124,7 +1105,7 @@ function GroupAiPolishPanel(props: {
             {message.isRule ? <div style={{ marginBottom: 3, color: colors.secondary, fontSize: 10 }}>{editingRule?.isActive === true && candidate === undefined ? '当前规则' : '规则候选'}</div> : null}
             {message.text}
           </div>)}
-          {busy && candidate === undefined ? <div style={{ color: colors.secondary, fontSize: 12 }}>正在整理规则…</div> : null}
+          {busy && candidate === undefined ? <div style={{ color: colors.secondary, fontSize: 12 }}>{tr("正在整理规则…")}</div> : null}
         </div>
         <div style={styles.aiComposer}>
           <div style={styles.aiInputShell}>
@@ -1132,18 +1113,18 @@ function GroupAiPolishPanel(props: {
               style={styles.aiTextarea}
               value={input}
               maxLength={2_000}
-              aria-label="润色规则描述"
-              placeholder="例如：语气更轻松，保留原意，不要使用网络热梗"
+              aria-label={tr("润色规则描述")}
+              placeholder={tr("例如：语气更轻松，保留原意，不要使用网络热梗")}
               disabled={!canManage || busy}
               onChange={event => { setInput(event.target.value) }}
               onKeyDown={event => {
                 if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void generateRule() }
               }}
             />
-            <button
+            <button data-arkme-feedback="primary"
               type="button"
-              aria-label="发送规则描述"
-              title="发送"
+              aria-label={tr("发送规则描述")}
+              title={tr("发送")}
               data-arkme-ai-polish-send="true"
               style={{ ...styles.aiSendButton, opacity: input.trim() === '' || busy ? .28 : 1 }}
               disabled={input.trim() === '' || busy || !canManage}
@@ -1160,23 +1141,31 @@ function GroupAiPolishPanel(props: {
 function GroupSettingsMenu(props: {
   source: ArkmeSourceItem
   open: boolean
-  position: { left: number; top: number }
-  fallbackRole: ArkmeGroupSettingsSnapshot['selfRole']
-  fallbackStatus: ArkmeGroupSettingsSnapshot['selfStatus']
+  buttonRef: RefObject<HTMLButtonElement>
+  onOpenChange: (open: boolean) => void
   onClose: () => void
   onRename: (target: ArkmeGroupActionTarget) => void
+  onSelfNickname: () => void
   aiPolishSettings?: ArkmeGroupAiPolishSnapshot | undefined
   onAiPolishSettingsChanged: (settings: ArkmeGroupAiPolishSnapshot) => void
   onAiPolishOpen: () => void
   onRestrictionsOpen: () => void
-  onSettingsLoaded: (settings: Pick<ArkmeGroupSettingsSnapshot, 'selfRole' | 'selfStatus'>) => void
   onSourceProjectionUpdated: (source: ArkmeSourceItem) => void
   onMembershipChanged: (target: ArkmeGroupActionTarget) => void
-  onMessageDndUpdated: (target: ArkmeGroupActionTarget, messageDnd: boolean) => void
+  onMessageDndUpdated: (target: ArkmeGroupActionTarget, result: ArkmeGroupNotificationResult) => boolean
   onError: (message: string) => void
+  onExport: () => void
+  exportBusy: boolean
+  exportProcessed: number
 }) {
+  useArkmeLocale()
   const [snapshot, setSnapshot] = useState<ArkmeGroupSettingsSnapshot>()
-  const [messageDnd, setMessageDnd] = useState(props.source.isMuted === true)
+  const [notification, setNotification] = useState<ArkmeGroupNotificationResult>({
+    messageDnd: props.source.isMuted === true,
+    chatNotificationPolicyUpdatedAtMillis: props.source.chatNotificationPolicyUpdatedAtMillis ?? 0,
+  })
+  const messageDnd = (props.source.chatNotificationPolicyUpdatedAtMillis ?? 0) > notification.chatNotificationPolicyUpdatedAtMillis
+    ? props.source.isMuted === true : notification.messageDnd
   const [busy, setBusy] = useState(false)
   const [localAiPolishSettings, setLocalAiPolishSettings] = useState(props.aiPolishSettings)
   const [aiPolishLoadState, setAiPolishLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -1186,15 +1175,14 @@ function GroupSettingsMenu(props: {
     const controller = new AbortController()
     let active = true
     setSnapshot(undefined)
-    setMessageDnd(props.source.isMuted === true)
     void callArkme<ArkmeGroupSettingsSnapshot>('group.settings', {
       sourceRef: props.source.sourceRef,
     }, controller.signal)
       .then(value => {
         if (!active) return
         setSnapshot(value)
-        setMessageDnd(value.messageDnd)
-        props.onSettingsLoaded(value)
+        setNotification(current => current.chatNotificationPolicyUpdatedAtMillis > (value.chatNotificationPolicyUpdatedAtMillis ?? 0)
+          ? current : { messageDnd: value.messageDnd, chatNotificationPolicyUpdatedAtMillis: value.chatNotificationPolicyUpdatedAtMillis ?? 0 })
       })
       .catch(caught => {
         if (active && !isArkmeRequestAbort(caught, controller.signal)) props.onError(errorMessage(caught))
@@ -1208,8 +1196,11 @@ function GroupSettingsMenu(props: {
   useEffect(() => {
     if (props.open) return
     setSnapshot(undefined)
-    setMessageDnd(props.source.isMuted === true)
-  }, [props.open, props.source.isMuted])
+    setNotification({
+      messageDnd: props.source.isMuted === true,
+      chatNotificationPolicyUpdatedAtMillis: props.source.chatNotificationPolicyUpdatedAtMillis ?? 0,
+    })
+  }, [props.open, props.source.isMuted, props.source.chatNotificationPolicyUpdatedAtMillis])
 
   useEffect(() => {
     if (props.aiPolishSettings !== undefined) setLocalAiPolishSettings(props.aiPolishSettings)
@@ -1255,11 +1246,11 @@ function GroupSettingsMenu(props: {
       kind: 'group_chat',
       displayName: props.source.displayName,
     },
-    selfRole: props.fallbackRole,
-    selfStatus: props.fallbackStatus,
-    canRename: props.fallbackRole === 'owner' && props.fallbackStatus === 'active',
-    canDissolve: props.fallbackRole === 'owner' && props.fallbackStatus === 'active',
-    canLeave: props.fallbackRole !== 'owner' && props.fallbackStatus === 'active',
+    selfRole: 'unknown' as const,
+    selfStatus: 'unknown' as const,
+    canRename: false,
+    canDissolve: false,
+    canLeave: false,
     messageDnd,
   }
   const actionTarget: ArkmeGroupActionTarget = {
@@ -1285,87 +1276,103 @@ function GroupSettingsMenu(props: {
     }
   }, [actionTarget.sourceRef, effective.canDissolve, props.onClose, props.onError, props.onMembershipChanged])
 
-  if (!props.open) return null
-  return <div style={styles.menuScrim} role="presentation" onMouseDown={event => {
-    if (event.target === event.currentTarget) props.onClose()
-  }}>
-    <div
-      style={{ ...styles.popover, left: props.position.left, top: props.position.top }}
-      role="menu"
-      aria-label="群聊设置"
-      onMouseDown={event => { event.stopPropagation() }}
-    >
-      {effective.canRename && <button
-        type="button"
-        role="menuitem"
-        style={styles.menuRow}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-        onClick={() => {
-          props.onRename(actionTarget)
-          props.onClose()
-        }}
-      ><ClientIcon src={icons.rename} /><span>重命名</span></button>}
-      {effective.selfRole === 'owner' && effective.selfStatus === 'active' && <button
-        type="button"
-        role="menuitem"
-        style={{ ...styles.menuRow, marginTop: 6 }}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-        onClick={props.onRestrictionsOpen}
-      ><span aria-hidden style={{ width: 20, display: 'grid', placeItems: 'center' }}><Prohibit size={18} /></span><span>禁止加入名单</span><span aria-hidden style={{ marginLeft: 'auto', color: colors.secondary }}>›</span></button>}
-      <button
-        type="button"
-        role="menuitem"
-        style={{ ...styles.menuRow, ...(effective.canRename ? { marginTop: 6 } : {}) }}
-        disabled={busy || (!effective.canLeave && !effective.canDissolve)}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-        onClick={() => { void leaveOrDissolve() }}
-      ><ClientIcon src={icons.exit} /><span>{effective.canDissolve ? '解散' : '退出群聊'}</span></button>
-      <div style={{ ...styles.menuRow, marginTop: 6 }} role="none">
-        <ClientIcon src={icons.notice} />
-        <span>消息免打扰</span>
-        <MessageDndSwitch
-          checked={messageDnd}
-          busy={busy}
-          onChange={next => {
-            const previous = messageDnd
-            setMessageDnd(next)
-            setBusy(true)
-            void callArkme<ArkmeGroupNotificationResult>('group.notification.set', {
-              sourceRef: actionTarget.sourceRef,
-              enabled: next,
-            })
-              .then(result => {
-                setMessageDnd(result.messageDnd)
-                props.onMessageDndUpdated(actionTarget, result.messageDnd)
-              })
-              .catch(caught => { setMessageDnd(previous); props.onError(errorMessage(caught)) })
-              .finally(() => { setBusy(false) })
-          }}
-        />
-      </div>
-      <button
-        type="button"
-        role="menuitem"
-        data-arkme-group-ai-polish-entry="true"
-        style={{ ...styles.menuRow, marginTop: 6 }}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-        onClick={props.onAiPolishOpen}
-      >
-        <MagicWandIcon />
-        <span style={{ flex: 'none' }}>AI 表达润色</span>
-        <span style={{ minWidth: 0, marginLeft: 'auto', color: colors.secondary, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {localAiPolishSettings === undefined
-            ? aiPolishLoadState === 'error' ? '加载失败' : '读取中'
-            : localAiPolishSettings.enabled ? localAiPolishSettings.activeRuleName || '已开启' : '不润色'}
-        </span>
-        <span aria-hidden style={{ flex: 'none', color: colors.secondary, fontSize: 16 }}>›</span>
-      </button>
-    </div>
-  </div>
+  const changeMessageDnd = (next: boolean) => {
+    setBusy(true)
+    void callArkme<ArkmeGroupNotificationResult>('group.notification.set', {
+      sourceRef: actionTarget.sourceRef,
+      enabled: next,
+    }).then(result => {
+      const accepted = props.onMessageDndUpdated(actionTarget, result)
+      setNotification(current => current.chatNotificationPolicyUpdatedAtMillis > result.chatNotificationPolicyUpdatedAtMillis
+        ? current : { ...result, messageDnd: accepted })
+    }).catch(caught => { props.onError(errorMessage(caught)) })
+      .finally(() => { setBusy(false) })
+  }
+  const entries: MenuEntry[] = [
+    { type: 'label', id: 'personal-label', text: '个人设置' },
+  ]
+  if (effective.selfStatus === 'active') entries.push({ id: 'self-nickname', label: '修改群昵称', icon: <ClientIcon src={icons.selfNickname} size={16} /> })
+  entries.push({
+    id: 'message-dnd',
+    label: <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <span style={{ flex: 1 }}>{tr("消息免打扰")}</span>
+      <MessageDndSwitch checked={messageDnd} busy={busy} onChange={changeMessageDnd} />
+    </span>,
+    icon: <ClientIcon src={icons.notice} size={16} />,
+    disabled: busy,
+  })
+  const polishStatus = localAiPolishSettings === undefined
+    ? aiPolishLoadState === 'error' ? '加载失败' : '读取中'
+    : localAiPolishSettings.enabled ? localAiPolishSettings.activeRuleName || '已开启' : '不润色'
+  entries.push({
+    id: 'ai-polish',
+    label: <span
+      data-arkme-group-ai-polish-entry="true"
+      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+      onClick={(event?: { stopPropagation(): void }) => {
+        event?.stopPropagation()
+        close()
+        props.onAiPolishOpen()
+      }}
+    ><span>{tr("AI 表达润色")}</span><span style={{ marginLeft: 'auto', color: colors.secondary, fontSize: 13 }}>{polishStatus}</span><CaretRight size={12} color={colors.secondary} aria-hidden /></span>,
+    icon: <MagicWandIcon />,
+  })
+  if (effective.canRename || (effective.selfRole === 'owner' && effective.selfStatus === 'active')) {
+    entries.push({ type: 'separator', id: 'management-separator' }, { type: 'label', id: 'management-label', text: '群管理' })
+    if (effective.canRename) entries.push({ id: 'rename', label: '修改群名称', icon: <ClientIcon src={icons.rename} size={16} /> })
+    if (effective.selfRole === 'owner' && effective.selfStatus === 'active') {
+      entries.push({ id: 'restrictions', label: <span style={{ display: 'flex', alignItems: 'center' }}>{tr("禁止加入名单")}<CaretRight size={12} color={colors.secondary} style={{ marginLeft: 'auto' }} aria-hidden /></span>, icon: <Prohibit size={16} aria-hidden /> })
+    }
+  }
+  entries.push(
+    { type: 'separator', id: 'export-separator' },
+    { type: 'label', id: 'export-label', text: '聊天记录' },
+    { id: 'export', label: props.exportBusy
+      ? `正在导出${props.exportProcessed > 0 ? ` · ${String(props.exportProcessed)} 条` : ''}`
+      : '导出', icon: <DownloadSimple size={20} weight="regular" aria-hidden />, disabled: props.exportBusy },
+    { type: 'separator', id: 'leave-separator' },
+    {
+      id: 'leave', danger: true,
+      label: <span style={{ color: arkmeTheme.danger }}>{effective.canDissolve ? '解散群聊' : tr("退出群聊")}</span>,
+      icon: <span style={{ color: arkmeTheme.danger }}><ClientIcon src={icons.exit} size={16} /></span>,
+      disabled: busy || (!effective.canLeave && !effective.canDissolve),
+    },
+  )
+
+  const close = () => {
+    props.onOpenChange(false)
+    props.onClose()
+  }
+  return <ArkmeDshMenu
+    open={props.open}
+    label={tr("群聊设置")}
+    conversationAppearance
+    align="end"
+    portal
+    items={entries}
+    onClose={close}
+    onSelect={id => {
+      if (id === 'export') { close(); props.onExport(); return }
+      if (id === 'self-nickname') { close(); props.onSelfNickname(); return }
+      if (id === 'message-dnd') {
+        close()
+        changeMessageDnd(!messageDnd)
+        return
+      }
+      if (id === 'ai-polish') { close(); props.onAiPolishOpen(); return }
+      if (id === 'rename') { close(); props.onRename(actionTarget); return }
+      if (id === 'restrictions') { close(); props.onRestrictionsOpen(); return }
+      if (id === 'leave') { close(); void leaveOrDissolve() }
+    }}
+    anchor={<ArkmeConversationHeaderIconButton
+      label={tr("群聊设置")}
+      buttonRef={props.buttonRef}
+      hasPopup
+      expanded={props.open}
+      busy={props.exportBusy}
+      onClick={() => { props.onOpenChange(!props.open) }}
+    ><ArkmeConversationMoreIcon /></ArkmeConversationHeaderIconButton>}
+  />
 }
 
 function GroupJoinRestrictionsPanel(props: {
@@ -1374,6 +1381,7 @@ function GroupJoinRestrictionsPanel(props: {
   onClose: () => void
   onStatus: (message: string) => void
 }) {
+  useArkmeLocale()
   const [items, setItems] = useState<ArkmeGroupJoinRestrictionPage['items']>([])
   const [cursor, setCursor] = useState<string>()
   const [loading, setLoading] = useState(false)
@@ -1504,57 +1512,42 @@ function GroupJoinRestrictionsPanel(props: {
       aria-labelledby="arkme-group-join-restrictions-title"
       aria-busy={busyMemberRef !== '' || undefined}
     >
-      <div style={styles.restrictionHeader}>
-        <h3 id="arkme-group-join-restrictions-title" style={styles.restrictionTitle}>禁止加入名单</h3>
-        <button
-          ref={closeButtonRef}
-          type="button"
-          aria-label="关闭禁止加入名单"
-          disabled={busyMemberRef !== ''}
-          style={{ ...styles.restrictionClose, opacity: busyMemberRef === '' ? 1 : .45 }}
-          onMouseEnter={event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = colors.subtle }}
-          onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-          onClick={props.onClose}
-        ><X size={18} /></button>
-      </div>
-      <p style={styles.restrictionDescription}>
-        名单中的用户无法通过邀请、添加或入群审批再次加入此群。
-      </p>
+      <ArkmeRightPanelHeader title={tr("禁止加入名单")} titleId="arkme-group-join-restrictions-title"
+        onClose={props.onClose} closeLabel={tr("关闭禁止加入名单")} closeRef={closeButtonRef} closeDisabled={busyMemberRef !== ''} />
+      <p style={styles.restrictionDescription}>{tr("名单中的用户无法通过邀请、添加或入群审批再次加入此群。")}</p>
       <div style={styles.restrictionBody}>
-        {loading && items.length === 0 ? <div style={styles.loading}>正在读取限制名单…</div> : null}
-        {!loading && loadError === '' && items.length === 0 ? <div style={styles.empty}>暂无被限制的用户</div> : null}
+        {loading && items.length === 0 ? <div style={styles.loading}>{tr("正在读取限制名单…")}</div> : null}
+        {!loading && loadError === '' && items.length === 0 ? <div style={styles.empty}>{tr("暂无被限制的用户")}</div> : null}
         {items.map(item => <div key={item.memberRef} style={styles.restrictionRow}>
           <Avatar imageRef={item.avatarRef} />
           <span style={styles.memberMain}>
             <span style={styles.memberName}>{item.displayName}</span>
-            <span style={styles.restrictionStatus}>已禁止再次加入</span>
+            <span style={styles.restrictionStatus}>{tr("已禁止再次加入")}</span>
           </span>
-          <button
+          <button data-arkme-feedback="neutral"
             type="button"
             disabled={busyMemberRef !== ''}
             style={{ ...styles.restrictionAction, opacity: busyMemberRef === '' ? 1 : .45 }}
-            onMouseEnter={event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = arkmeTheme.hover }}
-            onMouseLeave={event => { event.currentTarget.style.background = arkmeTheme.elevated }}
             onClick={() => { setMutationError(''); setConfirmationTarget(item) }}
-          >解除限制</button>
+          >{tr("解除限制")}</button>
         </div>)}
         {loadError === '' ? null : <div role="alert" style={styles.restrictionError}>
           <span style={{ minWidth: 0, flex: 1, overflowWrap: 'anywhere' }}>{loadError}</span>
-          <button type="button" disabled={loading} style={styles.restrictionRetry} onClick={() => { load(cursor) }}>重试</button>
+          <button data-arkme-feedback="neutral" type="button" disabled={loading} style={styles.restrictionRetry} onClick={() => { load(cursor) }}>{tr("重试")}</button>
         </div>}
-        {cursor !== undefined && loadError === '' ? <button type="button" disabled={loading} style={{ ...styles.restrictionLoadMore, opacity: loading ? .45 : 1 }} onClick={() => { load(cursor) }}>
-          {loading ? '加载中…' : '加载更多'}
+        {cursor !== undefined && loadError === '' ? <button data-arkme-feedback="neutral" type="button" disabled={loading} style={{ ...styles.restrictionLoadMore, opacity: loading ? .45 : 1 }} onClick={() => { load(cursor) }}>
+          {loading ? tr("加载中…") : tr("加载更多")}
         </button> : null}
       </div>
     </aside>
     {confirmationTarget === undefined ? null : <ArkmeConfirmDialog
       titleId="arkme-group-join-restriction-lift-title"
-      title="解除加入限制？"
+      title={tr("解除加入限制？")}
       description={`解除后，${confirmationTarget.displayName} 不会自动加入群聊，仍需通过邀请、添加或入群审批。`}
       error={mutationError}
       busy={busyMemberRef === confirmationTarget.memberRef}
-      confirmLabel="解除限制"
-      busyLabel="解除中…"
+      confirmLabel={tr("解除限制")}
+      busyLabel={tr("解除中…")}
       onClose={() => { setMutationError(''); setConfirmationTarget(undefined) }}
       onConfirm={() => { liftRestriction(confirmationTarget) }}
     />}
@@ -1568,6 +1561,7 @@ function RenameDialog(props: {
   onSourceProjectionUpdated: (source: ArkmeSourceItem) => void
   onError: (message: string) => void
 }) {
+  useArkmeLocale()
   const [title, setTitle] = useState(props.source?.displayName ?? '')
   const [busy, setBusy] = useState(false)
   useEffect(() => {
@@ -1578,20 +1572,20 @@ function RenameDialog(props: {
   return <div style={styles.dialogScrim} role="presentation" onMouseDown={event => {
     if (event.target === event.currentTarget) props.onClose()
   }}>
-    <section style={styles.dialog} role="dialog" aria-modal="true" aria-label="重命名">
-      <h3 style={styles.dialogTitle}>重命名</h3>
+    <section style={styles.dialog} role="dialog" aria-modal="true" aria-label={tr("重命名")}>
+      <h3 style={styles.dialogTitle}>{tr("重命名")}</h3>
       <input
         style={styles.dialogInput}
         value={title}
         maxLength={80}
         autoFocus
-        aria-label="群聊名称"
+        aria-label={tr("群聊名称")}
         disabled={busy}
         onChange={event => { setTitle(event.target.value) }}
       />
       <div style={styles.dialogActions}>
-        <button type="button" style={{ ...styles.dialogButton, background: colors.subtle, color: colors.text }} disabled={busy} onClick={props.onClose}>取消</button>
-        <button
+        <button data-arkme-feedback="neutral" type="button" style={{ ...styles.dialogButton, background: colors.subtle, color: colors.text }} disabled={busy} onClick={props.onClose}>{tr("取消")}</button>
+        <button data-arkme-feedback="primary"
           type="button"
           style={{ ...styles.dialogButton, background: colors.primary, color: arkmeTheme.foreground, opacity: busy || title.trim() === '' ? .55 : 1 }}
           disabled={busy || title.trim() === ''}
@@ -1605,28 +1599,33 @@ function RenameDialog(props: {
               .catch(caught => { props.onError(errorMessage(caught)) })
               .finally(() => { setBusy(false) })
           }}
-        >保存</button>
+        >{tr("保存")}</button>
       </div>
     </section>
   </div>
 }
 
 export function ArkmeGroupChatControls(props: {
+  accountScope: string | undefined
   membersOpen?: boolean
   onMembersOpenChange?: (open: boolean) => void
   source: ArkmeSourceItem
   overlayHostRef: RefObject<HTMLElement>
   onSourceProjectionUpdated: (source: ArkmeSourceItem) => void
   onMembershipChanged: (target: ArkmeGroupActionTarget) => void
-  onMessageDndUpdated: (target: ArkmeGroupActionTarget, messageDnd: boolean) => void
+  onMessageDndUpdated: (target: ArkmeGroupActionTarget, result: ArkmeGroupNotificationResult) => boolean
   onMemberOpen: (member: ArkmeConversationMemberItem) => void
   onMemberContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
-  onMembersChanged?: () => void
+  onMemberHover?: ((member: ArkmeConversationMemberItem, anchor: HTMLElement, side: 'left') => void) | undefined
   aiPolishSettings?: ArkmeGroupAiPolishSnapshot | undefined
   onAiPolishSettingsChanged?: (settings: ArkmeGroupAiPolishSnapshot) => void
   onStatus?: (message: string) => void
   onError: (message: string) => void
+  onExport?: () => void
+  exportBusy?: boolean
+  exportProcessed?: number
 }) {
+  useArkmeLocale()
   const [localMembersOpen, setLocalMembersOpen] = useState(false)
   const membersOpen = props.membersOpen ?? localMembersOpen
   const setMembersOpen = (open: boolean) => {
@@ -1636,13 +1635,10 @@ export function ArkmeGroupChatControls(props: {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [addMembersOpen, setAddMembersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [settingsPosition, setSettingsPosition] = useState({ left: 12, top: 54 })
   const [aiPolishOpen, setAiPolishOpen] = useState(false)
   const [restrictionsOpen, setRestrictionsOpen] = useState(false)
+  const [selfNicknameOpen, setSelfNicknameOpen] = useState(false)
   const [renameSource, setRenameSource] = useState<ArkmeGroupActionTarget>()
-  const [refreshToken, setRefreshToken] = useState(0)
-  const [selfRole, setSelfRole] = useState<ArkmeGroupSettingsSnapshot['selfRole']>('unknown')
-  const [selfStatus, setSelfStatus] = useState<ArkmeGroupSettingsSnapshot['selfStatus']>('unknown')
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
   const mountedRef = useRef(true)
   useEffect(() => {
@@ -1650,23 +1646,16 @@ export function ArkmeGroupChatControls(props: {
     return () => { mountedRef.current = false }
   }, [])
   useEffect(() => {
-    setSelfRole('unknown')
-    setSelfStatus('unknown')
     setRestrictionsOpen(false)
-  }, [props.source.sourceRef])
+    setSelfNicknameOpen(false)
+  }, [props.source.sourceRef, props.accountScope])
   const reportError = useCallback((message: string) => {
     if (mountedRef.current) props.onError(message)
   }, [props.onError])
 
-  const settingsLoaded = useCallback((settings: Pick<ArkmeGroupSettingsSnapshot, 'selfRole' | 'selfStatus'>) => {
-    setSelfRole(settings.selfRole)
-    setSelfStatus(settings.selfStatus)
-  }, [])
-
   const openMembers = useCallback(() => {
     setSettingsOpen(false)
     setMembersOpen(true)
-    setRefreshToken(value => value + 1)
   }, [props.onMembersOpenChange])
 
   const overlayHost = props.overlayHostRef.current
@@ -1675,18 +1664,6 @@ export function ArkmeGroupChatControls(props: {
     if (settingsOpen) {
       setSettingsOpen(false)
       return
-    }
-    const host = props.overlayHostRef.current
-    const button = settingsButtonRef.current
-    if (host !== null && button !== null) {
-      const hostRect = host.getBoundingClientRect()
-      const buttonRect = button.getBoundingClientRect()
-      const menuWidth = GROUP_SETTINGS_MENU_WIDTH
-      const menuHeight = 280
-      setSettingsPosition({
-        left: Math.max(12, Math.min(hostRect.width - menuWidth - 12, buttonRect.right - hostRect.left - menuWidth)),
-        top: Math.max(8, Math.min(hostRect.height - menuHeight - 12, buttonRect.bottom - hostRect.top + 8)),
-      })
     }
     setMembersOpen(false)
     setAiPolishOpen(false)
@@ -1711,28 +1688,32 @@ export function ArkmeGroupChatControls(props: {
 
   return <>
     <div style={styles.headerActions}>
-      <ArkmeConversationHeaderIconButton label="查看群成员" onClick={openMembers}><ClientIcon src={icons.members} size={24} /></ArkmeConversationHeaderIconButton>
-      <ArkmeConversationHeaderIconButton label="群聊设置" buttonRef={settingsButtonRef} hasPopup expanded={settingsOpen} onClick={toggleSettings}><ArkmeConversationMoreIcon /></ArkmeConversationHeaderIconButton>
-    </div>
-    {overlayHost !== null && createPortal(<>
+      <ArkmeConversationHeaderIconButton label={tr("查看群成员")} onClick={openMembers}><ClientIcon src={icons.members} size={24} /></ArkmeConversationHeaderIconButton>
       <GroupSettingsMenu
         source={props.source}
         open={settingsOpen}
-        position={settingsPosition}
-        fallbackRole={selfRole}
-        fallbackStatus={selfStatus}
+        buttonRef={settingsButtonRef}
+        onOpenChange={open => {
+          if (open) toggleSettings()
+          else setSettingsOpen(false)
+        }}
         aiPolishSettings={props.aiPolishSettings}
         onAiPolishSettingsChanged={settings => { props.onAiPolishSettingsChanged?.(settings) }}
         onClose={() => { setSettingsOpen(false) }}
         onRename={setRenameSource}
+        onSelfNickname={() => { setSelfNicknameOpen(true) }}
         onAiPolishOpen={openAiPolish}
         onRestrictionsOpen={openRestrictions}
-        onSettingsLoaded={settingsLoaded}
         onSourceProjectionUpdated={props.onSourceProjectionUpdated}
         onMembershipChanged={props.onMembershipChanged}
         onMessageDndUpdated={props.onMessageDndUpdated}
         onError={reportError}
+        onExport={() => { props.onExport?.() }}
+        exportBusy={props.exportBusy === true}
+        exportProcessed={props.exportProcessed ?? 0}
       />
+    </div>
+    {overlayHost !== null && createPortal(<>
       <GroupAiPolishPanel
         source={props.source}
         open={aiPolishOpen}
@@ -1747,17 +1728,17 @@ export function ArkmeGroupChatControls(props: {
         onClose={closeRestrictions}
         onStatus={message => { props.onStatus?.(message) }}
       />
-      <GroupMembersDrawer
+      {membersOpen && <GroupMembersDrawer
         source={props.source}
         open={membersOpen}
-        refreshToken={refreshToken}
+        accountScope={props.accountScope}
         onClose={() => { setMembersOpen(false) }}
         onAdd={() => { setInviteOpen(true) }}
         onMemberOpen={props.onMemberOpen}
         onMemberContextMenu={props.onMemberContextMenu}
-        onSettingsLoaded={settingsLoaded}
+        onMemberHover={props.onMemberHover}
         onError={reportError}
-      />
+      />}
       <InviteCollaboratorsDialog
         source={props.source}
         open={inviteOpen}
@@ -1770,11 +1751,16 @@ export function ArkmeGroupChatControls(props: {
         open={addMembersOpen}
         onClose={() => { setAddMembersOpen(false) }}
         onAdded={() => {
-          setRefreshToken(value => value + 1)
-          props.onMembersChanged?.()
+          arkmeConversationMembers.invalidate(props.accountScope, props.source)
         }}
         onError={reportError}
       />
+      {selfNicknameOpen && <ArkmeGroupSelfNicknameDialog
+        key={JSON.stringify([props.accountScope, props.source.sourceRef])}
+        source={props.source} accountScope={props.accountScope}
+        onClose={() => { setSelfNicknameOpen(false); settingsButtonRef.current?.focus({ preventScroll: true }) }}
+        onSaved={() => { props.onStatus?.('群昵称已修改') }}
+      />}
       <RenameDialog
         source={renameSource}
         open={renameSource !== undefined}

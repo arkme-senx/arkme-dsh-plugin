@@ -2,6 +2,7 @@ import { forwardRef, useImperativeHandle, useRef, type CSSProperties, type Texta
 import type { ArkmeComposerEmoji, ArkmeComposerMention } from './composer-draft-store.js'
 import { ARKME_COMPOSER_EMOJI_PLACEHOLDER } from './composer-draft-store.js'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
+import { arkmeMarkdownPlainText, type ArkmeTextFormat } from '../markdown.js'
 import { arkmeHashTagRanges } from '../hashtag.js'
 
 const mentionColor = 'var(--dsw-alias-state-business-primary, #3964fe)'
@@ -48,6 +49,7 @@ export function arkmeComposerTextRuns(
   mentions: readonly ArkmeComposerMention[],
   emojis: readonly ArkmeComposerEmoji[],
   activeHashTagStart?: number,
+  textFormat: ArkmeTextFormat = 'plain',
 ): ArkmeMentionTextRun[] {
   const objects: Array<
     | { kind: 'mention'; start: number; end: number }
@@ -56,7 +58,8 @@ export function arkmeComposerTextRuns(
   > = []
   for (const mention of mentions) {
     const end = mention.startIndex + mention.length
-    if (mention.startIndex < 0 || end > text.length || text.slice(mention.startIndex, end) !== `@${mention.displayName}`) continue
+    const span = text.slice(mention.startIndex, end)
+    if (mention.startIndex < 0 || end > text.length || (textFormat === 'markdown' ? arkmeMarkdownPlainText(span) : span) !== `@${mention.displayName}`) continue
     objects.push({ kind: 'mention', start: mention.startIndex, end })
   }
   for (const item of emojis) {

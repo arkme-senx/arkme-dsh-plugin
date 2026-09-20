@@ -143,7 +143,44 @@ function validatePublishOptions(options) {
   validateSecret(options.secret)
   if (!sha40Pattern.test(options.sourceSHA)) throw new Error('source SHA must be 40 lowercase hexadecimal characters')
   if (typeof options.notes !== 'string') throw new Error('release notes must be a string')
-  return backendBaseURL
+  return { backendBaseURL, harnessVersionCodeRange: validateHarnessVersionCodeRange(options.harnessVersionCodeRange, { required: false }) }
+}
+
+function validateHarnessVersionCodeRange(value, { required }) {
+  if (value === undefined) {
+    if (required) throw new Error('Backend returned an invalid stored harness version code range')
+    return undefined
+  }
+  if (
+    value === null || typeof value !== 'object' || Array.isArray(value)
+    || !Number.isSafeInteger(value.min) || !Number.isSafeInteger(value.max)
+    || value.min <= 0 || value.max < value.min || value.max > 0xffffffff
+  ) {
+    throw new Error(required ? 'Backend returned an invalid stored harness version code range' : 'harness version code range must have positive inclusive min and max values')
+  }
+  return { min: value.min, max: value.max }
+}
+
+function validateCompatibilitySource(value) {
+  if (value === undefined || value === null) return undefined
+  if (
+    typeof value !== 'object' || Array.isArray(value)
+    || typeof value.version_id !== 'string' || value.version_id.trim() === ''
+    || !Number.isSafeInteger(value.version_code) || value.version_code <= 0 || value.version_code > 0xffffffff
+    || !Number.isSafeInteger(value.revision) || value.revision <= 0
+  ) throw new Error('Backend returned an invalid compatibility source')
+  return { version_id: value.version_id, version_code: value.version_code, revision: value.revision }
+}
+
+function readStoredCompatibility(version) {
+  return {
+    harnessVersionCodeRange: validateHarnessVersionCodeRange(version?.harness_version_code_range, { required: true }),
+    compatibilitySource: validateCompatibilitySource(version?.compatibility_source),
+  }
+}
+
+function formatCompatibilitySource(source) {
+  return source ? `${source.version_id}@${source.version_code}#${source.revision}` : 'none'
 }
 
 function validateUploadGrant(grant, expectedObjectSuffix) {
@@ -205,7 +242,7 @@ export async function publishRuntimeArtifact(options, {
   pollTimeoutMs = defaultPollTimeoutMs,
   log = () => {},
 } = {}) {
-  const backendBaseURL = validatePublishOptions(options)
+  const { backendBaseURL, harnessVersionCodeRange } = validatePublishOptions(options)
   const { artifactPath, metadata } = await readVerifiedArtifact(options.artifactDirectory)
   const artifact = {
     version: metadata.version,
@@ -247,11 +284,12 @@ export async function publishRuntimeArtifact(options, {
 
   const created = await request(versionsPath, {
     method: 'POST',
-    body: { ...artifact, notes: options.notes.trim() },
+    body: { ...artifact, notes: options.notes.trim(), ...(harnessVersionCodeRange === undefined ? {} : { harness_version_code_range: harnessVersionCodeRange }) },
   })
   const versionID = created?.version?.id
   if (typeof versionID !== 'string' || versionID === '') throw new Error('Backend returned an invalid version ID')
-  log(`version_id=${versionID} status=${created.version.status}`)
+  const initialCompatibility = readStoredCompatibility(created.version)
+  log(`version_id=${versionID} status=${created.version.status} harness_version_code_range=${initialCompatibility.harnessVersionCodeRange.min}-${initialCompatibility.harnessVersionCodeRange.max} compatibility_source=${formatCompatibilitySource(initialCompatibility.compatibilitySource)}`)
 
   const deadline = Date.now() + pollTimeoutMs
   let current = created.version
@@ -263,6 +301,9 @@ export async function publishRuntimeArtifact(options, {
     log(`version_id=${versionID} status=${current.status}`)
   }
 
+  const storedCompatibility = readStoredCompatibility(current)
+  log(`version_id=${versionID} status=${current.status} harness_version_code_range=${storedCompatibility.harnessVersionCodeRange.min}-${storedCompatibility.harnessVersionCodeRange.max} compatibility_source=${formatCompatibilitySource(storedCompatibility.compatibilitySource)}`)
+
   const activation = await request(`${versionsPath}/${encodeURIComponent(versionID)}/activate`, { method: 'POST' })
   if (!Number.isSafeInteger(activation?.version_code)) throw new Error('Backend returned an invalid activation result')
   return {
@@ -270,6 +311,17 @@ export async function publishRuntimeArtifact(options, {
     versionId: versionID,
     versionCode: activation.version_code,
     reused: created.reused === true,
+    ...storedCompatibility,
+  }
+}
+
+export function readHarnessVersionCodeRangeFromEnvironment(environment) {
+  const raw = environment.ARKME_HARNESS_VERSION_CODE_RANGE
+  if (raw === undefined || raw === '') return undefined
+  try {
+    return validateHarnessVersionCodeRange(JSON.parse(raw), { required: false })
+  } catch (error) {
+    throw new Error('ARKME_HARNESS_VERSION_CODE_RANGE must be JSON such as {"min":1,"max":2}', { cause: error })
   }
 }
 
@@ -280,6 +332,7 @@ async function main() {
     secret: process.env.ARKME_CI_TRIGGER_SECRET,
     sourceSHA: process.env.ARKME_RELEASE_SOURCE_SHA,
     notes: process.env.ARKME_RELEASE_NOTES || '',
+    harnessVersionCodeRange: readHarnessVersionCodeRangeFromEnvironment(process.env),
   }, { log: message => process.stdout.write(`${message}\n`) })
   process.stdout.write(`Published runtime version=${result.version} source_sha=${process.env.ARKME_RELEASE_SOURCE_SHA} version_id=${result.versionId} version_code=${result.versionCode}\n`)
 }

@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale, arkmeIntlLocale } from '../../locale.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ArkmeUnmarkedSpeakerInference,
@@ -108,13 +109,13 @@ function durationPresentation(durationMillis: number): string {
   const seconds = Math.max(0, Math.round(durationMillis / 1_000))
   const minutes = Math.floor(seconds / 60)
   const rest = seconds % 60
-  if (minutes === 0) return `${String(seconds)} 秒`
-  return rest === 0 ? `${String(minutes)} 分钟` : `${String(minutes)} 分 ${String(rest)} 秒`
+  if (minutes === 0) return tr("{v0} 秒", { v0: String(seconds) })
+  return rest === 0 ? tr("{v0} 分钟", { v0: String(minutes) }) : tr("{v0} 分 {v1} 秒", { v0: String(minutes), v1: String(rest) })
 }
 
 function latestPresentation(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '时间未知'
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat(arkmeIntlLocale(), {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(new Date(value)).replaceAll('/', '.')
 }
@@ -142,6 +143,7 @@ export function UnmarkedSpeakerDetail({
   markSpeaker = defaultMarkSpeaker,
   playbackDependencies,
 }: UnmarkedSpeakerDetailProps) {
+  useArkmeLocale()
   const identity = `${accountKey}:${candidateRef}`
   const [stateIdentity, setStateIdentity] = useState(identity)
   const identityIsCurrent = stateIdentity === identity
@@ -355,7 +357,7 @@ export function UnmarkedSpeakerDetail({
   }
 
   if (identityIsCurrent && candidateGone) {
-    return <section className="arkme-unmarked-speaker-gone" aria-label="未标记说话人候选">
+    return <section className="arkme-unmarked-speaker-gone" aria-label={tr("未标记说话人候选")}>
       <div role="status">{markError ?? '候选已不存在，正在刷新列表'}</div>
     </section>
   }
@@ -383,40 +385,40 @@ export function UnmarkedSpeakerDetail({
     />
   }
   if (visibleView === 'success') {
-    return <section className="arkme-unmarked-speaker-success" aria-label="标记成功">
-      <h2>标记成功</h2>
-      <p>说话人已标记，联系人目录正在刷新。</p>
+    return <section className="arkme-unmarked-speaker-success" aria-label={tr("标记成功")}>
+      <h2>{tr("标记成功")}</h2>
+      <p>{tr("说话人已标记，联系人目录正在刷新。")}</p>
     </section>
   }
 
   const speakerToken = options?.speakerToken?.trim() || '…'
 
-  return <section className="arkme-unmarked-speaker-summary" aria-label="未标记说话人候选摘要">
+  return <section className="arkme-unmarked-speaker-summary" aria-label={tr("未标记说话人候选摘要")}>
     <header className="arkme-unmarked-speaker-identity">
       <UnmarkedSpeakerTokenAvatar
         token={speakerToken}
         size={64}
-        label={`${options === undefined ? '未标记说话人' : `说话人 ${speakerToken}`}的头像`}
+        label={tr("{v0}的头像", { v0: options === undefined ? '未标记说话人' : `说话人 ${speakerToken}` })}
       />
       <div>
-        <h1>{options === undefined ? '未标记说话人' : `说话人 ${speakerToken}`}</h1>
-        <p>最近：{options === undefined ? '正在加载…' : latestPresentation(options.latestAtMillis)}</p>
+        <h1>{options === undefined ? '未标记说话人' : tr("说话人 {v0}", { v0: speakerToken })}</h1>
+        <p>{tr("最近：")}{options === undefined ? tr("正在加载…") : latestPresentation(options.latestAtMillis)}</p>
       </div>
     </header>
-    {options !== undefined && <div className="arkme-unmarked-speaker-stats" aria-label="说话人统计">
-      <span>出现 <strong>{options.appearanceDays}</strong> 天</span>
-      <span>有效声音 <strong>{durationPresentation(options.validAudioDurationMillis)}</strong></span>
-      <span>相关片段 <strong>{options.segmentCount}</strong> 个</span>
+    {options !== undefined && <div className="arkme-unmarked-speaker-stats" aria-label={tr("说话人统计")}>
+      <span>{tr("出现")} <strong>{options.appearanceDays}</strong> {tr("天")}</span>
+      <span>{tr("有效声音")} <strong>{durationPresentation(options.validAudioDurationMillis)}</strong></span>
+      <span>{tr("相关片段")} <strong>{options.segmentCount}</strong> {tr("个")}</span>
     </div>}
     <div className="arkme-unmarked-speaker-inference">
       <span className="arkme-unmarked-speaker-inference-icon"><UnmarkedSpeakerLinearIcon kind="search" /></span>
       <div>
-        <span className="arkme-unmarked-speaker-inference-label">推测说话人</span>
+        <span className="arkme-unmarked-speaker-inference-label">{tr("推测说话人")}</span>
         <strong>{inferencePresentation(options?.inference)}</strong>
         {options?.conversationSummary !== undefined && <p>{options.conversationSummary}</p>}
       </div>
     </div>
-    {(identityIsCurrent ? optionsLoading : true) && options === undefined && <div role="status">正在加载候选详情…</div>}
+    {(identityIsCurrent ? optionsLoading : true) && options === undefined && <div role="status">{tr("正在加载候选详情…")}</div>}
     {identityIsCurrent && optionsError !== undefined && <div role="alert">{optionsError}</div>}
     {identityIsCurrent && inferenceError !== undefined && <div role="alert">{inferenceError}</div>}
     {options?.inference.retryable === true && <button
@@ -427,13 +429,13 @@ export function UnmarkedSpeakerDetail({
     <div className="arkme-unmarked-speaker-actions">
       <button type="button" className="arkme-unmarked-speaker-action" onClick={() => { setView('audio') }}>
         <span className="arkme-unmarked-speaker-action-icon"><UnmarkedSpeakerLinearIcon kind="sound" /></span>
-        <span>去听声音</span>
+        <span>{tr("去听声音")}</span>
       </button>
       <button type="button" className="arkme-unmarked-speaker-action" onClick={() => { setView('choice') }}>
         <span className="arkme-unmarked-speaker-action-icon"><UnmarkedSpeakerLinearIcon kind="profile" /></span>
-        <span>选择说话人</span>
+        <span>{tr("选择说话人")}</span>
       </button>
     </div>
-    {identityIsCurrent && optionsError !== undefined && <button type="button" onClick={reloadOptions}>重试候选详情</button>}
+    {identityIsCurrent && optionsError !== undefined && <button type="button" onClick={reloadOptions}>{tr("重试候选详情")}</button>}
   </section>
 }

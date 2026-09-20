@@ -107,14 +107,14 @@ describe('extension desired enable state owner', () => {
       profileBundlePath: canonicalBundlePath,
     })
     expect(JSON.parse(readFileSync(installationPath, 'utf8'))).toMatchObject({ artifact_path: canonicalArtifactPath })
-    expect(manager.persistentClientState(extensionId, version)).toMatchObject({ mount: true })
+    expect((await manager.persistentClientState(extensionId, version))).toMatchObject({ mount: true })
 
     await manager.reconcileInstallationMetrics()
     expect(install).toHaveBeenCalledWith(canonicalBundlePath)
     store.close()
   })
 
-  it('does not rebase a copied persistent Bundle with a mismatched installation identity', () => {
+  it('does not rebase a copied persistent Bundle with a mismatched installation identity', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-extension-relocated-invalid-'))
     directories.push(root)
     const currentHome = join(root, 'current')
@@ -179,7 +179,7 @@ describe('extension desired enable state owner', () => {
       artifactPath: oldArtifactPath,
       profileBundlePath: oldBundlePath,
     })
-    expect(manager.persistentClientState(extensionId, version)).toMatchObject({
+    expect((await manager.persistentClientState(extensionId, version))).toMatchObject({
       mount: false,
       reason: 'runtime-mismatch',
     })
@@ -207,18 +207,20 @@ describe('extension desired enable state owner', () => {
       artifactContractVersion: 2,
       installedAtMillis: 7,
     })
+    const list = vi.fn(async () => { throw new Error('unrelated inventory unavailable') })
     const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
-      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}',
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', pluginInventory: { list },
     })
 
-    const state = manager.bundleClientState(
+    const state = (await manager.bundleClientState(
       '@example/weather', '1.0.0', arkmeClientContentDigest(clientCode),
-    )
+    ))
+    expect(list).not.toHaveBeenCalled()
     expect(state).toMatchObject({
       extension_id: 'ext-weather', version: '1.0.0', mount: true, generation: 7,
       instance_key: expect.stringMatching(/^instance-v1-[a-f0-9]{64}$/),
     })
-    expect(manager.bundleClientState('@example/weather', '1.0.0', arkmeClientContentDigest('different')))
+    expect((await manager.bundleClientState('@example/weather', '1.0.0', arkmeClientContentDigest('different'))))
       .toMatchObject({ extension_id: 'ext-weather', mount: false, reason: 'content-mismatch' })
     await expect(manager.reportClientFailure({
       identityKey: 'packageName', extensionId: '@example/weather', version: '1.0.0',
@@ -233,7 +235,7 @@ describe('extension desired enable state owner', () => {
     store.close()
   })
 
-  it('projects a quarantined persistent extension as disabled and inactive for the Client', () => {
+  it('projects a quarantined persistent extension as disabled and inactive for the Client', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-extension-quarantined-'))
     directories.push(root)
     const bundle = join(root, 'profile', 'arkme-extensions', 'bundle')
@@ -256,7 +258,7 @@ describe('extension desired enable state owner', () => {
       profileInstaller: { install: vi.fn(), remove: vi.fn(), restart: vi.fn(), setEnabled: vi.fn() },
     })
 
-    expect(manager.listInstalled()).toEqual([expect.objectContaining({
+    expect((await manager.listInstalled())).toEqual([expect.objectContaining({
       extensionId: 'ext-client',
       enabled: false,
       active: false,
@@ -265,7 +267,7 @@ describe('extension desired enable state owner', () => {
         message: '插件运行失败，已自动停用。',
       },
     })])
-    expect(manager.enabledState('ext-client')).toMatchObject({ installed: true, enabled: false, active: false })
+    expect((await manager.enabledState('ext-client'))).toMatchObject({ installed: true, enabled: false, active: false })
     expect(store.get('ext-client')).toMatchObject({
       enabled: false,
       active: false,
@@ -274,7 +276,7 @@ describe('extension desired enable state owner', () => {
     store.close()
   })
 
-  it('does not treat an active same-package wrapper from an older version as the installed runtime', () => {
+  it('does not treat an active same-package wrapper from an older version as the installed runtime', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-extension-version-mismatch-'))
     directories.push(root)
     const bundle = join(root, 'profile', 'arkme-extensions', 'bundle-1.0.1')
@@ -301,14 +303,14 @@ describe('extension desired enable state owner', () => {
       },
     })
 
-    expect(manager.listInstalled()).toEqual([
+    expect((await manager.listInstalled())).toEqual([
       expect.objectContaining({ extensionId: 'ext-host', installedVersion: '1.0.1', enabled: true, active: false }),
     ])
-    expect(manager.enabledState('ext-host')).toMatchObject({ enabled: false, active: false })
-    expect(manager.persistentClientState('ext-host', '1.0.0')).toEqual({
+    expect((await manager.enabledState('ext-host'))).toMatchObject({ enabled: false, active: false })
+    expect((await manager.persistentClientState('ext-host', '1.0.0'))).toEqual({
       extension_id: 'ext-host', version: '1.0.0', mount: false, reason: 'version-mismatch',
     })
-    expect(manager.persistentClientState('ext-host', '1.0.1')).toEqual({
+    expect((await manager.persistentClientState('ext-host', '1.0.1'))).toEqual({
       extension_id: 'ext-host', version: '1.0.1', mount: false, reason: 'runtime-mismatch',
     })
     store.close()
@@ -378,8 +380,8 @@ describe('extension desired enable state owner', () => {
     expect(setEnabled).toHaveBeenCalledWith('@arkme-local/ext-0123456789abcdef', false)
     expect(store.get('ext-host')).toMatchObject({ installedVersion: '1.0.0', enabled: false })
     expect(JSON.parse(readFileSync(join(root, 'profile', 'arkme-extensions', 'bundle', 'activation.json'), 'utf8'))).toMatchObject({ enabled: false })
-    expect(manager.listInstalled()[0]).not.toHaveProperty('artifactPath')
-    expect(manager.listInstalled()[0]).not.toHaveProperty('profileBundlePath')
+    expect((await manager.listInstalled())[0]).not.toHaveProperty('artifactPath')
+    expect((await manager.listInstalled())[0]).not.toHaveProperty('profileBundlePath')
 
     await expect(manager.setEnabled({ agent: undefined, extensionId: 'ext-host', enabled: true }))
       .resolves.toMatchObject({ enabled: true, active: false, restart_required: true })
@@ -449,10 +451,10 @@ describe('extension desired enable state owner', () => {
     await expect(manager.setEnabled({ agent: undefined, extensionId: 'ext-native', enabled: false }))
       .resolves.toMatchObject({ enabled: false, active: true, restart_required: true })
     expect(setEnabled).toHaveBeenCalledWith('@example/native-bundle', false)
-    expect(manager.listInstalled()).toEqual([
+    expect((await manager.listInstalled())).toEqual([
       expect.objectContaining({ extensionId: 'ext-native', enabled: false, active: true }),
     ])
-    expect(manager.listInstalled()[0]).not.toHaveProperty('profileBundlePath')
+    expect((await manager.listInstalled())[0]).not.toHaveProperty('profileBundlePath')
     store.close()
   })
 
@@ -499,7 +501,7 @@ describe('extension desired enable state owner', () => {
     store.close()
   })
 
-  it('uses the current DSH Loader inventory instead of stale persisted activity after restart', () => {
+  it('uses the current DSH Loader inventory instead of stale persisted activity after restart', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-extension-native-restarted-'))
     directories.push(root)
     const store = new ArkmeExtensionInstallStore(join(root, 'store'))
@@ -512,10 +514,10 @@ describe('extension desired enable state owner', () => {
       pluginInventory: { list: () => ({ entries: [] }) },
     })
 
-    expect(manager.listInstalled()).toEqual([
+    expect((await manager.listInstalled())).toEqual([
       expect.objectContaining({ extensionId: 'ext-native', enabled: false, active: false }),
     ])
-    expect(manager.listInstalled()[0]).not.toHaveProperty('restartRequired')
+    expect((await manager.listInstalled())[0]).not.toHaveProperty('restartRequired')
     store.close()
   })
 
@@ -596,10 +598,10 @@ describe('extension desired enable state owner', () => {
     await manager.reconcileInstallationMetrics()
     expect(JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')))
       .toMatchObject({ dsh: { profile: { bundles: [] } } })
-    expect(manager.listInstalled()).toEqual([
+    expect((await manager.listInstalled())).toEqual([
       expect.objectContaining({ extensionId: 'ext-native', enabled: false, active: true, restartRequired: true }),
     ])
-    expect(manager.enabledState('ext-native')).toMatchObject({ restart_required: true })
+    expect((await manager.enabledState('ext-native'))).toMatchObject({ restart_required: true })
     await manager.restartProfileChange('ext-native')
     expect(restart).toHaveBeenCalledWith(expect.objectContaining({ activationChange: true, expectActive: false }))
     store.close()
@@ -648,7 +650,7 @@ describe('extension desired enable state owner', () => {
 
     expect(JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')))
       .toMatchObject({ dsh: { profile: { bundles: ['pet-b'] } } })
-    const views = manager.listInstalled()
+    const views = (await manager.listInstalled())
     expect(views.find(item => item.extensionId === 'ext-a')).toMatchObject({ restartRequired: true })
     expect(views.find(item => item.extensionId === 'ext-b')).not.toHaveProperty('restartRequired')
     expect(syncInstallationStates).toHaveBeenCalledOnce()
@@ -787,4 +789,145 @@ describe('extension desired enable state owner', () => {
     expect(store.get('ext-snake')).toMatchObject({ enabled: false, active: false, lastError: 'slot collision' })
     store.close()
   })
+  it('awaits native loader inventory and keeps failed plugins inactive', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-async-inventory-'))
+    directories.push(root)
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put({ ...installed(root, true), executionModel: 'dsh-native' })
+    let phase: 'active' | 'failed' = 'active'
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}',
+      pluginInventory: {
+        list: async () => ({ entries: [{
+          entryId: 'native', moduleName: store.get('ext-client')!.profilePackageName!,
+          enabled: true, fiberPhase: phase,
+        }] }),
+      },
+    })
+    expect(await manager.listInstalled()).toEqual([
+      expect.objectContaining({ extensionId: 'ext-client', active: true }),
+    ])
+    phase = 'failed'
+    expect(await manager.listInstalled()).toEqual([
+      expect.objectContaining({ extensionId: 'ext-client', active: false }),
+    ])
+    store.close()
+  })
+
+  it('propagates inventory failures without reporting an inactive extension or mutating its state', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-inventory-failure-'))
+    directories.push(root)
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    const original = { ...installed(root, true), executionModel: 'dsh-native' as const }
+    store.put(original)
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}',
+      pluginInventory: { list: async () => { throw new Error('inventory unavailable') } },
+    })
+    await expect(manager.listInstalled()).rejects.toThrow('inventory unavailable')
+    expect(store.get('ext-client')).toMatchObject({ enabled: original.enabled, active: original.active })
+    store.close()
+  })
+
+  it.each(['update', 'remove', 'disable', 'replace-content'] as const)('rejects a stale Bundle Client after %s without consulting loader inventory', async change => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-client-inventory-race-'))
+    directories.push(root)
+    const clientCode = 'return { apply() {} }'
+    const source = materializeCordisBundle({
+      packageName: '@example/weather', name: 'Weather', description: '', version: '1.0.0', clientCode,
+    })
+    const artifactPath = join(root, 'weather.tgz')
+    writeFileSync(artifactPath, source.bundle.bytes)
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    const original = {
+      ...installed(root, true), artifactPath, artifactSha256: source.bundle.bundleSha256,
+      profilePackageName: '@example/weather', executionModel: 'arkme-sandboxed' as const,
+      artifactContractVersion: 2 as const,
+    }
+    store.put(original)
+    const list = vi.fn(async () => { throw new Error('unrelated inventory unavailable') })
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}',
+      pluginInventory: { list },
+    })
+    if (change === 'remove') store.remove(original.extensionId)
+    else store.put({
+      ...original,
+      ...(change === 'update' ? { installedVersion: '2.0.0', installedAtMillis: 2 } : {}),
+      ...(change === 'disable' ? { enabled: false } : {}),
+      ...(change === 'replace-content' ? { artifactSha256: 'new-content' } : {}),
+    })
+    const reasons = { update: 'version-mismatch', remove: 'not-installed', disable: 'disabled', 'replace-content': 'content-mismatch' }
+    await expect(manager.bundleClientState('@example/weather', '1.0.0', arkmeClientContentDigest(clientCode))).resolves.toMatchObject({ mount: false, reason: reasons[change] })
+    expect(list).not.toHaveBeenCalled()
+    store.close()
+  })
+
+  it('does not recreate an extension removed while a toggle awaits inventory', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-toggle-inventory-race-'))
+    directories.push(root)
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put({ ...installed(root, true), executionModel: 'dsh-native' })
+    let finish!: () => void
+    let started!: () => void
+    const inventoryReady = new Promise<void>(resolve => { finish = resolve })
+    const inventoryStarted = new Promise<void>(resolve => { started = resolve })
+    const setEnabled = vi.fn(async () => undefined)
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}',
+      profileInstaller: { install: vi.fn(), remove: vi.fn(), restart: vi.fn(), setEnabled },
+      pluginInventory: { list: async () => { started(); await inventoryReady; return { entries: [] } } },
+    })
+    const pending = manager.setEnabled({ agent: {}, extensionId: 'ext-client', enabled: false })
+    await inventoryStarted
+    store.remove('ext-client')
+    finish()
+    await expect(pending).rejects.toMatchObject({ code: 'extension-not-installed' })
+    expect(setEnabled).not.toHaveBeenCalled()
+    expect(store.get('ext-client')).toBeUndefined()
+    store.close()
+  })
+
+  it.each(['update', 'remove'] as const)('rechecks persistent Client identity after %s without loader inventory', async change => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-persistent-inventory-race-'))
+    directories.push(root)
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    const original = installed(root, true)
+    store.put(original)
+    const list = vi.fn(async () => { throw new Error('unrelated inventory unavailable') })
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}',
+      pluginInventory: { list },
+    })
+    if (change === 'remove') store.remove('ext-client')
+    else store.put({ ...original, installedVersion: '2.0.0' })
+    await expect(manager.persistentClientState('ext-client', '1.0.0')).resolves.toMatchObject({
+      mount: false, reason: change === 'remove' ? 'not-installed' : 'version-mismatch',
+    })
+    expect(list).not.toHaveBeenCalled()
+    store.close()
+  })
+
+  it('checks a persistent Client against its own runtime without requiring DSH inventory', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-persistent-independent-'))
+    directories.push(root)
+    const profile = join(root, 'profile')
+    const bundle = join(profile, 'arkme-extensions', 'bundle')
+    mkdirSync(bundle, { recursive: true })
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put(installed(root, true))
+    const list = vi.fn(async () => { throw new Error('unrelated inventory unavailable') })
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: profile,
+      pluginInventory: { list },
+      persistentRuntimeState: () => ({
+        version: '1.0.0', active: true,
+        installationUrl: pathToFileURL(join(realpathSync(bundle), 'installation.json')).href,
+      }),
+    })
+    await expect(manager.persistentClientState('ext-client', '1.0.0')).resolves.toMatchObject({ mount: true })
+    expect(list).not.toHaveBeenCalled()
+    store.close()
+  })
+
 })

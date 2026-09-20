@@ -1,3 +1,4 @@
+import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -22,7 +23,7 @@ export interface ArkmeRelatedQuickNoteSourceLocator {
   sourceOwnerRef: string
   contextType: 'record' | 'chat'
   recordUid: string
-  recordOwnerUserId: number
+  recordOwnerUserId: RecordOwnerId
   chatSessionUid: string
 }
 
@@ -31,7 +32,7 @@ interface ArkmeRelatedQuickNoteReference {
   sourceRef: string
   sourceOwnerRef: string
   recordUid: string
-  recordOwnerUserId: number
+  recordOwnerUserId: RecordOwnerId
   senderName: string
   senderAvatarRef?: string
   expiresAtMillis: number
@@ -39,7 +40,7 @@ interface ArkmeRelatedQuickNoteReference {
 
 interface RelatedQuickNoteDescriptor {
   recordUid: string
-  recordOwnerUserId: number
+  recordOwnerUserId: RecordOwnerId
   authorUserId: number
   senderName: string
   sendAtMillis: number
@@ -97,17 +98,19 @@ function recordUid(raw: unknown): string {
     || firstString(core, ['record_uid', 'recordUid', 'uid'])
 }
 
-function recordOwnerUserId(raw: unknown): number {
+function recordOwnerUserId(raw: unknown): RecordOwnerId {
   const item = objectValue(raw)
   const core = recordCore(raw)
-  return firstPositiveInteger(item, [
-    'record_owner_user_id', 'recordOwnerUserId', 'owner_user_id', 'ownerUserId',
-  ]) || firstPositiveInteger(core, [
-    'record_owner_user_id', 'recordOwnerUserId', 'owner_user_id', 'ownerUserId',
-  ])
+  for (const source of [item, core]) {
+    for (const key of ['record_owner_user_id', 'recordOwnerUserId', 'owner_user_id', 'ownerUserId']) {
+      const owner = recordOwnerId(source[key])
+      if (owner !== 0) return owner
+    }
+  }
+  return 0
 }
 
-function matchesRecordIdentity(raw: unknown, expectedUid: string, expectedOwnerUserId: number): boolean {
+function matchesRecordIdentity(raw: unknown, expectedUid: string, expectedOwnerUserId: RecordOwnerId): boolean {
   const uidKeys = ['record_uid', 'recordUid', 'uid', 'target_record_uid', 'targetRecordUid'] as const
   const ownerKeys = ['record_owner_user_id', 'recordOwnerUserId', 'owner_user_id', 'ownerUserId'] as const
   const identities = [objectValue(raw), recordCore(raw)]
@@ -115,8 +118,8 @@ function matchesRecordIdentity(raw: unknown, expectedUid: string, expectedOwnerU
     .map(key => stringValue(item[key]).trim())
     .filter(value => value !== ''))
   const ownerUserIds = identities.flatMap(item => ownerKeys
-    .map(key => Math.trunc(numberValue(item[key])))
-    .filter(value => Number.isSafeInteger(value) && value > 0))
+    .map(key => recordOwnerId(item[key]))
+    .filter(value => value !== 0))
   return uids.length > 0 && ownerUserIds.length > 0
     && uids.every(value => value === expectedUid)
     && ownerUserIds.every(value => value === expectedOwnerUserId)
@@ -137,10 +140,10 @@ function descriptorFromRaw(raw: unknown): RelatedQuickNoteDescriptor | undefined
   const core = recordCore(raw)
   const uid = recordUid(raw)
   const ownerUserId = recordOwnerUserId(raw)
-  if (uid === '' || ownerUserId <= 0) return undefined
+  if (uid === '' || ownerUserId === 0) return undefined
   const authorUserId = firstPositiveInteger(item, [
     'author_user_id', 'authorUserId', 'creator_user_id', 'creatorUserId',
-  ]) || firstPositiveInteger(core, ['creator_user_id', 'creatorUserId']) || ownerUserId
+  ]) || firstPositiveInteger(core, ['creator_user_id', 'creatorUserId']) || (typeof ownerUserId === 'number' ? ownerUserId : 0)
   const senderName = firstString(item, [
     'author_name', 'authorName', 'author_nickname', 'authorNickname',
     'sender_name', 'senderName', 'nickname', 'nick_name',
@@ -226,7 +229,7 @@ export class RelatedQuickNoteService {
       lockedRecordUids,
     )
     const profiles = await this.profile.publicProfileSummariesByUserIds(
-      descriptors.map(item => item.authorUserId),
+      descriptors.map(item => item.authorUserId).filter(id => id > 0),
       session,
       signal,
     ).catch(() => new Map())
@@ -333,8 +336,7 @@ export class RelatedQuickNoteService {
     const recordUidValue = locator.recordUid.trim()
     const chatSessionUid = locator.chatSessionUid.trim()
     if (locator.viewerUserId !== expectedViewerUserId || sourceRef === '' || sourceOwnerRef === ''
-      || recordUidValue === '' || !Number.isSafeInteger(locator.recordOwnerUserId)
-      || locator.recordOwnerUserId <= 0 || (locator.contextType !== 'record' && locator.contextType !== 'chat')
+      || recordUidValue === '' || recordOwnerId(locator.recordOwnerUserId) === 0 || (locator.contextType !== 'record' && locator.contextType !== 'chat')
       || (locator.contextType === 'chat' && chatSessionUid === '')) {
       throw new ArkmePluginError('related-quick-note-source-invalid', '当前快记来源无效，请刷新后重试', false, 400)
     }

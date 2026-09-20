@@ -42,5 +42,12 @@
         updateCheckIntervalHours: 12
         updateAllowLocalInstall: true
         richMediaRenderEnabled: true
+        markdownQuickNotesEnabled: true
         richMediaSendEnabled: true
         maxUploadBytes: 104857600
+
+# Enable the official lazy full-text index for Arkme search.
+- id: session-query-sqlite
+  config:
+    path: ':memory:'
+    openAt: first-search

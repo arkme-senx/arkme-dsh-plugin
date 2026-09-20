@@ -1,6 +1,14 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { ArkmeSourceItem, ArkmeTopicDissolveProgress } from '../types.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { conversationMenuLayer } from './conversation-menu-layer.js'
+
+/** Topic actions can start from a hover menu while their workspace is hidden by DSH. */
+export function ArkmeTopicDialogPortal({ children }: { children: ReactNode }) {
+  return typeof document === 'undefined' ? children : createPortal(children, conversationMenuLayer(document))
+}
 
 interface ArkmeTopicDialogBaseProps {
   topic: ArkmeSourceItem
@@ -67,20 +75,21 @@ function ArkmeTopicDialogFrame({
   const cancelFromKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape' && !submitting) onCancel()
   }
-  return <div style={styles.backdrop} onMouseDown={cancelFromBackdrop} onKeyDown={cancelFromKeyboard}>
+  return <ArkmeTopicDialogPortal><div style={styles.backdrop} onMouseDown={cancelFromBackdrop} onKeyDown={cancelFromKeyboard}>
     <section role="dialog" aria-modal="true" aria-label={title} style={styles.dialog}>
       <div style={styles.header}>
         <h2 style={styles.title}>{title}</h2>
-        <button type="button" aria-label="关闭" style={styles.close} disabled={submitting} onClick={onCancel}>×</button>
+        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={styles.close} disabled={submitting} onClick={onCancel}>×</button>
       </div>
       {children}
     </section>
-  </div>
+  </div></ArkmeTopicDialogPortal>
 }
 
 export function ArkmeTopicRenameDialog({
   topic, submitting, error = '', onCancel, onConfirm,
 }: ArkmeTopicRenameDialogProps) {
+  useArkmeLocale()
   const [title, setTitle] = useState(topic.displayName)
   useEffect(() => { setTitle(topic.displayName) }, [topic.displayName, topic.sourceRef])
   const normalized = title.trim()
@@ -89,10 +98,10 @@ export function ArkmeTopicRenameDialog({
     event.preventDefault()
     if (canConfirm) onConfirm(normalized)
   }
-  return <ArkmeTopicDialogFrame title="重命名主题" submitting={submitting} onCancel={onCancel}>
+  return <ArkmeTopicDialogFrame title={tr("重命名主题")} submitting={submitting} onCancel={onCancel}>
     <form onSubmit={submit}>
       <label style={styles.field}>
-        <span style={styles.label}>主题名称</span>
+        <span style={styles.label}>{tr("主题名称")}</span>
         <input
           autoFocus maxLength={100} style={styles.input} value={title} disabled={submitting}
           aria-invalid={error !== ''} onChange={event => { setTitle(event.currentTarget.value) }}
@@ -100,8 +109,8 @@ export function ArkmeTopicRenameDialog({
       </label>
       {error !== '' && <p role="alert" style={styles.error}>{error}</p>}
       <div style={styles.actions}>
-        <button type="button" style={{ ...styles.button, ...styles.cancel }} disabled={submitting} onClick={onCancel}>取消</button>
-        <button type="submit" style={{ ...styles.button, ...styles.confirm, ...(!canConfirm ? styles.disabled : {}) }} disabled={!canConfirm}>{submitting ? '保存中…' : '保存'}</button>
+        <button data-arkme-feedback="neutral" type="button" style={{ ...styles.button, ...styles.cancel }} disabled={submitting} onClick={onCancel}>{tr("取消")}</button>
+        <button data-arkme-feedback="primary" type="submit" style={{ ...styles.button, ...styles.confirm, ...(!canConfirm ? styles.disabled : {}) }} disabled={!canConfirm}>{submitting ? tr("保存中…") : tr("保存")}</button>
       </div>
     </form>
   </ArkmeTopicDialogFrame>
@@ -110,25 +119,25 @@ export function ArkmeTopicRenameDialog({
 export function ArkmeTopicDissolveDialog({
   topic, childCount, parent, recordCount, progress, submitting, error = '', onCancel, onConfirm, onMinimize,
 }: ArkmeTopicDissolveDialogProps) {
-  const recordLabel = recordCount === undefined ? '其中快记' : `${String(Math.max(0, recordCount))} 条快记`
-  const recordDestination = parent === undefined ? '回到未分类' : `归入“${parent.displayName}”`
-  const childDestination = parent === undefined ? '提升为一级主题' : `提升为“${parent.displayName}”的子主题`
+  const recordLabel = recordCount === undefined ? '其中快记' : tr("{v0} 条快记", { v0: String(Math.max(0, recordCount)) })
+  const recordDestination = parent === undefined ? '回到未分类' : tr("归入“{v0}”", { v0: parent.displayName })
+  const childDestination = parent === undefined ? '提升为一级主题' : tr("提升为“{v0}”的子主题", { v0: parent.displayName })
   const progressText = progress === undefined || !submitting ? ''
-    : progress.stage === 'reading' ? `正在读取快记 ${String(progress.completedRecordCount)} / ${String(progress.totalRecordCount)} 条…`
-      : progress.stage === 'migrating' ? `正在迁移 ${String(progress.completedRecordCount)} / ${String(progress.totalRecordCount)} 条快记…`
+    : progress.stage === 'reading' ? tr("正在读取快记 {v0} / {v1} 条…", { v0: String(progress.completedRecordCount), v1: String(progress.totalRecordCount) })
+      : progress.stage === 'migrating' ? tr("正在迁移 {v0} / {v1} 条快记…", { v0: String(progress.completedRecordCount), v1: String(progress.totalRecordCount) })
         : progress.stage === 'promoting' ? '正在调整子主题…'
           : progress.stage === 'dissolving' ? '正在解散主题…'
             : progress.stage === 'completed' ? '解散完成'
               : '解散失败'
-  return <ArkmeTopicDialogFrame title="解散主题" submitting={submitting} onCancel={onCancel}>
-    <p style={styles.notice}>“{topic.displayName}”中的{recordLabel}将{recordDestination}。{childCount > 0 ? `${String(childCount)} 个子主题会${childDestination}。` : '此操作不会删除快记。'}</p>
+  return <ArkmeTopicDialogFrame title={tr("解散主题")} submitting={submitting} onCancel={onCancel}>
+    <p style={styles.notice}>“{topic.displayName}{tr("”中的")}{recordLabel}{tr("将")}{recordDestination}。{childCount > 0 ? `${String(childCount)} 个子主题会${childDestination}。` : '此操作不会删除快记。'}</p>
     {progressText !== '' && <p role="status" style={styles.progress}>{progressText}</p>}
     {error !== '' && <p role="alert" style={styles.error}>{error}</p>}
     <div style={styles.actions}>
-      <button type="button" style={{ ...styles.button, ...styles.cancel }}
+      <button data-arkme-feedback="neutral" type="button" style={{ ...styles.button, ...styles.cancel }}
         disabled={submitting && onMinimize === undefined} onClick={submitting ? onMinimize : onCancel}
-      >{submitting ? '收起' : '取消'}</button>
-      <button type="button" style={{ ...styles.button, ...styles.danger }} disabled={submitting} onClick={onConfirm}>{submitting ? '解散中…' : '解散主题'}</button>
+      >{submitting ? tr("收起") : tr("取消")}</button>
+      <button data-arkme-feedback="primary" type="button" style={{ ...styles.button, ...styles.danger }} disabled={submitting} onClick={onConfirm}>{submitting ? '解散中…' : tr("解散主题")}</button>
     </div>
   </ArkmeTopicDialogFrame>
 }

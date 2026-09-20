@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { ArkmeDesktopQuarantineStatus } from '../extensions/desktop-quarantine.js'
 import { callArkme } from './api.js'
@@ -56,6 +57,7 @@ export function ArkmeExtensionRecoveryNotice({
   request = defaultRequest,
   onOpenExtensions = () => { arkmeUi.showExtensions() },
 }: ArkmeExtensionRecoveryNoticeProps) {
+  useArkmeLocale()
   const [status, setStatus] = useState<ArkmeDesktopQuarantineStatus>()
   const [detailsVisible, setDetailsVisible] = useState(false)
   const [busyPackage, setBusyPackage] = useState<string>()
@@ -130,11 +132,11 @@ export function ArkmeExtensionRecoveryNotice({
       <button
         type="button" style={styles.button} data-arkme-quarantine-action="extensions"
         onClick={onOpenExtensions}
-      >打开扩展管理</button>
+      >{tr("打开扩展管理")}</button>
       <button
         type="button" style={styles.button} data-arkme-quarantine-action="dismiss"
         onClick={() => { void dismiss() }}
-      >知道了</button>
+      >{tr("知道了")}</button>
     </div>
   </section>
 }

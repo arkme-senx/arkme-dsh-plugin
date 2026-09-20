@@ -18,6 +18,7 @@ class MemorySecrets implements ArkmeSecureValueStore {
 }
 
 class FakeRealtime implements DshRemoteRealtimeTransport {
+  revalidate(): void {}
   subscriptions: Array<{ target: DshRemoteRuntimeTarget; afterSequence?: number }> = []
   publishes: Array<{ target: DshRemoteRuntimeTarget; commandId: string; direction: string; payload: Record<string, unknown> }> = []
   onEvent: ((payload: DshRemoteRealtimePayload, metadata: DshRemoteTrustedEventMetadata) => void) | undefined
@@ -173,4 +174,45 @@ describe('account-scoped Runtime channel manager', () => {
     expect(new Set(realtime.publishes.map(item => item.commandId))).toEqual(new Set(['projection-01']))
     vi.useRealTimers()
   })
+})
+
+
+it('a buffered request uses the same projection-error policy as a live request', async () => {
+  const { manager, realtime, fatals } = managerFixture()
+  const failure = new DshRemoteError('REMOTE_REQUEST_INVALID', 'large projection', false, { logicalTooLarge: true })
+  vi.spyOn(realtime, 'publish').mockRejectedValue(failure)
+  await manager.prepare()
+  realtime.event({ kind: 'request' }, controllerMetadata(9))
+  manager.activate(9)
+  await vi.waitFor(() => { expect(fatals).toEqual([{ projection: failure }]) })
+  expect(manager.status().ready).toBe(true)
+  await manager.close()
+})
+
+it('separates outbound queue time from ACK time and contains diagnostic failures', async () => {
+  const { manager, realtime } = managerFixture()
+  await manager.prepare(); await manager.activate(9)
+  let now = 0
+  const clock = vi.spyOn(performance, 'now').mockImplementation(() => now)
+  const gate = Promise.withResolvers<void>()
+  const timings: unknown[] = []
+  vi.spyOn(realtime, 'publish').mockImplementationOnce(async () => { await gate.promise; return { sequence: 1 } })
+  try {
+    const first = manager.publishProjectionEvent({ kind: 'event' }, 'first', timing => { timings.push(timing) })
+    await Promise.resolve()
+    now = 10
+    const second = manager.publishProjectionEvent({ kind: 'event' }, 'second', timing => {
+      timings.push(timing); throw new Error('diagnostic failed')
+    })
+    now = 80; gate.resolve()
+    await Promise.all([first, second])
+    expect(timings).toEqual([
+      { queueMs: 0, publishMs: 80, completed: true },
+      { queueMs: 70, publishMs: 0, completed: true },
+    ])
+    vi.spyOn(realtime, 'publish').mockRejectedValueOnce(new DshRemoteError('REMOTE_INVALID_RESPONSE', 'invalid', false))
+    const timing = vi.fn()
+    await expect(manager.publishProjectionEvent({ kind: 'event' }, 'failed', timing)).rejects.toThrow('invalid')
+    expect(timing).toHaveBeenCalledWith({ queueMs: 0, publishMs: 0, completed: false })
+  } finally { clock.mockRestore(); await manager.close() }
 })

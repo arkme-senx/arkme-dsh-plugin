@@ -1,3 +1,4 @@
+import { tr } from './locale.js'
 import type { CSSProperties } from 'react'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmePluginUpdateInstallSnapshot, ArkmePluginUpdateStatus } from '../types.js'
@@ -95,23 +96,23 @@ export function ArkmePluginUpdateDialog({
     <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-plugin-update-title">
       <div style={styles.header}>
         <div>
-          <h2 id="arkme-plugin-update-title" style={styles.title}>发现插件新版本</h2>
-          <p style={styles.version}>当前 v{status.installedVersion} → 最新 v{status.latestVersion ?? '…'}</p>
+          <h2 id="arkme-plugin-update-title" style={styles.title}>{tr("发现插件新版本")}</h2>
+          <p style={styles.version}>{tr("当前 v")}{status.installedVersion} {tr("→ 最新 v")}{status.latestVersion ?? '…'}</p>
         </div>
         <button type="button" style={{ ...styles.closeButton, ...(actionBusy ? { opacity: 0.5, cursor: 'default' } : {}) }}
-          aria-label="关闭插件更新" disabled={actionBusy} onClick={onDismiss}><X size={18} /></button>
+          aria-label={tr("关闭插件更新")} disabled={actionBusy} onClick={onDismiss}><X size={18} /></button>
       </div>
       <div style={styles.notes}>
-        <h3 style={styles.notesTitle}>更新说明</h3>
+        <h3 style={styles.notesTitle}>{tr("更新说明")}</h3>
         <p style={styles.notesBody}>{updateSummary}</p>
         {status.releaseNotesUrl !== undefined && <a style={styles.releaseLink} href={status.releaseNotesUrl}
-          target="_blank" rel="noreferrer">查看完整更新说明</a>}
+          target="_blank" rel="noreferrer">{tr("查看完整更新说明")}</a>}
       </div>
       {reason !== undefined && <p style={styles.status}>{reason}</p>}
       {installActive && <p style={styles.status} role="status">{install.message}</p>}
       {error.trim() !== '' && <p style={styles.error} role="alert">{error.trim()}</p>}
       <div style={styles.actions}>
-        <button type="button" style={styles.button} disabled={actionBusy} onClick={onDismiss}>稍后</button>
+        <button type="button" style={styles.button} disabled={actionBusy} onClick={onDismiss}>{tr("稍后")}</button>
         <button type="button" disabled={actionBusy || reason !== undefined}
           style={{ ...styles.primaryButton, ...((actionBusy || reason !== undefined) ? { opacity: 0.5, cursor: 'default' } : {}) }}
           onClick={onInstall}>{progressLabel(install)}</button>

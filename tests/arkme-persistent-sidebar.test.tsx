@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs'
+import { readUiSource } from './helpers/ui-source.js'
 import { describe, expect, it } from 'vitest'
 
-const persistentShellSource = readFileSync(new URL('../src/client/ArkmePersistentShell.tsx', import.meta.url), 'utf8')
+const persistentShellSource = readUiSource(new URL('../src/client/ArkmePersistentShell.tsx', import.meta.url), 'utf8')
   .replaceAll('\r\n', '\n')
 
 describe('Arkme persistent sidebar', () => {

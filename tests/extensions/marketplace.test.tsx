@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { JSDOM } from 'jsdom'
 import type { ComponentType } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import * as marketplaceModule from '../../src/client/ArkmeMarketplace.js'
@@ -13,7 +14,7 @@ import {
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
   executeExtensionShareAuthorAction, extensionAuthorWorldTarget, extensionGithubProfileUrl,
   classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
-  extensionEnabledLabel,
+  extensionEnabledLabel, extensionRestartPageReady,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   sameExtensionInstallTaskSnapshot,
   extensionVersionLabel, installedExtensionCatalogItem, mergeInstalledExtensionCatalogItem,
@@ -37,6 +38,18 @@ const previewModule = marketplaceModule as unknown as {
 }
 
 describe('Arkme marketplace UI', () => {
+  it('does not reload into the transient 404 between Host and Web readiness', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(new Response('<!doctype html>', { status: 200 }))
+
+    await expect(extensionRestartPageReady('http://127.0.0.1:3081/market', fetchImpl)).resolves.toBe(false)
+    await expect(extensionRestartPageReady('http://127.0.0.1:3081/market', fetchImpl)).resolves.toBe(true)
+    expect(fetchImpl).toHaveBeenCalledWith(new URL('http://127.0.0.1:3081/'), {
+      cache: 'no-store', credentials: 'same-origin',
+    })
+  })
+
   it('treats missing manifest permissions as no declared permissions', () => {
     const ManifestDetails = previewModule.ArkmeExtensionManifestDetails
     expect(ManifestDetails).toBeTypeOf('function')
@@ -58,6 +71,22 @@ describe('Arkme marketplace UI', () => {
       runtime: { dsh: '' }, halves: { host: false, client: false }, permissions: null,
     }} />)
     expect(html).toBe('')
+  })
+
+  it('marks only the page tab header for dragging, excluding search and modal navigation', () => {
+    const page = new JSDOM(renderToStaticMarkup(<ArkmeMarketplace displayMode="page" />))
+    const modal = new JSDOM(renderToStaticMarkup(<ArkmeMarketplace />))
+    try {
+      const document = page.window.document
+      expect(document.querySelector('[data-market-header-layer="primary"]')?.getAttribute('data-arkme-window-drag-region')).toBe('marketplace')
+      expect(document.querySelector('[role="tablist"]')?.getAttribute('data-arkme-window-drag-region')).toBe('marketplace')
+      expect(document.querySelector('[data-market-header-layer="secondary"]')?.closest('[data-arkme-window-drag-region]')).toBeNull()
+      expect(document.querySelector('input[type="search"]')?.closest('[data-arkme-window-drag-region]')).toBeNull()
+      expect(modal.window.document.querySelector('[data-arkme-window-drag-region]')).toBeNull()
+    } finally {
+      page.window.close()
+      modal.window.close()
+    }
   })
 
   it('uses a large modal with text-only navigation, no search entry, and a guided empty state', () => {

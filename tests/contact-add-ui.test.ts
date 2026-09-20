@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readUiSource } from './helpers/ui-source.js'
 import { describe, expect, it } from 'vitest'
 import {
   buildArkmePersonalShareUrl,
@@ -27,8 +27,8 @@ describe('contact add QR interoperability', () => {
 
 describe('contact add dialog layout', () => {
   it('uses the same viewport-centered overlay placement as the quick-create dialog', () => {
-    const contactSource = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
-    const quickAddSource = readFileSync(new URL('../src/client/ArkmeQuickAdd.tsx', import.meta.url), 'utf8')
+    const contactSource = readUiSource(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
+    const quickAddSource = readUiSource(new URL('../src/client/ArkmeQuickAdd.tsx', import.meta.url), 'utf8')
     const sharedPlacement = [
       "position: 'fixed', inset: 0, zIndex: 1000",
       'padding: 16',
@@ -45,14 +45,14 @@ describe('contact add dialog layout', () => {
   })
 
   it('reserves the result-state height without adding a dialog scrollbar', () => {
-    const source = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
+    const source = readUiSource(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
     expect(source).toContain("height: 'min(620px, calc(100% - 4px))'")
     expect(source).toContain("contactDialogBody: { flex: 1, minHeight: 0, overflow: 'hidden' }")
     expect(source).not.toContain("contactDialogBody: { flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' }")
   })
 
   it('keeps loading feedback and the contact card in separate reserved areas', () => {
-    const source = readFileSync(new URL('../src/client/ArkmeContactAddSurface.tsx', import.meta.url), 'utf8')
+    const source = readUiSource(new URL('../src/client/ArkmeContactAddSurface.tsx', import.meta.url), 'utf8')
     expect(source).toContain("resultArea: { flex: '1 1 auto', minHeight: 0, display: 'grid', overflow: 'hidden' }")
     expect(source).toContain("const statusVisible = busy || (!scannerOpen && error !== '') || notice !== ''")
     expect(source).toContain("gridTemplateRows: statusVisible ? '53px minmax(0, 1fr)' : '0 minmax(0, 1fr)'")

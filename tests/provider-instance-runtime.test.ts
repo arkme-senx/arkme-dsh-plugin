@@ -130,3 +130,19 @@ describe('Arkme Provider instance guard', () => {
     expect(onRefreshed).not.toHaveBeenCalled()
   })
 })
+
+it('cancels the previous account recovery before fallback or completion can affect the new account', async () => {
+  const controller = new AbortController()
+  let reject!: (error: Error) => void
+  const refreshRoot = vi.fn().mockImplementationOnce(() => new Promise<void>((_, fail) => { reject = fail })).mockResolvedValue(undefined)
+  const onRefreshed = vi.fn()
+  const pending = recoverArkmeProviderInstanceDirectory({
+    accountScope: 'test:old', activateAccount: vi.fn(), refreshRoot, onRefreshed,
+    signal: controller.signal,
+  })
+  controller.abort()
+  reject(new Error('old request completed after account replacement'))
+  await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  expect(refreshRoot).toHaveBeenCalledTimes(1)
+  expect(onRefreshed).not.toHaveBeenCalled()
+})

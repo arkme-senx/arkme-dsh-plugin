@@ -98,6 +98,8 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
     join(root, 'src/client/ArkmeLogin.tsx'),
     join(root, 'src/client/arkme-login-locales.ts'),
     join(root, 'src/client/ArkmeSettingsSurface.tsx'),
+    // Membership follows the same Jiwo-localized account surfaces and mobile entitlements.
+    join(root, 'src/client/ArkmeMembershipDialog.tsx'),
   ])
   if (localizedUiFiles.has(file)) return content.replaceAll('即我', '')
   const allowedFiles = new Set([
@@ -106,6 +108,7 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
     join(root, 'src/tools/business/contacts/index.ts'),
     join(root, 'src/tools/prompts/business.ts'),
     join(root, 'src/client/ArkmeContactAddSurface.tsx'),
+    join(root, 'src/client/redesign/contacts/ContactProfileDetail.tsx'),
     join(root, 'src/client/ArkmeCallSurface.tsx'),
     join(root, 'src/client/ArkmeCallHistorySurface.tsx'),
     join(root, 'src/client/ArkmeVirtualWorkspace.tsx'),
@@ -138,6 +141,15 @@ function withoutOfficialCommunityProductCopy(file: string, content: string): str
     return content.replaceAll('即我官方群', '')
   }
   return content
+}
+
+function withoutMobileRecordingGuideProductCopy(file: string, content: string): string {
+  if (file !== join(root, 'src/client/recordings/ArkmeRecordingMobileGuideDialog.tsx')) return content
+  // The guide names the separate mobile app the user must open, not the Arkme desktop product.
+  return content
+    .replaceAll('>即我</span>', '></span>')
+    .replaceAll('tr("即我")', "''")
+    .replaceAll('打开手机即我，登录同一账号', '')
 }
 
 function withoutApprovedJiwoScanLoginFeature(file: string, content: string): string {
@@ -182,7 +194,92 @@ function withoutApprovedLinkMetadataCompatibilityAliases(file: string, content: 
     .replaceAll("'jotmo-app.senguo.me'", '')
 }
 
+function withoutSharedBrandMarkIdentifiers(file: string, content: string): string {
+  const allowedFiles = new Set([
+    join(root, 'src/client/ArkmeJiwoBrandMark.tsx'),
+    join(root, 'src/client/ArkmeProductNavigation.tsx'),
+    join(root, 'src/client/ArkmeLogin.tsx'),
+  ])
+  if (!allowedFiles.has(file)) return content
+  // These are the shared image component's identifiers, not visible product copy.
+  return content.replaceAll('ArkmeJiwoBrandMark', '').replaceAll('data-arkme-jiwo-brand', '')
+}
+
+function withoutCalendarBackendOwnerName(file: string, content: string): string {
+  if (file !== join(root, 'docs/self-calendar-backend-requirements.md')) return content
+  // The backend handoff identifies the real repository whose contract was inspected.
+  return content.replaceAll('`jotmo-record`', '')
+}
+
+function withoutRecordingHandoffNames(file: string, content: string): string {
+  if (file === join(root, 'docs/recording-presence-handoff.md')) {
+    // Exact code references to the owners we must hand off to, not UI branding.
+    return content
+      .replaceAll('`jotmo-audio`', '')
+      .replaceAll('`jotmo-frontend`', '')
+      .replaceAll('`jotmo-frontend-web`', '')
+      .replaceAll('`apps/jotmo-web-pages/src/app/app/audio/long-recording`', '')
+  }
+  if (file === join(root, 'src/client/recordings/direct-recording-store.ts')) {
+    // Preserve the approved localized download filename, not every use of the brand.
+    return content.replaceAll('`即我录音-${stamp}-${id.slice(0, 8)}.wav`', '')
+  }
+  return content
+}
+
 describe('Arkme plugin identity', () => {
+  it('allows only exact recording handoff references and the localized recording filename', () => {
+    const handoff = join(root, 'docs/recording-presence-handoff.md')
+    const recorder = join(root, 'src/client/recordings/direct-recording-store.ts')
+    const references = ['`jotmo-audio`', '`jotmo-frontend`', '`jotmo-frontend-web`', '`apps/jotmo-web-pages/src/app/app/audio/long-recording`']
+    for (const reference of references) {
+      expect(withoutRecordingHandoffNames(handoff, reference)).toBe('')
+      expect(withoutRecordingHandoffNames(join(root, 'README.md'), reference)).toBe(reference)
+      expect(withoutRecordingHandoffNames(recorder, reference)).toBe(reference)
+    }
+    const filename = '`即我录音-${stamp}-${id.slice(0, 8)}.wav`'
+    expect(withoutRecordingHandoffNames(recorder, filename)).toBe('')
+    expect(withoutRecordingHandoffNames(handoff, filename)).toBe(filename)
+    for (const file of [handoff, recorder]) {
+      const otherCopy = 'Jotmo jiwo 即我产品 即我录音 jotmo-audio jotmo-frontend-web'
+      expect(withoutRecordingHandoffNames(file, otherCopy)).toBe(otherCopy)
+    }
+  })
+
+  it('allows shared logo identifiers without exempting legacy product copy', () => {
+    const file = join(root, 'src/client/ArkmeJiwoBrandMark.tsx')
+    expect(withoutSharedBrandMarkIdentifiers(file, 'ArkmeJiwoBrandMark data-arkme-jiwo-brand')).toBe(' ')
+    const copy = 'Jotmo jiwo 即我产品'
+    expect(withoutSharedBrandMarkIdentifiers(file, copy)).toBe(copy)
+    expect(withoutSharedBrandMarkIdentifiers(join(root, 'src/client/ArkmeHomeTour.tsx'), 'ArkmeJiwoBrandMark'))
+      .toBe('ArkmeJiwoBrandMark')
+  })
+
+  it('allows only the cited calendar backend repository name in its handoff', () => {
+    const file = join(root, 'docs/self-calendar-backend-requirements.md')
+    expect(withoutCalendarBackendOwnerName(file, '`jotmo-record`')).toBe('')
+    expect(withoutCalendarBackendOwnerName(file, 'Jotmo jiwo 即我产品')).toBe('Jotmo jiwo 即我产品')
+    expect(withoutCalendarBackendOwnerName(join(root, 'README.md'), '`jotmo-record`')).toBe('`jotmo-record`')
+  })
+
+  it('allows only the mobile recording guide app references without hiding other legacy branding', () => {
+    const guide = join(root, 'src/client/recordings/ArkmeRecordingMobileGuideDialog.tsx')
+    expect(withoutMobileRecordingGuideProductCopy(guide, '>即我</span>打开手机即我，登录同一账号')).toBe('></span>')
+    const legacyBranding = 'Jotmo jiwo 即我产品 即我登录'
+    expect(withoutMobileRecordingGuideProductCopy(guide, legacyBranding)).toBe(legacyBranding)
+    expect(withoutMobileRecordingGuideProductCopy(join(root, 'src/client/ArkmeHomeTour.tsx'), '打开手机即我，登录同一账号'))
+      .toBe('打开手机即我，登录同一账号')
+  })
+
+  it('allows contact account terminology while retaining legacy branding checks', () => {
+    const contactDetail = join(root, 'src/client/redesign/contacts/ContactProfileDetail.tsx')
+    expect(withoutArkmeIdCompatibilityAliases(contactDetail, '即我号')).toBe('')
+    const legacyBranding = 'Jotmo jiwo 即我产品'
+    expect(withoutArkmeIdCompatibilityAliases(contactDetail, legacyBranding)).toBe(legacyBranding)
+    const unrelatedFile = join(root, 'src/client/redesign/contacts/ContactDirectorySurface.tsx')
+    expect(withoutArkmeIdCompatibilityAliases(unrelatedFile, '即我号')).toBe('即我号')
+  })
+
   it('removes legacy product identity outside unchanged service infrastructure', () => {
     const files = [
       join(root, 'README.md'),
@@ -208,17 +305,27 @@ describe('Arkme plugin identity', () => {
               file,
               withoutOfficialCommunityProductCopy(
                 file,
-                withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+                withoutMobileRecordingGuideProductCopy(file,
+                  withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8'))),
               ),
             ),
           ),
         ),
       )
-      const content = withoutInfrastructureNames(withoutDshRemoteRepositoryNames(
+      const content = withoutRecordingHandoffNames(file, withoutCalendarBackendOwnerName(file, withoutSharedBrandMarkIdentifiers(file, withoutInfrastructureNames(withoutDshRemoteRepositoryNames(
         file,
         withoutOpenClawProtocolNames(file, withoutBotOwnerProtocolNames(file, source)),
-      ))
-      return /jotmo|jiwo|即我/i.test(content) ? [file.slice(root.length)] : []
+      )))))
+      // Engineering plans identify real repository owners, not product branding.
+      let productCopy = file.includes('/docs/plans/recording-')
+        ? content.replace(/jotmo-(audio|openapi|meta|intelligent)\b/g, '') : content
+      // Approved mobile parity uses Chinese lookup keys and official mobile
+      // branding/assets. English copy must still use the desktop product name.
+      if (/\/src\/client\/locales\/(en|dynamic-en)\.ts$/.test(file)) productCopy = productCopy.replace(/^.*\|/gm, '')
+      if (file.endsWith('/src/client/locales/mobile-en.ts')) productCopy = productCopy.replace(/^\/\/.*$/gm, '').replace(/"[^"\n]+"\s*:/g, '')
+      if (file.endsWith('/src/client/ArkmeAboutDetails.tsx')) productCopy = productCopy.replaceAll('jiwo-about-icon.png', 'product.png').replaceAll('jiwo-official-wechat.png', 'qr.png').replaceAll("tr('即我')", "''")
+      if (file.endsWith('/src/client/ArkmeDataManagementSettings.tsx') || file.endsWith('/docs/profile-data-navigation.md')) productCopy = productCopy.replaceAll('https://jiwo.cc/import', '').replaceAll('即我', '')
+      return /jotmo|jiwo|即我/i.test(productCopy) ? [file.slice(root.length)] : []
     })
 
     expect(residuals).toEqual([])

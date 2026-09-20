@@ -107,7 +107,7 @@ describe('ArkmeRecordingSurface layout', () => {
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 
     expect(source).not.toContain('calendarExpanded')
-    expect(source).toContain('>回到今日</button>')
+    expect(source).toContain('{tr("回到今日")}</button>')
     expect(source).toContain("const canJumpToday = dateKey(selectedDate) !== dateKey(today)")
     expect(source).toContain('disabled={future}')
   })
@@ -117,7 +117,7 @@ describe('ArkmeRecordingSurface layout', () => {
 
     expect(recordingSurface.recordingCalendarDuration(36 * 60_000)).toBe('0.6h')
     expect(recordingSurface.recordingCalendarDuration(90 * 60_000)).toBe('1.5h')
-    expect(source).toContain('monthDurationBrief: { background: colors.warningSoft, color: colors.warning }')
+    expect(source).toContain('monthDurationBrief: { color: colors.secondary }')
     expect(source).toContain('meta.durationMillis <= 60 * 60 * 1_000 ? styles.monthDurationBrief')
     expect(source).not.toMatch(/calendar: \{[^}]*boxShadow/)
   })
@@ -196,8 +196,8 @@ describe('ArkmeRecordingSurface layout', () => {
     const timelineSource = await readFile(new URL('../src/client/recordings/ArkmeRecordingTimeline.tsx', import.meta.url), 'utf8')
 
     expect(source).toContain("gridTemplateRows: 'auto minmax(0,1fr)'")
-    expect(timelineSource).toContain('height: 162')
-    expect(timelineSource).toContain("gridTemplateRows: '25px minmax(0,1fr) 28px'")
+    expect(timelineSource).toContain('minHeight: 162')
+    expect(timelineSource).toContain("gridTemplateRows: '25px 68px auto auto'")
   })
 
   it('uses the desktop empty illustration instead of tabs and the legacy placeholder track', async () => {
@@ -214,7 +214,6 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(markup).not.toContain('>转写</button>')
     expect(source).not.toContain('<div style={styles.track} aria-label="当天录音时间轴">')
     expect(source).toContain("const emptyDay = !dayLoading && dayError === '' && day?.transcript.state === 'empty'")
-    expect(source).toContain('{emptyDay ? <ArkmeRecordingEmptyState />')
   })
 
   it('uses the desktop empty-panel generation actions and hides them while processing', () => {
@@ -360,6 +359,7 @@ describe('ArkmeRecordingSurface layout', () => {
 
     expect(source).toContain("section.state === 'processing'")
     expect(source).toContain('section.processingCount > 0')
-    expect(source).toContain("loading={dayLoading || day?.transcript.state === 'processing'}")
+    expect(source).toContain('loading={dayLoading}')
+    expect(source).toContain('coverage={coverage}')
   })
 })

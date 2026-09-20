@@ -41,6 +41,20 @@ export type MessageActionReference =
   | ChatBotMessageActionReference
   | SubjectBotMessageActionReference
 
+/** Local DSH snapshots are deliberately outside the signed MessageActionReference union. */
+export interface NativeMessageForwardSnapshot {
+  ownerKind: 'dsh_native'
+  sessionId: string
+  messageIdentity: string
+  role: MessageActionRole
+  textContent: string
+  createdAtMillis: number
+  sortOrdinal: number
+  senderUserId: number
+  senderName: string
+}
+export type ForwardMessage = MessageActionReference | NativeMessageForwardSnapshot
+
 export interface AgentMessageActionConversation {
   version: 2
   userId: number
@@ -80,7 +94,7 @@ export interface MessageActionGateway {
   forwardToChat(input: {
     targetSourceRef: string
     target: Extract<MessageActionTarget, { kind: 'private_chat' }> | Extract<MessageActionTarget, { kind: 'group_chat' }>
-    references: readonly MessageActionReference[]
+    references: readonly ForwardMessage[]
     requestId: string
     sendAtMillis: number
     commentText: string
@@ -90,7 +104,7 @@ export interface MessageActionGateway {
   forwardToRecord(input: {
     targetSourceRef: string
     target: Exclude<MessageActionTarget, { kind: 'private_chat' | 'group_chat' }>
-    references: readonly MessageActionReference[]
+    references: readonly ForwardMessage[]
     requestId: string
     recordUid: string
     sendAtMillis: number

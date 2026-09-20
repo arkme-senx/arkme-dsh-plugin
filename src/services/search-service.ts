@@ -1,3 +1,5 @@
+import { resolveDshSearchOrigins } from '../dsh-search-origins.js'
+import { recordOwnerId } from '../record-owner-id.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type {
   ArkmeCachedQueryResult,
@@ -17,8 +19,8 @@ import { RecordService } from './record-service.js'
 import { SourceService } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue } from './service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
-import { ARKME_DSH_AGENT_INPUT_CREATION_SOURCE, isDshAgentInputSourceTitle } from '../dsh-agent-input-source.js'
 import { arkmeNormalizedHashTag } from '../hashtag.js'
+import { arkmeSearchRecordLinks } from '../search-record-links.js'
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -28,6 +30,8 @@ function booleanValue(value: unknown): boolean { return value === true }
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 
 export class SearchService {
+  localDshQuery?: () => unknown
+
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly record: RecordService,
@@ -61,26 +65,29 @@ export class SearchService {
     cursor?: string
     searchScope?: 'global' | 'topic' | 'chat_session'
     sourceUid?: string
+    sourceRef?: string
     signal?: AbortSignal
   }): Promise<ArkmeRecordSearchResult> {
     const query = options.query.trim()
     if (query === '') throw new ArkmePluginError('record-query-empty', '搜索关键词不能为空', false)
     const session = await this.runtime.requireSession()
+    const scope = await this.searchScope(options, session.userId)
     const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/search/records/query',
       {
         keyword: query,
         limit: Math.min(50, Math.max(1, Math.trunc(options.limit))),
-        search_scope: options.searchScope ?? 'global',
-        source_kinds: [1, 2, 3],
-        ...(options.sourceUid?.trim() ? { source_uid: options.sourceUid.trim() } : {}),
+        ...scope,
         ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
       },
       session,
       options.signal,
+      { lane: 'interactive-read' },
     )
-    return await this.withNavigationTargets(this.recordSearchResult(data, lockedRecordUids), options.signal)
+    const result = this.recordSearchResult(data, lockedRecordUids)
+    result.items = await resolveDshSearchOrigins(this.localDshQuery?.(), result.items, options.signal)
+    return await this.withNavigationTargets(result, options.signal, options.sourceRef)
   }
 
   /** Query the canonical record-tag projection used by Flutter's tag search. */
@@ -217,6 +224,9 @@ export class SearchService {
     scene: ArkmeSearchSceneKind
     limit: number
     cursor?: string
+    searchScope?: 'global' | 'topic' | 'chat_session'
+    sourceUid?: string
+    sourceRef?: string
     signal?: AbortSignal
   }): Promise<ArkmeRecordSearchResult> {
     const sceneKinds: Record<ArkmeSearchSceneKind, number> = {
@@ -230,46 +240,92 @@ export class SearchService {
       throw new ArkmePluginError('search-scene-invalid', '快速查找类型无效', false)
     }
     const session = await this.runtime.requireSession()
+    const scope = await this.searchScope(options, session.userId)
     const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/search/records/scene/query',
       {
         scene_kind: sceneKinds[options.scene],
         limit: Math.min(50, Math.max(1, Math.trunc(options.limit))),
-        search_scope: 'global',
+        ...(scope.search_scope === 'global' ? { search_scope: 'global' } : scope),
         ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
       },
       session,
       options.signal,
+      { lane: 'interactive-read' },
     )
-    const result = await this.withNavigationTargets(this.recordSearchResult(data, lockedRecordUids), options.signal)
+    const result = await this.withNavigationTargets(this.recordSearchResult(data, lockedRecordUids), options.signal, options.sourceRef)
     return options.scene === 'audio' ? await this.withAudioMediaRefs(result, options.signal) : result
+  }
+
+  private async searchScope(options: {
+    searchScope?: 'global' | 'topic' | 'chat_session'
+    sourceUid?: string
+    sourceRef?: string
+  }, userId: number): Promise<{ search_scope: string; source_kinds: number[]; source_uid?: string }> {
+    if (options.sourceRef !== undefined) {
+      if (this.source === undefined) throw new ArkmePluginError('search-source-unavailable', '会话搜索暂不可用', true)
+      const source = await this.source.openSourceRef(options.sourceRef, userId)
+      if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
+        throw new ArkmePluginError('search-source-invalid', '请选择私聊或群聊搜索', false)
+      }
+      return { search_scope: 'chat_session', source_kinds: [3], source_uid: source.ownerRef }
+    }
+    const scope = options.searchScope ?? 'global'
+    if (!['global', 'topic', 'chat_session'].includes(scope)) throw new ArkmePluginError('search-source-invalid', '搜索范围无效', false)
+    const uid = options.sourceUid?.trim() ?? ''
+    if (scope !== 'global' && uid === '') throw new ArkmePluginError('search-source-invalid', '搜索范围缺少数据源', false)
+    return { search_scope: scope, source_kinds: scope === 'chat_session' ? [3] : scope === 'topic' ? [2] : [1, 2, 3],
+      ...(scope === 'global' ? {} : { source_uid: uid }) }
   }
 
   private async withNavigationTargets(
     result: ArkmeRecordSearchResult,
     signal?: AbortSignal,
+    sourceRef?: string,
   ): Promise<ArkmeRecordSearchResult> {
-    if (this.source === undefined || result.items.length === 0) return result
-    const targets = new Map<string, ArkmeSearchRecordItem>()
+    if (this.source === undefined || (result.items.length === 0 && result.sourceAggregates.length === 0)) return result
+    if (sourceRef !== undefined) {
+      const session = await this.runtime.requireSession()
+      const source = await this.source.openSourceRef(sourceRef, session.userId)
+      const targetSource = await this.source.sourceItem(source)
+      return { ...result, items: result.items.map(item => item.sourceKind === 3 && (item.sourceUid ?? item.routeTargetUid) === source.ownerRef
+        ? { ...item, targetSource, sourceTitle: targetSource.displayName } : item) }
+    }
+    const targets = new Map<string, { sourceKind: number; sourceUid: string; title: string }>()
     const aggregateTitleByKey = new Map(result.sourceAggregates.map(item => [
       `${String(item.sourceKind)}:${item.sourceUid}`,
       item.title,
     ]))
     for (const item of result.items) {
       const sourceUid = item.sourceUid ?? item.routeTargetUid ?? ''
-      targets.set(`${String(item.sourceKind)}:${sourceUid}`, item)
+      const key = `${String(item.sourceKind)}:${sourceUid}`
+      targets.set(key, { sourceKind: item.sourceKind, sourceUid, title: item.sourceTitle ?? aggregateTitleByKey.get(key) ?? '' })
+    }
+    // Aggregates can refer to conversations whose matching messages are on later pages.
+    for (const item of result.sourceAggregates) {
+      const key = `${String(item.sourceKind)}:${item.sourceUid}`
+      if (!targets.has(key)) targets.set(key, item)
     }
     const sourceByKey = new Map<string, Awaited<ReturnType<SourceService['searchTargetSource']>>>()
+    const chatUids = [...targets.values()].filter(item => item.sourceKind === 3).map(item => item.sourceUid)
+    if (chatUids.length > 0) {
+      try {
+        const chats = await this.source.chatSourcesBySessionUids(chatUids, signal)
+        for (const [uid, source] of chats) sourceByKey.set(`3:${uid}`, source)
+      } catch (error) { if (signal?.aborted) throw error }
+    }
     for (const [key, item] of targets) {
+      if (item.sourceKind === 3) continue
       try {
         sourceByKey.set(key, await this.source.searchTargetSource(
           item.sourceKind,
-          item.sourceUid ?? item.routeTargetUid ?? '',
-          item.sourceTitle ?? aggregateTitleByKey.get(key) ?? '',
+          item.sourceUid,
+          item.title,
           signal,
         ))
-      } catch {
+      } catch (error) {
+        if (signal?.aborted) throw error
         sourceByKey.set(key, undefined)
       }
     }
@@ -278,7 +334,12 @@ export class SearchService {
       items: result.items.map(item => {
         const sourceUid = item.sourceUid ?? item.routeTargetUid ?? ''
         const targetSource = sourceByKey.get(`${String(item.sourceKind)}:${sourceUid}`)
-        return targetSource === undefined ? item : { ...item, targetSource }
+        return targetSource === undefined ? item : { ...item, targetSource, sourceTitle: targetSource.displayName }
+      }),
+      sourceAggregates: result.sourceAggregates.map(item => {
+        const targetSource = sourceByKey.get(`${String(item.sourceKind)}:${item.sourceUid}`)
+        return targetSource === undefined ? item : { ...item, title: targetSource.displayName, targetSource,
+          ...(targetSource.privateNickname ? { nickname: targetSource.privateNickname } : {}) }
       }),
     }
   }
@@ -447,16 +508,14 @@ export class SearchService {
     const files = listValue(item.file_ls).map(assetItem).filter((value): value is NonNullable<typeof value> => value !== undefined)
     const voice = assetItem(payload.voice)
     const textContent = clippedText(core.text_content, 2_000)
-    const linkMatch = textContent.match(/https:\/\/[^\s<>()]+/u)
+    const linkUrls = arkmeSearchRecordLinks(stringValue(core.text_content))
     const sourceTitle = stringValue(topic.title ?? chat.title).trim()
     const creationSource = Math.trunc(numberValue(core.creation_source ?? item.creation_source))
-    const normalizedCreationSource = creationSource > 0
-      ? creationSource
-      : isDshAgentInputSourceTitle(sourceTitle)
-        ? ARKME_DSH_AGENT_INPUT_CREATION_SOURCE
-        : 0
+    const recordOwnerUserId = recordOwnerId(core.owner_user_id)
     return {
       recordUid,
+      ...(recordOwnerUserId !== 0 ? { recordOwnerUserId } : {}),
+      ...(recordOwnerId(core.creator_user_id) !== 0 ? { recordCreatorUserId: recordOwnerId(core.creator_user_id) } : {}),
       sourceKind: Math.trunc(numberValue(item.source_kind)),
       ...(stringValue(item.source_uid).trim() === '' ? {} : { sourceUid: stringValue(item.source_uid).trim() }),
       routeTargetKind: stringValue(item.route_target_kind).trim(),
@@ -468,12 +527,12 @@ export class SearchService {
       ...(stringValue(core.nickname).trim() === '' ? {} : { nickname: stringValue(core.nickname).trim() }),
       ...(numberValue(core.template_kind) <= 0 ? {} : { templateKind: Math.trunc(numberValue(core.template_kind)) }),
       ...(numberValue(core.display_kind) <= 0 ? {} : { displayKind: Math.trunc(numberValue(core.display_kind)) }),
-      ...(normalizedCreationSource <= 0 ? {} : { creationSource: normalizedCreationSource }),
+      ...(creationSource <= 0 ? {} : { creationSource: creationSource }),
       ...(sourceTitle === '' ? {} : { sourceTitle }),
       media,
       files,
       ...(voice === undefined ? {} : { voice }),
-      ...(linkMatch === null ? {} : { linkUrl: linkMatch[0] }),
+      ...(linkUrls.length === 0 ? {} : { linkUrl: linkUrls[0], linkUrls }),
       ...(numberValue(core.duration_millis ?? core.record_duration_millis) <= 0 ? {} : { recordDurationMillis: numberValue(core.duration_millis ?? core.record_duration_millis) }),
       ...(numberValue(item.scene_item_count) <= 0 ? {} : { sceneItemCount: numberValue(item.scene_item_count) }),
       ...(numberValue(item.scene_item_size) <= 0 ? {} : { sceneItemSize: numberValue(item.scene_item_size) }),

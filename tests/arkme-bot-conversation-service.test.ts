@@ -23,6 +23,21 @@ function json(data: unknown): Response {
 }
 
 describe('BotConversationService', () => {
+  it.each(['chat', 'subject'])('calendar history never creates a conversation for %s ownership', async owner => {
+    const requests: string[] = []
+    const service = new ArkmeService(config, new SessionStore({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }),
+      { async uniqueCode() { return 'calendar-read-test' } } as never, async input => {
+        const url = String(input); requests.push(url)
+        if (url.endsWith('/api/v1/bot/list')) return json({ code: 200, data: { bots: [{ bot_id: 'bot-1', name: 'Bot', provider: 'webhook', status: 'online',
+          subject_uid: owner === 'subject' ? 'subject-1' : '', chat_session_uid: owner === 'chat' ? 'chat-1' : '' }] } })
+        if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: { chat_session_uid: 'chat-1', items: [] } })
+        throw new Error(`unexpected ${url}`)
+      })
+    const bot = (await service.listBots()).items[0]!
+    if (owner === 'chat') await expect(service.readBotPrivateChatHistory(bot.botRef)).resolves.toMatchObject({ messages: [] })
+    else await expect(service.readBotPrivateChatHistory(bot.botRef)).rejects.toMatchObject({ code: 'bot-history-read-unsupported' })
+    expect(requests.some(url => /private-chat\/open|mark-read|send/.test(url))).toBe(false)
+  })
   it('projects Chat-owned Bot actions from canonical relation identity and reopens them only through Host', async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = []
     const service = new ArkmeService(
@@ -124,7 +139,7 @@ describe('BotConversationService', () => {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>
         calls.push({ url, body })
         if (url.endsWith('/api/v1/bot/list')) return json({ code: 200, data: { bots: [{
-          bot_id: 'bot-chat-1', name: 'Chat Bot', provider: 'webhook', status: 'online',
+          bot_id: 'bot-chat-1', name: 'Chat Bot', provider: 'openclaw', status: 'online',
           subject_uid: '', chat_session_uid: 'chat-session-1',
         }] } })
         if (url.endsWith('/api/v1/bot/private-chat/open')) return json({ code: 200, data: {
@@ -144,9 +159,7 @@ describe('BotConversationService', () => {
         } })
         if (url.endsWith('/api/v1/chats/policy/update')) return json({ code: 200, data: {
           chat_session_uid: 'chat-session-1', user_id: 42,
-          show_in_home_state: body.show_in_home_state, privacy_state: body.privacy_state,
-          mute_state: body.mute_state, pin_state: body.pin_state, notify_state: body.notify_state,
-          status: body.status, update_at: body.update_at,
+          show_in_home_state: 1, privacy_state: 2, mute_state: 2, pin_state: 1, notify_state: 2, status: 1, update_at: 200,
         } })
         if (url.endsWith('/api/v1/chats/cursor/update')) return json({ code: 200, data: {
           chat_session_uid: 'chat-session-1', user_id: 42, effective_read_seq: 7, read_at: 200,
@@ -178,8 +191,7 @@ describe('BotConversationService', () => {
     expect(calls.filter(call => call.url.endsWith('/api/v1/bot/private-chat/open'))).toHaveLength(1)
     expect(calls.filter(call => call.url.endsWith('/api/v1/chats/records/send'))).toHaveLength(1)
     expect(calls.find(call => call.url.endsWith('/api/v1/chats/policy/update'))?.body).toMatchObject({
-      chat_session_uid: 'chat-session-1', show_in_home_state: 1, privacy_state: 1,
-      mute_state: 2, pin_state: 2, notify_state: 2, status: 1,
+      chat_session_uid: 'chat-session-1', patch: { mute_state: 2, notify_state: 2 },
     })
     expect(calls.some(call => call.url.includes('subject.test'))).toBe(false)
     expect(calls.some(call => call.url.includes('record.test'))).toBe(false)
@@ -194,7 +206,7 @@ describe('BotConversationService', () => {
       async input => {
         const url = String(input)
         if (url.endsWith('/api/v1/bot/list')) return json({ code: 200, data: { bots: [{
-          bot_id: 'bot-chat-1', name: 'Chat Bot', provider: 'webhook', status: 'online',
+          bot_id: 'bot-chat-1', name: 'Chat Bot', provider: 'openclaw', status: 'online',
           subject_uid: '', chat_session_uid: 'chat-session-1',
         }] } })
         if (url.endsWith('/api/v1/chats/records/send')) {

@@ -11,6 +11,62 @@ function deferred<T>() {
 afterEach(() => { vi.useRealTimers() })
 
 describe('ArkmeRequestCoordinator', () => {
+  it.each([false, true])('applies the final failure cooldown only when route-scoped (%s)', async coolsRoute => {
+    vi.useFakeTimers()
+    const coordinator = new ArkmeRequestCoordinator()
+    const busy = new Error('busy')
+    const shared = { scope: 'user:1', lane: 'interactive-read' as const, service: 'chat' as const, route: 'list' }
+    await expect(coordinator.run({ ...shared, key: 'first', operation: async () => { throw busy }, recovery: {
+      maxAttempts: 1, deadlineMs: 5000, delay: () => 1000, coolsRoute: () => coolsRoute,
+      exhausted: () => busy, timeout: () => new Error('deadline'),
+    } })).rejects.toBe(busy)
+    const next = vi.fn(async () => 'next')
+    const pending = coordinator.run({ ...shared, key: 'next', operation: next })
+    await expect(coordinator.run({ ...shared, route: 'unread', key: 'other', operation: async () => 'other' })).resolves.toBe('other')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(next).toHaveBeenCalledTimes(coolsRoute ? 0 : 1)
+    await vi.advanceTimersByTimeAsync(1000)
+    await expect(pending).resolves.toBe('next')
+    coordinator.dispose()
+  })
+
+  it('serializes different parameters on one account route while another route and writes keep moving', async () => {
+    vi.useFakeTimers()
+    const coordinator = new ArkmeRequestCoordinator()
+    const gate = deferred<string>()
+    const shared = { scope: 'user:1', lane: 'interactive-read' as const, service: 'chat' as const, route: 'list' }
+    const first = coordinator.run({ ...shared, key: 'one', operation: () => gate.promise })
+    const next = vi.fn(async () => 'two')
+    const second = coordinator.run({ ...shared, key: 'two', operation: next })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(next).not.toHaveBeenCalled()
+    await expect(coordinator.run({ ...shared, route: 'unread', key: 'unread', operation: async () => 'unread' })).resolves.toBe('unread')
+    await expect(coordinator.run({ scope: 'user:1', lane: 'write', service: 'chat', operation: async () => 'written' })).resolves.toBe('written')
+    gate.resolve('one')
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(Promise.all([first, second])).resolves.toEqual(['one', 'two'])
+    coordinator.dispose()
+  })
+
+  it('aborts a registered shared transport only after all subscribers cancel', async () => {
+    const coordinator = new ArkmeRequestCoordinator()
+    let transport!: AbortSignal
+    const request = { scope: 'user:1', lane: 'interactive-read' as const, service: 'chat' as const, key: 'list', route: 'list', cancelWhenUnobserved: true,
+      operation: async (signal: AbortSignal) => {
+        transport = signal
+        return await new Promise<void>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+      } }
+    const a = new AbortController(), b = new AbortController()
+    const first = coordinator.run({ ...request, signal: a.signal })
+    const second = coordinator.run({ ...request, signal: b.signal })
+    const checks = [expect(first).rejects.toMatchObject({ name: 'AbortError' }), expect(second).rejects.toMatchObject({ name: 'AbortError' })]
+    await vi.waitFor(() => expect(transport).toBeDefined())
+    a.abort(); await checks[0]
+    expect(transport.aborted).toBe(false)
+    b.abort(); await checks[1]
+    expect(transport.aborted).toBe(true)
+    coordinator.dispose()
+  })
   it('joins concurrent reads with the same semantic key', async () => {
     const coordinator = new ArkmeRequestCoordinator()
     const result = deferred<number>()

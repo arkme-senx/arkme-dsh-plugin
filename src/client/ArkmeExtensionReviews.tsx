@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type {
@@ -148,11 +149,11 @@ export function extensionReviewReplyCount(node: ArkmeExtensionReviewTreeNode): n
 }
 
 export function extensionRatingLabel(summary: ArkmeExtensionRatingSummary): string {
-  return summary.count === 0 ? '暂无评分' : `${summary.average.toFixed(1)} · ${String(summary.count)} 个评分`
+  return summary.count === 0 ? '暂无评分' : tr("{v0} · {v1} 个评分", { v0: summary.average.toFixed(1), v1: String(summary.count) })
 }
 
 function Stars({ value, size = 14 }: { value: number; size?: number }) {
-  return <span style={{ ...styles.stars, fontSize: size }} aria-label={`${value.toFixed(1)} 星`}>
+  return <span style={{ ...styles.stars, fontSize: size }} aria-label={tr("{v0} 星", { v0: value.toFixed(1) })}>
     {[0, 1, 2, 3, 4].map(index => {
       const fill = Math.max(0, Math.min(1, value - index))
       return <span key={index} style={{ position: 'relative', width: '1em', display: 'inline-block', color: '#d7d9dd' }}>
@@ -169,12 +170,12 @@ export function extensionReviewTimeLabel(createdAtMillis: number, nowMillis = Da
   const minute = 60_000
   const hour = 60 * minute
   const day = 24 * hour
-  if (elapsed < minute) return '刚刚'
-  if (elapsed < hour) return `${String(Math.floor(elapsed / minute))} 分钟前`
-  if (elapsed < day) return `${String(Math.floor(elapsed / hour))} 小时前`
-  if (elapsed < 30 * day) return `${String(Math.floor(elapsed / day))} 天前`
-  if (elapsed < 365 * day) return `${String(Math.floor(elapsed / (30 * day)))} 个月前`
-  return `${String(Math.floor(elapsed / (365 * day)))} 年前`
+  if (elapsed < minute) return tr("刚刚")
+  if (elapsed < hour) return tr("{v0} 分钟前", { v0: String(Math.floor(elapsed / minute)) })
+  if (elapsed < day) return tr("{v0} 小时前", { v0: String(Math.floor(elapsed / hour)) })
+  if (elapsed < 30 * day) return tr("{v0} 天前", { v0: String(Math.floor(elapsed / day)) })
+  if (elapsed < 365 * day) return tr("{v0} 个月前", { v0: String(Math.floor(elapsed / (30 * day))) })
+  return tr("{v0} 年前", { v0: String(Math.floor(elapsed / (365 * day))) })
 }
 
 function ReplyIcon() {
@@ -194,6 +195,7 @@ function ReviewPresentation({ item, onReply, clickThrough = false }: {
   onReply(item: ArkmeExtensionReviewItem): void
   clickThrough?: boolean
 }) {
+  useArkmeLocale()
   const [hoverCapable] = useState(browserSupportsHover)
   const [actionsVisible, setActionsVisible] = useState(false)
   const showReplyAction = !hoverCapable || actionsVisible
@@ -208,7 +210,7 @@ function ReviewPresentation({ item, onReply, clickThrough = false }: {
       {...(item.authorAvatarRef === undefined ? {} : { avatarRef: item.authorAvatarRef })}
       {...(item.authorAvatarFallback === undefined ? {} : { fallback: item.authorAvatarFallback })}
       size={34}
-      label={`${item.authorName}头像`}
+      label={tr("{v0}头像", { v0: item.authorName })}
     />
     <div data-arkme-review-main="true" style={styles.reviewMain}>
       <div style={styles.authorRow}>
@@ -229,7 +231,7 @@ function ReplyButton({ item, visible, onReply }: {
   visible: boolean
   onReply(item: ArkmeExtensionReviewItem): void
 }) {
-  return <button
+  return <button data-arkme-feedback="neutral"
     type="button"
     style={{
       ...styles.replyButton,
@@ -237,8 +239,8 @@ function ReplyButton({ item, visible, onReply }: {
       transform: visible ? 'translateY(0)' : 'translateY(-2px)',
       pointerEvents: visible ? 'auto' : 'none',
     }}
-    aria-label={`回复${item.authorName}`}
-    title="回复"
+    aria-label={tr("回复{v0}", { v0: item.authorName })}
+    title={tr("回复")}
     data-extension-review-reply-action="true"
     onClick={event => { event.stopPropagation(); onReply(item) }}
   >
@@ -281,7 +283,7 @@ function ReviewNode({ node, onReply, replyEditor }: {
   return <article style={styles.review}>
     <ReviewPresentation item={item} onReply={onReply} />
     <ReviewReplyComposerSlot item={item} editor={replyEditor} />
-    {node.children.length > 0 && <div style={styles.replyList} aria-label={`${item.authorName}的全部回复`}>
+    {node.children.length > 0 && <div style={styles.replyList} aria-label={tr("{v0}的全部回复", { v0: item.authorName })}>
       {node.children.map(child => <ThreadReply key={child.item.reviewRef} node={child} depth={0} onReply={onReply} replyEditor={replyEditor} />)}
     </div>}
   </article>
@@ -311,19 +313,19 @@ export function ArkmeExtensionReplyListDialog({ root, onClose, onReply }: {
   const dialog = <div style={styles.overlay} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section role="dialog" aria-modal="true" aria-labelledby="arkme-extension-replies-title" style={styles.threadDialog}>
       <header style={styles.threadHeader}>
-        <h3 id="arkme-extension-replies-title" style={styles.composerTitle}>评论回复</h3>
-        <button type="button" style={styles.closeButton} aria-label="关闭回复列表" onClick={onClose}>×</button>
+        <h3 id="arkme-extension-replies-title" style={styles.composerTitle}>{tr("评论回复")}</h3>
+        <button data-arkme-feedback="neutral" type="button" style={styles.closeButton} aria-label={tr("关闭回复列表")} onClick={onClose}>×</button>
       </header>
       <div style={styles.threadBody}>
         <div style={styles.threadOriginal}>
-          <div style={styles.originalLabel}>原评论</div>
+          <div style={styles.originalLabel}>{tr("原评论")}</div>
           <div style={{ marginTop: 7 }}>
             <ReviewPresentation item={item} onReply={onReply} />
           </div>
         </div>
-        <div style={styles.threadSectionLabel}>全部回复 {replyCount}</div>
+        <div style={styles.threadSectionLabel}>{tr("全部回复")} {replyCount}</div>
         {root.children.length === 0
-          ? <div style={styles.state}>还没有回复。</div>
+          ? <div style={styles.state}>{tr("还没有回复。")}</div>
           : root.children.map(child => <ThreadReply key={child.item.reviewRef} node={child} depth={0} onReply={onReply} />)}
       </div>
     </section>
@@ -372,16 +374,16 @@ export function ArkmeExtensionReviewComposerDialog({ state, submitting, onChange
   const valid = extensionReviewComposerCanSubmit({ textContent: state.textContent, rating: state.rating, replying })
   const dialog = <div style={styles.overlay} onMouseDown={event => { if (event.target === event.currentTarget && !submitting) onClose() }}>
     <section role="dialog" aria-modal="true" aria-labelledby="arkme-extension-review-composer-title" style={styles.composer}>
-      <h3 id="arkme-extension-review-composer-title" style={styles.composerTitle}>{replying ? `回复 ${state.parent!.authorName}` : '发表评价'}</h3>
+      <h3 id="arkme-extension-review-composer-title" style={styles.composerTitle}>{replying ? tr("回复 {v0}", { v0: state.parent!.authorName }) : '发表评价'}</h3>
       <div style={styles.composerHint}>{replying ? '回复不会改变扩展评分。' : '评论正文会同时保存为首页中的普通快记。'}</div>
-      {replying && <div style={styles.originalQuote} aria-label="回复原文">
-        <div style={styles.originalLabel}>回复原文 · {state.parent!.authorName}</div>
+      {replying && <div style={styles.originalQuote} aria-label={tr("回复原文")}>
+        <div style={styles.originalLabel}>{tr("回复原文 ·")} {state.parent!.authorName}</div>
         <p style={styles.originalText}>{state.parent!.textContent}</p>
       </div>}
-      {!replying && <div style={styles.ratingPicker} aria-label="选择评分">
-        {[1, 2, 3, 4, 5].map(star => <button
+      {!replying && <div style={styles.ratingPicker} aria-label={tr("选择评分")}>
+        {[1, 2, 3, 4, 5].map(star => <button data-arkme-feedback="neutral"
           key={star} type="button" style={{ ...styles.starButton, color: star <= state.rating ? '#f3aa18' : '#d7d9dd' }}
-          aria-label={`${String(star)} 星`} aria-pressed={star <= state.rating}
+          aria-label={tr("{v0} 星", { v0: String(star) })} aria-pressed={star <= state.rating}
           onClick={() => { onChange({ ...state, rating: star, error: '' }) }}
         >★</button>)}
       </div>}
@@ -393,9 +395,9 @@ export function ArkmeExtensionReviewComposerDialog({ state, submitting, onChange
       <div style={styles.composerFooter}>
         <span style={styles.charCount}>{[...state.textContent].length}/2000</span>
         <div style={styles.actions}>
-          <button type="button" style={styles.cancel} disabled={submitting} onClick={onClose}>取消</button>
-          <button type="button" style={{ ...styles.submit, ...(!valid || submitting ? { opacity: .5, cursor: 'not-allowed' } : {}) }} disabled={!valid || submitting} onClick={onSubmit}>
-            {submitting ? '提交中…' : replying ? '回复' : '发表评论'}
+          <button data-arkme-feedback="neutral" type="button" style={styles.cancel} disabled={submitting} onClick={onClose}>{tr("取消")}</button>
+          <button data-arkme-feedback="primary" type="button" style={{ ...styles.submit, ...(!valid || submitting ? { opacity: .5, cursor: 'not-allowed' } : {}) }} disabled={!valid || submitting} onClick={onSubmit}>
+            {submitting ? '提交中…' : replying ? tr("回复") : '发表评论'}
           </button>
         </div>
       </div>
@@ -418,14 +420,14 @@ export function ArkmeExtensionInlineReviewComposer({ state, submitting, currentU
     <ArkmeUserAvatar
       {...(currentUserAvatarRef === undefined ? {} : { avatarRef: currentUserAvatarRef })}
       size={30}
-      label="我的头像"
+      label={tr("我的头像")}
     />
     <div style={styles.inlineComposerMain}>
-      {replying && <div style={styles.inlineComposerTitle}>回复 {state.parent!.authorName}</div>}
-      {!replying && <div style={styles.inlineRatingPicker} aria-label="选择评分">
-        {[1, 2, 3, 4, 5].map(star => <button
+      {replying && <div style={styles.inlineComposerTitle}>{tr("回复")} {state.parent!.authorName}</div>}
+      {!replying && <div style={styles.inlineRatingPicker} aria-label={tr("选择评分")}>
+        {[1, 2, 3, 4, 5].map(star => <button data-arkme-feedback="neutral"
           key={star} type="button" style={{ ...styles.inlineStarButton, color: star <= state.rating ? '#f3aa18' : '#d7d9dd' }}
-          aria-label={`${String(star)} 星`} aria-pressed={star <= state.rating}
+          aria-label={tr("{v0} 星", { v0: String(star) })} aria-pressed={star <= state.rating}
           onClick={() => { onChange({ ...state, rating: star, error: '' }) }}
         >★</button>)}
       </div>}
@@ -440,11 +442,11 @@ export function ArkmeExtensionInlineReviewComposer({ state, submitting, currentU
       <div style={styles.inlineComposerFooter}>
         <span style={styles.charCount}>{[...state.textContent].length}/2000</span>
         <div style={styles.actions}>
-          {onCancel !== undefined && <button type="button" style={styles.inlineCancel} disabled={submitting} onClick={onCancel}>取消</button>}
-          <button
+          {onCancel !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.inlineCancel} disabled={submitting} onClick={onCancel}>{tr("取消")}</button>}
+          <button data-arkme-feedback="neutral"
             type="button" style={{ ...styles.inlineSubmit, ...(!valid || submitting ? { opacity: .42, cursor: 'not-allowed' } : {}) }}
             disabled={!valid || submitting} onClick={onSubmit}
-          >{submitting ? '提交中…' : replying ? '回复' : '发布'}</button>
+          >{submitting ? '提交中…' : replying ? tr("回复") : tr("发布")}</button>
         </div>
       </div>
     </div>
@@ -464,6 +466,7 @@ export function ArkmeExtensionReviews({
   initialRatingSummary?: ArkmeExtensionRatingSummary
   initialPage?: ArkmeExtensionReviewPage
 }) {
+  useArkmeLocale()
   const [page, setPage] = useState<ArkmeExtensionReviewPage | undefined>(initialPage)
   const [loading, setLoading] = useState(initialPage === undefined)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -579,10 +582,9 @@ export function ArkmeExtensionReviews({
     }
   }
 
-  return <section style={styles.section} aria-label="扩展评论">
+  return <section style={styles.section} aria-label={tr("扩展评论")}>
     <div style={styles.headingRow}>
-      <h3 style={styles.heading} title={extensionRatingLabel(summary)}>
-        用户评价 <span style={styles.headingCount}>{String(page?.total ?? 0)} 条评论</span>
+      <h3 style={styles.heading} title={extensionRatingLabel(summary)}>{tr("用户评价")} <span style={styles.headingCount}>{String(page?.total ?? 0)} {tr("条评论")}</span>
       </h3>
     </div>
     {composerMode === 'top-level' && <ArkmeExtensionInlineReviewComposer
@@ -591,7 +593,7 @@ export function ArkmeExtensionReviews({
           onChange={setTopLevelComposer} onSubmit={() => { void submit('top-level') }}
         />}
     {error !== '' && <div style={styles.error} role="alert">{error}</div>}
-    {loading && <div style={styles.state}>正在加载评论…</div>}
+    {loading && <div style={styles.state}>{tr("正在加载评论…")}</div>}
     {!loading && tree.length === 0 && error === '' && <div style={styles.state}>
       {canCreateTopLevelReview ? '还没有评论，来发表第一条评价吧。' : '还没有用户评价。'}
     </div>}
@@ -610,8 +612,8 @@ export function ArkmeExtensionReviews({
         } })}
       />)}
     </div>}
-    {page?.hasMore === true && <button type="button" style={styles.loadMore} disabled={loadingMore} onClick={() => { void load(page.nextOffset ?? page.offset + page.limit) }}>
-      {loadingMore ? '加载中…' : '加载更多'}
+    {page?.hasMore === true && <button data-arkme-feedback="neutral" type="button" style={styles.loadMore} disabled={loadingMore} onClick={() => { void load(page.nextOffset ?? page.offset + page.limit) }}>
+      {loadingMore ? tr("加载中…") : tr("加载更多")}
     </button>}
   </section>
 }

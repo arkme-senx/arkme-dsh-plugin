@@ -173,7 +173,7 @@ describe('marketplace Host BFF', () => {
   })
 
   it('rejects stale persistent Client calls with a specific unavailable error before invoking Host handlers', async () => {
-    const persistentClientState = vi.fn(() => ({
+    const persistentClientState = vi.fn(async () => ({
       extension_id: 'ext-1', version: '1.0.0', mount: false, reason: 'version-mismatch',
     }))
 
@@ -216,7 +216,7 @@ describe('marketplace Host BFF', () => {
   })
 
   it('resolves a Bundle Client owner through the Host install store', async () => {
-    const bundleClientState = vi.fn(() => ({
+    const bundleClientState = vi.fn(async () => ({
       extension_id: 'ext-1', version: '1.0.0', mount: true,
       instance_key: `instance-v1-${'a'.repeat(64)}`, generation: 7,
     }))

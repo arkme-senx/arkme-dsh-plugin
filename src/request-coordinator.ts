@@ -35,6 +35,17 @@ export interface ArkmeCoordinatedRequest<T> {
   service: ArkmeRequestService
   /** Omit for mutations and other calls that must never be coalesced. */
   key?: string
+  /** Explicitly registered read route; never set for mutations. */
+  route?: string
+  cancelWhenUnobserved?: boolean
+  recovery?: {
+    maxAttempts: number
+    deadlineMs: number
+    delay(error: unknown, attempt: number): number | undefined
+    coolsRoute?(error: unknown): boolean
+    exhausted(error: unknown, attempts: number): Error
+    timeout(): Error
+  }
   cacheMs?: number
   failureCooldownMs?: number
   bypassCache?: boolean
@@ -65,6 +76,7 @@ interface ResolvedLimit extends ArkmeRequestLimit {
 interface QueuedPermit {
   lane: ArkmeRequestLane
   service: ArkmeRequestService
+  route?: ResolvedLimit
   sequence: number
   signal: AbortSignal
   resolve(release: () => void): void
@@ -88,6 +100,8 @@ interface InFlightEntry {
   promise: Promise<unknown>
   controller: AbortController
   epoch: number
+  consumers: number
+  cancelWhenUnobserved: boolean
 }
 
 const DEFAULT_LANE_LIMITS: Record<ArkmeRequestLane, ArkmeRequestLimit> = {
@@ -170,6 +184,7 @@ export class ArkmeRequestCoordinator {
   private readonly random: () => number
   private readonly laneLimits = new Map<ArkmeRequestLane, ResolvedLimit>()
   private readonly serviceLimits = new Map<ArkmeRequestService, ResolvedLimit>()
+  private readonly routeLimits = new Map<string, ResolvedLimit>()
   private readonly queue: QueuedPermit[] = []
   private readonly cache = new Map<string, CacheEntry>()
   private readonly failures = new Map<string, FailureEntry>()
@@ -201,11 +216,11 @@ export class ArkmeRequestCoordinator {
   }
 
   async run<T>(request: ArkmeCoordinatedRequest<T>): Promise<T> {
+    if (request.signal?.aborted === true) throw abortError(request.signal.reason)
     const scope = request.scope.trim() || 'public'
     const epoch = this.epoch(scope)
     const key = request.key?.trim()
     if (key === undefined || key === '') {
-      if (request.signal?.aborted === true) throw abortError(request.signal.reason)
       const controller = new AbortController()
       const abort = () => { controller.abort(request.signal?.reason) }
       request.signal?.addEventListener('abort', abort, { once: true })
@@ -229,9 +244,9 @@ export class ArkmeRequestCoordinator {
       throw failure.error
     }
     const existing = this.inFlight.get(fullKey)
-    if (existing !== undefined && existing.epoch === epoch) {
+    if (existing !== undefined && existing.epoch === epoch && !existing.controller.signal.aborted) {
       this.bump(request, 'joined')
-      return await this.joinCaller(existing.promise as Promise<T>, request.signal).then(clone)
+      return await this.joinFlight<T>(existing, request.signal).then(clone)
     }
     const controller = new AbortController()
     const cacheMs = normalizedDuration(request.cacheMs)
@@ -266,8 +281,9 @@ export class ArkmeRequestCoordinator {
       .finally(() => {
         if (this.inFlight.get(fullKey)?.promise === promise) this.inFlight.delete(fullKey)
       })
-    this.inFlight.set(fullKey, { promise, controller, epoch })
-    return await this.joinCaller(promise, request.signal).then(clone)
+    const entry = { promise, controller, epoch, consumers: 0, cancelWhenUnobserved: request.cancelWhenUnobserved === true }
+    this.inFlight.set(fullKey, entry)
+    return await this.joinFlight<T>(entry, request.signal).then(clone)
   }
 
   /** Hard account/lifecycle invalidation. Old completions cannot populate the new scope. */
@@ -285,6 +301,7 @@ export class ArkmeRequestCoordinator {
     for (const controller of this.activeControllersByScope.get(scope) ?? []) {
       controller.abort(new ArkmeStaleRequestError())
     }
+    for (const key of this.routeLimits.keys()) if (key.startsWith(prefix)) this.routeLimits.delete(key)
   }
 
   invalidateKey(scopeInput: string, keyPrefix: string): void {
@@ -309,6 +326,7 @@ export class ArkmeRequestCoordinator {
       for (const controller of controllers) controller.abort()
     }
     this.activeControllersByScope.clear()
+    this.routeLimits.clear()
     for (const queued of this.queue.splice(0)) queued.abort()
   }
 
@@ -326,34 +344,84 @@ export class ArkmeRequestCoordinator {
     controllers.add(controller)
     this.activeControllersByScope.set(scope, controllers)
     let release: (() => void) | undefined
+    const routeKey = request.route === undefined ? undefined : `${scope}\u0000${request.route}`
+    let route = routeKey === undefined ? undefined : this.routeLimits.get(routeKey)
+    if (routeKey !== undefined && route === undefined) {
+      route = resolveLimit({ maxConcurrent: 1, ratePerSecond: 5, burst: 1, maxQueued: 128 }, undefined, this.now())
+      this.routeLimits.set(routeKey, route)
+    }
+    let attempts = 0
+    let lastError: unknown
+    const recovery = request.recovery
+    const deadline = recovery === undefined ? undefined : setTimeout(() => controller.abort(recovery.timeout()), recovery.deadlineMs)
     try {
-      release = await this.acquire(request.lane, request.service, controller.signal)
-      this.bump(request, 'started')
-      if (controller.signal.aborted) throw abortError(controller.signal.reason)
-      if (this.epoch(scope) !== epoch) throw new ArkmeStaleRequestError()
-      let value: T
-      try {
-        value = await request.operation(controller.signal)
-      } catch (error) {
-        const cooldownMs = normalizedDuration(request.serviceCooldownMs?.(error))
-        if (cooldownMs > 0) {
-          const service = this.serviceLimits.get(request.service)!
-          service.cooldownUntil = Math.max(service.cooldownUntil, this.now() + cooldownMs)
+      while (true) {
+        release = await this.acquire(request.lane, request.service, controller.signal, route)
+        this.bump(request, 'started')
+        if (controller.signal.aborted) throw abortError(controller.signal.reason)
+        if (this.epoch(scope) !== epoch) throw new ArkmeStaleRequestError()
+        let value: T
+        try {
+          attempts += 1
+          value = await request.operation(controller.signal)
+        } catch (error) {
+          lastError = error
+          const delay = recovery?.delay(error, attempts)
+          if (delay !== undefined && route !== undefined && recovery?.coolsRoute?.(error) === true) {
+            route.cooldownUntil = Math.max(route.cooldownUntil, this.now() + delay)
+          }
+          release()
+          release = undefined
+          if (delay !== undefined && recovery !== undefined && attempts < recovery.maxAttempts && !controller.signal.aborted) {
+            await this.waitRetry(delay, controller.signal)
+            continue
+          }
+          const cooldownMs = normalizedDuration(request.serviceCooldownMs?.(error))
+          if (cooldownMs > 0) {
+            const service = this.serviceLimits.get(request.service)!
+            service.cooldownUntil = Math.max(service.cooldownUntil, this.now() + cooldownMs)
+          }
+          throw error
         }
-        throw error
+        if (this.epoch(scope) !== epoch) {
+          this.bump(request, 'staleDropped')
+          throw new ArkmeStaleRequestError()
+        }
+        return value
       }
-      if (this.epoch(scope) !== epoch) {
-        this.bump(request, 'staleDropped')
-        throw new ArkmeStaleRequestError()
+    } catch (error) {
+      if (recovery !== undefined && !(error instanceof ArkmeStaleRequestError)
+        && (recovery.delay(error, attempts) !== undefined || (controller.signal.aborted && lastError !== undefined))) {
+        throw recovery.exhausted(lastError ?? error, attempts)
       }
-      return value
+      throw error
     } finally {
+      if (deadline !== undefined) clearTimeout(deadline)
       release?.()
       controllers.delete(controller)
       if (controllers.size === 0 && this.activeControllersByScope.get(scope) === controllers) {
         this.activeControllersByScope.delete(scope)
       }
     }
+  }
+
+  private async joinFlight<T>(entry: InFlightEntry, signal?: AbortSignal): Promise<T> {
+    entry.consumers += 1
+    try { return await this.joinCaller(entry.promise as Promise<T>, signal) }
+    finally {
+      entry.consumers -= 1
+      if (entry.cancelWhenUnobserved && entry.consumers === 0) entry.controller.abort()
+    }
+  }
+
+  private async waitRetry(delay: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) throw abortError(signal.reason)
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); reject(abortError(signal.reason)) }
+      // Node 将超出 int32 的 timer 缩成 1ms；长提示由请求总 deadline 结束，不能形成忙循环。
+      const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, Math.min(2_147_483_647, delay))
+      signal.addEventListener('abort', abort, { once: true })
+    })
   }
 
   private async joinCaller<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
@@ -370,6 +438,7 @@ export class ArkmeRequestCoordinator {
     lane: ArkmeRequestLane,
     service: ArkmeRequestService,
     signal: AbortSignal,
+    route?: ResolvedLimit,
   ): Promise<() => void> {
     if (signal.aborted) return Promise.reject(abortError(signal.reason))
     const laneLimit = this.laneLimits.get(lane)!
@@ -392,7 +461,7 @@ export class ArkmeRequestCoordinator {
         signal.removeEventListener('abort', abort)
         reject(abortError(signal.reason))
       }
-      queued = { lane, service, sequence: this.sequence++, signal, resolve, reject, abort }
+      queued = { lane, service, ...(route === undefined ? {} : { route }), sequence: this.sequence++, signal, resolve, reject, abort }
       signal.addEventListener('abort', abort, { once: true })
       this.queue.push(queued)
       this.queue.sort((left, right) => LANE_PRIORITY[left.lane] - LANE_PRIORITY[right.lane]
@@ -419,12 +488,18 @@ export class ArkmeRequestCoordinator {
       service.tokens = Math.max(0, service.tokens - 1)
       lane.active += 1
       service.active += 1
+      if (queued.route !== undefined) {
+        this.refill(queued.route)
+        queued.route.tokens = Math.max(0, queued.route.tokens - 1)
+        queued.route.active += 1
+      }
       let released = false
       queued.resolve(() => {
         if (released) return
         released = true
         lane.active = Math.max(0, lane.active - 1)
         service.active = Math.max(0, service.active - 1)
+        if (queued.route !== undefined) queued.route.active = Math.max(0, queued.route.active - 1)
         this.drain()
       })
       selected = this.nextRunnableIndex()
@@ -445,6 +520,11 @@ export class ArkmeRequestCoordinator {
       const service = this.serviceLimits.get(queued.service)!
       this.refill(lane)
       this.refill(service)
+      const route = queued.route
+      if (route !== undefined) {
+        this.refill(route)
+        if (route.active >= route.maxConcurrent || route.tokens < 1 || this.now() < route.cooldownUntil) continue
+      }
       if (lane.active < lane.maxConcurrent && service.active < service.maxConcurrent
         && this.now() >= lane.cooldownUntil && this.now() >= service.cooldownUntil
         && lane.tokens >= 1 && service.tokens >= 1) return index
@@ -467,6 +547,9 @@ export class ArkmeRequestCoordinator {
       const service = this.serviceLimits.get(queued.service)!
       this.refill(lane)
       this.refill(service)
+      const route = queued.route
+      if (route !== undefined) this.refill(route)
+      if (route !== undefined && route.active >= route.maxConcurrent) continue
       if (lane.active >= lane.maxConcurrent || service.active >= service.maxConcurrent) continue
       const now = this.now()
       delay = Math.min(delay, Math.max(
@@ -474,13 +557,14 @@ export class ArkmeRequestCoordinator {
         this.tokenDelay(service),
         lane.cooldownUntil - now,
         service.cooldownUntil - now,
+        route === undefined ? 0 : Math.max(this.tokenDelay(route), route.cooldownUntil - now),
       ))
     }
     if (!Number.isFinite(delay)) return
     this.timer = setTimeout(() => {
       this.timer = undefined
       this.drain()
-    }, Math.max(1, Math.ceil(delay)))
+    }, Math.min(2_147_483_647, Math.max(1, Math.ceil(delay))))
   }
 
   private tokenDelay(limit: ResolvedLimit): number {

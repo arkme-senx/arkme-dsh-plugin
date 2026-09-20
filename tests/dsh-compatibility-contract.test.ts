@@ -10,6 +10,14 @@ const TARGET_DSH_VERSIONS = [
 ] as const
 
 describe('DSH compatibility contract', () => {
+  it('advertises the authenticated desktop harness readiness protocol', () => {
+    const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+      arkme?: { desktopHarnessReady?: { version?: number } }
+    }
+
+    expect(manifest.arkme?.desktopHarnessReady).toEqual({ version: 1 })
+  })
+
   it('does not make generation-specific Host APIs startup dependencies', () => {
     expect(inject).not.toContain('apiProxy')
     expect(inject).not.toContain('sessionController')

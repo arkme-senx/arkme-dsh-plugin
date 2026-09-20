@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ArkmeCalendarCell,
   ArkmeCalendarSurface,
+  ArkmeCalendarMonthView,
   arkmeCalendarRecordIsDSHAgentInput,
   arkmeCalendarRecordSourceLabel,
 } from '../src/client/ArkmeCalendarSurface.js'
@@ -25,6 +26,12 @@ function matchStyle(markup: string, pattern: RegExp): Map<string, string> {
 }
 
 describe('ArkmeCalendarSurface layout', () => {
+  it('keeps return-to-today in the standalone calendar', () => {
+    const markup = renderToStaticMarkup(<ArkmeCalendarMonthView visibleMonth={new Date(2026, 6, 1)}
+      selectedDate={new Date(2026, 6, 15)} today={new Date(2026, 8, 18)} days={[]} loading={false} error=""
+      onVisibleMonthChange={() => {}} onSelectDate={() => {}} />)
+    expect(markup).toContain('回到今日')
+  })
   it('renders record counts under the date and keeps the selected cell stable', () => {
     const markup = renderToStaticMarkup(<ArkmeCalendarCell
       date={new Date(2026, 7, 21)}
@@ -62,6 +69,7 @@ describe('ArkmeCalendarSurface layout', () => {
     const selectedCount = renderCount(true)
 
     for (const count of [unselectedCount, selectedCount]) {
+      expect(count.get('background')).toBe('transparent')
       expect(count.get('min-width')).toBe('15px')
       expect(count.get('padding')).toBe('0 4px')
       expect(count.get('transition')).toBe('background 120ms ease, color 120ms ease')
@@ -159,7 +167,7 @@ describe('ArkmeCalendarSurface layout', () => {
     expect(surfaceSource).not.toContain('useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)')
     expect(surfaceSource).not.toContain('ui.chatRevision')
     expect(surfaceSource).not.toContain('ui.recordRevision')
-    expect(surfaceSource).toContain('arkmeCalendarInvalidations.subscribeMonth')
+    expect(surfaceSource).toContain('useCalendarMonth(')
     expect(surfaceSource).toContain('arkmeCalendarInvalidations.subscribeDate')
   })
 })

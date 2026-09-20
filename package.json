@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.43",
+  "version": "0.1.69",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -39,6 +39,7 @@
   "files": [
     "lib",
     "assets/desktop_call",
+    "assets/licenses/MaterialIcons_LICENSE.txt",
     "assets/windows/arkme-credential-helper.exe",
     "assets/windows/manifest.json",
     "cordis.patch.yml",
@@ -65,13 +66,16 @@
     "desktopAccountScope": {
       "version": 1
     },
+    "desktopHarnessReady": {
+      "version": 1
+    },
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.43 更新",
-      "summary": "0904-1748",
-      "publishedAt": "2026-09-04T09:49:36.428Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.43"
+      "title": "Arkme 插件 0.1.69 更新",
+      "summary": "feat(desktop): 完善日历、账号与对话体验",
+      "publishedAt": "2026-09-19T20:58:39.138Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.69"
     }
   },
   "scripts": {
@@ -85,10 +89,11 @@
     "pack:runtime": "node scripts/build-runtime-artifact.mjs",
     "verify:call-assets": "node scripts/verify-call-assets.mjs",
     "verify:windows-credential-helper": "node scripts/verify-windows-credential-helper.mjs",
-    "prepare": "pnpm run build"
+    "prepare": "node scripts/prepare-build.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",
+    "@rc-component/tour": "2.4.0",
     "@tiptap/core": "^3.31.0",
     "@tiptap/extension-code-block": "^3.31.0",
     "@tiptap/extension-table": "^3.31.0",
@@ -112,7 +117,8 @@
     "sharp": "0.35.3",
     "unified": "^11.0.5",
     "ws": "8.18.3",
-    "yaml": "2.9.0"
+    "yaml": "2.9.0",
+    "@sentry/node": "10.73.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

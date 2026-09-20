@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { CheckCircleIcon } from '@phosphor-icons/react/dist/csr/CheckCircle'
 import { CircleIcon } from '@phosphor-icons/react/dist/csr/Circle'
@@ -139,7 +140,7 @@ function ProviderOption({ provider, selected, disabled, onSelect }: {
   onSelect(): void
 }) {
   const copy = providerCopy[provider]
-  return <button
+  return <button data-arkme-feedback="neutral"
     type="button" role="radio" aria-checked={selected} disabled={disabled}
     data-arkme-bot-provider={provider}
     style={{ ...styles.providerOption, ...(selected ? { borderColor: arkmeTheme.primaryAction, background: arkmeTheme.active } : {}) }}
@@ -160,6 +161,7 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
   onBotCreated?(bot: ArkmeBotSummary): void | Promise<void>
   onBusyChange?(busy: boolean): void
 }) {
+  useArkmeLocale()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [provider, setProvider] = useState<ArkmeBotProvider>('openclaw')
@@ -171,6 +173,8 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
   const [error, setError] = useState('')
   const nameInput = useRef<HTMLInputElement>(null)
   const avatarInput = useRef<HTMLInputElement>(null)
+  const createRequest = useRef<{ uid: string; name: string; description: string; provider: ArkmeBotProvider; avatarFile: File | undefined; avatar: string }>()
+  const submitting = useRef(false)
   const busy = busyLabel !== ''
   const canSubmit = !busy && !created && name.trim() !== ''
 
@@ -198,19 +202,27 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
 
   const submit = async () => {
     const normalizedName = name.trim()
-    if (busy || created) return
+    if (submitting.current || busy || created) return
     if (normalizedName === '') { setError('请输入 Bot 名称'); nameInput.current?.focus(); return }
+    const previous = createRequest.current
+    if (previous !== undefined && (previous.name !== normalizedName || previous.description !== description.trim() || previous.provider !== provider || previous.avatarFile !== avatarFile)) {
+      setError('上次创建已提交，请先刷新 Bot 列表确认结果，再修改信息或新建 Bot')
+      return
+    }
+    submitting.current = true
     setError('')
     try {
-      let avatar = ''
-      if (avatarFile !== undefined) {
+      let avatar = previous?.avatar ?? ''
+      if (previous === undefined && avatarFile !== undefined) {
         setBusyLabel('头像处理中...')
         avatar = await uploadBotAvatar(avatarFile)
       }
       setBusyLabel('创建中...')
+      createRequest.current ??= { uid: crypto.randomUUID(), name: normalizedName, description: description.trim(), provider, avatarFile, avatar }
       const bot = await callArkme<ArkmeBotSummary>('bots.create', {
         name: normalizedName,
         provider,
+        requestUid: createRequest.current.uid,
         ...(description.trim() === '' ? {} : { description: description.trim() }),
         ...(avatar === '' ? {} : { avatar }),
       })
@@ -218,13 +230,18 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
         await onBotCreated?.(bot)
       } catch (caught) {
         setCreated(true)
-        setError(`Bot 已创建，但无法打开私聊：${botErrorMessage(caught)}`)
+        setError(tr("Bot 已创建，但无法打开私聊：{v0}", { v0: botErrorMessage(caught) }))
         return
       }
       onClose()
     } catch (caught) {
+      // 只解除本次尚未发送的创建；更早一次的未知结果仍须保留原请求身份。
+      if (previous === undefined && caught instanceof ArkmeClientError && ['login-required', 'bot-name-invalid', 'bot-provider-unsupported', 'bot-avatar-invalid'].includes(caught.body.code)) {
+        createRequest.current = undefined
+      }
       setError(botErrorMessage(caught))
     } finally {
+      submitting.current = false
       setBusyLabel('')
     }
   }
@@ -236,18 +253,18 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
   >
     <section role="dialog" aria-modal="true" aria-labelledby="arkme-add-bot-title" style={styles.dialog}>
       <header style={styles.header}>
-        <h2 id="arkme-add-bot-title" style={styles.heading}>创建 Bot</h2>
-        <button type="button" style={styles.close} aria-label="关闭" disabled={busy} onClick={onClose}>×</button>
+        <h2 id="arkme-add-bot-title" style={styles.heading}>{tr("创建 Bot")}</h2>
+        <button data-arkme-feedback="neutral" type="button" style={styles.close} aria-label={tr("关闭")} disabled={busy} onClick={onClose}>×</button>
       </header>
       <div style={styles.body}>
         <input
           ref={avatarInput} type="file" tabIndex={-1} style={styles.hiddenInput} accept={BOT_AVATAR_ACCEPT}
-          aria-label="选择 Bot 头像文件" disabled={busy}
+          aria-label={tr("选择 Bot 头像文件")} disabled={busy}
           onChange={event => { chooseAvatar(event.currentTarget.files?.[0]); event.currentTarget.value = '' }}
         />
 
         <div style={styles.avatarPicker}>
-          <button type="button" style={styles.avatarButton} disabled={busy} aria-label="上传 Bot 头像" title="上传头像" onClick={() => { avatarInput.current?.click() }}>
+          <button type="button" style={styles.avatarButton} disabled={busy} aria-label={tr("上传 Bot 头像")} title={tr("上传头像")} onClick={() => { avatarInput.current?.click() }}>
             <span style={styles.avatar} aria-hidden>
               {avatarPreview !== '' && !avatarPreviewFailed
                 ? <img src={avatarPreview} alt="" style={styles.avatarImage} onError={() => { setAvatarPreviewFailed(true) }} />
@@ -259,32 +276,32 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
 
         <input
           ref={nameInput} style={{ ...styles.input, marginTop: 16 }} value={name} disabled={busy} maxLength={64}
-          placeholder="给 Bot 起个名字" onChange={event => { setName(event.currentTarget.value); setError('') }}
-          onKeyDown={event => { if (event.key === 'Enter') void submit() }}
+          placeholder={tr("给 Bot 起个名字")} onChange={event => { setName(event.currentTarget.value); setError('') }}
+          onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) void submit() }}
         />
 
         <fieldset style={{ ...styles.field, marginInline: 0, padding: 0, border: 0 }}>
-          <legend style={{ ...styles.label, padding: 0 }}>接入方式</legend>
-          <div role="radiogroup" aria-label="Bot 接入方式" style={styles.providerList}>
+          <legend style={{ ...styles.label, padding: 0 }}>{tr("接入方式")}</legend>
+          <div role="radiogroup" aria-label={tr("Bot 接入方式")} style={styles.providerList}>
             <ProviderOption provider="openclaw" selected={provider === 'openclaw'} disabled={busy} onSelect={() => { setProvider('openclaw') }} />
             <ProviderOption provider="webhook" selected={provider === 'webhook'} disabled={busy} onSelect={() => { setProvider('webhook') }} />
           </div>
           <p style={styles.providerHint}>{providerCopy[provider].hint}</p>
         </fieldset>
         <label style={styles.field}>
-          <span style={styles.label}>简介（可选）</span>
+          <span style={styles.label}>{tr("简介（可选）")}</span>
           <textarea
             style={{ ...styles.input, ...styles.textarea }} value={description} disabled={busy} maxLength={200}
-            rows={3} placeholder="描述这个 Bot 的用途" onChange={event => { setDescription(event.currentTarget.value); setError('') }}
+            rows={3} placeholder={tr("描述这个 Bot 的用途")} onChange={event => { setDescription(event.currentTarget.value); setError('') }}
           />
         </label>
         {error !== '' && <p role="alert" style={styles.error}>{error}</p>}
         <footer style={styles.footer}>
-          <button type="button" style={styles.cancel} disabled={busy} onClick={onClose}>取消</button>
-          <button
+          <button data-arkme-feedback="neutral" type="button" style={styles.cancel} disabled={busy} onClick={onClose}>{tr("取消")}</button>
+          <button data-arkme-feedback="primary"
             type="button" style={{ ...styles.submit, ...(canSubmit ? {} : { opacity: .45, cursor: 'not-allowed' }) }} disabled={!canSubmit}
             onClick={() => { void submit() }}
-          >{busyLabel || '创建 Bot'}</button>
+          >{busyLabel || tr("创建 Bot")}</button>
         </footer>
       </div>
     </section>

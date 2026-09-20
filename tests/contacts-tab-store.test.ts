@@ -96,3 +96,54 @@ describe('contacts tab store', () => {
     expect(store.getDirectoryCache('stage:1')).toBeUndefined()
   })
 })
+
+
+it('updates the cached contact name without losing selection, preserves it against late cache writes, and isolates accounts', () => {
+  const store = new ContactsTabStore()
+  store.activateAccount('a')
+  const state = createContactDirectoryState('a')
+  state.sections.contacts.items = [{ kind: 'contact', contactRef: 'ref', displayName: '小满', nickname: '小满', remark: '', letter: 'X' }]
+  store.cacheDirectoryState(state, true)
+  store.select({ kind: 'contact', contactRef: 'ref' })
+  const profile = { contactRef: 'ref', displayName: '设计同事', nickname: '小满', remark: '设计同事' }
+  store.updateContactProfile('a', profile)
+  store.cacheDirectoryState(state, false)
+  expect(store.getDirectoryCache('a')?.state.sections.contacts.items[0]).toMatchObject({ displayName: '设计同事', remark: '设计同事', letter: 'S' })
+  expect(store.getSnapshot().selection).toEqual({ kind: 'contact', contactRef: 'ref' })
+  expect(store.getSnapshot().contactProfiles.ref).toEqual(profile)
+  store.activateAccount('b')
+  store.updateContactProfile('a', profile)
+  expect(store.getSnapshot().contactProfiles).toEqual({})
+})
+
+it('invalidates directory data after an add intent while retaining section preferences', () => {
+  const store = new ContactsTabStore()
+  store.activateAccount('prod:1')
+  store.setSectionExpanded('groups', true)
+  store.cacheDirectoryState(createContactDirectoryState('prod:1'), true)
+  expect(store.getDirectoryCache('prod:1')).toBeDefined()
+  store.invalidateDirectoryCache()
+  expect(store.getDirectoryCache('prod:1')).toBeUndefined()
+  expect(store.getSnapshot().expandedSections.groups).toBe(true)
+})
+
+
+it('accepts fresh directory data after a saved profile but keeps saves newer than the request', () => {
+  const store = new ContactsTabStore()
+  store.activateAccount('test:1')
+  const saved = { contactRef: 'stable-ref', displayName: '本地备注', remark: '本地备注', nickname: '小满' }
+  store.updateContactProfile('test:1', saved)
+  const profilesAtStart = store.getSnapshot().contactProfiles
+  const state = createContactDirectoryState('test:1')
+  state.sections.contacts.items = [{ kind: 'contact', contactRef: 'stable-ref', displayName: '其他设备的新备注', remark: '其他设备的新备注', nickname: '新昵称', letter: 'Q' }]
+  store.cacheDirectoryState(state, true, profilesAtStart)
+  expect(store.getSnapshot().contactProfiles).toEqual({})
+  expect(store.getDirectoryCache('test:1')?.state.sections.contacts.items[0]).toMatchObject({ displayName: '其他设备的新备注', nickname: '新昵称' })
+
+  store.updateContactProfile('test:1', saved)
+  const olderRead = store.getSnapshot().contactProfiles
+  store.updateContactProfile('test:1', { ...saved, displayName: '后保存的备注', remark: '后保存的备注' })
+  store.cacheDirectoryState(state, true, olderRead)
+  expect(store.getDirectoryCache('test:1')?.state.sections.contacts.items[0]).toMatchObject({ displayName: '后保存的备注' })
+  expect(store.getSnapshot().contactProfiles['stable-ref']?.remark).toBe('后保存的备注')
+})

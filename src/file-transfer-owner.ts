@@ -18,6 +18,7 @@ export function createArkmeFileTransfers(options: {
   if (options.directory === undefined) return undefined
   return new FileTransfers(options.directory, {
     currentUser: async () => (await options.runtime.requireSession()).userId,
+    retainedFileRefs: async userId => await options.runtime.stateStore.recordReeditFileRefs(userId),
     validateSource: async sourceRef => { await options.source.openSourceRef(sourceRef, (await options.runtime.requireSession()).userId) },
     upload: async (path, metadata, onProgress, expectedUserId, signal) => await options.media.uploadLocalFile(path, metadata, { onProgress, expectedUserId, signal }),
     send: async (input, assets, backgroundSound, expectedUserId, signal): Promise<FileTransferSendOutcome> => {
@@ -52,7 +53,7 @@ export function createArkmeFileTransfers(options: {
         if (!(error instanceof ArkmePluginError)) return { kind: 'owner_outcome_unknown' }
         return error.writeOutcomeUnknown === true
           ? { kind: 'owner_outcome_unknown', message: error.message, code: error.code }
-          : { kind: 'owner_not_accepted', message: error.message, code: error.code }
+          : { kind: 'owner_not_accepted', message: error.message, code: error.code, retryable: error.retryable }
       }
     },
     fetchMedia: async (ref, signal) => await options.media.fetchMedia(ref, undefined, signal, true),

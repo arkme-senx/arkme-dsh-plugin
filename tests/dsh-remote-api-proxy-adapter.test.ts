@@ -112,6 +112,29 @@ describe('public DSH ApiProxy remote adapter', () => {
       .resolves.not.toEqual(first)
   })
 
+  it('keeps predecessor titles without publishing their unknown watermark alongside new sessions', async () => {
+    const { api } = await fakeApi()
+    api.workspace!.list = async request => ok({ items: [{
+      workspaceId: 'workspace-1', path: process.cwd(), title: 'Project',
+      sessionIds: ['legacy', 'new', 'zero'],
+    }] }, request.rpcId)
+    api.sessions!.list = async request => ok({ items: [
+      { sessionId: 'legacy', updatedAt: 1, running: false, blank: false,
+        projections: { asOfSeq: -1, values: { title: 'Cached predecessor title' } } },
+      { sessionId: 'new', updatedAt: 3, running: false, blank: false,
+        projections: { asOfSeq: 17, values: { title: 'New conversation' } } },
+      { sessionId: 'zero', updatedAt: 2, running: false, blank: true,
+        projections: { asOfSeq: 0, values: {} } },
+    ] }, request.rpcId)
+    const { items } = await new DshApiProxyAdapter(api).sessions()
+    expect(items).toEqual([
+      expect.objectContaining({ sessionId: 'new', projectionAsOfSeq: 17 }),
+      expect.objectContaining({ sessionId: 'zero', projectionAsOfSeq: 0 }),
+      expect.objectContaining({ sessionId: 'legacy', title: 'Cached predecessor title', blank: false }),
+    ])
+    expect(items[2]).not.toHaveProperty('projectionAsOfSeq')
+  })
+
   it('projects DSH archive and subagent lineage for sidebar parity', async () => {
     const { api } = await fakeApi()
     api.workspace!.list = async request => ok({

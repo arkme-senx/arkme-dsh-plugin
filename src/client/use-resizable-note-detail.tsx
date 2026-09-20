@@ -1,25 +1,26 @@
+import { tr } from './locale.js'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 
 export const NOTE_DETAIL_WIDTH_KEY = 'arkme:note-detail-width:v1'
 export const DEFAULT_NOTE_DETAIL_WIDTH = 405
-export function noteDetailWidthBounds(available: number) {
-  const safeAvailable = Number.isFinite(available) ? Math.max(0, available) : DEFAULT_NOTE_DETAIL_WIDTH
-  const min = Math.min(DEFAULT_NOTE_DETAIL_WIDTH, safeAvailable)
-  return { min, max: Math.min(safeAvailable, Math.max(DEFAULT_NOTE_DETAIL_WIDTH, safeAvailable * 0.6)) }
+export function noteDetailWidthBounds(available: number, defaultWidth = DEFAULT_NOTE_DETAIL_WIDTH) {
+  const safeAvailable = Number.isFinite(available) ? Math.max(0, available) : defaultWidth
+  const min = Math.min(defaultWidth, safeAvailable)
+  return { min, max: Math.min(safeAvailable, Math.max(defaultWidth, safeAvailable * 0.6)) }
 }
-export function clampNoteDetailWidth(width: number, available: number) {
-  const { min, max } = noteDetailWidthBounds(available)
-  return Math.max(min, Math.min(Number.isFinite(width) ? width : DEFAULT_NOTE_DETAIL_WIDTH, max))
+export function clampNoteDetailWidth(width: number, available: number, defaultWidth = DEFAULT_NOTE_DETAIL_WIDTH) {
+  const { min, max } = noteDetailWidthBounds(available, defaultWidth)
+  return Math.max(min, Math.min(Number.isFinite(width) ? width : defaultWidth, max))
 }
 
 /** Shared local-only layout preference for right-hand quick-note drawers. */
-export function useResizableNoteDetail(panel: RefObject<HTMLElement>) {
+export function useResizableNoteDetail(panel: RefObject<HTMLElement>, preferenceKey = NOTE_DETAIL_WIDTH_KEY, label = '调整快记详情宽度', defaultWidth = DEFAULT_NOTE_DETAIL_WIDTH) {
   const [preferred, setPreferred] = useState(() => {
     try {
-      const stored = window.localStorage.getItem(NOTE_DETAIL_WIDTH_KEY)
+      const stored = window.localStorage.getItem(preferenceKey)
       const width = Number(stored)
-      return stored !== null && Number.isFinite(width) && width > 0 ? width : DEFAULT_NOTE_DETAIL_WIDTH
-    } catch { return DEFAULT_NOTE_DETAIL_WIDTH }
+      return stored !== null && Number.isFinite(width) && width > 0 ? width : defaultWidth
+    } catch { return defaultWidth }
   })
   const [available, setAvailable] = useState(1000)
   const [dragging, setDragging] = useState(false)
@@ -27,13 +28,13 @@ export function useResizableNoteDetail(panel: RefObject<HTMLElement>) {
   const [focused, setFocused] = useState(false)
   const drag = useRef<{ id: number; x: number; width: number }>()
   const latest = useRef(preferred)
-  const bounds = noteDetailWidthBounds(available)
-  const width = clampNoteDetailWidth(preferred, available)
+  const bounds = noteDetailWidthBounds(available, defaultWidth)
+  const width = clampNoteDetailWidth(preferred, available, defaultWidth)
   const save = () => {
-    try { window.localStorage.setItem(NOTE_DETAIL_WIDTH_KEY, String(latest.current)) } catch { /* optional storage */ }
+    try { window.localStorage.setItem(preferenceKey, String(latest.current)) } catch { /* optional storage */ }
   }
   const update = (next: number) => {
-    latest.current = clampNoteDetailWidth(next, available)
+    latest.current = clampNoteDetailWidth(next, available, defaultWidth)
     setPreferred(latest.current)
   }
   useEffect(() => {
@@ -62,9 +63,9 @@ export function useResizableNoteDetail(panel: RefObject<HTMLElement>) {
   const highlighted = dragging || hovered || focused
   return {
     style: { width, maxWidth: '100%' },
-    handle: <div role="separator" aria-label="调整快记详情宽度" aria-orientation="vertical"
+    handle: <div role="separator" aria-label={label} aria-orientation="vertical"
       aria-valuemin={Math.round(bounds.min)} aria-valuemax={Math.round(bounds.max)} aria-valuenow={Math.round(width)}
-      tabIndex={0} title="左右拖动调整详情宽度，双击恢复默认宽度"
+      tabIndex={0} title={tr("左右拖动调整详情宽度，双击恢复默认宽度")}
       style={{ position: 'absolute', left: -5, top: 0, bottom: 0, width: 10, zIndex: 20, cursor: 'ew-resize', touchAction: 'none' }}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
       onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
@@ -80,11 +81,11 @@ export function useResizableNoteDetail(panel: RefObject<HTMLElement>) {
       }}
       onPointerUp={event => finish(event.pointerId)} onPointerCancel={event => finish(event.pointerId)}
       onLostPointerCapture={event => finish(event.pointerId)}
-      onDoubleClick={() => { update(DEFAULT_NOTE_DETAIL_WIDTH); save() }}
+      onDoubleClick={() => { update(defaultWidth); save() }}
       onKeyDown={event => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter'].includes(event.key)) return
         event.preventDefault()
-        update(event.key === 'Enter' ? DEFAULT_NOTE_DETAIL_WIDTH : event.key === 'Home' ? bounds.min : event.key === 'End' ? bounds.max : width + (event.key === 'ArrowLeft' ? 20 : -20))
+        update(event.key === 'Enter' ? defaultWidth : event.key === 'Home' ? bounds.min : event.key === 'End' ? bounds.max : width + (event.key === 'ArrowLeft' ? 20 : -20))
         save()
       }}>
       <span aria-hidden style={{ position: 'absolute', top: 0, bottom: 0, left: 4, width: 3, background: highlighted ? '#09B83E' : 'transparent', pointerEvents: 'none' }} />

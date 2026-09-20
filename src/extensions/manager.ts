@@ -85,15 +85,17 @@ export interface ArkmeBundleClientState {
   reason?: 'not-installed' | 'version-mismatch' | 'disabled' | 'unavailable' | 'content-mismatch'
 }
 
+export interface ArkmePluginInventorySnapshot {
+  entries: ReadonlyArray<{
+    entryId: string
+    moduleName: string
+    enabled: boolean
+    fiberPhase: 'pending' | 'loading' | 'active' | 'failed' | 'unloading' | null
+  }>
+}
+
 export interface ArkmePluginInventoryLike {
-  list(): {
-    entries: ReadonlyArray<{
-      entryId: string
-      moduleName: string
-      enabled: boolean
-      fiberPhase: 'pending' | 'loading' | 'active' | 'failed' | 'unloading' | null
-    }>
-  }
+  list(): ArkmePluginInventorySnapshot | Promise<ArkmePluginInventorySnapshot>
 }
 
 export interface ArkmeExtensionApplyResult {
@@ -431,7 +433,7 @@ export class ArkmeExtensionManager {
     const repaired = await this.restoreDisabledProfileLayers('', (item, error) => {
       repairFailures.push({ extensionId: item.extensionId, error })
     })
-    const current = new Map(this.listInstalled().map(item => [item.extensionId, item]))
+    const current = new Map((await this.listInstalled()).map(item => [item.extensionId, item]))
     for (const item of repaired) {
       if (item.profilePackageName === undefined) continue
       const loaded = current.get(item.extensionId)?.active === true
@@ -1023,14 +1025,11 @@ export class ArkmeExtensionManager {
     return { ...value, data: new Uint8Array(value.data) }
   }
 
-  listInstalled(): ArkmeInstalledExtensionView[] {
-    const loaderEntries = this.options.pluginInventory?.list().entries ?? []
+  async listInstalled(): Promise<ArkmeInstalledExtensionView[]> {
+    const loaderEntries = (await this.options.pluginInventory?.list())?.entries ?? []
     return this.store.list().map(item => {
-      const state = this.effectivePersistentActivation(item)
+      const state = this.reconcilePersistentActivation(item)
       const effective = state.item
-      if (effective.enabled !== item.enabled || effective.active !== item.active || effective.lastError !== item.lastError) {
-        this.store.put(effective)
-      }
       const loaderActive = effective.executionModel !== undefined && effective.profilePackageName !== undefined && loaderEntries.some(entry =>
         entry.moduleName === effective.profilePackageName && entry.enabled && entry.fiberPhase === 'active')
       const active = effective.executionModel === undefined
@@ -1052,6 +1051,15 @@ export class ArkmeExtensionManager {
     return runtime?.active === true
       && runtime.version === item.installedVersion
       && runtime.installationUrl === pathToFileURL(join(bundleDirectory, 'installation.json')).href
+  }
+
+  private reconcilePersistentActivation(item: ArkmeInstalledExtension) {
+    const state = this.effectivePersistentActivation(item)
+    const effective = state.item
+    if (effective.enabled !== item.enabled || effective.active !== item.active || effective.lastError !== item.lastError) {
+      this.store.put(effective)
+    }
+    return state
   }
 
   private effectivePersistentActivation(item: ArkmeInstalledExtension): {
@@ -1083,9 +1091,9 @@ export class ArkmeExtensionManager {
     }
   }
 
-  enabledState(extensionIdValue: string): ArkmeExtensionEnabledState {
+  async enabledState(extensionIdValue: string): Promise<ArkmeExtensionEnabledState> {
     const extensionId = requiredId(extensionIdValue, 'extension_id')
-    const installed = this.listInstalled().find(item => item.extensionId === extensionId)
+    const installed = (await this.listInstalled()).find(item => item.extensionId === extensionId)
     if (installed === undefined) return { extension_id: extensionId, installed: false, enabled: false, active: false }
     return {
       extension_id: extensionId,
@@ -1097,7 +1105,7 @@ export class ArkmeExtensionManager {
     }
   }
 
-  persistentClientState(extensionIdValue: string, versionValue: string): ArkmePersistentClientState {
+  async persistentClientState(extensionIdValue: string, versionValue: string): Promise<ArkmePersistentClientState> {
     const extensionId = requiredId(extensionIdValue, 'extension_id')
     const version = versionValue.trim()
     const stored = this.store.get(extensionId)
@@ -1105,12 +1113,12 @@ export class ArkmeExtensionManager {
     if (version === '' || stored.installedVersion !== version) {
       return { extension_id: extensionId, version, mount: false, reason: 'version-mismatch' }
     }
-    const installed = this.listInstalled().find(item => item.extensionId === extensionId)
-    if (installed?.unavailable !== undefined) {
+    const state = this.reconcilePersistentActivation(stored)
+    if (state.unavailable !== undefined) {
       return { extension_id: extensionId, version, mount: false, reason: 'unavailable' }
     }
-    if (installed?.enabled !== true) return { extension_id: extensionId, version, mount: false, reason: 'disabled' }
-    if (installed.active !== true || !this.persistentRuntimeMatches(stored)) {
+    if (!state.item.enabled) return { extension_id: extensionId, version, mount: false, reason: 'disabled' }
+    if (!this.persistentRuntimeMatches(state.item)) {
       return { extension_id: extensionId, version, mount: false, reason: 'runtime-mismatch' }
     }
     return {
@@ -1122,7 +1130,8 @@ export class ArkmeExtensionManager {
     }
   }
 
-  bundleClientState(packageNameValue: string, versionValue: string, contentDigestValue: string): ArkmeBundleClientState {
+  async bundleClientState(packageNameValue: string, versionValue: string, contentDigestValue: string): Promise<ArkmeBundleClientState> {
+    // Client ownership is an installation/content check, not a Loader health check.
     const packageName = packageNameValue.trim()
     const version = versionValue.trim()
     if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(packageName)) {
@@ -1139,11 +1148,7 @@ export class ArkmeExtensionManager {
     if (contentDigest === '' || this.installedClientContentDigest(stored) !== contentDigest) {
       return { extension_id: stored.extensionId, version, mount: false, reason: 'content-mismatch' }
     }
-    const installed = this.listInstalled().find(item => item.extensionId === stored.extensionId)
-    if (installed?.unavailable !== undefined) {
-      return { extension_id: stored.extensionId, version, mount: false, reason: 'unavailable' }
-    }
-    if (installed?.enabled !== true) {
+    if (!stored.enabled) {
       return { extension_id: stored.extensionId, version, mount: false, reason: 'disabled' }
     }
     return {
@@ -1220,11 +1225,11 @@ export class ArkmeExtensionManager {
 
   private async setEnabledNow(input: { agent: unknown; extensionId: string; enabled: boolean }): Promise<ArkmeExtensionEnabledResult> {
     const extensionId = requiredId(input.extensionId, 'extension_id')
+    const current = (await this.listInstalled()).find(item => item.extensionId === extensionId)
     const installed = this.store.get(extensionId)
     if (installed === undefined) {
       throw new ArkmePluginError('extension-not-installed', '该扩展尚未安装', false, 404)
     }
-    const current = this.listInstalled().find(item => item.extensionId === extensionId)
     const currentActive = current?.active === true
     const profilePackageName = installed.profilePackageName
     const legacyProfileBundle = installed.executionModel === undefined

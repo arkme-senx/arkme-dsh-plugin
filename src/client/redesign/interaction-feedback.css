@@ -1,0 +1,47 @@
+/* Opt in only Arkme action controls, never whole message/media hit targets or
+   DSH-owned primitives. A background layer preserves layout, shadows and the
+   base fill of selected/primary controls; portals inherit the host theme too. */
+@property --arkme-control-feedback-fill {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: transparent;
+}
+
+[data-arkme-feedback] {
+  --arkme-control-feedback-fill: transparent;
+  --arkme-control-hover: var(--arkme-control-hover-surface, var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, .06)));
+  --arkme-control-pressed: var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, .10));
+  background-image: linear-gradient(var(--arkme-control-feedback-fill), var(--arkme-control-feedback-fill)) !important;
+  transition: --arkme-control-feedback-fill 120ms ease !important;
+}
+
+/* Keep selection distinguishable even when the host's hover token is opaque. */
+[data-arkme-feedback="neutral"]:is([aria-current="page"], [aria-selected="true"], [aria-pressed="true"], [aria-checked="true"], [data-arkme-feedback-selected="true"]),
+[data-arkme-feedback="preserve"] {
+  --arkme-control-hover: color-mix(in srgb, var(--dsw-alias-label-primary, #17191c) 6%, transparent);
+  --arkme-control-pressed: color-mix(in srgb, var(--dsw-alias-label-primary, #17191c) 10%, transparent);
+}
+[data-arkme-feedback="primary"] {
+  --arkme-control-hover: color-mix(in srgb, var(--dsw-alias-label-primary-inverted, #fff) 12%, transparent);
+  --arkme-control-pressed: color-mix(in srgb, var(--dsw-alias-label-primary-inverted, #fff) 20%, transparent);
+}
+[data-arkme-feedback="danger"] {
+  --arkme-control-hover: var(--dsw-alias-interactive-bg-hover-danger, rgba(194, 65, 59, .10));
+  --arkme-control-pressed: color-mix(in srgb, var(--dsw-alias-state-error-primary, #c2413b) 16%, transparent);
+}
+
+@media (hover: hover) {
+  [data-arkme-feedback]:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]):hover {
+    --arkme-control-feedback-fill: var(--arkme-control-hover);
+  }
+}
+[data-arkme-feedback]:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]):active {
+  --arkme-control-feedback-fill: var(--arkme-control-pressed);
+}
+[data-arkme-feedback]:not(:disabled):not([aria-disabled="true"]):focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8) !important;
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-arkme-feedback] { transition: none !important; }
+}

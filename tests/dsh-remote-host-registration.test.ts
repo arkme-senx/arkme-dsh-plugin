@@ -1,3 +1,4 @@
+import { adaptSessionPersistence } from '../src/dsh-remote/session-persistence.js'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -30,7 +31,9 @@ class MemorySecrets implements ArkmeSecureValueStore {
 }
 
 class FakeRealtime implements DshRemoteRealtimeTransport {
+  revalidate(): void {}
   readonly calls: string[] = []
+  readonly published: Record<string, unknown>[] = []
   connectWaiter: Promise<void> | undefined
   onEvent: ((payload: DshRemoteRealtimePayload, metadata: DshRemoteTrustedEventMetadata) => void) | undefined
   private disconnectListener: ((error: Error) => void) | undefined
@@ -47,7 +50,7 @@ class FakeRealtime implements DshRemoteRealtimeTransport {
     this.onEvent = input.onEvent
     return () => { this.calls.push('unsubscribe'); this.onEvent = undefined }
   }
-  async publish(): Promise<{ sequence: number }> { this.calls.push('publish'); return { sequence: 1 } }
+  async publish(input: Parameters<DshRemoteRealtimeTransport['publish']>[0]): Promise<{ sequence: number }> { this.calls.push('publish'); this.published.push(input.payload as Record<string, unknown>); return { sequence: 1 } }
   emitDisconnect(error: Error): void { this.disconnectListener?.(error) }
 }
 
@@ -122,7 +125,7 @@ async function fixture(input: {
     ...(input.yieldToEventLoop === undefined ? {} : { yieldToEventLoop: input.yieldToEventLoop }),
     now: input.now ?? (() => 2_000),
   })
-  return { host, realtime, controlCalls, adapter, sessionOwnership }
+  return { host, realtime, controlCalls, controlPlane, adapter, sessionOwnership }
 }
 
 function historyEvent(type: string, seq: number): DshRemoteHistoryEntry['event'] {
@@ -143,6 +146,108 @@ function historyOutbox() {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Host login-only registration lifecycle', () => {
+  it('pushes selection changes once, clears on leaving Harness and exposes the latest version for reconnect', async () => {
+    const { host, realtime } = await fixture()
+    await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
+    const flush = async () => { await (host as unknown as { desktopSelectionFlight?: Promise<void> }).desktopSelectionFlight }
+    await flush()
+    const selections = () => realtime.published.filter(p => p.operation === 'session.current')
+    host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 1, sessionRef: 'session-01' })
+    await flush()
+    expect(selections().at(-1)?.body).toMatchObject({ selectionRevision: 1,
+      session: { sessionRef: 'session-01', workspaceRef: 'workspace-01', running: false } })
+    const count = selections().length
+    host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 2, sessionRef: 'session-01' })
+    await flush()
+    expect(selections()).toHaveLength(count)
+    host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 3, sessionRef: null })
+    await flush()
+    expect(selections().at(-1)?.body).toEqual({ session: null, selectionRevision: 2 })
+    await host.stop()
+    expect((host as unknown as { desktopSelectionTimer?: unknown }).desktopSelectionTimer).toBeUndefined()
+  })
+
+  it('reads only owned non-archived desktop selection and invalidates it on account shutdown', async () => {
+    const { host, adapter } = await fixture()
+    await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
+    const report = { accountId: '42', windowRef: 'window', revision: 1, sessionRef: 'session-01' }
+    host.reportCurrentSession(report)
+    expect(host.getStatus().capabilities).toContain('session.current')
+    await expect(host.currentSession()).resolves.toMatchObject({ session: { sessionRef: 'session-01', workspaceRef: 'workspace-01', running: false } })
+    expect(() => host.reportCurrentSession({ ...report, accountId: '84', revision: 2 })).toThrow()
+    const original = adapter.sessions.bind(adapter)
+    vi.spyOn(adapter, 'sessions').mockImplementation(async input => ({ ...await original(input), items: [] }))
+    await expect(host.currentSession()).resolves.toEqual({ session: null })
+    await host.stop()
+    await expect(host.currentSession()).resolves.toEqual({ session: null })
+  })
+
+  it('does not follow a Browser selection that changes during the authoritative lookup', async () => {
+    const { host, adapter } = await fixture()
+    await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
+    host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 1, sessionRef: 'session-01' })
+    const original = adapter.sessions.bind(adapter)
+    vi.spyOn(adapter, 'sessions').mockImplementation(async input => {
+      host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 2, sessionRef: null })
+      return await original(input)
+    })
+    await expect(host.currentSession()).resolves.toEqual({ session: null })
+    await host.stop()
+  })
+
+  it('current-session reads never claim an unowned session or rewrite ownership', async () => {
+    const { host, sessionOwnership } = await fixture()
+    await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
+    const claim = vi.spyOn(sessionOwnership, 'claimUnownedAndListOwned')
+    host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 1, sessionRef: 'unowned' })
+    await expect(host.currentSession()).resolves.toEqual({ session: null })
+    await expect(sessionOwnership.ownerAccountId('unowned')).resolves.toBeUndefined()
+    expect(claim).not.toHaveBeenCalled()
+    await host.stop()
+  })
+
+  it.each([{ archived: true }, { origin: 'subagent' }])('does not follow excluded sessions: %j', async excluded => {
+    const { host, adapter } = await fixture()
+    await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
+    host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 1, sessionRef: 'session-01' })
+    const original = adapter.sessions.bind(adapter)
+    vi.spyOn(adapter, 'sessions').mockImplementation(async input => {
+      const page = await original(input)
+      return { ...page, items: page.items.map(item => ({ ...item, ...excluded })) }
+    })
+    await expect(host.currentSession()).resolves.toEqual({ session: null })
+    await host.stop()
+  })
+
+  it('an A-to-B-to-A lifecycle cannot accept a lookup from the old account generation', async () => {
+    let userId = 42
+    const { host, adapter } = await fixture({ session: () => ({ userId, clientId: 9 }) })
+    await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
+    host.reportCurrentSession({ accountId: '42', windowRef: 'window', revision: 1, sessionRef: 'session-01' })
+    const original = adapter.sessions.bind(adapter)
+    const entered = Promise.withResolvers<void>()
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof adapter.sessions>>>()
+    vi.spyOn(adapter, 'sessions').mockImplementationOnce(() => { entered.resolve(); return pending.promise })
+    const reading = host.currentSession()
+    await entered.promise
+    await host.suspend()
+    userId = 84
+    await host.start()
+    await host.suspend()
+    userId = 42
+    await host.start()
+    host.reportCurrentSession({ accountId: '42', windowRef: 'window-new', revision: 1, sessionRef: 'session-01' })
+    pending.resolve(await original({ sessionId: 'session-01' }))
+    await expect(reading).resolves.toEqual({ session: null })
+    await host.stop()
+  })
+
   it('does nothing when the rollout feature is disabled', async () => {
     const { host, realtime, controlCalls } = await fixture({ featureEnabled: false })
     await host.start()
@@ -155,6 +260,7 @@ describe('Host login-only registration lifecycle', () => {
   it('registers Backend projections, subscribes before Host lease, and uses no authorization control plane', async () => {
     const { host, realtime, controlCalls, sessionOwnership } = await fixture()
     await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
     await expect(sessionOwnership.ownerAccountId('session-01')).resolves.toBe('42')
     expect(controlCalls.map(call => call.name)).toEqual(['desktop', 'runtime', 'workspaces', 'sessions', 'complete'])
     expect(controlCalls[1]!.value).toMatchObject({
@@ -192,6 +298,7 @@ describe('Host login-only registration lifecycle', () => {
     })
 
     await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
 
     expect(controlCalls.find(call => call.name === 'sessions')?.value).toMatchObject({ items: [] })
     await expect(sessionOwnership.ownerAccountId('session-01')).resolves.toBe('42')
@@ -312,6 +419,7 @@ describe('Host login-only registration lifecycle', () => {
   it('emits explicit tombstones when a previously projected workspace and session disappear', async () => {
     const { host, controlCalls, adapter } = await fixture()
     await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
     vi.spyOn(adapter, 'workspaceInventory').mockResolvedValue({
       items: [], archivedSessionIds: [],
     })
@@ -339,6 +447,7 @@ describe('Host login-only registration lifecycle', () => {
   it('serializes full snapshots so completion cannot overtake another page chain', async () => {
     const { host, controlCalls } = await fixture()
     await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
     controlCalls.splice(0)
     const internal = host as unknown as {
       syncProjectionSnapshot(force: boolean): Promise<void>
@@ -358,10 +467,57 @@ describe('Host login-only registration lifecycle', () => {
     await host.stop()
   })
 
+  it('pushes canonical session metadata over Realtime without waiting for Backend, and coalesces changes during sync', async () => {
+    const { host, realtime, adapter, controlPlane, controlCalls } = await fixture()
+    await host.start()
+    const internal = host as unknown as {
+      backgroundProjectionFlight?: Promise<void>
+      publishProjectionEvent(event: unknown): Promise<void>
+      flushPendingSessionEventBatches(): Promise<void>
+    }
+    await internal.backgroundProjectionFlight
+    const original = adapter.sessions.bind(adapter)
+    let title = 'First title'
+    let seq = 1
+    vi.spyOn(adapter, 'sessions').mockImplementation(async input => {
+      const page = await original(input)
+      return { ...page, items: page.items.map(item => ({ ...item, title, projectionAsOfSeq: seq })) }
+    })
+    let release!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    const sync = vi.spyOn(controlPlane, 'syncWorkspaces').mockImplementationOnce(async () => { await blocked; return {} })
+    controlCalls.splice(0)
+    const emit = async (type: string) => {
+      await internal.publishProjectionEvent({ kind: 'session-event', sessionId: 'session-01', entry: { event: historyEvent(type, seq++) } })
+      await internal.flushPendingSessionEventBatches()
+    }
+    try {
+      await emit('turn/start')
+      const metadata = () => realtime.published.filter(p => p.operation === 'snapshot.get' && (p.body as Record<string, unknown>).sessions)
+      expect(metadata().at(-1)?.body).toMatchObject({ sessions: [{ sessionId: 'session-01', title: 'First title', blank: false }] })
+      await vi.waitFor(() => { expect(sync).toHaveBeenCalledOnce() })
+      expect(controlCalls.some(call => call.name === 'complete')).toBe(false)
+      title = 'Final title'
+      await emit('session/title')
+      expect(metadata().at(-1)?.body).toMatchObject({ sessions: [{ title: 'Final title' }] })
+      for (let i = 0; i < 20; i++) await emit('assistant/chunk')
+      expect(metadata()).toHaveLength(2)
+      expect(sync).toHaveBeenCalledOnce()
+      release()
+      await vi.waitFor(() => { expect(sync).toHaveBeenCalledTimes(2) })
+      await internal.backgroundProjectionFlight
+      expect(controlCalls.filter(call => call.name === 'sessions').at(-1)?.value).toMatchObject({ items: [{ title: 'Final title' }] })
+    } finally {
+      release()
+      await host.stop()
+    }
+  })
+
   it('does not repeat a complete Backend projection inside the 30 second metadata interval', async () => {
     let now = 2_000
     const { host, controlCalls } = await fixture({ now: () => now })
     await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
     controlCalls.splice(0)
     const internal = host as unknown as {
       syncProjectionSnapshotSafely(force?: boolean): Promise<void>
@@ -505,9 +661,9 @@ describe('Host login-only registration lifecycle', () => {
     await host.stop()
   })
 
-  it('requeues only Backend-known cold sessions and checkpoints the stable DSH revision', async () => {
+  it.each(['legacy', 'handles'])('requeues only Backend-known cold sessions and checkpoints the stable DSH revision (%s)', async api => {
     const outbox = historyOutbox()
-    const readFrom = vi.fn(async (sessionRef: string) => ({
+    const readFrom = vi.fn(async (sessionRef: string, _offset: number, _signal: AbortSignal) => ({
       meta: { id: sessionRef },
       events: [
         historyEvent('session/start', 0),
@@ -515,6 +671,20 @@ describe('Host login-only registration lifecycle', () => {
         historyEvent('turn/start', 4), historyEvent('turn/end', 5),
       ],
     }))
+    const snapshots = [
+      { header: { id: 'session-01' }, revision: 'revision-1' },
+      { header: { id: 'session-from-another-account' }, revision: 'revision-x' },
+    ]
+    const close = vi.fn(async () => {})
+    const persistence = api === 'legacy' ? { listSnapshots: async () => snapshots, readFrom } : {
+      list: async () => snapshots,
+      open: async (id: string) => ({
+        header: { id },
+        read: async (offset: number, _length: unknown, options: { signal: AbortSignal }) =>
+          readFrom(id, offset, options.signal),
+        close,
+      }),
+    }
     const knownHistorySessions = vi.fn(async () => ({ session_refs: ['session-01'] }))
     const { host } = await fixture({
       turnUploadForAccount: () => outbox as unknown as DshRemoteTurnUploadOutbox,
@@ -523,13 +693,7 @@ describe('Host login-only registration lifecycle', () => {
         backfill_mode: 'local_persistence_v1', content_encoding: 'gzip', max_object_bytes: 1024,
       }),
       knownHistorySessions,
-      sessionPersistence: {
-        listSnapshots: async () => [
-          { header: { id: 'session-01' }, revision: 'revision-1' },
-          { header: { id: 'session-from-another-account' }, revision: 'revision-x' },
-        ],
-        readFrom,
-      },
+      sessionPersistence: adaptSessionPersistence(persistence)!,
       yieldToEventLoop: async () => undefined,
     })
     await host.start()
@@ -554,6 +718,7 @@ describe('Host login-only registration lifecycle', () => {
     await expect(internal.backfillOneHistorySession('42', internal.runtime, new AbortController().signal))
       .resolves.toBe(false)
     expect(readFrom).toHaveBeenCalledOnce()
+    if (api === 'handles') expect(close).toHaveBeenCalledOnce()
     await host.stop()
   })
 
@@ -768,7 +933,7 @@ describe('Host login-only registration lifecycle', () => {
 
     await expect(backfill).rejects.toBeDefined()
     expect(controller.signal.aborted).toBe(true)
-    expect(outbox.capture).toHaveBeenCalledWith('session-01', [{ event: historyEvent('turn/start', 10) }])
+    await vi.waitFor(() => { expect(outbox.capture).toHaveBeenCalledWith('session-01', [{ event: historyEvent('turn/start', 10) }]) })
     await host.stop()
   })
 
@@ -804,4 +969,96 @@ describe('Host login-only registration lifecycle', () => {
     expect(outbox.queueHistoryFinalization).toHaveBeenCalledWith('session-01', 'revision-large', 100_002)
     await host.stop()
   })
+})
+
+
+describe('Host bounded recovery', () => {
+  it('registers before a blocked initial metadata snapshot finishes', async () => {
+    const { host, realtime, adapter } = await fixture()
+    const snapshot = Promise.withResolvers<{ items: []; archivedSessionIds: [] }>()
+    const inventory = adapter.workspaceInventory.bind(adapter)
+    vi.spyOn(adapter, 'workspaceInventory').mockImplementationOnce(inventory).mockReturnValue(snapshot.promise)
+    await host.start()
+    expect(host.getStatus().connected).toBe(true)
+    expect(realtime.calls).toContain('register')
+    snapshot.resolve({ items: [], archivedSessionIds: [] })
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
+    await host.stop()
+  })
+
+  it('expires a stuck connect flight and rejects late registration', async () => {
+    const { host, realtime } = await fixture()
+    await host.start()
+    await (host as unknown as { backgroundProjectionFlight?: Promise<void> }).backgroundProjectionFlight
+    vi.useFakeTimers()
+    const stuck = Promise.withResolvers<void>()
+    realtime.connectWaiter = stuck.promise
+    realtime.emitDisconnect(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'offline', true))
+    await vi.advanceTimersByTimeAsync(1_000)
+    // Runtime persistence uses real IO; wait for the fake transport boundary.
+    await vi.waitFor(() => { expect(realtime.calls.filter(x => x === 'connect')).toHaveLength(2) })
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(host.getStatus().connected).toBe(false)
+    await host.stop()
+    stuck.resolve()
+    await Promise.resolve()
+    expect(realtime.calls.filter(x => x === 'register')).toHaveLength(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+it('aborts an old account snapshot and never completes it after scope teardown', async () => {
+  const { host, controlCalls } = await fixture()
+  const internal = host as unknown as {
+    options: { controlPlane: DshRemoteControlPlane }
+    backgroundProjectionFlight?: Promise<void>
+  }
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let snapshotSignal: AbortSignal | undefined
+  vi.spyOn(internal.options.controlPlane, 'syncWorkspaces').mockImplementation(async (_body, signal) => {
+    snapshotSignal = signal
+    entered.resolve()
+    await release.promise
+    return {}
+  })
+  await host.start()
+  await entered.promise
+  const oldSnapshot = internal.backgroundProjectionFlight
+  await host.suspend()
+  expect(snapshotSignal?.aborted).toBe(true)
+  release.resolve()
+  await oldSnapshot
+  expect(controlCalls.some(call => call.name === 'complete' || call.name === 'sessions')).toBe(false)
+  expect(host.getStatus().connected).toBe(false)
+})
+
+
+it('publishes Host readiness before dispatching a request buffered during service registration', async () => {
+  const { host, realtime } = await fixture()
+  const result = Promise.withResolvers<Awaited<ReturnType<typeof host.dispatchAuthorizedRequest>>>()
+  const dispatch = vi.spyOn(host, 'dispatchAuthorizedRequest').mockImplementation(async () => {
+    expect(host.getStatus().connected).toBe(true)
+    return result.promise
+  })
+  vi.spyOn(realtime, 'registerHost').mockImplementation(async () => {
+    realtime.onEvent?.({ kind: 'request' }, { senderRole: 'controller', runtimeRef: 'runtime-01', acceptedAtMillis: 2000, targetHostLeaseGeneration: 9 })
+    return { serviceLeaseGeneration: 9 }
+  })
+  await host.start()
+  expect(dispatch).toHaveBeenCalledOnce()
+  expect(host.getStatus().connected).toBe(true)
+  await host.suspend()
+  result.reject(new DshRemoteError('RUNTIME_OFFLINE', 'scope closed', true))
+})
+
+
+it('a logged-in Host with zero conversations registers without opening a desktop conversation', async () => {
+  const { host, realtime, adapter } = await fixture()
+  vi.spyOn(adapter, 'workspaceInventory').mockResolvedValue({ items: [], archivedSessionIds: [] })
+  vi.spyOn(adapter, 'sessions').mockResolvedValue({ items: [] })
+  await host.start()
+  expect(host.getStatus().connected).toBe(true)
+  expect(realtime.calls).toContain('register')
+  await host.suspend()
 })

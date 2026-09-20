@@ -10,11 +10,14 @@ import type {
 } from './types.js'
 import { DSH_REMOTE_MAX_FRAME_BYTES } from './types.js'
 
-interface SocketEventLike { data?: unknown }
+interface SocketEventLike { data?: unknown; code?: number }
 export interface DshRemoteSocketLike {
   readonly readyState: number
+  readonly diagnosticRequestId?: string
   send(data: string): void
   close(code?: number, reason?: string): void
+  terminate(): void
+  subscribeHeartbeat(listener: () => void): () => void
   addEventListener(type: 'open' | 'message' | 'error' | 'close', listener: (event: SocketEventLike) => void): void
   removeEventListener(type: 'open' | 'message' | 'error' | 'close', listener: (event: SocketEventLike) => void): void
 }
@@ -166,11 +169,22 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
   private readonly disconnectListeners = new Set<(error: Error) => void>()
   private onMessage: ((event: SocketEventLike) => void) | undefined
   private onClose: ((event: SocketEventLike) => void) | undefined
+  private onError: ((event: SocketEventLike) => void) | undefined
+  private stopHeartbeat: (() => void) | undefined
+  private livenessTimer: ReturnType<typeof setTimeout> | undefined
+  private lastReceivedAt = 0
+  private lifecycleGeneration = 0
 
   constructor(
     private readonly createSocket: DshRemoteSocketFactory,
     private readonly requestTimeoutMillis = 10_000,
+    private readonly options: {
+      livenessTimeoutMillis?: number
+      now?: () => number
+      onDiagnostic?: (event: string, fields: Record<string, unknown>) => void
+    } = {},
   ) {
+    if (options.livenessTimeoutMillis !== undefined && (!Number.isSafeInteger(options.livenessTimeoutMillis) || options.livenessTimeoutMillis < 1_000)) throw new TypeError('Invalid liveness timeout')
     if (!Number.isSafeInteger(requestTimeoutMillis) || requestTimeoutMillis < 1_000 || requestTimeoutMillis > 60_000) {
       throw new TypeError('Realtime request timeout must be between 1000 and 60000 milliseconds')
     }
@@ -179,41 +193,85 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
   async connect(input: { profileRef: string; clientRef: string; signal: AbortSignal }): Promise<void> {
     await this.disconnect()
     if (input.signal.aborted) throw input.signal.reason
+    const generation = this.lifecycleGeneration
     const socket = await this.createSocket(input)
-    this.socket = socket
-    this.onMessage = event => { this.receive(event.data) }
-    this.onClose = () => {
-      if (this.socket !== socket) return
-      this.failConnection(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Realtime 连接意外关闭', true), false)
+    if (typeof socket.terminate !== 'function' || typeof socket.subscribeHeartbeat !== 'function') {
+      socket.close()
+      throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '远控 Socket 缺少心跳检测或终止能力')
     }
+    if (generation !== this.lifecycleGeneration || input.signal.aborted) {
+      socket.terminate()
+      throw input.signal.reason ?? new DshRemoteError('REMOTE_TRANSPORT_FAILED', '连接已被取消', true)
+    }
+    this.socket = socket
+    this.diagnostic('transport_started', { request_id: socket.diagnosticRequestId })
+    this.onMessage = event => { if (this.socket === socket) this.receive(event.data) }
+    this.onClose = event => {
+      if (this.socket !== socket) return
+      this.failConnection(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Realtime 连接意外关闭', true, { reason: 'socket_closed', closeCode: event.code }), false)
+    }
+    this.onError = () => {
+      if (this.socket === socket) this.failConnection(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Realtime 连接失败', true, { reason: 'socket_error' }), false)
+    }
+    socket.addEventListener('error', this.onError)
     socket.addEventListener('message', this.onMessage)
     socket.addEventListener('close', this.onClose)
-    await new Promise<void>((resolve, reject) => {
-      const onOpen = () => { cleanup(); resolve() }
-      const onError = () => { cleanup(); reject(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Realtime 连接失败', true)) }
-      const onEarlyClose = () => { cleanup(); reject(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Realtime 在握手前关闭', true)) }
-      const onAbort = () => { cleanup(); socket.close(1000, 'aborted'); reject(input.signal.reason) }
-      const cleanup = () => {
-        clearTimeout(timer)
-        socket.removeEventListener('open', onOpen)
-        socket.removeEventListener('error', onError)
-        socket.removeEventListener('close', onEarlyClose)
-        input.signal.removeEventListener('abort', onAbort)
-      }
-      const timer = setTimeout(() => {
-        cleanup()
-        socket.close(1000, 'handshake timeout')
-        reject(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Realtime 连接握手超时', true))
-      }, this.requestTimeoutMillis)
-      timer.unref()
-      socket.addEventListener('open', onOpen)
-      socket.addEventListener('error', onError)
-      socket.addEventListener('close', onEarlyClose)
-      input.signal.addEventListener('abort', onAbort, { once: true })
-    })
-    const ready = this.waitForType('connection.ready', input.signal)
-    this.send({ type: 'connection.open', profile_ref: input.profileRef, client_ref: input.clientRef })
-    this.connectionGeneration = positive(await ready, 'connection_generation')
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onOpen = () => { cleanup(); resolve() }
+        const onError = () => { cleanup(); reject(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Realtime 连接失败', true)) }
+        const onEarlyClose = () => { cleanup(); reject(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Realtime 在握手前关闭', true)) }
+        const onAbort = () => { cleanup(); socket.close(1000, 'aborted'); reject(input.signal.reason) }
+        const cleanup = () => {
+          clearTimeout(timer)
+          socket.removeEventListener('open', onOpen)
+          socket.removeEventListener('error', onError)
+          socket.removeEventListener('close', onEarlyClose)
+          input.signal.removeEventListener('abort', onAbort)
+        }
+        const timer = setTimeout(() => {
+          cleanup()
+          socket.close(1000, 'handshake timeout')
+          reject(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Realtime 连接握手超时', true))
+        }, this.requestTimeoutMillis)
+        timer.unref()
+        socket.addEventListener('open', onOpen)
+        socket.addEventListener('error', onError)
+        socket.addEventListener('close', onEarlyClose)
+        input.signal.addEventListener('abort', onAbort, { once: true })
+      })
+      input.signal.throwIfAborted()
+      if (this.socket !== socket) throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', '连接已失效', true)
+      const ready = this.waitForType('connection.ready', input.signal)
+      this.send({ type: 'connection.open', profile_ref: input.profileRef, client_ref: input.clientRef })
+      this.connectionGeneration = positive(await ready, 'connection_generation')
+      if (this.socket !== socket) throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', '连接已被替换', true)
+      this.stopHeartbeat = socket.subscribeHeartbeat(() => { if (this.socket === socket) this.touchLiveness() })
+      this.touchLiveness()
+      this.diagnostic('transport_ready', { connection_generation: this.connectionGeneration, request_id: socket.diagnosticRequestId })
+    } catch (error) {
+      if (this.socket === socket) this.failConnection(error instanceof DshRemoteError ? error : new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Realtime 握手失败', true), true)
+      throw error
+    }
+  }
+
+  /** Revalidates after an OS resume without creating a second reconnect owner. */
+  revalidate(): void {
+    if (this.socket !== undefined) this.failConnection(new DshRemoteError('REMOTE_TRANSPORT_FAILED', '系统恢复后重新建立远控连接', true, { reason: 'system_resume' }), false)
+  }
+
+  private touchLiveness(): void {
+    this.lastReceivedAt = (this.options.now ?? (() => performance.now()))()
+    if (this.livenessTimer !== undefined) clearTimeout(this.livenessTimer)
+    const socket = this.socket
+    this.livenessTimer = setTimeout(() => {
+      this.livenessTimer = undefined
+      if (this.socket !== socket || socket === undefined) return
+      this.failConnection(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Realtime 接收心跳超时', true, {
+        reason: 'liveness_expired', last_receive_age_ms: Math.round((this.options.now ?? (() => performance.now()))() - this.lastReceivedAt),
+      }), false)
+    }, this.options.livenessTimeoutMillis ?? 45_000)
+    this.livenessTimer.unref()
   }
 
   async disconnect(): Promise<void> {
@@ -259,11 +317,14 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
       && (!Number.isSafeInteger(input.afterSequence) || input.afterSequence < 0)) {
       throw new DshRemoteError('REMOTE_REQUEST_INVALID', 'Realtime after_seq 无效')
     }
+    const generation = this.lifecycleGeneration
     await this.request({
       type: 'channel.subscribe', namespace: 'dsh_remote', channel_ref: input.target.runtimeRef,
       ...wireTarget(input.target),
       ...(input.afterSequence === undefined ? {} : { after_seq: input.afterSequence }),
     }, 'channel.subscribed', input.signal)
+    input.signal.throwIfAborted()
+    if (generation !== this.lifecycleGeneration) throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', '订阅所属连接已失效', true)
     this.channelListeners.set(input.target.runtimeRef, frame => {
       const event = frame.event
       if (event === null || typeof event !== 'object' || Array.isArray(event)) return
@@ -291,6 +352,7 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
       if (unsubscribed) return
       unsubscribed = true
       input.signal.removeEventListener('abort', unsubscribe)
+      if (generation !== this.lifecycleGeneration) return
       this.channelListeners.delete(input.target.runtimeRef)
       if (this.socket !== undefined) this.send({
         type: 'channel.unsubscribe', request_id: randomUUID(), namespace: 'dsh_remote',
@@ -324,6 +386,7 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
   }
 
   private async request(frame: Record<string, unknown>, expectedType: string, signal: AbortSignal): Promise<ServerFrame> {
+    signal.throwIfAborted()
     const requestId = randomUUID()
     const response = this.waitForRequest(requestId, expectedType, signal)
     try {
@@ -399,8 +462,9 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
       }
       return
     }
+    if (this.connectionGeneration > 0) this.touchLiveness()
     if (frame.type === 'connection.replaced') {
-      this.failConnection(new DshRemoteError('CONNECTION_REPLACED', 'Realtime 连接已被同一客户端的新连接替换', true), false)
+      this.failConnection(new DshRemoteError('CONNECTION_REPLACED', 'Realtime 连接已被同一客户端的新连接替换', false), false)
       return
     }
     const requestId = frame.request_id
@@ -420,6 +484,16 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
 
   private failConnection(error: DshRemoteError, expected: boolean): void {
     const socket = this.socket
+    this.lifecycleGeneration += 1
+    if (this.livenessTimer !== undefined) clearTimeout(this.livenessTimer)
+    this.livenessTimer = undefined
+    this.stopHeartbeat?.()
+    this.stopHeartbeat = undefined
+    if (!expected && socket !== undefined) this.diagnostic('transport_closed', {
+      connection_generation: this.connectionGeneration, error_code: error.code, ...error.details,
+    })
+    if (socket !== undefined && this.onError !== undefined) socket.removeEventListener('error', this.onError)
+    this.onError = undefined
     if (socket !== undefined && this.onMessage !== undefined) socket.removeEventListener('message', this.onMessage)
     if (socket !== undefined && this.onClose !== undefined) socket.removeEventListener('close', this.onClose)
     this.socket = undefined
@@ -427,7 +501,10 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
     this.onClose = undefined
     this.connectionGeneration = 0
     this.serviceLeaseGeneration = 0
-    socket?.close(1000, expected ? 'remote host stopped' : 'remote connection failed')
+    try {
+      if (!expected) socket?.terminate()
+      else socket?.close(1000, 'remote host stopped')
+    } catch { /* Already-invalid adapters cannot prevent local waiter cleanup. */ }
     for (const waiter of this.waiters.values()) waiter.reject(error)
     this.waiters.clear()
     this.channelListeners.clear()
@@ -440,4 +517,9 @@ export class ArkmeRemoteRealtimeTransport implements DshRemoteRealtimeTransport 
     if (Buffer.byteLength(encoded) > DSH_REMOTE_MAX_FRAME_BYTES) throw new DshRemoteError('REMOTE_REQUEST_INVALID', 'Realtime frame 超过 60KiB')
     this.socket.send(encoded)
   }
+
+  private diagnostic(event: string, fields: Record<string, unknown>): void {
+    try { this.options.onDiagnostic?.(event, fields) } catch { /* Observability must not affect transport state. */ }
+  }
+
 }

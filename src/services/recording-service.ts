@@ -1,8 +1,9 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import {
   recordingImportCanonicalMimeType,
   sameRecordingImportIdentity,
+  isUnresolvedRecordingImportJob,
   toPublicRecordingImportJob,
   type PublicRecordingImportJob,
   type PublicRecordingImportCurrentSnapshot,
@@ -16,6 +17,8 @@ import {
   type RecordingImportOwnerTaskSnapshot,
   type RecordingImportOwnerGateway,
   type RecordingImportSource,
+  type RecordingDirectoryCandidate,
+  type RecordingDirectorySnapshot,
 } from '../recording-import-contract.js'
 import { RecordingImportCoordinator, type RecordingImportGateway } from '../recording-import-coordinator.js'
 import { openRecordingImportRef, sealRecordingImportRef } from '../recording-import-ref.js'
@@ -37,7 +40,6 @@ import type {
   ArkmeRecordingCalendarMonth,
   ArkmeRecordingComparison,
   ArkmeRecordingTranscriptSource,
-  ArkmeRecordingCursorPayload,
   ArkmeRecordingDay,
   ArkmeRecordingPlayback,
   ArkmeRecordingProjectionKind,
@@ -48,10 +50,12 @@ import type {
   ArkmeRecordingTranscriptSection,
   ArkmeRecordingTranscriptItem,
   ArkmeRecordingWorkbenchItem,
-  ArkmeRecordingSpeakerOption,
+  ArkmeRecordingSpeakerCandidate,
+  ArkmeRecordingSpeakerRecommendation,
   ArkmeRecordingVersion,
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import { projectRecordingCoverage, recordingBelongsToViewer } from '../recording-coverage.js'
 import type { ArkmePublicProfile } from './profile-service.js'
 import { RECORDING_FORWARD_MAX_SEGMENTS, type RecordingForwardGateway, type RecordingForwardInput } from '../recording-forward-contract.js'
 
@@ -140,14 +144,6 @@ function speakerUserIds(speakerData: readonly unknown[]): number[] {
   }))]
 }
 
-function encodeOpaqueJson(value: unknown): string {
-  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
-}
-
-function decodeOpaqueJson(value: string): unknown {
-  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
-}
-
 function safeFailureMessage(error: unknown): string {
   if (error instanceof ArkmePluginError) return error.message
   if (error instanceof Error && error.message.trim() !== '') return error.message
@@ -198,6 +194,7 @@ function recordingImportOwnerStatus(
 
 export class RecordingService {
   private readonly recordingImports: RecordingImportCoordinator
+  private readonly importCommands = new Set<string>()
   private readonly importRuns = new Map<string, {
     controller: AbortController
     promise: Promise<void>
@@ -208,12 +205,15 @@ export class RecordingService {
   private readonly userCandidates: ArkmeRecordingUserCandidateReader | undefined
   private readonly recordingImportSource: RecordingImportSource
   private readonly recordingImportOwnerGateway: RecordingImportOwnerGateway
+  private speakerCacheRevision = 0
+  private readonly unsubscribeSpeakerAccount: () => void
   private readonly forwardGateway: RecordingForwardGateway
 
   constructor(
     private readonly runtime: ServiceRuntime,
     dependencies: RecordingServiceDependencies,
   ) {
+    this.unsubscribeSpeakerAccount = runtime.subscribeAccountScope(() => { this.speakerCacheRevision++ })
     this.profile = dependencies.profile
     this.media = dependencies.media
     this.userCandidates = dependencies.userCandidates
@@ -229,6 +229,8 @@ export class RecordingService {
   }
 
   dispose(): void {
+    this.speakerCacheRevision++
+    this.unsubscribeSpeakerAccount()
     for (const run of this.importRuns.values()) run.controller.abort()
   }
 
@@ -287,28 +289,51 @@ export class RecordingService {
     }
   }
 
-  async recordingSpeakerOptions(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerOption[]> {
-    this.assertWorkbenchEnabled()
-    const payload = await this.openRecordingItemRef(itemRef)
-    const session = await this.runtime.requireSession()
-    if (session.userId !== payload.viewerUserId) {
-      throw new ArkmePluginError('recording-ref-account-mismatch', '录音引用与当前账号不匹配', false, 403)
+  private async speakerCacheScope(): Promise<string> {
+    const key = await this.recordingRefKey('arkme-recording-speaker-v1')
+    return `${this.runtime.config.environment}:${createHash('sha256').update(key).digest('hex')}`
+  }
+
+  private async assertSpeakerReadCurrent(session: ArkmeSessionCredentials, revision: number, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken || revision !== this.speakerCacheRevision) {
+      throw new ArkmePluginError('recording-speaker-context-changed', '说话人目录已变化，请重新读取', true, 409)
     }
-    const [data, similar] = await Promise.all([
-      this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-        '/api/v1/audio/get-speaker-ls', {}, session, signal,
-      ),
-      this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-        '/api/v1/audio/similar-session-speaker',
-        { session_id: payload.sessionId, num: payload.assignmentSpeakerNumber }, session, signal,
-      ).catch((): Record<string, unknown> => ({})),
-    ])
+    signal?.throwIfAborted()
+  }
+
+  async cachedRecordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[] | null> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const revision = this.speakerCacheRevision
+    const scope = await this.speakerCacheScope()
+    let candidates: ArkmeRecordingSpeakerCandidate[] | undefined
+    try { candidates = await this.runtime.stateStore.readRecordingSpeakerCache?.(scope, session.userId) }
+    catch { /* A derived cache failure must fall through to the owner read. */ }
+    await this.assertSpeakerReadCurrent(session, revision, signal)
+    return candidates ?? null
+  }
+
+  private async invalidateSpeakerCache(userId: number): Promise<void> {
+    this.speakerCacheRevision++
+    try { await this.runtime.stateStore.clearRecordingSpeakerCache?.(await this.speakerCacheScope(), userId) }
+    catch { /* Cache maintenance cannot change a business command outcome. */ }
+  }
+
+  async recordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const revision = this.speakerCacheRevision
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/get-speaker-ls', {}, session, signal,
+    )
     const rows = listValue(data.spk_ls)
-    const recommendedSpeakerId = stringValue(similar.speaker_id).trim()
     const userIds = speakerUserIds(rows)
+    let complete = true
     const [profiles, candidateUsers] = await Promise.all([
       this.recordingSpeakerProfiles(userIds, session, signal),
-      this.userCandidates?.listRecordingSpeakerUsers(session, signal).catch(() => []) ?? [],
+      this.userCandidates?.listRecordingSpeakerUsers(session, signal).catch(() => { complete = false; return [] }) ?? [],
     ])
     const speakerRefKey = await this.recordingRefKey('arkme-recording-speaker-v1')
     const speakerOptions = rows.flatMap(raw => {
@@ -320,17 +345,16 @@ export class RecordingService {
       const label = stringValue(speaker.nick_name ?? speaker.nickname ?? speaker.display_name ?? speaker.name).trim()
         || profile?.displayName || '未命名说话人'
       return [{ speakerId, label, avatarRef: profile?.avatarRef, userId }]
-    }).map((item): ArkmeRecordingSpeakerOption => ({
+    }).map((item): ArkmeRecordingSpeakerCandidate => ({
+      optionKey: this.recordingSpeakerOptionKey(speakerRefKey, session.userId, 'speaker', item.speakerId),
       speakerRef: this.sealRecordingRefWithKey('arkme-recording-speaker-v1', {
-        version: 1, viewerUserId: payload.viewerUserId,
+        version: 1, viewerUserId: session.userId,
         target: { kind: 'speaker', speakerId: item.speakerId },
       }, speakerRefKey),
       label: item.label,
       ...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef }),
       kind: 'speaker',
-      currentAssignment: item.speakerId === payload.formalSpeakerId,
       isCurrentUser: item.userId === session.userId,
-      recommended: item.speakerId === recommendedSpeakerId,
     }))
     const representedUserIds = new Set(rows.flatMap(raw => {
       const speaker = objectValue(raw)
@@ -338,24 +362,65 @@ export class RecordingService {
       return userId === undefined ? [] : [userId]
     }))
     const userOptions = candidateUsers.filter(candidate => !representedUserIds.has(candidate.userId)).map(
-      (candidate): ArkmeRecordingSpeakerOption => ({
+      (candidate): ArkmeRecordingSpeakerCandidate => ({
+        optionKey: this.recordingSpeakerOptionKey(speakerRefKey, session.userId, 'arkme-user', candidate.userId),
         speakerRef: this.sealRecordingRefWithKey('arkme-recording-speaker-v1', {
           version: 1,
-          viewerUserId: payload.viewerUserId,
+          viewerUserId: session.userId,
           target: { kind: 'arkme-user', userId: candidate.userId },
         }, speakerRefKey),
         label: candidate.label,
         ...(candidate.avatarRef === undefined ? {} : { avatarRef: candidate.avatarRef }),
         kind: 'arkme-user',
-        currentAssignment: false,
         isCurrentUser: candidate.userId === session.userId,
-        recommended: false,
       }),
     )
-    return [...speakerOptions, ...userOptions].sort((left, right) => Number(right.recommended) - Number(left.recommended))
+    const candidates = [...speakerOptions, ...userOptions]
+    const scope = await this.speakerCacheScope()
+    await this.assertSpeakerReadCurrent(session, revision, signal)
+    try { if (complete) await this.runtime.stateStore.writeRecordingSpeakerCache?.(scope, session.userId, candidates) }
+    catch { /* The fresh owner result remains usable when local storage is unavailable. */ }
+    await this.assertSpeakerReadCurrent(session, revision, signal)
+    return candidates
+  }
+
+  async recordingSpeakerRecommendation(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerRecommendation> {
+    this.assertWorkbenchEnabled()
+    const item = await this.openRecordingItemRef(itemRef)
+    const session = await this.runtime.requireSession()
+    if (session.userId !== item.viewerUserId) {
+      throw new ArkmePluginError('recording-ref-account-mismatch', '录音引用与当前账号不匹配', false, 403)
+    }
+    const similar = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/similar-session-speaker',
+      { session_id: item.sessionId, num: item.assignmentSpeakerNumber }, session, signal,
+    )
+    const speakerId = stringValue(similar.speaker_id).trim()
+    if (speakerId === '') return {}
+    return { optionKey: this.recordingSpeakerOptionKey(
+      await this.recordingRefKey('arkme-recording-speaker-v1'), session.userId, 'speaker', speakerId,
+    ) }
+  }
+
+  private recordingSpeakerOptionKey(key: Buffer, viewerUserId: number, kind: 'speaker' | 'arkme-user', id: string | number): string {
+    return createHmac('sha256', key)
+      .update(JSON.stringify([this.runtime.config.environment, viewerUserId, kind, id])).digest('base64url')
   }
 
   async assignRecordingSpeaker(input: {
+    itemRef: string
+    speakerRef?: string
+    newSpeakerName?: string
+    scope: 'item' | 'speaker'
+  }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    await this.invalidateSpeakerCache(session.userId)
+    try { return await this.assignRecordingSpeakerToOwner(input, signal) }
+    finally { await this.invalidateSpeakerCache(session.userId) }
+  }
+
+  private async assignRecordingSpeakerToOwner(input: {
     itemRef: string
     speakerRef?: string
     newSpeakerName?: string
@@ -390,8 +455,16 @@ export class RecordingService {
     let speakerId = ''
     if (speakerRef !== '') {
       const target = (await this.openRecordingSpeakerRef(speakerRef)).target
-      if (target.kind === 'speaker') speakerId = target.speakerId
-      else {
+      if (target.kind === 'speaker') {
+        const current = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+          '/api/v1/audio/get-speaker-ls', {}, session, signal, { bypassCache: true },
+        )
+        if (!listValue(current.spk_ls).some(raw => {
+          const speaker = objectValue(raw)
+          return stringValue(speaker.speaker_id ?? speaker.id ?? speaker.spk_id).trim() === target.speakerId
+        })) throw new ArkmePluginError('recording-speaker-target-missing', '该说话人已不存在，请重新选择', false, 409)
+        speakerId = target.speakerId
+      } else {
         const candidate = await this.currentRecordingSpeakerUser(target.userId, session, signal)
         speakerId = await this.recordingSpeakerIdForUser(target.userId, session, signal)
         if (speakerId === '') {
@@ -478,7 +551,7 @@ export class RecordingService {
     const session = await this.runtime.requireSession()
     const unresolvedLocalFileNameKeys = new Set(
       (await this.runtime.stateStore.listRecordingImportJobs(session.userId))
-        .filter(job => !['accepted', 'cancelled'].includes(job.phase))
+        .filter(isUnresolvedRecordingImportJob)
         .map(job => recordingImportFileNameKey(job.fileName)),
     )
     const audioOwnerFileNameKeys = new Set<string>()
@@ -498,6 +571,38 @@ export class RecordingService {
     }
   }
 
+  async recordingDirectorySnapshot(
+    candidates: readonly RecordingDirectoryCandidate[], expectedUserId: number, signal?: AbortSignal,
+  ): Promise<RecordingDirectorySnapshot> {
+    this.assertWorkbenchEnabled()
+    signal?.throwIfAborted()
+    const session = await this.requireRecordingImportSession(expectedUserId)
+    const jobs = (await this.runtime.stateStore.listRecordingImportJobs(session.userId))
+      .filter(isUnresolvedRecordingImportJob)
+    const existingFileNames = candidates.length === 0 ? [] : await this.recordingImportOwnerGateway.findExistingFileNames({
+      viewerUserId: session.userId, fileNames: candidates.map(file => file.fileName),
+      ...(signal === undefined ? {} : { signal }),
+    })
+    const existingKeys = new Set(existingFileNames.map(recordingImportFileNameKey))
+    const duplicates = candidates.filter(file => existingKeys.has(recordingImportFileNameKey(file.fileName)))
+    const owner = duplicates.length === 0 ? [] : await this.recordingImportOwnerGateway.findDirectoryImportSessions({
+      viewerUserId: session.userId, fileNames: duplicates.map(file => file.fileName),
+      fromMillis: Math.min(...duplicates.map(file => file.startAtMillis)),
+      toMillis: Math.max(...duplicates.map(file => file.startAtMillis)) + 1,
+      ...(signal === undefined ? {} : { signal }),
+    })
+    const local = await Promise.all(jobs.map(async job => ({
+      identity: {
+        userId: job.userId, fileName: job.fileName, fileSize: job.fileSize,
+        sha256: job.sha256, startAtMillis: job.startAtMillis, belongUserId: job.belongUserId,
+      },
+      task: toPublicRecordingImportJob(job, await this.recordingImportRef(job)),
+    })))
+    await this.requireRecordingImportSession(expectedUserId)
+    signal?.throwIfAborted()
+    return { local, existingFileNames, owner }
+  }
+
   async acceptRecordingImport(
     sourceHandle: string,
     metadata: {
@@ -509,7 +614,9 @@ export class RecordingService {
       belongUserId: number
     },
     expectedUserId: number,
+    signal?: AbortSignal,
   ): Promise<PublicRecordingImportJob> {
+    signal?.throwIfAborted()
     this.assertWorkbenchEnabled()
     let session = await this.requireRecordingImportSession(expectedUserId)
     if (!/^[a-f0-9]{64}$/.test(metadata.sha256)) {
@@ -532,11 +639,13 @@ export class RecordingService {
       belongUserId,
     }
     const currentJobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
-    const unresolvedJobs = currentJobs.filter(job => !['accepted', 'cancelled'].includes(job.phase))
+    const unresolvedJobs = currentJobs.filter(isUnresolvedRecordingImportJob)
     const existing = unresolvedJobs.find(job => sameRecordingImportIdentity(job, identity))
     if (existing !== undefined) {
+      const importRef = await this.recordingImportRef(existing)
+      signal?.throwIfAborted()
       await this.recordingImportSource.discard(sourceHandle).catch(() => undefined)
-      return toPublicRecordingImportJob(existing, await this.recordingImportRef(existing))
+      return toPublicRecordingImportJob(existing, importRef)
     }
     const fileNameKey = recordingImportFileNameKey(metadata.fileName)
     if (unresolvedJobs.some(job => recordingImportFileNameKey(job.fileName) === fileNameKey)) {
@@ -555,8 +664,11 @@ export class RecordingService {
         409,
       )
     }
+    signal?.throwIfAborted()
     const probe = await this.recordingImportSource.inspect(sourceHandle, metadata)
+    const signingKey = await this.runtime.stateStore.uniqueCode()
     session = await this.requireRecordingImportSession(expectedUserId)
+    signal?.throwIfAborted()
     if (startAtMillis + probe.durationMillis > Date.now()) {
       throw new ArkmePluginError('recording-import-end-invalid', '录音结束时间不能晚于当前时间', false)
     }
@@ -578,14 +690,16 @@ export class RecordingService {
       createdAtMillis: now,
       updatedAtMillis: now,
     }
+    const importRef = sealRecordingImportRef({ jobId: job.jobId, userId: job.userId }, signingKey)
     const admission = await this.runtime.stateStore.admitRecordingImportJob(
       session.userId,
       job,
       RECORDING_IMPORT_UNRESOLVED_LIMIT,
+      signal,
     )
     if (admission.kind === 'existing') {
       await this.recordingImportSource.discard(sourceHandle).catch(() => undefined)
-      return toPublicRecordingImportJob(admission.job, await this.recordingImportRef(admission.job))
+      return toPublicRecordingImportJob(admission.job, sealRecordingImportRef({ jobId: admission.job.jobId, userId: admission.job.userId }, signingKey))
     }
     if (admission.kind === 'duplicate-file-name') {
       throw new ArkmePluginError(
@@ -604,7 +718,6 @@ export class RecordingService {
       )
     }
     const selected = admission.job
-    const importRef = await this.recordingImportRef(selected)
     this.runRecordingImport(selected)
     return toPublicRecordingImportJob(selected, importRef)
   }
@@ -617,6 +730,28 @@ export class RecordingService {
     return toPublicRecordingImportJob(job, importRef)
   }
 
+  async waitRecordingImport(importRef: string, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
+    this.assertWorkbenchEnabled()
+    signal?.throwIfAborted()
+    const { userId, jobId } = await this.openRecordingImportRef(importRef)
+    const job = await this.runtime.stateStore.getRecordingImportJob(userId, jobId)
+    if (job === undefined) throw new ArkmePluginError('recording-import-not-found', '录音导入任务不存在', false, 404)
+    signal?.throwIfAborted()
+    if (['prepared', 'uploading', 'finalizing'].includes(job.phase)) this.runRecordingImport(job)
+    const run = this.importRuns.get(jobId)?.promise
+    if (run !== undefined) {
+      // Ending a directory invocation stops waiting, not its already admitted upload.
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { reject(signal?.reason) }
+        signal?.addEventListener('abort', abort, { once: true })
+        if (signal?.aborted) abort()
+        void run.then(resolve, reject).finally(() => signal?.removeEventListener('abort', abort))
+      })
+    }
+    signal?.throwIfAborted()
+    return await this.recordingImportStatus(importRef)
+  }
+
   async recordingImportList(signal?: AbortSignal): Promise<PublicRecordingImportCurrentSnapshot> {
     this.assertWorkbenchEnabled()
     const session = await this.runtime.requireSession()
@@ -625,7 +760,7 @@ export class RecordingService {
       if (['prepared', 'uploading', 'finalizing'].includes(job.phase)) this.runRecordingImport(job)
     }
     const newestFirst = (left: RecordingImportJob, right: RecordingImportJob) => right.createdAtMillis - left.createdAtMillis
-    const unresolved = jobs.filter(job => !['accepted', 'cancelled'].includes(job.phase)).sort(newestFirst)
+    const unresolved = jobs.filter(isUnresolvedRecordingImportJob).sort(newestFirst)
     let activeOwnerTasks: Awaited<ReturnType<RecordingImportOwnerGateway['listOwnerTasks']>>['tasks'] | undefined
     let owner: PublicRecordingImportCurrentSnapshot['owner'] = { state: 'available' }
     try {
@@ -773,35 +908,46 @@ export class RecordingService {
       .map(async job => await this.runtime.stateStore.removeRecordingImportJob(session.userId, job.jobId)))
   }
 
-  async retryRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> {
+  async retryRecordingImport(importRef: string, expectedRevision: number, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
+    signal?.throwIfAborted()
     this.assertWorkbenchEnabled()
     const { userId, jobId } = await this.openRecordingImportRef(importRef)
-    const resumed = await this.recordingImports.resumeRetry(userId, jobId, expectedRevision)
-    const priorRun = this.importRuns.get(jobId)?.promise
-    const controller = new AbortController()
-    const run = (priorRun ?? Promise.resolve())
-      .then(async () => { await this.recordingImports.run(userId, jobId, controller.signal) })
-    this.trackRecordingImportRun(jobId, resumed.revision, run, controller)
-    return toPublicRecordingImportJob(resumed, importRef)
+    this.beginRecordingImportCommand(jobId)
+    try {
+      const resumed = await this.recordingImports.resumeRetry(userId, jobId, expectedRevision, signal)
+      const priorRun = this.importRuns.get(jobId)?.promise
+      const controller = new AbortController()
+      const run = (priorRun ?? Promise.resolve())
+        .then(async () => { await this.recordingImports.run(userId, jobId, controller.signal) })
+      this.trackRecordingImportRun(jobId, resumed.revision, run, controller)
+      return toPublicRecordingImportJob(resumed, importRef)
+    } finally {
+      this.importCommands.delete(jobId)
+    }
   }
 
   async cancelRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> {
     this.assertWorkbenchEnabled()
     const { userId, jobId } = await this.openRecordingImportRef(importRef)
-    const active = this.importRuns.get(jobId)
-    if (active !== undefined) {
-      const observed = await this.runtime.stateStore.getRecordingImportJob(userId, jobId)
-      if (observed === undefined || expectedRevision < active.startedRevision || expectedRevision > observed.revision) {
-        throw new ArkmePluginError('recording-import-revision-conflict', '任务状态已变化，请刷新后重试', true, 409)
+    this.beginRecordingImportCommand(jobId)
+    try {
+      const active = this.importRuns.get(jobId)
+      if (active !== undefined) {
+        const observed = await this.runtime.stateStore.getRecordingImportJob(userId, jobId)
+        if (observed === undefined || expectedRevision < active.startedRevision || expectedRevision > observed.revision) {
+          throw new ArkmePluginError('recording-import-revision-conflict', '任务状态已变化，请刷新后重试', true, 409)
+        }
       }
+      active?.controller.abort()
+      await active?.promise
+      const current = active === undefined
+        ? undefined
+        : await this.runtime.stateStore.getRecordingImportJob(userId, jobId)
+      const cancelled = await this.recordingImports.cancel(userId, jobId, current?.revision ?? expectedRevision)
+      return toPublicRecordingImportJob(cancelled, importRef)
+    } finally {
+      this.importCommands.delete(jobId)
     }
-    active?.controller.abort()
-    await active?.promise
-    const current = active === undefined
-      ? undefined
-      : await this.runtime.stateStore.getRecordingImportJob(userId, jobId)
-    const cancelled = await this.recordingImports.cancel(userId, jobId, current?.revision ?? expectedRevision)
-    return toPublicRecordingImportJob(cancelled, importRef)
   }
 
   async resumeRecordingImports(): Promise<void> {
@@ -814,7 +960,7 @@ export class RecordingService {
   }
 
   private runRecordingImport(job: RecordingImportJob): void {
-    if (this.importRuns.has(job.jobId)) return
+    if (this.importCommands.has(job.jobId) || this.importRuns.has(job.jobId)) return
     const controller = new AbortController()
     this.trackRecordingImportRun(
       job.jobId,
@@ -822,6 +968,15 @@ export class RecordingService {
       this.recordingImports.run(job.userId, job.jobId, controller.signal).then(() => undefined),
       controller,
     )
+  }
+
+  private beginRecordingImportCommand(jobId: string): void {
+    if (this.importCommands.has(jobId)) {
+      throw new ArkmePluginError(
+        'recording-import-command-in-progress', '该录音任务正在执行重试或取消，请稍后重试', true, 409,
+      )
+    }
+    this.importCommands.add(jobId)
   }
 
   private async requireRecordingImportSession(expectedUserId: number): Promise<ArkmeSessionCredentials> {
@@ -1080,6 +1235,11 @@ export class RecordingService {
     dayEnd.setDate(dayEnd.getDate() + 1)
     const options = { viewerUserId: session.userId, dayStartMillis: date, dayEndMillis: dayEnd.getTime() }
     const response = transcriptResult.value
+    const coverage = projectRecordingCoverage(response, date, dayEnd.getTime(), session.userId)
+    const ownSessionIds = new Set(listValue(response.session_ls ?? response.sessions)
+      .filter(raw => recordingBelongsToViewer(raw, session.userId))
+      .map(raw => stringValue(objectValue(raw).id ?? objectValue(raw).session_id).trim())
+      .filter(id => id !== ''))
     const { processingCount: pendingDoubao, candidateCount, failedCount, silentCount } = recordingDoubaoProgress(response, options)
     const section = (transcriptSource: ArkmeRecordingTranscriptSource): ArkmeRecordingPrivateTranscriptSection => {
       const items = projectRecordingTranscripts(response, speakerData, profilesByUserId, { ...options, transcriptSource })
@@ -1088,12 +1248,12 @@ export class RecordingService {
       return {
         state: items.length > 0 ? 'ready' : processingCount > 0 ? 'processing' : transcriptSource === 'doubao' && failedCount > 0 ? 'error' : 'empty',
         items,
-        message: items.length > 0 ? '' : processingCount > 0 ? '音频文字正在导入&转写中' : transcriptSource === 'doubao' && failedCount > 0 ? '豆包转写失败，请稍后重试' : transcriptSource === 'system' ? '当天无录音' : '暂无豆包转写内容',
+        message: items.length > 0 ? '' : processingCount > 0 ? '音频文字正在导入&转写中' : transcriptSource === 'doubao' && failedCount > 0 ? '豆包转写失败，请稍后重试' : transcriptSource === 'system' ? coverage.intervals.length > 0 ? '已有录音，暂无转写内容' : '当天无录音' : '暂无豆包转写内容',
         identityCoverage: speakerResult.status === 'fulfilled' ? 'complete' : 'partial',
         totalDurationMillis, processingCount,
       }
     }
-    return { section, candidateCount, failedCount, silentCount }
+    return { section, candidateCount, failedCount, silentCount, coverage, ownSessionIds }
   }
 
   async recordingComparison(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingComparison> {
@@ -1102,6 +1262,7 @@ export class RecordingService {
     const date = this.recordingDayStart(dateStamp).getTime()
     const data = await this.readRecordingTranscripts(date, session, signal)
     const key = await this.recordingRefKey('arkme-recording-item-v1')
+    const speakerRefKey = await this.recordingRefKey('arkme-recording-speaker-v1')
     const project = (source: ArkmeRecordingTranscriptSource) => {
       const section = data.section(source)
       const counts = new Map<string, number>()
@@ -1109,7 +1270,7 @@ export class RecordingService {
         const speakerKey = this.recordingSpeakerMutationKey(item)
         counts.set(speakerKey, (counts.get(speakerKey) ?? 0) + 1)
       }
-      return { ...section, items: section.items.map(item => this.workbenchItem(date, item, counts.get(this.recordingSpeakerMutationKey(item))!, session.userId, key)) }
+      return { ...section, items: section.items.map(item => this.workbenchItem(date, item, counts.get(this.recordingSpeakerMutationKey(item))!, session.userId, key, speakerRefKey)) }
     }
     return { dateStamp: date, system: project('system'), doubao: project('doubao'), candidateCount: data.candidateCount, failedCount: data.failedCount, silentCount: data.silentCount }
   }
@@ -1245,61 +1406,6 @@ export class RecordingService {
     return this.recordingVersionSection(projectRecordingVersions(data, kind))
   }
 
-  async sealRecordingCursor(payload: ArkmeRecordingCursorPayload): Promise<string> {
-    const session = await this.runtime.requireSession()
-    const encoded = encodeOpaqueJson(payload)
-    const signature = createHmac('sha256', await this.recordingCursorKey(session.userId))
-      .update(encoded)
-      .digest('base64url')
-    return `arkme-recording-cursor-v1.${encoded}.${signature}`
-  }
-
-  async openRecordingCursor(cursor: string): Promise<ArkmeRecordingCursorPayload> {
-    const session = await this.runtime.requireSession()
-    const [prefix, encoded, suppliedText, ...extra] = cursor.trim().split('.')
-    if (prefix !== 'arkme-recording-cursor-v1' || encoded === undefined
-      || suppliedText === undefined || extra.length > 0) {
-      throw new ArkmePluginError('recording-cursor-invalid', '录音分页游标无效', false)
-    }
-    const supplied = Buffer.from(suppliedText, 'base64url')
-    const expected = createHmac('sha256', await this.recordingCursorKey(session.userId))
-      .update(encoded)
-      .digest()
-    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
-      throw new ArkmePluginError('recording-cursor-invalid', '录音分页游标无效', false)
-    }
-    let raw: Record<string, unknown>
-    try {
-      raw = objectValue(decodeOpaqueJson(encoded))
-    } catch (error) {
-      throw new ArkmePluginError(
-        'recording-cursor-invalid',
-        '录音分页游标无效',
-        false,
-        400,
-        { cause: error },
-      )
-    }
-    const content = raw.content
-    const payload: ArkmeRecordingCursorPayload = {
-      version: 1,
-      dateStamp: numberValue(raw.dateStamp),
-      content: content === 'summary' || content === 'timeline' ? content : 'transcript',
-      itemOffset: numberValue(raw.itemOffset),
-      textOffset: numberValue(raw.textOffset),
-      fingerprint: stringValue(raw.fingerprint),
-      ...(stringValue(raw.versionId) === '' ? {} : { versionId: stringValue(raw.versionId) }),
-    }
-    if (raw.version !== 1 || !['transcript', 'summary', 'timeline'].includes(String(content))
-      || !isRecordingLocalDateOnOrAfterMinimum(payload.dateStamp)
-      || !Number.isSafeInteger(payload.itemOffset) || payload.itemOffset < 0
-      || !Number.isSafeInteger(payload.textOffset) || payload.textOffset < 0
-      || payload.fingerprint === '') {
-      throw new ArkmePluginError('recording-cursor-invalid', '录音分页游标无效', false)
-    }
-    return payload
-  }
-
   async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> {
     return await this.recordingDayWithSession(dateStamp, await this.runtime.requireSession(), signal)
   }
@@ -1311,28 +1417,31 @@ export class RecordingService {
   ): Promise<ArkmeRecordingDay> {
     const date = this.recordingDayStart(dateStamp).getTime()
     const [transcriptResult, summaryResult, timelineResult] = await Promise.allSettled([
-      this.recordingTranscriptWithSession(date, session, signal),
+      this.readRecordingTranscripts(date, session, signal),
       this.recordingProjectionWithSession(date, 'summary', session, signal),
       this.recordingProjectionWithSession(date, 'timeline', session, signal),
     ])
     let transcript: ArkmeRecordingDay['transcript']
     if (transcriptResult.status === 'fulfilled') {
-      const items = transcriptResult.value.items
+      const section = transcriptResult.value.section('system')
+      const items = section.items
       const counts = new Map<string, number>()
       for (const item of items) {
         const key = this.recordingSpeakerMutationKey(item)
         counts.set(key, (counts.get(key) ?? 0) + 1)
       }
       const recordingItemRefKey = await this.recordingRefKey('arkme-recording-item-v1')
+      const speakerRefKey = await this.recordingRefKey('arkme-recording-speaker-v1')
       transcript = {
-        ...transcriptResult.value,
-        items: items.map(item => this.workbenchItem(
+        ...section,
+        items: items.map(item => ({ ...this.workbenchItem(
           date,
           item,
           counts.get(this.recordingSpeakerMutationKey(item)) ?? 1,
           session.userId,
           recordingItemRefKey,
-        )),
+          speakerRefKey,
+        ), recordingBelongsToViewer: transcriptResult.value.ownSessionIds.has(item.sessionId) })),
       }
     } else {
       transcript = {
@@ -1342,8 +1451,9 @@ export class RecordingService {
     }
     return {
       dateStamp: date,
+      coverage: transcriptResult.status === 'fulfilled' ? transcriptResult.value.coverage : { state: 'error', intervals: [] },
       totalDurationMillis: transcriptResult.status === 'fulfilled'
-        ? transcriptResult.value.totalDurationMillis
+        ? transcript.totalDurationMillis
         : 0,
       transcript,
       summary: summaryResult.status === 'fulfilled' ? summaryResult.value : {
@@ -1361,6 +1471,7 @@ export class RecordingService {
     sameSpeakerItemCount: number,
     viewerUserId: number,
     refKey: Buffer,
+    speakerRefKey: Buffer,
   ): ArkmeRecordingWorkbenchItem {
     const payload: RecordingItemRefPayload = {
       version: 1,
@@ -1388,6 +1499,7 @@ export class RecordingService {
       endAtMillis: item.endAtMillis,
       speakerNumber: item.speakerNumber,
       speakerKey: createHmac('sha256', refKey).update(`speaker:${item.speakerIdentity}`).digest('base64url'),
+      ...(item.formalSpeakerId === '' ? {} : { assignedSpeakerOptionKey: this.recordingSpeakerOptionKey(speakerRefKey, viewerUserId, 'speaker', item.formalSpeakerId) }),
       speakerColorIndex: item.speakerColorIndex,
       speakerLabel: item.speakerLabel,
       ...(item.speakerAvatarRef === undefined ? {} : { speakerAvatarRef: item.speakerAvatarRef }),
@@ -1583,12 +1695,6 @@ export class RecordingService {
     return createHash('sha256')
       .update(await this.runtime.stateStore.uniqueCode())
       .update(`\0${prefix}`)
-      .digest()
-  }
-
-  private async recordingCursorKey(userId: number): Promise<Buffer> {
-    return createHmac('sha256', await this.runtime.stateStore.uniqueCode())
-      .update(`arkme-recording-cursor:${String(userId)}`)
       .digest()
   }
 

@@ -299,10 +299,20 @@ function restartDsh(plan: PluginUpdaterPlan): ChildProcess {
   return child
 }
 
+async function webRootReady(plan: PluginUpdaterPlan): Promise<boolean> {
+  try {
+    const response = await fetch(new URL('/', plan.healthUrl), { signal: AbortSignal.timeout(2_000) })
+    return response.ok || response.status === 401 || response.status === 403
+  } catch {
+    return false
+  }
+}
+
 async function waitForHealthy(plan: PluginUpdaterPlan, expectedVersion: string): Promise<boolean> {
   const deadline = Date.now() + HEALTH_TIMEOUT_MS
   while (Date.now() < deadline) {
     const installedVersion = installedProfileVersion(plan)
+    let pluginReady = false
     try {
       const response = await fetch(plan.healthUrl, {
         method: 'POST',
@@ -312,15 +322,10 @@ async function waitForHealthy(plan: PluginUpdaterPlan, expectedVersion: string):
       })
       if (response.ok) {
         const body = await response.json() as { ok?: boolean, value?: { installedVersion?: string } }
-        if (body.ok === true && body.value?.installedVersion === expectedVersion) return true
+        pluginReady = body.ok === true && body.value?.installedVersion === expectedVersion
       }
     } catch { /* The old process is down or the new process is still booting. */ }
-    if (installedVersion === expectedVersion) {
-      try {
-        const root = await fetch(new URL('/', plan.healthUrl), { signal: AbortSignal.timeout(2_000) })
-        if (root.ok) return true
-      } catch { /* DSH has not started listening yet. */ }
-    }
+    if ((pluginReady || installedVersion === expectedVersion) && await webRootReady(plan)) return true
     await new Promise(resolve => setTimeout(resolve, 500))
   }
   return false

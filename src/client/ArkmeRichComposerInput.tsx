@@ -1,13 +1,14 @@
-import { ArkmeMarkdownComposerInput } from './ArkmeMarkdownComposerInput.js'
+import { ArkmeDocumentComposerInput, type ArkmeDocumentComposerHandle } from './ArkmeDocumentComposerInput.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import {
-  forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState,
+  forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useRef, useState,
   type ClipboardEvent, type CSSProperties, type FocusEvent, type KeyboardEvent,
 } from 'react'
 import type { ArkmeComposerEmoji, ArkmeComposerMention } from './composer-draft-store.js'
 import { ARKME_COMPOSER_EMOJI_PLACEHOLDER } from './composer-draft-store.js'
 import { arkmeComposerTextRuns } from './ArkmeMentionTextarea.js'
 import { arkmeHashTagTrigger } from '../hashtag.js'
+import { useComposerSelectionRequest, type ArkmeComposerSelectionRequest } from './composer-selection-request.js'
 
 const mentionColor = 'var(--dsw-alias-state-business-primary, #3964fe)'
 
@@ -16,7 +17,7 @@ const styles: Record<string, CSSProperties> = {
   editor: { cursor: 'text', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' },
   placeholder: {
     position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
-    color: 'var(--dsw-alias-label-tertiary, #9097a1)',
+    color: 'var(--dsw-alias-label-secondary, #68707c)',
   },
   mention: { color: mentionColor },
   tag: { color: mentionColor, fontWeight: 500 },
@@ -49,6 +50,9 @@ export interface ArkmeComposerCaretGeometry {
 }
 
 export interface ArkmeRichComposerInputProps {
+  /** Format of source text in the plain editor; independent of rich Markdown editing. */
+  textFormat?: 'plain' | 'markdown'
+  selectionRequest?: ArkmeComposerSelectionRequest | undefined
   markdownEnabled?: boolean
   markdown?: ArkmeMarkdownDraft | undefined
   onMarkdownChange?(value: ArkmeMarkdownDraft, text: string, mentions: readonly ArkmeComposerMention[], emojis: readonly ArkmeComposerEmoji[]): void
@@ -229,9 +233,10 @@ function renderEditorContents(
   mentions: readonly ArkmeComposerMention[],
   emojis: readonly ArkmeComposerEmoji[],
   activeHashTagStart?: number,
+  textFormat: 'plain' | 'markdown' = 'plain',
 ): void {
   const fragment = document.createDocumentFragment()
-  for (const run of arkmeComposerTextRuns(value, mentions, emojis, activeHashTagStart)) {
+  for (const run of arkmeComposerTextRuns(value, mentions, emojis, activeHashTagStart, textFormat)) {
     if (run.kind === 'emoji' && run.emoji !== undefined) {
       const atom = document.createElement('span')
       atom.contentEditable = 'false'
@@ -263,7 +268,7 @@ function renderEditorContents(
 /** Native contenteditable surface whose rich emoji spans remain atomic, selectable inline objects. */
 const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(
   function ArkmeRichComposerInput({
-    className, value, mentions, emojis, maxLength, placeholder, ariaLabel, disabled, style,
+    className, value, mentions, emojis, textFormat = 'plain', maxLength, placeholder, ariaLabel, disabled, style, selectionRequest,
     onTextChange, onInputActivity, onSelectionChange, onFocus, onBlur, onPaste, onKeyDown,
   }, forwardedRef) {
     const editorRef = useRef<HTMLDivElement>(null)
@@ -319,18 +324,26 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
       const nextSelection = pendingSelectionRef.current
         ?? (active ? editorSelection(root, selectionRef.current) : selectionRef.current)
       const activeHashTagStart = arkmeHashTagTrigger(value, nextSelection.start, nextSelection.end)?.startIndex
-      renderEditorContents(root, value, mentions, emojis, activeHashTagStart)
+      renderEditorContents(root, value, mentions, emojis, activeHashTagStart, textFormat)
       setEditorHasContent(value !== '')
       pendingSelectionRef.current = undefined
       selectionRef.current = nextSelection
       if (active) applySelection(nextSelection.start, nextSelection.end)
-    }, [value, mentions, emojis])
+    }, [value, mentions, emojis, textFormat])
+
+    useComposerSelectionRequest(selectionRequest, value, disabled, request => {
+      const root = editorRef.current
+      if (root === null) return false
+      root.focus({ preventScroll: true })
+      applySelection(request.start, request.end)
+      return true
+    })
 
     const commitDom = (root: HTMLDivElement, nextText = editorSemanticText(root)) => {
       const selection = editorSelection(root, selectionRef.current)
       if (nextText.length > maxLength) {
         const activeHashTagStart = arkmeHashTagTrigger(valueRef.current, selectionRef.current.start, selectionRef.current.end)?.startIndex
-        renderEditorContents(root, valueRef.current, mentions, emojis, activeHashTagStart)
+        renderEditorContents(root, valueRef.current, mentions, emojis, activeHashTagStart, textFormat)
         setEditorHasContent(valueRef.current !== '')
         applySelection(selectionRef.current.start, selectionRef.current.end)
         return
@@ -430,8 +443,12 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
 )
 
 export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(function ArkmeRichComposerInput(props, ref) {
+  const attachDocument = useCallback((handle: ArkmeDocumentComposerHandle | null) => {
+    if (typeof ref === 'function') ref(handle)
+    else if (ref !== null) ref.current = handle
+  }, [ref])
   if ((props.markdownEnabled || props.markdown !== undefined) && props.onMarkdownChange !== undefined) {
-    return <ArkmeMarkdownComposerInput {...props} ref={ref} onMarkdownChange={props.onMarkdownChange} />
+    return <ArkmeDocumentComposerInput format="markdown" {...props} ref={attachDocument} onMarkdownChange={props.onMarkdownChange} />
   }
   return <ArkmePlainComposerInput {...props} ref={ref} />
 })

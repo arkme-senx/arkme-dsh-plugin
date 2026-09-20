@@ -102,11 +102,14 @@ function entityValue(value: string): string {
   return ({ amp: '&', apos: "'", gt: '>', lt: '<', nbsp: ' ', quot: '"' } as Record<string, string>)[value.toLowerCase()] ?? `&${value};`
 }
 
-function normalizedTitle(value: string): string {
-  const withoutTags = value.replace(/<[^>]*>/gu, ' ')
-  const decoded = withoutTags.replace(/&(#x[\da-f]+|#\d+|amp|apos|gt|lt|nbsp|quot);/giu, (_match, entity: string) => {
+function decodedHtml(value: string): string {
+  return value.replace(/&(#x[\da-f]+|#\d+|amp|apos|gt|lt|nbsp|quot);/giu, (_match, entity: string) => {
     try { return entityValue(entity) } catch { return '' }
   })
+}
+
+function normalizedTitle(value: string): string {
+  const decoded = decodedHtml(value.replace(/<[^>]*>/gu, ' '))
   return decoded.replace(/[\u0000-\u001f\u007f\s]+/gu, ' ').trim().slice(0, MAX_LINK_TITLE_LENGTH)
 }
 
@@ -133,7 +136,9 @@ function documentMetadata(url: URL, html: string): ArkmeLinkMetadata | null {
     const attributes = tagAttributes(match[0])
     const property = (attributes.get('property') ?? attributes.get('name') ?? '').toLowerCase()
     if (property === '' || metadata.has(property)) continue
-    const content = normalizedTitle(attributes.get('content') ?? '')
+    const rawContent = attributes.get('content') ?? ''
+    const content = property === 'og:image' || property === 'twitter:image'
+      ? decodedHtml(rawContent).trim() : normalizedTitle(rawContent)
     if (content !== '') metadata.set(property, content)
   }
   const documentTitle = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/iu.exec(html)?.[1]
@@ -143,12 +148,21 @@ function documentMetadata(url: URL, html: string): ArkmeLinkMetadata | null {
     documentTitle === undefined ? undefined : normalizedTitle(documentTitle),
   ])
   if (title === '') return null
+  let imageUrl: string | undefined
+  try {
+    const candidate = metadata.get('og:image') ?? metadata.get('twitter:image')
+    if (candidate) {
+      const image = safeWebUrl(new URL(candidate, url))
+      if (image.protocol === 'https:' && image.username === '' && image.password === '') imageUrl = image.href
+    }
+  } catch { /* optional image metadata */ }
   const description = metadata.get('og:description') ?? metadata.get('description')
   const siteName = metadata.get('og:site_name') ?? url.hostname.replace(/^www\./iu, '')
   return {
     url: url.href,
     title,
     ...(description === undefined ? {} : { description }),
+    ...(imageUrl === undefined ? {} : { imageUrl }),
     ...(siteName === '' ? {} : { siteName }),
   }
 }

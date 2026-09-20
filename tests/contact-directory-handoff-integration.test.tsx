@@ -91,8 +91,8 @@ async function mountProductionContacts(): Promise<ReactTestRenderer> {
 }
 
 beforeEach(() => {
-  class FakeEventSource { onopen: (() => void) | null = null; onmessage: ((event: MessageEvent) => void) | null = null; close() {} }
-  vi.stubGlobal('EventSource', FakeEventSource)
+  class FakeWebSocket { onopen: (() => void) | null = null; onmessage: ((event: MessageEvent) => void) | null = null; close() {} }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
   vi.stubGlobal('window', {
     addEventListener: vi.fn(), removeEventListener: vi.fn(),
     matchMedia: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
@@ -150,6 +150,8 @@ describe('production Contacts handoff isolation', () => {
     const renderer = await mountProductionContacts()
     await click(renderer, '群聊')
     await click(renderer, '测试群聊')
+    expect(testState.callArkme.mock.calls.filter(([operation]) => operation === 'directory.group.open-chat')).toHaveLength(0)
+    await click(renderer, '发消息')
     expect(signals.group?.aborted).toBe(false)
 
     await click(renderer, '后来的昵称')
@@ -162,24 +164,29 @@ describe('production Contacts handoff isolation', () => {
     expect(arkmeContactsTab.getSnapshot().selection).toEqual({ kind: 'contact', contactRef: 'contact-1' })
   })
 
-  it('opens a Bot directly through the Bot surface and still aborts pending group work on an environment switch', async () => {
+  it('opens a Bot from its profile through the Bot surface and still aborts pending group work on an environment switch', async () => {
     const group = deferred<ArkmeSourceItem>()
     const bot = deferred<ArkmeSourceItem>()
     const signals = installDirectoryApi(group, bot)
     const renderer = await mountProductionContacts()
     await click(renderer, 'Bot')
     await click(renderer, '测试 Bot')
+    expect(arkmeUi.getSnapshot()).toMatchObject({ mode: 'source', productMode: 'contacts' })
+    await click(renderer, '发消息')
     expect(arkmeUi.getSnapshot()).toMatchObject({ mode: 'bot', selectedBot: botSummary })
     expect(arkmeUi.getSnapshot().selectedSource).toBeUndefined()
     expect(testState.callArkme).toHaveBeenCalledWith(
       'conversation.directory.visibility.set',
       { entryKind: 'bot', entryRef: botSummary.botRef, hidden: false },
+      expect.any(AbortSignal),
     )
     expect(testState.callArkme.mock.calls.some(([operation]) => operation === 'directory.bot.open-chat')).toBe(false)
 
     await click(renderer, '联系人')
     await click(renderer, '群聊')
     await click(renderer, '测试群聊')
+    expect(testState.callArkme.mock.calls.filter(([operation]) => operation === 'directory.group.open-chat')).toHaveLength(0)
+    await click(renderer, '发消息')
     await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 101 }); await Promise.resolve() })
     expect(signals.group?.aborted).toBe(true)
     group.resolve({ sourceRef: 'group-source', kind: 'group_chat', displayName: '测试群聊', activeAtMillis: 1, unreadCount: 0 })
@@ -195,6 +202,8 @@ describe('production Contacts handoff isolation', () => {
     const renderer = await mountProductionContacts()
     await click(renderer, '群聊')
     await click(renderer, '测试群聊')
+    expect(testState.callArkme.mock.calls.filter(([operation]) => operation === 'directory.group.open-chat')).toHaveLength(0)
+    await click(renderer, '发消息')
     group.resolve({ sourceRef: 'group-source', kind: 'group_chat', displayName: '测试群聊', activeAtMillis: 1, unreadCount: 0 })
     await flush()
 

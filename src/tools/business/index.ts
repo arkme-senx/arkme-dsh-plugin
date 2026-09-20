@@ -1,10 +1,12 @@
+import { memberPageToolModules } from './conversation/member-pages.js'
 import { arkoToolModules } from './arko/index.js'
 import { botToolModules } from './bots/index.js'
 import { callHistoryToolModules } from './calls/index.js'
 import { recordCalendarToolModules } from './calendar/index.js'
 import type { ArkmeToolModule } from '../contract/module.js'
 import { accountBusinessToolModules } from './account/index.js'
-import { listSourcesToolModule } from './conversation/list-sources.js'
+import { listSourcesToolModule, pinBotDirectoryToolModule } from './conversation/list-sources.js'
+import { topicHomeVisibilityToolModule } from './conversation/topic-home-visibility.js'
 import { groupAiPolishToolModule } from './conversation/group-ai-polish.js'
 import { addFavoriteStickerToolModule, listFavoriteStickersToolModule, manageFavoriteStickerToolModule, sendFavoriteStickerToolModule } from './conversation/favorite-stickers.js'
 import { readSourceToolModule } from './conversation/read-source.js'
@@ -15,6 +17,7 @@ import { reportMessageToolModule } from './conversation/report-message.js'
 import { withdrawMessageToolModule } from './conversation/withdraw-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
 import { userBanToolModules } from './conversation/user-ban.js'
+import { directMessageAdmissionToolModule, directMessageRefusalToolModule } from './conversation/direct-message-refusal.js'
 import { sendDirectTextToolModule } from './conversation/send-direct-text.js'
 import { sendTextToolModule } from './conversation/send-text.js'
 import { startCallToolModule } from './conversation/start-call.js'
@@ -42,11 +45,13 @@ import { wechatToolModules } from './wechat/index.js'
 import { extensionReviewToolModules } from './extensions/reviews.js'
 import { groupMemberToolModules } from './groups/index.js'
 import { contactToolModules } from './contacts/index.js'
+import { directoryReadToolModule } from './contacts/directory.js'
 import { groupToolModules } from './groups/index.js'
 import { voiceprintToolModules } from './voiceprint/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
+  directoryReadToolModule,
   recentRecordsToolModule,
   ...accountBusinessToolModules,
   ...contactToolModules,
@@ -70,11 +75,14 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...recordingToolModules,
   ...wechatToolModules,
   listSourcesToolModule,
+  pinBotDirectoryToolModule,
+  topicHomeVisibilityToolModule,
   unreadConversationsToolModule,
   ...groupMemberToolModules,
   readSourceToolModule,
   copyLinkExtendToolModule,
   sourceMembersToolModule,
+  ...memberPageToolModules,
   sourceMemberRecordsToolModule,
   ...messageReadReceiptToolModules,
   conversationMarkReadToolModule,
@@ -82,6 +90,8 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   withdrawMessageToolModule,
   relatedRecordingsToolModule,
   ...userBanToolModules,
+  directMessageAdmissionToolModule,
+  directMessageRefusalToolModule,
   groupAiPolishToolModule,
   listFavoriteStickersToolModule,
   addFavoriteStickerToolModule,

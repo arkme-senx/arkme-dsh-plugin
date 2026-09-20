@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useState, type CSSProperties, type FormEvent } from 'react'
 import type { ArkmeExtensionEditableVisibility } from '../extensions/types.js'
 import type { ArkmeMyExtensionItem } from '../extensions/owned-types.js'
@@ -20,6 +21,7 @@ export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit
   onCancel(): void
   onSubmit(value: ArkmeExtensionEditFormValue): void
 }) {
+  useArkmeLocale()
   const [name, setName] = useState(item.name)
   const [description, setDescription] = useState(item.description)
   const initialVisibility = item.published?.visibility
@@ -38,7 +40,7 @@ export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit
   }
   return <div style={styles.backdrop}>
     <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-edit-title">
-      <h3 id="arkme-extension-edit-title" style={styles.title}>编辑扩展</h3>
+      <h3 id="arkme-extension-edit-title" style={styles.title}>{tr("编辑扩展")}</h3>
       <form onSubmit={submit}>
         <ArkmeExtensionAvatarField
           {...(item.published?.extensionId === undefined ? {} : { extensionId: item.published.extensionId })}
@@ -47,20 +49,20 @@ export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit
           disabled={busy}
           onSelect={setIconFile}
         />
-        <label style={styles.label}>名称<input style={styles.input} value={name} maxLength={120} required disabled={busy} onChange={event => { setName(event.target.value) }} /></label>
-        <label style={styles.label}>说明<textarea style={styles.textarea} value={description} maxLength={2000} disabled={busy} onChange={event => { setDescription(event.target.value) }} /></label>
-        <label style={styles.label}>可见范围<select
+        <label style={styles.label}>{tr("名称")}<input style={styles.input} value={name} maxLength={120} required disabled={busy} onChange={event => { setName(event.target.value) }} /></label>
+        <label style={styles.label}>{tr("说明")}<textarea style={styles.textarea} value={description} maxLength={2000} disabled={busy} onChange={event => { setDescription(event.target.value) }} /></label>
+        <label style={styles.label}>{tr("可见范围")}<select
           style={styles.input} value={visibility} required disabled={busy}
           onChange={event => { setVisibility(event.target.value as ArkmeExtensionEditableVisibility | '') }}
         >
-          {visibility === '' && <option value="">请选择可见范围</option>}
-          <option value="private">仅自己</option><option value="public">公开</option>
+          {visibility === '' && <option value="">{tr("请选择可见范围")}</option>}
+          <option value="private">{tr("仅自己")}</option><option value="public">{tr("公开")}</option>
         </select></label>
-        {legacyVisibility && visibility === '' && <div role="status" style={styles.notice}>该历史可见范围已隐藏，请选择仅自己或公开后保存。</div>}
+        {legacyVisibility && visibility === '' && <div role="status" style={styles.notice}>{tr("该历史可见范围已隐藏，请选择仅自己或公开后保存。")}</div>}
         {error !== '' && <div role="alert" style={styles.error}>{error}</div>}
         <div style={styles.actions}>
-          <button type="button" style={styles.secondary} disabled={busy} onClick={onCancel}>取消</button>
-          <button type="submit" style={styles.primary} disabled={busy || visibility === ''}>{busy ? '保存中…' : '保存'}</button>
+          <button data-arkme-feedback="neutral" type="button" style={styles.secondary} disabled={busy} onClick={onCancel}>{tr("取消")}</button>
+          <button data-arkme-feedback="primary" type="submit" style={styles.primary} disabled={busy || visibility === ''}>{busy ? tr("保存中…") : tr("保存")}</button>
         </div>
       </form>
     </section>

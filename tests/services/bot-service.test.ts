@@ -15,6 +15,19 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('BotService', () => {
+  it('keeps valid avatar handles on account mismatch and clears both indices on expiry', async () => {
+    let now = 1_000
+    const service = new BotService({} as never, {} as never, { now: () => now, ttlMillis: 10 })
+    const { avatarRef } = service.botAvatarProjection({ avatar_url: 'https://images.test/bot.png' }, 42, 'bot')
+    await expect(service.openBotImageRef(avatarRef!, 99)).rejects.toMatchObject({ code: 'bot-image-ref-invalid' })
+    await expect(service.openBotImageRef(avatarRef!, 42)).resolves.toMatchObject({ viewerUserId: 42 })
+    now += 11
+    await expect(service.openBotImageRef(avatarRef!, 42)).rejects.toMatchObject({ code: 'bot-image-ref-invalid' })
+    const indices = service as unknown as { botImageRefs: Map<string, unknown>; botImageRefByKey: Map<string, string> }
+    expect(indices.botImageRefs.size).toBe(0)
+    expect(indices.botImageRefByKey.size).toBe(0)
+  })
+
   it('keeps direct Bot and Chat-backed Bot preference identities semantically separate', async () => {
     const { service, source } = createBotPreferenceFixture([
       {
@@ -208,3 +221,55 @@ function createBotPreferenceFixture(rawBots: Array<Record<string, unknown>>) {
   })
   return { service: new BotService(runtime, source), source }
 }
+
+
+it('restores a cached directory lookup after restart without resurrecting a live Bot handle or its old target', async () => {
+  const oldOwner = createBotPreferenceFixture([{ bot_id: 'private-owner-id', name: 'Bot', provider: 'openclaw', status: 'online', subject_uid: 'old-subject' }]).service
+  const original = (await oldOwner.listBots()).items[0]!
+  const currentOwner = createBotPreferenceFixture([{ bot_id: 'private-owner-id', name: 'Bot', provider: 'openclaw', status: 'online', chat_session_uid: 'current-chat' }]).service
+  const restored = (await currentOwner.restoreDirectoryBots([original], 42))[0]!
+  await expect(currentOwner.openBotRef(original.botRef, 42)).rejects.toMatchObject({ code: 'bot-ref-expired' })
+  expect(restored.botRef).toMatch(/^arkme-bot-directory-entry-v1\./)
+  for (const part of restored.botRef.split('.')) expect(Buffer.from(part, 'base64url').toString()).not.toContain('private-owner-id')
+  await expect(currentOwner.openBotRef(restored.botRef, 42)).resolves.toMatchObject({ botId: 'private-owner-id', target: { kind: 'chat', chatSessionUid: 'current-chat' } })
+  await expect(currentOwner.openBotRef(restored.botRef + 'x', 42)).rejects.toMatchObject({ code: 'bot-ref-invalid' })
+  await expect(currentOwner.openBotRef(restored.botRef, 43)).rejects.toMatchObject({ code: 'bot-ref-invalid' })
+  const removedOwner = createBotPreferenceFixture([]).service
+  await expect(removedOwner.openBotRef(restored.botRef, 42)).rejects.toMatchObject({ code: 'bot-ref-expired' })
+})
+
+
+it.each(['subject', 'chat'] as const)('recomputes cached %s Webhook send capability instead of restoring an old writable projection', async owner => {
+  const service = createBotPreferenceFixture([{
+    bot_id: 'webhook', name: 'Webhook', provider: 'webhook',
+    ...(owner === 'subject' ? { subject_uid: 'subject-1' } : { chat_session_uid: 'chat-1' }),
+  }]).service
+  const bot = (await service.listBots()).items[0]!
+  const cached = { ...bot, privateChatOutboundEnabled: true }
+  const restored = (await service.restoreDirectoryBots([cached], 42))[0]!
+  expect(restored.privateChatOutboundEnabled).toBe(false)
+  expect(restored.directChatAvailable).toBe(true)
+  expect(restored.conversationProjection).toBe(bot.conversationProjection)
+  expect(cached.privateChatOutboundEnabled).toBe(true)
+})
+
+
+it.each(['subject', 'chat'] as const)('keeps cached %s OpenClaw writable and preserves its owner projection', async owner => {
+  const service = createBotPreferenceFixture([{
+    bot_id: 'openclaw', name: 'OpenClaw', provider: 'openclaw',
+    ...(owner === 'subject' ? { subject_uid: 'subject-1' } : { chat_session_uid: 'chat-1' }),
+  }]).service
+  const bot = (await service.listBots()).items[0]!
+  const restored = (await service.restoreDirectoryBots([bot], 42))[0]!
+  expect(restored).toMatchObject({
+    directChatAvailable: true, privateChatOutboundEnabled: true,
+    conversationProjection: bot.conversationProjection,
+  })
+})
+
+it.each(['openclaw', 'webhook'] as const)('does not enable a cached %s Bot with unavailable owner evidence', async provider => {
+  const service = createBotPreferenceFixture([{ bot_id: 'unavailable', name: 'Bot', provider }]).service
+  const bot = (await service.listBots()).items[0]!
+  const restored = (await service.restoreDirectoryBots([{ ...bot, privateChatOutboundEnabled: true }], 42))[0]!
+  expect(restored).toMatchObject({ directChatAvailable: false, privateChatOutboundEnabled: false, conversationProjection: 'none' })
+})

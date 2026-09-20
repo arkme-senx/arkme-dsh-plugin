@@ -1,3 +1,4 @@
+import { ArkmeBotAvatarFallback } from '../src/client/ArkmeBotIdentity.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -47,6 +48,17 @@ describe('ArkmeAvatar', () => {
   })
 
   afterEach(() => { arkmeAvatarImages.activateScope(undefined) })
+
+  it('uses the Flutter Bot icon for a Bot without an image, and its image when available', async () => {
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeUserAvatar senderKind="bot" />) })
+    expect(renderer.root.findAllByType(ArkmeBotAvatarFallback)).toHaveLength(1)
+    expect(mocks.callArkme).not.toHaveBeenCalled()
+    await act(async () => { renderer.update(<ArkmeUserAvatar senderKind="bot" avatarRef="bot-avatar" />); await tick(); await tick() })
+    expect(renderer.root.findAllByType('img')).toHaveLength(1)
+    expect(renderer.root.findAllByType(ArkmeBotAvatarFallback)).toHaveLength(0)
+    act(() => renderer.unmount())
+  })
 
   it('renders a cached user avatar on the first frame when re-entering the page', async () => {
     let renderer!: ReactTestRenderer

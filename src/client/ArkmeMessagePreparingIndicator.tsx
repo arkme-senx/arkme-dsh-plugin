@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useSyncExternalStore } from 'react'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -11,15 +12,16 @@ const motion = `
 
 /** A transient accessory, never a timeline record or member-action surface. */
 export function ArkmeMessagePreparingIndicator({ sourceKey, accountScope }: { sourceKey: string; accountScope: string }) {
+  useArkmeLocale()
   useSyncExternalStore(arkmeMessagePreparing.subscribe, arkmeMessagePreparing.getSnapshot, arkmeMessagePreparing.getSnapshot)
   const entries = arkmeMessagePreparing.get(sourceKey, accountScope).slice(0, 7)
   if (entries.length === 0) return null
-  return <div role="status" aria-label="正在输入" aria-live="polite" data-arkme-message-preparing
+  return <div role="status" aria-label={tr("正在输入")} aria-live="polite" data-arkme-message-preparing
     style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: 8, padding: '6px 4px', maxWidth: '100%', minWidth: 0, pointerEvents: 'none' }}>
     <style>{motion}</style>
     <div aria-hidden style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden', minWidth: 0 }}>
       {entries.map(entry => <span key={entry.actorKey} style={{ flex: '0 0 32px' }}>
-        <ArkmeUserAvatar {...(entry.avatarRef === undefined ? {} : { avatarRef: entry.avatarRef })} size={32} label="正在输入的成员" />
+        <ArkmeUserAvatar {...(entry.avatarRef === undefined ? {} : { avatarRef: entry.avatarRef })} size={32} label={tr("正在输入的成员")} />
       </span>)}
     </div>
     <span aria-hidden style={{ display: 'flex', flex: 'none', alignItems: 'center', gap: 4, height: 28, padding: '0 14px',

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeUploadedAsset } from '../src/types.js'
 import {
   ArkmeComposerDraftStore,
+  reconcileArkmeComposerMentions, insertArkmeComposerMentionToken,
   ARKME_COMPOSER_EMOJI_PLACEHOLDER,
   arkmeComposerCanSend,
   arkmeComposerAtomicDeletion,
@@ -23,6 +24,21 @@ function attachment(uid: string, previewUrl?: string): ArkmeComposerAttachment {
 
 describe('Arkme composer draft store', () => {
   beforeEach(() => { vi.restoreAllMocks() })
+
+  it('preserves source-range identities when re-editing escaped Markdown mentions', () => {
+    const mentions = [{ originalIndex: 0, displayName: 'A_B', startIndex: 0, length: 5 }]
+    expect(reconcileArkmeComposerMentions(String.raw`@A\_B`, String.raw`前 @A\_B`, mentions, 'markdown'))
+      .toEqual([{ ...mentions[0], startIndex: 2 }])
+    const inserted = insertArkmeComposerMentionToken({ text: String.raw`@A\_B `, mentions, emojis: [] },
+      { mentionRef: 'new' }, 'C_D', 6, 6, 'markdown')
+    expect(inserted?.text).toBe(String.raw`@A\_B @C\_D `)
+    expect(inserted?.mentions).toEqual([mentions[0], { mentionRef: 'new', displayName: 'C_D', startIndex: 6, length: 5 }])
+  })
+
+  it('removes mention identity when Markdown editing turns it into code', () => {
+    const mentions = [{ originalIndex: 0, displayName: '小明', startIndex: 1, length: 3 }]
+    expect(reconcileArkmeComposerMentions('`@小明', '`@小明`', mentions, 'markdown')).toEqual([])
+  })
 
   it('allows keyboard submission when either text or an attachment is ready', () => {
     expect(arkmeComposerCanSend('文字', 0, false)).toBe(true)
@@ -192,6 +208,21 @@ describe('Arkme composer draft store', () => {
     ])
   })
 
+  it('uses explicit selection ranges to preserve distinct adjacent emoji when replacing any subset', () => {
+    const choices = arkmeDefaultEmojis.slice(0, 3)
+    for (let start = 0; start <= choices.length; start++) {
+      for (let end = start; end <= choices.length; end++) {
+        const store = new ArkmeComposerDraftStore()
+        const key = arkmeArkoComposerDraftKey(1001)
+        store.setRichText(key, '\uFFFC'.repeat(choices.length), choices.map((item, startIndex) => ({ emojiId: item.id, startIndex })))
+        store.insertEmoji(key, arkmeDefaultEmojis[3]!, start, end)
+        expect(serializeArkmeComposerDraft(store.get(key)).text).toBe([
+          ...choices.slice(0, start), arkmeDefaultEmojis[3]!, ...choices.slice(end),
+        ].map(item => item.token).join(''))
+      }
+    }
+  })
+
   it('stores rich emoji as an inline object and serializes desktop tokens with shifted mentions', () => {
     const store = new ArkmeComposerDraftStore()
     const key = arkmeSourceComposerDraftKey(1001, { kind: 'group_chat', sourceRef: 'group:8' })
@@ -211,6 +242,21 @@ describe('Arkme composer draft store', () => {
         length: 3,
       }],
     })
+  })
+
+  it('preserves untouched chat mentions and removes their metadata when emoji insertion edits the label', () => {
+    for (const [start, end, intact] of [[0, 0, true], [2, 2, false], [1, 4, false], [4, 4, true]] as const) {
+      const store = new ArkmeComposerDraftStore()
+      const key = arkmeSourceComposerDraftKey(1001, { kind: 'group_chat', sourceRef: 'group:8' })
+      store.setText(key, '前后')
+      store.insertMention(key, 'mention-ref', '小林', 1)
+      const original = store.get(key).text
+      const chosen = arkmeDefaultEmojis[0]!
+      store.insertEmoji(key, chosen, start, end)
+      const sent = serializeArkmeComposerDraft(store.get(key))
+      expect(sent.text).toBe(original.slice(0, start) + chosen.token + original.slice(end))
+      expect(sent.mentions).toEqual(intact ? [{ mentionRef: 'mention-ref', displayName: '小林', startIndex: sent.text.indexOf('@小林'), length: 3 }] : [])
+    }
   })
 
   it('drops mention metadata when the visible mention token is edited', () => {

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { CallHistoryService } from '../../src/services/call-history-service.js'
+import { SourceService } from '../../src/services/source-service.js'
 import { ProfileService } from '../../src/services/profile-service.js'
+import { MediaService } from '../../src/services/media-service.js'
 import { ArkmePluginError, ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 
 const config: ArkmeServiceConfig = {
@@ -45,10 +47,167 @@ function service(fetchImpl: typeof fetch, override: Partial<ArkmeServiceConfig> 
     { async uniqueCode() { return 'call-history-secret' } } as StateStore,
     fetchImpl,
   )
-  return new CallHistoryService(runtime, new ProfileService(runtime))
+  const profile = new ProfileService(runtime)
+  return new CallHistoryService(runtime, profile, new MediaService(runtime, profile, {} as never, {} as never),
+    new SourceService(runtime, profile, {} as never))
 }
 
 describe('CallHistoryService', () => {
+  it.each([false, true])('resolves detail summaries by explicit identity without guessing unknown speakers (remark failure: %s)', async remarkFailure => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/trtc/call-detail')) return envelope({
+        caller_user_id: 42, callee_user_ids: [77], call_summary_status: 'done',
+        participant_profiles: [{ user_id: 77, display_name: '旧昵称' }],
+        call_summary_template: '{{user:42}}与{{user:77}}、{{speaker:s1}}、{{speaker:s2}}和{{speaker:s3}}聊天。',
+        call_summary_speaker_user_ids: { s1: 88, s3: 99 },
+        call_summary_speaker_labels: { s1: '已绑定的人', s2: 'Jotmoer方说话人A', s3: '已标记姓名' },
+        room_transcript_segments: [{ speaker_user_id: 77, text: '你好', start_ms: 1000, end_ms: 2000 }],
+      })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({ items: [
+        { user_id: 42, nick_name: '自己' }, { user_id: 77, nick_name: 'Jotmoer' }, { user_id: 88, nick_name: 'Jotmoer' },
+      ] })
+      if (url.endsWith('/api/v1/chats/contacts/list')) {
+        if (remarkFailure) throw new Error('contact lookup failed')
+        return envelope({ items: [{ user_id: 77, remark: '  英梦华 ' }, { user_id: 88, remark: '安宝' }], has_more: false })
+      }
+      if (url.endsWith('/api/v1/chats/list')) return envelope({ items: [], has_more: false })
+      throw new Error(`unexpected ${url}`)
+    })
+    const owner = service(fetchImpl)
+    const record = await owner.timelineCallRecord({ crd: { ri: 'identity-room', cr: 42, mt: 'Video', rs: 'NormalEnd' } }, 42)
+    const detail = await owner.callDetail(record!.callRef!)
+    expect(detail.stableId).toBe(record!.stableId)
+    expect(detail.stableId).not.toContain('identity-room')
+    expect(detail.summaryText).toBe(remarkFailure
+      ? '我与Jotmoer、Jotmoer、Jotmoer方说话人A和已标记姓名聊天。'
+      : '我与英梦华、安宝、Jotmoer方说话人A和已标记姓名聊天。')
+    expect(detail.participants.map(p => p.userId).sort()).toEqual([42, 77])
+    expect(detail.transcriptSegments[0]?.speakerDisplayName).toBe(remarkFailure ? 'Jotmoer' : '英梦华')
+    expect(fetchImpl.mock.calls.filter(([input]) => String(input).endsWith('/api/v1/auth/get-public-users-by-ids'))).toHaveLength(1)
+  })
+
+  it('keeps legacy free-form summaries unchanged even when a nickname has a remark', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/trtc/call-detail')) return envelope({ caller_user_id: 42, callee_user_ids: [77],
+        call_summary: 'Jotmoer方说话人A和说话人B聊天。' })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({ items: [{ user_id: 77, nick_name: 'Jotmoer' }] })
+      if (url.endsWith('/api/v1/chats/contacts/list')) return envelope({ items: [{ user_id: 77, remark: '英梦华' }], has_more: false })
+      throw new Error(`unexpected ${url}`)
+    })
+    const owner = service(fetchImpl)
+    const record = await owner.timelineCallRecord({ crd: { ri: 'legacy-room', cr: 42, mt: 'Audio', rs: 'NormalEnd' } }, 42)
+    expect((await owner.callDetail(record!.callRef!)).summaryText).toBe('Jotmoer方说话人A和说话人B聊天。')
+  })
+
+  it('renders list summary templates with viewer identity, peer remarks and participant names', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/call/history-aggregate')) return envelope({ items: [
+        { trtc: { room_id: 'template', caller_user_id: 42, callee_user_ids: [77], call_summary_status: 'done',
+          call_summary_template: '{{speaker:self}}与{{user:77}}确认{{user:88}}的排期',
+          call_summary_speaker_user_ids: { self: 42 }, participant_display_names: { 88: '小林' } } },
+        { trtc: { room_id: 'fallback', call_summary_status: 'done', call_summary_template: '{{user:999}}确认排期', call_summary: '确认排期' } },
+        { trtc: { room_id: 'unresolved', call_summary_status: 'done', call_summary_template: '{{user:999}}确认排期' } },
+        { trtc: { room_id: 'label', call_summary_status: 'done', call_summary_template: '{{speaker:guest}}确认排期',
+          call_summary_speaker_labels: { guest: '访客' } } },
+      ], has_more: false })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({ items: [{ user_id: 77, nick_name: '昵称' }] })
+      if (url.endsWith('/api/v1/chats/contacts/list')) return envelope({ items: [{ user_id: 77, remark: '张总' }], has_more: false })
+      if (url.endsWith('/api/v1/chats/list')) return envelope({ items: [], has_more: false })
+      throw new Error(`unexpected ${url}`)
+    })
+    const page = await service(fetchImpl).listCallHistory({ includeRecentContacts: false })
+    expect(page.items.map(item => item.summaryPreview)).toEqual(['我与张总确认小林的排期', '确认排期', undefined, '访客确认排期'])
+    expect(JSON.stringify(page)).not.toContain('{{')
+    expect(fetchImpl.mock.calls.some(([input]) => String(input).includes('call-detail'))).toBe(false)
+  })
+  it.each([undefined, 'page2'])('prefers viewer remarks on history page %s by user ID', async cursor => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/call/history-aggregate')) return envelope({
+        items: [77, 88].map(id => ({ stable_id: `trtc:room-${id}`, trtc: {
+          room_id: `room-${id}`, caller_user_id: 42, callee_user_ids: [id], peer_display_name: '同名用户',
+        } })), has_more: false,
+      })
+      if (url.endsWith('/api/v1/chats/contacts/list')) return envelope({ items: [
+        { user_id: 77, remark: '  张总（客户）  ' }, { user_id: 88, remark: '   ' },
+      ], has_more: false })
+      if (url.endsWith('/api/v1/chats/list')) return envelope({ items: [], has_more: false })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({ items: [
+        { user_id: 77, nick_name: '同名用户' }, { user_id: 88, nick_name: '同名用户' },
+      ] })
+      throw new Error(`unexpected ${url}`)
+    })
+    const page = await service(fetchImpl).listCallHistory({ includeRecentContacts: false, ...(cursor ? { cursor } : {}) })
+    expect(page.items.map(item => item.peerDisplayName)).toEqual(['张总（客户）', '同名用户'])
+  })
+
+  it('falls back to a nickname without an avatar when remark lookup fails', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/call/history-aggregate')) return envelope({ items: [{
+        stable_id: 'trtc:room', trtc: { room_id: 'room', caller_user_id: 42, callee_user_ids: [77] },
+      }], has_more: false })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({ items: [{ user_id: 77, nick_name: '张三' }] })
+      throw new Error('contact service unavailable')
+    })
+    const page = await service(fetchImpl).listCallHistory({ includeRecentContacts: false })
+    expect(page.items[0]?.peerDisplayName).toBe('张三')
+  })
+
+  it('projects real COS room transcript audio through the local media proxy', async () => {
+    const owner = service(vi.fn<typeof fetch>(async () => envelope({ room_transcript_segments: [
+      { start_ms: 2000, end_ms: 3000, text: '录音片段', speaker_user_id: 42,
+        audio_url: 'https://webrtc-record-prod-1403070603.cos.ap-shanghai.myqcloud.com/clip.wav?q-signature=private' },
+    ] })), { environment: 'prod' })
+    const presentation = await owner.timelineCallRecord({ crd: { ri: 'cos-room', mt: 'Audio', rs: 'NormalEnd', cr: 42 } }, 42)
+    const result = await owner.callDetail(presentation!.callRef!)
+    expect(result.transcriptSegments[0]?.audioUrl).toMatch(/^\/arkme-self\/api\/media\?ref=/)
+    expect(JSON.stringify(result)).not.toMatch(/myqcloud|q-signature|private/)
+  })
+
+  it('projects standalone transcript audio URLs and drops unsupported URL schemes', async () => {
+    const owner = service(vi.fn<typeof fetch>(async () => envelope({ segments: [
+      { id: 'a', text: '可播放', start_ms: 2000, end_ms: 3000, audio_url: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/clip.wav' },
+      { id: 'b', text: '无录音', audio_url: 'javascript:alert(1)' },
+      { id: 'c', text: '本地文件不可读', audio_url: 'file:///private/clip.wav' },
+    ] })))
+    const presentation = await owner.timelineCallRecord({ crd: { ri: 'audio-room', mt: 'Audio', rs: 'NormalEnd', cr: 42 } }, 42)
+    const result = await owner.callDetail(presentation!.callRef!)
+    expect(result.transcriptSegments.find(segment => segment.segmentId === 'a')).toMatchObject({ audioUrl: expect.stringMatching(/^\/arkme-self\/api\/media\?ref=/), startMillis: 2000 })
+    expect(JSON.stringify(result)).not.toContain('oss-cn-hangzhou')
+    expect(result.transcriptSegments.filter(segment => segment.segmentId !== 'a').every(segment => segment.audioUrl === undefined)).toBe(true)
+  })
+
+  it('renders a template-only summary for the viewer through the timeline detail reference', async () => {
+    const owner = service(vi.fn<typeof fetch>(async () => envelope({
+      call_media_type: 0, call_summary_status: 'done', call_summary_template: '{{speaker:s1}}确认周五上线',
+      summary_speaker_user_ids: { s1: 42 },
+    })))
+    const presentation = await owner.timelineCallRecord({ crd: { ri: 'template-room', mt: 'Audio', rs: 'NormalEnd', cr: 42 } }, 42)
+    await expect(owner.callDetail(presentation!.callRef!)).resolves.toMatchObject({ summaryText: '我确认周五上线', summaryStatus: 'done' })
+  })
+
+  it('seals a timeline call for the existing detail endpoint without exposing its room', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('https://webrtc.test/api/v1/trtc/call-detail')
+      expect(JSON.parse(String(init?.body))).toMatchObject({ room_id: 'timeline-private-room' })
+      return envelope({ call_media_type: 1, start_time: 1788949920, end_time: 1788949922, call_result: 'Cancel' })
+    })
+    const owner = service(fetchImpl)
+    const presentation = await owner.timelineCallRecord({ record: { payload: { content_payload: { crd: { ri: 'timeline-private-room', cr: 42, mt: 'Video', rs: 'Cancel', st: 1788949920, du: 0 } } } } }, 42)
+    expect(presentation).toMatchObject({ mediaType: 'video', text: '已取消', startedAtMillis: 1788949920000, durationSeconds: 0 })
+    expect(JSON.stringify(presentation)).not.toContain('timeline-private-room')
+    const detail = await owner.callDetail(presentation!.callRef!)
+    expect(detail).toMatchObject({ mediaType: 'video', durationSeconds: 2, transcriptSegments: [] })
+    const anchored = await owner.timelineCallRecord({ content_payload: { structured_anchor: { anchor_kind: 2, anchor_uid: 'timeline-private-room' }, crd: { mt: 'Video', rs: 'Cancel', cr: 42 } } }, 42)
+    await expect(owner.callDetail(anchored!.callRef!)).resolves.toMatchObject({ mediaType: 'video' })
+    const foreign = await owner.timelineCallRecord({ crd: { ri: 'other-room', mt: 'Audio', rs: 'Cancel', cr: 77 } }, 77)
+    await expect(owner.callDetail(foreign!.callRef!)).rejects.toMatchObject({ code: 'call-ref-invalid' })
+  })
+
   it('lists safe call history without leaking raw room or media fields', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async input => {
       expect(String(input)).toBe('https://data.test/api/v1/call/history-aggregate')

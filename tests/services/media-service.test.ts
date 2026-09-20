@@ -17,6 +17,112 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('MediaService', () => {
+  it.each([true, false])('loads the recorded asset rather than the current avatar (asset available: %s)', async available => {
+    const fetchImpl = vi.fn(async () => new Response(new Uint8Array([137,80,78,71,13,10,26,10]), { headers: { 'Content-Type': 'image/png' } }))
+    const runtime = new ServiceRuntime(config, { read: async () => ({ userId: 42, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }, {} as StateStore, fetchImpl)
+    const profile = new ProfileService(runtime)
+    const currentProfile = vi.spyOn(profile, 'publicProfilesByUserIds')
+    const media = new MediaService(runtime, profile, {} as never, { recordUid: () => '' })
+    const assets = vi.spyOn(media, 'queryFileAssets').mockResolvedValue(available ? [{
+      fileAssetUid: 'old-avatar', status: 'ready',
+      previewUrl: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/old.png?x-oss-signature=fixture',
+    }] : [])
+    if (available) await expect(media.readImage('file_asset://old-avatar')).resolves.toMatchObject({ mediaType: 'image/png', bytes: 8 })
+    else await expect(media.readImage('file_asset://old-avatar')).rejects.toMatchObject({ code: 'image-ref-unavailable' })
+    expect(assets).toHaveBeenCalledWith(['old-avatar'], undefined)
+    expect(currentProfile).not.toHaveBeenCalled()
+    expect(fetchImpl).toHaveBeenCalledTimes(available ? 1 : 0)
+  })
+  it.each([1, 2])('projects an explicit Live pair for cover render role %s', async (coverRenderRole) => {
+    const media = new MediaService({ config: {} } as ServiceRuntime, {} as never, {} as never, {} as never)
+    const refs = [
+      { file_asset_uid: 'cover', render_role: coverRenderRole, dynamic_photo: { logical_uid: 'live', role: 'cover' }, file_name: 'photo.jpg', mime_type: 'image/jpeg', file_kind: 1, preview_url: 'https://example.test/cover' },
+      { file_asset_uid: 'motion', render_role: 4, dynamic_photo: { logical_uid: 'live', role: 'motion' }, file_name: 'photo.mov', mime_type: 'video/quicktime', file_kind: 3, download_url: 'https://example.test/motion' },
+    ]
+    const raw = { content_payload: { media_refs: refs } }
+    const blocks = media.richContentBlocks(raw, 42)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({ kind: 'image', fileAssetUid: 'cover', dynamicPhoto: { logicalUid: 'live', motion: { kind: 'video', fileAssetUid: 'motion' } } })
+    expect(JSON.stringify(blocks)).not.toContain('https:')
+    expect(media.recordMediaUnavailable(raw, blocks)).toBe(false)
+    const missing = { content_payload: { media_refs: [refs[0], { ...refs[1], download_url: '' }] } }
+    const partial = media.richContentBlocks(missing, 42)
+    expect(partial).toHaveLength(1)
+    expect(partial[0]).toMatchObject({ dynamicPhoto: { logicalUid: 'live' } })
+    expect(partial[0]?.dynamicPhoto?.motion).toBeUndefined()
+    expect(media.recordMediaUnavailable(missing, partial)).toBe(true)
+  })
+
+  it('never pairs by name, sender, background role or ambiguous logical identity', () => {
+    const media = new MediaService({ config: {} } as ServiceRuntime, {} as never, {} as never, {} as never)
+    const cover = { file_asset_uid: 'cover', render_role: 1, dynamic_photo: { logical_uid: 'pair', role: 'cover' }, file_name: 'same.jpg', mime_type: 'image/jpeg', preview_url: 'https://example.test/cover' }
+    const motion = { file_asset_uid: 'motion', render_role: 4, dynamic_photo: { logical_uid: 'pair', role: 'motion' }, file_name: 'same.mov', mime_type: 'video/quicktime', download_url: 'https://example.test/motion' }
+    for (const others of [
+      [{ ...motion, content_file_role: 4 }],
+      [motion, { ...motion, file_asset_uid: 'duplicate-motion' }],
+      [{ ...motion, dynamic_photo: { logical_uid: 'other', role: 'motion' } }],
+    ]) {
+      const blocks = media.richContentBlocks({ content_payload: { media_refs: [cover, ...others] } }, 42)
+      expect(blocks[0]?.dynamicPhoto?.motion).toBeUndefined()
+    }
+    const ordinary = media.richContentBlocks({ content_payload: { media_refs: [
+      { ...cover, dynamic_photo: undefined }, { ...motion, dynamic_photo: undefined, render_role: 1 },
+    ] } }, 42)
+    expect(ordinary.map(block => block.kind)).toEqual(['image', 'video'])
+    expect(ordinary.every(block => block.dynamicPhoto === undefined)).toBe(true)
+  })
+
+  it('proxies trusted production COS call audio with ranges and account isolation', async () => {
+    let userId = 42
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId, accessToken: 'fixture', refreshToken: 'fixture' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async () => new Response('audio', { status: 206 }))
+    const runtime = new ServiceRuntime({ ...config, environment: 'prod' }, sessions, {} as StateStore, fetchImpl)
+    const media = new MediaService(runtime, new ProfileService(runtime), {} as never, {} as never)
+    const url = 'https://webrtc-record-prod-1403070603.cos.ap-shanghai.myqcloud.com/clip.wav?q-signature=secret'
+    const blocks = media.forwardContentBlocks([{ type: 2, download_url: url }], 42)
+    expect(blocks).toHaveLength(1)
+    const result = await media.fetchMedia(blocks[0]!.mediaRef, 'bytes=0-4')
+    expect(result.response.status).toBe(206)
+    await expect(result.response.text()).resolves.toBe('audio')
+    expect(fetchImpl).toHaveBeenCalledWith(new URL(url), expect.objectContaining({ headers: { Range: 'bytes=0-4' }, redirect: 'error' }))
+    for (const rejected of [url.replace('https:', 'http:'), url.replace('https://', 'https://user:pass@'),
+      url.replace('.com/', '.com:8443/'), `${url}#fragment`, url.replace('.com/', '.com.evil.test/'),
+      url.replace('1403070603', '9999999999')]) {
+      expect(media.forwardContentBlocks([{ type: 2, download_url: rejected }], 42)).toEqual([])
+    }
+    runtime.config.environment = 'test'
+    expect(media.forwardContentBlocks([{ type: 2, download_url: url }], 42)).toEqual([])
+    await expect(media.fetchMedia(blocks[0]!.mediaRef)).rejects.toMatchObject({ code: 'media-host-rejected' })
+    runtime.config.environment = 'prod'
+    userId = 99
+    await expect(media.fetchMedia(blocks[0]!.mediaRef)).rejects.toMatchObject({ code: 'media-ref-invalid' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks partially resolved media by asset identity, not just by count', () => {
+    const runtime = { config: {} } as ServiceRuntime
+    const media = new MediaService(runtime, {} as never, {} as never, { recordUid() { return 'r' } })
+    const refs = ['a', 'b'].map((file_asset_uid, sort_order) => ({ file_asset_uid, sort_order,
+      file_name: `${file_asset_uid}.png`, mime_type: 'image/png', file_kind: 1 }))
+    const raw = { record: { version: 8, payload: { content_payload: { media_refs: refs } } },
+      media_display_items: [{ ...refs[0], preview_url: 'https://example.test/a' }] }
+    const blocks = media.richContentBlocks(raw, 42)
+    expect(blocks).toHaveLength(1)
+    expect(media.recordMediaUnavailable(raw, blocks)).toBe(true)
+    expect(media.recordMediaUnavailable(raw, [blocks[0]!, { ...blocks[0]!, fileAssetUid: 'wrong' }])).toBe(true)
+    expect(media.recordMediaUnavailable(raw, [blocks[0]!, { ...blocks[0]!, fileAssetUid: 'b' }])).toBe(false)
+    expect(media.recordMediaUnavailable({ content_payload: { media_refs: [] } }, [])).toBe(false)
+    expect(media.recordMediaUnavailable({ content_payload: { media_refs: [
+      { file_asset_uid: 'background', content_file_role: 4 },
+    ] } }, [])).toBe(false)
+    expect(media.recordMediaUnavailable({ content_payload: { voice: { source_file_asset_uid: 'voice' } } }, [])).toBe(true)
+    runtime.config.richMediaRenderEnabled = false
+    expect(media.recordMediaUnavailable(raw, [])).toBe(false)
+  })
+
   it('logs the final profile image failure once with its upstream status and no signed URL', async () => {
     const session = { userId: 42, accessToken: 'SECRET_ACCESS', refreshToken: 'SECRET_REFRESH' }
     const sessions: ArkmeSessionStore = { async read() { return session }, async write() {}, async delete() {} }
@@ -271,4 +377,50 @@ describe('MediaService', () => {
     expect(refs.has('record-1\0missing')).toBe(false)
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
+})
+
+
+describe('durable avatar availability', () => {
+  it.each(['read', 'write'])('keeps the downloaded profile avatar usable when cache %s fails', async failure => {
+    const state = { uniqueCode: async () => 'device', readAvatarCache: vi.fn(async () => { if (failure === 'read') throw new Error('disk unavailable'); return undefined }),
+      writeAvatarCache: vi.fn(async () => { if (failure === 'write') throw new Error('disk full') }) }
+    const runtime = new ServiceRuntime(config, { read: async () => ({ userId: 42, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }, state as unknown as StateStore,
+      vi.fn(async () => new Response(new Uint8Array([137,80,78,71,13,10,26,10]), { headers: { 'Content-Type': 'image/png' } })))
+    const profile = new ProfileService(runtime)
+    vi.spyOn(profile, 'publicProfilesByUserIds').mockResolvedValue(new Map([[88, { userId: 88, displayName: 'User', nickname: 'User', avatarUrl: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/a.png?x-oss-signature=fixture' }]]))
+    const media = new MediaService(runtime, profile, {} as never, { recordUid: () => '' })
+    await expect(media.readImage(await profile.sealProfileImageRef(42, 88))).resolves.toMatchObject({ mediaType: 'image/png', bytes: 8 })
+  })
+})
+
+
+it('restores expired Bot image bytes offline only from the current account cache', async () => {
+  const bytes = { mediaType: 'image/png' as const, bytes: 8, data: new Uint8Array([137,80,78,71,13,10,26,10]) }
+  const state = { readAvatarCache: vi.fn(async (viewer: number) => viewer === 42 ? bytes : undefined) }
+  let userId = 42
+  const sessionStore = { read: async () => ({ userId, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }
+  const fetchImpl = vi.fn(async () => { throw new Error('offline') })
+  const runtime = new ServiceRuntime(config, sessionStore, state as unknown as StateStore, fetchImpl)
+  const openBotImageRef = vi.fn(async (_ref: string, viewer: number) => {
+    if (viewer !== 42) throw new Error('foreign account reference')
+    return { sourceUrl: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/bot.png?x-oss-signature=fixture' }
+  })
+  const media = new MediaService(runtime, {} as never, {} as never, { recordUid: () => '' }, { openBotImageRef } as never)
+  await expect(media.readImage('arkme-bot-image-v1.fixture')).resolves.toMatchObject({ bytes: 8 })
+  expect(openBotImageRef).not.toHaveBeenCalled()
+  expect(fetchImpl).not.toHaveBeenCalled()
+  userId = 43
+  const secondRuntime = new ServiceRuntime(config, sessionStore, state as unknown as StateStore, fetchImpl)
+  const secondMedia = new MediaService(secondRuntime, {} as never, {} as never, { recordUid: () => '' }, { openBotImageRef } as never)
+  await expect(secondMedia.readImage('arkme-bot-image-v1.fixture')).rejects.toThrow('foreign account')
+  expect(state.readAvatarCache).toHaveBeenCalledTimes(2)
+})
+
+it('keeps all 100 long article snapshot images with local inline aliases', () => {
+  const media = new MediaService({config} as ServiceRuntime, {} as never, {} as never, {} as never)
+  const files = Array.from({length:100}, (_, i) => ({type:1,name:`${i}.png`,mime_type:'image/png',file_asset_uid:`private-${i}`,inline_ref:`arkme-asset:media-${i}`,preview_url:`https://jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com/${i}.png`}))
+  const blocks = media.forwardContentBlocks(files,42,{longArticle:true})
+  expect(blocks).toHaveLength(100)
+  expect(blocks[99]!.fileAssetUid).toBe('media-99')
+  expect(JSON.stringify(blocks)).not.toContain('private-')
 })

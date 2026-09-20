@@ -1,3 +1,4 @@
+import { tr } from './locale.js'
 import type { CSSProperties } from 'react'
 import type { ArkmeSharedExtensionDetail as SharedExtension } from '../extensions/types.js'
 import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
@@ -9,34 +10,34 @@ export function ArkmeSharedExtensionDetail({ extension, onBack }: {
 	onBack(): void
 }) {
 	return <div style={styles.detail}>
-		<button type="button" style={styles.back} onClick={onBack}>‹ 返回列表</button>
+		<button data-arkme-feedback="neutral" type="button" style={styles.back} onClick={onBack}>{tr("‹ 返回列表")}</button>
 		<div style={styles.hero}>
 			<span style={styles.icon} aria-hidden><ArkmeExtensionIcon size={26} /></span>
 			<div style={styles.heading}>
 				<div style={styles.name}>{extension.name}</div>
-				<div style={styles.scope}>通过分享链接查看 · 只读</div>
+				<div style={styles.scope}>{tr("通过分享链接查看 · 只读")}</div>
 			</div>
 		</div>
-		<section style={styles.rating} aria-label={`评分 ${extension.rating_summary.average.toFixed(1)}`}>
+		<section style={styles.rating} aria-label={tr("评分 {v0}", { v0: extension.rating_summary.average.toFixed(1) })}>
 			<span style={styles.stars} aria-hidden>★★★★★</span>
 			<strong>{extension.rating_summary.average.toFixed(1)}</strong>
-			<span>{extension.rating_summary.count} 个评分</span>
+			<span>{extension.rating_summary.count} {tr("个评分")}</span>
 		</section>
 		<section style={styles.section}>
-			<div style={styles.label}>市场最新版本</div>
+			<div style={styles.label}>{tr("市场最新版本")}</div>
 			<div>{extension.latest_stable_version}</div>
 		</section>
 		<section style={styles.section}>
-			<div style={styles.label}>扩展说明</div>
+			<div style={styles.label}>{tr("扩展说明")}</div>
 			<div style={styles.description}>{extension.description || '这个扩展还没有填写说明。'}</div>
 		</section>
 		{extension.source !== undefined && <section style={styles.section}>
-			<div style={styles.label}>来源</div>
+			<div style={styles.label}>{tr("来源")}</div>
 			<div>{extension.source.label} · <a
 				href={extension.source.url} target="_blank" rel="noopener noreferrer nofollow" style={styles.source}
-			>查看 GitHub 仓库</a></div>
+			>{tr("查看 GitHub 仓库")}</a></div>
 		</section>}
-		<div role="note" style={styles.notice}>分享链接仅用于查看，不授予安装、评论、执行或管理权限。</div>
+		<div role="note" style={styles.notice}>{tr("分享链接仅用于查看，不授予安装、评论、执行或管理权限。")}</div>
 	</div>
 }
 

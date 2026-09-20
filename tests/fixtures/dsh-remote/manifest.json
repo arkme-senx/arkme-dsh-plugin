@@ -1,6 +1,6 @@
 {
   "contract": "dsh.remote/v1",
-  "schema_version": 7,
+  "schema_version": 10,
   "authority": "authenticated-account",
   "files": {
     "dsh-history-entry.schema.json": "f327364f10e8742172ec2588c7da78ed36a4e354851c2ed40ac6fe9a09748855",
@@ -9,7 +9,7 @@
     "errors.json": "31d373e27168035a35a439a55f749c47b773fed116b63406b2c5b7ceb94b52d2",
     "protocol-v1.json": "85711539203c78023d54d40af70f94f7a2ef89aa623431d51d962d3b11c85c68",
     "remote-channel.schema.json": "6b6f78e5a74819d01f058ac3dcc1f5ed5d4c5fdfac0801f3a2adccf7a80344fc",
-    "remote-envelope.schema.json": "e56cd8e46b7725b5feab4aef98059a6e235b4415d6a281239f9f276c0843685e",
+    "remote-envelope.schema.json": "8fd92b9cdbc481a03f0f230c2e67b8eebe561005496dee8ed52b966862c6ac42",
     "transport-fragment.schema.json": "a9c6709263f9372152700b51c82a148f9e6cbc706a16548fa1a656f33606e6f7"
   }
 }

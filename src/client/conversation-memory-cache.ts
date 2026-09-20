@@ -2,6 +2,7 @@ import type {
   ArkmeGroupAiPolishNotice,
   ArkmeGroupAiPolishSnapshot,
   ArkmeInterwovenMention,
+  ArkmeInterwovenState,
   ArkmeTimelineCursor,
   ArkmeTimelineItem,
 } from '../types.js'
@@ -131,13 +132,28 @@ export function arkmeConversationRestoredScrollTop(
 export class ArkmeConversationMemoryCache {
   private readonly timelines = new Map<string, ArkmeConversationTimelineSnapshot>()
   private readonly interwovenMoments = new Map<string, ArkmeInterwovenMention[]>()
+  private readonly interwovenStates = new Map<string, ArkmeInterwovenState>()
   private readonly interwovenRefreshRevisions = new Map<string, number>()
   private readonly pendingInterwovenMoments = new Map<string, ArkmeInterwovenMention[]>()
   private readonly pendingInterwovenRefreshRevisions = new Map<string, number>()
   private readonly viewports = new Map<string, ArkmeConversationViewportSnapshot>()
   private readonly recency = new Map<string, true>()
+  private readonly appliedTimelineDeltas = new Map<string, WeakSet<ArkmeTimelineItem>>()
 
   constructor(private readonly maxSources = 20) {}
+
+  unappliedTimelineDeltaItems(conversationKey: string, items: readonly ArkmeTimelineItem[]): ArkmeTimelineItem[] {
+    const applied = this.appliedTimelineDeltas.get(conversationKey)
+    return items.filter(item => !applied?.has(item))
+  }
+
+  consumeTimelineDeltaItems(conversationKey: string, items: readonly ArkmeTimelineItem[]): void {
+    if (items.length === 0) return
+    const applied = this.appliedTimelineDeltas.get(conversationKey) ?? new WeakSet<ArkmeTimelineItem>()
+    for (const item of items) applied.add(item)
+    this.appliedTimelineDeltas.set(conversationKey, applied)
+    this.touch(conversationKey)
+  }
 
   getTimeline(conversationKey: string): ArkmeConversationTimelineSnapshot | undefined {
     const snapshot = this.timelines.get(conversationKey)
@@ -191,6 +207,15 @@ export class ArkmeConversationMemoryCache {
     return moments
   }
 
+  getInterwovenState(conversationKey: string): ArkmeInterwovenState | undefined {
+    return this.interwovenStates.get(conversationKey)
+  }
+
+  storeInterwovenState(conversationKey: string, state: ArkmeInterwovenState): void {
+    this.touch(conversationKey)
+    this.interwovenStates.set(conversationKey, state)
+  }
+
   /** Returns true only when the ordinary timeline is ready and the result may be revealed. */
   storeInterwovenMoments(conversationKey: string, moments: ArkmeInterwovenMention[], refreshRevision = 0): boolean {
     this.touch(conversationKey)
@@ -222,14 +247,21 @@ export class ArkmeConversationMemoryCache {
     this.touch(conversationKey)
   }
 
+  /** A Record mutation may affect several cached sources; preserve viewport and require fresh owner reads. */
+  invalidateTimelines(): void {
+    for (const [key, snapshot] of this.timelines) this.timelines.set(key, { ...snapshot, fetchedAtMillis: 0, recordRevision: -1 })
+  }
+
   clear(): void {
     this.timelines.clear()
     this.interwovenMoments.clear()
+    this.interwovenStates.clear()
     this.interwovenRefreshRevisions.clear()
     this.pendingInterwovenMoments.clear()
     this.pendingInterwovenRefreshRevisions.clear()
     this.viewports.clear()
     this.recency.clear()
+    this.appliedTimelineDeltas.clear()
   }
 
   private touch(conversationKey: string): void {
@@ -240,7 +272,9 @@ export class ArkmeConversationMemoryCache {
       if (oldest === undefined) return
       this.recency.delete(oldest)
       this.timelines.delete(oldest)
+      this.appliedTimelineDeltas.delete(oldest)
       this.interwovenMoments.delete(oldest)
+      this.interwovenStates.delete(oldest)
       this.interwovenRefreshRevisions.delete(oldest)
       this.pendingInterwovenMoments.delete(oldest)
       this.pendingInterwovenRefreshRevisions.delete(oldest)

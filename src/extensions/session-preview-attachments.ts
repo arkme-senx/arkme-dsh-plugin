@@ -1,5 +1,6 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import { readSessionEvents } from '../dsh-session-events.js'
 
 export interface SelectedPreviewAttachment {
   index: number
@@ -23,7 +24,7 @@ export function selectLatestUserPreviewAttachments(
   agent: Agent,
   attachmentIndices?: readonly number[],
 ): SelectedPreviewAttachment[] {
-  const event = [...agent.session.events].reverse().find(candidate => candidate.type === 'user/message'
+  const event = [...readSessionEvents(agent.session)].reverse().find(candidate => candidate.type === 'user/message'
     && candidate.data.source.kind === 'user')
   if (event?.type !== 'user/message') throw new Error('the current Agent session has no direct user message')
   const refs = event.data.content.map(imageAttachment).filter((ref): ref is ImageAttachmentRef => ref !== undefined)

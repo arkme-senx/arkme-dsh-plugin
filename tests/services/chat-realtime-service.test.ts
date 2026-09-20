@@ -20,7 +20,85 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ChatRealtimeService', () => {
-  it('projects a member event hint without reading messages or refreshing unread/attention state', async () => {
+  it('invalidates computed calendar months by date and timezone, with a full privacy fallback', () => {
+    const runtime = new ServiceRuntime(config, {} as ArkmeSessionStore, {} as StateStore)
+    const version = (start: string, end: string, zone = 'Asia/Shanghai') => runtime.calendarReadRevision('user:42', start, end, zone)
+    const september = version('2026-09-01', '2026-09-30')
+    const august = version('2026-08-01', '2026-08-31')
+    runtime.invalidateCalendarDates('user:42', [Date.parse('2026-08-31T18:00:00Z')])
+    expect(version('2026-09-01', '2026-09-30')).not.toBe(september)
+    expect(version('2026-08-01', '2026-08-31')).toBe(august)
+    expect(version('2026-08-01', '2026-08-31', 'UTC')).not.toBe(august)
+    expect(runtime.calendarReadRevision('user:43', '2026-09-01', '2026-09-30', 'UTC')).toBe('0:0')
+    runtime.invalidateKey('user:42', 'calendar:')
+    expect(version('2026-08-01', '2026-08-31')).not.toBe(august)
+    runtime.dispose()
+  })
+
+  it.each(['current', 'account-change', 'new-connection', 'final-connection-change', 'disconnected', 'disposed'] as const)(
+    'recovers pin projections from the existing reconnect read: %s', async scenario => {
+      let account = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+      let reads = 0
+      const sessions: ArkmeSessionStore = {
+        async read() {
+          reads += 1
+          if (scenario === 'final-connection-change' && reads === 3) {
+            await Promise.resolve()
+            state.mockReturnValue({ revision: 2, connected: true, connectionGeneration: 3 })
+          }
+          return account
+        },
+        async write() {}, async delete() {},
+      }
+      const runtime = new ServiceRuntime(config, sessions, {} as StateStore)
+      vi.spyOn(runtime, 'requireSession').mockImplementation(async () => account)
+      const source = new SourceService(runtime, new ProfileService(runtime), {
+        async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
+      })
+      const timeline = vi.fn(async () => [])
+      const service = new ChatRealtimeService(runtime, source, { chatTimelineItems: timeline })
+      const internals = service as unknown as {
+        chatRealtime: { state(): { revision: number; connected: boolean; connectionGeneration: number } }
+        reconcileChatConnectionBaseline(generation: number, userId: number): Promise<void>
+      }
+      const state = vi.spyOn(internals.chatRealtime, 'state').mockReturnValue({ revision: 1, connected: true, connectionGeneration: 2 })
+      let release!: () => void
+      const rows = [
+        { sourceKey: 'bound-private', sourceRef: 'private-ref', kind: 'private_chat' as const,
+          displayName: '私聊', activeAtMillis: 1, unreadCount: 0, isPinned: true, chatPolicyUpdatedAtMillis: 3000 },
+        { sourceKey: 'bound-group', sourceRef: 'group-ref', kind: 'group_chat' as const,
+          displayName: '群聊', activeAtMillis: 1, unreadCount: 5, isPinned: false, chatPolicyUpdatedAtMillis: 4000 },
+      ]
+      const list = vi.spyOn(source, 'listSources')
+        .mockImplementationOnce(async () => { await new Promise<void>(resolve => { release = resolve }); return { directory: 'root', items: [rows[0]!], hasMore: true, nextCursor: 'page-2' } })
+        .mockResolvedValue({ directory: 'root', items: [rows[1]!], hasMore: false })
+      vi.spyOn(source, 'openSourceRef').mockImplementation(async ref => ({ v: 1, userId: 42, kind: 'group_chat', ownerRef: ref }))
+      const events: unknown[] = []
+      service.subscribeChatRealtime(event => { events.push(event) })
+      const pending = internals.reconcileChatConnectionBaseline(2, 42)
+      await vi.waitFor(() => { expect(list).toHaveBeenCalledOnce() })
+      if (scenario === 'account-change') account = { ...account, userId: 43 }
+      if (scenario === 'new-connection') state.mockReturnValue({ revision: 2, connected: true, connectionGeneration: 3 })
+      if (scenario === 'disconnected') state.mockReturnValue({ revision: 2, connected: false, connectionGeneration: 2 })
+      if (scenario === 'disposed') service.dispose()
+      release()
+      await pending
+      if (scenario === 'current') {
+        expect(events).toEqual([{ type: 'chat-pins-reconciled', revision: 1, pins: [
+          { sourceKey: 'bound-private', pinned: true, policyUpdatedAtMillis: 3000 },
+          { sourceKey: 'bound-group', pinned: false, policyUpdatedAtMillis: 4000 },
+        ] }])
+        expect(list).toHaveBeenCalledTimes(2)
+      } else {
+        expect(events).toEqual([])
+        expect(list).toHaveBeenCalledTimes(scenario === 'final-connection-change' ? 2 : 1)
+      }
+      expect(timeline).not.toHaveBeenCalled()
+      service.dispose()
+    },
+  )
+
+  it.each(['memberEvent', 'memberJoined'] as const)('projects %s without confusing roster and history or refreshing messages', async kind => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
@@ -37,10 +115,10 @@ describe('ChatRealtimeService', () => {
     service.subscribeChatRealtime(event => { events.push(event) })
     service.handleChatRealtimeNotice({
       cause: 'chat-hint', state: { revision: 2, connected: true, connectionGeneration: 1 },
-      memberEvent: { eventUid: 'leave-1', chatSessionUid: 'raw-group', eventAtMillis: 1234 },
+      [kind]: { eventUid: 'event-1', chatSessionUid: 'raw-group', eventAtMillis: 1234 },
     })
     await vi.waitFor(() => { expect(events).toHaveLength(1) })
-    expect(events[0]).toMatchObject({ type: 'member-events-invalidated', eventId: 'leave-1', occurredAtMillis: 1234,
+    expect(events[0]).toMatchObject({ ...(kind === 'memberEvent' ? { type: 'member-events-invalidated', eventId: 'event-1', occurredAtMillis: 1234 } : { type: 'members-invalidated' }),
       sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./) })
     expect(JSON.stringify(events[0])).not.toContain('raw-group')
     expect(timeline).not.toHaveBeenCalled()
@@ -73,8 +151,8 @@ describe('ChatRealtimeService', () => {
     const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
     const invalidate = vi.spyOn(source, 'invalidateSourceListCache')
     const invalidateKey = vi.spyOn(runtime, 'invalidateKey')
-    vi.spyOn(service as unknown as { reconcileChatNotificationBaseline(generation: number): Promise<void> },
-      'reconcileChatNotificationBaseline').mockResolvedValue()
+    vi.spyOn(service as unknown as { reconcileChatConnectionBaseline(generation: number): Promise<void> },
+      'reconcileChatConnectionBaseline').mockResolvedValue()
     const events: unknown[] = []
     service.subscribeChatRealtime(event => { events.push(event) })
 
@@ -272,8 +350,8 @@ describe('ChatRealtimeService', () => {
     })
     const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
     vi.spyOn(service as unknown as {
-      reconcileChatNotificationBaseline(generation: number, userId?: number): Promise<void>
-    }, 'reconcileChatNotificationBaseline').mockResolvedValue()
+      reconcileChatConnectionBaseline(generation: number, userId?: number): Promise<void>
+    }, 'reconcileChatConnectionBaseline').mockResolvedValue()
     vi.spyOn(service, 'refreshAttentionSummary').mockResolvedValue()
     vi.spyOn(service, 'invalidateRecordProjection').mockResolvedValue()
     const internals = service as unknown as {
@@ -406,7 +484,8 @@ describe('ChatRealtimeService', () => {
       async applyBadgeSummary() { return true },
     }
     const service = new ChatRealtimeService(runtime, source, {
-      async chatTimelineItems(_data, _session, chatSessionUid) {
+      async chatTimelineItems(_data, _session, chatSessionUid, _sourceKind, bundle) {
+        expect(bundle).toEqual(bundles.find(item => item.session.chat_session_uid === chatSessionUid))
         return timelineItemsByUid.get(chatSessionUid) ?? []
       },
     }, nativeAttention)
@@ -610,6 +689,74 @@ describe('ChatRealtimeService', () => {
 
     await new Promise(resolve => setTimeout(resolve, 10))
     expect(events).toHaveLength(1)
+    service.dispose()
+  })
+})
+
+
+describe('Chat policy invalidation', () => {
+  it.each(['account-change', 'abort', 'dispose'] as const)('drops policy projection when %s occurs during the session read', async scenario => {
+    const account = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    let release!: (value: typeof account) => void
+    const sessions: ArkmeSessionStore = {
+      read: vi.fn(async () => await new Promise(resolve => { release = resolve })),
+      async write() {}, async delete() {},
+    }
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore)
+    const source = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
+    })
+    const invalidate = vi.spyOn(source, 'invalidateSourceListCache')
+    const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
+    const events: unknown[] = []
+    const controller = new AbortController()
+    service.subscribeChatRealtime(event => { events.push(event) })
+    service.handleChatRealtimeNotice({
+      cause: 'chat-policy-invalidation', state: { revision: 1, connected: true, connectionGeneration: 1 },
+      connectionUserId: 42, connectionSignal: controller.signal,
+      policyUpdated: { eventUid: 'policy-1', chatSessionUid: 'chat-1', userId: 42, pinState: 2, policyUpdateAtMillis: 1000, eventAtMillis: 1000 },
+    })
+    expect(sessions.read).toHaveBeenCalledOnce()
+    if (scenario === 'abort') controller.abort()
+    if (scenario === 'dispose') service.dispose()
+    release({ ...account, userId: scenario === 'account-change' ? 43 : 42 })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(events).toEqual([])
+    expect(invalidate).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
+  it.each(['current', 'other-account', 'aborted', 'disposed'] as const)('invalidates only the active account directory: %s', async scenario => {
+    const controller = new AbortController()
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: scenario === 'other-account' ? 43 : 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn() as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+    const source = new SourceService(runtime, new ProfileService(runtime), { async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined } })
+    const invalidate = vi.spyOn(source, 'invalidateSourceListCache')
+    const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+    if (scenario === 'aborted') controller.abort()
+    if (scenario === 'disposed') service.dispose()
+    service.handleChatRealtimeNotice({
+      cause: 'chat-policy-invalidation', state: { revision: 1, connected: true, connectionGeneration: 1 },
+      connectionUserId: 42, connectionSignal: controller.signal,
+      policyUpdated: { eventUid: 'policy-1', chatSessionUid: 'private-owner-uid', userId: 42, pinState: 2, policyUpdateAtMillis: 1000, eventAtMillis: 1000 },
+    })
+    if (scenario === 'current') {
+      await vi.waitFor(() => { expect(events).toEqual([{ type: 'chat-policy-invalidated', revision: 1 }]) })
+      expect(invalidate).toHaveBeenCalledExactlyOnceWith(42, 'root')
+    } else {
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(events).toEqual([])
+      expect(invalidate).not.toHaveBeenCalled()
+    }
+    expect(fetchImpl).not.toHaveBeenCalled()
     service.dispose()
   })
 })

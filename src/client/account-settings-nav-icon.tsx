@@ -1,7 +1,7 @@
 import { IconUserOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createRoot, type Root } from 'react-dom/client'
 
-const ACCOUNT_LABEL = '我的账户'
+const ACCOUNT_LABELS = new Set(['我的账户', 'My account'])
 const ACCOUNT_ICON_SELECTOR = '[data-arkme-account-nav-icon]'
 const SETTINGS_DIALOG_SELECTOR = '[role="dialog"]'
 const SETTINGS_UI_SELECTOR = [
@@ -45,6 +45,7 @@ function touchesSettingsUi(node: Node): boolean {
 }
 
 function mutationTouchesSettingsUi(record: MutationRecord): boolean {
+  if (record.type === 'characterData') return record.target.parentElement?.closest(SETTINGS_DIALOG_SELECTOR) != null
   return [...record.addedNodes, ...record.removedNodes].some(touchesSettingsUi)
 }
 
@@ -103,7 +104,7 @@ export function installArkmeAccountSettingsNavIcon(
     const dialogs = runtime.document.querySelectorAll<HTMLElement>(SETTINGS_DIALOG_SELECTOR)
     for (const dialog of dialogs) {
       const accountButtons = [...dialog.querySelectorAll<HTMLButtonElement>(':scope > nav button')]
-        .filter(button => button.textContent?.trim() === ACCOUNT_LABEL)
+        .filter(button => ACCOUNT_LABELS.has(button.textContent?.trim() ?? ''))
       if (accountButtons.length !== 1) continue
       mountIcon(accountButtons[0]!)
     }
@@ -112,7 +113,7 @@ export function installArkmeAccountSettingsNavIcon(
   const observer = new runtime.MutationObserver((records) => {
     if (!disposed && records.some(mutationTouchesSettingsUi)) renderAccountIcons()
   })
-  observer.observe(runtime.document.body, { childList: true, subtree: true })
+  observer.observe(runtime.document.body, { childList: true, subtree: true, characterData: true })
   renderAccountIcons()
 
   return () => {

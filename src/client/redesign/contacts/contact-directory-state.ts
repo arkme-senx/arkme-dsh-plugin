@@ -1,8 +1,11 @@
 import type {
   ArkmeDirectoryItem,
+  ArkmeDirectoryContactProfile,
   ArkmeDirectoryPage,
   ArkmeDirectorySectionKind,
 } from '../../../types.js'
+
+import { contactDirectoryLetter } from '../../../contact-directory-presentation.js'
 
 export const CONTACT_DIRECTORY_SECTION_ORDER = [
   'groups',
@@ -17,6 +20,7 @@ export type ContactDirectoryLoadMode = 'replace' | 'append' | 'count'
 
 export type ArkmeDirectorySelection =
   | { kind: 'none' }
+  | Extract<ArkmeDirectoryItem, { kind: 'group' | 'bot' }>
   | { kind: 'contact'; contactRef: string }
   | { kind: 'team'; teamRef: string }
   | { kind: 'unmarked-speaker'; candidateRef: string }
@@ -26,6 +30,9 @@ export interface ContactDirectorySectionState {
   status: ContactDirectoryLoadStatus
   items: ArkmeDirectoryItem[]
   total: number
+  coverage?: 'complete' | 'partial' | undefined
+  /** Health of the displayed pages, distinct from the current request status. */
+  projectionState?: ArkmeDirectoryPage['projectionState'] | undefined
   hasMore: boolean
   nextCursor: string | undefined
   expanded: boolean
@@ -39,6 +46,21 @@ export interface ContactDirectoryState {
   accountKey: string
   selection: ArkmeDirectorySelection
   sections: Record<ArkmeDirectorySectionKind, ContactDirectorySectionState>
+}
+
+export type ContactProfileUpdates = Readonly<Record<string, ArkmeDirectoryContactProfile>>
+
+export function applyContactProfileUpdates(state: ContactDirectoryState, profiles: ContactProfileUpdates = {}): ContactDirectoryState {
+  const contacts = state.sections.contacts
+  let changed = false
+  const items = contacts.items.map(item => {
+    const profile = item.kind === 'contact' ? profiles[item.contactRef] : undefined
+    if (item.kind !== 'contact' || profile === undefined) return item
+    changed = true
+    const next = { ...item, ...profile }
+    return { ...next, letter: contactDirectoryLetter(next) }
+  })
+  return changed ? { ...state, sections: { ...state.sections, contacts: { ...contacts, items } } } : state
 }
 
 export type ContactDirectoryAction =
@@ -59,6 +81,7 @@ export type ContactDirectoryAction =
     generation: number
     mode: ContactDirectoryLoadMode
     page: ArkmeDirectoryPage
+    preserveSelection?: boolean
   }
   | {
     type: 'load-error'
@@ -152,6 +175,12 @@ function selectionAfterReplacement(
   section: ArkmeDirectorySectionKind,
   items: readonly ArkmeDirectoryItem[],
 ): ArkmeDirectorySelection {
+  if (section === 'groups' && selection.kind === 'group') {
+    return items.find(item => item.kind === 'group' && item.sourceRef === selection.sourceRef) as ArkmeDirectorySelection ?? { kind: 'none' }
+  }
+  if (section === 'bots' && selection.kind === 'bot') {
+    return items.find(item => item.kind === 'bot' && item.bot.botRef === selection.bot.botRef) as ArkmeDirectorySelection ?? { kind: 'none' }
+  }
   if (section === 'contacts' && selection.kind === 'contact') {
     return items.some(item => item.kind === 'contact' && item.contactRef === selection.contactRef)
       ? selection
@@ -226,6 +255,7 @@ export function contactDirectoryReducer(
         return updateSection(state, action.section, {
           ...current,
           total: action.page.total,
+          coverage: action.page.coverage,
           loadingMode: undefined,
         })
       }
@@ -239,26 +269,37 @@ export function contactDirectoryReducer(
           loadingMode: undefined,
         })
       }
-      const items = action.mode === 'append'
+      // Partial contact identity scans cannot prove removal. Group page coverage is
+      // pagination progress, not this failure semantic, and must still replace page one.
+      const partialContactRefresh = action.mode === 'replace' && action.section === 'contacts' && action.page.coverage === 'partial'
+      const items = action.mode === 'append' || partialContactRefresh
         ? mergeDirectoryItems(current.items, action.page.items)
         : [...action.page.items]
+      // Contact presentation is hydrated page by page. Audio instead reports its
+      // owner's current projection state, so a later fresh result supersedes it.
+      const projectionState = action.section === 'contacts' && action.mode === 'append' && current.projectionState !== undefined && current.projectionState !== 'fresh'
+        ? current.projectionState : action.page.projectionState
+      const incomplete = action.page.coverage === 'partial' && action.section === 'contacts'
+      const warning = incomplete ? '联系人暂时无法完整显示'
+        : projectionState === 'building' ? '正在整理目录…'
+          : projectionState === 'stale' || projectionState === 'failed' ? '部分资料暂时无法显示' : undefined
       const next = {
         ...current,
-        status: items.length === 0 ? 'empty' : 'ready',
+        status: items.length === 0 && !action.page.hasMore && action.page.total === 0 && warning === undefined ? 'empty' : 'ready',
         items,
-        total: action.section === 'groups' || action.mode === 'append'
+        total: action.mode === 'append' || (action.section === 'groups' && action.page.coverage === undefined)
           ? Math.max(current.total, action.page.total, items.length)
           : Math.max(action.page.total, items.length),
+        coverage: action.page.coverage,
+        projectionState,
         hasMore: action.page.hasMore,
         nextCursor: action.page.nextCursor,
-        warning: action.page.projectionState === 'stale' || action.page.projectionState === 'failed'
-          ? '目录数据可能不是最新状态'
-          : undefined,
+        warning,
         loadingMode: undefined,
       } satisfies ContactDirectorySectionState
       return {
         ...updateSection(state, action.section, next),
-        selection: action.mode === 'replace'
+        selection: !action.page.hasMore && warning === undefined && action.preserveSelection !== true
           ? selectionAfterReplacement(state.selection, action.section, items)
           : state.selection,
       }

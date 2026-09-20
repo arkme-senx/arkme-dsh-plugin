@@ -1,5 +1,7 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent } from 'react'
 import { arkmeTheme } from './arkme-theme.js'
+import { ArkmeTopicDialogPortal } from './ArkmeTopicManagementDialog.js'
 
 export interface ArkmeTopicCreateDialogProps {
   mode: 'topic' | 'child'
@@ -68,6 +70,7 @@ const styles: Record<string, CSSProperties> = {
 export function ArkmeTopicCreateDialog({
   mode, parentTopicPath = [], submitting, error = '', onCancel, onConfirm,
 }: ArkmeTopicCreateDialogProps) {
+  useArkmeLocale()
   const [title, setTitle] = useState('')
   const normalizedTitle = title.trim()
   const canConfirm = normalizedTitle !== '' && !submitting
@@ -84,7 +87,7 @@ export function ArkmeTopicCreateDialog({
     if (event.key === 'Escape' && !submitting) onCancel()
   }
 
-  return <div
+  return <ArkmeTopicDialogPortal><div
     data-arkme-notification-blocking-overlay="true"
     style={styles.backdrop}
     onMouseDown={cancelFromBackdrop}
@@ -96,27 +99,25 @@ export function ArkmeTopicCreateDialog({
     >
       <div style={styles.header}>
         <h2 id="arkme-topic-create-title" style={styles.title}>{dialogTitle}</h2>
-        <button type="button" style={styles.close} aria-label="关闭" disabled={submitting} onClick={onCancel}>×</button>
+        <button data-arkme-feedback="neutral" type="button" style={styles.close} aria-label={tr("关闭")} disabled={submitting} onClick={onCancel}>×</button>
       </div>
-      {mode === 'child' && parentTopicPath.length > 0 && <p style={styles.parentPath} title={parentTopicPath.join(' / ')}>
-        将在「{parentTopicPath.join(' / ')}」下创建
-      </p>}
+      {mode === 'child' && parentTopicPath.length > 0 && <p style={styles.parentPath} title={parentTopicPath.join(' / ')}>{tr("将在「")}{parentTopicPath.join(' / ')}{tr("」下创建")}</p>}
       <label style={styles.field}>
-        <span style={styles.label}>主题名称</span>
+        <span style={styles.label}>{tr("主题名称")}</span>
         <input
           autoFocus maxLength={100} style={styles.input} value={title} disabled={submitting}
-          placeholder="请输入主题名称" aria-invalid={error !== ''}
+          placeholder={tr("请输入主题名称")} aria-invalid={error !== ''}
           onChange={event => { setTitle(event.currentTarget.value) }}
         />
       </label>
       {error !== '' && <p role="alert" style={styles.error}>{error}</p>}
       <div style={styles.actions}>
-        <button type="button" style={{ ...styles.button, ...styles.cancel }} disabled={submitting} onClick={onCancel}>取消</button>
-        <button
+        <button data-arkme-feedback="neutral" type="button" style={{ ...styles.button, ...styles.cancel }} disabled={submitting} onClick={onCancel}>{tr("取消")}</button>
+        <button data-arkme-feedback="primary"
           type="submit" disabled={!canConfirm}
           style={{ ...styles.button, ...styles.confirm, ...(!canConfirm ? styles.confirmDisabled : {}) }}
-        >{submitting ? '创建中…' : '确认'}</button>
+        >{submitting ? '创建中…' : tr("确认")}</button>
       </div>
     </form>
-  </div>
+  </div></ArkmeTopicDialogPortal>
 }

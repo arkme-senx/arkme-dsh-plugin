@@ -23,6 +23,8 @@ export function arkmeRecordTextFormat(value: unknown): ArkmeTextFormat {
 
 interface MarkdownNode {
   type: string
+  url?: string
+  alt?: string | null | undefined
   value?: string
   children?: MarkdownNode[]
   data?: { hName?: string | undefined; hProperties?: Record<string, unknown> | undefined } | undefined
@@ -39,9 +41,10 @@ export function arkmeEscapeMarkdownText(text: string): string {
 }
 
 /** The editor must also retain unsupported constructs on paste/import, before Marked parses HTML. */
-export function arkmeMarkdownEditorSource(source: string): string {
+export function arkmeMarkdownEditorSource(source: string, articleImages = false): string {
   const replacements: { start: number; end: number }[] = []
   const visit = (node: MarkdownNode) => {
+    if (articleImages && node.type === 'image' && arkmeArticleImageReference(node.url ?? '')) return
     if (['html', 'image', 'imageReference'].includes(node.type)) {
       const start = node.position?.start.offset
       const end = node.position?.end.offset
@@ -114,6 +117,7 @@ export function arkmeMarkdownPlainText(source: string): string {
   const read = (node: MarkdownNode): string => {
     if (node.type === 'definition') return ''
     if (node.type === 'image' || node.type === 'imageReference') {
+      if (node.type === 'image' && arkmeArticleImageReference(node.url ?? '')) return '[图片]'
       return source.slice(node.position?.start.offset, node.position?.end.offset)
     }
     if (node.value !== undefined) return node.value
@@ -125,10 +129,19 @@ export function arkmeMarkdownPlainText(source: string): string {
 }
 
 /** HTML and inline images remain visible source; neither becomes an active browser element. */
-export function arkmeLiteralMarkdownNodes() {
+export function arkmeArticleImageReference(value: string): boolean {
+  return /^arkme-asset:[A-Za-z0-9._:-]{1,256}$/u.test(value)
+    || /^arkme-local:arkme-file-v1\.[0-9a-f-]{36}$/u.test(value)
+}
+
+export function arkmeLiteralMarkdownNodes(options?: { articleImages?: boolean }) {
   return (tree: MarkdownNode, file: { value?: unknown }) => {
     const source = String(file.value ?? '')
     const visit = (node: MarkdownNode) => {
+      if (options?.articleImages && node.type === 'image' && /^arkme-asset:[A-Za-z0-9._:-]{1,256}$/u.test(node.url ?? '')) {
+        node.data = { hName: 'span', hProperties: { 'data-arkme-image-ref': node.url, 'data-arkme-image-alt': node.alt ?? '' } }
+        return
+      }
       if (['html', 'image', 'imageReference'].includes(node.type)) {
         node.type = 'text'
         node.value = source.slice(node.position?.start.offset, node.position?.end.offset)
@@ -140,7 +153,7 @@ export function arkmeLiteralMarkdownNodes() {
 }
 
 /** Tag activation follows source text nodes, so escaped hashes and code never become links. */
-export function arkmeMarkdownBusinessNodes() {
+export function arkmeMarkdownBusinessNodes(options?: { mentions?: readonly { startIndex: number; length: number }[] }) {
   return (tree: MarkdownNode, file: { value?: unknown }) => {
     const source = String(file.value ?? '')
     const visit = (node: MarkdownNode) => {
@@ -151,15 +164,32 @@ export function arkmeMarkdownBusinessNodes() {
       if (start === undefined || end === undefined) return
       const raw = source.slice(start, end)
       const tags = arkmeMarkdownTextHashTagRanges(raw)
+      // Use wire source offsets, not display-name matching: repeated/same-name mentions may identify different people.
+      const mentions = (options?.mentions ?? []).flatMap((mention, index) => {
+        const mentionEnd = mention.startIndex + mention.length
+        if (!Number.isSafeInteger(mention.startIndex) || !Number.isSafeInteger(mention.length)
+          || mention.length < 2 || mention.startIndex < start || mentionEnd > end
+          || source[mention.startIndex] !== '@') return []
+        return [{ startIndex: mention.startIndex - start, length: mention.length, kind: 'mention', index }]
+      })
+      const ranges = [
+        ...mentions,
+        ...tags.filter(tag => !mentions.some(mention => tag.startIndex < mention.startIndex + mention.length
+          && tag.startIndex + tag.length > mention.startIndex)).map(tag => ({ ...tag, kind: 'tag', index: -1 })),
+      ].sort((left, right) => left.startIndex - right.startIndex)
       const children: MarkdownNode[] = []
-      const append = (value: string, kind: string) => {
-        if (value) children.push({ type: 'arkmeBusinessText', data: { hName: 'span', hProperties: { 'data-arkme-markdown-run': kind } }, children: [{ type: 'text', value: decodeString(value) }] })
+      const append = (value: string, kind: string, index?: number) => {
+        if (value) children.push({ type: 'arkmeBusinessText', data: { hName: 'span', hProperties: {
+          'data-arkme-markdown-run': kind,
+          ...(kind === 'mention' ? { 'data-arkme-mention-index': index } : {}),
+        } }, children: [{ type: 'text', value: decodeString(value) }] })
       }
       let cursor = 0
-      for (const tag of tags) {
-        append(raw.slice(cursor, tag.startIndex), 'text')
-        append(raw.slice(tag.startIndex, tag.startIndex + tag.length), 'tag')
-        cursor = tag.startIndex + tag.length
+      for (const range of ranges) {
+        if (range.startIndex < cursor) continue
+        append(raw.slice(cursor, range.startIndex), 'text')
+        append(raw.slice(range.startIndex, range.startIndex + range.length), range.kind, range.index)
+        cursor = range.startIndex + range.length
       }
       append(raw.slice(cursor), 'text')
       node.type = 'arkmeBusinessText'

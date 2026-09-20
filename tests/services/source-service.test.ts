@@ -15,6 +15,180 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('searches remark and nickname independently of message content, preserving directory pagination and account binding', async () => {
+    const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+    const post = vi.fn(async (_path: string, body: { page_cursor?: unknown }) => ({
+      items: [{ session: { chat_session_uid: body.page_cursor ? 'group' : 'private', session_kind: body.page_cursor ? 2 : 1, title: '讨论群' },
+        private_counterpart: { user_id: 17, display_name_snapshot: '狗才' }, private_supplement: { remark: '周鹏' } }],
+      has_more: !body.page_cursor, ...(!body.page_cursor ? { next_page_cursor: { id: 'second' } } : {}),
+    }))
+    const runtime = { config, requireSession: async () => session, authenticatedChatPost: post,
+      stateStore: { uniqueCode: async () => 'fixture-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, { publicProfileSummariesByUserIds: async () => new Map() } as unknown as ProfileService, {} as never)
+    for (const query of [' 周鹏 ', '狗才']) {
+      const page = await service.searchConversationNames({ query })
+      expect(page.items).toHaveLength(1)
+      expect(page.items[0]).toMatchObject({ title: '周鹏', nickname: '狗才', sourceUid: 'private', targetSource: { displayName: '周鹏', privateNickname: '狗才' } })
+      expect(await service.openSourceRef(page.items[0]!.targetSource!.sourceRef, 42)).toMatchObject({ ownerRef: 'private' })
+      await expect(service.openSourceRef(page.items[0]!.targetSource!.sourceRef, 43)).rejects.toBeDefined()
+      expect(page.hasMore).toBe(true)
+    }
+    const first = await service.searchConversationNames({ query: '讨论' })
+    expect(first.items).toEqual([])
+    const second = await service.searchConversationNames({ query: '讨论', cursor: first.nextCursor })
+    expect(second.items[0]).toMatchObject({ title: '讨论群', sourceUid: 'group' })
+    expect(second.items[0]!.nickname).toBeUndefined()
+    expect(second.hasMore).toBe(false)
+    expect(post).toHaveBeenCalledTimes(2)
+    await expect(service.searchConversationNames({ query: ' ' })).rejects.toMatchObject({ code: 'conversation-query-empty' })
+  })
+
+  it('does not turn an empty remark into a nameless private conversation', async () => {
+    const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+    const bundle = { session: { chat_session_uid: 'private', session_kind: 1 }, private_counterpart: { user_id: 17, display_name_snapshot: '狗才' }, private_supplement: { remark: '  ', counterpart_name_snapshot: '' } }
+    const runtime = { config, requireSession: async () => session, authenticatedChatPost: async () => ({ items: [bundle], has_more: false }), stateStore: { uniqueCode: async () => 'fixture-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, { publicProfileSummariesByUserIds: async () => new Map() } as unknown as ProfileService, {} as never)
+    expect((await service.searchConversationNames({ query: '狗才' })).items[0]!.title).toBe('狗才')
+    expect((await service.chatSourceFromBundle(bundle, session, undefined, [])).displayName).toBe('狗才')
+    const controller = new AbortController(); controller.abort()
+    await expect(service.searchConversationNames({ query: '狗才', signal: controller.signal })).rejects.toBeDefined()
+  })
+
+  it('reports broken name-search pagination instead of claiming complete results', async () => {
+    const runtime = { config, requireSession: async () => ({ userId: 42 }) } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    vi.spyOn(service, 'listSources').mockResolvedValue({ directory: 'root', items: [], hasMore: true })
+    await expect(service.searchConversationNames({ query: '周鹏' })).rejects.toMatchObject({ code: 'conversation-search-incomplete' })
+  })
+
+  it('uses real profile nicknames when legacy chat snapshots contain the remark instead', async () => {
+    const session = { userId: 42 }
+    const runtime = { config, requireSession: async () => session } as unknown as ServiceRuntime
+    const profiles = vi.fn(async () => new Map([[17, { nickname: '狗才' }]]))
+    const service = new SourceService(runtime, { publicProfileSummariesByUserIds: profiles } as unknown as ProfileService, {} as never)
+    vi.spyOn(service, 'listSources').mockResolvedValue({ directory: 'root', items: [{ sourceRef: 'ref', kind: 'private_chat', peerUserId: 17, displayName: '周鹏', privateNickname: '周鹏', activeAtMillis: 0, unreadCount: 0 }], hasMore: false })
+    vi.spyOn(service, 'openSourceRef').mockResolvedValue({ version: 1, userId: 42, ownerRef: 'private', displayName: '周鹏', kind: 'private_chat' })
+    const result = await service.searchConversationNames({ query: '狗才' })
+    expect(result.items[0]).toMatchObject({ title: '周鹏', nickname: '狗才', targetSource: { privateNickname: '狗才' } })
+    expect(profiles).toHaveBeenCalledExactlyOnceWith([17], session, undefined)
+    profiles.mockRejectedValueOnce(new Error('资料不可用'))
+    await expect(service.searchConversationNames({ query: '狗才' })).rejects.toThrow('资料不可用')
+  })
+  it('replaces generic cached previews with viewer-aware calls without extra detail requests', async () => {
+    const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+    const payload = { template_kind: 5, structured_anchor: { anchor_kind: 2 },
+      content_payload: { crd: { mt: 'Video', rs: 'Cancel', cr: 42, du: 0 } } }
+    const bundle = { session: { chat_session_uid: 'call-chat', session_kind: 1, last_seq: 7 },
+      private_counterpart: { user_id: 17, display_name_snapshot: '同事' },
+      latest_preview: { record: { payload } }, unread_snapshot: { unread_count: 0 } }
+    const post = vi.fn(async (_path: string) => ({ items: [bundle], has_more: false }))
+    const runtime = { config, requireSession: async () => session, authenticatedChatPost: post,
+      stateStore: { uniqueCode: async () => 'fixture-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    service.setChatSource(42, 'call-chat', { sourceRef: 'old', kind: 'private_chat', displayName: '同事',
+      activeAtMillis: 0, unreadCount: 0, latestSequence: 7, latestPreview: '[卡片]' })
+    const page = await service.listSources('root', { refresh: true, firstPaint: true })
+    expect(page.items[0]?.latestPreview).toBe('视频通话 已取消')
+    expect(service.cachedChatSource(42, 'call-chat')?.latestPreview).toBe('视频通话 已取消')
+    expect(post).toHaveBeenCalledOnce()
+    expect(post.mock.calls[0]?.[0]).toBe('/api/v1/chats/list')
+    const updated = await service.chatSourceFromBundle(bundle, session, page.items[0], [{
+      itemUid: 'call', title: '', textContent: '', senderName: '我', isMe: true,
+      status: 1, sendAtMillis: 1, sequence: 8, conversationPreview: '视频通话 已接听 00:59',
+    }])
+    expect(updated.latestPreview).toBe('视频通话 已接听 00:59')
+  })
+
+  it.each(['vip', 'svip', 'free', undefined])('projects counterpart membership %s and clears stale paid snapshots', async memberType => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    const cached: ArkmeSourceItem = { sourceRef: 'old', kind: 'private_chat', displayName: '同事', activeAtMillis: 0, unreadCount: 0, peerUserId: 17, peerMemberType: 'svip' }
+    const bundle = { session: { chat_session_uid: 'private-1', session_kind: 1 }, private_counterpart: { user_id: 17, member_type: memberType } }
+    const result = await service.chatSourceFromBundle(bundle, session, cached, [])
+    expect(result.peerMemberType).toBe(memberType ?? 'unknown')
+    expect((await service.chatSourceFromBundle({ ...bundle, session: { chat_session_uid: 'group-1', session_kind: 2 } }, session, undefined, [])).peerMemberType).toBeUndefined()
+  })
+
+  it('keeps counterpart identity through realtime cache replacement so calendar avatar hydration can resolve it', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+    const readProfiles = vi.fn(async () => new Map([[17, { avatarUrl: 'https://avatar.test/image' }]]))
+    const profile = { publicProfileSummariesByUserIds: readProfiles, sealProfileImageRef: async () => 'opaque-peer-avatar' } as unknown as ProfileService
+    const service = new SourceService(runtime, profile, {} as never)
+    const updated = await service.chatSourceFromBundle({
+      session: { chat_session_uid: 'private-1', session_kind: 1 },
+      private_counterpart: { user_id: 17, display_name_snapshot: '同事' },
+    }, session, undefined, [])
+    service.setChatSource(42, 'private-1', updated)
+    const sources = await service.chatSourcesBySessionUids(['private-1'])
+    const hydrated = await service.hydrateDirectoryPage([...sources.values()], new AbortController().signal)
+    expect(hydrated[0]).toMatchObject({ peerUserId: 17, avatarRef: 'opaque-peer-avatar' })
+    expect(readProfiles).toHaveBeenCalledWith([17], session, expect.any(AbortSignal))
+    for (const userId of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const pending = await service.chatSourceFromBundle({ session: { chat_session_uid: 'pending', session_kind: 3 },
+        private_counterpart: { user_id: userId } }, session, undefined, [])
+      expect(pending.peerUserId).toBeUndefined()
+    }
+  })
+
+  it('cancels home preference reads without cancelling durable writes', async () => {
+    const session = { userId: 42 }
+    const post = vi.fn().mockResolvedValue({
+      topic_core: { topic_uid: 'archive', kind: 3, privacy_state: 1, show_in_home: false },
+      show_in_home: true,
+    })
+    const runtime = { config, requireSession: async () => session, authenticatedPost: post } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    vi.spyOn(service, 'openSourceRef').mockResolvedValue({ version: 1, userId: 42, kind: 'topic', ownerRef: 'archive', displayName: 'Archive' })
+    const invalidate = vi.spyOn(service, 'invalidateSourceListCache').mockImplementation(() => {})
+    const controller = new AbortController()
+    await expect(service.topicHomeVisibility('topic-ref', undefined, controller.signal)).resolves.toEqual({ showInHome: false })
+    expect(post).toHaveBeenLastCalledWith('/api/v1/topics/display/metadata', { topic_uid: 'archive' }, session, controller.signal)
+    expect(invalidate).not.toHaveBeenCalled()
+    await expect(service.topicHomeVisibility('topic-ref', true, controller.signal)).resolves.toEqual({ showInHome: true })
+    expect(post).toHaveBeenLastCalledWith('/api/v1/topics/display/policy/set', { topic_uid: 'archive', show_in_home: true }, session, undefined)
+    expect(invalidate).toHaveBeenCalledWith(42, 'send_to_self')
+  })
+
+  it('excludes system topics from write candidates without losing pagination or same-name ordinary topics', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async (_input, init) => {
+      const body = JSON.parse(String(init?.body))
+      expect(body.keyword).toBe('DSH Agent Input')
+      const secondPage = body.offset === 1
+      return new Response(JSON.stringify({ code: 0, data: {
+        items: [{ topic_core: {
+          topic_uid: secondPage ? 'ordinary-topic' : 'system-topic',
+          title: 'DSH Agent Input', kind: secondPage ? 1 : 3, status: 1,
+        } }],
+        has_more: !secondPage,
+        ...(!secondPage ? { next_offset: 1 } : {}),
+      } }), { status: 200 })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+
+    const first = await service.listTopicCandidates(' DSH Agent Input ')
+    expect(first.items).toEqual([])
+    expect(first.hasMore).toBe(true)
+    expect(first.nextCursor).toBeTruthy()
+    const second = await service.listTopicCandidates('DSH Agent Input', first.nextCursor)
+    expect(second.items).toHaveLength(1)
+    expect(second.items[0]).toMatchObject({ kind: 'topic', topicKind: 1, displayName: 'DSH Agent Input' })
+    expect(second.hasMore).toBe(false)
+    expect(second.nextCursor).toBeUndefined()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('logs private avatar sealing failure without dropping the last good presentation', async () => {
     const runtime = { config } as ServiceRuntime
     const profile = {
@@ -373,7 +547,7 @@ describe('SourceService', () => {
     })).toBe('[文件]正文')
   })
 
-  it('updates a pin in the chat policy and the cloud topic pin policy', async () => {
+  it('updates only the chat pin while preserving unrelated policy fields', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
@@ -390,8 +564,8 @@ describe('SourceService', () => {
           show_in_home_state: 1, privacy_state: 2, mute_state: 2, pin_state: 1, notify_state: 2, status: 3,
         } }), { status: 200 })
       }
-      if (path === '/api/v1/chats/policy/update') return new Response(JSON.stringify({ code: 200, data: {} }), { status: 200 })
-      if (path === '/api/v1/topics/pin/set') return new Response(JSON.stringify({ code: 0, data: {} }), { status: 200 })
+      if (path === '/api/v1/chats/policy/update') return new Response(JSON.stringify({ code: 200, data: { chat_session_uid: body.chat_session_uid, user_id:42, show_in_home_state:1, privacy_state:2, mute_state:2, pin_state:2, notify_state:2, status:3, update_at:1000 } }), { status: 200 })
+      if (path === '/api/v1/topics/pin/set') return new Response(JSON.stringify({ code: 400, message: 'topic is not found' }), { status: 200 })
       throw new Error(`unexpected path: ${path}`)
     }) as typeof fetch)
     const service = new SourceService(runtime, new ProfileService(runtime), {
@@ -405,20 +579,10 @@ describe('SourceService', () => {
     })
 
     await expect(service.setChatDirectoryPin(source.sourceRef, true)).resolves.toEqual({
-      sourceRef: source.sourceRef, pinned: true,
+      sourceRef: source.sourceRef, pinned: true, policyUpdatedAtMillis: expect.any(Number),
     })
-    expect(requests).toHaveLength(3)
-    expect(requests[1]).toMatchObject({
-      path: '/api/v1/chats/policy/update',
-      body: {
-        chat_session_uid: 'chat-1', show_in_home_state: 1, privacy_state: 2, mute_state: 2,
-        pin_state: 2, notify_state: 2, status: 3,
-      },
-    })
-    expect(requests[2]).toMatchObject({
-      path: '/api/v1/topics/pin/set',
-      body: { topic_uid: 'topic-chat-1', pin_state: 1, pinned_at: expect.any(Number) },
-    })
+    expect(requests).toEqual([{ path: '/api/v1/chats/policy/update', body: { chat_session_uid: 'chat-1', patch: {pin_state:2} } }])
+    expect(requests.every(request => request.path.startsWith('/api/v1/chats/'))).toBe(true)
   })
 
   it('resolves Chat preference identity and activity without changing policy state', async () => {
@@ -634,6 +798,31 @@ describe('SourceService', () => {
     expect(latestRecordSignal?.aborted).toBe(true)
   })
 
+  it.each(['empty-title', 'long-title', 'aggregate-parent', 'uncategorized-parent'] as const)(
+    'rejects %s before creating any owner data', async invalid => {
+      const sessions: ArkmeSessionStore = {
+        async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+        async write() {}, async delete() {},
+      }
+      const fetchImpl = vi.fn(async () => { throw new Error('unexpected owner write') })
+      const runtime = new ServiceRuntime(config, sessions, {
+        async uniqueCode() { return 'device-secret' },
+      } as StateStore, fetchImpl)
+      const service = new SourceService(runtime, new ProfileService(runtime), {
+        async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+        recordItem() { return undefined },
+      })
+      const parent = invalid === 'aggregate-parent' || invalid === 'uncategorized-parent'
+        ? await service.sealSourceRef(42, invalid === 'aggregate-parent' ? 'send_to_self' : 'default_category', 'root', '入口')
+        : undefined
+      const title = invalid === 'empty-title' ? '  ' : invalid === 'long-title' ? '字'.repeat(101) : '子主题'
+      await expect(service.createTopic(title, parent)).rejects.toMatchObject({
+        code: parent === undefined ? 'topic-title-invalid' : 'topic-parent-invalid',
+      })
+      expect(fetchImpl).not.toHaveBeenCalled()
+    },
+  )
+
   it('creates a topic with an account-bound source reference', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
@@ -747,13 +936,14 @@ describe('SourceService', () => {
     expect(groupResult).toMatchObject({
       status: 'fulfilled', value: { items: [{ kind: 'group_chat', displayName: '项目群' }] },
     })
-    expect(listBodies).toEqual([
+    expect(listBodies).toHaveLength(2)
+    expect(listBodies).toEqual(expect.arrayContaining([
       { limit: 30 },
       { limit: 30, session_kind: 2 },
-    ])
+    ]))
   })
 
-  it('skips DSH Agent input records when decorating the default category preview', async () => {
+  it('excludes DSH input records and system topics from personal directory counts and previews', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
@@ -765,7 +955,12 @@ describe('SourceService', () => {
         return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: false } }), { status: 200 })
       }
       if (url.endsWith('/api/v1/topics/display/list')) {
-        return new Response(JSON.stringify({ code: 0, data: { items: [] } }), { status: 200 })
+        return new Response(JSON.stringify({ code: 0, data: { items: [
+          { topic_core: { topic_uid: 'archive', kind: 3, title: '归档', status: 1 },
+            summary: { record_count: 100, latest_send_at: 900 }, latest_record_core: { text_content: 'DSH消息', send_at: 900 } },
+          { topic_core: { topic_uid: 'ordinary', kind: 1, title: 'DSH Agent Input', status: 1 },
+            summary: { record_count: 1, latest_send_at: 100 }, latest_record_core: { text_content: '普通主题', send_at: 100 } },
+        ] } }), { status: 200 })
       }
       if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) {
         return new Response(JSON.stringify({ code: 0, data: { relations: [] } }), { status: 200 })
@@ -818,6 +1013,9 @@ describe('SourceService', () => {
 
     const result = await service.listSources('send_to_self', { refresh: true })
     const defaultCategory = result.items.find(item => item.kind === 'default_category')
+    expect(result.items.some(item => item.topicKind === 3)).toBe(false)
+    expect(result.items.filter(item => item.kind === 'topic')).toMatchObject([{ displayName: 'DSH Agent Input', recordCount: 1 }])
+    expect(result.items[0]).toMatchObject({ latestPreview: '普通发给自己', activeAtMillis: 190 })
 
     expect(defaultCategory).toMatchObject({
       displayName: '未分类',
@@ -927,8 +1125,17 @@ describe('SourceService', () => {
     const second = await service.listSources('send_to_self', { limit: 100, cursor: first.nextCursor, refresh: true })
     const parent = second.items.find(item => item.displayName === '一级主题')
 
+    const requestsFor = (path: string) => vi.mocked(fetchImpl).mock.calls.filter(([url]) => new URL(String(url)).pathname === path)
+    expect(requestsFor('/api/v1/topics/hierarchy/relations/list')).toHaveLength(1)
+    expect(requestsFor('/api/v1/records/uncategorized/query')).toHaveLength(1)
+    service.invalidateSourceListCache(42, 'send_to_self')
+    await service.listSources('send_to_self', { limit: 100, cursor: first.nextCursor })
+    expect(requestsFor('/api/v1/topics/hierarchy/relations/list')).toHaveLength(2)
+    expect(requestsFor('/api/v1/records/uncategorized/query')).toHaveLength(2)
+
     expect(displayListBodies).toEqual([
       { limit: 100, keyword: '', privacy_state: 1 },
+      { limit: 100, keyword: '', privacy_state: 1, offset: 100 },
       { limit: 100, keyword: '', privacy_state: 1, offset: 100 },
     ])
     expect(first.hasMore).toBe(true)
@@ -937,4 +1144,316 @@ describe('SourceService', () => {
     expect(child?.parentTopicHierarchyKey).toEqual(expect.any(String))
     expect(parent?.topicHierarchyKey).toBe(child?.parentTopicHierarchyKey)
   })
+})
+
+
+describe('Chat directory pin owner boundary', () => {
+  function fixture(options: { failure?: 'get' | 'update'; userId?: number; getReply?: Record<string, unknown>; updateReply?: Record<string, unknown> } = {}) {
+    const requests: Array<{ origin: string; path: string; body: Record<string, unknown> }> = []
+    const policy = { chat_session_uid: 'chat-1', user_id: options.userId ?? 42, update_at: 1000, show_in_home_state: 2, privacy_state: 2, mute_state: 2, pin_state: 1, notify_state: 2, status: 3 }
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: options.userId ?? 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ origin: url.origin, path: url.pathname, body })
+      if (url.origin !== config.chatBaseUrl) throw new Error('Chat pin must not access Record or Subject')
+      if (url.pathname === `/api/v1/chats/policy/${options.failure}`) {
+        return new Response(JSON.stringify({ code: 400, message: 'policy denied' }), { status: 200 })
+      }
+      if (url.pathname === '/api/v1/chats/list') {
+        return new Response(JSON.stringify({ code: 200, data: { has_more: false, items: [{
+          session: { chat_session_uid: 'chat-1', session_kind: 1 },
+          current_policy: policy,
+          private_supplement: { remark: '会话' },
+        }] } }), { status: 200 })
+      }
+      if (url.pathname === '/api/v1/chats/policy/get') {
+        return new Response(JSON.stringify({ code: 200, data: options.getReply ?? policy }), { status: 200 })
+      }
+      if (url.pathname === '/api/v1/chats/policy/update') {
+        Object.assign(policy, body.patch, { update_at: policy.update_at + 1 })
+        return new Response(JSON.stringify({ code: 200, data: options.updateReply ?? policy }), { status: 200 })
+      }
+      throw new Error(`Unexpected Chat endpoint: ${url.pathname}`)
+    })
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+    return { service, requests, policy, runtime, fetchImpl }
+  }
+
+  for (const kind of ['private_chat', 'group_chat'] as const) {
+    for (const pinned of [true, false]) {
+      it.each([undefined, 'unrelated-personal-topic'])(`${kind} pinned=${pinned} ignores subject metadata %s`, async sidebarSubjectUid => {
+        const { service, requests } = fixture()
+        const source = await service.sourceItem({
+          version: 1, userId: 42, kind, ownerRef: 'chat-1', displayName: '会话',
+          ...(sidebarSubjectUid === undefined ? {} : { sidebarSubjectUid }),
+        })
+        const cached = { ...source, isPinned: !pinned, unreadCount: 7, isMuted: true }
+        service.setChatSource(42, 'chat-1', cached)
+        service.setChatSource(43, 'chat-1', { ...cached, displayName: '其他账号' })
+        const before = service.cachedChatSource(42, 'chat-1')
+        const otherAccountBefore = service.cachedChatSource(43, 'chat-1')
+
+        await expect(service.setChatDirectoryPin(source.sourceRef, pinned)).resolves.toEqual({ sourceRef: source.sourceRef, pinned, policyUpdatedAtMillis: expect.any(Number) })
+        expect(requests.map(request => request.path)).toEqual(['/api/v1/chats/policy/update'])
+        expect(requests[0]?.body).toEqual({ chat_session_uid: 'chat-1', patch: { pin_state: pinned ? 2 : 1 } })
+        expect(service.cachedChatSource(42, 'chat-1')).toEqual({ ...before, isPinned: pinned, chatPolicyUpdatedAtMillis: expect.any(Number), chatNotificationPolicyUpdatedAtMillis: expect.any(Number) })
+        expect(service.cachedChatSource(43, 'chat-1')).toEqual(otherAccountBefore)
+      })
+    }
+  }
+
+  it.each(['update'] as const)('preserves the cached row when Chat policy %s fails', async failure => {
+    const { service, requests } = fixture({ failure })
+    const source = await service.sourceItem({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '会话' })
+    const cached = { ...source, isPinned: false }
+    service.setChatSource(42, 'chat-1', cached)
+    const before = service.cachedChatSource(42, 'chat-1')
+    await expect(service.setChatDirectoryPin(source.sourceRef, true)).rejects.toThrow('policy denied')
+    expect(service.cachedChatSource(42, 'chat-1')).toEqual(before)
+    expect(requests.map(request => request.path)).toEqual(['/api/v1/chats/policy/update'])
+  })
+
+  it('keeps repeated pin requests idempotent and can subsequently unpin', async () => {
+    const { service, policy } = fixture()
+    const source = await service.sourceItem({ version: 1, userId: 42, kind: 'group_chat', ownerRef: 'chat-1', displayName: '群聊' })
+    await service.setChatDirectoryPin(source.sourceRef, true)
+    await service.setChatDirectoryPin(source.sourceRef, true)
+    expect(policy.pin_state).toBe(2)
+    await service.setChatDirectoryPin(source.sourceRef, false)
+    expect(policy).toMatchObject({ pin_state: 1, privacy_state: 2, mute_state: 2, show_in_home_state: 2 })
+  })
+
+  it('projects owner policy timestamps through directory and realtime rows without regressing newer cached pins', async () => {
+    const { service, policy } = fixture()
+    Object.assign(policy, { pin_state: 2, update_at: 3000 })
+    const first = await service.listSources('root')
+    expect(first.items[0]).toMatchObject({ isPinned: true, chatPolicyUpdatedAtMillis: 3000 })
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const stale = await service.chatSourceFromBundle({
+      session: { chat_session_uid: 'chat-1', session_kind: 1 },
+      current_policy: { ...policy, pin_state: 1, update_at: 2000 },
+      unread_snapshot: { session_last_seq: 11, unread_count: 1 },
+    }, session, first.items[0], [])
+    expect(stale).toMatchObject({ isPinned: true, chatPolicyUpdatedAtMillis: 3000, latestSequence: 11, unreadCount: 1 })
+    const fresh = await service.chatSourceFromBundle({
+      session: { chat_session_uid: 'chat-1', session_kind: 1 },
+      current_policy: { ...policy, pin_state: 1, update_at: 4000 },
+    }, session, stale, [])
+    service.setChatSource(42, 'chat-1', fresh)
+    service.setChatSource(42, 'chat-1', stale)
+    expect(service.cachedChatSource(42, 'chat-1')).toMatchObject({ isPinned: false, chatPolicyUpdatedAtMillis: 4000 })
+  })
+
+  it('returns consistent notification fields when an old realtime bundle follows newer mute evidence', async () => {
+    const { service, policy } = fixture()
+    Object.assign(policy, { mute_state: 2, notify_state: 2, update_at: 2000 })
+    const first = await service.listSources('root')
+    const cached = { ...first.items[0]!, isPinned: true, chatPolicyUpdatedAtMillis: 3000 }
+    const stale = await service.chatSourceFromBundle({
+      session: { chat_session_uid: 'chat-1', session_kind: 1 },
+      current_policy: { ...policy, mute_state: 1, notify_state: 1, update_at: 1000 },
+      unread_snapshot: { unread_count: 5, session_last_seq: 12 },
+    }, { userId: 42, accessToken: 'access', refreshToken: 'refresh' }, cached, [])
+    expect(stale).toMatchObject({
+      isPinned: true, chatPolicyUpdatedAtMillis: 3000,
+      isMuted: true, chatNotificationPolicyUpdatedAtMillis: 2000,
+      unreadCount: 5, badgeUnreadCount: 0, notificationAllowed: false,
+    })
+  })
+
+  it('invalidates the directory cache and reads pin state back from Chat after each write', async () => {
+    const { service, requests } = fixture()
+    const first = await service.listSources('root')
+    const source = first.items[0]!
+    expect(source.isPinned).toBe(false)
+    await service.listSources('root')
+    expect(requests.filter(request => request.path === '/api/v1/chats/list')).toHaveLength(1)
+    await service.setChatDirectoryPin(source.sourceRef, true)
+    expect((await service.listSources('root')).items[0]?.isPinned).toBe(true)
+    await service.setChatDirectoryPin(source.sourceRef, false)
+    expect((await service.listSources('root')).items[0]?.isPinned).toBe(false)
+    expect(requests.filter(request => request.path === '/api/v1/chats/list')).toHaveLength(3)
+  })
+
+  it('does not reuse an in-flight directory read started before pinning', async () => {
+    const { service } = fixture()
+    const source = await service.sourceItem({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '会话' })
+    let releaseStale = (): void => {}
+    const staleGate = new Promise<void>(resolve => { releaseStale = resolve })
+    const staleResult: ArkmeSourceList = { directory: 'root', items: [{ ...source, isPinned: false }], hasMore: false }
+    const freshResult: ArkmeSourceList = { directory: 'root', items: [{ ...source, isPinned: true }], hasMore: false }
+    const loader = service as unknown as { listSourcesUncached(): Promise<ArkmeSourceList> }
+    const read = vi.spyOn(loader, 'listSourcesUncached')
+      .mockImplementationOnce(async () => { await staleGate; return staleResult })
+      .mockResolvedValue(freshResult)
+    const staleRead = service.listSources('root', { refresh: true })
+    await vi.waitFor(() => { expect(read).toHaveBeenCalledTimes(1) })
+    await service.setChatDirectoryPin(source.sourceRef, true)
+    const freshRead = service.listSources('root', { refresh: true })
+    try {
+      await vi.waitFor(() => { expect(read).toHaveBeenCalledTimes(2) })
+      await expect(freshRead).resolves.toEqual(freshResult)
+    } finally {
+      releaseStale()
+    }
+    await staleRead
+    await expect(service.listSources('root')).resolves.toEqual(freshResult)
+  })
+
+  it.each(['pin-ack', 'policy-notice'] as const)('retires coordinated directory reads after %s', async trigger => {
+    const { service, policy, fetchImpl, runtime } = fixture()
+    const source = await service.sourceItem({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '会话' })
+    let releaseOld!: (response: Response) => void
+    const oldResponse = new Response(JSON.stringify({ code: 200, data: { has_more: false, items: [{
+      session: { chat_session_uid: 'chat-1', session_kind: 1 },
+      current_policy: { ...policy },
+    }] } }), { status: 200 })
+    fetchImpl.mockImplementationOnce(async () => await new Promise<Response>(resolve => { releaseOld = resolve }))
+    const oldRead = service.listSources('root', { refresh: true })
+    await vi.waitFor(() => { expect(releaseOld).toBeTypeOf('function') })
+    if (trigger === 'pin-ack') await service.setChatDirectoryPin(source.sourceRef, true)
+    else {
+      policy.pin_state = 2
+      service.invalidateSourceListCache(42, 'root')
+    }
+    const callsBeforeRefresh = fetchImpl.mock.calls.length
+    const freshRead = service.listSources('root', { refresh: true })
+    try {
+      // A detached read cannot be joined after a write, but the route retains its
+      // single-execution budget until the old transport has actually settled.
+      await new Promise(resolve => setTimeout(resolve, 250))
+      expect(fetchImpl).toHaveBeenCalledTimes(callsBeforeRefresh)
+      releaseOld(oldResponse)
+      await vi.waitFor(() => { expect(fetchImpl).toHaveBeenCalledTimes(callsBeforeRefresh + 1) })
+      await expect(freshRead).resolves.toMatchObject({ items: [{ isPinned: true }] })
+    } finally {
+      releaseOld(oldResponse)
+      await Promise.allSettled([oldRead, freshRead])
+      runtime.dispose()
+    }
+    await expect(service.listSources('root')).resolves.toMatchObject({ items: [{ isPinned: true }] })
+    expect(service.cachedChatSource(42, 'chat-1')?.isPinned).toBe(true)
+  })
+
+  it('rejects a source from another account before network I/O', async () => {
+    const { service, requests } = fixture({ userId: 43 })
+    const source = await service.sourceItem({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '会话' })
+    await expect(service.setChatDirectoryPin(source.sourceRef, true)).rejects.toMatchObject({ code: 'source-ref-invalid' })
+    expect(requests).toEqual([])
+  })
+
+  it.each(['topic', 'default_category'] as const)('rejects %s as a chat pin target before network I/O', async kind => {
+    const { service, requests } = fixture()
+    const source = await service.sourceItem({ version: 1, userId: 42, kind, ownerRef: 'topic-1', displayName: '主题' })
+    await expect(service.setChatDirectoryPin(source.sourceRef, true)).rejects.toMatchObject({ code: 'chat-directory-policy-invalid' })
+    expect(requests).toEqual([])
+  })
+
+
+  it.each([
+    {}, { chat_session_uid: 'other-chat', pin_state: 2, update_at: 1000 },
+    { chat_session_uid: 'chat-1', pin_state: 0, update_at: 1000 },
+    ...[undefined, 0, -1, '1000'].map(update_at => ({ chat_session_uid: 'chat-1', pin_state: 2, update_at })),
+  ])('does not publish an invalid write acknowledgement: %j', async updateReply => {
+    const { service } = fixture({ updateReply })
+    const source = await service.sourceItem({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '会话' })
+    service.setChatSource(42, 'chat-1', { ...source, isPinned: false })
+    await expect(service.setChatDirectoryPin(source.sourceRef, true)).rejects.toMatchObject({ code: 'chat-policy-result-invalid' })
+    expect(service.cachedChatSource(42, 'chat-1')?.isPinned).toBe(false)
+  })
+
+  it('does not report success when Chat ignores a stale pin write', async () => {
+    const { service } = fixture({ updateReply: { chat_session_uid: 'chat-1', user_id:42, show_in_home_state:2, privacy_state:2, mute_state:2, notify_state:2, status:3, pin_state: 1, update_at: 2000 } })
+    const source = await service.sourceItem({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '会话' })
+    service.setChatSource(42, 'chat-1', { ...source, isPinned: false })
+    await expect(service.setChatDirectoryPin(source.sourceRef, true)).rejects.toMatchObject({ code: 'chat-policy-conflict' })
+    expect(service.cachedChatSource(42, 'chat-1')?.isPinned).toBe(false)
+  })
+
+  it('does not send an already cancelled pin request' , async () => {
+    const { service, requests } = fixture()
+    const source = await service.sourceItem({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '会话' })
+    const controller = new AbortController()
+    controller.abort()
+    await expect(service.setChatDirectoryPin(source.sourceRef, true, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    expect(requests).toEqual([])
+  })
+})
+
+  it('keeps a second directory caller alive when the first caller cancels', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let completeRead = () => {}
+    let latestRecordSignal: AbortSignal | undefined
+    const fetchImpl = vi.fn(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/v1/records/privacy/visibility-snapshot') {
+        return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: false } }), { status: 200 })
+      }
+      if (path === '/api/v1/records/uncategorized/query') {
+        latestRecordSignal = init?.signal ?? undefined
+        return await new Promise<Response>((resolve, reject) => {
+          completeRead = () => resolve(new Response(JSON.stringify({ code: 0, data: { items: [] } }), { status: 200 }))
+          const rejectAbort = (): void => reject(new DOMException('aborted', 'AbortError'))
+          if (init?.signal?.aborted === true) rejectAbort()
+          else init?.signal?.addEventListener('abort', rejectAbort, { once: true })
+        })
+      }
+      if (path === '/api/v1/topics/display/list') {
+        return new Response(JSON.stringify({ code: 0, data: { items: [] } }), { status: 200 })
+      }
+      if (path === '/api/v1/topics/hierarchy/relations/list') {
+        return new Response(JSON.stringify({ code: 0, data: { relations: [] } }), { status: 200 })
+      }
+      throw new Error(`unexpected path: ${path}`)
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+    const controller = new AbortController()
+
+    const read = service.listSources('send_to_self', { refresh: true, signal: controller.signal })
+    await vi.waitFor(() => { expect(latestRecordSignal).toBeDefined() })
+    const secondController = new AbortController()
+    const secondRead = service.listSources('send_to_self', { refresh: true, signal: secondController.signal })
+    const outcomes = Promise.allSettled([read, secondRead])
+    await new Promise(resolve => setTimeout(resolve, 0))
+    controller.abort()
+    completeRead()
+
+    const result = await outcomes
+    expect(secondController.signal.aborted).toBe(false)
+    expect(result[1]?.status).toBe('fulfilled')
+  })
+
+
+it('resolves a current-account self target without reading personal content', async () => {
+  const fetchImpl = vi.fn(() => { throw new Error('must not read topics or records') })
+  const sessions: ArkmeSessionStore = {
+    async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+    async write() {}, async delete() {},
+  }
+  const runtime = new ServiceRuntime(config, sessions, { async uniqueCode() { return 'secret' } } as StateStore, fetchImpl as typeof fetch)
+  const service = new SourceService(runtime, new ProfileService(runtime), {} as never)
+  const target = await service.selfTarget()
+  expect(target).toMatchObject({ kind: 'send_to_self', displayName: '发给自己' })
+  await expect(service.openSourceRef(target.sourceRef, 42)).resolves.toMatchObject({ userId: 42, kind: 'send_to_self', ownerRef: 'all' })
+  await expect(service.openSourceRef(target.sourceRef, 43)).rejects.toBeDefined()
+  expect(fetchImpl).not.toHaveBeenCalled()
 })

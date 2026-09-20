@@ -1,3 +1,4 @@
+import { recordToolResults, sessionEvents } from '../helpers/tool-session.js'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { CallId } from '@deepseek-ai/dsh-llm'
@@ -12,6 +13,7 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
+    recordToolResults(ctx)
     const list = vi.fn(async () => ({
       items: [{
         ownedRef: 'owned-ref', name: '天气助手', description: '天气', states: ['cordis'],
@@ -48,11 +50,12 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
-    const events: Array<Record<string, unknown>> = [
+    recordToolResults(ctx)
+    const events = sessionEvents([
       { seq: 0, type: 'turn/start', data: { turn: 1 } },
       { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '发布两个扩展' }], source: { kind: 'user' } } },
       { seq: 2, type: 'tool/call', data: { turn: 1, step: 1, callId: 'prepare', name: 'arkme_extension_publish', arguments: '{}' } },
-    ]
+    ])
     const agent = {
       id: SessionId('session-publish'),
       session: { get events() { return events } },
@@ -105,10 +108,11 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
-    const events: Array<Record<string, unknown>> = [
+    recordToolResults(ctx)
+    const events = sessionEvents([
       { seq: 0, type: 'turn/start', data: { turn: 1 } },
       { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '把新版更新到原扩展' }], source: { kind: 'user' } } },
-    ]
+    ])
     const agent = {
       id: SessionId('session-update-existing'),
       session: { get events() { return events } },

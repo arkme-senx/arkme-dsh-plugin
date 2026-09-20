@@ -1,3 +1,4 @@
+import { arkmeEscapeMarkdownText, arkmeMarkdownPlainText, arkmeMarkdownTextRanges, type ArkmeTextFormat } from '../markdown.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import type { ArkmeSourceItem, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
@@ -10,6 +11,7 @@ export function arkmeAttachmentId(item: ArkmeComposerAttachment): string { retur
 export function arkmeAttachmentMetadata(item: ArkmeComposerAttachment): ArkmeUploadedAsset | ArkmeLocalFile { return item.localFile ?? item.asset! }
 
 export interface ArkmeComposerMention {
+  originalIndex?: number
   mentionRef?: string
   botRef?: string
   all?: boolean
@@ -39,6 +41,13 @@ export interface ArkmeComposerAtomicDeletion {
   caretIndex: number
 }
 
+export interface ArkmeComposerMentionInsertion {
+  text: string
+  mentions: ArkmeComposerMention[]
+  emojis: ArkmeComposerEmoji[]
+  caretIndex: number
+}
+
 const EMPTY_DRAFT: ArkmeComposerDraftSnapshot = Object.freeze({
   text: '',
   attachments: Object.freeze([]),
@@ -52,6 +61,7 @@ export function reconcileArkmeComposerMentions(
   previousText: string,
   nextText: string,
   mentions: readonly ArkmeComposerMention[],
+  textFormat: ArkmeTextFormat = 'plain',
 ): ArkmeComposerMention[] {
   if (previousText === nextText || mentions.length === 0) return [...mentions]
   let prefix = 0
@@ -64,6 +74,7 @@ export function reconcileArkmeComposerMentions(
   const oldEnd = previousText.length - suffix
   const newEnd = nextText.length - suffix
   const delta = newEnd - oldEnd
+  const textRanges = textFormat === 'markdown' ? arkmeMarkdownTextRanges(nextText) : undefined
   return mentions.flatMap(mention => {
     const mentionEnd = mention.startIndex + mention.length
     let nextStart = mention.startIndex
@@ -71,7 +82,9 @@ export function reconcileArkmeComposerMentions(
     else if (prefix >= mentionEnd) nextStart = mention.startIndex
     else return []
     const token = `@${mention.displayName}`
-    if (nextStart < 0 || nextText.slice(nextStart, nextStart + mention.length) !== token) return []
+    const span = nextText.slice(nextStart, nextStart + mention.length)
+    if (nextStart < 0 || (textFormat === 'markdown' ? arkmeMarkdownPlainText(span) : span) !== token
+      || (textRanges && !textRanges.some(range => nextStart >= range.start && nextStart + mention.length <= range.end))) return []
     return [{ ...mention, startIndex: nextStart }]
   })
 }
@@ -180,6 +193,46 @@ export function arkmeComposerAtomicDeletion(
   }
 }
 
+export function insertArkmeComposerMentionToken(
+  snapshot: Pick<ArkmeComposerDraftSnapshot, 'text' | 'mentions' | 'emojis'>,
+  mention: Pick<ArkmeComposerMention, 'mentionRef' | 'botRef' | 'all'>,
+  displayName: string,
+  selectionStart: number,
+  selectionEnd = selectionStart,
+  textFormat: ArkmeTextFormat = 'plain',
+): ArkmeComposerMentionInsertion | undefined {
+  const normalizedDisplayName = displayName.trim()
+  const normalizedMentionRef = mention.mentionRef?.trim()
+  const normalizedBotRef = mention.botRef?.trim()
+  if (normalizedDisplayName === '') return undefined
+  if (mention.all !== true
+    && (normalizedMentionRef === undefined || normalizedMentionRef === '')
+    && (normalizedBotRef === undefined || normalizedBotRef === '')) return undefined
+  const start = Math.max(0, Math.min(snapshot.text.length, Math.trunc(selectionStart)))
+  const end = Math.max(start, Math.min(snapshot.text.length, Math.trunc(selectionEnd)))
+  const token = textFormat === 'markdown' ? arkmeEscapeMarkdownText(`@${normalizedDisplayName}`) : `@${normalizedDisplayName}`
+  const inserted = `${token} `
+  const withoutSelection = snapshot.text.slice(0, start) + snapshot.text.slice(end)
+  const text = snapshot.text.slice(0, start) + inserted + snapshot.text.slice(end)
+  const mentions = reconcileArkmeComposerMentions(snapshot.text, withoutSelection, snapshot.mentions, textFormat)
+    .map(item => item.startIndex >= start
+      ? { ...item, startIndex: item.startIndex + inserted.length }
+      : item)
+  if (mention.all === true) {
+    mentions.push({ all: true, displayName: normalizedDisplayName, startIndex: start, length: token.length })
+  } else if (normalizedBotRef !== undefined && normalizedBotRef !== '') {
+    mentions.push({ botRef: normalizedBotRef, displayName: normalizedDisplayName, startIndex: start, length: token.length })
+  } else {
+    mentions.push({ mentionRef: normalizedMentionRef!, displayName: normalizedDisplayName, startIndex: start, length: token.length })
+  }
+  mentions.sort((left, right) => left.startIndex - right.startIndex)
+  const emojis = reconcileArkmeComposerEmojis(snapshot.text, withoutSelection, snapshot.emojis)
+    .map(emoji => emoji.startIndex >= start
+      ? { ...emoji, startIndex: emoji.startIndex + inserted.length }
+      : emoji)
+  return { text, mentions, emojis, caretIndex: start + inserted.length }
+}
+
 export function arkmeComposerCanSend(text: string, attachmentCount: number, busy: boolean): boolean {
   return !busy && (text.trim() !== '' || attachmentCount > 0)
 }
@@ -275,6 +328,12 @@ export class ArkmeComposerDraftStore {
     })
   }
 
+  /** Atomic text-editor projection, including emoji restored by undo/redo. */
+  setRichText(key: string | undefined, text: string, emojis: readonly ArkmeComposerEmoji[]): void {
+    if (key === undefined) return
+    this.storeOrDelete(key, { text, emojis, mentions: [], attachments: this.get(key).attachments })
+  }
+
   insertEmoji(
     key: string | undefined,
     emoji: Pick<ArkmeEmoji, 'id' | 'token'>,
@@ -287,17 +346,24 @@ export class ArkmeComposerDraftStore {
     const start = Math.max(0, Math.min(current.text.length, Math.trunc(selectionStart)))
     const end = Math.max(start, Math.min(current.text.length, Math.trunc(selectionEnd)))
     const textWithoutSelection = current.text.slice(0, start) + current.text.slice(end)
-    const mentions = reconcileArkmeComposerMentions(current.text, textWithoutSelection, current.mentions)
-    const emojis = reconcileArkmeComposerEmojis(current.text, textWithoutSelection, current.emojis)
-      .map(item => item.startIndex >= start ? { ...item, startIndex: item.startIndex + 1 } : item)
+    const delta = 1 - (end - start)
+    const mentions = current.mentions.flatMap(item => {
+      if (item.startIndex + item.length <= start) return [item]
+      if (item.startIndex >= end) return [{ ...item, startIndex: item.startIndex + delta }]
+      return []
+    })
+    // The caller supplies the exact replacement range; repeated placeholders cannot identify it.
+    const emojis = current.emojis.flatMap(item => {
+      if (item.startIndex < start) return [item]
+      if (item.startIndex >= end) return [{ ...item, startIndex: item.startIndex + delta }]
+      return []
+    })
     emojis.push({ emojiId: emoji.id, startIndex: start })
     emojis.sort((left, right) => left.startIndex - right.startIndex)
     const next: ArkmeComposerDraftSnapshot = {
       text: textWithoutSelection.slice(0, start) + ARKME_COMPOSER_EMOJI_PLACEHOLDER + textWithoutSelection.slice(start),
       attachments: current.attachments,
-      mentions: mentions.map(mention => mention.startIndex >= start
-        ? { ...mention, startIndex: mention.startIndex + 1 }
-        : mention),
+      mentions,
       emojis,
     }
     if (serializeArkmeComposerDraft(next).text.length > maxSerializedLength) return undefined
@@ -312,43 +378,12 @@ export class ArkmeComposerDraftStore {
     selectionStart: number,
     selectionEnd = selectionStart,
   ): number | undefined {
-    const normalizedDisplayName = displayName.trim()
-    const normalizedMentionRef = mention.mentionRef?.trim()
-    const normalizedBotRef = mention.botRef?.trim()
-    if (key === undefined || normalizedDisplayName === '') return undefined
-    if (mention.all !== true
-      && (normalizedMentionRef === undefined || normalizedMentionRef === '')
-      && (normalizedBotRef === undefined || normalizedBotRef === '')) return undefined
+    if (key === undefined) return undefined
     const current = this.get(key)
-    const start = Math.max(0, Math.min(current.text.length, Math.trunc(selectionStart)))
-    const end = Math.max(start, Math.min(current.text.length, Math.trunc(selectionEnd)))
-    const token = `@${normalizedDisplayName}`
-    const inserted = `${token} `
-    const text = current.text.slice(0, start) + inserted + current.text.slice(end)
-    const mentions = reconcileArkmeComposerMentions(
-      current.text,
-      current.text.slice(0, start) + current.text.slice(end),
-      current.mentions,
-    ).map(mention => mention.startIndex >= start
-      ? { ...mention, startIndex: mention.startIndex + inserted.length }
-      : mention)
-    if (mention.all === true) {
-      mentions.push({ all: true, displayName: normalizedDisplayName, startIndex: start, length: token.length })
-    } else if (normalizedBotRef !== undefined && normalizedBotRef !== '') {
-      mentions.push({ botRef: normalizedBotRef, displayName: normalizedDisplayName, startIndex: start, length: token.length })
-    } else {
-      mentions.push({ mentionRef: normalizedMentionRef!, displayName: normalizedDisplayName, startIndex: start, length: token.length })
-    }
-    mentions.sort((left, right) => left.startIndex - right.startIndex)
-    const emojis = reconcileArkmeComposerEmojis(
-      current.text,
-      current.text.slice(0, start) + current.text.slice(end),
-      current.emojis,
-    ).map(emoji => emoji.startIndex >= start
-      ? { ...emoji, startIndex: emoji.startIndex + inserted.length }
-      : emoji)
-    this.store(key, { text, attachments: current.attachments, mentions, emojis })
-    return start + inserted.length
+    const inserted = insertArkmeComposerMentionToken(current, mention, displayName, selectionStart, selectionEnd)
+    if (inserted === undefined) return undefined
+    this.store(key, { text: inserted.text, attachments: current.attachments, mentions: inserted.mentions, emojis: inserted.emojis })
+    return inserted.caretIndex
   }
 
   insertMention(

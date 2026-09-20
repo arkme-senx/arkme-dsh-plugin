@@ -110,3 +110,14 @@ export function dshHistoryEntryUserRpcId(entry: DshRemoteHistoryEntry): string |
       ? message.source : undefined
   return typeof source?.rpcId === 'string' ? source.rpcId : undefined
 }
+
+/** Read projection only: canonical messages cover chunks, never tool calls/results. */
+export function dshTranscriptHistoryEntries(entries: readonly DshRemoteHistoryEntry[]): DshRemoteHistoryEntry[] {
+  const covered = new Set<number>()
+  for (const { event } of entries) {
+    if (event.type === 'assistant/message' && event.surfaceOp === 'append') {
+      for (const seq of event.sourceEventSeqs ?? []) covered.add(seq)
+    }
+  }
+  return entries.filter(({ event }) => event.type !== 'assistant/chunk' || !covered.has(event.seq))
+}

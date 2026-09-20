@@ -32,8 +32,15 @@ export class ArkmeAccountSessionOwner {
   ) {}
 
   start(): Promise<void> {
-    this.startTask ??= this.attestCurrent()
-    return this.startTask
+    if (this.startTask !== undefined) return this.startTask
+    const task = this.attestCurrent().catch(error => {
+      // A locked keychain or unavailable bridge must not poison every later read.
+      // Keep the failing attempt shared, but let the next caller retry attestation.
+      if (this.startTask === task) this.startTask = undefined
+      throw error
+    })
+    this.startTask = task
+    return task
   }
 
   attachGuestConversationProbe(probe: () => Promise<boolean>): void {
@@ -63,15 +70,39 @@ export class ArkmeAccountSessionOwner {
     })
   }
 
-  async delete(): Promise<void> {
+  async updateAccessToken(expected: ArkmeSessionCredentials, accessToken: string): Promise<boolean> {
     await this.start()
+    let updated = false
     await this.serial(async () => {
       const current = await this.store.read()
-      if (current === undefined) return
+      if (current?.userId !== expected.userId || current.refreshToken !== expected.refreshToken) return
+      await this.store.write({ ...current, accessToken })
+      updated = true
+    })
+    return updated
+  }
+
+  async delete(): Promise<void> {
+    await this.clearSession()
+  }
+
+  async deleteIfCurrent(expected: ArkmeSessionCredentials): Promise<boolean> {
+    return await this.clearSession(expected)
+  }
+
+  private async clearSession(expected?: ArkmeSessionCredentials): Promise<boolean> {
+    await this.start()
+    let deleted = false
+    await this.serial(async () => {
+      const current = await this.store.read()
+      if (current === undefined || expected !== undefined
+        && (current.userId !== expected.userId || current.refreshToken !== expected.refreshToken)) return
       await this.transition({ kind: 'guest' }, async () => {
         await this.store.delete()
       })
+      deleted = true
     })
+    return deleted
   }
 
   async scopedSession(): Promise<ArkmeSessionCredentials | undefined> {

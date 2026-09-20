@@ -66,6 +66,10 @@ function inertHost(apiProxy: DshApiProxyAdapter, input: {
 
 afterEach(() => { vi.useRealTimers() })
 
+async function flushLive(host: ArkmeRemoteRealtimeHost): Promise<void> {
+  await (host as unknown as { flushPendingSessionEventBatches(): Promise<void> }).flushPendingSessionEventBatches()
+}
+
 describe('Arkme remote Host account contract', () => {
   it('never writes legacy history when the Turn Outbox is not ready', async () => {
     const appendSessionEvents = vi.fn(async () => ({}))
@@ -87,6 +91,7 @@ describe('Arkme remote Host account contract', () => {
       kind: 'session-event', sessionId: 'session-01',
       entry: { event: { type: 'permission/preset', seq: 0, time: 1_400, data: {} } },
     })
+    await flushLive(host)
 
     expect(appendSessionEvents).not.toHaveBeenCalled()
     expect(publishProjectionEvent).toHaveBeenCalledOnce()
@@ -113,6 +118,7 @@ describe('Arkme remote Host account contract', () => {
       kind: 'session-event', sessionId: 'session-01',
       entry: { event: { type: 'turn/start', seq: 8, time: 1_400, data: {} } },
     })
+    await flushLive(host)
 
     expect(capture).toHaveBeenCalledOnce()
     expect(appendSessionEvents).not.toHaveBeenCalled()
@@ -134,6 +140,7 @@ describe('Arkme remote Host account contract', () => {
     const project = async (event: DshRemoteApiProjectionEvent) => {
       await (host as unknown as { publishProjectionEvent(value: DshRemoteApiProjectionEvent): Promise<void> })
         .publishProjectionEvent(event)
+      await flushLive(host)
     }
     await project({
       kind: 'session-event', sessionId: 'session-01',
@@ -228,7 +235,7 @@ describe('Arkme remote Host account contract', () => {
         expect.objectContaining({ event: expect.objectContaining({ seq: 8 }) }),
         expect.objectContaining({ event: expect.objectContaining({ seq: 10 }) }),
       ]) }),
-    }), expect.any(String))
+    }), expect.any(String), expect.any(Function))
   })
 
   it('keeps live batches independent across Sessions', async () => {
@@ -281,12 +288,13 @@ describe('Arkme remote Host account contract', () => {
     await project(8, 'assistant/chunk')
     await project(9, 'assistant/chunk')
     await project(10, 'turn/start')
+    await vi.advanceTimersByTimeAsync(0)
 
     expect(appendSessionEvents).not.toHaveBeenCalled()
     expect(published).toHaveBeenCalledOnce()
     expect(published).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.objectContaining({ run_state: 'running', presentation_version: 1 }),
-    }), expect.any(String))
+    }), expect.any(String), expect.any(Function))
     await vi.advanceTimersByTimeAsync(40)
     expect(appendSessionEvents).not.toHaveBeenCalled()
     expect(published).toHaveBeenCalledOnce()
@@ -373,6 +381,7 @@ describe('Arkme remote Host account contract', () => {
     })
 
     await Promise.all(Array.from({ length: 50 }, (_, seq) => project(seq)))
+    await vi.advanceTimersByTimeAsync(0)
     expect(appendSessionEvents).not.toHaveBeenCalled()
     expect(published).toHaveBeenCalledOnce()
 
@@ -405,9 +414,53 @@ describe('Arkme remote Host account contract', () => {
       kind: 'session-event', sessionId: 'session-a',
       entry: { event: { type: 'assistant/message', seq: 1, time: 1_400, data: {} } },
     })
+    await flushLive(host)
 
     expect(appendSessionEvents).not.toHaveBeenCalled()
     expect(publishProjectionEvent).not.toHaveBeenCalled()
+  })
+
+  it('compacts only negotiated history replies and preserves raw archive input and cursors', async () => {
+    const apiProxy = new DshApiProxyAdapter({})
+    vi.spyOn(apiProxy, 'capabilities').mockReturnValue(['session.history', 'session.history.compact'])
+    const event = (type: string, seq: number, extra = {}) => ({ event: { type, seq, time: seq, data: {}, ...extra } })
+    const entries = [
+      event('assistant/chunk', 1),
+      event('assistant/message', 2, { surfaceOp: 'append', sourceEventSeqs: [1] }),
+      event('tool/call', 3),
+      event('tool/result', 4, { surfaceOp: 'append', sourceEventSeqs: [3] }),
+      event('assistant/chunk', 5),
+      event('assistant/message', 6, { surfaceOp: { replace: [2] }, sourceEventSeqs: [5] }),
+      event('assistant/chunk', 7),
+    ]
+    const raw = { entries, hasMore: true, nextCursor: 1, projectionAsOfSeq: 7 }
+    const history = vi.spyOn(apiProxy, 'history').mockResolvedValue(raw)
+    const host = inertHost(apiProxy, {
+      sessionOwnership: new MemorySessionOwnership([['session-a', 'account-a']]),
+    })
+    Object.assign(host, {
+      started: true, connected: true, serviceLeaseGeneration: 9, accountId: 'account-a',
+      runtime: { runtimeRef: 'runtime-a', profileRef: 'web', accountId: 'account-a',
+        hostGeneration: 2, capabilities: ['session.history', 'session.history.compact'], updatedAtMillis: 1 },
+    })
+    for (const compact of [undefined, false, true]) {
+      const response = await host.dispatchAuthorizedRequest({
+        protocol: 'dsh.remote', protocol_major: 1, kind: 'request',
+        request_ref: `history-${String(compact)}`, host_generation: 2,
+        issued_at: 1_000, execute_before: 2_000, operation: 'session.history',
+        body: { session_ref: 'session-a', before_seq: 9, limit: 10,
+          ...(compact === undefined ? {} : { omit_superseded_chunks: compact }) },
+      }, { serviceLeaseGeneration: 9, metadata: {
+        senderRole: 'controller', runtimeRef: 'runtime-a', acceptedAtMillis: 1_400,
+        targetHostLeaseGeneration: 9,
+      } })
+      expect(response).toMatchObject({ status: 'completed', result: {
+        entries: compact === true ? entries.slice(1) : entries,
+        hasMore: true, nextCursor: 1, projectionAsOfSeq: 7,
+      } })
+    }
+    expect(history).toHaveBeenCalledWith({ sessionId: 'session-a', beforeSeq: 9, limit: 10 })
+    expect(raw.entries).toHaveLength(7)
   })
 
   it('rejects a direct request for another account Session without touching DSH', async () => {
@@ -790,4 +843,107 @@ describe('Arkme remote Host account contract', () => {
       status: 'rejected', host_generation: 6, error: { code: 'HOST_GENERATION_STALE' },
     })
   })
+})
+
+function liveHost() {
+  const adapter = new DshApiProxyAdapter({})
+  const published = vi.fn(async (_value: Record<string, unknown>, _ref: string, _timing?: unknown) => undefined)
+  const capture = vi.fn(async (_ref: string, _entries: Array<{ event: { seq: number } }>) => undefined)
+  const host = inertHost(adapter)
+  Object.assign(host, { started: true, connected: true, accountId: '1',
+    channelManager: { publishProjectionEvent: published }, turnUpload: { capture },
+    runtime: { runtimeRef: 'runtime-01', profileRef: 'web', accountId: '1', hostGeneration: 7,
+      capabilities: ['session.events', 'session.history'], updatedAtMillis: 1 },
+  })
+  const enqueue = (seq: number, sessionId = 'session-01') => (host as unknown as {
+    publishProjectionEvent(event: DshRemoteApiProjectionEvent): Promise<void>
+  }).publishProjectionEvent({ kind: 'session-event', sessionId,
+    entry: { event: { type: seq % 100 === 0 ? 'turn/start' : 'assistant/chunk', seq, time: seq + 1, data: {} } },
+  })
+  const clear = () => (host as unknown as { clearPendingSessionEventBatches(): void }).clearPendingSessionEventBatches()
+  return { host, adapter, published, capture, enqueue, clear }
+}
+
+it('awaits capture once, consumes exhausted wire failures and lets the next batch proceed', async () => {
+  vi.useFakeTimers()
+  const { host, published, capture, enqueue, clear } = liveHost()
+  const gate = Promise.withResolvers<void>()
+  capture.mockImplementationOnce(async () => { await gate.promise })
+  published.mockRejectedValueOnce(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'ACK failed', true))
+  await enqueue(0); await vi.advanceTimersByTimeAsync(0)
+  expect(capture).toHaveBeenCalledOnce(); expect(published).not.toHaveBeenCalled()
+  for (let seq = 1; seq <= 100; seq++) await enqueue(seq)
+  gate.resolve(); await flushLive(host)
+  expect(capture.mock.calls.flatMap(([, entries]) => entries.map(e => e.event.seq)))
+    .toEqual(Array.from({ length: 101 }, (_, i) => i))
+  expect(published).toHaveBeenCalledTimes(3)
+  await vi.advanceTimersByTimeAsync(3000)
+  expect(capture).toHaveBeenCalledTimes(3)
+  clear()
+})
+
+it('finishes an old capture without sending after an account epoch change', async () => {
+  vi.useFakeTimers()
+  const { host, published, capture, enqueue, clear } = liveHost()
+  const gate = Promise.withResolvers<void>()
+  capture.mockImplementationOnce(async () => { await gate.promise })
+  await enqueue(0); await vi.advanceTimersByTimeAsync(0)
+  expect(capture).toHaveBeenCalledOnce()
+  const internal = host as unknown as { accountGeneration: number }
+  internal.accountGeneration++
+  gate.resolve(); await flushLive(host)
+  expect(published).not.toHaveBeenCalled()
+  await enqueue(1); await flushLive(host)
+  expect(published).toHaveBeenCalledOnce()
+  expect(capture.mock.calls.map(([, entries]) => entries.map(e => e.event.seq))).toEqual([[0], [1]])
+  clear()
+})
+
+it('replays bounded overflow including a newly observed session using the live ownership policy', async () => {
+  vi.useFakeTimers()
+  const { host, adapter, capture, enqueue, clear } = liveHost()
+  const gate = Promise.withResolvers<void>()
+  capture.mockImplementationOnce(async () => { await gate.promise })
+  const history = vi.spyOn(adapter, 'history').mockImplementation(async ({ sessionId, beforeSeq }) => {
+    const upper = (beforeSeq ?? 4202) - 1
+    // A short tail page with gaps forces the Host to shrink a requested forward range.
+    const start = Math.max(0, upper - 19)
+    return { entries: Array.from({ length: upper - start + 1 }, (_, i) => ({
+      event: { type: 'assistant/chunk', seq: start + i, time: start + i + 1, data: {} },
+    })), hasMore: start > 0, ...(start > 0 ? { nextCursor: start } : {}),
+      ...(beforeSeq === undefined ? { projectionAsOfSeq: sessionId === 'session-02' ? 1 : 4201 } : {}),
+    }
+  })
+  await enqueue(0); await vi.advanceTimersByTimeAsync(0)
+  for (let seq = 1; seq <= 4201; seq++) await enqueue(seq)
+  await enqueue(0, 'session-02'); await enqueue(1, 'session-02')
+  gate.resolve(); await flushLive(host)
+  expect(history).toHaveBeenCalled()
+  for (const [ref, count] of [['session-01', 4202], ['session-02', 2]] as const) {
+    expect(capture.mock.calls.filter(([sessionRef]) => sessionRef === ref).flatMap(([, entries]) => entries.map(e => e.event.seq)))
+      .toEqual(Array.from({ length: count }, (_, i) => i))
+  }
+  clear()
+})
+
+it('records delivery stage totals with account correlation only after the report interval', async () => {
+  vi.useFakeTimers()
+  const { host, published, enqueue, clear } = liveHost()
+  const diagnostic = vi.fn()
+  Object.assign(host, { diagnostic })
+  published.mockImplementation(async (_value, _ref, callback) => {
+    (callback as (timing: unknown) => void)({ queueMs: 2, publishMs: 80, completed: true })
+  })
+  await enqueue(0); await flushLive(host)
+  expect(diagnostic).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(10_000)
+  ;(host as unknown as { reportLiveDelivery(): void }).reportLiveDelivery()
+  expect(diagnostic).toHaveBeenCalledOnce()
+  expect(diagnostic).toHaveBeenCalledWith('live_delivery_window', expect.objectContaining({
+    user_id: '1', runtime_ref: 'runtime-01', batch_count: 1, event_count: 1, incomplete_batches: 0,
+    channel_queue_ms_sum: 2, publish_ack_ms_sum: 80, capture_ms_sum: 0,
+  }))
+  clear()
+  ;(host as unknown as { reportLiveDelivery(): void }).reportLiveDelivery()
+  expect(diagnostic).toHaveBeenCalledOnce()
 })

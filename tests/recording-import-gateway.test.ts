@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { RecordingImportJob } from '../src/recording-import-contract.js'
+import { RecordingImportContractError, type RecordingImportJob } from '../src/recording-import-contract.js'
 import { AudioRecordingImportGateway } from '../src/services/recording-import-gateway.js'
 import type { ServiceRuntime } from '../src/services/service.js'
 
@@ -50,6 +50,145 @@ function gatewayForOwnerProgress(itemLs: Array<Record<string, unknown>>): AudioR
 }
 
 describe('AudioRecordingImportGateway', () => {
+  describe('directory import owner lookup', () => {
+    function setup(reply: (body: Record<string, unknown>) => unknown) {
+      const authenticatedAudioPost = vi.fn(async (path: string, body: Record<string, unknown>) => {
+        expect(path).toBe('/api/v1/audio/get-session-ls')
+        return reply(body)
+      })
+      const runtime = {
+        async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+        authenticatedAudioPost,
+      } as unknown as ServiceRuntime
+      return { gateway: new AudioRecordingImportGateway(runtime), authenticatedAudioPost }
+    }
+
+    const lookup = {
+      viewerUserId: 42, fileNames: ['meeting.wav'],
+      fromMillis: 1_725_000_000_000, toMillis: 1_725_000_010_000,
+    }
+
+    it.each([0, 42, 77])('preserves exact recording ownership %s independently of display categories', async belongUserId => {
+      const { gateway } = setup(() => ({ session_ls: [{ ...ownerRow('match'), orig_name: 'meeting.wav', belong_usr: belongUserId }] }))
+      const matches = await gateway.findDirectoryImportSessions(lookup)
+      expect(matches).toEqual([expect.objectContaining({ belongUserId })])
+      expect(matches[0]).not.toHaveProperty('ownership')
+    })
+
+    it.each([undefined, null, '0', '', -1, 0.5, Number.MAX_SAFE_INTEGER + 1])('rejects invalid precise recording ownership %s', async belongUserId => {
+      const { gateway } = setup(() => ({ session_ls: [{ ...ownerRow('match'), orig_name: 'meeting.wav', belong_usr: belongUserId }] }))
+      await expect(gateway.findDirectoryImportSessions(lookup)).rejects.toMatchObject({ code: 'recording-import-session-invalid' })
+    })
+
+    it('does not request Audio for empty file names', async () => {
+      const { gateway, authenticatedAudioPost } = setup(() => ({ session_ls: [] }))
+
+      await expect(gateway.findDirectoryImportSessions({ ...lookup, fileNames: [] })).resolves.toEqual([])
+      await expect(gateway.findDirectoryImportSessions({ ...lookup, fileNames: [' ', ''] })).resolves.toEqual([])
+      expect(authenticatedAudioPost).not.toHaveBeenCalled()
+    })
+
+    it('keeps every same-name owner session and its upload facts across unscoped pages', async () => {
+      const firstPage = Array.from({ length: 100 }, (_, index) => ({
+        ...ownerRow(`session-${String(index)}`), start_at: lookup.toMillis - index - 1,
+        orig_name: index === 0 ? 'MEETING.WAV' : `unrelated-${String(index)}.wav`,
+      }))
+      const secondPage = [
+        { ...ownerRow('same-name-pending', false), orig_name: 'meeting.wav', belong_usr: 0 },
+        { ...ownerRow('another-source'), source: 1, orig_name: 'meeting.wav' },
+      ]
+      const signal = new AbortController().signal
+      const { gateway, authenticatedAudioPost } = setup(body => ({
+        session_ls: body.offset === 0 ? firstPage : secondPage,
+      }))
+
+      await expect(gateway.findDirectoryImportSessions({ ...lookup, signal })).resolves.toEqual([
+        expect.objectContaining({ sessionId: 'session-0', fileName: 'MEETING.WAV', hasFinishedUpload: true }),
+        expect.objectContaining({ sessionId: 'same-name-pending', hasFinishedUpload: false, belongUserId: 0 }),
+      ])
+      expect(authenticatedAudioPost.mock.calls.map(call => call[1])).toEqual([
+        { to_stamp: lookup.toMillis, limit: 100, offset: 0, query_new: false },
+        { to_stamp: lookup.toMillis, limit: 100, offset: 100, query_new: false },
+      ])
+      expect(authenticatedAudioPost).toHaveBeenLastCalledWith(
+        '/api/v1/audio/get-session-ls', expect.any(Object),
+        { userId: 42, accessToken: 'access', refreshToken: 'refresh' }, signal, {},
+      )
+    })
+
+    it('includes the lower time boundary and stops when a full page reaches older sessions', async () => {
+      const rows = Array.from({ length: 100 }, (_, index) => ({
+        ...ownerRow(`session-${String(index)}`), orig_name: 'meeting.wav', start_at: lookup.fromMillis - index,
+      }))
+      const { gateway, authenticatedAudioPost } = setup(() => ({ session_ls: rows }))
+
+      await expect(gateway.findDirectoryImportSessions(lookup)).resolves.toEqual([
+        expect.objectContaining({ sessionId: 'session-0', startAtMillis: lookup.fromMillis }),
+      ])
+      expect(authenticatedAudioPost).toHaveBeenCalledOnce()
+    })
+
+    it.each([undefined, null, {}, { session_ls: null }, { session_ls: {} }])(
+      'rejects a non-array session response instead of returning an empty match: %j', async response => {
+        const { gateway } = setup(() => response)
+
+        await expect(gateway.findDirectoryImportSessions(lookup)).rejects.toBeInstanceOf(RecordingImportContractError)
+      },
+    )
+
+    it.each([{ id: '' }, { duration: -1 }, { start_at: '1725000000000' }, { end_at: -1 }])(
+      'rejects invalid same-name owner evidence instead of returning partial matches: %j', async invalid => {
+        const { gateway } = setup(() => ({ session_ls: [
+          { ...ownerRow('valid'), orig_name: 'meeting.wav' },
+          { ...ownerRow('invalid'), orig_name: 'meeting.wav', ...invalid },
+        ] }))
+
+        await expect(gateway.findDirectoryImportSessions(lookup)).rejects.toBeInstanceOf(RecordingImportContractError)
+      },
+    )
+
+    it('rejects repeated pages without progress instead of returning partial matches', async () => {
+      const rows = Array.from({ length: 100 }, (_, index) => ({
+        ...ownerRow(`session-${String(index)}`), orig_name: 'meeting.wav',
+      }))
+      const { gateway, authenticatedAudioPost } = setup(() => ({ session_ls: rows }))
+
+      await expect(gateway.findDirectoryImportSessions(lookup)).rejects.toMatchObject({
+        name: 'RecordingImportContractError', retryable: true,
+      })
+      expect(authenticatedAudioPost).toHaveBeenCalledTimes(2)
+    })
+
+    it('rejects an unfinished scan at its bounded limit', async () => {
+      const { gateway, authenticatedAudioPost } = setup(body => ({
+        session_ls: Array.from({ length: Number(body.limit) }, (_, index) => ({
+          ...ownerRow(`session-${String(Number(body.offset) + index)}`), orig_name: 'meeting.wav',
+        })),
+      }))
+
+      await expect(gateway.findDirectoryImportSessions(lookup)).rejects.toMatchObject({
+        name: 'RecordingImportContractError', retryable: true,
+      })
+      expect(authenticatedAudioPost).toHaveBeenCalledTimes(100)
+    })
+
+    it('rechecks the active account before every directory lookup page', async () => {
+      let currentUserId = 42
+      const authenticatedAudioPost = vi.fn(async () => {
+        currentUserId = 77
+        return { session_ls: Array.from({ length: 100 }, (_, index) => ownerRow(`session-${String(index)}`)) }
+      })
+      const runtime = {
+        async requireSession() { return { userId: currentUserId, accessToken: 'access', refreshToken: 'refresh' } },
+        authenticatedAudioPost,
+      } as unknown as ServiceRuntime
+
+      await expect(new AudioRecordingImportGateway(runtime).findDirectoryImportSessions(lookup))
+        .rejects.toMatchObject({ code: 'recording-import-account-mismatch', retryable: true })
+      expect(authenticatedAudioPost).toHaveBeenCalledOnce()
+    })
+  })
+
   it('keeps Audio duplicate lookup batching behind the owner gateway', async () => {
     const posts: Array<{ path: string; body: Record<string, unknown> }> = []
     const runtime = {
@@ -71,6 +210,30 @@ describe('AudioRecordingImportGateway', () => {
       { path: '/api/v1/audio/check-exist-same-orig', body: { orig_names: names.slice(100, 200) } },
       { path: '/api/v1/audio/check-exist-same-orig', body: { orig_names: names.slice(200) } },
     ])
+  })
+
+  it.each([undefined, null, {}, { exist_names: null }, { exist_names: 'meeting.wav' }, { exist_names: [null] }, { exist_names: [42] }, { exist_names: [''] }, { exist_names: ['another.wav'] }])(
+    'rejects malformed owner duplicate results without assuming no matching recording: %j', async response => {
+      const runtime = {
+        async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+        async authenticatedAudioPost() { return response },
+      } as unknown as ServiceRuntime
+
+      await expect(new AudioRecordingImportGateway(runtime).findExistingFileNames({
+        viewerUserId: 42, fileNames: ['meeting.wav'],
+      })).rejects.toBeInstanceOf(RecordingImportContractError)
+    },
+  )
+
+  it('accepts the empty array returned by Audio when no duplicate exists', async () => {
+    const runtime = {
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost() { return { exist_names: [] } },
+    } as unknown as ServiceRuntime
+
+    await expect(new AudioRecordingImportGateway(runtime).findExistingFileNames({
+      viewerUserId: 42, fileNames: ['meeting.wav'],
+    })).resolves.toEqual([])
   })
 
   it('rejects owner reads when the active account changes after business scope capture', async () => {
@@ -607,7 +770,7 @@ describe('AudioRecordingImportGateway', () => {
     expect(JSON.stringify(posts)).not.toContain('access_key_secret')
   })
 
-  it('closes the final owner duplicate race with the same case-insensitive file-name identity', async () => {
+  it('rejects names returned by the owner using the conservative local conflict key', async () => {
     const runtime = {
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async authenticatedAudioPost(path: string) {
@@ -622,6 +785,47 @@ describe('AudioRecordingImportGateway', () => {
       code: 'recording-import-duplicate',
       retryable: false,
     })
+  })
+
+  it.each([{}, null, { exist_names: null }, { exist_names: 'meeting.m4a' },
+    { exist_names: [null] }, { exist_names: [''] }, { exist_names: ['unrelated.m4a'] },
+  ])('does not create an owner session from an invalid final duplicate response: %j', async response => {
+    const posts: string[] = []
+    const runtime = {
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string) {
+        posts.push(path)
+        if (path.endsWith('/get-session-ls')) return { session_ls: [] }
+        if (path.endsWith('/check-exist-same-orig')) return response
+        return { session_id: 'must-not-create' }
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.ensureSession(job())).rejects.toMatchObject({
+      code: 'recording-import-duplicate-response-invalid', retryable: true,
+    })
+    expect(posts).toEqual(['/api/v1/audio/get-session-ls', '/api/v1/audio/check-exist-same-orig'])
+  })
+
+  it.each([{}, null, { session_ls: null }, { session_ls: {} }, { session_ls: [null] }, { session_ls: ['session'] },
+  ])('does not treat an invalid session recovery response as a missing checkpoint: %j', async response => {
+    const posts: string[] = []
+    const runtime = {
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string) {
+        posts.push(path)
+        if (path.endsWith('/get-session-ls')) return response
+        if (path.endsWith('/check-exist-same-orig')) return { exist_names: [] }
+        return { session_id: 'must-not-create' }
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.ensureSession(job())).rejects.toMatchObject({
+      code: 'recording-import-session-recovery-invalid', retryable: true,
+    })
+    expect(posts).toEqual(['/api/v1/audio/get-session-ls'])
   })
 
   it('recovers its exact session checkpoint before duplicate-name rejection', async () => {

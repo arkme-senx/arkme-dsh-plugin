@@ -9,6 +9,8 @@ import {
   interwovenDetailTimeLabel,
   interwovenTimeLabel,
   mergeConversationRows,
+  projectInterwovenWindow,
+  ArkmeInterwovenPrelude,
   resolveInterwovenGroupTarget,
 } from '../src/client/interwoven-moments.js'
 
@@ -31,6 +33,79 @@ function source(sourceRef: string, kind: ArkmeSourceItem['kind'], displayName: s
 }
 
 describe('interwoven conversation projection', () => {
+  it('keeps a calendar target inline even before the oldest loaded message without duplicating the prelude', () => {
+    const cards = [moment('old', 10), moment('target', 20), moment('later', 50)]
+    expect(projectInterwovenWindow([message('latest', 40)], cards, true).inline.map(item => item.momentId)).toEqual(['later'])
+    const window = projectInterwovenWindow([message('latest', 40)], cards, true, 20)
+    expect(window.inline.map(item => item.momentId)).toEqual(['target', 'later'])
+    expect(window.prelude).toEqual([])
+    const html = renderToStaticMarkup(<ArkmeInterwovenMentionCard moment={cards[1]!} rowId="moment:target" highlighted onOpen={() => {}} />)
+    expect(html).toContain('data-arkme-conversation-row="moment:target"')
+    expect(html).toContain('outline:1px solid')
+  })
+  it('keeps a same-time forward comment after its card by chat sequence among events', () => {
+    const card = { ...message('forward_record_example', 20), sequence: 41 }
+    const comment = { ...message('forward_comment_record_example', 20), sequence: 42 }
+    const event = { eventId: 'leave', type: 'left' as const, occurredAtMillis: 20, displayName: '同事' }
+    const rows = mergeConversationRows([comment, card], [moment('moment', 20)], [event])
+    expect(rows.map(row => row.id)).toEqual([
+      'member-event:leave', 'message:forward_record_example',
+      'message:forward_comment_record_example', 'moment:moment',
+    ])
+  })
+
+  it('keeps time ahead of sequence and preserves identity order without chat sequences', () => {
+    const rows = mergeConversationRows([
+      { ...message('early', 10), sequence: 100 },
+      { ...message('late', 20), sequence: 1 },
+      message('z-self', 30), message('a-self', 30),
+    ], [])
+    expect(rows.map(row => row.id)).toEqual(['message:early', 'message:late', 'message:a-self', 'message:z-self'])
+  })
+
+  it('keeps mixed-row order independent of input order for tied times', () => {
+    const messages = [
+      { ...message('forward_record_x', 20), sequence: 5 },
+      { ...message('forward_comment_record_x', 20), sequence: 6 },
+      message('pending', 20),
+    ]
+    const events = [{ eventId: 'left', type: 'left' as const, occurredAtMillis: 20, displayName: '同事' }]
+    const expected = ['member-event:left', 'message:pending', 'message:forward_record_x', 'message:forward_comment_record_x', 'moment:a']
+    for (const order of [[0,1,2], [0,2,1], [1,0,2], [1,2,0], [2,0,1], [2,1,0]]) {
+      expect(mergeConversationRows(order.map(i => messages[i]!), [moment('a', 20)], events).map(row => row.id)).toEqual(expected)
+    }
+  })
+
+  it('collapses all early cards without dropping them from the prelude', async () => {
+    const cards = Array.from({ length: 21 }, (_, i) => moment(String(i), i + 1))
+    const projection = projectInterwovenWindow([message('latest', 100)], cards, true)
+    expect(projection.inline).toEqual([])
+    expect(projection.prelude).toEqual(cards)
+    let tree!: ReturnType<typeof create>
+    await act(async () => { tree = create(<ArkmeInterwovenPrelude moments={projection.prelude} onOpen={() => {}} />) })
+    expect(tree.root.findAllByType(ArkmeInterwovenMentionCard).map(node => node.props.moment.momentId)).toEqual(['19', '20'])
+    await act(async () => { tree.root.findByProps({ 'data-arkme-interwoven-expand': true }).props.onClick() })
+    expect(tree.root.findAllByType(ArkmeInterwovenMentionCard)).toHaveLength(21)
+    await act(async () => { tree.update(<ArkmeInterwovenPrelude key="another-conversation" moments={cards} onOpen={() => {}} />) })
+    expect(tree.root.findAllByType(ArkmeInterwovenMentionCard)).toHaveLength(2)
+    await act(async () => { tree.unmount() })
+  })
+
+  it('reclassifies cards as the message window grows and reveals the prelude when history ends', () => {
+    const cards = [moment('early', 10), moment('boundary', 20), moment('inside', 30), moment('newer', 70)]
+    const messages = [message('new', 60), message('old', 20)]
+    expect(projectInterwovenWindow(messages, cards, true)).toEqual({ prelude: [], inline: cards.slice(2) })
+    expect(projectInterwovenWindow(messages, cards, false)).toEqual({ prelude: cards.slice(0, 2), inline: cards.slice(2) })
+    expect(projectInterwovenWindow([message('older', 5), ...messages], cards, true)).toEqual({ prelude: [], inline: cards })
+    expect(projectInterwovenWindow([], cards, false)).toEqual({ prelude: cards, inline: [] })
+  })
+
+  it('deduplicates by card identity and keeps input arrays untouched', () => {
+    const a = moment('a', 10), b = moment('b', 10)
+    const input = [b, a, a]
+    expect(projectInterwovenWindow([message('m', 20)], input, true).prelude).toEqual([a, b])
+    expect(input).toEqual([b, a, a])
+  })
   it('inserts unique member events between quick notes using occurrence time and stable ties', () => {
     const left = {eventId:'leave-1',type:'left' as const,occurredAtMillis:15,displayName:'李四'}
     const rows = mergeConversationRows([message('early',10),message('late',20)],[],[left,left,{...left,eventId:'leave-2',occurredAtMillis:20}])

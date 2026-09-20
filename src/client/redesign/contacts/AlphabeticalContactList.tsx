@@ -1,3 +1,4 @@
+import { tr } from '../../locale.js'
 import type { ArkmeBotSummary, ArkmeDirectoryItem } from '../../../types.js'
 import { groupContactDirectoryItems } from '../../../contact-directory-presentation.js'
 import { ArkmeDefaultAvatarFrame, ArkmeSourceAvatar, ArkmeUserAvatar } from '../../ArkmeAvatar.js'
@@ -12,10 +13,10 @@ export interface DirectoryItemRowProps {
   onSelect(selection: ArkmeDirectorySelection): void
 }
 
-function ArkmeDirectoryBotGlyph() {
+export function ArkmeDirectoryBotGlyph({ size = 38 }: { size?: number }) {
   return <svg
-    width={38 * .68}
-    height={38 * .68}
+    width={size * .68}
+    height={size * .68}
     viewBox="0 0 24 24"
     fill="none"
     aria-hidden
@@ -69,7 +70,7 @@ function rowContent(item: ArkmeDirectoryItem) {
   const avatarRef = 'avatarRef' in item ? item.avatarRef : undefined
   return <>
     {item.kind === 'group'
-      ? <span className="arkme-contact-directory-avatar" role="img" aria-label={`${item.displayName}的群聊头像`}>
+      ? <span className="arkme-contact-directory-avatar" role="img" aria-label={tr("{v0}的群聊头像", { v0: item.displayName })}>
           <ArkmeSourceAvatar
             kind="group"
             {...(item.groupAvatar === undefined ? {} : { groupAvatar: item.groupAvatar })}
@@ -77,17 +78,17 @@ function rowContent(item: ArkmeDirectoryItem) {
           />
         </span>
       : item.kind === 'bot'
-        ? <span className="arkme-contact-directory-avatar is-bot" role="img" aria-label={`${item.bot.name}的机器人头像`}>
+        ? <span className="arkme-contact-directory-avatar is-bot" role="img" aria-label={tr("{v0}的机器人头像", { v0: item.bot.name })}>
             <ArkmeDefaultAvatarFrame>
               <ArkmeDirectoryBotGlyph />
             </ArkmeDefaultAvatarFrame>
           </span>
         : item.kind === 'unmarked-speaker'
           ? <span className="arkme-contact-directory-avatar">
-              <UnmarkedSpeakerTokenAvatar token={item.speakerToken} label={`${item.displayName}的说话人头像`} />
+              <UnmarkedSpeakerTokenAvatar token={item.speakerToken} label={tr("{v0}的说话人头像", { v0: item.displayName })} />
             </span>
         : item.kind === 'team'
-          ? <span className="arkme-contact-directory-avatar is-team" role="img" aria-label={`${item.displayName}的团队头像`}>
+          ? <span className="arkme-contact-directory-avatar is-team" role="img" aria-label={tr("{v0}的团队头像", { v0: item.displayName })}>
               <ArkmeDefaultAvatarFrame>
                 <ArkmeDirectoryTeamGlyph />
               </ArkmeDefaultAvatarFrame>
@@ -96,7 +97,7 @@ function rowContent(item: ArkmeDirectoryItem) {
               <ArkmeUserAvatar
                 {...(avatarRef === undefined ? {} : { avatarRef })}
                 size={38}
-                label={`${item.displayName}的头像`}
+                label={tr("{v0}的头像", { v0: item.displayName })}
               />
             </span>}
     <span className="arkme-contact-directory-row-copy">
@@ -109,8 +110,6 @@ function rowContent(item: ArkmeDirectoryItem) {
 export function DirectoryItemRow({
   item,
   selected,
-  onOpenGroup,
-  onOpenBot,
   onSelect,
 }: DirectoryItemRowProps) {
   const selection = item.kind === 'contact'
@@ -119,7 +118,7 @@ export function DirectoryItemRow({
       ? { kind: 'unmarked-speaker', candidateRef: item.candidateRef } as const
       : item.kind === 'team'
         ? { kind: 'team', teamRef: item.teamRef } as const
-      : undefined
+      : item
   return <button
     type="button"
     className={`arkme-contact-directory-row${selected ? ' is-selected' : ''}`}
@@ -127,9 +126,7 @@ export function DirectoryItemRow({
     data-directory-row-ref={item.kind === 'group' ? item.sourceRef : item.kind === 'bot' ? item.bot.botRef : selection === undefined ? '' : item.kind === 'contact' ? item.contactRef : item.kind === 'team' ? item.teamRef : item.candidateRef}
     {...(selection === undefined ? {} : { 'aria-current': selected as true | false })}
     onClick={() => {
-      if (item.kind === 'group') onOpenGroup(item.sourceRef)
-      else if (item.kind === 'bot') onOpenBot(item.bot)
-      else onSelect(selection ?? { kind: 'none' })
+      onSelect(selection)
     }}
   >{rowContent(item)}</button>
 }

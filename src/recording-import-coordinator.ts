@@ -1,6 +1,7 @@
 import {
   RecordingImportContractError,
   advanceRecordingImportJob,
+  isRecordingImportDuplicateRejection,
   type RecordingImportJob,
   type RecordingImportPhase,
   type RecordingImportSource,
@@ -8,7 +9,7 @@ import {
 
 export interface RecordingImportStore {
   getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined>
-  replaceRecordingImportJob(userId: number, job: RecordingImportJob, expectedRevision: number): Promise<boolean>
+  replaceRecordingImportJob(userId: number, job: RecordingImportJob, expectedRevision: number, signal?: AbortSignal): Promise<boolean>
 }
 
 export interface RecordingImportGateway {
@@ -24,14 +25,19 @@ export interface RecordingImportGateway {
   deleteSession(job: RecordingImportJob): Promise<void>
 }
 
-function errorDetail(error: unknown): { code: string; message: string; retryable: boolean } {
+function importFailure(error: unknown): { code: string; message: string; retryable: boolean } {
   if (error instanceof RecordingImportContractError) {
     return { code: error.code, message: error.message, retryable: error.retryable }
   }
   if (error !== null && typeof error === 'object') {
     const source = error as { code?: unknown; message?: unknown; retryable?: unknown }
     if (typeof source.code === 'string' && typeof source.message === 'string') {
-      return { code: source.code, message: source.message, retryable: source.retryable === true }
+      return {
+        code: source.code,
+        message: source.message,
+        // A login request cannot retry itself; the retained upload can resume after sign-in.
+        retryable: source.retryable === true || source.code === 'login-required' || source.code === 'login-expired',
+      }
     }
   }
   return {
@@ -69,13 +75,20 @@ export class RecordingImportCoordinator {
       const current = await this.requiredJob(userId, jobId)
       if (signal?.aborted === true) return current
       if (current.phase === 'accepted' || current.phase === 'cancelled' || current.phase === 'failed') return current
-      const detail = errorDetail(error)
-      return await this.transition(current, 'failed', {
+      const detail = importFailure(error)
+      const failure = {
         failedFromPhase: current.phase,
         errorCode: detail.code,
         errorMessage: detail.message,
         retryable: detail.retryable,
+      }
+      const rejected = isRecordingImportDuplicateRejection({ ...current, ...failure, phase: 'failed' })
+      const failed = await this.transition(current, 'failed', {
+        ...failure,
+        ...(rejected ? { sourceHandle: '' } : {}),
       })
+      if (rejected) await this.source.discard(current.sourceHandle).catch(() => undefined)
+      return failed
     }
   }
 
@@ -84,8 +97,10 @@ export class RecordingImportCoordinator {
     return await this.run(userId, resumed.jobId)
   }
 
-  async resumeRetry(userId: number, jobId: string, expectedRevision: number): Promise<RecordingImportJob> {
+  async resumeRetry(userId: number, jobId: string, expectedRevision: number, signal?: AbortSignal): Promise<RecordingImportJob> {
+    this.throwIfAborted(signal)
     const failed = await this.requiredJob(userId, jobId)
+    this.throwIfAborted(signal)
     if (failed.revision !== expectedRevision) {
       throw new RecordingImportContractError('recording-import-revision-conflict', '任务状态已变化，请刷新后重试', true)
     }
@@ -97,7 +112,7 @@ export class RecordingImportCoordinator {
       errorMessage: undefined,
       retryable: undefined,
       failedFromPhase: undefined,
-    })
+    }, signal)
   }
 
   async cancel(userId: number, jobId: string, expectedRevision: number): Promise<RecordingImportJob> {
@@ -206,6 +221,7 @@ export class RecordingImportCoordinator {
     job: RecordingImportJob,
     phase: RecordingImportPhase,
     updates: Partial<RecordingImportJob> = {},
+    signal?: AbortSignal,
   ): Promise<RecordingImportJob> {
     const next = advanceRecordingImportJob(job, {
       expectedRevision: job.revision,
@@ -213,7 +229,7 @@ export class RecordingImportCoordinator {
       nowMillis: this.nowMillis(),
       ...updates,
     })
-    if (!await this.store.replaceRecordingImportJob(job.userId, next, job.revision)) {
+    if (!await this.store.replaceRecordingImportJob(job.userId, next, job.revision, signal)) {
       throw new RecordingImportContractError('recording-import-revision-conflict', '任务状态已变化，请刷新后重试', true)
     }
     return next

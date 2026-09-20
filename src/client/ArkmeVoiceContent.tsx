@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Play } from '@phosphor-icons/react/dist/icons/Play'
 import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
@@ -52,6 +53,7 @@ export function ArkmeVoiceContent(props: ArkmeVoiceContentProps) {
 }
 
 function VoiceContent({ src = '', playlist, durationSeconds, resolveSrc, visualization, contentLabel = '语音', children, collapsible = false, maxLines = 5, downloadName }: ArkmeVoiceContentProps) {
+  useArkmeLocale()
   const playlistSources = playlist?.filter(value => value.trim() !== '') ?? []
   const sources = playlistSources.length > 0 ? playlistSources : src === '' ? [] : [src]
   const initialSrc = sources[0] ?? ''
@@ -213,14 +215,14 @@ function VoiceContent({ src = '', playlist, durationSeconds, resolveSrc, visuali
     await playSource(url, sourceIndex.current, lease, controller)
   }
 
-  const label = status === 'loading' ? `正在加载${normalizedContentLabel}` : unavailable ? `${normalizedContentLabel}暂不可播放` : status === 'error' ? `重试播放${normalizedContentLabel}` : status === 'playing' ? `暂停${normalizedContentLabel}` : `播放${normalizedContentLabel}`
+  const label = status === 'loading' ? tr("正在加载{v0}", { v0: normalizedContentLabel }) : unavailable ? tr("{v0}暂不可播放", { v0: normalizedContentLabel }) : status === 'error' ? tr("重试播放{v0}", { v0: normalizedContentLabel }) : status === 'playing' ? tr("暂停{v0}", { v0: normalizedContentLabel }) : tr("播放{v0}", { v0: normalizedContentLabel })
   return <div style={styles.root} data-arkme-voice="inline" data-arkme-voice-state={status}>
     <div style={{ ...styles.content, ...(!expanded && collapsible ? { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: maxLines, overflow: 'hidden' } as CSSProperties : {}) }}>
       <button
         type="button"
         style={{ ...styles.control, ...(unavailable ? { opacity: .5, cursor: 'default' } : {}) }}
         disabled={unavailable}
-        aria-label={`${label}，时长 ${totalLabel}`}
+        aria-label={tr("{v0}，时长 {v1}", { v0: label, v1: totalLabel })}
         aria-pressed={status === 'playing'}
         aria-busy={status === 'loading'}
         title={status === 'loading' ? '正在加载，点击取消' : label}
@@ -239,9 +241,8 @@ function VoiceContent({ src = '', playlist, durationSeconds, resolveSrc, visuali
     {collapsible && <button type="button" style={styles.action} aria-expanded={expanded}
       onClick={event => { event.stopPropagation(); setExpanded(value => !value) }}
       onKeyDown={event => { event.stopPropagation() }} onKeyUp={event => { event.stopPropagation() }}
-    >{expanded ? '收起' : '展开'}</button>}
-    {status === 'error' && <div style={styles.error} role="status">{normalizedContentLabel}加载或播放失败，请点击播放重试。
-      {resolvedSrc !== '' && downloadName !== undefined && <>{' '}<a href={resolvedSrc} download={downloadName} style={styles.action} onClick={event => { event.stopPropagation() }}>下载{normalizedContentLabel}</a></>}
+    >{expanded ? tr("收起") : tr("展开")}</button>}
+    {status === 'error' && <div style={styles.error} role="status">{normalizedContentLabel}{tr("加载或播放失败，请点击播放重试。")}{resolvedSrc !== '' && downloadName !== undefined && <>{' '}<a href={resolvedSrc} download={downloadName} style={styles.action} onClick={event => { event.stopPropagation() }}>{tr("下载")}{normalizedContentLabel}</a></>}
     </div>}
     {/* The keyed instance owns its initial src. Lazy resolution sets audio.src
         once in toggle; mirroring it here reloads media and aborts the first play. */}

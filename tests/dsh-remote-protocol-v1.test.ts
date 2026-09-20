@@ -10,6 +10,22 @@ function request(overrides: Record<string, unknown> = {}) {
 }
 
 describe('dsh.remote/v1 envelopes', () => {
+  it('current-session reads take no caller-selected session or workspace', () => {
+    expect(parseDshRemoteRequest(request({ operation: 'session.current', body: {} }), { expectedHostGeneration: 7, nowMillis: 1_500 }).operation).toBe('session.current')
+    expect(() => parseDshRemoteRequest(request({ operation: 'session.current', body: { session_ref: 'arbitrary' } }), { expectedHostGeneration: 7, nowMillis: 1_500 })).toThrow(/未定义字段/)
+  })
+
+  it('accepts only a boolean compact-history preference', () => {
+    for (const value of [true, false]) {
+      expect(parseDshRemoteRequest(request({ body: { session_ref: 'session-1', omit_superseded_chunks: value } }),
+        { expectedHostGeneration: 7, nowMillis: 1_500 }).body.omit_superseded_chunks).toBe(value)
+    }
+    for (const value of ['true', 1, null, {}]) {
+      expect(() => parseDshRemoteRequest(request({ body: { session_ref: 'session-1', omit_superseded_chunks: value } }),
+        { expectedHostGeneration: 7, nowMillis: 1_500 })).toThrow(/omit_superseded_chunks/)
+    }
+  })
+
   it('strictly validates generation, deadline, operations and additional fields', () => {
     expect(parseDshRemoteRequest(request(), { expectedHostGeneration: 7, nowMillis: 1_500 }).operation).toBe('session.history')
     expect(() => parseDshRemoteRequest(request({ host_generation: 6 }), { expectedHostGeneration: 7, nowMillis: 1_500 })).toThrow(/失效/)

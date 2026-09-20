@@ -16,7 +16,7 @@
     "operation": {
       "enum": [
         "capabilities.get", "snapshot.get", "workspace.list", "model.list", "session.model.get", "session.model.select", "session.create",
-        "session.list", "session.history", "session.prompt", "session.cancel",
+        "session.list", "session.current", "session.history", "session.prompt", "session.cancel",
         "interaction.question.respond", "interaction.approval.respond"
       ]
     },
@@ -30,11 +30,21 @@
   },
   "allOf": [
     {
+      "if": {"properties": {"kind": {"const": "event"}, "operation": {"const": "session.current"}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session", "selectionRevision"], "properties": {
+        "selectionRevision": {"type": "integer", "minimum": 0},
+        "session": {"anyOf": [{"type": "null"}, {"type": "object", "required": ["sessionRef", "workspaceRef"], "properties": {
+          "sessionRef": {"$ref": "#/$defs/ref"}, "workspaceRef": {"$ref": "#/$defs/ref"}, "title": {"type": "string"},
+          "running": {"type": "boolean"}, "projectionAsOfSeq": {"type": "integer", "minimum": -1}
+        }}]}
+      }}}}
+    },
+    {
       "if": {"properties": {"kind": {"const": "request"}}},
       "then": {"required": ["execute_before"]}
     },
     {
-      "if": {"properties": {"kind": {"const": "request"}, "operation": {"enum": ["capabilities.get", "model.list"]}}, "required": ["kind", "operation"]},
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"enum": ["capabilities.get", "model.list", "session.current"]}}, "required": ["kind", "operation"]},
       "then": {"properties": {"body": {"$ref": "#/$defs/emptyBody"}}}
     },
     {
@@ -59,7 +69,7 @@
     },
     {
       "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.history"}}, "required": ["kind", "operation"]},
-      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}, "before_seq": {"type": "integer", "minimum": 1}, "limit": {"$ref": "#/$defs/limit"}}}}}
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}, "before_seq": {"type": "integer", "minimum": 1}, "omit_superseded_chunks": {"type": "boolean"}, "limit": {"$ref": "#/$defs/limit"}}}}}
     },
     {
       "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.prompt"}}, "required": ["kind", "operation"]},

@@ -1,4 +1,4 @@
-import { access, mkdtemp, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -6,6 +6,7 @@ import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { LocalRecordingImportSource } from '../../src/recording-import-probe.js'
 import { RecordingService, type RecordingServiceDependencies } from '../../src/services/recording-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
+import { ArkmeLocalDatabase } from '../../src/local-database.js'
 import { ArkmeStateStore } from '../../src/state-store.js'
 import {
   RecordingImportContractError,
@@ -27,6 +28,140 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordingService', () => {
+  async function speakerCacheFixture() {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-speaker-persistence-'))
+    const database = new ArkmeLocalDatabase(root, new ArkmeStateStore(root))
+    let session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const sessions: ArkmeSessionStore = { async read() { return session }, async write(value) { session = value }, async delete() {} }
+    const state = { rows: [{ speaker_id: 'speaker', nick_name: '甲' }], failWrite: false }
+    const calls: string[] = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      calls.push(path)
+      if (state.failWrite && path.endsWith('/assign-asr-item-to-spk')) throw new Error('unknown write result')
+      let data: Record<string, unknown> = {}
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: state.rows }
+      if (path.endsWith('/create-speaker')) data = { speaker_id: 'created' }
+      if (path.endsWith('/one-day-trans')) data = {
+        session_ls: [{ id: 'session', belong_usr: session.userId, start_at: 3600000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
+        child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 1000, e: 2000, n: 1, t: '内容' }] }],
+      }
+      return new Response(JSON.stringify({ code: 200, data }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, database, fetchImpl)
+    const service = new RecordingService(runtime, dependencies())
+    return { root, database, runtime, service, state, calls, fetchImpl,
+      async close() { service.dispose(); database.close(); await rm(root, { recursive: true, force: true }) } }
+  }
+
+  it('restores persisted candidates in a new service without calling Audio or recommendations', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+      const options = await fixture.service.recordingSpeakerOptions()
+      const restored = new RecordingService(fixture.runtime, dependencies())
+      fixture.calls.length = 0
+      expect(await restored.cachedRecordingSpeakerOptions()).toEqual(options)
+      expect(fixture.calls).toEqual([])
+      restored.dispose()
+      await fixture.runtime.writeSession({ userId: 43, accessToken: 'new', refreshToken: 'new' })
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+    } finally { await fixture.close() }
+  })
+
+  it('rejects late restoration across an account switch back to the original account', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      const options = await fixture.service.recordingSpeakerOptions()
+      let finish!: (value: typeof options) => void
+      vi.spyOn(fixture.database, 'readRecordingSpeakerCache').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+      const pending = fixture.service.cachedRecordingSpeakerOptions()
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+      await fixture.runtime.writeSession({ userId: 43, accessToken: 'other', refreshToken: 'other' })
+      await fixture.runtime.writeSession({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })
+      finish(options)
+      await expect(pending).rejects.toMatchObject({ code: 'recording-speaker-context-changed' })
+    } finally { await fixture.close() }
+  })
+
+  it('replaces persistent candidates with the fresh owner result including an empty directory', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      await fixture.service.recordingSpeakerOptions()
+      fixture.state.rows = []
+      await fixture.service.recordingSpeakerOptions()
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toEqual([])
+    } finally { await fixture.close() }
+  })
+
+  it('keeps owner reads usable on disk failures and preserves the old cache on remote failure', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      const options = await fixture.service.recordingSpeakerOptions()
+      const read = vi.spyOn(fixture.database, 'readRecordingSpeakerCache').mockRejectedValueOnce(new Error('disk'))
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+      read.mockRestore()
+      vi.spyOn(fixture.database, 'writeRecordingSpeakerCache').mockRejectedValueOnce(new Error('disk'))
+      expect(await fixture.service.recordingSpeakerOptions()).toHaveLength(1)
+      vi.spyOn(fixture.runtime, 'authenticatedAudioPost').mockRejectedValueOnce(new Error('offline'))
+      await expect(fixture.service.recordingSpeakerOptions()).rejects.toThrow('offline')
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toEqual(options)
+    } finally { await fixture.close() }
+  })
+
+  it('does not overwrite a complete persistent directory when optional user candidates fail', async () => {
+    const fixture = await speakerCacheFixture()
+    const users = vi.fn().mockResolvedValueOnce([{ userId: 77, label: '乙' }]).mockRejectedValueOnce(new Error('contacts offline'))
+    const service = new RecordingService(fixture.runtime, dependencies(gatewayNoop(), { userCandidates: { listRecordingSpeakerUsers: users } }))
+    try {
+      const complete = await service.recordingSpeakerOptions()
+      expect(complete).toHaveLength(2)
+      expect(await service.recordingSpeakerOptions()).toHaveLength(1)
+      expect(await service.cachedRecordingSpeakerOptions()).toEqual(complete)
+    } finally { service.dispose(); await fixture.close() }
+  })
+
+  it('rejects a deleted cached speaker before making any assignment write', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      const [candidate] = await fixture.service.recordingSpeakerOptions()
+      const day = await fixture.service.recordingDay(new Date(1970, 0, 1).getTime())
+      fixture.state.rows = []
+      await expect(fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef,
+        speakerRef: candidate!.speakerRef, scope: 'item' })).rejects.toMatchObject({ code: 'recording-speaker-target-missing' })
+      expect(fixture.calls.some(path => path.endsWith('/assign-asr-item-to-spk'))).toBe(false)
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+    } finally { await fixture.close() }
+  })
+
+  it('invalidates persistent data even when creation is followed by an unknown assignment result', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      await fixture.service.recordingSpeakerOptions()
+      const day = await fixture.service.recordingDay(new Date(1970, 0, 1).getTime())
+      fixture.state.failWrite = true
+      await expect(fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef,
+        newSpeakerName: '新说话人', scope: 'item' })).rejects.toThrow()
+      expect(fixture.calls.filter(path => path.endsWith('/create-speaker'))).toHaveLength(1)
+      expect(fixture.calls.filter(path => path.endsWith('/assign-asr-item-to-spk'))).toHaveLength(1)
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+    } finally { await fixture.close() }
+  })
+
+  it('does not persist a read started before an intervening mutation', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      let finish!: (value: Record<string, unknown>) => void
+      vi.spyOn(fixture.runtime, 'authenticatedAudioPost').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+      const pending = fixture.service.recordingSpeakerOptions()
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+      await expect(fixture.service.assignRecordingSpeaker({ itemRef: 'invalid', newSpeakerName: '甲', scope: 'item' })).rejects.toThrow()
+      finish({ spk_ls: fixture.state.rows })
+      await expect(pending).rejects.toMatchObject({ code: 'recording-speaker-context-changed' })
+      expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
+    } finally { await fixture.close() }
+  })
+
   function oneSecondMonoWav(): Buffer {
     const sampleRate = 8_000
     const dataSize = sampleRate * 2
@@ -290,6 +425,49 @@ describe('RecordingService', () => {
     })
   })
 
+  it('projects a fully silent owner recording to browser-safe day coverage before ASR exists', async () => {
+    const fixture = await speakerCacheFixture()
+    const dayStart = new Date(2026, 8, 18).getTime()
+    try {
+      vi.mocked(fixture.fetchImpl).mockImplementation(async input => {
+        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+        const data = path.endsWith('/one-day-trans') ? {
+          session_ls: [{ id: 'silent-secret', user_id: 42, belong_usr: 42, start_at: dayStart + 8 * 3600000, end_at: dayStart + 20 * 3600000, duration: 12 * 3600000 }],
+          child_ls: [{ session_id: 'silent-secret', start_at: dayStart + 8 * 3600000, duration: 12 * 3600000, has_asr: true, asr: [] }],
+        } : { spk_ls: [] }
+        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+      })
+      const day = await fixture.service.recordingDay(dayStart)
+      expect(day.transcript).toMatchObject({ state: 'empty', items: [], message: '已有录音，暂无转写内容' })
+      expect(day.coverage).toEqual({ state: 'ready', intervals: [{ startAtMillis: dayStart + 8 * 3600000, endAtMillis: dayStart + 20 * 3600000, sourceLabel: '已同步录音', status: 'saved' }] })
+      expect(JSON.stringify(day.coverage)).not.toContain('silent-secret')
+    } finally { await fixture.close() }
+  })
+
+  it('attributes timeline coverage and speech independently of who uploaded or spoke, retaining transcript access', async () => {
+    const fixture = await speakerCacheFixture()
+    const dayStart = new Date(2026, 8, 18).getTime(), hour = 3600000
+    try {
+      vi.mocked(fixture.fetchImpl).mockImplementation(async input => {
+        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+        const source = (id: string, belong_usr: number, at: number) => ({ id, user_id: 42, belong_usr, start_at: dayStart + at * hour, end_at: dayStart + (at + 1) * hour, duration: hour, spk_ls: [{ num: 1, spk_id: id === 'own-secret' ? 'partner' : 'self' }] })
+        const audio = (session_id: string, at: number) => ({ id: `${session_id}-child`, session_id, start_at: dayStart + at * hour, duration: hour, has_asr: true, asr: [{ s: 0, e: 1000, n: 1, t: `${session_id} content` }] })
+        const data = path.endsWith('/one-day-trans') ? {
+          session_ls: [source('own-secret', 42, 8), source('other-secret', 99, 10), source('unmarked-secret', 0, 12)],
+          child_ls: [audio('own-secret', 8), audio('other-secret', 10), audio('unmarked-secret', 12)],
+        } : path.endsWith('/get-speaker-ls') ? { spk_ls: [{ id: 'self', ref_usr_id: 42 }, { id: 'partner', ref_usr_id: 77 }] } : {}
+        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+      })
+      const day = await fixture.service.recordingDay(dayStart)
+      expect(day.coverage).toMatchObject({ state: 'ready', intervals: [{ startAtMillis: dayStart + 8 * hour, endAtMillis: dayStart + 9 * hour }] })
+      expect(day.coverage?.intervals).toHaveLength(1)
+      expect(JSON.stringify(day.coverage)).not.toContain('secret')
+      expect(day.transcript.items.map(item => ({ own: item.recordingBelongsToViewer, self: item.isSelf }))).toEqual([
+        { own: true, self: false }, { own: false, self: true }, { own: false, self: true },
+      ])
+    } finally { await fixture.close() }
+  })
+
   it('rejects an account mismatch before accepting the Host-local file', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-account-fence-'))
     const path = join(root, 'voice.upload')
@@ -336,22 +514,6 @@ describe('RecordingService', () => {
     }, 42)).rejects.toMatchObject({ code: 'recording-import-account-mismatch', retryable: true })
     await expect(store.listRecordingImportJobs(42)).resolves.toEqual([])
     await expect(store.listRecordingImportJobs(77)).resolves.toEqual([])
-  })
-
-  it('round-trips an account-bound recording cursor', async () => {
-    const sessions: ArkmeSessionStore = {
-      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async write() {}, async delete() {},
-    }
-    const stateStore = { async uniqueCode() { return 'device-secret' } } as StateStore
-    const service = new RecordingService(new ServiceRuntime(config, sessions, stateStore), dependencies())
-    const payload = {
-      version: 1 as const, dateStamp: new Date(1970, 0, 1).getTime(), content: 'transcript' as const,
-      itemOffset: 3, textOffset: 120, fingerprint: 'fingerprint-1',
-    }
-
-    const cursor = await service.sealRecordingCursor(payload)
-    await expect(service.openRecordingCursor(cursor)).resolves.toEqual(payload)
   })
 
   it('reports unresolved local jobs and Audio owner matches as separate duplicate sources during preflight', async () => {
@@ -1359,19 +1521,34 @@ describe('RecordingService', () => {
       asrItemEndAt: 2_000,
       speakerNumber: 1,
     }, undefined)
-    const options = await service.recordingSpeakerOptions(item!.itemRef)
+    const options = await service.recordingSpeakerOptions()
+    candidateLabel = '小林'
+    expect(options[0]!.optionKey).toBe(item!.assignedSpeakerOptionKey)
+    expect(options[0]).not.toHaveProperty('currentAssignment')
+    expect(options[0]).not.toHaveProperty('recommended')
+    expect(calls.some(call => call.path.endsWith('/similar-session-speaker'))).toBe(false)
+    await expect(service.recordingSpeakerRecommendation(item!.itemRef)).resolves.toEqual({ optionKey: options[0]!.optionKey })
+    const renewedOptions = await service.recordingSpeakerOptions()
+    expect(renewedOptions.map(option => option.label)).toEqual(['小林', '小林'])
+    candidateLabel = '小王'
+    expect(options[0]!.optionKey).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(renewedOptions.map(option => option.optionKey)).toEqual(options.map(option => option.optionKey))
+    expect(renewedOptions[0]!.speakerRef).not.toBe(options[0]!.speakerRef)
+    expect(options[0]!.optionKey).not.toBe(options[1]!.optionKey)
     expect(calls).toContainEqual({
       path: '/api/v1/audio/similar-session-speaker',
       body: { session_id: 'session-secret', num: 1 },
     })
     expect(options).toEqual([
       {
+        optionKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
         speakerRef: expect.stringMatching(/^arkme-recording-speaker-v1\./), label: '小林', kind: 'speaker',
-        currentAssignment: true, isCurrentUser: false, recommended: true,
+        isCurrentUser: false,
       },
       {
+        optionKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
         speakerRef: expect.stringMatching(/^arkme-recording-speaker-v1\./), label: '小王', kind: 'arkme-user',
-        currentAssignment: false, isCurrentUser: false, recommended: false,
+        isCurrentUser: false,
       },
     ])
     const individuallyAssignedItem = day.transcript.items.find(candidate => candidate.speakerNumber < 0)!
@@ -1384,7 +1561,7 @@ describe('RecordingService', () => {
       asrItemEndAt: 6_000,
       speakerNumber: 1,
     }, undefined)
-    await service.recordingSpeakerOptions(individuallyAssignedItem.itemRef)
+    await service.recordingSpeakerRecommendation(individuallyAssignedItem.itemRef)
     expect(calls).toContainEqual({
       path: '/api/v1/audio/similar-session-speaker',
       body: { session_id: 'session-secret', num: -1 },
@@ -1570,14 +1747,14 @@ describe('RecordingService', () => {
       calls.push(path)
       let data: Record<string, unknown> = {}
       if (path.endsWith('/one-day-trans')) data = {
-        session_ls: [{ id: `session-${String(userId)}`, belong_usr: userId, start_at: Number(body.start_at) + 3_600_000, spk_ls: [{ num: 1, spk_id: `speaker-${String(userId)}` }] }],
+        session_ls: [{ id: `session-${String(userId)}`, belong_usr: userId, start_at: Number(body.start_at) + 3_600_000, spk_ls: [{ num: 1, spk_id: 'shared-speaker-id' }] }],
         child_ls: [{
           id: `child-${String(userId)}`, session_id: `session-${String(userId)}`, start_at: 0,
           file_name: 'device_0.m4a', mime_type: 'audio/mp4',
           asr: [{ s: 1_000, e: 2_000, n: 1, t: '项目复盘' }],
         }],
       }
-      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: `speaker-${String(userId)}`, nick_name: `用户${String(userId)}` }] }
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: 'shared-speaker-id', nick_name: `用户${String(userId)}` }] }
       if (path.endsWith('/similar-session-speaker')) data = {}
       if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
       return new Response(JSON.stringify({ code: 200, data }), {
@@ -1589,9 +1766,20 @@ describe('RecordingService', () => {
       dependencies(),
     )
     const account42Day = await service.recordingDay(new Date(2024, 7, 29).setHours(0, 0, 0, 0))
-    const account42Option = (await service.recordingSpeakerOptions(account42Day.transcript.items[0]!.itemRef))[0]!
+    const account42Option = (await service.recordingSpeakerOptions())[0]!
     userId = 43
     const account43Day = await service.recordingDay(new Date(2024, 7, 30).setHours(0, 0, 0, 0))
+    await expect(service.recordingSpeakerRecommendation(account42Day.transcript.items[0]!.itemRef)).rejects.toMatchObject({ code: 'recording-ref-account-mismatch' })
+    const account43Option = (await service.recordingSpeakerOptions())[0]!
+    expect(account43Option.optionKey).not.toBe(account42Option.optionKey)
+    const productionService = new RecordingService(
+      new ServiceRuntime({ ...config, environment: 'prod' }, sessions, new ArkmeStateStore(root), fetchImpl),
+      dependencies(),
+    )
+    const productionDay = await productionService.recordingDay(new Date(2024, 7, 30).setHours(0, 0, 0, 0))
+    const productionOption = (await productionService.recordingSpeakerOptions())[0]!
+    expect(productionOption.optionKey).not.toBe(account43Option.optionKey)
+
 
     await expect(service.assignRecordingSpeaker({
       itemRef: account43Day.transcript.items[0]!.itemRef,
@@ -1666,6 +1854,7 @@ function ownerPage(
 
 function gatewayNoop(): RecordingImportGateway & RecordingImportOwnerGateway {
   return {
+    async findDirectoryImportSessions() { return [] },
     async findExistingFileNames() { return [] },
     async ensureSession() { return 'session' },
     async createChild() { return 'child' }, async upload() {},
@@ -1721,3 +1910,253 @@ function failedImportJob(index: number, createdAtMillis: number): RecordingImpor
     errorMessage: 'owner timeout',
   }
 }
+
+describe('recording import command mutual exclusion', () => {
+  async function fixture(phase: RecordingImportJob['phase'] = 'failed') {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-import-command-'))
+    const store = new ArkmeStateStore(root)
+    const jobs = [0, 1].map(index => ({
+      ...failedImportJob(index, Date.now()), phase: index === 0 ? phase : 'failed' as const,
+      sourceHandle: join(root, `${index}.upload`), sessionId: `session-${index}`, childId: `child-${index}`,
+    }))
+    for (const job of jobs) {
+      await writeFile(job.sourceHandle, Buffer.alloc(job.fileSize))
+      await store.putRecordingImportJob(42, job)
+    }
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const gateway = gatewayNoop()
+    gateway.upload = vi.fn(async () => undefined)
+    gateway.deleteSession = vi.fn(async () => undefined)
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    const { sealRecordingImportRef } = await import('../../src/recording-import-ref.js')
+    const key = await store.uniqueCode()
+    const refs = jobs.map(job => sealRecordingImportRef({ jobId: job.jobId, userId: 42 }, key))
+    return { store, jobs, refs, gateway, service,
+      dispose: async () => { service.dispose(); await rm(root, { recursive: true, force: true }) },
+    }
+  }
+
+  it('rejects retry and duplicate cancellation while deletion is pending without blocking another job', async () => {
+    const f = await fixture()
+    let release!: () => void
+    let started!: () => void
+    const deleting = new Promise<void>(resolve => { started = resolve })
+    const released = new Promise<void>(resolve => { release = resolve })
+    vi.mocked(f.gateway.deleteSession).mockImplementationOnce(async () => { started(); await released })
+    const cancelled = f.service.cancelRecordingImport(f.refs[0]!, 2)
+    try {
+      await deleting
+      await expect(f.service.retryRecordingImport(f.refs[0]!, 2)).rejects.toMatchObject({
+        code: 'recording-import-command-in-progress', retryable: true, httpStatus: 409,
+      })
+      await expect(f.service.cancelRecordingImport(f.refs[0]!, 2)).rejects.toMatchObject({
+        code: 'recording-import-command-in-progress', retryable: true,
+      })
+      await f.service.retryRecordingImport(f.refs[1]!, 2)
+      await expect(f.service.waitRecordingImport(f.refs[1]!)).resolves.toMatchObject({ phase: 'accepted' })
+      expect(vi.mocked(f.gateway.upload).mock.calls.every(([job]) => job.jobId === f.jobs[1]!.jobId)).toBe(true)
+      expect(f.gateway.deleteSession).toHaveBeenCalledTimes(1)
+      release()
+      await expect(cancelled).resolves.toMatchObject({ phase: 'cancelled' })
+      await expect(f.store.getRecordingImportJob(42, f.jobs[0]!.jobId)).resolves.toMatchObject({ phase: 'cancelled' })
+      await expect(access(f.jobs[0]!.sourceHandle)).rejects.toThrow()
+    } finally { release(); await cancelled.catch(() => undefined); await f.dispose() }
+  })
+
+  it('does not restart a persisted runner through resume, list, or wait while its cancellation is deleting', async () => {
+    const f = await fixture('uploading')
+    let release!: () => void
+    let started!: () => void
+    const deleting = new Promise<void>(resolve => { started = resolve })
+    const released = new Promise<void>(resolve => { release = resolve })
+    vi.mocked(f.gateway.deleteSession).mockImplementationOnce(async () => { started(); await released })
+    const cancelled = f.service.cancelRecordingImport(f.refs[0]!, 2)
+    try {
+      await deleting
+      await f.service.resumeRecordingImports()
+      await f.service.recordingImportList()
+      await f.service.waitRecordingImport(f.refs[0]!)
+      expect(f.gateway.upload).not.toHaveBeenCalled()
+      release()
+      await expect(cancelled).resolves.toMatchObject({ phase: 'cancelled' })
+    } finally { release(); await cancelled.catch(() => undefined); await f.dispose() }
+  })
+
+  it('rejects cancellation while retry commits its revision, then permits a normal later cancellation', async () => {
+    const f = await fixture()
+    let release!: () => void
+    let started!: () => void
+    const committing = new Promise<void>(resolve => { started = resolve })
+    const released = new Promise<void>(resolve => { release = resolve })
+    const replace = f.store.replaceRecordingImportJob.bind(f.store)
+    vi.spyOn(f.store, 'replaceRecordingImportJob').mockImplementationOnce(async (...args) => {
+      started(); await released; return await replace(...args)
+    })
+    vi.mocked(f.gateway.upload).mockImplementation(async (_job, _progress, signal) => {
+      await new Promise<void>((_resolve, reject) => {
+        const abort = () => { reject(new Error('aborted')) }
+        signal?.addEventListener('abort', abort, { once: true })
+        if (signal?.aborted) abort()
+      })
+    })
+    const retry = f.service.retryRecordingImport(f.refs[0]!, 2)
+    try {
+      await committing
+      await expect(f.service.cancelRecordingImport(f.refs[0]!, 2)).rejects.toMatchObject({
+        code: 'recording-import-command-in-progress', retryable: true,
+      })
+      expect(f.gateway.deleteSession).not.toHaveBeenCalled()
+      release()
+      const resumed = await retry
+      await expect(f.service.cancelRecordingImport(f.refs[0]!, resumed.revision)).resolves.toMatchObject({ phase: 'cancelled' })
+    } finally { release(); await retry.catch(() => undefined); await f.dispose() }
+  })
+
+  it('releases the command guard after failed owner deletion so the original task remains retryable', async () => {
+    const f = await fixture()
+    vi.mocked(f.gateway.deleteSession).mockRejectedValueOnce(new Error('owner unavailable'))
+    try {
+      await expect(f.service.cancelRecordingImport(f.refs[0]!, 2)).rejects.toThrow('owner unavailable')
+      await expect(f.service.retryRecordingImport(f.refs[0]!, 2)).resolves.toMatchObject({ phase: 'uploading' })
+      await expect(f.service.waitRecordingImport(f.refs[0]!)).resolves.toMatchObject({ phase: 'accepted' })
+    } finally { await f.dispose() }
+  })
+})
+
+describe('recording import admission boundary', () => {
+  it('keeps local retry identity separate from Audio same-name evidence in a directory snapshot', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-directory-snapshot-'))
+    const store = new ArkmeStateStore(root)
+    const job = failedImportJob(1, 1_700_000_000_000)
+    await store.putRecordingImportJob(42, job)
+    const gateway = gatewayNoop()
+    gateway.findExistingFileNames = vi.fn(async () => ['remote.wav'])
+    gateway.findDirectoryImportSessions = vi.fn(async () => [])
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    const controller = new AbortController()
+    const snapshot = await service.recordingDirectorySnapshot([
+      { fileName: job.fileName, startAtMillis: job.startAtMillis },
+      { fileName: 'remote.wav', startAtMillis: 1_700_000_000_000 },
+      { fileName: 'new.wav', startAtMillis: 1_600_000_000_000 },
+    ], 42, controller.signal)
+    expect(snapshot).toMatchObject({ local: [{ identity: { userId: job.userId, fileName: job.fileName, fileSize: job.fileSize, sha256: job.sha256, startAtMillis: job.startAtMillis, belongUserId: job.belongUserId }, task: { importRef: expect.any(String), revision: job.revision, phase: job.phase } }], existingFileNames: ['remote.wav'], owner: [] })
+    expect(Object.keys(snapshot.local[0]!).sort()).toEqual(['identity', 'task'])
+    for (const key of ['sourceHandle', 'sessionId', 'childId', 'uploadCheckpoint', 'failedFromPhase']) {
+      expect(snapshot.local[0]!.identity).not.toHaveProperty(key)
+      expect(snapshot.local[0]!.task).not.toHaveProperty(key)
+    }
+    expect(gateway.findDirectoryImportSessions).toHaveBeenCalledWith({
+      viewerUserId: 42, fileNames: ['remote.wav'], fromMillis: 1_700_000_000_000, toMillis: 1_700_000_000_001, signal: controller.signal,
+    })
+  })
+
+  it('does not load Audio history when no candidate has an owner filename match', async () => {
+    const store = new ArkmeStateStore(await mkdtemp(join(tmpdir(), 'arkme-directory-new-')))
+    const gateway = gatewayNoop()
+    gateway.findDirectoryImportSessions = vi.fn(async () => [])
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    expect(await service.recordingDirectorySnapshot([{ fileName: 'new.wav', startAtMillis: 1_700_000_000_000 }], 42)).toEqual({ local: [], existingFileNames: [], owner: [] })
+    expect(gateway.findDirectoryImportSessions).not.toHaveBeenCalled()
+  })
+
+  it('rejects a directory snapshot if its account changes during owner lookup', async () => {
+    const store = new ArkmeStateStore(await mkdtemp(join(tmpdir(), 'arkme-directory-account-')))
+    let userId = 42
+    const sessions = { read: async () => ({ userId, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const gateway = gatewayNoop()
+    gateway.findExistingFileNames = vi.fn(async () => { userId = 43; return [] })
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    await expect(service.recordingDirectorySnapshot([{ fileName: 'new.wav', startAtMillis: 1_700_000_000_000 }], 42))
+      .rejects.toMatchObject({ code: 'recording-import-account-mismatch' })
+  })
+
+  it('cancels only the directory wait while an admitted upload continues to acceptance', async () => {
+    const store = new ArkmeStateStore(await mkdtemp(join(tmpdir(), 'arkme-directory-wait-')))
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const gateway = gatewayNoop()
+    let release!: () => void
+    let started!: () => void
+    let uploadSignal: AbortSignal | undefined
+    const uploadStarted = new Promise<void>(resolve => { started = resolve })
+    const uploadReleased = new Promise<void>(resolve => { release = resolve })
+    gateway.upload = vi.fn(async (_job, _progress, signal) => { uploadSignal = signal; started(); await uploadReleased })
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway, {
+      recordingImportSource: { inspect: async () => ({ kind: 'wav', durationMillis: 1000 }), discard: vi.fn() },
+    }))
+    try {
+      const job = await service.acceptRecordingImport('/private/test.upload', {
+        fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: 100, sha256: 'a'.repeat(64), startAtMillis: 1_700_000_000_000, belongUserId: 42,
+      }, 42)
+      await uploadStarted
+      const controller = new AbortController()
+      const waiting = service.waitRecordingImport(job.importRef, controller.signal)
+      controller.abort()
+      await expect(waiting).rejects.toThrow()
+      expect(uploadSignal?.aborted).toBe(false)
+      release()
+      await expect(service.waitRecordingImport(job.importRef)).resolves.toMatchObject({ phase: 'accepted' })
+      expect(gateway.upload).toHaveBeenCalledTimes(1)
+    } finally { release(); service.dispose() }
+  })
+
+  it('does not resume a retry cancelled while opening its task reference', async () => {
+    const { sealRecordingImportRef } = await import('../../src/recording-import-ref.js')
+    const root = await mkdtemp(join(tmpdir(), 'arkme-retry-cancel-'))
+    const store = new ArkmeStateStore(root)
+    const failed = failedImportJob(1, 1_700_000_000_000)
+    await store.putRecordingImportJob(42, failed)
+    const ref = sealRecordingImportRef({ jobId: failed.jobId, userId: 42 }, await store.uniqueCode())
+    const controller = new AbortController()
+    const readCode = store.uniqueCode.bind(store)
+    vi.spyOn(store, 'uniqueCode').mockImplementationOnce(async () => { const code = await readCode(); controller.abort(); return code })
+    const gateway = gatewayNoop()
+    gateway.upload = vi.fn()
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    try {
+      await expect(service.retryRecordingImport(ref, failed.revision, controller.signal)).rejects.toThrow()
+      expect(await store.getRecordingImportJob(42, failed.jobId)).toMatchObject({ phase: 'failed', revision: failed.revision })
+      expect(gateway.upload).not.toHaveBeenCalled()
+    } finally { service.dispose() }
+  })
+
+  it('does not admit or upload after cancellation while the audio is being inspected', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-import-cancel-probe-'))
+    const store = new ArkmeStateStore(root)
+    const controller = new AbortController()
+    const gateway = gatewayNoop()
+    gateway.ensureSession = vi.fn(async () => 'session')
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway, {
+      recordingImportSource: { inspect: async () => { controller.abort(); return { kind: 'wav', durationMillis: 1000 } }, discard: vi.fn() },
+    }))
+    try {
+      await expect(service.acceptRecordingImport('/private/cancelled.upload', {
+        fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: 100, sha256: 'a'.repeat(64), startAtMillis: 1_700_000_000_000, belongUserId: 42,
+      }, 42, controller.signal)).rejects.toThrow()
+      expect(await store.listRecordingImportJobs(42)).toEqual([])
+      expect(gateway.ensureSession).not.toHaveBeenCalled()
+    } finally { service.dispose() }
+  })
+
+  it('obtains the response reference before persisting a new task', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-import-ref-failure-'))
+    const store = new ArkmeStateStore(root)
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gatewayNoop(), {
+      recordingImportSource: { inspect: async () => ({ kind: 'wav', durationMillis: 1000 }), discard: vi.fn() },
+    }))
+    vi.spyOn(store, 'uniqueCode').mockRejectedValueOnce(new Error('ref unavailable'))
+    try {
+      await expect(service.acceptRecordingImport('/private/new.upload', {
+        fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: 100, sha256: 'a'.repeat(64), startAtMillis: 1_700_000_000_000, belongUserId: 42,
+      }, 42)).rejects.toThrow('ref unavailable')
+      expect(await store.listRecordingImportJobs(42)).toEqual([])
+    } finally { service.dispose() }
+  })
+})

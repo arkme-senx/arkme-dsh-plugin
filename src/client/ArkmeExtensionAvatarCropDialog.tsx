@@ -1,13 +1,16 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { extensionAvatarCropGeometry, normalizeExtensionAvatar } from './extension-avatar-crop.js'
 
 const VIEWPORT_SIZE = 280
 
-export function ArkmeExtensionAvatarCropDialog({ sourceFile, onCancel, onConfirm }: {
+export function ArkmeExtensionAvatarCropDialog({ sourceFile, onCancel, onConfirm, title }: {
   sourceFile: File
   onCancel(): void
   onConfirm(file: File): void
+  title?: string
 }) {
+  useArkmeLocale()
   const image = useRef<HTMLImageElement>(null)
   const drag = useRef<{ pointerId: number; clientX: number; clientY: number; panX: number; panY: number }>()
   const [sourceUrl, setSourceUrl] = useState('')
@@ -72,8 +75,8 @@ export function ArkmeExtensionAvatarCropDialog({ sourceFile, onCancel, onConfirm
 
   return <div style={styles.backdrop}>
     <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-avatar-crop-title">
-      <h3 id="arkme-extension-avatar-crop-title" style={styles.title}>裁剪扩展头像</h3>
-      <p style={styles.hint}>拖动图片调整位置，使用滑块缩放；最终会生成正方形头像并自动压缩。</p>
+      <h3 id="arkme-extension-avatar-crop-title" style={styles.title}>{title ?? tr("裁剪扩展头像")}</h3>
+      <p style={styles.hint}>{tr("拖动图片调整位置，使用滑块缩放；最终会生成正方形头像并自动压缩。")}</p>
       <div
         style={styles.viewport}
         onPointerDown={event => {
@@ -94,7 +97,7 @@ export function ArkmeExtensionAvatarCropDialog({ sourceFile, onCancel, onConfirm
         {sourceUrl !== '' && <img
           ref={image}
           src={sourceUrl}
-          alt="待裁剪扩展头像"
+          alt={tr("待裁剪扩展头像")}
           draggable={false}
           style={geometry === undefined ? styles.loadingImage : {
             ...styles.image,
@@ -117,8 +120,8 @@ export function ArkmeExtensionAvatarCropDialog({ sourceFile, onCancel, onConfirm
         <span style={styles.gridVertical} aria-hidden />
         <span style={styles.gridHorizontal} aria-hidden />
       </div>
-      <label style={styles.zoomLabel}>缩放<input
-        aria-label="头像缩放"
+      <label style={styles.zoomLabel}>{tr("缩放")}<input
+        aria-label={tr("头像缩放")}
         type="range"
         min="1"
         max="3"
@@ -139,9 +142,9 @@ export function ArkmeExtensionAvatarCropDialog({ sourceFile, onCancel, onConfirm
       /></label>
       {error !== '' && <div role="alert" style={styles.error}>{error}</div>}
       <div style={styles.actions}>
-        <button type="button" style={styles.secondary} disabled={busy} onClick={onCancel}>取消</button>
+        <button type="button" style={styles.secondary} disabled={busy} onClick={onCancel}>{tr("取消")}</button>
         <button type="button" style={styles.primary} disabled={busy || geometry === undefined} onClick={() => { void confirm() }}>
-          {busy ? '处理中…' : '确认裁剪'}
+          {busy ? tr("处理中…") : tr("确认裁剪")}
         </button>
       </div>
     </section>

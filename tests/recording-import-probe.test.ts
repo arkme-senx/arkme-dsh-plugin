@@ -1,8 +1,9 @@
 import { access, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { BufferTarget, EncodedAudioPacketSource, EncodedPacket, Mp4OutputFormat, Output } from 'mediabunny'
 import { describe, expect, it } from 'vitest'
-import { LocalRecordingImportSource, probeRecordingImportFile } from '../src/recording-import-probe.js'
+import { LocalRecordingImportSource, probeRecordingImportFile, probeRecordingImportSource } from '../src/recording-import-probe.js'
 import { probeImaAdpcmWave } from '../src/recording-wave-probe.js'
 import { desktopRecorderImaAdpcmMonoWav } from './recording-import-ima-adpcm-fixture.js'
 
@@ -28,6 +29,107 @@ function oneSecondMonoWav(): Buffer {
 }
 
 describe('recording import file probe', () => {
+  it('rejects an oversized M4A metadata read before the source can allocate its declared box', async () => {
+    const size = 1024 * 1024 * 1024
+    const header = Buffer.alloc(32)
+    header.writeUInt32BE(24, 0)
+    header.write('ftyp', 4)
+    header.write('M4A ', 8)
+    header.write('isomM4A ', 16)
+    header.writeUInt32BE(size - 24, 24)
+    header.write('moov', 28)
+    const reads: number[] = []
+
+    await expect(probeRecordingImportSource({ size, read: async (offset, length) => {
+      reads.push(length)
+      // Keep the regression safe on the unpatched implementation too.
+      if (length > 128 * 1024 * 1024) throw new Error('Source would allocate nearly 1 GiB')
+      const bytes = new Uint8Array(length)
+      if (offset < header.length) bytes.set(header.subarray(offset, Math.min(offset + length, header.length)))
+      return bytes
+    } }, { fileName: 'broken.m4a', mimeType: 'audio/mp4', fileSize: size }))
+      .rejects.toMatchObject({ code: 'recording-import-probe-failed' })
+    expect(Math.max(...reads)).toBeLessThanOrEqual(128 * 1024 * 1024)
+  })
+
+  it.each([1, 10])('reads bounded PCM metadata for %i hours without scanning audio data', async hours => {
+    const header = oneSecondMonoWav().subarray(0, 44)
+    const size = 44 + 16_000 * 3600 * hours
+    header.writeUInt32LE(size - 8, 4)
+    header.writeUInt32LE(size - 44, 40)
+    let readBytes = 0
+    const result = await probeRecordingImportSource({ size, read: async (offset, length) => {
+      readBytes += length
+      const bytes = new Uint8Array(length)
+      if (offset < header.length) bytes.set(header.subarray(offset, Math.min(offset + length, header.length)))
+      return bytes
+    } }, { fileName: 'hour.wav', mimeType: 'audio/wav', fileSize: size })
+    expect(result.durationMillis).toBe(3_600_000 * hours)
+    expect(readBytes).toBeLessThan(256 * 1024)
+  })
+
+  it('accepts ten-hour CBR MP3 metadata without scanning its 576 MB payload', async () => {
+    const size = 576_000_000 // 128 kbit/s, 48 kHz, 384-byte frames over ten hours.
+    let readBytes = 0
+    const result = await probeRecordingImportSource({ size, read: async (offset, length) => {
+      readBytes += length
+      const bytes = new Uint8Array(length)
+      const frameHeader = new Uint8Array([0xff, 0xfb, 0x94, 0])
+      for (let frame = Math.floor(offset / 384) * 384; frame < offset + length; frame += 384) {
+        for (let index = 0; index < frameHeader.length; index++) {
+          if (frame + index >= offset && frame + index < offset + length) bytes[frame + index - offset] = frameHeader[index]!
+        }
+      }
+      return bytes
+    } }, { fileName: 'ten-hours.mp3', mimeType: 'audio/mpeg', fileSize: size })
+    expect(result).toEqual({ kind: 'mp3', durationMillis: 36_000_000 })
+    expect(readBytes).toBeLessThan(256 * 1024)
+  })
+
+  it('accepts a ten-hour M4A timeline with 32 MiB metadata padding in a 1 GiB container', async () => {
+    const output = new Output({ format: new Mp4OutputFormat({ fastStart: false }), target: new BufferTarget() })
+    const audio = new EncodedAudioPacketSource('aac')
+    output.addAudioTrack(audio)
+    await output.start()
+    const duration = 1024 / 48000
+    const silence = new Uint8Array([0, 208, 0, 7])
+    await audio.add(new EncodedPacket(silence, 'key', 0, duration), {
+      decoderConfig: { codec: 'mp4a.40.2', numberOfChannels: 1, sampleRate: 48000, description: new Uint8Array([0x11, 0x88]) },
+    })
+    await audio.add(new EncodedPacket(silence, 'key', 36000 - duration, duration))
+    audio.close()
+    await output.finalize()
+    const header = Buffer.from(output.target.buffer!)
+    let moov = 0
+    while (header.toString('ascii', moov + 4, moov + 8) !== 'moov') {
+      const boxSize = header.readUInt32BE(moov)
+      moov += boxSize === 1 ? Number(header.readBigUInt64BE(moov + 8)) : boxSize
+    }
+    expect(moov + header.readUInt32BE(moov)).toBe(header.length)
+    const padding = 32 * 1024 * 1024
+    header.writeUInt32BE(header.readUInt32BE(moov) + padding, moov)
+    const free = Buffer.alloc(8)
+    free.writeUInt32BE(padding, 0)
+    free.write('free', 4)
+    const size = 1024 * 1024 * 1024
+    const tail = Buffer.alloc(8)
+    tail.writeUInt32BE(size - header.length - padding, 0)
+    tail.write('free', 4)
+    let readBytes = 0
+    const result = await probeRecordingImportSource({ size, read: async (offset, length) => {
+      readBytes += length
+      const bytes = new Uint8Array(length)
+      for (const [position, content] of [[0, header], [header.length, free], [header.length + padding, tail]] as const) {
+        const start = Math.max(offset, position)
+        const end = Math.min(offset + length, position + content.length)
+        if (start < end) bytes.set(content.subarray(start - position, end - position), start - offset)
+      }
+      return bytes
+    } }, { fileName: 'ten-hours.m4a', mimeType: 'audio/mp4', fileSize: size })
+    expect(result).toEqual({ kind: 'm4a', durationMillis: 36_000_000 })
+    expect(readBytes).toBeLessThan(34 * 1024 * 1024)
+  })
+
   it('reads the actual audio container and duration from the Host file', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-probe-'))
     const path = join(root, 'voice.upload')

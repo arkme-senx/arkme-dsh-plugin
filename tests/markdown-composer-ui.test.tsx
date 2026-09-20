@@ -3,9 +3,9 @@ import { act, createRef, useState, useSyncExternalStore } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Editor } from '@tiptap/core'
-import { ArkmeMarkdownComposerInput } from '../src/client/ArkmeMarkdownComposerInput.js'
+import { ArkmeDocumentComposerInput, type ArkmeDocumentComposerHandle } from '../src/client/ArkmeDocumentComposerInput.js'
 import { ArkmeMarkdownBody } from '../src/client/ArkmeMarkdownBody.js'
-import type { ArkmeRichComposerHandle } from '../src/client/ArkmeRichComposerInput.js'
+import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
 import { arkmeEditorProjection, arkmeSerializeMarkdownEditor } from '../src/client/markdown-editor.js'
 import { ArkmeComposerDraftStore, arkmeComposerCanSend, arkmeSourceComposerDraftKey, type ArkmeComposerDraftSnapshot } from '../src/client/composer-draft-store.js'
 
@@ -17,7 +17,7 @@ let update: (value: ArkmeComposerDraftSnapshot) => void
 let candidates = false
 let inputActivity: string[] = []
 let sent = 0
-const handle = createRef<ArkmeRichComposerHandle>()
+const handle = createRef<ArkmeDocumentComposerHandle>()
 const draftKey = arkmeSourceComposerDraftKey(7, { kind: 'send_to_self', sourceRef: 'test' })!
 let draftStore: ArkmeComposerDraftStore
 let storage: Pick<Storage, 'getItem' | 'setItem'>
@@ -28,7 +28,7 @@ function Harness() {
   const draft = useSyncExternalStore(store.subscribe, () => store.get(draftKey))
   snapshot = draft
   update = value => { store.clear(draftKey); store.restore(draftKey, value) }
-  return <ArkmeMarkdownComposerInput ref={handle} value={draft.text} mentions={draft.mentions} emojis={draft.emojis} markdown={draft.markdown}
+  return <ArkmeDocumentComposerInput format="markdown" ref={handle} value={draft.text} mentions={draft.mentions} emojis={draft.emojis} markdown={draft.markdown}
     maxLength={20000} placeholder="快记" ariaLabel="快记" disabled={false} style={{}}
     onTextChange={text => store.setText(draftKey, text)}
     onInputActivity={text => { inputActivity.push(text) }}
@@ -66,9 +66,67 @@ beforeEach(async () => {
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals() })
 
 describe('Markdown composer DOM interaction', () => {
+  it('continues typing after an externally inserted reply mention', () => {
+    act(() => { handle.current!.focus(); handle.current!.setSelectionRange(0, 0) })
+    act(() => { draftStore.insertMention(draftKey, 'reply-member', '群昵称', 0) })
+    act(() => {
+      handle.current!.focus()
+      handle.current!.setSelectionRange(snapshot.text.length, snapshot.text.length)
+    })
+    expect(handle.current!.selectionStart).toBe(5)
+    type('补充')
+    expect(snapshot.text).toBe('@群昵称 补充')
+    expect(snapshot.mentions[0]).toMatchObject({ mentionRef: 'reply-member', startIndex: 0, length: 4 })
+  })
+
+  it.each(['native DOMRect', 'plain rectangle'])('opens the emoji picker with %s caret coordinates and keeps navigation usable', async kind => {
+    const coordinates = new DOMRect(120, 500, 0, 21)
+    const rect = kind === 'native DOMRect' ? coordinates : {
+      left: coordinates.left, right: coordinates.right, top: coordinates.top, bottom: coordinates.bottom,
+    }
+    const coordsAtPos = vi.spyOn(editor().view, 'coordsAtPos').mockReturnValue(rect)
+    try {
+      expect(handle.current!.getCaretGeometry()).toEqual({
+        left: 120, right: 120, top: 500, bottom: 521, width: 0, height: 21,
+      })
+      const selected = vi.fn()
+      const render = (scopeKey: string) => <><Harness /><ArkmeEmojiPicker
+        disabled={false} scopeKey={scopeKey} onSelect={selected}
+        getCaretGeometry={() => handle.current?.getCaretGeometry()}
+        getEditorGeometry={() => handle.current?.getEditorGeometry()}
+      /></>
+      await act(async () => { root.render(render('chat:1')) })
+      const toggle = () => act(() => { host.querySelector<HTMLButtonElement>('[aria-label="选择表情"]')!.click() })
+      toggle()
+      const panel = () => document.querySelector<HTMLElement>('[data-arkme-emoji-panel-shell]')
+      expect(panel()?.style.visibility).toBe('visible')
+      expect(document.querySelectorAll('[data-arkme-emoji-grid="default"] img')).toHaveLength(56)
+      act(() => { document.querySelector<HTMLButtonElement>('[data-arkme-emoji-id="angry_face"]')!.click() })
+      expect(selected).toHaveBeenCalledWith(expect.objectContaining({ id: 'angry_face' }))
+      act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+      expect(panel()).toBeNull()
+      toggle()
+      await act(async () => { root.render(render('chat:2')) })
+      expect(panel()).toBeNull()
+      toggle()
+      expect(panel()?.style.visibility).toBe('visible')
+      expect(coordsAtPos.mock.calls.length).toBeGreaterThan(1)
+    } finally { coordsAtPos.mockRestore() }
+  })
   it('reports Markdown typing to the existing input activity owner', () => {
     type('甲乙')
     expect(inputActivity).toEqual(['甲', '甲乙'])
+  })
+  it('reads the native selection before the delayed selectionchange event reaches the editor', () => {
+    type('甲乙丙')
+    const text = editor().view.dom.querySelector('p')!.firstChild!
+    const range = document.createRange()
+    range.setStart(text, 0)
+    range.setEnd(text, 1)
+    document.getSelection()!.removeAllRanges()
+    document.getSelection()!.addRange(range)
+    expect(handle.current?.selectionStart).toBe(0)
+    expect(handle.current?.selectionEnd).toBe(1)
   })
   it.each([[1, '乙甲丙'], [2, '甲乙丙'], [3, '甲丙乙']])('pastes text inline at position %s', (position, expected) => {
     type('甲丙')

@@ -70,7 +70,7 @@ describe('desktop call host bridge', () => {
     })
   })
 
-  it('rejects incoming-call, cross-origin, mismatched request, and malformed messages', () => {
+  it('rejects invalid media, cross-origin, mismatched request, and malformed messages', () => {
     const valid = bridgeEvent({ type: 'incoming' })
     expect(parseDesktopCallBridgeEvent(valid.event, {
       expectedSource: valid.expectedSource as Window,
@@ -94,6 +94,13 @@ describe('desktop call host bridge', () => {
       expectedOrigin: 'http://127.0.0.1:3210',
       callRequestId: 'request-1',
     })).toBeUndefined()
+  })
+
+  it('accepts incoming caller identity only through the active frame envelope', () => {
+    const { event, expectedSource } = bridgeEvent({ type: 'incoming', mediaType: 'video', caller: { name: '来电用户' } })
+    const context = { expectedSource: expectedSource as Window, expectedOrigin: event.origin, callRequestId: 'request-1' }
+    expect(parseDesktopCallBridgeEvent(event, context)).toEqual({ type: 'incoming', mediaType: 'video', callerName: '来电用户' })
+    expect(parseDesktopCallBridgeEvent({ ...event, source: {} } as MessageEvent, context)).toBeUndefined()
   })
 
   it('sends only allowlisted commands through the same-origin iframe host queue', () => {

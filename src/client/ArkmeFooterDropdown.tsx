@@ -3,7 +3,7 @@ import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import { ArkmeFooterAction, type ArkmeFooterActionProps } from './ArkmeFooterAction.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { arkmeAttentionSummary } from './attention-summary-store.js'
+import { arkmeChatDirectory } from './chat-directory-store.js'
 import { useArkmeRealtimeClientEvents } from './realtime-client-events.js'
 import { arkmeUi } from './ui-controller.js'
 
@@ -17,11 +17,11 @@ export type ArkmeFooterDropdownProps = ArkmeFooterActionProps & PropsRenderSlots
 export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
-  const attention = useSyncExternalStore(arkmeAttentionSummary.subscribe, arkmeAttentionSummary.getSnapshot, arkmeAttentionSummary.getSnapshot)
+  const directory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getConversationSnapshot, arkmeChatDirectory.getConversationSnapshot)
   const auth = authState.auth
-  const unreadCount = auth?.status === 'authenticated' && attention.ready
-    && attention.accountUserId === auth.userId
-    ? attention.summary?.badgeCount ?? 0
+  const unreadCount = auth?.status === 'authenticated'
+    && directory.accountScope === `${auth.environment}:${String(auth.userId)}`
+    ? directory.badgeCount
     : 0
   useArkmeRealtimeClientEvents(auth, ui.authRevision, false)
   return <>

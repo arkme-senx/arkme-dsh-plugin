@@ -29,6 +29,39 @@ function source(
 }
 
 describe('Arkme send-to-self source list', () => {
+  it.each([undefined, '', ' \n '])('keeps the author subtitle when an existing chat has preview %j', latestPreview => {
+    const author: ArkmeSourceItem = {
+      sourceRef: 'author', kind: 'private_chat', displayName: '作者昵称', peerUserId: 11,
+      activeAtMillis: 0, unreadCount: 0,
+      ...(latestPreview === undefined ? {} : { latestPreview }),
+    }
+    expect(arkmeRootChatPreview(author)).toBe('问题反馈与使用建议')
+    expect(renderToStaticMarkup(createElement(ArkmeRootChatPreview, { source: author })))
+      .toContain('问题反馈与使用建议')
+  })
+
+  it('keeps actual messages ahead of the author subtitle and does not label other conversations', () => {
+    const author: ArkmeSourceItem = {
+      sourceRef: 'author', kind: 'private_chat', displayName: '作者昵称', peerUserId: 11,
+      activeAtMillis: 0, unreadCount: 0, latestPreview: '',
+    }
+    expect(arkmeRootChatPreview({ ...author, latestPreview: 'hi' })).toBe('hi')
+    expect(arkmeRootChatPreview({ ...author, latestPreview: '[jm_emoji:silent_face]' })).toBe('😶')
+    expect(arkmeRootChatPreview({ ...author, peerUserId: 12 })).toBe('')
+    expect(arkmeRootChatPreview({ ...author, kind: 'group_chat' })).toBe('')
+  })
+
+  it('shows the first incoming author message immediately without requiring an outgoing message', () => {
+    const author: ArkmeSourceItem = {
+      sourceRef: 'author', kind: 'private_chat', displayName: '作者昵称', peerUserId: 11,
+      activeAtMillis: 1, unreadCount: 1, latestSequence: 1, latestPreview: '作者先发来的消息',
+    }
+    expect(arkmeRootChatPreview(author)).toBe('作者先发来的消息')
+    const rendered = renderToStaticMarkup(createElement(ArkmeRootChatPreview, { source: author }))
+    expect(rendered).toContain('作者先发来的消息')
+    expect(rendered).not.toContain('问题反馈与使用建议')
+  })
+
   it('keeps the aggregate selected in the left navigation while excluding it from category rows', () => {
     const aggregate = { ...source('aggregate', '发给自己', 0, 0), kind: 'send_to_self' as const }
     const defaultCategory = { ...source('default', '默认分类', 0, 0), kind: 'default_category' as const }

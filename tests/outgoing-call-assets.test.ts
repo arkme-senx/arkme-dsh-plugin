@@ -31,6 +31,22 @@ async function request(path: string, method = 'GET') {
 }
 
 describe('outgoing call assets', () => {
+  it('serves the playable onboarding utterance as packaged MPEG-4 audio', async () => {
+    const audio = await request('/arkme-self/api/call/call-demo-utterance-v1.m4a')
+    expect(audio.status).toBe(200)
+    expect(audio.headers['Content-Type']).toBe('audio/mp4')
+    expect(audio.body.subarray(4, 8).toString()).toBe('ftyp')
+    expect(audio.body.byteLength).toBeGreaterThan(1000)
+    const head = await request('/arkme-self/api/call/call-demo-utterance-v1.m4a', 'HEAD')
+    expect(head.status).toBe(200)
+    expect(head.body).toHaveLength(0)
+  })
+  it.each(['call-outgoing-linear.svg', 'call-incoming-linear.svg', 'video-outgoing-linear.svg', 'video-incoming-linear.svg'])('serves the original desktop detail icon %s', async name => {
+    const response = await request(`/arkme-self/api/call/${name}`)
+    expect(response.status).toBe(200)
+    expect(response.headers['Content-Type']).toBe('image/svg+xml; charset=utf-8')
+    expect(response.body.toString()).toContain('<svg')
+  })
   it('serves the iframe document with the script policy required by the pinned CallEngine bundle', async () => {
     const response = await request('/arkme-self/api/call/index.html')
 
@@ -57,6 +73,8 @@ describe('outgoing call assets', () => {
   it('serves the bundle, icon, and manifest with exact content types', async () => {
     const bundle = await request('/arkme-self/api/call/bundle.js')
     const icon = await request('/arkme-self/api/call/call-linear-strong.svg')
+    const menuCallIcon = await request('/arkme-self/api/call/call-linear.svg')
+    const menuVideoIcon = await request('/arkme-self/api/call/video-linear.svg')
     const manifest = await request('/arkme-self/api/call/manifest.json')
     const demoPeer = await request('/arkme-self/api/call/call-demo-peer.png')
     const demoSelf = await request('/arkme-self/api/call/call-demo-self.png')
@@ -70,6 +88,17 @@ describe('outgoing call assets', () => {
       'Content-Type': 'image/svg+xml; charset=utf-8',
       'Cache-Control': 'public, max-age=31536000, immutable',
     }) })
+    expect(menuCallIcon).toMatchObject({ status: 200, headers: expect.objectContaining({
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    }) })
+    expect(menuVideoIcon).toMatchObject({ status: 200, headers: expect.objectContaining({
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    }) })
+    // Git checkouts may use CRLF on Windows; compare the original SVG content with LF endings.
+    expect(createHash('sha256').update(menuCallIcon.body.toString().replace(/\r\n/g, '\n')).digest('hex')).toBe('f9407702eb8b6086a71fac0c8b0d2a315d360abc3ea82700615082e47c99e989')
+    expect(createHash('sha256').update(menuVideoIcon.body.toString().replace(/\r\n/g, '\n')).digest('hex')).toBe('1d034663d515141689b74c33f1ff189ca436cc2c0ad0c50c0bbb05a34ad31728')
     expect(manifest).toMatchObject({ status: 200, headers: expect.objectContaining({
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
@@ -104,7 +133,7 @@ describe('outgoing call assets', () => {
     expect((await request('/arkme-self/api/call/%2e%2e%2fpackage.json')).status).toBe(404)
   })
 
-  it('pins the upstream frontend and verifies the outgoing-only derived bundle', async () => {
+  it('pins the upstream frontend and verifies the incoming-capable derived bundle', async () => {
     const manifest = JSON.parse(await readFile(join(assetDirectory, 'manifest.json'), 'utf8')) as Record<string, unknown>
     const bundle = await readFile(join(assetDirectory, 'bundle.js'))
     const icon = await readFile(join(assetDirectory, 'call-linear-strong.svg'))
@@ -116,7 +145,8 @@ describe('outgoing call assets', () => {
       callEngineRange: '^3.5.9',
       upstreamBundleSha256: '6ff59d3eb9ce4d7556ba4054bac0df22ae279a7bccc56ccbf5712b6f475c95ce',
       iconSha256: '583d7dbd34069c5b50ca294a071637bbd3beed913cecdb91a202c001004eed45',
-      outgoingOnly: true,
+      outgoingOnly: false,
+      supportsIncoming: true,
     })
     expect(createHash('sha256').update(bundle).digest('hex')).toBe(manifest.bundleSha256)
     expect(createHash('sha256').update(icon).digest('hex')).toBe(manifest.iconSha256)

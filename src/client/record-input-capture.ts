@@ -465,15 +465,12 @@ export function arkmeRecordInputNetworkName(source: ArkmeNavigatorCaptureSource 
   const rawType = typeof source?.connection?.type === 'string'
     ? source.connection.type.trim().toLowerCase()
     : ''
-  const effectiveType = typeof source?.connection?.effectiveType === 'string'
-    ? source.connection.effectiveType.trim().toLowerCase()
-    : ''
-  if (rawType === 'wifi') return 'Wi‑Fi'
+  if (rawType === 'none' || source?.onLine === false) return '离线'
+  if (rawType === 'wifi') return 'WiFi'
   if (rawType === 'ethernet') return '有线网络'
-  if (rawType === 'cellular' || /^(?:(?:slow-)?2g|3g|4g|5g)$/u.test(effectiveType)) return '移动网络'
+  if (rawType === 'cellular') return '移动网络'
   if (rawType === 'vpn') return 'VPN'
   if (rawType === 'bluetooth') return '蓝牙网络'
-  if (rawType === 'none' || source?.onLine === false) return '离线'
   return source?.onLine === true ? '网络已连接' : ''
 }
 
@@ -500,17 +497,55 @@ async function withTimeout<T>(
   }
 }
 
+function browserComputerName(source: ArkmeNavigatorCaptureSource | undefined): string {
+  const userAgent = source?.userAgent ?? ''
+  if (/Android/iu.test(userAgent)) return 'Android'
+  if (/iPhone|iPad|iPod/iu.test(userAgent)) return 'iOS'
+  if (/Windows/iu.test(userAgent)) return 'Windows'
+  if (/Macintosh|Mac OS/iu.test(userAgent)) return 'macOS'
+  if (/CrOS/iu.test(userAgent)) return 'ChromeOS'
+  if (/Linux/iu.test(userAgent)) return 'Linux'
+  return '未知电脑'
+}
+
+interface ArkmeRecordCaptureDesktopScope {
+  readonly arkmeDesktop?: {
+    readonly startupAuthGate?: boolean
+    readonly device?: { readonly snapshot: () => Promise<unknown> }
+  }
+}
+
 export async function captureArkmeRecordInputContext(
   source: ArkmeNavigatorCaptureSource | undefined = browserNavigator(),
   timeoutMillis = DEFAULT_CONTEXT_TIMEOUT_MILLIS,
+  scope: ArkmeRecordCaptureDesktopScope = typeof window === 'undefined' ? {} : window,
 ): Promise<ArkmeRecordCaptureContext> {
-  const networkName = arkmeRecordInputNetworkName(source)
+  const desktop = scope.arkmeDesktop
+  const [deviceValue, battery] = await Promise.all([
+    typeof desktop?.device?.snapshot === 'function'
+      ? withTimeout(Promise.resolve().then(() => desktop.device!.snapshot()).catch(() => undefined), timeoutMillis, undefined)
+      : undefined,
+    typeof source?.getBattery === 'function'
+      ? withTimeout(Promise.resolve().then(() => source.getBattery!()).catch(() => undefined), timeoutMillis, undefined)
+      : undefined,
+  ])
+  const device = typeof deviceValue === 'object' && deviceValue !== null && 'schemaVersion' in deviceValue
+    && deviceValue.schemaVersion === 1 ? deviceValue as Record<string, unknown> : undefined
+  const nativeType = device?.networkType
+  const networkName = arkmeRecordInputNetworkName({
+    ...(source?.onLine === undefined ? {} : { onLine: source.onLine }),
+    connection: { type: typeof nativeType === 'string' && ['wifi', 'ethernet', 'cellular', 'vpn', 'bluetooth'].includes(nativeType)
+      ? nativeType : source?.connection?.type },
+  })
+  const wifiSsid = nativeType === 'wifi' && typeof device?.wifiSsid === 'string'
+    && device.wifiSsid.length > 0 && device.wifiSsid.length <= 32 ? device.wifiSsid : undefined
+  const displayNetwork = networkName === 'WiFi' && wifiSsid !== undefined ? `WiFi（${wifiSsid}）` : networkName
+  const computerName = typeof device?.computerName === 'string' ? device.computerName.trim().slice(0, 80) : ''
+  const clientName = desktop?.startupAuthGate === true ? 'Arkme' : arkmeRecordInputBrowserName(source)
   const base: ArkmeRecordCaptureContext = {
-    clientName: `${arkmeRecordInputBrowserName(source)}（DeepSeek Harness）`,
-    ...(networkName === '' ? {} : { networkName }),
+    clientName: `${computerName || browserComputerName(source)}（${clientName}）`,
+    ...(displayNetwork === '' ? {} : { networkName: displayNetwork }),
   }
-  if (source?.getBattery === undefined) return base
-  const battery = await withTimeout(source.getBattery().catch(() => undefined), timeoutMillis, undefined)
   const level = typeof battery?.level === 'number' && Number.isFinite(battery.level)
     ? Math.round(Math.max(0, Math.min(1, battery.level)) * 100)
     : undefined
@@ -1075,7 +1110,7 @@ export class ArkmeRecordInputCaptureOwner {
     const state = this.session(draftKey)
     const completedAtMillis = this.now()
     const contextPromise = this.captureContext().catch((): ArkmeRecordCaptureContext => ({
-      clientName: '浏览器（DeepSeek Harness）',
+      clientName: '未知电脑（浏览器）',
     }))
     // A quick send can arrive before the zero-delay timer fires or while
     // getUserMedia/MediaRecorder is still starting. Finalize that same owner

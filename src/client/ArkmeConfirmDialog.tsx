@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import {
   useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode,
 } from 'react'
@@ -41,19 +42,30 @@ export function ArkmeConfirmDialogPreview({ children, title }: { children: React
   return <p style={styles.preview} title={title}>{children}</p>
 }
 
-export function ArkmeConfirmDialog(props: {
+type ArkmeDialogProps = {
   titleId: string
   title: string
-  description: ReactNode
   children?: ReactNode
   error?: string
   busy: boolean
+  closeWhileBusy?: boolean
+  cancelLabel?: string
+  onClose: () => void
+} & ({
+  layout: 'picker'
+} | {
+  layout?: 'confirm'
+  description: ReactNode
   confirmLabel: string
   busyLabel: string
   confirmTone?: 'primary' | 'danger'
-  onClose: () => void
+  confirmDisabled?: boolean
   onConfirm: () => void
-}) {
+})
+
+export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
+  useArkmeLocale()
+  const closeDisabled = props.busy && !props.closeWhileBusy
   const dialogRef = useRef<HTMLElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
   const previousFocusRef = useRef<HTMLElement>()
@@ -63,7 +75,8 @@ export function ArkmeConfirmDialog(props: {
     previousFocusRef.current = typeof HTMLElement !== 'undefined' && document.activeElement instanceof HTMLElement
       ? document.activeElement
       : undefined
-    cancelRef.current?.focus({ preventScroll: true })
+    const initialFocus = cancelRef.current ?? dialogRef.current
+    initialFocus?.focus({ preventScroll: true })
     return () => {
       const previousFocus = previousFocusRef.current
       if (previousFocus?.isConnected === true) previousFocus.focus({ preventScroll: true })
@@ -73,23 +86,27 @@ export function ArkmeConfirmDialog(props: {
   useEffect(() => {
     if (typeof document === 'undefined') return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || props.busy) return
+      if (event.key !== 'Escape' || closeDisabled) return
       event.preventDefault()
       props.onClose()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [props.busy, props.onClose])
+  }, [closeDisabled, props.onClose])
 
   const trapFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Tab' || typeof document === 'undefined') return
     const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
       'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
     )
-    if (focusable === undefined || focusable.length === 0) return
+    if (focusable === undefined || focusable.length === 0) {
+      event.preventDefault()
+      dialogRef.current?.focus({ preventScroll: true })
+      return
+    }
     const first = focusable[0]
     const last = focusable[focusable.length - 1]
-    if (event.shiftKey && document.activeElement === first) {
+    if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
       event.preventDefault()
       last?.focus()
     } else if (!event.shiftKey && document.activeElement === last) {
@@ -99,31 +116,33 @@ export function ArkmeConfirmDialog(props: {
   }
 
   const dialog = <div style={styles.backdrop} role="presentation" data-arkme-confirm-dialog-backdrop="true" onMouseDown={event => {
-    if (event.target === event.currentTarget && !props.busy) props.onClose()
+    if (event.target === event.currentTarget && !closeDisabled) props.onClose()
   }}>
     <section
       ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby={props.titleId}
+      tabIndex={-1}
       aria-busy={props.busy || undefined}
       data-arkme-confirm-dialog="true"
-      style={styles.dialog}
+      style={{ ...styles.dialog, ...(props.layout === 'picker' ? { width: 'min(440px, 100%)', padding: 0, borderRadius: 12 } : {}) }}
       onKeyDown={trapFocus}
     >
-      <h2 id={props.titleId} style={styles.title}>{props.title}</h2>
-      <p style={styles.description}>{props.description}</p>
+      {props.layout === 'picker' && <h2 id={props.titleId} style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clipPath: 'inset(50%)' }}>{props.title}</h2>}
+      {props.layout !== 'picker' && <><h2 id={props.titleId} style={styles.title}>{props.title}</h2>
+      <p style={styles.description}>{props.description}</p></>}
       {props.children}
       {props.error === undefined || props.error === '' ? null : <div role="alert" style={styles.error}>{props.error}</div>}
-      <footer style={styles.footer}>
-        <button ref={cancelRef} type="button" style={{ ...styles.button, ...(props.busy ? styles.disabled : {}) }} disabled={props.busy} onClick={props.onClose}>取消</button>
-        <button
+      {props.layout !== 'picker' && <footer style={styles.footer}>
+        <button data-arkme-feedback="neutral" ref={cancelRef} type="button" style={{ ...styles.button, ...(closeDisabled ? styles.disabled : {}) }} disabled={closeDisabled} onClick={props.onClose}>{props.cancelLabel ?? tr("取消")}</button>
+        <button data-arkme-feedback="primary"
           type="button"
-          style={{ ...styles.button, ...styles[props.confirmTone ?? 'primary'], ...(props.busy ? styles.disabled : {}) }}
-          disabled={props.busy}
+          style={{ ...styles.button, ...styles[props.confirmTone ?? 'primary'], ...(props.busy || props.confirmDisabled ? styles.disabled : {}) }}
+          disabled={props.busy || props.confirmDisabled}
           onClick={props.onConfirm}
         >{props.busy ? props.busyLabel : props.confirmLabel}</button>
-      </footer>
+      </footer>}
     </section>
   </div>
   return typeof document === 'undefined' ? dialog : createPortal(dialog, document.body)

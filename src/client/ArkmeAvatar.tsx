@@ -1,3 +1,4 @@
+import { ArkmeBotAvatarFallback } from './ArkmeBotIdentity.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type {
   ArkmeGroupAvatarFallback,
@@ -65,7 +66,7 @@ function avatarStyles(size: number): Record<string, CSSProperties> {
 }
 
 export function ArkmeDefaultAvatarFrame({ children }: { children: ReactNode }) {
-  return <span style={{
+  return <span data-arkme-avatar style={{
     width: '100%', height: '100%', display: 'grid', placeItems: 'center', borderRadius: '50%',
     background: arkmeTheme.subtle, color: arkmeTheme.caption,
   }}>{children}</span>
@@ -91,25 +92,30 @@ function PhoneDefaultAvatar({ fallback, size }: { fallback: Extract<ArkmeGroupAv
 
 export function ArkmeUserAvatar({
   avatarRef,
+  lazy = false,
   fallback,
   size = 44,
   label = '用户头像',
+  senderKind,
 }: {
+  lazy?: boolean
   avatarRef?: string
   fallback?: ArkmeGroupAvatarFallback
   size?: number
   label?: string
+  senderKind?: 'human' | 'bot' | undefined
 }) {
   const normalizedRef = avatarRef?.trim() ?? ''
-  const imageUrl = useArkmeAvatarImage(normalizedRef)
+  const container = useRef<HTMLSpanElement>(null)
+  const imageUrl = useArkmeAvatarImage(normalizedRef, lazy ? container : undefined)
 
   const styles = avatarStyles(size)
-  return <span style={styles.avatar} aria-label={label}>
+  return <span data-arkme-avatar ref={container} style={styles.avatar} aria-label={label}>
     {imageUrl !== undefined
       ? <img src={imageUrl} alt="" draggable={false} style={styles.image} />
       : fallback?.kind === 'phone_default'
         ? <PhoneDefaultAvatar fallback={fallback} size={size} />
-        : <DefaultUserAvatar size={size} />}
+        : senderKind === 'bot' ? <ArkmeBotAvatarFallback size={size} /> : <DefaultUserAvatar size={size} />}
   </span>
 }
 
@@ -152,6 +158,7 @@ export function ArkmeGroupAvatarVisual({
   return <span
     aria-hidden
     data-arkme-group-avatar-count={layoutCount}
+    data-arkme-avatar
     style={{
       width: size, height: size, flex: 'none', position: 'relative', display: 'block', overflow: 'hidden',
       borderRadius: '50%', background: arkmeTheme.active,
@@ -264,7 +271,7 @@ export function ArkmeSourceAvatar(props: ArkmeSourceAvatarProps) {
   }, [slotsKey, visible])
 
   const styles = avatarStyles(size)
-  return <span ref={container} aria-hidden style={{ width: size, height: size, flex: 'none', display: 'grid', placeItems: 'center' }}>
+  return <span data-arkme-avatar ref={container} aria-hidden style={{ width: size, height: size, flex: 'none', display: 'grid', placeItems: 'center' }}>
     {isGroup
       ? <ArkmeGroupAvatarVisual memberCount={groupAvatar?.memberCount ?? sourceSlots.length} slots={slots} size={size} />
       : slots[0]?.imageUrl !== undefined

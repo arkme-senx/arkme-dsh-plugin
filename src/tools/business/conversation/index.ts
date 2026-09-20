@@ -1,5 +1,7 @@
+import { memberPageToolModules } from './member-pages.js'
 import type { ArkmeToolModule } from '../../contract/module.js'
 import { listSourcesToolModule } from './list-sources.js'
+import { topicHomeVisibilityToolModule } from './topic-home-visibility.js'
 import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './member-records.js'
 import { groupAiPolishToolModule } from './group-ai-polish.js'
 import { addFavoriteStickerToolModule, listFavoriteStickersToolModule, manageFavoriteStickerToolModule, sendFavoriteStickerToolModule } from './favorite-stickers.js'
@@ -16,9 +18,11 @@ import { conversationMarkReadToolModule, unreadConversationsToolModule } from '.
 
 export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
   listSourcesToolModule,
+  topicHomeVisibilityToolModule,
   unreadConversationsToolModule,
   readSourceToolModule,
   sourceMembersToolModule,
+  ...memberPageToolModules,
   sourceMemberRecordsToolModule,
   ...messageReadReceiptToolModules,
   conversationMarkReadToolModule,

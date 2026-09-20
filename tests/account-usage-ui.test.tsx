@@ -1,0 +1,285 @@
+// @vitest-environment jsdom
+import { act, createRef } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { ArkmeAccountUsage, ArkmeAccountUsageDetails, ArkmeAccountUsageDialog, formatCompactTokens, formatUsageBytes, formatUsageSeconds, usageLevel } from '../src/client/ArkmeAccountUsage.js'
+import { installArkmeRedesignStyles } from '../src/client/redesign/styles.js'
+const mocks = vi.hoisted(() => ({ call: vi.fn() }))
+vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
+vi.mock('../src/client/read-intent-visibility.js', () => ({ suspendArkmeVisibleReadIntent: () => () => {} }))
+vi.mock('../src/client/account-usage.css?inline', async () => ({ default: (await import('node:fs')).readFileSync(`${process.cwd()}/src/client/account-usage.css`, 'utf8') }))
+let root: Root, host: HTMLDivElement
+const onViewMembership = vi.fn(), onRefreshMembership = vi.fn()
+const tokens = { accountScope: 'prod:11', used: 1000, remaining: 9000 }
+const storage = { accountScope: 'prod:11', usedBytes: 1024 ** 3, totalBytes: 10 * 1024 ** 3 }
+const voice = { accountScope: 'prod:11', usedSeconds: 300, remainingSeconds: 6900 }
+const balance = { availableNanoCny: '12500000000', totalNanoCny: '15000000000', reservedNanoCny: '2500000000', currency: 'CNY' }
+const defaultValue = (operation: string) => operation === 'billing.quota' ? balance : operation === 'account.usage.voice' ? voice : operation === 'account.usage.tokens' ? tokens : storage
+beforeEach(() => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+  mocks.call.mockReset(); onViewMembership.mockReset(); onRefreshMembership.mockReset()
+  mocks.call.mockImplementation(async operation => defaultValue(operation))
+  host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
+})
+afterEach(async () => { await act(async () => root.unmount()); host.remove() })
+async function render(scope = 'prod:11') { await act(async () => root.render(<ArkmeAccountUsageDetails accountScope={scope} onViewMembership={onViewMembership} onRefreshMembership={onRefreshMembership} />)) }
+const refresh = () => host.querySelector<HTMLButtonElement>('[aria-label="刷新用量与额度"]')!
+describe('account usage card', () => {
+  it('keeps new detail reads collapsed and cancels a pending detail read when closed', async () => {
+    await render()
+    expect(mocks.call.mock.calls.some(c => c[0].startsWith('account.usage.token.'))).toBe(false)
+    let signal: AbortSignal | undefined
+    mocks.call.mockImplementation((_operation, _params, value) => { signal = value; return new Promise(() => {}) })
+    const toggle = () => host.querySelector<HTMLButtonElement>('[aria-controls][aria-expanded]')!
+    await act(async () => toggle().click())
+    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    expect(host.querySelector('[data-usage-detail="tokens"]')).not.toBeNull()
+    expect(mocks.call.mock.calls.at(-1)?.[0]).toBe('account.usage.token.summary')
+    await act(async () => toggle().click())
+    expect(signal?.aborted).toBe(true)
+    expect(host.querySelector('[data-usage-detail="tokens"]')).toBeNull()
+  })
+  it('separates monthly Tokens from purchased balance without fabricating usage or conversion', async () => {
+    await render()
+    expect(host.querySelectorAll('.arkme-usage-metric')).toHaveLength(5)
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(3)
+    expect(host.textContent).toContain('已用 1,000 / 剩余 9,000')
+    expect(host.textContent).toContain('已用 1 GB / 共 10 GB')
+    expect(host.textContent).toContain('剩余 9 GB')
+    const recording = host.querySelector('[data-usage-kind="recording-transcription"]')!
+    expect(recording.textContent).toContain('暂未做限制')
+    expect(recording.textContent).toContain('用量统计待接入')
+    expect(recording.querySelector('[role="progressbar"]')).toBeNull()
+    expect(mocks.call.mock.calls.map(c => c[0])).toEqual(['account.usage.tokens', 'account.usage.storage', 'account.usage.voice', 'billing.quota'])
+    expect(host.querySelector('[data-usage-kind="voice-transcription"]')?.textContent).toContain('已用 5 分 / 剩余 1 小时 55 分')
+    expect(host.textContent).toContain('月度赠送 Token')
+    const prepaid = host.querySelector('[data-usage-kind="ai-balance"]')!
+    expect(prepaid.textContent).toContain('可用 ¥12.50')
+    expect(prepaid.textContent).toContain('任务预占 ¥2.50')
+    expect(prepaid.textContent).not.toContain('已消费')
+    expect(prepaid.querySelector('[role="progressbar"]')).toBeNull()
+    expect(host.textContent).not.toContain('永久免费')
+  })
+  it('refreshes monthly Tokens, storage, monetary balance and membership with one action', async () => {
+    await render()
+    mocks.call.mockImplementation(async operation => operation === 'account.usage.tokens' ? { ...tokens, remaining: 8000 } : operation === 'billing.quota' ? { ...balance, availableNanoCny: '3000000000' } : operation === 'account.usage.voice' ? { ...voice, usedSeconds: 600, remainingSeconds: 6600 } : storage)
+    await act(async () => refresh().click())
+    expect(host.textContent).toContain('剩余 8,000')
+    expect(host.textContent).toContain('可用 ¥3.00')
+    expect(host.textContent).toContain('已用 10 分 / 剩余 1 小时 50 分')
+    expect(mocks.call).toHaveBeenCalledTimes(8)
+    expect(onRefreshMembership).toHaveBeenCalledOnce()
+  })
+  it('reports errors independently, never displaying missing values as zero', async () => {
+    mocks.call.mockImplementation(async operation => {
+      if (operation === 'account.usage.tokens') throw new Error('offline')
+      return defaultValue(operation)
+    })
+    await render()
+    expect(host.textContent).toContain('暂时无法读取，请刷新重试')
+    expect(host.textContent).toContain('已用 1 GB')
+    expect(host.textContent).not.toContain('已用 0')
+    expect(refresh().disabled).toBe(false)
+  })
+  it('keeps successful Token output when storage fails and retries successfully', async () => {
+    mocks.call.mockImplementation(async operation => {
+      if (operation === 'account.usage.storage') throw new Error('offline')
+      return defaultValue(operation)
+    })
+    await render()
+    expect(host.textContent).toContain('剩余 9,000')
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2)
+    mocks.call.mockImplementation(async operation => defaultValue(operation))
+    await act(async () => refresh().click())
+    expect(host.textContent).not.toContain('无法读取')
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(3)
+  })
+  it('provides a non-mutating membership entry for low or empty balances', async () => {
+    mocks.call.mockImplementation(async operation => operation === 'billing.quota' ? balance : operation === 'account.usage.voice' ? { ...voice, remainingSeconds: 0 } : operation === 'account.usage.tokens' ? { ...tokens, remaining: 0 } : { ...storage, usedBytes: storage.totalBytes * 1.2 })
+    await render()
+    expect(host.textContent).toContain('暂无可用额度')
+    expect(host.textContent).toContain('空间已用满')
+    expect(host.querySelectorAll('[data-usage-level="exhausted"]')).toHaveLength(3)
+    expect([...host.querySelectorAll('[role="progressbar"]')].every(bar => bar.getAttribute('aria-valuenow') === '100')).toBe(true)
+    await act(async () => host.querySelector<HTMLButtonElement>('.arkme-usage-action')!.click())
+    expect(onViewMembership).toHaveBeenCalledOnce()
+    expect(mocks.call).toHaveBeenCalledTimes(4)
+  })
+  it('does not reveal a previous account result while a new account is loading', async () => {
+    await render()
+    let resolveOld: (value: unknown) => void = () => {}
+    mocks.call.mockImplementation(operation => operation === 'billing.quota' ? Promise.reject(new Error('offline')) : new Promise(resolve => { resolveOld = resolve }))
+    await render('prod:12')
+    expect(host.textContent).not.toContain('9,000')
+    expect(host.textContent).not.toContain('¥12.50')
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0)
+    expect(refresh().disabled).toBe(true)
+    await act(async () => resolveOld(storage))
+    expect(host.textContent).not.toContain('1 GB')
+    expect(host.textContent).toContain('暂时无法读取')
+  })
+  it('ignores a late request after switching environments', async () => {
+    const pending: Array<(value: unknown) => void> = []
+    mocks.call.mockImplementation(() => new Promise(resolve => pending.push(resolve)))
+    await render()
+    mocks.call.mockImplementation(async operation => operation === 'billing.quota' ? { ...balance, availableNanoCny: '1000000000' } : operation === 'account.usage.voice' ? { ...voice, accountScope: 'test:11', remainingSeconds: 0 } : operation === 'account.usage.tokens' ? { ...tokens, accountScope: 'test:11', remaining: 88 } : { ...storage, accountScope: 'test:11' })
+    await render('test:11')
+    await act(async () => { pending[0]!(tokens); pending[1]!(storage); pending[2]!(voice); pending[3]!(balance) })
+    expect(host.textContent).toContain('剩余 88')
+    expect(host.textContent).not.toContain('9,000')
+    expect(host.textContent).toContain('可用 ¥1.00')
+    expect(host.textContent).not.toContain('¥12.50')
+    expect(host.textContent).not.toContain('剩余 1 小时 55 分')
+  })
+  it('shows a zero available balance without pretending that it is a Token balance', async () => {
+    mocks.call.mockImplementation(async operation => operation === 'billing.quota' ? { ...balance, availableNanoCny: '0', reservedNanoCny: '0', totalNanoCny: '0' } : defaultValue(operation))
+    await render()
+    expect(host.textContent).toContain('可用 ¥0.00')
+    expect(host.textContent).toContain('剩余 9,000')
+    expect(host.textContent).not.toContain('任务预占')
+  })
+  it('keeps Tokens and storage visible when balance fails and allows a retry', async () => {
+    mocks.call.mockImplementation(async operation => { if (operation === 'billing.quota') throw new Error('offline'); return defaultValue(operation) })
+    await render()
+    expect(host.querySelector('[data-usage-kind="ai-balance"]')?.textContent).toContain('暂时无法读取')
+    expect(host.textContent).toContain('剩余 9,000')
+    expect(host.textContent).not.toContain('¥0.00')
+    mocks.call.mockImplementation(async operation => defaultValue(operation))
+    await act(async () => refresh().click())
+    expect(host.textContent).toContain('可用 ¥12.50')
+  })
+  it('isolates voice read failures from the separate unlimited recording entry and retries', async () => {
+    mocks.call.mockImplementation(async operation => { if (operation === 'account.usage.voice') throw new Error('offline'); return defaultValue(operation) })
+    await render()
+    const speech = () => host.querySelector('[data-usage-kind="voice-transcription"]')!
+    expect(speech().textContent).toContain('暂时无法读取')
+    expect(speech().textContent).not.toContain('已用 0')
+    expect(host.querySelector('[data-usage-kind="recording-transcription"]')?.textContent).toContain('暂未做限制')
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2)
+    mocks.call.mockImplementation(async operation => defaultValue(operation))
+    await act(async () => refresh().click())
+    expect(speech().textContent).toContain('已用 5 分 / 剩余 1 小时 55 分')
+    expect(speech().textContent).toContain('每月 2 小时')
+  })
+  it('formats durations without rounding seconds into fake zero usage', () => {
+    expect(formatUsageSeconds(0)).toBe('0 秒')
+    expect(formatUsageSeconds(1)).toBe('1 秒')
+    expect(formatUsageSeconds(60)).toBe('1 分')
+    expect(formatUsageSeconds(61)).toBe('1 分 1 秒')
+    expect(formatUsageSeconds(3661)).toBe('1 小时 1 分 1 秒')
+    expect(formatUsageSeconds(1200 * 60)).toBe('20 小时')
+  })
+  it('opens existing recharge as a top-layer dialog without placing an order and returns to details', async () => {
+    mocks.call.mockImplementation(async operation => operation === 'billing.products' ? { items: [] } : defaultValue(operation))
+    await act(async () => root.render(<ArkmeAccountUsageDialog accountScope="prod:11" onViewMembership={onViewMembership} onRefreshMembership={onRefreshMembership} onClose={() => {}} />))
+    const recharge = document.querySelector<HTMLButtonElement>('[data-usage-kind="ai-balance"] button')!
+    recharge.focus()
+    await act(async () => recharge.click())
+    expect(document.querySelector<HTMLDialogElement>('.arkme-billing-modal-host')?.open).toBe(true)
+    expect(document.querySelector('[aria-label="余额充值"]')).not.toBeNull()
+    expect(mocks.call.mock.calls.map(c => c[0])).toContain('billing.products')
+    expect(mocks.call.mock.calls.some(c => c[0].startsWith('billing.order.'))).toBe(false)
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="关闭充值弹窗"]')!.click())
+    expect(document.querySelector('.arkme-billing-modal-host')).toBeNull()
+    expect(document.querySelector<HTMLDialogElement>('.arkme-usage-dialog')?.open).toBe(true)
+    expect(document.activeElement).toBe(recharge)
+  })
+  it('formats small/large storage accurately and bounds depletion thresholds', () => {
+    expect(formatUsageBytes(0)).toBe('0 B')
+    expect(formatUsageBytes(1024)).toBe('1 KB')
+    expect(formatUsageBytes(1024 ** 4)).toBe('1 TB')
+    expect(usageLevel(0, 0)).toBe('exhausted')
+    expect(usageLevel(90, 100)).toBe('low')
+    expect(usageLevel(89, 100)).toBe('normal')
+    expect(usageLevel(101, 100)).toBe('exhausted')
+  })
+  it('ships semantic-theme styles with a viewport-bounded scrolling popover', () => {
+    const dispose = installArkmeRedesignStyles()
+    expect(document.head.textContent).toContain('.arkme-account-usage')
+    expect(document.head.textContent).toContain('max-height: calc(100dvh - 28px)')
+    expect(document.head.textContent).toContain('var(--dsw-alias-label-primary')
+    dispose()
+    const navigation = readFileSync(`${process.cwd()}/src/client/ArkmeProductNavigation.tsx`, 'utf8')
+    expect(navigation).toContain('<ArkmeAccountUsage key={memberScope}')
+  })
+})
+
+describe('compact summary and detail dialog', () => {
+  it('keeps all four rows while loading without presenting unknown values as measured zeros', async () => {
+    mocks.call.mockImplementation(() => new Promise(() => {}))
+    await act(async () => root.render(<ArkmeAccountUsage accountScope="prod:11" onOpenDetails={() => {}} />))
+    expect(host.querySelectorAll('.arkme-usage-summary-row')).toHaveLength(4)
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0)
+    expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['读取中…', '读取中…', '读取中…', '暂未做限制'])
+  })
+  it('preserves genuine zero voice allowance and marks it as exhausted, not missing', async () => {
+    mocks.call.mockImplementation(async operation => operation === 'account.usage.voice' ? { ...voice, usedSeconds: 0, remainingSeconds: 0 } : defaultValue(operation))
+    await act(async () => root.render(<ArkmeAccountUsage accountScope="prod:11" onOpenDetails={() => {}} />))
+    const speech = host.querySelector('[data-usage-kind="voice-transcription"]')!
+    expect(speech.getAttribute('data-usage-level')).toBe('exhausted')
+    expect(speech.querySelector('.arkme-usage-summary-total')?.textContent).toBe('0 秒')
+    expect(speech.getAttribute('title')).toContain('本月已用 0 秒 / 剩余 0 秒 / 共 0 秒')
+  })
+  it('shows four compact rows with three used-progress bars and totals on the right', async () => {
+    const open = vi.fn()
+    mocks.call.mockImplementation(async operation => operation === 'account.usage.tokens' ? { ...tokens, used: 760_424, remaining: 49_239_576 } : defaultValue(operation))
+    await act(async () => root.render(<ArkmeAccountUsage accountScope="prod:11" onOpenDetails={open} />))
+    expect(host.querySelectorAll('.arkme-usage-summary-row')).toHaveLength(4)
+    expect([...host.querySelectorAll('.arkme-usage-summary-total')].map(el => el.textContent)).toEqual(['5,000 万', '10 GB', '2 小时', '暂未做限制'])
+    expect(host.textContent).toContain('暂未做限制')
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(3)
+    expect(host.querySelectorAll('p,small')).toHaveLength(0)
+    expect(host.querySelector('[data-usage-kind="recording-transcription"] [role="progressbar"]')).toBeNull()
+    expect(host.querySelector('[data-usage-kind="recording-transcription"]')?.getAttribute('title')).toContain('用量统计待接入')
+    expect(host.querySelector('[data-usage-kind="storage"] [role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('10')
+    expect(host.textContent).not.toContain('刷新')
+    expect(host.textContent).toContain('月度 Token')
+    expect(mocks.call.mock.calls.some(c => c[0].startsWith('billing.'))).toBe(false)
+    expect(host.querySelector('[data-usage-kind="tokens"]')?.getAttribute('title')).toContain('本月已用 760,424 / 剩余 49,239,576 / 共 50,000,000 Token')
+    await act(async () => host.querySelector('button')!.click())
+    expect(open).toHaveBeenCalledOnce()
+  })
+  it('keeps depleted/error summaries on the same row and the details entry usable', async () => {
+    mocks.call.mockImplementation(async operation => {
+      if (operation === 'account.usage.storage') throw new Error('offline')
+      return operation === 'account.usage.tokens' ? { ...tokens, remaining: 0 } : defaultValue(operation)
+    })
+    const open = vi.fn()
+    await act(async () => root.render(<ArkmeAccountUsage accountScope="prod:11" onOpenDetails={open} />))
+    expect(host.querySelector('[data-usage-kind="tokens"]')?.getAttribute('title')).toContain('已用尽')
+    expect(host.querySelector('[data-usage-kind="tokens"] [role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100')
+    expect(host.querySelector('[data-usage-kind="tokens"] .arkme-usage-summary-total')?.textContent).toBe('1,000')
+    expect(host.textContent).toContain('暂不可用')
+    expect(host.querySelectorAll('.arkme-usage-summary-row')).toHaveLength(4)
+    expect(host.querySelector('[data-usage-kind="storage"] [role="progressbar"]')).toBeNull()
+    await act(async () => host.querySelector('button')!.click())
+    expect(open).toHaveBeenCalledOnce()
+  })
+  it('uses a dialog for precise values with cancel/close and focus restoration', async () => {
+    const close = vi.fn(), ref = createRef<HTMLButtonElement>()
+    await act(async () => root.render(<><button ref={ref}>头像</button><ArkmeAccountUsageDialog accountScope="prod:11" onViewMembership={onViewMembership} onRefreshMembership={onRefreshMembership} onClose={close} returnFocusRef={ref} /></>))
+    const dialog = document.querySelector('dialog')!
+    expect(dialog.open).toBe(true)
+    expect(dialog.textContent).toContain('已用 1,000 / 剩余 9,000')
+    expect(dialog.textContent).toContain('用量统计待接入')
+    expect(dialog.querySelectorAll('[role="progressbar"]')).toHaveLength(3)
+    await act(async () => dialog.querySelector<HTMLButtonElement>('[aria-label="关闭用量与额度详情"]')!.click())
+    expect(close).toHaveBeenCalledOnce()
+    await act(async () => dialog.dispatchEvent(new Event('cancel', { bubbles: true, cancelable: true })))
+    expect(close).toHaveBeenCalledTimes(2)
+    await act(async () => root.render(<button ref={ref}>头像</button>))
+    expect(document.activeElement).toBe(ref.current)
+    expect(document.querySelector('dialog')).toBeNull()
+  })
+  it('formats quota magnitudes without converting monetary balance to tokens', () => {
+    expect(formatCompactTokens(0)).toBe('0')
+    expect(formatCompactTokens(9999)).toBe('9,999')
+    expect(formatCompactTokens(10_000)).toBe('1 万')
+    expect(formatCompactTokens(50_000_000)).toBe('5,000 万')
+    expect(formatCompactTokens(49_239_576)).toBe('约 4,924 万')
+    expect(formatCompactTokens(123_456_789)).toBe('约 1.23 亿')
+  })
+})

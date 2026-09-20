@@ -1,7 +1,48 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmeUiController } from '../src/client/ui-controller.js'
+import { arkmeContactsTab } from '../src/client/redesign/contacts/contacts-tab-store.js'
 
 describe('ArkmeUiController', () => {
+  it('returns from a contact personal World to that contact, while other personal Worlds return to World', () => {
+    const controller = new ArkmeUiController()
+    arkmeContactsTab.activateAccount('return-world-test')
+    try {
+      controller.showContacts()
+      arkmeContactsTab.select({ kind: 'contact', contactRef: 'contact-a' })
+      controller.showContactWorld({ userId: 88, contactRef: 'contact-a', displayName: 'Lucis' })
+      controller.backFromWorld()
+      expect(controller.getViewSnapshot()).toMatchObject({ mode: 'source', productMode: 'contacts' })
+      expect(controller.getViewSnapshot().worldTarget).toBeUndefined()
+      expect(arkmeContactsTab.getSnapshot().selection).toEqual({ kind: 'contact', contactRef: 'contact-a' })
+      controller.showUserWorld({ userId: 12, displayName: 'Other' })
+      controller.backFromWorld()
+      expect(controller.getViewSnapshot().mode).toBe('world')
+      expect(controller.getViewSnapshot().productMode).toBeUndefined()
+      expect(controller.getViewSnapshot().worldTarget).toBeUndefined()
+    } finally {
+      arkmeContactsTab.activateAccount(undefined)
+    }
+  })
+  it('navigates from contacts to a personal World using an opaque contact reference', () => {
+    const controller = new ArkmeUiController()
+    controller.showContacts()
+    controller.showContactWorld({ userId: 88, contactRef: 'contact-a', displayName: 'Lucis' })
+    expect(controller.getViewSnapshot()).toMatchObject({ mode: 'world', worldTarget: { contactRef: 'contact-a', displayName: 'Lucis' } })
+    expect(controller.getViewSnapshot().productMode).toBeUndefined()
+    controller.showContactWorld({ userId: 88, contactRef: 'contact-b', displayName: 'Lucis' })
+    expect(controller.getViewSnapshot().worldTarget).toMatchObject({ contactRef: 'contact-b' })
+    controller.showWorld()
+    expect(controller.getViewSnapshot().worldTarget).toBeUndefined()
+  })
+  it('updates the private-chat header when only the peer membership changes', () => {
+    const controller = new ArkmeUiController()
+    const source = { sourceRef: 'private-1', kind: 'private_chat' as const, displayName: '同事', activeAtMillis: 0, unreadCount: 0, peerMemberType: 'svip' as const }
+    controller.selectSource(source)
+    expect(controller.updateSelectedSourceProjection({ ...source, peerMemberType: 'free' })).toBe(true)
+    expect(controller.getViewSnapshot().selectedSource?.peerMemberType).toBe('free')
+    expect(controller.updateSelectedSourceProjection({ ...source, sourceRef: 'other-peer', peerMemberType: 'vip' })).toBe(false)
+  })
+
   it('keeps the view snapshot stable across projection-only invalidations', () => {
     const controller = new ArkmeUiController()
     const initial = controller.getViewSnapshot()
@@ -73,6 +114,14 @@ describe('ArkmeUiController', () => {
     expect(controller.getChatRevision()).toBe(0)
   })
 
+  it('retains newer policy evidence when presentation is unchanged', () => {
+    const controller = new ArkmeUiController()
+    const source = { sourceRef: 'group-1', kind: 'group_chat' as const, displayName: '群', isMuted: false, isPinned: true }
+    controller.selectSource({ ...source, chatPolicyUpdatedAtMillis: 1000, chatNotificationPolicyUpdatedAtMillis: 1000 })
+    controller.updateSelectedSourceProjection({ ...source, chatPolicyUpdatedAtMillis: 3000, chatNotificationPolicyUpdatedAtMillis: 2000 })
+    expect(controller.getSnapshot().selectedSource).toMatchObject({ chatPolicyUpdatedAtMillis: 3000, chatNotificationPolicyUpdatedAtMillis: 2000 })
+  })
+
   it('clears Contacts mode on every non-Contacts route and authenticated account reset', () => {
     const controller = new ArkmeUiController()
 
@@ -136,6 +185,8 @@ describe('ArkmeUiController', () => {
       chatRevision: 0,
       recordRevision: 0,
       mode: 'world',
+      worldInitialScope: 'all',
+      worldNavigationRevision: 1,
     })
 
     controller.selectSource(source)
@@ -271,17 +322,17 @@ describe('ArkmeUiController', () => {
     })
   })
 
-  it('opens and consumes an exact conversation message target', () => {
+  it.each([undefined, 7, '6690025278483443577'])('opens and consumes an exact conversation message target for %s', (ownerId) => {
     const controller = new ArkmeUiController()
     const source = {
       sourceRef: 'source-search', kind: 'group_chat', displayName: '发布会项目群', activeAtMillis: 1, unreadCount: 0,
     } as const
 
-    controller.showConversationTarget(source, 'record-search-1', 123)
+    controller.showConversationTarget(source, 'record-search-1', 123, ownerId)
     const target = controller.getSnapshot().conversationTarget
     expect(controller.getSnapshot()).toMatchObject({
       mode: 'source', selectedSource: source,
-      conversationTarget: { itemUid: 'record-search-1', sendAtMillis: 123 },
+      conversationTarget: { itemUid: 'record-search-1', sendAtMillis: 123, ...(ownerId === undefined ? {} : { recordOwnerUserId: ownerId }) },
     })
 
     controller.consumeConversationTarget(target?.revision ?? 0)
@@ -341,6 +392,7 @@ describe('ArkmeUiController', () => {
     controller.showWorld()
     expect(controller.getSnapshot()).toEqual({
       authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'world',
+      worldInitialScope: 'all', worldNavigationRevision: 1,
     })
     expect(() => { controller.showUserWorld({ userId: 0, displayName: '无效' }) }).toThrow('世界用户 ID')
   })
@@ -481,4 +533,25 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).not.toHaveProperty('calendarOpen')
     expect(controller.getSnapshot()).not.toHaveProperty('productMode')
   })
+})
+
+
+it('publishes each unread-directory jump without changing the selected conversation or chat revision', () => {
+  const controller = new ArkmeUiController()
+  const source = { sourceRef: 'a', kind: 'private_chat' as const, displayName: 'A', activeAtMillis: 1, unreadCount: 3 }
+  controller.selectSource(source)
+  const before = controller.getSnapshot()
+  controller.locateNextUnreadConversation()
+  controller.locateNextUnreadConversation()
+  expect(controller.getViewSnapshot().conversationUnreadJumpRevision).toBe(2)
+  expect(controller.getSnapshot().selectedSource).toEqual(source)
+  expect(controller.getSnapshot().chatRevision).toBe(before.chatRevision)
+})
+
+it('clears the previous account Bot selection before publishing an authenticated account replacement', () => {
+  const controller = new ArkmeUiController()
+  controller.openBotConversation({ botRef: 'old-account', directoryKey: 'old-account-bot', name: 'Old', provider: 'openclaw', description: '', status: 'offline', directChatAvailable: true })
+  controller.authChanged(true, true)
+  expect(controller.getSnapshot().mode).toBe('source')
+  expect(controller.getSnapshot().selectedBot).toBeUndefined()
 })

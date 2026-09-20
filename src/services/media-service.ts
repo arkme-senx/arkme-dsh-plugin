@@ -14,6 +14,7 @@ import type {
   ArkmeUploadedAsset,
 } from '../types.js'
 import { ProfileService } from './profile-service.js'
+import { isRecordDynamicPhotoMotion, recordDynamicPhotoGroups } from './dynamic-photo.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 export interface ArkmeWorldImageEntry {
@@ -131,6 +132,12 @@ function allowedSignedAudioHost(environment: 'test' | 'prod', hostname: string):
     ? ['jotmo-useraudio.oss-cn-hangzhou.aliyuncs.com']
     : ['jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com']
   return allowed.includes(hostname.toLowerCase())
+}
+
+/** Call transcript clips use a separate COS bucket, not the user-audio OSS bucket. */
+function allowedSignedCallAudioHost(environment: 'test' | 'prod', hostname: string): boolean {
+  return environment === 'prod'
+    && hostname.toLowerCase() === 'webrtc-record-prod-1403070603.cos.ap-shanghai.myqcloud.com'
 }
 
 /** Record audio can originate from the dedicated audio or generic file bucket. */
@@ -303,6 +310,7 @@ export class MediaService {
       { file_asset_uids: unique },
       session,
       signal,
+      { lane: 'interactive-read' },
     )
     return listValue(data.items).map(raw => {
       const item = objectValue(raw)
@@ -311,6 +319,8 @@ export class MediaService {
       return {
         fileAssetUid: stringValue(item.file_asset_uid).trim(),
         status: stringValue(item.status).trim(),
+        ...(typeof item.file_kind === 'number' ? { fileKind: item.file_kind } : {}),
+        ...(typeof item.size === 'number' ? { size: item.size } : {}),
         ...(stringValue(item.file_name).trim() === '' ? {} : { fileName: stringValue(item.file_name).trim() }),
         ...(stringValue(item.mime_type).trim() === '' ? {} : { mimeType: stringValue(item.mime_type).trim() }),
         ...(previewUrl === undefined ? {} : { previewUrl }),
@@ -449,8 +459,10 @@ export class MediaService {
     }
     const url = new URL(descriptor.remoteUrl)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== ''
+      || url.port !== '' || url.hash !== ''
       || !(allowedSignedImageHost(this.runtime.config.environment, url.hostname)
-        || allowedSignedAudioHost(this.runtime.config.environment, url.hostname))) {
+        || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)
+        || allowedSignedCallAudioHost(this.runtime.config.environment, url.hostname))) {
       throw new ArkmePluginError('media-host-rejected', '媒体来源不受信任', false, 403)
     }
     const response = await this.runtime.fetchImpl(url, {
@@ -602,14 +614,33 @@ export class MediaService {
 
   async readImage(
     imageRef: string,
-    options: { maxBytes?: number; signal?: AbortSignal } = {},
+    options: { maxBytes?: number; signal?: AbortSignal; refresh?: boolean } = {},
   ): Promise<ArkmeImageBytes> {
+    options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
     const isProfileImage = imageRef.trim().startsWith('arkme-profile-image-v1.')
+    const isBotImage = imageRef.trim().startsWith('arkme-bot-image-v1.')
+    const isAvatar = isProfileImage || isBotImage
     const maximumBytes = isProfileImage ? MAX_ARKME_PROFILE_IMAGE_BYTES : MAX_ARKME_IMAGE_BYTES
     const byteLimit = Math.min(maximumBytes, Math.max(1, Math.trunc(options.maxBytes ?? maximumBytes)))
     const cacheKey = `${String(session.userId)}:${String(byteLimit)}:${imageRef.trim()}`
-    const cached = this.cachedImage(cacheKey)
+    if (isProfileImage) await this.profile.openProfileImageRef(imageRef, session.userId)
+    const persisted = isAvatar ? await this.runtime.stateStore.readAvatarCache?.(session.userId, imageRef).catch(() => undefined) : undefined
+    if (persisted !== undefined && options.refresh !== true && persisted.bytes <= byteLimit) {
+      this.cacheImage(cacheKey, persisted)
+      return cloneImageBytes(persisted)
+    }
+    if (isBotImage) {
+      try {
+        if (this.botImages === undefined) throw new ArkmePluginError('bot-image-ref-invalid', 'Bot 头像引用不可用', false, 403)
+        await this.botImages.openBotImageRef(imageRef, session.userId)
+      } catch (error) {
+        // The account-scoped DB row authorizes historical local bytes, never an expired upstream URL.
+        if (persisted !== undefined && persisted.bytes <= byteLimit) return cloneImageBytes(persisted)
+        throw error
+      }
+    }
+    const cached = options.refresh === true ? undefined : this.cachedImage(cacheKey)
     if (cached !== undefined) return cached
     const existing = this.imageInFlight.get(cacheKey)
     if (existing !== undefined) return cloneImageBytes(await existing)
@@ -621,8 +652,11 @@ export class MediaService {
     try {
       const value = await pending
       this.cacheImage(cacheKey, value)
+      if (isAvatar) await this.runtime.stateStore.writeAvatarCache?.(session.userId, imageRef, value).catch(() => { console.warn('dsh-arkme: avatar_cache_write_failed') })
       return cloneImageBytes(value)
     } catch (error) {
+      options.signal?.throwIfAborted()
+      if (persisted !== undefined && persisted.bytes <= byteLimit) return cloneImageBytes(persisted)
       if (isProfileImage) logArkmeAvatarDiagnostic('image_read_failed', {
         environment: this.runtime.config.environment, viewerUserId: session.userId,
         ...avatarReferenceDiagnostic(imageRef), durationMillis: Math.max(0, Date.now() - startedAtMillis),
@@ -681,6 +715,17 @@ export class MediaService {
     byteLimit: number,
     signal?: AbortSignal,
   ): Promise<ArkmeImageBytes> {
+    const snapshotAsset = /^file_asset:\/\/([A-Za-z0-9_-]{8,128})$/.exec(imageRef.trim())
+    if (snapshotAsset !== null) {
+      // Resolve the immutable historical asset with the existing authenticated file API.
+      // Do not fall back to the user's current profile when this asset is unavailable.
+      const asset = (await this.queryFileAssets([snapshotAsset[1]!], signal))
+        .find(item => item.fileAssetUid === snapshotAsset[1])
+      const url = asset?.previewUrl ?? asset?.downloadUrl
+      if (url === undefined) throw new ArkmePluginError('image-ref-unavailable', '历史头像当前不可用', true, 404)
+      return await this.downloadSignedImage(trustedSignedImageUrl(this.runtime.config.environment, url),
+        byteLimit, signal, this.runtime.requestScope(session.userId))
+    }
     if (imageRef.trim().startsWith('arkme-bot-image-v1.')) {
       if (this.botImages === undefined) throw new ArkmePluginError('bot-image-ref-invalid', 'Bot 头像引用不可用', false, 403)
       const reference = await this.botImages.openBotImageRef(imageRef, session.userId)
@@ -989,6 +1034,88 @@ export class MediaService {
     return refs
   }
 
+  /** Snapshot membership comes only from its refs; current media is an access-address source. */
+  async hydrateRecordSnapshotMediaPage(
+    snapshots: Record<string, unknown>[],
+    session: ArkmeSessionCredentials,
+    chat?: { chatSessionUid: string; recordUid: string; recordOwnerUserId: number | string; relationUid: string },
+    signal?: AbortSignal,
+  ): Promise<unknown[][]> {
+    const refsBySnapshot = snapshots.map(snapshot => this.recordMediaRefs(snapshot))
+    if (this.runtime.config.richMediaRenderEnabled === false) return snapshots.map(() => [])
+    const refs = [...new Map(refsBySnapshot.flat().map(ref => [stringValue(ref.file_asset_uid), ref])).values()]
+    if (refs.length === 0) return snapshots.map(() => [])
+    const displays = new Map<string, Record<string, unknown>>()
+    const expected = new Set(refs.map(ref => stringValue(ref.file_asset_uid)))
+    const accept = (items: unknown[]) => {
+      for (const raw of items) {
+        const item = objectValue(raw)
+        const uid = stringValue(item.file_asset_uid)
+        if (expected.has(uid) && stringValue(item.preview_url ?? item.download_url).trim() !== '') displays.set(uid, item)
+      }
+    }
+    for (const snapshot of snapshots) accept(listValue(snapshot.media_display_items))
+    accept(refs)
+    const check = async () => {
+      signal?.throwIfAborted()
+      if ((await this.runtime.requireSession()).userId !== session.userId) {
+        throw new ArkmePluginError('media-account-changed', '账号已切换，请重新打开内容', true, 403)
+      }
+    }
+    await check()
+    if (chat !== undefined && refs.some(ref => !displays.has(stringValue(ref.file_asset_uid)))) {
+      try {
+        const result = objectValue(await this.runtime.authenticatedChatPost('/api/v1/chats/records/media-display', {
+          chat_session_uid: chat.chatSessionUid, record_uid: chat.recordUid,
+          record_owner_user_id: chat.recordOwnerUserId, rel_uid: chat.relationUid,
+        }, session, signal))
+        if (result.record_uid === chat.recordUid && result.chat_session_uid === chat.chatSessionUid) accept(listValue(result.media_display_items))
+      } catch (error) {
+        if (signal?.aborted) throw error
+      }
+      await check()
+    }
+    // An owner's file lookup is not a substitute for another user's chat authorization.
+    if (chat === undefined || String(chat.recordOwnerUserId) === String(session.userId)) {
+      const native = refs.filter(ref => ref.legacy_file_ref !== true && !displays.has(stringValue(ref.file_asset_uid)))
+      for (let start = 0; start < native.length; start += 50) {
+        await check()
+        try {
+          const assets = await this.queryFileAssets(native.slice(start, start + 50).map(ref => stringValue(ref.file_asset_uid)), signal)
+          accept(assets.map(asset => ({ file_asset_uid: asset.fileAssetUid, file_name: asset.fileName,
+            mime_type: asset.mimeType, file_kind: asset.fileKind, size: asset.size,
+            download_url: asset.downloadUrl, preview_url: asset.previewUrl })))
+        } catch (error) {
+          if (signal?.aborted) throw error
+        }
+      }
+      const legacy = refs.filter(ref => ref.legacy_file_ref === true && ref.legacy_remote_available === true
+        && !displays.has(stringValue(ref.file_asset_uid)))
+      if (legacy.length > 0) {
+        await check()
+        try {
+          const credentials = await this.ossCredentials(session, signal)
+          const client = new OSS({ region: 'oss-cn-hangzhou', secure: true,
+            bucket: this.runtime.config.environment === 'prod' ? 'jotmo-userfiles' : 'jotmo-userfiles-test',
+            accessKeyId: credentials.accessKeyId, accessKeySecret: credentials.accessKeySecret, stsToken: credentials.stsToken })
+          for (const ref of legacy) {
+            const fileUid = stringValue(ref.file_uid).trim()
+            if (fileUid === '' || fileUid === '.' || fileUid === '..' || /[\\/\x00-\x1f]/.test(fileUid)) continue
+            const path = `${md5Text(String(session.userId))}/${String(session.userId)}/${fileUid}`
+            accept([{ ...ref, download_url: client.signatureUrl(path, { method: 'GET', expires: 1800 }) }])
+          }
+        } catch (error) {
+          if (signal?.aborted) throw error
+        }
+      }
+    }
+    await check()
+    return refsBySnapshot.map(refs => refs.flatMap(ref => {
+      const display = displays.get(stringValue(ref.file_asset_uid))
+      return display === undefined ? [] : [display]
+    }))
+  }
+
   async hydrateRecordMediaPage(
     rawItems: unknown[],
     session: ArkmeSessionCredentials,
@@ -1027,31 +1154,39 @@ export class MediaService {
   }
 
   /** Only the already-authorized received snapshot is used; never hydrate its source IDs. */
-  forwardContentBlocks(files: unknown[], viewerUserId: number): ArkmeContentBlock[] {
+  forwardContentBlocks(files: unknown[], viewerUserId: number, options: { longArticle?: boolean } = {}): ArkmeContentBlock[] {
     if (this.runtime.config.richMediaRenderEnabled === false) return []
-    const displayItems = files.slice(0, 32).map(objectValue).flatMap((file, index) => {
+    const displayItems = (options.longArticle ? files : files.slice(0, 32)).map(objectValue).flatMap((file, index) => {
       if (numberValue(file.content_file_role) === RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND) return []
       const trustedUrl = (raw: unknown): string | undefined => {
         const value = safeHttpsUrl(raw)
         if (value === undefined) return undefined
         const url = new URL(value)
         return url.port === '' && url.hash === '' && (allowedSignedImageHost(this.runtime.config.environment, url.hostname)
-          || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)) ? value : undefined
+          || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)
+          || allowedSignedCallAudioHost(this.runtime.config.environment, url.hostname)) ? value : undefined
       }
       const downloadUrl = trustedUrl(file.download_url ?? file.downloadUrl)
       const previewUrl = trustedUrl(file.preview_url ?? file.previewUrl)
       return [{
-        // Do not copy file/source IDs into the public projection or stable media cache.
+        // Only item-local aliases are exposed, never source asset IDs.
+        ...(options.longArticle ? { inline_alias: /^arkme-asset:media-\d+$/.test(stringValue(file.inline_ref)) ? stringValue(file.inline_ref).slice('arkme-asset:'.length) : `media-${index}` } : {}),
         file_name: stringValue(file.name ?? file.file_name ?? file.fileName),
         file_kind: numberValue(file.type ?? file.file_kind ?? file.fileKind),
         mime_type: stringValue(file.mime_type ?? file.mimeType),
-        size: numberValue(file.size), sort_order: numberValue(file.order ?? file.sort_order ?? index),
+        size: numberValue(file.size), sort_order: options.longArticle ? index : numberValue(file.order ?? file.sort_order ?? index),
         duration_sec: numberValue(file.duration_sec ?? file.durationSec),
         ...(downloadUrl === undefined ? {} : { download_url: downloadUrl }),
         ...(previewUrl === undefined ? {} : { preview_url: previewUrl }),
       }]
     })
-    return this.richContentBlocks({}, viewerUserId, displayItems)
+    const blocks = this.richContentBlocks({}, viewerUserId, displayItems)
+    // Aliases only join this snapshot's Markdown to its authorized media. They
+    // must not be used as global cache identities across unrelated snapshots.
+    return options.longArticle ? blocks.map(block => {
+      const alias = displayItems.find(item => item.sort_order === block.sortOrder)?.inline_alias
+      return alias === undefined ? block : { ...block, fileAssetUid: alias }
+    }) : blocks
   }
 
   issueImageMediaRef(
@@ -1109,6 +1244,13 @@ export class MediaService {
     return ref
   }
 
+  /** A current Record version does not imply that every media URL was resolved. */
+  recordMediaUnavailable(raw: unknown, blocks: readonly ArkmeContentBlock[]): boolean {
+    if (this.runtime.config.richMediaRenderEnabled === false) return false
+    const displayed = new Set(blocks.flatMap(block => [block.fileAssetUid, block.dynamicPhoto?.motion?.fileAssetUid]))
+    return this.recordMediaRefs(raw).some(ref => !displayed.has(stringValue(ref.file_asset_uid).trim()))
+  }
+
   richContentBlocks(raw: unknown, viewerUserId: number, hydratedDisplayItems: unknown[] = []): ArkmeContentBlock[] {
     if (this.runtime.config.richMediaRenderEnabled === false) return []
     const root = objectValue(raw)
@@ -1132,7 +1274,7 @@ export class MediaService {
     const candidates = mediaRefs.length > 0
       ? mediaRefs.map(ref => ({ ...(displayByAsset.get(stringValue(ref.file_asset_uid).trim()) ?? {}), ...ref }))
       : displayItems
-    return candidates.filter(item => {
+    const projected = candidates.filter(item => {
       // content_file_role=4 is ambient background sound captured while writing a record.
       // It is author-only record metadata, not an attachment that belongs in a chat bubble.
       return Math.trunc(numberValue(item.content_file_role)) !== RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND
@@ -1165,7 +1307,18 @@ export class MediaService {
           ? { renderRole: Math.trunc(numberValue(item.render_role)) as 1 | 3 }
           : {}),
       }]
-    }).sort((left, right) => left.sortOrder - right.sortOrder)
+    })
+    const byAsset = new Map(projected.map(block => [block.fileAssetUid, block]))
+    for (const group of recordDynamicPhotoGroups(candidates)) {
+      const cover = byAsset.get(stringValue(group.cover.file_asset_uid))
+      if (cover?.kind !== 'image') continue
+      const motion = group.motion === undefined ? undefined : byAsset.get(stringValue(group.motion.file_asset_uid))
+      cover.dynamicPhoto = { logicalUid: group.logicalUid,
+        ...(group.motion === undefined ? {} : { motionFileAssetUid: stringValue(group.motion.file_asset_uid) }),
+        ...(motion?.kind === 'video' ? { motion: { ...motion, kind: 'video' } } : {}) }
+    }
+    const motionAssets = new Set(candidates.filter(isRecordDynamicPhotoMotion).map(item => stringValue(item.file_asset_uid)))
+    return projected.filter(block => !motionAssets.has(block.fileAssetUid ?? '')).sort((left, right) => left.sortOrder - right.sortOrder)
   }
 
   private async ossCredentials(

@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type {
@@ -10,7 +11,7 @@ const REPORT_OPTIONS: ReadonlyArray<{ type: ArkmeMessageReportType; label: strin
   { type: 1, label: '垃圾广告' },
   { type: 2, label: '违法违规' },
   { type: 3, label: '不友善内容' },
-  { type: 4, label: '其他' },
+  { type: 4, get label() { return tr("其他") } },
 ]
 const REPORT_TIMEOUT_MILLIS = 12_000
 
@@ -91,6 +92,7 @@ export function ArkmeMessageReportDialog({
   onClose: () => void
   onSubmitted: (result: ArkmeMessageReportResult) => void
 }) {
+  useArkmeLocale()
   const [reportType, setReportType] = useState<ArkmeMessageReportType>()
   const [reason, setReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -176,17 +178,17 @@ export function ArkmeMessageReportDialog({
     onMouseDown={event => { if (event.target === event.currentTarget) close() }}
   >
     <section role="dialog" aria-modal="true" aria-labelledby="arkme-message-report-title" style={styles.dialog}>
-      <button ref={closeRef} type="button" aria-label="关闭举报" style={{ ...styles.close, ...(submitting ? styles.disabled : {}) }} disabled={submitting} onClick={close}>×</button>
+      <button data-arkme-feedback="neutral" ref={closeRef} type="button" aria-label={tr("关闭举报")} style={{ ...styles.close, ...(submitting ? styles.disabled : {}) }} disabled={submitting} onClick={close}>×</button>
       <header style={styles.header}>
-        <h2 id="arkme-message-report-title" style={styles.title}>举报和反馈</h2>
-        <p style={styles.subtitle}>你的反馈可以帮助我们持续优化，Arkme 会及时处理。</p>
+        <h2 id="arkme-message-report-title" style={styles.title}>{tr("举报和反馈")}</h2>
+        <p style={styles.subtitle}>{tr("你的反馈可以帮助我们持续优化，Arkme 会及时处理。")}</p>
       </header>
       <div style={styles.body}>
         <p style={styles.preview} title={preview}>{preview}</p>
-        <div role="radiogroup" aria-label="举报类型" style={styles.group}>
+        <div role="radiogroup" aria-label={tr("举报类型")} style={styles.group}>
           {REPORT_OPTIONS.map(option => {
             const selected = reportType === option.type
-            return <button
+            return <button data-arkme-feedback="neutral"
               key={option.type}
               type="button"
               role="radio"
@@ -198,14 +200,12 @@ export function ArkmeMessageReportDialog({
             ><span style={{ ...styles.radio, ...(selected ? styles.radioSelected : {}) }} aria-hidden>{selected ? <span style={styles.radioDot} /> : null}</span>{option.label}</button>
           })}
         </div>
-        <label style={styles.fieldLabel}>
-          举报补充说明
-          <span style={styles.optional}>{reportType === 4 ? '必填' : '选填'}</span>
+        <label style={styles.fieldLabel}>{tr("举报补充说明")}<span style={styles.optional}>{reportType === 4 ? '必填' : '选填'}</span>
           <textarea
-            aria-label="举报补充说明"
+            aria-label={tr("举报补充说明")}
             value={reason}
             disabled={submitting}
-            placeholder="请描述具体问题"
+            placeholder={tr("请描述具体问题")}
             style={styles.textarea}
             onChange={event => { setReason(Array.from(event.currentTarget.value).slice(0, 500).join('')); setError('') }}
           />
@@ -213,14 +213,14 @@ export function ArkmeMessageReportDialog({
         <div style={styles.count}>{String(Array.from(reason).length)}/500</div>
         {error !== '' ? <div role="alert" style={styles.error}>{error}</div> : null}
         <footer style={styles.footer}>
-          <button type="button" style={{ ...styles.button, ...(submitting ? styles.disabled : {}) }} disabled={submitting} onClick={close}>取消</button>
-          <button
+          <button data-arkme-feedback="neutral" type="button" style={{ ...styles.button, ...(submitting ? styles.disabled : {}) }} disabled={submitting} onClick={close}>{tr("取消")}</button>
+          <button data-arkme-feedback="primary"
             type="button"
-            aria-label="提交举报"
+            aria-label={tr("提交举报")}
             style={{ ...styles.button, ...styles.submit, ...(!canSubmit ? styles.disabled : {}) }}
             disabled={!canSubmit}
             onClick={submit}
-          >{submitting ? '提交中…' : '提交'}</button>
+          >{submitting ? '提交中…' : tr("提交")}</button>
         </footer>
       </div>
     </section>

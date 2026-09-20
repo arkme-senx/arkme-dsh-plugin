@@ -152,7 +152,7 @@ describe('recording timeline math', () => {
     }
   })
 
-  it('renders the desktop framed 24-hour timeline and selection controls', () => {
+  it('renders the minimal 24-hour timeline and preserves selection controls', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const item = {
       itemId: 'item-1', itemRef: 'ref-1', speakerKey: 'speaker-1', speakerLabel: '说话人 1', text: '对齐时间轴',
@@ -173,7 +173,8 @@ describe('recording timeline math', () => {
     expect(markup).not.toContain('播放该片段')
     expect(markup).toContain('24 小时缩略导航')
     expect(markup).toContain('当前窗口说话人')
-    expect(markup).toMatch(/style="[^"]*border:1px solid [^;"]+;[^"]*border-radius:10px[^"]*" aria-label="真实录音时间轴"/)
+    expect(markup).toMatch(/style="[^"]*min-height:162px[^"]*" aria-label="真实录音时间轴"/)
+    expect(markup).toContain('aria-label="录音覆盖图例"')
   })
 
   it('renders the three desktop timeline layers as independent rows', () => {
@@ -413,8 +414,8 @@ describe('recording timeline math', () => {
     }
 
     const serialized = JSON.stringify(renderer.toJSON())
-    expect(serialized).toContain('有录音无人声')
-    expect(serialized).toContain('有人声')
+    expect(serialized).toContain('有录音')
+    expect(serialized).toContain('已识别人声')
     expect(serialized).not.toContain('当前窗口说话人图例')
   })
 

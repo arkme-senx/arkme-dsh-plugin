@@ -46,7 +46,7 @@ describe('Arkme billing settings migration', () => {
       onOpen={noop}
     />)
 
-    expect(markup).toMatch(/AI 余额[\s\S]*¥12\.80[\s\S]*可用于在 DSH 会话中通过 Arkme 调用 AI 模型[\s\S]*预占余额[\s\S]*¥0\.30[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
+    expect(markup).toMatch(/账户余额[\s\S]*¥12\.80[\s\S]*预占余额[\s\S]*¥0\.30[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
     expect(markup).toContain('class="arkme-redesign-reserved-help" tabindex="0" aria-label="预占余额说明" aria-describedby="arkme-reserved-balance-tooltip">?</span>')
     expect(markup).toContain('id="arkme-reserved-balance-tooltip" role="tooltip">当前运行的任务预先占用的余额，任务完成后将返还剩余余额。</span>')
     expect(markup).toContain('>充值</button><span class="arkme-redesign-trailing-slot" aria-hidden="true"></span>')
@@ -68,7 +68,7 @@ describe('Arkme billing settings migration', () => {
     expect(markup).toContain('arkme-redesign-balance-row is-without-reserved')
     expect(markup).not.toContain('预占余额')
     expect(markup).not.toContain('arkme-reserved-balance-tooltip')
-    expect(markup).toMatch(/AI 余额[\s\S]*可用于在 DSH 会话中通过 Arkme 调用 AI 模型[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
+    expect(markup).toMatch(/账户余额[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
   })
 
   it('renders both available payment entries in the recharge dialog', () => {

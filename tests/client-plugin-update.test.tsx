@@ -11,7 +11,7 @@ function deferred<T>() {
 }
 
 function presentation(store: ArkmePluginUpdateStore) {
-  return deriveArkmeUpdatePresentation({ app: { checked: true, busy: false, error: '' }, plugin: store.getSnapshot() })
+  return deriveArkmeUpdatePresentation({ plugin: store.getSnapshot() })
 }
 
 function updateStatus(patch: Partial<ArkmePluginUpdateStatus> = {}): ArkmePluginUpdateStatus {

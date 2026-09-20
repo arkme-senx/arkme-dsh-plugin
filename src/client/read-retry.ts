@@ -1,5 +1,5 @@
 interface ArkmeRetryableErrorShape {
-  body?: { retryable?: unknown }
+  body?: { retryable?: unknown; retryAfterMillis?: number; recovery?: { owner?: string } }
 }
 
 function errorName(error: unknown): string {
@@ -22,6 +22,7 @@ function isRetryableReadFailure(error: unknown): boolean {
   const body = error !== null && typeof error === 'object'
     ? (error as ArkmeRetryableErrorShape).body
     : undefined
+  if (body?.recovery?.owner === 'host') return false
   if (body?.retryable === true || error instanceof TypeError) return true
   const message = errorText(error).toLowerCase()
   return message === 'failed to fetch' || message.includes('networkerror') || message.includes('fetch failed')
@@ -57,7 +58,8 @@ export async function retryArkmeRead<T>(
     } catch (error) {
       if (isArkmeRequestAbort(error, options.signal) || !isRetryableReadFailure(error)
         || attempt >= retryDelays.length) throw error
-      await waitForRetry(retryDelays[attempt] ?? 0, options.signal)
+      const body = (error as ArkmeRetryableErrorShape | undefined)?.body
+      await waitForRetry(Math.max(retryDelays[attempt] ?? 0, body?.retryAfterMillis ?? 0), options.signal)
       attempt += 1
     }
   }

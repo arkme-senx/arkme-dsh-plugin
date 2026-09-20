@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale, arkmeIntlLocale } from '../locale.js'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
 import { recordingSpeakerColor } from './recording-speaker-presentation.js'
@@ -16,6 +17,7 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
   prepared: PreparedRecordingComparison
   onClose(): void
 }) {
+  useArkmeLocale()
   const [data, setData] = useState<ArkmeRecordingComparison>(prepared.data)
   const [error, setError] = useState('')
   const [playbackNotice, setPlaybackNotice] = useState('')
@@ -81,7 +83,7 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
     void player.playAt(queue, seek)
   }
 
-  return <div role="dialog" aria-modal="true" aria-label="转写对比" onKeyDown={event => {
+  return <div role="dialog" aria-modal="true" aria-label={tr("转写对比")} onKeyDown={event => {
     if (event.key === 'Escape') { event.stopPropagation(); onClose() }
     if (event.key === 'Tab') {
       const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),[tabindex="0"]'))
@@ -90,32 +92,32 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
     }
   }} style={{ position: 'fixed', inset: 0, zIndex: 1_100, display: 'flex', flexDirection: 'column', background: colors.layer2, color: colors.text }}>
     <header style={{ height: 58, flex: 'none', padding: '0 20px', display: 'flex', alignItems: 'center', borderBottom: `1px solid ${colors.border}` }}>
-      <strong style={{ flex: 1, fontSize: 18, fontWeight: 600 }}>转写对比</strong>
-      <RecordingTranscriptButton ref={closeButton} onClick={onClose} aria-label="关闭转写对比" style={{ border: 0, padding: 4, display: 'grid', placeItems: 'center', background: 'transparent' }}><X size={20} /></RecordingTranscriptButton>
+      <strong style={{ flex: 1, fontSize: 18, fontWeight: 600 }}>{tr("转写对比")}</strong>
+      <RecordingTranscriptButton ref={closeButton} onClick={onClose} aria-label={tr("关闭转写对比")} style={{ border: 0, padding: 4, display: 'grid', placeItems: 'center', background: 'transparent' }}><X size={20} /></RecordingTranscriptButton>
     </header>
-    {error && <div role="alert" style={{ color: colors.danger, padding: '8px 20px' }}>{error}<RecordingTranscriptButton onClick={() => { setRevision(value => value + 1) }} disabled={loading}>重试</RecordingTranscriptButton></div>}
+    {error && <div role="alert" style={{ color: colors.danger, padding: '8px 20px' }}>{error}<RecordingTranscriptButton onClick={() => { setRevision(value => value + 1) }} disabled={loading}>{tr("重试")}</RecordingTranscriptButton></div>}
     {(playbackNotice || player.error) && <div role="alert" style={{ color: colors.danger, padding: '8px 20px' }}>{playbackNotice || player.error}</div>}
     {prepared.notice !== '' && <div role="status" style={{ color: colors.secondary, padding: '8px 20px' }}>{prepared.notice}</div>}
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', flex: 1, minHeight: 0 }}>
       {(['system', 'doubao'] as const).map((source, index) => <section key={source} style={{ display: 'flex', flexDirection: 'column', minHeight: 0, borderLeft: index === 1 ? `1px solid ${colors.border}` : undefined }}>
         <header style={{ height: 46, flex: 'none', padding: '0 20px', display: 'flex', alignItems: 'center', gap: 8 }}>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>{source === 'system' ? '系统转写' : '豆包转写'}</h3>
-          {source === 'system' && player.isPlaying && <RecordingTranscriptButton aria-label="暂停播放" onClick={player.pause} style={{ border: 0, width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', background: 'transparent' }}><Pause size={18} /></RecordingTranscriptButton>}
-          {source === 'doubao' && pending && <small role="status" style={{ color: colors.secondary }}>豆包转写中…</small>}
+          {source === 'system' && player.isPlaying && <RecordingTranscriptButton aria-label={tr("暂停播放")} onClick={player.pause} style={{ border: 0, width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', background: 'transparent' }}><Pause size={18} /></RecordingTranscriptButton>}
+          {source === 'doubao' && pending && <small role="status" style={{ color: colors.secondary }}>{tr("豆包转写中…")}</small>}
         </header>
         <div ref={element => { columns.current[index] = element }} onScroll={event => { synchronize(event, index) }} style={{ overflowY: 'auto', flex: 1, overscrollBehavior: 'contain', padding: '12px 20px 24px' }}>
           {data[source].items.map(item => {
             const active = player.positionAtMillis !== undefined && player.positionAtMillis >= item.startAtMillis && player.positionAtMillis < item.endAtMillis
-            return <div role="button" tabIndex={0} aria-label={`播放${source === 'system' ? '系统' : '豆包'}片段 ${new Date(item.startAtMillis).toLocaleTimeString('zh-CN', { hour12: false })}`} key={item.itemId} data-transcript-time={item.startAtMillis} onDoubleClick={() => { play(item) }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); play(item) } }} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 6, padding: 4, borderRadius: 6, background: active ? colors.active : 'transparent', cursor: 'default', fontSize: 14, lineHeight: '22px' }}>
+            return <div role="button" tabIndex={0} aria-label={`播放${source === 'system' ? '系统' : '豆包'}片段 ${new Date(item.startAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hour12: false })}`} key={item.itemId} data-transcript-time={item.startAtMillis} onDoubleClick={() => { play(item) }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); play(item) } }} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 6, padding: 4, borderRadius: 6, background: active ? colors.active : 'transparent', cursor: 'default', fontSize: 14, lineHeight: '22px' }}>
               <span style={{ display: 'flex', gap: 8, flex: 'none', alignItems: 'flex-start' }}><span aria-hidden style={{ width: 12, height: 12, marginTop: 5, borderRadius: '50%', background: recordingSpeakerColor(item.speakerColorIndex) }} /><span style={{ width: 78, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.speakerLabel}</span></span>
-              {item.isBackground && <small style={{ flex: 'none', color: colors.secondary }}>背景音</small>}
+              {item.isBackground && <small style={{ flex: 'none', color: colors.secondary }}>{tr("背景音")}</small>}
               <span style={{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.text}</span>
-              <time style={{ flex: 'none', fontSize: 12, color: colors.secondary }}>{new Date(item.startAtMillis).toLocaleTimeString('zh-CN', { hour12: false })} {Math.max(0, Math.floor((item.endAtMillis - item.startAtMillis) / 1000))}秒</time>
+              <time style={{ flex: 'none', fontSize: 12, color: colors.secondary }}>{new Date(item.startAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hour12: false })} {Math.max(0, Math.floor((item.endAtMillis - item.startAtMillis) / 1000))}{tr("秒")}</time>
             </div>
           })}
           {data[source].items.length === 0 && <p style={{ color: colors.secondary }}>{pending && source === 'doubao' ? '正在转写，请稍候' : data[source].message || '暂无转写'}</p>}
-          {source === 'doubao' && data.failedCount > 0 && <p role="status" style={{ color: colors.danger }}>{data.failedCount} 个片段转写失败</p>}
-          {source === 'doubao' && data.silentCount > 0 && <p role="status">{data.silentCount} 个片段未识别到人声</p>}
+          {source === 'doubao' && data.failedCount > 0 && <p role="status" style={{ color: colors.danger }}>{data.failedCount} {tr("个片段转写失败")}</p>}
+          {source === 'doubao' && data.silentCount > 0 && <p role="status">{data.silentCount} {tr("个片段未识别到人声")}</p>}
         </div>
       </section>)}
     </div>

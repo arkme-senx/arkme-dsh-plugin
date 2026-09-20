@@ -1,4 +1,5 @@
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
+import { postChatMessageCreation } from './direct-message-admission-service.js'
 import { RECORDING_FORWARD_MAX_SEGMENTS, type RecordingForwardGateway, type RecordingForwardInput, type RecordingForwardReceipt, type RecordingForwardSelection } from '../recording-forward-contract.js'
 import type { SourceService } from './source-service.js'
 import type { ChatService } from './chat-service.js'
@@ -22,7 +23,7 @@ export class OwnerRecordingForwardGateway implements RecordingForwardGateway {
     const target = await this.source.openSourceRef(input.targetSourceRef, session.userId)
     const segments = selection.segments.map(item => ({ child_id: item.childId, asr_item_index: item.asrItemIndex, transcript_source: item.transcriptSource }))
     if (target.kind === 'private_chat' || target.kind === 'group_chat') {
-      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/records/forward', {
+      const data = await postChatMessageCreation<Record<string, unknown>>(this.runtime, '/api/v1/chats/records/forward', {
         chat_session_uid: target.ownerRef,
         client_request_id: input.requestId,
         source_items: [{ source_type: 'long_recording_segments', source_identity_kind: 'audio_session', session_id: selection.sessionId, segment_selection: { kind: 'long_recording_segments', segments } }],

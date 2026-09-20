@@ -1,6 +1,6 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { describe, expect, it } from 'vitest'
-import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
+import { describe, expect, it, vi } from 'vitest'
+import { ArkmeMessageContent, ArkmeMediaPreview } from '../src/client/ArkmeRichContent.js'
 import type { ArkmeTimelineItem } from '../src/types.js'
 
 const complete: ArkmeTimelineItem = {
@@ -123,4 +123,95 @@ describe('visual media failure stability', () => {
     expect(view.root.findAll(node => node.type === mediaType)).toHaveLength(0)
     await act(async () => view.unmount())
   })
+})
+
+
+vi.mock('react-dom', async importOriginal => ({
+  ...await importOriginal<typeof import('react-dom')>(),
+  createPortal: (children: unknown) => children,
+}))
+
+describe('open preview follows current message media', () => {
+  it.each(['asset', 'reference'] as const)('refreshes Live metadata by %s and does not reopen removed attachments', async identity => {
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+    const cover = { kind: 'image' as const, mediaRef: 'cover', ...(identity === 'asset' ? { fileAssetUid: 'cover-asset' } : {}), fileName: 'photo.jpg', mimeType: 'image/jpeg', size: 1, sortOrder: 0 }
+    const item = { ...complete, title: '', contentBlocks: [cover] }
+    let view: ReactTestRenderer | undefined
+    try {
+      await act(async () => { view = create(<ArkmeMessageContent sourceRef="source-a" item={item} />) })
+      await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.jpg' }).props.onClick())
+      expect(view!.root.findByType(ArkmeMediaPreview).props.selected.dynamicPhoto).toBeUndefined()
+      const updated = { ...cover, mediaRef: identity === 'asset' ? 'renewed-cover' : cover.mediaRef, dynamicPhoto: { logicalUid: 'pair' } }
+      await act(async () => view!.update(<ArkmeMessageContent sourceRef="source-a" item={{ ...item, contentBlocks: [updated] }} />))
+      expect(view!.root.findByType(ArkmeMediaPreview).props.selected).toBe(updated)
+      expect(view!.root.findByProps({ 'data-arkme-live-photo-control': true }).props.disabled).toBe(true)
+      const motion = { kind: 'video' as const, mediaRef: 'motion', localFileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111', fileName: 'motion.mp4', mimeType: 'video/mp4', size: 1, sortOrder: 1 }
+      const ready = { ...updated, dynamicPhoto: { logicalUid: 'pair', motion } }
+      await act(async () => view!.update(<ArkmeMessageContent sourceRef="source-a" item={{ ...item, contentBlocks: [ready] }} />))
+      expect(view!.root.findByProps({ 'data-arkme-live-photo-control': true }).props.disabled).toBe(false)
+      await act(async () => view!.update(<ArkmeMessageContent sourceRef="source-a" item={{ ...item, contentBlocks: [] }} />))
+      expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(0)
+      await act(async () => view!.update(<ArkmeMessageContent sourceRef="source-a" item={item} />))
+      expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(0)
+      for (const [nextSource, nextItem] of [
+        ['source-b', item],
+        ['source-a', { ...item, itemUid: 'other-record' }],
+        ['source-a', { ...item, status: 2 }],
+      ] as const) {
+        await act(async () => view!.update(<ArkmeMessageContent sourceRef="source-a" item={item} />))
+        await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.jpg' }).props.onClick())
+        expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(1)
+        await act(async () => view!.update(<ArkmeMessageContent sourceRef={nextSource} item={nextItem} />))
+        expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(0)
+      }
+    } finally {
+      if (view) await act(async () => view!.unmount())
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+
+describe('stable conversation media identity', () => {
+  it.each(['refresh', 'local-original', 'partial-media', 'new-version', 'unknown-version', 'explicit-removal', 'other-conversation', 'other-message', 'deleted', 'removed'] as const)(
+    'keeps access-reference rotation separate from %s', async boundary => {
+      vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+      vi.stubGlobal('document', { body: { style: { overflow: '' } } })
+      const cover = { kind: 'image' as const, mediaRef: 'cover', fileAssetUid: 'asset',
+        fileName: 'photo.jpg', mimeType: 'image/jpeg', size: 1, sortOrder: 0 }
+      const item = { ...complete, title: '', contentBlocks: [cover] }
+      let view: ReactTestRenderer | undefined
+      try {
+        await act(async () => { view = create(<ArkmeMessageContent sourceRef="old-ref" sourceIdentityKey="chat-a" item={item} />) })
+        await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.jpg' }).props.onClick())
+        expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(1)
+        const next = { ...item,
+          ...(boundary === 'refresh' ? { contentBlocks: [{ ...cover, mediaRef: 'fresh-cover' }] } : {}),
+          ...(boundary === 'local-original' ? { contentBlocks: [{ ...cover, localFileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111' }] } : {}),
+          ...(['partial-media', 'new-version', 'unknown-version', 'explicit-removal'].includes(boundary) ? { contentBlocks: [], mediaUnavailable: true } : {}),
+          ...(boundary === 'new-version' ? { version: 8 } : {}),
+          ...(boundary === 'unknown-version' ? { version: undefined } : {}),
+          ...(boundary === 'other-message' ? { itemUid: 'other' } : {}),
+          ...(boundary === 'deleted' ? { status: 2 } : {}),
+          ...(boundary === 'removed' ? { contentBlocks: [] } : {}),
+        }
+        await act(async () => view!.update(<ArkmeMessageContent sourceRef="new-ref"
+          sourceIdentityKey={boundary === 'other-conversation' ? 'chat-b' : 'chat-a'}
+          mediaSelectionIsExplicit={boundary === 'explicit-removal'} item={next} />))
+        const remainsOpen = boundary === 'refresh' || boundary === 'partial-media' || boundary === 'local-original'
+        expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(remainsOpen ? 1 : 0)
+        if (remainsOpen) {
+          expect(view!.root.findByType(ArkmeMediaPreview).props.selected.mediaRef)
+            .toBe(boundary === 'refresh' ? 'fresh-cover' : 'cover')
+          await act(async () => view!.root.findByType(ArkmeMediaPreview).props.onClose())
+        }
+        await act(async () => view!.update(<ArkmeMessageContent sourceRef="latest-ref" sourceIdentityKey="chat-a" item={item} />))
+        expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(0)
+      } finally {
+        if (view) await act(async () => view!.unmount())
+        vi.unstubAllGlobals()
+      }
+    },
+  )
 })

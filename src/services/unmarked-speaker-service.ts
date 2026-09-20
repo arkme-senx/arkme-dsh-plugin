@@ -596,6 +596,13 @@ export class UnmarkedSpeakerService implements ArkmeUnmarkedSpeakerSegmentResolv
   private sealCursor(
     kind: CursorRefEntry['kind'], upstreamCursor: string, viewerUserId: number, candidateRef?: string,
   ): string {
+    // Keep candidate pagination identity stable so consumers can detect repeated/cyclic pages.
+    if (kind === 'candidate') {
+      for (const [ref, entry] of this.cursorRefs) {
+        if (entry.kind === kind && entry.viewerUserId === viewerUserId
+          && entry.upstreamCursor === upstreamCursor && entry.expiresAtMillis > Date.now()) return ref
+      }
+    }
     const prefix = kind === 'candidate' ? 'arkme-unmarked-candidate-cursor-v1' : 'arkme-unmarked-segment-cursor-v1'
     const ref = `${prefix}.${randomUUID()}`
     this.cursorRefs.set(ref, {

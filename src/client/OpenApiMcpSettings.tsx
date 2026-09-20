@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useState } from 'react'
 import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import { CircleNotch } from '@phosphor-icons/react/CircleNotch'
@@ -27,6 +28,7 @@ export function openApiMcpPresentation(status: OpenApiMcpStatus | undefined): Op
 }
 
 export function OpenApiMcpSettings(): JSX.Element {
+  useArkmeLocale()
   const [status, setStatus] = useState<OpenApiMcpStatus>()
   const [busy, setBusy] = useState(false)
   const [feedback, setFeedback] = useState('')
@@ -69,9 +71,9 @@ export function OpenApiMcpSettings(): JSX.Element {
 
   const body = <>
     <strong>{presentation.title}</strong>
-    <span className="arkme-redesign-setting-summary">{busy ? '正在处理…' : presentation.description}</span>
+    <span className="arkme-redesign-setting-summary">{busy ? tr("正在处理…") : presentation.description}</span>
     {busy
-      ? <CircleNotch size={15} aria-label="正在处理" className="arkme-spin" />
+      ? <CircleNotch size={15} aria-label={tr("正在处理")} className="arkme-spin" />
       : presentation.action === undefined
         ? <span className="arkme-redesign-trailing-slot" aria-hidden />
         : <CaretRight size={15} aria-hidden />}
@@ -84,7 +86,7 @@ export function OpenApiMcpSettings(): JSX.Element {
           type="button"
           className="arkme-redesign-setting-row"
           disabled={busy}
-          aria-label="重试开放平台 MCP 连接"
+          aria-label={tr("重试开放平台 MCP 连接")}
           onClick={() => { void runAction() }}
         >{body}</button>}
     {feedback === '' ? null : <p className="arkme-account-feedback" role="alert">{feedback}</p>}

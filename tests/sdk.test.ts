@@ -19,6 +19,47 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('reads calendar location using only the issued reference', async () => {
+    const calls: unknown[] = []
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      calls.push(JSON.parse(String(init?.body)))
+      return success({ recordUid: 'a', access: 'available' })
+    } })
+    expect(await sdk.calendarRecordLocation('opaque', new AbortController().signal)).toEqual({ recordUid: 'a', access: 'available' })
+    expect(calls).toEqual([{ operation: 'calendar.record-location', params: { locationRef: 'opaque' } }])
+  })
+  it('exposes the paginated conversation-name read with cancellation', async () => {
+    const fetcher = vi.fn(async () => success({ items: [], hasMore: false }))
+    const sdk = createArkmeSdk({ fetchImpl: fetcher })
+    await expect(sdk.searchConversationNames('狗才', { cursor: 'next', signal: new AbortController().signal })).resolves.toEqual({ items: [], hasMore: false })
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({ operation: 'search.conversations', params: { query: '狗才', cursor: 'next' } })
+  })
+  it('exposes the five-section directory, passes refresh/cursor and preserves Host recovery metadata', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
+      const call = JSON.parse(String(init?.body)); calls.push(call)
+      if (call.operation === 'provider.capabilities') return success({ contractVersion: 1, features: { contactDirectoryReads: true } })
+      if (call.params.section === 'contacts') return new Response(JSON.stringify({ ok: false, error: {
+        code: 'arkme-code-1002', message: '请求较频繁，请稍后重试', retryable: true, failureKind: 'rate_limited',
+        retryAfterMillis: 700, retryScope: 'route', recovery: { owner: 'host', attempts: 3, exhausted: true },
+      } }), { status: 502 })
+      return success({ section: call.params.section, items: [], total: 0, hasMore: false })
+    } })
+    for (const section of ['groups', 'bots', 'unmarked-speakers', 'teams'] as const) {
+      await expect(sdk.listDirectory(section, { refresh: true })).resolves.toMatchObject({ section })
+    }
+    await expect(sdk.listDirectory('contacts')).rejects.toMatchObject({ body: { failureKind: 'rate_limited', retryAfterMillis: 700, recovery: { owner: 'host', attempts: 3 } } })
+    expect(calls.filter(c => c.operation === 'directory.list')).toHaveLength(5)
+    expect(calls[1]?.params).toEqual({ section: 'groups', refresh: true })
+    await expect(sdk.listDirectory('contacts', { refresh: true, cursor: 'old' })).rejects.toThrow('Refresh')
+  })
+
+  it('fails directory capability discovery explicitly on an older provider', async () => {
+    const fetcher = vi.fn(async () => success({ contractVersion: 1, features: {} }))
+    const sdk = createArkmeSdk({ fetchImpl: fetcher })
+    await expect(sdk.listDirectory('contacts')).rejects.toThrow('不支持联系人目录')
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
   it('exposes employee user-ban operations through the same source-bound Host contract', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
@@ -636,7 +677,7 @@ describe('Arkme SDK', () => {
           return success({ scope: 'self', startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Shanghai', refreshedAtMillis: 1, days: [] })
         }
         if (request.operation === 'calendar.records') {
-          return success({ scope: 'self', bucketDate: '2026-08-21', timezone: 'Asia/Shanghai', refreshedAtMillis: 1, items: [], hasMore: false })
+          return success({ scope: 'self', bucketDate: '2026-08-21', timezone: 'Asia/Shanghai', refreshedAtMillis: 1, items: [{ recordUid: 'calendar-rich', source: { kind: 'group_chat', displayName: '项目群', sourceRef: 'safe' }, content: { itemUid: 'calendar-rich', textFormat: 'markdown', textContent: '**正文**', contentBlocks: [{ kind: 'image', mediaRef: 'opaque-media' }] } }], hasMore: false })
         }
         if (request.operation === 'records.create') return success({ recordUid: request.params?.recordUid, status: 1 })
         throw new Error(`unexpected ${request.operation}`)
@@ -673,14 +714,17 @@ describe('Arkme SDK', () => {
     await expect(sdk.calendarBuckets({
       startDate: '2026-08-01',
       endDate: '2026-08-31',
+      sourceRef: 'signed-self',
       timezone: 'Asia/Shanghai',
     })).resolves.toMatchObject({ scope: 'self', days: [] })
     await expect(sdk.calendarRecords({
       bucketDate: '2026-08-21',
+      sourceRef: 'signed-self',
+      oldestFirst: true,
       timezone: 'Asia/Shanghai',
       limit: 10,
       cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
-    })).resolves.toMatchObject({ scope: 'self', hasMore: false })
+    })).resolves.toMatchObject({ scope: 'self', hasMore: false, items: [{ source: { displayName: '项目群' }, content: { textFormat: 'markdown', contentBlocks: [{ mediaRef: 'opaque-media' }] } }] })
     await expect(sdk.createText('保存内容', { recordUid: 'a5d8df82-5b62-5b22-8f76-916a751ad63c' }))
       .resolves.toMatchObject({ status: 1 })
     expect(calls).toMatchObject([
@@ -695,11 +739,13 @@ describe('Arkme SDK', () => {
       },
       { operation: 'auth.phone.verify', params: { phone: '13800008000', code: '123456' } },
       { operation: 'image.read', params: { imageRef: '1_1700000000_1_0.png' } },
-      { operation: 'calendar.buckets', params: { startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Shanghai' } },
+      { operation: 'calendar.buckets', params: { startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Shanghai', sourceRef: 'signed-self' } },
       {
         operation: 'calendar.records',
         params: {
           bucketDate: '2026-08-21',
+          sourceRef: 'signed-self',
+          oldestFirst: true,
           timezone: 'Asia/Shanghai',
           limit: 10,
           cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
@@ -842,7 +888,7 @@ describe('Arkme SDK', () => {
     ])
   })
 
-  it('requests an exact chat timeline window around a record', async () => {
+  it.each([7, '6690025278483443577'])('requests an exact chat timeline window around a record for %s', async (ownerId) => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
       calls.push(JSON.parse(String(init?.body)))
@@ -853,11 +899,11 @@ describe('Arkme SDK', () => {
       })
     } })
 
-    await expect(sdk.readSourceAround('source-1', 'record-1', 7, { beforeLimit: 20, afterLimit: 30 }))
+    await expect(sdk.readSourceAround('source-1', 'record-1', ownerId, { beforeLimit: 20, afterLimit: 30 }))
       .resolves.toMatchObject({ anchorItemUid: 'record-1' })
     expect(calls).toEqual([{
       operation: 'source.timeline-around',
-      params: { sourceRef: 'source-1', itemUid: 'record-1', recordOwnerUserId: 7, beforeLimit: 20, afterLimit: 30 },
+      params: { sourceRef: 'source-1', itemUid: 'record-1', recordOwnerUserId: ownerId, beforeLimit: 20, afterLimit: 30 },
     }])
   })
 
@@ -1143,4 +1189,13 @@ describe('Arkme SDK', () => {
     })
     await expect(sdk.state()).rejects.toBeInstanceOf(ArkmeClientError)
   })
+})
+
+it('exposes server search with DSH identity and cancellation to external consumers', async () => {
+ const signal = new AbortController().signal
+ const fetchImpl = vi.fn(async (_input: unknown, _init?: RequestInit) => JSON.parse(String(_init?.body)).operation === 'provider.capabilities' ? success({ contractVersion: 1, features: { remoteRecordSearch: true } }) : success({ items: [{ recordUid: 'r', dshOrigin: { sessionId: 's', eventSeq: 7 } }], hasMore: false }))
+ const sdk = createArkmeSdk({ fetchImpl })
+ const result = await sdk.searchRemote('武汉', { limit: 10, signal })
+ expect(result.items[0]?.dshOrigin).toEqual({ sessionId: 's', eventSeq: 7 })
+ expect(JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body))).toEqual({ operation: 'search.records', params: { query: '武汉', limit: 10 } })
 })

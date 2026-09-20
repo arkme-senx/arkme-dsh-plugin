@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import { CircleNotch } from '@phosphor-icons/react/CircleNotch'
@@ -6,6 +7,10 @@ import { IdentificationCard } from '@phosphor-icons/react/IdentificationCard'
 import { Phone } from '@phosphor-icons/react/Phone'
 import { WarningCircle } from '@phosphor-icons/react/WarningCircle'
 import { WechatLogo } from '@phosphor-icons/react/WechatLogo'
+import { AppleLogo } from '@phosphor-icons/react/AppleLogo'
+import { GoogleLogo } from '@phosphor-icons/react/GoogleLogo'
+import { DeviceMobile } from '@phosphor-icons/react/DeviceMobile'
+import { EnvelopeSimple } from '@phosphor-icons/react/EnvelopeSimple'
 import { X } from '@phosphor-icons/react/X'
 import qrcode from 'qrcode-generator'
 import pluginManifest from '../../package.json' with { type: 'json' }
@@ -21,8 +26,8 @@ import type {
   ArkmeUserProfileSnapshot,
 } from '../types.js'
 import { callArkme } from './api.js'
-import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
-import { OpenApiMcpSettings } from './OpenApiMcpSettings.js'
+import { ArkmeProfileEditor } from './ArkmeProfileEditor.js'
+import { ArkmeAboutProduct, ArkmeAboutDetails } from './ArkmeAboutDetails.js'
 import { arkmeAppUpdateStore, type ArkmeAppUpdateSnapshot } from './app-update-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -42,7 +47,6 @@ import {
   type ArkmeMicrophonePermissionState,
 } from './record-input-capture.js'
 import { arkmeUi } from './ui-controller.js'
-import { arkmeUpdateUi } from './update-ui-controller.js'
 import { verifyPhoneCaptcha } from './geetest.js'
 
 export type ArkmeBackgroundSoundEligibilityStatus = 'loading' | ArkmeBackgroundSoundEligibilityReason
@@ -63,20 +67,20 @@ export function describeArkmeBackgroundSoundSetting(input: {
   enabled: boolean
   permission: ArkmeMicrophonePermissionState
 }): string {
-  if (input.capability === 'loading') return '正在确认当前 Arkme Host 是否支持文字背景音…'
-  if (input.capability === 'unsupported') return '当前 Arkme Host 不支持文字背景音，请升级后重试'
-  if (input.eligibility === 'loading') return '正在确认当前账号的背景音会员权益…'
-  if (input.eligibility === 'membership-required') return '免费版暂不支持背景音'
-  if (input.eligibility === 'membership-unavailable') return '暂时无法确认会员权益'
-  if (input.enabled && input.permission === 'granted') return '已开启，输入时自动记录环境背景音并随本条快记保存'
+  if (input.capability === 'loading') return tr("正在确认当前 Arkme Host 是否支持文字背景音…")
+  if (input.capability === 'unsupported') return tr("当前 Arkme Host 不支持文字背景音，请升级后重试")
+  if (input.eligibility === 'loading') return tr("正在确认当前账号的背景音会员权益…")
+  if (input.eligibility === 'membership-required') return tr("免费版暂不支持背景音")
+  if (input.eligibility === 'membership-unavailable') return tr("暂时无法确认会员权益")
+  if (input.enabled && input.permission === 'granted') return tr("已开启，输入时自动记录环境背景音并随本条快记保存")
   if (input.enabled) {
-    if (input.permission === 'denied') return '已开启；输入时检测到麦克风权限已拒绝，请在浏览器站点设置中允许'
-    if (input.permission === 'unavailable') return '账号开关已开启，但当前浏览器不支持麦克风录音'
-    return '已开启，首次输入时会请求麦克风权限'
+    if (input.permission === 'denied') return tr("已开启；输入时检测到麦克风权限已拒绝，请在浏览器站点设置中允许")
+    if (input.permission === 'unavailable') return tr("账号开关已开启，但当前浏览器不支持麦克风录音")
+    return tr("已开启，首次输入时会请求麦克风权限")
   }
-  if (input.permission === 'denied') return '未开启，麦克风权限已拒绝'
-  if (input.permission === 'unavailable') return '当前浏览器不支持麦克风录音'
-  return '未开启；开启后会在首次输入时请求麦克风权限'
+  if (input.permission === 'denied') return tr("未开启，麦克风权限已拒绝")
+  if (input.permission === 'unavailable') return tr("当前浏览器不支持麦克风录音")
+  return tr("未开启；开启后会在首次输入时请求麦克风权限")
 }
 
 interface SettingsRowProps {
@@ -100,7 +104,7 @@ function SettingsRow({ title, description, href, onClick, danger = false, disabl
     return <a className="arkme-redesign-setting-row" href={href} target="_blank" rel="noreferrer">{body}</a>
   }
   if (onClick !== undefined) {
-    return <button type="button" className="arkme-redesign-setting-row" disabled={disabled} onClick={onClick}>{body}</button>
+    return <button data-arkme-feedback="neutral" type="button" className="arkme-redesign-setting-row" disabled={disabled} onClick={onClick}>{body}</button>
   }
   return <div className="arkme-redesign-setting-row">{body}</div>
 }
@@ -120,13 +124,13 @@ export function BackgroundSoundSettingsRow({
 }) {
   const switchDisabled = busy || disabled
   return <div className="arkme-redesign-setting-row">
-    <strong>文字背景音</strong>
+    <strong>{tr("文字背景音")}</strong>
     <span style={{ minWidth: 0, maxWidth: 430, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 }}>
       <span className="arkme-redesign-setting-summary" style={{ minWidth: 0 }}>{description}</span>
-      <button
+      <button data-arkme-feedback="neutral"
         type="button"
         role="switch"
-        aria-label="文字背景音"
+        aria-label={tr("文字背景音")}
         aria-checked={checked}
         aria-busy={busy}
         disabled={switchDisabled}
@@ -167,9 +171,7 @@ interface VersionSettingsRowProps {
   title: string
   version: string
   feedback?: string
-  actionLabel?: '检查更新' | '检查中…' | '立即更新' | '下载中…' | '打开安装包' | '重启并安装' | '安装中…'
-  disabled?: boolean
-  loading?: boolean
+  actionLabel?: string
   onAction?: () => void
 }
 
@@ -178,8 +180,6 @@ export function VersionSettingsRow({
   version,
   feedback,
   actionLabel,
-  disabled = false,
-  loading = false,
   onAction,
 }: VersionSettingsRowProps) {
   const hasAction = actionLabel !== undefined && onAction !== undefined
@@ -190,15 +190,12 @@ export function VersionSettingsRow({
     </span>
     {hasAction ?
       <span className="arkme-redesign-version-action-slot">
-      <button
+      <button data-arkme-feedback="neutral"
         type="button"
         className="arkme-redesign-update-button"
-        aria-label={loading ? `正在检查 ${title}更新` : actionLabel === '检查更新' ? `检查 ${title}更新` : `${actionLabel}：${title}`}
-        aria-busy={loading}
-        disabled={disabled}
+        aria-label={`${actionLabel}：${title}`}
         onClick={onAction}
       >
-        {loading ? <CircleNotch className="arkme-icon-spin" size={13} aria-hidden /> : null}
         {actionLabel}
       </button>
       </span> : null}
@@ -207,9 +204,9 @@ export function VersionSettingsRow({
   </div>
 }
 
-function SettingsGroup({ title, children, id }: { title: string; children: ReactNode; id?: string }) {
+function SettingsGroup({ title, children, id }: { title?: string; children: ReactNode; id?: string }) {
   return <section className="arkme-redesign-settings-group" {...(id === undefined ? {} : { id })}>
-    <h2>{title}</h2>
+    {title !== undefined && <h2>{title}</h2>}
     <div>{children}</div>
   </section>
 }
@@ -230,11 +227,29 @@ function AccountInfoRow({ icon, title, value, action, disabled = false, onClick 
       <strong>{title}</strong>
       <small>{value}</small>
     </span>
-    {action === undefined ? null : <span className="arkme-account-info-action">{action}</span>}
+    <span className="arkme-account-info-action">{action}</span>
     {onClick === undefined ? <span className="arkme-redesign-trailing-slot" aria-hidden /> : <CaretRight size={15} aria-hidden />}
   </>
   if (onClick === undefined) return <div className="arkme-account-info-row">{content}</div>
-  return <button type="button" className="arkme-account-info-row" disabled={disabled} onClick={onClick}>{content}</button>
+  return <button data-arkme-feedback="neutral" type="button" className="arkme-account-info-row" disabled={disabled} onClick={onClick}>{content}</button>
+}
+
+export function WechatBindingSettingsRow({ bound, nickname, onBind, busy = false }: {
+  bound: boolean | undefined
+  nickname?: string | undefined
+  // Only an actual authorization adapter may supply this capability.
+  onBind?: (() => void) | undefined
+  busy?: boolean
+}) {
+  const canBind = bound === false && onBind !== undefined
+  return <AccountInfoRow
+    icon={<WechatLogo size={18} />}
+    title={tr("微信号")}
+    value={bound === undefined ? tr('正在读取…') : bound ? nickname?.trim() || tr('已绑定') : tr('未绑定')}
+    {...(canBind ? { action: tr(busy ? '绑定中…' : '绑定') } : {})}
+    disabled={busy}
+    onClick={canBind && !busy ? onBind : undefined}
+  />
 }
 
 function WorldShareQrIcon({ size = 20 }: { size?: number }) {
@@ -282,21 +297,21 @@ function copyText(value: string): Promise<void> {
 function localArkmeIdValidation(text: string, minLength: number): string | undefined {
   const value = text.trim()
   if (value === '') return undefined
-  if (!/^[A-Za-z]/.test(value)) return '即我号不能以数字或符号开头'
-  if (!/^[A-Za-z0-9_-]+$/.test(value)) return '即我号仅支持字母、数字、下划线或减号'
+  if (!/^[A-Za-z]/.test(value)) return tr("即我号不能以数字或符号开头")
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) return tr("即我号仅支持字母、数字、下划线或减号")
   const length = [...value].length
-  if (length < minLength || length > 20) return minLength === 5 ? '即我号需要5-20个字符' : '即我号需要6-20个字符'
+  if (length < minLength || length > 20) return minLength === 5 ? tr("即我号需要5-20个字符") : tr("即我号需要6-20个字符")
   return undefined
 }
 
 function arkmeIdAvailabilityText(availability: ArkmeIdAvailabilitySnapshot | undefined): string {
   if (availability === undefined) return ''
-  if (availability.available) return '✅ 当前即我号可设置'
+  if (availability.available) return tr("✅ 当前即我号可设置")
   switch (availability.reason) {
     case 'modify_limited': return '❌ 即我号仅可设置一次'
     case 'invalid': return '❌ 即我号格式不正确'
     case 'taken': return '❌ 该即我号已被占用'
-    default: return '服务器繁忙，请稍后重试'
+    default: return tr("服务器繁忙，请稍后重试")
   }
 }
 
@@ -313,7 +328,7 @@ function SettingsDialog({
     <section className="arkme-account-dialog" role="dialog" aria-modal="true" aria-label={title} onClick={event => { event.stopPropagation() }}>
       <header>
         <h3>{title}</h3>
-        <button type="button" aria-label="关闭" onClick={onClose}><X size={20} aria-hidden /></button>
+        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} onClick={onClose}><X size={20} aria-hidden /></button>
       </header>
       {children}
     </section>
@@ -329,21 +344,22 @@ function ProfileQrDialog({
   shareWebsite: string | undefined
   onClose: () => void
 }) {
+  useArkmeLocale()
   const shareUrl = buildProfileShareUrl(shareWebsite, profile.arkmeId)
   const [status, setStatus] = useState('')
   const qrDataUrl = useMemo(() => profileQrDataUrlFromShareUrl(shareUrl), [shareUrl])
-  return <SettingsDialog title="我的二维码" onClose={onClose}>
+  return <SettingsDialog title={tr("我的二维码")} onClose={onClose}>
     <div className="arkme-account-qr-card">
-      <ArkmeUserAvatar {...(profile.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={52} label="当前用户头像" />
-      <strong>{profile.displayName || '即我用户'}</strong>
-      <span>即我号：{profile.arkmeId || '-'}</span>
-      <img src={qrDataUrl} alt="我的即我二维码" />
-      <small>扫描二维码，进入我的世界</small>
+      <ArkmeUserAvatar {...(profile.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={52} label={tr("当前用户头像")} />
+      <strong>{profile.displayName || tr("即我用户")}</strong>
+      <span>{tr("即我号：")}{profile.arkmeId || '-'}</span>
+      <img src={qrDataUrl} alt={tr("我的即我二维码")} />
+      <small>{tr("扫码查看我的主页")}</small>
     </div>
     <div className="arkme-account-dialog-actions">
-      <button type="button" onClick={() => {
-        void copyText(shareUrl).then(() => { setStatus('链接已复制') }).catch(() => { setStatus('复制失败，请稍后重试') })
-      }}><Copy size={16} aria-hidden />复制链接</button>
+      <button data-arkme-feedback="neutral" type="button" onClick={() => {
+        void copyText(shareUrl).then(() => { setStatus('主页链接已复制') }).catch(() => { setStatus('复制失败，请稍后重试') })
+      }}><Copy size={16} aria-hidden />{tr("复制主页链接")}</button>
     </div>
     {status !== '' ? <p className="arkme-account-dialog-status" role="status">{status}</p> : null}
   </SettingsDialog>
@@ -358,6 +374,7 @@ function ArkmeIdDialog({
   onClose: () => void
   onUpdated: (snapshot: ArkmeUserProfileSnapshot) => void
 }) {
+  useArkmeLocale()
   const minLength = profile.accountType === 2 ? 5 : 6
   const [value, setValue] = useState(profile.arkmeId)
   const [availability, setAvailability] = useState<ArkmeIdAvailabilitySnapshot>()
@@ -415,18 +432,18 @@ function ArkmeIdDialog({
   }
 
   const statusText = localError ?? (checking ? '加载中…' : arkmeIdAvailabilityText(availability))
-  return <SettingsDialog title="设置即我号" onClose={onClose}>
+  return <SettingsDialog title={tr("设置即我号")} onClose={onClose}>
     <form className="arkme-account-form" onSubmit={event => { void submit(event) }}>
       <label>
-        <span>即我号</span>
-        <input value={value} maxLength={20} autoFocus placeholder="请输入即我号" onChange={event => { setValue(event.target.value) }} />
+        <span>{tr("即我号")}</span>
+        <input value={value} maxLength={20} autoFocus placeholder={tr("请输入即我号")} onChange={event => { setValue(event.target.value) }} />
       </label>
-      <p className="arkme-account-rule">需字母开头 · 最少{minLength}位 · 暂仅可设置一次</p>
+      <p className="arkme-account-rule">{tr("需字母开头 · 最少")}{minLength}{tr("位 · 暂仅可设置一次")}</p>
       {statusText !== '' ? <p className={`arkme-account-dialog-status${localError !== undefined || availability?.available === false || error !== '' ? ' is-error' : ''}`} role="status">{statusText}</p> : null}
       {error !== '' ? <p className="arkme-account-dialog-status is-error" role="alert">{error}</p> : null}
       <div className="arkme-account-dialog-actions">
-        <button type="button" onClick={onClose}>取消</button>
-        <button type="submit" disabled={!canSubmit}>{submitting ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}确认创建</button>
+        <button data-arkme-feedback="neutral" type="button" onClick={onClose}>{tr("取消")}</button>
+        <button data-arkme-feedback="primary" type="submit" disabled={!canSubmit}>{submitting ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}{tr("确认创建")}</button>
       </div>
     </form>
   </SettingsDialog>
@@ -443,6 +460,7 @@ function PhoneBindDialog({
   onClose: () => void
   onUpdated: (snapshot: ArkmeUserProfileSnapshot, auth: ArkmeAuthSnapshot) => void
 }) {
+  useArkmeLocale()
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [phoneBusy, setPhoneBusy] = useState(false)
@@ -500,24 +518,24 @@ function PhoneBindDialog({
 
   return <SettingsDialog title={actionLabel} onClose={onClose}>
     <form className="arkme-account-form" onSubmit={event => { void verify(event) }}>
-      {profile.contact.phoneMasked !== undefined ? <p className="arkme-account-rule">当前绑定的手机号码为 {profile.contact.phoneMasked}</p> : null}
+      {profile.contact.phoneMasked !== undefined ? <p className="arkme-account-rule">{tr("当前绑定的手机号码为")} {profile.contact.phoneMasked}</p> : null}
       <label>
-        <span>手机号</span>
-        <input value={phone} autoFocus inputMode="tel" placeholder="请输入手机号" onChange={event => { setPhone(event.target.value) }} />
+        <span>{tr("手机号")}</span>
+        <input value={phone} autoFocus inputMode="tel" placeholder={tr("请输入手机号")} onChange={event => { setPhone(event.target.value) }} />
       </label>
       <label>
-        <span>验证码</span>
+        <span>{tr("验证码")}</span>
         <span className="arkme-account-code-row">
-          <input value={code} inputMode="numeric" maxLength={6} placeholder="请输入验证码" onChange={event => { setCode(event.target.value) }} />
-          <button type="button" disabled={phoneBusy || !phoneValid || countdown > 0} onClick={() => { void sendCode() }}>
+          <input value={code} inputMode="numeric" maxLength={6} placeholder={tr("请输入验证码")} onChange={event => { setCode(event.target.value) }} />
+          <button data-arkme-feedback="neutral" type="button" disabled={phoneBusy || !phoneValid || countdown > 0} onClick={() => { void sendCode() }}>
             {countdown > 0 ? `${countdown}s` : '发送验证码'}
           </button>
         </span>
       </label>
       {status !== '' ? <p className={`arkme-account-dialog-status${status.includes('失败') || status.includes('错误') || status.includes('请输入') || status.includes('已绑定') ? ' is-error' : ''}`} role="status">{status}</p> : null}
       <div className="arkme-account-dialog-actions">
-        <button type="button" onClick={onClose}>取消</button>
-        <button type="submit" disabled={phoneBusy || !phoneValid || !codeValid}>{phoneBusy ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}{profile.contact.phoneMasked === undefined ? '绑 定' : '更 换'}</button>
+        <button data-arkme-feedback="neutral" type="button" onClick={onClose}>{tr("取消")}</button>
+        <button data-arkme-feedback="primary" type="submit" disabled={phoneBusy || !phoneValid || !codeValid}>{phoneBusy ? <CircleNotch className="arkme-icon-spin" size={16} aria-hidden /> : null}{profile.contact.phoneMasked === undefined ? tr("绑 定") : tr("更 换")}</button>
       </div>
     </form>
   </SettingsDialog>
@@ -546,9 +564,7 @@ export interface ArkmeAppUpdateRow {
   label: string
   current: string
   latest: string
-  action: 'check' | 'download' | 'install' | 'open' | 'busy'
   feedback?: string
-  downloadedFilePath?: string
 }
 
 function versionLabel(version: string | undefined): string {
@@ -576,64 +592,59 @@ export function aboutHarnessVersion(
 }
 
 export function updateVersionText(current: string, latest: string): string {
-  if (current === 'v…') return '当前版本读取中…'
+  if (current === 'v…') return tr("当前版本读取中…")
   if (latest === 'v…') return `当前 ${current}`
   return current === latest ? `当前 ${current} · 已是最新版本` : `当前 ${current} → 最新 ${latest}`
 }
 
 export function buildArkmeAppUpdateRow(input: {
-  app?: Pick<ArkmeAppUpdateSnapshot, 'status' | 'currentVersion' | 'noUpdateAvailable' | 'latestVersion' | 'error' | 'failureStage' | 'installMode' | 'downloadedFilePath'>
+  app?: Pick<ArkmeAppUpdateSnapshot, 'status' | 'currentVersion' | 'noUpdateAvailable' | 'latestVersion' | 'error' | 'failureStage' | 'downloadedBytes' | 'totalBytes'>
   appError?: string
 }): ArkmeAppUpdateRow {
   const status = input.app?.status
-  const unavailable = input.app === undefined && input.appError?.trim() !== undefined && input.appError.trim() !== ''
-  const busy = status === 'checking' || status === 'downloading' || status === 'installing'
+  const latest = versionLabel(input.app?.latestVersion ?? input.app?.currentVersion)
+  const downloaded = input.app?.downloadedBytes ?? 0
+  const total = input.app?.totalBytes
+  const progress = total !== undefined && total > 0
+    ? `${Math.max(0, Math.min(100, Math.round(downloaded / total * 100)))}%`
+    : undefined
   const feedback = input.appError?.trim()
-    ? `检查失败：${input.appError.trim()}`
+    ? input.appError.trim()
     : status === 'checking'
       ? '正在检查更新…'
       : status === 'current'
-        ? input.app?.noUpdateAvailable === true ? '已检查 · 暂无可用版本' : '已检查 · 当前已是最新版本'
+        ? input.app?.noUpdateAvailable === true ? '暂无可用版本' : '当前已是最新版本'
         : status === 'available'
-          ? '发现新版本，可以下载更新包'
+          ? `发现新版本 ${latest}`
           : status === 'downloading'
-            ? '正在下载更新包'
+            ? `正在下载更新${progress === undefined ? '' : ` · ${progress}`}`
             : status === 'downloaded'
-              ? input.app?.installMode === 'in-app'
-                ? '下载完成，可重启并安装新版本'
-                : '下载完成，可打开所在文件夹定位安装包'
+              ? '更新已下载，前往 APP 更新继续'
               : status === 'installing'
-                ? '正在停止 Harness 并安装新版本…'
+                ? '正在安装更新…'
               : status === 'failed'
                 ? `${input.app?.failureStage === 'download' ? '下载' : input.app?.failureStage === 'install' ? '安装' : '检查'}失败：${input.app?.error || '请稍后重试'}`
-                : undefined
+                : status === 'idle' ? '等待检查更新' : '正在读取更新状态…'
   return {
     label: 'APP',
     current: versionLabel(input.app?.currentVersion),
-    latest: versionLabel(input.app?.latestVersion ?? input.app?.currentVersion),
-    action: unavailable || busy
-      ? 'busy'
-      : status === 'downloaded'
-        ? input.app?.installMode === 'in-app' ? 'install' : 'open'
-        : status === 'available' ? 'download' : 'check',
+    latest,
     ...(feedback === undefined ? {} : { feedback }),
-    ...(input.app?.installMode === 'in-app' || input.app?.downloadedFilePath === undefined
-      ? {}
-      : { downloadedFilePath: input.app.downloadedFilePath }),
   }
 }
 
 export function arkmeNotificationPermissionLabel(permission: ArkmeDesktopNotificationPermission): string {
   return permission === 'granted'
-    ? '已开启'
+    ? tr("已开启")
     : permission === 'denied'
-      ? '系统通知未开启，点击前往设置'
+      ? tr("系统通知未开启，点击前往设置")
       : permission === 'default'
-        ? '尚未授权，点击开启'
-        : permission === 'system-managed' ? '由系统管理' : '不可用'
+        ? tr("尚未授权，点击开启")
+        : permission === 'system-managed' ? tr("由系统管理") : tr("不可用")
 }
 
-export function ArkmeSettingsSurface() {
+export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 'general' | 'about' } = {}) {
+  useArkmeLocale()
   const surfaceRef = useRef<HTMLDivElement>(null)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const appUpdateState = useSyncExternalStore(arkmeAppUpdateStore.subscribe, arkmeAppUpdateStore.getSnapshot, arkmeAppUpdateStore.getSnapshot)
@@ -676,9 +687,11 @@ export function ArkmeSettingsSurface() {
     setProfile(undefined)
     setError('')
     void callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, signal)
-      .then(async snapshot => snapshot.profile === null
-        ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, signal)
-        : snapshot)
+      .then(async snapshot => {
+        if (signal?.aborted) return snapshot
+        if (snapshot.profile !== null) applyProfileSnapshot(snapshot)
+        return await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, signal)
+      })
       .then(snapshot => { if (!signal?.aborted) applyProfileSnapshot(snapshot) })
       .catch(caught => {
         if (!signal?.aborted) setError(caught instanceof Error ? caught.message : String(caught))
@@ -694,10 +707,14 @@ export function ArkmeSettingsSurface() {
   }, [])
 
   useEffect(() => {
+    if (view !== 'account') {
+      setError('')
+      return
+    }
     const controller = new AbortController()
     loadProfile(controller.signal)
     return () => { controller.abort() }
-  }, [loadProfile])
+  }, [loadProfile, view])
 
   useEffect(() => {
     const refresh = () => { void arkmeDesktopNotifications.refreshPermission() }
@@ -857,34 +874,8 @@ export function ArkmeSettingsSurface() {
     ...(appUpdateState.status === undefined ? {} : { app: appUpdateState.status }),
     ...(appUpdateState.error === '' ? {} : { appError: appUpdateState.error }),
   })
-  const appUpdateActionLabel = appUpdateRow.action === 'check'
-    ? '检查更新'
-    : appUpdateRow.action === 'download'
-      ? '立即更新'
-      : appUpdateRow.action === 'install'
-        ? '重启并安装'
-      : appUpdateRow.action === 'open'
-        ? '打开安装包'
-        : appUpdateState.status?.status === 'downloading'
-          ? '下载中…'
-          : appUpdateState.status?.status === 'installing' ? '安装中…' : '检查中…'
-  const runAppUpdateAction = (row: ArkmeAppUpdateRow) => {
-    if (row.action === 'busy') return
-    if (row.action === 'download') arkmeUpdateUi.open('app')
-    else if (row.action === 'install') void arkmeAppUpdateStore.install()
-    else if (row.action === 'open') void arkmeAppUpdateStore.showDownloadedFile()
-    else void arkmeAppUpdateStore.refresh(true)
-  }
-
   const currentArkmeId = profile?.arkmeId.trim() ?? ''
   const phoneMasked = profile?.contact.phoneMasked
-  const wechatName = profile?.bindingNames?.wechat?.trim()
-  const accountActionUnavailable = (message: string) => {
-    setAccountFeedback(message)
-    window.setTimeout(() => {
-      setAccountFeedback(current => current === message ? '' : current)
-    }, 3600)
-  }
   const changeBackgroundSound = async (enabled: boolean) => {
     if (authenticatedUserId === undefined || authenticatedAccountKey === undefined || backgroundSoundCapability !== 'supported'
       || backgroundSoundEligibility !== 'eligible' || backgroundSoundBusyRef.current) return
@@ -939,72 +930,64 @@ export function ArkmeSettingsSurface() {
     }
   }
 
-  return <div ref={surfaceRef} className="arkme-redesign-settings-surface" data-arkme-settings-surface aria-label="Arkme 设置">
+  return <div ref={surfaceRef} className="arkme-redesign-settings-surface" data-arkme-settings-surface data-arkme-settings-view={view} aria-label={tr("Arkme 设置")}>
     <div className="arkme-redesign-settings-shell">
-      <div className="arkme-redesign-settings-profile">
-        <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={56} label="当前用户头像" />
+      {view === 'account' && <>
+      {!authenticated && <div className="arkme-redesign-settings-profile">
+        <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={56} label={tr("当前用户头像")} />
         <div>
           <h1>{displayName}</h1>
-          <p>
-            <span>{accountDescription}</span>
-            {authenticated ? <button
-              type="button"
-              className="arkme-account-profile-qr"
-              aria-label="查看我的二维码"
-              disabled={profile === undefined || currentArkmeId === ''}
-              onClick={() => { setActiveAccountDialog('qr'); setAccountFeedback('') }}
-            >
-              <WorldShareQrIcon />
-            </button> : null}
-          </p>
+          {!authenticated && <p><span>{accountDescription}</span></p>}
         </div>
-      </div>
+      </div>}
+      {authenticated && profile && authenticatedAccountKey && <ArkmeProfileEditor key={authenticatedAccountKey} profile={profile} accountScope={authenticatedAccountKey} onUpdated={applyProfileSnapshot} />}
 
-      {!authenticated && <SettingsGroup title="账户">
+      {!authenticated && <SettingsGroup title={tr("账户")}>
         <SettingsRow
-          title={bindingRequired ? '待完成登录' : authState.checked ? '当前未登录' : '正在读取登录状态…'}
-          description={bindingRequired ? '完成手机号绑定后即可登录' : '登录 Arkme 后可管理账户'}
+          title={bindingRequired ? tr("待完成登录") : authState.checked ? tr("当前未登录") : tr("正在读取登录状态…")}
+          description={bindingRequired ? tr("完成手机号绑定后即可登录") : tr("登录 Arkme 后可管理账户")}
         />
       </SettingsGroup>}
 
-      {authenticated && <SettingsGroup title="账户">
-        <ArkmeBillingSettings />
-        <OpenApiMcpSettings />
-      </SettingsGroup>}
-
-      {authenticated && <SettingsGroup title="账号信息">
+      {authenticated && <SettingsGroup title={tr("账号信息")}>
+        <div className="arkme-account-id-with-qr">
         <AccountInfoRow
           icon={<IdentificationCard size={18} />}
-          title="即我号"
-          value={currentArkmeId === '' ? '暂未获取到即我号' : currentArkmeId}
-          action={profile?.canUpdateArkmeId === false ? '不可修改' : '修改'}
+          title={tr("即我号")}
+          value={currentArkmeId === '' ? tr('暂未获取到即我号') : currentArkmeId}
+          action={tr(profile?.canUpdateArkmeId === false ? '不可修改' : '修改')}
           disabled={profile === undefined || profile.canUpdateArkmeId === false}
           onClick={profile !== undefined && profile.canUpdateArkmeId !== false ? () => { setActiveAccountDialog('arkme-id'); setAccountFeedback('') } : undefined}
         />
+        <button type="button" className="arkme-account-profile-qr" aria-label={tr('查看我的二维码')} disabled={!profile || !currentArkmeId} onClick={() => { setActiveAccountDialog('qr') }}><WorldShareQrIcon /></button>
+        </div>
         <AccountInfoRow
           icon={<Phone size={18} />}
-          title="手机号"
-          value={phoneMasked ?? '未绑定'}
-          action={phoneMasked === undefined ? '绑定' : '换绑'}
+          title={tr("手机号")}
+          value={phoneMasked ?? tr('未绑定')}
+          action={tr(phoneMasked === undefined ? '绑定' : '换绑')}
           disabled={profile === undefined}
           onClick={profile !== undefined ? () => { setActiveAccountDialog('phone'); setAccountFeedback('') } : undefined}
         />
-        <AccountInfoRow
-          icon={<WechatLogo size={18} />}
-          title="微信"
-          value={profile?.bindings?.wechat === true ? (wechatName || '已绑定') : '未绑定'}
-          action={profile?.bindings?.wechat === true ? '换绑' : '绑定'}
-          disabled={profile === undefined}
-          onClick={profile !== undefined ? () => {
-            accountActionUnavailable('Flutter 客户端通过本机微信授权完成微信绑定；当前 DSH 插件暂不具备微信 AppBridge，不能在插件内换绑。')
-          } : undefined}
-        />
+        {/* DSH currently has no WeChat authorization adapter. Never substitute an explanatory dialog. */}
+        <WechatBindingSettingsRow bound={profile === undefined ? undefined : profile.bindings?.wechat === true} nickname={profile?.bindingNames?.wechat} />
+        {/* Binding metadata is distinct from the Arkme profile. Do not show the Arkme
+            avatar as a provider avatar when the profile API does not supply one. */}
+        {profile?.bindings?.apple && <AccountInfoRow icon={<AppleLogo size={18} />} title="Apple ID" value={profile.bindingNames?.apple || tr('已绑定')} />}
+        {profile?.bindings?.google && <AccountInfoRow icon={<GoogleLogo size={18} />} title="Google" value={profile.bindingNames?.google || tr('已绑定')} />}
+        {profile?.bindings?.huawei && <AccountInfoRow icon={<DeviceMobile size={18} />} title={tr("华为 ID")} value={tr('已绑定')} />}
+        {profile?.contact.emailMasked && <AccountInfoRow icon={<EnvelopeSimple size={18} />} title={tr("邮箱")} value={profile.contact.emailMasked} />}
         {accountFeedback !== '' ? <p className="arkme-account-feedback" role="status"><WarningCircle size={14} aria-hidden />{accountFeedback}</p> : null}
       </SettingsGroup>}
+      {authenticated && <div className="arkme-account-logout">
+        <button data-arkme-feedback="danger" type="button" disabled={logoutBusy} onClick={() => { void logout() }}>{logoutBusy ? tr("正在退出…") : tr("退出登录")}</button>
+      </div>}
+      </>}
 
-      <SettingsGroup title="通用">
+      {view === 'general' && <>
+      <SettingsGroup title={tr("通用")}>
         <SettingsRow
-          title="通知"
+          title={tr("通知")}
           description={notificationLabel}
           disabled={notificationBusy}
           {...(notificationPermission === 'default'
@@ -1015,7 +998,7 @@ export function ArkmeSettingsSurface() {
         />
       </SettingsGroup>
 
-      {authenticated && authenticatedUserId !== undefined ? <SettingsGroup title="隐私与权限">
+      {authenticated && authenticatedUserId !== undefined ? <SettingsGroup title={tr("隐私与权限")}>
         <BackgroundSoundSettingsRow
           checked={backgroundSoundCapability === 'supported' && backgroundSoundEligibility === 'eligible' && backgroundSoundEnabled}
           busy={backgroundSoundBusy || backgroundSoundCapability === 'loading' || backgroundSoundEligibility === 'loading'}
@@ -1025,27 +1008,25 @@ export function ArkmeSettingsSurface() {
           onChange={enabled => { void changeBackgroundSound(enabled) }}
         />
       </SettingsGroup> : null}
+      </>}
 
-      <SettingsGroup title="更新" id="arkme-settings-about">
+      {view === 'about' && <>
+      <ArkmeAboutProduct />
+      <SettingsGroup id="arkme-settings-about">
         <VersionSettingsRow
-          title="ArkME 客户端"
+          title={tr("ArkME 客户端")}
           version={aboutArkmeVersion(appUpdateState.status?.currentVersion)}
-          feedback={`${updateVersionText(appUpdateRow.current, appUpdateRow.latest)} · ${appUpdateRow.feedback ?? '尚未检查'}`
-            + (appUpdateRow.downloadedFilePath === undefined ? '' : ` · ${appUpdateRow.downloadedFilePath}`)}
-          actionLabel={appUpdateActionLabel}
-          disabled={appUpdateRow.action === 'busy'}
-          loading={appUpdateState.status?.status === 'checking'}
-          onAction={() => { runAppUpdateAction(appUpdateRow) }}
+          feedback={`${updateVersionText(appUpdateRow.current, appUpdateRow.latest)} · ${tr(appUpdateRow.feedback ?? '正在读取更新状态…')}`}
+          actionLabel={tr("打开 APP 更新")}
+          onAction={() => { void arkmeAppUpdateStore.open() }}
         />
-        <VersionSettingsRow title="ArkME 插件" version={`v${pluginManifest.version}`} />
+        <VersionSettingsRow title={tr("ArkME 插件")} version={`v${pluginManifest.version}`} />
         <VersionSettingsRow title="DeepSeek Harness" version={aboutHarnessVersion()} />
-        <SettingsRow title="用户协议" description="查看 Arkme 用户协议" href="https://www.arkme.ai/article/user-aggrement-v1.html" />
-        <SettingsRow title="隐私条款" description="查看 Arkme 隐私条款" href="https://www.arkme.ai/article/privacy-aggrement-v1.html" />
+        <SettingsRow title={tr("用户协议")} description={tr("查看 Arkme 用户协议")} href="https://www.arkme.ai/article/user-aggrement-v1.html" />
+        <SettingsRow title={tr("隐私条款")} description={tr("查看 Arkme 隐私条款")} href="https://www.arkme.ai/article/privacy-aggrement-v1.html" />
       </SettingsGroup>
-
-      {authenticated && <SettingsGroup title="账户操作">
-        <SettingsRow danger title={logoutBusy ? '正在退出…' : '退出登录'} description="退出当前 Arkme 账户" disabled={logoutBusy} onClick={() => { void logout() }} />
-      </SettingsGroup>}
+      <ArkmeAboutDetails accountScope={authenticatedAccountKey} />
+      </>}
 
       {error !== '' && <div className="arkme-redesign-settings-error" role="alert">{error}</div>}
     </div>

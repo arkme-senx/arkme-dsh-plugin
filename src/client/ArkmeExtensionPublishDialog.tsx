@@ -1,3 +1,4 @@
+import { tr, useArkmeLocale } from './locale.js'
 import { useState, type CSSProperties, type FormEvent } from 'react'
 import type { ArkmeExtensionEditableVisibility } from '../extensions/types.js'
 import type { ArkmeMyExtensionItem } from '../extensions/owned-types.js'
@@ -20,6 +21,7 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
   onCancel(): void
   onSubmit(value: ArkmeExtensionPublishFormValue): void
 }) {
+  useArkmeLocale()
   const [name, setName] = useState(item.name)
   const [description, setDescription] = useState(item.description)
   const [version, setVersion] = useState(nextVersion(item.published?.version))
@@ -44,14 +46,14 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
     <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-publish-title">
       <h3 id="arkme-extension-publish-title" style={styles.title}>{item.publish.allowed && item.publish.mode === 'version' ? '发布新版本' : '发布扩展'}</h3>
       <form onSubmit={submit}>
-        <label style={styles.label}>名称<input style={styles.input} value={name} maxLength={120} required disabled={busy} onChange={event => { setName(event.target.value) }} /></label>
-        <label style={styles.label}>说明<textarea style={styles.textarea} value={description} maxLength={2000} disabled={busy} onChange={event => { setDescription(event.target.value) }} /></label>
-        <label style={styles.label}>版本<input style={styles.input} value={version} pattern="\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?" required disabled={busy} onChange={event => { setVersion(event.target.value) }} /></label>
-        <label style={styles.label}>可见范围<select style={styles.input} value={visibility} disabled={busy} onChange={event => { setVisibility(event.target.value as ArkmeExtensionEditableVisibility) }}>
-          <option value="private">仅自己</option><option value="public">公开</option>
+        <label style={styles.label}>{tr("名称")}<input style={styles.input} value={name} maxLength={120} required disabled={busy} onChange={event => { setName(event.target.value) }} /></label>
+        <label style={styles.label}>{tr("说明")}<textarea style={styles.textarea} value={description} maxLength={2000} disabled={busy} onChange={event => { setDescription(event.target.value) }} /></label>
+        <label style={styles.label}>{tr("版本")}<input style={styles.input} value={version} pattern="\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?" required disabled={busy} onChange={event => { setVersion(event.target.value) }} /></label>
+        <label style={styles.label}>{tr("可见范围")}<select style={styles.input} value={visibility} disabled={busy} onChange={event => { setVisibility(event.target.value as ArkmeExtensionEditableVisibility) }}>
+          <option value="private">{tr("仅自己")}</option><option value="public">{tr("公开")}</option>
         </select></label>
-        <label style={styles.label}>更新说明<textarea style={styles.textarea} value={changelog} maxLength={2000} disabled={busy} onChange={event => { setChangelog(event.target.value) }} /></label>
-		<label style={styles.label}>GitHub 仓库（可选）<input
+        <label style={styles.label}>{tr("更新说明")}<textarea style={styles.textarea} value={changelog} maxLength={2000} disabled={busy} onChange={event => { setChangelog(event.target.value) }} /></label>
+		<label style={styles.label}>{tr("GitHub 仓库（可选）")}<input
 			style={styles.input}
 			type="url"
 			placeholder="https://github.com/owner/repository"
@@ -68,8 +70,8 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
         />
         {error !== '' && <div role="alert" style={styles.error}>{error}</div>}
         <div style={styles.actions}>
-          <button type="button" style={styles.secondary} disabled={busy} onClick={onCancel}>取消</button>
-          <button type="submit" style={styles.primary} disabled={busy}>{busy ? '发布中…' : '确认发布'}</button>
+          <button data-arkme-feedback="neutral" type="button" style={styles.secondary} disabled={busy} onClick={onCancel}>{tr("取消")}</button>
+          <button data-arkme-feedback="primary" type="submit" style={styles.primary} disabled={busy}>{busy ? '发布中…' : '确认发布'}</button>
         </div>
       </form>
     </section>

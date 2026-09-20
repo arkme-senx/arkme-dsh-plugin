@@ -1,3 +1,4 @@
+import { arkmeIntlLocale, tr } from './locale.js'
 import type { ArkmeSourceItem } from '../types.js'
 
 export type ArkmeSourceSort = 'default' | 'latest' | 'most'
@@ -60,22 +61,22 @@ export function arkmeSourceTimeLabel(value: number, nowMillis = Date.now()): str
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
   if (day === today) {
-    return new Intl.DateTimeFormat('zh-CN', {
+    return new Intl.DateTimeFormat(arkmeIntlLocale(), {
       hour: '2-digit', minute: '2-digit', hour12: false,
     }).format(date)
   }
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime()
   if (day === yesterday) {
-    const time = new Intl.DateTimeFormat('zh-CN', {
+    const time = new Intl.DateTimeFormat(arkmeIntlLocale(), {
       hour: '2-digit', minute: '2-digit', hour12: false,
     }).format(date)
-    return `昨天 ${time}`
+    return tr("昨天 {v0}", { v0: time })
   }
   const sixDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime()
   if (day >= sixDaysAgo && day < today) {
-    return new Intl.DateTimeFormat('zh-CN', { weekday: 'short' }).format(date)
+    return new Intl.DateTimeFormat(arkmeIntlLocale(), { weekday: 'short' }).format(date)
   }
-  return `${date.getMonth() + 1}月${date.getDate()}日`
+  return tr("{v0}月{v1}日", { v0: date.getMonth() + 1, v1: date.getDate() })
 }
 
 export function arkmeSendToSelfDirectoryPresentation(

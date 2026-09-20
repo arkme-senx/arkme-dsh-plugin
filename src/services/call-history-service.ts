@@ -16,6 +16,10 @@ import type {
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue } from './service.js'
 import { ProfileService } from './profile-service.js'
+import type { MediaService } from './media-service.js'
+import type { SourceService } from './source-service.js'
+import { callRecordRoomId, callRecordSource, callSummaryUserIds, projectCallRecord, renderCallRecordSummary } from '../call-record-presentation.js'
+import type { ArkmeTimelineItem } from '../types.js'
 
 interface ArkmeCallRefPayload {
   version: 1
@@ -213,7 +217,9 @@ function videoPerspectiveFromItem(item: Record<string, unknown>, viewerUserId: n
     'snapshot_url', 'snapshotUrl', 'image_url', 'imageUrl',
   ])
   if (videoUrl === '' && posterUrl === '') return undefined
+  const userId = Math.trunc(firstNumber(item, ['user_id', 'userId', 'owner_user_id', 'ownerUserId', 'view_user_id', 'viewUserId']))
   return {
+    ...(userId > 0 ? { userId } : {}),
     perspective: perspectiveFromItem(item, viewerUserId),
     ...(firstString(item, ['label', 'display_name', 'displayName', 'name']) === '' ? {} : {
       label: firstString(item, ['label', 'display_name', 'displayName', 'name']),
@@ -290,6 +296,8 @@ export class CallHistoryService {
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly profile: ProfileService,
+    private readonly media?: Pick<MediaService, 'forwardContentBlocks'>,
+    private readonly source?: Pick<SourceService, 'privateRemarksByUserIds'>,
   ) {}
 
   async listCallHistory(options: ArkmeCallHistoryOptions = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> {
@@ -311,10 +319,26 @@ export class CallHistoryService {
         failureCooldownMs: 2_000,
       },
     )
-    const items = await Promise.all(this.historyItems(raw)
+    const rawItems = this.historyItems(raw)
+    const items = await Promise.all(rawItems
       .map(async item => await this.normalizeHistoryItem(item, session.userId)))
     const validItems = items.filter((item): item is ArkmeCallHistoryItem => item !== undefined)
-    await this.attachPeerAvatars(validItems, session, signal)
+    await this.attachPeerPresentation(validItems, session, signal)
+    // Resolve templates after profile/remark enrichment, without a detail request per row.
+    items.forEach((item, index) => {
+      if (item === undefined) return
+      const source = rawItems[index]!
+      const record = { ...source, ...objectValue(source.trtc ?? source.call ?? source.call_record) }
+      const names = new Map<number, string>()
+      for (const [id, name] of Object.entries(objectValue(record.participant_display_names ?? record.participantDisplayNames))) {
+        if (Number(id) > 0 && typeof name === 'string' && name.trim()) names.set(Number(id), name.trim())
+      }
+      if (item.peerUserId !== undefined && !/^Arkme 用户 \d+$/.test(item.peerDisplayName)) {
+        names.set(item.peerUserId, item.peerDisplayName)
+      }
+      const summary = safeSummary(renderCallRecordSummary(record, session.userId, names))
+      if (summary) item.summaryPreview = summary
+    })
     const hasMore = booleanValue(raw.has_more ?? raw.hasMore)
     const nextCursor = firstString(raw, ['next_cursor', 'nextCursor', 'cursor'])
     const includeRecentContacts = options.includeRecentContacts !== false && cursor === ''
@@ -333,6 +357,24 @@ export class CallHistoryService {
     const session = await this.runtime.requireSession()
     const payload = await this.openCallRef(callRef, session.userId)
     return await this.detailByRoomId(payload.roomId, payload, session, signal)
+  }
+
+  async timelineCallRecord(raw: unknown, userId: number): Promise<ArkmeTimelineItem['callRecord']> {
+    const presentation = projectCallRecord(raw, userId)
+    const source = callRecordSource(raw)
+    if (!presentation || !source) return presentation
+    const roomId = callRecordRoomId(raw)
+    if (roomId === '') return presentation
+    const startedAtMillis = firstEpochMillis(source, ['st', 'start_time', 'startTime', 'call_start_time', 'callStartTime'])
+    const rawDuration = firstValue(source, ['du', 'duration', 'duration_sec', 'durationSec'])
+    return {
+      ...presentation,
+      direction: firstNumber(source, ['cr', 'caller_id', 'callerId', 'caller_user_id', 'callerUserId']) === userId ? 'outgoing' : 'incoming',
+      stableId: await this.publicStableId(`trtc:${roomId}`),
+      callRef: await this.sealCallRef({ version: 1, userId, roomId, stableId: `trtc:${roomId}`, issuedAtMillis: Date.now() }),
+      ...(startedAtMillis > 0 ? { startedAtMillis } : {}),
+      ...(rawDuration === undefined ? {} : { durationSeconds: Math.max(0, Math.trunc(numberValue(rawDuration))) }),
+    }
   }
 
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> {
@@ -384,7 +426,6 @@ export class CallHistoryService {
     const calleeUserIds = numberList(item.callee_user_ids ?? item.calleeUserIds)
     const connectedUserIds = numberList(item.connected_user_ids ?? item.connectedUserIds)
     const peerUserId = this.resolvePeerUserId(viewerUserId, callerUserId, calleeUserIds, connectedUserIds, item)
-    const summaryText = safeSummary(firstString(item, ['call_summary', 'callSummary', 'summary_text', 'summaryText', 'summary']))
     const summaryUpdatedAtMillis = firstEpochMillis(item, [
       'call_summary_updated_at', 'callSummaryUpdatedAt', 'summary_updated_at', 'summaryUpdatedAt',
     ])
@@ -411,7 +452,6 @@ export class CallHistoryService {
       callResult,
       resultLabel: resultLabel(callResult, acceptedAtMillis, duration),
       summaryStatus: summaryStatus(firstValue(item, ['call_summary_status', 'callSummaryStatus', 'summary_status', 'summaryStatus'])),
-      ...(summaryText === '' ? {} : { summaryPreview: summaryText }),
       ...(summaryUpdatedAtMillis > 0 ? { summaryUpdatedAtMillis } : {}),
       canOpenDetail: true,
       canRedial: peerUserId > 0,
@@ -481,20 +521,27 @@ export class CallHistoryService {
     }
   }
 
-  private async attachPeerAvatars(
+  private async attachPeerPresentation(
     items: ArkmeCallHistoryItem[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<void> {
     const ids = [...new Set(items.flatMap(item => item.peerUserId === undefined ? [] : [item.peerUserId]))]
     if (ids.length === 0) return
-    const profiles = await this.profile.publicProfilesByUserIds(ids, session, signal).catch(() => new Map())
+    const [profiles, remarks] = await Promise.all([
+      this.profile.publicProfileSummariesByUserIds(ids, session, signal).catch(() => new Map()),
+      this.source?.privateRemarksByUserIds(ids, signal === undefined ? {} : { signal })
+        .catch(() => new Map<number, string>()) ?? Promise.resolve(new Map<number, string>()),
+    ])
     await Promise.all(items.map(async item => {
       const peerUserId = item.peerUserId
       if (peerUserId === undefined) return
       const profile = profiles.get(peerUserId)
       const displayName = profile?.displayName?.trim() ?? ''
-      if (displayName !== '' && /^Arkme 用户 \d+$/.test(item.peerDisplayName.trim())) {
+      const remark = remarks.get(peerUserId)?.trim() ?? ''
+      if (remark !== '') {
+        item.peerDisplayName = remark
+      } else if (displayName !== '' && /^Arkme 用户 \d+$/.test(item.peerDisplayName.trim())) {
         item.peerDisplayName = displayName
       }
       if (profile?.avatarUrl === undefined) return
@@ -556,15 +603,37 @@ export class CallHistoryService {
     const endedAtMillis = firstEpochMillis(raw, ['ended_at_millis', 'endedAtMillis', 'end_time', 'endTime'])
     const duration = durationSeconds(acceptedAtMillis, startedAtMillis, endedAtMillis)
     const callResult = firstString(raw, ['call_result', 'callResult', 'result'])
-    const summaryText = safeSummary(firstString(raw, ['call_summary', 'callSummary', 'summary_text', 'summaryText', 'summary']))
     const summaryUpdatedAtMillis = firstEpochMillis(raw, [
       'call_summary_updated_at', 'callSummaryUpdatedAt', 'summary_updated_at', 'summaryUpdatedAt',
     ])
     const mediaType = callMediaType(firstValue(raw, ['call_media_type', 'callMediaType', 'media_type', 'mediaType']))
     const videoRecord = callVideoRecord(raw, mediaType, session.userId)
-    const participants = await this.attachParticipantAvatars(this.participants(raw, session.userId), session, signal)
+    const transcriptSegments = this.transcriptSegments(raw, startedAtMillis, session.userId).slice(0, 200)
+    const hangupUserId = callResult.toLowerCase().replace(/[_\s-]/g, '') === 'normalend'
+      ? listValue(raw.member_actions).map(objectValue).reverse().find(action => firstString(action, ['action']).toLowerCase() === 'hangup' && firstNumber(action, ['user_id']) > 0)?.user_id
+      : undefined
+    const participantSeeds = this.participants(raw, session.userId)
+    const userIds = [firstNumber(raw, ['caller_user_id', 'callerUserId']), ...numberList(raw.callee_user_ids ?? raw.calleeUserIds), ...numberList(raw.connected_user_ids ?? raw.connectedUserIds), ...transcriptSegments.map(segment => segment.speakerUserId ?? 0), numberValue(hangupUserId)]
+    for (const userId of [...new Set(userIds)].filter(value => Number.isSafeInteger(value) && value > 0)) {
+      if (!participantSeeds.some(participant => participant.userId === userId)) {
+        participantSeeds.push({ userId, displayName: userId === session.userId ? '我' : '通话参与者', ...(userId === session.userId ? { isCurrentUser: true } : {}) })
+      }
+    }
+    const seeds = participantSeeds.slice(0, 50)
+    // A bound speaker can be a different person from the device's account.
+    // Resolve their display name without adding them as a call endpoint.
+    const summarySeeds = callSummaryUserIds(raw).filter(id => !seeds.some(participant => participant.userId === id))
+      .slice(0, 50).map(userId => ({ userId, displayName: '' }))
+    const presentations = await this.attachParticipantPresentation([...seeds, ...summarySeeds], session, signal)
+    const participants = presentations.slice(0, seeds.length)
+    const summaryNames = new Map(presentations.flatMap(participant => participant.userId && participant.displayName.trim()
+      && !/^(Arkme 用户 \d+|通话参与者)$/.test(participant.displayName.trim())
+      ? [[participant.userId, participant.displayName] as const] : []))
+    const summaryText = safeSummary(renderCallRecordSummary(raw, session.userId, summaryNames))
+    const hangupParticipant = participants.find(participant => participant.userId === numberValue(hangupUserId))
     return {
       callRef: await this.sealCallRef({ ...payload, issuedAtMillis: Date.now() }),
+      stableId: await this.publicStableId(payload.stableId),
       title: firstString(raw, ['title', 'display_name', 'displayName', 'peer_display_name', 'peerDisplayName']) || '通话详情',
       mediaType,
       startedAtMillis,
@@ -580,22 +649,33 @@ export class CallHistoryService {
       transcriptFailed: booleanValue(raw.transcript_failed ?? raw.transcriptFailed),
       ...(videoRecord === undefined ? {} : { videoRecord }),
       participants,
-      transcriptSegments: this.transcriptSegments(raw).slice(0, 200),
+      transcriptSegments: transcriptSegments.map(segment => {
+        const speaker = participants.find(participant => participant.userId !== undefined && participant.userId === segment.speakerUserId)
+        return speaker ? { ...segment, speakerDisplayName: speaker.displayName } : segment
+      }),
+      ...(hangupParticipant ? { hangupParticipant } : {}),
     }
   }
 
-  private async attachParticipantAvatars(
+  private async attachParticipantPresentation(
     participants: ArkmeCallParticipant[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<ArkmeCallParticipant[]> {
     const ids = [...new Set(participants.flatMap(participant => participant.userId === undefined ? [] : [participant.userId]))]
     if (ids.length === 0) return participants
-    const profiles = await this.profile.publicProfilesByUserIds(ids, session, signal).catch(() => new Map())
+    const [profiles, remarks] = await Promise.all([
+      this.profile.publicProfileSummariesByUserIds(ids, session, signal).catch(() => new Map()),
+      this.source?.privateRemarksByUserIds(ids, signal === undefined ? {} : { signal })
+        .catch(() => new Map<number, string>()) ?? Promise.resolve(new Map<number, string>()),
+    ])
     return await Promise.all(participants.map(async participant => {
       const userId = participant.userId
-      if (userId === undefined || profiles.get(userId)?.avatarUrl === undefined) return participant
-      return { ...participant, avatarRef: await this.profile.sealProfileImageRef(session.userId, userId) }
+      if (userId === undefined) return participant
+      const profile = profiles.get(userId)
+      const remark = userId === session.userId ? '' : remarks.get(userId)?.trim()
+      return { ...participant, displayName: remark || profile?.displayName || participant.displayName,
+        ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, userId) }) }
     }))
   }
 
@@ -616,25 +696,37 @@ export class CallHistoryService {
     return participants.slice(0, 50)
   }
 
-  private transcriptSegments(raw: Record<string, unknown>): ArkmeCallTranscriptSegment[] {
+  private transcriptSegments(raw: Record<string, unknown>, startedAtMillis: number, viewerUserId: number): ArkmeCallTranscriptSegment[] {
     return listValue(firstValue(raw, ['segments', 'transcript_segments', 'room_transcript_segments']))
       .map((item, index) => {
         const rawItem = objectValue(item)
         const text = clippedText(firstString(rawItem, ['text', 'transcript', 'content']), 2_000)
         if (text === '') return undefined
         const segmentId = firstString(rawItem, ['segment_id', 'segmentId', 'id']) || `segment-${String(index + 1)}`
+        const remoteAudioUrl = firstString(rawItem, ['audio_url', 'audioUrl'])
+        const audioBlock = remoteAudioUrl ? this.media?.forwardContentBlocks([{ type: 2, name: '通话片段', download_url: remoteAudioUrl }], viewerUserId).find(block => block.kind === 'audio') : undefined
+        const audioUrl = audioBlock ? `${this.runtime.config.routePath}/media?ref=${encodeURIComponent(audioBlock.mediaRef)}` : undefined
         const speakerUserId = Math.trunc(firstNumber(rawItem, ['speaker_user_id', 'speakerUserId', 'user_id', 'userId']))
+        // start_ms/end_ms are absolute epoch milliseconds in the desktop contract;
+        // older providers supply relative millisecond offsets. Never multiply offsets by 1000.
+        const start = firstNumber(rawItem, ['start_ms', 'start_millis', 'startMillis', 'start_time_ms', 'startTimeMs'])
+        const end = firstNumber(rawItem, ['end_ms', 'end_millis', 'endMillis', 'end_time_ms', 'endTimeMs'])
+        const absoluteStart = start >= 100_000_000_000
+        const absoluteEnd = end >= 100_000_000_000
         return {
           segmentId,
+          ...(audioUrl ? { audioUrl } : {}),
           speakerDisplayName: firstString(rawItem, ['speaker_display_name', 'speakerDisplayName', 'speaker_name', 'speakerName'])
             || (speakerUserId > 0 ? `Arkme 用户 ${String(speakerUserId)}` : '说话人'),
           ...(speakerUserId > 0 ? { speakerUserId } : {}),
           text,
-          startMillis: firstEpochMillis(rawItem, ['start_millis', 'startMillis', 'start_time_ms', 'startTimeMs']),
-          endMillis: firstEpochMillis(rawItem, ['end_millis', 'endMillis', 'end_time_ms', 'endTimeMs']),
+          startMillis: absoluteStart ? Math.max(0, start - startedAtMillis) : Math.max(0, start),
+          endMillis: absoluteEnd ? Math.max(0, end - startedAtMillis) : Math.max(0, end),
+          ...(absoluteStart ? { spokenAtMillis: start } : {}),
         } satisfies ArkmeCallTranscriptSegment
       })
       .filter((item): item is ArkmeCallTranscriptSegment => item !== undefined)
+      .sort((left, right) => left.startMillis - right.startMillis)
   }
 
   private async sealCallRef(payload: ArkmeCallRefPayload): Promise<string> {

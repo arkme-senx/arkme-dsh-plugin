@@ -1,8 +1,10 @@
+import { tr } from './locale.js'
 import type {
   ArkmeOutgoingCallFailureCode,
   ArkmeOutgoingCallIntentClaim,
   ArkmeOutgoingCallMediaType,
   ArkmeOutgoingCallPrepareResult,
+  ArkmeCallReceiverPrepareResult,
 } from '../outgoing-call-contract.js'
 import type { ArkmePluginOperation } from '../types.js'
 import { callArkme } from './api.js'
@@ -15,7 +17,7 @@ import {
 } from './outgoing-call-bridge.js'
 import { outgoingCallUi, type OutgoingCallUiController, type OutgoingCallUiRequest } from './outgoing-call-ui-controller.js'
 
-export type OutgoingCallPhase = 'idle' | 'preparing' | 'bootstrapping' | 'calling' | 'active' | 'ending' | 'error'
+export type OutgoingCallPhase = 'idle' | 'listening' | 'incoming' | 'preparing' | 'bootstrapping' | 'calling' | 'active' | 'ending' | 'error'
 
 export interface OutgoingCallRuntimeSnapshot {
   visible: boolean
@@ -115,6 +117,107 @@ export class OutgoingCallRuntime {
   private callStartFallbackTimer: ReturnType<typeof globalThis.setTimeout> | undefined
   private unsubscribeController: (() => void) | undefined
   private claiming = false
+  private claimEpoch = 0
+  private receiverUserId: number | undefined
+  private receiverScope: string | undefined
+  private receiverBootstrap: ArkmeCallReceiverPrepareResult['bootstrap'] | undefined
+  private receiverReady = false
+  private receiverError = ''
+  private receiverRetryTimer: ReturnType<typeof globalThis.setTimeout> | undefined
+  private receiverBootTimer: ReturnType<typeof globalThis.setTimeout> | undefined
+  private unregisterReceiver: (() => void) | undefined
+
+  configureReceiver(userId: number | undefined, scope?: string): void {
+    if (this.receiverScope === scope && this.receiverUserId === userId) return
+    const mounted = this.unsubscribeController !== undefined
+    // Account changes invalidate pending credentials, calls and callbacks together.
+    this.dispose()
+    this.receiverUserId = userId
+    this.receiverScope = scope
+    if (mounted) this.mount()
+  }
+
+  private clearReceiverTimers(): void {
+    if (this.receiverRetryTimer !== undefined) this.stopTimeout(this.receiverRetryTimer)
+    if (this.receiverBootTimer !== undefined) this.stopTimeout(this.receiverBootTimer)
+    this.receiverRetryTimer = undefined
+    this.receiverBootTimer = undefined
+  }
+
+  private async startReceiver(): Promise<void> {
+    if (this.receiverUserId === undefined || this.unregisterReceiver === undefined || this.snapshot.phase !== 'idle') return
+    this.clearReceiverTimers()
+    const userId = this.receiverUserId
+    const generation = ++this.generation
+    this.receiverError = ''
+    this.receiverReady = false
+    this.bootstrapSent = false
+    this.callSent = false
+    this.receiverBootstrap = undefined
+    this.frame = null
+    this.update({ phase: 'listening', retainFrame: true, visible: false, callRequestId: this.randomId(), error: '' })
+    this.receiverBootTimer = this.startTimeout(() => {
+      if (generation === this.generation && !this.receiverReady) this.receiverFailed('通话服务连接超时，请重试')
+    }, 15_000)
+    try {
+      const result = await this.callApi('calls.receiver.prepare') as ArkmeCallReceiverPrepareResult
+      if (generation !== this.generation) return
+      if (result.accountUserId !== userId) throw new Error('登录账号已变化，请重试')
+      this.receiverBootstrap = result.bootstrap
+      this.flushBootstrap()
+    } catch (error) {
+      if (generation === this.generation) this.receiverFailed(failureFrom(error).message)
+    }
+  }
+
+  private receiverFailed(message: string): void {
+    this.generation += 1
+    this.clearReceiverTimers()
+    if (this.frame !== null) sendDesktopCallCommand(this.frame, 'logout')
+    this.receiverBootstrap = undefined
+    this.receiverReady = false
+    this.bootstrapSent = false
+    this.receiverError = message
+    this.update({ phase: 'idle', visible: false, retainFrame: false, callRequestId: '', error: message })
+    if (this.receiverUserId !== undefined && this.unregisterReceiver !== undefined) {
+      this.receiverRetryTimer = this.startTimeout(() => { void this.startReceiver() }, 30_000)
+    }
+  }
+
+  private async ensureReceiver(): Promise<void> {
+    if (this.receiverUserId === undefined) throw new Error('请先登录后再生成通话邀请')
+    if (this.snapshot.phase !== 'idle' && this.snapshot.phase !== 'listening') throw new Error('请结束当前通话后再生成邀请')
+    if (this.snapshot.phase === 'idle') void this.startReceiver()
+    if (this.receiverReady) return
+    await new Promise<void>((resolve, reject) => {
+      const unsubscribe = this.subscribe(() => {
+        if (this.receiverReady) { unsubscribe(); resolve() }
+        else if (this.snapshot.phase !== 'listening') { unsubscribe(); reject(new Error(this.receiverError || '通话连接已中断，请重试')) }
+      })
+    })
+  }
+
+  private async receiveIncoming(message: DesktopCallBridgeEvent): Promise<void> {
+    if (this.snapshot.phase !== 'listening' || !this.receiverReady) return
+    const generation = this.generation
+    const callRequestId = this.snapshot.callRequestId
+    this.receiverReady = false
+    this.update({ phase: 'incoming', displayName: message.callerName || 'Arkme 用户', mediaType: message.mediaType ?? 'audio', statusText: '收到来电邀请' })
+    try {
+      await this.callApi('calls.receiver.claim', { callRequestId })
+      if (generation !== this.generation || this.getSnapshot().phase !== 'incoming') {
+        await this.callApi('calls.outgoing.release', { callRequestId })
+        return
+      }
+      this.leaseCallRequestId = callRequestId
+      this.startHeartbeat()
+      this.update({ visible: true, retainFrame: true })
+    } catch (error) {
+      if (generation !== this.generation) return
+      if (this.frame !== null) sendDesktopCallCommand(this.frame, 'terminate')
+      void this.finish('call-active', failureFrom(error).message)
+    }
+  }
 
   constructor(options: OutgoingCallRuntimeOptions = {}) {
     this.api = options.api ?? (callArkme as ApiCall)
@@ -153,7 +256,9 @@ export class OutgoingCallRuntime {
       }
     }
     this.unsubscribeController = this.controller.subscribe(consume)
+    this.unregisterReceiver = this.controller.registerReceiver(() => this.ensureReceiver())
     consume()
+    void this.startReceiver()
     this.pollTimer = this.startInterval(() => { void this.pollToolIntent().catch(() => undefined) }, 750)
     void this.pollToolIntent().catch(() => undefined)
   }
@@ -194,7 +299,17 @@ export class OutgoingCallRuntime {
       return
     }
     if (this.snapshot.phase === 'idle') return
+    if (message.type === 'incoming') { void this.receiveIncoming(message); return }
     if (message.type === 'ready') {
+      if (this.snapshot.phase === 'listening') {
+        if (!this.bootstrapSent) this.flushBootstrap()
+        else {
+          this.receiverReady = true
+          this.clearReceiverTimers()
+          this.update({ statusText: '等待来电' })
+        }
+        return
+      }
       if (!this.bootstrapSent) this.flushBootstrap()
       else this.flushCall()
       return
@@ -210,7 +325,7 @@ export class OutgoingCallRuntime {
     }
     if (message.type === 'calling') {
       this.clearCallStartFallback()
-      this.update({ phase: 'calling', statusText: `正在呼叫 ${this.snapshot.displayName}…` })
+      this.update({ phase: 'calling', statusText: tr("正在呼叫 {v0}…", { v0: this.snapshot.displayName }) })
       void this.resolveIntentCalling()
       return
     }
@@ -220,7 +335,7 @@ export class OutgoingCallRuntime {
       return
     }
     if (
-      message.type === 'state' && this.callSent && message.hasActiveCall === false &&
+      message.type === 'state' && (this.callSent || this.leaseCallRequestId !== '') && message.hasActiveCall === false &&
       (message.phase === 'idle' || message.phase === 'ending')
     ) {
       this.diag('state_terminal_detected', {
@@ -252,6 +367,7 @@ export class OutgoingCallRuntime {
       return
     }
     if (message.type === 'fatal_error') {
+      if (this.snapshot.phase === 'listening') { this.receiverFailed(message.message ?? '通话连接已中断'); return }
       void this.finish('call-engine-failed', message.message ?? '呼叫引擎启动失败')
       return
     }
@@ -259,10 +375,20 @@ export class OutgoingCallRuntime {
   }
 
   async pollToolIntent(): Promise<void> {
-    if (this.snapshot.phase !== 'idle' || this.claiming) return
+    if ((this.snapshot.phase !== 'idle' && this.snapshot.phase !== 'listening') || this.claiming) return
     this.claiming = true
+    const claimEpoch = ++this.claimEpoch
+    const generation = this.generation
+    const scope = this.receiverScope
     try {
       const claim = await this.callApi('calls.outgoing.intent.claim') as ArkmeOutgoingCallIntentClaim | null
+      if (generation !== this.generation) {
+        if (claim && scope === this.receiverScope && this.unsubscribeController !== undefined) {
+          await this.callApi('calls.outgoing.intent.resolve', { intentId: claim.intentId, claimToken: claim.claimToken,
+            status: 'failed', code: 'call-active', message: '通话状态已变化，请重试' })
+        }
+        return
+      }
       if (claim === null || claim === undefined) return
       this.diag('tool_intent_claimed', {
         intentId: claim.intentId,
@@ -270,7 +396,7 @@ export class OutgoingCallRuntime {
         mediaType: claim.mediaType,
         displayName: claim.displayName,
       })
-      if (this.snapshot.phase !== 'idle') {
+      if (this.snapshot.phase !== 'idle' && this.snapshot.phase !== 'listening') {
         await this.callApi('calls.outgoing.intent.resolve', {
           intentId: claim.intentId, claimToken: claim.claimToken, status: 'failed',
           code: 'call-active', message: '已有通话正在进行',
@@ -278,14 +404,14 @@ export class OutgoingCallRuntime {
         return
       }
       await this.start({ sourceRef: claim.sourceRef, displayName: claim.displayName, mediaType: claim.mediaType }, claim)
-    } finally { this.claiming = false }
+    } finally { if (claimEpoch === this.claimEpoch) this.claiming = false }
   }
 
   cancel(): void {
-    if (this.snapshot.phase === 'idle') return
+    if (this.snapshot.phase === 'idle' || this.snapshot.phase === 'listening') return
     const frame = this.frame
     const shouldTerminateFrame = frame !== null && (
-      this.snapshot.phase === 'bootstrapping' || this.snapshot.phase === 'calling' || this.snapshot.phase === 'active' ||
+      this.snapshot.phase === 'incoming' || this.snapshot.phase === 'bootstrapping' || this.snapshot.phase === 'calling' || this.snapshot.phase === 'active' ||
       this.bootstrapSent || this.callSent
     )
     this.diag('cancel_requested', {
@@ -306,6 +432,13 @@ export class OutgoingCallRuntime {
 
   dispose(): void {
     this.generation += 1
+    this.clearReceiverTimers()
+    this.unregisterReceiver?.()
+    this.unregisterReceiver = undefined
+    this.receiverReady = false
+    this.receiverBootstrap = undefined
+    this.receiverUserId = undefined
+    this.receiverScope = undefined
     this.unsubscribeController?.()
     this.unsubscribeController = undefined
     if (this.pollTimer !== undefined) this.stopInterval(this.pollTimer)
@@ -314,16 +447,17 @@ export class OutgoingCallRuntime {
     this.pollTimer = undefined
     this.heartbeatTimer = undefined
     this.claiming = false
+    this.claimEpoch += 1
     if (this.frame !== null) sendDesktopCallCommand(this.frame, 'logout')
     const lease = this.leaseCallRequestId
     this.leaseCallRequestId = ''
-    if (lease !== '') void this.callApi('calls.outgoing.release', { callRequestId: lease })
+    if (lease !== '') void this.callApi('calls.outgoing.release', { callRequestId: lease }).catch(() => undefined)
     const intent = this.intent
     this.intent = undefined
     if (intent !== undefined) void this.callApi('calls.outgoing.intent.resolve', {
       intentId: intent.intentId, claimToken: intent.claimToken, status: 'failed',
       code: 'call-ui-unavailable', message: '呼叫界面已关闭',
-    })
+    }).catch(() => undefined)
     this.prepared = undefined
     this.frame = null
     this.snapshot = { ...INITIAL_SNAPSHOT, assetBasePath: this.snapshot.assetBasePath }
@@ -339,7 +473,7 @@ export class OutgoingCallRuntime {
       intentId: intent?.intentId,
       callRequestId: intent?.callRequestId,
     })
-    if (this.snapshot.phase !== 'idle') {
+    if (this.snapshot.phase !== 'idle' && this.snapshot.phase !== 'listening') {
       if (intent !== undefined) await this.callApi('calls.outgoing.intent.resolve', {
         intentId: intent.intentId, claimToken: intent.claimToken, status: 'failed',
         code: 'call-active', message: '已有通话正在进行',
@@ -348,6 +482,15 @@ export class OutgoingCallRuntime {
     }
     const callRequestId = intent?.callRequestId ?? this.randomId()
     const generation = ++this.generation
+    this.claiming = false
+    this.claimEpoch += 1
+    this.clearReceiverTimers()
+    this.receiverReady = false
+    this.receiverBootstrap = undefined
+    if (this.snapshot.phase === 'listening') {
+      if (this.frame !== null) sendDesktopCallCommand(this.frame, 'logout')
+      this.frame = null
+    }
     this.intent = intent
     this.bootstrapSent = false
     this.callSent = false
@@ -388,6 +531,14 @@ export class OutgoingCallRuntime {
   }
 
   private flushBootstrap(): void {
+    if (this.snapshot.phase === 'listening') {
+      if (this.bootstrapSent || this.receiverBootstrap === undefined || this.frame === null) return
+      if (!sendDesktopCallCommand(this.frame, 'bootstrap', this.receiverBootstrap)) return
+      this.bootstrapSent = true
+      this.receiverBootstrap.userSig = ''
+      this.receiverBootstrap = undefined
+      return
+    }
     if (this.bootstrapSent || this.prepared === undefined || this.frame === null) return
     const sent = sendDesktopCallCommand(this.frame, 'bootstrap', this.prepared.bootstrap)
     this.diag('flush_bootstrap', { sent, callRequestId: this.snapshot.callRequestId })
@@ -409,7 +560,7 @@ export class OutgoingCallRuntime {
     this.callSent = true
     this.prepared = undefined
     this.scheduleCallStartFallback()
-    this.update({ statusText: `正在呼叫 ${this.snapshot.displayName}…` })
+    this.update({ statusText: tr("正在呼叫 {v0}…", { v0: this.snapshot.displayName }) })
   }
 
   private async resolvePermissions(request: { requestId: string; camera: boolean; microphone: boolean }): Promise<void> {
@@ -487,13 +638,16 @@ export class OutgoingCallRuntime {
   }
 
   private async fail(code: ArkmeOutgoingCallFailureCode, message: string): Promise<void> {
+    const generation = this.generation
     const intent = this.intent
     this.intent = undefined
     this.diag('fail', { code, message, intentId: intent?.intentId, callRequestId: this.snapshot.callRequestId })
     if (intent !== undefined) await this.callApi('calls.outgoing.intent.resolve', {
       intentId: intent.intentId, claimToken: intent.claimToken, status: 'failed', code, message,
     }).catch(() => undefined)
+    if (generation !== this.generation) return
     await this.releaseLease()
+    if (generation !== this.generation) return
     this.prepared = undefined
     this.update({ phase: 'error', statusText: '', error: message })
   }
@@ -526,7 +680,7 @@ export class OutgoingCallRuntime {
 
   private async finish(code: ArkmeOutgoingCallFailureCode, message: string): Promise<void> {
     this.diag('finish_enter', { code, message, callRequestId: this.leaseCallRequestId })
-    this.generation += 1
+    const generation = ++this.generation
     this.clearCallStartFallback()
     const settled = this.leaseCallRequestId === '' ? undefined : {
       callRequestId: this.leaseCallRequestId,
@@ -539,8 +693,10 @@ export class OutgoingCallRuntime {
     if (intent !== undefined) await this.callApi('calls.outgoing.intent.resolve', {
       intentId: intent.intentId, claimToken: intent.claimToken, status: 'failed', code, message,
     }).catch(() => undefined)
+    if (generation !== this.generation) return
     if (this.frame !== null) sendDesktopCallCommand(this.frame, 'logout')
     await this.releaseLease()
+    if (generation !== this.generation) return
     this.prepared = undefined
     this.bootstrapSent = false
     this.callSent = false
@@ -550,6 +706,7 @@ export class OutgoingCallRuntime {
     })
     this.diag('finish_done', { code, message, settled })
     if (settled !== undefined) this.controller.notifySettled(settled)
+    void this.startReceiver()
   }
 
   private async releaseLease(): Promise<void> {

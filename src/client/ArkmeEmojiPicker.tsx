@@ -1,9 +1,13 @@
+import { tr, useArkmeLocale } from './locale.js'
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import { arkmeTheme } from './arkme-theme.js'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type {
   ArkmeFavoriteSticker, ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerList, ArkmeSourceSendResult, ArkmeUploadedAsset,
 } from '../types.js'
 import { callArkme } from './api.js'
+import { arkmeRecentEmojiStore } from './emoji-recent-store.js'
 import {
   arkmeDefaultEmojis, arkmeEmojiById, nextArkmeRecentEmojiIds,
   type ArkmeEmoji,
@@ -12,7 +16,6 @@ import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeComposerEmojiIcon } from './ArkmeComposerToolIcon.js'
 import type { ArkmeComposerCaretGeometry } from './ArkmeRichComposerInput.js'
 
-const recentStorageKey = 'arkme:chat-emoji:recent:v1'
 const favoriteStickerLoadAttemptTimeoutMs = 6_000
 const favoriteStickerLoadAttempts = 2
 const favoriteStickerRetryDelayMs = 400
@@ -29,7 +32,6 @@ function waitForFavoriteStickerRetry(signal: AbortSignal): Promise<void> {
     signal.addEventListener('abort', done, { once: true })
   })
 }
-export const arkmeDefaultEmojiGridColumns = 14
 
 interface ArkmePendingFavoriteSticker {
   id: string
@@ -108,8 +110,9 @@ const styles: Record<string, CSSProperties> = {
   hint: { marginLeft: 'auto', color: 'var(--dsw-alias-label-tertiary, #9097a1)', fontSize: 11, lineHeight: '18px' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, 28px)', gap: 4 },
   defaultGrid: {
-    gridTemplateColumns: `repeat(${arkmeDefaultEmojiGridColumns}, 28px)`,
-    columnGap: 0, rowGap: 4, justifyContent: 'space-between',
+    // Fourteen columns at full panel width; wrap instead of hiding choices in narrow windows.
+    gridTemplateColumns: 'repeat(auto-fit, 28px)',
+    columnGap: 3, rowGap: 4, justifyContent: 'space-between',
   },
   emoji: {
     position: 'relative', width: 28, height: 28, display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 6,
@@ -130,7 +133,7 @@ const styles: Record<string, CSSProperties> = {
   favoriteGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, 82px)', gap: 8, alignContent: 'start' },
   stickerTile: {
     position: 'relative', width: 82, height: 82, padding: 0, overflow: 'hidden', border: 0, borderRadius: 12,
-    background: 'var(--dsw-alias-fill-l2, #f5f6f7)', cursor: 'pointer',
+    background: arkmeTheme.subtle, cursor: 'pointer',
   },
   stickerImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   stickerFallback: { width: '100%', height: '100%', display: 'grid', placeItems: 'center', color: '#a7adb5', fontSize: 24 },
@@ -159,30 +162,6 @@ const styles: Record<string, CSSProperties> = {
   },
   spinner: { width: 13, height: 13, border: '2px solid rgba(255,255,255,.45)', borderTopColor: '#fff', borderRadius: 999 },
   skeleton: { width: 82, height: 82, borderRadius: 12, background: 'var(--dsw-alias-fill-l2, #f1f2f4)' },
-  contextMenu: {
-    position: 'fixed', zIndex: 100, width: 132, padding: 5, boxSizing: 'border-box', border: '1px solid rgba(120,126,136,.14)',
-    borderRadius: 10, background: 'rgba(255,255,255,.96)', boxShadow: '0 10px 30px rgba(20,24,31,.20)', backdropFilter: 'blur(16px)',
-  },
-  contextMenuItem: {
-    width: '100%', height: 34, padding: '0 12px', border: 0, borderRadius: 6, background: 'transparent',
-    color: '#30343a', cursor: 'pointer', textAlign: 'left', fontSize: 13,
-  },
-}
-
-function loadRecentEmojiIds(): string[] {
-  if (typeof localStorage === 'undefined') return []
-  try {
-    const parsed = JSON.parse(localStorage.getItem(recentStorageKey) ?? '[]') as unknown
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((value): value is string => typeof value === 'string' && arkmeEmojiById[value] !== undefined).slice(0, 14)
-  } catch {
-    return []
-  }
-}
-
-function saveRecentEmojiIds(ids: readonly string[]): void {
-  if (typeof localStorage === 'undefined') return
-  try { localStorage.setItem(recentStorageKey, JSON.stringify(ids)) } catch { /* private storage can be unavailable */ }
 }
 
 function SmileIcon() {
@@ -225,15 +204,16 @@ function EmojiGrid({ emojis, layout = 'compact', onSelect }: {
   layout?: 'compact' | 'default'
   onSelect(emoji: ArkmeEmoji): void
 }) {
+  useArkmeLocale()
   const [hoveredId, setHoveredId] = useState('')
   return <div
     data-arkme-emoji-grid={layout}
     style={{ ...styles.grid, ...(layout === 'default' ? styles.defaultGrid : {}) }}
   >
-    {emojis.map(emoji => <button
+    {emojis.map(emoji => <button data-arkme-feedback="neutral"
       key={emoji.id}
       type="button"
-      style={{ ...styles.emoji, ...(hoveredId === emoji.id ? { background: 'var(--dsw-alias-fill-hover, rgba(127,127,127,.10))' } : {}) }}
+      style={styles.emoji}
       aria-label={emoji.label}
       data-arkme-emoji-id={emoji.id}
       aria-describedby={hoveredId === emoji.id ? `arkme-emoji-tooltip-${emoji.id}` : undefined}
@@ -253,18 +233,33 @@ function EmojiGrid({ emojis, layout = 'compact', onSelect }: {
   </div>
 }
 
-export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeometry, getEditorGeometry, onBeforeToggle, onSelect, onUploadSticker, onStickerSent, onError }: {
+interface ArkmeEmojiPickerBaseProps {
   disabled: boolean
+  accountKey?: string | undefined
   scopeKey: string | undefined
-  sourceRef?: string
   getCaretGeometry?: () => ArkmeComposerCaretGeometry | undefined
   getEditorGeometry?: () => ArkmeComposerCaretGeometry | undefined
   onBeforeToggle?: () => void
-  onSelect(emoji: ArkmeEmoji): void
+  /** Return false when the editor rejects insertion; rejected choices are not recorded as recent. */
+  onSelect(emoji: ArkmeEmoji): boolean | void
+  onError?: (message: string) => void
+}
+
+/** Text insertion cannot accidentally acquire the private/group chat sticker-send contract. */
+export type ArkmeEmojiPickerProps = ArkmeEmojiPickerBaseProps & ({
+  mode: 'text'
+  sourceRef?: never
+  onUploadSticker?: never
+  onStickerSent?: never
+} | {
+  mode?: 'all'
+  sourceRef?: string
   onUploadSticker?: (file: File) => Promise<ArkmeUploadedAsset>
   onStickerSent?: (result: ArkmeSourceSendResult) => void | Promise<void>
-  onError?: (message: string) => void
-}) {
+})
+
+export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey, sourceRef, getCaretGeometry, getEditorGeometry, onBeforeToggle, onSelect, onUploadSticker, onStickerSent, onError }: ArkmeEmojiPickerProps) {
+  useArkmeLocale()
   const hostRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const stickerInputRef = useRef<HTMLInputElement>(null)
@@ -281,7 +276,13 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
   const [previewFailedIds, setPreviewFailedIds] = useState<Set<string>>(() => new Set())
   const [previewRevision, setPreviewRevision] = useState(0)
   const [contextMenu, setContextMenu] = useState<ArkmeFavoriteStickerMenuState>()
-  const [recentIds, setRecentIds] = useState<string[]>(loadRecentEmojiIds)
+  const [recentIds, setRecentIds] = useState<string[]>([])
+  const [recentSaveError, setRecentSaveError] = useState<string>()
+  const [recentPhase, setRecentPhase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const recentSelectionRevision = useRef(0)
+  const recentReadRevision = useRef(0)
+  const recentAccount = useRef(accountKey)
+  recentAccount.current = accountKey
   const [panelGeometry, setPanelGeometry] = useState<ArkmeEmojiPanelGeometry>()
   const previousScopeKey = useRef(scopeKey)
   const recentEmojis = recentIds.map(id => arkmeEmojiById[id]).filter((emoji): emoji is ArkmeEmoji => emoji !== undefined)
@@ -298,19 +299,24 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
   useEffect(() => {
     if (!open || typeof document === 'undefined') return
     const closeOnPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest('[data-arkme-action-menu][aria-label="收藏表情操作"]')) return
       if (event.target instanceof Node
         && hostRef.current?.contains(event.target) !== true
         && panelRef.current?.contains(event.target) !== true) setOpen(false)
       setContextMenu(undefined)
     }
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (contextMenu !== undefined) setContextMenu(undefined)
+      else setOpen(false)
+    }
     document.addEventListener('pointerdown', closeOnPointerDown)
     document.addEventListener('keydown', closeOnEscape)
     return () => {
       document.removeEventListener('pointerdown', closeOnPointerDown)
       document.removeEventListener('keydown', closeOnEscape)
     }
-  }, [open])
+  }, [open, contextMenu])
 
   const updatePanelGeometry = () => {
     if (!open || typeof window === 'undefined') return
@@ -354,20 +360,66 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
     pendingStickersRef.current = pendingStickers
   }, [pendingStickers])
 
-  useEffect(() => () => {
-    disposedRef.current = true
-    stickerLoadAbortRef.current?.abort()
-    for (const item of pendingStickersRef.current) {
-      cancelledPendingStickerIdsRef.current.add(item.id)
-      if (item.previewUrl !== '') URL.revokeObjectURL(item.previewUrl)
+  useEffect(() => {
+    disposedRef.current = false
+    return () => {
+      disposedRef.current = true
+      stickerLoadAbortRef.current?.abort()
+      for (const item of pendingStickersRef.current) {
+        cancelledPendingStickerIdsRef.current.add(item.id)
+        if (item.previewUrl !== '') URL.revokeObjectURL(item.previewUrl)
+      }
     }
   }, [])
 
+  const loadRecent = async () => {
+    if (accountKey === undefined) return
+    const revision = recentSelectionRevision.current
+    const readRevision = ++recentReadRevision.current
+    const current = () => !disposedRef.current && recentAccount.current === accountKey
+      && revision === recentSelectionRevision.current && readRevision === recentReadRevision.current
+    setRecentPhase('loading')
+    try {
+      const ids = await arkmeRecentEmojiStore.recentEmojiIds(accountKey)
+      if (!current()) return
+      setRecentIds(ids)
+      setRecentPhase('ready')
+    } catch {
+      if (current()) setRecentPhase('error')
+    }
+  }
+
+  useEffect(() => {
+    ++recentSelectionRevision.current
+    setRecentIds([])
+    setRecentSaveError(undefined)
+    setRecentPhase('idle')
+    setOpen(false)
+  }, [accountKey])
+
+  useEffect(() => {
+    if (open) void loadRecent()
+  }, [open, accountKey])
+
+  const recordRecent = (emojiId: string) => {
+    const revision = ++recentSelectionRevision.current
+    setRecentSaveError(undefined)
+    setRecentPhase('ready')
+    if (accountKey === undefined) return
+    void arkmeRecentEmojiStore.recordRecentEmoji(accountKey, emojiId).then(
+      ids => {
+        if (!disposedRef.current && recentAccount.current === accountKey && revision === recentSelectionRevision.current) setRecentIds(ids)
+      },
+      () => {
+        if (!disposedRef.current && recentAccount.current === accountKey && revision === recentSelectionRevision.current) setRecentSaveError(emojiId)
+      },
+    )
+  }
+
   const select = (emoji: ArkmeEmoji) => {
-    const nextRecentIds = nextArkmeRecentEmojiIds(recentIds, emoji.id)
-    setRecentIds(nextRecentIds)
-    saveRecentEmojiIds(nextRecentIds)
-    onSelect(emoji)
+    if (disabled || onSelect(emoji) === false) return
+    setRecentIds(current => nextArkmeRecentEmojiIds(current, emoji.id))
+    recordRecent(emoji.id)
   }
 
   const loadStickers = async () => {
@@ -435,8 +487,8 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
   }
 
   useEffect(() => {
-    if (open && tab === 'favorite' && loadPhase === 'idle') void loadStickers()
-  }, [open, tab, loadPhase])
+    if (mode === 'all' && open && tab === 'favorite' && loadPhase === 'idle') void loadStickers()
+  }, [mode, open, tab, loadPhase])
 
   const addFavoriteSticker = async (item: ArkmeFavoriteStickerAddInput) => {
     const result = await callArkme<ArkmeFavoriteStickerList>('favorite-stickers.add', { item })
@@ -535,21 +587,15 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
   const showContextMenu = (event: ReactMouseEvent, stickerId: string, kind: 'remote' | 'pending') => {
     event.preventDefault()
     event.stopPropagation()
-    const width = 132
-    const menuItems = kind === 'pending' ? 2 : 3
-    const height = menuItems * 34 + 10
-    const viewportWidth = typeof window === 'undefined' ? 1_024 : window.innerWidth
-    const viewportHeight = typeof window === 'undefined' ? 768 : window.innerHeight
-    const x = Math.max(8, Math.min(event.clientX - width / 2, viewportWidth - width - 8))
-    const preferredY = event.clientY - height - 8
-    const y = preferredY >= 8 ? preferredY : Math.min(event.clientY + 8, viewportHeight - height - 8)
+    const x = event.clientX
+    const y = event.clientY
     setContextMenu({ x, y, stickerId, kind })
   }
 
   return <div ref={hostRef} style={styles.host} data-arkme-emoji-picker>
     <ArkmeComposerToolButton
       disabled={disabled}
-      aria-label="选择表情"
+      aria-label={tr("选择表情")}
       aria-haspopup="dialog"
       aria-expanded={open}
       data-arkme-composer-tool="emoji"
@@ -566,36 +612,42 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
         }}
         data-arkme-emoji-panel-shell="true"
         data-placement={panelGeometry?.placement ?? 'above'}
-      ><section ref={panelRef} role="dialog" aria-label="表情选择器" style={styles.panel} data-arkme-emoji-panel>
-      {tab === 'emoji' ? <div style={styles.body}>{recentEmojis.length > 0 && <div style={styles.section}>
-        <div style={styles.titleRow}><span style={styles.title}>最近使用</span></div>
+      ><section ref={panelRef} role="dialog" aria-label={tr("表情选择器")} style={styles.panel} data-arkme-emoji-panel>
+      {mode === 'text' || tab === 'emoji' ? <div style={styles.body}>
+      {recentSaveError !== undefined && <div role="alert" style={styles.title}>{tr("最近表情保存未确认")}<button data-arkme-feedback="neutral" type="button" aria-label={tr("重试保存最近表情")} style={styles.retryButton} onClick={() => { recordRecent(recentSaveError) }}>{tr("重试保存")}</button>
+      </div>}
+      {recentPhase === 'loading'  && <div role="status" style={styles.title}>{tr("正在加载最近表情…")}</div>}
+      {recentPhase === 'error' && <div role="alert" style={styles.title}>{tr("最近表情加载失败")}<button data-arkme-feedback="neutral" type="button" aria-label={tr("重试加载最近表情")} style={styles.retryButton} onClick={() => { void loadRecent() }}>{tr("重试")}</button>
+      </div>}
+      {recentEmojis.length > 0 && <div style={styles.section}>
+        <div style={styles.titleRow}><span style={styles.title}>{tr("最近使用")}</span></div>
         <EmojiGrid emojis={recentEmojis} onSelect={select} />
       </div>}
       <div style={recentEmojis.length > 0 ? styles.sectionSpaced : styles.section}>
         <div style={styles.titleRow}>
-          <span style={styles.title}>默认表情</span>
-          <span style={styles.hint}>创作者：牛mo王</span>
+          <span style={styles.title}>{tr("默认表情")}</span>
+          <span style={styles.hint}>{tr("创作者：牛mo王")}</span>
         </div>
         <EmojiGrid emojis={arkmeDefaultEmojis} layout="default" onSelect={select} />
       </div></div> : <div style={styles.favoriteBody}>
         {loadPhase === 'error' && stickers.length === 0 && pendingStickers.length === 0 ? <div style={styles.stateText} role="alert">
-          <div>加载失败</div>
-          <button type="button" style={styles.retryButton} onClick={() => { void loadStickers() }}>重试</button>
+          <div>{tr("加载失败")}</div>
+          <button data-arkme-feedback="neutral" type="button" style={styles.retryButton} onClick={() => { void loadStickers() }}>{tr("重试")}</button>
         </div> : <div style={styles.favoriteGrid} data-arkme-favorite-sticker-grid="true">
-          <button
-            type="button" style={styles.addTile} aria-label="添加收藏表情" title="添加收藏表情"
+          <button data-arkme-feedback="neutral"
+            type="button" style={styles.addTile} aria-label={tr("添加收藏表情")} title={tr("添加收藏表情")}
             disabled={loadPhase === 'loading' || busyStickerId !== '' || onUploadSticker === undefined}
             onClick={() => { stickerInputRef.current?.click() }}
           ><PlusIcon /></button>
           {loadPhase === 'loading' && stickers.length === 0 && pendingStickers.length === 0 && Array.from({ length: 5 }, (_, index) => <div key={`skeleton:${String(index)}`} style={styles.skeleton} data-arkme-favorite-sticker-skeleton="true" />)}
           {pendingStickers.map(pending => <button
             key={pending.id} type="button" style={styles.stickerTile}
-            aria-label={pending.status === 'failed' ? `重试${pending.file.name}` : `正在上传${pending.file.name}`}
+            aria-label={pending.status === 'failed' ? tr("重试{v0}", { v0: pending.file.name }) : tr("正在上传{v0}", { v0: pending.file.name })}
             title={pending.error ?? pending.file.name}
             onClick={() => { if (pending.status === 'failed') void persistPendingSticker(pending) }}
             onContextMenu={event => { showContextMenu(event, pending.id, 'pending') }}
           >{pending.previewUrl !== '' ? <img src={pending.previewUrl} alt="" draggable={false} style={styles.stickerImage} /> : <span style={styles.stickerFallback}><StickerFallbackIcon /></span>}
-            <span style={styles.stickerOverlay}>{pending.status === 'uploading' ? <><span style={styles.spinner} />上传中</> : <><RefreshIcon />点击重试</>}</span>
+            <span style={styles.stickerOverlay}>{pending.status === 'uploading' ? <><span style={styles.spinner} />{tr("上传中")}</> : <><RefreshIcon />{tr("点击重试")}</>}</span>
             {pending.file.type.toLowerCase() === 'image/gif' && <span style={styles.gifBadge}>GIF</span>}
           </button>)}
           {stickers.map(sticker => {
@@ -604,7 +656,7 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
             const available = sendSupported && sticker.isAvailable && !previewFailed
             return <button
               key={sticker.fileAssetUid} type="button" style={{ ...styles.stickerTile, opacity: sticker.isAvailable ? 1 : .62 }}
-              aria-label={available ? `发送${sticker.fileName}` : previewFailed ? `重试${sticker.fileName}` : !sendSupported ? `${sticker.fileName}仅聊天可发送` : `${sticker.fileName}不可用`}
+              aria-label={available ? tr("发送{v0}", { v0: sticker.fileName }) : previewFailed ? tr("重试{v0}", { v0: sticker.fileName }) : !sendSupported ? `${sticker.fileName}仅聊天可发送` : tr("{v0}不可用", { v0: sticker.fileName })}
               aria-disabled={!available}
               title={available ? sticker.fileName : previewFailed ? '预览加载失败，点击重试' : !sendSupported ? '收藏表情仅支持私聊和群聊发送' : sticker.unavailableReason}
               onClick={event => { if (previewFailed) retryPreview(sticker, event); else if (available) void sendSticker(sticker) }}
@@ -615,41 +667,38 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
                 alt="" draggable={false} style={styles.stickerImage}
                 onError={() => { setPreviewFailedIds(current => new Set(current).add(sticker.fileAssetUid)) }}
               /> : <span style={styles.stickerFallback}><StickerFallbackIcon /></span>}
-              {busyStickerId === sticker.fileAssetUid && <span style={styles.stickerOverlay}><span style={styles.spinner} />处理中</span>}
-              {busyStickerId !== sticker.fileAssetUid && previewFailed && <span style={styles.stickerOverlay}><RefreshIcon />点击重试</span>}
-              {busyStickerId !== sticker.fileAssetUid && !sticker.isAvailable && !previewFailed && <span style={styles.stickerOverlay}>不可用</span>}
+              {busyStickerId === sticker.fileAssetUid && <span style={styles.stickerOverlay}><span style={styles.spinner} />{tr("处理中")}</span>}
+              {busyStickerId !== sticker.fileAssetUid && previewFailed && <span style={styles.stickerOverlay}><RefreshIcon />{tr("点击重试")}</span>}
+              {busyStickerId !== sticker.fileAssetUid && !sticker.isAvailable && !previewFailed && <span style={styles.stickerOverlay}>{tr("不可用")}</span>}
               {sticker.isAnimated && <span style={styles.gifBadge}>GIF</span>}
             </button>
           })}
-          {loadPhase !== 'loading' && stickers.length === 0 && pendingStickers.length === 0 && <div style={styles.empty}>暂无收藏表情，点击 + 添加</div>}
+          {loadPhase !== 'loading' && stickers.length === 0 && pendingStickers.length === 0 && <div style={styles.empty}>{tr("暂无收藏表情，点击 + 添加")}</div>}
         </div>}
         <input ref={stickerInputRef} type="file" accept="image/*,.gif" hidden onChange={addSticker} />
       </div>}
-      <div style={styles.toolbar}>
-        <button type="button" style={{ ...styles.tab, ...(tab === 'emoji' ? { background: '#f3f4f5', color: '#737a84' } : {}) }} aria-label="默认表情" title="默认表情" onClick={() => { setTab('emoji') }}><SmileIcon /></button>
-        <button type="button" style={{ ...styles.tab, ...(tab === 'favorite' ? { background: '#f3f4f5', color: '#737a84' } : {}) }} aria-label="收藏表情" title="收藏表情" onClick={() => { setTab('favorite') }}><HeartIcon /></button>
-      </div>
-      {contextMenu !== undefined && <div
-        role="menu" aria-label="收藏表情操作" data-arkme-favorite-sticker-context-menu="true"
-        style={{ ...styles.contextMenu, left: contextMenu.x, top: contextMenu.y }}
-        onPointerDown={event => { event.stopPropagation() }}
-      >{contextMenu.kind === 'remote' ? (() => {
+      {mode === 'all' && <div style={styles.toolbar}>
+        <button data-arkme-feedback="neutral" data-arkme-feedback-selected={tab === 'emoji'} type="button" style={{ ...styles.tab, ...(tab === 'emoji' ? { background: arkmeTheme.accentSoft, color: arkmeTheme.text } : {}) }} aria-label={tr("默认表情")} title={tr("默认表情")} onClick={() => { setTab('emoji') }}><SmileIcon /></button>
+        <button data-arkme-feedback="neutral" data-arkme-feedback-selected={tab === 'favorite'} type="button" style={{ ...styles.tab, ...(tab === 'favorite' ? { background: arkmeTheme.accentSoft, color: arkmeTheme.text } : {}) }} aria-label={tr("收藏表情")} title={tr("收藏表情")} onClick={() => { setTab('favorite') }}><HeartIcon /></button>
+      </div>}
+      {mode === 'all' && contextMenu !== undefined && <ArkmeActionMenu label={tr("收藏表情操作")}
+        point={{ x: contextMenu.x, y: contextMenu.y }} onClose={() => setContextMenu(undefined)}
+        actions={contextMenu.kind === 'remote' ? (() => {
           const sticker = stickers.find(item => item.fileAssetUid === contextMenu.stickerId)
-          if (sticker === undefined) return null
-          return <>
-            <button type="button" role="menuitem" style={styles.contextMenuItem} onClick={() => { void manageSticker(sticker, 'move-to-front') }}>移至最前</button>
-            {previewFailedIds.has(sticker.fileAssetUid) && <button type="button" role="menuitem" style={styles.contextMenuItem} onClick={event => { setContextMenu(undefined); retryPreview(sticker, event) }}>重试</button>}
-            <button type="button" role="menuitem" style={{ ...styles.contextMenuItem, color: '#d84a4a' }} onClick={() => { void manageSticker(sticker, 'delete') }}>删除</button>
-          </>
+          if (!sticker) return []
+          return [
+            { id: 'front', label: '移至最前', disabled: busyStickerId !== '', onSelect: () => { void manageSticker(sticker, 'move-to-front') } },
+            previewFailedIds.has(sticker.fileAssetUid) && { id: 'retry', label: '重试', onSelect: () => { setContextMenu(undefined); retryPreview(sticker) } },
+            { id: 'delete', label: '删除', danger: true, disabled: busyStickerId !== '', onSelect: () => { void manageSticker(sticker, 'delete') } },
+          ]
         })() : (() => {
           const pending = pendingStickers.find(item => item.id === contextMenu.stickerId)
-          if (pending === undefined) return null
-          return <>
-            {pending.status === 'failed' && <button type="button" role="menuitem" style={styles.contextMenuItem} onClick={() => { setContextMenu(undefined); void persistPendingSticker(pending) }}>重试</button>}
-            <button type="button" role="menuitem" style={{ ...styles.contextMenuItem, color: '#d84a4a' }} onClick={() => { removePendingSticker(pending) }}>删除</button>
-          </>
-        })()}
-      </div>}
+          if (!pending) return []
+          return [
+            pending.status === 'failed' && { id: 'retry', label: '重试', onSelect: () => { setContextMenu(undefined); void persistPendingSticker(pending) } },
+            { id: 'delete', label: '删除', danger: true, onSelect: () => removePendingSticker(pending) },
+          ]
+        })()} />}
       </section><span
         aria-hidden
         data-arkme-emoji-panel-arrow="true"

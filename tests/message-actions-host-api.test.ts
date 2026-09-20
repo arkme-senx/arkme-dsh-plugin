@@ -130,3 +130,46 @@ describe('owner-neutral message action Host operations', () => {
     }
   })
 })
+
+it('isolates native snapshot forwarding from signed action references and forwards account and abort guards', async () => {
+  const forwardNativeChat = vi.fn(async () => ({ itemUid: 'sent' }))
+  const service = { forwardNativeChat } as unknown as ArkmeService
+  const snapshot = { sessionId: 'native', messages: [{ key: 'key', role: 'user', text: 'hello', anchorSeq: 1, createdAtMillis: 10 }] }
+  const signal = new AbortController().signal
+  await dispatchArkmeHostOperation(service, 'native-chat.forward', {
+    snapshot, expectedUserId: 42, targetSourceRef: ' target ', requestId: ' request ', recordUid: 'record', commentRecordUid: 'comment', commentText: ' note ', sendAtMillis: 100,
+    actionRefs: ['must-not-be-used'], ownerKind: 'agent', agentSessionId: 111,
+  }, undefined, undefined, undefined, undefined, signal)
+  expect(forwardNativeChat).toHaveBeenCalledWith(snapshot, 42, {
+    targetSourceRef: 'target', requestId: 'request', recordUid: 'record', commentRecordUid: 'comment', commentText: 'note', sendAtMillis: 100, signal,
+  })
+})
+
+it('rejects native forwarding without the current browser origin before any delivery', async () => {
+  const service = { forwardNativeChat: vi.fn() } as unknown as ArkmeService
+  const server = createServer(createArkmeHostApi(service, { expectedPort: 3080, allowNonLoopback: false }))
+  server.listen(0, '127.0.0.1'); await once(server, 'listening')
+  const address = server.address()
+  if (address === null || typeof address === 'string') throw new Error('address')
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/arkme-self/api`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'native-chat.forward', params: {} }) })
+    expect(response.status).toBe(403)
+    expect(service.forwardNativeChat).not.toHaveBeenCalled()
+  } finally { server.close(); await once(server, 'close') }
+})
+it('accepts native Markdown beyond the standard 128 KiB body limit using its bounded snapshot operation', async () => {
+  const forwardNativeChat = vi.fn(async () => ({ itemUid: 'sent', localState: 'synced' }))
+  const service = { forwardNativeChat } as unknown as ArkmeService
+  const server = createServer(createArkmeHostApi(service, { expectedPort: 3080, allowNonLoopback: false }))
+  server.listen(0, '127.0.0.1'); await once(server, 'listening')
+  const address = server.address()
+  if (address === null || typeof address === 'string') throw new Error('address')
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/arkme-self/api`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://127.0.0.1:3080' },
+      body: JSON.stringify({ operation: 'native-chat.forward', params: { snapshot: { sessionId: 'session', messages: [{ key: 'a', anchorSeq: 1, role: 'assistant', text: 'a'.repeat(150 * 1024), createdAtMillis: 100 }] }, expectedUserId: 42 } }),
+    })
+    expect(response.status).toBe(200)
+    expect(forwardNativeChat).toHaveBeenCalledTimes(1)
+  } finally { server.close(); await once(server, 'close') }
+})

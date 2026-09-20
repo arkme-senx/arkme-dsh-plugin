@@ -2,17 +2,21 @@ import { describe, expect, it, vi } from 'vitest'
 import { UserBanService } from '../../src/services/user-ban-service.js'
 
 function fixture() {
+  const session = { userId: 7, accessToken: 'fixture-access', refreshToken: 'fixture-login' }
+  const requireSession = vi.fn(async () => session)
   const authenticatedAuthReadPost = vi.fn()
   const authenticatedAuthPost = vi.fn()
   const resolvePrivateChatPeer = vi.fn(async () => ({ userId: 42, displayName: '何' }))
   return {
     service: new UserBanService(
-      { authenticatedAuthReadPost, authenticatedAuthPost } as never,
+      { authenticatedAuthReadPost, authenticatedAuthPost, requireSession } as never,
       { resolvePrivateChatPeer },
     ),
     authenticatedAuthReadPost,
     authenticatedAuthPost,
     resolvePrivateChatPeer,
+    requireSession,
+    session,
   }
 }
 
@@ -29,8 +33,18 @@ function record(status: 1 | 2) {
 }
 
 describe('UserBanService', () => {
+  it.each(['account', 'login'])('does not submit a peer resolved before a changed %s context', async kind => {
+    const { service, requireSession, resolvePrivateChatPeer, authenticatedAuthPost, session } = fixture()
+    resolvePrivateChatPeer.mockImplementationOnce(async () => {
+      requireSession.mockResolvedValue({ ...session, ...(kind === 'account' ? { userId: 9 } : { refreshToken: 'new-login' }) })
+      return { userId: 42, displayName: '何' }
+    })
+    authenticatedAuthPost.mockResolvedValue(record(1))
+    await expect(service.ban('source-ref')).rejects.toMatchObject({ code: 'login-context-changed' })
+    expect(authenticatedAuthPost).not.toHaveBeenCalled()
+  })
   it('treats an absent independent ban record as an ordinary unbanned user', async () => {
-    const { service, authenticatedAuthReadPost, resolvePrivateChatPeer } = fixture()
+    const { service, authenticatedAuthReadPost, resolvePrivateChatPeer, session } = fixture()
     authenticatedAuthReadPost.mockResolvedValue({ exists: false, banned: false })
 
     await expect(service.status('source-ref')).resolves.toEqual({
@@ -38,7 +52,7 @@ describe('UserBanService', () => {
     })
     expect(resolvePrivateChatPeer).toHaveBeenCalledWith('source-ref', undefined)
     expect(authenticatedAuthReadPost).toHaveBeenCalledWith(
-      '/api/v1/user-ban/status', { user_id: 42 }, undefined, undefined, { bypassCache: true },
+      '/api/v1/user-ban/status', { user_id: 42 }, session, undefined, { bypassCache: true },
     )
   })
 
@@ -57,18 +71,18 @@ describe('UserBanService', () => {
   })
 
   it('uses explicit idempotent target-state endpoints and keeps transport ownership Host-side', async () => {
-    const { service, authenticatedAuthPost } = fixture()
+    const { service, authenticatedAuthPost, session } = fixture()
     authenticatedAuthPost.mockResolvedValueOnce(record(1)).mockResolvedValueOnce(record(2))
 
     await expect(service.ban('source-ref', ' 私聊复核 ')).resolves.toMatchObject({ status: 'banned' })
     await expect(service.unban('source-ref', ' 复核通过 ')).resolves.toMatchObject({ status: 'unbanned' })
 
     expect(authenticatedAuthPost).toHaveBeenNthCalledWith(
-      1, '/api/v1/user-ban/ban', { user_id: 42, remark: '私聊复核' }, undefined, undefined,
+      1, '/api/v1/user-ban/ban', { user_id: 42, remark: '私聊复核' }, session, undefined,
       { bypassCache: true, trackWriteOutcome: true },
     )
     expect(authenticatedAuthPost).toHaveBeenNthCalledWith(
-      2, '/api/v1/user-ban/unban', { user_id: 42, remark: '复核通过' }, undefined, undefined,
+      2, '/api/v1/user-ban/unban', { user_id: 42, remark: '复核通过' }, session, undefined,
       { bypassCache: true, trackWriteOutcome: true },
     )
   })

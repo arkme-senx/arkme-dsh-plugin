@@ -1,9 +1,15 @@
+import { SharedReadGroup } from '../shared-read-group.js'
+import { arkmePeerMemberType } from '../peer-membership.js'
+import { patchChatPolicy, type ChatPolicySnapshot } from './chat-policy.js'
+import { readTopicRecordPage } from './topic-record-page.js'
+import { readTopicMetadata } from './topic-metadata.js'
 import { arkmeRecordTextFormat, arkmeMarkdownPlainText } from '../markdown.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeChatAttentionSummary,
+  ArkmeConversationNameSearchResult,
   ArkmeGroupAvatarPresentation,
   ArkmeSelfRecordItem,
   ArkmeSelfSummary,
@@ -30,7 +36,10 @@ import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './se
 import { arkmeMentionMetadataMentionsViewer } from '../mention-metadata.js'
 import { arkmeMediaKind } from '../file-transfer-contract.js'
 import { projectArkmeChatAttention, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
+import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import { arkmeEmojiTokenSafePrefix, arkmeHasKnownEmojiToken } from '../arkme-emoji-text.js'
+import { callRecordConversationPreview } from '../call-record-presentation.js'
+import { ARKME_DSH_INPUT_TOPIC_KIND, arkmeSourceAllowsUserWrite, arkmeTopicDisplayName } from '../topic-policy.js'
 
 export interface ArkmeSourceRefPayload {
   version: 1
@@ -68,6 +77,11 @@ export interface ArkmePrivateChatViewerLabel {
 }
 
 interface CacheEntry<T> { value: T; expiresAtMillis: number }
+interface SelfDirectoryContext {
+  hierarchyData: Record<string, unknown> | undefined
+  summaryResult: PromiseSettledResult<ArkmeSelfSummary>
+  latestRecordsResult: PromiseSettledResult<Record<string, unknown>>
+}
 
 export interface ArkmeSourceRecordReader {
   summary(): Promise<ArkmeSelfSummary>
@@ -303,7 +317,9 @@ function conversationMediaMarker(values: readonly Record<string, unknown>[]): st
   return sticker ? '[表情]' : ''
 }
 
-export function arkmeChatConversationPreview(raw: Record<string, unknown>): string {
+export function arkmeChatConversationPreview(raw: Record<string, unknown>, viewerUserId = 0): string {
+  const callPreview = callRecordConversationPreview(raw, viewerUserId)
+  if (callPreview !== undefined) return callPreview
   const values = conversationPreviewObjects(raw)
   const text = normalizedConversationText(values)
   let marker = conversationMediaMarker(values)
@@ -364,7 +380,9 @@ function cloneSourceList(value: ArkmeSourceList): ArkmeSourceList {
 export class SourceService {
   private readonly chatSourceCache = new Map<string, ArkmeSourceItem>()
   private readonly sourceListCache = new Map<string, CacheEntry<ArkmeSourceList>>()
-  private readonly sourceListInFlight = new Map<string, Promise<ArkmeSourceList>>()
+  private readonly sourceListInFlight = new SharedReadGroup<ArkmeSourceList>()
+  private readonly selfDirectoryContexts = new Map<number, CacheEntry<SelfDirectoryContext>>()
+  private readonly selfDirectoryContextReads = new SharedReadGroup<SelfDirectoryContext>()
   private readonly groupAvatarSnapshotCache = new Map<string, CacheEntry<ArkmeGroupAvatarSnapshotProjection | null>>()
   private readonly topicDissolveProgress = new Map<string, {
     userId: number
@@ -419,6 +437,19 @@ export class SourceService {
     return this.chatSourceCache.get(cacheKey)
   }
 
+  applyConfirmedChatPolicy(policy: ChatPolicySnapshot): void {
+    const cacheKey = `${String(policy.user_id)}:${policy.chat_session_uid}`
+    const cached = this.chatSourceCache.get(cacheKey)
+    if (cached !== undefined) this.storeChatSourceByKey(cacheKey, {
+      ...cached,
+      isPinned: policy.pin_state === 2,
+      isMuted: policy.mute_state === 2 || policy.notify_state === 2,
+      chatPolicyUpdatedAtMillis: policy.update_at,
+      chatNotificationPolicyUpdatedAtMillis: policy.update_at,
+    })
+    this.invalidateSourceListCache(policy.user_id, 'root')
+  }
+
   private projectChatSourceAttention(source: ArkmeSourceItem): ArkmeSourceItem {
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') return source
     const attention = projectArkmeChatAttentionFromMuted(source.unreadCount, source.isMuted === true)
@@ -426,7 +457,8 @@ export class SourceService {
   }
 
   private storeChatSourceByKey(cacheKey: string, source: ArkmeSourceItem): void {
-    this.chatSourceCache.set(cacheKey, cloneSourceItem(this.projectChatSourceAttention(source)))
+    const projected = retainNewerArkmeChatPolicy(this.chatSourceCache.get(cacheKey), source)
+    this.chatSourceCache.set(cacheKey, cloneSourceItem(this.projectChatSourceAttention(projected)))
   }
 
   /**
@@ -495,23 +527,63 @@ export class SourceService {
       })
     }
     if (sourceKind !== 3) return undefined
-    const cacheKey = `${String(session.userId)}:${ownerRef}`
-    const cached = this.chatSourceCache.get(cacheKey)
-    if (cached !== undefined) return cached
+    return (await this.chatSourcesBySessionUids([ownerRef], signal)).get(ownerRef)
+  }
 
+  /** Search one canonical directory page, including names with no matching messages. */
+  async searchConversationNames(options: { query: string; cursor?: string; signal?: AbortSignal }): Promise<ArkmeConversationNameSearchResult> {
+    const keyword = options.query.trim().normalize('NFKC').toLocaleLowerCase()
+    if (keyword === '') throw new ArkmePluginError('conversation-query-empty', '搜索关键词不能为空', false)
+    const session = await this.runtime.requireSession()
+    const page = await this.listSources('root', { limit: 50, firstPaint: true,
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }) })
+    options.signal?.throwIfAborted()
+    if (page.hasMore && (!page.nextCursor || page.nextCursor === options.cursor)) {
+      throw new ArkmePluginError('conversation-search-incomplete', '会话名称查找未完成，请重试', true)
+    }
+    // Legacy private supplements sometimes store the viewer's remark as the
+    // name snapshot. Resolve actual nicknames from the existing batched profile read.
+    const peerIds = page.items.flatMap(item => item.kind === 'private_chat' && item.peerUserId !== undefined ? [item.peerUserId] : [])
+    const profiles = peerIds.length === 0 ? new Map<number, ArkmePublicProfile>()
+      : await this.profile.publicProfileSummariesByUserIds(peerIds, session, options.signal)
+    const items: ArkmeConversationNameSearchResult['items'] = []
+    for (const directorySource of page.items) {
+      const nickname = profiles.get(directorySource.peerUserId ?? 0)?.nickname.trim() || directorySource.privateNickname
+      const targetSource = nickname ? { ...directorySource, privateNickname: nickname } : directorySource
+      if (targetSource.kind !== 'private_chat' && targetSource.kind !== 'group_chat') continue
+      if (![targetSource.displayName, targetSource.privateNickname ?? ''].some(name => name.normalize('NFKC').toLocaleLowerCase().includes(keyword))) continue
+      const ref = await this.openSourceRef(targetSource.sourceRef, session.userId)
+      items.push({ sourceKind: 3, sourceUid: ref.ownerRef, title: targetSource.displayName, targetSource,
+        ...(targetSource.privateNickname ? { nickname: targetSource.privateNickname } : {}) })
+    }
+    options.signal?.throwIfAborted()
+    return { items, hasMore: page.hasMore, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) }
+  }
+
+  /** Resolve a bounded set in one directory walk, reusing viewer-scoped source projections. */
+  async chatSourcesBySessionUids(uids: readonly string[], signal?: AbortSignal): Promise<Map<string, ArkmeSourceItem>> {
+    const session = await this.runtime.requireSession()
+    const pending = new Set(uids.filter(uid => uid.trim() !== ''))
+    const result = new Map<string, ArkmeSourceItem>()
+    const collect = () => {
+      for (const uid of pending) {
+        const source = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
+        if (source !== undefined) { result.set(uid, source); pending.delete(uid) }
+      }
+    }
+    collect()
     let cursor: string | undefined
-    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-      const page = await this.listSources('root', {
-        limit: 50,
-        ...(cursor === undefined ? {} : { cursor }),
-        ...(signal === undefined ? {} : { signal }),
+    for (let pageIndex = 0; pending.size > 0 && pageIndex < 20; pageIndex += 1) {
+      if (signal?.aborted) throw signal.reason
+      const page = await this.listSources('root', { limit: 50,
+        ...(cursor === undefined ? {} : { cursor }), ...(signal === undefined ? {} : { signal }),
       })
-      const resolved = this.chatSourceCache.get(cacheKey)
-      if (resolved !== undefined) return resolved
-      if (!page.hasMore || page.nextCursor === undefined) return undefined
+      collect()
+      if (!page.hasMore || page.nextCursor === undefined) break
       cursor = page.nextCursor
     }
-    return undefined
+    return result
   }
 
   setChatSource(userId: number, chatSessionUid: string, source: ArkmeSourceItem): void {
@@ -675,12 +747,15 @@ export class SourceService {
     this.chatSourceCache.clear()
     this.sourceListCache.clear()
     this.sourceListInFlight.clear()
+    this.selfDirectoryContexts.clear()
+    this.selfDirectoryContextReads.clear()
     this.groupAvatarSnapshotCache.clear()
     this.topicDissolveProgress.clear()
   }
 
-  async createTopic(titleInput: string, parentSourceRef?: string): Promise<ArkmeTopicCreateResult> {
+  async createTopic(titleInput: string, parentSourceRef?: string, options: { contextSourceRef?: string; signal?: AbortSignal } = {}): Promise<ArkmeTopicCreateResult> {
     const session = await this.runtime.requireSession()
+    if (options.contextSourceRef !== undefined) await this.openSourceRef(options.contextSourceRef, session.userId)
     const title = titleInput.trim()
     if (title === '' || Array.from(title).length > 100) {
       throw new ArkmePluginError('topic-title-invalid', '主题名称不能为空或超过 100 个字符', false)
@@ -695,6 +770,10 @@ export class SourceService {
       parentTopicUid = parent.ownerRef
     }
 
+    if ((await this.runtime.requireSession()).userId !== session.userId) {
+      throw new ArkmePluginError('account-changed', '账号已切换，请重新创建主题', false, 409)
+    }
+    options.signal?.throwIfAborted()
     const createdAtMillis = Date.now()
     const created = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/topics/create',
@@ -705,13 +784,16 @@ export class SourceService {
         extra: { source: 'dsh-arkme' },
       },
       session,
-    )
+      options.signal,
+      { trackWriteOutcome: true },
+    ).finally(() => { this.invalidateSourceListCache(session.userId, 'send_to_self') })
     const topicUid = stringValue(created.topic_uid).trim()
     if (topicUid === '' || numberValue(created.status) !== 1) {
       throw new ArkmePluginError('topic-create-contract-invalid', '主题创建响应不完整', true, 502)
     }
 
     const sourceRef = await this.sealSourceRef(session.userId, 'topic', topicUid, title)
+    const topicHierarchyKey = await this.topicHierarchyKey(session.userId, topicUid)
     if (parentTopicUid !== undefined) {
       try {
         const bound = await this.runtime.authenticatedPost<Record<string, unknown>>(
@@ -743,6 +825,7 @@ export class SourceService {
           return {
             source: {
               sourceRef,
+              topicHierarchyKey,
               kind: 'topic',
               displayName: title,
               activeAtMillis: createdAtMillis,
@@ -759,13 +842,19 @@ export class SourceService {
           409,
           { cause: bindError },
         )
+      } finally {
+        this.invalidateSourceListCache(session.userId, 'send_to_self')
       }
     }
 
     return {
       source: {
         sourceRef,
-        ...(parentSourceRef !== undefined ? { parentSourceRef } : {}),
+        topicHierarchyKey,
+        ...(parentSourceRef !== undefined && parentTopicUid !== undefined ? {
+          parentSourceRef,
+          parentTopicHierarchyKey: await this.topicHierarchyKey(session.userId, parentTopicUid),
+        } : {}),
         kind: 'topic',
         displayName: title,
         activeAtMillis: createdAtMillis,
@@ -806,6 +895,29 @@ export class SourceService {
       sourceRef: await this.sealSourceRef(session.userId, 'topic', topic.ownerRef, title),
       displayName: title,
     }
+  }
+
+  /** Reuse the record owner's topic policy, without replaying title/privacy defaults. */
+  async topicHomeVisibility(sourceRef: string, showInHome?: boolean, signal?: AbortSignal): Promise<{ showInHome: boolean }> {
+    const session = await this.runtime.requireSession()
+    const topic = await this.openSourceRef(sourceRef, session.userId)
+    if (topic.kind !== 'topic') throw new ArkmePluginError('topic-policy-invalid', '请选择主题', false)
+    if (showInHome === undefined) {
+      const metadata = await readTopicMetadata(this.runtime, session, topic.ownerRef, signal)
+      return { showInHome: metadata.showInHome }
+    }
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/topics/display/policy/set',
+      { topic_uid: topic.ownerRef, show_in_home: showInHome },
+      session,
+      // Detach obsolete reads, but let a submitted preference write complete
+      // and invalidate projections even if its settings surface has closed.
+      undefined,
+    )
+    const value = data.show_in_home
+    if (typeof value !== 'boolean') throw new ArkmePluginError('topic-policy-contract-invalid', '主题设置响应不完整，请重试', true, 502)
+    this.invalidateSourceListCache(session.userId, 'send_to_self')
+    return { showInHome: value }
   }
 
   /**
@@ -923,25 +1035,17 @@ export class SourceService {
     let cursorSendAt: number | undefined
     let cursorRecordUid: string | undefined
     for (let pageIndex = 0; pageIndex < 1_000; pageIndex += 1) {
-      const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-        '/api/v1/topics/display/detail',
-        {
-          topic_uid: topicUid,
-          limit: 100,
-          ...(cursorSendAt === undefined ? {} : { cursor_send_at: cursorSendAt }),
-          ...(cursorRecordUid === undefined ? {} : { cursor_record_uid: cursorRecordUid }),
-        },
-        session,
-      )
-      for (const raw of listValue(data.records)) {
-        const item = objectValue(raw)
-        const uid = stringValue(item.record_uid ?? objectValue(item.record_core).record_uid).trim()
-        if (uid !== '') recordUids.add(uid)
+      const page = await readTopicRecordPage(this.runtime, session, topicUid, {
+        limit: 100,
+        ...(cursorSendAt === undefined || cursorRecordUid === undefined ? {} : { cursor: { sendAtMillis: cursorSendAt, itemUid: cursorRecordUid } }),
+      })
+      for (const raw of page.records) {
+        recordUids.add(stringValue(objectValue(raw).record_uid).trim())
       }
       onProgress?.(recordUids.size)
-      if (data.has_more !== true) return [...recordUids]
-      const nextSendAt = numberValue(data.next_cursor_send_at)
-      const nextRecordUid = stringValue(data.next_cursor_record_uid).trim()
+      if (!page.hasMore) return [...recordUids]
+      const nextSendAt = page.nextCursor?.sendAtMillis ?? 0
+      const nextRecordUid = page.nextCursor?.itemUid ?? ''
       const cursorKey = `${String(nextSendAt)}:${nextRecordUid}`
       if (nextSendAt <= 0 || nextRecordUid === '' || seenCursors.has(cursorKey)) {
         throw new ArkmePluginError('topic-dissolve-record-page-invalid', '主题快记加载不完整，未解散主题，请刷新后重试', true, 502)
@@ -1101,7 +1205,7 @@ export class SourceService {
     if (movedTopicUid !== topic.ownerRef || movedParentUid !== (nextParentUid ?? '') || siblingOrder <= 0) {
       throw new ArkmePluginError('topic-hierarchy-move-contract-invalid', '主题移动响应不完整，请刷新后重试', true, 502)
     }
-    this.sourceListCache.clear()
+    this.invalidateSourceListCache(session.userId, 'send_to_self')
     return {
       sourceRef,
       ...(nextParentSourceRef === undefined ? {} : { parentSourceRef: nextParentSourceRef }),
@@ -1109,35 +1213,156 @@ export class SourceService {
     }
   }
 
+  /** Lightweight personal-topic choices; independent of conversation cards and their summaries. */
+  async listTopicCandidates(keyword: string, cursor?: string, signal?: AbortSignal): Promise<Pick<ArkmeSourceList, 'items' | 'hasMore' | 'nextCursor'>> {
+    const session = await this.runtime.requireSession()
+    const page = cursor === undefined ? undefined : this.decodeTopicDirectoryCursor(cursor)
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/topics/display/list', {
+      keyword: keyword.trim(), privacy_state: 1, limit: 100,
+      ...(page?.pageCursor === undefined ? {} : { page_cursor: page.pageCursor }),
+      ...(page?.pageCursor !== undefined || page?.offset === undefined ? {} : { offset: page.offset }),
+    }, session, signal, { lane: 'interactive-read' })
+    signal?.throwIfAborted()
+    const items: ArkmeSourceItem[] = []
+    const seen = new Set<string>()
+    for (const raw of listValue(data.items)) {
+      const entry = objectValue(raw)
+      const core = objectValue(entry.topic_core)
+      if (arkmePrivacyLockedTopic(entry) || core.status !== 1) continue
+      const topicKind = numberValue(core.kind) || 1
+      if (!arkmeSourceAllowsUserWrite({ kind: 'topic', topicKind })) continue
+      const topicUid = stringValue(core.topic_uid).trim()
+      const title = stringValue(core.title).trim()
+      if (!topicUid || !title || seen.has(topicUid)) continue
+      seen.add(topicUid)
+      const recordCount = objectValue(entry.summary).record_count
+      items.push({ kind: 'topic', topicKind, displayName: title, activeAtMillis: numberValue(core.update_at), unreadCount: 0,
+        ...(typeof recordCount === 'number' && Number.isSafeInteger(recordCount) && recordCount >= 0 ? { recordCount } : {}),
+        sourceRef: await this.sealSourceRef(session.userId, 'topic', topicUid, title),
+        topicHierarchyKey: await this.topicHierarchyKey(session.userId, topicUid),
+      })
+    }
+    const pageCursor = objectValue(data.next_page_cursor ?? data.next_cursor)
+    const offset = numberValue(data.next_offset)
+    const hasCursor = Object.keys(pageCursor).length > 0
+    if (data.has_more === true && !hasCursor && offset <= 0) {
+      throw new ArkmePluginError('topic-candidates-incomplete', '主题列表加载不完整，请重试', true, 502)
+    }
+    return { items, hasMore: data.has_more === true,
+      ...(data.has_more !== true ? {} : { nextCursor: this.encodeTopicDirectoryCursor(hasCursor ? { pageCursor } : { offset }) }),
+    }
+  }
+
   async listSources(
     directory: ArkmeSourceDirectory,
-    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean } = {},
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean } = {},
   ): Promise<ArkmeSourceList> {
+    options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
+    options.signal?.throwIfAborted()
     // Topic hierarchies require their parent and child to arrive in the same response.
     // The topics endpoint supports up to 100 items, while chat directories stay capped at 50.
     const maxLimit = directory === 'send_to_self' ? 100 : 50
     const limit = Math.min(maxLimit, Math.max(1, Math.trunc(options.limit ?? 30)))
     const cursor = options.cursor?.trim() ?? ''
-    const cacheKey = `${String(session.userId)}:${directory}:${String(limit)}:${cursor}`
+    if (directory === 'send_to_self' && options.refresh === true && cursor === '') {
+      this.selfDirectoryContexts.delete(session.userId)
+      this.selfDirectoryContextReads.invalidate(key => key === String(session.userId))
+    }
+    const cacheKey = `${String(session.userId)}:${directory}:${String(limit)}:${cursor}:${options.firstPaint === true ? "first" : "full"}`
     this.pruneSourceListCache()
     const cached = this.sourceListCache.get(cacheKey)
     if (options.refresh !== true && cached !== undefined && cached.expiresAtMillis > Date.now()) return cloneSourceList(cached.value)
-    const existing = this.sourceListInFlight.get(cacheKey)
-    if (existing !== undefined) return cloneSourceList(await existing)
-    const pending = this.listSourcesUncached(session, directory, { ...options, ...(cursor === '' ? {} : { cursor }) }, limit)
-    this.sourceListInFlight.set(cacheKey, pending)
-    try {
-      const result = await pending
-      if (this.sourceListInFlight.get(cacheKey) === pending) {
+    return cloneSourceList(await this.sourceListInFlight.run(cacheKey, async (signal, isCurrent) => {
+      const result = await this.listSourcesUncached(session, directory, {
+        ...options, signal, ...(cursor === '' ? {} : { cursor }), isCurrent,
+      }, limit)
+      signal.throwIfAborted()
+      if (isCurrent()) {
         this.sourceListCache.delete(cacheKey)
         this.sourceListCache.set(cacheKey, { value: cloneSourceList(result), expiresAtMillis: Date.now() + SOURCE_LIST_CACHE_TTL_MS })
         this.pruneSourceListCache()
       }
-      return cloneSourceList(result)
-    } finally {
-      if (this.sourceListInFlight.get(cacheKey) === pending) this.sourceListInFlight.delete(cacheKey)
+      return result
+    }, options.signal))
+  }
+
+  async selfTarget(signal?: AbortSignal): Promise<ArkmeSourceItem> {
+    signal?.throwIfAborted()
+    const { userId } = await this.runtime.requireSession()
+    const target = await this.selfTargetForAccount(userId)
+    signal?.throwIfAborted()
+    return target
+  }
+
+  /**
+   * Resolve one personal topic and every visible descendant from the same
+   * paginated directory contract used by the topic picker. Keeping this owner
+   * here prevents a timeline read from trusting a partial browser-side tree or
+   * exposing raw topic ids across the Host boundary.
+   */
+  async topicSubtreeSources(sourceRef: string, signal?: AbortSignal): Promise<ArkmeSourceItem[]> {
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    const selected = await this.openSourceRef(sourceRef, session.userId)
+    if (selected.kind !== 'topic') {
+      throw new ArkmePluginError('topic-subtree-source-invalid', '仅主题支持读取下级主题内容', false, 400)
     }
+    const selectedKey = await this.topicHierarchyKey(session.userId, selected.ownerRef)
+    const byHierarchyKey = new Map<string, ArkmeSourceItem>()
+    let cursor: string | undefined
+    const visitedCursors = new Set<string>()
+    for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+      signal?.throwIfAborted()
+      const page = await this.listSources('send_to_self', {
+        limit: 100,
+        ...(cursor === undefined ? {} : { cursor }),
+        ...(signal === undefined ? {} : { signal }),
+      })
+      for (const item of page.items) {
+        if (item.kind !== 'topic' || item.topicHierarchyKey === undefined) continue
+        byHierarchyKey.set(item.topicHierarchyKey, item)
+      }
+      if (!page.hasMore || page.nextCursor === undefined) break
+      if (visitedCursors.has(page.nextCursor)) {
+        throw new ArkmePluginError('topic-subtree-cursor-invalid', '主题层级分页未推进，请重试', true, 502)
+      }
+      visitedCursors.add(page.nextCursor)
+      cursor = page.nextCursor
+      if (pageIndex === 99) {
+        throw new ArkmePluginError('topic-subtree-pagination-limit', '主题层级加载未完成，请重试', true, 502)
+      }
+    }
+    const selectedSource = byHierarchyKey.get(selectedKey) ?? {
+      ...await this.sourceItem(selected),
+      topicHierarchyKey: selectedKey,
+    }
+    byHierarchyKey.set(selectedKey, selectedSource)
+    const childrenByParent = new Map<string, ArkmeSourceItem[]>()
+    for (const item of byHierarchyKey.values()) {
+      const parentKey = item.parentTopicHierarchyKey
+      if (parentKey === undefined || parentKey === item.topicHierarchyKey) continue
+      const children = childrenByParent.get(parentKey) ?? []
+      children.push(item)
+      childrenByParent.set(parentKey, children)
+    }
+    const result: ArkmeSourceItem[] = []
+    const queue = [selectedSource]
+    const visited = new Set<string>()
+    while (queue.length > 0) {
+      const current = queue.shift()!
+      const key = current.topicHierarchyKey ?? current.sourceRef
+      if (visited.has(key)) continue
+      visited.add(key)
+      result.push(current)
+      queue.push(...(childrenByParent.get(key) ?? []))
+    }
+    return result
+  }
+
+  private async selfTargetForAccount(userId: number): Promise<ArkmeSourceItem> {
+    const sourceRef = await this.sealSourceRef(userId, 'send_to_self', 'all', '发给自己')
+    return { sourceRef, kind: 'send_to_self', displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 }
   }
 
   async setChatDirectoryPin(
@@ -1150,43 +1375,12 @@ export class SourceService {
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
       throw new ArkmePluginError('chat-directory-policy-invalid', '仅支持更新私聊或群聊的会话列表状态', false)
     }
-    const pinTarget = await this.resolveChatPinTarget(source, session, signal)
-    const current = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-      '/api/v1/chats/policy/get', { chat_session_uid: source.ownerRef }, session, signal,
-    )
-    const updatedAt = Date.now()
-    await Promise.all([
-      this.runtime.authenticatedChatPost<Record<string, unknown>>(
-        '/api/v1/chats/policy/update',
-        {
-          chat_session_uid: source.ownerRef,
-          show_in_home_state: numberValue(current.show_in_home_state) || 1,
-          privacy_state: numberValue(current.privacy_state) || 1,
-          mute_state: numberValue(current.mute_state) || 1,
-          pin_state: pinned ? 2 : 1,
-          notify_state: numberValue(current.notify_state) || 1,
-          status: numberValue(current.status) || 1,
-          update_at: updatedAt,
-        },
-        session,
-        signal,
-      ),
-      this.runtime.authenticatedPost<Record<string, unknown>>(
-        '/api/v1/topics/pin/set',
-        {
-          topic_uid: pinTarget.subjectUid,
-          pin_state: pinned ? 1 : 2,
-          ...(pinned ? { pinned_at: updatedAt } : {}),
-        },
-        session,
-        signal,
-      ),
-    ])
-    const cacheKey = `${String(session.userId)}:${source.ownerRef}`
-    const cached = this.chatSourceCache.get(cacheKey)
-    if (cached !== undefined) this.storeChatSourceByKey(cacheKey, { ...cached, isPinned: pinned })
-    this.sourceListCache.clear()
-    return { sourceRef, pinned }
+    if (signal?.aborted === true) throw new DOMException('The operation was aborted', 'AbortError')
+    const updated = await patchChatPolicy(this.runtime, session, source.ownerRef, { pin_state: pinned ? 2 : 1 }, signal)
+    const effectivePinned = updated.pin_state === 2
+    const policyUpdatedAtMillis = Number(updated.update_at)
+    this.applyConfirmedChatPolicy(updated)
+    return { sourceRef, pinned: effectivePinned, policyUpdatedAtMillis }
   }
 
   async chatConversationListPreferenceEntry(
@@ -1233,38 +1427,8 @@ export class SourceService {
     }
   }
 
-  private async resolveChatPinTarget(
-    source: ArkmeSourceRefPayload,
-    session: ArkmeSessionCredentials,
-    signal?: AbortSignal,
-  ): Promise<{ subjectUid: string }> {
-    if (source.sidebarSubjectUid !== undefined && source.sidebarSubjectUid.trim() !== '') {
-      return { subjectUid: source.sidebarSubjectUid.trim() }
-    }
-    const detail = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-      '/api/v1/chats/detail',
-      { chat_session_uid: source.ownerRef },
-      session,
-      signal,
-      { lane: 'interactive-read', key: `chat-sidebar-target:${source.ownerRef}`, failureCooldownMs: 2_000 },
-    )
-    const target = arkmeChatDirectoryMetadataFromBundle(
-      detail,
-      source.kind === 'group_chat' ? source.ownerRef : '',
-    )
-    if (target.subjectUid === undefined) {
-      throw new ArkmePluginError(
-        'chat-sidebar-target-unavailable',
-        '未能定位该会话的跨端侧边栏数据，请刷新后重试',
-        true,
-        502,
-      )
-    }
-    return { subjectUid: target.subjectUid }
-  }
-
   async listGroupSources(
-    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean } = {},
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean } = {},
   ): Promise<ArkmeSourceList> {
     const session = await this.runtime.requireSession()
     const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 30)))
@@ -1274,17 +1438,48 @@ export class SourceService {
 
   async countGroupSources(signal?: AbortSignal): Promise<number> {
     const session = await this.runtime.requireSession()
-    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-      '/api/v1/chats/list', { limit: 0, session_kind: 2 }, session, signal,
-      { lane: 'interactive-read', key: 'directory:groups:count', failureCooldownMs: 2_000 },
-    )
-    return Math.max(0, numberValue(data.total ?? data.total_count))
+    let total = 0
+    let cursor: Record<string, unknown> | undefined
+    const seen = new Set<string>()
+    for (let page = 0; page < 100; page += 1) {
+      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/list', { limit: 100, session_kind: 2, ...(cursor === undefined ? {} : { page_cursor: cursor }) }, session, signal,
+        { lane: 'background-read' },
+      )
+      if (!Array.isArray(data.items)) throw new ArkmePluginError('directory-groups-contract-invalid', '群聊列表响应不完整', false, 502)
+      total += data.items.length
+      if (data.has_more !== true) return total
+      cursor = objectValue(data.next_page_cursor)
+      const key = JSON.stringify(cursor)
+      if (Object.keys(cursor).length === 0 || seen.has(key)) throw new ArkmePluginError('directory-groups-cursor-invalid', '群聊分页响应不完整', false, 502)
+      seen.add(key)
+    }
+    throw new ArkmePluginError('directory-groups-pagination-limit', '群聊列表超过安全分页上限', false, 502)
+  }
+
+  private async selfDirectoryContext(session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<SelfDirectoryContext> {
+    const cached = this.selfDirectoryContexts.get(session.userId)
+    if (cached && cached.expiresAtMillis > Date.now()) return cached.value
+    return this.selfDirectoryContextReads.run(String(session.userId), async (inner, isCurrent) => {
+      const [hierarchyData, [summaryResult, latestRecordsResult]] = await Promise.all([
+        this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/topics/hierarchy/relations/list', {}, session, inner).catch(() => undefined),
+        Promise.allSettled([
+          this.recordReader.summary(),
+          this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/uncategorized/query', { limit: 10 }, session, inner),
+        ]),
+      ])
+      const value = { hierarchyData, summaryResult, latestRecordsResult }
+      if (isCurrent()) {
+        this.selfDirectoryContexts.set(session.userId, { value, expiresAtMillis: Date.now() + SOURCE_LIST_CACHE_TTL_MS })
+      }
+      return value
+    }, signal)
   }
 
   private async listSourcesUncached(
     session: ArkmeSessionCredentials,
     directory: ArkmeSourceDirectory,
-    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean },
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean; isCurrent?: () => boolean },
     limit: number,
     sessionKind?: number,
   ): Promise<ArkmeSourceList> {
@@ -1293,7 +1488,7 @@ export class SourceService {
       const topicPage = options.cursor === undefined || options.cursor.trim() === ''
         ? undefined
         : this.decodeTopicDirectoryCursor(options.cursor)
-      const [data, hierarchyData] = await Promise.all([
+      const [data, { hierarchyData, summaryResult, latestRecordsResult }] = await Promise.all([
         this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/topics/display/list',
           {
@@ -1307,22 +1502,7 @@ export class SourceService {
           session,
           options.signal,
         ),
-        this.runtime.authenticatedPost<Record<string, unknown>>(
-          '/api/v1/topics/hierarchy/relations/list',
-          {},
-          session,
-          options.signal,
-        ).catch(() => undefined),
-      ])
-      options.signal?.throwIfAborted()
-      const [summaryResult, latestRecordsResult] = await Promise.allSettled([
-        this.recordReader.summary(),
-        this.runtime.authenticatedPost<Record<string, unknown>>(
-          '/api/v1/records/uncategorized/query',
-          { limit: 10 },
-          session,
-          options.signal,
-        ),
+        this.selfDirectoryContext(session, options.signal),
       ])
       options.signal?.throwIfAborted()
       const cached = summaryResult.status === 'rejected' || latestRecordsResult.status === 'rejected'
@@ -1360,6 +1540,7 @@ export class SourceService {
       }
       const topicDescriptors: Array<{
         topicUid: string
+        topicKind: number
         parentTopicUid?: string
         siblingOrder: number
         title: string
@@ -1388,6 +1569,9 @@ export class SourceService {
         const item = objectValue(raw)
         if (arkmePrivacyLockedTopic(item)) continue
         const core = objectValue(item.topic_core)
+        // Archives remain readable through calendar/search, but are not
+        // personal topics and must not contribute to this directory's preview/counts.
+        if (numberValue(core.kind) === ARKME_DSH_INPUT_TOPIC_KIND) continue
         const status = core.status ?? item.status
         // A dissolved topic remains in some list responses briefly (or in an
         // older cache), but it must never be selectable by the plugin.
@@ -1408,10 +1592,11 @@ export class SourceService {
         ).trim()
         topicDescriptors.push({
           topicUid,
+          topicKind: numberValue(core.kind) || 1,
           ...(parentTopicUid === '' || parentTopicUid === topicUid ? {} : { parentTopicUid }),
           siblingOrder: numberValue(siblingOrderByChild.get(topicUid) ?? core.sibling_order ?? item.sibling_order),
           title,
-          latestPreview: arkmeChatConversationPreview(latest),
+          latestPreview: arkmeChatConversationPreview(latest, session.userId),
           latestMessageAtMillis: numberValue(latest.send_at ?? summary.latest_send_at),
           activeAtMillis: numberValue(latest.send_at ?? summary.latest_send_at ?? core.update_at),
           recordCount: numberValue(summary.record_count),
@@ -1443,7 +1628,8 @@ export class SourceService {
           ...(parentTopicHierarchyKey === undefined ? {} : { parentTopicHierarchyKey }),
           ...(topic.siblingOrder > 0 ? { siblingOrder: topic.siblingOrder } : {}),
           kind: 'topic',
-          displayName: topic.title,
+          topicKind: topic.topicKind,
+          displayName: arkmeTopicDisplayName(topic.title, topic.topicKind),
           ...(topic.latestPreview === '' ? {} : { latestPreview: topic.latestPreview }),
           activeAtMillis: topic.activeAtMillis,
           unreadCount: 0,
@@ -1466,9 +1652,7 @@ export class SourceService {
         ? ''
         : latestAggregateItem.latestPreview?.trim() || '非文本内容'
       const aggregateSource: ArkmeSourceItem = {
-        sourceRef: await this.sealSourceRef(session.userId, 'send_to_self', 'all', '发给自己'),
-        kind: 'send_to_self',
-        displayName: '发给自己',
+        ...await this.selfTargetForAccount(session.userId),
         ...(aggregateLatestPreview === '' ? {} : { latestPreview: aggregateLatestPreview }),
         activeAtMillis: latestAggregateItem?.activeAtMillis ?? 0,
         unreadCount: 0,
@@ -1538,13 +1722,11 @@ export class SourceService {
         ? 'group_chat'
         : sessionKind === 1 || sessionKind === 3 ? 'private_chat' : undefined
       if (uid === '' || kind === undefined) continue
+      const privateNickname = stringValue(supplement.counterpart_name_snapshot).trim() || stringValue(counterpart.display_name_snapshot).trim()
       const displayName = (kind === 'private_chat'
-        ? stringValue(
-          supplement.remark ?? supplement.counterpart_name_snapshot ?? counterpart.display_name_snapshot
-          ?? supplement.pending_name ?? counterpart.visible_phone,
-        )
+        ? stringValue(supplement.remark).trim() || privateNickname || stringValue(supplement.pending_name).trim() || stringValue(counterpart.visible_phone).trim()
         : stringValue(chatSession.title)).trim() || '未命名会话'
-      const preview = arkmeChatConversationPreview(latestPayload)
+      const preview = arkmeChatConversationPreview(latestRecord, session.userId)
       const unreadCount = attention.unreadCount
       const latestRelation = objectValue(latestPreview.relation)
       const latestSenderUserId = integerLikeValue(latestRelation.sender_user_id ?? latestRelation.senderUserId)
@@ -1561,7 +1743,7 @@ export class SourceService {
       const botGroupTarget = kind === 'group_chat' ? arkmeGroupBotBindingTargetFromBundle(bundle) : undefined
       const cached = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
       const chatDirectoryMetadata = arkmeChatDirectoryMetadataFromBundle(bundle, kind === 'group_chat' ? uid : '')
-      const item: ArkmeSourceItem = {
+      const item = retainNewerArkmeChatPolicy(cached, {
         sourceRef: await this.sealSourceRef(
           session.userId,
           kind,
@@ -1574,7 +1756,9 @@ export class SourceService {
         ),
         sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
         kind,
+        directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
         displayName,
+        ...(kind === 'private_chat' && privateNickname !== '' ? { privateNickname } : {}),
         ...(kind === 'private_chat' && cached?.avatarRef !== undefined
           ? { avatarRef: cached.avatarRef }
           : {}),
@@ -1588,17 +1772,21 @@ export class SourceService {
         activeAtMillis: arkmeChatSortActiveAt(bundle, chatSession),
         ...attention,
         ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
+        readSequence: numberValue(unread.read_seq),
         isPinned,
+        chatPolicyUpdatedAtMillis: numberValue(currentPolicy.update_at),
+        chatNotificationPolicyUpdatedAtMillis: numberValue(currentPolicy.update_at),
         ...((numberValue(unread.session_last_seq ?? chatSession.last_seq)) > 0
           ? { latestSequence: numberValue(unread.session_last_seq ?? chatSession.last_seq) }
           : {}),
-      }
+      })
       const itemIndex = items.push(item) - 1
       chatSessionUidByIndex.set(itemIndex, uid)
       if (kind === 'private_chat') {
         const counterpartUserId = numberValue(counterpart.user_id)
         if (Number.isSafeInteger(counterpartUserId) && counterpartUserId > 0) {
           item.peerUserId = counterpartUserId
+          item.peerMemberType = arkmePeerMemberType(counterpart.member_type)
           privateUserIdByIndex.set(itemIndex, counterpartUserId)
         }
       } else {
@@ -1606,7 +1794,7 @@ export class SourceService {
       }
     }
     try {
-      await this.hydrateSourceAvatars(
+      if (options.firstPaint !== true) await this.hydrateSourceAvatars(
         items, privateUserIdByIndex, groupSessionUidByIndex, session, options.signal,
       )
     } catch (error) {
@@ -1615,9 +1803,11 @@ export class SourceService {
     }
     // Cache the final hydrated projection as an owned snapshot. Realtime updates
     // must not depend on later mutation of the directory row object.
-    for (const [index, uid] of chatSessionUidByIndex) {
-      const item = items[index]
-      if (item !== undefined) this.storeChatSourceByKey(`${String(session.userId)}:${uid}`, item)
+    if (options.isCurrent?.() !== false) {
+      for (const [index, uid] of chatSessionUidByIndex) {
+        const item = items[index]
+        if (item !== undefined) this.storeChatSourceByKey(`${String(session.userId)}:${uid}`, item)
+      }
     }
     const hasMore = data.has_more === true
     const totalValue = data.total ?? data.total_count
@@ -1635,6 +1825,13 @@ export class SourceService {
   }
 
   invalidateSourceListCache(userId: number, directory?: ArkmeSourceDirectory): void {
+    if (directory === undefined || directory === 'send_to_self') {
+      this.selfDirectoryContexts.delete(userId)
+      this.selfDirectoryContextReads.invalidate(key => key === String(userId))
+    }
+    if (directory === undefined || directory === 'root') {
+      this.runtime.invalidateKey(this.runtime.requestScope(userId), 'directory:root:')
+    }
     const prefix = `${String(userId)}:`
     const matches = (key: string): boolean => (
       key.startsWith(prefix)
@@ -1643,9 +1840,7 @@ export class SourceService {
     for (const key of this.sourceListCache.keys()) {
       if (matches(key)) this.sourceListCache.delete(key)
     }
-    for (const key of this.sourceListInFlight.keys()) {
-      if (matches(key)) this.sourceListInFlight.delete(key)
-    }
+    this.sourceListInFlight.invalidate(matches)
   }
 
   private pruneSourceListCache(): void {
@@ -1658,6 +1853,20 @@ export class SourceService {
       if (oldestKey === undefined) break
       this.sourceListCache.delete(oldestKey)
     }
+  }
+
+  async hydrateDirectoryPage(items: ArkmeSourceItem[], signal: AbortSignal): Promise<ArkmeSourceItem[]> {
+    const session = await this.runtime.requireSession()
+    const hydrated = items.map(cloneSourceItem)
+    const privateUsers = new Map<number, number>()
+    const groups = new Map<number, string>()
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index]!
+      if (item.kind === 'private_chat' && item.peerUserId !== undefined) privateUsers.set(index, item.peerUserId)
+      if (item.kind === 'group_chat') groups.set(index, (await this.openSourceRef(item.sourceRef, session.userId)).ownerRef)
+    }
+    await this.hydrateSourceAvatars(hydrated, privateUsers, groups, session, signal)
+    return hydrated
   }
 
   async hydrateSourceAvatars(
@@ -1766,6 +1975,8 @@ export class SourceService {
     for (const [index, targetUserId] of privateUserIdByIndex) {
       const item = items[index]
       if (item === undefined) continue
+      const nickname = profiles.get(targetUserId)?.nickname?.trim()
+      if (nickname) item.privateNickname = nickname
       if (profiles.get(targetUserId)?.avatarUrl === undefined) {
         // The profile request completed and explicitly produced no usable
         // avatar, so the full directory baseline owns removal.
@@ -1950,6 +2161,7 @@ export class SourceService {
         },
       ),
       ...(sourceKey === undefined ? {} : { sourceKey }),
+      ...(source.kind === 'topic' ? { topicHierarchyKey: await this.topicHierarchyKey(source.userId, source.ownerRef) } : {}),
       kind: source.kind,
       displayName: source.displayName,
       activeAtMillis: source.conversationListActivityAtMillis ?? 0,
@@ -1975,15 +2187,14 @@ export class SourceService {
     const isPinned = numberValue(currentPolicy.pin_state) === 2
     const uid = stringValue(chatSession.chat_session_uid).trim()
     const sessionKind = numberValue(chatSession.session_kind)
+    const peerUserId = numberValue(counterpart.user_id)
     const kind: ArkmeSourceKind | undefined = sessionKind === 2
       ? 'group_chat'
       : sessionKind === 1 || sessionKind === 3 ? 'private_chat' : undefined
     if (uid === '' || kind === undefined) throw new Error('invalid chat display snapshot')
+    const privateNickname = stringValue(supplement.counterpart_name_snapshot).trim() || stringValue(counterpart.display_name_snapshot).trim()
     const displayName = (kind === 'private_chat'
-      ? stringValue(
-        supplement.remark ?? supplement.counterpart_name_snapshot ?? counterpart.display_name_snapshot
-        ?? supplement.pending_name ?? counterpart.visible_phone,
-      )
+      ? stringValue(supplement.remark).trim() || privateNickname || stringValue(supplement.pending_name).trim() || stringValue(counterpart.visible_phone).trim()
       : stringValue(chatSession.title)).trim() || cached?.displayName || '未命名会话'
     const latestItem = [...timelineItems].sort((left, right) => (right.sequence ?? 0) - (left.sequence ?? 0))[0]
     const latestPreview = latestItem === undefined
@@ -2008,7 +2219,7 @@ export class SourceService {
           : backendMentionState === true || latestMentionsViewer
     const botGroupTarget = kind === 'group_chat' ? arkmeGroupBotBindingTargetFromBundle(bundle) : undefined
     const chatDirectoryMetadata = arkmeChatDirectoryMetadataFromBundle(bundle, kind === 'group_chat' ? uid : '')
-    return {
+    return retainNewerArkmeChatPolicy(cached, {
       sourceRef: await this.sealSourceRef(
         session.userId,
         kind,
@@ -2021,7 +2232,12 @@ export class SourceService {
       ),
       sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
       kind,
+      directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
       displayName,
+      ...(kind === 'private_chat' && privateNickname !== '' ? { privateNickname } : {}),
+      ...(kind === 'private_chat' && Number.isSafeInteger(peerUserId) && peerUserId > 0 ? { peerUserId } : {}),
+      ...(kind === 'private_chat' && Number.isSafeInteger(peerUserId) && peerUserId > 0
+        ? { peerMemberType: arkmePeerMemberType(counterpart.member_type) } : {}),
       ...(cached?.avatarRef === undefined ? {} : { avatarRef: cached.avatarRef }),
       ...(cached?.avatarRefs === undefined ? {} : { avatarRefs: cached.avatarRefs }),
       ...(cached?.groupAvatar === undefined ? {} : { groupAvatar: cached.groupAvatar }),
@@ -2033,8 +2249,10 @@ export class SourceService {
       ...attention,
       ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
       isPinned,
+      chatPolicyUpdatedAtMillis: numberValue(currentPolicy.update_at),
+      chatNotificationPolicyUpdatedAtMillis: numberValue(currentPolicy.update_at),
       ...(latestSequence > 0 ? { latestSequence } : {}),
-    }
+    })
   }
 
   private encodeCursor(value: Record<string, unknown>): string {

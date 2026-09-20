@@ -1,10 +1,10 @@
-import { readFileSync } from 'node:fs'
+import { readUiSource } from './helpers/ui-source.js'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('group member add UI', () => {
   it('matches the pre-release collaborator list and invite flow', () => {
-    const source = readFileSync(join(process.cwd(), 'src/client/ArkmeGroupChatControls.tsx'), 'utf8')
+    const source = readUiSource(join(process.cwd(), 'src/client/ArkmeGroupChatControls.tsx'), 'utf8')
     expect(source).toContain("callArkme<ArkmeGroupMemberCandidateList>('group.member-candidates'")
     expect(source).toContain("sourceRef: props.source.sourceRef, query: '', limit: 50")
     expect(source).toContain('setSnapshot(undefined)')
@@ -32,7 +32,7 @@ describe('group member add UI', () => {
     expect(source).toContain("item.relation === 'stranger'")
     expect(source).toContain("确认添加")
     expect(source).toContain('添加成员')
-    expect(source).toContain('协作者{visibleSnapshot === undefined')
+    expect(source).toContain('群成员{visibleSnapshot === undefined')
     expect(source).toContain('邀请协作者')
     expect(source).toContain('二维码有效期')
     expect(source).toContain("'复制链接'")
@@ -44,13 +44,15 @@ describe('group member add UI', () => {
     expect(source).toContain('aria-busy={busy || undefined}')
     expect(source).toContain("action('save', '保存', saveQr, qrUrl === '' || saving, saving)")
     expect(source).toContain("callArkme<ArkmeGroupInvitePreview>('group.invite-preview'")
-    expect(source).toContain('{member.recordCount}条快记')
+    expect(source).toContain('member.statsKnown === false')
     expect(source).toContain('drawerScrim')
     expect(source).toContain('onPointerDown={event => { event.preventDefault(); props.onClose() }}')
     expect(source).toContain("window.addEventListener('keydown', dismissOnEscape)")
 
-    const sidebarSource = readFileSync(join(process.cwd(), 'src/client/ArkmeSidebar.tsx'), 'utf8')
-    expect(sidebarSource).toContain('member.avatarRef === undefined')
-    expect(sidebarSource).toContain('<RobotIcon size={14} weight="fill" />')
+    const mentionRowSource = readUiSource(join(process.cwd(), 'src/client/ArkmeMentionSuggestionRow.tsx'), 'utf8')
+    expect(mentionRowSource).toContain('candidate.avatarRef === undefined')
+    expect(mentionRowSource).toContain('<RobotIcon size={14} weight="fill" />')
+    expect(mentionRowSource).toContain('image_at_all_member_light.png')
+    expect(mentionRowSource).toContain('icon_ai_thought.svg')
   })
 })

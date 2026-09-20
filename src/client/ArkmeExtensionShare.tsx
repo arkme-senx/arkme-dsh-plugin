@@ -1,3 +1,4 @@
+import { tr } from './locale.js'
 import type { CSSProperties } from 'react'
 import type { ArkmeExtensionSource } from '../extensions/types.js'
 
@@ -10,19 +11,19 @@ export function ArkmeExtensionShareDialog({ url, notice, onClose, onCopy }: {
   return <div style={styles.backdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-share-title">
       <header style={styles.header}>
-        <h3 id="arkme-extension-share-title" style={styles.title}>分享扩展</h3>
-        <button type="button" style={styles.close} aria-label="关闭分享弹窗" onClick={onClose}>×</button>
+        <h3 id="arkme-extension-share-title" style={styles.title}>{tr("分享扩展")}</h3>
+        <button type="button" style={styles.close} aria-label={tr("关闭分享弹窗")} onClick={onClose}>×</button>
       </header>
-      <div style={styles.label}>网页链接</div>
+      <div style={styles.label}>{tr("网页链接")}</div>
       <div style={styles.linkRow}>
         <input
           readOnly
-          aria-label="分享网页链接"
+          aria-label={tr("分享网页链接")}
           style={styles.input}
           value={url}
           onFocus={event => { event.currentTarget.select() }}
         />
-        <button type="button" style={styles.copy} onClick={onCopy}>复制</button>
+        <button type="button" style={styles.copy} onClick={onCopy}>{tr("复制")}</button>
       </div>
       {notice !== undefined && notice !== '' && <div role="status" style={styles.notice}>{notice}</div>}
     </section>

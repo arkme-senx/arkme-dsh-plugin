@@ -7,6 +7,7 @@ vi.mock('../src/client/api.js', () => ({
   ArkmeClientError: class ArkmeClientError extends Error { body = { message: this.message } },
 }))
 
+import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve() }
@@ -15,6 +16,7 @@ describe('recording transcript speaker popover', () => {
   let renderer: ReactTestRenderer
 
   beforeEach(() => {
+    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
     mocks.callArkme.mockReset().mockImplementation(async operation => {
       if (operation === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
       if (operation === 'recordings.day') return {
@@ -85,4 +87,26 @@ describe('recording transcript speaker popover', () => {
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'recordings.speaker.options'))
       .toHaveLength(1)
   })
+  it.each([
+    { status: 'logged-out' as const, environment: 'test' as const },
+    { status: 'expired' as const, environment: 'test' as const, userId: 42 },
+    { status: 'authenticated' as const, environment: 'test' as const, userId: 43 },
+    { status: 'authenticated' as const, environment: 'prod' as const, userId: 42 },
+  ])('closes the old item editor when its account context changes: %j', async auth => {
+    await act(async () => {
+      renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => undefined} recordingRefreshRevision={0} />)
+      await tick()
+    })
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '编辑说话人 说话人 1' }).props.onClick({
+        stopPropagation() {},
+        currentTarget: { getBoundingClientRect: () => ({ left: 24, right: 104, top: 120, bottom: 142 }) },
+      })
+      await tick()
+    })
+    expect(renderer.root.findAllByProps({ 'aria-label': '编辑说话人' })).toHaveLength(1)
+    await act(async () => { arkmeAuthStore.setAuth(auth); await tick() })
+    expect(renderer.root.findAllByProps({ 'aria-label': '编辑说话人' })).toHaveLength(0)
+  })
+
 })

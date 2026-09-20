@@ -19,6 +19,19 @@ function pending(recordUid: string, textContent: string): ArkmePendingWrite {
   }
 }
 
+it('preserves historical sender avatars across database restart without affecting other accounts', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'arkme-record-avatar-'))
+  const operational = new ArkmeStateStore(directory)
+  let database = new ArkmeLocalDatabase(directory, operational)
+  try {
+    await database.cachePage(42, { items: [{ ...remote('history', '旧记录'), avatarRef: 'file_asset://old-avatar', senderName: '旧昵称' }], hasMore: false })
+    database.close()
+    database = new ArkmeLocalDatabase(directory, operational)
+    expect((await database.cachedSnapshot(42)).items[0]).toMatchObject({ avatarRef: 'file_asset://old-avatar', senderName: '旧昵称' })
+    expect((await database.cachedSnapshot(43)).items).toEqual([])
+  } finally { database.close() }
+})
+
 function capturedPending(recordUid: string, textContent: string): ArkmePendingWrite {
   return {
     ...pending(recordUid, textContent),
@@ -42,6 +55,40 @@ function remote(recordUid: string, textContent: string): ArkmeSelfRecordItem {
 }
 
 describe('ArkmeLocalDatabase', () => {
+  it('persists speaker candidates across database reopen and isolates environment, account and signing identity', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'arkme-speaker-cache-'))
+    let database = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    const rows = [{ optionKey: 'key', speakerRef: 'ref', label: '甲', kind: 'speaker' as const, isCurrentUser: false }]
+    await database.writeRecordingSpeakerCache('test:key-v1', 42, rows)
+    await database.recordRecentEmoji('test:42', 'joy_face')
+    database.close()
+    database = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    try {
+      expect(await database.readRecordingSpeakerCache('test:key-v1', 42)).toEqual(rows)
+      expect(await database.recentEmojiIds('test:42')).toEqual(['joy_face'])
+      expect(await database.readRecordingSpeakerCache('production:key-v1', 42)).toBeUndefined()
+      expect(await database.readRecordingSpeakerCache('test:key-v2', 42)).toBeUndefined()
+      expect(await database.readRecordingSpeakerCache('test:key-v1', 43)).toBeUndefined()
+      await database.writeRecordingSpeakerCache('test:key-v1', 42, [])
+      expect(await database.readRecordingSpeakerCache('test:key-v1', 42)).toEqual([])
+      await database.clearRecordingSpeakerCache('test:key-v1', 42)
+      expect(await database.recentEmojiIds('test:42')).toEqual(['joy_face'])
+      expect(await database.readRecordingSpeakerCache('test:key-v1', 42)).toBeUndefined()
+    } finally { database.close() }
+  })
+
+  it('treats corrupted or structurally invalid persisted candidates as a cache miss', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'arkme-speaker-corrupt-'))
+    const database = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    const raw = new DatabaseSync(join(directory, 'records.sqlite3'))
+    try {
+      for (const payload of ['{', '{}', '[null]', '[{"optionKey":"key"}]']) {
+        raw.prepare('INSERT OR REPLACE INTO recording_speaker_cache VALUES (?, ?, ?)').run('test:key', 42, payload)
+        expect(await database.readRecordingSpeakerCache('test:key', 42)).toBeUndefined()
+      }
+    } finally { raw.close(); database.close() }
+  })
+
   it('adds Arkme ID change availability to an existing profile cache without dropping data', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'dsh-arkme-db-'))
     const legacyDatabase = new DatabaseSync(join(directory, 'records.sqlite3'))
@@ -264,4 +311,65 @@ describe('ArkmeLocalDatabase', () => {
     expect(await reopened.listExtensionReviewOperations(10001)).toEqual([])
     reopened.close()
   })
+})
+
+describe('durable conversation directory', () => {
+  it('restores incrementally written rows, pin/hidden state and image bytes after reopening', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'arkme sidebar cache '))
+    const operational = new ArkmeStateStore(directory)
+    let db = new ArkmeLocalDatabase(directory, operational)
+    const source = { sourceRef: 'ref', sourceKey: 'stable', kind: 'private_chat' as const, displayName: 'One', activeAtMillis: 1, unreadCount: 2, isPinned: true, avatarRef: 'image' }
+    const projection = { revision: 1, phase: 'complete' as const, cachedAtMillis: 2, bots: [], visibility: [{ entryKind: 'source' as const, entryRef: 'ref', hidden: true }] }
+    await db.writeDirectoryCache(1, { directory: 'root', items: [source], hasMore: false, projection })
+    await db.writeDirectoryCache(1, { directory: 'root', items: [{ ...source, sourceKey: 'other', sourceRef: 'ref2' }], hasMore: false, projection: { ...projection, visibility: [], revision: 2 } })
+    await db.writeAvatarCache(1, 'image', { mediaType: 'image/png', bytes: 3, data: new Uint8Array([1, 2, 3]) })
+    db.close()
+    db = new ArkmeLocalDatabase(directory, operational)
+    const restored = await db.readDirectoryCache(1)
+    expect(restored?.items).toHaveLength(2)
+    expect(restored?.items[0]).toMatchObject({ isPinned: true, avatarRef: 'image' })
+    expect(restored?.projection?.visibility).toContainEqual({ entryKind: 'source', entryRef: 'ref', hidden: true })
+    expect(await db.readDirectoryCache(2)).toBeUndefined()
+    expect(await db.readAvatarCache(2, 'image')).toBeUndefined()
+    expect(Array.from((await db.readAvatarCache(1, 'image'))!.data)).toEqual([1, 2, 3])
+    db.close()
+  })
+})
+
+
+it('retains Bot visibility across source-only disk deltas and a reopen', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'arkme sidebar bot visibility '))
+  const operational = new ArkmeStateStore(directory)
+  let db = new ArkmeLocalDatabase(directory, operational)
+  const hidden = { entryKind: 'bot' as const, entryRef: 'bot-ref', hidden: true }
+  const projection = { revision: 1, phase: 'complete' as const, cachedAtMillis: 2, bots: [], visibility: [hidden] }
+  await db.writeDirectoryCache(1, { directory: 'root', items: [], hasMore: false, projection })
+  await db.writeDirectoryCache(1, { directory: 'root', items: [], hasMore: false, projection: { ...projection, visibility: [], revision: 2 } })
+  db.close(); db = new ArkmeLocalDatabase(directory, operational)
+  expect((await db.readDirectoryCache(1))?.projection?.visibility).toContainEqual(hidden)
+  db.close()
+})
+
+
+it('persists explicit source removal even when coalesced with an older row delta', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'arkme group removal '))
+  const db = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+  const source = { sourceRef: 'ref', sourceKey: 'key', kind: 'group_chat' as const, displayName: 'Left', activeAtMillis: 1, unreadCount: 0 }
+  const projection = { revision: 1, phase: 'complete' as const, cachedAtMillis: 1, bots: [], visibility: [] }
+  await db.writeDirectoryCache(1, { directory: 'root', items: [source], hasMore: false, projection })
+  await db.writeDirectoryCache(1, { directory: 'root', items: [source], hasMore: false, projection: { ...projection, revision: 2, removedSourceKeys: ['key'] } })
+  expect((await db.readDirectoryCache(1))?.items).toEqual([])
+  db.close()
+})
+
+
+it('does not accumulate retired Bot handles in durable visibility metadata', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'arkme bot handle rotation '))
+  const db = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+  const bot = { botRef: 'old', directoryKey: 'stable', name: 'Bot', provider: 'openclaw' as const, description: '', status: 'offline' as const, directChatAvailable: true }
+  const projection = { revision: 1, phase: 'complete' as const, cachedAtMillis: 1, bots: [bot], visibility: [{ entryKind: 'bot' as const, entryRef: 'old', hidden: true }] }
+  await db.writeDirectoryCache(1, { directory: 'root', items: [], hasMore: false, projection })
+  await db.writeDirectoryCache(1, { directory: 'root', items: [], hasMore: false, projection: { ...projection, revision: 2, bots: [{ ...bot, botRef: 'new' }], visibility: [{ entryKind: 'bot', entryRef: 'new', hidden: true }] } })
+  expect((await db.readDirectoryCache(1))?.projection?.visibility).toEqual([{ entryKind: 'bot', entryRef: 'new', hidden: true }])
+  db.close()
 })

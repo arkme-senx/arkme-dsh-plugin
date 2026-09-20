@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { JSDOM } from 'jsdom'
 import { describe, expect, it } from 'vitest'
 import {
-  ArkmeArkoSurface, arkoHistoryHasTerminalRun, arkoMessageActivityLabel, arkoPreservedScrollTop,
+  ArkmeArkoSurface, arkoHistoryHasTerminalRun, arkoPreservedScrollTop,
   arkoRunActivityLabel, latestActiveRun, mergeHistory, shouldShowArkoThinking,
 } from '../src/client/ArkmeArkoSurface.js'
 import type { ArkmeArkoHistoryItem } from '../src/types.js'
@@ -21,13 +22,27 @@ function historyItem(overrides: Partial<ArkmeArkoHistoryItem>): ArkmeArkoHistory
 }
 
 describe('Arko surface', () => {
+  it('exposes header whitespace for native dragging without marking its action toolbar', () => {
+    const dom = new JSDOM(renderToStaticMarkup(<ArkmeArkoSurface />))
+    try {
+      const header = dom.window.document.querySelector('header')!
+      expect(header.getAttribute('data-arkme-window-drag-region')).toBe('conversation')
+      const copy = header.querySelector('[data-arkme-window-drag-copy]')!
+      expect(copy?.getAttribute('data-arkme-window-drag-region')).toBe('conversation')
+      expect(copy?.querySelector('h2')?.textContent).toBe('Arko')
+      expect(header.querySelector('[role="toolbar"]')?.hasAttribute('data-arkme-window-drag-region')).toBe(false)
+    } finally {
+      dom.window.close()
+    }
+  })
+
   it('renders an Arko chat panel with loading and send controls', () => {
     const markup = renderToStaticMarkup(<ArkmeArkoSurface />)
 
     expect(markup).toContain('Arko')
     expect(markup).toContain('正在恢复会话')
-    expect(markup).toContain('问问 Arko')
-    expect(markup).toContain('aria-label="发送给 Arko"')
+    expect(markup).toContain('data-arkme-composer-editor-box')
+    expect(markup).toContain('aria-label="选择表情"')
     expect(markup).toContain('<h2')
     expect(markup).toContain('Arko</h2>')
     expect(markup).toContain('内容由 AI 生成，仅供参考')
@@ -55,11 +70,6 @@ describe('Arko surface', () => {
     expect(shouldShowArkoThinking('done')).toBe(false)
     expect(shouldShowArkoThinking('done', '')).toBe(false)
     expect(shouldShowArkoThinking('done', '正在读取资料')).toBe(true)
-  })
-
-  it('keeps run activity labels on assistant messages only', () => {
-    expect(arkoMessageActivityLabel('assistant', 'queued')).toBe('正在思考')
-    expect(arkoMessageActivityLabel('user', 'queued')).toBeUndefined()
   })
 
   it('uses matching terminal history as a silent fallback for status polling failures', () => {

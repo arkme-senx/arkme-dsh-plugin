@@ -27,6 +27,59 @@ function fixture(initial?: ArkmeSessionCredentials, commitStatus: 'ready' | 'rel
 }
 
 describe('Arkme account session owner', () => {
+  test('retries startup after temporary credential failure without changing the login', async () => {
+    const { owner, store, bridge } = fixture(credentials(42))
+    vi.mocked(store.read).mockRejectedValueOnce(new Error('keychain temporarily locked'))
+    await expect(owner.start()).rejects.toThrow('keychain temporarily locked')
+    expect(owner.ready()).toBe(false)
+    expect(bridge.attest).not.toHaveBeenCalled()
+
+    await expect(owner.start()).resolves.toBeUndefined()
+    expect(await owner.scopedSession()).toEqual(credentials(42))
+    expect(bridge.attest).toHaveBeenCalledExactlyOnceWith({ kind: 'account', userId: 42 })
+    expect(store.write).not.toHaveBeenCalled()
+    expect(store.delete).not.toHaveBeenCalled()
+  })
+
+  test('shares each concurrent startup attempt and keeps the successful result', async () => {
+    const { owner, store } = fixture(credentials(42))
+    vi.mocked(store.read).mockRejectedValueOnce(new Error('temporary startup failure'))
+    const first = owner.start()
+    expect(owner.start()).toBe(first)
+    await expect(first).rejects.toThrow('temporary startup failure')
+    const retry = owner.start()
+    expect(retry).not.toBe(first)
+    expect(owner.start()).toBe(retry)
+    await retry
+    expect(owner.start()).toBe(retry)
+    expect(store.read).toHaveBeenCalledTimes(2)
+  })
+
+  test('retries a failed account bridge attestation without bypassing it', async () => {
+    const { owner, bridge, store } = fixture(credentials(42))
+    vi.mocked(bridge.attest).mockRejectedValueOnce(new Error('bridge not ready'))
+    await expect(owner.start()).rejects.toThrow('bridge not ready')
+    expect(owner.ready()).toBe(false)
+    expect(await owner.scopedSession()).toBeUndefined()
+    await owner.start()
+    expect(await owner.scopedSession()).toEqual(credentials(42))
+    expect(bridge.attest).toHaveBeenCalledTimes(2)
+    expect(store.write).not.toHaveBeenCalled()
+    expect(store.delete).not.toHaveBeenCalled()
+  })
+
+  test('keeps required bridge failures closed across retries', async () => {
+    const { store } = fixture(credentials(42))
+    const owner = new ArkmeAccountSessionOwner(store, undefined, true)
+    for (let i = 0; i < 2; i += 1) {
+      await expect(owner.start()).rejects.toThrow('account scope bridge is required')
+      expect(owner.ready()).toBe(false)
+    }
+    expect(store.read).toHaveBeenCalledTimes(2)
+    expect(store.write).not.toHaveBeenCalled()
+    expect(store.delete).not.toHaveBeenCalled()
+  })
+
   test('attests the persisted account before exposing it to remote consumers', async () => {
     const { bridge, owner } = fixture(credentials(42))
 
@@ -124,6 +177,48 @@ describe('Arkme account session owner', () => {
 
     expect(store.write).toHaveBeenCalledWith(credentials(42, 'updated-access'))
     expect(bridge.prepare).not.toHaveBeenCalled()
+  })
+
+  test('updates only the current login access token without a scope transition', async () => {
+    const initial = credentials(42)
+    const { bridge, owner, store } = fixture(initial)
+    await owner.start()
+
+    await expect(owner.updateAccessToken(initial, 'refreshed-access')).resolves.toBe(true)
+
+    expect(await store.read()).toEqual({ ...initial, accessToken: 'refreshed-access' })
+    expect(bridge.prepare).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    credentials(43),
+    { ...credentials(42), refreshToken: 'another-login-refresh' },
+  ])('does not refresh or clear a replacement login $userId/$refreshToken', async replacement => {
+    const initial = credentials(42)
+    const { bridge, owner, store } = fixture(initial)
+    await owner.start()
+    const switchLogin = owner.write(replacement)
+    const refresh = owner.updateAccessToken(initial, 'stale-access')
+    const clear = owner.deleteIfCurrent(initial)
+
+    await switchLogin
+    await expect(refresh).resolves.toBe(false)
+    await expect(clear).resolves.toBe(false)
+
+    expect(await store.read()).toEqual(replacement)
+    expect(store.delete).not.toHaveBeenCalled()
+    expect(bridge.prepare).toHaveBeenCalledTimes(replacement.userId === initial.userId ? 0 : 1)
+  })
+
+  test('clears matching failed credentials through the existing scope transition', async () => {
+    const initial = credentials(42)
+    const { bridge, owner, store } = fixture(initial)
+    await owner.start()
+
+    await expect(owner.deleteIfCurrent(initial)).resolves.toBe(true)
+
+    expect(await store.read()).toBeUndefined()
+    expect(bridge.prepare).toHaveBeenCalledExactlyOnceWith({ kind: 'guest' })
   })
 
   test('marks an empty guest scope so an existing account container can be restored', async () => {

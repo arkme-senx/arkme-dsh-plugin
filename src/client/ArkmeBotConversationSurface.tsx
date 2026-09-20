@@ -1,3 +1,5 @@
+import { tr, useArkmeLocale } from './locale.js'
+import { ArkmeMessageSelectionControl } from './message-selection-presentation.js'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { GearSix } from '@phosphor-icons/react/dist/icons/GearSix'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
@@ -15,7 +17,6 @@ import { arkmeUi } from './ui-controller.js'
 import { ArkmeLinkText } from './ArkmeLinkText.js'
 import { arkmeConversationComposerHeight, arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
 import {
-  ArkmeMessageActionSelectCheck,
   useArkmeMessageActions,
   type ArkmeMessageActionViewItem,
 } from './ArkmeMessageActions.js'
@@ -101,6 +102,7 @@ export function ArkmeBotConversationSurface({
   onConversationActivity?(bot: ArkmeBotSummary): void
   onDeleted?(): void
 }) {
+  useArkmeLocale()
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const [messages, setMessages] = useState<ArkmeBotConversationMessage[]>([])
   const [draft, setDraft] = useState('')
@@ -196,9 +198,17 @@ export function ArkmeBotConversationSurface({
     input.style.height = `${String(arkmeConversationComposerHeight(input.scrollHeight))}px`
   }, [draft])
 
+  const privateChatInboundOnly = bot.provider === 'webhook'
+  const privateChatUnavailable = !bot.directChatAvailable
+    || (!privateChatInboundOnly && bot.privateChatOutboundEnabled === false)
+
+  const emptyMessage = privateChatUnavailable
+    ? '当前 Bot 会话暂不可用'
+    : privateChatInboundOnly ? '暂无消息，等待外部系统推送' : tr("和 {v0} 打个招呼吧", { v0: bot.name })
+
   const send = async () => {
     const content = draft.trim()
-    if (content === '' || sendInFlightRef.current) return
+    if (privateChatUnavailable || privateChatInboundOnly || content === '' || sendInFlightRef.current) return
     sendInFlightRef.current = true
     setSending(true)
     setError('')
@@ -221,19 +231,16 @@ export function ArkmeBotConversationSurface({
     }
   }
 
-  const privateChatUnavailable = !bot.directChatAvailable
-  const privateChatInboundOnly = bot.directChatAvailable && bot.privateChatOutboundEnabled === false
-
-  return <section style={styles.shell} aria-label={`${bot.name} Bot 对话`}>
-    <header style={styles.header}>
+  return <section style={styles.shell} aria-label={tr("{v0} Bot 对话", { v0: bot.name })}>
+    <header data-arkme-window-drag-region="conversation" style={styles.header}>
       <span style={styles.avatar} aria-hidden><RobotIcon size={20} weight="fill" /></span>
-      <span style={styles.title}><span>{bot.name}</span><span style={styles.badge}>BOT</span></span>
-      <button type="button" aria-label="Bot 设置" title="Bot 设置" style={styles.settings} onClick={() => { setSettingsOpen(true) }}><GearSix size={20} /></button>
+      <span data-arkme-window-drag-region="conversation" style={styles.title}><span>{bot.name}</span><span style={styles.badge}>BOT</span></span>
+      <button type="button" aria-label={tr("Bot 设置")} title={tr("Bot 设置")} style={styles.settings} onClick={() => { setSettingsOpen(true) }}><GearSix size={20} /></button>
     </header>
     <div ref={bodyRef} style={styles.body}>
       {error !== '' && <div role="alert" style={styles.error}>{error}</div>}
-      {loading ? <div role="status" style={styles.loading}>正在加载 Bot 对话…</div>
-        : messages.length === 0 ? <div style={styles.empty}>和 {bot.name} 打个招呼吧</div>
+      {loading ? <div role="status" style={styles.loading}>{tr("正在加载 Bot 对话…")}</div>
+        : messages.length === 0 ? (error === '' && <div style={styles.empty}>{emptyMessage}</div>)
           : <div style={styles.messages}>{messages.map((message, index) => {
             const actionItem = messageActionItems.find(candidate => candidate.id === message.messageId)
             const selectedForAction = messageActions.selectedIds.has(message.messageId)
@@ -245,9 +252,9 @@ export function ArkmeBotConversationSurface({
               if (event.target instanceof Element && event.target.closest('button,a,input,textarea,[role=link]')) return
               messageActions.toggle(actionItem)
             }}
-          >{messageActions.selecting && actionItem !== undefined && <ArkmeMessageActionSelectCheck
-            selected={selectedForAction}
-            onClick={event => { event.stopPropagation(); messageActions.toggle(actionItem) }}
+          >{messageActions.selecting && actionItem !== undefined && <ArkmeMessageSelectionControl anchor="avatar"
+            checked={selectedForAction}
+            disabled={false} onToggle={() => { messageActions.toggle(actionItem) }}
           />}<div
             onContextMenu={event => { if (actionItem !== undefined) messageActions.openMenu(actionItem, event) }}
             style={{ ...styles.bubble, ...(message.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant) }}
@@ -260,7 +267,7 @@ export function ArkmeBotConversationSurface({
     </div></footer> : <footer className="arkme-conversation-composer" style={styles.composer}><div className="arkme-conversation-composer-inner" style={styles.composerInner}>
       <textarea
         ref={inputRef} value={draft} disabled={sending} style={styles.input} rows={1} maxLength={20_000}
-        placeholder={`发消息给 ${bot.name}`}
+        placeholder={tr("发消息给 {v0}", { v0: bot.name })}
         onChange={event => { setDraft(event.target.value) }}
         onKeyDown={event => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -270,7 +277,7 @@ export function ArkmeBotConversationSurface({
       />
       <div style={styles.tools}>
         <span aria-hidden style={{ width: 34, height: 34 }} />
-        <button type="button" aria-label={sending ? '正在发送' : '发送消息'} title="发送消息" disabled={sending || draft.trim() === ''} style={{ ...styles.send, ...(sending || draft.trim() === '' ? { opacity: .4, cursor: 'default' } : {}) }} onClick={() => { void send() }}>
+        <button type="button" aria-label={sending ? '正在发送' : tr("发送消息")} title={tr("发送消息")} disabled={sending || draft.trim() === ''} style={{ ...styles.send, ...(sending || draft.trim() === '' ? { opacity: .4, cursor: 'default' } : {}) }} onClick={() => { void send() }}>
           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
             <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />
           </svg>

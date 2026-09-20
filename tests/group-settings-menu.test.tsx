@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import { arkmeConversationMembers } from '../src/client/conversation-members-store.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeGroupActionTarget, ArkmeSourceItem } from '../src/types.js'
@@ -5,7 +7,7 @@ import type { ArkmeGroupActionTarget, ArkmeSourceItem } from '../src/types.js'
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 
 vi.mock('react-dom', () => ({ createPortal: (node: React.ReactNode) => node }))
-vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
+vi.mock('../src/client/api.js', async () => { const { memberPageFixture } = await import('./helpers/member-page-fixture.js'); return ({ callArkme: memberPageFixture(mocks.callArkme) }) })
 
 import { ArkmeGroupChatControls } from '../src/client/ArkmeGroupChatControls.js'
 import { arkmeSourceIdentityKey } from '../src/client/source-identity.js'
@@ -30,23 +32,30 @@ function controls(currentSource: ArkmeSourceItem, options: {
   componentKey?: string
   onSourceProjectionUpdated?: (next: ArkmeSourceItem) => void
   onMembershipChanged?: (target: ArkmeGroupActionTarget) => void
-  onMessageDndUpdated?: (target: ArkmeGroupActionTarget, messageDnd: boolean) => void
+  onMessageDndUpdated?: (target: ArkmeGroupActionTarget, result: { messageDnd: boolean; chatNotificationPolicyUpdatedAtMillis: number }) => boolean
   onStatus?: (message: string) => void
   onError?: (message: string) => void
+  onExport?: () => void
+  exportBusy?: boolean
+  exportProcessed?: number
 } = {}) {
   return <ArkmeGroupChatControls
     key={options.componentKey ?? arkmeSourceIdentityKey(currentSource)}
     source={currentSource}
+    accountScope="test:42"
     overlayHostRef={{ current: {} as HTMLElement }}
     aiPolishSettings={aiSettings}
     onAiPolishSettingsChanged={() => {}}
     onSourceProjectionUpdated={options.onSourceProjectionUpdated ?? (() => {})}
     onMembershipChanged={options.onMembershipChanged ?? (() => {})}
-    onMessageDndUpdated={options.onMessageDndUpdated ?? (() => {})}
+    onMessageDndUpdated={options.onMessageDndUpdated ?? ((_target, result) => result.messageDnd)}
     onMemberOpen={() => {}}
     onMemberContextMenu={() => {}}
     onStatus={options.onStatus}
     onError={options.onError ?? (() => {})}
+    onExport={options.onExport}
+    {...(options.exportBusy === undefined ? {} : { exportBusy: options.exportBusy })}
+    {...(options.exportProcessed === undefined ? {} : { exportProcessed: options.exportProcessed })}
   />
 }
 
@@ -54,6 +63,7 @@ describe('group settings menu', () => {
   let renderer: ReactTestRenderer | undefined
 
   beforeEach(() => {
+    arkmeConversationMembers.activateAccount('test:42')
     vi.stubGlobal('window', {
       addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true),
     })
@@ -71,7 +81,37 @@ describe('group settings menu', () => {
   afterEach(async () => {
     await act(async () => { renderer?.unmount() })
     renderer = undefined
+    arkmeConversationMembers.activateAccount(undefined)
     vi.unstubAllGlobals()
+  })
+
+  it('offers own nickname to ordinary active members without group rename permission', async () => {
+    await act(async () => { renderer = create(controls(source)) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    expect(JSON.stringify(renderer!.toJSON())).toContain('修改群昵称')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('修改群名称')
+  })
+
+  it('exports the current group from the shared three-dot menu', async () => {
+    const onExport = vi.fn()
+    await act(async () => { renderer = create(controls(source, { onExport })) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    const exportButton = renderer!.root.findAllByProps({ role: 'menuitem' })
+      .find(button => button.findAll(node => node.children.includes('导出')).length > 0)
+    expect(exportButton).toBeDefined()
+    await act(async () => { exportButton!.props.onClick() })
+    expect(onExport).toHaveBeenCalledOnce()
+  })
+
+  it('shows live export progress without allowing a duplicate group export', async () => {
+    const onExport = vi.fn()
+    await act(async () => { renderer = create(controls(source, { onExport, exportBusy: true, exportProcessed: 238 })) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    const exportButton = renderer!.root.findAllByProps({ role: 'menuitem' })
+      .find(button => button.findAll(node => node.children.includes('正在导出 · 238 条')).length > 0)
+    expect(exportButton).toBeDefined()
+    expect(exportButton!.props.disabled).toBe(true)
+    expect(onExport).not.toHaveBeenCalled()
   })
 
   it('does not reactivate the current source when settings are read', async () => {
@@ -97,6 +137,30 @@ describe('group settings menu', () => {
 
     expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'group.settings')).toHaveLength(2)
     expect(onSourceProjectionUpdated).not.toHaveBeenCalled()
+  })
+
+  it('silently refreshes existing members without adding a loading row or changing the heading', async () => {
+    const result = { source, items: [{ memberRef: 'member-a', displayName: '已有成员', role: 'member', status: 'active',
+      isSelf: false, isOwner: false, joinedAtMillis: 1, recordCount: 7, mentionCount: 0 }], total: 1, activeCount: 1 }
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'source.members') return result
+      if (operation === 'source.ai-polish.settings') return aiSettings
+      throw new Error(`unexpected ${operation}`)
+    })
+    await act(async () => { renderer = create(controls(source)) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '查看群成员' }).props.onClick() })
+    const heading = renderer!.root.findByType('h3').children.join('')
+    let finish!: (value: unknown) => void
+    mocks.callArkme.mockImplementationOnce(async () => await new Promise(resolve => { finish = resolve }))
+    let pending!: Promise<void>
+    await act(async () => { pending = arkmeConversationMembers.ensure('test:42', source, true) })
+    expect(arkmeConversationMembers.get('test:42', source).refreshing).toBe(true)
+    expect(renderer!.root.findByType('h3').children.join('')).toBe(heading)
+    const visible = JSON.stringify(renderer!.toJSON())
+    expect(visible).toContain('已有成员')
+    expect(visible).toContain('7条快记')
+    expect(visible).not.toMatch(/更新中|正在更新|正在读取资料|正在读取群成员/)
+    await act(async () => { finish(result); await pending })
   })
 
   it('does not show the previous group while current group members are loading', async () => {
@@ -242,7 +306,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(renderer!.root.findByProps({ role: 'menu', 'aria-label': '群聊设置' })).toBeDefined()
+    expect(renderer!.root.findByProps({ role: 'menu' })).toBeDefined()
 
     await act(async () => {
       renderer!.update(controls(rotatedSource))
@@ -250,7 +314,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
     })
 
-    expect(renderer!.root.findByProps({ role: 'menu', 'aria-label': '群聊设置' })).toBeDefined()
+    expect(renderer!.root.findByProps({ role: 'menu' })).toBeDefined()
     expect(mocks.callArkme).toHaveBeenCalledWith('group.settings', {
       sourceRef: rotatedSource.sourceRef,
     }, expect.any(AbortSignal))
@@ -292,7 +356,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
     })
     expect(renderer!.root.findAllByProps({ role: 'menuitem' }).some(node =>
-      node.findAll(child => child.children.includes('重命名')).length > 0)).toBe(true)
+      node.findAll(child => child.children.includes('修改群名称')).length > 0)).toBe(true)
 
     await act(async () => {
       renderer!.update(controls(rotatedSource))
@@ -300,7 +364,7 @@ describe('group settings menu', () => {
     })
 
     expect(renderer!.root.findAllByProps({ role: 'menuitem' }).some(node =>
-      node.findAll(child => child.children.includes('重命名')).length > 0)).toBe(false)
+      node.findAll(child => child.children.includes('修改群名称')).length > 0)).toBe(false)
     const membershipButton = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
       node.findAll(child => child.children.includes('退出群聊')).length > 0)
     expect(membershipButton?.props.disabled).toBe(true)
@@ -438,7 +502,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
     })
     const renameEntry = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
-      node.findAll(child => child.children.includes('重命名')).length > 0)
+      node.findAll(child => child.children.includes('修改群名称')).length > 0)
     expect(renameEntry).toBeDefined()
     await act(async () => { renameEntry!.props.onClick() })
 
@@ -489,7 +553,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
     })
     expect(renderer!.root.findAllByProps({ role: 'menuitem' }).some(node =>
-      node.findAll(child => child.children.includes('重命名')).length > 0)).toBe(true)
+      node.findAll(child => child.children.includes('修改群名称')).length > 0)).toBe(true)
     expect(renderer!.root.findByProps({ 'aria-label': '消息免打扰' }).props['aria-checked']).toBe(true)
 
     await act(async () => {
@@ -502,16 +566,79 @@ describe('group settings menu', () => {
     })
 
     expect(renderer!.root.findAllByProps({ role: 'menuitem' }).some(node =>
-      node.findAll(child => child.children.includes('重命名')).length > 0)).toBe(false)
+      node.findAll(child => child.children.includes('修改群名称')).length > 0)).toBe(false)
     expect(renderer!.root.findByProps({ 'aria-label': '消息免打扰' }).props['aria-checked']).toBe(false)
     const leaveButton = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
       node.findAll(child => child.children.includes('退出群聊')).length > 0)
     expect(leaveButton?.props.disabled).toBe(true)
   })
 
+  it('updates an open notification switch when the source carries newer policy evidence', async () => {
+    await act(async () => { renderer = create(controls({ ...source, isMuted: false, chatNotificationPolicyUpdatedAtMillis: 1000 })) })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.update(controls({ ...source, isMuted: true, chatNotificationPolicyUpdatedAtMillis: 2000 }))
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findByProps({ 'aria-label': '消息免打扰' }).props['aria-checked']).toBe(true)
+  })
+
+  it('keeps a successful notification result when an earlier settings read arrives late', async () => {
+    let resolveSettings!: (value: unknown) => void
+    const settings = new Promise(resolve => { resolveSettings = resolve })
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'group.settings') return await settings
+      if (operation === 'source.ai-polish.settings') return aiSettings
+      if (operation === 'group.notification.set') return { messageDnd: true, chatNotificationPolicyUpdatedAtMillis: 2000 }
+      throw new Error(`unexpected ${operation}`)
+    })
+    await act(async () => { renderer = create(controls({ ...source, isMuted: false, chatNotificationPolicyUpdatedAtMillis: 1000 })) })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '消息免打扰' }).props.onClick({ stopPropagation: vi.fn() })
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findByProps({ 'aria-label': '消息免打扰' }).props['aria-checked']).toBe(true)
+    await act(async () => {
+      resolveSettings({ target: source, selfRole: 'member', selfStatus: 'active', canRename: false,
+        canDissolve: false, canLeave: true, messageDnd: false, chatNotificationPolicyUpdatedAtMillis: 1000 })
+      await settings
+    })
+    expect(renderer!.root.findByProps({ 'aria-label': '消息免打扰' }).props['aria-checked']).toBe(true)
+  })
+
+  it('keeps newer source evidence when the local notification write fails', async () => {
+    let rejectWrite!: (reason: Error) => void
+    const write = new Promise((_resolve, reject) => { rejectWrite = reject })
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'group.notification.set'
+      ? await write : await baseCall(operation))
+    await act(async () => { renderer = create(controls({ ...source, isMuted: false, chatNotificationPolicyUpdatedAtMillis: 1000 })) })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '消息免打扰' }).props.onClick({ stopPropagation: vi.fn() })
+      await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.update(controls({ ...source, isMuted: true, chatNotificationPolicyUpdatedAtMillis: 2000 }))
+      await Promise.resolve()
+    })
+    await act(async () => { rejectWrite(new Error('设置失败')); await write.catch(() => undefined) })
+    expect(renderer!.root.findByProps({ 'aria-label': '消息免打扰' }).props['aria-checked']).toBe(true)
+  })
+
   it('publishes only the message DND field after the mutation succeeds', async () => {
     const onSourceProjectionUpdated = vi.fn()
-    const onMessageDndUpdated = vi.fn()
+    const onMessageDndUpdated = vi.fn((_target, result) => result.messageDnd)
     const visibleSource = {
       ...source, latestPreview: '当前消息摘要', latestSequence: 9, avatarRef: 'group-avatar-ref',
     }
@@ -525,7 +652,7 @@ describe('group settings menu', () => {
         canDissolve: false, canLeave: true, messageDnd: false,
       }
       if (operation === 'source.ai-polish.settings') return aiSettings
-      if (operation === 'group.notification.set') return { messageDnd: true }
+      if (operation === 'group.notification.set') return { messageDnd: true, chatNotificationPolicyUpdatedAtMillis: 2000 }
       throw new Error(`unexpected ${operation}`)
     })
     await act(async () => {
@@ -556,13 +683,13 @@ describe('group settings menu', () => {
       sourceKey: settingsSource.sourceKey,
       kind: settingsSource.kind,
       displayName: settingsSource.displayName,
-    }, true)
+    }, { messageDnd: true, chatNotificationPolicyUpdatedAtMillis: 2000 })
   })
 
   it('restores the switch and does not publish when a mutation fails', async () => {
     const onError = vi.fn()
     const onSourceProjectionUpdated = vi.fn()
-    const onMessageDndUpdated = vi.fn()
+    const onMessageDndUpdated = vi.fn((_target, result) => result.messageDnd)
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'group.settings') return {
         target: source, selfRole: 'member', selfStatus: 'active', canRename: false,
@@ -694,7 +821,7 @@ describe('group settings menu', () => {
       await Promise.resolve()
     })
     const dissolveButton = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
-      node.findAll(child => child.children.includes('解散')).length > 0)
+      node.findAll(child => child.children.includes('解散群聊')).length > 0)
     expect(dissolveButton).toBeDefined()
     await act(async () => {
       dissolveButton!.props.onClick()
@@ -734,6 +861,6 @@ describe('group settings menu', () => {
 
     expect(onError).toHaveBeenCalledWith('群设置读取失败')
     expect(onSourceProjectionUpdated).not.toHaveBeenCalled()
-    expect(renderer!.root.findByProps({ role: 'menu', 'aria-label': '群聊设置' })).toBeDefined()
+    expect(renderer!.root.findByProps({ role: 'menu' })).toBeDefined()
   })
 })

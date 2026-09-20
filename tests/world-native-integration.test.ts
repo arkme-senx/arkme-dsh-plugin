@@ -8,7 +8,7 @@ describe('native World integration', () => {
     const controller = await source('src/client/ui-controller.ts')
 
     expect(controller).toContain("| 'world'")
-    expect(controller).toContain('showWorld(): void')
+    expect(controller).toContain("showWorld(scope: 'all' | 'mine' = 'all'): void")
     expect(controller).toContain("mode: 'world'")
   })
 
@@ -28,7 +28,7 @@ describe('native World integration', () => {
     expect(sidebar).toContain("ui.mode === 'world'")
     expect(sidebar).toContain('<ArkmeWorldSurface')
     expect(sidebar).toContain('ui.worldTarget === undefined ? {} : { target: ui.worldTarget }')
-    expect(sidebar).toContain('onBackToWorld={() => { arkmeUi.showWorld() }}')
+    expect(sidebar).toContain('onBackToWorld={() => { arkmeUi.backFromWorld() }}')
     expect(clientIndex).toContain("export { ArkmeWorldSurface } from './ArkmeWorldSurface.js'")
   })
 

@@ -1,3 +1,4 @@
+import { tr, arkmeIntlLocale } from './locale.js'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import type { CSSProperties } from 'react'
 import type {
@@ -96,7 +97,7 @@ function dateTimeDisplay(value: number): { label: string; iso: string } | undefi
   if (time === 0 || time > 8_640_000_000_000_000) return undefined
   const date = new Date(time)
   return {
-    label: date.toLocaleString('zh-CN', {
+    label: date.toLocaleString(arkmeIntlLocale(), {
       month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
     }),
     iso: date.toISOString(),
@@ -115,8 +116,8 @@ export function ArkmeRelatedQuickNotesCard({
   if (state.kind === 'idle' || state.kind === 'loading' || state.kind === 'empty') return null
   if (state.kind === 'error') {
     return <div style={styles.compactError} data-arkme-related-quick-notes-error title={state.message}>
-      <span>相关快记加载失败</span>
-      <button type="button" style={styles.retry} onClick={onRetry}>重试</button>
+      <span>{tr("相关快记加载失败")}</span>
+      <button type="button" style={styles.retry} onClick={onRetry}>{tr("重试")}</button>
     </div>
   }
   if (state.list.items.length === 0) return null
@@ -128,8 +129,8 @@ export function ArkmeRelatedQuickNotesCard({
     onClick={onOpen}
   >
     <span style={styles.cardHeader}>
-      <span style={styles.cardTitle}>相关快记</span>
-      <span style={styles.cardCount}>共 {state.list.total} 条</span>
+      <span style={styles.cardTitle}>{tr("相关快记")}</span>
+      <span style={styles.cardCount}>{tr("共")} {state.list.total} {tr("条")}</span>
       <CaretRight size={14} color={arkmeTheme.tertiary} aria-hidden />
     </span>
     <span style={styles.previewList}>
@@ -151,16 +152,16 @@ export function ArkmeRelatedQuickNotesList({
   onRetry: () => void
 }) {
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <div style={styles.state} role="status">正在加载相关快记…</div>
+    return <div style={styles.state} role="status">{tr("正在加载相关快记…")}</div>
   }
-  if (state.kind === 'empty') return <div style={styles.state}>暂无相关快记</div>
+  if (state.kind === 'empty') return <div style={styles.state}>{tr("暂无相关快记")}</div>
   if (state.kind === 'error') {
     return <div style={styles.state} role="alert">
-      <div>{state.message || '相关快记加载失败'}</div>
-      <button type="button" style={{ ...styles.retry, marginTop: 10 }} onClick={onRetry}>重试</button>
+      <div>{state.message || tr("相关快记加载失败")}</div>
+      <button type="button" style={{ ...styles.retry, marginTop: 10 }} onClick={onRetry}>{tr("重试")}</button>
     </div>
   }
-  if (state.list.items.length === 0) return <div style={styles.state}>暂无相关快记</div>
+  if (state.list.items.length === 0) return <div style={styles.state}>{tr("暂无相关快记")}</div>
   return <div style={styles.list} data-arkme-related-quick-notes-list>
     {state.list.items.map(item => {
       const preview = notePreview(item)
@@ -175,7 +176,7 @@ export function ArkmeRelatedQuickNotesList({
         <ArkmeUserAvatar
           {...(item.senderAvatarRef === undefined ? {} : { avatarRef: item.senderAvatarRef })}
           size={30}
-          label="相关快记作者头像"
+          label={tr("相关快记作者头像")}
         />
         <span style={styles.rowBody}>
           <span style={styles.rowMeta}>
@@ -206,12 +207,12 @@ export function ArkmeRelatedQuickNoteDetail({
   onMessageCopyLinkOpen?: (sid: string) => void
 }) {
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <div style={styles.state} role="status">正在加载快记详情…</div>
+    return <div style={styles.state} role="status">{tr("正在加载快记详情…")}</div>
   }
   if (state.kind === 'error') {
     return <div style={styles.state} role="alert">
       <div>{state.message || '快记详情加载失败'}</div>
-      <button type="button" style={{ ...styles.retry, marginTop: 10 }} onClick={() => { onRetry(state.item) }}>重试</button>
+      <button type="button" style={{ ...styles.retry, marginTop: 10 }} onClick={() => { onRetry(state.item) }}>{tr("重试")}</button>
     </div>
   }
   const time = dateTimeDisplay(state.detail.sendAtMillis)
@@ -220,7 +221,7 @@ export function ArkmeRelatedQuickNoteDetail({
       <ArkmeUserAvatar
         {...(state.detail.avatarRef === undefined ? {} : { avatarRef: state.detail.avatarRef })}
         size={40}
-        label="相关快记作者头像"
+        label={tr("相关快记作者头像")}
       />
       <div style={styles.detailSenderBody}>
         <div style={styles.detailSenderName}>{state.detail.senderName}</div>

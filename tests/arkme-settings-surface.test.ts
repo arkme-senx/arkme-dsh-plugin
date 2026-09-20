@@ -1,11 +1,11 @@
-import { readFileSync } from 'node:fs'
+import { readUiSource } from './helpers/ui-source.js'
 import { describe, expect, it } from 'vitest'
 
-const source = readFileSync(new URL('../src/client/ArkmeSettingsSurface.tsx', import.meta.url), 'utf8')
-const shellSource = readFileSync(new URL('../src/client/ArkmePersistentShell.tsx', import.meta.url), 'utf8')
-const navigationSource = readFileSync(new URL('../src/client/ArkmeProductNavigation.tsx', import.meta.url), 'utf8')
-const adapterSource = readFileSync(new URL('../src/client/index.tsx', import.meta.url), 'utf8')
-const redesignCss = readFileSync(new URL('../src/client/redesign/arkme-redesign.css', import.meta.url), 'utf8')
+const source = readUiSource(new URL('../src/client/ArkmeSettingsSurface.tsx', import.meta.url), 'utf8')
+const shellSource = readUiSource(new URL('../src/client/ArkmePersistentShell.tsx', import.meta.url), 'utf8')
+const navigationSource = readUiSource(new URL('../src/client/ArkmeProductNavigation.tsx', import.meta.url), 'utf8')
+const adapterSource = readUiSource(new URL('../src/client/index.tsx', import.meta.url), 'utf8')
+const redesignCss = readUiSource(new URL('../src/client/redesign/arkme-redesign.css', import.meta.url), 'utf8')
 
 describe('ArkmeSettingsSurface', () => {
   it('keeps Arkme account and APP update capabilities with a read-only plugin version', () => {
@@ -32,7 +32,7 @@ describe('ArkmeSettingsSurface', () => {
     expect(source).toContain('title="即我号"')
     expect(source).not.toMatch(/<AccountInfoRow\s+icon=\{<QrCode size=\{18\}/)
     expect(source).toContain('title="手机号"')
-    expect(source).toContain('title="微信"')
+    expect(source).toContain('title="微信号"')
     expect(source).toContain("callArkme<ArkmeIdAvailabilitySnapshot>('user.arkme-id.check'")
     expect(source).toContain("callArkme<ArkmeIdMutationResult>('user.arkme-id.set'")
     expect(source).toContain("callArkme('auth.phone.send'")
@@ -114,9 +114,10 @@ describe('ArkmeSettingsSurface', () => {
     expect(redesignCss).toContain('max-width: none !important')
     expect(redesignCss).toContain('[data-arkme-directory-visible="true"]')
     expect(redesignCss).toContain('[data-arkme-directory-visible="false"]')
-    expect(redesignCss).toContain('grid-template-columns: var(--arkme-persistent-sidebar-width, 356px) minmax(0, 1fr) 0 !important')
-    expect(redesignCss).toContain('[data-arkme-avatar-only="true"]')
-    expect(redesignCss).toContain('grid-template-columns: 72px minmax(0, 1fr) 0 !important')
+    expect(redesignCss).toContain('grid-template-columns: var(--arkme-persistent-sidebar-width, calc(var(--arkme-navigation-width) + 284px)) minmax(0, 1fr) 0 !important')
+    expect(redesignCss).toContain('[data-arkme-directory-compact="true"]')
+    expect(redesignCss).toContain('[data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 120px !important; }')
+    expect(redesignCss).not.toContain('grid-template-columns: 72px minmax(0, 1fr) 0 !important')
     expect(redesignCss).toContain('[data-arkme-login-mode="true"]:not([data-arkme-web-locked])')
     expect(redesignCss).toContain('overflow-y: auto')
     expect(redesignCss).toContain('.arkme-redesign-profile-menu button')

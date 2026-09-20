@@ -14,6 +14,14 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ProfileService', () => {
+  it('rejects malformed public-profile collections without negative-caching them as absent users', async () => {
+    const request = vi.fn().mockResolvedValueOnce({ items: 'invalid' }).mockResolvedValueOnce({ items: [{ user_id: 7, nick_name: '正常姓名' }] })
+    const service = new ProfileService({ config, authenticatedAuthPost: request } as unknown as ServiceRuntime)
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    await expect(service.publicProfileSummariesByUserIds([7], session)).rejects.toMatchObject({ code: 'public-profile-contract-invalid', retryable: false })
+    expect((await service.publicProfileSummariesByUserIds([7], session)).get(7)?.nickname).toBe('正常姓名')
+    expect(request).toHaveBeenCalledTimes(2)
+  })
   it('logs a failed public-profile batch with user IDs and preserves the original error', async () => {
     const error = new ArkmePluginError('arkme-timeout', 'SECRET_MESSAGE', true, 504)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
