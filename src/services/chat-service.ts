@@ -5361,6 +5361,9 @@ export class ChatService {
             senderName,
             ...(isDeepSeekReply ? { avatarKind: 'deepseek' as const } : {}),
             ...(senderUserId > 0 ? { avatarRef: await this.profile.sealProfileImageRef(viewerUserId, senderUserId) } : {}),
+            // Only a resolved other account gets an actionable identity; the
+            // viewer's own id and unresolved senders stay off the wire.
+            ...(senderUserId > 0 && senderUserId !== viewerUserId ? { senderUserId } : {}),
             sendAtMillis: recordingSegments.length > 0 ? numberValue(item.send_at ?? item.sendAt) : epochMillis(item.send_at ?? item.sendAt),
             title,
             textContent,

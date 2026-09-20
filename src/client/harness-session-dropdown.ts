@@ -72,6 +72,21 @@ function summaryLayout(header: HTMLElement | undefined): Array<[HTMLElement, str
 }
 
 /**
+ * The selected row already owns the live task status (pending interaction, live
+ * activity, running subagents). Mirror that exact node instead of re-deriving
+ * the states and colors here, so the fixed title cannot drift from the list.
+ */
+function selectedRowStatus(value: Shell): { dot: Element; labels: string[] } | undefined {
+  const row = value.column.querySelector<HTMLElement>('[role="treeitem"][aria-selected="true"]')
+  const slot = row?.firstElementChild
+  const dot = slot?.querySelector(':scope > [data-state]')
+  if (!slot || !dot) return undefined
+  const labels = [...slot.querySelectorAll('span')]
+    .map(node => node.textContent?.trim() ?? '').filter(text => text !== '')
+  return { dot, labels }
+}
+
+/**
  * Presentation-only adapter: the native SidebarRoot, WorkspaceBrowser, their
  * live slots, handlers, menus, stores and React ancestry all stay mounted in
  * place. No copied session list or private API. Only the sidebar's position,
@@ -83,6 +98,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   if (!win || !doc.body) return () => {}
   let current: Shell | undefined
   let title: HTMLElement | undefined
+  let statusSignature = ''
   let open = false
   let external: HarnessSessionMenuRequest | undefined
   let disposed = false
@@ -104,6 +120,11 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   trigger.setAttribute('data-arkme-conversation-selector', '')
   mark(trigger, 'trigger')
   const label = doc.createElement('span')
+  const status = doc.createElement('span')
+  mark(status, 'status')
+  status.setAttribute('aria-hidden', 'true')
+  const labelText = doc.createElement('span')
+  label.append(status, labelText)
   const arrow = doc.createElement('span')
   const chevron = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
   chevron.setAttribute('viewBox', '0 0 16 16')
@@ -152,10 +173,20 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       opacity: 1 !important; visibility: visible !important; transform: none !important;
     }
     [${PREFIX}anchor] { display: inline-flex; width: max-content; min-width: 0; max-width: 100%; }
+    /* The selected row's own status dot, mirrored beside the fixed title. Empty
+       when the session has no status, so the title keeps its full width. */
+    [${PREFIX}status] {
+      display: none; flex: none; width: 16px; height: 16px; margin-right: 6px;
+      align-items: center; justify-content: center; vertical-align: middle;
+    }
+    [${PREFIX}status]:not(:empty) { display: inline-flex; }
     [${PREFIX}title-row] { align-items: flex-start; }
     [${PREFIX}title-cluster] { flex-direction: column; align-items: stretch; gap: 4px; }
-    [${PREFIX}title-nav] { width: 100%; }
-    [${PREFIX}summary] { min-width: 0; min-height: 18px; gap: 0; flex-wrap: wrap; color: var(--dsw-alias-label-secondary, #626872); font-size: 12px; line-height: 18px; }
+    /* The title block sits centered in the conversation seat instead of hugging
+       the left edge, so the freed left side stays empty. Both stacked rows keep
+       their own full width and center their content. */
+    [${PREFIX}title-nav] { width: 100%; display: flex; justify-content: center; }
+    [${PREFIX}summary] { min-width: 0; min-height: 18px; gap: 0; flex-wrap: wrap; justify-content: center; color: var(--dsw-alias-label-secondary, #626872); font-size: 12px; line-height: 18px; }
     [${PREFIX}summary] [data-slot="conversation.session.header.actions"] > * { font-size: inherit; line-height: inherit; }
     [${PREFIX}turn-count] { display: inline-flex; align-items: center; white-space: nowrap; }
     [${PREFIX}summary] [data-slot="conversation.session.header.actions"] > * + [${PREFIX}turn-count]::before { content: '·'; margin: 0 7px; }
@@ -192,6 +223,8 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     summaryMarks = []
     title?.removeAttribute(PREFIX + 'native-title')
     title = undefined
+    statusSignature = ''
+    status.replaceChildren()
     host.remove()
     if (current) {
       const { frame, column, root, brand, create, toggle } = current
@@ -297,9 +330,26 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       if (host.parentElement !== next.center) next.center.append(host)
     }
     const text = title?.textContent?.trim() || (visibleHeader ? next.copy.sessions : next.copy.blank)
-    if (label.textContent !== text) label.textContent = text
+    if (labelText.textContent !== text) labelText.textContent = text
     trigger.title = text
-    trigger.setAttribute('aria-label', `${next.copy.choose}：${text}`)
+    // Re-clone only when the row's status actually changed: replacing the node
+    // restarts the ongoing dot's CSS chase animation and would make it flicker
+    // on every unrelated re-render of the native list.
+    const nativeStatus = selectedRowStatus(next)
+    const statusText = nativeStatus?.labels.join('、') ?? ''
+    const signature = nativeStatus === undefined ? '' : `${nativeStatus.dot.outerHTML}\u0000${statusText}`
+    if (statusSignature !== signature) {
+      statusSignature = signature
+      status.replaceChildren()
+      if (nativeStatus !== undefined) {
+        const mirror = nativeStatus.dot.cloneNode(true) as Element
+        mark(mirror, 'status-dot')
+        status.append(mirror)
+      }
+    }
+    trigger.setAttribute('aria-label', statusText === ''
+      ? `${next.copy.choose}：${text}`
+      : `${next.copy.choose}：${text}（${statusText}）`)
     position()
   }
   function schedule() {
@@ -398,7 +448,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   }
   const observer = new win.MutationObserver(schedule)
   observer.observe(doc.body, { childList: true, subtree: true, characterData: true, attributes: true,
-    attributeFilter: ['class', 'style', 'aria-hidden', 'aria-selected', 'disabled', 'data-slot'] })
+    attributeFilter: ['class', 'style', 'aria-hidden', 'aria-selected', 'disabled', 'data-slot', 'data-state'] })
   doc.addEventListener('pointerdown', pointer, true)
   doc.addEventListener('click', click)
   doc.addEventListener('keydown', key)

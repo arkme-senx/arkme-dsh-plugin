@@ -20,7 +20,8 @@ import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
 import type {
   ArkmeArkoHistoryPage, ArkmeArkoProfile, ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeConversationDirectoryVisibility,
-  ArkmeOfficialAuthorProfile, ArkmeOpenPrivateChatResult, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
+  ArkmeOfficialAuthorProfile, ArkmeOpenPrivateChatResult, ArkmePrivateInteraction, ArkmePrivateInteractionPage,
+  ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
   ArkmeTopicCreateResult, ArkmeSourceDirectoryPinResult,
 } from '../types.js'
 import { arkmeBadgeUnreadCount, projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
@@ -51,6 +52,7 @@ import {
 } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
+import { applyPrivateInteractionDirectory, projectPrivateInteractions } from './private-interaction-directory.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
 import { arkmePrependSourceByIdentity, arkmeSourceIdentityKey } from './source-identity.js'
 import {
@@ -263,6 +265,10 @@ const styles: Record<string, CSSProperties> = {
   mutedUnreadDot: {
     position: 'absolute', top: -1, right: -1, width: 10, height: 10, boxSizing: 'border-box',
     borderRadius: 999, background: '#ff5f57', border: `2px solid ${colors.panel}`,
+  },
+  interactionUnreadDot: {
+    position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, boxSizing: 'border-box',
+    borderRadius: 999, background: '#20c66a', border: `2px solid ${colors.panel}`,
   },
   avatar: {
     width: 38, height: 38, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
@@ -557,13 +563,23 @@ export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabl
   const total = statuses.reduce((sum, status) => sum + status.items.length, 0)
   const running = (activity?.running.length ?? 0) > 0
   const destination = activity?.current === null ? '新会话' : activity?.current?.title
+  // The first line names the conversation, exactly like every other directory
+  // row. The product name is only the fallback while the harness has not
+  // reported a session yet; before, this line was hardcoded and the live
+  // conversation name was pushed onto the second line, where a running task
+  // replaced it entirely.
+  const title = destination?.trim() ?? ''
+  const heading = title === '' ? 'DeepSeek Harness' : title
+  // Sibling rows describe themselves on the second line while idle (the calendar
+  // row, the recordings row), so this entry keeps that same descriptor.
+  const idleHint = '你的 DeepSeek 智能助手'
   return <button
     ref={rowRef}
     type="button"
     data-arkme-home-tour-target="harness"
     role="treeitem"
     aria-selected={selected}
-    aria-label={['DeepSeek Harness', destination, summary].filter(Boolean).join('，')}
+    aria-label={[heading, summary].filter(Boolean).join('，')}
     style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
     onClick={onClick}
   >
@@ -572,12 +588,15 @@ export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabl
       {total > 0 && <span data-arkme-harness-badge data-idle={!running ? 'true' : undefined} data-kind={statuses[0]!.kind === 'pending' ? 'pending' : activity!.unread.length > 0 ? 'unread' : 'running'}>{total > 99 ? '99+' : total}</span>}
     </span>
     <span data-arkme-conversation-content data-arkme-harness-label style={styles.chatContent}>
-      <span style={styles.chatTop}><span style={styles.entryName}>DeepSeek Harness</span></span>
-      <span style={styles.chatBottom}>{!running
-        ? <span data-arkme-harness-destination style={styles.preview}>{destination ?? (accountScope === undefined ? '你的 DeepSeek 智能助手' : '')}</span>
-        : <span data-arkme-harness-summary>{statuses.map(status => <span key={status.kind} data-arkme-harness-status={status.kind}>
+      <span style={styles.chatTop}><span data-arkme-harness-title style={styles.chatName}>{heading}</span></span>
+      {/* Second line keeps its documented contract: counts while a task runs,
+          the idle hint otherwise. Pending/unread without a running task stays a
+          badge-only signal, and the conversation name now lives on line one. */}
+      <span style={styles.chatBottom}>{running
+        ? <span data-arkme-harness-summary>{statuses.map(status => <span key={status.kind} data-arkme-harness-status={status.kind}>
           <i aria-hidden />{status.items.length} {status.label}
-        </span>)}</span>}
+        </span>)}</span>
+        : <span data-arkme-harness-destination style={styles.preview}>{idleHint}</span>}
       </span>
     </span>
   </button>
@@ -651,12 +670,15 @@ export function arkmeRootChatPreviewParts(source: ArkmeSourceItem): { mentionPre
 }
 
 export function arkmeRootChatUnreadPlacement(source: {
+  kind?: ArkmeSourceItem['kind']
   unreadCount?: number
   badgeUnreadCount?: number
   notificationAllowed?: boolean
   isMuted?: boolean
+  privateInteraction?: { attentionCount: number }
 }): 'avatar' | 'dot' | 'none' {
   if (arkmeBadgeUnreadCount(source) > 0) return 'avatar'
+  if (source.kind === 'private_chat' && (source.privateInteraction?.attentionCount ?? 0) > 0) return 'avatar'
   const rawUnreadCount = Math.max(0, Math.trunc(source.unreadCount ?? 0))
   return rawUnreadCount > 0 && (source.notificationAllowed === false || source.isMuted === true)
     ? 'dot'
@@ -915,6 +937,8 @@ export function ArkmeNavigation({
   const authenticatedUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const [directoryAccountKey, setDirectoryAccountKey] = useState<string>()
   const directoryRequestAbortRef = useRef<AbortController>()
+  const privateInteractionRequestAbortRef = useRef<AbortController>()
+  const privateInteractionAccountKeyRef = useRef<string>()
   const topicCreateRequestRef = useRef(false)
   const rootRowElementsRef = useRef(new Map<string, HTMLButtonElement>())
   const revealedSourceIdentityRef = useRef<string>()
@@ -981,6 +1005,10 @@ export function ArkmeNavigation({
     arkmeArkoConversationPreviewStore.getSnapshot,
   )
   const [error, setError] = useState('')
+  const [privateInteractionSnapshot, setPrivateInteractionSnapshot] = useState<{
+    version: string
+    items: ArkmePrivateInteraction[]
+  }>({ version: '', items: [] })
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   const [quickAddBlockingOpen, setQuickAddBlockingOpen] = useState(false)
   const [activeDirectoryEntryId, setActiveDirectoryEntryId] = useState<string>()
@@ -1054,6 +1082,10 @@ export function ArkmeNavigation({
   const cardMode = sourceSort !== 'default'
   const bindingRequired = auth?.status === 'binding-required'
   const rootSources = directory === 'root' ? chatDirectory.sources : sources
+  const privateInteractionProjection = useMemo(
+    () => projectPrivateInteractions(privateInteractionSnapshot.items, privateInteractionSnapshot.version),
+    [privateInteractionSnapshot.items, privateInteractionSnapshot.version],
+  )
   const botChatDirectory = conversationProjection.directory
   const conversationVisibilityActivity = useMemo(() => new Map<string, { sequence: number; activityAtMillis: number }>([
     ...botChatDirectory.sources.map(source => [
@@ -1103,10 +1135,11 @@ export function ArkmeNavigation({
   const rootConversationRows = useMemo(() => {
     if (conversationProjection.accountScope !== `${auth?.environment}:${String(auth?.userId)}`) return []
     return [
-      ...conversationProjection.sources.map(source => ({ kind: 'source' as const, source, activeAtMillis: source.activeAtMillis, pinned: source.isPinned === true })),
+      ...applyPrivateInteractionDirectory(conversationProjection.sources, privateInteractionProjection)
+        .map(source => ({ kind: 'source' as const, source, activeAtMillis: source.activeAtMillis, pinned: source.isPinned === true })),
       ...conversationProjection.bots.map(bot => ({ kind: 'bot' as const, bot, activeAtMillis: botActivityAtMillis(bot), pinned: botDirectoryIsPinned(botDirectoryPreferences, bot) })),
     ].sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.activeAtMillis - left.activeAtMillis)
-  }, [auth?.environment, auth?.userId, conversationProjection, botDirectoryPreferences])
+  }, [auth?.environment, auth?.userId, conversationProjection, botDirectoryPreferences, privateInteractionProjection])
   const removalFeedback = useConversationRemovalFeedback({
     rows: rootConversationRows,
     rowKey: row => row.kind === 'source'
@@ -1303,6 +1336,55 @@ export function ArkmeNavigation({
       .catch(() => undefined)
     return () => { controller.abort() }
   }, [authenticated, auth?.userId, chatDirectory.baselineReady, chatDirectory.projection !== undefined])
+  useEffect(() => {
+    privateInteractionRequestAbortRef.current?.abort()
+    const accountKey = currentAccountKey
+    if (!authenticated || directory !== 'root' || accountKey === undefined || !chatDirectory.baselineReady) {
+      privateInteractionAccountKeyRef.current = undefined
+      setPrivateInteractionSnapshot({ version: '', items: [] })
+      return
+    }
+    if (privateInteractionAccountKeyRef.current !== accountKey) {
+      privateInteractionAccountKeyRef.current = accountKey
+      setPrivateInteractionSnapshot({ version: '', items: [] })
+    }
+    const controller = new AbortController()
+    privateInteractionRequestAbortRef.current = controller
+    let settled = false
+    const load = async (retry: number): Promise<void> => {
+      const items: ArkmePrivateInteraction[] = []
+      let cursor: string | undefined
+      let version: string | undefined
+      for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+        const page = await callArkme<ArkmePrivateInteractionPage>('private-interaction.query', {
+          limit: 50,
+          ...(cursor === undefined ? {} : { cursor }),
+          ...(version === undefined ? {} : { expectedVersion: version }),
+        }, controller.signal)
+        version = page.version
+        items.push(...page.items)
+        if (!page.hasMore || page.nextCursor === undefined) break
+        cursor = page.nextCursor
+      }
+      if (controller.signal.aborted || settled || authenticatedUserIdRef.current !== auth?.userId) return
+      setPrivateInteractionSnapshot({ version: version ?? '', items })
+    }
+    const run = async (): Promise<void> => {
+      try {
+        await load(0)
+      } catch (error) {
+        if (controller.signal.aborted) return
+        const retryable = error instanceof Error && /version|状态已变化|刷新互动/iu.test(error.message)
+        if (retryable && !settled) await load(1)
+      }
+    }
+    void run().catch(() => undefined)
+    return () => {
+      settled = true
+      controller.abort()
+      if (privateInteractionRequestAbortRef.current === controller) privateInteractionRequestAbortRef.current = undefined
+    }
+  }, [authenticated, auth?.userId, chatDirectory.baselineReady, chatDirectory.revision, currentAccountKey, directory])
   useEffect(() => {
     if (!authenticated || recordRevision === 0) return
     const activityUserId = auth?.userId
@@ -2151,14 +2233,16 @@ export function ArkmeNavigation({
           const removalPhase = removalFeedback.phases.get(`source:${conversationSourceVisibilityKey(source)}`)
           const selected = activeDirectoryEntryId === undefined && ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
           const unreadPlacement = arkmeRootChatUnreadPlacement(source)
-          const badgeUnreadCount = arkmeBadgeUnreadCount(source)
+          const directBadgeUnreadCount = arkmeBadgeUnreadCount(source)
+          const interactionUnreadCount = source.privateInteraction?.attentionCount ?? 0
+          const badgeUnreadCount = directBadgeUnreadCount > 0 ? directBadgeUnreadCount : interactionUnreadCount
           const unreadText = badgeUnreadCount > 99 ? '99+' : badgeUnreadCount
           const mutationPending = directoryMutation?.kind === 'source'
             && directoryMutation.key === arkmeSourceIdentityKey(source)
           const interactionsDisabled = (mutationPending && directoryMutation.action === 'dismiss') || removalPhase !== undefined
           return <button
             key={arkmeSourceIdentityKey(source)} data-arkme-directory-row="source" type="button" role="treeitem" aria-selected={selected}
-            aria-label={unreadPlacement === 'avatar'
+              aria-label={unreadPlacement === 'avatar'
               ? tr("{v0}，{v1} 条未读", { v0: source.displayName, v1: String(badgeUnreadCount) })
               : unreadPlacement === 'dot' ? tr("{v0}，有未读消息，已免打扰", { v0: source.displayName }) : source.displayName}
             ref={node => {
@@ -2182,6 +2266,11 @@ export function ArkmeNavigation({
               <ArkmeDirectorySourceAvatar source={source} size={38} />
               {unreadPlacement === 'avatar' && <span style={styles.mentionUnread}>{unreadText}</span>}
               {unreadPlacement === 'dot' && <span style={styles.mutedUnreadDot} />}
+              {directBadgeUnreadCount > 0 && interactionUnreadCount > 0 && <span
+                aria-label={tr("有未读群互动")}
+                title={tr("有未读群互动")}
+                style={styles.interactionUnreadDot}
+              />}
             </span>
             <span data-arkme-conversation-content style={styles.chatContent}>
               <span style={styles.chatTop}>

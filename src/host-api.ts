@@ -1184,6 +1184,28 @@ export async function dispatchArkmeHostOperation(
       ...(stringParam(params, 'remark').trim() === '' ? {} : { remark: stringParam(params, 'remark') }),
       ...(stringParam(params, 'requestUid').trim() === '' ? {} : { requestUid: stringParam(params, 'requestUid') }),
     })
+    case 'private-interaction.summary': {
+      const sourceRef = stringParam(params, 'sourceRef').trim()
+      if (sourceRef === '') throw new ArkmePluginError('interaction-source-invalid', '请选择一个私聊联系人', false, 400)
+      const expectedVersion = stringParam(params, 'expectedVersion').trim()
+      return await service.privateInteractionSummary(sourceRef, {
+        ...(expectedVersion === '' ? {} : { expectedVersion }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
+    case 'private-interaction.query': {
+      const cursor = stringParam(params, 'cursor').trim()
+      const expectedVersion = stringParam(params, 'expectedVersion').trim()
+      const sourceRef = stringParam(params, 'sourceRef').trim()
+      return await service.queryPrivateInteractions({
+        ...(sourceRef === '' ? {} : { sourceRef }),
+        ...(params.unreadOnly === undefined ? {} : { unreadOnly: booleanParam(params, 'unreadOnly') }),
+        limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 30)))),
+        ...(cursor === '' ? {} : { cursor }),
+        ...(expectedVersion === '' ? {} : { expectedVersion }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
     case 'directory.list': {
       const countOnly = booleanParam(params, 'countOnly')
       const cursor = stringParam(params, 'cursor').trim()

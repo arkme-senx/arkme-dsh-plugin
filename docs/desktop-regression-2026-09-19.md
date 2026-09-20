@@ -75,3 +75,13 @@
 - 最终全量：671 文件，663 通过、0 失败、8 跳过；**7,938 项通过、0 失败、12 跳过**（18:52:20 开始，151.72 秒）。原有跳过数量未增加，未删除失败用例。
 - 本节没有更新或重启固定 3098 预览，未更换端口、迁移登录、访问钥匙串或修改已安装 Arkme 客户端。此时预览仍是之前部署版本。
 - 既有 DSH 页面卸载生命周期问题未在本节修复，真实截屏授权、麦克风、多小时录音、真实发送及跨端状态等验收限制也仍有效。
+
+## 第二栏「添加」按钮的悬停反馈回归
+
+2026-09-20 修复：Arkme 的统一悬停反馈（`redesign/interaction-feedback.css`）是**叠一层 `background-image` 渐变**，不是改 `background-color`。第二栏工具栏的 `.arkme-directory-search-toolbar button[title="添加"]` 用了 `background` **简写**并带 `!important`，简写会把 `background-image` 重置为 `none`，且该选择器优先级高于 `[data-arkme-feedback]`，于是这个按钮的悬停与按下反馈被静默清掉。
+
+该规则最初只命中未登录时的联系人工具栏按钮，`#576` 把选择器改成按 `title="添加"` 命中后，才开始作用于带 `data-arkme-feedback` 的加号按钮。修复为只设置 `background-color`，保留输入框式底色，同时让共享悬停渐变层继续生效。
+
+验证：`tests/interaction-feedback.test.tsx` 用 jsdom 计算样式直接断言该按钮的 `background-image` 仍是共享渐变，并断言规则只使用 `background-color`；把简写改回去该用例会失败。类型检查、完整测试与打包通过。
+
+后续（2026-09-20）：该按钮已按会话输入框的统一控件改为 28×28 圆形加号（官方 `IconPlusOutline16`），底色改由组件内联 `backgroundColor` 声明，`.arkme-directory-search-toolbar button[title="添加"]` 这条本地覆盖规则不再需要并已移除，避免第二处可能重置悬停层的简写。悬停反馈依赖的仍是 `[data-arkme-feedback]` 那层 `background-image` 渐变。

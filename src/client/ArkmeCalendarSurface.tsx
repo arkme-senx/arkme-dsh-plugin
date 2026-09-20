@@ -917,7 +917,8 @@ export function ArkmeCalendarSurface({
       {detailItem !== undefined && <div style={{ position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none' }}>
         <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 'min(394px, 100%)', pointerEvents: 'auto' }}>
           {detailItem.forwardRecords !== undefined
-            ? <ForwardRecordsDetail sourceBadge={sourceBadge} item={detailItem} onClose={() => setSelectedRecord(undefined)} />
+            ? <ForwardRecordsDetail sourceBadge={sourceBadge} item={detailItem}
+              onPrivateChatOpened={selectSource} onClose={() => setSelectedRecord(undefined)} />
             : <ArkmeTimelineDetailDrawer sourceBadge={sourceBadge} key={detailItem.itemUid} item={detailItem} canExtend={false}
               showOriginal={showOriginal} onToggleOriginal={() => setShowOriginal(value => !value)}
               onClose={() => setSelectedRecord(undefined)} />}

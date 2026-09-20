@@ -1463,11 +1463,10 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
   border-radius: 6px; background: transparent; color: inherit; cursor: pointer;
 }
 .arkme-contact-directory-search-field button:not([data-arkme-feedback]):hover { background: var(--dsw-alias-interactive-bg-hover, #f6f6f7); }
-.arkme-directory-search-toolbar button[title="添加"] {
-  background: var(--dsw-specific-input-major, #fff) !important;
-  border-color: var(--dsw-alias-border-l2, #e2e3e6) !important;
-  color: var(--dsw-alias-label-secondary, #555a64) !important;
-}
+/* The add control now carries the DSH composer's own round selector surface and
+   plus icon, so it needs no local overrides. Never reintroduce a `background`
+   shorthand here: it resets the shared [data-arkme-feedback] background-image
+   gradient to none and silently removes every hover/pressed state. */
 .arkme-contact-directory-toolbar button:focus-visible { outline: 2px solid var(--arkme-focus); outline-offset: 2px; }
 body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--dsw-alias-bg-base); }
 .arkme-directory-detail-pane { overflow: hidden; }

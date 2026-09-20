@@ -94,6 +94,8 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'provider.instance'
   | 'link.metadata'
   | 'directory.list'
+  | 'private-interaction.summary'
+  | 'private-interaction.query'
   | 'directory.contact.profile'
   | 'directory.contact.remark.update'
   | 'directory.contact.world'

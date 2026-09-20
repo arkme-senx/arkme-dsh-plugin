@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ArkmeComposerToolButton } from '../src/client/ArkmeComposerToolButton.js'
 import { ArkmeConversationHeaderIconButton } from '../src/client/ArkmeGroupChatControls.js'
 import { ArkmeCalendarCell } from '../src/client/ArkmeCalendarSurface.js'
-import { ArkmeQuickAddMenu } from '../src/client/ArkmeQuickAdd.js'
+import { ArkmeQuickAddButton, ArkmeQuickAddMenu } from '../src/client/ArkmeQuickAdd.js'
 import { ArkmeRightPanelHeader } from '../src/client/ArkmeRightPanelHeader.js'
 
 const css = readFileSync(new URL('../src/client/redesign/interaction-feedback.css', import.meta.url), 'utf8')
@@ -134,5 +134,22 @@ describe('shared Arkme interaction feedback', () => {
     expect(readSource('ArkmeDshMenu')).not.toContain('data-arkme-feedback')
     expect(readSource('ArkmeEmojiPicker')).not.toContain('background: \'var(--dsw-alias-fill-hover')
     expect(readSource('ArkmeEmojiPicker')).toContain('onMouseEnter={() => { setHoveredId(emoji.id) }}')
+  })
+
+  it('keeps the directory add control on the shared hover layer', () => {
+    const redesign = readFileSync(new URL('../src/client/redesign/arkme-redesign.css', import.meta.url), 'utf8')
+    // Render the real control: any later rule that resets background-image on the
+    // shipped markup has to fail here, not only on a hand-written element.
+    const markup = renderToStaticMarkup(<ArkmeQuickAddButton onContactAdd={vi.fn()} onSourceCreated={vi.fn()} />)
+    const dom = new JSDOM(`<body><div class="arkme-directory-search-toolbar">${markup}</div></body>`)
+    const style = dom.window.document.createElement('style')
+    style.textContent = `${css}\n${redesign}`
+    dom.window.document.head.append(style)
+    const button = dom.window.document.querySelector<HTMLButtonElement>('button[title="添加"]')!
+    // Surface skin may set a base fill, but only through background-color: the
+    // `background` shorthand resets background-image to none and silently deletes
+    // the shared hover/pressed feedback layer.
+    expect(dom.window.getComputedStyle(button).backgroundImage).toContain('linear-gradient')
+    dom.window.close()
   })
 })

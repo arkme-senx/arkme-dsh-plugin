@@ -8704,6 +8704,7 @@ export function ArkmeSurface({
           {detailItem.forwardRecords !== undefined && <ForwardRecordsDetail
             key={detailItem.itemUid}
             item={detailItem}
+            onPrivateChatOpened={activateSource}
             onClose={() => { setDrawer(undefined) }}
           />}
           {detailSharedRecording !== undefined && <RelatedRecordingDetail

@@ -188,3 +188,89 @@ it('stacks the native header action slot below the title and restores it when th
   expect(header.querySelector('[data-arkme-session-title-cluster]')).toBeNull()
   expect(header.querySelector('[data-arkme-session-summary]')).toBeNull()
 })
+
+const rowWithStatus = (dot: string, label?: string) =>
+  `<span class="slot">${dot}${label === undefined ? '' : `<span class="visuallyHidden">${label}</span>`}</span><span class="title">会话 A</span>`
+
+it('centers the title block in the conversation seat and leaves the left side empty', async () => {
+  const { header, trigger } = mount()
+  header.innerHTML = '<div><div><nav><span><button disabled>测试</button></span></nav><div><div data-slot="conversation.session.header.actions"><span title="原模式说明">标准模式</span><span data-arkme-session-turn-count>1 次对话</span></div></div></div><div data-slot="conversation.session.header.utilities"><button>更多操作</button></div></div>'
+  await flush()
+  const nav = header.querySelector<HTMLElement>('[data-arkme-session-title-nav]')!
+  const summary = header.querySelector<HTMLElement>('[data-arkme-session-summary]')!
+  expect(nav).not.toBeNull()
+  expect(summary).not.toBeNull()
+  // Centering is pure presentation: the native nodes keep their identity and the
+  // trigger keeps showing the live conversation name.
+  expect(getComputedStyle(nav).display).toBe('flex')
+  expect(getComputedStyle(nav).justifyContent).toBe('center')
+  expect(getComputedStyle(summary).justifyContent).toBe('center')
+  expect(getComputedStyle(header.querySelector<HTMLElement>('[data-arkme-session-title-cluster]')!).flexDirection).toBe('column')
+  expect(trigger.textContent).toContain('测试')
+})
+
+it('mirrors the selected row task status into the fixed title', async () => {
+  const { trigger, rows } = mount()
+  rows[0]!.innerHTML = rowWithStatus('<svg data-state="ongoing"></svg>', '进行中')
+  await flush()
+  expect(trigger.querySelector('[data-arkme-session-status-dot]')?.getAttribute('data-state')).toBe('ongoing')
+  // Only the dot is mirrored: the row's screen-reader text stays out of the title.
+  expect(trigger.textContent).toBe('会话 A')
+  expect(trigger.getAttribute('aria-label')).toBe('切换会话：会话 A（进行中）')
+})
+
+it('leaves the fixed title clean when the selected session reports no status', async () => {
+  const { trigger, rows } = mount()
+  rows[0]!.innerHTML = rowWithStatus('<span class="slot"></span>')
+  await flush()
+  const status = trigger.querySelector('[data-arkme-session-status]')!
+  expect(status.childElementCount).toBe(0)
+  expect(getComputedStyle(status).display).toBe('none')
+  expect(trigger.getAttribute('aria-label')).toBe('切换会话：会话 A')
+  expect(trigger.textContent).toBe('会话 A')
+})
+
+it('follows a status that changes only its data-state attribute', async () => {
+  const { trigger, rows } = mount()
+  rows[0]!.innerHTML = rowWithStatus('<span data-state="done"></span>', '已完成')
+  await flush()
+  expect(trigger.querySelector('[data-arkme-session-status-dot]')?.getAttribute('data-state')).toBe('done')
+  rows[0]!.querySelector('span[data-state]')!.setAttribute('data-state', 'warning')
+  await flush()
+  expect(trigger.querySelector('[data-arkme-session-status-dot]')?.getAttribute('data-state')).toBe('warning')
+  expect(getComputedStyle(trigger.querySelector('[data-arkme-session-status]')!).display).toBe('inline-flex')
+})
+
+it('keeps the same mirrored node while the status is unchanged so the chase animation never restarts', async () => {
+  const { trigger, rows, nativeTitle } = mount()
+  rows[0]!.innerHTML = rowWithStatus('<svg data-state="ongoing"></svg>', '进行中')
+  await flush()
+  const mirrored = trigger.querySelector('[data-arkme-session-status-dot]')!
+  nativeTitle.textContent = '会话 A 改过名字'
+  rows[0]!.setAttribute('class', 'sessionRow selected')
+  await flush()
+  expect(trigger.title).toBe('会话 A 改过名字')
+  expect(trigger.querySelector('[data-arkme-session-status-dot]')).toBe(mirrored)
+})
+
+it('drops a stale status when the selection moves to a row without one', async () => {
+  const { trigger, rows } = mount()
+  rows[0]!.innerHTML = rowWithStatus('<svg data-state="ongoing"></svg>', '进行中')
+  await flush()
+  expect(trigger.querySelector('[data-arkme-session-status]')!.childElementCount).toBe(1)
+  rows[0]!.setAttribute('aria-selected', 'false')
+  rows[1]!.setAttribute('aria-selected', 'true')
+  await flush()
+  expect(trigger.querySelector('[data-arkme-session-status]')!.childElementCount).toBe(0)
+  expect(trigger.getAttribute('aria-label')).toBe('切换会话：会话 A')
+})
+
+it('removes the mirrored status together with the adapter', async () => {
+  const { trigger, rows } = mount()
+  rows[0]!.innerHTML = rowWithStatus('<svg data-state="ongoing"></svg>', '进行中')
+  await flush()
+  expect(trigger.querySelector('[data-arkme-session-status-dot]')).not.toBeNull()
+  cleanup?.(); cleanup = undefined
+  expect(document.querySelector('[data-arkme-session-status]')).toBeNull()
+  expect(document.querySelector('[data-arkme-session-trigger]')).toBeNull()
+})

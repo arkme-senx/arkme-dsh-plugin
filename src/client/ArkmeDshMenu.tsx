@@ -219,6 +219,36 @@ export function ArkmeActionMenu(props: {
     return () => { stopFrames(); document.removeEventListener('keydown', onKey) }
   }, [open])
   useEffect(() => {
+    if (!open || typeof document === 'undefined') return
+    // The native Menu dismisses from a bubble-phase document listener, so one
+    // stopPropagation() between the pointer target and document (custom scroll
+    // thumbs, drag surfaces, card wrappers) silently disables outside dismissal
+    // for the whole surface. Capture on document runs before every other handler
+    // and cannot be blocked, so it arms a fallback; a bubble listener on the same
+    // document cancels it whenever propagation arrives normally. That keeps the
+    // native single-close contract instead of closing twice per click.
+    const own = root.current?.ownerDocument ?? document
+    if (typeof own?.addEventListener !== 'function') return
+    let pending: ReturnType<typeof setTimeout> | undefined
+    const cancel = () => { if (pending !== undefined) { clearTimeout(pending); pending = undefined } }
+    const outside = (event: Event) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (root.current?.contains(target) === true) return
+      if (menu.current?.contains(target) === true) return
+      cancel()
+      pending = setTimeout(() => { pending = undefined; closeRef.current() }, 0)
+    }
+    const arrived = () => cancel()
+    own.addEventListener('pointerdown', outside, true)
+    own.addEventListener('pointerdown', arrived)
+    return () => {
+      cancel()
+      own.removeEventListener('pointerdown', outside, true)
+      own.removeEventListener('pointerdown', arrived)
+    }
+  }, [open])
+  useEffect(() => {
     if (!open || !props.point || typeof document === 'undefined' || typeof document.createElement !== 'function') return
     const doc = props.pointDocument ?? document
     const closeOnScroll = (event: Event) => {

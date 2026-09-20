@@ -236,7 +236,7 @@ function directorySourceIdentity(source: ArkmeSourceItem): string {
   return normalizedSourceKey(source.sourceKey) ?? source.sourceRef
 }
 
-type DirectorySourceScalarField = Exclude<keyof ArkmeSourceItem, 'avatarRefs' | 'groupAvatar'>
+type DirectorySourceScalarField = Exclude<keyof ArkmeSourceItem, 'avatarRefs' | 'groupAvatar' | 'privateInteraction'>
 
 const DIRECTORY_SOURCE_SCALAR_FIELDS: Record<DirectorySourceScalarField, true> = {
   privateNickname: true,

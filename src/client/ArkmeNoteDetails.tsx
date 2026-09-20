@@ -8,6 +8,7 @@ import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import type { ArkmeProviderCapabilities } from '../types.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
+import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
 import type {
   ArkmeBotList,
@@ -17,6 +18,8 @@ import type {
   ArkmeGroupBotCandidateList,
   ArkmeHumanMentionInput,
   ArkmeMessageCopyLinkExtensionItem,
+  ArkmeOpenPrivateChatResult,
+  ArkmeSourceItem,
   ArkmeRelatedQuickNoteDetail as ArkmeRelatedQuickNoteDetailDto,
   ArkmeRelatedQuickNoteItem,
   ArkmeRelatedQuickNoteList,
@@ -40,6 +43,7 @@ import {
   type ArkmeRelatedQuickNotesLoadState,
 } from './ArkmeRelatedQuickNotes.js'
 import { ArkmeClientError, callArkme } from './api.js'
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { ArkmeAttachmentStrip, ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
@@ -1059,12 +1063,17 @@ export function ArkmeTimelineDetailDrawer({
   </ArkmeDetailShell>
 }
 
-function ForwardDetailRow({ name, time, avatarRef, avatarKind, segment = false, children }: {
-  name: string; time: string; avatarRef?: string | undefined; avatarKind?: 'deepseek' | undefined; segment?: boolean; children: ReactNode
+function ForwardDetailRow({ name, time, avatarRef, avatarKind, senderUserId, onPrivateChatOpened, segment = false, children }: {
+  name: string; time: string; avatarRef?: string | undefined; avatarKind?: 'deepseek' | undefined
+  senderUserId?: number | undefined
+  onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined
+  segment?: boolean; children: ReactNode
 }) {
   return <div style={styles.row} {...(segment ? { 'data-arkme-forward-segment': 'true' } : {})}>
-    {avatarKind === 'deepseek' ? <span role="img" aria-label="DeepSeek Harness 头像" style={{ width: 30, height: 30, flex: 'none' }}><DeepSeekLogoMark style={{ width: 30, height: 30, color: arkmeTheme.accent, opacity: 1 }} /></span>
-      : <ArkmeUserAvatar {...(avatarRef === undefined ? {} : { avatarRef })} size={30} label={segment ? '转写说话人头像' : '转发消息头像'} />}
+    {avatarKind === 'deepseek'
+      ? <span role="img" aria-label="DeepSeek Harness 头像" style={{ width: 30, height: 30, flex: 'none' }}><DeepSeekLogoMark style={{ width: 30, height: 30, color: arkmeTheme.accent, opacity: 1 }} /></span>
+      : <ForwardSenderAvatar name={name} avatarRef={avatarRef} senderUserId={senderUserId}
+        onPrivateChatOpened={onPrivateChatOpened} segment={segment} />}
     <div style={styles.content}>
       <div style={styles.meta}><span style={styles.name}>{name}</span><span style={styles.time}>{time}</span></div>
       {children}
@@ -1072,7 +1081,72 @@ function ForwardDetailRow({ name, time, avatarRef, avatarKind, segment = false, 
   </div>
 }
 
-export function ForwardRecordsDetail({ item, onClose, sourceBadge }: { item: ArkmeTimelineItem; onClose: () => void; sourceBadge?: ReactNode }) {
+/**
+ * Which account, if any, a forwarded row may start a private chat with. A
+ * transcript speaker label is never an account identity even when it reuses the
+ * sender's name and photo, and a surface that cannot navigate gets no entry.
+ */
+export function arkmeForwardSenderChatPeerId(
+  senderUserId: number | undefined,
+  segment: boolean,
+  canNavigate: boolean,
+): number | undefined {
+  if (segment || !canNavigate) return undefined
+  return senderUserId
+}
+
+/**
+ * Snapshot sender avatar with a hover entry to their private chat. Only a row the
+ * Provider resolved to another real account is actionable: transcript speakers
+ * carry no account identity, and the viewer's own id never reaches the client.
+ */
+function ForwardSenderAvatar({ name, avatarRef, senderUserId, onPrivateChatOpened, segment }: {
+  name: string; avatarRef?: string | undefined; senderUserId?: number | undefined
+  onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined; segment: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [opening, setOpening] = useState(false)
+  const [error, setError] = useState('')
+  const anchorRef = useRef<HTMLSpanElement>(null)
+  const avatar = <ArkmeUserAvatar {...(avatarRef === undefined ? {} : { avatarRef })} size={30}
+    label={segment ? '转写说话人头像' : '转发消息头像'} />
+  const peerUserId = arkmeForwardSenderChatPeerId(senderUserId, segment, onPrivateChatOpened !== undefined)
+  if (peerUserId === undefined || onPrivateChatOpened === undefined) return avatar
+  const startPrivateChat = async () => {
+    setOpening(true); setError('')
+    try {
+      const opened = await callArkme<ArkmeOpenPrivateChatResult>('chat.private.open', {
+        peerUserId,
+        displayName: name,
+      })
+      setOpen(false)
+      onPrivateChatOpened(opened.source)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setOpening(false)
+    }
+  }
+  return <ArkmeActionMenu label={tr("{v0} 的操作", { v0: name })} open={open} align="start" side="right"
+    onClose={() => { if (!opening) setOpen(false) }}
+    hoverAnchor={anchorRef.current ?? undefined}
+    getAnchorRect={() => anchorRef.current?.getBoundingClientRect() ?? null}
+    anchor={<span ref={anchorRef} data-arkme-forward-sender-hover
+      // Hover is the entry point; keyboard focus reaches the same card.
+      onPointerEnter={event => { if (event.pointerType !== 'touch') { setError(''); setOpen(true) } }}
+      onFocus={() => { setError(''); setOpen(true) }}
+    >{avatar}</span>}
+    actions={[
+      { id: 'private-chat', label: opening ? tr("正在打开…") : tr("发起私聊"), disabled: opening, icon: <ChatCircle size={16} />, onSelect: () => { void startPrivateChat() } },
+      ...(error === '' ? [] : [{ id: 'error' as const, label: <span role="alert">{error}</span>, disabled: true, onSelect: () => {} }]),
+    ]} />
+}
+
+export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChatOpened }: {
+  item: ArkmeTimelineItem; onClose: () => void; sourceBadge?: ReactNode
+  /** Opens a resolved snapshot sender's private chat, shared by every entry path. */
+  onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined
+}) {
   const forward = item.forwardRecords
   if (forward === undefined) return null
   const recording = forward.items.length === 1 ? forward.items[0] : undefined
@@ -1125,6 +1199,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge }: { item: Ark
     const hasRecordBody = segments.length === 0 || hasDistinctText || (value.contentBlocks?.length ?? 0) > 0
     return <div key={index} style={styles.rows}>
       {hasRecordBody && <ForwardDetailRow name={value.senderName} avatarRef={value.avatarRef} avatarKind={value.avatarKind}
+        senderUserId={value.senderUserId} onPrivateChatOpened={onPrivateChatOpened}
         time={`${firstDate !== lastDate ? `${dateLabel(value.sendAtMillis)} ` : ''}${timeLabel(value.sendAtMillis)}`}>
         {!isArticle && value.title.trim() !== '' && (snapshot.textContent !== '' || (value.contentBlocks?.length ?? 0) > 0) && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7, overflowWrap: 'anywhere' }}>
           <ArkmeRichText text={value.title} presentation="preview" />

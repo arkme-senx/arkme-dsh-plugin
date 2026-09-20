@@ -1,5 +1,5 @@
 import { tr, useArkmeLocale } from './locale.js'
-import { IconNewChatOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconNewChatOutline16, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -19,10 +19,15 @@ type QuickAddDialogKind = 'group' | 'call' | 'bot'
 const style: Record<string, CSSProperties> = {
   // Keep the menu above later sidebar rows without escaping the frame-wide overlay layer.
   anchor: { position: 'relative', zIndex: 10, flex: 'none' },
+  // Same round control, token and icon as the DSH composer's bottom-left add
+  // button, so the directory and the conversation input read as one control set
+  // instead of introducing a second shape and a text glyph. Declare only
+  // background-color: the shared [data-arkme-feedback] hover layer is a
+  // background-image gradient, and the `background` shorthand would reset it.
   trigger: {
-    width: 40, height: 40, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 11, background: arkmeTheme.menu, color: '#555a64',
-    cursor: 'pointer', font: 'inherit', fontSize: 23, lineHeight: 1, fontWeight: 300, outline: 0,
+    width: 28, height: 28, flex: 'none', padding: 0, display: 'grid', placeItems: 'center',
+    border: 0, borderRadius: 999, backgroundColor: 'var(--dsw-specific-selector, transparent)',
+    color: 'var(--dsw-alias-label-primary)', cursor: 'pointer', font: 'inherit', outline: 0,
   },
 
   overlay: {
@@ -71,7 +76,7 @@ function maskIcon(base64: string, iconStyle: CSSProperties): CSSProperties {
 }
 
 export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, onAddBot, onNewDshSession, error,
-  anchor, open = true, onClose = () => {}, getAnchorRect,
+  anchor, open = true, onClose = () => {}, getAnchorRect, hoverAnchor,
 }: {
   onContactAdd(): void
   onCreateGroup(): void
@@ -83,11 +88,14 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, on
   anchor?: ReactNode
   onClose?: () => void
   getAnchorRect?: () => DOMRect | null
+  /** Hover entry point: the trigger and the menu stay one hover target. */
+  hoverAnchor?: HTMLElement | undefined
 }) {
   const icon = (base64: string) => <span aria-hidden style={maskIcon(base64, { width: 16, height: 16 })} />
   return <span data-arkme-notification-blocking-overlay={open ? 'true' : undefined}>
     <ArkmeActionMenu label={tr("添加")} open={open} anchor={anchor} align="end" onClose={onClose}
       {...(getAnchorRect === undefined ? {} : { getAnchorRect })}
+      {...(hoverAnchor === undefined ? {} : { hoverAnchor })}
       actions={[
         onNewDshSession !== undefined && { id: 'dsh', label: '新建 DSH 会话', icon: <IconNewChatOutline16 />, onSelect: onNewDshSession },
         { id: 'contact', label: '添加联系人', icon: icon(arkmeUserAddIconBase64), onSelect: onContactAdd },
@@ -162,13 +170,23 @@ export function ArkmeQuickAddButton({
     setDialogKind(kind)
   }
 
+  const openMenu = () => { setMenuError(''); setMenuOpen(true) }
+
   const menu = <ArkmeQuickAddMenu
       open={menuOpen} onClose={() => setMenuOpen(false)}
+      hoverAnchor={triggerRef.current ?? undefined}
       anchor={<button data-arkme-feedback="neutral"
         ref={triggerRef} type="button" aria-label={onNewDshSession ? '新建 DSH 会话、添加联系人、群聊、发起通话或添加 Bot' : '添加联系人、群聊、发起通话或添加 Bot'} title={tr("添加")}
         aria-haspopup="menu" aria-expanded={menuOpen} style={style.trigger}
-        onClick={() => { setMenuError(''); setMenuOpen(open => !open) }}
-      >＋</button>}
+        // Hover is the primary entry: a pointer over the trigger shows the menu
+        // so it stays discoverable. The trigger and the portaled menu remain one
+        // hover target (hoverAnchor), so moving into the menu never closes it.
+        // Click is kept for touch and keyboard: a keyboard activation reports
+        // detail 0 and still toggles, while a pointer click only ever opens. A
+        // missing event is an activation without pointer info, so it toggles.
+        onPointerEnter={event => { if (event?.pointerType !== 'touch') openMenu() }}
+        onClick={event => { if ((event?.detail ?? 0) === 0) setMenuOpen(open => !open); else openMenu() }}
+      ><IconPlusOutline16 size={14} aria-hidden /></button>}
       error={menuError}
       onNewDshSession={onNewDshSession === undefined ? undefined : () => {
         try { onNewDshSession(); setMenuError(''); setMenuOpen(false) }

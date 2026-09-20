@@ -14,12 +14,22 @@ describe('Arkme quick-add UI', () => {
     />)
     expect(markup).toContain('aria-label="添加联系人、群聊、发起通话或添加 Bot"')
     expect(markup).toContain('aria-haspopup="menu"')
-    expect(markup).toContain('>＋</button>')
-    expect(markup).toContain('width:40px;height:40px')
-    expect(markup).toContain('border:1px solid')
-    expect(markup).toContain('border-radius:11px')
+    expect(markup).toContain('width:28px;height:28px')
+    expect(markup).toContain('border-radius:999px')
+    // Same DSH icon set as the composer's bottom-left add button, not a text glyph.
+    expect(markup).toContain('M8.64453 1.5V7.34961H14.5V8.65039H8.64453V14.5H7.34473V8.65039H1.5V7.34961H7.34473V1.5H8.64453Z')
+    expect(markup).not.toContain('>＋</button>')
     expect(markup).not.toContain('role="treeitem"')
     expect(markup).not.toContain('>添加联系人<')
+  })
+
+  it('reuses the composer add control shape and icon instead of a second resource', () => {
+    expect(quickAddSource).toContain("IconNewChatOutline16, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'")
+    expect(quickAddSource).toContain('<IconPlusOutline16 size={14} aria-hidden />')
+    expect(quickAddSource).toContain("backgroundColor: 'var(--dsw-specific-selector, transparent)'")
+    expect(quickAddSource).toContain('borderRadius: 999')
+    // No new asset: the icon must come from the host primitive package.
+    expect(quickAddSource).not.toMatch(/plus-icon|add\.svg|＋/)
   })
 
   it('delegates placement and theme styling to the shared native menu', () => {

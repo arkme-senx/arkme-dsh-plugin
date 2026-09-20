@@ -1542,6 +1542,17 @@ export interface ArkmeSourceItem {
   /** Current viewer's confirmed Chat read cursor; distinct from the last message sequence. */
   readSequence?: number
   recordCount?: number
+  /**
+   * Account-bound projection of Chat-owned group @ activity for this private
+   * contact. It is deliberately separate from direct-message unreadCount so
+   * the global conversation badge and private-chat read cursor are unchanged.
+   */
+  privateInteraction?: {
+    latest: ArkmePrivateInteraction
+    unreadCount: number
+    attentionCount: number
+    version: string
+  }
 }
 
 /** Account-bound pin snapshot; does not describe directory membership or message state. */
@@ -1949,6 +1960,13 @@ export interface ArkmeForwardRecordPreviewItem {
   senderName: string
   /** Opaque Provider image reference for the snapshotted sender. */
   avatarRef?: string
+  /**
+   * Account id of the snapshotted sender, present only when the Provider
+   * resolved a real account and it is not the viewer, so the snapshot can offer
+   * a private chat. Transcript speaker labels are never identities and never
+   * populate this field.
+   */
+  senderUserId?: number
   sendAtMillis: number
   title: string
   textContent: string
@@ -3595,6 +3613,8 @@ export type ArkmePluginOperation =
   | 'billing.order.status'
   | 'contacts.search'
   | 'directory.list'
+  | 'private-interaction.summary'
+  | 'private-interaction.query'
   | 'contacts.add'
   | 'chat.private.open-from-contact'
   | 'group.create'

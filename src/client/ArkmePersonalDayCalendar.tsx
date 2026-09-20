@@ -107,7 +107,9 @@ function PersonalDayCalendar({ accountScope = '', onClose }: { accountScope?: st
     </div>
     {richDetail && <aside className="arkme-personal-day-rich-detail" aria-label={tr("完整快记详情")}>
       {richDetail.callRecord ? <ArkmeCallDetailDrawer item={richDetail} onClose={() => setRichDetail(undefined)} />
-        : richDetail.forwardRecords ? <ForwardRecordsDetail item={richDetail} onClose={() => setRichDetail(undefined)} />
+        : richDetail.forwardRecords ? <ForwardRecordsDetail item={richDetail}
+          onPrivateChatOpened={source => { setRichDetail(undefined); onClose(); arkmeUi.selectSource(source) }}
+          onClose={() => setRichDetail(undefined)} />
         : <ArkmeTimelineDetailDrawer key={richDetail.itemUid} item={richDetail} canExtend={false} showOriginal={showOriginal}
           onToggleOriginal={() => setShowOriginal(value => !value)} onClose={() => setRichDetail(undefined)} />}
     </aside>}
