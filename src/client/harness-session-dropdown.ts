@@ -76,14 +76,17 @@ function summaryLayout(header: HTMLElement | undefined): Array<[HTMLElement, str
  * activity, running subagents). Mirror that exact node instead of re-deriving
  * the states and colors here, so the fixed title cannot drift from the list.
  */
-function selectedRowStatus(value: Shell): { dot: Element; labels: string[] } | undefined {
+type NativeSessionStatus = 'done' | 'warning' | 'ongoing' | 'error' | 'idle'
+
+function selectedRowStatus(value: Shell): { dot: Element; labels: string[]; state: NativeSessionStatus } | undefined {
   const row = value.column.querySelector<HTMLElement>('[role="treeitem"][aria-selected="true"]')
   const slot = row?.firstElementChild
-  const dot = slot?.querySelector(':scope > [data-state]')
-  if (!slot || !dot) return undefined
-  const labels = [...slot.querySelectorAll('span')]
+  const dot = slot?.querySelector<HTMLElement>('[data-state]')
+  const state = dot?.getAttribute('data-state') as NativeSessionStatus | null
+  if (!slot || !dot || state === null || !['done', 'warning', 'ongoing', 'error', 'idle'].includes(state)) return undefined
+  const labels = [...slot.querySelectorAll('span:not([data-state])')]
     .map(node => node.textContent?.trim() ?? '').filter(text => text !== '')
-  return { dot, labels }
+  return { dot, labels, state }
 }
 
 /**
@@ -123,8 +126,11 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   const status = doc.createElement('span')
   mark(status, 'status')
   status.setAttribute('aria-hidden', 'true')
+  const statusLabel = doc.createElement('span')
+  mark(statusLabel, 'status-label')
+  statusLabel.setAttribute('aria-hidden', 'true')
   const labelText = doc.createElement('span')
-  label.append(status, labelText)
+  label.append(status, labelText, statusLabel)
   const arrow = doc.createElement('span')
   const chevron = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
   chevron.setAttribute('viewBox', '0 0 16 16')
@@ -180,6 +186,12 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       align-items: center; justify-content: center; vertical-align: middle;
     }
     [${PREFIX}status]:not(:empty) { display: inline-flex; }
+    [${PREFIX}status-label] {
+      display: none; flex: none; min-width: 0; max-width: 96px; margin-left: 6px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--dsw-alias-label-secondary, #626872); font-size: 12px; font-weight: 500; line-height: 18px;
+    }
+    [${PREFIX}status-label]:not(:empty) { display: inline-block; }
     [${PREFIX}title-row] { align-items: flex-start; }
     [${PREFIX}title-cluster] { flex-direction: column; align-items: stretch; gap: 4px; }
     /* The title block sits centered in the conversation seat instead of hugging
@@ -225,6 +237,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     title = undefined
     statusSignature = ''
     status.replaceChildren()
+    statusLabel.textContent = ''
     host.remove()
     if (current) {
       const { frame, column, root, brand, create, toggle } = current
@@ -337,14 +350,22 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     // on every unrelated re-render of the native list.
     const nativeStatus = selectedRowStatus(next)
     const statusText = nativeStatus?.labels.join('、') ?? ''
-    const signature = nativeStatus === undefined ? '' : `${nativeStatus.dot.outerHTML}\u0000${statusText}`
+    const signature = nativeStatus === undefined ? '' : `${nativeStatus.dot.outerHTML}\u0000${statusText}\u0000${nativeStatus.state}`
     if (statusSignature !== signature) {
       statusSignature = signature
       status.replaceChildren()
+      statusLabel.textContent = ''
       if (nativeStatus !== undefined) {
         const mirror = nativeStatus.dot.cloneNode(true) as Element
         mark(mirror, 'status-dot')
         status.append(mirror)
+        statusLabel.textContent = nativeStatus.labels[0] ?? ({
+          ongoing: next.copy.expand === 'Open sidebar' ? 'Running' : '进行中',
+          done: next.copy.expand === 'Open sidebar' ? 'Completed' : '已完成',
+          warning: next.copy.expand === 'Open sidebar' ? 'Needs attention' : '等待处理',
+          error: next.copy.expand === 'Open sidebar' ? 'Error' : '出错',
+          idle: next.copy.expand === 'Open sidebar' ? 'Idle' : '空闲',
+        } satisfies Record<NativeSessionStatus, string>)[nativeStatus.state]
       }
     }
     trigger.setAttribute('aria-label', statusText === ''

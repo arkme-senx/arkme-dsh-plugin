@@ -214,8 +214,9 @@ it('mirrors the selected row task status into the fixed title', async () => {
   rows[0]!.innerHTML = rowWithStatus('<svg data-state="ongoing"></svg>', '进行中')
   await flush()
   expect(trigger.querySelector('[data-arkme-session-status-dot]')?.getAttribute('data-state')).toBe('ongoing')
-  // Only the dot is mirrored: the row's screen-reader text stays out of the title.
-  expect(trigger.textContent).toBe('会话 A')
+  expect(trigger.querySelector('[data-arkme-session-status-label]')?.textContent).toBe('进行中')
+  expect(trigger.textContent).toContain('会话 A')
+  expect(trigger.textContent).toContain('进行中')
   expect(trigger.getAttribute('aria-label')).toBe('切换会话：会话 A（进行中）')
 })
 
@@ -235,10 +236,19 @@ it('follows a status that changes only its data-state attribute', async () => {
   rows[0]!.innerHTML = rowWithStatus('<span data-state="done"></span>', '已完成')
   await flush()
   expect(trigger.querySelector('[data-arkme-session-status-dot]')?.getAttribute('data-state')).toBe('done')
+  expect(trigger.querySelector('[data-arkme-session-status-label]')?.textContent).toBe('已完成')
   rows[0]!.querySelector('span[data-state]')!.setAttribute('data-state', 'warning')
   await flush()
   expect(trigger.querySelector('[data-arkme-session-status-dot]')?.getAttribute('data-state')).toBe('warning')
   expect(getComputedStyle(trigger.querySelector('[data-arkme-session-status]')!).display).toBe('inline-flex')
+})
+
+it('finds a native status icon when DSH adds a wrapper inside the status slot', async () => {
+  const { trigger, rows } = mount()
+  rows[0]!.innerHTML = rowWithStatus('<span class="native-status-wrapper"><svg data-state="ongoing"></svg></span>', '进行中')
+  await flush()
+  expect(trigger.querySelector('[data-arkme-session-status-dot]')?.getAttribute('data-state')).toBe('ongoing')
+  expect(trigger.querySelector('[data-arkme-session-status-label]')?.textContent).toBe('进行中')
 })
 
 it('keeps the same mirrored node while the status is unchanged so the chase animation never restarts', async () => {
