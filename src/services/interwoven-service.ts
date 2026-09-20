@@ -1,9 +1,10 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import type { ArkmePrivateInteraction, ArkmePrivateInteractionCoverage, ArkmePrivateInteractionSummary, ArkmePrivateInteractionPage, ArkmePrivateInteractionQueryOptions } from '../types.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention } from '../types.js'
 import { ProfileService } from './profile-service.js'
 import type { ArkmeRelatedQuickNoteSourceLocator } from './related-quick-note-service.js'
-import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import { ArkmePluginError, ArkmeUpstreamResponseError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { SourceService, type ArkmeSourceRefPayload } from './source-service.js'
 
 interface ArkmeInterwovenMomentReference {
@@ -34,6 +35,7 @@ function booleanValue(value: unknown): boolean { return value === true }
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 
 export class InterwovenService {
+  private interactionEpoch = 0
   private readonly momentReferences = new Map<string, ArkmeInterwovenMomentReference>()
 
   constructor(
@@ -43,7 +45,115 @@ export class InterwovenService {
   ) {}
 
   dispose(): void {
+    this.interactionEpoch += 1
     this.momentReferences.clear()
+  }
+
+  async privateInteractionSummary(sourceRef: string, options: Pick<ArkmePrivateInteractionQueryOptions, 'expectedVersion' | 'signal'> = {}): Promise<ArkmePrivateInteractionSummary> {
+    if (sourceRef.trim() === '') throw new ArkmePluginError('interaction-source-invalid', '请选择一个私聊联系人', false, 400)
+    const { data, userId, epoch } = await this.readPrivateInteractions('contacts/summary', { ...options, sourceRef })
+    const result: ArkmePrivateInteractionSummary = {
+      ...this.interactionCoverage(data),
+      unreadCount: this.interactionCount(data.unread_count),
+      attentionCount: this.interactionCount(data.attention_count),
+      ...(data.latest === undefined ? {} : { latest: await this.projectInteraction(data.latest, userId) }),
+    }
+    await this.assertInteractionAccount(userId, epoch)
+    return result
+  }
+
+  async queryPrivateInteractions(options: ArkmePrivateInteractionQueryOptions = {}): Promise<ArkmePrivateInteractionPage> {
+    const { data, userId, epoch } = await this.readPrivateInteractions('occurrences/query', options)
+    if (!Array.isArray(data.items) || data.items.length > (options.limit ?? 30) || typeof data.has_more !== 'boolean'
+      || (data.has_more && (typeof data.next_cursor !== 'string' || data.next_cursor.length === 0 || data.next_cursor.length > 2048))) {
+      throw new ArkmePluginError('interaction-contract-invalid', '互动分页返回不完整，请重新查询', true)
+    }
+    const items: ArkmePrivateInteraction[] = []
+    for (const item of data.items) items.push(await this.projectInteraction(item, userId))
+    await this.assertInteractionAccount(userId, epoch)
+    return {
+      ...this.interactionCoverage(data), items, hasMore: data.has_more,
+      ...(data.has_more ? { nextCursor: data.next_cursor as string } : {}),
+    }
+  }
+
+  private async assertInteractionAccount(userId: number, epoch: number): Promise<void> {
+    if (epoch !== this.interactionEpoch || (await this.runtime.requireSession()).userId !== userId) {
+      throw new ArkmePluginError('interaction-account-changed', '账号已切换，请重新查询互动', true)
+    }
+  }
+
+  private async readPrivateInteractions(route: string, options: ArkmePrivateInteractionQueryOptions) {
+    const epoch = this.interactionEpoch
+    const session = await this.runtime.requireSession()
+    if (!this.runtime.config.interwovenMomentsEnabled) throw new ArkmePluginError('interaction-disabled', '群互动能力已关闭', false, 403)
+    const limit = options.limit ?? 30
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50 || (options.cursor?.length ?? 0) > 2048
+      || (options.expectedVersion !== undefined && !/^[a-f0-9]{64}$/.test(options.expectedVersion))) {
+      throw new ArkmePluginError('interaction-input-invalid', '互动查询参数无效', false, 400)
+    }
+    const source = options.sourceRef === undefined ? undefined : await this.source.openSourceRef(options.sourceRef, session.userId)
+    if (source !== undefined && source.kind !== 'private_chat') throw new ArkmePluginError('interaction-source-invalid', '群互动摘要需要普通私聊联系人', false, 400)
+    let data: Record<string, unknown>
+    try {
+      data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        `/api/v1/chats/interwoven/${route}`,
+        {
+          ...(source === undefined ? {} : { chat_session_uid: source.ownerRef }),
+          ...(route === 'occurrences/query' ? { limit, unread_only: options.unreadOnly ?? false, ...(options.cursor === undefined ? {} : { cursor: options.cursor }) } : {}),
+          ...(options.expectedVersion === undefined ? {} : { expected_version: options.expectedVersion }),
+        }, session, options.signal,
+        { lane: 'interactive-read', bypassCache: true },
+      )
+    } catch (error) {
+      const status = error instanceof ArkmeUpstreamResponseError ? stringValue(objectValue(error.responseData).status) : ''
+      if (status === 'version_changed') throw new ArkmePluginError('interaction-version-changed', '互动或已读状态已变化，请从第一页重新查询', true, 409)
+      if (status === 'capacity_exceeded') throw new ArkmePluginError('interaction-capacity-exceeded', '互动查询超过当前容量，结果不可视为完整，请缩小到指定联系人或升级后端查询能力', false, 409)
+      if (error instanceof ArkmePluginError && error.upstreamStatus === 404) throw new ArkmePluginError('interaction-unsupported', '当前 Chat 后端尚未支持互动目录查询，请先升级后端', false, 501)
+      throw error
+    }
+    await this.assertInteractionAccount(session.userId, epoch)
+    return { data, userId: session.userId, epoch }
+  }
+
+  private interactionCount(value: unknown): number {
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+      throw new ArkmePluginError('interaction-contract-invalid', '互动计数不可用，不能视为零未读', true)
+    }
+    return value
+  }
+
+  private interactionCoverage(data: Record<string, unknown>): ArkmePrivateInteractionCoverage {
+    if (data.source_scope !== 'chat_group_mentions' || data.scope_complete !== true
+      || typeof data.version !== 'string' || !/^[a-f0-9]{64}$/.test(data.version)
+      || !Array.isArray(data.uncovered_sources) || !data.uncovered_sources.every(item => typeof item === 'string')) {
+      throw new ArkmePluginError('interaction-contract-invalid', '后端未提供完整的 Chat 互动范围，请检查服务版本或重试', true)
+    }
+    return { contractVersion: 1, version: data.version, sourceScope: 'chat_group_mentions', scopeComplete: true, uncoveredSources: data.uncovered_sources as string[] }
+  }
+
+  private async projectInteraction(raw: unknown, userId: number): Promise<ArkmePrivateInteraction> {
+    const item = objectValue(raw)
+    const privateUid = stringValue(item.private_chat_session_uid).trim()
+    const groupUid = stringValue(item.source_chat_session_uid).trim()
+    const id = stringValue(item.interaction_id)
+    if (privateUid === '' || groupUid === '' || !/^[a-f0-9]{64}$/.test(id)
+      || typeof item.summary !== 'string' || typeof item.sender_is_me !== 'boolean'
+      || typeof item.unread !== 'boolean' || typeof item.attention !== 'boolean'
+      || (item.sender_is_me && item.unread) || (item.attention && !item.unread)
+      || this.interactionCount(item.seq) === 0 || this.interactionCount(item.occurred_at) === 0) {
+      throw new ArkmePluginError('interaction-contract-invalid', '群互动来源或状态无效', true)
+    }
+    const peerName = stringValue(item.peer_name).slice(0, 256) || '联系人'
+    const groupName = stringValue(item.group_name).slice(0, 256) || '群聊'
+    return {
+      interactionRef: id,
+      privateSourceRef: await this.source.sealSourceRef(userId, 'private_chat', privateUid, peerName),
+      peerName,
+      groupSourceRef: await this.source.sealSourceRef(userId, 'group_chat', groupUid, groupName),
+      groupName, sequence: item.seq as number, occurredAtMillis: item.occurred_at as number,
+      senderIsMe: item.sender_is_me, summary: item.summary.slice(0, 2000), unread: item.unread, attention: item.attention,
+    }
   }
 
   async interwovenMoments(

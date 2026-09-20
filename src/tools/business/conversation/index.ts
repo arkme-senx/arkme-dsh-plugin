@@ -1,3 +1,4 @@
+import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule } from './private-interactions.js'
 import { memberPageToolModules } from './member-pages.js'
 import type { ArkmeToolModule } from '../../contract/module.js'
 import { listSourcesToolModule } from './list-sources.js'
@@ -20,6 +21,8 @@ export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
   listSourcesToolModule,
   topicHomeVisibilityToolModule,
   unreadConversationsToolModule,
+  privateInteractionSummaryToolModule,
+  privateInteractionsQueryToolModule,
   readSourceToolModule,
   sourceMembersToolModule,
   ...memberPageToolModules,

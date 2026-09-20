@@ -204,6 +204,8 @@ describe('registerArkmeTools', () => {
       'arkme_bot_conversation_pin',
       'arkme_topic_home_visibility',
       'arkme_unread_conversations',
+      'arkme_private_interaction_summary',
+      'arkme_private_interactions_query',
       'arkme_group_member_candidates',
       'arkme_group_member_add',
       'arkme_group_member_remove',

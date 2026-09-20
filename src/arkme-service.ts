@@ -1270,6 +1270,14 @@ export class ArkmeService {
     return await this.community.dshBetaCommunityEntryState(signal)
   }
 
+  /** Model Tool adapter; Chat owns interaction permissions and unread semantics. */
+  async privateInteractionSummary(sourceRef: string, options: Pick<import('./types.js').ArkmePrivateInteractionQueryOptions, 'expectedVersion' | 'signal'> = {}) {
+    return await this.interwoven.privateInteractionSummary(sourceRef, options)
+  }
+  async queryPrivateInteractions(options: import('./types.js').ArkmePrivateInteractionQueryOptions = {}) {
+    return await this.interwoven.queryPrivateInteractions(options)
+  }
+
   /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
   async interwovenMoments(
     sourceRef: string,

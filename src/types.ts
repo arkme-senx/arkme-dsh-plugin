@@ -3936,3 +3936,43 @@ export interface ArkmePluginErrorBody {
 export type ArkmePluginResponse<T = unknown> =
   | { ok: true; value: T }
   | { ok: false; error: ArkmePluginErrorBody }
+
+/** Chat-owned directed human mentions. Never add these counts to the global badge. */
+export interface ArkmePrivateInteraction {
+  interactionRef: string
+  privateSourceRef: string
+  peerName: string
+  groupSourceRef: string
+  groupName: string
+  sequence: number
+  occurredAtMillis: number
+  senderIsMe: boolean
+  summary: string
+  unread: boolean
+  attention: boolean
+}
+export interface ArkmePrivateInteractionCoverage {
+  contractVersion: 1
+  version: string
+  sourceScope: 'chat_group_mentions'
+  scopeComplete: true
+  uncoveredSources: string[]
+}
+export interface ArkmePrivateInteractionSummary extends ArkmePrivateInteractionCoverage {
+  latest?: ArkmePrivateInteraction
+  unreadCount: number
+  attentionCount: number
+}
+export interface ArkmePrivateInteractionPage extends ArkmePrivateInteractionCoverage {
+  items: ArkmePrivateInteraction[]
+  hasMore: boolean
+  nextCursor?: string
+}
+export interface ArkmePrivateInteractionQueryOptions {
+  sourceRef?: string
+  unreadOnly?: boolean
+  limit?: number
+  cursor?: string
+  expectedVersion?: string
+  signal?: AbortSignal
+}

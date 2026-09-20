@@ -11,6 +11,9 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
+  privateInteractionSummary(sourceRef: string, options?: Pick<import('../../types.js').ArkmePrivateInteractionQueryOptions, 'expectedVersion' | 'signal'>): Promise<import('../../types.js').ArkmePrivateInteractionSummary>
+  queryPrivateInteractions(options?: import('../../types.js').ArkmePrivateInteractionQueryOptions): Promise<import('../../types.js').ArkmePrivateInteractionPage>
+
   setBotDirectoryPin(botRef: string, pinned: boolean): Promise<void>
   cachedSourceMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeConversationMemberCache | undefined>
   pageSourceMembers(sourceRef: string, options?: { cursor?: string; limit?: number; signal?: AbortSignal }): Promise<ArkmeConversationMemberPage>
