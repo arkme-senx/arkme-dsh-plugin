@@ -186,7 +186,7 @@ export function VersionSettingsRow({
   return <div className={`arkme-redesign-setting-row arkme-redesign-version-row${hasAction ? '' : ' is-without-action'}`}>
     <span className="arkme-redesign-version-copy">
       <strong>{title}</strong>
-      {feedback === undefined ? null : <small>{feedback}</small>}
+      {feedback === undefined ? null : <small title={feedback} role="status">{feedback}</small>}
     </span>
     {hasAction ?
       <span className="arkme-redesign-version-action-slot">
@@ -1030,7 +1030,8 @@ export function ArkmeSettingsSurface() {
         <VersionSettingsRow
           title="ArkME 客户端"
           version={aboutArkmeVersion(appUpdateState.status?.currentVersion)}
-          feedback={`${updateVersionText(appUpdateRow.current, appUpdateRow.latest)} · ${appUpdateRow.feedback ?? '尚未检查'}`
+          feedback={(appUpdateRow.latest !== appUpdateRow.current && appUpdateRow.latest !== 'v…' ? `新版本 ${appUpdateRow.latest} · ` : '')
+            + (appUpdateRow.feedback ?? '尚未检查')
             + (appUpdateRow.downloadedFilePath === undefined ? '' : ` · ${appUpdateRow.downloadedFilePath}`)}
           actionLabel={appUpdateActionLabel}
           disabled={appUpdateRow.action === 'busy'}

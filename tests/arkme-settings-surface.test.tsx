@@ -158,6 +158,22 @@ describe('ArkmeSettingsSurface', () => {
     expect(markup).toContain('>检查中…</button>')
   })
 
+  it('keeps the existing update action callable and exposes the full status when truncated', () => {
+    const onAction = vi.fn()
+    const feedback = '下载完成，可打开所在文件夹定位安装包 · C:/Downloads/Arkme Setup.exe'
+    const renderer = create(<VersionSettingsRow
+      title="ArkME 客户端"
+      version="v0.3.0"
+      feedback={feedback}
+      actionLabel="打开安装包"
+      onAction={onAction}
+    />)
+    expect(renderer.root.findByProps({ role: 'status' }).props.title).toBe(feedback)
+    renderer.root.findByType('button').props.onClick()
+    expect(onAction).toHaveBeenCalledOnce()
+    renderer.unmount()
+  })
+
   it('uses the desktop-injected APP version when the update bridge has no status yet', () => {
     expect(aboutArkmeVersion(undefined, { arkmeDesktop: { appVersion: '0.1.0' } })).toBe('v0.1.0')
     expect(aboutArkmeVersion('1.2.0', { arkmeDesktop: { appVersion: '0.1.0' } })).toBe('v0.1.0')
@@ -187,6 +203,9 @@ describe('ArkmeSettingsSurface', () => {
     expect(markup).toMatch(/ArkME 插件[\s\S]*DeepSeek Harness/)
     expect(markup).toContain('aria-label="检查 ArkME 客户端更新"')
     expect(markup).toContain('<span class="arkme-redesign-version-value">v0.1.0</span>')
+    const appRow = markup.split('>ArkME 客户端<')[1]?.split('>ArkME 插件<')[0] ?? ''
+    expect(appRow.match(/v0\.1\.0/g)).toHaveLength(1)
+    expect(appRow).toContain('title="尚未检查" role="status"')
     expect(markup).toContain(`<span class="arkme-redesign-version-value">v${pluginManifest.version}</span>`)
     expect(markup).toContain('<span class="arkme-redesign-version-value">v0.1.0-rc.8</span>')
     expect(markup).not.toContain('aria-label="检查 ArkME 插件更新"')
