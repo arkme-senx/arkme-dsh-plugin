@@ -12,6 +12,7 @@ import { callArkme } from './api.js'
 import { ArkmeBotCreateDialog } from './ArkmeBotCreateDialog.js'
 import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { directorySearchLayout } from './directory-search-layout.js'
 
 
 type QuickAddDialogKind = 'group' | 'call' | 'bot'
@@ -19,14 +20,12 @@ type QuickAddDialogKind = 'group' | 'call' | 'bot'
 const style: Record<string, CSSProperties> = {
   // Keep the menu above later sidebar rows without escaping the frame-wide overlay layer.
   anchor: { position: 'relative', zIndex: 10, flex: 'none' },
-  // Same round control, token and icon as the DSH composer's bottom-left add
-  // button, so the directory and the conversation input read as one control set
-  // instead of introducing a second shape and a text glyph. Declare only
-  // background-color: the shared [data-arkme-feedback] hover layer is a
-  // background-image gradient, and the `background` shorthand would reset it.
+  // Align the directory action with its search field, retaining the host's
+  // icon and feedback tokens. Avoid a background shorthand that resets hover.
   trigger: {
-    width: 28, height: 28, flex: 'none', padding: 0, display: 'grid', placeItems: 'center',
-    border: 0, borderRadius: 999, backgroundColor: 'var(--dsw-specific-selector, transparent)',
+    width: directorySearchLayout.field.height, height: directorySearchLayout.field.height,
+    flex: 'none', padding: 0, display: 'grid', placeItems: 'center', boxSizing: 'border-box',
+    border: 0, borderRadius: directorySearchLayout.field.borderRadius, backgroundColor: 'var(--dsw-specific-selector, transparent)',
     color: 'var(--dsw-alias-label-primary)', cursor: 'pointer', font: 'inherit', outline: 0,
   },
 
@@ -94,6 +93,7 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, on
   const icon = (base64: string) => <span aria-hidden style={maskIcon(base64, { width: 16, height: 16 })} />
   return <span data-arkme-notification-blocking-overlay={open ? 'true' : undefined}>
     <ArkmeActionMenu label={tr("添加")} open={open} anchor={anchor} align="end" onClose={onClose}
+      hoverCloseDelayMs={250}
       {...(getAnchorRect === undefined ? {} : { getAnchorRect })}
       {...(hoverAnchor === undefined ? {} : { hoverAnchor })}
       actions={[
@@ -186,7 +186,7 @@ export function ArkmeQuickAddButton({
         // missing event is an activation without pointer info, so it toggles.
         onPointerEnter={event => { if (event?.pointerType !== 'touch') openMenu() }}
         onClick={event => { if ((event?.detail ?? 0) === 0) setMenuOpen(open => !open); else openMenu() }}
-      ><IconPlusOutline16 size={14} aria-hidden /></button>}
+      ><IconPlusOutline16 size={20} aria-hidden /></button>}
       error={menuError}
       onNewDshSession={onNewDshSession === undefined ? undefined : () => {
         try { onNewDshSession(); setMenuError(''); setMenuOpen(false) }

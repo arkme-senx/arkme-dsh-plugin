@@ -250,6 +250,31 @@ it('reserves space for every native right-side group without reparenting them', 
   expect((row as HTMLElement).style.getPropertyValue('--arkme-header-utilities-width')).toBe('')
 })
 
+it('uses the conversation header width, not browser width, for the compact two-row layout', async () => {
+  const { header, draft } = mount()
+  header.innerHTML = '<div><div><nav><span><button disabled>任务</button></span></nav><div><div data-slot="conversation.session.header.actions">标准模式</div></div></div><div data-tools><button>工作区</button></div><div data-panel><button>侧栏</button></div></div>'
+  const row = header.firstElementChild!, button = header.querySelector<HTMLButtonElement>('[data-panel] button')!
+  const parent = button.parentElement
+  const clicked = vi.fn()
+  button.addEventListener('click', clicked)
+  await flush()
+  const css = document.querySelector('[data-arkme-session-style]')!.textContent!
+  expect(css).toContain('container: arkme-session-header / inline-size')
+  expect(css).toContain('@container arkme-session-header (max-width: 360px)')
+  expect(css).toContain('flex-wrap: wrap; row-gap: 8px')
+  expect(css).toContain('flex-basis: calc(40% - 1.6px)')
+  expect(css).toContain('flex-basis: calc(60% - 2.4px)')
+  expect(button.parentElement).toBe(parent)
+  expect(parent?.parentElement).toBe(row)
+  button.click()
+  expect(clicked).toHaveBeenCalledOnce()
+  expect(document.querySelector('textarea')).toBe(draft)
+  cleanup!(); cleanup = undefined
+  expect(header.hasAttribute('data-arkme-session-header')).toBe(false)
+  expect(document.querySelector('[data-arkme-session-style]')).toBeNull()
+  expect(button.parentElement).toBe(parent)
+})
+
 it('mirrors the selected row task status into the fixed title', async () => {
   const { trigger, rows } = mount()
   rows[0]!.innerHTML = rowWithStatus('<svg data-state="ongoing"></svg>', '进行中')

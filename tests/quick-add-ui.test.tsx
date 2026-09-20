@@ -14,8 +14,8 @@ describe('Arkme quick-add UI', () => {
     />)
     expect(markup).toContain('aria-label="添加联系人、群聊、发起通话或添加 Bot"')
     expect(markup).toContain('aria-haspopup="menu"')
-    expect(markup).toContain('width:28px;height:28px')
-    expect(markup).toContain('border-radius:999px')
+    expect(markup).toContain('width:40px;height:40px')
+    expect(markup).toContain('border-radius:11px')
     // Same DSH icon set as the composer's bottom-left add button, not a text glyph.
     expect(markup).toContain('M8.64453 1.5V7.34961H14.5V8.65039H8.64453V14.5H7.34473V8.65039H1.5V7.34961H7.34473V1.5H8.64453Z')
     expect(markup).not.toContain('>＋</button>')
@@ -23,11 +23,12 @@ describe('Arkme quick-add UI', () => {
     expect(markup).not.toContain('>添加联系人<')
   })
 
-  it('reuses the composer add control shape and icon instead of a second resource', () => {
+  it('matches the directory search geometry and reuses the host add icon', () => {
     expect(quickAddSource).toContain("IconNewChatOutline16, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'")
-    expect(quickAddSource).toContain('<IconPlusOutline16 size={14} aria-hidden />')
+    expect(quickAddSource).toContain('<IconPlusOutline16 size={20} aria-hidden />')
     expect(quickAddSource).toContain("backgroundColor: 'var(--dsw-specific-selector, transparent)'")
-    expect(quickAddSource).toContain('borderRadius: 999')
+    expect(quickAddSource).toContain('height: directorySearchLayout.field.height')
+    expect(quickAddSource).toContain('borderRadius: directorySearchLayout.field.borderRadius')
     // No new asset: the icon must come from the host primitive package.
     expect(quickAddSource).not.toMatch(/plus-icon|add\.svg|＋/)
   })

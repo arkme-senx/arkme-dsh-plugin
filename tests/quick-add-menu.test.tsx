@@ -21,6 +21,8 @@ beforeEach(() => {
 afterEach(() => {
   act(() => { root.unmount() })
   host.remove()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -72,15 +74,68 @@ it('keeps a hover-opened menu open when the pointer clicks the trigger', async (
   expect(menu()).toBeNull()
 })
 
-it('closes the hover-opened menu once the pointer leaves the trigger and menu', async () => {
+const move = async (x: number, y: number) => {
+  await act(async () => {
+    document.body.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: x, clientY: y }))
+  })
+}
+const advance = async (ms: number) => { await act(async () => { vi.advanceTimersByTime(ms) }) }
+const setRects = () => {
+  vi.spyOn(trigger(), 'getBoundingClientRect').mockReturnValue(new DOMRect(200, 24, 40, 40))
+  vi.spyOn(menu()!, 'getBoundingClientRect').mockReturnValue(new DOMRect(20, 68, 220, 160))
+}
+
+it('closes after 250ms outside without restarting the timer on every move', async () => {
   await render()
   await hover('pointerover')
+  vi.useFakeTimers()
+  await move(500, 500)
+  await advance(200)
   expect(menu()).not.toBeNull()
-  await act(async () => {
-    document.body.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 500, clientY: 500 }))
-  })
-  await flush()
+  await move(510, 510)
+  await advance(50)
   expect(menu()).toBeNull()
+})
+
+it('keeps the vertical crossing gap open even if the pointer pauses there', async () => {
+  await render()
+  await hover()
+  setRects()
+  vi.useFakeTimers()
+  for (const [x, y] of [[220, 60], [220, 66], [80, 90]]) {
+    await move(x!, y!)
+    await advance(500)
+    expect(menu()).not.toBeNull()
+  }
+})
+
+it.each([[220, 44], [80, 90], [220, 66]])('cancels closing when re-entering the trigger, menu or gap (%s,%s)', async (x, y) => {
+  await render()
+  await hover()
+  setRects()
+  vi.useFakeTimers()
+  await move(245, 66)
+  await advance(200)
+  await move(x, y)
+  await advance(500)
+  expect(menu()).not.toBeNull()
+})
+
+it.each(['Escape', 'outside', 'select'])('dismisses immediately on %s and cancels the old timer before reopening', async reason => {
+  await render()
+  await hover()
+  vi.useFakeTimers()
+  await move(500, 500)
+  await advance(100)
+  await act(async () => {
+    if (reason === 'Escape') trigger().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    else if (reason === 'outside') document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    else document.querySelector<HTMLButtonElement>('[role="menuitem"][aria-label="添加联系人"]')!.click()
+  })
+  expect(menu()).toBeNull()
+  await hover()
+  await advance(500)
+  expect(menu()).not.toBeNull()
 })
 
 it('closes the quick-add menu on an outside pointerdown in the host document', async () => {

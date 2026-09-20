@@ -15,7 +15,7 @@ function fixture(visible = true) {
   let resize = () => {}
   vi.stubGlobal('ResizeObserver', class {
     constructor(callback: () => void) { resize = callback }
-    observe() {} disconnect() {}
+    observe() {} unobserve() {} disconnect() {}
   })
   document.body.innerHTML = '<main style="overflow:hidden"><span id="seat"></span></main>'
   const seat = document.querySelector<HTMLElement>('#seat')!
@@ -151,4 +151,51 @@ it('keeps the native shell visible if the optional dropdown adapter stops recogn
   expect(surface.style.clipPath).toContain('M 356 0 H 1400 V 1000')
   stop?.(); stop = undefined
   expect(content.hasAttribute('data-arkme-harness-content-frame')).toBe(false)
+})
+
+it('bounds native fullscreen sidebars below the task header without moving the iframe or native content', async () => {
+  const { native, frame, seat, resize } = fixture()
+  const shell = native.querySelector('[data-arkme-session-frame]')!
+  const draft = native.querySelector('textarea')!
+  const headerSlot = native.createElement('div')
+  headerSlot.setAttribute('data-slot', 'conversation.session.header')
+  const header = native.createElement('header')
+  headerSlot.append(header); shell.prepend(headerSlot)
+  vi.spyOn(header, 'getBoundingClientRect').mockReturnValue(rect(356, 0, 1044, 73))
+  const panel = native.createElement('div')
+  panel.setAttribute('data-sidebar-right-panel', 'fullscreen')
+  panel.style.width = '100%'
+  panel.textContent = 'Files'
+  shell.querySelector('[data-rightbar-col]')!.append(panel)
+  const frameStyle = frame.style.cssText
+  await flush()
+  const value = (key: string) => native.documentElement.style.getPropertyValue(`--arkme-harness-${key}`)
+  expect(value('panel-top')).toBe('73px')
+  expect(value('panel-height')).toBe('927px')
+  // Resize and reposition the embedding seat, not the iframe viewport.
+  vi.mocked(seat.getBoundingClientRect).mockReturnValue(rect(184, 20, 536, 800))
+  vi.mocked(header.getBoundingClientRect).mockReturnValue(rect(184, 20, 536, 96))
+  resize()
+  expect(value('content-left')).toBe('184px')
+  expect(value('content-width')).toBe('536px')
+  expect(value('panel-top')).toBe('116px')
+  expect(value('panel-height')).toBe('704px')
+  const css = [...native.querySelectorAll('style')].map(style => style.textContent).join('')
+  expect(css).toContain('[data-arkme-harness-content-frame] [data-sidebar-right-panel="fullscreen"]')
+  expect(css).toContain('width: var(--arkme-harness-content-width) !important')
+  expect(css).not.toContain('[data-sidebar-right-panel="push"]')
+  expect(frame.style.cssText).toBe(frameStyle)
+  expect(native.querySelector('textarea')).toBe(draft)
+  expect(panel.textContent).toBe('Files')
+  header.setAttribute('aria-hidden', 'true')
+  await flush()
+  expect(value('panel-top')).toBe('20px')
+  expect(value('panel-height')).toBe('800px')
+  headerSlot.remove(); await flush()
+  expect(value('panel-top')).toBe('20px')
+  stop?.(); stop = undefined
+  expect(value('panel-top')).toBe('')
+  expect(value('panel-height')).toBe('')
+  expect(native.querySelector('style')).toBeNull()
+  expect(native.querySelector('textarea')).toBe(draft)
 })

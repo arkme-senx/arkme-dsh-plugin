@@ -202,7 +202,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       color: var(--dsw-alias-label-secondary, #626872); font-size: 12px; font-weight: 500; line-height: 18px;
     }
     [${PREFIX}status-label]:not(:empty) { display: inline-block; }
-    [${PREFIX}header] { padding-left: 20px; padding-right: 20px; }
+    [${PREFIX}header] { padding-left: 20px; padding-right: 20px; container: arkme-session-header / inline-size; }
     [${PREFIX}title-row] {
       --arkme-header-side: max(calc((100% - 8px) / 4), var(--arkme-header-utilities-width, 0px));
       display: flex !important; flex-wrap: nowrap; gap: 4px; align-items: flex-start;
@@ -225,6 +225,16 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     [${PREFIX}summary] [data-slot="conversation.session.header.actions"] > * { font-size: inherit; line-height: inherit; }
     [${PREFIX}turn-count] { display: inline-flex; align-items: center; white-space: nowrap; }
     [${PREFIX}summary] [data-slot="conversation.session.header.actions"] > * + [${PREFIX}turn-count]::before { content: '·'; margin: 0 7px; }
+    /* The embedded conversation can be much narrower than the browser. Keep
+       native controls in their React ancestry, wrapping only in that case. */
+    @container arkme-session-header (max-width: 360px) {
+      [${PREFIX}title-row] { flex-wrap: wrap; row-gap: 8px; }
+      [${PREFIX}identity] { flex-basis: calc(40% - 1.6px); }
+      [${PREFIX}title-cluster] { flex-basis: calc(60% - 2.4px); }
+      [${PREFIX}utilities] { margin-left: 0; margin-right: 0; max-width: 100%; flex-wrap: wrap; }
+      [${PREFIX}utilities-start] { margin-left: auto; }
+      [${PREFIX}title-nav] [${PREFIX}anchor] { display: inline-flex; min-width: 0; max-width: 100%; }
+    }
     [${PREFIX}anchor][${PREFIX}fallback] {
       width: max-content; position: absolute; top: 10px;
       left: 50%; transform: translateX(-50%); z-index: 10; max-width: calc(50% - 8px);

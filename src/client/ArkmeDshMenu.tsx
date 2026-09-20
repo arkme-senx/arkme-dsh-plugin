@@ -159,6 +159,8 @@ export function ArkmeActionMenu(props: {
   autoFocus?: boolean
   /** Hover menus dismiss immediately outside the trigger, menu and crossing gap. */
   hoverAnchor?: HTMLElement | undefined
+  /** Optional grace for pointer overshoot; other dismissal paths remain immediate. */
+  hoverCloseDelayMs?: number
 }) {
   useArkmeLocale()
   const open = props.open ?? true
@@ -272,12 +274,22 @@ export function ArkmeActionMenu(props: {
     const anchor = props.hoverAnchor
     if (!open || !anchor || typeof document === 'undefined') return
     const doc = anchor.ownerDocument
-    const close = () => closeRef.current()
+    let pending: ReturnType<typeof setTimeout> | undefined
+    const cancel = () => { if (pending !== undefined) { clearTimeout(pending); pending = undefined } }
+    const close = () => { cancel(); closeRef.current() }
+    const scheduleClose = () => {
+      if (!props.hoverCloseDelayMs) { close(); return }
+      // Do not restart on each pointermove: continuous movement outside must
+      // still close, while re-entering either target cancels the pending close.
+      if (pending === undefined) pending = setTimeout(close, props.hoverCloseDelayMs)
+    }
     const move = (event: PointerEvent) => {
       if (event.pointerType === 'touch') return
+      if (!anchor.isConnected) { close(); return }
       const list = menu.current
-      if (!anchor.isConnected || (list && !inMenuHoverRegion(event.clientX, event.clientY,
-        anchor.getBoundingClientRect(), list.getBoundingClientRect()))) close()
+      if (!list || inMenuHoverRegion(event.clientX, event.clientY,
+        anchor.getBoundingClientRect(), list.getBoundingClientRect())) cancel()
+      else scheduleClose()
     }
     const leave = (event: PointerEvent) => { if (event.relatedTarget === null) close() }
     const observer = new MutationObserver(() => { if (!anchor.isConnected) close() })
@@ -286,12 +298,13 @@ export function ArkmeActionMenu(props: {
     doc.addEventListener('pointerout', leave, true)
     doc.defaultView?.addEventListener('blur', close)
     return () => {
+      cancel()
       observer.disconnect()
       doc.removeEventListener('pointermove', move, true)
       doc.removeEventListener('pointerout', leave, true)
       doc.defaultView?.removeEventListener('blur', close)
     }
-  }, [open, props.hoverAnchor])
+  }, [open, props.hoverAnchor, props.hoverCloseDelayMs])
   const actions = props.actions.filter((action): action is ArkmeMenuAction => !!action)
   const items: MenuEntry[] = actions.map(action => 'type' in action ? action : ({
     id: action.id, label: typeof document === 'undefined' || typeof document.createElement !== 'function' ? action.label : <span ref={node => {
