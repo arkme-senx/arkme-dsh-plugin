@@ -173,7 +173,7 @@ export class FileTransfers {
       await this.prune(userId, state)
       const ordinaryFiles = Object.values(state.files).filter(file => file.longArticle !== true)
       const used = ordinaryFiles.reduce((sum, file) => sum + file.size, 0)
-      if (!longArticle && (used + metadata.size > Math.max(this.policy.maxFileBytes, 1024 * 1024 * 1024) || ordinaryFiles.length >= 256)) {
+      if (!longArticle && used + metadata.size > Math.max(this.policy.maxFileBytes, 1024 * 1024 * 1024)) {
         throw fail('file-cache-full', '本地附件空间不足，请移除不再需要的草稿或失败任务')
       }
       const info = await stat(temporaryPath)
