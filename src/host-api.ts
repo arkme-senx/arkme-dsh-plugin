@@ -2356,6 +2356,15 @@ export async function dispatchArkmeHostOperation(
     case 'calls.history.detail': return await service.callDetail(
       requiredCallParam(params, 'callRef', 'call-ref-invalid', 4096),
     )
+    case 'calls.share.ensure': return await service.callShareLink(
+      requiredCallParam(params, 'callRef', 'call-ref-invalid', 4096),
+      requestSignal,
+    )
+    case 'calls.share.viewers': return await service.callShareViewers(
+      requiredCallParam(params, 'callRef', 'call-ref-invalid', 4096),
+      stringParam(params, 'cursor').slice(0, 128),
+      requestSignal,
+    )
     case 'calls.history.summary.retry': return await service.retryCallSummary(
       requiredCallParam(params, 'callRef', 'call-ref-invalid', 4096),
     )

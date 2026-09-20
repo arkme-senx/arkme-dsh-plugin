@@ -406,3 +406,68 @@ describe('CallHistoryService', () => {
     })
   })
 })
+
+describe('CallHistoryService detail sharing', () => {
+ it('converts only the current account reference to a stable share URL and paginates owner viewers', async () => {
+  const shareRef = `${'a'.repeat(24)}.${'b'.repeat(64)}`
+  const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+   const url = String(input)
+   if (url.endsWith('/api/v1/call/history-aggregate')) return envelope({items:[{stable_id:'trtc:room-1',trtc:{room_id:'room-1',caller_user_id:42,callee_user_ids:[]}}],has_more:false})
+   if (url.endsWith('/call-detail-share/ensure')) { expect(JSON.parse(String(init?.body))).toEqual({room_id:'room-1'}); return envelope({share_ref:shareRef}) }
+   if (url.endsWith('/call-detail-share/viewers')) { expect(JSON.parse(String(init?.body))).toEqual({room_id:'room-1',cursor:'1750000000000:999999999999999999999999',limit:20}); return envelope({items:[{view_id:'a'.repeat(24),user_id:7,display_name:'访客',viewed_at_ms:1750000000001}],next_cursor:''}) }
+   return envelope({items:[],has_more:false})
+  })
+  const api = service(fetchImpl)
+  const page = await api.listCallHistory({includeRecentContacts:false})
+  const ref = page.items[0]!.callRef
+  expect(await api.shareLink(ref)).toEqual({url:`https://jotmo-app.senguo.me/share/call/${shareRef}`})
+  expect(await api.shareViewers(ref,'1750000000000:999999999999999999999999')).toEqual({items:[{viewId:'a'.repeat(24),userId:7,displayName:'访客',viewedAtMillis:1750000000001}],nextCursor:''})
+  await expect(api.shareLink('room-1')).rejects.toThrow()
+  await expect(api.shareViewers('room-1')).rejects.toThrow()
+ })
+ it('rejects another account reference before issuing share requests', async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+  const api = service(fetchImpl)
+  const foreign = await api.timelineCallRecord({ crd: { ri: 'other-room', mt: 'Audio', rs: 'Cancel', cr: 77 } }, 77)
+  fetchImpl.mockClear()
+  await expect(api.shareLink(foreign!.callRef!)).rejects.toMatchObject({ code: 'call-ref-invalid' })
+  await expect(api.shareViewers(foreign!.callRef!)).rejects.toMatchObject({ code: 'call-ref-invalid' })
+  expect(fetchImpl).not.toHaveBeenCalled()
+ })
+ it('does not turn malformed owner responses into a fake copied link or empty viewer list', async () => {
+  const fetchImpl = vi.fn<typeof fetch>(async input => String(input).endsWith('/api/v1/call/history-aggregate') ? envelope({items:[{stable_id:'trtc:room-1',trtc:{room_id:'room-1',caller_user_id:42,callee_user_ids:[]}}],has_more:false}) : envelope({}))
+  const api = service(fetchImpl)
+  const page = await api.listCallHistory({includeRecentContacts:false})
+  await expect(api.shareLink(page.items[0]!.callRef)).rejects.toThrow('分享链接暂不可用')
+  await expect(api.shareViewers(page.items[0]!.callRef)).rejects.toThrow('查看记录暂不可用')
+ })
+})
+
+describe('call share viewer avatars', () => {
+ it.each([false, true])('batches avatar profiles and preserves history when avatar lookup fails=%s', async fail => {
+  const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+   const url = String(input)
+   if (url.endsWith('/api/v1/call/history-aggregate')) return envelope({ items: [{ stable_id: 'trtc:room-1', trtc: { room_id: 'room-1', caller_user_id: 42, callee_user_ids: [] } }], has_more: false })
+   if (url.endsWith('/call-detail-share/viewers')) return envelope({ items: [7, 8].map(user_id => ({ view_id: String(user_id).repeat(24), user_id, display_name: user_id === 7 ? '公开访客' : '', viewed_at_ms: 1750000000001 })), next_cursor: '' })
+   if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) {
+    if (fail) throw new Error('profiles unavailable')
+    return envelope({ items: [7, 8].map(user_id => ({ user_id, nick_name: '资料昵称', head_img: `https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/${user_id}/avatar.png?x-oss-signature=avatar` })) })
+   }
+   return envelope({ items: [], has_more: false })
+  })
+  const api = service(fetchImpl)
+  const page = await api.listCallHistory({ includeRecentContacts: false })
+  fetchImpl.mockClear()
+  const result = await api.shareViewers(page.items[0]!.callRef)
+  expect(result.items.map(item => item.displayName)).toEqual(['公开访客', '即我用户'])
+  const lookups = fetchImpl.mock.calls.filter(([input]) => String(input).endsWith('/api/v1/auth/get-public-users-by-ids'))
+  if (!fail) expect(lookups).toHaveLength(1)
+  expect(lookups.length).toBeGreaterThan(0)
+  for (const [, init] of lookups) expect(JSON.parse(String(init?.body))).toEqual({ user_ids: [7, 8] })
+  expect(JSON.stringify(result)).not.toContain('x-oss-signature')
+  for (const item of result.items) {
+   if (fail) expect(item.avatarRef).toBeUndefined()
+   else expect(item.avatarRef).toMatch(/^arkme-profile-image-v1\./)
+  }
+ })
+})

@@ -1751,3 +1751,14 @@ it('routes long article images and durable draft metadata without trusting prepa
   }, undefined, undefined, undefined, undefined, signal)
   expect(service.recordEditHistoryPage).toHaveBeenCalledWith('source', 'action', 100, signal)
  })
+
+describe('call sharing host cancellation', () => {
+  it('passes request cancellation to both sharing operations', async () => {
+    const service = { callShareLink: vi.fn(), callShareViewers: vi.fn() }
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'calls.share.ensure', { callRef: 'ref' }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'calls.share.viewers', { callRef: 'ref', cursor: '10:2' }, undefined, undefined, undefined, undefined, signal)
+    expect(service.callShareLink).toHaveBeenCalledWith('ref', signal)
+    expect(service.callShareViewers).toHaveBeenCalledWith('ref', '10:2', signal)
+  })
+})

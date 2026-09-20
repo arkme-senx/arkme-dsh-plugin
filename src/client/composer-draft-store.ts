@@ -300,6 +300,17 @@ export class ArkmeComposerDraftStore {
     } catch { /* An unavailable browser store must not prevent editing a local draft. */ }
   }
 
+  /** A per-key snapshot for desktop replication; includes ordinary text drafts. */
+  entries(): ReadonlyMap<string, ArkmeComposerDraftSnapshot> { return new Map(this.drafts) }
+
+  applyRemote(key: string, value: unknown): void {
+    if (value === null) { if (this.drafts.delete(key)) this.publish(); return }
+    const draft = value as ArkmeComposerDraftSnapshot | undefined
+    if (!draft || typeof draft.text !== 'string' || !Array.isArray(draft.attachments)
+      || !Array.isArray(draft.mentions) || !Array.isArray(draft.emojis)) return
+    this.storeOrDelete(key, draft)
+  }
+
   readonly getRevision = (): number => this.revision
 
   readonly subscribe = (listener: () => void): (() => void) => {

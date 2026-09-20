@@ -41,19 +41,28 @@ export class ComposerArticleStore {
     }
     return this.states.get(key)
   }
+  entries(): ReadonlyMap<string, ComposerArticleState> { return new Map(this.states) }
+  applyRemote(key: string, value: unknown): void {
+    if (value === null) { this.write(key, undefined); return }
+    const state = value as ComposerArticleState | undefined
+    if (!state || !validArticle(state.article) || typeof state.recordUid !== 'string'
+      || typeof state.relationUid !== 'string' || typeof state.sending !== 'boolean') return
+    this.write(key, state)
+  }
   set(key: string, article: ComposerArticle): void {
     if (this.get(key)?.sending) return
     this.write(key, { article, recordUid: article.kind === 'new' ? article.draft.recordUid : crypto.randomUUID(),
       relationUid: article.kind === 'new' ? article.draft.relationUid : crypto.randomUUID(), sendAtMillis: Date.now(), sending: false, error: '' })
   }
   remove(key: string): void { if (!this.get(key)?.sending) this.write(key, undefined) }
-  async send(key: string, sourceRef: string, expectedUserId: number, expectedEnvironment: string): Promise<ArkmeSourceSendResult | undefined> {
+  async send(key: string, sourceRef: string, expectedUserId: number, expectedEnvironment: string, consumed?: () => Promise<void>): Promise<ArkmeSourceSendResult | undefined> {
     const state = this.get(key)
     const sameAccount = () => { const auth = arkmeAuthStore.getSnapshot().auth; return auth?.status === 'authenticated' && auth.userId === expectedUserId && auth.environment === expectedEnvironment }
     if (!state || state.sending || !sameAccount()) return undefined
     const sending = { ...state, sending: true, error: '' }
     this.write(key, sending)
     try {
+      if (consumed) await consumed()
       const article = state.article
       const result = article.kind === 'existing'
         ? await callArkme<ArkmeSourceSendResult>('source.forward-messages', {
@@ -65,16 +74,21 @@ export class ComposerArticleStore {
           title: article.draft.title, textContent: article.draft.textContent, textFormat: article.draft.textFormat,
           images: article.draft.images, recordDurationMillis: article.draft.durationMillis,
         })
-      if (this.states.get(key) === sending) this.write(key, undefined)
+      if (this.ownsSubmission(key, sending)) this.write(key, undefined)
       // Delete only the matching local editor draft, not a newer article opened elsewhere.
       if (article.kind === 'new' && sameAccount()) {
         await callArkme('source.long-article.draft.delete', { sourceRef, expectedRecordUid: state.recordUid }).catch(() => {})
       }
       return sameAccount() ? result : undefined
     } catch (error) {
-      if (this.states.get(key) === sending) this.write(key, { ...state, sending: false, error: error instanceof Error ? error.message : '长文发送失败，请重试' })
+      if (this.ownsSubmission(key, sending)) this.write(key, { ...state, sending: false, error: error instanceof Error ? error.message : '长文发送失败，请重试' })
       return undefined
     }
+  }
+  private ownsSubmission(key: string, state: ComposerArticleState): boolean {
+    const current = this.states.get(key)
+    // Replication clones objects. Submission identity survives renderer boundaries.
+    return current?.sending === true && current.recordUid === state.recordUid && current.relationUid === state.relationUid
   }
   private write(key: string, state: ComposerArticleState | undefined): void {
     if (state) this.states.set(key, state); else this.states.delete(key)

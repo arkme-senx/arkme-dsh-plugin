@@ -48,3 +48,22 @@ it('publishes new drafts only on send with stable IDs and conditionally clears o
   expect(mock.call.mock.calls[0]![1]).toMatchObject({ recordUid: 'record-123', relationUid: 'relation-123', expectedUserId: 42 })
   expect(mock.call.mock.calls[1]).toEqual(['source.long-article.draft.delete', { sourceRef: 'chat', expectedRecordUid: 'record-123' }])
 })
+it('settles an in-flight article after another window replays a cloned snapshot', async () => {
+ const store = new ComposerArticleStore(); store.set('key',existing)
+ let resolve!: (value: unknown) => void
+ mock.call.mockImplementationOnce(() => new Promise(done => {resolve=done}))
+ const sending = store.send('key','chat-target',42,'prod')
+ store.applyRemote('key',structuredClone(store.get('key')))
+ resolve({itemUid:'sent',localState:'synced'}); await sending
+ expect(store.get('key')).toBeUndefined()
+})
+it('restores retry state after a replayed article submission fails', async () => {
+ const store = new ComposerArticleStore(); store.set('key',existing)
+ let reject!: (reason: Error) => void
+ mock.call.mockImplementationOnce(() => new Promise((_done,fail) => {reject=fail}))
+ const sending = store.send('key','chat-target',42,'prod')
+ const identity=store.get('key')!.recordUid
+ store.applyRemote('key',structuredClone(store.get('key')))
+ reject(new Error('offline')); await sending
+ expect(store.get('key')).toMatchObject({sending:false,error:'offline',recordUid:identity})
+})

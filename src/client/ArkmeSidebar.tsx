@@ -1,3 +1,5 @@
+import { conversationWindowRequested, navigateConversationWindow } from './conversation-window.js'
+import { conversationSending, withConversationSend } from './conversation-window-sync.js'
 import { DeepSeekLogoMark } from './ArkmeDshAgentInputMarker.js'
 import { createNativeCopyLinkEntry, NATIVE_COPY_LINK_ENTRY, type NativeCopyLinkWindow } from './native-copy-link-entry.js'
 import { NATIVE_FORWARD_ENTRY, isNativeForwardCaller, nativeForwardPreview, type NativeForwardDelivery, type NativeForwardWindow, type NativeForwardEntry, type NativeForwardResult } from './native-forward-entry.js'
@@ -2800,14 +2802,15 @@ export function ArkmeSurface({
   // Transport is per message.  It must never lock the next draft while a previous
   // message waits for the server, otherwise fast keyboard input is dropped.
   const archiveReadOnly = isArkmeDSHInputTopic(source) || isArkmeDSHInputTopic(selectedSource)
-  const canSend = activeRecordReeditComposer === undefined
+  useSyncExternalStore(conversationSending.subscribe, conversationSending.getRevision, conversationSending.getRevision)
+  const canSend = !conversationSending.has(composerDraftKey) && (activeRecordReeditComposer === undefined
     ? !archiveReadOnly && !directAdmission.blocked && (pendingArticle ? !pendingArticle.sending : arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles))
     : activeRecordReeditComposer.snapshot !== undefined
       && !activeRecordReeditComposer.loading
       && !activeRecordReeditComposer.busy
       && !preparingReeditFiles
       && (activeRecordReeditComposer.textContent.trim() !== ''
-        || activeRecordReeditComposer.attachments.length > 0 || activeRecordReeditComposer.snapshot.hasVoice === true)
+        || activeRecordReeditComposer.attachments.length > 0 || activeRecordReeditComposer.snapshot.hasVoice === true))
   const pendingComposerFocusDraftKeyRef = useRef<string>()
   const [compactNavigation, setCompactNavigation] = useState(false)
   const [submitBusy, setSubmitBusy] = useState(false)
@@ -4740,18 +4743,23 @@ export function ArkmeSurface({
   }, [])
 
   const send = async () => {
+    const scope = captureComposerAsyncScope()
+    try { await withConversationSend(composerDraftKey, async consumed => { if (sameComposerAsyncScope(scope)) await sendCore(consumed) }) }
+    catch (caught) { setError(errorMessage(caught)) }
+  }
+  const sendCore = async (consumed: () => Promise<void>) => {
     if (activeRecordReeditComposer === undefined && directAdmission.blocked) return
     if (activeRecordReeditComposer !== undefined) {
       await commitRecordReedit()
       return
     }
     if (source === undefined || composerDraftKey === undefined) return
-    if (pendingArticle && articleDraftKey && authenticatedUserId !== undefined) {
+    if (composerArticleStore.get(articleDraftKey) && articleDraftKey && authenticatedUserId !== undefined) {
       const scope = captureComposerAsyncScope()
       const auth = arkmeAuthStore.getSnapshot().auth
       if (!sameComposerAsyncScope(scope) || auth?.status !== 'authenticated') return
       messagePreparing.stop()
-      const result = await composerArticleStore.send(articleDraftKey, source.sourceRef, authenticatedUserId, auth.environment)
+      const result = await composerArticleStore.send(articleDraftKey, source.sourceRef, authenticatedUserId, auth.environment, consumed)
       if (!result || !sameComposerAsyncScope(scope)) return
       // Read the canonical forwarded/published card; do not synthesize article text as a normal message.
       const page = await callArkme<ArkmeTimelinePage>('source.timeline', { sourceRef: source.sourceRef, limit: 50 }).catch(() => undefined)
@@ -4801,6 +4809,7 @@ export function ArkmeSurface({
     // Take the draft before any network await.  The next keystroke now belongs to a
     // fresh draft and can be sent independently instead of being swallowed by a busy lock.
     const pendingDraft = arkmeComposerDraftStore.take(targetDraftKey)
+    try { await consumed() } catch (caught) { if (sameTargetAccount()) arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft); throw caught }
     // The reference belongs to the submitted draft, not the next message. Do not
     // leave it visible until the network request and attachment cleanup finish.
     if (extensionTarget !== undefined && sameTargetComposer()) {
@@ -5300,6 +5309,13 @@ export function ArkmeSurface({
     })
   }, [aiPolishNotices, aiPolishSettings, detailItemUid, hasMore, items, loadTimeline, newerCursor, newerHasMore, nextCursor, source, sourceIsChat, sourceProjectionRevision])
   const activateSource = useCallback((nextSource: ArkmeTimelinePage['source']) => {
+    if (conversationWindowRequested()) {
+      void navigateConversationWindow(nextSource).then(result => {
+        if (result.destination === 'main') setError(`独立窗口打开失败（${result.reason}），已在主窗口打开该会话`)
+      }).catch(caught => setError(errorMessage(caught)))
+      return
+    }
+
     // The directory owns the middle conversation list. Update it before selecting
     // the source so sources opened outside that list (for example, from World)
     // have an entry to select immediately instead of waiting for its cached refresh.

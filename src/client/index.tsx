@@ -1,3 +1,6 @@
+import { registerConversationWindowRoot } from './conversation-window-root.js'
+import { conversationWindowRequested } from './conversation-window.js'
+import { bindConversationWindows } from './conversation-window-sync.js'
 import { createRoot } from 'react-dom/client'
 import { ArkmeLongArticleWindow } from './ArkmeLongArticleWindow.js'
 import { bindLongArticleWindowAccount, longArticleWindowRequested } from './long-article-window.js'
@@ -99,6 +102,14 @@ function logNotificationActivation(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
+  if (conversationWindowRequested()) {
+    ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: conversation language')
+    ctx.effect(() => bindConversationWindows(), 'dsh-arkme: conversation sync')
+    ctx.effect(() => bindAttachmentPreviewAccount(), 'dsh-arkme: conversation preview lifetime')
+    registerConversationWindowRoot(ctx)
+    return
+  }
+
   if (longArticleWindowRequested()) {
     ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: article language')
     ctx.effect(() => {
@@ -139,6 +150,7 @@ export function apply(ctx: ClientContext): void {
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
   ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: product language')
 
+  ctx.effect(() => bindConversationWindows(), 'dsh-arkme: conversation window lifetime')
   ctx.effect(() => bindLongArticleWindowAccount(), 'dsh-arkme: article window account')
   ctx.effect(() => bindAttachmentPreviewAccount(), 'dsh-arkme: attachment preview account lifetime')
   ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update bridge')

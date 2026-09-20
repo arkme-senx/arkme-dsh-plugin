@@ -1,3 +1,4 @@
+import { conversationWindowBridge, conversationWindowRequested } from './conversation-window.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useState, type CSSProperties } from 'react'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
@@ -29,6 +30,7 @@ export function ArkmePrivateCallMenu({
   const [open, setOpen] = useState(false)
   const start = (mediaType: 'audio' | 'video') => {
     setOpen(false)
+    if (conversationWindowRequested()) { void conversationWindowBridge()?.requestCall(mediaType).catch(() => {}); return }
     outgoingCallUi.request({ sourceRef, displayName, mediaType })
   }
   return <ArkmeActionMenu open={open} label={tr("选择通话方式")} align="end" onClose={() => setOpen(false)}

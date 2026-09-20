@@ -1,3 +1,4 @@
+import { conversationWindowBridge, conversationWindowRequested } from './conversation-window.js'
 import { callArkme as callProvider } from '../sdk/index.js'
 import type { PublicRecordingImportCurrentItem, PublicRecordingImportJob } from '../recording-import-shared.js'
 import type { ArkmePluginOperation } from '../types.js'
@@ -227,5 +228,6 @@ export async function callArkme<T>(
   params?: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<T> {
+  if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
   return await callProvider<T>(operation as ArkmePluginOperation, params, signal)
 }

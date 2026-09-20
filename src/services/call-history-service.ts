@@ -2,6 +2,8 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes }
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeCallDetail,
+  ArkmeCallShareLink,
+  ArkmeCallShareViewers,
   ArkmeCallHistoryItem,
   ArkmeCallHistoryOptions,
   ArkmeCallHistoryPage,
@@ -357,6 +359,49 @@ export class CallHistoryService {
     const session = await this.runtime.requireSession()
     const payload = await this.openCallRef(callRef, session.userId)
     return await this.detailByRoomId(payload.roomId, payload, session, signal)
+  }
+
+  async shareLink(callRef: string, signal?: AbortSignal): Promise<ArkmeCallShareLink> {
+    const session = await this.runtime.requireSession()
+    const payload = await this.openCallRef(callRef, session.userId)
+    const data = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
+      '/api/v1/trtc/call-detail-share/ensure', { room_id: payload.roomId }, session, signal,
+      { scope: this.runtime.requestScope(session.userId), lane: 'write', service: 'webrtc' },
+    )
+    const shareRef = stringValue(data.share_ref)
+    if (!/^[a-f0-9]{24}\.[a-f0-9]{64}$/.test(shareRef)) {
+      throw new ArkmePluginError('call-share-invalid', '分享链接暂不可用，请重试', true, 502)
+    }
+    const origin = this.runtime.config.environment === 'prod' ? 'https://jiwo.cc' : 'https://jotmo-app.senguo.me'
+    return { url: `${origin}/share/call/${shareRef}` }
+  }
+
+  async shareViewers(callRef: string, cursor = '', signal?: AbortSignal): Promise<ArkmeCallShareViewers> {
+    const session = await this.runtime.requireSession()
+    const payload = await this.openCallRef(callRef, session.userId)
+    const data = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
+      '/api/v1/trtc/call-detail-share/viewers', { room_id: payload.roomId, cursor, limit: 20 }, session, signal,
+      { scope: this.runtime.requestScope(session.userId), lane: 'interactive-read', service: 'webrtc' },
+    )
+    if (!Array.isArray(data.items) || typeof data.next_cursor !== 'string') {
+      throw new ArkmePluginError('call-viewers-invalid', '查看记录暂不可用，请重试', true, 502)
+    }
+    const items = data.items.map(value => {
+      const row = objectValue(value)
+      const viewId = stringValue(row.view_id)
+      const userId = numberValue(row.user_id)
+      const viewedAtMillis = numberValue(row.viewed_at_ms)
+      if (!/^[a-f0-9]{24}$/.test(viewId) || !Number.isSafeInteger(userId) || userId <= 0 || !Number.isSafeInteger(viewedAtMillis) || viewedAtMillis <= 0) {
+        throw new ArkmePluginError('call-viewers-invalid', '查看记录暂不可用，请重试', true, 502)
+      }
+      return { viewId, userId, viewedAtMillis, displayName: stringValue(row.display_name).trim() || '即我用户' }
+    })
+    const profiles = await this.profile.publicProfilesByUserIds(items.map(item => item.userId), session, signal).catch(() => new Map())
+    const viewers = await Promise.all(items.map(async item => ({
+      ...item,
+      ...(profiles.get(item.userId)?.avatarUrl === undefined ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, item.userId) }),
+    })))
+    return { items: viewers, nextCursor: data.next_cursor }
   }
 
   async timelineCallRecord(raw: unknown, userId: number): Promise<ArkmeTimelineItem['callRecord']> {

@@ -26,7 +26,7 @@ const expectedPublicMethods = [
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'createShareCallLink', 'prepareCallReceiver', 'claimIncomingCall',
-  'listCallHistory', 'callDetail', 'retryCallSummary',
+  'listCallHistory', 'callDetail', 'callShareLink', 'callShareViewers', 'retryCallSummary',
   'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'publicAvatarPresentationsByArkmeIds', 'extensionAuthors', 'listExtensionReviews',
   'backgroundSoundPreference', 'updateBackgroundSoundPreference',
   'topicHomeVisibility',
