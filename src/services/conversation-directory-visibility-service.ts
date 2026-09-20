@@ -38,11 +38,37 @@ export class ConversationDirectoryVisibilityService {
     private readonly invalidation: ConversationDirectoryVisibilityInvalidationPort,
   ) {}
 
-  async query(
+  async query(sourceRefs: readonly string[], botRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeConversationDirectoryVisibility> {
+    const { items } = await this.read(sourceRefs, botRefs, signal)
+    return { items }
+  }
+
+  /** Host-only targeting metadata must never be returned by the public visibility query. */
+  async queryAffected(
+    sourceRefs: readonly string[], botRefs: readonly string[],
+    expected: ReadonlyMap<string, number>, signal: AbortSignal,
+  ): Promise<ArkmeConversationDirectoryVisibility & { matched: string[] }> {
+    // ponytail: scan loaded Bot handles locally; add an owner index only if profiling warrants it.
+    const affectedBots: string[] = []
+    for (let offset = 0; offset < botRefs.length; offset += 200) {
+      signal.throwIfAborted()
+      const chunk = botRefs.slice(offset, offset + 200)
+      const resolved = await Promise.allSettled(chunk.map(ref => this.bot.botConversationListPreferenceEntry(ref)))
+      resolved.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          if (isFatalResolutionError(result.reason)) throw result.reason
+        } else if (expected.has(conversationListPreferenceRefKey(result.value.ref))) affectedBots.push(chunk[index]!)
+      })
+    }
+    return await this.read(sourceRefs, affectedBots, signal, expected)
+  }
+
+  private async read(
     sourceRefs: readonly string[],
     botRefs: readonly string[],
     signal?: AbortSignal,
-  ): Promise<ArkmeConversationDirectoryVisibility> {
+    expected?: ReadonlyMap<string, number>,
+  ): Promise<ArkmeConversationDirectoryVisibility & { matched: string[] }> {
     if (sourceRefs.length + botRefs.length > MAX_DIRECTORY_VISIBILITY_REFS) {
       throw new ArkmePluginError('conversation-directory-visibility-too-large', '会话列表状态查询数量过多', false, 400)
     }
@@ -58,9 +84,11 @@ export class ConversationDirectoryVisibilityService {
     })))
     const fatal = resolved.find(result => result.status === 'rejected' && isFatalResolutionError(result.reason))
     if (fatal?.status === 'rejected') throw fatal.reason
-    const entries = resolved.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])
+    const entries = resolved.flatMap(result => result.status === 'fulfilled'
+      && (expected === undefined || expected.has(conversationListPreferenceRefKey(result.value.ref))) ? [result.value] : [])
+    const matched = [...new Set(entries.map(entry => conversationListPreferenceRefKey(entry.ref)))]
     if (entries.length === 0) {
-      return { items: handles.map(handle => ({ ...handle, hidden: false })) }
+      return { items: expected === undefined ? handles.map(handle => ({ ...handle, hidden: false })) : [], matched }
     }
     const ownerUserId = entries[0]!.ownerUserId
     if (entries.some(entry => entry.ownerUserId !== ownerUserId)) {
@@ -71,6 +99,9 @@ export class ConversationDirectoryVisibilityService {
       { ownerUserId, ...(signal === undefined ? {} : { signal }) },
     )
     const snapshots = new Map(owner.map(item => [conversationListPreferenceRefKey(item.ref), item]))
+    if (expected !== undefined && matched.some(key => (snapshots.get(key)?.revision ?? -1) < expected.get(key)!)) {
+      throw new ArkmePluginError('directory-preference-stale', '会话列表状态尚未同步', true, 409)
+    }
     const evidenceByOwnerRef = new Map<string, { sequence: number; activityAtMillis: number }>()
     for (const entry of entries) {
       const key = conversationListPreferenceRefKey(entry.ref)
@@ -92,7 +123,9 @@ export class ConversationDirectoryVisibilityService {
     if (staleSnapshots.length > 0) {
       void this.preference.restoreIfUnchanged(staleSnapshots, { ownerUserId }).catch(() => undefined)
     }
-    const items = resolved.map((result, index) => {
+    const items = resolved.flatMap((result, index) => {
+      if (expected !== undefined && (result.status !== 'fulfilled'
+        || !expected.has(conversationListPreferenceRefKey(result.value.ref)))) return []
       if (result.status === 'rejected') return { ...handles[index]!, hidden: false }
       const entry = result.value
       const key = conversationListPreferenceRefKey(entry.ref)
@@ -103,7 +136,7 @@ export class ConversationDirectoryVisibilityService {
         && conversationListPreferenceIsDismissed(snapshot, evidence)
       return { entryKind: entry.entryKind, entryRef: entry.entryRef, hidden }
     })
-    return { items }
+    return { items, matched }
   }
 
   async setVisibility(

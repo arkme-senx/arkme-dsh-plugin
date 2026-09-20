@@ -481,3 +481,37 @@ it('revalidates the local directory cache on same-Host reconnect without forcing
     expect(refresh).toHaveBeenLastCalledWith({ force: false })
   } finally { await act(async () => { renderer.unmount() }) }
 })
+
+it('uses Host directory deltas for managed pin and visibility events without another Browser read', async () => {
+  let channel!: { onmessage: ((event: MessageEvent<string>) => void) | null }
+  vi.stubGlobal('WebSocket', class {
+    onopen = null; onmessage = null
+    constructor() { channel = this }
+    close() {}
+  })
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  const read = vi.spyOn(clientApi, 'callArkme')
+  const refresh = vi.spyOn(arkmeChatDirectory, 'refreshRoot').mockResolvedValue([])
+  const auth: ArkmeAuthSnapshot = { status: 'authenticated', userId: 42, environment: 'test' }
+  function Harness() {
+    useArkmeRealtimeClientEvents(auth, 1, false)
+    const state = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot)
+    return createElement('div', null, state.sources[0]?.isPinned ? '已置顶' : '未置顶')
+  }
+  let renderer!: ReactTestRenderer
+  const emit = async (event: unknown) => { await act(async () => { channel.onmessage?.({ data: JSON.stringify(event) } as MessageEvent<string>) }) }
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    read.mockClear(); refresh.mockClear()
+    await emit({ type: 'chat-policy-invalidated', revision: 1, refresh: 'none' })
+    await emit({ type: 'conversation-list-preference-invalidated', revision: 2, refresh: 'none' })
+    await emit({ type: 'directory-update', revision: 3, page: { directory: 'root', items: [
+      { sourceRef: 'ref', sourceKey: 'key', kind: 'private_chat', displayName: 'Chat', activeAtMillis: 1, unreadCount: 0, isPinned: true },
+    ], hasMore: false, projection: { revision: 3, phase: 'complete', cachedAtMillis: 1, bots: [],
+      visibility: [{ entryKind: 'source', entryRef: 'ref', hidden: true }] } } })
+    expect(renderer.toJSON()).toMatchObject({ children: ['已置顶'] })
+    expect(arkmeChatDirectory.getSnapshot().projection?.visibility).toEqual([{ entryKind: 'source', entryRef: 'ref', hidden: true }])
+    expect(read).not.toHaveBeenCalled()
+    expect(refresh).not.toHaveBeenCalled()
+  } finally { if (renderer !== undefined) await act(async () => renderer.unmount()) }
+})

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { conversationListPreferenceRefKey } from '../../src/services/conversation-list-preference-service.js'
 import {
   ConversationDirectoryVisibilityService,
   type ConversationDirectoryVisibilityInvalidationPort,
@@ -245,3 +246,31 @@ function snapshot(
     updatedAtMillis: 110,
   }
 }
+
+
+describe('targeted visibility revision boundary', () => {
+  it('rejects a snapshot older than the event and never restores it', async () => {
+    const preference = preferencePort([snapshot(chatRef, 2, 4, 100)])
+    const service = createService(preference, entry(chatRef, 5, 101), entry(botRef, 0, 100))
+    const old = snapshot(chatRef, 2, 4, 100)
+    await expect(service.queryAffected(['source-ref'], [], new Map([[conversationListPreferenceRefKey(chatRef), old.revision + 1]]), new AbortController().signal)).rejects.toMatchObject({ code: 'directory-preference-stale' })
+    expect(preference.restoreIfUnchanged).not.toHaveBeenCalled()
+  })
+
+  it('queries only the affected Bot identity and keeps raw identities out of the public result', async () => {
+    const preference = preferencePort([snapshot(botRef, 2, 0, 100)])
+    const service = createService(preference, entry(chatRef, 4, 100), entry(botRef, 0, 100))
+    const result = await service.queryAffected(['source-ref'], ['bot-ref'], new Map([[conversationListPreferenceRefKey(botRef), 1]]), new AbortController().signal)
+    expect(result.items).toEqual([{ entryKind: 'bot', entryRef: 'bot-ref', hidden: true }])
+    expect(preference.query).toHaveBeenCalledWith([botRef], expect.objectContaining({ ownerUserId: 42 }))
+    expect(await service.query([], ['bot-ref'])).not.toHaveProperty('matched')
+  })
+
+  it('shares current activity evidence between a chat row and its Bot alias', async () => {
+    const preference = preferencePort([snapshot(chatRef, 2, 4, 100)])
+    const service = createService(preference, entry(chatRef, 5, 101), entry(chatRef, 4, 100))
+    const result = await service.queryAffected(['source-ref'], ['bot-ref'], new Map([[conversationListPreferenceRefKey(chatRef), 1]]), new AbortController().signal)
+    expect(result.items.map(item => item.hidden)).toEqual([false, false])
+    expect(result.matched).toEqual([conversationListPreferenceRefKey(chatRef)])
+  })
+})

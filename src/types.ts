@@ -3525,9 +3525,13 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'chat-policy-invalidated'
   revision: number
+  /** Host owns the targeted refresh; consumers wait for directory-update. */
+  refresh?: 'none'
 } | {
   type: 'conversation-list-preference-invalidated'
   revision: number
+  /** Host owns the targeted refresh; consumers wait for directory-update. */
+  refresh?: 'none'
 } | {
   type: 'members-invalidated'
   revision: number

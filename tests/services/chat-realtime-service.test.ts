@@ -760,3 +760,31 @@ describe('Chat policy invalidation', () => {
     service.dispose()
   })
 })
+
+
+describe('directory invalidation ownership', () => {
+  it('routes raw targets only to the Host directory and does not trigger Browser rescans', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = new ServiceRuntime(config, { read: async () => session } as ArkmeSessionStore, {} as StateStore)
+    const source = { invalidateSourceListCache: vi.fn() } as unknown as SourceService
+    const service = new ChatRealtimeService(runtime, source, { chatTimelineItems: async () => [] })
+    const directory = vi.fn(async () => undefined)
+    const browser = vi.fn()
+    service.directoryInvalidation = directory
+    service.subscribeChatRealtime(browser)
+    const state = { revision: 1, connected: true, connectionGeneration: 1 }
+    const preference = { eventUid: 'remove', userId: 42, items: [{ entityKind: 1 as const, entityUid: 'host-only-session', revision: 3 }], acceptedAtMillis: 1, sourceClientId: 1 }
+    const policy = { eventUid: 'pin', userId: 42, chatSessionUid: 'host-only-session', pinState: 2 as const, policyUpdateAtMillis: 20, eventAtMillis: 1 }
+    service.handleChatRealtimeNotice({ cause: 'conversation-list-preference-invalidation', state, conversationListPreferenceUpdated: preference })
+    service.handleChatRealtimeNotice({ cause: 'chat-policy-invalidation', state, policyUpdated: policy, connectionUserId: 42, connectionSignal: new AbortController().signal })
+    await vi.waitFor(() => expect(directory).toHaveBeenCalledTimes(2))
+    expect(directory).toHaveBeenCalledWith(preference)
+    expect(directory).toHaveBeenCalledWith(policy)
+    expect(browser.mock.calls.map(([event]) => event)).toEqual(expect.arrayContaining([
+      { type: 'conversation-list-preference-invalidated', revision: expect.any(Number), refresh: 'none' },
+      { type: 'chat-policy-invalidated', revision: expect.any(Number), refresh: 'none' },
+    ]))
+    expect(JSON.stringify(browser.mock.calls)).not.toContain('host-only-session')
+    service.dispose(); runtime.dispose()
+  })
+})

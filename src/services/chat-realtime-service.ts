@@ -2,6 +2,8 @@ import {
   ArkmeChatRealtimeRuntime,
   type ArkmeChatRealtimeNotice,
   type ArkmeChatReceiveHint,
+  type ArkmeChatPolicyUpdatedHint,
+  type ArkmeConversationListPreferenceUpdatedHint,
 } from '../chat-realtime.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -132,6 +134,7 @@ function safeFailureMessage(error: unknown): string {
 }
 
 export class ChatRealtimeService {
+  directoryInvalidation?: (hint: ArkmeChatPolicyUpdatedHint | ArkmeConversationListPreferenceUpdatedHint) => Promise<void>
   directoryAttention?: (retry: boolean) => Promise<ArkmeChatAttentionSummary>
   directoryBaseline?: () => Promise<import('../types.js').ArkmeSourceList>
   private disposed = false
@@ -303,6 +306,7 @@ export class ChatRealtimeService {
       && notice.conversationListPreferenceUpdated !== undefined) {
       void this.invalidateConversationListPreferenceForCurrentSession(
         notice.conversationListPreferenceUpdated.userId,
+        notice.conversationListPreferenceUpdated,
       )
       return
     }
@@ -698,21 +702,28 @@ export class ChatRealtimeService {
       const session = await this.runtime.sessionStore.read()
       if (this.disposed || notice.connectionSignal?.aborted || session?.userId !== hint.userId) return
       this.source.invalidateSourceListCache(session.userId, 'root')
-      this.emitChatClientEvent({ type: 'chat-policy-invalidated', revision: this.nextChatClientRevision() })
+      if (this.directoryInvalidation !== undefined) await this.directoryInvalidation(hint)
+      if (this.disposed || notice.connectionSignal?.aborted) return
+      this.emitChatClientEvent({ type: 'chat-policy-invalidated', revision: this.nextChatClientRevision(),
+        ...(this.directoryInvalidation === undefined ? {} : { refresh: 'none' as const }) })
     } catch (error) {
       console.warn('dsh-arkme: Chat policy invalidation failed:', safeFailureMessage(error))
     }
   }
 
   /** Browser invalidation only; raw source/Bot caches belong to different projections. */
-  async invalidateConversationListPreferenceForCurrentSession(expectedUserId?: number): Promise<void> {
+  async invalidateConversationListPreferenceForCurrentSession(expectedUserId?: number, hint?: ArkmeConversationListPreferenceUpdatedHint): Promise<void> {
     try {
       const session = await this.runtime.sessionStore.read()
-      if (session === undefined
+      if (this.disposed || session === undefined
         || expectedUserId !== undefined && session.userId !== expectedUserId) return
+      const managed = hint !== undefined && this.directoryInvalidation !== undefined
+      if (managed) await this.directoryInvalidation!(hint)
+      if (this.disposed) return
       this.emitChatClientEvent({
         type: 'conversation-list-preference-invalidated',
         revision: this.nextChatClientRevision(),
+        ...(managed ? { refresh: 'none' as const } : {}),
       })
     } catch (error) {
       console.warn('dsh-arkme: Conversation-list preference invalidation failed:', safeFailureMessage(error))

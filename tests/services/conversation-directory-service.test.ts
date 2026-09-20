@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { conversationListPreferenceRefKey } from '../../src/services/conversation-list-preference-service.js'
+import { ArkmePluginError } from '../../src/services/service.js'
 import { ConversationDirectoryService, mergeDirectorySource } from '../../src/services/conversation-directory-service.js'
 import type { ServiceRuntime } from '../../src/services/service.js'
 import type { SourceService } from '../../src/services/source-service.js'
@@ -9,15 +11,18 @@ function gate<T>() { let resolve!: (value: T) => void; let reject!: (error: Erro
 const row = (id: number, extra: Partial<ArkmeSourceItem> = {}): ArkmeSourceItem => ({ sourceRef: `ref-${id}`, sourceKey: `key-${id}`, kind: 'private_chat', displayName: `Chat ${id}`, activeAtMillis: id, unreadCount: 0, latestSequence: id, ...extra })
 const page = (items: ArkmeSourceItem[], nextCursor?: string): ArkmeSourceList => ({ directory: 'root', items, hasMore: nextCursor !== undefined, ...(nextCursor === undefined ? {} : { nextCursor }) })
 const owners: ConversationDirectoryService[] = []
-afterEach(() => { for (const owner of owners.splice(0)) owner.reset() })
+afterEach(() => { for (const owner of owners.splice(0)) owner.reset(); vi.useRealTimers() })
 function setup(load: (cursor?: string) => Promise<ArkmeSourceList>, cached?: ArkmeSourceList, restoreBots?: (items: import('../../src/types.js').ArkmeBotSummary[], userId: number) => Promise<import('../../src/types.js').ArkmeBotSummary[]>) {
   let userId = 1
   const write = vi.fn(async (_userId: number, _page: ArkmeSourceList) => undefined)
   const emitted: ArkmeSourceList[] = []
   const source = { listSources: vi.fn(async (_directory, options) => { expect(options.limit).toBe(20); return await load(options.cursor) }),
+    chatDirectorySourceKey: vi.fn(async (_userId: number, uid: string) => `key-${uid}`),
     openSourceRef: vi.fn(async () => ({ userId })), hydrateDirectoryPage: vi.fn(async (items: ArkmeSourceItem[]) => items) }
-  const preferences = { query: vi.fn(async (refs: string[]) => ({ items: refs.map(entryRef => ({ entryKind: 'source' as const, entryRef, hidden: false })) })) }
-  const runtime = { requireSession: async () => ({ userId }), accountScopedSession: async () => ({ userId }), stateStore: { readDirectoryCache: async () => cached, writeDirectoryCache: write } }
+  const preferences = { queryAffected: vi.fn(async (refs: string[], _bots: string[], expected: ReadonlyMap<string, number>) => ({
+    items: refs.map(entryRef => ({ entryKind: 'source' as const, entryRef, hidden: true })), matched: [...expected.keys()],
+  })), query: vi.fn(async (refs: string[]) => ({ items: refs.map(entryRef => ({ entryKind: 'source' as const, entryRef, hidden: false })) })) }
+  const runtime = { authenticatedChatPost: vi.fn(async (_path: string, body: { chat_session_uids: string[] }) => ({ items: body.chat_session_uids.map(uid => ({ session: { chat_session_uid: uid }, current_policy: { user_id: userId, pin_state: 2, update_at: 20 } })) })), requireSession: async () => ({ userId }), accountScopedSession: async () => ({ userId }), stateStore: { readDirectoryCache: async () => cached, writeDirectoryCache: write } }
   const readBots = vi.fn(async () => ({ items: [] as import('../../src/types.js').ArkmeBotSummary[] }))
   const warmAvatar = vi.fn(async () => undefined)
   const owner = new ConversationDirectoryService(runtime as unknown as ServiceRuntime, source as unknown as SourceService, preferences as unknown as ConversationDirectoryVisibilityService, readBots, warmAvatar, value => { emitted.push(value) }, restoreBots)
@@ -346,4 +351,210 @@ it('accepts current-account Bot facts before the first root directory read', asy
   test.preferences.query.mockImplementation(async (_sources: string[], bots?: string[]) => ({ items: (bots ?? []).map(entryRef => ({ entryKind: 'bot' as const, entryRef, hidden: false })) }))
   await test.owner.rememberBots([{ botRef: 'early', directoryKey: 'stable-early', name: 'Early', provider: 'openclaw', description: '', status: 'offline', directChatAvailable: true, unreadCount: 2 }], 1)
   expect((await test.owner.attentionSummary()).badgeCount).toBe(2)
+})
+
+
+describe('cross-device directory recovery', () => {
+  it('does not report complete when visibility read fails and recovers without a second event', async () => {
+    const test = setup(async () => page([row(1)]))
+    await test.owner.read(); await test.owner.settled()
+    test.preferences.query.mockRejectedValueOnce(new ArkmePluginError('upstream-unavailable', '暂时不可用', true, 503))
+    await test.owner.read(true)
+    await test.owner.settled().catch(() => undefined)
+    expect(test.emitted.at(-1)?.projection?.phase).toBe('failed')
+    test.preferences.query.mockImplementation(async refs => ({ items: refs.map(entryRef => ({ entryKind: 'source', entryRef, hidden: true })) }))
+    await vi.waitFor(() => expect(test.emitted.at(-1)?.projection?.phase).toBe('complete'), { timeout: 2500 })
+  })
+})
+
+const preferenceHint = (ids: number[], revision = 1) => ({ eventUid: `visibility-${revision}`, userId: 1,
+  items: ids.map(id => ({ entityKind: 1 as const, entityUid: String(id), revision })), acceptedAtMillis: 1, sourceClientId: 2 })
+const pinHint = (id = 1, version = 20) => ({ eventUid: `pin-${version}`, userId: 1, chatSessionUid: String(id),
+  pinState: 2 as const, policyUpdateAtMillis: version, eventAtMillis: 1 })
+
+describe('targeted cross-device changes', () => {
+  it.each([20, 2000])('queries just the changed row out of %i cached rows without scanning pages', async count => {
+    const test = setup(async cursor => {
+      const offset = Number(cursor ?? 0)
+      return page(Array.from({ length: Math.min(20, count - offset) }, (_, i) => row(offset + i + 1)), offset + 20 < count ? String(offset + 20) : undefined)
+    })
+    await test.owner.read(); await test.owner.settled()
+    test.source.listSources.mockClear(); test.preferences.query.mockClear()
+    await test.owner.invalidate(preferenceHint([count]))
+    await vi.waitFor(() => expect(test.preferences.queryAffected).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(test.emitted.some(p => p.projection?.visibility.some(v => v.entryRef === `ref-${count}` && v.hidden))).toBe(true))
+    expect(test.preferences.queryAffected.mock.calls[0]?.[0]).toEqual([`ref-${count}`])
+    expect(test.source.listSources).not.toHaveBeenCalled()
+    expect(test.preferences.query).not.toHaveBeenCalled()
+  })
+
+  it('coalesces repeated notifications and keeps the newest minimum revision', async () => {
+    const test = setup(async () => page([row(1)]))
+    await test.owner.read(); await test.owner.settled()
+    await Promise.all(Array.from({ length: 100 }, (_, i) => test.owner.invalidate(preferenceHint([1], i + 1))))
+    await vi.waitFor(() => expect(test.preferences.queryAffected).toHaveBeenCalledOnce())
+    expect([...test.preferences.queryAffected.mock.calls[0]![2].values()]).toEqual([100])
+  })
+
+  it('retries a failed targeted read without rescanning or another notification', async () => {
+    const test = setup(async () => page([row(1)]))
+    await test.owner.read(); await test.owner.settled()
+    test.preferences.queryAffected.mockRejectedValueOnce(new Error('temporary'))
+    await test.owner.invalidate(preferenceHint([1]))
+    await vi.waitFor(() => expect(test.emitted.at(-1)?.projection?.phase).toBe('failed'))
+    await vi.waitFor(() => expect(test.preferences.queryAffected).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    await vi.waitFor(() => expect(test.emitted.at(-1)?.projection?.phase).toBe('complete'))
+    expect(test.source.listSources).toHaveBeenCalledOnce()
+    expect((await test.owner.read()).projection?.visibility).toContainEqual({ entryKind: 'source', entryRef: 'ref-1', hidden: true })
+  })
+
+  it('discards an old in-flight result and queries the newer event before acknowledging it', async () => {
+    const test = setup(async () => page([row(1)]))
+    await test.owner.read(); await test.owner.settled()
+    const old = gate<{ items: { entryKind: 'source'; entryRef: string; hidden: boolean }[]; matched: string[] }>()
+    test.preferences.queryAffected.mockImplementationOnce(() => old.promise)
+    test.preferences.queryAffected.mockResolvedValue({ items: [{ entryKind: 'source', entryRef: 'ref-1', hidden: false }], matched: [conversationListPreferenceRefKey({ entityKind: 1, entityUid: '1' })] })
+    await test.owner.invalidate(preferenceHint([1], 1))
+    await vi.waitFor(() => expect(test.preferences.queryAffected).toHaveBeenCalledOnce())
+    await test.owner.invalidate(preferenceHint([1], 2))
+    const start = test.emitted.length
+    old.resolve({ items: [{ entryKind: 'source', entryRef: 'ref-1', hidden: true }], matched: [conversationListPreferenceRefKey({ entityKind: 1, entityUid: '1' })] })
+    await vi.waitFor(() => expect(test.preferences.queryAffected).toHaveBeenCalledTimes(2))
+    expect(test.emitted.slice(start).flatMap(p => p.projection?.visibility ?? []).some(v => v.hidden)).toBe(false)
+  })
+
+  it('reads authoritative pin state without loading message history or the directory', async () => {
+    const test = setup(async () => page([row(1, { isPinned: false, chatPolicyUpdatedAtMillis: 10, latestPreview: '保留消息' })]))
+    await test.owner.read(); await test.owner.settled()
+    await test.owner.invalidate(pinHint())
+    await vi.waitFor(() => expect(test.runtime.authenticatedChatPost).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(test.emitted.flatMap(p => p.items).some(r => r.isPinned === true)).toBe(true))
+    expect(test.source.listSources).toHaveBeenCalledOnce()
+    expect(test.preferences.queryAffected).not.toHaveBeenCalled()
+    expect((await test.owner.read()).items[0]).toMatchObject({ isPinned: true, latestPreview: '保留消息', chatPolicyUpdatedAtMillis: 20 })
+  })
+
+  it('keeps a later confirmed local pin when an older targeted response arrives', async () => {
+    const test = setup(async () => page([row(1, { isPinned: false, chatPolicyUpdatedAtMillis: 10 })]))
+    await test.owner.read(); await test.owner.settled()
+    const response = gate<any>()
+    test.runtime.authenticatedChatPost.mockImplementationOnce(() => response.promise)
+    await test.owner.invalidate(pinHint())
+    await vi.waitFor(() => expect(test.runtime.authenticatedChatPost).toHaveBeenCalledOnce())
+    await test.owner.confirmPin('ref-1', false, 30)
+    response.resolve({ items: [{ session: { chat_session_uid: '1' }, current_policy: { user_id: 1, pin_state: 2, update_at: 20 } }] })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect((await test.owner.read()).items[0]).toMatchObject({ isPinned: false, chatPolicyUpdatedAtMillis: 30 })
+  })
+
+  it('cancels delayed work and drops in-flight results when the account changes', async () => {
+    const test = setup(async () => page([row(1)]))
+    await test.owner.read(); await test.owner.settled()
+    const result = gate<any>()
+    test.preferences.queryAffected.mockImplementationOnce(() => result.promise)
+    await test.owner.invalidate(preferenceHint([1]))
+    await vi.waitFor(() => expect(test.preferences.queryAffected).toHaveBeenCalledOnce())
+    const signal = test.preferences.queryAffected.mock.calls[0]![3] as AbortSignal
+    test.switchUser(2); const emitted = test.emitted.length
+    result.resolve({ items: [{ entryKind: 'source', entryRef: 'ref-1', hidden: true }], matched: [] })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(signal.aborted).toBe(true)
+    expect(test.emitted).toHaveLength(emitted)
+    await test.owner.invalidate(preferenceHint([1], 2))
+    expect(test.preferences.queryAffected).toHaveBeenCalledOnce()
+  })
+
+  it('stops retrying after the bounded budget and resumes on explicit refresh', async () => {
+    const test = setup(async () => page([row(1)]))
+    await test.owner.read(); await test.owner.settled()
+    vi.useFakeTimers()
+    test.preferences.queryAffected.mockRejectedValue(new Error('offline'))
+    await test.owner.invalidate(preferenceHint([1]))
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(test.preferences.queryAffected).toHaveBeenCalledTimes(5)
+    expect(test.emitted.at(-1)?.projection?.phase).toBe('failed')
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(test.preferences.queryAffected).toHaveBeenCalledTimes(5)
+    test.preferences.queryAffected.mockResolvedValue({ items: [{ entryKind: 'source', entryRef: 'ref-1', hidden: true }], matched: [conversationListPreferenceRefKey({ entityKind: 1, entityUid: '1' })] })
+    await test.owner.read(true); await vi.advanceTimersByTimeAsync(100)
+    expect(test.preferences.queryAffected).toHaveBeenCalledTimes(6)
+    expect(test.emitted.at(-1)?.projection?.phase).toBe('complete')
+    test.owner.reset(); expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+
+it('applies a change during a blocked background page without waiting for that page', async () => {
+  let paginated = false
+  const second = gate<ArkmeSourceList>()
+  const test = setup(async cursor => !paginated ? page([row(1), row(2)]) : cursor === undefined ? page([row(1)], 'next') : second.promise)
+  await test.owner.read(); await test.owner.settled(); paginated = true
+  await test.owner.read(true)
+  await vi.waitFor(() => expect(test.source.listSources).toHaveBeenCalledTimes(3))
+  await test.owner.invalidate(preferenceHint([2]))
+  await vi.waitFor(() => expect(test.emitted.some(p => p.projection?.visibility.some(v => v.entryRef === 'ref-2' && v.hidden))).toBe(true))
+  second.resolve(page([row(2)])); await test.owner.settled()
+  expect((await test.owner.read()).projection?.visibility).toContainEqual({ entryKind: 'source', entryRef: 'ref-2', hidden: true })
+})
+
+it('performs one shared reconciliation for unknown entries then checks their notified revision', async () => {
+  let extra = false
+  const test = setup(async () => page(extra ? [row(1), row(2)] : [row(1)]))
+  await test.owner.read(); await test.owner.settled(); extra = true
+  test.preferences.queryAffected.mockImplementation(async (refs, _bots, expected) => ({ items: refs.map(entryRef => ({ entryKind: 'source', entryRef, hidden: true })), matched: refs.length ? [...expected.keys()] : [] }))
+  await test.owner.invalidate(preferenceHint([2], 3))
+  await vi.waitFor(() => expect(test.preferences.queryAffected).toHaveBeenCalledTimes(2))
+  expect(test.source.listSources).toHaveBeenCalledTimes(2)
+  expect([...test.preferences.queryAffected.mock.calls[1]![2].values()]).toEqual([3])
+  await vi.waitFor(() => expect(test.emitted.at(-1)?.projection?.phase).toBe('complete'))
+})
+
+it('keeps capacity bounded and combines overflow into one full reconciliation', async () => {
+  const test = setup(async () => page(Array.from({ length: 1001 }, (_, i) => row(i + 1))))
+  await test.owner.read(); await test.owner.settled()
+  vi.useFakeTimers()
+  await test.owner.invalidate(preferenceHint(Array.from({ length: 1001 }, (_, i) => i + 1)))
+  await vi.advanceTimersByTimeAsync(100)
+  expect(test.source.listSources).toHaveBeenCalledTimes(2)
+  expect(test.preferences.queryAffected).toHaveBeenCalledTimes(20)
+  expect(test.preferences.queryAffected.mock.calls.every(([refs]) => refs.length <= 50)).toBe(true)
+  expect(test.emitted.at(-1)?.projection?.phase).toBe('complete')
+  test.owner.reset(); expect(vi.getTimerCount()).toBe(0)
+})
+
+
+it('does not drop another row visibility when a pin and removal share a batch', async () => {
+  const test = setup(async () => page([row(1), row(2)]))
+  await test.owner.read(); await test.owner.settled()
+  await Promise.all([test.owner.invalidate(pinHint(1)), test.owner.invalidate(preferenceHint([2]))])
+  await vi.waitFor(() => expect(test.runtime.authenticatedChatPost).toHaveBeenCalledOnce())
+  await vi.waitFor(() => expect(test.emitted.at(-1)?.projection?.phase).toBe('complete'))
+  const snapshot = await test.owner.read()
+  expect(snapshot.items.find(row => row.sourceRef === 'ref-1')?.isPinned).toBe(true)
+  expect(snapshot.projection?.visibility).toContainEqual({ entryKind: 'source', entryRef: 'ref-2', hidden: true })
+})
+
+it('rejects an older pin response until the authoritative policy catches up', async () => {
+  const test = setup(async () => page([row(1, { isPinned: false })]))
+  await test.owner.read(); await test.owner.settled()
+  vi.useFakeTimers()
+  test.runtime.authenticatedChatPost.mockResolvedValueOnce({ items: [{ session: { chat_session_uid: '1' }, current_policy: { user_id: 1, pin_state: 2, update_at: 19 } }] })
+  await test.owner.invalidate(pinHint())
+  await vi.advanceTimersByTimeAsync(100)
+  expect(test.emitted.flatMap(p => p.items).some(row => row.isPinned === true)).toBe(false)
+  await vi.advanceTimersByTimeAsync(2000)
+  expect(test.runtime.authenticatedChatPost).toHaveBeenCalledTimes(2)
+  expect(test.emitted.flatMap(p => p.items).some(row => row.isPinned === true)).toBe(true)
+})
+
+it('does not reactivate a disposed directory when a notification is waiting on account lookup', async () => {
+  const test = setup(async () => page([row(1)]))
+  const session = gate<{ userId: number }>()
+  test.runtime.accountScopedSession = () => session.promise
+  const pending = test.owner.invalidate({ eventUid: 'late', userId: 1, items: [{ entityKind: 1, entityUid: '1', revision: 2 }], acceptedAtMillis: 1, sourceClientId: 1 })
+  test.owner.dispose(); session.resolve({ userId: 1 })
+  await expect(pending).rejects.toThrow('Directory disposed')
+  expect(test.source.listSources).not.toHaveBeenCalled()
+  expect(test.preferences.queryAffected).not.toHaveBeenCalled()
+  expect(test.emitted).toEqual([])
 })

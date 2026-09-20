@@ -196,6 +196,9 @@ export class ConversationListPreferenceService implements ConversationListPrefer
         snapshots.push(snapshot)
       })
     }
+    if (this.revisionOwnerUserId === session.userId && snapshots.some(snapshot => snapshot.revision < (this.revisionHints.get(conversationListPreferenceRefKey(snapshot.ref)) ?? 0))) {
+      throw new ArkmePluginError('conversation-list-preference-stale', '会话列表状态尚未同步', true, 409)
+    }
     this.rememberRevisions(snapshots, session.userId)
     return snapshots
   }
