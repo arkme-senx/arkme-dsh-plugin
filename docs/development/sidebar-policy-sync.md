@@ -27,6 +27,6 @@
 
 - `pnpm build` 与 `pnpm pack` 通过；不可变 tgz SHA-256：`daf5b29207c43b6b3d14f5564cbe7c1e42c06efced64751144e65097261ee42b`。包内未发现本机路径、测试目录、数据库或临时日志；版本保持 0.1.69，未发布。
 - 官方 DSH 0.1.5-rc.2 通过 `plugin --profile web add <tgz>` 安装；实际 Host、Browser、SDK 文件逐字节匹配 tgz。全新带空格的 DSH_HOME、独立 Profile／Keychain 和随机本地端口，自动更新关闭。
-- Profile 的 `config` 覆盖必须包含所选环境的完整配置，不能只写 Keychain／更新字段；当前实例使用测试服，已核对 `auth.status` 为 `logged-out`、`test`。
-- Chrome 实际展示 Arkme 0.1.69 侧边栏及测试服登录入口，实例和页面均保留。尚未登录用户账号，因此不声称真实手机双向场景通过。
+- Profile 的 `config` 覆盖必须包含所选环境的完整配置，不能只写 Keychain／更新字段；当前实例使用测试服，补修包加载后已核对 `auth.status` 为 `authenticated`、`test`，原有登录得以保留。
+- Chrome 实际展示 Arkme 0.1.69 的已登录侧边栏，实例和页面均保留。尚未完成真实手机双向同步操作，因此不声称该场景通过。
 - Arkme 客户端和 DSH 参考仓 tracked 文件未改；没有替换常驻客户端或发布制品，PR 只交付插件源码。
