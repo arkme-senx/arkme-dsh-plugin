@@ -332,14 +332,24 @@ export class ConversationDirectoryService {
       this.sources.set(key, merged); this.mutations.set(key, this.revision + 1); changed.push(merged)
     }
     const currentRefs = new Set(items.flatMap(item => { const source = this.sources.get(keyOf(item)); return source === undefined ? [] : [source.sourceRef] }))
-    const acceptedVisibility = visibility.filter(entry =>
-      (items.length === 0 || entry.entryKind !== 'source' || currentRefs.has(entry.entryRef))
-      && (this.visibilityMutations.get(`${entry.entryKind}:${entry.entryRef}`) ?? 0) <= atRevision)
+    const acceptedVisibility = visibility.filter(entry => {
+      if (items.length > 0 && entry.entryKind === 'source' && !currentRefs.has(entry.entryRef)) {
+        this.recoveryScan = true
+        return false
+      }
+      const key = `${entry.entryKind}:${entry.entryRef}`
+      if ((this.visibilityMutations.get(key) ?? 0) <= atRevision) return true
+      // Arrival order cannot establish server preference order. Keep the newer local
+      // projection, but reconcile conflicting results before acknowledging completion.
+      if (this.visibility.get(key)?.hidden !== entry.hidden) this.recoveryScan = true
+      return false
+    })
     for (const entry of acceptedVisibility) {
       const key = `${entry.entryKind}:${entry.entryRef}`
       this.visibility.set(key, entry); this.visibilityMutations.set(key, this.revision + 1)
     }
     this.publish(changed, acceptedVisibility)
+    if (this.recoveryScan) this.scheduleChanges(1_000)
   }
 
   private snapshot(items = [...this.sources.values()], visibility = [...this.visibility.values()]): ArkmeSourceList {
@@ -650,9 +660,13 @@ export class ConversationDirectoryService {
           const current = this.sources.get(keyOf(row))
           return current === undefined ? [] : [{ ...current, isPinned: pinned, chatPolicyUpdatedAtMillis: updatedAt }]
         }), [], atRevision)
-        if (visible.length > 0) this.apply([], visible.filter(entry => entry.entryKind === 'bot'
-          ? this.bots.some(bot => bot.botRef === entry.entryRef)
-          : sources.some(row => this.sources.get(keyOf(row))?.sourceRef === entry.entryRef)), atRevision)
+        if (visible.length > 0) {
+          const currentVisibility = visible.filter(entry => entry.entryKind === 'bot'
+            ? this.bots.some(bot => bot.botRef === entry.entryRef)
+            : sources.some(row => this.sources.get(keyOf(row))?.sourceRef === entry.entryRef))
+          if (currentVisibility.length !== visible.length) this.recoveryScan = true
+          this.apply([], currentVisibility, atRevision)
+        }
         const unknown = visibilityChanges.some(([key]) => !matched.has(key))
           || policyChanges.some(([, change]) => !sourceByUid.has(change.entityUid))
         if (unknown && !reconciledMissing) {

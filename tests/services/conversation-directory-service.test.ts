@@ -558,3 +558,63 @@ it('does not reactivate a disposed directory when a notification is waiting on a
   expect(test.preferences.queryAffected).not.toHaveBeenCalled()
   expect(test.emitted).toEqual([])
 })
+
+it.each([
+  { route: 'targeted', rotated: false, hiddenAfter: true },
+  { route: 'legacy', rotated: false, hiddenAfter: true },
+  { route: 'targeted', rotated: true, hiddenAfter: true },
+  { route: 'legacy', rotated: true, hiddenAfter: true },
+  { route: 'targeted', rotated: false, hiddenAfter: false },
+])('reconciles displaced visibility before completion ($route, rotated=$rotated, hidden=$hiddenAfter)', async ({ route, rotated, hiddenAfter }) => {
+  let item = row(1, { latestSequence: 11, activeAtMillis: 11, latestPreview: '消息保持' })
+  const test = setup(async () => page([item]))
+  await test.owner.read(); await test.owner.settled()
+  vi.useFakeTimers()
+  let hidden = false
+  test.preferences.query.mockImplementation(async refs => ({ items: refs.map(entryRef => ({ entryKind: 'source', entryRef, hidden })) }))
+  const response = gate<{ items: { entryKind: 'source'; entryRef: string; hidden: boolean }[]; matched: string[] }>()
+  if (route === 'targeted') {
+    test.preferences.queryAffected.mockImplementationOnce(() => response.promise)
+    await test.owner.invalidate(preferenceHint([1], 3))
+  } else {
+    test.preferences.query.mockImplementationOnce(() => response.promise)
+    await test.owner.accept({ type: 'conversation-list-preference-invalidated', revision: 10 })
+  }
+  await vi.advanceTimersByTimeAsync(1)
+  // The message query observed revision 2; the pending revision 3 removal includes its activity.
+  if (rotated) item = { ...item, sourceRef: 'fresh-ref' }
+  await test.owner.accept({ type: 'sessions-delta', revision: 11, updates: [{ source: item, timelineItems: [] }] })
+  // A subsequent restore must also win over the delayed removal on reconciliation.
+  hidden = hiddenAfter
+  response.resolve({ items: [{ entryKind: 'source', entryRef: 'ref-1', hidden: true }], matched: ['1:1'] })
+  await vi.advanceTimersByTimeAsync(1)
+  expect(test.emitted.at(-1)?.projection?.phase).toBe('syncing')
+  expect((await test.owner.read()).projection?.visibility).toContainEqual({ entryKind: 'source', entryRef: item.sourceRef, hidden: false })
+  await vi.advanceTimersByTimeAsync(1100)
+  const result = await test.owner.read()
+  expect(result.projection?.phase).toBe('complete')
+  expect(result.projection?.visibility).toContainEqual({ entryKind: 'source', entryRef: item.sourceRef, hidden: hiddenAfter })
+  expect(result.items[0]?.latestPreview).toBe('消息保持')
+  expect(test.source.listSources).toHaveBeenCalledTimes(route === 'targeted' ? 2 : 3)
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+it('bounds reconciliation under repeated visibility conflicts and recovers on explicit refresh', async () => {
+  const test = setup(async () => page([row(1)]))
+  await test.owner.read(); await test.owner.settled()
+  vi.useFakeTimers()
+  test.preferences.query.mockImplementation(async refs => {
+    if (refs.length > 0) await test.owner.confirmVisibility('source', 'ref-1', false, 1)
+    return { items: refs.map(entryRef => ({ entryKind: 'source', entryRef, hidden: true })) }
+  })
+  await test.owner.accept({ type: 'conversation-list-preference-invalidated', revision: 10 })
+  await vi.advanceTimersByTimeAsync(100_000)
+  expect(test.emitted.at(-1)?.projection?.phase).toBe('failed')
+  expect(test.source.listSources).toHaveBeenCalledTimes(7)
+  expect(vi.getTimerCount()).toBe(0)
+  test.preferences.query.mockImplementation(async refs => ({ items: refs.map(entryRef => ({ entryKind: 'source', entryRef, hidden: true })) }))
+  await test.owner.read(true)
+  await vi.advanceTimersByTimeAsync(1100)
+  expect((await test.owner.read()).projection).toMatchObject({ phase: 'complete', visibility: [{ entryKind: 'source', entryRef: 'ref-1', hidden: true }] })
+  expect(vi.getTimerCount()).toBe(0)
+})
