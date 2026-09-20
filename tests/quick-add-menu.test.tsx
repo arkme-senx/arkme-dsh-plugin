@@ -64,14 +64,14 @@ it('keeps a hover-opened menu open when the pointer clicks the trigger', async (
   await render()
   await hover('pointerover')
   expect(menu()).not.toBeNull()
-  // A real pointer click reports detail >= 1 and must not toggle the hover menu
-  // closed again; only a keyboard activation (detail 0) toggles.
+  // Both pointer and keyboard activation pin the menu, including when it was
+  // already opened by hover. Repeated activation must not dismiss it.
   await act(async () => { trigger().dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })) })
   await flush()
   expect(menu()).not.toBeNull()
   await act(async () => { trigger().dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 })) })
   await flush()
-  expect(menu()).toBeNull()
+  expect(menu()).not.toBeNull()
 })
 
 const move = async (x: number, y: number) => {
@@ -85,15 +85,56 @@ const setRects = () => {
   vi.spyOn(menu()!, 'getBoundingClientRect').mockReturnValue(new DOMRect(20, 68, 220, 160))
 }
 
-it('closes after 250ms outside without restarting the timer on every move', async () => {
+it('closes after 500ms outside without restarting the timer on every move', async () => {
   await render()
   await hover('pointerover')
   vi.useFakeTimers()
   await move(500, 500)
-  await advance(200)
+  await advance(450)
   expect(menu()).not.toBeNull()
   await move(510, 510)
   await advance(50)
+  expect(menu()).toBeNull()
+})
+
+it.each(['pointerout', 'blur'])('honors the 500ms grace for %s instead of closing immediately', async type => {
+  await render()
+  await hover()
+  vi.useFakeTimers()
+  await act(async () => {
+    if (type === 'blur') window.dispatchEvent(new Event('blur'))
+    else trigger().dispatchEvent(new MouseEvent('pointerout', { bubbles: true, relatedTarget: null }))
+  })
+  await advance(499)
+  expect(menu()).not.toBeNull()
+  await advance(1)
+  expect(menu()).toBeNull()
+})
+
+it('pins a hover menu, cancels a pending close and stays pinned after re-entry', async () => {
+  await render()
+  await hover()
+  setRects()
+  vi.useFakeTimers()
+  await move(500, 500)
+  await advance(450)
+  await act(async () => { trigger().dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })) })
+  await advance(1000)
+  expect(menu()).not.toBeNull()
+  await hover()
+  await move(500, 500)
+  await act(async () => {
+    trigger().dispatchEvent(new MouseEvent('pointerout', { bubbles: true, relatedTarget: null }))
+    window.dispatchEvent(new Event('blur'))
+  })
+  await advance(1000)
+  expect(menu()).not.toBeNull()
+  await act(async () => { document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })) })
+  expect(menu()).toBeNull()
+  // Outside dismissal resets pinned mode for the next hover opening.
+  await hover()
+  await move(500, 500)
+  await advance(500)
   expect(menu()).toBeNull()
 })
 

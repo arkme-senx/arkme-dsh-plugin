@@ -93,7 +93,7 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, on
   const icon = (base64: string) => <span aria-hidden style={maskIcon(base64, { width: 16, height: 16 })} />
   return <span data-arkme-notification-blocking-overlay={open ? 'true' : undefined}>
     <ArkmeActionMenu label={tr("添加")} open={open} anchor={anchor} align="end" onClose={onClose}
-      hoverCloseDelayMs={250}
+      hoverCloseDelayMs={500}
       {...(getAnchorRect === undefined ? {} : { getAnchorRect })}
       {...(hoverAnchor === undefined ? {} : { hoverAnchor })}
       actions={[
@@ -124,7 +124,9 @@ export function ArkmeQuickAddButton({
   onBlockingOverlayChange?(open: boolean): void
 }) {
   useArkmeLocale()
-  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuMode, setMenuMode] = useState<'hover' | 'pinned'>()
+  const menuOpen = menuMode !== undefined
+  const closeMenu = () => setMenuMode(undefined)
   const [menuError, setMenuError] = useState('')
   const [dialogKind, setDialogKind] = useState<QuickAddDialogKind>()
   const [dialogBusy, setDialogBusy] = useState(false)
@@ -151,7 +153,7 @@ export function ArkmeQuickAddButton({
     if (notificationRevisionRef.current === notificationActivationRevision) return
     notificationRevisionRef.current = notificationActivationRevision
     pendingNotificationDismissRef.current = true
-    setMenuOpen(false)
+    closeMenu()
     if (!dialogBusy) {
       pendingNotificationDismissRef.current = false
       setDialogKind(undefined)
@@ -165,35 +167,32 @@ export function ArkmeQuickAddButton({
 
 
   const chooseDialog = (kind: QuickAddDialogKind) => {
-    setMenuOpen(false)
+    closeMenu()
     setDialogBusy(false)
     setDialogKind(kind)
   }
 
-  const openMenu = () => { setMenuError(''); setMenuOpen(true) }
+  const openMenu = () => { setMenuError(''); setMenuMode(current => current ?? 'hover') }
 
   const menu = <ArkmeQuickAddMenu
-      open={menuOpen} onClose={() => setMenuOpen(false)}
-      hoverAnchor={triggerRef.current ?? undefined}
+      open={menuOpen} onClose={closeMenu}
+      hoverAnchor={menuMode === 'hover' ? triggerRef.current ?? undefined : undefined}
       anchor={<button data-arkme-feedback="neutral"
         ref={triggerRef} type="button" aria-label={onNewDshSession ? '新建 DSH 会话、添加联系人、群聊、发起通话或添加 Bot' : '添加联系人、群聊、发起通话或添加 Bot'} title={tr("添加")}
         aria-haspopup="menu" aria-expanded={menuOpen} style={style.trigger}
-        // Hover is the primary entry: a pointer over the trigger shows the menu
-        // so it stays discoverable. The trigger and the portaled menu remain one
-        // hover target (hoverAnchor), so moving into the menu never closes it.
-        // Click is kept for touch and keyboard: a keyboard activation reports
-        // detail 0 and still toggles, while a pointer click only ever opens. A
-        // missing event is an activation without pointer info, so it toggles.
+        // A click pins an already-hovered menu as well as opening a closed one.
+        // Removing hoverAnchor also cancels any pending hover-close timer.
+        // Re-entering the trigger must never demote a pinned menu to hover mode.
         onPointerEnter={event => { if (event?.pointerType !== 'touch') openMenu() }}
-        onClick={event => { if ((event?.detail ?? 0) === 0) setMenuOpen(open => !open); else openMenu() }}
+        onClick={() => { setMenuError(''); setMenuMode('pinned') }}
       ><IconPlusOutline16 size={20} aria-hidden /></button>}
       error={menuError}
       onNewDshSession={onNewDshSession === undefined ? undefined : () => {
-        try { onNewDshSession(); setMenuError(''); setMenuOpen(false) }
+        try { onNewDshSession(); setMenuError(''); closeMenu() }
         catch (error) { setMenuError(error instanceof Error ? error.message : '暂时无法新建 DSH 会话，请稍后再试') }
       }}
       onContactAdd={() => {
-        setMenuOpen(false)
+        closeMenu()
         onContactAdd()
       }}
       onCreateGroup={() => { chooseDialog('group') }}

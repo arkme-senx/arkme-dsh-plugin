@@ -291,18 +291,20 @@ export function ArkmeActionMenu(props: {
         anchor.getBoundingClientRect(), list.getBoundingClientRect())) cancel()
       else scheduleClose()
     }
-    const leave = (event: PointerEvent) => { if (event.relatedTarget === null) close() }
+    const leave = (event: PointerEvent) => { if (event.relatedTarget === null) scheduleClose() }
     const observer = new MutationObserver(() => { if (!anchor.isConnected) close() })
     observer.observe(doc.body, { childList: true, subtree: true })
     doc.addEventListener('pointermove', move, true)
+    doc.addEventListener('pointerover', move, true)
     doc.addEventListener('pointerout', leave, true)
-    doc.defaultView?.addEventListener('blur', close)
+    doc.defaultView?.addEventListener('blur', scheduleClose)
     return () => {
       cancel()
       observer.disconnect()
       doc.removeEventListener('pointermove', move, true)
+      doc.removeEventListener('pointerover', move, true)
       doc.removeEventListener('pointerout', leave, true)
-      doc.defaultView?.removeEventListener('blur', close)
+      doc.defaultView?.removeEventListener('blur', scheduleClose)
     }
   }, [open, props.hoverAnchor, props.hoverCloseDelayMs])
   const actions = props.actions.filter((action): action is ArkmeMenuAction => !!action)
