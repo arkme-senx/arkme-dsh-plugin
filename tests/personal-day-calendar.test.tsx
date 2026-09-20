@@ -25,6 +25,15 @@ const clickText = async (label: string) => act(async () => {
 beforeEach(() => {
   arkmeCalendarMonths.activateAccount(undefined)
   mocks.read.mockReset().mockImplementation(async (operation, params) => {
+    if (operation === 'calendar.activity') {
+      if (params.mode === 'buckets') return { daily_data: [], coverage: { status: 'complete' } }
+      if (params.source === 'record') return { items: [{ occurred_at: new Date(`${params.body.bucket_date}T12:00:00`).getTime(), record_projection: {
+        recordUid: 'mine', accessState: 'available', protected: false, title: '我的记录', preview: '自己的内容', textContent: '完整图文',
+        content: { itemUid: 'mine', textContent: '完整图文' },
+      } }], has_more: false }
+      if (params.source === 'audio') return { items: [{ start_at: params.body.start_at + 3600000, end_at: params.body.start_at + 7200000, source_label: '我的录音' }], has_more: false }
+      return { items: [], has_more: false }
+    }
     if (operation === 'calendar.buckets') return { scope: 'self', ...params, refreshedAtMillis: Date.now(), days: [{ bucketDate: date, count: 2, protectedCount: 0, hasRecords: true }] }
     if (operation === 'recordings.calendar') return { ...params, days: [{ dateStamp, durationMillis: 3600000, hasRecording: true, unreviewedCount: 0 }] }
     if (operation === 'calendar.records') return { scope: 'self', bucketDate: params.bucketDate, timezone, refreshedAtMillis: Date.now(), hasMore: false,
@@ -40,12 +49,12 @@ afterEach(() => { act(() => view?.unmount()); view = undefined; arkmeCalendarMon
 async function mount(accountScope = 'prod:123') { await act(async () => { view = create(<ArkmePersonalDayCalendar accountScope={accountScope} onClose={() => {}} />) }) }
 
 describe('first-rail personal day calendar', () => {
-  it('loads month/day using existing APIs, keeps per-source index and hides unavailable filters', async () => {
+  it('loads month/day using the production documented reader and keeps per-source index', async () => {
     await mount()
-    expect(mocks.read.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining(['calendar.buckets', 'calendar.records', 'recordings.calendar', 'recordings.day']))
+    expect(mocks.read.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining(['calendar.buckets', 'calendar.activity', 'recordings.calendar']))
     expect(text()).toContain('自己的内容')
     expect(text()).toContain('录音索引有内容')
-    expect(text()).toContain('DSH 暂为已同步输入')
+    expect(text()).toContain('当前来源已加载')
     const labels = view!.root.findAllByType('button').map(button => button.props.children)
     expect(labels).toContain('个人记录'); expect(labels).toContain('录音')
     expect(labels).toContain('对话'); expect(labels).not.toContain('私聊'); expect(labels).toContain('通话'); expect(labels).toContain('原始明细')
@@ -63,11 +72,11 @@ describe('first-rail personal day calendar', () => {
     expect(navigate).not.toHaveBeenCalled()
     await clickText('前往原始来源')
     expect(navigate).toHaveBeenCalledExactlyOnceWith(dateStamp, dateStamp + 3600000)
-    expect(mocks.read.mock.calls.every(call => ['calendar.buckets', 'calendar.records', 'recordings.day', 'recordings.calendar', 'calls.history.list', 'arko.history', 'bots.list'].includes(call[0]))).toBe(true)
+    expect(mocks.read.mock.calls.every(call => ['calendar.buckets', 'calendar.activity', 'recordings.calendar'].includes(call[0]))).toBe(true)
   })
   it('refreshes current date on invalidation, cancels reads on close, and resets account state', async () => {
     await mount()
-    const count = () => mocks.read.mock.calls.filter(call => call[0] === 'calendar.records').length
+    const count = () => mocks.read.mock.calls.filter(call => call[0] === 'calendar.activity' && call[1].source === 'record').length
     const before = count()
     await act(async () => arkmeCalendarInvalidations.publish({ dateKey: date }))
     expect(count()).toBe(before + 1)
@@ -92,6 +101,6 @@ describe('first-rail personal day calendar', () => {
     await mount()
     const day = today.getDate() === 1 ? today : new Date(today.getFullYear(), today.getMonth(), 1)
     await act(async () => view!.root.findByProps({ 'data-calendar-date': personalDateKey(day) }).props.onClick())
-    expect(mocks.read.mock.calls.filter(call => call[0] === 'recordings.day').at(-1)?.[1]).toEqual({ dateStamp: new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime() })
+    expect(mocks.read.mock.calls.filter(call => call[0] === 'calendar.activity' && call[1].source === 'audio').at(-1)?.[1].body.start_at).toBe(new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime())
   })
 })

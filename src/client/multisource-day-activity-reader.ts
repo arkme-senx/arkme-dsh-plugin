@@ -4,6 +4,7 @@ import { callArkme } from './api.js'
 import { createExistingDayActivityReader, existingDayBounds, type ExistingDayTarget } from './existing-day-activity-reader.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { arkmeMarkdownPlainText } from '../markdown.js'
+import { isDayConversation, selectDayActivityExcerpts } from './day-activity-presentation.js'
 import { dayActivityMatchesFilter, dayActivityQueryKey, type DayActivityReader, type DayActivityEntry, type DayActivityQuery,
   type DayActivityPage, type DayActivityDetailPage, type DayActivityKind } from './calendar-activity-model.js'
 
@@ -41,10 +42,13 @@ export function groupDayActivities(entries: readonly DayActivityEntry[], mode: D
   const items = [...groups].map(([id, members]) => {
     const latest = members[0]!
     const place = members.find(member => member.location)
+    const locationSummary = members.find(member => member.locationSummary)?.locationSummary
     return { ...latest, id, startAtMillis: Math.min(...members.map(item => item.startAtMillis)),
       endAtMillis: Math.max(...members.map(item => item.endAtMillis)),
       recordCount: members.reduce((sum, item) => sum + item.recordCount, 0),
+      ...(isDayConversation(latest) ? { excerpts: selectDayActivityExcerpts(members) } : {}),
       ...(members.some(item => item.canLoadLocation) ? { canLoadLocation: true } : {}),
+      ...(locationSummary ? { locationSummary } : {}),
       ...(place?.location ? { location: place.location } : {}) }
   }).sort((a, b) => b.startAtMillis - a.startAtMillis || a.id.localeCompare(b.id))
   return { groups, items }

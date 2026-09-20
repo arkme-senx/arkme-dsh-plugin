@@ -37,22 +37,22 @@ const render = async () => {
   })
 }
 
-it('names the current harness conversation on the first line', async () => {
+it('uses the product conversation name instead of the current task on the first line', async () => {
   activity({ current: { id: 's1', title: '插件开发分支选择' } })
   await render()
-  expect(line('[data-arkme-harness-title]')).toBe('插件开发分支选择')
+  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
   expect(line('[data-arkme-harness-destination]')).toBe('你的 DeepSeek 智能助手')
-  expect(row().getAttribute('aria-label')).toBe('插件开发分支选择')
+  expect(row().getAttribute('aria-label')).toBe('DeepSeek Harness')
 })
 
 it('keeps the conversation name visible while a task is running', async () => {
   activity({ current: { id: 's1', title: '插件开发分支选择' }, running: [{ id: 's2', title: '另一个任务' }] })
   await render()
   // The running status must not push the conversation name out of the row.
-  expect(line('[data-arkme-harness-title]')).toBe('插件开发分支选择')
+  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
   expect(line('[data-arkme-harness-summary]')).toContain('1 进行中')
   expect(line('[data-arkme-harness-destination]')).toBe('')
-  expect(row().getAttribute('aria-label')).toBe('插件开发分支选择，1 进行中')
+  expect(row().getAttribute('aria-label')).toBe('DeepSeek Harness，1 进行中')
 })
 
 it('keeps pending and unread work as a badge-only signal without a running task', async () => {
@@ -60,7 +60,7 @@ it('keeps pending and unread work as a badge-only signal without a running task'
   await render()
   // Documented contract: only a running task claims the second line; pending and
   // unread stay on the avatar badge, and the name is now always on line one.
-  expect(line('[data-arkme-harness-title]')).toBe('插件开发分支选择')
+  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
   expect(line('[data-arkme-harness-summary]')).toBe('')
   expect(line('[data-arkme-harness-destination]')).toBe('你的 DeepSeek 智能助手')
   expect(host.querySelector('[data-arkme-harness-badge]')?.textContent).toBe('1')
@@ -71,8 +71,10 @@ it('falls back to the product name before the harness reports a session', async 
   expect(row().getAttribute('aria-label')).toBe('DeepSeek Harness')
 })
 
-it('shows the new-conversation label for a blank harness session', async () => {
+it('keeps the product name for a blank harness session and after session changes', async () => {
   activity({ current: null })
   await render()
-  expect(line('[data-arkme-harness-title]')).toBe('新会话')
+  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
+  await act(async () => activity({ current: { id: 's2', title: '新任务' } }))
+  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
 })

@@ -41,9 +41,9 @@ async function mount(source: DayActivityReader | undefined, q = query, navigate 
 afterEach(() => { act(() => { renderer?.unmount() }); renderer = undefined })
 
 describe('day activity read model', () => {
-  it('prefers remarks, distinguishes received messages, and hides restricted titles', () => {
-    expect(dayActivityTitle(entry('a'))).toBe('与 备注名 的私聊')
-    expect(dayActivityTitle(entry('a', { participation: 'received' }))).toBe('收到 备注名 的消息')
+  it('prefers stable remark titles regardless of last message direction, and hides restricted titles', () => {
+    expect(dayActivityTitle(entry('a'))).toBe('备注名')
+    expect(dayActivityTitle(entry('a', { participation: 'received' }))).toBe('备注名')
     expect(dayActivityTitle(entry('a', { access: 'restricted' }))).toBe('内容已不可访问')
     expect(dayActivityDisplayName({ name: '昵称', remark: '  ' })).toBe('昵称')
     expect(dayActivityDisplayName({ name: '' })).toBe('未命名用户')
@@ -66,6 +66,32 @@ describe('day activity read model', () => {
 })
 
 describe('day timeline integration boundary', () => {
+  it('renders selected original excerpts and compact metadata without repeating a source name', async () => {
+    const source = reader()
+    source.loadDay.mockResolvedValue(page([entry('group', { kind: 'group_chat', participant: undefined,
+      title: '项目群', sourceName: '项目群', preview: '好的', statusLabel: '我收到', recordCount: 3,
+      excerpts: [{ id: 'a', text: '明天完成接口联调', self: true },
+        { id: 'b', text: '还需要补一个回复筛选', self: false, author: { name: '昵称', remark: '周鹏' } }] })]))
+    await mount(source)
+    const row = renderer!.root.findByProps({ 'data-activity-id': 'group' })
+    const rowText = content(row)
+    expect(rowText).toContain('我：明天完成接口联调')
+    expect(rowText).toContain('周鹏：还需要补一个回复筛选')
+    expect(rowText).toContain('3 条相关消息')
+    expect(rowText.match(/项目群/g)).toHaveLength(1)
+    expect(rowText).not.toMatch(/好的|原始记录|我收到/)
+    expect(source.loadDetail).not.toHaveBeenCalled()
+  })
+  it('shows recording duration instead of zero original records and does not fetch transcripts eagerly', async () => {
+    const source = reader()
+    source.loadDay.mockResolvedValue(page([entry('audio', { kind: 'recording', title: '录音时段', sourceName: '录音',
+      recordCount: 0, startAtMillis: start + hour, endAtMillis: start + hour + 25_000, participant: undefined })]))
+    await mount(source)
+    expect(text()).toContain('录音 0:25')
+    expect(text()).not.toContain('0 条原始记录')
+    expect(text()).not.toContain('01:00–01:00')
+    expect(source.loadDetail).not.toHaveBeenCalled()
+  })
   it('does not fake an empty complete day when no adapter is installed', async () => {
     await mount(undefined)
     expect(text()).toContain('多维活动数据尚未接入')
@@ -81,7 +107,8 @@ describe('day timeline integration boundary', () => {
     const source = reader(); const navigate = vi.fn()
     await mount(source, query, navigate)
     expect(source.loadDay).toHaveBeenCalledExactlyOnceWith(query, { signal: expect.any(AbortSignal) })
-    expect(text()).toContain('与 备注名 的私聊')
+    expect(text()).toContain('备注名')
+    expect(text()).toContain('对方：本段讨论内容')
     expect(text()).not.toContain('原始昵称')
     expect(source.loadDetail).not.toHaveBeenCalled()
     expect(navigate).not.toHaveBeenCalled()

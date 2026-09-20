@@ -21,4 +21,15 @@ describe('Arkme realtime client event lifetime', () => {
     expect(arkmeRealtimeTimelineDeliveryAllowed(undefined)).toBe(true)
     expect(source).toContain('foreground && timelineUpdates.length > 0')
   })
+
+  it('refreshes interaction counters on read acknowledgements and permission changes even when the Host owns directory refresh', () => {
+    const readAck = source.slice(source.indexOf("if (update.type === 'read-ack')"), source.indexOf("if (update.type === 'attention-summary')"))
+    expect(readAck).toContain('arkmeInterwovenInvalidation.invalidate(update.sourceKey)')
+    for (const type of ['chat-policy-invalidated', 'conversation-list-preference-invalidated']) {
+      const start = source.indexOf(`if (update.type === '${type}')`)
+      const block = source.slice(start, source.indexOf('\n        }', start))
+      expect(block.indexOf('arkmeInterwovenInvalidation.invalidate()')).toBeGreaterThan(0)
+      expect(block.indexOf('arkmeInterwovenInvalidation.invalidate()')).toBeLessThan(block.indexOf("update.refresh === 'none'"))
+    }
+  })
 })

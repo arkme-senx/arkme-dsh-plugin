@@ -88,7 +88,7 @@ it('provides a blank-session entry and follows native right-panel geometry and h
   expect(newSession).toHaveBeenCalledOnce()
   expect(trigger.textContent).toContain('新会话')
   expect(trigger.closest('[data-arkme-session-fallback]')).not.toBeNull()
-  expect(getComputedStyle(trigger.closest('[data-arkme-session-fallback]')!).left).toBe('20px')
+  expect(getComputedStyle(trigger.closest('[data-arkme-session-fallback]')!).left).toBe('50%')
   frame.style.gridTemplateColumns = '280px minmax(0px, 1fr) 420px'
   await flush()
   expect(frame.style.getPropertyValue('--arkme-session-rightbar')).toBe('420px')
@@ -192,7 +192,7 @@ it('stacks the native header action slot below the title and restores it when th
 const rowWithStatus = (dot: string, label?: string) =>
   `<span class="slot">${dot}${label === undefined ? '' : `<span class="visuallyHidden">${label}</span>`}</span><span class="title">会话 A</span>`
 
-it('centers the title block in the conversation seat and leaves the left side empty', async () => {
+it('centers the selector with symmetric side tracks and a fixed product name on the left', async () => {
   const { header, trigger } = mount()
   header.innerHTML = '<div><div><nav><span><button disabled>测试</button></span></nav><div><div data-slot="conversation.session.header.actions"><span title="原模式说明">标准模式</span><span data-arkme-session-turn-count>1 次对话</span></div></div></div><div data-slot="conversation.session.header.utilities"><button>更多操作</button></div></div>'
   await flush()
@@ -205,8 +205,49 @@ it('centers the title block in the conversation seat and leaves the left side em
   expect(getComputedStyle(nav).display).toBe('flex')
   expect(getComputedStyle(nav).justifyContent).toBe('center')
   expect(getComputedStyle(summary).justifyContent).toBe('center')
+  expect(getComputedStyle(summary).flexWrap).toBe('nowrap')
+  expect(getComputedStyle(summary).height).toBe('18px')
   expect(getComputedStyle(header.querySelector<HTMLElement>('[data-arkme-session-title-cluster]')!).flexDirection).toBe('column')
+  const row = header.querySelector<HTMLElement>('[data-arkme-session-title-row]')!
+  expect(getComputedStyle(row).display).toBe('flex')
+  expect(row.style.getPropertyValue('--arkme-header-utilities-width')).toBe('0px')
+  const identity = row.querySelector<HTMLElement>('[data-arkme-session-identity]')!
+  expect(identity.textContent).toBe('DeepSeek Harness')
+  expect(row.firstElementChild).toBe(identity)
+  expect(getComputedStyle(header.querySelector('[data-arkme-session-utilities-start]')!).marginLeft).toBe('auto')
   expect(trigger.textContent).toContain('测试')
+  header.querySelector('[data-arkme-session-native-title]')!.textContent = '改名后的任务'
+  await flush()
+  expect(identity.textContent).toBe('DeepSeek Harness')
+  expect(trigger.textContent).toContain('改名后的任务')
+  cleanup!(); cleanup = undefined
+  expect(document.querySelector('[data-arkme-session-identity]')).toBeNull()
+  expect(row.hasAttribute('data-arkme-session-title-row')).toBe(false)
+})
+
+it('keeps the product identity and a centered selector for the native blank header', async () => {
+  const { header, trigger } = mount()
+  header.setAttribute('aria-hidden', 'true')
+  await flush()
+  const identity = document.querySelector<HTMLElement>('[data-arkme-session-identity]')!
+  expect(identity.textContent).toBe('DeepSeek Harness')
+  expect(identity.hasAttribute('data-arkme-session-fallback')).toBe(true)
+  expect(getComputedStyle(trigger.parentElement!).left).toBe('50%')
+  expect(trigger.textContent).toBe('新会话')
+})
+
+it('reserves space for every native right-side group without reparenting them', async () => {
+  const { header } = mount()
+  header.innerHTML = '<div><div><nav><span><button disabled>任务</button></span></nav><div><div data-slot="conversation.session.header.actions">标准模式</div></div></div><div data-tools><button>工作区</button></div><div data-panel><button>侧栏</button></div></div>'
+  const row = header.firstElementChild!, tools = header.querySelector<HTMLElement>('[data-tools]')!, panel = header.querySelector<HTMLElement>('[data-panel]')!
+  vi.spyOn(tools, 'getBoundingClientRect').mockReturnValue({ width: 80 } as DOMRect)
+  vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 28 } as DOMRect)
+  await flush()
+  expect(header.querySelectorAll('[data-arkme-session-utilities]')).toHaveLength(2)
+  expect(header.querySelector<HTMLElement>('[data-arkme-session-title-row]')!.style.getPropertyValue('--arkme-header-utilities-width')).toBe('112px')
+  expect(tools.parentElement).toBe(row); expect(panel.parentElement).toBe(row)
+  cleanup!(); cleanup = undefined
+  expect((row as HTMLElement).style.getPropertyValue('--arkme-header-utilities-width')).toBe('')
 })
 
 it('mirrors the selected row task status into the fixed title', async () => {

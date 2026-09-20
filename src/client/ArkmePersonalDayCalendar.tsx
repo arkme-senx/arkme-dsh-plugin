@@ -1,13 +1,14 @@
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ArkmeRecordingCalendarMonth, ArkmeTimelineItem } from '../types.js'
+import type { ArkmeCalendarBucketDay, ArkmeRecordingCalendarMonth, ArkmeTimelineItem } from '../types.js'
 import { isRecordingLocalDateOnOrAfterMinimum } from '../recording-time.js'
 import { ArkmeDayTimeline } from './ArkmeDayTimeline.js'
 import { ArkmeCalendarMonthView, ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDetails.js'
 import { personalDateKey } from './existing-day-activity-reader.js'
-import { createMultisourceDayActivityReader } from './multisource-day-activity-reader.js'
+import { createDocumentedDayActivityReader } from './documented-day-activity-reader.js'
+import { useDocumentedDayMonth } from './use-documented-day-month.js'
 import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
 import { ArkmeCallDetailDrawer } from './ArkmeCallDetailDrawer.js'
 import { ArkmeMarkdownBody } from './ArkmeMarkdownBody.js'
@@ -38,7 +39,8 @@ function PersonalDayCalendar({ accountScope = '', onClose }: { accountScope?: st
   const [richDetail, setRichDetail] = useState<ArkmeTimelineItem>()
   const [showOriginal, setShowOriginal] = useState(false)
   const root = useRef<HTMLDivElement>(null)
-  const reader = useMemo(() => createMultisourceDayActivityReader(accountScope), [accountScope])
+  const reader = useMemo(() => createDocumentedDayActivityReader(accountScope), [accountScope])
+  const documentedMonth = useDocumentedDayMonth(accountScope, visibleMonth, query.timezone, true, monthRevision)
   const monthEnd = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0)
   const nextMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1).getTime()
   const month = useCalendarMonth({ scopeKey: 'global', timezone: query.timezone,
@@ -70,6 +72,17 @@ function PersonalDayCalendar({ accountScope = '', onClose }: { accountScope?: st
   const refreshMonth = () => { void month.retry(); setMonthRevision(value => value + 1); setRichDetail(undefined) }
 
   if (legacy) return <ArkmeCalendarSurface anchor="product-rail" accountScope={accountScope} onClose={() => setLegacy(false)} />
+  const markerDays = new Map(documentedMonth.markers)
+  if (audioIndex?.key === monthKey) for (const date of audioIndex.dates) {
+    markerDays.set(date, { ...(markerDays.get(date) ?? {}), recording: true })
+  }
+  const calendarDayMap = new Map((month.value?.days ?? []).map(day => [day.bucketDate, day]))
+  for (const [bucketDate, activityMarkers] of markerDays) {
+    const existing = calendarDayMap.get(bucketDate)
+    if (existing) calendarDayMap.set(bucketDate, { ...existing, hasRecords: existing.hasRecords || Object.values(activityMarkers).some(Boolean), activityMarkers: { ...(existing.activityMarkers ?? {}), ...activityMarkers } })
+    else calendarDayMap.set(bucketDate, { bucketDate, count: 0, protectedCount: 0, hasRecords: true, activityMarkers } satisfies ArkmeCalendarBucketDay)
+  }
+  const calendarDays = [...calendarDayMap.values()].sort((left, right) => left.bucketDate.localeCompare(right.bucketDate))
   return <div ref={root} tabIndex={-1} role="region" aria-label={tr("个人活动日历")} className="arkme-personal-day-calendar"
     data-arkme-notification-blocking-overlay="true" style={{ left: ARKME_NAVIGATION_WIDTH }}
     onKeyDown={event => {
@@ -79,7 +92,7 @@ function PersonalDayCalendar({ accountScope = '', onClose }: { accountScope?: st
     }}>
     <aside className="arkme-personal-day-month" aria-label={tr("选择活动日期")}>
       <ArkmeCalendarMonthView visibleMonth={visibleMonth} selectedDate={selectedDate} today={today}
-        days={month.value?.days ?? []} loading={month.loading} error={month.error}
+        days={calendarDays} loading={month.loading || documentedMonth.loading} error={month.error}
         recordingDates={audioIndex?.key === monthKey ? audioIndex.dates : new Set()}
         onVisibleMonthChange={setVisibleMonth} onSelectDate={date => { setRichDetail(undefined); setQuery(current => ({ ...current, bucketDate: personalDateKey(date) })) }} />
       <p className="arkme-personal-day-caption">{tr("数字为个人记录数，圆点为录音索引。录音归属与覆盖范围以当天结果为准。")}</p>

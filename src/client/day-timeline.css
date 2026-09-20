@@ -36,7 +36,7 @@
 .arkme-day-columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
 .arkme-day-columns[data-detail-open=true] { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
 .arkme-day-list, .arkme-day-detail { min-width: 0; }
-.arkme-day-entry { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; padding-bottom: 20px; }
+.arkme-day-entry { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; padding-bottom: 9px; }
 .arkme-day-entry > time { font-size: 12px; color: var(--day-muted); padding-top: 9px; font-variant-numeric: tabular-nums; }
 .arkme-day-entry-content { text-align: left; width: 100%; min-width: 0; border: 0; border-radius: 10px; background: transparent; padding: 7px 9px; }
 .arkme-day-entry-body { min-width: 0; }
@@ -51,12 +51,19 @@
 .arkme-day-location dt, .arkme-day-location p { color: var(--day-muted); }
 .arkme-day-location dd { margin: 0; }
 .arkme-day-entry-content:not(:disabled):hover, .arkme-day-entry-content[aria-expanded=true] { background: color-mix(in srgb, var(--day-text) 6%, var(--day-base)); }
-.arkme-day-entry-title { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; }
-.arkme-day-entry-title strong { font-weight: 500; overflow-wrap: anywhere; }
-.arkme-day-entry-title span { flex: none; font-size: 11px; color: var(--day-muted); }
+.arkme-day-entry-title { display: flex; gap: 8px; align-items: center; }
+.arkme-day-entry-title strong { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.arkme-day-entry-title .arkme-day-kind { flex: none; font-size: 11px; color: var(--day-muted); }
+.arkme-day-identity-icon { flex: none; display: grid; place-items: center; width: 24px; height: 24px; color: var(--day-muted); }
 .arkme-day-entry-content p { margin-top: 5px; color: var(--day-muted); font-size: 13px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .arkme-day-entry-content p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.arkme-day-entry-meta { color: var(--day-muted); font-size: 11px; margin-top: 6px; overflow-wrap: anywhere; }
+.arkme-day-excerpts p { margin-top: 3px; }
+.arkme-day-excerpts p + p { -webkit-line-clamp: 1; }
+.arkme-day-excerpt-author { color: var(--day-text); opacity: .75; }
+.arkme-day-entry-meta { color: var(--day-muted); font-size: 11px; margin-top: 4px; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.arkme-day-expand { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+.arkme-day-entry-content[aria-expanded=true] .arkme-day-expand svg { transform: rotate(90deg); }
+.arkme-day-entry-content:focus-visible { outline: 2px solid var(--day-accent); outline-offset: 2px; }
 .arkme-day-status { padding: 18px 0; font-size: 13px; color: var(--day-muted); overflow-wrap: anywhere; }
 .arkme-day-status button { border: 0; border-radius: 6px; padding: 5px 9px; margin-left: 8px; background: var(--day-layer); }
 .arkme-day-more { border: 0; border-radius: 8px; background: var(--day-layer); padding: 8px 14px; margin: 8px 0; font-size: 12px; }

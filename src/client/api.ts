@@ -125,6 +125,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'dsh-beta-community.entry-state'
   | 'dsh-beta-community.join'
   | 'calendar.buckets'
+  | 'calendar.activity'
   | 'calendar.records'
   | 'recordings.calendar'
   | 'recordings.day'

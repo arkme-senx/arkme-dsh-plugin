@@ -7,9 +7,29 @@ import { CONVERSATION_MENU_LAYOUT } from '../src/client/conversation-selector-st
 import { IconEllipsisOutline16, IconNewChatOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ArkmeSourceItem } from '../src/types.js'
+import { CONVERSATION_HEADER_COLUMNS } from '../src/client/conversation-header-layout.js'
 
 let host: HTMLDivElement
 let root: Root
+
+it('allows a fixed conversation name outside the centered selector without duplicating it', async () => {
+  const select = vi.fn()
+  const topic = { kind: 'topic', sourceRef: 'one', displayName: '很长的工作主题', recordCount: 1 } as ArkmeSourceItem
+  await act(async () => root.render(<header style={{ display: 'grid', gridTemplateColumns: CONVERSATION_HEADER_COLUMNS }}>
+    <h2>发给自己</h2><div style={{ gridColumn: 2, minWidth: 0, justifySelf: 'center' }}>
+      <ArkmeSourceBreadcrumb selectedSource={undefined} sources={[topic]} showRootTitle={false}
+        onSelect={select} onSelectAggregate={vi.fn()} />
+    </div><button>日历</button>
+  </header>))
+  expect(host.querySelector('[data-arkme-self-topic-root]')).toBeNull()
+  expect(host.querySelector('h2')?.textContent).toBe('发给自己')
+  expect(host.querySelector('[data-arkme-self-topic-selector]')?.textContent).toBe('全部')
+  await clickButton('选择主题')
+  expect(host.querySelector('[data-arkme-self-topic-menu]')).not.toBeNull()
+  const topicRow = host.querySelector<HTMLElement>('[data-arkme-self-topic-tree-row-ref="one"]')!
+  await act(async () => topicRow.click())
+  expect(select).toHaveBeenCalledWith(topic)
+})
 
 async function render(userId: number) {
   await act(async () => {

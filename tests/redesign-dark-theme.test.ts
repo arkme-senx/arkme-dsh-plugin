@@ -78,10 +78,11 @@ describe('Arkme redesign dark theme', () => {
     expect(redesignCss).toContain('.arkme-contact-directory-section-header[aria-expanded="true"] .arkme-contact-directory-caret { transform: rotate(90deg); }')
   })
   it('reassigns the real AppFrame grid tracks for Contacts narrow directory and detail seats', () => {
-    expect(redesignCss).toContain('div:has(> [data-shell-overlay]):has([data-arkme-directory-mode="contacts"]):has([data-arkme-contacts-mobile-view="directory"])')
+    expect(redesignCss).toContain('[data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="directory"]) { grid-template-columns:')
     expect(redesignCss).toContain('grid-template-columns: minmax(0, 1fr) 0px 0px !important')
-    expect(redesignCss).toContain('div:has(> [data-shell-overlay]):has([data-arkme-directory-mode="contacts"]):has([data-arkme-contacts-mobile-view="content"])')
-    expect(redesignCss).toContain('grid-template-columns: 0px minmax(0, 1fr) 0px !important')
+    expect(redesignCss).toContain('[data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="content"]) { grid-template-columns:')
+    expect(redesignCss).toContain('grid-template-columns: var(--arkme-navigation-width) minmax(0, 1fr) 0px !important')
+    expect(redesignCss).not.toContain('[data-arkme-contacts-mobile-view="content"] { display: none')
     expect(redesignCss).not.toContain('.pI_x6G_frame')
     expect(redesignCss).not.toContain('data-details-collapsed]):has([data-arkme-owned="persistent')
   })
@@ -251,7 +252,7 @@ describe('Arkme redesign dark theme', () => {
     expect(redesignCss).toContain('[data-arkme-directory-mode="contacts"]')
     expect(redesignCss).toContain('.arkme-contact-directory button:focus-visible')
     expect(redesignCss).toContain('.arkme-directory-detail-pane button:focus-visible')
-    expect(redesignCss).toMatch(/@media \(max-width: 1024px\) \{[\s\S]*data-arkme-directory-mode="contacts"/)
+    expect(redesignCss).toContain('[data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="content"] > [data-arkme-directory-mode="contacts"]')
     expect(redesignCss).toMatch(/@media \(max-width: 820px\) \{[^}]*\.arkme-redesign-chat-panel \{ display: none;/)
     expect(redesignCss).toMatch(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.arkme-contact-directory-caret/)
 
@@ -263,7 +264,7 @@ describe('Arkme redesign dark theme', () => {
   })
 
   it('keeps both Contacts seats bounded at narrow widths', () => {
-    expect(redesignCss).toMatch(/@media \(max-width: 820px\) \{[\s\S]*data-arkme-directory-mode="contacts"/)
+    expect(redesignCss).toContain('[data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="directory"]')
     expect(redesignCss).toContain('.arkme-directory-detail-pane')
   })
 

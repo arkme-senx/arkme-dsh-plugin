@@ -408,7 +408,7 @@ export class ArkmeService {
     async (source, text, humans, bots, session, textFormat) => await this.chat.resolveMentions(
       source, text, text, humans, bots, session, undefined, textFormat,
     ))
-    this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source)
+    this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory)
     this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy)
     if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
     this.bot = new BotService(this.runtime, this.source)
@@ -1280,6 +1280,15 @@ export class ArkmeService {
   async queryPrivateInteractions(options: import('./types.js').ArkmePrivateInteractionQueryOptions = {}) {
     return await this.interwoven.queryPrivateInteractions(options)
   }
+  /** @internal Built-in conversation directory; never creates a private chat. */
+  async privateInteractionDirectory(options: Pick<import('./types.js').ArkmePrivateInteractionQueryOptions, 'limit' | 'cursor' | 'expectedVersion' | 'signal'> = {}) {
+    const { userId } = await this.runtime.requireSession()
+    const page = await this.interwoven.privateInteractionDirectory(options)
+    const visibility = await this.conversationDirectoryVisibility.query(page.items.map(item => item.sourceRef), [], options.signal)
+    if ((await this.runtime.requireSession()).userId !== userId) throw new ArkmePluginError('interaction-account-changed', '账号已切换，请重新查询互动', true)
+    const visible = new Set(visibility.items.filter(item => !item.hidden).map(item => item.entryRef))
+    return { ...page, items: page.items.filter(item => visible.has(item.sourceRef)) }
+  }
 
   /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
   async interwovenMoments(
@@ -2019,10 +2028,29 @@ export class ArkmeService {
     return await this.record.list(limit, cursor)
   }
 
-  async calendarBuckets(
-    options: { startDate: string; endDate: string; timezone?: string; sourceRef?: string; background?: boolean; signal?: AbortSignal },
-  ): Promise<ArkmeCalendarBucketPage> {
-    return await this.calendar.bucketPage(options)
+  async calendarBuckets(options: {
+    startDate?: string
+    endDate?: string
+    timezone?: string
+    sourceRef?: string
+    background?: boolean
+    activity?: {
+      source: 'record' | 'chat' | 'call' | 'audio' | 'arko' | 'bot'
+      mode: 'buckets' | 'details' | 'coverage' | 'transcripts'
+      body: Record<string, unknown>
+    }
+    signal?: AbortSignal
+  }): Promise<ArkmeCalendarBucketPage> {
+    if (options.activity !== undefined) return await this.calendar.activity({ ...options.activity, ...(options.signal === undefined ? {} : { signal: options.signal }) }) as ArkmeCalendarBucketPage
+    if (options.startDate === undefined || options.endDate === undefined) throw new Error('calendar range is required')
+    return await this.calendar.bucketPage({
+      startDate: options.startDate,
+      endDate: options.endDate,
+      ...(options.timezone === undefined ? {} : { timezone: options.timezone }),
+      ...(options.sourceRef === undefined ? {} : { sourceRef: options.sourceRef }),
+      ...(options.background === undefined ? {} : { background: options.background }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
   }
 
   async calendarChatStatistics(options: {

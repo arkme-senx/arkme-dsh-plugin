@@ -7,6 +7,7 @@ describe('private interaction Host operations', () => {
     const service = {
       privateInteractionSummary: vi.fn(async () => ({ unreadCount: 1 })),
       queryPrivateInteractions: vi.fn(async () => ({ items: [], hasMore: false })),
+      privateInteractionDirectory: vi.fn(async () => ({ items: [], hasMore: false })),
     } as unknown as ArkmeService
     const signal = new AbortController().signal
     await dispatchArkmeHostOperation(service, 'private-interaction.summary', {
@@ -23,5 +24,9 @@ describe('private interaction Host operations', () => {
       sourceRef: 'private-source', unreadOnly: true, limit: 50, cursor: 'cursor',
       expectedVersion: 'b'.repeat(64), signal,
     })
+    await dispatchArkmeHostOperation(service, 'private-interaction.directory', {
+      limit: 199, cursor: ' cursor ', expectedVersion: 'b'.repeat(64), unreadOnly: true, userId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+    expect(service.privateInteractionDirectory).toHaveBeenCalledWith({ limit: 100, cursor: 'cursor', expectedVersion: 'b'.repeat(64), signal })
   })
 })

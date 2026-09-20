@@ -80,6 +80,105 @@ function buttonByLabel(renderer: ReactTestRenderer, label: string): ReactTestIns
 }
 
 describe('ArkmeCallSurface interactions', () => {
+  it('retains selection, detail, search and loaded pages while checking updates on return', async () => {
+    const refresh = deferred<unknown>()
+    const item = (id: string, time: number) => ({ callRef: `${id}-handle`, stableId: id, peerDisplayName: id,
+      mediaType: 'audio', startedAtMillis: time, acceptedAtMillis: time, endedAtMillis: time + 1,
+      durationSeconds: 1, callResult: 'NormalEnd', resultLabel: '已结束', summaryStatus: 'done', canOpenDetail: true, canRedial: false })
+    let heads = 0
+    mocks.callArkme.mockImplementation(async (op: string, args: { cursor?: string; callRef?: string }) => {
+      if (op === 'calls.history.list') {
+        if (args.cursor) return { items: [item('Older', 10)], hasMore: true, nextCursor: 'page3' }
+        return ++heads === 1 ? { items: [item('Selected', 20)], hasMore: true, nextCursor: 'page2' } : refresh.promise
+      }
+      if (op === 'calls.history.detail') return { ...item('Selected', 20), callRef: args.callRef,
+        title: 'Detail', summaryText: 'Preserved detail', participants: [], transcriptSegments: [], transcriptPending: false, transcriptFailed: false }
+      return { items: [], hasMore: false }
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
+    await act(async () => { buttonByText(renderer, 'Selected').props.onClick(); await tick() })
+    const detailNode = renderer.root.findByProps({ 'data-arkme-call-detail-content': 'true' })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '通话记录列表' }).props.onScroll({ currentTarget: { scrollHeight: 1000, scrollTop: 750, clientHeight: 200 } }); await tick() })
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'calls.history.detail')).toHaveLength(1)
+    const search = () => renderer.root.findByProps({ 'aria-label': '搜索通话记录' })
+    await act(async () => { search().props.onChange({ currentTarget: { value: 'Selected' } }); renderer.update(<ArkmeCallSurface active={false} />); await tick() })
+    expect(mocks.outgoingCallSettledListeners).toHaveLength(0)
+    expect(heads).toBe(1)
+    await act(async () => { renderer.update(<ArkmeCallSurface active />); await tick() })
+    expect(heads).toBe(2)
+    expect(search().props.value).toBe('Selected')
+    expect(textContent(renderer.toJSON())).toContain('Preserved detail')
+    expect(textContent(renderer.toJSON())).not.toContain('正在读取通话记录')
+    await act(async () => { refresh.resolve({ items: [item('New', 30), { ...item('Selected', 20), callRef: 'rotated-handle' }], hasMore: true, nextCursor: 'new-head-cursor' }); await tick() })
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'calls.history.detail')).toHaveLength(2)
+    expect(renderer.root.findByProps({ 'data-arkme-call-detail-content': 'true' })).toBe(detailNode)
+    expect(renderer.root.findAllByType('button').filter(node => node.props['aria-pressed'] === true)).toHaveLength(1)
+    await act(async () => { search().props.onChange({ currentTarget: { value: '' } }); await tick() })
+    expect(textContent(renderer.toJSON())).toContain('New')
+    expect(textContent(renderer.toJSON())).toContain('Older')
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '通话记录列表' }).props.onScroll({ currentTarget: { scrollHeight: 1000, scrollTop: 750, clientHeight: 200 } }); await tick() })
+    expect(mocks.callArkme.mock.calls.some(([op, args]) => op === 'calls.history.list' && args.cursor === 'page3')).toBe(true)
+    act(() => renderer.unmount())
+  })
+
+  it('keeps cached rows on a failed return refresh and retries on the next visit', async () => {
+    let heads = 0
+    mocks.callArkme.mockImplementation(async (op: string) => {
+      if (op !== 'calls.history.list') return { items: [], hasMore: false }
+      if (++heads === 2) throw new Error('offline')
+      return { items: [{ callRef: 'cached', stableId: 'cached', peerDisplayName: 'Cached peer', mediaType: 'audio',
+        startedAtMillis: 1, durationSeconds: 1, acceptedAtMillis: 1, summaryStatus: 'done', canOpenDetail: false }], hasMore: false }
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
+    for (let visit = 0; visit < 2; visit++) {
+      await act(async () => { renderer.update(<ArkmeCallSurface active={false} />); await tick() })
+      await act(async () => { renderer.update(<ArkmeCallSurface active />); await tick() })
+      expect(textContent(renderer.toJSON())).toContain('Cached peer')
+      expect(textContent(renderer.toJSON())).not.toContain('正在读取通话记录')
+    }
+    expect(heads).toBe(3)
+    act(() => renderer.unmount())
+  })
+
+  it('does not drain pagination while the retained list is hidden', async () => {
+    const initial = deferred<unknown>()
+    mocks.callArkme.mockImplementation(async (op: string) => op === 'calls.history.list' ? initial.promise : { items: [], hasMore: false })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface />, { createNodeMock: node => node.type === 'ul' ? { scrollHeight: 0, clientHeight: 0 } : null }); await tick() })
+    await act(async () => { renderer.update(<ArkmeCallSurface active={false} />); initial.resolve({ items: [], hasMore: true, nextCursor: 'next' }); await tick() })
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'calls.history.list')).toHaveLength(1)
+    act(() => renderer.unmount())
+  })
+
+  it('cancels an unfinished detail read on leaving and shows a retry failure rather than hanging on return', async () => {
+    const pending = deferred<unknown>()
+    let details = 0
+    const item = { callRef: 'one', stableId: 'one', peerDisplayName: 'Pending peer', mediaType: 'audio',
+      startedAtMillis: 1, acceptedAtMillis: 1, durationSeconds: 1, canOpenDetail: true, summaryStatus: 'done' }
+    mocks.callArkme.mockImplementation(async (op: string) => {
+      if (op === 'calls.history.list') return { items: [item], hasMore: false }
+      if (op === 'calls.history.detail') {
+        if (++details === 1) return pending.promise
+        throw new Error('second detail failed')
+      }
+      return { items: [], hasMore: false }
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
+    await act(async () => { buttonByText(renderer, 'Pending peer').props.onClick(); await tick() })
+    const signal = mocks.callArkme.mock.calls.find(([op]) => op === 'calls.history.detail')![2]
+    await act(async () => { renderer.update(<ArkmeCallSurface active={false} />); await tick() })
+    expect(signal.aborted).toBe(true)
+    await act(async () => { renderer.update(<ArkmeCallSurface active />); await tick() })
+    expect(textContent(renderer.toJSON())).toContain('second detail failed')
+    expect(textContent(renderer.toJSON())).not.toContain('正在读取通话详情')
+    await act(async () => { pending.resolve({}); await tick() })
+    expect(textContent(renderer.toJSON())).toContain('second detail failed')
+    act(() => renderer.unmount())
+  })
+
   it('reuses contact, call-type and invitation dialogs without rendering or navigating to the calls page', async () => {
     const onClose = vi.fn()
     const previousUi = arkmeUi.getSnapshot()

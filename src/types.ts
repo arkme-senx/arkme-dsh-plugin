@@ -464,6 +464,8 @@ export interface ArkmeCalendarBucketDay {
   anchor?: ArkmeCalendarAnchor
   momentAnchor?: ArkmeCalendarMomentAnchor
   conversationCounts?: { messages: number; interactions: number }
+  /** Source-presence markers used by the multi-source personal day calendar. */
+  activityMarkers?: { chat?: boolean; call?: boolean; recording?: boolean; arko?: boolean; bot?: boolean }
 }
 
 export interface ArkmeCalendarBucketPage {
@@ -485,6 +487,7 @@ export interface ArkmeCalendarRecordCursor {
 }
 
 export interface ArkmeCalendarRecordItem extends ArkmeCalendarAnchor {
+  locationSummary?: { label?: string; capturedAtMillis?: number }
   /** Device-captured observation, never a shared place or an inferred stay. */
   locationObservation?: ArkmeRecordLocationObservation
   /** Short-lived, account-bound capability for an explicit location detail read. */
@@ -3620,6 +3623,7 @@ export type ArkmePluginOperation =
   | 'directory.list'
   | 'private-interaction.summary'
   | 'private-interaction.query'
+  | 'private-interaction.directory'
   | 'contacts.add'
   | 'chat.private.open-from-contact'
   | 'group.create'
@@ -3652,6 +3656,7 @@ export type ArkmePluginOperation =
   | 'calendar.buckets'
   | 'calendar.chat-statistics'
   | 'calendar.records'
+  | 'calendar.activity'
   | 'calendar.day-recap'
   | 'calendar.record-location'
   | 'user.profile'
@@ -3976,6 +3981,8 @@ export type ArkmePluginResponse<T = unknown> =
 export interface ArkmePrivateInteraction {
   interactionRef: string
   privateSourceRef: string
+  /** Stable opaque chat identity, independent of reference labels/activity. */
+  privateSourceKey?: string
   peerName: string
   groupSourceRef: string
   groupName: string
@@ -4000,6 +4007,11 @@ export interface ArkmePrivateInteractionSummary extends ArkmePrivateInteractionC
 }
 export interface ArkmePrivateInteractionPage extends ArkmePrivateInteractionCoverage {
   items: ArkmePrivateInteraction[]
+  hasMore: boolean
+  nextCursor?: string
+}
+export interface ArkmePrivateInteractionDirectoryPage extends ArkmePrivateInteractionCoverage {
+  items: ArkmeSourceItem[]
   hasMore: boolean
   nextCursor?: string
 }

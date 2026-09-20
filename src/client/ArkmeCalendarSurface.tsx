@@ -1,5 +1,5 @@
 import { tr, useArkmeLocale, arkmeIntlLocale, calendarWeekdays, getArkmeLocale } from './locale.js'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
@@ -31,6 +31,7 @@ import { arkmeUi } from './ui-controller.js'
 import type { SelfCalendarDateSelection } from './use-self-calendar-navigation.js'
 import type { CalendarMonthSnapshot } from './calendar-month-cache.js'
 import { CALENDAR_MIN_HEIGHT, useCalendarPopoverLayout } from './use-calendar-popover-layout.js'
+import { ArkmeCalendarDateTooltip } from './ArkmeCalendarDateTooltip.js'
 
 const colors = {
   text: arkmeTheme.text,
@@ -692,12 +693,20 @@ export function ArkmeCalendarCell({
 }) {
   const count = meta?.count ?? 0
   const breakdown = meta?.conversationCounts
+  const markers = meta?.activityMarkers
   const tooltip = breakdown ? [breakdown.messages > 0 ? tr("私聊 {v0} 条", { v0: breakdown.messages }) : '',
     breakdown.interactions > 0 ? tr("群聊互动 {v0} 条", { v0: breakdown.interactions }) : ''].filter(Boolean).join(' · ') : ''
-  return <button data-arkme-feedback={selected ? 'primary' : 'neutral'}
+  const tooltipText = tooltip || (markers ? tr('多来源活动') : '')
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const tooltipId = useId()
+  const cellKey = dateKey(date)
+  const [hintDate, setHintDate] = useState<string>()
+  const closeHint = useCallback(() => setHintDate(undefined), [])
+  const showHint = !disabled && !unknown && hintDate === cellKey && tooltipText !== ''
+  return <><button ref={buttonRef} data-arkme-feedback={selected ? 'primary' : 'neutral'}
     type="button"
     aria-label={`${dateKey(date)} ${unknown ? '待加载' : count > 0 ? `${incomplete ? '已知 ' : ''}${String(count)} 条记录` : incomplete ? '暂无已加载记录' : tr("暂无记录")}${hasRecordingIndex ? ' · 录音索引有内容' : ''}`}
-    title={tooltip || undefined}
+    aria-describedby={showHint ? tooltipId : undefined}
     data-selected={selected ? 'true' : 'false'}
     data-arkme-hover="button"
     data-calendar-date={dateKey(date)}
@@ -711,12 +720,25 @@ export function ArkmeCalendarCell({
       ...(disabled ? styles.dayDisabled : {}),
       ...(selected ? styles.daySelected : {}),
     }}
-    onClick={onClick}
+    onPointerEnter={event => { if (event.pointerType !== 'touch') setHintDate(cellKey) }}
+    onPointerLeave={closeHint}
+    onPointerCancel={closeHint}
+    onFocus={event => { if (event.currentTarget.matches(':focus-visible')) setHintDate(cellKey) }}
+    onBlur={closeHint}
+    onClick={() => { closeHint(); onClick() }}
   >
     <span style={styles.dayNumber}>{date.getDate()}</span>
     <span style={{ ...styles.dayCount, ...(count > 0 ? styles.dayCountPopulated : {}), ...(selected ? styles.selectedDayCount : {}) }}>{count > 0 ? `${count}${showCountLabel ? tr("条") : ''}` : ''}</span>
-    {hasRecordingIndex && <span aria-hidden style={{ position: 'absolute', bottom: 2, left: 'calc(50% - 2px)', width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : colors.selected }} />}
+    {(hasRecordingIndex || markers) && <span aria-hidden style={{ position: 'absolute', bottom: 2, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 2, height: 4 }}>
+      {(hasRecordingIndex || markers?.recording) && <i style={{ width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : colors.selected }} />}
+      {markers?.chat && <i style={{ width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : '#5d8dff' }} />}
+      {markers?.call && <i style={{ width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : '#d79838' }} />}
+      {(markers?.arko || markers?.bot) && <i style={{ width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : '#9a75d6' }} />}
+    </span>}
   </button>
+    {showHint && buttonRef.current && <ArkmeCalendarDateTooltip anchor={buttonRef.current}
+      id={tooltipId} text={tooltipText} onClose={closeHint} />}
+  </>
 }
 
 export function ArkmeCalendarSurface({

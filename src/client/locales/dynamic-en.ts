@@ -1,5 +1,13 @@
 /** Interpolated UI messages. Values remain untouched (including user content). */
 export const dynamicEnglish: Record<string, string> = Object.fromEntries(`
+{v0} 条相关消息|{v0} related messages
+录音 {v0}|Recorded {v0}
+始于前一天|Started the previous day
+延续至下一天|Continues into the next day
+暂无内容预览，展开查看详情|No preview available. Expand for details
+已有摘要：|Existing summary:
+群互动同步暂未完成，点击重试|Group interactions could not sync. Click to retry
+较早群互动暂未加载，点击重试|Earlier group interactions are not loaded. Click to retry
 {v0}的头像|Avatar of {v0}
 {v0} 的头像|Avatar of {v0}
 {v0}头像|Avatar of {v0}
@@ -46,6 +54,7 @@ export const dynamicEnglish: Record<string, string> = Object.fromEntries(`
 {v0} 像素|{v0} px
 来源：{v0}|Source: {v0}
 私聊 {v0} 条|{v0} direct messages
+多来源活动|Activity from multiple sources
 群聊互动 {v0} 条|{v0} group interactions
 查看地点：{v0}|View location: {v0}
 查看小结来源：{v0}|View recap source: {v0}

@@ -71,6 +71,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 export interface ArkmeCallDetailContentProps {
+  active?: boolean
   selectedItem: Pick<ArkmeCallHistoryItem, 'callRef' | 'peerDisplayName' | 'mediaType' | 'durationSeconds' | 'acceptedAtMillis' | 'summaryPreview'>
   detail?: ArkmeCallDetail | undefined
   detailState: 'idle' | 'loading' | 'ready' | 'error'
@@ -82,7 +83,7 @@ export interface ArkmeCallDetailContentProps {
 }
 
 /** The selected-call pane, shared by the call browser and conversation drawer. */
-export function ArkmeCallDetailContent({ selectedItem, detail, detailState, detailError, avatarRefForName = () => undefined, compact = false, initialVideoUrl, tourSample = false }: ArkmeCallDetailContentProps) {
+export function ArkmeCallDetailContent({ active = true, selectedItem, detail, detailState, detailError, avatarRefForName = () => undefined, compact = false, initialVideoUrl, tourSample = false }: ArkmeCallDetailContentProps) {
   useArkmeLocale()
   const selectedIsSample = selectedItem.callRef.startsWith('sample-')
   const [samplePerspective, setSamplePerspective] = useState<SamplePerspective>('primary')
@@ -98,6 +99,14 @@ export function ArkmeCallDetailContent({ selectedItem, detail, detailState, deta
     for (const video of videoRefs.current.values()) video.pause()
     standaloneVideo.current?.pause()
   })
+  const stopTranscript = transcriptPlayback.stop
+  useEffect(() => {
+    if (active) return
+    stopTranscript()
+    setVideoPlaying(false)
+    for (const video of videoRefs.current.values()) video.pause()
+    standaloneVideo.current?.pause()
+  }, [active, stopTranscript])
   const setVideoRef = useCallback((key: string, element: HTMLVideoElement | null) => {
     if (element === null) {
       videoRefs.current.delete(key)

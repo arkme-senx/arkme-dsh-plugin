@@ -1,5 +1,5 @@
 import { arkmeIntlLocale, tr } from './locale.js'
-import type { ArkmeRecordingCoverage, ArkmeRecordingDay, ArkmeTimelineItem, ArkmeRecordLocationObservation, ArkmeCallDetail, ArkmeCallHistoryItem } from '../types.js'
+import type { ArkmeRecordingCoverage, ArkmeRecordingDay, ArkmeTimelineItem, ArkmeRecordLocationObservation, ArkmeCallDetail, ArkmeCallHistoryItem, ArkmeSourceItem } from '../types.js'
 
 /** Frontend read model, NOT a deployed HTTP contract. See docs/my-day-calendar.md. */
 export type DayActivityKind = 'note' | 'private_chat' | 'group_chat' | 'call' | 'recording' | 'arko' | 'bot' | 'dsh'
@@ -17,7 +17,14 @@ export interface DayActivityQuery {
 }
 
 export interface DayActivityEntry {
+  /** Presentation only; image references retain the existing authorized image reader. */
+  avatar?: { [Key in 'avatarRef' | 'avatarRefs' | 'groupAvatar']?: ArkmeSourceItem[Key] | undefined }
+  previewAuthor?: { name: string; remark?: string }
+  /** Selected verbatim excerpts from the bounded loaded segment, never an AI summary. */
+  excerpts?: DayActivityExcerpt[]
   location?: ArkmeRecordLocationObservation
+  /** Label-only location hint returned by the calendar index; coordinates stay protected. */
+  locationSummary?: { label?: string; capturedAtMillis?: number }
   canLoadLocation?: boolean
   /** Explicit source identity, never a display name or a guessed participant. */
   sourceIdentity?: string
@@ -35,6 +42,13 @@ export interface DayActivityEntry {
   participant?: { name: string; remark?: string }
   recordCount: number
   participation: 'self' | 'participated' | 'mentioned' | 'received' | 'background'
+}
+
+export interface DayActivityExcerpt {
+  id: string
+  text: string
+  author?: { name: string; remark?: string }
+  self: boolean
 }
 
 export interface DayActivityPage {
@@ -125,8 +139,7 @@ export function dayActivityDisplayName(person: { name: string; remark?: string }
 export function dayActivityTitle(entry: DayActivityEntry): string {
   if (entry.access !== 'available') return '内容已不可访问'
   if (entry.participant && entry.kind === 'private_chat') {
-    const name = dayActivityDisplayName(entry.participant)
-    return entry.participation === 'received' ? tr("收到 {v0} 的消息", { v0: name }) : tr("与 {v0} 的私聊", { v0: name })
+    return dayActivityDisplayName(entry.participant)
   }
   return entry.title.trim() || `${dayActivityLabels[entry.kind]}活动`
 }

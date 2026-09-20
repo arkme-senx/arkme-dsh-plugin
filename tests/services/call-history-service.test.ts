@@ -53,6 +53,16 @@ function service(fetchImpl: typeof fetch, override: Partial<ArkmeServiceConfig> 
 }
 
 describe('CallHistoryService', () => {
+  it('forwards a bounded calendar date range and separates it from ordinary history cache entries', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => envelope({ items: [], has_more: false }))
+    const subject = service(fetchImpl)
+    const startAtMillis = Date.parse('2026-09-20T00:00:00+08:00'), endAtMillis = startAtMillis + 86_400_000
+    await subject.listCallHistory({ includeRecentContacts: false })
+    await subject.listCallHistory({ startAtMillis, endAtMillis, includeRecentContacts: false })
+    const bodies = fetchImpl.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
+    expect(bodies).toContainEqual(expect.objectContaining({ start_at: startAtMillis, end_at: endAtMillis, direction: 'desc' }))
+    await expect(subject.listCallHistory({ startAtMillis })).rejects.toMatchObject({ code: 'call-range-invalid' })
+  })
   it.each([false, true])('resolves detail summaries by explicit identity without guessing unknown speakers (remark failure: %s)', async remarkFailure => {
     const fetchImpl = vi.fn<typeof fetch>(async input => {
       const url = String(input)

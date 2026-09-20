@@ -1,11 +1,11 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
-import type { ArkmePrivateInteraction, ArkmePrivateInteractionCoverage, ArkmePrivateInteractionSummary, ArkmePrivateInteractionPage, ArkmePrivateInteractionQueryOptions } from '../types.js'
+import type { ArkmePrivateInteraction, ArkmePrivateInteractionCoverage, ArkmePrivateInteractionSummary, ArkmePrivateInteractionPage, ArkmePrivateInteractionDirectoryPage, ArkmePrivateInteractionQueryOptions } from '../types.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention } from '../types.js'
 import { ProfileService } from './profile-service.js'
 import type { ArkmeRelatedQuickNoteSourceLocator } from './related-quick-note-service.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, ServiceRuntime, objectValue, stringValue } from './service.js'
-import { SourceService, type ArkmeSourceRefPayload } from './source-service.js'
+import { SourceService, arkmeChatConversationPreview, type ArkmeSourceRefPayload } from './source-service.js'
 
 interface ArkmeInterwovenMomentReference {
   userId: number
@@ -77,6 +77,44 @@ export class InterwovenService {
     }
   }
 
+  async privateInteractionDirectory(options: Pick<ArkmePrivateInteractionQueryOptions, 'limit' | 'cursor' | 'expectedVersion' | 'signal'> = {}): Promise<ArkmePrivateInteractionDirectoryPage> {
+    const { data, userId, epoch, session } = await this.readPrivateInteractions('directory/query', options)
+    const coverage = this.interactionCoverage(data)
+    if (!Array.isArray(data.items) || data.items.length > (options.limit ?? 30) || typeof data.has_more !== 'boolean'
+      || (data.has_more && (typeof data.next_cursor !== 'string' || !data.next_cursor || data.next_cursor.length > 2048))) {
+      throw new ArkmePluginError('interaction-contract-invalid', '互动目录返回不完整，请重试', true)
+    }
+    const items: ArkmePrivateInteractionDirectoryPage['items'] = []
+    for (const raw of data.items) {
+      options.signal?.throwIfAborted()
+      const bundle = objectValue(raw)
+      const row = await this.source.chatSourceFromBundle(bundle, session, undefined, [])
+      if (row.kind === 'private_chat' && row.peerUserId !== undefined) {
+        row.avatarRef = await this.profile.sealProfileImageRef(userId, row.peerUserId)
+      }
+      // Keep the direct message facts separate. The Browser compares them with
+      // live direct-message deltas, so an older directory cannot replace a new DM.
+      row.latestPreview = arkmeChatConversationPreview(objectValue(objectValue(bundle.latest_preview).record), userId)
+      const summary = objectValue(bundle.interaction)
+      if (row.kind === 'private_chat' && summary.latest !== undefined && summary.latest !== null) {
+        const latest = await this.projectInteraction(summary.latest, userId)
+        if (latest.privateSourceKey !== row.sourceKey) throw new ArkmePluginError('interaction-contract-invalid', '互动联系人与会话不匹配', true)
+        row.privateInteraction = {
+          latest, version: coverage.version,
+          unreadCount: this.interactionCount(summary.unread_count),
+          attentionCount: this.interactionCount(summary.attention_count),
+        }
+        if (bundle.latest_display_source === 'group_interaction') {
+          const sender = latest.senderIsMe ? '我' : row.displayName
+          row.latestPreview = `${latest.groupName} · ${sender}：${latest.summary.replace(/\s+/gu, ' ').trim()}`
+        }
+      }
+      items.push(row)
+    }
+    await this.assertInteractionAccount(userId, epoch, options.signal)
+    return { ...coverage, items, hasMore: data.has_more, ...(data.has_more ? { nextCursor: data.next_cursor as string } : {}) }
+  }
+
   private async assertInteractionAccount(userId: number, epoch: number, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
@@ -91,7 +129,7 @@ export class InterwovenService {
     const session = await this.runtime.requireSession()
     if (!this.runtime.config.interwovenMomentsEnabled) throw new ArkmePluginError('interaction-disabled', '群互动能力已关闭', false, 403)
     const limit = options.limit ?? 30
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50 || (options.cursor?.length ?? 0) > 2048
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > (route === 'directory/query' ? 100 : 50) || (options.cursor?.length ?? 0) > 2048
       || (options.expectedVersion !== undefined && !/^[a-f0-9]{64}$/.test(options.expectedVersion))) {
       throw new ArkmePluginError('interaction-input-invalid', '互动查询参数无效', false, 400)
     }
@@ -103,7 +141,8 @@ export class InterwovenService {
         `/api/v1/chats/interwoven/${route}`,
         {
           ...(source === undefined ? {} : { chat_session_uid: source.ownerRef }),
-          ...(route === 'occurrences/query' ? { limit, unread_only: options.unreadOnly ?? false, ...(options.cursor === undefined ? {} : { cursor: options.cursor }) } : {}),
+          ...(route.endsWith('/query') ? { limit, ...(options.cursor === undefined ? {} : { cursor: options.cursor }) } : {}),
+          ...(route === 'occurrences/query' ? { unread_only: options.unreadOnly ?? false } : {}),
           ...(options.expectedVersion === undefined ? {} : { expected_version: options.expectedVersion }),
         }, session, options.signal,
         { lane: 'interactive-read', bypassCache: true },
@@ -116,7 +155,7 @@ export class InterwovenService {
       throw error
     }
     await this.assertInteractionAccount(session.userId, epoch, options.signal)
-    return { data, userId: session.userId, epoch }
+    return { data, userId: session.userId, epoch, session }
   }
 
   private interactionCount(value: unknown): number {
@@ -152,6 +191,7 @@ export class InterwovenService {
     return {
       interactionRef: id,
       privateSourceRef: await this.source.sealSourceRef(userId, 'private_chat', privateUid, peerName),
+      privateSourceKey: await this.source.chatDirectorySourceKey(userId, privateUid),
       peerName,
       groupSourceRef: await this.source.sealSourceRef(userId, 'group_chat', groupUid, groupName),
       groupName, sequence: item.seq as number, occurredAtMillis: item.occurred_at as number,

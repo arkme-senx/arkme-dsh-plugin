@@ -29,7 +29,7 @@ describe('bounded daily recap material', () => {
     const { input, sources } = buildDayRecapInput(query, [entry('hidden', { access: 'restricted', preview: '秘密' }),
       entry('note:private-id', { sourceIdentity: 'opaque-private-handle', location: { source: 'device', latitude: 30.1234, longitude: 114.4567 } })])
     expect(input.items).toHaveLength(1)
-    expect(input.items[0]?.title).toBe('与 备注名 的私聊')
+    expect(input.items[0]?.title).toBe('备注名')
     expect(JSON.stringify(input)).not.toMatch(/秘密|opaque-private-handle|latitude|30.1234|note:private-id/)
     expect(sources.get('a1')?.activityId).toBe('note:private-id')
   })

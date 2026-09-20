@@ -333,10 +333,10 @@ span.arkme-forward-search {
 [data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"][data-arkme-directory-visible="false"]) {
   grid-template-columns: var(--arkme-navigation-width) minmax(0, 1fr) 0 !important;
 }
+[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"] [data-arkme-directory-mode="contacts"]) {
+  grid-template-columns: var(--arkme-persistent-sidebar-width, calc(var(--arkme-navigation-width) + 284px)) minmax(0, 1fr) 0 !important;
+}
 @media (min-width: 1100px) {
-  [data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="false"] [data-arkme-directory-mode="contacts"]) {
-    grid-template-columns: var(--arkme-persistent-sidebar-width, calc(var(--arkme-navigation-width) + 284px)) minmax(0, 1fr) 0 !important;
-  }
   [data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="true"]:not([data-arkme-web-locked])) {
     grid-template-columns: 0 minmax(0, 1fr) 0 !important;
   }
@@ -1764,26 +1764,23 @@ body[data-ds-dark-theme] .arkme-contact-profile-message-error,
 body[data-ds-dark-theme] .arkme-contact-world-error { color: var(--dsw-alias-state-error-primary); }
 body[data-ds-dark-theme] .arkme-contact-directory-more { color: var(--dsw-alias-state-business-primary); }
 
-@media (max-width: 1024px) {
-  [data-arkme-owned="persistent-sidebar"] [data-arkme-directory-mode="contacts"] { min-width: 0; }
-}
-@media (max-width: 820px) {
-  /* AppFrame has no public full-width panel action: its closed sidebar still
-     reserves 56px. Contacts therefore owns exactly one AppFrame grid seat. */
-  div:has(> [data-shell-overlay]):has([data-arkme-directory-mode="contacts"]):has([data-arkme-contacts-mobile-view="directory"]) { grid-template-columns: minmax(0, 1fr) 0px 0px !important; }
-  div:has(> [data-shell-overlay]):has([data-arkme-directory-mode="contacts"]):has([data-arkme-contacts-mobile-view="content"]) { grid-template-columns: 0px minmax(0, 1fr) 0px !important; }
-  [data-arkme-owned="persistent-sidebar"][data-arkme-contacts-mobile-view="content"] { display: none !important; }
-  [data-arkme-owned="persistent-workspace"][data-arkme-contacts-mobile-view="directory"] { display: none !important; }
-  [data-arkme-owned="persistent-sidebar"] [data-arkme-directory-mode="contacts"], .arkme-directory-detail-pane { min-width: 0; }
-}
+/* Follow the host's actual collapsed state, not a second 820px breakpoint.
+   Keep the rail in both views and retain the mounted directory's local state. */
+[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="directory"]) { grid-template-columns: minmax(0, 1fr) 0px 0px !important; }
+[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="content"]) { grid-template-columns: var(--arkme-navigation-width) minmax(0, 1fr) 0px !important; }
+[data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="content"] > [data-arkme-directory-mode="contacts"],
+[data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view] > [data-arkme-owned="persistent-sidebar-resize-handle"],
+:root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="directory"]) [data-arkme-owned="persistent-workspace"] { display: none !important; }
+:root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="content"]) [data-arkme-contacts-workspace] { display: flex; flex-direction: column; }
+:root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="content"]) [data-arkme-contacts-workspace] > :not(.arkme-directory-mobile-back) { flex: 1; min-height: 0; height: auto; }
 .arkme-directory-mobile-back { display: none; }
+:root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="content"]) .arkme-directory-mobile-back {
+  display: inline-flex; flex: none; min-height: 42px; align-items: center; gap: 5px; padding: 0 14px;
+  background: transparent; color: var(--dsw-alias-label-secondary, #68707c); cursor: pointer;
+}
+.arkme-directory-mobile-back::before { content: "‹"; font-size: 18px; line-height: 1; }
+.arkme-directory-mobile-back:hover { color: var(--dsw-alias-label-primary, #202124); }
 @media (max-width: 820px) {
-  .arkme-directory-mobile-back {
-    display: inline-flex; min-height: 42px; align-items: center; gap: 5px; padding: 0 14px;
-    background: transparent; color: var(--dsw-alias-label-secondary, #68707c); cursor: pointer;
-  }
-  .arkme-directory-mobile-back::before { content: "‹"; font-size: 18px; line-height: 1; }
-  .arkme-directory-mobile-back:hover { color: var(--dsw-alias-label-primary, #202124); }
   .arkme-contact-detail { padding: 28px 20px; }
   .arkme-contact-profile-main { grid-template-columns: 56px minmax(0, 1fr); gap: 18px; }
   .arkme-contact-profile-avatar { width: 56px; height: 56px; }

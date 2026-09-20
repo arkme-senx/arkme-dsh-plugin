@@ -5,6 +5,16 @@ import type { DayRecapGenerator } from './day-recap-input.js'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { MapPin } from '@phosphor-icons/react/dist/icons/MapPin'
+import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
+import { Users } from '@phosphor-icons/react/dist/icons/Users'
+import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
+import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
+import { Robot } from '@phosphor-icons/react/dist/icons/Robot'
+import { Phone } from '@phosphor-icons/react/dist/icons/Phone'
+import { TerminalWindow } from '@phosphor-icons/react/dist/icons/TerminalWindow'
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
+import { ArkmeSourceAvatar } from './ArkmeAvatar.js'
+import { dayActivityMetadata, dayExcerptAuthor, isDayConversation, selectDayActivityExcerpts } from './day-activity-presentation.js'
 import type { ArkmeRecordLocationObservation } from '../types.js'
 import { useDayActivityLocation } from './use-day-activity-location.js'
 import {
@@ -54,6 +64,7 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onClos
   }, [location.value])
   const knownLocation = (item: DayActivityEntry) => locations.snapshotId === data.page?.snapshotId && Object.hasOwn(locations.values, item.id)
     ? locations.values[item.id] : item.location
+  const hasLocationHint = (item: DayActivityEntry) => Boolean(knownLocation(item) || item.locationSummary)
   useEffect(() => {
     const page = data.page, limit = reader?.capabilities?.autoLocationLimit ?? 0
     if (!page || !reader?.loadLocation || !limit) return
@@ -97,7 +108,7 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onClos
   const change = (next: Partial<DayActivityQuery>) => onQueryChange({ ...query, ...next })
   const filteredOut = (entry: DayActivityEntry) => !dayActivityMatchesFilter(query.kind, entry.kind)
     || !query.includeBackground && entry.participation === 'background'
-  const items = data.page?.items.filter(entry => !filteredOut(entry) && (!placesOnly || knownLocation(entry))).map(entry => restrictedIds.has(entry.id)
+  const items = data.page?.items.filter(entry => !filteredOut(entry) && (!placesOnly || hasLocationHint(entry))).map(entry => restrictedIds.has(entry.id)
     ? { ...entry, access: 'restricted' as const } : entry) ?? []
   const incomplete = data.page?.completeness === 'partial' || (data.page?.missingKinds.length ?? 0) > 0
   const missing = data.page?.missingKinds.filter(kind => !reader?.capabilities || reader.capabilities.kinds.includes(kind)) ?? []
@@ -164,23 +175,22 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onClos
           <div className="arkme-day-entry-body">
           <button type="button" className="arkme-day-entry-content" disabled={item.access !== 'available'}
             aria-expanded={selected?.id === item.id} onClick={() => { onDetailChange?.(); setLocationRequestedId(undefined); setSelectedId(current => current === item.id ? undefined : item.id) }}>
-            <div className="arkme-day-entry-title"><strong>{dayActivityTitle(item)}</strong><span>{dayActivityLabels[item.kind]}</span></div>
+            <div className="arkme-day-entry-title">
+              <span className="arkme-day-identity-icon" aria-hidden><DayActivityAvatar item={item} /></span>
+              <strong>{dayActivityTitle(item)}</strong><span className="arkme-day-kind">{tr(dayActivityLabels[item.kind])}</span>
+            </div>
             {item.access === 'available' && <>
-              {item.preview && <p>{item.kind === 'call' && '已有摘要：'}{item.preview}</p>}
+              <DayActivityPreview item={item} />
               <div className="arkme-day-entry-meta">
-                {item.startAtMillis < data.page!.dayStartMillis && '始于前一天 · '}
-                {item.endAtMillis > data.page!.dayEndMillis && '延续至下一天 · '}
-                {item.endAtMillis > item.startAtMillis && `${dayActivityTime(item.startAtMillis, query.timezone)}–${dayActivityTime(item.endAtMillis, query.timezone)} · `}
-                {item.statusLabel && `${item.statusLabel} · `}
-                {item.kind === 'call' ? tr("通话记录") : query.mode === 'activities' ? tr("{v0} 条原始记录", { v0: item.recordCount }) : '原始记录'}
-                {item.kind !== 'private_chat' && item.sourceName ? ` · ${item.sourceName}` : ''}
+                <span>{dayActivityMetadata(item, query.timezone, data.page!.dayStartMillis, data.page!.dayEndMillis)}</span>
+                <span className="arkme-day-expand">{selected?.id === item.id ? tr('收起') : tr('展开')}<CaretRight size={12} aria-hidden /></span>
               </div>
             </>}
           </button>
-          {item.access === 'available' && knownLocation(item) && !(selected?.id === item.id && location.error) && <button type="button"
-            className="arkme-day-location-tag" aria-label={tr("查看地点：{v0}", { v0: knownLocation(item)!.label || '设备采集位置' })}
+          {item.access === 'available' && hasLocationHint(item) && !(selected?.id === item.id && location.error) && <button type="button"
+            className="arkme-day-location-tag" aria-label={tr("查看地点：{v0}", { v0: knownLocation(item)?.label || item.locationSummary?.label || '设备采集位置' })}
             onClick={() => { onDetailChange?.(); setSelectedId(item.id); setLocationRequestedId(item.id) }}>
-            <MapPin size={14} aria-hidden /><span>{knownLocation(item)!.label || '已记录设备位置'}</span>
+            <MapPin size={14} aria-hidden /><span>{knownLocation(item)?.label || item.locationSummary?.label || '已记录设备位置'}</span>
           </button>}
           </div>
         </article></Fragment>)}
@@ -202,12 +212,12 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onClos
               <div>{dayActivityDisplayName(item.author)} · <time>{dayActivityTime(item.occurredAtMillis, query.timezone)}</time></div>
               {renderRecord ? renderRecord(item) : <p>{item.text}</p>}
             </article>)}
-            {(selected.canLoadLocation && reader?.loadLocation || knownLocation(selected)) && <section className="arkme-day-location" aria-label={tr("记录地点")}>
+            {(selected.canLoadLocation && reader?.loadLocation || hasLocationHint(selected)) && <section className="arkme-day-location" aria-label={tr("记录地点")}>
               {locationRequestedId !== selected.id ? <button type="button" className="arkme-day-source"
                 onClick={() => setLocationRequestedId(selected.id)}>{knownLocation(selected) ? '查看地点详情' : '查看地点'}</button> : <>
                 {location.loading ? <p role="status">{tr("正在读取地点…")}</p> : location.error ? <div role="alert">{location.error}
                   <button type="button" className="arkme-day-source" onClick={location.retry}>{tr("重试地点")}</button></div>
-                  : <LocationObservation location={location.value?.location ?? (!selected.canLoadLocation ? knownLocation(selected) : undefined)} timezone={query.timezone} />}
+                  : <LocationObservation location={location.value?.location ?? (!selected.canLoadLocation ? knownLocation(selected) : undefined)} summary={selected.locationSummary} timezone={query.timezone} />}
               </>}
             </section>}
             {detail.page.hasMore && <button type="button" className="arkme-day-more" disabled={detail.loading}
@@ -221,7 +231,33 @@ function DayTimelineContent({ query, reader, onQueryChange, onOpenSource, onClos
   </section>
 }
 
-function LocationObservation({ location, timezone }: { location: ArkmeRecordLocationObservation | undefined; timezone: string }) {
+function DayActivityAvatar({ item }: { item: DayActivityEntry }) {
+  if (item.access === 'available' && item.avatar && (item.avatar.avatarRef || item.avatar.avatarRefs?.length || item.avatar.groupAvatar)) {
+    return item.kind === 'group_chat' && (item.avatar.avatarRefs?.length || item.avatar.groupAvatar)
+      ? <ArkmeSourceAvatar kind="group" avatarRefs={item.avatar.avatarRefs} groupAvatar={item.avatar.groupAvatar} size={24} />
+      : <ArkmeSourceAvatar kind="single" avatarRef={item.avatar.avatarRef} size={24} />
+  }
+  const Icon = item.kind === 'note' ? NotePencil : item.kind === 'recording' ? Microphone : item.kind === 'call' ? Phone
+    : item.kind === 'dsh' ? TerminalWindow : item.kind === 'arko' || item.kind === 'bot' ? Robot : item.kind === 'group_chat' ? Users : ChatCircle
+  return <Icon size={18} aria-hidden />
+}
+
+function DayActivityPreview({ item }: { item: DayActivityEntry }) {
+  if (isDayConversation(item)) {
+    const excerpts = item.excerpts ?? selectDayActivityExcerpts([item])
+    return <div className="arkme-day-excerpts">{excerpts.length ? excerpts.map(excerpt => <p key={excerpt.id}>
+      <span className="arkme-day-excerpt-author">{dayExcerptAuthor(item, excerpt)}{dayExcerptAuthor(item, excerpt) ? '：' : ''}</span>{excerpt.text}
+    </p>) : <p>{tr('暂无内容预览，展开查看详情')}</p>}</div>
+  }
+  return item.preview ? <p>{item.kind === 'call' && tr('已有摘要：')}{item.preview}</p> : null
+}
+
+function LocationObservation({ location, summary, timezone }: { location: ArkmeRecordLocationObservation | undefined; summary?: DayActivityEntry['locationSummary']; timezone: string }) {
+  if (!location && summary) return <>
+    <strong><MapPin size={14} aria-hidden /> {summary.label || '设备采集位置'}</strong>
+    {summary.capturedAtMillis !== undefined && <p>{tr("采集时间")}：{new Intl.DateTimeFormat(arkmeIntlLocale(), { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(summary.capturedAtMillis)}</p>}
+    <p>{tr("已显示记录返回的位置摘要；精确坐标需在详情中授权读取。")}</p>
+  </>
   if (!location) return <p>{tr("这条记录没有可确认的设备采集位置，不代表当时没有外出。")}</p>
   const captured = location.capturedAtMillis
   const capturedLabel = captured === undefined ? '采集时间未知' : new Intl.DateTimeFormat(arkmeIntlLocale(), {

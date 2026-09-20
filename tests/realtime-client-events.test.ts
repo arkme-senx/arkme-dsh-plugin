@@ -207,7 +207,7 @@ describe('realtime reconcile routing', () => {
     await act(async () => { renderer.unmount() })
   })
 
-  it('refreshes only the directory for a policy invalidation and deduplicates Browser revisions', async () => {
+  it('refreshes directory and interaction permissions for policy changes, deduplicating revisions', async () => {
     let source!: FakeWebSocket
     class FakeWebSocket {
       onopen: (() => void) | null = null
@@ -238,7 +238,7 @@ describe('realtime reconcile routing', () => {
     expect(refresh).toHaveBeenCalledExactlyOnceWith({ force: true, silent: true })
     expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(refresh.mock.invocationCallOrder[0]!)
     expect(receipts).not.toHaveBeenCalled()
-    expect(interwoven).not.toHaveBeenCalled()
+    expect(interwoven).toHaveBeenCalledOnce()
     await act(async () => { renderer.unmount() })
   })
 

@@ -226,10 +226,12 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'members-invalidated') {
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
           arkmeConversationMembers.invalidate(authenticatedAccountScope, { sourceKey: update.sourceKey, sourceRef: '' })
           return
         }
         if (update.type === 'member-events-invalidated') {
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
           arkmeConversationMembers.invalidate(authenticatedAccountScope, { sourceKey: update.sourceKey, sourceRef: '' })
           publishMemberEventHint({ account:authenticatedAccountScope, sourceKey:update.sourceKey,
             eventId:update.eventId, occurredAtMillis:update.occurredAtMillis })
@@ -266,6 +268,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'read-ack') {
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
           arkmeChatDirectory.updateReadAck(
             update.sourceRef,
             update.sourceKey,
@@ -307,12 +310,14 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'chat-policy-invalidated') {
+          arkmeInterwovenInvalidation.invalidate()
           if (update.refresh === 'none') return
           arkmeChatDirectory.invalidateRoot()
           void arkmeChatDirectory.refreshRoot({ force: true, silent: true }).catch(() => undefined)
           return
         }
         if (update.type === 'conversation-list-preference-invalidated') {
+          arkmeInterwovenInvalidation.invalidate()
           if (update.refresh === 'none') return
           arkmeUi.chatChanged()
           return
@@ -363,6 +368,7 @@ export function useArkmeRealtimeClientEvents(
       updateForeground()
       connectEvents()
       if (browserDocument?.visibilityState !== 'hidden') {
+        arkmeInterwovenInvalidation.invalidate()
         reconcileReceipts()
         void refreshUnread(true)
           .then(() => { if (!stopped) arkmeUi.chatChanged() })
@@ -379,6 +385,7 @@ export function useArkmeRealtimeClientEvents(
     }
     browserWindow?.addEventListener('online', recoverDirectory)
     const handleWindowFocus = () => {
+      arkmeInterwovenInvalidation.invalidate()
       if (ownsMessagePreparing) recoverDirectory()
       arkmeConversationMembers.refreshActive()
       reconcileReceipts()

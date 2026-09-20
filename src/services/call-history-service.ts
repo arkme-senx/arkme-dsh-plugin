@@ -302,11 +302,17 @@ export class CallHistoryService {
     private readonly source?: Pick<SourceService, 'privateRemarksByUserIds'>,
   ) {}
 
-  async listCallHistory(options: ArkmeCallHistoryOptions = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> {
+  async listCallHistory(options: ArkmeCallHistoryOptions & { startAtMillis?: number; endAtMillis?: number } = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> {
     const session = await this.runtime.requireSession()
     const limit = this.normalizedLimit(options.limit)
     const cursor = options.cursor?.trim() ?? ''
     const body: Record<string, unknown> = { limit }
+    if (options.startAtMillis !== undefined || options.endAtMillis !== undefined) {
+      if (!Number.isSafeInteger(options.startAtMillis) || !Number.isSafeInteger(options.endAtMillis)
+        || options.startAtMillis! <= 0 || options.endAtMillis! <= options.startAtMillis!
+        || options.endAtMillis! - options.startAtMillis! > 94 * 86_400_000) throw new ArkmePluginError('call-range-invalid', '通话日期范围无效', false)
+      body.start_at = options.startAtMillis; body.end_at = options.endAtMillis; body.direction = 'desc'
+    }
     if (cursor !== '') body.cursor = cursor
     const scope = this.runtime.requestScope(session.userId)
     const raw = await this.runtime.authenticatedDataPost<Record<string, unknown>>(
@@ -316,7 +322,7 @@ export class CallHistoryService {
       signal,
       {
         scope,
-        key: `call-history:${String(limit)}:${cursor}`,
+        key: `call-history:${String(limit)}:${cursor}:${options.startAtMillis ?? ''}:${options.endAtMillis ?? ''}`,
         cacheMs: 2_000,
         failureCooldownMs: 2_000,
       },

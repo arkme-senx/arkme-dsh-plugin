@@ -1193,6 +1193,16 @@ export async function dispatchArkmeHostOperation(
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       })
     }
+    case 'private-interaction.directory': {
+      const cursor = stringParam(params, 'cursor').trim()
+      const expectedVersion = stringParam(params, 'expectedVersion').trim()
+      return await service.privateInteractionDirectory({
+        limit: Math.min(100, Math.max(1, Math.trunc(numberParam(params, 'limit', 100)))),
+        ...(cursor === '' ? {} : { cursor }),
+        ...(expectedVersion === '' ? {} : { expectedVersion }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
     case 'private-interaction.query': {
       const cursor = stringParam(params, 'cursor').trim()
       const expectedVersion = stringParam(params, 'expectedVersion').trim()
@@ -1408,6 +1418,26 @@ export async function dispatchArkmeHostOperation(
       endDate: stringParam(params, 'endDate'),
       ...(stringParam(params, 'timezone') === '' ? {} : { timezone: stringParam(params, 'timezone') }),
     })
+    case 'calendar.activity': {
+      const source = params?.source
+      const mode = params?.mode
+      if (!['record', 'chat', 'call', 'audio', 'arko', 'bot'].includes(source as string)
+        || !['buckets', 'details', 'coverage', 'transcripts'].includes(mode as string)) {
+        throw new ArkmePluginError('calendar-activity-invalid', '我的一天数据源或读取模式无效', false, 400)
+      }
+      const body = params?.body
+      if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+        throw new ArkmePluginError('calendar-activity-body-invalid', '我的一天请求参数无效', false, 400)
+      }
+      return await service.calendarBuckets({
+        activity: {
+          source: source as 'record' | 'chat' | 'call' | 'audio' | 'arko' | 'bot',
+          mode: mode as 'buckets' | 'details' | 'coverage' | 'transcripts',
+          body: body as Record<string, unknown>,
+        },
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
     case 'calendar.day-recap': return await service.generateDayRecap(params, requestSignal)
     case 'calendar.record-location': return await service.calendarRecordLocation(stringParam(params, 'locationRef'), requestSignal)
     case 'calendar.records': {

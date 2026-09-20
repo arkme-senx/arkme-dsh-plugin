@@ -24,6 +24,7 @@ function fixture() {
       return { kind: 'private_chat', ownerRef: 'private-secret' }
     }),
     sealSourceRef: vi.fn(async (_user, kind) => `opaque-${String(kind)}`),
+    chatDirectorySourceKey: vi.fn(async () => 'opaque-private-key'),
   }
   const service = new InterwovenService(runtime as never, source as never, {} as never)
   return { service, runtime, source, switchAccount: () => { userId = 2 } }

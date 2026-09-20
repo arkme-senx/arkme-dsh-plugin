@@ -32,6 +32,17 @@ const mount = async (reader: DayActivityReader) => act(async () => { view = crea
 afterEach(() => act(() => view?.unmount()))
 
 describe('day location presentation', () => {
+  it('shows a location summary without requiring coordinates or fetching a location', async () => {
+    const { reader, loadLocation } = setup([{ ...entry('summary'), canLoadLocation: false,
+      locationSummary: { label: '办公室', capturedAtMillis: at } }])
+    await mount(reader)
+    expect(button('查看地点：办公室')).toBeDefined()
+    await click('查看地点：办公室')
+    expect(text()).toContain('办公室')
+    expect(text()).toContain('已显示记录返回的位置摘要')
+    expect(loadLocation).not.toHaveBeenCalled()
+    expect(view.root.findAllByType('dl')).toHaveLength(0)
+  })
   it('can automatically enrich a bounded visible window without navigation or loading message details', async () => {
     const { reader, loadLocation } = setup([entry('a'), entry('b')])
     reader.capabilities = { kinds: ['note'], modes: ['activities'], notice: '', autoLocationLimit: 1 }

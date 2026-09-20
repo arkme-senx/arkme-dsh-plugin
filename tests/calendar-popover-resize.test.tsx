@@ -154,5 +154,9 @@ it.each([
   await act(async () => root.render(<ArkmeCalendarCell date={new Date(2026, 7, 4)} selected={false} disabled={false}
     onClick={() => {}} incomplete meta={{ bucketDate: '2026-08-04', count: Number(messages) + Number(interactions),
       hasRecords: true, protectedCount: 0, conversationCounts: { messages: Number(messages), interactions: Number(interactions) } }} />))
-  expect(host.querySelector('button')!.title).toBe(title)
+  const day = host.querySelector('button')!
+  expect(day.hasAttribute('title')).toBe(false)
+  await act(async () => day.dispatchEvent(new MouseEvent('pointerover', { bubbles: true })))
+  if (title) expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(title)
+  else expect(document.querySelector('[role="tooltip"]')).toBeNull()
 })

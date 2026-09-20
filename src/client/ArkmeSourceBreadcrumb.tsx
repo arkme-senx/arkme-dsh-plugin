@@ -336,7 +336,7 @@ function ArkmeTopicCount({ count, error, hidden }: { count: number | undefined; 
 export function ArkmeSourceBreadcrumb({
   userId, environment = 'prod', selectedSource, sources, loading = false, countsReady, error, onSelect, onSelectAggregate,
   onCreateTopic, onCreateChildTopic, onRenameTopic, onDissolveTopic, onRetry, onMoveTopic, activeDissolve,
-  tourOpen, trigger = 'visible', onOpen, assignment,
+  tourOpen, trigger = 'visible', onOpen, assignment, showRootTitle = true,
 }: {
   userId?: number | undefined
   environment?: ArkmeEnvironment
@@ -347,6 +347,8 @@ export function ArkmeSourceBreadcrumb({
   error?: string
   tourOpen?: boolean | undefined
   trigger?: 'visible' | 'none'
+  /** The conversation header can own the fixed name separately from this selector. */
+  showRootTitle?: boolean
   onSelect(source: ArkmeSourceItem): void
   onSelectAggregate(): void
   onOpen?(): void
@@ -697,10 +699,17 @@ export function ArkmeSourceBreadcrumb({
       const anchor = menu?.parentElement
       const win = menu?.ownerDocument.defaultView
       if (!menu || !anchor || !win) return
-      // The inline header sits to the right of the conversation list. Limit its
-      // width to the actual remaining viewport, not the entire window width.
       const resize = () => {
-        menu.style.setProperty('--arkme-topic-menu-available-width', `${Math.max(0, win.innerWidth - anchor.getBoundingClientRect().left - 12)}px`)
+        const left = anchor.getBoundingClientRect().left
+        if (!showRootTitle) {
+          // A centered trigger should keep a full-sized menu, shifting it left
+          // at the right edge rather than squeezing its rows into a narrow strip.
+          menu.style.setProperty('--arkme-topic-menu-available-width', `${Math.max(0, win.innerWidth - 24)}px`)
+          const width = menu.getBoundingClientRect().width || menuLayout.width
+          menu.style.left = `${Math.max(12 - left, Math.min(0, win.innerWidth - left - width - 12))}px`
+        } else {
+          menu.style.setProperty('--arkme-topic-menu-available-width', `${Math.max(0, win.innerWidth - left - 12)}px`)
+        }
       }
       resize()
       const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(resize)
@@ -720,7 +729,7 @@ export function ArkmeSourceBreadcrumb({
       }
     })
     return () => { cancelAnimationFrame(frame) }
-  }, [externalRequest, open, positionExternalMenu, rows])
+  }, [externalRequest, open, positionExternalMenu, rows, showRootTitle])
   useLayoutEffect(() => {
     if (!open || !menuRef.current || !menuListRef.current) return
     return watchConversationMenuScrollbars(menuRef.current, menuListRef.current)
@@ -838,7 +847,7 @@ export function ArkmeSourceBreadcrumb({
     ...styles.breadcrumb, position: 'absolute', width: 0, height: 0, minWidth: 0, overflow: 'visible',
   }}>
     <style>{CONVERSATION_SELECTOR_CSS}</style>
-    {trigger === 'visible' && <><span data-arkme-self-topic-root="true" style={styles.fixedTitle}>{tr("发给自己")}</span>
+    {trigger === 'visible' && <>{showRootTitle && <span data-arkme-self-topic-root="true" style={styles.fixedTitle}>{tr("发给自己")}</span>}
     <button
       ref={selectorRef}
       type="button" aria-label={tr("选择主题")} aria-haspopup="tree" aria-expanded={open}

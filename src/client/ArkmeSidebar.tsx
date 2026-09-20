@@ -1,4 +1,5 @@
 import { conversationWindowRequested, navigateConversationWindow } from './conversation-window.js'
+import { CONVERSATION_HEADER_COLUMNS } from './conversation-header-layout.js'
 import { conversationSending, withConversationSend } from './conversation-window-sync.js'
 import { DeepSeekLogoMark } from './ArkmeDshAgentInputMarker.js'
 import { createNativeCopyLinkEntry, NATIVE_COPY_LINK_ENTRY, type NativeCopyLinkWindow } from './native-copy-link-entry.js'
@@ -130,7 +131,7 @@ import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeDirectRecordingStatus, useDirectRecordingOwner } from './recordings/ArkmeDirectRecording.js'
 import { ArkmeSelfCalendarPopover } from './ArkmeCalendarSurface.js'
 import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle, type RecordingImportButtonStatus } from './recordings/ArkmeRecordingImportDialog.js'
-import { ArkmeCallSurface } from './ArkmeCallSurface.js'
+import { ArkmeRetainedCallPage } from './ArkmeRetainedCallPage.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 import {
   ArkmeMediaPreview, ArkmeMessageContent, arkmeContentMediaUrl, arkmeRelatedRecordingItemFromSharedRecording,
@@ -5121,6 +5122,9 @@ export function ArkmeSurface({
       const targetSourceKey = arkmeSourceIdentityKey(targetSource)
       if (result.localState === 'synced' && confirmedItem !== undefined) {
         confirmedSendRetention.retain(targetSourceKey, confirmedItem)
+        if (targetSource.kind === 'group_chat' && pendingHumanMentions.length > 0) {
+          arkmeInterwovenInvalidation.invalidate(targetSourceKey)
+        }
       }
       if (sameTargetComposer()) setItems(current => applySourceSendResult(current, recordUid, result))
       if (result.localState !== 'failed' && locationCaptureRequested) {
@@ -7127,8 +7131,10 @@ export function ArkmeSurface({
       ? `${destinationName.slice(0, 10)}...` : destinationName}</span>
     {destinationMemberCount !== undefined && destinationMemberCount > 1 && <span>{tr(" ({v0}人)", { v0: destinationMemberCount })}</span>}<span> {tr("发消息")}</span></span>
   </div>
+  // Reserve the stats line even for an empty, unfocused self/topic draft so
+  // focus changes cannot resize the message viewport and shift its scroll anchor.
   const composerInfoRow = <div data-arkme-composer-info-row="true"
-    style={{ ...styles.composerInfoRow, minHeight: sourceIsChat ? (source?.kind === 'private_chat' ? 30 : 20) : composerStatsVisible ? 20 : 0 }}>
+    style={{ ...styles.composerInfoRow, minHeight: source?.kind === 'private_chat' ? 30 : 20 }}>
     {composerDestinationHint}
     <ArkmeComposerInputStats
       active={activeConversation}
@@ -7244,6 +7250,7 @@ export function ArkmeSurface({
       selectedSource={selfWorkspaceSelected ? selectedSource : undefined}
       sources={selfSources}
       trigger={active && selfWorkspaceSelected ? 'visible' : 'none'}
+      showRootTitle={false}
       tourOpen={active && selfWorkspaceSelected ? selfTour.topicMenuOpen : undefined}
       loading={selfSourcesLoading || (selfTopicPreviewRequested && activeSelfSourcesResolution === undefined)}
       countsReady={activeSelfSourcesResolution?.status === 'ready' ? activeSelfSourcesResolution.complete : false}
@@ -7439,10 +7446,15 @@ export function ArkmeSurface({
           </section>
         </div>) : null
   const forwardDialog = forwardTargetPicker?.native && forwardDialogContent ? createPortal(forwardDialogContent, document.body) : forwardDialogContent
+  const retainedCallPage = authView === 'content' && <ArkmeRetainedCallPage
+    key={`calls:${auth?.status}:${auth?.environment}:${auth?.userId}`}
+    active={active && ui.mode === 'calls'}
+  />
 
   if (!active) return <>
     {forwardDialog}
     <div
+      key="conversation-surface"
       className="arkme-conversation-surface"
       ref={surfaceRef}
       data-arkme-owned="product-surface"
@@ -7453,7 +7465,11 @@ export function ArkmeSurface({
         ...(productChrome && compactNavigation ? styles.compactSurface : {}),
       }}
       aria-hidden
-    />
+    >
+      <section key="conversation-panel" className="arkme-conversation-panel" style={styles.panel}>
+        {retainedCallPage}
+      </section>
+    </div>
     {selfTopicDirectoryOwner}
     {selfTopicMenuOwner}
     {recordingImportOwner}
@@ -7526,6 +7542,7 @@ export function ArkmeSurface({
       }}
     />}
     <div
+      key="conversation-surface"
       className="arkme-conversation-surface"
       ref={surfaceRef}
       data-arkme-owned="product-surface"
@@ -7555,6 +7572,7 @@ export function ArkmeSurface({
         />
       </aside>}
       <section
+        key="conversation-panel"
         className="arkme-conversation-panel"
         ref={panelRef}
         data-arkme-active-conversation-identity={activeConversation ? conversationKey : undefined}
@@ -7564,13 +7582,17 @@ export function ArkmeSurface({
       >
         {selfTopicDirectoryOwner}
         {!selfWorkspaceSelected && selfTopicMenuOwner}
-        {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header data-arkme-window-drag-region="conversation" className="arkme-conversation-header" style={styles.header}>
+        {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header data-arkme-window-drag-region="conversation" className="arkme-conversation-header"
+          data-arkme-centered-header={selfWorkspaceSelected ? 'self' : undefined}
+          style={{ ...styles.header, ...(selfWorkspaceSelected ? {
+            display: 'grid', gridTemplateColumns: CONVERSATION_HEADER_COLUMNS, paddingLeft: 20, paddingRight: 20,
+          } : {}) }}>
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
             <ArkmeDirectorySourceAvatar source={source} size={34} />
           </span>}
           <div data-arkme-window-drag-region="conversation" style={styles.titleGroup}>
             {selfWorkspaceSelected
-              ? selfTopicMenuOwner
+              ? <h2 style={styles.title}>{tr("发给自己")}</h2>
               : <div style={styles.titleBlock}>
                 <span style={styles.titleLine}>
                   <h2 style={styles.title}>{surfaceTitle}</h2>
@@ -7586,6 +7608,9 @@ export function ArkmeSurface({
             {authenticated && selfWorkspaceSelected
               && source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon size={16} /></span>}
           </div>
+          {selfWorkspaceSelected && <div data-arkme-header-selector="self" style={{
+            gridColumn: 2, gridRow: 1, justifySelf: 'center', minWidth: 0, maxWidth: '100%',
+          }}>{selfTopicMenuOwner}</div>}
           {authenticated && activeConversation && sourceIsChat && source !== undefined && <ArkmeChatCalendar
             key={`chat-calendar:${authenticatedAccountKey}:${conversationKey}`}
             sourceRef={source.sourceRef} scopeKey={conversationKey} accountScope={authenticatedAccountKey}
@@ -7622,7 +7647,7 @@ export function ArkmeSurface({
             exportBusy={conversationExport?.status === 'downloading'}
             exportProcessed={conversationExport?.processed ?? 0}
           />}
-          {authenticated && activeConversation && isArkmeSelfWorkspaceSource(source) && <div style={ARKME_CONVERSATION_HEADER_ACTIONS_STYLE}>
+          {authenticated && activeConversation && isArkmeSelfWorkspaceSource(source) && <div style={{ ...ARKME_CONVERSATION_HEADER_ACTIONS_STYLE, gridColumn: 3, gridRow: 1, justifySelf: 'end' }}>
             <ArkmeConversationHeaderIconButton
               label={tr("按日期查看发给自己")}
               buttonRef={selfCalendarButtonRef}
@@ -7720,6 +7745,7 @@ export function ArkmeSurface({
             setConversationExportToast(current => current?.sequence === conversationExportToast.sequence ? undefined : current)
           }}
         />}
+        {retainedCallPage}
         {authView === 'login' ? <div style={styles.loginBody}><ArkmeLogin
           t={t}
           mode={loginMode}
@@ -7746,7 +7772,7 @@ export function ArkmeSurface({
           onWechatLogin={() => { void beginWechat() }}
           onJiwoLogin={() => { void beginJiwo() }}
           onCancelBinding={() => { void cancelBinding() }}
-        /></div> : ui.mode === 'calls' ? <ArkmeCallSurface />
+        /></div> : ui.mode === 'calls' ? null
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface
             active={active}
             key={`recordings:${auth?.status ?? 'unknown'}:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}

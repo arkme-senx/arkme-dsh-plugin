@@ -7744,7 +7744,11 @@ describe('conversation send directory projection', () => {
     })
   })
 
-  it.each([target, group, sendToSelf])('moves composer stats above the card and shortcuts beside send ($kind)', async selected => {
+  it.each([
+    target, group, sendToSelf,
+    { ...sendToSelf, kind: 'topic' as const, sourceRef: 'composer-layout-topic', sourceKey: 'topic:composer-layout' },
+    { ...sendToSelf, kind: 'default_category' as const, sourceRef: 'composer-layout-default', sourceKey: 'default:composer-layout' },
+  ])('keeps composer stats space stable across focus and draft changes ($kind)', async selected => {
     arkmeUi.selectSource(selected)
     await act(async () => {
       renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
@@ -7756,7 +7760,8 @@ describe('conversation send directory projection', () => {
     expect(info().parent).toBe(card.parent)
     expect(info().parent!.children.indexOf(info())).toBeLessThan(info().parent!.children.indexOf(card))
     expect(info().findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(0)
-    if (selected.kind === 'send_to_self') expect(info().props.style.minHeight).toBe(0)
+    const reservedHeight = selected.kind === 'private_chat' ? 30 : 20
+    expect(info().props.style.minHeight).toBe(reservedHeight)
     const tools = card.findByProps({ 'data-arkme-composer-footer': 'tools' })
     const shortcut = tools.findByProps({ 'data-arkme-composer-footer': 'hint' })
     expect(shortcut.props.title).toBe('Enter发送 / Shift+Enter换行')
@@ -7766,11 +7771,13 @@ describe('conversation send directory projection', () => {
     expect(shortcut.parent!.findAllByProps({ 'aria-label': '发送消息' }).length).toBeGreaterThan(0)
 
     act(() => composer.props.onFocus())
+    expect(info().props.style.minHeight).toBe(reservedHeight)
     expect(shortcut.props.style.visibility).toBe('visible')
     expect(shortcut.props['aria-hidden']).toBe(false)
     expect(info().findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(1)
     expect(card.findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(0)
     await act(async () => { composer.props.onTextChange('布局测试'); await Promise.resolve() })
+    expect(info().props.style.minHeight).toBe(reservedHeight)
     const stats = info().findByProps({ 'data-arkme-composer-stats': 'true' })
     expect(stats.props['aria-label']).toContain('已输入 4 字')
     const toggle = stats.findByType('button')
@@ -7784,6 +7791,7 @@ describe('conversation send directory projection', () => {
     expect(composer.props.value).toBe('布局测试')
     act(() => composer.props.onBlur())
     expect(shortcut.props.style.visibility).toBe('hidden')
+    expect(info().props.style.minHeight).toBe(reservedHeight)
     expect(shortcut.props['aria-hidden']).toBe(true)
     expect(info().findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(1)
     act(() => composer.props.onFocus())
@@ -7791,6 +7799,7 @@ describe('conversation send directory projection', () => {
     act(() => composer.props.onBlur())
     await act(async () => { composer.props.onTextChange(''); await Promise.resolve() })
     expect(info().findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(0)
+    expect(info().props.style.minHeight).toBe(reservedHeight)
   })
 
   it('matches the desktop group destination hint height, name truncation and focus transition', async () => {
