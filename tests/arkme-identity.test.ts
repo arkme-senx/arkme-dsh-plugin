@@ -227,7 +227,27 @@ function withoutRecordingHandoffNames(file: string, content: string): string {
   return content
 }
 
+function withoutCallShareViewerFallback(file: string, content: string): string {
+  if (file !== join(root, 'src/services/call-history-service.ts')) return content
+  // The approved localized share-viewer fallback is not a blanket brand exemption.
+  return content.replaceAll("displayName: stringValue(row.display_name).trim() || '即我用户'", '')
+}
+
 describe('Arkme plugin identity', () => {
+  it('allows only the approved call share viewer fallback without hiding other legacy branding', () => {
+    const file = join(root, 'src/services/call-history-service.ts')
+    const fallback = "displayName: stringValue(row.display_name).trim() || '即我用户'"
+    expect(withoutCallShareViewerFallback(file, fallback)).toBe('')
+    for (const unrelatedFile of ['src/services/contact-service.ts', 'README.md']) {
+      expect(withoutCallShareViewerFallback(join(root, unrelatedFile), fallback)).toBe(fallback)
+    }
+    const otherCopy = "Jotmo jiwo 即我产品 即我用户 displayName: '即我用户'"
+    expect(withoutCallShareViewerFallback(file, otherCopy)).toBe(otherCopy)
+    expect(withoutCallShareViewerFallback(file, `${fallback} ${otherCopy}`)).toBe(` ${otherCopy}`)
+    const differentFallback = fallback.replace('即我用户', '即我用户中心')
+    expect(withoutCallShareViewerFallback(file, differentFallback)).toBe(differentFallback)
+  })
+
   it('allows only exact recording handoff references and the localized recording filename', () => {
     const handoff = join(root, 'docs/recording-presence-handoff.md')
     const recorder = join(root, 'src/client/recordings/direct-recording-store.ts')
@@ -306,7 +326,7 @@ describe('Arkme plugin identity', () => {
               withoutOfficialCommunityProductCopy(
                 file,
                 withoutMobileRecordingGuideProductCopy(file,
-                  withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8'))),
+                  withoutArkmeIdCompatibilityAliases(file, withoutCallShareViewerFallback(file, readFileSync(file, 'utf8')))),
               ),
             ),
           ),
