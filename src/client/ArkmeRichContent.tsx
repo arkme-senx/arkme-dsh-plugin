@@ -1,3 +1,4 @@
+import { openLongArticleWindow } from './long-article-window.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useArkmeLivePhotoPlayback } from './live-photo-playback.js'
 import { ArkmeLivePhotoBadge } from './ArkmeLivePhotoBadge.js'
@@ -460,9 +461,11 @@ function LongArticleWordCountIcon() {
 export function ArkmeForwardArticleContent({ item }: { item: ArkmeTimelineItem }) {
   useArkmeLocale()
   const [open, setOpen] = useState(false)
+  const [openError, setOpenError] = useState('')
   return <>
+    {openError && <p role="alert">{openError}</p>}
     <div style={{ maxWidth: '100%', minWidth: 0, padding: '10px 13px', overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', boxSizing: 'border-box', borderRadius: '16px 5px 16px 16px', background: arkmeTheme.messageOwn, border: '1px solid rgba(83,97,145,.045)' }}>
-      <ArticleCard title={item.title} text={item.textFormat === 'markdown' ? arkmeMarkdownPlainText(item.textContent) : item.textContent} onOpen={() => { setOpen(true) }} />
+      <ArticleCard title={item.title} text={item.textFormat === 'markdown' ? arkmeMarkdownPlainText(item.textContent) : item.textContent} onOpen={() => { void openLongArticleWindow({ sourceRef: 'snapshot', sourceKey: `snapshot:${item.itemUid}`, displayName: item.title || '转发长文' }, { mode: 'snapshot', item }).then(opened => { if (!opened) setOpen(true) }).catch(error => setOpenError(error instanceof Error ? error.message : '无法打开长文窗口')) }} />
     </div>
     {open && typeof document !== 'undefined' && createPortal(<ArkmeLongArticleSnapshotDialog item={item} onClose={() => { setOpen(false) }} />, document.body)}
   </>
@@ -930,11 +933,12 @@ export function arkmeRelatedRecordingItemFromSharedRecording(item: ArkmeTimeline
     : arkmeRelatedRecordingItemFromSharedRecordingPreview(item.sharedRecording, item)
 }
 
-export function ArkmeMessageContent({ item, sourceRef, sourceIdentityKey, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen }: {
+export function ArkmeMessageContent({ item, sourceRef, sourceIdentityKey, sourceDisplayName, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen }: {
   item: ArkmeTimelineItem
   presentation?: 'bubble' | 'detail'
   sourceRef?: string
   sourceIdentityKey?: string
+  sourceDisplayName?: string
   onLongArticleUpdated?: (detail: ArkmeLongArticleDetail) => void
   highlightMentions?: boolean
   collapseText?: boolean
@@ -947,6 +951,7 @@ export function ArkmeMessageContent({ item, sourceRef, sourceIdentityKey, onLong
   onArticleOpen?: () => void
 }) {
   useArkmeLocale()
+  const [articleWindowError, setArticleWindowError] = useState('')
   const readMentionMembers = useReadMentionMembers(item.itemUid, sourceRef)
   // Access references rotate on new messages; only a different conversation ends this media scope.
   const mediaSourceKey = sourceIdentityKey ?? sourceRef
@@ -1078,7 +1083,13 @@ export function ArkmeMessageContent({ item, sourceRef, sourceIdentityKey, onLong
   return <>
     <div style={{ ...styles.stack, ...(presentation === 'detail' ? { width: '100%' } : {}) }} data-arkme-message-content={isArticle ? 'article' : 'message'} data-arkme-content-presentation={presentation}>
       {inlineVoice !== undefined ? <>{renderVoice(inlineVoice, true)}{renderRows}</> : <>
-        {isArticle && presentation === 'bubble' ? <ArticleCard title={item.title} text={item.textFormat === 'markdown' ? arkmeMarkdownPlainText(item.textContent) : item.textContent} onOpen={() => { if (onArticleOpen !== undefined) onArticleOpen(); else setArticleOpen(true) }} /> : <>
+        {isArticle && presentation === 'bubble' ? <ArticleCard title={item.title} text={item.textFormat === 'markdown' ? arkmeMarkdownPlainText(item.textContent) : item.textContent} onOpen={() => {
+          if (onArticleOpen !== undefined) { onArticleOpen(); return }
+          if (!sourceRef) { setArticleOpen(true); return }
+          setArticleWindowError('')
+          void openLongArticleWindow({ sourceRef, sourceKey: sourceIdentityKey ?? sourceRef, displayName: sourceDisplayName || item.title || '长文' }, { mode: 'existing', item })
+            .then(opened => { if (!opened) setArticleOpen(true) }).catch(error => setArticleWindowError(error instanceof Error ? error.message : '无法打开长文窗口'))
+        }} /> : <>
           {isArticle && item.title && <h3 style={{ margin: 0, fontSize: 14, lineHeight: 1.7 }}><ArkmeRichText text={item.title} presentation="preview" /></h3>}
           {isArticle && bodyTextFormat === 'markdown' ? <ArkmeLongArticleBody text={text} blocks={blocks} textStyle={{ fontSize: 16, lineHeight: '26px' }} /> : text !== '' && <LongText
             textFormat={bodyTextFormat}
@@ -1106,6 +1117,7 @@ export function ArkmeMessageContent({ item, sourceRef, sourceIdentityKey, onLong
       <ArkmeMediaPreview blocks={visualBlocks} selected={previewBlock} onSelect={openPreview} onClose={() => { setPreview(undefined) }} {...(preview.forceDownload === undefined ? {} : { forceDownload: preview.forceDownload })} />,
       document.body,
     )}
+    {articleWindowError && <p role="alert">{articleWindowError}</p>}
     {articleOpen && sourceRef !== undefined && typeof document !== 'undefined' && createPortal(
       <ArkmeLongArticleDialog
         sourceRef={sourceRef}

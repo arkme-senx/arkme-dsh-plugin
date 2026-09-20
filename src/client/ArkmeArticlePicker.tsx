@@ -28,7 +28,8 @@ export function isOwnArticle(item: ArkmeSearchRecordItem, userId: number): boole
     && (item.recordCreatorUserId === undefined || String(item.recordCreatorUserId) === String(userId))
 }
 
-export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect }: {
+export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCreate }: {
+  onCreate?: () => Promise<boolean>
   sourceRef: string; userId: number; onClose: () => void; onSelect: (article: ComposerArticle) => void
 }) {
   useArkmeLocale()
@@ -119,7 +120,13 @@ export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect }: {
         }
       }}>
         <header style={styles.header}><h2 style={{ margin: 0, flex: 1, fontSize: 19 }}>{tr("添加长文")}</h2>
-          <button type="button" style={styles.button} disabled={opening} onClick={() => setCreating(true)}>{tr("＋新建长文")}</button>
+          <button type="button" style={styles.button} disabled={opening} onClick={() => {
+            if (!onCreate) { setCreating(true); return }
+            setOpening(true); setOpenError('')
+            void onCreate().then(opened => { if (!mounted.current) return; if (opened) close(); else setCreating(true) })
+              .catch(caught => { if (mounted.current) setOpenError(caught instanceof Error ? caught.message : '无法打开长文窗口') })
+              .finally(() => { if (mounted.current) setOpening(false) })
+          }}>{tr("＋新建长文")}</button>
           <button type="button" style={styles.button} aria-label={tr("关闭添加长文")} onClick={close}>×</button></header>
         <input ref={search} style={styles.search} value={query} aria-label={tr("搜索自己的长文")} placeholder={tr("搜索自己的长文")} onChange={event => setQuery(event.target.value)} />
         <div style={styles.list}>

@@ -1,3 +1,6 @@
+import { createRoot } from 'react-dom/client'
+import { ArkmeLongArticleWindow } from './ArkmeLongArticleWindow.js'
+import { bindLongArticleWindowAccount, longArticleWindowRequested } from './long-article-window.js'
 import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -95,6 +98,21 @@ function logNotificationActivation(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
+  if (longArticleWindowRequested()) {
+    ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: article language')
+    ctx.effect(() => {
+      const disposeStyles = installArkmeRedesignStyles()
+      const host = document.createElement('div')
+      host.dataset.arkmeOwned = 'long-article-window'
+      Object.assign(host.style, { position: 'fixed', inset: '0', zIndex: '2147483000' })
+      document.body.append(host)
+      const root = createRoot(host)
+      root.render(<ArkmeLongArticleWindow />)
+      return () => { root.unmount(); host.remove(); disposeStyles() }
+    }, 'dsh-arkme: independent article editor')
+    return
+  }
+
 	if (deepSeekHarnessEmbedRequested()) {
 		if (!deepSeekHarnessNativeSettingsRequested()) {
 			ctx.slots.inject('sidebar.settings', () => ctx.slots.register({
@@ -120,6 +138,7 @@ export function apply(ctx: ClientContext): void {
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
   ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: product language')
 
+  ctx.effect(() => bindLongArticleWindowAccount(), 'dsh-arkme: article window account')
   ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update bridge')
   ctx.effect(() => installHarnessConversationLayoutLoader(ctx, document), 'dsh-arkme: native wide conversation exports')
   ctx.effect(() => {

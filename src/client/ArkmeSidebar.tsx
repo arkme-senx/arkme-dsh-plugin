@@ -1,4 +1,5 @@
 import { NATIVE_FORWARD_ENTRY, isNativeForwardCaller, nativeForwardPreview, type NativeForwardDelivery, type NativeForwardWindow, type NativeForwardEntry, type NativeForwardResult } from './native-forward-entry.js'
+import { longArticleWindowBridge, openLongArticleWindow } from './long-article-window.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { useComposerPasteFocus } from './composer-paste-focus.js'
@@ -2811,6 +2812,12 @@ export function ArkmeSurface({
   const conversationTargetLocatedRevisionRef = useRef(0)
   const conversationTargetAbortRef = useRef<AbortController>()
   const [error, setError] = useState(initialAuth?.status === 'binding-required' ? t('error.binding.required') : '')
+  const createLongArticle = async () => {
+    if (!source) return
+    try {
+      if (!await openLongArticleWindow({ ...source, sourceKey: conversationKey })) setLongArticleCreating(true)
+    } catch (caught) { setError(errorMessage(caught)) }
+  }
   const [agreed, setAgreed] = useState(true)
   const [loginMode, setLoginMode] = useState<ArkmeLoginMode>(initialAuth?.status === 'binding-required' ? 'phone' : 'jiwo')
   const [phone, setPhone] = useState('')
@@ -3104,6 +3111,18 @@ export function ArkmeSurface({
     returnToLatest: boolean
   }>())
   const pendingViewportRestoreRef = useRef<ArkmeConversationViewportRestore>()
+  useEffect(() => longArticleWindowBridge()?.onCreated(receipt => {
+    if (receipt.accountKey !== authenticatedAccountKey) return
+    if (!receipt.article) confirmedSendRetention.retain(receipt.sourceKey, receipt.item)
+    if (receipt.sourceKey === conversationKey) {
+      pendingViewportRestoreRef.current = { sourceKey: conversationKey, viewport: undefined }
+      setItems(current => receipt.article?.mode === 'existing'
+        ? current.map(item => item.itemUid === receipt.item.itemUid ? { ...item, ...receipt.item } : item)
+        : mergeItems(current, [receipt.item]))
+    }
+    arkmeUi.recordChanged()
+    void arkmeChatDirectory.refreshRoot({ force: true, silent: true }).catch(() => {})
+  }), [authenticatedAccountKey, conversationKey, confirmedSendRetention, setItems])
   const viewportRestoreIntentRef = useRef<boolean>()
   const pendingConversationTargetLocateRef = useRef<{
     sourceKey: string
@@ -3512,6 +3531,16 @@ export function ArkmeSurface({
       setMomentRelatedDetailState({ kind: 'idle' })
     }
     if (kind !== 'related') closeRelatedPanel()
+  }
+
+  function openChatMessage(item: ArkmeTimelineItem) {
+    if (source && !item.forwardRecords && (item.templateKind === 8 || item.displayKind === 1)) {
+      void openLongArticleWindow({ ...source, sourceKey: conversationKey }, { mode: 'existing', item })
+        .then(opened => { if (!opened) openNoteDetail(item) })
+        .catch(error => setError(errorMessage(error)))
+      return
+    }
+    openNoteDetail(item)
   }
 
   function openNoteDetail(item: ArkmeTimelineItem, videoUrl?: string) {
@@ -7922,12 +7951,12 @@ export function ArkmeSurface({
                               if (event.target.closest('button,a,audio,video,input,select,textarea,[contenteditable],[role=link],[role=slider]')) return
                               if (window.getSelection()?.toString()) return
                               event.currentTarget.focus({ preventScroll: true })
-                              openNoteDetail(item)
+                              openChatMessage(item)
                             }}
                             onKeyDown={event => {
                               if (event.target !== event.currentTarget) return
                               if (event.key !== 'Enter' && event.key !== ' ') return
-                              event.preventDefault(); openNoteDetail(item)
+                              event.preventDefault(); openChatMessage(item)
                             }}
                             onContextMenu={event => { openMessageMenu(item, event, event.currentTarget) }}
                             data-arkme-message-direction={item.isMe ? 'self' : 'other'}
@@ -7944,6 +7973,7 @@ export function ArkmeSurface({
                               onCallDetailOpen={videoUrl => { openNoteDetail(item, videoUrl) }}
                               sourceRef={source.sourceRef}
                               sourceIdentityKey={conversationKey}
+                              sourceDisplayName={source.displayName}
                               highlightMentions
                               shareWebsite={shareWebsite}
                               onMessageCopyLinkOpen={openMessageCopyLinkDetail}
@@ -8210,7 +8240,7 @@ export function ArkmeSurface({
               getAnchorRect={() => addMenuTriggerRef.current?.getBoundingClientRect() ?? null}
               onClose={() => setAddMenuOpen(false)} actions={[
                 { id: 'files', label: '添加附件', icon: <IconPaperclipOutline16 />, onSelect: () => { setAddMenuOpen(false); fileInputRef.current?.click() } },
-                activeRecordReeditComposer === undefined && { id: 'article', label: sourceIsChat ? '添加长文' : '写长文', icon: <IconEditOutline16 />, disabled: pendingArticle?.sending === true, onSelect: () => { if (pendingArticle?.sending) return; if (sourceIsChat) setArticlePickerScope(captureComposerAsyncScope()); else setLongArticleCreating(true); setAddMenuOpen(false) } },
+                activeRecordReeditComposer === undefined && { id: 'article', label: sourceIsChat ? '添加长文' : '写长文', icon: <IconEditOutline16 />, disabled: pendingArticle?.sending === true, onSelect: () => { if (pendingArticle?.sending) return; if (sourceIsChat) setArticlePickerScope(captureComposerAsyncScope()); else void createLongArticle(); setAddMenuOpen(false) } },
               ]} />}
             <input ref={fileInputRef} type="file" multiple hidden onChange={event => { void selectFiles(event.currentTarget.files) }} />
             <div className="arkme-conversation-input-card">
@@ -8769,6 +8799,7 @@ export function ArkmeSurface({
       />}
       {articlePickerOpen && source !== undefined && authenticatedUserId !== undefined && typeof document !== 'undefined' && createPortal(
         <ArkmeArticlePicker key={`${articleDraftKey}:${articlePickerScope.generation}`} sourceRef={source.sourceRef} userId={authenticatedUserId}
+          onCreate={() => openLongArticleWindow({ ...source, sourceKey: conversationKey })}
           onClose={() => { setArticlePickerScope(undefined); if (sameComposerAsyncScope(articlePickerScope)) textareaRef.current?.focus() }}
           onSelect={article => { if (articleDraftKey && sameComposerAsyncScope(articlePickerScope)) composerArticleStore.set(articleDraftKey, article) }} />,
         document.body,
