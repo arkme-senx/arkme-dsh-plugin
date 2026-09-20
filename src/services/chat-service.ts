@@ -5296,16 +5296,22 @@ export class ChatService {
             continue
           }
           if (depth >= 4 && Object.keys(nestedForward).length > 0) truncated = true
-          const senderUserId = numberValue(item.source_sender_user_id ?? item.sourceSenderUserId ?? item.owner_id ?? item.ownerId)
-          const senderName = stringValue(
+          const rawType = stringValue(item.source_type ?? item.sourceType ?? payload.source_type ?? payload.sourceType)
+          const sourceSender = item.source_sender_user_id ?? item.sourceSenderUserId
+          const isDeepSeekReply = rawType === 'agent'
+            && numberValue(sourceSender) === 0 && stringValue(item.source_avatar_kind ?? item.sourceAvatarKind) === 'deepseek'
+          // Chat omits the zero AI speaker ID; content ownership must not turn that reply into a human speaker.
+          const senderUserId = isDeepSeekReply ? 0 : numberValue(sourceSender ?? item.owner_id ?? item.ownerId)
+          const senderName = isDeepSeekReply ? 'DeepSeek Harness' : stringValue(
             item.owner_name ?? item.ownerName ?? item.source_display_name ?? item.sourceDisplayName,
           ).trim() || 'Arkme用户'
-          const textFormat = arkmeRecordTextFormat(item)
+          // Agent forward snapshots use render_format; ordinary Record text_format has a separate contract.
+          const textFormat = rawType === 'agent'
+            && stringValue(item.render_format ?? item.renderFormat) === 'markdown' ? 'markdown' : arkmeRecordTextFormat(item)
           const rawText = stringValue(item.text ?? item.text_preview ?? item.textPreview)
           let textContent = textFormat === 'markdown' ? rawText : rawText.trim()
           const displayKind = numberValue(item.display_kind ?? item.displayKind)
           const title = stringValue(item.title).trim()
-          const rawType = stringValue(item.source_type ?? item.sourceType ?? payload.source_type ?? payload.sourceType)
           const sourceType: ArkmeForwardRecordPreviewItem['sourceType'] =
             rawType === 'record' || rawType === 'chat_record' || rawType === 'long_recording_segments'
               || rawType === 'agent' || rawType === 'ai_letter' ? rawType : 'unknown'
@@ -5353,6 +5359,7 @@ export class ChatService {
                 : stringValue(item.availability).trim() !== '' ? '原快记暂不可查看' : undefined
           projectedItems.push({
             senderName,
+            ...(isDeepSeekReply ? { avatarKind: 'deepseek' as const } : {}),
             ...(senderUserId > 0 ? { avatarRef: await this.profile.sealProfileImageRef(viewerUserId, senderUserId) } : {}),
             sendAtMillis: recordingSegments.length > 0 ? numberValue(item.send_at ?? item.sendAt) : epochMillis(item.send_at ?? item.sendAt),
             title,

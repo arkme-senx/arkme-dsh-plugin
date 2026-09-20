@@ -182,6 +182,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'source.forward-messages'
   | 'message-actions.copy-link'
   | 'message-actions.forward'
+  | 'native-chat.forward'
   | 'source.shared-recording-detail'
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'

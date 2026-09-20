@@ -1,3 +1,4 @@
+import { NATIVE_FORWARD_ENTRY, type NativeForwardWindow, type NativeForwardResult } from '../src/client/native-forward-entry.js'
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { ArkmeArticlePicker } from '../src/client/ArkmeArticlePicker.js'
 import { composerArticleKey, composerArticleStore } from '../src/client/composer-article-store.js'
@@ -2357,6 +2358,66 @@ describe('conversation send directory projection', () => {
       act(() => { renderer?.unmount() }); renderer = undefined
       vi.useRealTimers()
     }
+  })
+
+  it('opens DSH content in the original Arkme picker while its conversation surface is inactive', async () => {
+    const caller = {} as Window
+    const doc = { body: {}, querySelectorAll: () => [{ contentWindow: caller }], addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    vi.stubGlobal('document', doc)
+    Object.assign(window, { document: doc })
+    await act(async () => { renderer = create(<ArkmeSurface active={false} productChrome={false} productNavigation={false} />) })
+    const entry = (window as NativeForwardWindow)[NATIVE_FORWARD_ENTRY]!
+    const snapshot = { sessionId: 'dsh-session', messages: [{ key: 'a', anchorSeq: 1, role: 'assistant' as const, text: '**DSH 正文**', createdAtMillis: 1 }] }
+    const content = { snapshot, userId: 42, delivery: { comment: undefined, send: vi.fn(async () => ({ localState: 'synced' as const, itemUid: 'native-delivered' })) } }
+    await expect(entry.open({ ...content, userId: 99 }, new AbortController().signal, caller)).rejects.toThrow('账号')
+    await expect(entry.open(content, new AbortController().signal, {} as Window)).rejects.toThrow('DSH')
+    let result!: Promise<NativeForwardResult>
+    const controller = new AbortController()
+    await act(async () => { result = entry.open(content, controller.signal, caller) })
+    const dialog = renderer!.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })
+    expect(dialog.findByProps({ 'aria-label': '转发对象列表' })).toBeDefined()
+    expect(mocks.callArkme.mock.calls.some(([op, params]) => op === 'sources.list' && params?.directory === 'send_to_self')).toBe(false)
+    const targetButton = dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean')[0]!
+    await act(async () => { await targetButton.props.onClick() })
+    expect(renderedText(dialog)).toContain('我和DeepSeek Harness的快记')
+    snapshot.messages[0]!.text = '后续变化不能改快照'
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    await expect(result).resolves.toEqual({ completed: true })
+    expect(content.delivery.send).toHaveBeenCalledTimes(1)
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.forward-messages')).toBe(false)
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+    await act(async () => { result = entry.open(content, controller.signal, caller) })
+    await act(async () => { controller.abort() })
+    await expect(result).resolves.toEqual({ completed: false })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+  })
+
+  it('keeps only failed native recipients selected and blocks double submission in the original picker', async () => {
+    const caller = {} as Window
+    const doc = { body: {}, querySelectorAll: () => [{ contentWindow: caller }], addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    vi.stubGlobal('document', doc); Object.assign(window, { document: doc })
+    await act(async () => { renderer = create(<ArkmeSurface active={false} productChrome={false} productNavigation={false} />) })
+    const entry = (window as NativeForwardWindow)[NATIVE_FORWARD_ENTRY]!
+    const pending = deferred<{ localState: 'synced'; itemUid: string }>()
+    const send = vi.fn().mockResolvedValueOnce({ localState: 'synced', itemUid: 'first' }).mockImplementationOnce(() => pending.promise)
+    const content = { userId: 42, snapshot: { sessionId: 'native', messages: [{ key: 'a', anchorSeq: 1, role: 'assistant' as const, text: 'body', createdAtMillis: 1 }] }, delivery: { comment: undefined, send } }
+    let result!: Promise<NativeForwardResult>
+    await act(async () => { result = entry.open(content, new AbortController().signal, caller) })
+    const dialog = renderer!.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })
+    const targets = dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean')
+    await act(async () => { await targets[0]!.props.onClick() })
+    await act(async () => { await targets[1]!.props.onClick() })
+    const submit = dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick
+    await act(async () => { submit(); submit() })
+    expect(send).toHaveBeenCalledTimes(2)
+    await act(async () => { pending.reject(new Error('target unavailable')) })
+    expect(dialog.findAll(node => node.type === 'button' && node.props['aria-pressed'] === true)).toHaveLength(1)
+    expect(renderedText(dialog)).toContain('1 个失败')
+    send.mockResolvedValue({ localState: 'synced', itemUid: 'second' })
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    await expect(result).resolves.toEqual({ completed: true })
+    expect(send).toHaveBeenCalledTimes(3)
+    expect(send.mock.calls[2]![0]).toEqual(send.mock.calls[1]![0])
   })
 
   async function openForwardPicker(textContent = '待转发快记', body?: unknown, draft?: string) {

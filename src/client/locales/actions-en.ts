@@ -1,6 +1,20 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '账号已切换，无法保存；请保留窗口或复制内容后再关闭': 'Account changed. Keep this window open or copy the content before closing.',
+  '发送到：': 'Send to: ',
+  '草稿已保存': 'Draft saved',
+  '正在保存草稿…': 'Saving draft…',
+  '草稿保存失败，请重试': 'Could not save draft. Please retry.',
+  '未保存': 'Not saved',
+  '保留这篇长文的修改？': 'Keep changes to this article?',
+  '保存草稿后，可以下次继续编辑。': 'Save a draft to continue editing later.',
+  '保存并关闭': 'Save and close',
+  '放弃修改': 'Discard changes',
+
   "关闭用量与额度详情": "Close usage and limits details",
+  "所属会话：": "Conversation: ",
+  "保存修改": "Save changes",
+  "只读": "Read only",
   "关闭添加长文": "Close add an article",
   "关闭充值弹窗": "Close add credit",
   "关闭日历": "Close calendar",

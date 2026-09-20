@@ -57,7 +57,7 @@ const expectedPublicMethods = [
   'userBanStatus', 'banPrivateChatUser', 'unbanPrivateChatUser',
   'memberEvents', 'memberEventProfile', 'memberEventPrivateChat',
   'openPrivateChatFromUser', 'openPrivateChatFromContact', 'officialAuthorProfile', 'openOfficialAuthorPrivateChat', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'readSourceAround', 'messageReadReceiptSummaries', 'messageReadReceiptDetail', 'messageSnapshotDetail', 'saveMessageLocation', 'sharedRecordingDetail', 'relatedRecordingEligibility', 'relatedRecordings',
-  'recordRelatedRecordingsToolEvent', 'reportMessage', 'withdrawGroupMessage', 'copySourceMessageLink', 'copyMessageActionsLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'sourceMessageExtensionContext', 'extendSourceMessage', 'forwardSourceMessages', 'forwardMessageActions',
+  'recordRelatedRecordingsToolEvent', 'reportMessage', 'withdrawGroupMessage', 'copySourceMessageLink', 'copyMessageActionsLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'sourceMessageExtensionContext', 'extendSourceMessage', 'forwardSourceMessages', 'forwardMessageActions', 'forwardNativeChat',
   'sendSourceText', 'retryGroupAiPolish',
   'sendSourceRich', 'favoriteStickers', 'addFavoriteSticker', 'manageFavoriteSticker', 'sendFavoriteSticker', 'longArticleDetail', 'ownLongArticle', 'updateLongArticle', 'getLongArticleDraft',
   'putLongArticleDraft', 'removeLongArticleDraft', 'recordEditHistoryPage', 'recordReeditEditor', 'prepareRecordReedit', 'commitRecordReedit',

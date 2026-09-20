@@ -26,6 +26,7 @@ import type {
   ArkmeTimelineItem,
   ArkmeTimelineMentionTarget,
 } from '../types.js'
+import { DeepSeekLogoMark } from './ArkmeDshAgentInputMarker.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeForwardArticleContent, ArkmeMediaPreview, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -1058,11 +1059,12 @@ export function ArkmeTimelineDetailDrawer({
   </ArkmeDetailShell>
 }
 
-function ForwardDetailRow({ name, time, avatarRef, segment = false, children }: {
-  name: string; time: string; avatarRef?: string | undefined; segment?: boolean; children: ReactNode
+function ForwardDetailRow({ name, time, avatarRef, avatarKind, segment = false, children }: {
+  name: string; time: string; avatarRef?: string | undefined; avatarKind?: 'deepseek' | undefined; segment?: boolean; children: ReactNode
 }) {
   return <div style={styles.row} {...(segment ? { 'data-arkme-forward-segment': 'true' } : {})}>
-    <ArkmeUserAvatar {...(avatarRef === undefined ? {} : { avatarRef })} size={30} label={segment ? '转写说话人头像' : '转发消息头像'} />
+    {avatarKind === 'deepseek' ? <span role="img" aria-label="DeepSeek Harness 头像" style={{ width: 30, height: 30, flex: 'none' }}><DeepSeekLogoMark style={{ width: 30, height: 30, color: arkmeTheme.accent, opacity: 1 }} /></span>
+      : <ArkmeUserAvatar {...(avatarRef === undefined ? {} : { avatarRef })} size={30} label={segment ? '转写说话人头像' : '转发消息头像'} />}
     <div style={styles.content}>
       <div style={styles.meta}><span style={styles.name}>{name}</span><span style={styles.time}>{time}</span></div>
       {children}
@@ -1122,7 +1124,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge }: { item: Ark
     }
     const hasRecordBody = segments.length === 0 || hasDistinctText || (value.contentBlocks?.length ?? 0) > 0
     return <div key={index} style={styles.rows}>
-      {hasRecordBody && <ForwardDetailRow name={value.senderName} avatarRef={value.avatarRef}
+      {hasRecordBody && <ForwardDetailRow name={value.senderName} avatarRef={value.avatarRef} avatarKind={value.avatarKind}
         time={`${firstDate !== lastDate ? `${dateLabel(value.sendAtMillis)} ` : ''}${timeLabel(value.sendAtMillis)}`}>
         {!isArticle && value.title.trim() !== '' && (snapshot.textContent !== '' || (value.contentBlocks?.length ?? 0) > 0) && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7, overflowWrap: 'anywhere' }}>
           <ArkmeRichText text={value.title} presentation="preview" />
