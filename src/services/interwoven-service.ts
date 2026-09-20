@@ -58,7 +58,7 @@ export class InterwovenService {
       attentionCount: this.interactionCount(data.attention_count),
       ...(data.latest === undefined ? {} : { latest: await this.projectInteraction(data.latest, userId) }),
     }
-    await this.assertInteractionAccount(userId, epoch)
+    await this.assertInteractionAccount(userId, epoch, options.signal)
     return result
   }
 
@@ -70,15 +70,18 @@ export class InterwovenService {
     }
     const items: ArkmePrivateInteraction[] = []
     for (const item of data.items) items.push(await this.projectInteraction(item, userId))
-    await this.assertInteractionAccount(userId, epoch)
+    await this.assertInteractionAccount(userId, epoch, options.signal)
     return {
       ...this.interactionCoverage(data), items, hasMore: data.has_more,
       ...(data.has_more ? { nextCursor: data.next_cursor as string } : {}),
     }
   }
 
-  private async assertInteractionAccount(userId: number, epoch: number): Promise<void> {
-    if (epoch !== this.interactionEpoch || (await this.runtime.requireSession()).userId !== userId) {
+  private async assertInteractionAccount(userId: number, epoch: number, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    signal?.throwIfAborted()
+    if (epoch !== this.interactionEpoch || session.userId !== userId) {
       throw new ArkmePluginError('interaction-account-changed', '账号已切换，请重新查询互动', true)
     }
   }
@@ -112,7 +115,7 @@ export class InterwovenService {
       if (error instanceof ArkmePluginError && error.upstreamStatus === 404) throw new ArkmePluginError('interaction-unsupported', '当前 Chat 后端尚未支持互动目录查询，请先升级后端', false, 501)
       throw error
     }
-    await this.assertInteractionAccount(session.userId, epoch)
+    await this.assertInteractionAccount(session.userId, epoch, options.signal)
     return { data, userId: session.userId, epoch }
   }
 

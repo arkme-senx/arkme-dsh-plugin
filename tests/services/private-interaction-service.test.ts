@@ -55,6 +55,24 @@ describe('private interaction service', () => {
       await expect(service.queryPrivateInteractions()).rejects.toMatchObject({ code: 'interaction-account-changed' })
     }
   })
+  it('rejects disposal while the final asynchronous account check is pending', async () => {
+    const { service, runtime } = fixture()
+    let checks = 0
+    runtime.requireSession.mockImplementation(async () => {
+      if (++checks === 3) service.dispose()
+      return { userId: 1, accessToken: 'secret' }
+    })
+    await expect(service.queryPrivateInteractions()).rejects.toMatchObject({ code: 'interaction-account-changed' })
+  })
+  it('honors cancellation during reference projection after HTTP has completed', async () => {
+    const { service, source } = fixture()
+    const controller = new AbortController()
+    source.sealSourceRef.mockImplementation(async () => {
+      controller.abort()
+      return 'opaque'
+    })
+    await expect(service.queryPrivateInteractions({ signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
+  })
   it('rejects capacity, disabled features and invalid limits without a fallback', async () => {
     const { service, runtime } = fixture()
     await expect(service.queryPrivateInteractions({ limit: 51 })).rejects.toMatchObject({ code: 'interaction-input-invalid' })
