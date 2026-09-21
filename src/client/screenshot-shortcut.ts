@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react'
-export interface ShortcutSnapshot {accelerator:string;available:boolean}
+export interface ShortcutSnapshot {accelerator:string;available:boolean;recording?:boolean}
 export interface ScreenshotShortcutBridge {
  get():Promise<ShortcutSnapshot|null>;set(key:string):Promise<ShortcutSnapshot>;record(value:boolean):Promise<boolean>
  onChanged(listener:(snapshot:ShortcutSnapshot)=>void):()=>void
