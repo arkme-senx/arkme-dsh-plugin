@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   publishRuntimeArtifact,
   readHarnessVersionCodeRangeFromEnvironment,
@@ -14,6 +14,7 @@ const roots: string[] = []
 const sourceSHA = '0123456789012345678901234567890123456789'
 
 afterEach(async () => {
+  vi.useRealTimers()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -128,7 +129,7 @@ describe('runtime artifact publisher', () => {
     expect(uploads[0]).toMatchObject({
       client: { hasCredentials: true, retryMax: 0 },
       key: objectKey,
-      upload: { headers: {
+      upload: { timeout: 300_000, headers: {
         'Content-Type': 'application/zstd',
         'x-oss-forbid-overwrite': 'true',
         'x-oss-meta-sha256': fixture.sha256,
@@ -136,6 +137,10 @@ describe('runtime artifact publisher', () => {
       } },
     })
     expect(JSON.stringify({ calls, uploads })).not.toContain('temporary-sk')
+    expect(logs).toContain(`version=${fixture.version} source_sha=${sourceSHA} object_key=${objectKey} size_bytes=16`)
+    expect(logs).toContain('oss_upload attempt=1/3 timeout_ms=300000 status=started')
+    expect(logs.some(message => /oss_upload attempt=1\/3 status=success elapsed_ms=\d+/.test(message))).toBe(true)
+    expect(logs.join(' ')).not.toMatch(/temporary-ak|temporary-sk|temporary-token|publisher-secret/)
     expect(logs).toContain('version_id=version-1 status=validating harness_version_code_range=4-9 compatibility_source=none')
     expect(logs).toContain('version_id=version-1 status=ready harness_version_code_range=4-9 compatibility_source=source-1@3#2')
   })
@@ -278,4 +283,52 @@ describe('runtime artifact publisher', () => {
     }, 'object-key', '/artifact.tar.zst', {}, { sleep: async () => {} })).rejects.toThrow('forbidden')
     expect(forbiddenAttempts).toBe(1)
   })
+
+  it('allows uploads taking longer than the former 60 second timeout', async () => {
+    vi.useFakeTimers()
+    const logs: string[] = []
+    const upload = uploadRuntimeObject({
+      put: async (_key, _path, options) => {
+        await new Promise(resolve => setTimeout(resolve, 90_000))
+        if ((options.timeout ?? 60_000) < 90_000) throw new Error('upload timed out')
+        return { ok: true }
+      },
+    }, 'object-key', '/artifact.tar.zst', {}, { log: message => logs.push(message) })
+    await Promise.all([
+      expect(upload).resolves.toEqual({ ok: true }),
+      vi.advanceTimersByTimeAsync(300_000),
+    ])
+    expect(logs).toContain('oss_upload attempt=1/3 status=success elapsed_ms=90000')
+  })
+
+  it('logs each timeout and backoff, stops after three failures, and preserves the error', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const logs: string[] = []
+    const waits: number[] = []
+    let attempts = 0
+    const error = Object.assign(new Error('sensitive SDK diagnostics'), { name: 'ResponseTimeoutError', status: -1 })
+    await expect(uploadRuntimeObject({
+      put: async () => {
+        attempts += 1
+        vi.setSystemTime(Date.now() + 300_000)
+        throw error
+      },
+    }, 'object-key', '/artifact.tar.zst', {}, {
+      log: message => logs.push(message),
+      sleep: async milliseconds => { waits.push(milliseconds) },
+    })).rejects.toBe(error)
+    expect(attempts).toBe(3)
+    expect(waits).toEqual([1_000, 2_000])
+    expect(logs).toEqual([
+      'oss_upload attempt=1/3 timeout_ms=300000 status=started',
+      'oss_upload attempt=1/3 status=failed elapsed_ms=300000 http_status=-1 retry_in_ms=1000',
+      'oss_upload attempt=2/3 timeout_ms=300000 status=started',
+      'oss_upload attempt=2/3 status=failed elapsed_ms=300000 http_status=-1 retry_in_ms=2000',
+      'oss_upload attempt=3/3 timeout_ms=300000 status=started',
+      'oss_upload attempt=3/3 status=failed elapsed_ms=300000 http_status=-1 retry_in_ms=0',
+    ])
+    expect(logs.join(' ')).not.toContain(error.message)
+  })
+
 })
