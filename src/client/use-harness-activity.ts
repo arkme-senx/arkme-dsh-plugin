@@ -11,7 +11,7 @@ export function useHarnessActivity(scope: string | undefined): HarnessActivity |
     let cachedRaw: string | null = null
     let cachedValue: HarnessActivity | undefined
     return () => {
-      const raw = typeof document === 'undefined' ? null : document.querySelector('[data-arkme-owned="deepseek-harness-surface"]')?.getAttribute(HARNESS_ACTIVITY_ATTRIBUTE) ?? null
+      const raw = typeof document === 'undefined' ? null : document.querySelector('[data-arkme-owned="deepseek-harness-surface"]:not([data-arkme-active="false"])')?.getAttribute(HARNESS_ACTIVITY_ATTRIBUTE) ?? null
       if (raw !== cachedRaw) { cachedRaw = raw; cachedValue = parseHarnessActivity(raw, scope) }
       return cachedValue
     }

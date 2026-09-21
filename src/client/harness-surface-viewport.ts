@@ -55,7 +55,7 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
     if (visible) viewport.removeAttribute('data-arkme-session-preview')
     else if (!viewport.hasAttribute('data-arkme-session-preview')) viewport.setAttribute('data-arkme-session-preview', '')
     const nextContent = native.querySelector<HTMLElement>('[data-arkme-session-frame]')
-      ?? native.querySelector<HTMLElement>('[data-rightbar-col]')?.parentElement ?? undefined
+      ?? native.querySelector<HTMLElement>('[data-rightbar-col]')?.parentElement ?? native.body ?? undefined
     if (nextContent !== contentFrame) {
       contentFrame?.removeAttribute('data-arkme-harness-content-frame')
       contentFrame = nextContent

@@ -17,6 +17,7 @@ it('reports the iframe public selection, coalesces list events, clears on hide a
   let mutate = () => undefined
   let stop = () => undefined
   let visible = true
+  let remoteSelected = false
   const unsubscribe = vi.fn()
   const disconnect = vi.fn()
   const document = Object.assign(new EventTarget(), { hidden: false, querySelector: () => ({ content: '/custom/api' }) })
@@ -25,6 +26,7 @@ it('reports the iframe public selection, coalesces list events, clears on hide a
   vi.stubGlobal('window', Object.assign(lifecycle, { frameElement: { parentElement: { getAttribute: (key: string) => ({
     'data-arkme-owned': 'deepseek-harness-surface', 'data-arkme-account-id': '42',
     'data-arkme-follow-session': visible ? 'true' : 'false',
+    'data-arkme-remote-session': remoteSelected ? 'runtime:session' : undefined,
   })[key] } } }))
   vi.stubGlobal('MutationObserver', class {
     constructor(callback: () => undefined) { mutate = callback }
@@ -84,28 +86,37 @@ it('reports the iframe public selection, coalesces list events, clears on hide a
   await vi.advanceTimersByTimeAsync(0)
   expect(JSON.parse(fetcher.mock.calls.at(-1)![1]!.body as string).params.sessionRef).toBe('session-B')
   const querySelector = document.querySelector
-  document.querySelector = () => ({ contentWindow: window }) as unknown as ReturnType<typeof querySelector>
+  document.querySelector = () => ({ contentWindow: window, parentElement: window.frameElement!.parentElement }) as unknown as ReturnType<typeof querySelector>
   openEmbeddedDshSession('session-target')
   expect(open).toHaveBeenCalledExactlyOnceWith('session-target')
   expect(() => openEmbeddedDshSession('')).toThrow('DSH 对话标识无效')
   open.mockImplementationOnce(() => { throw new Error('unknown session') })
   expect(() => openEmbeddedDshSession('missing')).toThrow('unknown session')
+  lifecycle.dispatchEvent(new Event('focus'))
+  await vi.advanceTimersByTimeAsync(0)
+  expect(JSON.parse(fetcher.mock.calls.at(-1)![1]!.body as string).params.focused).toBe(true)
+  await vi.advanceTimersByTimeAsync(10_000)
+  expect(JSON.parse(fetcher.mock.calls.at(-1)![1]!.body as string).params.focused).toBe(false)
+  remoteSelected = true; mutate()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(JSON.parse(fetcher.mock.calls.at(-1)![1]!.body as string).params.sessionRef).toBeNull()
   stop()
   expect((window as HarnessSessionWindow)[HARNESS_SESSION_NAVIGATION_KEY]).toBeUndefined()
   expect(() => openEmbeddedDshSession('session-target')).toThrow('DSH 对话尚未就绪')
   await vi.advanceTimersByTimeAsync(0)
-  expect(unsubscribe).toHaveBeenCalledOnce(); expect(disconnect).toHaveBeenCalledOnce()
+  expect(unsubscribe).toHaveBeenCalledTimes(2); expect(disconnect).toHaveBeenCalledTimes(2)
   expect(vi.getTimerCount()).toBe(0)
 })
 
 it('mounts local navigation without remote reporting and removes it on dispose', () => {
+  vi.stubGlobal('MutationObserver', class { observe() {} disconnect() {} })
   const open = vi.fn()
   let stop!: () => void
-  vi.stubGlobal('window', { frameElement: { parentElement: { getAttribute: () => 'deepseek-harness-surface' } } })
-  vi.stubGlobal('document', { querySelector: () => null })
+  vi.stubGlobal('window', { frameElement: { parentElement: { getAttribute: (key: string) => key === 'data-arkme-owned' ? 'deepseek-harness-surface' : null } } })
+  vi.stubGlobal('document', Object.assign(new EventTarget(), { querySelector: () => null }))
   const fetcher = vi.fn()
   vi.stubGlobal('fetch', fetcher)
-  apply({ effect: (effect: () => () => void) => { stop = effect() }, sessions: { open } } as unknown as ClientContext)
+  apply({ effect: (effect: () => () => void) => { stop = effect() }, sessions: { open, list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } } } as unknown as ClientContext)
   const navigation = (window as HarnessSessionWindow)[HARNESS_SESSION_NAVIGATION_KEY]!
   navigation.open('local-task')
   expect(open).toHaveBeenCalledExactlyOnceWith('local-task')
@@ -115,12 +126,13 @@ it('mounts local navigation without remote reporting and removes it on dispose',
 })
 
 it('distinguishes missing local sessions from failed Remote lists and silent refresh failures', async () => {
+  vi.stubGlobal('MutationObserver', class { observe() {} disconnect() {} })
   let byId: Record<string, object> = { local: {} }
   const refresh = vi.fn(async () => {})
   const list = vi.fn(async () => ({ ok: true, value: { items: [{ sessionId: 'local' }] } }))
-  vi.stubGlobal('window', { frameElement: { parentElement: { getAttribute: () => 'deepseek-harness-surface' } } })
-  vi.stubGlobal('document', { querySelector: () => null })
-  apply({ effect: (fn: () => unknown) => fn(), remote: { session: { list } }, sessions: { refresh, list: { getSnapshot: () => ({ phase: 'ready', byId }) } } } as unknown as ClientContext)
+  vi.stubGlobal('window', { frameElement: { parentElement: { getAttribute: (key: string) => key === 'data-arkme-owned' ? 'deepseek-harness-surface' : null } } })
+  vi.stubGlobal('document', Object.assign(new EventTarget(), { querySelector: () => null }))
+  apply({ effect: (fn: () => unknown) => fn(), remote: { session: { list } }, sessions: { refresh, list: { subscribe: () => () => {}, getSnapshot: () => ({ phase: 'ready', byId }) } } } as unknown as ClientContext)
   const bridge = (window as HarnessSessionWindow)[HARNESS_SESSION_NAVIGATION_KEY]!
   await expect(bridge.has('local')).resolves.toBe(true)
   await expect(bridge.has('other-machine')).resolves.toBe(false)

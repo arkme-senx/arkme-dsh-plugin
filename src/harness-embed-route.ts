@@ -1,3 +1,4 @@
+import { harnessNativeTransportScript } from './harness-native-transport-script.js'
 import { HARNESS_SESSION_CLIENT_ID, HARNESS_SESSION_CLIENT_PATH } from './harness-embed-contract.js'
 import { HARNESS_SESSION_RESTORE_SCRIPT } from './harness-session-restore-script.js'
 import { createHash } from 'node:crypto'
@@ -299,6 +300,7 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
         }
         html = html.replace('</head>', `<meta name="arkme-session-api" content="${apiPath}"></head>`)
       }
+      if (options.sessionClient?.apiPath !== undefined) html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-native-transport>${harnessNativeTransportScript(options.sessionClient!.apiPath!)}</script>`)
       const body = Buffer.from(html)
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',

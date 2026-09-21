@@ -79,6 +79,12 @@ describe('current DSH public Gateway compatibility', () => {
     adapter.subscribeProjectionEvents(projected)
     const stop = adapter.startEvents()
     await vi.waitFor(() => expect(f.interactions()).toBeDefined())
+    f.interactions().push({ type: 'emit', event: 'api-session/added', args: [{ sessionId: 'new-session' }] })
+    f.controls().push({ type: 'projection', sessionId: 'renamed-session', key: 'title', value: 'new title', seq: 2 })
+    await vi.waitFor(() => {
+      expect(projected).toHaveBeenCalledWith({ kind: 'session-metadata', sessionId: 'new-session' })
+      expect(projected).toHaveBeenCalledWith({ kind: 'session-metadata', sessionId: 'renamed-session' })
+    })
     const event = { type: 'turn/start', seq: 8, time: 123, data: {} }
     f.append(event)
     f.controls().push({ type: 'baseline', value: { projections: { 'session-1': { asOfSeq: 7, values: {} } } } })
@@ -135,4 +141,13 @@ describe('current DSH public Gateway compatibility', () => {
     f.controller.abort(); await next; await iterator.return?.()
     expect(f.off).toHaveBeenCalledTimes(1)
   })
+})
+
+it('routes session catalog edits to the exact public Gateway owner', async () => {
+  const f = fixture()
+  const api = f.api
+  await api.sessions!.rename!({ rpcId: 'rename-1', payload: { sessionId: 'remote-session', title: '新的标题' } })
+  await api.workspace!.archiveSession!({ rpcId: 'archive-1', payload: { sessionId: 'remote-session' } })
+  expect(f.gateway.invoke).toHaveBeenCalledWith(expect.objectContaining({ namespace: 'session', method: 'rename', args: { request: { sessionId: 'remote-session', title: '新的标题' } } }))
+  expect(f.gateway.invoke).toHaveBeenCalledWith(expect.objectContaining({ namespace: 'workspace', method: 'archiveSession', args: { request: { sessionId: 'remote-session' } } }))
 })
