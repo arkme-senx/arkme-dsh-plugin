@@ -1,6 +1,7 @@
 import { DshRemoteError } from './errors.js'
 import {
   DSH_REMOTE_MAX_FRAME_BYTES,
+  DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES,
   DSH_REMOTE_PROTOCOL,
   DSH_REMOTE_PROTOCOL_MAJOR,
   type DshRemoteOperation,
@@ -8,8 +9,9 @@ import {
 } from './types.js'
 
 const OPERATIONS = new Set<DshRemoteOperation>([
+  'session.native',
   'session.current', 'workspace.list', 'model.list', 'session.model.get', 'session.model.select',
-  'session.create', 'session.list', 'session.history', 'session.prompt', 'session.cancel',
+  'session.create', 'session.list', 'session.history', 'session.prompt', 'session.cancel', 'session.rename', 'session.archive',
   'interaction.question.respond', 'interaction.approval.respond', 'snapshot.get', 'capabilities.get',
 ])
 const REQUEST_KEYS = new Set([
@@ -69,6 +71,17 @@ function pageFields(source: Record<string, unknown>): void {
 
 function validateOperationBody(operation: DshRemoteOperation, source: Record<string, unknown>): void {
   switch (operation) {
+    case 'session.native': {
+      assertOnly(source, ['mode', 'endpoint', 'payload', 'streamRef', 'afterSeq'])
+      if (!['call', 'pull', 'close'].includes(String(source.mode))) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '原生传输模式无效')
+      if (source.afterSeq !== undefined && (source.mode !== 'pull' || source.endpoint !== 'session/follow' || !Number.isSafeInteger(source.afterSeq) || Number(source.afterSeq) < -1)) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '历史续传序号无效')
+      if (source.mode !== 'call') ref(source.streamRef, 'streamRef')
+      if (source.mode === 'call' || source.endpoint !== undefined) {
+        if (typeof source.endpoint !== 'string' || !/^(?:[A-Za-z][A-Za-z0-9]*\/[A-Za-z][A-Za-z0-9]*|\$events(?:\/result)?)$/.test(source.endpoint)) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '原生传输入口无效')
+        object(object(source.payload).args)
+      }
+      return
+    }
     case 'session.current':
     case 'capabilities.get': assertOnly(source, []); return
     case 'snapshot.get':
@@ -125,6 +138,11 @@ function validateOperationBody(operation: DshRemoteOperation, source: Record<str
       }
       return
     }
+    case 'session.rename':
+      assertOnly(source, ['session_ref', 'title']); bodyRef(source, 'session_ref'); bodyRef(source, 'title');
+      if (String(source.title).trim() === '') throw new DshRemoteError('REMOTE_REQUEST_INVALID', 'title 无效')
+      return
+    case 'session.archive':
     case 'session.cancel': assertOnly(source, ['session_ref']); bodyRef(source, 'session_ref'); return
     case 'interaction.question.respond':
       assertOnly(source, ['session_ref', 'interaction_rpc_ref', 'answer']); bodyRef(source, 'session_ref');
@@ -162,8 +180,9 @@ export function parseDshRemoteRequest(
   options: { expectedHostGeneration: number; nowMillis?: number },
 ): DshRemoteRequest {
   const encoded = Buffer.from(JSON.stringify(value))
-  if (encoded.length > DSH_REMOTE_MAX_FRAME_BYTES) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '远控请求超过 60KiB')
   const source = object(value)
+  const limit = source.operation === 'session.native' ? DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES : DSH_REMOTE_MAX_FRAME_BYTES
+  if (encoded.length > limit) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '远控请求超过安全上限')
   if (Object.keys(source).some(key => !REQUEST_KEYS.has(key))) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '远控请求包含未定义字段')
   if (source.protocol !== DSH_REMOTE_PROTOCOL || source.protocol_major !== DSH_REMOTE_PROTOCOL_MAJOR) {
     throw new DshRemoteError('REMOTE_PROTOCOL_UNSUPPORTED', '远控协议版本不受支持')

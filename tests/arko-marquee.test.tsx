@@ -1,3 +1,4 @@
+import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from '../src/client/message-selection-presentation.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -20,6 +21,7 @@ const item = (id: number, extra: Partial<ArkmeArkoHistoryItem> = {}): ArkmeArkoH
   messageActionConversationRef: 'session-88', messageActionCapabilities: { copyLink: true, forward: true }, ...extra,
 })
 beforeEach(() => {
+  arkoModelCache.clear()
   history = [item(1), item(2, { messageActionRef: undefined, messageActionConversationRef: undefined }), item(3, { role: 'divider' })]
   vi.stubGlobal('requestAnimationFrame', () => 0); vi.stubGlobal('cancelAnimationFrame', vi.fn())
   vi.stubGlobal('document', { activeElement: null, body: {} })

@@ -101,6 +101,16 @@ describe('public DSH ApiProxy remote adapter', () => {
     })
   })
 
+  it('syncs and reads ungrouped owned sessions without inventing a workspace', async () => {
+    const { api } = await fakeApi()
+    api.workspace!.list = async request => ok({ items: [], archivedSessionIds: [] }, request.rpcId)
+    const adapter = new DshApiProxyAdapter(api)
+    expect((await adapter.sessions()).items).toEqual([])
+    expect((await adapter.sessions({ includeUngrouped: true })).items).toMatchObject([{ sessionId: 'session-1', workspaceId: '' }])
+    await expect(adapter.history({ sessionId: 'session-1' })).resolves.toHaveProperty('entries')
+    await expect(adapter.history({ sessionId: 'not-owned-by-this-runtime' })).rejects.toMatchObject({ code: 'SESSION_NOT_FOUND' })
+  })
+
   it('preallocates a stable SessionId and never accepts cwd from the controller', async () => {
     const { api } = await fakeApi()
     const adapter = new DshApiProxyAdapter(api)

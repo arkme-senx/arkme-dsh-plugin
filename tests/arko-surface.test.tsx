@@ -22,7 +22,7 @@ function historyItem(overrides: Partial<ArkmeArkoHistoryItem>): ArkmeArkoHistory
 }
 
 describe('Arko surface', () => {
-  it('exposes header whitespace for native dragging without marking its action toolbar', () => {
+  it('keeps the header draggable and puts context clearing before model selection in the composer', () => {
     const dom = new JSDOM(renderToStaticMarkup(<ArkmeArkoSurface />))
     try {
       const header = dom.window.document.querySelector('header')!
@@ -30,7 +30,9 @@ describe('Arko surface', () => {
       const copy = header.querySelector('[data-arkme-window-drag-copy]')!
       expect(copy?.getAttribute('data-arkme-window-drag-region')).toBe('conversation')
       expect(copy?.querySelector('h2')?.textContent).toBe('Arko')
-      expect(header.querySelector('[role="toolbar"]')?.hasAttribute('data-arkme-window-drag-region')).toBe(false)
+      expect(header.querySelector('button')).toBeNull()
+      const clear = dom.window.document.querySelector('footer button[aria-label="清除上下文"]')!
+      expect(clear.nextElementSibling?.getAttribute('aria-label')).toBe('选择模型')
     } finally {
       dom.window.close()
     }
@@ -47,9 +49,8 @@ describe('Arko surface', () => {
     expect(markup).toContain('Arko</h2>')
     expect(markup).toContain('内容由 AI 生成，仅供参考')
     expect(markup).not.toContain('data-arkme-topic-tag="Agent"')
-    expect(markup).toContain('role="toolbar"')
-    expect(markup).toContain('aria-label="Arko 操作"')
-    expect(markup).toContain('模型选择')
+    expect(markup).not.toContain('aria-label="Arko 操作"')
+    expect(markup).toContain('选择模型')
     expect(markup).toContain('清除上下文')
     expect(markup).not.toContain('aria-label="AI"')
     expect(markup).not.toContain('DeepSeek-R1满血版')

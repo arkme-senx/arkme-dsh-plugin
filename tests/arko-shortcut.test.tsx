@@ -1,6 +1,8 @@
+import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { act, create, type ReactTestRenderer, type ReactTestInstance } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeDocumentComposerInput } from '../src/client/ArkmeDocumentComposerInput.js'
+import { ArkoModelMenu } from '../src/client/ArkoModelMenu.js'
 import { ArkmeArkoSurface } from '../src/client/ArkmeArkoSurface.js'
 import { ArkmeClientError, callArkme } from '../src/client/api.js'
 import { readArkoPendingTurn } from '../src/client/arko-pending-turn-store.js'
@@ -19,6 +21,9 @@ vi.mock('../src/client/ArkmeDocumentComposerInput.js', async () => {
   return { ArkmeDocumentComposerInput: forwardRef(() => null) }
 })
 
+// DOM popup behavior is covered by arko-emoji-dom.test.tsx.
+vi.mock('../src/client/ArkoModelMenu.js', () => ({ ArkoModelMenu: () => null }))
+
 const draftKey = arkmeArkoComposerDraftKey(10001)
 const result = { sessionId: 88, userMsgId: 1, assistantMsgId: 2, status: 'completed', text: '可以帮你记录', reasoning: '', createdRecordUids: [] }
 let renderer: ReactTestRenderer
@@ -33,6 +38,7 @@ function visibleText(node: ReactTestInstance): string { return node.children.map
 function shortcut() { return renderer.root.findByProps({ 'aria-label': 'Arko 能干什么' }) }
 
 beforeEach(() => {
+  arkoModelCache.clear()
   arkmeArkoProfileStore.activateUser(undefined)
   sessionAvailable = true
   history = []
@@ -499,9 +505,8 @@ describe('Arko capability shortcut', () => {
     })
     arkmeComposerDraftStore.setText(draftKey, '草稿')
     await mount()
-    act(() => renderer.root.findByProps({ title: '选择模型' }).props.onClick())
-    const option = renderer.root.findAllByType('button').find(button => button.findAll(node => node.type === 'span' && node.children.includes('B')).length > 0)!
-    await act(async () => { option.props.onClick() })
+    act(() => renderer.root.findByProps({ 'aria-label': '选择模型' }).props.onClick({ currentTarget: { closest: () => null } }))
+    await act(async () => { void renderer.root.findByType(ArkoModelMenu).props.onSelect('model-b') })
     expect(shortcut().props.disabled).toBe(true)
     expect(renderer.root.findByProps({ title: '发送' }).props.disabled).toBe(true)
     await act(async () => { complete({ ...models, effectiveRouteKey: 'model-b' }) })

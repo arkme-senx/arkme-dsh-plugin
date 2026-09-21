@@ -1277,6 +1277,7 @@ export interface ArkmeProviderCapabilities {
     topicHomeVisibility?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     groupSelfNickname?: true
+    dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
     sourceTimeline: true
@@ -3600,6 +3601,11 @@ export type ArkmePluginOperation =
   | 'team.members.list'
   | 'team.create'
   | 'team.join-by-jotmo-id'
+  | 'remote.sessions.list'
+  | 'remote.session.read'
+  | 'remote.session.native'
+  | 'remote.session.command'
+  | 'remote.session.observe'
   | 'remote.currentSession'
   | 'remote.reportCurrentSession'
   | 'remote.getStatus'

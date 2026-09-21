@@ -930,20 +930,45 @@ it('records delivery stage totals with account correlation only after the report
   vi.useFakeTimers()
   const { host, published, enqueue, clear } = liveHost()
   const diagnostic = vi.fn()
+  const deliveryReports = () => diagnostic.mock.calls.filter(([phase]) => phase === 'live_delivery_window')
   Object.assign(host, { diagnostic })
   published.mockImplementation(async (_value, _ref, callback) => {
     (callback as (timing: unknown) => void)({ queueMs: 2, publishMs: 80, completed: true })
   })
   await enqueue(0); await flushLive(host)
-  expect(diagnostic).not.toHaveBeenCalled()
+  expect(deliveryReports()).toHaveLength(0)
   await vi.advanceTimersByTimeAsync(10_000)
   ;(host as unknown as { reportLiveDelivery(): void }).reportLiveDelivery()
-  expect(diagnostic).toHaveBeenCalledOnce()
+  expect(deliveryReports()).toHaveLength(1)
   expect(diagnostic).toHaveBeenCalledWith('live_delivery_window', expect.objectContaining({
     user_id: '1', runtime_ref: 'runtime-01', batch_count: 1, event_count: 1, incomplete_batches: 0,
     channel_queue_ms_sum: 2, publish_ack_ms_sum: 80, capture_ms_sum: 0,
   }))
   clear()
   ;(host as unknown as { reportLiveDelivery(): void }).reportLiveDelivery()
-  expect(diagnostic).toHaveBeenCalledOnce()
+  expect(deliveryReports()).toHaveLength(1)
+})
+
+it.each(['session.rename', 'session.archive'] as const)('authorizes and deduplicates %s through the existing command ledger', async operation => {
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-catalog-command-'))
+  const ledger = new DshRemoteCommandLedger(join(directory, 'ledger'), Buffer.alloc(32, 3), { now: () => 1_500 })
+  const ownership = new MemorySessionOwnership([['session-1', '1'], ['session-other', '2']])
+  const adapter = new DshApiProxyAdapter({})
+  vi.spyOn(adapter, 'capabilities').mockReturnValue([operation])
+  const edit = vi.spyOn(adapter, 'editCatalog').mockResolvedValue({ accepted: true })
+  const host = inertHost(adapter, { ledger, sessionOwnership: ownership })
+  Object.assign(host, { accountId: '1', started: true, connected: true, serviceLeaseGeneration: 9, ledger,
+    runtime: { runtimeRef: 'runtime-01', profileRef: 'web', accountId: '1', hostGeneration: 7, capabilities: [operation], updatedAtMillis: 1 } })
+  vi.spyOn(host as any, 'scheduleProjectionSnapshot').mockImplementation(() => {})
+  const context = { serviceLeaseGeneration: 9, metadata: { senderRole: 'controller' as const, runtimeRef: 'runtime-01', acceptedAtMillis: 1_400, targetHostLeaseGeneration: 9 } }
+  const request = { protocol: 'dsh.remote', protocol_major: 1, kind: 'request', request_ref: 'request-catalog-01', host_generation: 7,
+    issued_at: 1_000, execute_before: 2_000, operation, body: { session_ref: 'session-1', ...(operation === 'session.rename' ? { title: 'New title' } : {}) } }
+  try {
+    expect((await host.dispatchAuthorizedRequest(request, context)).status).toBe('completed')
+    expect((await host.dispatchAuthorizedRequest(request, context)).status).toBe('duplicate')
+    expect(edit).toHaveBeenCalledOnce()
+    expect(edit).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1', operation }))
+    expect((await host.dispatchAuthorizedRequest({ ...request, request_ref: 'request-catalog-other', body: { ...request.body, session_ref: 'session-other' } }, context)).status).toBe('rejected')
+    expect(edit).toHaveBeenCalledOnce()
+  } finally { ledger.close() }
 })

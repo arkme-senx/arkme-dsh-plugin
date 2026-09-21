@@ -1,3 +1,8 @@
+import { DshNativeSocket } from './dsh-remote/native-socket.js'
+import { DshNativeHistoryCache } from './dsh-remote/native-history-cache.js'
+import { DshNativeTransport } from './dsh-remote/native-transport.js'
+import { DshAccountSessions } from './dsh-remote/account-sessions.js'
+import { accountSessionTools } from './dsh-remote/account-session-tools.js'
 import { adaptSessionPersistence } from './dsh-remote/session-persistence.js'
 import { currentDesktopSessionTool } from './dsh-remote/current-session-tool.js'
 import { HARNESS_SESSION_CLIENT_PATH } from './harness-embed-contract.js'
@@ -53,7 +58,7 @@ import {
   validatePluginUpdateServiceOrigin,
 } from './plugin-update.js'
 import { ArkmeRealtimeEvents } from './realtime-events.js'
-import { ArkmeService } from './arkme-service.js'
+import { ArkmePluginError, ArkmeService } from './arkme-service.js'
 import { ArkmeExtensionInstallStore } from './extensions/install-store.js'
 import { ArkmeDesktopExtensionQuarantine } from './extensions/desktop-quarantine.js'
 import { ArkmeExtensionInstallTasks, type ArkmeAgentRegistryLike } from './extensions/install-tasks.js'
@@ -321,6 +326,7 @@ export function apply(ctx: Context, config: Config): void {
   service.attachLocalFileOpener(async (path, signal) => {
     await openDshHostPath(ctx, path, signal)
   })
+  let accountSessions: DshAccountSessions | undefined
   let remoteHost: DshRemoteHostFacade | undefined
   const openClawStateDirectory = join(stateDirectory, 'openclaw')
   const openClawCli = createOpenClawCliAdapter({
@@ -506,7 +512,7 @@ export function apply(ctx: Context, config: Config): void {
       tasks.dispose()
     }, 'dsh-arkme: marketplace dynamic runner bridge')
   })
-  const attachRemoteApi = (apiCtx: Context, publicApi: DshPublicApiProxyLike) => {
+  const attachRemoteApi = (apiCtx: Context, publicApi: DshPublicApiProxyLike, nativeTransport?: DshNativeTransport) => {
     if (remoteHost !== undefined) return
     const agentDefaultModel = apiCtx.get('agentDefaultModel') as {
       currentSelection?: () => unknown
@@ -524,7 +530,7 @@ export function apply(ctx: Context, config: Config): void {
       try {
         let cursor: string | undefined
         for (let page = 0; page < 200; page += 1) {
-          const sessions = await apiProxy.sessions({ limit: 50, ...(cursor === undefined ? {} : { cursor }) })
+          const sessions = await apiProxy.sessions({ includeUngrouped: true, limit: 50, ...(cursor === undefined ? {} : { cursor }) })
           if (sessions.items.some(session => !session.blank)) return true
           if (sessions.nextCursor === undefined) return false
           cursor = sessions.nextCursor
@@ -568,7 +574,7 @@ export function apply(ctx: Context, config: Config): void {
       runtimeStore: new DshRemoteRuntimeStore(stateDirectory),
       sessionOwnership: new DshRemoteSessionOwnershipStore(stateDirectory, profileRef),
       controlPlane,
-      realtime, apiProxy,
+      realtime, apiProxy, ...(nativeTransport ? { nativeTransport } : {}),
       ...(sessionPersistence === undefined ? {} : { sessionPersistence }),
       onDiagnostic: (event, fields) => diagnostics.record(event, fields),
       readLifecycle: createDesktopLifecycleReader(fetch),
@@ -602,13 +608,36 @@ export function apply(ctx: Context, config: Config): void {
         onFinalized: callbacks.onFinalized,
       }),
     })
+    let historyCache: DshNativeHistoryCache | undefined
+    try { historyCache = new DshNativeHistoryCache(join(stateDirectory, 'dsh-remote', 'native-cache', config.environment)) }
+    catch { ctx.logger.warn('dsh-arkme: local remote-history cache unavailable') }
+    const directory = new DshAccountSessions({
+      ...(historyCache ? { historyCache } : {}),
+      onCacheError: () => ctx.logger.warn('dsh-arkme: local remote-history cache read/write failed'),
+      request: { post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal) },
+      requireAccount: async () => {
+        const session = await service.accountScope.scopedSession()
+        if (!service.accountScope.ready() || session === undefined) throw new ArkmePluginError('login-required', '请先登录当前 Arkme 账号', false, 401)
+        return String(session.userId)
+      },
+      localStatus: () => host.getStatus(),
+      createTransport: () => new ArkmeRemoteRealtimeTransport(async input => {
+        const session = await service.accountScope.scopedSession()
+        if (!session) throw new ArkmePluginError('login-required', '请先登录当前 Arkme 账号', false, 401)
+        return await authenticatedSocketFactory({ ...input, accessToken: session.accessToken })
+      }),
+      profileRef: `controller_${profileRef}`, clientRef: 'arkme_directory',
+    })
+    accountSessions = directory
     remoteHost = host
     if (config.toolProfile !== 'disabled') {
       apiCtx.effect(() => apiCtx.tools.register(currentDesktopSessionTool(host)), 'arkme: current DSH session read tool')
+      for (const tool of accountSessionTools(directory)) apiCtx.effect(() => apiCtx.tools.register(tool), `arkme: ${tool.name}`)
     }
     apiCtx.effect(async () => {
       let lifecycleTail: Promise<void> = Promise.resolve()
       const reconcile = () => {
+        directory.close()
         lifecycleTail = lifecycleTail.then(
           async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
           async () => { if (service.accountScope.ready()) await host.start(); else await host.suspend() },
@@ -620,6 +649,9 @@ export function apply(ctx: Context, config: Config): void {
       return async () => {
         unsubscribe()
         await lifecycleTail
+        directory.close()
+        historyCache?.close()
+        if (accountSessions === directory) accountSessions = undefined
         if (remoteHost === host) remoteHost = undefined
         await host.stop()
         await diagnostics.close()
@@ -638,7 +670,7 @@ export function apply(ctx: Context, config: Config): void {
       apiCtx.get('typertGateway') as DshGatewayLike,
       apiCtx.get('connection') as DshConnectionLike,
       lifetime.signal,
-    ))
+    ), new DshNativeTransport(apiCtx.get('typertGateway') as DshGatewayLike, apiCtx.get('connection') as DshConnectionLike))
   })
   const handler = createArkmeHostApi(service, {
     expectedPort: ctx.webServer.port,
@@ -648,6 +680,7 @@ export function apply(ctx: Context, config: Config): void {
     extensionInstallTasks: () => extensionInstallTasks,
     ownedExtensionInventory: () => ownedExtensionInventory,
     remoteHost: () => remoteHost,
+    accountSessions: () => accountSessions,
     remoteUnavailableReason: () => {
       if (!config.dshRemoteFeatureEnabled) return 'DSH 远控功能未启用'
       const missing = ['typertGateway', 'sessionController', 'workspaceController', 'connection']
@@ -906,6 +939,11 @@ export function apply(ctx: Context, config: Config): void {
       realtimeEvents.close()
     }
   }, 'dsh-arkme: local realtime events route')
+  ctx.effect(() => {
+    const carrier = new DshNativeSocket(() => accountSessions, ctx.webServer.port, config.allowNonLoopback)
+    const remove = ctx.webServer.registerUpgrade({ path: `${config.routePath}/native-streams`, handler: carrier.handler })
+    return () => { remove(); carrier.close() }
+  }, 'dsh-arkme: native subscription carrier')
   ctx.logger.info('dsh-arkme: mounted %s for %s environment', config.routePath, config.environment)
 }
 

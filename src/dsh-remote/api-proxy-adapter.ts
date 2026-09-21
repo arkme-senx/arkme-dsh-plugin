@@ -50,6 +50,7 @@ interface ModelCatalogApiValue {
 }
 
 interface WorkspaceApiLike {
+  archiveSession?(request: { rpcId: string; payload: { sessionId: string } }): Promise<RpcResponse<{ archivedSessionIds: string[] }>>
   list?(request: { rpcId: string; payload: Record<string, never> }): Promise<RpcResponse<{
     items: Array<{ workspaceId: string; path: string; title: string; sessionIds: string[] }>
     archivedSessionIds?: string[]
@@ -62,6 +63,7 @@ interface DshRemoteWorkspaceInventory {
 }
 
 interface SessionsApiLike {
+  rename?(request: { rpcId: string; payload: { sessionId: string; title: string } }): Promise<RpcResponse<{ title: string; seq: number }>>
   list?(request: { rpcId: string; payload: { cursor?: string } }): Promise<RpcResponse<{ items: Array<{
     sessionId: string
     updatedAt: number
@@ -119,6 +121,7 @@ interface EventsApiLike {
 }
 
 export type DshRemoteApiProjectionEvent =
+  | { kind: 'session-metadata'; sessionId: string }
   | {
       kind: 'session-event'
       sessionId: string
@@ -370,6 +373,8 @@ export class DshApiProxyAdapter {
       result.push('session.prompt', 'session.prompt.queue', 'session.prompt.steer')
     }
     if (typeof this.api.sessions?.cancel === 'function') result.push('session.cancel')
+    if (typeof this.api.sessions?.rename === 'function') result.push('session.rename')
+    if (typeof this.api.workspace?.archiveSession === 'function') result.push('session.archive')
     if (typeof this.api.events?.mux === 'function') result.push('session.events')
     if (typeof this.api.events?.mux === 'function' && typeof this.api.respond === 'function') {
       result.push('interaction.question.respond', 'interaction.approval.respond')
@@ -431,6 +436,7 @@ export class DshApiProxyAdapter {
     limit?: number
     cursor?: string
     workspaceInventory?: DshRemoteWorkspaceInventory
+    includeUngrouped?: boolean
   } = {}): Promise<{
     items: DshRemoteSessionSummary[]
     nextCursor?: string
@@ -447,8 +453,8 @@ export class DshApiProxyAdapter {
     const value = unwrap(await list.call(this.api.sessions, { rpcId: rpcId('remote-sessions'), payload: {} }))
     const all = value.items.flatMap<DshRemoteSessionSummary>(item => {
       if (input.sessionId !== undefined && item.sessionId !== input.sessionId) return []
-      const workspaceId = workspaceBySession.get(item.sessionId)
-      if (workspaceId === undefined || (input.workspaceId !== undefined && workspaceId !== input.workspaceId)) return []
+      const workspaceId = workspaceBySession.get(item.sessionId) ?? ''
+      if ((!input.includeUngrouped && workspaceId === '') || (input.workspaceId !== undefined && workspaceId !== input.workspaceId)) return []
       const titleValue = item.projections?.values.title
       return [{
         sessionId: item.sessionId,
@@ -713,6 +719,23 @@ export class DshApiProxyAdapter {
     }))
   }
 
+  async editCatalog(input: { operation: 'session.rename' | 'session.archive'; sessionId: string; title?: string; dshRpcId: string }): Promise<unknown> {
+    await this.requireSession(input.sessionId, false)
+    const request = { rpcId: input.dshRpcId, payload: { sessionId: input.sessionId } }
+    if (input.operation === 'session.rename') {
+      const rename = this.api.sessions?.rename
+      if (!rename) this.unsupported(input.operation)
+      return unwrap(await rename.call(this.api.sessions, { ...request, payload: { ...request.payload, title: input.title! } }))
+    }
+    if (input.operation === 'session.archive') {
+      const archive = this.api.workspace?.archiveSession
+      if (!archive) this.unsupported(input.operation)
+      await archive.call(this.api.workspace, request).then(unwrap)
+      return { archived: true }
+    }
+    this.unsupported(input.operation)
+  }
+
   async cancel(input: { sessionId: string; dshRpcId: string }): Promise<{ accepted: true }> {
     const session = await this.requireSession(input.sessionId, false)
     if (!session.running) return { accepted: true }
@@ -850,7 +873,9 @@ export class DshApiProxyAdapter {
       const payload = frame.payload
       const type = payload.type
       let interactionsChanged = false
-      if (type === 'session/event' && typeof payload.sessionId === 'string'
+      if (type === 'session/metadata' && typeof payload.sessionId === 'string' && payload.sessionId.length > 0) {
+        this.emitProjection({ kind: 'session-metadata', sessionId: payload.sessionId })
+      } else if (type === 'session/event' && typeof payload.sessionId === 'string'
         && payload.event !== null && typeof payload.event === 'object' && !Array.isArray(payload.event)) {
         const event = payload.event as Record<string, unknown>
         if (typeof event.type === 'string' && typeof event.seq === 'number' && Number.isSafeInteger(event.seq) && event.seq >= 0
@@ -910,12 +935,11 @@ export class DshApiProxyAdapter {
   private async requireSession(sessionId: string, requireWorkspaceAvailable: boolean): Promise<DshRemoteSessionSummary> {
     const workspaces = await this.workspaces()
     const workspace = workspaces.find(item => item.sessionIds.includes(sessionId))
-    if (workspace === undefined) throw new DshRemoteError('SESSION_NOT_FOUND', '会话不属于当前 Runtime 的已登记工作目录')
-    if (requireWorkspaceAvailable && !workspace.available) throw new DshRemoteError('WORKSPACE_UNAVAILABLE', '工作目录已经删除或不可访问')
+    if (requireWorkspaceAvailable && workspace !== undefined && !workspace.available) throw new DshRemoteError('WORKSPACE_UNAVAILABLE', '工作目录已经删除或不可访问')
     let cursor: string | undefined
     do {
       const page = await this.sessions({
-        workspaceId: workspace.workspaceId, limit: DSH_REMOTE_MAX_PAGE_ITEMS,
+        sessionId, includeUngrouped: true, limit: DSH_REMOTE_MAX_PAGE_ITEMS,
         ...(cursor === undefined ? {} : { cursor }),
       })
       const session = page.items.find(item => item.sessionId === sessionId)

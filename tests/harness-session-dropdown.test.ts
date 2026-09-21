@@ -2,8 +2,20 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { installHarnessSessionDropdown } from '../src/client/harness-session-dropdown.js'
 import { CONVERSATION_MENU_LAYOUT } from '../src/client/conversation-selector-style.js'
+import { HARNESS_MENU_OPEN } from '../src/client/harness-session-menu-bridge.js'
 
 let cleanup: (() => void) | undefined
+it('signals directory refresh when opening the native title menu', () => {
+  const { trigger } = mount()
+  const listener = vi.fn()
+  document.addEventListener(HARNESS_MENU_OPEN, listener)
+  try {
+    trigger.click()
+    expect(listener).toHaveBeenCalledOnce()
+    trigger.click()
+    expect(listener).toHaveBeenCalledOnce()
+  } finally { document.removeEventListener(HARNESS_MENU_OPEN, listener) }
+})
 afterEach(() => { cleanup?.(); cleanup = undefined; document.body.replaceChildren(); vi.restoreAllMocks() })
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() }
 function mount() {

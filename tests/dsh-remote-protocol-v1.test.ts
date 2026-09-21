@@ -90,3 +90,13 @@ describe('dsh.remote/v1 envelopes', () => {
     }), { expectedHostGeneration: 7, nowMillis: 1_500 })).toThrow(/模型选择/)
   })
 })
+
+it('validates catalog edits without caller-controlled source ownership or extra arguments', () => {
+  const options = { expectedHostGeneration: 7, nowMillis: 1_500 }
+  for (const operation of ['session.archive']) {
+    expect(parseDshRemoteRequest(request({ operation, body: { session_ref: 'session-1' } }), options).operation).toBe(operation)
+    expect(() => parseDshRemoteRequest(request({ operation, body: { session_ref: 'session-1', runtime_ref: 'forged' } }), options)).toThrow(/未定义字段/)
+  }
+  expect(parseDshRemoteRequest(request({ operation: 'session.rename', body: { session_ref: 'session-1', title: '新标题' } }), options).body.title).toBe('新标题')
+  for (const title of ['', '   ', 'x'.repeat(257), 42]) expect(() => parseDshRemoteRequest(request({ operation: 'session.rename', body: { session_ref: 'session-1', title } }), options)).toThrow()
+})

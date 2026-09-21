@@ -15,8 +15,8 @@
     "execute_before": {"type": "integer", "minimum": 1},
     "operation": {
       "enum": [
-        "capabilities.get", "snapshot.get", "workspace.list", "model.list", "session.model.get", "session.model.select", "session.create",
-        "session.list", "session.current", "session.history", "session.prompt", "session.cancel",
+        "session.native", "capabilities.get", "snapshot.get", "workspace.list", "model.list", "session.model.get", "session.model.select", "session.create",
+        "session.list", "session.current", "session.history", "session.prompt", "session.cancel", "session.rename", "session.archive",
         "interaction.question.respond", "interaction.approval.respond"
       ]
     },
@@ -30,9 +30,18 @@
   },
   "allOf": [
     {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.native"}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["mode"], "properties": {
+        "mode": {"enum": ["call", "pull", "close"]}, "endpoint": {"type": "string", "maxLength": 128},
+        "payload": {"type": "object", "required": ["args"], "properties": {"args": {"type": "object"}}},
+        "streamRef": {"type": "string", "minLength": 8, "maxLength": 128}
+      }}}}
+    },
+    {
       "if": {"properties": {"kind": {"const": "event"}, "operation": {"const": "session.current"}}, "required": ["kind", "operation"]},
       "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session", "selectionRevision"], "properties": {
         "selectionRevision": {"type": "integer", "minimum": 0},
+        "selectedAt": {"type": ["integer", "null"], "minimum": 0},
         "session": {"anyOf": [{"type": "null"}, {"type": "object", "required": ["sessionRef", "workspaceRef"], "properties": {
           "sessionRef": {"$ref": "#/$defs/ref"}, "workspaceRef": {"$ref": "#/$defs/ref"}, "title": {"type": "string"},
           "running": {"type": "boolean"}, "projectionAsOfSeq": {"type": "integer", "minimum": -1}
@@ -76,8 +85,12 @@
       "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref", "mode", "content"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}, "mode": {"enum": ["queue", "steer"]}, "content": {"$ref": "#/$defs/textContent"}}}}}
     },
     {
-      "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.cancel"}}, "required": ["kind", "operation"]},
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"enum": ["session.cancel", "session.archive"]}}, "required": ["kind", "operation"]},
       "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}}}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.rename"}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref", "title"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}, "title": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "\\S"}}}}}
     },
     {
       "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "interaction.question.respond"}}, "required": ["kind", "operation"]},
