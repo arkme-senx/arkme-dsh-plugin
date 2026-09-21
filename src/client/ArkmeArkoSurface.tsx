@@ -8,6 +8,8 @@ import {
   type CSSProperties,
 } from 'react'
 import { ArrowsClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowsClockwise'
+import { ArrowUpIcon } from '@phosphor-icons/react/dist/csr/ArrowUp'
+import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
 import type {
   ArkmeArkoAskResult,
@@ -23,6 +25,8 @@ import type {
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { arkoModelCache } from './arko-model-cache.js'
+import { ArkoModelMenu } from './ArkoModelMenu.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import {
   readArkoPendingTurn,
@@ -109,20 +113,7 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
     color: colors.secondary, fontSize: 11, lineHeight: '15px',
   },
-  actions: { minWidth: 0, marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 },
-  actionButton: {
-    minWidth: 0, height: 34, display: 'flex', alignItems: 'center', gap: 7,
-    padding: '5px 9px', boxSizing: 'border-box', border: `1px solid ${colors.border}`,
-    borderRadius: 8, background: arkmeTheme.elevated, color: colors.text,
-    cursor: 'pointer', textAlign: 'left', font: 'inherit',
-  },
-  actionIcon: {
-    width: 22, height: 22, flex: 'none', display: 'grid', placeItems: 'center',
-    borderRadius: 999, background: colors.active, color: arkmeTheme.accent, fontSize: 12, fontWeight: 800,
-  },
-  actionContent: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
-  actionTitle: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, lineHeight: '18px', fontWeight: 600 },
-  actionSub: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: colors.secondary, fontSize: 11, lineHeight: '18px' },
+
   records: { width: '100%', listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 0 },
   row: { width: '100%', display: 'flex' },
   rowMe: { justifyContent: 'flex-end' },
@@ -187,25 +178,13 @@ const styles: Record<string, CSSProperties> = {
   },
   dialogTitle: { margin: 0, fontSize: 22, lineHeight: '29px', fontWeight: 700 },
   dialogContent: { margin: '6px 0 18px', color: colors.secondary, fontSize: 14, lineHeight: '20px' },
-  modelList: { display: 'flex', flexDirection: 'column', gap: 8 },
-  modelOption: {
-    width: '100%', minHeight: 78, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    gap: 12, padding: '12px 14px', boxSizing: 'border-box', border: `1px solid ${colors.border}`,
-    borderRadius: 8, background: arkmeTheme.elevated, color: colors.text,
-    cursor: 'pointer', textAlign: 'left', font: 'inherit',
-  },
-  modelOptionSelected: { borderColor: colors.accent, background: arkmeTheme.accentSoft },
-  modelName: { fontSize: 16, lineHeight: '22px', fontWeight: 650 },
-  modelDescription: { marginTop: 3, color: colors.secondary, fontSize: 13, lineHeight: '19px' },
-  recommended: { marginLeft: 8, color: arkmeTheme.accent, fontSize: 11, fontWeight: 600 },
-  check: { width: 26, height: 26, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999, background: colors.accent, color: arkmeTheme.foreground, fontWeight: 800 },
   dialogActions: { marginTop: 20, display: 'flex', justifyContent: 'flex-end', gap: 8 },
   dialogButton: {
     minWidth: 76, height: 36, border: `1px solid ${colors.border}`, borderRadius: 8,
     background: arkmeTheme.elevated, color: colors.text, font: 'inherit', cursor: 'pointer',
   },
   dialogPrimary: { border: 0, background: arkmeTheme.info, color: arkmeTheme.foreground },
-  composer: { ...arkmeConversationComposerLayout.composer, flexDirection: 'column', gap: 8 },
+  composer: { ...arkmeConversationComposerLayout.composer, padding: '0 16px calc(30px + var(--dsh-content-font-delta-secondary, 0px))', boxSizing: 'border-box', flexDirection: 'column', gap: 8 },
   capabilityShortcut: {
     alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 4,
     padding: '6px 8px', borderRadius: 8, border: `1px solid ${colors.border}`,
@@ -213,18 +192,31 @@ const styles: Record<string, CSSProperties> = {
   },
   composerInner: {
     ...arkmeConversationComposerLayout.composerInner,
-    border: '1px solid var(--dsw-alias-border-l2-darkmode-thin, rgba(0,0,0,.1))',
-    background: arkmeTheme.input, boxShadow: arkmeTheme.shadow,
+    padding: '8px 0 0', gap: 12, border: 0, borderRadius: 22,
+    background: arkmeTheme.input, boxShadow: 'var(--dsw-elevation-soft, 0 2px 12px rgba(0,0,0,.08))',
   },
   textarea: {
     ...arkmeConversationComposerLayout.textarea,
+    width: 'calc(100% - 4px)', marginRight: 4, minHeight: 36, padding: '4px 8px 0 14px',
+    fontSize: 'var(--dsh-content-font-size, 14px)', lineHeight: 'calc(24px + var(--dsh-content-font-delta, 0px))',
     background: 'transparent', color: colors.text, boxShadow: 'none', appearance: 'none', WebkitAppearance: 'none',
   },
-  tools: { ...arkmeConversationComposerLayout.tools },
-  hint: { color: colors.secondary, fontSize: 12, lineHeight: '18px', marginRight: 'auto' },
+  tools: { ...arkmeConversationComposerLayout.tools, gap: 12, padding: '2px 8px 6px' },
+  hint: { color: colors.secondary, fontSize: 12, lineHeight: '18px', flex: '1 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  clearContextButton: {
+    width: 28, height: 28, flex: 'none', display: 'grid', placeItems: 'center',
+    marginLeft: 'auto', padding: 0, border: 0, borderRadius: 6,
+    background: 'transparent', color: colors.secondary, cursor: 'pointer',
+  },
+  modelTrigger: {
+    display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '60%',
+    padding: '4px 0', border: 0, borderRadius: 6,
+    background: 'transparent', color: colors.secondary, font: 'inherit', fontSize: 13, cursor: 'pointer',
+  },
+  modelLabel: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   send: {
-    width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center',
-    border: 0, borderRadius: 999, background: colors.accent, color: arkmeTheme.foreground, cursor: 'pointer',
+    width: 34, height: 34, minWidth: 34, minHeight: 34, padding: 0, boxSizing: 'border-box', flex: 'none', display: 'grid', placeItems: 'center',
+    transform: 'translateY(-2px)', border: 0, borderRadius: '50%', background: colors.accent, color: arkmeTheme.foreground, cursor: 'pointer',
   },
   stop: { background: colors.danger },
 }
@@ -438,7 +430,17 @@ export function ArkmeArkoSurface() {
   const profile = profileSnapshot.userId === profileUserId ? profileSnapshot.profile : undefined
   const [userProfile, setUserProfile] = useState<ArkmeUserProfile | null>(null)
   const [session, setSession] = useState<ArkmeArkoSession>()
-  const [catalog, setCatalog] = useState<ArkmeArkoModelCatalog>()
+  useSyncExternalStore(arkoModelCache.subscribe, arkoModelCache.getRevision, arkoModelCache.getRevision)
+  const catalog = arkoModelCache.get(accountKey)
+  useEffect(() => {
+    if (accountKey === undefined) return
+    let active = true
+    setModelError('')
+    void arkoModelCache.load(accountKey, () => callArkme<ArkmeArkoModelCatalog>('arko.models')).catch(caught => {
+      if (active && arkoModelCache.get(accountKey) === undefined) setModelError(errorMessage(caught))
+    })
+    return () => { active = false }
+  }, [accountKey])
   const [messages, setMessages] = useState<ArkoMessage[]>([])
   const [historyOffset, setHistoryOffset] = useState<number>()
   const [historyError, setHistoryError] = useState('')
@@ -446,9 +448,16 @@ export function ArkmeArkoSurface() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [sending, setSending] = useState(false)
   const [clearing, setClearing] = useState(false)
-  const [selectingModel, setSelectingModel] = useState(false)
+  const selectingModel = arkoModelCache.isSelecting(accountKey)
   const [cancelling, setCancelling] = useState(false)
-  const [modelDialogOpen, setModelDialogOpen] = useState(false)
+  const [modelAnchor, setModelAnchor] = useState<HTMLButtonElement | null>(null)
+  const modelDialogOpen = modelAnchor !== null
+  const [modelError, setModelError] = useState('')
+  const closeModelMenu = useCallback(() => setModelAnchor(null), [])
+  const toggleModelMenu = (anchor: HTMLButtonElement) => {
+    setModelError('')
+    setModelAnchor(current => current === anchor ? null : anchor)
+  }
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -557,14 +566,13 @@ export function ArkmeArkoSurface() {
     void Promise.allSettled([
       callArkme<ArkmeArkoSession>('arko.session', undefined, controller.signal),
       callArkme<ArkmeArkoProfile>('arko.profile', undefined, controller.signal),
-      callArkme<ArkmeArkoModelCatalog>('arko.models', undefined, controller.signal),
       callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 }, controller.signal),
       callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, controller.signal).then(async snapshot => (
         snapshot.profile === null
           ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, controller.signal)
           : snapshot
       )),
-    ]).then(([sessionResult, profileResult, modelResult, historyResult, userProfileResult]) => {
+    ]).then(([sessionResult, profileResult, historyResult, userProfileResult]) => {
       if (controller.signal.aborted) return
       if (sessionResult.status === 'rejected') {
         setError(errorMessage(sessionResult.reason))
@@ -574,7 +582,6 @@ export function ArkmeArkoSurface() {
       if (profileResult.status === 'fulfilled' && profileUserId !== undefined) {
         arkmeArkoProfileStore.setProfile(profileUserId, profileResult.value)
       }
-      if (modelResult.status === 'fulfilled') setCatalog(modelResult.value)
       if (userProfileResult.status === 'fulfilled') setUserProfile(userProfileResult.value.profile)
       if (historyResult.status === 'fulfilled') {
         setMessages(current => mergeHistory(current, historyResult.value.items))
@@ -890,20 +897,17 @@ export function ArkmeArkoSurface() {
   }, [catalog, composerDraftKey, messages, profileUserId, scrollToBottom, sendDisabled, session, submitTurn])
 
   const selectModel = useCallback(async (routeKey: string) => {
-    if (selectingModel) return
-    setSelectingModel(true)
-    setError('')
+    if (selectingModel || accountKey === undefined) return false
+    setModelError('')
     try {
-      const next = await callArkme<ArkmeArkoModelCatalog>('arko.model.activate', { routeKey })
-      setCatalog(next)
-      setModelDialogOpen(false)
+      const next = await arkoModelCache.select(accountKey, () => callArkme<ArkmeArkoModelCatalog>('arko.model.activate', { routeKey }))
       setNotice(tr("已切换到 {v0}", { v0: selectedModelName(next) }))
+      return true
     } catch (caught) {
-      setError(errorMessage(caught))
-    } finally {
-      setSelectingModel(false)
+      setModelError(errorMessage(caught))
+      return false
     }
-  }, [selectingModel])
+  }, [selectingModel, accountKey])
 
   const cancelActiveRun = useCallback(async () => {
     if (activeRun === undefined || cancelling) return
@@ -945,7 +949,7 @@ export function ArkmeArkoSurface() {
   }, [clearing, pendingTurn, scrollToBottom, sending])
 
   const displayName = arkoPresentationName(profile)
-  const selectedModel = selectedModelName(catalog)
+  const selectedModel = catalog === undefined && modelError === '' ? tr('正在加载模型…') : selectedModelName(catalog)
   const canChooseModel = (catalog?.options.length ?? 0) > 1
   const continuation = useMemo(() => latestContinuation(messages, session?.sessionId), [messages, session?.sessionId])
   useEffect(() => {
@@ -971,42 +975,29 @@ export function ArkmeArkoSurface() {
       ? '请先确认上一次发送结果'
       : sending
         ? '等待回复'
-        : continuation === undefined ? selectedModel : '继续当前任务'
+        : continuation === undefined ? '' : '继续当前任务'
 
   return <div style={styles.shell}>
+    <style>{`
+      [data-arkme-arko-send] { corner-shape: round; }
+      [data-arkme-arko-composer] .ProseMirror { min-height: 32px; }
+      [data-arkme-arko-composer] [data-arkme-composer-editor-box] > span[aria-hidden] {
+        top: 4px; left: 14px; right: 8px;
+      }
+      /* Match active Harness InputBar + StatsPills geometry: 16px side clearance,
+         4px stats padding + 20px line + 2px pill padding + 4px bottom = 30px.
+         Reserve that space without inventing Arko session statistics. */
+      [data-arkme-wide-conversation] footer[data-arkme-arko-composer] {
+        width: min(100%, calc(var(--dsh-composer-card-max-width, calc(clamp(680px, calc(var(--dsh-conversation-column-width, 0px) * .64), 920px) + 32px)) + 32px));
+        margin-inline: auto;
+      }
+    `}</style>
     <header data-arkme-window-drag-region="conversation" style={styles.header}>
       <span style={styles.headerAvatar}><ArkmeArkoAvatar size={34} /></span>
       <span data-arkme-window-drag-region="conversation" data-arkme-window-drag-copy="" style={styles.headerCopy}>
         <h2 style={styles.headerTitle}>{displayName}</h2>
         <span style={styles.aiDisclaimer}>{tr("Agent · 内容由 AI 生成，仅供参考")}</span>
       </span>
-      <div style={styles.actions} role="toolbar" aria-label={tr("Arko 操作")}>
-        <button data-arkme-feedback="neutral"
-          type="button"
-          title={tr("选择模型")}
-          style={{ ...styles.actionButton, opacity: !canChooseModel || interactionLocked || clearing ? .55 : 1 }}
-          onClick={() => { setModelDialogOpen(true) }}
-          disabled={!canChooseModel || interactionLocked || clearing}
-        >
-          <span style={styles.actionIcon} aria-hidden><RobotIcon size={14} weight="regular" /></span>
-          <span style={styles.actionContent}>
-            <span style={styles.actionTitle}>{tr("模型选择")}</span>
-            <span style={styles.actionSub}>{selectedModel}</span>
-          </span>
-        </button>
-        <button data-arkme-feedback="neutral"
-          type="button"
-          title={tr("清除上下文")}
-          style={{ ...styles.actionButton, opacity: loading || interactionLocked || clearing ? .55 : 1 }}
-          onClick={() => { setClearConfirmOpen(true) }}
-          disabled={loading || interactionLocked || clearing || session === undefined}
-        >
-          <span style={styles.actionIcon} aria-hidden><ArrowsClockwiseIcon size={14} weight="regular" /></span>
-          <span style={styles.actionContent}>
-            <span style={styles.actionTitle}>{clearing ? '清除中...' : tr("清除上下文")}</span>
-          </span>
-        </button>
-      </div>
     </header>
     <ArkmeWideConversation enabled scopeKey={messageSelectionScope} viewportRef={bodyRef} turns controlsHidden={messageActions.selecting}>
     <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -1145,33 +1136,10 @@ export function ArkmeArkoSurface() {
       </p>}
     </ArkmeDetailShell>}
 
-    {modelDialogOpen && catalog !== undefined && <div style={styles.backdrop} onMouseDown={event => {
-      if (event.target === event.currentTarget && !selectingModel) setModelDialogOpen(false)
-    }}>
-      <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-arko-model-title">
-        <h3 id="arkme-arko-model-title" style={styles.dialogTitle}>{tr("选择模型")}</h3>
-        <p style={styles.dialogContent}>{tr("仅影响之后发起的新任务，进行中的任务会继续使用原模型")}</p>
-        <div style={styles.modelList}>
-          {catalog.options.map(option => <button data-arkme-feedback="neutral" data-arkme-feedback-selected={option.selected}
-            key={option.routeKey}
-            type="button"
-            style={{ ...styles.modelOption, ...(option.selected ? styles.modelOptionSelected : {}), opacity: selectingModel ? .6 : 1 }}
-            disabled={selectingModel || option.selected}
-            onClick={() => { void selectModel(option.routeKey) }}
-          >
-            <span>
-              <span style={styles.modelName}>{option.displayName}</span>
-              {option.recommended && <span style={styles.recommended}>{tr("推荐")}</span>}
-              <span style={{ display: 'block', ...styles.modelDescription }}>{option.description}</span>
-            </span>
-            {option.selected && <span style={styles.check} aria-label={tr("当前模型")}>✓</span>}
-          </button>)}
-        </div>
-        <div style={styles.dialogActions}>
-          <button data-arkme-feedback="neutral" type="button" style={styles.dialogButton} onClick={() => { setModelDialogOpen(false) }} disabled={selectingModel}>{tr("关闭")}</button>
-        </div>
-      </section>
-    </div>}
+    {modelAnchor !== null && catalog !== undefined && <ArkoModelMenu
+      anchor={modelAnchor} catalog={catalog} busy={selectingModel} error={modelError}
+      onSelect={selectModel} onClose={closeModelMenu}
+    />}
 
     {clearConfirmOpen && <div style={styles.backdrop} onMouseDown={event => {
       if (event.target === event.currentTarget) setClearConfirmOpen(false)
@@ -1186,9 +1154,9 @@ export function ArkmeArkoSurface() {
       </section>
     </div>}
 
-    <div style={{ position: 'relative', flex: 'none' }}>
+    <div data-arkme-arko-composer-seat style={{ position: 'relative', flex: 'none', boxSizing: 'border-box', paddingRight: 'calc(var(--dsh-scrollbar-width, 8px) + 2px)' }}>
     {messageActions.selecting && <div style={{ position: 'absolute', inset: 0, zIndex: 35, display: 'grid', background: arkmeTheme.layer2 }}>{messageActions.selectionBar}</div>}
-    <footer data-arkme-width-composer ref={composerRef} aria-hidden={messageActions.selecting || undefined} {...(messageActions.selecting ? { inert: '' } : {})} style={{ ...styles.composer, ...(messageActions.selecting ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}>
+    <footer data-arkme-arko-composer data-arkme-width-composer ref={composerRef} aria-hidden={messageActions.selecting || undefined} {...(messageActions.selecting ? { inert: '' } : {})} style={{ ...styles.composer, ...(messageActions.selecting ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}>
       <button data-arkme-feedback="neutral"
         type="button"
         aria-label={tr("{v0} 能干什么", { v0: displayName })}
@@ -1229,15 +1197,37 @@ export function ArkmeArkoSurface() {
           onBeforeToggle={() => { textareaRef.current?.captureSelection() }}
           onSelect={insertEmoji}
         />
-        <span style={styles.hint}>{hint}</span>
+        <span style={styles.hint} title={hint}>{hint}</span>
+        <button data-arkme-feedback="neutral"
+          type="button"
+          title={clearing ? tr("清除中...") : tr("清除上下文")}
+          aria-label={tr("清除上下文")}
+          aria-haspopup="dialog"
+          aria-busy={clearing}
+          style={{ ...styles.clearContextButton, opacity: loading || interactionLocked || clearing || session === undefined ? .55 : 1 }}
+          disabled={loading || interactionLocked || clearing || session === undefined}
+          onClick={() => { setClearConfirmOpen(true) }}
+        ><ArrowsClockwiseIcon size={18} aria-hidden /></button>
+        <button data-arkme-feedback="neutral"
+          type="button"
+          aria-label={tr("选择模型")}
+          aria-haspopup="menu"
+          aria-expanded={modelDialogOpen}
+          title={selectedModel}
+          style={{ ...styles.modelTrigger, opacity: !canChooseModel || interactionLocked || clearing || selectingModel ? .55 : 1 }}
+          disabled={!canChooseModel || interactionLocked || clearing || selectingModel}
+          onClick={event => { toggleModelMenu(event.currentTarget) }}
+        ><span style={styles.modelLabel}>{selectedModel}</span><CaretDownIcon size={12} style={{ flex: 'none' }} aria-hidden /></button>
         {activeRun === undefined ? <button data-arkme-feedback="neutral"
           type="button"
+          data-arkme-arko-send
           title={tr("发送")}
           style={{ ...styles.send, opacity: sendDisabled || draft.trim() === '' ? .45 : 1 }}
           disabled={sendDisabled || draft.trim() === ''}
           onClick={() => { void send() }}
-        ><span aria-hidden>↑</span></button> : <button data-arkme-feedback="neutral"
+        ><ArrowUpIcon size={22} weight="bold" aria-hidden /></button> : <button data-arkme-feedback="neutral"
           type="button"
+          data-arkme-arko-send
           title={tr("停止当前任务")}
           aria-label={tr("停止当前 Arko 任务")}
           style={{ ...styles.send, ...styles.stop, opacity: cancelling ? .45 : 1 }}
