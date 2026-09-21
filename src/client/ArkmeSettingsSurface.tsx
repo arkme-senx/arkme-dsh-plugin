@@ -1,3 +1,4 @@
+import {ArkmeScreenshotShortcutSetting} from './ArkmeScreenshotShortcutSetting.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { CaretRight } from '@phosphor-icons/react/CaretRight'
@@ -996,6 +997,7 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
               ? { onClick: () => { void openNotificationSettings() } }
               : {})}
         />
+        <ArkmeScreenshotShortcutSetting />
       </SettingsGroup>
 
       {authenticated && authenticatedUserId !== undefined ? <SettingsGroup title={tr("隐私与权限")}>

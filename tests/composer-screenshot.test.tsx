@@ -84,7 +84,63 @@ it('shows actionable failure without sending or discarding the draft', async () 
 it('explains unsupported native capture without starting it', async () => {
   call.mockResolvedValue({ available: false, reason: '仅支持 macOS' })
   await mount(); await start()
-  expect(button().disabled).toBe(false); expect(button().title).toBe('仅支持 macOS')
+  expect(button().disabled).toBe(false); await act(async()=>button().dispatchEvent(new MouseEvent('mouseover',{bubbles:true}))); expect(document.querySelector('[role=tooltip]')?.textContent).toBe('仅支持 macOS')
   expect(onError).toHaveBeenCalledWith('仅支持 macOS')
   expect(onBegin).not.toHaveBeenCalled()
+})
+
+// A versioned client bridge must take precedence over the legacy macOS process API.
+it('uses the native editor bridge and adds only its completed PNG',async()=>{
+ const native=vi.fn(async()=>captured)
+ vi.stubGlobal('arkmeScreenshot',{version:1,capture:native,cancel:vi.fn(async()=>{})})
+ await mount();await start()
+ expect(call).not.toHaveBeenCalled();expect(native).toHaveBeenCalledOnce();expect(onFile).toHaveBeenCalledOnce()
+})
+it('cancels the native editor on scope change and rejects its late PNG',async()=>{
+ let complete!:(v:ArkmeDesktopScreenshotResult)=>void
+ const native=vi.fn(()=>new Promise<ArkmeDesktopScreenshotResult>(r=>{complete=r})),cancel=vi.fn(async()=>{})
+ vi.stubGlobal('arkmeScreenshot',{version:1,capture:native,cancel})
+ await mount();await start();await mount({scope:{}})
+ expect(cancel).toHaveBeenCalledOnce();await act(async()=>complete(captured));expect(onFile).not.toHaveBeenCalled()
+})
+it('does not time out a native static editor after the legacy capture deadline',async()=>{
+ vi.useFakeTimers()
+ try {
+  let complete!:(v:ArkmeDesktopScreenshotResult)=>void
+  const cancel=vi.fn(async()=>{})
+  vi.stubGlobal('arkmeScreenshot',{version:1,capture:()=>new Promise<ArkmeDesktopScreenshotResult>(r=>{complete=r}),cancel})
+  await mount();await start();await act(async()=>{await vi.advanceTimersByTimeAsync(121000)})
+  expect(cancel).not.toHaveBeenCalled();expect(onError).not.toHaveBeenCalled()
+  await act(async()=>complete(captured));expect(onFile).toHaveBeenCalledOnce()
+ } finally {vi.useRealTimers()}
+})
+it('uses the same guarded capture flow for shortcut and updates the tooltip', async () => {
+ let trigger!:()=>void, changed!:(value:any)=>void
+ vi.stubGlobal('arkmeScreenshotShortcut',{get:async()=>({accelerator:'Command+Shift+A',available:true}),onTrigger:(fn:()=>void)=>{trigger=fn;return ()=>{}},onChanged:(fn:(value:any)=>void)=>{changed=fn;return ()=>{}}})
+ await mount();await act(async()=>button().dispatchEvent(new MouseEvent('mouseover',{bubbles:true})));expect(document.querySelector('[role=tooltip]')?.textContent).toContain('⌘ + ⇧ + A')
+ await act(async()=>changed({accelerator:'Control+Alt+B',available:true}));expect(document.querySelector('[role=tooltip]')?.textContent).toContain('Ctrl + Alt + B')
+ await act(async()=>{trigger();trigger()});expect(call.mock.calls.filter(args=>args[0]==='desktop.screenshot.capture')).toHaveLength(1)
+ await act(async()=>resolveCapture({status:'cancelled'}))
+ await mount({active:false});await act(async()=>trigger());expect(call.mock.calls.filter(args=>args[0]==='desktop.screenshot.capture')).toHaveLength(1)
+})
+it('renders shortcut tooltip on hover and dismisses it when leaving', async () => {
+ vi.stubGlobal('arkmeScreenshotShortcut',{get:async()=>({accelerator:'Command+Shift+A',available:true}),onTrigger:()=>()=>{},onChanged:()=>()=>{}})
+ await mount()
+ await act(async()=>button().dispatchEvent(new MouseEvent('mouseover',{bubbles:true})))
+ expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('截图（⌘ + ⇧ + A）')
+ await act(async()=>button().dispatchEvent(new MouseEvent('mouseout',{bubbles:true,relatedTarget:document.body})))
+ expect(document.querySelector('[role="tooltip"]')).toBeNull()
+})
+
+it('shows the tooltip for keyboard focus and dismisses it with Escape', async()=>{
+ await mount();await act(async()=>button().focus());expect(document.querySelector('[role=tooltip]')).not.toBeNull()
+ await act(async()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));expect(document.querySelector('[role=tooltip]')).toBeNull()
+})
+
+it('disables click and shortcut capture during shortcut recording, then restores them',async()=>{
+ let trigger!:()=>void,changed!:(v:any)=>void
+ vi.stubGlobal('arkmeScreenshotShortcut',{get:async()=>({accelerator:'Command+Shift+A',available:true,recording:true}),onTrigger:(fn:()=>void)=>{trigger=fn;return ()=>{}},onChanged:(fn:(v:any)=>void)=>{changed=fn;return ()=>{}}})
+ await mount();expect(button().disabled).toBe(true);await act(async()=>{button().click();trigger()});expect(onBegin).not.toHaveBeenCalled()
+ await act(async()=>changed({accelerator:'Command+Shift+A',available:true,recording:false}));expect(button().disabled).toBe(false)
+ await start();expect(onBegin).toHaveBeenCalledOnce();await act(async()=>resolveCapture({status:'cancelled'}))
 })

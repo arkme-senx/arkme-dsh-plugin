@@ -1,3 +1,5 @@
+import { ArkmeScreenshotWindow } from './ArkmeScreenshotWindow.js'
+import { screenshotWindowRequested } from './native-screenshot.js'
 import { registerConversationWindowRoot } from './conversation-window-root.js'
 import { conversationWindowRequested } from './conversation-window.js'
 import { bindConversationWindows } from './conversation-window-sync.js'
@@ -102,6 +104,19 @@ function logNotificationActivation(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
+  if (screenshotWindowRequested()) {
+    ctx.effect(() => {
+      const host = document.createElement('div')
+      host.dataset.arkmeOwned = 'screenshot-window'
+      Object.assign(host.style, {position:'fixed',inset:'0',zIndex:'2147483000',background:'#181a20'})
+      document.body.append(host)
+      const root = createRoot(host)
+      root.render(<ArkmeScreenshotWindow />)
+      return () => { root.unmount(); host.remove() }
+    }, 'dsh-arkme: screenshot editor')
+    return
+  }
+
   if (conversationWindowRequested()) {
     ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: conversation language')
     ctx.effect(() => bindConversationWindows(), 'dsh-arkme: conversation sync')
