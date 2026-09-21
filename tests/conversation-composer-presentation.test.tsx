@@ -3,7 +3,6 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 
 const arkoSource = readFileSync(new URL('../src/client/ArkmeArkoSurface.tsx', import.meta.url), 'utf8')
-const arkoControllerSource = readFileSync(new URL('../src/client/useArkoConversationController.ts', import.meta.url), 'utf8')
 const sidebarSource = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
 const emojiPickerSource = readFileSync(new URL('../src/client/ArkmeEmojiPicker.tsx', import.meta.url), 'utf8')
 const toolButtonSource = readFileSync(new URL('../src/client/ArkmeComposerToolButton.tsx', import.meta.url), 'utf8')
@@ -133,7 +132,7 @@ describe('Arkme conversation composer presentation', () => {
     expect(arkmeConversationComposerHeight(630)).toBe(336)
   })
 
-  it('keeps Agent behavior in the Arko controller while both surfaces consume shared presentation', () => {
+  it('keeps Agent behavior in the Arko surface while both surfaces consume shared presentation', () => {
     for (const source of [sidebarSource, arkoSource]) {
       expect(source).toContain("from './conversation-composer-presentation.js'")
       expect(source).toContain('...arkmeConversationComposerLayout.composer')
@@ -148,12 +147,9 @@ describe('Arkme conversation composer presentation', () => {
     expect(sidebarSource).toContain("callArkme<ArkmeRecordTagList>('records.tags.list'")
     expect(sidebarSource).not.toContain('<ArkmeMentionTextarea')
 
-    expect(arkoSource).not.toContain('callArkme')
-    expect(arkoControllerSource).not.toContain('arko-native-')
-    expect(arkoControllerSource).not.toMatch(/\b(?:document|requestAnimationFrame|IntersectionObserver)\b/)
-    expect(arkoControllerSource).toContain("callArkme<ArkmeArkoAskResult>('arko.ask'")
-    expect(arkoControllerSource).toContain("callArkme<ArkmeArkoCancelResult>('arko.cancel'")
-    expect(arkoControllerSource).toContain("callArkme<ArkmeArkoModelCatalog>('arko.model.activate'")
+    expect(arkoSource).toContain("callArkme<ArkmeArkoAskResult>('arko.ask'")
+    expect(arkoSource).toContain("callArkme<ArkmeArkoCancelResult>('arko.cancel'")
+    expect(arkoSource).toContain("callArkme<ArkmeArkoModelCatalog>('arko.model.activate'")
   })
 
   it('preserves tool geometry while sharing hover feedback between add and emoji', () => {

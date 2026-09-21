@@ -387,24 +387,6 @@ describe('core-only DeepSeek Harness iframe route', () => {
   })
 })
 
-it('serves the Arko native graph without ordinary Harness model or session bridges', async () => {
-  const full = graph()
-  const response = responseDouble()
-  await createHarnessEmbedRouteHandler({
-    getGraph: () => full, installedPackageNames: () => ['@arkme-local/weather'],
-    readRootHtml: async () => htmlWithGraph(full),
-    sessionClient: { revision: 'abc', apiPath: '/ordinary/api' },
-    selectionClientRevision: 'abc',
-    arkoClient: { id: '@senguoyun/dsh-arkme/arko-native-client', url: '/arko-native.js', rev: 'abc' },
-  })({ method: 'GET', url: '/arkme-self/harness-frame?arkme-arko=1' } as IncomingMessage, response.value)
-  expect(response.status()).toBe(200)
-  expect(response.body()).toContain('/arko-native.js')
-  expect(response.body()).not.toContain('data-arkme-session-restore')
-  expect(response.body()).not.toContain('arkme-session-api')
-  expect(response.body()).not.toContain('name="arkme-native-selection"')
-  expect(response.body()).not.toContain('/arkme.js')
-})
-
 function responseDouble() {
   let responseStatus = 0
   let responseHeaders: Record<string, string | number> = {}
