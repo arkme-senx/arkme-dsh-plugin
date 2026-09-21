@@ -1,7 +1,8 @@
+import {ArkmeScreenshotTooltip} from './ArkmeScreenshotTooltip.js'
 import {screenshotShortcutBridge,shortcutLabel,useScreenshotShortcut} from './screenshot-shortcut.js'
 import { captureNativeScreenshot, nativeScreenshotBridge } from './native-screenshot.js'
 import { tr, useArkmeLocale } from './locale.js'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Scissors } from '@phosphor-icons/react/dist/icons/Scissors'
 import type { ArkmeDesktopScreenshotCapability, ArkmeDesktopScreenshotResult } from '../desktop-screenshot-contract.js'
 import { callArkme } from './api.js'
@@ -21,6 +22,10 @@ export function ArkmeComposerScreenshotButton(props: {
 }) {
   useArkmeLocale()
   const shortcut = useScreenshotShortcut()
+  const tooltipId = useId()
+  const tooltipAnchor = useRef<HTMLButtonElement>(null)
+  const [tooltipVisible, setTooltipVisible] = useState(false)
+  const closeTooltip = useCallback(() => setTooltipVisible(false), [])
   const trigger = useRef<() => void>(() => {})
   useEffect(() => screenshotShortcutBridge()?.onTrigger(() => trigger.current()), [])
   const latest = useRef(props)
@@ -59,6 +64,7 @@ export function ArkmeComposerScreenshotButton(props: {
     if (active.current !== undefined || props.active === false || props.disabled || !props.isCurrent()) return
     const unavailable = nativeDesktop ? capability?.available === true ? undefined : capability?.reason ?? '正在检查截屏能力，请稍后重试。' : browserScreenshotUnavailable()
     if (unavailable) { props.onError(unavailable); return }
+    closeTooltip()
     const captured = props
     const controller = new AbortController()
     active.current = controller
@@ -112,12 +118,16 @@ export function ArkmeComposerScreenshotButton(props: {
   trigger.current = () => { void capture() }
   const title = busy ? '正在截屏，按 Esc 取消' : !nativeDesktop ? browserScreenshotUnavailable() ?? '截屏（选择屏幕或窗口后裁剪）'
     : capability?.available === true ? nativeBridge ? '截屏（框选并编辑后添加到草稿，Esc 取消）' : '截屏（框选后添加到草稿，Esc 取消）' : capability?.reason ?? '正在检查截屏能力'
-  return <><ArkmeComposerToolButton aria-label={tr("截屏")} title={shortcut ? `${title} · ${shortcutLabel(shortcut.accelerator)}${shortcut.available ? "" : "（快捷键不可用）"}` : title} aria-busy={busy}
+  const tooltipText = busy ? title : shortcut ? `截图（${shortcutLabel(shortcut.accelerator)}）${shortcut.available ? '' : ' · 快捷键不可用'}` : title
+  return <><span style={{display:'inline-flex', flex:'none'}} onMouseEnter={() => setTooltipVisible(true)} onMouseLeave={closeTooltip}
+    onFocus={() => setTooltipVisible(true)} onBlur={closeTooltip}>
+  <ArkmeComposerToolButton ref={tooltipAnchor} aria-label={tr("截屏")} aria-describedby={tooltipVisible ? tooltipId : undefined} aria-busy={busy}
     disabled={props.active === false || props.disabled || busy || (nativeDesktop && capability === undefined)}
     onMouseDown={event => { event.preventDefault() }}
     onClick={() => { void capture() }}>
     <Scissors size={ARKME_COMPOSER_TOOL_ICON_SIZE} aria-hidden="true" />
-  </ArkmeComposerToolButton>
+  </ArkmeComposerToolButton></span>
+    {tooltipVisible && tooltipAnchor.current && <ArkmeScreenshotTooltip anchor={tooltipAnchor.current} id={tooltipId} text={tooltipText} onClose={closeTooltip}/>}
     {crop && <ArkmeScreenshotCropDialog frame={crop.frame} rootRef={cropRoot} onClose={() => crop.complete()} onComplete={crop.complete} />}
   </>
 }

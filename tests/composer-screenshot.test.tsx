@@ -84,7 +84,7 @@ it('shows actionable failure without sending or discarding the draft', async () 
 it('explains unsupported native capture without starting it', async () => {
   call.mockResolvedValue({ available: false, reason: '仅支持 macOS' })
   await mount(); await start()
-  expect(button().disabled).toBe(false); expect(button().title).toBe('仅支持 macOS')
+  expect(button().disabled).toBe(false); await act(async()=>button().dispatchEvent(new MouseEvent('mouseover',{bubbles:true}))); expect(document.querySelector('[role=tooltip]')?.textContent).toBe('仅支持 macOS')
   expect(onError).toHaveBeenCalledWith('仅支持 macOS')
   expect(onBegin).not.toHaveBeenCalled()
 })
@@ -117,9 +117,22 @@ it('does not time out a native static editor after the legacy capture deadline',
 it('uses the same guarded capture flow for shortcut and updates the tooltip', async () => {
  let trigger!:()=>void, changed!:(value:any)=>void
  vi.stubGlobal('arkmeScreenshotShortcut',{get:async()=>({accelerator:'Command+Shift+A',available:true}),onTrigger:(fn:()=>void)=>{trigger=fn;return ()=>{}},onChanged:(fn:(value:any)=>void)=>{changed=fn;return ()=>{}}})
- await mount();expect(button().title).toContain('⌘ + ⇧ + A')
- await act(async()=>changed({accelerator:'Control+Alt+B',available:true}));expect(button().title).toContain('Ctrl + Alt + B')
+ await mount();await act(async()=>button().dispatchEvent(new MouseEvent('mouseover',{bubbles:true})));expect(document.querySelector('[role=tooltip]')?.textContent).toContain('⌘ + ⇧ + A')
+ await act(async()=>changed({accelerator:'Control+Alt+B',available:true}));expect(document.querySelector('[role=tooltip]')?.textContent).toContain('Ctrl + Alt + B')
  await act(async()=>{trigger();trigger()});expect(call.mock.calls.filter(args=>args[0]==='desktop.screenshot.capture')).toHaveLength(1)
  await act(async()=>resolveCapture({status:'cancelled'}))
  await mount({active:false});await act(async()=>trigger());expect(call.mock.calls.filter(args=>args[0]==='desktop.screenshot.capture')).toHaveLength(1)
+})
+it('renders shortcut tooltip on hover and dismisses it when leaving', async () => {
+ vi.stubGlobal('arkmeScreenshotShortcut',{get:async()=>({accelerator:'Command+Shift+A',available:true}),onTrigger:()=>()=>{},onChanged:()=>()=>{}})
+ await mount()
+ await act(async()=>button().dispatchEvent(new MouseEvent('mouseover',{bubbles:true})))
+ expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('截图（⌘ + ⇧ + A）')
+ await act(async()=>button().dispatchEvent(new MouseEvent('mouseout',{bubbles:true,relatedTarget:document.body})))
+ expect(document.querySelector('[role="tooltip"]')).toBeNull()
+})
+
+it('shows the tooltip for keyboard focus and dismisses it with Escape', async()=>{
+ await mount();await act(async()=>button().focus());expect(document.querySelector('[role=tooltip]')).not.toBeNull()
+ await act(async()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));expect(document.querySelector('[role=tooltip]')).toBeNull()
 })
