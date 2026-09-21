@@ -44,7 +44,6 @@ export interface DshWebBootGraph {
 }
 
 interface HarnessEmbedRouteOptions {
-  arkoClient?: DshWebBootEntry
   modelClient?: DshWebBootEntry
   trajectoryClient?: DshWebBootEntry
   sidebarClient?: DshWebBootEntry
@@ -261,10 +260,9 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
     }
 
     try {
-      const arko = new URL(request.url ?? '/', 'http://localhost').searchParams.get('arkme-arko') === '1'
       const fullGraph = options.getGraph()
-      const projectedGraph = projectHarnessBootGraph(fullGraph, options.installedPackageNames(), arko ? undefined : options.modelClient, arko ? undefined : options.trajectoryClient, arko ? undefined : options.sidebarClient)
-      if (!arko && options.onboardingClient !== undefined) {
+      const projectedGraph = projectHarnessBootGraph(fullGraph, options.installedPackageNames(), options.modelClient, options.trajectoryClient, options.sidebarClient)
+      if (options.onboardingClient !== undefined) {
         const entry = {
           ...options.onboardingClient,
           // Register the final step after all native settings/onboarding contributions.
@@ -275,7 +273,7 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
         projectedGraph.batches?.push({ phase: 'application', url: entry.url, rev: entry.rev, entries: [entry.id] })
         projectedGraph.rev = shortHash(`${projectedGraph.rev}:${entry.rev}`)
       }
-      if (!arko && options.sessionClient !== undefined) {
+      if (options.sessionClient !== undefined) {
         const rev = options.sessionClient.revision
         projectedGraph.entries.push({
           id: HARNESS_SESSION_CLIENT_ID, url: HARNESS_SESSION_CLIENT_PATH, rev,
@@ -286,22 +284,15 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
         })
         projectedGraph.rev = shortHash(`${projectedGraph.rev}:${rev}`)
       }
-      if (arko) {
-        if (!options.arkoClient) throw new Error('Arko native client unavailable')
-        const entry = options.arkoClient
-        projectedGraph.entries.push(entry)
-        projectedGraph.batches?.push({ phase: 'application', url: entry.url, rev: entry.rev, entries: [entry.id] })
-        projectedGraph.rev = shortHash(`${projectedGraph.rev}:${entry.rev}`)
-      }
       let html = replaceHarnessBootGraph(await options.readRootHtml(request), fullGraph, projectedGraph)
-      if (!arko && options.sessionClient !== undefined) {
+      if (options.sessionClient !== undefined) {
         if (!/<head(?:\s[^>]*)?>/i.test(html)) throw new Error('harness session restore requires a document head')
         html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-session-restore>${HARNESS_SESSION_RESTORE_SCRIPT}</script>`)
       }
-      if (!arko && options.selectionClientRevision && /^[a-f0-9]+$/.test(options.selectionClientRevision)) {
+      if (options.selectionClientRevision && /^[a-f0-9]+$/.test(options.selectionClientRevision)) {
         html = html.replace('</head>', `<meta name="arkme-native-selection" content="/arkme-self/harness-native-selection-client.js?rev=${options.selectionClientRevision}"></head>`)
       }
-      if (!arko && options.sessionClient?.apiPath !== undefined) {
+      if (options.sessionClient?.apiPath !== undefined) {
         const apiPath = options.sessionClient.apiPath
         if (!/^\/[A-Za-z0-9/_-]+$/.test(apiPath) || !html.includes('</head>')) {
           throw new Error('harness session observer configuration is invalid')

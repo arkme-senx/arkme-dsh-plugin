@@ -67,22 +67,6 @@ export default defineConfig([
     },
   },
   {
-    name: '@senguoyun/dsh-arkme/arko-native-client',
-    entry: { 'arko-native-client': 'src/client/arko-native-client.tsx' },
-    outDir: 'lib', format: 'cjs', platform: 'browser', inputOptions: { platform: 'browser' }, target: 'es2022',
-    fixedExtension: false, dts: false, clean: false,
-    loader: { '.svg': 'base64', '.png': 'base64' },
-    external: CLIENT_EXTERNALS,
-    noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
-    define: { 'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production') },
-    outputOptions: {
-      entryFileNames: 'arko-native-client.js',
-      banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme/arko-native-client", factory: (require) => {',
-      footer: 'return module.exports; } });',
-      intro: 'var module = { exports: {} }; var exports = module.exports;',
-    },
-  },
-  {
     name: '@senguoyun/dsh-arkme/harness-session',
     entry: { 'harness-session-client': 'src/client/harness-session-client.ts' },
     outDir: 'lib', format: 'cjs', platform: 'browser', inputOptions: { platform: 'browser' }, target: 'es2022',

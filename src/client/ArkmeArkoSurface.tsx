@@ -1,21 +1,40 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { ArkoNativeSurface } from './ArkoNativeSurface.js'
-import { useArkoConversationController, arkoQuestionMaxLength, type ArkoConversationController } from './useArkoConversationController.js'
-export { arkoHistoryHasTerminalRun, latestActiveRun, mergeHistory } from './useArkoConversationController.js'
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from './message-selection-presentation.js'
 import { RegionMarquee } from './selection/RegionMarquee.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { ArkmeWideConversation } from './ArkmeWideConversation.js'
 import {
-  Fragment, useCallback, useEffect, useMemo, useRef, useState,
+  Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties,
 } from 'react'
 import { ArrowsClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowsClockwise'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
+import type {
+  ArkmeArkoAskResult,
+  ArkmeArkoCancelResult,
+  ArkmeArkoHistoryItem,
+  ArkmeArkoHistoryPage,
+  ArkmeArkoModelCatalog,
+  ArkmeArkoProfile,
+  ArkmeArkoRunStatus,
+  ArkmeArkoSession,
+  ArkmeUserProfile,
+  ArkmeUserProfileSnapshot,
+} from '../types.js'
+import { callArkme, ArkmeClientError } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
+import {
+  readArkoPendingTurn,
+  removeArkoPendingTurn,
+  writeArkoPendingTurn,
+  type ArkmeArkoPendingTurn,
+} from './arko-pending-turn-store.js'
+import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-store.js'
+import { arkmeArkoConversationPreviewStore } from './arko-conversation-preview-store.js'
+import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { arkmeComposerDraftStore } from './composer-draft-store.js'
+import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore, serializeArkmeComposerDraft } from './composer-draft-store.js'
 import {
   arkmeConversationComposerLayout,
 } from './conversation-composer-presentation.js'
@@ -29,7 +48,38 @@ import {
   type ArkmeMessageActionViewItem,
 } from './ArkmeMessageActions.js'
 
+type ArkoMessageRole = 'user' | 'assistant' | 'divider'
 type ArkoMessageStatus = 'sending' | 'done' | 'error'
+const arkoQuestionMaxLength = 60 * 1024
+
+interface ArkoMessage {
+  id: string
+  messageId?: number
+  sessionId?: number
+  role: ArkoMessageRole
+  text: string
+  reasoning?: string
+  status: ArkoMessageStatus
+  createdAtMillis?: number
+  assistantMsgId?: number
+  runUid?: string
+  runStatus?: string
+  messageActionRef?: string
+  messageActionConversationRef?: string
+  copyLinkAvailable?: boolean
+  forwardAvailable?: boolean
+}
+
+interface ArkoContinuationTarget {
+  assistantMsgId: number
+  runUid: string
+}
+
+interface ActiveArkoRun extends ArkoContinuationTarget {
+  sessionId: number
+}
+
+const ACTIVE_RUN_STATUSES = new Set(['accepted', 'queued', 'running', 'stream_timeout', 'waiting_tool'])
 
 const colors = {
   text: arkmeTheme.text,
@@ -179,6 +229,11 @@ const styles: Record<string, CSSProperties> = {
   stop: { background: colors.danger },
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof ArkmeClientError) return error.body.message
+  return error instanceof Error ? error.message : String(error)
+}
+
 export function arkoRunActivityLabel(status: string | undefined): string | undefined {
   if (status === 'accepted' || status === 'queued') return '正在思考'
   if (status === 'running' || status === 'stream_timeout') return tr("正在处理")
@@ -202,6 +257,43 @@ export function arkoPreservedScrollTop(
   nextScrollHeight: number,
 ): number {
   return Math.max(0, previousScrollTop + (nextScrollHeight - previousScrollHeight))
+}
+
+function isActiveRunStatus(status: string | undefined): boolean {
+  return status !== undefined && ACTIVE_RUN_STATUSES.has(status)
+}
+
+function isActivityPlaceholderText(value: string): boolean {
+  return /^(正在)?(思考|处理)(中)?[.。…]*$/.test(value.trim())
+}
+
+function isActiveHistoryRun(item: ArkmeArkoHistoryItem): boolean {
+  const placeholder = isActivityPlaceholderText(item.text)
+  return item.role === 'assistant' && (isActiveRunStatus(item.runStatus)
+    || (item.runStatus === undefined && item.status === 2 && (item.text.trim() === '' || placeholder)))
+}
+
+export function arkoHistoryHasTerminalRun(
+  items: ArkmeArkoHistoryItem[],
+  sessionId: number,
+  assistantMsgId: number,
+  runUid: string,
+): boolean {
+  const matchingItem = items.find(item => item.role === 'assistant'
+    && item.sessionId === sessionId
+    && item.messageId === assistantMsgId
+    && (item.runUid === undefined || item.runUid === runUid))
+  return matchingItem !== undefined && !isActiveHistoryRun(matchingItem)
+}
+
+function waitForNextPoll(signal: AbortSignal, delayMillis = 1_200): Promise<void> {
+  return new Promise(resolve => {
+    const timeout = setTimeout(resolve, delayMillis)
+    signal.addEventListener('abort', () => {
+      clearTimeout(timeout)
+      resolve()
+    }, { once: true })
+  })
 }
 
 function ArkoThinkingPanel({ reasoning, activity }: { reasoning?: string; activity?: string }) {
@@ -233,36 +325,141 @@ function ArkoThinkingPanel({ reasoning, activity }: { reasoning?: string; activi
   </div>
 }
 
-export function ArkmeArkoSurface({ native = false }: { native?: boolean } = {}) {
-  const controller = useArkoConversationController()
-  return native ? <ArkoNativeConversation controller={controller} /> : <ArkoConversationView controller={controller} />
+function historyMessage(item: ArkmeArkoHistoryItem): ArkoMessage {
+  const placeholder = isActivityPlaceholderText(item.text)
+  const reasoningPlaceholder = isActivityPlaceholderText(item.reasoning)
+  const active = isActiveHistoryRun(item)
+  return {
+    id: `history:${String(item.messageId)}`,
+    messageId: item.messageId,
+    sessionId: item.sessionId,
+    role: item.role,
+    text: active && placeholder ? '' : item.text,
+    status: active ? 'sending' : item.runStatus === 'failed' ? 'error' : 'done',
+    createdAtMillis: item.createdAtMillis,
+    ...(item.reasoning.trim() === '' || (!active && reasoningPlaceholder) ? {} : { reasoning: item.reasoning }),
+    ...(item.role !== 'assistant' ? {} : { assistantMsgId: item.messageId }),
+    ...(item.runUid === undefined ? {} : { runUid: item.runUid }),
+    ...(item.runStatus === undefined ? {} : { runStatus: item.runStatus }),
+    ...(item.messageActionRef === undefined ? {} : {
+      messageActionRef: item.messageActionRef,
+      ...(item.messageActionConversationRef === undefined ? {} : { messageActionConversationRef: item.messageActionConversationRef }),
+      copyLinkAvailable: item.messageActionCapabilities?.copyLink === true,
+      forwardAvailable: item.messageActionCapabilities?.forward === true,
+    }),
+  }
 }
 
-function ArkoConversationView({ controller }: { controller: ArkoConversationController }) {
+export function latestActiveRun(
+  items: ArkmeArkoHistoryItem[],
+  sessionId: number,
+): ActiveArkoRun | undefined {
+  const item = items
+    .filter(candidate => candidate.sessionId === sessionId
+      && candidate.role === 'assistant'
+      && candidate.runUid !== undefined
+      && isActiveRunStatus(candidate.runStatus))
+    .sort((left, right) => right.createdAtMillis - left.createdAtMillis || right.messageId - left.messageId)[0]
+  if (item?.runUid === undefined) return undefined
+  return { sessionId: item.sessionId, assistantMsgId: item.messageId, runUid: item.runUid }
+}
+
+export function mergeHistory(current: ArkoMessage[], items: ArkmeArkoHistoryItem[]): ArkoMessage[] {
+  const byId = new Map(current.map(item => [item.id, item]))
+  for (const item of items) byId.set(`history:${String(item.messageId)}`, historyMessage(item))
+  return [...byId.values()].sort((left, right) => {
+    const leftAt = left.createdAtMillis ?? Number.MAX_SAFE_INTEGER
+    const rightAt = right.createdAtMillis ?? Number.MAX_SAFE_INTEGER
+    if (leftAt !== rightAt) return leftAt - rightAt
+    const leftId = left.messageId ?? Number.MAX_SAFE_INTEGER
+    const rightId = right.messageId ?? Number.MAX_SAFE_INTEGER
+    return leftId - rightId
+  })
+}
+
+function resultText(result: ArkmeArkoAskResult): string {
+  if (result.text.trim() !== '') return result.text.trim()
+  if (result.errorMessage?.trim()) return result.errorMessage.trim()
+  if (isActiveRunStatus(result.run?.status ?? result.status)) return ''
+  return '任务已处理。'
+}
+
+function latestContinuation(messages: ArkoMessage[], sessionId: number | undefined): ArkoContinuationTarget | undefined {
+  if (sessionId === undefined) return undefined
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message === undefined) continue
+    if (message.role === 'divider') return undefined
+    if (message.sessionId !== sessionId) continue
+    if (message.role === 'user') return undefined
+    if (message.runStatus !== 'waiting_user' || message.runUid === undefined || message.assistantMsgId === undefined) {
+      return undefined
+    }
+    return { runUid: message.runUid, assistantMsgId: message.assistantMsgId }
+  }
+  return undefined
+}
+
+function selectedModelName(catalog: ArkmeArkoModelCatalog | undefined): string {
+  return catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.displayName ?? '模型目录暂不可用'
+}
+
+export function ArkmeArkoSurface() {
   useArkmeLocale()
-  const { accountKey, profileUserId, composerDraftKey, draftSnapshot, draft, userProfile,
-    session, catalog, messages, historyOffset, historyError, historyPageError,
-    loading, historyLoading, sending, clearing, selectingModel, cancelling,
-    error, notice, activeRun, pendingTurn, interactionLocked, sendDisabled, inputDisabled,
-    displayName, selectedModel, canChooseModel, continuation, submitTurn, cancelActiveRun, retryHistory,
-    feedback: setError } = controller
   const bodyRef = useRef<HTMLDivElement>(null)
   const historySentinelRef = useRef<HTMLDivElement>(null)
+  const historyLoadInFlightRef = useRef(false)
   const composerInputBoundaryRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLElement>(null)
   const textareaRef = useRef<ArkmeDocumentComposerHandle>(null)
   const pendingComposerFocusRef = useRef(false)
+  const sendInFlightRef = useRef(false)
+  const authSnapshot = useSyncExternalStore(
+    arkmeAuthStore.subscribe,
+    arkmeAuthStore.getSnapshot,
+    arkmeAuthStore.getSnapshot,
+  )
+  const profileSnapshot = useSyncExternalStore(
+    arkmeArkoProfileStore.subscribe,
+    arkmeArkoProfileStore.getSnapshot,
+    arkmeArkoProfileStore.getSnapshot,
+  )
+  const profileUserId = authSnapshot.auth?.status === 'authenticated' ? authSnapshot.auth.userId : undefined
+  const composerDraftKey = arkmeArkoComposerDraftKey(profileUserId)
+  useSyncExternalStore(
+    arkmeComposerDraftStore.subscribe,
+    arkmeComposerDraftStore.getRevision,
+    arkmeComposerDraftStore.getRevision,
+  )
+  const draftSnapshot = arkmeComposerDraftStore.get(composerDraftKey)
+  const draft = draftSnapshot.text
+  const accountKey = authSnapshot.auth?.status === 'authenticated' && profileUserId !== undefined
+    ? `${authSnapshot.auth.environment}:${String(profileUserId)}` : undefined
+  const profile = profileSnapshot.userId === profileUserId ? profileSnapshot.profile : undefined
+  const [userProfile, setUserProfile] = useState<ArkmeUserProfile | null>(null)
+  const [session, setSession] = useState<ArkmeArkoSession>()
+  const [catalog, setCatalog] = useState<ArkmeArkoModelCatalog>()
+  const [messages, setMessages] = useState<ArkoMessage[]>([])
+  const [historyOffset, setHistoryOffset] = useState<number>()
+  const [historyError, setHistoryError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [selectingModel, setSelectingModel] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const [modelDialogOpen, setModelDialogOpen] = useState(false)
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
-  const send = (text?: string) => { pendingComposerFocusRef.current = true; return controller.send(text) }
-  const selectModel = async (routeKey: string) => { if (await controller.selectModel(routeKey)) setModelDialogOpen(false) }
-  const clearContext = async () => { setClearConfirmOpen(false); await controller.clearContext() }
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [activeRun, setActiveRun] = useState<ActiveArkoRun>()
+  const [pendingTurn, setPendingTurn] = useState<ArkmeArkoPendingTurn>()
   const detailTriggerRef = useRef<HTMLElement | null>(null)
   const detailBodyRef = useRef<HTMLDivElement>(null)
-  const detailScope = `${accountKey ?? ''}:${String(profileUserId)}:${String(session?.sessionId)}`
+  const detailScope = `${authSnapshot.auth?.environment ?? ''}:${String(profileUserId)}:${String(session?.sessionId)}`
   const [detailSelection, setDetailSelection] = useState<{ scope: string; id: string }>()
   const detailMessage = detailSelection?.scope === detailScope
-    ? messages.find(message => (message.presentationKey ?? message.id) === detailSelection.id && message.role !== 'divider')
+    ? messages.find(message => message.id === detailSelection.id && message.role !== 'divider')
     : undefined
   const detailActivity = detailMessage?.status === 'sending'
     ? arkoRunActivityLabel(detailMessage.runStatus) ?? '等待回复'
@@ -274,7 +471,7 @@ function ArkoConversationView({ controller }: { controller: ArkoConversationCont
     detailTriggerRef.current = trigger
     if (detailBodyRef.current !== null) detailBodyRef.current.scrollTop = 0
     trigger.focus({ preventScroll: true })
-    setDetailSelection({ scope: detailScope, id: messages.find(message => message.id === id)?.presentationKey ?? id })
+    setDetailSelection({ scope: detailScope, id })
   }
   const messageActionItems = useMemo<ArkmeMessageActionViewItem[]>(() => messages.flatMap(message => (
     message.role === 'divider' || message.messageActionRef === undefined || message.messageActionConversationRef === undefined
@@ -306,31 +503,330 @@ function ArkoConversationView({ controller }: { controller: ArkoConversationCont
     })
   }, [])
 
-  const lastMessage = messages.at(-1)
-  useEffect(() => { scrollToBottom() }, [lastMessage?.id, lastMessage?.text, lastMessage?.reasoning, scrollToBottom])
+  useEffect(() => {
+    arkmeArkoProfileStore.activateUser(profileUserId)
+    arkmeArkoConversationPreviewStore.activateUser(profileUserId)
+  }, [profileUserId])
+
+  useEffect(() => {
+    if (profileUserId === undefined) return
+    arkmeArkoConversationPreviewStore.setLatestFromSurface(profileUserId, messages
+      .filter(message => message.role !== 'divider')
+      .map(message => ({
+        key: message.id,
+        text: message.text,
+        ...(message.messageId === undefined ? {} : { messageId: message.messageId }),
+        ...(message.createdAtMillis === undefined ? {} : { createdAtMillis: message.createdAtMillis }),
+      })))
+  }, [messages, profileUserId])
+
+  useEffect(() => {
+    if (profileUserId === undefined) {
+      setPendingTurn(undefined)
+      return
+    }
+    const restored = readArkoPendingTurn(profileUserId)
+    setPendingTurn(restored)
+    if (restored === undefined) return
+    setMessages(current => {
+      if (current.some(item => item.id === restored.localAssistantMessageId)) return current
+      return [...current, {
+        id: restored.localUserMessageId,
+        sessionId: restored.sessionId,
+        role: 'user',
+        text: restored.text,
+        status: 'done',
+        createdAtMillis: restored.createdAtMillis,
+      }, {
+        id: restored.localAssistantMessageId,
+        sessionId: restored.sessionId,
+        role: 'assistant',
+        text: '',
+        status: 'error',
+        createdAtMillis: restored.createdAtMillis + 1,
+      }]
+    })
+    scrollToBottom()
+  }, [profileUserId, scrollToBottom])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setLoading(true)
+    setError('')
+    setHistoryError('')
+    void Promise.allSettled([
+      callArkme<ArkmeArkoSession>('arko.session', undefined, controller.signal),
+      callArkme<ArkmeArkoProfile>('arko.profile', undefined, controller.signal),
+      callArkme<ArkmeArkoModelCatalog>('arko.models', undefined, controller.signal),
+      callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 }, controller.signal),
+      callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, controller.signal).then(async snapshot => (
+        snapshot.profile === null
+          ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, controller.signal)
+          : snapshot
+      )),
+    ]).then(([sessionResult, profileResult, modelResult, historyResult, userProfileResult]) => {
+      if (controller.signal.aborted) return
+      if (sessionResult.status === 'rejected') {
+        setError(errorMessage(sessionResult.reason))
+        return
+      }
+      setSession(sessionResult.value)
+      if (profileResult.status === 'fulfilled' && profileUserId !== undefined) {
+        arkmeArkoProfileStore.setProfile(profileUserId, profileResult.value)
+      }
+      if (modelResult.status === 'fulfilled') setCatalog(modelResult.value)
+      if (userProfileResult.status === 'fulfilled') setUserProfile(userProfileResult.value.profile)
+      if (historyResult.status === 'fulfilled') {
+        setMessages(current => mergeHistory(current, historyResult.value.items))
+        setHistoryOffset(historyResult.value.nextOffset)
+        scrollToBottom()
+        const restoredRun = latestActiveRun(historyResult.value.items, sessionResult.value.sessionId)
+        if (restoredRun !== undefined) {
+          setActiveRun(restoredRun)
+          setSending(true)
+        }
+      } else {
+        setHistoryError(tr("加载 Arko 对话记录失败：{v0}", { v0: errorMessage(historyResult.reason) }))
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoading(false)
+    })
+    return () => { controller.abort() }
+  }, [profileUserId, scrollToBottom])
+
+  useEffect(() => {
+    if (activeRun === undefined) return
+    const controller = new AbortController()
+    let consecutiveFailures = 0
+    const finishRun = async (knownHistory?: ArkmeArkoHistoryPage): Promise<void> => {
+      const [historyResult, profileResult] = await Promise.allSettled([
+        knownHistory === undefined
+          ? callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 }, controller.signal)
+          : Promise.resolve(knownHistory),
+        callArkme<ArkmeArkoProfile>('arko.profile', undefined, controller.signal),
+      ])
+      if (controller.signal.aborted) return
+      if (historyResult.status === 'fulfilled') {
+        setMessages(current => mergeHistory(current, historyResult.value.items))
+        setHistoryOffset(historyResult.value.nextOffset)
+        setHistoryError('')
+        scrollToBottom()
+      } else {
+        setHistoryError(tr("刷新 Arko 对话记录失败：{v0}", { v0: errorMessage(historyResult.reason) }))
+      }
+      if (profileResult.status === 'fulfilled' && profileUserId !== undefined) {
+        arkmeArkoProfileStore.setProfile(profileUserId, profileResult.value)
+      }
+      setActiveRun(current => current?.runUid === activeRun.runUid ? undefined : current)
+      setSending(false)
+    }
+    const poll = async (): Promise<void> => {
+      await waitForNextPoll(controller.signal)
+      while (!controller.signal.aborted) {
+        try {
+          const status = await callArkme<ArkmeArkoRunStatus>('arko.run.status', {
+            sessionId: activeRun.sessionId,
+            runUid: activeRun.runUid,
+          }, controller.signal)
+          if (controller.signal.aborted) return
+          consecutiveFailures = 0
+          if (status.status === 'waiting_tool') {
+            setNotice('当前任务需要 DSH 尚未支持的客户端操作，可以停止任务后换一种方式重试')
+          }
+          setMessages(current => current.map(item => item.assistantMsgId === activeRun.assistantMsgId ? {
+            ...item,
+            runStatus: status.status,
+            status: isActiveRunStatus(status.status) ? 'sending' : status.status === 'failed' ? 'error' : 'done',
+          } : item))
+          if (!isActiveRunStatus(status.status)) {
+            await finishRun()
+            return
+          }
+        } catch {
+          if (controller.signal.aborted) return
+          consecutiveFailures += 1
+          try {
+            const history = await callArkme<ArkmeArkoHistoryPage>(
+              'arko.history',
+              { limit: 50, offset: 0 },
+              controller.signal,
+            )
+            if (controller.signal.aborted) return
+            if (arkoHistoryHasTerminalRun(
+              history.items,
+              activeRun.sessionId,
+              activeRun.assistantMsgId,
+              activeRun.runUid,
+            )) {
+              await finishRun(history)
+              return
+            }
+          } catch {
+            if (controller.signal.aborted) return
+          }
+        }
+        const retryDelay = consecutiveFailures === 0
+          ? 1_200
+          : Math.min(10_000, 1_200 * (2 ** Math.min(consecutiveFailures - 1, 3)))
+        await waitForNextPoll(controller.signal, retryDelay)
+      }
+    }
+    void poll()
+    return () => { controller.abort() }
+  }, [activeRun, profileUserId, scrollToBottom])
+
   const loadEarlier = useCallback(async () => {
+    if (historyOffset === undefined || historyLoadInFlightRef.current) return
     const body = bodyRef.current
     const previousScrollHeight = body?.scrollHeight ?? 0
     const previousScrollTop = body?.scrollTop ?? 0
+    historyLoadInFlightRef.current = true
+    setHistoryLoading(true)
     try {
-      await controller.loadEarlier()
+      const page = await callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: historyOffset })
+      setMessages(current => mergeHistory(current, page.items))
+      setHistoryOffset(page.nextOffset)
+      setHistoryError('')
       requestAnimationFrame(() => {
         const target = bodyRef.current
-        if (target) target.scrollTop = arkoPreservedScrollTop(previousScrollTop, previousScrollHeight, target.scrollHeight)
+        if (target === null) return
+        target.scrollTop = arkoPreservedScrollTop(
+          previousScrollTop,
+          previousScrollHeight,
+          target.scrollHeight,
+        )
       })
-    } catch { /* The shared controller retains the page error for retry. */ }
-  }, [controller.loadEarlier])
+    } catch (caught) {
+      setHistoryError(tr("加载更早的 Arko 对话记录失败：{v0}", { v0: errorMessage(caught) }))
+    } finally {
+      historyLoadInFlightRef.current = false
+      setHistoryLoading(false)
+    }
+  }, [historyOffset])
+
   useEffect(() => {
     const root = bodyRef.current
     const sentinel = historySentinelRef.current
-    if (loading || historyLoading || historyError !== '' || historyPageError !== '' || root === null || sentinel === null || typeof historyOffset !== 'number') return
+    if (loading || historyLoading || historyError !== '' || root === null || sentinel === null || historyOffset === undefined) return
     const observer = new IntersectionObserver(entries => {
-      if (entries[0]?.isIntersecting !== true) return
+      if (entries[0]?.isIntersecting !== true || historyLoadInFlightRef.current) return
       void loadEarlier()
     }, { root, rootMargin: '120px 0px 0px' })
     observer.observe(sentinel)
     return () => { observer.disconnect() }
-  }, [historyPageError, historyError, historyLoading, historyOffset, loadEarlier, loading])
+  }, [historyError, historyLoading, historyOffset, loadEarlier, loading])
+
+  const retryHistory = useCallback(async () => {
+    if (historyLoading) return
+    setHistoryLoading(true)
+    setHistoryError('')
+    try {
+      const page = await callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 })
+      setMessages(current => mergeHistory(current, page.items))
+      setHistoryOffset(page.nextOffset)
+      scrollToBottom()
+      if (session !== undefined) {
+        const restoredRun = latestActiveRun(page.items, session.sessionId)
+        if (restoredRun !== undefined) {
+          setActiveRun(restoredRun)
+          setSending(true)
+        }
+      }
+    } catch (caught) {
+      setHistoryError(tr("加载 Arko 对话记录失败：{v0}", { v0: errorMessage(caught) }))
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [historyLoading, scrollToBottom, session])
+
+  const submitTurn = useCallback(async (turn: ArkmeArkoPendingTurn) => {
+    if (sending || activeRun !== undefined) return
+    let handedOffToPolling = false
+    setSending(true)
+    setError('')
+    setNotice('')
+    setMessages(current => current.map(item => item.id === turn.localAssistantMessageId
+      ? { ...item, text: '', status: 'sending', runStatus: 'accepted' }
+      : item))
+    try {
+      const result = await callArkme<ArkmeArkoAskResult>('arko.ask', {
+        text: turn.text,
+        sessionId: turn.sessionId,
+        clientTurnUid: turn.clientTurnUid,
+        waitSeconds: 1,
+        ...(turn.modelRouteKey === undefined ? {} : { modelRouteKey: turn.modelRouteKey }),
+        ...(turn.replyToRunUid === undefined ? {} : { replyToRunUid: turn.replyToRunUid }),
+        ...(turn.replyToAssistantMsgId === undefined ? {} : { replyToAssistantMsgId: turn.replyToAssistantMsgId }),
+      })
+      removeArkoPendingTurn(turn.userId)
+      setPendingTurn(current => current?.clientTurnUid === turn.clientTurnUid ? undefined : current)
+      setSession(current => current === undefined ? current : { ...current, sessionId: result.sessionId })
+      if (result.profile !== undefined && profileUserId !== undefined) {
+        arkmeArkoProfileStore.setProfile(profileUserId, result.profile)
+      }
+      const runStatus = result.run?.status ?? result.status
+      const runActive = isActiveRunStatus(runStatus)
+      const hasVisibleReasoning = result.reasoning.trim() !== ''
+        && (runActive || !isActivityPlaceholderText(result.reasoning))
+      setMessages(current => mergeHistory(current.map(item => item.id === turn.localUserMessageId ? {
+        ...item,
+        id: `history:${String(result.userMsgId)}`,
+        messageId: result.userMsgId,
+        sessionId: result.sessionId,
+      } : item.id === turn.localAssistantMessageId ? {
+        id: `history:${String(result.assistantMsgId)}`,
+        messageId: result.assistantMsgId,
+        sessionId: result.sessionId,
+        role: 'assistant',
+        text: resultText(result),
+        status: runActive ? 'sending' : result.errorMessage === undefined ? 'done' : 'error',
+        assistantMsgId: result.assistantMsgId,
+        ...(item.createdAtMillis === undefined ? {} : { createdAtMillis: item.createdAtMillis }),
+        ...(hasVisibleReasoning ? { reasoning: result.reasoning } : {}),
+        ...(result.runUid === undefined ? {} : { runUid: result.runUid }),
+        runStatus,
+      } : item), []))
+      setDetailSelection(current => {
+        if (current?.scope !== detailScope) return current
+        if (current.id === turn.localUserMessageId) return { ...current, id: `history:${String(result.userMsgId)}` }
+        if (current.id === turn.localAssistantMessageId) return { ...current, id: `history:${String(result.assistantMsgId)}` }
+        return current
+      })
+      if (runActive && result.runUid !== undefined) {
+        handedOffToPolling = true
+        setActiveRun({
+          sessionId: result.sessionId,
+          assistantMsgId: result.assistantMsgId,
+          runUid: result.runUid,
+        })
+      }
+    } catch (caught) {
+      const message = errorMessage(caught)
+      const retryable = !(caught instanceof ArkmeClientError) || caught.body.retryable
+      if (retryable) {
+        setPendingTurn(turn)
+        writeArkoPendingTurn(turn)
+        setError(`Arko 发送结果暂未确认：${message}。请重试确认，系统会复用同一次请求，不会重复执行。`)
+        setMessages(current => current.map(item => item.id === turn.localAssistantMessageId ? {
+          ...item, role: 'assistant', text: '', status: 'error',
+        } : item))
+      } else {
+        removeArkoPendingTurn(turn.userId)
+        setPendingTurn(current => current?.clientTurnUid === turn.clientTurnUid ? undefined : current)
+        setError(message)
+        setMessages(current => current.map(item => item.id === turn.localAssistantMessageId ? {
+          ...item, role: 'assistant', text: message, status: 'error',
+        } : item))
+      }
+    } finally {
+      if (!handedOffToPolling) setSending(false)
+    }
+  }, [activeRun, detailScope, profileUserId, sending])
+
+  const interactionLocked = sending || pendingTurn !== undefined || activeRun !== undefined
+  const sendDisabled = loading || interactionLocked || clearing || selectingModel
+    || session === undefined || profileUserId === undefined
+  const inputDisabled = loading || interactionLocked || session === undefined || profileUserId === undefined
 
   const insertEmoji = useCallback((emoji: ArkmeEmoji): boolean => {
     if (inputDisabled || composerDraftKey === undefined) return false
@@ -339,6 +835,119 @@ function ArkoConversationView({ controller }: { controller: ArkoConversationCont
     return result === 'inserted'
   }, [composerDraftKey, inputDisabled])
 
+  const send = useCallback(async (presetText?: string) => {
+    const text = (presetText ?? serializeArkmeComposerDraft(arkmeComposerDraftStore.get(composerDraftKey)).text).trim()
+    if (text === '' || sendInFlightRef.current || sendDisabled
+      || session === undefined || profileUserId === undefined || composerDraftKey === undefined) return
+    if (text.length > arkoQuestionMaxLength) {
+      setError('内容长度超过上限，请删减后再发送')
+      return
+    }
+    sendInFlightRef.current = true
+    try {
+      const continuation = latestContinuation(messages, session.sessionId)
+      const createdAtMillis = Date.now()
+      const turn: ArkmeArkoPendingTurn = {
+        userId: profileUserId,
+        sessionId: session.sessionId,
+        clientTurnUid: crypto.randomUUID(),
+        text,
+        createdAtMillis,
+        localUserMessageId: crypto.randomUUID(),
+        localAssistantMessageId: crypto.randomUUID(),
+        ...(continuation === undefined ? {
+          ...(catalog === undefined ? {} : { modelRouteKey: catalog.effectiveRouteKey }),
+        } : {
+          replyToRunUid: continuation.runUid,
+          replyToAssistantMsgId: continuation.assistantMsgId,
+        }),
+      }
+      writeArkoPendingTurn(turn)
+      pendingComposerFocusRef.current = true
+      setPendingTurn(turn)
+      if (presetText === undefined) arkmeComposerDraftStore.clear(composerDraftKey)
+      setMessages(current => [...current, {
+        id: turn.localUserMessageId,
+        sessionId: turn.sessionId,
+        role: 'user',
+        text,
+        status: 'done',
+        createdAtMillis,
+      }, {
+        id: turn.localAssistantMessageId,
+        sessionId: turn.sessionId,
+        role: 'assistant',
+        text: '',
+        status: 'sending',
+        runStatus: 'accepted',
+        createdAtMillis: createdAtMillis + 1,
+      }])
+      scrollToBottom()
+      await submitTurn(turn)
+    } finally {
+      sendInFlightRef.current = false
+    }
+  }, [catalog, composerDraftKey, messages, profileUserId, scrollToBottom, sendDisabled, session, submitTurn])
+
+  const selectModel = useCallback(async (routeKey: string) => {
+    if (selectingModel) return
+    setSelectingModel(true)
+    setError('')
+    try {
+      const next = await callArkme<ArkmeArkoModelCatalog>('arko.model.activate', { routeKey })
+      setCatalog(next)
+      setModelDialogOpen(false)
+      setNotice(tr("已切换到 {v0}", { v0: selectedModelName(next) }))
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setSelectingModel(false)
+    }
+  }, [selectingModel])
+
+  const cancelActiveRun = useCallback(async () => {
+    if (activeRun === undefined || cancelling) return
+    setCancelling(true)
+    setError('')
+    try {
+      await callArkme<ArkmeArkoCancelResult>('arko.cancel', {
+        sessionId: activeRun.sessionId,
+        assistantMsgId: activeRun.assistantMsgId,
+        runUid: activeRun.runUid,
+      })
+      setNotice('已请求停止当前任务，正在确认最终状态')
+    } catch (caught) {
+      setError(tr("停止 Arko 任务失败：{v0}", { v0: errorMessage(caught) }))
+    } finally {
+      setCancelling(false)
+    }
+  }, [activeRun, cancelling])
+
+  const clearContext = useCallback(async () => {
+    if (sending || clearing || pendingTurn !== undefined) return
+    setClearConfirmOpen(false)
+    setClearing(true)
+    setError('')
+    setNotice('')
+    try {
+      const nextSession = await callArkme<ArkmeArkoSession>('arko.new-session')
+      setSession(nextSession)
+      setMessages(current => [...current, {
+        id: crypto.randomUUID(), role: 'divider', text: '新的对话', status: 'done', createdAtMillis: Date.now(),
+      }])
+      scrollToBottom()
+      setNotice('上下文已清除，历史记录仍然保留')
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setClearing(false)
+    }
+  }, [clearing, pendingTurn, scrollToBottom, sending])
+
+  const displayName = arkoPresentationName(profile)
+  const selectedModel = selectedModelName(catalog)
+  const canChooseModel = (catalog?.options.length ?? 0) > 1
+  const continuation = useMemo(() => latestContinuation(messages, session?.sessionId), [messages, session?.sessionId])
   useEffect(() => {
     if (!pendingComposerFocusRef.current || loading || interactionLocked
       || session === undefined || profileUserId === undefined) return
@@ -402,17 +1011,12 @@ function ArkoConversationView({ controller }: { controller: ArkoConversationCont
     <ArkmeWideConversation enabled scopeKey={messageSelectionScope} viewportRef={bodyRef} turns controlsHidden={messageActions.selecting}>
     <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
     <div ref={bodyRef} data-arkme-width-viewport data-arko-message-viewport style={styles.body}>
-      {historyPageError && <div role="alert" style={{ ...styles.error, ...styles.feedbackRow }}>
-        <span>{historyPageError}</span>
-        <button data-arkme-feedback="neutral" type="button" style={styles.retryButton} disabled={historyLoading}
-          onClick={() => { void loadEarlier() }}>{tr("重试加载更早记录")}</button>
-      </div>}
       {notice !== '' && <div style={styles.notice}>{notice}</div>}
       {error !== '' && <div style={styles.error}>{error}</div>}
       {historyError !== '' && <div style={{ ...styles.error, ...styles.feedbackRow }}>
         <span>{historyError}</span>
         <button data-arkme-feedback="neutral" type="button" style={styles.retryButton} disabled={historyLoading} onClick={() => {
-          if (typeof historyOffset !== 'number') void retryHistory()
+          if (historyOffset === undefined) void retryHistory()
           else void loadEarlier()
         }}>
           {historyLoading ? tr("加载中...") : tr("重新加载")}
@@ -646,45 +1250,4 @@ function ArkoConversationView({ controller }: { controller: ArkoConversationCont
     {messageActions.overlay}
     </ArkmeWideConversation>
   </div>
-}
-
-function ArkoNativeConversation({ controller }: { controller: ArkoConversationController }) {
-  const { accountKey, session, catalog, messages, loading, sending, activeRun, draft, error, historyError,
-    notice, historyOffset, historyPageError, inputDisabled, sendDisabled, selectModel, cancelActiveRun,
-    loadEarlier, pendingTurn, submitTurn, retryHistory, setDraft, feedback: setError, send, displayName,
-    clearing, selectingModel, continuation } = controller
-  const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
-  const clearContext = async () => { setClearConfirmOpen(false); await controller.clearContext() }
-  const hint = loading ? '正在恢复会话' : clearing ? '正在清除上下文' : selectingModel ? '正在切换模型'
-    : pendingTurn !== undefined && !sending ? '请先确认上一次发送结果'
-    : sending ? '等待回复' : continuation === undefined ? '' : '继续当前任务'
-  if (accountKey === undefined) return <div role="status">正在恢复账号…</div>
-  return <>
-    <ArkoNativeSurface snapshot={{
-      accountKey, displayName, ...(session ? { sessionId: session.sessionId } : {}), messages,
-      modelCatalog: catalog ?? null, loading, busy: sending || activeRun !== undefined,
-      draft, error: error || historyError, notice: notice || hint, hasMore: typeof historyOffset === 'number',
-      historyError: historyPageError,
-      ...(inputDisabled && activeRun === undefined ? { inputBlockedReason: hint || '当前输入暂不可用' } : {}),
-    }} actions={{
-      submit: async text => {
-        if (sendDisabled || text.trim() === '' || text.length > arkoQuestionMaxLength) return false
-        setDraft(text)
-        return await send() === true
-      },
-      selectModel, cancel: cancelActiveRun, loadEarlier: loadEarlier,
-    }} ui={{
-      clearDisabled: sendDisabled,
-      setDraft: text => setDraft(text),
-      clearContext: () => setClearConfirmOpen(true),
-      retry: async () => { if (pendingTurn) await submitTurn(pendingTurn); else await retryHistory() },
-      ...(pendingTurn ? { retryLabel: '重试确认' } : historyError ? { retryLabel: '重试加载记录' } : {}),
-      feedback: setError,
-    }} />
-    {clearConfirmOpen && <div role="dialog" aria-label="清除上下文" style={{ position: 'absolute', inset: 0, zIndex: 30, display: 'grid', placeItems: 'center', background: '#0004' }}>
-      <div style={{ background: arkmeTheme.base, padding: 24, borderRadius: 12 }}>清除当前上下文？历史记录仍然保留。
-        <button onClick={() => setClearConfirmOpen(false)}>取消</button><button disabled={sendDisabled} onClick={() => { void clearContext() }}>确认清除</button>
-      </div>
-    </div>}
-  </>
 }

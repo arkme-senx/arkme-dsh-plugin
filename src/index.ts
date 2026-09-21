@@ -705,14 +705,6 @@ export function apply(ctx: Context, config: Config): void {
       response.end(sessionClient.source)
     },
   }), 'arkme: Harness session observer asset')
-  const arkoNativeClient = readFileSync(new URL('../lib/arko-native-client.js', import.meta.url))
-  ctx.effect(() => ctx.webServer.register({
-    kind: 'exact', path: '/arkme-self/arko-native-client.js',
-    handler: (_request, response) => {
-      response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' })
-      response.end(arkoNativeClient)
-    },
-  }), 'arkme: Arko native client asset')
   const harnessModelClient = readFileSync(new URL('../lib/harness-model-client.js', import.meta.url))
   const harnessOnboardingClient = readFileSync(new URL('../lib/harness-onboarding-client.js', import.meta.url))
   const harnessTrajectoryClient = readFileSync(new URL('../lib/harness-trajectory-client.js', import.meta.url))
@@ -762,12 +754,6 @@ export function apply(ctx: Context, config: Config): void {
     },
   }), 'arkme: Harness onboarding bridge asset')
   const harnessEmbedHandler = createHarnessEmbedRouteHandler({
-    arkoClient: {
-      id: '@senguoyun/dsh-arkme/arko-native-client', url: '/arkme-self/arko-native-client.js',
-      rev: createHash('sha256').update(arkoNativeClient).digest('hex'),
-      inject: ['@deepseek-ai/dsh-client-ui-conversation', '@deepseek-ai/dsh-client-ui-session'],
-      external: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'],
-    },
     ...(selectionClientRevision === undefined ? {} : { selectionClientRevision }),
     sidebarClient: {
       id: '@senguoyun/dsh-arkme/harness-sidebar', url: ARKME_HARNESS_SIDEBAR_CLIENT_PATH,
