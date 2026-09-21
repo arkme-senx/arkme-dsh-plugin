@@ -1,3 +1,5 @@
+import {screenshotShortcutBridge,shortcutLabel,useScreenshotShortcut} from './screenshot-shortcut.js'
+import { captureNativeScreenshot, nativeScreenshotBridge } from './native-screenshot.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useRef, useState } from 'react'
 import { Scissors } from '@phosphor-icons/react/dist/icons/Scissors'
@@ -18,23 +20,28 @@ export function ArkmeComposerScreenshotButton(props: {
   onError: (message: string) => void
 }) {
   useArkmeLocale()
+  const shortcut = useScreenshotShortcut()
+  const trigger = useRef<() => void>(() => {})
+  useEffect(() => screenshotShortcutBridge()?.onTrigger(() => trigger.current()), [])
   const latest = useRef(props)
   latest.current = props
   const active = useRef<AbortController>()
   const [busy, setBusy] = useState(false)
   const [crop, setCrop] = useState<{ frame: ScreenshotFrame; complete: (blob?: Blob) => void }>()
   const cropRoot = useRef<HTMLDivElement>(null)
-  const nativeDesktop = isArkmeDesktopScreenshotRuntime()
+  const nativeBridge = nativeScreenshotBridge()
+  const nativeDesktop = !!nativeBridge || isArkmeDesktopScreenshotRuntime()
   const [capability, setCapability] = useState<ArkmeDesktopScreenshotCapability>()
   useEffect(() => {
     if (!nativeDesktop) return
+    if (nativeBridge) { setCapability({ available: true }); return }
     const controller = new AbortController()
     setCapability(undefined)
     void callArkme<ArkmeDesktopScreenshotCapability>('desktop.screenshot.capability', undefined, controller.signal)
       .then(value => { if (!controller.signal.aborted) setCapability(value) })
       .catch(() => { if (!controller.signal.aborted) setCapability({ available: false, reason: '暂无法使用截屏，请重新打开对话或使用系统截屏后粘贴' }) })
     return () => controller.abort()
-  }, [props.userId, nativeDesktop])
+  }, [props.userId, nativeDesktop, nativeBridge])
   useEffect(() => {
     if (props.active === false) active.current?.abort()
     return () => active.current?.abort()
@@ -66,7 +73,10 @@ export function ArkmeComposerScreenshotButton(props: {
     try {
       restoreFocus = captured.onBegin({ ownedDialog: () => cropRoot.current })
       if (nativeDesktop) {
-        const result = await callArkme<ArkmeDesktopScreenshotResult>('desktop.screenshot.capture', { expectedUserId: captured.userId }, controller.signal)
+        // Main enforces a capture/load deadline. Editing a frozen image has no time limit.
+        if (nativeBridge) clearTimeout(timeout)
+        const result = nativeBridge ? await captureNativeScreenshot(controller.signal)
+          : await callArkme<ArkmeDesktopScreenshotResult>('desktop.screenshot.capture', { expectedUserId: captured.userId }, controller.signal)
         if (!current()) return
         if (result.status === 'captured') {
           const bytes = Uint8Array.from(atob(result.contentBase64), character => character.charCodeAt(0))
@@ -99,9 +109,10 @@ export function ArkmeComposerScreenshotButton(props: {
       if (active.current === controller) { active.current = undefined; setBusy(false) }
     }
   }
+  trigger.current = () => { void capture() }
   const title = busy ? '正在截屏，按 Esc 取消' : !nativeDesktop ? browserScreenshotUnavailable() ?? '截屏（选择屏幕或窗口后裁剪）'
-    : capability?.available === true ? '截屏（框选后添加到草稿，Esc 取消）' : capability?.reason ?? '正在检查截屏能力'
-  return <><ArkmeComposerToolButton aria-label={tr("截屏")} title={title} aria-busy={busy}
+    : capability?.available === true ? nativeBridge ? '截屏（框选并编辑后添加到草稿，Esc 取消）' : '截屏（框选后添加到草稿，Esc 取消）' : capability?.reason ?? '正在检查截屏能力'
+  return <><ArkmeComposerToolButton aria-label={tr("截屏")} title={shortcut ? `${title} · ${shortcutLabel(shortcut.accelerator)}${shortcut.available ? "" : "（快捷键不可用）"}` : title} aria-busy={busy}
     disabled={props.active === false || props.disabled || busy || (nativeDesktop && capability === undefined)}
     onMouseDown={event => { event.preventDefault() }}
     onClick={() => { void capture() }}>

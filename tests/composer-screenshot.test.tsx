@@ -88,3 +88,38 @@ it('explains unsupported native capture without starting it', async () => {
   expect(onError).toHaveBeenCalledWith('仅支持 macOS')
   expect(onBegin).not.toHaveBeenCalled()
 })
+
+// A versioned client bridge must take precedence over the legacy macOS process API.
+it('uses the native editor bridge and adds only its completed PNG',async()=>{
+ const native=vi.fn(async()=>captured)
+ vi.stubGlobal('arkmeScreenshot',{version:1,capture:native,cancel:vi.fn(async()=>{})})
+ await mount();await start()
+ expect(call).not.toHaveBeenCalled();expect(native).toHaveBeenCalledOnce();expect(onFile).toHaveBeenCalledOnce()
+})
+it('cancels the native editor on scope change and rejects its late PNG',async()=>{
+ let complete!:(v:ArkmeDesktopScreenshotResult)=>void
+ const native=vi.fn(()=>new Promise<ArkmeDesktopScreenshotResult>(r=>{complete=r})),cancel=vi.fn(async()=>{})
+ vi.stubGlobal('arkmeScreenshot',{version:1,capture:native,cancel})
+ await mount();await start();await mount({scope:{}})
+ expect(cancel).toHaveBeenCalledOnce();await act(async()=>complete(captured));expect(onFile).not.toHaveBeenCalled()
+})
+it('does not time out a native static editor after the legacy capture deadline',async()=>{
+ vi.useFakeTimers()
+ try {
+  let complete!:(v:ArkmeDesktopScreenshotResult)=>void
+  const cancel=vi.fn(async()=>{})
+  vi.stubGlobal('arkmeScreenshot',{version:1,capture:()=>new Promise<ArkmeDesktopScreenshotResult>(r=>{complete=r}),cancel})
+  await mount();await start();await act(async()=>{await vi.advanceTimersByTimeAsync(121000)})
+  expect(cancel).not.toHaveBeenCalled();expect(onError).not.toHaveBeenCalled()
+  await act(async()=>complete(captured));expect(onFile).toHaveBeenCalledOnce()
+ } finally {vi.useRealTimers()}
+})
+it('uses the same guarded capture flow for shortcut and updates the tooltip', async () => {
+ let trigger!:()=>void, changed!:(value:any)=>void
+ vi.stubGlobal('arkmeScreenshotShortcut',{get:async()=>({accelerator:'Command+Shift+A',available:true}),onTrigger:(fn:()=>void)=>{trigger=fn;return ()=>{}},onChanged:(fn:(value:any)=>void)=>{changed=fn;return ()=>{}}})
+ await mount();expect(button().title).toContain('⌘ + ⇧ + A')
+ await act(async()=>changed({accelerator:'Control+Alt+B',available:true}));expect(button().title).toContain('Ctrl + Alt + B')
+ await act(async()=>{trigger();trigger()});expect(call.mock.calls.filter(args=>args[0]==='desktop.screenshot.capture')).toHaveLength(1)
+ await act(async()=>resolveCapture({status:'cancelled'}))
+ await mount({active:false});await act(async()=>trigger());expect(call.mock.calls.filter(args=>args[0]==='desktop.screenshot.capture')).toHaveLength(1)
+})
